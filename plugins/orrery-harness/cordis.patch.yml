@@ -38,6 +38,10 @@
               sampleOverCapGlobResults: false
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+            config:
+              # F5 拉取式后台：结算通知已内建为紧凑 + 边界注入 + 拉取式读取；
+              # 这里仅限制连续唤醒次数，防止通知唤醒风暴。
+              maxConsecutiveWakes: 8
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
