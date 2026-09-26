@@ -20,7 +20,7 @@
 /**
  * Build the snapshot from the llm service. Catalog failures degrade to null
  * (advisory absence), never to a rejected snapshot.
- * @param {object} llm - ctx.llm
+ * @param {any} llm - ctx.llm
  * @returns {Promise<ProviderSnapshot>}
  */
 export async function snapshotProviders(llm) {
@@ -47,7 +47,7 @@ export function rungResolves(rung, snapshot) {
 
 /**
  * Resolve a category's route.
- * @param {object} category - registry entry { chain, gateModels?, disabled? }
+ * @param {any} category - registry entry { chain, gateModels?, disabled? }
  * @param {ProviderSnapshot} snapshot
  * @param {boolean} hasExplicitUserConfig - any explicit user config for this category
  * @returns {{ kind: 'resolved', provider: string, model: string, reasoningEffort?: string }

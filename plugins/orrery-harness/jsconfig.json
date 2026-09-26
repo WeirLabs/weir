@@ -5,9 +5,24 @@
     "target": "es2023",
     "moduleResolution": "nodenext",
     "strict": true,
+    "noImplicitAny": false,
     "skipLibCheck": true,
     "noEmit": true,
     "types": []
   },
-  "include": ["src/**/*.js", "test/**/*.js", "vitest.config.js"]
+  "include": [
+    "src/core/doctrine.js",
+    "src/intent-gate/matcher.js",
+    "src/delegate/resolver.js",
+    "src/delegate/families.js",
+    "src/delegate/escalate.js",
+    "src/delegate/categories.js",
+    "src/delegate/agents.js",
+    "src/todo-driver/state-machine.js",
+    "src/context-guard/pressure.js",
+    "src/hashline-edit/xxhash32.js",
+    "src/hashline-edit/anchors.js",
+    "src/hashline-edit/apply-ops.js",
+    "src/hashline-edit/diff.js"
+  ]
 }

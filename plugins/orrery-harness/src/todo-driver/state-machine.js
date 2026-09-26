@@ -47,6 +47,7 @@ export function createContinuationState(options = {}) {
     armed: true,
     consecutive: 0,
     errorStreak: 0,
+    /** @type {string | null} */
     stopReason: null,
   }
   return {
@@ -79,7 +80,7 @@ export function createContinuationState(options = {}) {
 
     /**
      * Decide the continuation action for one ended turn.
-     * @param {object} reason - TurnEndReason from the durable turn/end event
+     * @param {any} reason - TurnEndReason from the durable turn/end event
      * @param {boolean} todosRemain
      * @returns {{ kind: 'continue', delayMs: number }
      *   | { kind: 'blocked', notice: string }

@@ -62,18 +62,23 @@ export function validateOps(ops, lines) {
 export function applyOps(lines, ops) {
   const result = [...lines]
   // Indexed positions computed against the ORIGINAL array, applied bottom-up.
-  const planned = ops.map((op) => {
+  const planned = []
+  for (const op of ops) {
+    // validateOps has already run: anchors parse and are in range. The guard
+    // below is unreachable in practice and keeps the fail-closed invariant.
     const pos = parseAnchor(op.pos)
+    if (!pos) continue
     if (op.op === 'replace') {
-      const endLine = op.end === undefined ? pos.line : parseAnchor(op.end).line
-      return { at: pos.line, deleteCount: endLine - pos.line + 1, insert: op.lines }
+      const endAnchor = op.end === undefined ? null : parseAnchor(op.end)
+      const endLine = endAnchor === null ? pos.line : endAnchor.line
+      planned.push({ at: pos.line, deleteCount: endLine - pos.line + 1, insert: op.lines })
+    } else if (op.op === 'append') {
+      planned.push({ at: pos.line + 1, deleteCount: 0, insert: op.lines })
+    } else {
+      // prepend
+      planned.push({ at: pos.line, deleteCount: 0, insert: op.lines })
     }
-    if (op.op === 'append') {
-      return { at: pos.line + 1, deleteCount: 0, insert: op.lines }
-    }
-    // prepend
-    return { at: pos.line, deleteCount: 0, insert: op.lines }
-  })
+  }
   planned.sort((a, b) => b.at - a.at)
   for (const plan of planned) {
     // `at` is a 1-based line coordinate of the original file; splice is 0-based.

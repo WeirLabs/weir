@@ -14,6 +14,7 @@ function apply(ctx, config = {}) {
   const agents = { ...CURATED_AGENTS, ...(config.agents ?? {}) }
 
   // Provider snapshot cache, invalidated on adapter topology changes.
+  /** @type {Map<string, string[] | null> | null} */
   let snapshot = null
   const refresh = async () => {
     snapshot = await snapshotProviders(ctx.llm)

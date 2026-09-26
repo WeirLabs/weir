@@ -28,7 +28,7 @@ export function anchorFor(lineNumber, lineText) {
 
 /**
  * Parse an anchor string.
- * @param {string} anchor
+ * @param {string | undefined} anchor
  * @returns {{ line: number, id: string } | null}
  */
 export function parseAnchor(anchor) {

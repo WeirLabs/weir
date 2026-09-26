@@ -50,7 +50,7 @@ export function compileIntentTable(raw) {
       try {
         return new RegExp(matcher, 'i')
       } catch (error) {
-        throw new Error(`intent-gate: intent "${entry.id}" has an invalid matcher ${JSON.stringify(matcher)}: ${error.message}`)
+        throw new Error(`intent-gate: intent "${entry.id}" has an invalid matcher ${JSON.stringify(matcher)}: ${String(error)}`)
       }
     })
     const injection = entry.injection
