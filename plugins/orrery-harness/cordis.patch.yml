@@ -128,6 +128,9 @@
               # F3 分类委派：类别路由 + 精选只读代理 + 后台 job 道
               - id: delegate
                 name: 'orrery-harness/delegate'
+              # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
+              - id: todo-driver
+                name: 'orrery-harness/todo-driver'
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo
