@@ -6,5 +6,10 @@
   "scripts": {
     "build": "pnpm -r --filter './plugins/*' run build",
     "test": "pnpm -r --filter './plugins/*' run test"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "1.13.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
   }
 }

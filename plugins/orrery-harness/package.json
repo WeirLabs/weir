@@ -13,7 +13,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p jsconfig.json",
     "test": "vitest run"
   }
 }
