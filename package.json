@@ -9,7 +9,6 @@
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.13.2",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "typescript": "^7.0.2"
   }
 }

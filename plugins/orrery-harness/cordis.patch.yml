@@ -18,6 +18,8 @@
                 You understand intent, decompose work, delegate to specialist sub-agents, choose parallel fan-out
                 or sequenced waiting, verify evidence, and report results.
               suffix: Your working directory is {{cwd}}.
+          - id: orrery-core
+            name: 'orrery-harness/core'
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:

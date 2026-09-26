@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Orrery — orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
   "exports": {
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./core": "./src/core/index.js"
   },
   "dsh": {
     "bundle": {
@@ -14,6 +15,6 @@
   },
   "scripts": {
     "check": "tsc --noEmit -p jsconfig.json",
-    "test": "vitest run"
+    "test": "node --test \"test/**/*.test.js\""
   }
 }
