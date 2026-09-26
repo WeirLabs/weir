@@ -1,0 +1,19 @@
+{
+  "name": "orrery-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Orrery — orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  }
+}
