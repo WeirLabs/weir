@@ -1,0 +1,27 @@
+# AI tools & process material (never committed)
+.claude/
+.agent/
+.agents/
+openspec/
+docs/
+
+# AI-generated working reports (kept locally only)
+omo-feature-inventory.md
+omo-architecture-map.md
+dsh-plugin-authoring-surface.md
+
+# Dependencies & build output
+node_modules/
+**/node_modules/
+plugins/*/lib/
+plugins/*/dist/
+
+# Secrets & credentials (never committed)
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# OS junk
+.DS_Store
