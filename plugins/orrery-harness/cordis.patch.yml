@@ -125,6 +125,9 @@
               # F1 意图门：关键词意图 → 上下文注入 / 推理提档
               - id: intent-gate
                 name: 'orrery-harness/intent-gate'
+              # F3 分类委派：类别路由 + 精选只读代理 + 后台 job 道
+              - id: delegate
+                name: 'orrery-harness/delegate'
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo

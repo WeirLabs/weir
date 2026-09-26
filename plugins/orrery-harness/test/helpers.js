@@ -31,5 +31,17 @@ export function expect(actual, message) {
     toBeUndefined: () => assert.notStrictEqual(actual, undefined, message),
     toBeNull: () => assert.notStrictEqual(actual, null, message),
   }
+  api.rejects = {
+    toThrow: async (pattern) => {
+      await assert.rejects(
+        typeof actual === 'function' ? actual : async () => { throw actual },
+        pattern instanceof RegExp ? pattern : pattern === undefined ? undefined : new RegExp(String(pattern)),
+      )
+    },
+  }
+  api.resolves = {
+    toBe: async (expected) => assert.strictEqual(await actual, expected, message),
+    toEqual: async (expected) => assert.deepStrictEqual(await actual, expected, message),
+  }
   return api
 }
