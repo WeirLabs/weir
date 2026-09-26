@@ -8,7 +8,7 @@ export const it = nodeIt
 export const test = nodeTest
 
 export function expect(actual, message) {
-  return {
+  const api = {
     toBe: (expected) => assert.strictEqual(actual, expected, message),
     toEqual: (expected) => assert.deepStrictEqual(actual, expected, message),
     toContain: (expected) => assert.ok(actual.includes(expected), message ?? `expected ${String(actual)} to contain ${String(expected)}`),
@@ -23,4 +23,13 @@ export function expect(actual, message) {
     toThrow: (pattern) => assert.throws(typeof actual === 'function' ? actual : () => { throw actual }, pattern),
     toBeInstanceOf: (expected) => assert.ok(actual instanceof expected, message),
   }
+  api.not = {
+    toBe: (expected) => assert.notStrictEqual(actual, expected, message),
+    toEqual: (expected) => assert.notDeepStrictEqual(actual, expected, message),
+    toContain: (expected) => assert.ok(!actual.includes(expected), message ?? `expected ${String(actual)} not to contain ${String(expected)}`),
+    toHaveLength: (expected) => assert.notStrictEqual(actual.length, expected, message),
+    toBeUndefined: () => assert.notStrictEqual(actual, undefined, message),
+    toBeNull: () => assert.notStrictEqual(actual, null, message),
+  }
+  return api
 }

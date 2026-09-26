@@ -122,6 +122,9 @@
                 config:
                   subagentProvider: spawn
                   maxRounds: 64
+              # F1 意图门：关键词意图 → 上下文注入 / 推理提档
+              - id: intent-gate
+                name: 'orrery-harness/intent-gate'
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo

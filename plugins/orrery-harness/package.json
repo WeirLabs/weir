@@ -6,7 +6,8 @@
   "description": "Orrery — orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
   "exports": {
     "./package.json": "./package.json",
-    "./core": "./src/core/index.js"
+    "./core": "./src/core/index.js",
+    "./intent-gate": "./src/intent-gate/index.js"
   },
   "dsh": {
     "bundle": {
