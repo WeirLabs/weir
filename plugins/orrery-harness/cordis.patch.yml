@@ -135,6 +135,9 @@
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'orrery-harness/todo-driver'
+              # F6 自动压缩：上下文压力阈值 + 模型择时压缩 + 边界强制 + 压缩后续推
+              - id: context-guard
+                name: 'orrery-harness/context-guard'
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo

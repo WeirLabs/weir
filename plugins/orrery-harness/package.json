@@ -9,7 +9,8 @@
     "./core": "./src/core/index.js",
     "./intent-gate": "./src/intent-gate/index.js",
     "./delegate": "./src/delegate/index.js",
-    "./todo-driver": "./src/todo-driver/index.js"
+    "./todo-driver": "./src/todo-driver/index.js",
+    "./context-guard": "./src/context-guard/index.js"
   },
   "dsh": {
     "bundle": {
