@@ -10,7 +10,8 @@
     "./intent-gate": "./src/intent-gate/index.js",
     "./delegate": "./src/delegate/index.js",
     "./todo-driver": "./src/todo-driver/index.js",
-    "./context-guard": "./src/context-guard/index.js"
+    "./context-guard": "./src/context-guard/index.js",
+    "./hashline-edit": "./src/hashline-edit/index.js"
   },
   "dsh": {
     "bundle": {

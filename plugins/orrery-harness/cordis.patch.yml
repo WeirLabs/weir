@@ -138,6 +138,9 @@
               # F6 自动压缩：上下文压力阈值 + 模型择时压缩 + 边界强制 + 压缩后续推
               - id: context-guard
                 name: 'orrery-harness/context-guard'
+              # F7 锚点编辑：read 锚点增强 + fail-closed hash_edit 工具
+              - id: hashline-edit
+                name: 'orrery-harness/hashline-edit'
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo
