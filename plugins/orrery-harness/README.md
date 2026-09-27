@@ -12,6 +12,7 @@ Orrery — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 
 | `orrery-harness/todo-driver` | todo 空转续推：`turn/end` reason 区分用户打断/供应商错误，`stop_continuation` 逃生舱 |
 | `orrery-harness/context-guard` | 上下文压力阈值：软阈值提示 + `compact_context` 择时压缩 + 硬阈值边界强制 + 压缩后续推 |
 | `orrery-harness/hashline-edit` | read 锚点增强（`N#XX|`）+ fail-closed `hash_edit` 工具（预设默认唯一编辑工具，`hideStockEdit: false` 可回归共存） |
+| `orrery-harness/lsp` | 自研零依赖 LSP 客户端：四个只读语义工具（diagnostics/definition/references/symbols），`lsp` 工具随时 per-session 开关（默认关） |
 | （内建采用） | 拉取式后台通知由 DSH 内建 job 道承担；本预设配置 `maxConsecutiveWakes: 8` |
 
 技能（`skills/`，经 `customSkillDirs` 挂载）：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`（英文正文；模板层英文、实例内容跟随会话语言）。
