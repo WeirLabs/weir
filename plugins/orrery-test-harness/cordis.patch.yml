@@ -1,0 +1,27 @@
+# Integration-test composition for the `orrery-it` headless profile:
+# a scripted mock LLM adapter (provider `mock`) plus the orrery modules
+# mounted at host level (this profile has no agent-preset registry; the
+# orrery-harness bundle itself is NOT loaded here — it only supplies module
+# resolution through the profile's node_modules).
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: mock
+    model: mock-1
+- insert:
+    - id: orrery-it-mock-llm
+      name: 'orrery-test-harness/mock-llm'
+    - id: orrery-it-event-tap
+      name: 'orrery-test-harness/event-tap'
+    - id: orrery-it-core
+      name: 'orrery-harness/core'
+    - id: orrery-it-intent-gate
+      name: 'orrery-harness/intent-gate'
+    - id: orrery-it-delegate
+      name: 'orrery-harness/delegate'
+    - id: orrery-it-todo-driver
+      name: 'orrery-harness/todo-driver'
+    - id: orrery-it-context-guard
+      name: 'orrery-harness/context-guard'
+    - id: orrery-it-hashline-edit
+      name: 'orrery-harness/hashline-edit'

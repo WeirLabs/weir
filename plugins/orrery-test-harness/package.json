@@ -1,0 +1,20 @@
+{
+  "name": "orrery-test-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only integration test harness for orrery-harness (scripted mock LLM + host-level mounts). Never install into a real profile.",
+  "exports": {
+    "./package.json": "./package.json",
+    "./mock-llm": "./src/mock-llm.js",
+    "./event-tap": "./src/event-tap.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test:integration": "node run.mjs"
+  }
+}
