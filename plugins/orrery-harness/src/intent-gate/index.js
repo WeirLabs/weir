@@ -1,7 +1,9 @@
 // Orrery intent gate: detects configured intent keywords in fresh user prompts
 // and injects the matching context (skill pointer / message) through the
 // agent/pre-step waterfall, or raises reasoning effort through agent/request.
-// Plain ESM, ctx-only.
+// Optional semantic classification (llm sidecar / experimental jev) kicks in
+// only when regex misses. Plain ESM, ctx-only.
+import { createClassifier } from './classifier.js'
 import {
   compileIntentTable,
   DEFAULT_INTENTS,
@@ -12,7 +14,7 @@ import {
 } from './matcher.js'
 
 const name = 'orrery-intent-gate'
-const inject = []
+const inject = ['llm']
 
 /** Extract the text of the newest user message in the proposed step batch. */
 function latestUserText(messages) {
@@ -43,6 +45,18 @@ function apply(ctx, config = {}) {
   const disabled = new Set(Array.isArray(config.disabled) ? config.disabled : [])
   const intents = table.filter((intent) => !disabled.has(intent.id))
 
+  // Semantic classifier: null in regex mode (regex-only behavior, zero cost).
+  const classifier = createClassifier({
+    mode: config.classifier ?? 'regex',
+    llm: ctx.llm,
+    routeOverride: {
+      ...(config.classifierProvider ? { provider: config.classifierProvider } : {}),
+      ...(config.classifierModel ? { model: config.classifierModel } : {}),
+    },
+    timeoutMs: config.classifierTimeoutMs,
+    jev: config.jev,
+  })
+
   // Per-session arming ledger: intent id set, so a full payload fires once.
   const armed = new Map()
   // Per-session effort flags: turns whose requests get the raised effort.
@@ -51,7 +65,26 @@ function apply(ctx, config = {}) {
   ctx.on('agent/pre-step', async ({ agent, messages, turn }, next) => {
     const text = latestUserText(messages)
     if (text === undefined) return next()
-    const hits = matchIntents(stripQuotedRegions(text), intents)
+    const stripped = stripQuotedRegions(text)
+    let hits = matchIntents(stripped, intents)
+
+    // Semantic front-end: only when regex missed entirely (short-circuit).
+    if (hits.length === 0 && classifier) {
+      const semanticHit = await classifier(stripped, intents, {
+        agent,
+        onAudit: (event) => {
+          try {
+            agent.session.append('orrery/intent-classify', event)
+          } catch {
+            // log-only audit must never break a turn
+          }
+        },
+      })
+      if (semanticHit) {
+        const intent = intents.find((entry) => entry.id === semanticHit)
+        if (intent) hits = [intent]
+      }
+    }
     if (hits.length === 0) return next()
 
     const sessionId = agent.id
