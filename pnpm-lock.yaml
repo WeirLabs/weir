@@ -17,6 +17,8 @@ importers:
 
   plugins/orrery-harness: {}
 
+  plugins/orrery-test-harness: {}
+
 packages:
 
   '@fission-ai/openspec@1.13.2':
