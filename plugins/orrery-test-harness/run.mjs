@@ -19,7 +19,7 @@ const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
-const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic']
+const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped']
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -60,6 +60,7 @@ function runScenario(scenario) {
     robash: 'robash-probe',
     // no intent keywords: only the semantic classifier can arm deep-work here
     semantic: '把这个任务从头到尾彻底完成，每一步都要拿出证据',
+    grouped: 'grouped-probe',
   }[scenario]
   const trace = join(IT_ROOT, `trace-${scenario}.jsonl`)
   const env = {
@@ -167,6 +168,16 @@ function assertSemantic(run) {
   check('semantic', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
+function assertGrouped(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  check('grouped', 'parent delegated a supervised group', requests.some((r) => r.emitted.includes('tool-call') && r.sawGroupProbe), JSON.stringify(requests.map((r) => r.emitted)))
+  check('grouped', 'provider-error retry path exercised', requests.some((r) => r.groupRetrySeen), JSON.stringify(requests.map((r) => r.groupRetrySeen)))
+  check('grouped', 'merged report carried both member reports', requests.some((r) => r.mergedAlphaSeen) && requests.some((r) => r.mergedBetaSeen), JSON.stringify(requests.map((r) => [r.mergedAlphaSeen, r.mergedBetaSeen])))
+  check('grouped', 'parent observed the merged group report', run.stdout.includes('parent observed group merge'), run.stdout.slice(-400))
+  check('grouped', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
 async function main() {
   const selected = process.argv.slice(2).length > 0 ? process.argv.slice(2) : SCENARIOS
   console.log(`[setup] profile at ${PROFILE}`)
@@ -183,6 +194,7 @@ async function main() {
     if (scenario === 'pressure') assertPressure(run)
     if (scenario === 'robash') assertRobash(run)
     if (scenario === 'semantic') assertSemantic(run)
+    if (scenario === 'grouped') assertGrouped(run)
   }
   const failed = results.filter((result) => !result.ok)
   console.log(`\n${results.length - failed.length}/${results.length} integration checks passed`)

@@ -85,6 +85,11 @@ function* toolCallChunks(callName, args) {
   yield { type: 'finish', reason: { kind: 'tool-calls' } }
 }
 
+function* errorChunks(message) {
+  yield usage()
+  yield { type: 'finish', reason: { kind: 'error', failure: { message, code: 'MOCK_429' } } }
+}
+
 // ---------- scenario brains ----------
 
 function decideDeepwork(options) {
@@ -178,6 +183,46 @@ function decideSemantic(options) {
   return textChunks('unhandled semantic turn')
 }
 
+function decideGrouped(options) {
+  const history = transcript(options)
+  // Child A: first turn fails with a provider error; the coordinator's retry
+  // message (RETRY_MESSAGE) then gets a clean terminal report.
+  if (history.includes('GROUPED_CHILD_A') && !history.includes('grouped-probe')) {
+    if (history.includes('Continue the task now, and remember to end')) {
+      return textChunks('STATUS: completed\nREPORT: alpha finished after one retry')
+    }
+    return errorChunks('simulated provider 429')
+  }
+  // Child B: settles on the first try.
+  if (history.includes('GROUPED_CHILD_B') && !history.includes('grouped-probe')) {
+    return textChunks('STATUS: completed\nREPORT: beta finished first try')
+  }
+  // Parent: observe the merged group report; after the delegate tool result,
+  // pad the busy window so the headless one-shot driver does not exit before
+  // the (instant-mock) children settle; then end the turn and wait.
+  if (history.includes('<supervised_group_report')) {
+    return textChunks('parent observed group merge')
+  }
+  const lastRole = options.messages?.at(-1)?.role
+  if (lastRole === 'tool') {
+    const toolText = lastOfRole(options, 'tool')
+    if (toolText.includes('Supervised group')) {
+      return toolCallChunks('bash', { command: 'sleep 1', description: 'Let supervised children settle' })
+    }
+    return textChunks('group started, waiting for the merged report')
+  }
+  if (history.includes('grouped-probe') && !history.includes('Supervised group')) {
+    return toolCallChunks('delegate', {
+      group: 'probe-group',
+      tasks: [
+        { category: 'quick', prompt: 'GROUPED_CHILD_A\nTASK: probe alpha\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' },
+        { category: 'quick', prompt: 'GROUPED_CHILD_B\nTASK: probe beta\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' },
+      ],
+    })
+  }
+  return textChunks('unhandled grouped turn')
+}
+
 function decideRobash(options) {
   const history = transcript(options)
   const lastRole = options.messages?.at(-1)?.role
@@ -226,6 +271,8 @@ function decide(options) {
       return decideRobash(options)
     case 'semantic':
       return decideSemantic(options)
+    case 'grouped':
+      return decideGrouped(options)
     default:
       return textChunks(`unknown scenario ${SCENARIO}`)
   }
@@ -257,6 +304,10 @@ async function* streamScenario(options) {
     roBashLsSeen: transcript(options).includes('ROBASH_LS_RAN'),
     roBashRmDenied: transcript(options).includes('explicitly denied'),
     sawClassifyCall: (options.system ?? '').includes('You classify a user prompt'),
+    sawGroupProbe: transcript(options).includes('grouped-probe'),
+    groupRetrySeen: transcript(options).includes('Continue the task now, and remember to end'),
+    mergedAlphaSeen: transcript(options).includes('alpha finished after one retry'),
+    mergedBetaSeen: transcript(options).includes('beta finished first try'),
     emitted: out.filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.type ?? 'unknown'),
     lastUser: lastOfRole(options, 'user').slice(0, 200),
   })

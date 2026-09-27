@@ -25,6 +25,11 @@
         classifierModel: mock-1
     - id: orrery-it-delegate
       name: 'orrery-harness/delegate'
+      config:
+        # Keep the supervision backoff fast enough for a headless run.
+        supervision:
+          initialBackoffMs: 50
+          maxBackoffMs: 100
     - id: orrery-it-todo-driver
       name: 'orrery-harness/todo-driver'
     - id: orrery-it-hashline-edit

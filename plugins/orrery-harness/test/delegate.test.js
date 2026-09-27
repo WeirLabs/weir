@@ -266,8 +266,7 @@ describe('delegate plugin apply', () => {
       on: () => {},
     }
     apply(ctx, {})
-    expect(registered).toHaveLength(1)
-    expect(registered[0].name).toBe('delegate')
+    expect(registered.map((tool) => tool.name)).toEqual(['delegate', 'resume_agent', 'terminate_agent'])
   })
 
   function applyHarness(config = {}) {
@@ -354,5 +353,182 @@ describe('delegate plugin apply', () => {
     const guardedTool = createDelegateTool(deps)
     await expect(async () => guardedTool.execute({ agent: 'explore', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)
     expect(disposed).toEqual([true])
+  })
+})
+
+describe('supervised groups (mount layer)', () => {
+  const execStub = () => ({ agent: { id: 'parent-session', session: { header: { delegationDepth: 0 } } }, signal: new AbortController().signal })
+
+  function groupHarness(config = {}) {
+    const registered = []
+    const continued = []
+    const sent = []
+    const interruptedCalls = []
+    const scheduled = []
+    const steered = []
+    const sessionEvents = []
+    const handlers = {}
+    const ctx = {
+      tools: { register: (tool) => registered.push(tool) },
+      subagents: {
+        async startContinuable(spec) {
+          continued.push(spec)
+          return { childId: `child-${continued.length}`, messageId: `msg-${continued.length}` }
+        },
+        async sendMessage(sender, targetId, content) {
+          sent.push({ targetId, text: content[0].text })
+          return `msg-${sent.length}`
+        },
+        interrupt(targetId, authority) {
+          interruptedCalls.push({ targetId, authority })
+        },
+      },
+      llm: { listProviders: () => [], listModels: async () => [] },
+      skills: {},
+      get: () => undefined,
+      on(event, handler) {
+        handlers[event] = handler
+      },
+      emit: (type, record) => emitted.push({ type, record }),
+    }
+    const emitted = []
+    apply(ctx, config)
+    return {
+      ctx,
+      handlers,
+      continued,
+      sent,
+      interruptedCalls,
+      scheduled,
+      steered,
+      sessionEvents,
+      emitted,
+      tools: Object.fromEntries(registered.map((tool) => [tool.name, tool])),
+    }
+  }
+
+  it('registers resume_agent and terminate_agent with object-rooted schemas', () => {
+    const { tools } = groupHarness()
+    expect(tools.resume_agent.parameters.type).toBe('object')
+    expect(tools.resume_agent.parameters.required).toEqual(['agent', 'context'])
+    expect(tools.terminate_agent.parameters.type).toBe('object')
+    expect(tools.terminate_agent.parameters.required).toEqual(['agent'])
+  })
+
+  it('spawns a supervised group as continuable children with the status contract', async () => {
+    const { tools, continued } = groupHarness()
+    const result = await tools.delegate.execute(
+      { group: 'scan', tasks: [
+        { category: 'quick', prompt: 'TASK: a' },
+        { category: 'quick', prompt: 'TASK: b' },
+      ] },
+      execStub(),
+    )
+    expect(result.supervised).toBe(true)
+    expect(result.group).toBe('scan')
+    expect(result.members).toHaveLength(2)
+    expect(continued).toHaveLength(2)
+    expect(continued[0].request.persona).toContain('STATUS: completed')
+    expect(continued[0].request.persona).toContain('Terminal status contract')
+    expect(continued[0].request.maxDepth).toBe(1)
+  })
+
+  it('rejects a second delegation into a live group', async () => {
+    const { tools } = groupHarness()
+    await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a' }, execStub())
+    await expect(async () =>
+      tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: b' }, execStub()),
+    ).rejects.toThrow(/does not accept insertion/)
+  })
+
+  it('rejects group combined with run_in_background', async () => {
+    const { tools } = groupHarness()
+    await expect(async () =>
+      tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a', run_in_background: true }, execStub()),
+    ).rejects.toThrow(/cannot be combined/)
+  })
+
+  it('drives child turn ends through the state machine and flushes at turn-stopping', async () => {
+    const { tools, handlers } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [
+        { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
+        { category: 'quick', prompt: 'TASK: b', name: 'beta' },
+      ] },
+      execStub(),
+    )
+    const agent = { id: 'parent-session', steer: (message) => steered.push(message) }
+    const steered = []
+
+    // parent is mid-turn: notices queue and flush at turn-stopping
+    handlers['session/event']({ id: 'parent-session' }, { type: 'turn/start', data: { turn: 1 } })
+
+    // child-1 completes; child-2 reports blocked → blocked notice flushes first
+    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
+    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: beta stuck' }] } } })
+    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+
+    handlers['agent/turn-stopping']({ agent })
+    expect(steered).toHaveLength(1)
+    expect(steered[0].content[0].text).toContain('supervised_blocked')
+    expect(steered[0].content[0].text).toContain('beta stuck')
+    expect(steered[0].content[0].text).not.toContain('supervised_group_report')
+    expect(steered[0].source.kind).toBe('orrery-delegate')
+  })
+
+  it('merged report flushes after the last member settles (termination counts)', async () => {
+    const { tools, handlers } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [
+        { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
+        { category: 'quick', prompt: 'TASK: b', name: 'beta' },
+      ] },
+      execStub(),
+    )
+    const steered = []
+    const agent = { id: 'parent-session', steer: (message) => steered.push(message) }
+
+    // parent is mid-turn: the merged report flushes at turn-stopping
+    handlers['session/event']({ id: 'parent-session' }, { type: 'turn/start', data: { turn: 1 } })
+
+    await tools.terminate_agent.execute({ agent: 'alpha', reason: 'redirected' }, execStub())
+    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
+    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+
+    handlers['agent/turn-stopping']({ agent })
+    expect(steered).toHaveLength(1)
+    expect(steered[0].content[0].text).toContain('supervised_group_report')
+    expect(steered[0].content[0].text).toContain('terminated')
+    expect(steered[0].content[0].text).toContain('beta done')
+  })
+
+  it('resume_agent delivers context and flips the child back to running', async () => {
+    const { tools, handlers, sent } = groupHarness()
+    await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a', name: 'alpha' }, execStub())
+    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: stuck' }] } } })
+    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+
+    const outcome = await tools.resume_agent.execute({ agent: 'alpha', context: 'registry is back' }, execStub())
+    expect(outcome.status).toBe('running')
+    expect(sent.at(-1).text).toContain('registry is back')
+    expect(sent.at(-1).targetId).toBe('child-1')
+  })
+
+  it('terminate_agent on a running child interrupts for real', async () => {
+    const { tools, interruptedCalls } = groupHarness()
+    await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a', name: 'alpha' }, execStub())
+    const outcome = await tools.terminate_agent.execute({ agent: 'alpha' }, execStub())
+    expect(outcome.interrupted).toBe(true)
+    expect(interruptedCalls).toHaveLength(1)
+    expect(interruptedCalls[0].targetId).toBe('child-1')
+    expect(interruptedCalls[0].authority.kind).toBe('ancestor')
+  })
+
+  it('supervision tools are depth-gated', async () => {
+    const { tools } = groupHarness()
+    const childExec = () => ({ agent: { id: 'child-x', session: { header: { delegationDepth: 1 } } }, signal: undefined })
+    await expect(async () => tools.resume_agent.execute({ agent: 'x', context: 'y' }, childExec())).rejects.toThrow(/only the main agent/)
+    await expect(async () => tools.terminate_agent.execute({ agent: 'x' }, childExec())).rejects.toThrow(/only the main agent/)
   })
 })
