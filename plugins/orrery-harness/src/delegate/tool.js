@@ -2,6 +2,7 @@
 // subagents spawn provider. Pure-object ToolDefinition (no defineTool import —
 // @deepseek-ai packages do not resolve from a linked bundle).
 import { parseEscalation } from './escalate.js'
+import { SUPERVISION_CONTRACT } from './group-coordinator.js'
 import { attachReadOnlyBashGuard } from './robash-guard.js'
 
 export const DELEGATE_TOOL_NAME = 'delegate'
@@ -15,7 +16,9 @@ Each call item MUST provide exactly one of:
 
 NEVER pass model together with category: category-routed children take their model from the registry. model is honored for agent spawns only.
 
-Options: run_in_background (return a job id immediately; the completion arrives as a compact notice and you pull the report with job_output), load_skills (skill bodies prepended to the child's prompt), name (stable handle), task_summary (one-line label).
+Options: run_in_background (return a job id immediately; the completion arrives as a compact notice and you pull the report with job_output), load_skills (skill bodies prepended to the child's prompt), name (stable handle), task_summary (one-line label), group (supervised group: all items of THIS call form one group whose members run as supervised continuable children; groups never accept later insertion; when every member settles you receive ONE merged group report).
+
+Supervised children report a binary terminal status (completed or blocked). A blocked report reaches you promptly; resume a blocked child with resume_agent (attach unblocking context) or terminate it with terminate_agent. Terminate a blocked child and delegate a fresh one when the task's direction changed substantially.
 
 Batch form: tasks (1-16 items) shares top-level options; an item-level run_in_background must agree with the top level.
 
@@ -32,6 +35,7 @@ Children cannot delegate further. Curated agents are read-only and never write f
  * @property {object} subagents - ctx.subagents
  * @property {object | undefined} jobs - ctx.jobs when mounted
  * @property {{ enabled: boolean, lists: { allow: string[], gitAllow: string[], deny: string[] } }} robash - read-only bash guard config
+ * @property {(parentAgent: object) => object} coordinatorFor - supervised group coordinator for one parent agent
  */
 
 /**
@@ -69,6 +73,7 @@ export function createDelegateTool(deps) {
         load_skills: { type: 'array', items: { type: 'string' }, description: 'Skills to prepend to the child prompt.' },
         name: { type: 'string', description: 'Stable handle for the child.' },
         task_summary: { type: 'string', description: 'One-line label (<=80 chars) for the UI.' },
+        group: { type: 'string', description: 'Supervised group name: every item of this call joins the group (no later insertion); merged report when all settle.' },
       },
     },
     output: {
@@ -83,6 +88,12 @@ export function createDelegateTool(deps) {
       const depth = exec.agent?.session?.header?.delegationDepth ?? 0
       if (depth >= 1) {
         throw new Error('delegate: delegation depth limit reached — category workers and curated agents cannot delegate')
+      }
+
+      // Supervised group lane: all items of this call form one supervised group.
+      if (typeof args.group === 'string' && args.group.length > 0) {
+        if (background) throw new Error('delegate: group and run_in_background cannot be combined (supervised groups are continuable children)')
+        return spawnSupervisedGroup(args.group, items, args, deps, exec)
       }
 
       const outcomes = []
@@ -262,6 +273,52 @@ function attachGuardIfReadOnly(started, target, deps) {
   }
 }
 
+/** Supervised group lane: spawn every item as a continuable supervised child. */
+async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
+  const coordinator = deps.coordinatorFor(exec.agent)
+  coordinator.assertGroupAvailable(groupName)
+
+  const members = []
+  try {
+    for (const item of items) {
+      const target = await deps.resolveTarget(item, parentRouteOf(exec))
+      const prompt = await buildPrompt(item, deps)
+      const started = await deps.subagents.startContinuable({
+        provider: 'spawn',
+        label: target.label,
+        request: {
+          prompt,
+          parent: exec.agent,
+          ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
+          ...(target.toolFilter ? { toolFilter: target.toolFilter } : {}),
+          maxDepth: 1,
+          persona: target.persona + SUPERVISION_CONTRACT,
+        },
+        signal: exec.signal,
+      })
+      const member = coordinator.registerMember({ id: started.childId, name: target.label, group: groupName })
+      members.push({ id: started.childId, name: target.label, member })
+    }
+  } catch (error) {
+    // Roll back partially spawned members so the group name is freed.
+    for (const { id, name } of members) {
+      try {
+        coordinator.terminate(id, `Supervised spawn aborted: ${String(error?.message ?? error)}`)
+        deps.subagents.interrupt(id, { kind: 'ancestor', agent: exec.agent })
+      } catch {
+        // best-effort rollback
+      }
+    }
+    throw error
+  }
+  coordinator.sealGroup(groupName)
+  return {
+    supervised: true,
+    group: groupName,
+    members: members.map(({ id, name }) => ({ id, name })),
+  }
+}
+
 /** The calling agent's current route, when the session has one. */
 function parentRouteOf(exec) {
   try {
@@ -284,6 +341,10 @@ function textOf(output) {
 /** Model-facing rendering of the delegate result value. */
 function renderDelegateResult(value) {
   if (!value || typeof value !== 'object') return String(value)
+  if (value.supervised) {
+    const lines = value.members.map((member) => `- ${member.name} (${member.id})`)
+    return `Supervised group "${value.group}" started with ${value.members.length} member(s); they now run as supervised continuable children:\n${lines.join('\n')}\n\nEach member will report a terminal status (completed/blocked). Blocked reports reach you promptly; the merged group report arrives when every member settles.`
+  }
   if (value.background) {
     const lines = value.jobs.map((job) => `- ${job.job_id}: ${job.label}`)
     return `Delegated in the background. Completion arrives as a compact notice; pull the report with job_output(job_id).\n${lines.join('\n')}`
