@@ -16,6 +16,8 @@ Orrery — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 
 
 技能（`skills/`，经 `customSkillDirs` 挂载）：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`（英文正文；模板层英文、实例内容跟随会话语言）。
 
+另含 profile 层 `orrery-harness/settings` 行：Orrery 设置页（Settings 应用自动生成）+ host 层 `orrerySettings` 服务（生效配置分层：模块默认 ← 行 config ← 设置值）。schema 依赖 vendored 于 `src/vendor/`（见该目录 THIRD-PARTY.md）。
+
 ## 安装
 
 由 Harness 会话内 `plugin_manager install_bundle` 以本目录绝对路径安装；重复安装用 `set_bundle` 禁用/启用循环重应用。
