@@ -1,9 +1,10 @@
 // Orrery delegate plugin: category registry + curated agents + the delegate
 // tool. Plain ESM, ctx-only.
-import { CURATED_AGENTS } from './agents.js'
+import { CURATED_AGENTS, READONLY_BASH_NOTE } from './agents.js'
 import { DEFAULT_CATEGORIES } from './categories.js'
 import { modelFamily, pickVariant } from './families.js'
 import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './resolver.js'
+import { attachReadOnlyBashGuard, DEFAULT_ROBASH } from './robash-guard.js'
 import { createDelegateTool } from './tool.js'
 
 const name = 'orrery-delegate'
@@ -12,6 +13,15 @@ const inject = ['tools', 'subagents', 'llm', 'skills']
 function apply(ctx, config = {}) {
   const categories = { ...DEFAULT_CATEGORIES, ...(config.categories ?? {}) }
   const agents = { ...CURATED_AGENTS, ...(config.agents ?? {}) }
+
+  // Read-only bash guard: curated agents and readOnly categories get bash
+  // behind a fail-closed whitelist guard when enabled.
+  const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}) }
+  const robash = {
+    enabled: robashConfig.enabled !== false,
+    lists: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },
+  }
+  const readOnlyTools = (base) => (robash.enabled ? [...new Set([...base, 'bash'])] : base)
 
   // Provider snapshot cache, invalidated on adapter topology changes.
   /** @type {Map<string, string[] | null> | null} */
@@ -39,9 +49,10 @@ function apply(ctx, config = {}) {
       if (agent.disabled) throw new Error(`delegate: agent "${item.agent}" is disabled`)
       const label = item.name ?? item.task_summary ?? `${item.agent}: ${firstLine(item.prompt)}`
       return {
-        persona: agent.prompt,
-        toolFilter: { allow: agent.tools },
+        persona: agent.prompt + (robash.enabled ? READONLY_BASH_NOTE : ''),
+        toolFilter: { allow: readOnlyTools(agent.tools) },
         label,
+        readOnly: true,
       }
     }
 
@@ -84,10 +95,11 @@ function apply(ctx, config = {}) {
 
     return {
       persona,
-      ...(category.readOnly ? { toolFilter: { allow: ['read', 'glob', 'grep'] } } : {}),
+      ...(category.readOnly ? { toolFilter: { allow: readOnlyTools(['read', 'glob', 'grep']) } } : {}),
       ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
       label,
       categoryName: item.category,
+      ...(category.readOnly ? { readOnly: true } : {}),
     }
   }
 
@@ -103,6 +115,7 @@ function apply(ctx, config = {}) {
       loadSkill,
       subagents: ctx.subagents,
       jobs: ctx.get('jobs'),
+      robash,
     }),
   )
 }

@@ -2,6 +2,7 @@
 // subagents spawn provider. Pure-object ToolDefinition (no defineTool import —
 // @deepseek-ai packages do not resolve from a linked bundle).
 import { parseEscalation } from './escalate.js'
+import { attachReadOnlyBashGuard } from './robash-guard.js'
 
 export const DELEGATE_TOOL_NAME = 'delegate'
 export const BATCH_LIMIT = 16
@@ -20,16 +21,17 @@ Batch form: tasks (1-16 items) shares top-level options; an item-level run_in_ba
 
 Every child prompt MUST be self-contained and start with TASK: <imperative>, then name DELIVERABLE, SCOPE, VERIFY, and STOP WHEN. Prompts are executable assignments, not context handoffs: include only what the child needs.
 
-Children cannot delegate further. Curated agents are read-only and never write files.`
+Children cannot delegate further. Curated agents are read-only and never write files; their bash access is guarded by a fail-closed read-only whitelist.`
 
 /**
  * @typedef {object} DelegateDeps
  * @property {(target: { category?: string, agent?: string, model?: string }, parentRoute?: { provider?: string, model?: string }) => Promise<{
  *   persona: string, agentOptions?: object, toolFilter?: { allow?: string[], deny?: string[] },
- *   label: string, categoryName?: string }>} resolveTarget
+ *   label: string, categoryName?: string, readOnly?: boolean }>} resolveTarget
  * @property {(skillName: string) => Promise<string>} loadSkill
  * @property {object} subagents - ctx.subagents
  * @property {object | undefined} jobs - ctx.jobs when mounted
+ * @property {{ enabled: boolean, lists: { allow: string[], gitAllow: string[], deny: string[] } }} robash - read-only bash guard config
  */
 
 /**
@@ -152,6 +154,7 @@ async function spawnForeground(item, args, deps, exec) {
     maxDepth: 1,
     persona: target.persona,
   })
+  attachGuardIfReadOnly(started, target, deps)
   const result = await withEscalation(started, item, deps, exec)
   return {
     label: target.label,
@@ -187,6 +190,7 @@ async function spawnBackground(item, args, deps, exec) {
             maxDepth: 1,
             persona: target.persona,
           })
+          attachGuardIfReadOnly(started, target, deps)
           handle.updateProgress(`${target.label}: running`)
           const result = await withEscalation(started, item, deps, { agent: parent, signal: abort.signal })
           return {
@@ -236,12 +240,25 @@ async function withEscalation(started, item, deps, exec) {
     maxDepth: 1,
     persona: target.persona,
   })
+  attachGuardIfReadOnly(respawned, target, deps)
   const second = await respawned.result
   return {
     id: respawned.id,
     status: second.stopReason,
     text: textOf(second.output),
     escalated: escalation.target,
+  }
+}
+
+/** Attach the read-only bash guard to a spawned read-only child (fail-closed). */
+function attachGuardIfReadOnly(started, target, deps) {
+  if (!target.readOnly || !deps.robash?.enabled) return
+  try {
+    attachReadOnlyBashGuard(started.localAgent, deps.robash.lists)
+  } catch (error) {
+    // A read-only child must never run unguarded: tear it down and fail loud.
+    started.dispose()
+    throw new Error(`delegate: failed to attach the read-only bash guard — ${String(error?.message ?? error)}`)
   }
 }
 
