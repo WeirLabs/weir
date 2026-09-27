@@ -253,6 +253,8 @@ describe('registry defaults', () => {
 })
 
 describe('delegate plugin apply', () => {
+  const execStub = () => ({ agent: { id: 'parent-session', session: { header: { delegationDepth: 0 } } }, signal: undefined })
+
   it('registers the delegate tool', () => {
     const registered = []
     const ctx = {
@@ -266,5 +268,91 @@ describe('delegate plugin apply', () => {
     apply(ctx, {})
     expect(registered).toHaveLength(1)
     expect(registered[0].name).toBe('delegate')
+  })
+
+  function applyHarness(config = {}) {
+    const registered = []
+    const spawned = []
+    const guards = []
+    const ctx = {
+      tools: { register: (tool) => registered.push(tool) },
+      subagents: {
+        async start(provider, request) {
+          spawned.push({ provider, request })
+          return {
+            id: 'child-ro',
+            localAgent: {
+              ctx: {
+                tools: {
+                  guard: (fn) => {
+                    guards.push(fn)
+                    return () => {}
+                  },
+                },
+              },
+            },
+            result: Promise.resolve({ output: [{ type: 'text', text: 'ro findings' }], stopReason: 'completed' }),
+            dispose: async () => {},
+          }
+        },
+      },
+      llm: { listProviders: () => [], listModels: async () => [] },
+      skills: {},
+      get: () => undefined,
+      on: () => {},
+    }
+    apply(ctx, config)
+    return { tool: registered[0], spawned, guards }
+  }
+
+  it('curated spawns get bash in the allowlist, a persona note, and a live guard', async () => {
+    const { tool, spawned, guards } = applyHarness()
+    const result = await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(result.results[0].text).toBe('ro findings')
+    expect(spawned[0].request.toolFilter.allow).toContain('bash')
+    expect(spawned[0].request.toolFilter.allow).toContain('read')
+    expect(spawned[0].request.persona).toContain('guarded read-only')
+    expect(guards).toHaveLength(1)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'git status' } })).toBe(undefined)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/explicitly denied/)
+  })
+
+  it('non-read-only targets get no guard', async () => {
+    const { tool, guards } = applyHarness()
+    await tool.execute({ category: 'quick', prompt: 'TASK: go' }, execStub())
+    expect(guards).toHaveLength(0)
+  })
+
+  it('readOnlyBash disabled drops bash from the allowlist and skips the guard', async () => {
+    const { tool, spawned, guards } = applyHarness({ readOnlyBash: { enabled: false } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(spawned[0].request.toolFilter.allow).not.toContain('bash')
+    expect(spawned[0].request.persona).not.toContain('guarded read-only')
+    expect(guards).toHaveLength(0)
+  })
+
+  it('a failing guard attach disposes the child and fails the call', async () => {
+    const disposed = []
+    const deps = {
+      resolveTarget: async () => ({ persona: 'p', label: 'ro', readOnly: true }),
+      loadSkill: async () => 's',
+      subagents: {
+        async start() {
+          return {
+            id: 'child-x',
+            localAgent: { ctx: { tools: { guard: () => { throw new Error('no tools service') } } } },
+            result: Promise.resolve({ output: [], stopReason: 'completed' }),
+            dispose: async () => {
+              disposed.push(true)
+            },
+          }
+        },
+      },
+      jobs: undefined,
+      robash: { enabled: true, lists: { allow: ['ls'], gitAllow: [], deny: [] } },
+    }
+    const guardedTool = createDelegateTool(deps)
+    await expect(async () => guardedTool.execute({ agent: 'explore', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)
+    expect(disposed).toEqual([true])
   })
 })

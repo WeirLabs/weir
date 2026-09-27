@@ -19,7 +19,7 @@ const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
-const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure']
+const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash']
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -57,6 +57,7 @@ function runScenario(scenario) {
     delegate: 'delegate-probe',
     hashline: 'hashline-probe',
     pressure: 'pressure-probe',
+    robash: 'robash-probe',
   }[scenario]
   const trace = join(IT_ROOT, `trace-${scenario}.jsonl`)
   const env = {
@@ -142,6 +143,18 @@ function assertPressure(run) {
   check('pressure', 'post-compaction continuation resumed the task', resumed, JSON.stringify(requests.map((r) => r.lastUser)))
 }
 
+function assertRobash(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  const created = trace.filter((r) => r.kind === 'agent-created')
+  const fixture = readFileSync(join(WS, 'fixture.txt'), 'utf8')
+  check('robash', 'parent delegated to a curated explore child', created.some((r) => r.origin === 'subagent' && r.depth === 1), JSON.stringify(created))
+  check('robash', 'child ran an allowed bash command through the guard', requests.some((r) => r.sawRobashChild && r.roBashLsSeen), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashLsSeen])))
+  check('robash', 'child write command was denied by the guard', requests.some((r) => r.sawRobashChild && r.roBashRmDenied), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashRmDenied])))
+  check('robash', 'fixture survived the denied rm', fixture.split('\n')[0] === 'line one' && fixture.trim().split('\n').length === 3, fixture)
+  check('robash', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
 async function main() {
   const selected = process.argv.slice(2).length > 0 ? process.argv.slice(2) : SCENARIOS
   console.log(`[setup] profile at ${PROFILE}`)
@@ -156,6 +169,7 @@ async function main() {
     if (scenario === 'delegate') assertDelegate(run)
     if (scenario === 'hashline') assertHashline(run)
     if (scenario === 'pressure') assertPressure(run)
+    if (scenario === 'robash') assertRobash(run)
   }
   const failed = results.filter((result) => !result.ok)
   console.log(`\n${results.length - failed.length}/${results.length} integration checks passed`)

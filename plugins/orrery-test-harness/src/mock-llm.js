@@ -170,6 +170,34 @@ function decidePressure(options) {
   return textChunks('unhandled pressure turn')
 }
 
+function decideRobash(options) {
+  const history = transcript(options)
+  const lastRole = options.messages?.at(-1)?.role
+  // Child brain (explore curated agent): run an allowed command, then a denied one.
+  if (history.includes('ROBASH_CHILD') && !history.includes('robash-probe')) {
+    if (lastRole === 'tool') {
+      const toolText = lastOfRole(options, 'tool')
+      if (toolText.includes('ROBASH_LS_RAN') && !history.includes('read-only agent')) {
+        return toolCallChunks('bash', { command: 'rm -rf fixture.txt', description: 'Try to delete the fixture' })
+      }
+      return textChunks('MARKER_ROBASH_OK: ls ran, rm was denied')
+    }
+    return toolCallChunks('bash', { command: 'echo ROBASH_LS_RAN', description: 'Prove bash executed' })
+  }
+  // Parent brain: delegate to the explore curated agent.
+  if (lastRole === 'tool') {
+    return textChunks('parent observed robash child result')
+  }
+  if (history.includes('robash-probe')) {
+    return toolCallChunks('delegate', {
+      agent: 'explore',
+      prompt: 'ROBASH_CHILD\nTASK: prove bash works, then attempt a write command\nDELIVERABLE: report both outcomes\nSCOPE: bash only\nVERIFY: the echo output and the denial both observed\nSTOP WHEN: reported',
+      task_summary: 'robash child',
+    })
+  }
+  return textChunks('unhandled robash turn')
+}
+
 function decide(options) {
   if (options.purpose === 'session-title') return textChunks('Integration Test Session')
   if (options.purpose === 'compaction') return textChunks('SUMMARY: the probe task was in progress with no errors.')
@@ -182,6 +210,8 @@ function decide(options) {
       return decideHashline(options)
     case 'pressure':
       return decidePressure(options)
+    case 'robash':
+      return decideRobash(options)
     default:
       return textChunks(`unknown scenario ${SCENARIO}`)
   }
@@ -209,6 +239,9 @@ async function* streamScenario(options) {
     anchoredReadSeen: /#([ZPMQVRWSNKTXJBYH]{2})\|/.test(transcript(options)),
     sawDelegateProbe: transcript(options).includes('delegate-probe'),
     sawChildMarker: transcript(options).includes('MARKER_CHILD_OK'),
+    sawRobashChild: transcript(options).includes('ROBASH_CHILD'),
+    roBashLsSeen: transcript(options).includes('ROBASH_LS_RAN'),
+    roBashRmDenied: transcript(options).includes('explicitly denied'),
     emitted: out.filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.type ?? 'unknown'),
     lastUser: lastOfRole(options, 'user').slice(0, 200),
   })
