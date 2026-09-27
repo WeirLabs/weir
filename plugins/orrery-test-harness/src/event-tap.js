@@ -49,7 +49,7 @@ function apply(ctx) {
     const type = event?.type
     if (typeof type !== 'string') return
     if (type.startsWith('orrery/') || type.startsWith('compaction/') || type === 'todo/write') {
-      tap({ kind: 'session-event', session: session.id, type })
+      tap({ kind: 'session-event', session: session.id, type, data: event.data ?? null })
       return
     }
     if (type === 'turn/end') {

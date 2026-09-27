@@ -17,6 +17,12 @@
       name: 'orrery-harness/core'
     - id: orrery-it-intent-gate
       name: 'orrery-harness/intent-gate'
+      config:
+        # Exercise the semantic classifier headlessly: the mock LLM serves the
+        # sidecar classification call on an explicit route.
+        classifier: 'llm'
+        classifierProvider: mock
+        classifierModel: mock-1
     - id: orrery-it-delegate
       name: 'orrery-harness/delegate'
     - id: orrery-it-todo-driver

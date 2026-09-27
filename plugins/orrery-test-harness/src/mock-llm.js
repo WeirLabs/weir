@@ -170,6 +170,14 @@ function decidePressure(options) {
   return textChunks('unhandled pressure turn')
 }
 
+function decideSemantic(options) {
+  const history = transcript(options)
+  if (history.includes('<intent-gate id="deep-work"')) {
+    return textChunks('semantic mode armed, task done')
+  }
+  return textChunks('unhandled semantic turn')
+}
+
 function decideRobash(options) {
   const history = transcript(options)
   const lastRole = options.messages?.at(-1)?.role
@@ -201,6 +209,10 @@ function decideRobash(options) {
 function decide(options) {
   if (options.purpose === 'session-title') return textChunks('Integration Test Session')
   if (options.purpose === 'compaction') return textChunks('SUMMARY: the probe task was in progress with no errors.')
+  // Intent-gate semantic-classifier sidecar: scripted answer per scenario.
+  if ((options.system ?? '').includes('You classify a user prompt')) {
+    return textChunks(SCENARIO === 'semantic' ? 'deep-work' : 'none')
+  }
   switch (SCENARIO) {
     case 'deepwork':
       return decideDeepwork(options)
@@ -212,6 +224,8 @@ function decide(options) {
       return decidePressure(options)
     case 'robash':
       return decideRobash(options)
+    case 'semantic':
+      return decideSemantic(options)
     default:
       return textChunks(`unknown scenario ${SCENARIO}`)
   }
@@ -242,6 +256,7 @@ async function* streamScenario(options) {
     sawRobashChild: transcript(options).includes('ROBASH_CHILD'),
     roBashLsSeen: transcript(options).includes('ROBASH_LS_RAN'),
     roBashRmDenied: transcript(options).includes('explicitly denied'),
+    sawClassifyCall: (options.system ?? '').includes('You classify a user prompt'),
     emitted: out.filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.type ?? 'unknown'),
     lastUser: lastOfRole(options, 'user').slice(0, 200),
   })

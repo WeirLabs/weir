@@ -19,7 +19,7 @@ const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
-const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash']
+const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic']
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -58,6 +58,8 @@ function runScenario(scenario) {
     hashline: 'hashline-probe',
     pressure: 'pressure-probe',
     robash: 'robash-probe',
+    // no intent keywords: only the semantic classifier can arm deep-work here
+    semantic: '把这个任务从头到尾彻底完成，每一步都要拿出证据',
   }[scenario]
   const trace = join(IT_ROOT, `trace-${scenario}.jsonl`)
   const env = {
@@ -155,6 +157,16 @@ function assertRobash(run) {
   check('robash', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
+function assertSemantic(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  const events = trace.filter((r) => r.kind === 'session-event')
+  check('semantic', 'classifier sidecar call was served', requests.some((r) => r.sawClassifyCall), JSON.stringify(requests.map((r) => [r.purpose, r.sawClassifyCall])))
+  check('semantic', 'semantic hit injected the deep-work directive', requests.some((r) => r.intentInjected), JSON.stringify(requests.map((r) => r.lastUser)))
+  check('semantic', 'orrery/intent-classify audit event names the hit', events.some((e) => e.type === 'orrery/intent-classify' && e.data?.hit === 'deep-work'), JSON.stringify(events.filter((e) => e.type.startsWith('orrery/')).map((e) => [e.type, e.data])))
+  check('semantic', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
 async function main() {
   const selected = process.argv.slice(2).length > 0 ? process.argv.slice(2) : SCENARIOS
   console.log(`[setup] profile at ${PROFILE}`)
@@ -170,6 +182,7 @@ async function main() {
     if (scenario === 'hashline') assertHashline(run)
     if (scenario === 'pressure') assertPressure(run)
     if (scenario === 'robash') assertRobash(run)
+    if (scenario === 'semantic') assertSemantic(run)
   }
   const failed = results.filter((result) => !result.ok)
   console.log(`\n${results.length - failed.length}/${results.length} integration checks passed`)
