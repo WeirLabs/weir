@@ -11,6 +11,10 @@
      每个 feat/fix 合入时在此添加条目；
      打版时本段固化为版本段并打 tag。 -->
 
+### Changed
+
+- **锚点编辑成为默认编辑方式**（行为级 BREAKING，仅 `orrery` 预设）：预设默认开启 `hideStockEdit`，会话中 stock `edit` 工具不再出现，`hash_edit` 为唯一编辑工具；配置 `hideStockEdit: false` 可回归共存模式。其他预设不受影响。
+
 ## [0.1.0] - 2026-09-27
 
 首个发布版本。以 DSH bundle `orrery-harness` 交付，声明 agent 预设 `orrery`（GUI 显示名 "Orrery"）。
