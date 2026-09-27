@@ -19,7 +19,7 @@ const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
-const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped']
+const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'lsp']
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -49,6 +49,10 @@ function setup() {
   writeFileSync(join(PROFILE, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
   execFileSync(NODE, [PNPM, 'install', '--reporter', 'silent'], { cwd: PROFILE, stdio: 'inherit' })
   writeFileSync(join(WS, 'fixture.txt'), 'line one\nline two\nline three\n')
+  // LSP scenario fixtures: a .ts target and the mock LSP server INSIDE the
+  // workspace (spawned processes may only read inside the sandbox root).
+  writeFileSync(join(WS, 'probe.ts'), 'export const fixtureSymbol = 1\n')
+  writeFileSync(join(WS, 'mock-lsp-server.js'), readFileSync(join(HERE, 'src', 'mock-lsp-server.js'), 'utf8'))
 }
 
 function runScenario(scenario) {
@@ -61,6 +65,7 @@ function runScenario(scenario) {
     // no intent keywords: only the semantic classifier can arm deep-work here
     semantic: '把这个任务从头到尾彻底完成，每一步都要拿出证据',
     grouped: 'grouped-probe',
+    lsp: 'lsp-probe',
   }[scenario]
   const trace = join(IT_ROOT, `trace-${scenario}.jsonl`)
   const env = {
@@ -178,6 +183,16 @@ function assertGrouped(run) {
   check('grouped', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
+function assertLsp(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  check('lsp', 'toggle enabled the LSP tool set', requests.some((r) => r.lspToggledOn), JSON.stringify(requests.map((r) => r.lspToggledOn)))
+  check('lsp', 'diagnostics delivered through the mock LSP server', requests.some((r) => r.lspDiagSeen), JSON.stringify(requests.map((r) => r.lspDiagSeen)))
+  check('lsp', 'definition, references, and symbols answered', requests.some((r) => r.lspDefSeen) && requests.some((r) => r.lspRefsSeen) && requests.some((r) => r.lspSymbolsSeen), JSON.stringify(requests.map((r) => [r.lspDefSeen, r.lspRefsSeen, r.lspSymbolsSeen])))
+  check('lsp', 'tools unregistered after toggle off', requests.some((r) => r.lspUnknownAfterOff), JSON.stringify(requests.map((r) => r.lspUnknownAfterOff)))
+  check('lsp', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
 async function main() {
   const selected = process.argv.slice(2).length > 0 ? process.argv.slice(2) : SCENARIOS
   console.log(`[setup] profile at ${PROFILE}`)
@@ -195,6 +210,7 @@ async function main() {
     if (scenario === 'robash') assertRobash(run)
     if (scenario === 'semantic') assertSemantic(run)
     if (scenario === 'grouped') assertGrouped(run)
+    if (scenario === 'lsp') assertLsp(run)
   }
   const failed = results.filter((result) => !result.ok)
   console.log(`\n${results.length - failed.length}/${results.length} integration checks passed`)

@@ -183,8 +183,29 @@ function decideSemantic(options) {
   return textChunks('unhandled semantic turn')
 }
 
-function decideGrouped(options) {
+const TSFIXTURE = process.env.ORRERY_IT_TSFIXTURE ?? '/tmp/orrery-it/ws/probe.ts'
+
+function decideLsp(options) {
   const history = transcript(options)
+  const lastRole = options.messages?.at(-1)?.role
+  if (lastRole === 'tool') {
+    const toolText = lastOfRole(options, 'tool')
+    if (toolText.includes('unknown tool')) return textChunks('lsp scenario done')
+    if (toolText.includes('disabled for this session')) return toolCallChunks('lsp_diagnostics', { file_path: TSFIXTURE })
+    if (toolText.includes('fixtureSymbol')) return toolCallChunks('lsp', { enabled: false })
+    if (toolText.includes('reference(s)')) return toolCallChunks('lsp_symbols', { file_path: TSFIXTURE })
+    if (toolText.includes('Definition location')) return toolCallChunks('lsp_references', { file_path: TSFIXTURE, line: 3, character: 5 })
+    if (toolText.includes('diagnostic(s) for')) return toolCallChunks('lsp_definition', { file_path: TSFIXTURE, line: 3, character: 5 })
+    if (toolText.includes('enabled for this session')) return toolCallChunks('lsp_diagnostics', { file_path: TSFIXTURE })
+    return textChunks('unhandled lsp turn')
+  }
+  if (history.includes('lsp-probe')) {
+    return toolCallChunks('lsp', { enabled: true })
+  }
+  return textChunks('unhandled lsp turn')
+}
+
+function decideGrouped(options) {  const history = transcript(options)
   // Child A: first turn fails with a provider error; the coordinator's retry
   // message (RETRY_MESSAGE) then gets a clean terminal report.
   if (history.includes('GROUPED_CHILD_A') && !history.includes('grouped-probe')) {
@@ -273,6 +294,8 @@ function decide(options) {
       return decideSemantic(options)
     case 'grouped':
       return decideGrouped(options)
+    case 'lsp':
+      return decideLsp(options)
     default:
       return textChunks(`unknown scenario ${SCENARIO}`)
   }
@@ -308,6 +331,12 @@ async function* streamScenario(options) {
     groupRetrySeen: transcript(options).includes('Continue the task now, and remember to end'),
     mergedAlphaSeen: transcript(options).includes('alpha finished after one retry'),
     mergedBetaSeen: transcript(options).includes('beta finished first try'),
+    lspToggledOn: transcript(options).includes('LSP semantic tools enabled'),
+    lspDiagSeen: transcript(options).includes('mock-diagnostic'),
+    lspDefSeen: transcript(options).includes('probe.ts:3:5'),
+    lspRefsSeen: transcript(options).includes('2 reference(s)'),
+    lspSymbolsSeen: transcript(options).includes('fixtureSymbol'),
+    lspUnknownAfterOff: transcript(options).includes('unknown tool "lsp_diagnostics"'),
     emitted: out.filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.type ?? 'unknown'),
     lastUser: lastOfRole(options, 'user').slice(0, 200),
   })

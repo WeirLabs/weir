@@ -44,6 +44,16 @@
       config:
         # Mirror the real preset's default: hash_edit is the only edit tool.
         hideStockEdit: true
+    # LSP module under test: registry points the typescript server at the
+    # scripted mock LSP server (protocol fixture, no external installs).
+    - id: orrery-it-lsp
+      name: 'orrery-harness/lsp'
+      config:
+        servers:
+          typescript:
+            command: '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
+            args: ['/tmp/orrery-it/ws/mock-lsp-server.js']
+            installHint: 'not-needed-in-tests'
     # Mirror the real preset's realm structure: the compaction provider and the
     # context-guard consumer co-isolated in one group. This reproduces the
     # "waiting for compaction" preset-load failure class headlessly.
