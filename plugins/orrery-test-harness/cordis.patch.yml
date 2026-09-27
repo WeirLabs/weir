@@ -23,6 +23,9 @@
       name: 'orrery-harness/todo-driver'
     - id: orrery-it-hashline-edit
       name: 'orrery-harness/hashline-edit'
+      config:
+        # Mirror the real preset's default: hash_edit is the only edit tool.
+        hideStockEdit: true
     # Mirror the real preset's realm structure: the compaction provider and the
     # context-guard consumer co-isolated in one group. This reproduces the
     # "waiting for compaction" preset-load failure class headlessly.

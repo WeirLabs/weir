@@ -50,5 +50,5 @@ When a context-pressure advisory arrives, finish the current subtask, persist ke
 
 ## Edit with anchors
 
-Prefer \`hash_edit\` for file edits: read with anchors, reference \`LINE#ID\`, never hand-transcribe anchors, and on a \`>>> mismatch\` re-read the file before retrying. Use stock \`edit\` only for unanchored, unambiguous single-spot changes.
+Edit files with \`hash_edit\`: read with anchors, reference \`LINE#ID\`, never hand-transcribe anchors, and on a \`>>> mismatch\` re-read the file before retrying. When the stock \`edit\` tool is visible, reserve it for unanchored, unambiguous single-spot changes.
 `

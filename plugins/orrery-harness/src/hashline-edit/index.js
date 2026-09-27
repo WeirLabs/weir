@@ -8,6 +8,33 @@ const name = 'orrery-hashline-edit'
 const inject = ['tools', 'fs']
 
 export const HASH_EDIT_NAME = 'hash_edit'
+const STOCK_EDIT_NAME = 'edit'
+
+/**
+ * Hide the stock edit tool. Scoped mount (agent preset): one restriction on
+ * the standing scope covers every agent joined under it — past and future.
+ * Unscoped mount (host-level dev compositions, e.g. the headless test
+ * profile): no standing scope exists, so restrict each agent's own scope on
+ * creation — agents are only created after profile boot, so the listener
+ * catches all of them.
+ */
+function hideStockEdit(ctx) {
+  try {
+    ctx.tools.restrict({ deny: [STOCK_EDIT_NAME] })
+    return
+  } catch (error) {
+    if (!String(error?.message ?? '').includes('requires a scoped context')) throw error
+  }
+  // Unscoped mount (host-level dev compositions, e.g. the headless test
+  // profile): no standing scope exists, so restrict each agent's own scope
+  // on creation — agents are only created after profile boot, so the
+  // listener catches all of them. The presence check lives inside the
+  // listener: at mount time the stock edit row may not have loaded yet.
+  ctx.on('agent/created', ({ agent }) => {
+    if (!ctx.tools.get(STOCK_EDIT_NAME)) return // composition has no stock edit
+    agent.ctx.tools.restrict({ deny: [STOCK_EDIT_NAME] })
+  })
+}
 
 export const HASH_EDIT_DESCRIPTION = `Edit a UTF-8 text file through hash anchors (\`LINE#ID\`) from read output.
 
@@ -69,7 +96,7 @@ function apply(ctx, config = {}) {
 
   // Optional: hide the stock edit tool from this preset's agents.
   if (config.hideStockEdit === true) {
-    ctx.tools.restrict({ deny: ['edit'] })
+    hideStockEdit(ctx)
   }
 
   ctx.tools.register({
