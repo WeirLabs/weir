@@ -49,6 +49,9 @@ export const Config = z.object({
   robash: z.object({
     enabled: z.boolean().description('Guarded read-only bash for curated agents (master switch)'),
   }),
+  lsp: z.object({
+    enabled: z.boolean().description('LSP semantic tools (default off; per-session toggle also available via the lsp tool)'),
+  }),
 })
 
 /** Parse + validate the categoryChains JSON map (bad input fails activation loud). */

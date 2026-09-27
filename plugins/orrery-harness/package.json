@@ -12,7 +12,8 @@
     "./todo-driver": "./src/todo-driver/index.js",
     "./context-guard": "./src/context-guard/index.js",
     "./hashline-edit": "./src/hashline-edit/index.js",
-    "./settings": "./src/settings/index.js"
+    "./settings": "./src/settings/index.js",
+    "./lsp": "./src/lsp/index.js"
   },
   "dsh": {
     "bundle": {

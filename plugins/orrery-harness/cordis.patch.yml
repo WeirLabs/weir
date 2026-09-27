@@ -148,6 +148,9 @@
               # F7 锚点编辑：read 锚点增强 + fail-closed hash_edit 工具
               - id: hashline-edit
                 name: 'orrery-harness/hashline-edit'
+              # LSP 语义工具：默认关闭，`lsp` 工具随时开关
+              - id: lsp
+                name: 'orrery-harness/lsp'
                 config:
                   # hash_edit 为预设默认唯一编辑工具；配置 false 回归与 stock edit 共存
                   hideStockEdit: true
