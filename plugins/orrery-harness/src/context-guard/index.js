@@ -1,6 +1,7 @@
 // Orrery context guard: context-pressure monitoring and boundary-safe,
 // model-timed compaction. Plain ESM, ctx-only.
 import { computePressure, createPressureState, PRESSURE_DEFAULTS, renderAdvisory, RESUME_AFTER_COMPACTION } from './pressure.js'
+import { userTextMessage } from '../shared/user-message.js'
 
 const name = 'orrery-context-guard'
 const inject = ['tools', 'agents', 'tokenMeter', 'compaction', 'llm']
@@ -63,7 +64,7 @@ function apply(ctx, config = {}) {
       )
       stateOf(session.id).reset()
       try {
-        agent.followup([{ type: 'text', text: RESUME_AFTER_COMPACTION }])
+        agent.followup(userTextMessage(RESUME_AFTER_COMPACTION, 'orrery-context-guard'))
       } catch (error) {
         ctx.logger?.warn?.(`context-guard: post-compaction followup failed for "${session.id}": ${error?.message ?? error}`)
       }
@@ -91,7 +92,7 @@ function apply(ctx, config = {}) {
       const agent = ctx.agents.get(sessionId)
       if (!agent) return
       try {
-        agent.inject([{ type: 'text', text: renderAdvisory(pressure) }])
+        agent.inject(userTextMessage(renderAdvisory(pressure), 'orrery-context-guard'))
       } catch (error) {
         ctx.logger?.warn?.(`context-guard: advisory injection failed for "${sessionId}": ${error?.message ?? error}`)
       }
@@ -112,7 +113,7 @@ function apply(ctx, config = {}) {
       const agent = ctx.agents.get(sessionId)
       if (!agent) return
       try {
-        agent.inject([{ type: 'text', text: renderAdvisory(pressure) }])
+        agent.inject(userTextMessage(renderAdvisory(pressure), 'orrery-context-guard'))
       } catch (error) {
         ctx.logger?.warn?.(`context-guard: advisory injection failed for "${sessionId}": ${error?.message ?? error}`)
       }

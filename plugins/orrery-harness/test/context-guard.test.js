@@ -115,7 +115,7 @@ describe('context-guard plugin', () => {
     const { handlers, injected, session } = harness(0.75)
     await handlers['session/event'](session, { type: 'step/end', data: {} })
     expect(injected).toHaveLength(1)
-    expect(injected[0][0].text).toContain('75%')
+    expect(injected[0].content[0].text).toContain('75%')
     await handlers['session/event'](session, { type: 'step/end', data: {} })
     expect(injected).toHaveLength(1) // once per crossing
   })
@@ -132,7 +132,7 @@ describe('context-guard plugin', () => {
     await handlers['session/event'](session, { type: 'turn/end', data: {} })
     expect(compactions).toHaveLength(1)
     expect(followups).toHaveLength(1) // resume continuation
-    expect(followups[0][0].text).toContain('Resume the task')
+    expect(followups[0].content[0].text).toContain('Resume the task')
   })
 
   it('compact_context queues compaction and concludes the turn', async () => {
