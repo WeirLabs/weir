@@ -5,6 +5,9 @@
 openspec/
 docs/
 
+# Harness runtime scratch (notepads, research notes written by orrery sessions)
+.orrery/
+
 # AI-generated working reports (kept locally only)
 omo-feature-inventory.md
 omo-architecture-map.md
