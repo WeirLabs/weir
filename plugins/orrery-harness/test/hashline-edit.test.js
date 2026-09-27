@@ -226,27 +226,14 @@ describe('hash_edit tool', () => {
     expect(typeof handlers['tools/post-execute']).toBe('function')
   })
 
-  it('hideStockEdit restricts the stock edit tool', () => {
-    const restricted = []
-    const ctx = {
-      tools: { register: () => {}, restrict: (filter) => restricted.push(filter) },
-      fs: {},
-      on: () => {},
-    }
-    apply(ctx, { hideStockEdit: true })
-    expect(restricted).toEqual([{ deny: ['edit'] }])
-  })
-
-  it('hideStockEdit on an unscoped mount restricts each created agent instead', () => {
+  it('hideStockEdit restricts the stock edit per created agent (uniform mechanism)', () => {
     const restrictedBy = []
     const listeners = {}
     const ctx = {
       tools: {
         register: () => {},
-        get: (toolName) => (toolName === 'edit' ? { name: 'edit' } : undefined),
-        restrict: () => {
-          throw new Error('tools.restrict() requires a scoped context (agent.ctx): a context-global restriction would mask every agent')
-        },
+        get: (toolName, scope) => (toolName === 'edit' && scope ? { name: 'edit' } : undefined),
+        restrict: (filter) => restrictedBy.push(['mount-time-should-not-happen', filter]),
       },
       fs: {},
       on: (event, listener) => {
@@ -254,12 +241,15 @@ describe('hash_edit tool', () => {
       },
     }
     apply(ctx, { hideStockEdit: true })
+    // no mount-time restrict at any level (host-level would throw unscoped;
+    // preset-scope would throw unknown-global — the per-agent path avoids both)
+    expect(restrictedBy).toHaveLength(0)
     expect(typeof listeners['agent/created']).toBe('function')
     listeners['agent/created']({ agent: { ctx: { tools: { restrict: (filter) => restrictedBy.push(filter) } } } })
     expect(restrictedBy).toEqual([{ deny: ['edit'] }])
   })
 
-  it('hideStockEdit fallback is a no-op for agents when the composition has no stock edit', () => {
+  it('hideStockEdit skips agents whose view has no stock edit', () => {
     const listeners = {}
     let restricted = 0
     const ctx = {
@@ -267,7 +257,7 @@ describe('hash_edit tool', () => {
         register: () => {},
         get: () => undefined,
         restrict: () => {
-          throw new Error('tools.restrict() requires a scoped context (agent.ctx): a context-global restriction would mask every agent')
+          throw new Error('should not be called')
         },
       },
       fs: {},
@@ -276,23 +266,32 @@ describe('hash_edit tool', () => {
       },
     }
     apply(ctx, { hideStockEdit: true })
-    expect(typeof listeners['agent/created']).toBe('function')
     listeners['agent/created']({ agent: { ctx: { tools: { restrict: () => restricted++ } } } })
     expect(restricted).toBe(0)
   })
 
-  it('hideStockEdit propagates unexpected restrict errors', () => {
+  it('hideStockEdit presence check uses the agent view (preset-layer edit counts)', () => {
+    const restrictedBy = []
+    const listeners = {}
+    let getScope
     const ctx = {
       tools: {
         register: () => {},
-        get: () => ({ name: 'edit' }),
-        restrict: () => {
-          throw new Error('tools.restrict() names unknown global tool "edit"')
+        get: (toolName, scope) => {
+          getScope = scope
+          return { name: toolName }
         },
+        restrict: () => {},
       },
       fs: {},
-      on: () => {},
+      on: (event, listener) => {
+        listeners[event] = listener
+      },
     }
-    expect(() => apply(ctx, { hideStockEdit: true })).toThrow(/unknown global tool/)
+    apply(ctx, { hideStockEdit: true })
+    const agent = { ctx: { tools: { restrict: (filter) => restrictedBy.push(filter) } } }
+    listeners['agent/created']({ agent })
+    expect(getScope).toBe(agent)
+    expect(restrictedBy).toEqual([{ deny: ['edit'] }])
   })
 })

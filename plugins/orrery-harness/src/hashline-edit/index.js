@@ -11,27 +11,19 @@ export const HASH_EDIT_NAME = 'hash_edit'
 const STOCK_EDIT_NAME = 'edit'
 
 /**
- * Hide the stock edit tool. Scoped mount (agent preset): one restriction on
- * the standing scope covers every agent joined under it — past and future.
- * Unscoped mount (host-level dev compositions, e.g. the headless test
- * profile): no standing scope exists, so restrict each agent's own scope on
- * creation — agents are only created after profile boot, so the listener
- * catches all of them.
+ * Hide the stock edit tool. Uniform mechanism: per-agent restriction on
+ * creation. At an agent's scope the stock edit is always *inherited* (from
+ * the global layer, or from the preset layer in preset compositions), and
+ * inherited tools are restrictable — the agent's catalog hides it. This
+ * covers host-level mounts (headless compositions) and preset mounts alike;
+ * a mount-time restrict cannot work in either (unscoped at host level; at
+ * preset standing scope the fs row's scoped edit is not restrictable).
+ * Listeners are awaited before creation resolves, so the restriction lands
+ * before the agent's first request.
  */
 function hideStockEdit(ctx) {
-  try {
-    ctx.tools.restrict({ deny: [STOCK_EDIT_NAME] })
-    return
-  } catch (error) {
-    if (!String(error?.message ?? '').includes('requires a scoped context')) throw error
-  }
-  // Unscoped mount (host-level dev compositions, e.g. the headless test
-  // profile): no standing scope exists, so restrict each agent's own scope
-  // on creation — agents are only created after profile boot, so the
-  // listener catches all of them. The presence check lives inside the
-  // listener: at mount time the stock edit row may not have loaded yet.
   ctx.on('agent/created', ({ agent }) => {
-    if (!ctx.tools.get(STOCK_EDIT_NAME)) return // composition has no stock edit
+    if (!ctx.tools.get(STOCK_EDIT_NAME, agent)) return // this agent has no stock edit
     agent.ctx.tools.restrict({ deny: [STOCK_EDIT_NAME] })
   })
 }
@@ -84,6 +76,11 @@ function anchorIdOf(line) {
 }
 
 function apply(ctx, config = {}) {
+  // Settings overlay (absent service = no-op): hashlineEdit section wins over row config.
+  const settingsOverride = ctx.get?.('orrerySettings')?.get('hashlineEdit')
+  if (settingsOverride && typeof settingsOverride === 'object') {
+    config = { ...config, ...settingsOverride }
+  }
   // Read enhancer: annotate read results with anchors.
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const downstream = await next()
