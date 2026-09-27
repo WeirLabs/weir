@@ -41,29 +41,33 @@ export function createDelegateTool(deps) {
     name: DELEGATE_TOOL_NAME,
     description: DELEGATE_DESCRIPTION,
     parameters: {
-      prompt: { type: 'string', description: 'The delegation prompt (single form).' },
-      tasks: {
-        type: 'array',
-        description: 'Batch form: 1-16 delegation items.',
-        items: {
-          type: 'object',
-          properties: {
-            prompt: { type: 'string', required: true },
-            category: { type: 'string' },
-            agent: { type: 'string' },
-            load_skills: { type: 'array', items: { type: 'string' } },
-            name: { type: 'string' },
-            task_summary: { type: 'string' },
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'The delegation prompt (single form).' },
+        tasks: {
+          type: 'array',
+          description: 'Batch form: 1-16 delegation items.',
+          items: {
+            type: 'object',
+            properties: {
+              prompt: { type: 'string' },
+              category: { type: 'string' },
+              agent: { type: 'string' },
+              load_skills: { type: 'array', items: { type: 'string' } },
+              name: { type: 'string' },
+              task_summary: { type: 'string' },
+            },
+            required: ['prompt'],
           },
         },
+        category: { type: 'string', description: 'Category route (single form).' },
+        agent: { type: 'string', description: 'Curated agent name (single form).' },
+        model: { type: 'string', description: 'Explicit model override (agent spawns only).' },
+        run_in_background: { type: 'boolean', description: 'Return a job id immediately instead of waiting.' },
+        load_skills: { type: 'array', items: { type: 'string' }, description: 'Skills to prepend to the child prompt.' },
+        name: { type: 'string', description: 'Stable handle for the child.' },
+        task_summary: { type: 'string', description: 'One-line label (<=80 chars) for the UI.' },
       },
-      category: { type: 'string', description: 'Category route (single form).' },
-      agent: { type: 'string', description: 'Curated agent name (single form).' },
-      model: { type: 'string', description: 'Explicit model override (agent spawns only).' },
-      run_in_background: { type: 'boolean', description: 'Return a job id immediately instead of waiting.' },
-      load_skills: { type: 'array', items: { type: 'string' }, description: 'Skills to prepend to the child prompt.' },
-      name: { type: 'string', description: 'Stable handle for the child.' },
-      task_summary: { type: 'string', description: 'One-line label (<=80 chars) for the UI.' },
     },
     output: {
       schema: { type: 'object' },

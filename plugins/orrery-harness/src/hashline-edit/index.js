@@ -76,21 +76,25 @@ function apply(ctx, config = {}) {
     name: HASH_EDIT_NAME,
     description: HASH_EDIT_DESCRIPTION,
     parameters: {
-      file_path: { type: 'string', required: true, description: 'Path to edit, resolved by the filesystem backend.' },
-      edits: {
-        type: 'array',
-        required: true,
-        description: 'One or more anchored edit operations, applied against the original file state.',
-        items: {
-          type: 'object',
-          properties: {
-            op: { type: 'string', enum: ['replace', 'append', 'prepend'], required: true },
-            pos: { type: 'string', required: true, description: 'Anchor N#XX copied from read output.' },
-            end: { type: 'string', description: 'Inclusive end anchor for replace ranges.' },
-            lines: { type: 'array', items: { type: 'string' }, required: true, description: 'Replacement or inserted lines.' },
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: 'Path to edit, resolved by the filesystem backend.' },
+        edits: {
+          type: 'array',
+          description: 'One or more anchored edit operations, applied against the original file state.',
+          items: {
+            type: 'object',
+            properties: {
+              op: { type: 'string', enum: ['replace', 'append', 'prepend'] },
+              pos: { type: 'string', description: 'Anchor N#XX copied from read output.' },
+              end: { type: 'string', description: 'Inclusive end anchor for replace ranges.' },
+              lines: { type: 'array', items: { type: 'string' }, description: 'Replacement or inserted lines.' },
+            },
+            required: ['op', 'pos', 'lines'],
           },
         },
       },
+      required: ['file_path', 'edits'],
     },
     output: {
       schema: { type: 'object' },

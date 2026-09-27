@@ -189,6 +189,15 @@ function decide(options) {
 
 async function* streamScenario(options) {
   const tools = (options.tools ?? []).map((tool) => tool.name)
+  // Strict-provider schema validation: every tool's parameters must be an
+  // object-rooted JSON Schema (DeepSeek rejects anything else) — this check
+  // reproduces the provider-side schema gate headlessly.
+  const invalidTools = (options.tools ?? [])
+    .filter((tool) => tool.deferLoading !== true && (!tool.parameters || tool.parameters.type !== 'object'))
+    .map((tool) => tool.name)
+  if (invalidTools.length > 0) {
+    throw new Error(`Invalid schema for function '${invalidTools[0]}': schema must be a JSON Schema of 'type: "object"'`)
+  }
   const out = [...decide(options)]
   trace({
     scenario: SCENARIO,

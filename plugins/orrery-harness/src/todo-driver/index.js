@@ -134,7 +134,11 @@ function apply(ctx, config = {}) {
     name: 'stop_continuation',
     description: STOP_CONTINUATION_DESCRIPTION,
     parameters: {
-      reason: { type: 'string', required: true, description: 'The concrete blocker that prevents progress.' },
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'The concrete blocker that prevents progress.' },
+      },
+      required: ['reason'],
     },
     output: {
       schema: { type: 'object' },

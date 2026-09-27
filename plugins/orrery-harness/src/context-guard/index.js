@@ -126,7 +126,7 @@ function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'compact_context',
     description: COMPACT_CONTEXT_DESCRIPTION,
-    parameters: {},
+    parameters: { type: 'object', properties: {} },
     output: {
       schema: { type: 'object' },
       render: (_args, value) => [{ type: 'text', text: value.text }],
