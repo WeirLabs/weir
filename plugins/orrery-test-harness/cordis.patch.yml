@@ -11,6 +11,15 @@
 - insert:
     - id: orrery-it-mock-llm
       name: 'orrery-test-harness/mock-llm'
+    # Mirror the profile-level settings row: exercises the orrerySettings
+    # service path headlessly (it supplies the classifier route — the semantic
+    # scenario only passes when the overlay actually delivers these values).
+    - id: orrery-it-settings
+      name: 'orrery-harness/settings'
+      config:
+        intentGate:
+          classifierProvider: mock
+          classifierModel: mock-1
     - id: orrery-it-event-tap
       name: 'orrery-test-harness/event-tap'
     - id: orrery-it-core
@@ -18,11 +27,9 @@
     - id: orrery-it-intent-gate
       name: 'orrery-harness/intent-gate'
       config:
-        # Exercise the semantic classifier headlessly: the mock LLM serves the
-        # sidecar classification call on an explicit route.
+        # Exercise the semantic classifier headlessly; the sidecar route comes
+        # from the settings row above (orrerySettings overlay proof).
         classifier: 'llm'
-        classifierProvider: mock
-        classifierModel: mock-1
     - id: orrery-it-delegate
       name: 'orrery-harness/delegate'
       config:
