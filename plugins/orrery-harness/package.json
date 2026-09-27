@@ -11,7 +11,8 @@
     "./delegate": "./src/delegate/index.js",
     "./todo-driver": "./src/todo-driver/index.js",
     "./context-guard": "./src/context-guard/index.js",
-    "./hashline-edit": "./src/hashline-edit/index.js"
+    "./hashline-edit": "./src/hashline-edit/index.js",
+    "./settings": "./src/settings/index.js"
   },
   "dsh": {
     "bundle": {

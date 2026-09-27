@@ -14,7 +14,9 @@ const STOP_CONTINUATION_DESCRIPTION = `Stop the todo continuation driver for thi
 
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
-  const opts = { ...DEFAULTS, ...config }
+  // Settings overlay (absent service = no-op): todoDriver section wins over row config.
+  const settingsOverride = ctx.get?.('orrerySettings')?.get('todoDriver')
+  const opts = { ...DEFAULTS, ...config, ...(settingsOverride ?? {}) }
   /** Per-session continuation states. */
   const states = new Map()
   /** Per-session pending delayed-continuation timer handles. */

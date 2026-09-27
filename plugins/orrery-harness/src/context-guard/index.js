@@ -9,7 +9,9 @@ const inject = ['tools', 'agents', 'tokenMeter', 'compaction', 'llm']
 const COMPACT_CONTEXT_DESCRIPTION = `Compact this session's conversation history into a summary, then continue the task from that summary. Call this when a context-pressure advisory arrives and the current subtask has reached a safe point: persist key state first (plan, findings, evidence paths). The current turn ends at this call; compaction runs at the turn boundary; a continuation resumes the task automatically. Not callable while another compaction is active.`
 
 function apply(ctx, config = {}) {
-  const opts = { ...PRESSURE_DEFAULTS, ...config }
+  // Settings overlay (absent service = no-op): contextGuard section wins over row config.
+  const settingsOverride = ctx.get?.('orrerySettings')?.get('contextGuard')
+  const opts = { ...PRESSURE_DEFAULTS, ...config, ...(settingsOverride ?? {}) }
   /** Per-session pressure hysteresis state. */
   const states = new Map()
   /** Sessions with a model-requested compaction pending at the boundary. */

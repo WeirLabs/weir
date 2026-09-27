@@ -2,6 +2,11 @@
 # by this bundle's patch. The preset is edited through bundle updates; the Web
 # editor is read-only for preset rows.
 - insert:
+    # Profile-level settings row: one-stop Orrery configuration page in the
+    # Settings app (auto-generated from the declared schema) plus the
+    # host-plane orrerySettings service the preset modules overlay with.
+    - id: orrery-settings
+      name: 'orrery-harness/settings'
     - id: preset-orrery
       name: '@deepseek-ai/dsh-agent-preset'
       config:

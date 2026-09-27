@@ -15,12 +15,41 @@ const inject = ['tools', 'subagents', 'llm', 'skills']
 
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
-  const categories = { ...DEFAULT_CATEGORIES, ...(config.categories ?? {}) }
+  // Settings overlay (absent service = no-op): delegate + robash sections.
+  const settings = ctx.get?.('orrerySettings')
+  const delegateOverride = settings?.get('delegate')
+  const robashOverride = settings?.get('robash')
+
+  let categories = { ...DEFAULT_CATEGORIES, ...(config.categories ?? {}) }
   const agents = { ...CURATED_AGENTS, ...(config.agents ?? {}) }
+
+  // Settings category chains: wholesale chain replacement per named category.
+  if (delegateOverride?.categoryChains && typeof delegateOverride.categoryChains === 'object') {
+    for (const [category, chain] of Object.entries(delegateOverride.categoryChains)) {
+      if (!categories[category]) {
+        ctx.logger?.warn?.(`orrery-settings: categoryChains names unknown category "${category}" — ignored`)
+        continue
+      }
+      categories[category] = { ...categories[category], chain }
+    }
+  }
+  if (delegateOverride && typeof delegateOverride === 'object') {
+    const { categoryChains: _ignored, supervisionMaxRetries, supervisionInitialBackoffMs, supervisionMaxBackoffMs, ...rest } = delegateOverride
+    config = {
+      ...config,
+      ...rest,
+      supervision: {
+        ...(config.supervision ?? {}),
+        ...(supervisionMaxRetries !== undefined ? { maxRetries: supervisionMaxRetries } : {}),
+        ...(supervisionInitialBackoffMs !== undefined ? { initialBackoffMs: supervisionInitialBackoffMs } : {}),
+        ...(supervisionMaxBackoffMs !== undefined ? { maxBackoffMs: supervisionMaxBackoffMs } : {}),
+      },
+    }
+  }
 
   // Read-only bash guard: curated agents and readOnly categories get bash
   // behind a fail-closed whitelist guard when enabled.
-  const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}) }
+  const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
   const robash = {
     enabled: robashConfig.enabled !== false,
     lists: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },

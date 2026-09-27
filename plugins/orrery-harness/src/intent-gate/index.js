@@ -43,6 +43,20 @@ function injectionMessage(text) {
 
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
+  // Settings overlay (absent service = no-op): intentGate section wins over row config.
+  const settingsOverride = ctx.get?.('orrerySettings')?.get('intentGate')
+  if (settingsOverride && typeof settingsOverride === 'object') {
+    const { jevEndpoint, jevModel, jevApiKeyEnv, ...rest } = settingsOverride
+    config = { ...config, ...rest }
+    if (jevEndpoint !== undefined || jevModel !== undefined || jevApiKeyEnv !== undefined) {
+      config.jev = {
+        ...(config.jev ?? {}),
+        ...(jevEndpoint !== undefined ? { endpoint: jevEndpoint } : {}),
+        ...(jevModel !== undefined ? { model: jevModel } : {}),
+        ...(jevApiKeyEnv !== undefined ? { apiKeyEnv: jevApiKeyEnv } : {}),
+      }
+    }
+  }
   const table = compileIntentTable(config.intents ?? DEFAULT_INTENTS)
   const disabled = new Set(Array.isArray(config.disabled) ? config.disabled : [])
   const intents = table.filter((intent) => !disabled.has(intent.id))
