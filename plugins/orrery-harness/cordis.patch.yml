@@ -91,6 +91,11 @@
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024
+              # F6 自动压缩：上下文压力阈值 + 模型择时压缩 + 边界强制 + 压缩后续推。
+              # `compaction` 服务被本组 isolate：消费者必须与提供者同 realm（否则
+              # inject 永久等待，预设加载失败）。
+              - id: context-guard
+                name: 'orrery-harness/context-guard'
           - id: delegation
             name: cordis:group
             group: true
@@ -135,9 +140,6 @@
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'orrery-harness/todo-driver'
-              # F6 自动压缩：上下文压力阈值 + 模型择时压缩 + 边界强制 + 压缩后续推
-              - id: context-guard
-                name: 'orrery-harness/context-guard'
               # F7 锚点编辑：read 锚点增强 + fail-closed hash_edit 工具
               - id: hashline-edit
                 name: 'orrery-harness/hashline-edit'

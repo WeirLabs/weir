@@ -21,7 +21,19 @@
       name: 'orrery-harness/delegate'
     - id: orrery-it-todo-driver
       name: 'orrery-harness/todo-driver'
-    - id: orrery-it-context-guard
-      name: 'orrery-harness/context-guard'
     - id: orrery-it-hashline-edit
       name: 'orrery-harness/hashline-edit'
+    # Mirror the real preset's realm structure: the compaction provider and the
+    # context-guard consumer co-isolated in one group. This reproduces the
+    # "waiting for compaction" preset-load failure class headlessly.
+    - id: orrery-it-compaction
+      name: cordis:group
+      group: true
+      isolate:
+        compaction: true
+        toolResultPruner: true
+      config:
+        - id: orrery-it-compaction-basic
+          name: '@deepseek-ai/dsh-compaction-basic'
+        - id: orrery-it-context-guard
+          name: 'orrery-harness/context-guard'
