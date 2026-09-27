@@ -14,7 +14,7 @@ Orrery — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 
 | `orrery-harness/hashline-edit` | read 锚点增强（`N#XX|`）+ fail-closed `hash_edit` 工具（预设默认唯一编辑工具，`hideStockEdit: false` 可回归共存） |
 | （内建采用） | 拉取式后台通知由 DSH 内建 job 道承担；本预设配置 `maxConsecutiveWakes: 8` |
 
-技能（`skills/`，经 `customSkillDirs` 挂载）：`deep-work`、`research`、`review-work`、`debugging`（英文正文；模板层英文、实例内容跟随会话语言）。
+技能（`skills/`，经 `customSkillDirs` 挂载）：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`（英文正文；模板层英文、实例内容跟随会话语言）。
 
 ## 安装
 

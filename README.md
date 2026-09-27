@@ -24,7 +24,7 @@ Orrery 是 DeepSeek Harness 的一款 agent 预设（preset）。安装后，你
 
 ## 内置工作技能
 
-Orrery 自带四项开箱即用的工作技能，意图命中时自动加载，也可以随时手动调用：
+Orrery 自带十项开箱即用的工作技能，意图命中时自动加载，也可以随时手动调用：
 
 | 技能 | 一句话说明 |
 |---|---|
@@ -32,6 +32,12 @@ Orrery 自带四项开箱即用的工作技能，意图命中时自动加载，�
 | `research` | 深度研究：并行检索代码、文档与网络，产出带引用的综述 |
 | `review-work` | 完工把关：先亲自在实际界面上验证，再从目标覆盖、代码质量、安全性审计 |
 | `debugging` | 假设驱动的调试：先复现、排序假设、用最便宜的判别实验定位根因 |
+| `git-master` | git 全科医生：原子提交、rebase、squash、blame、bisect、reflog、历史考古 |
+| `refactor` | 重构向导：用正确的分解方式做重构、清理与重组 |
+| `programming` | 语言实践纪律：Python/Rust/TypeScript/Go 的严格现代写法（含分语言参考） |
+| `remove-ai-slops` | 清除 AI 代码异味：在回归测试保护下给分支改动"去腻" |
+| `work-with-pr` | PR 全生命周期：独立 worktree 实现、证据绑定的手工验证、可读性优先的 PR 描述 |
+| `remove-deadcode` | 死代码清理：安全验证 + 原子提交，删掉无人使用的代码 |
 
 ## 了解更多
 
