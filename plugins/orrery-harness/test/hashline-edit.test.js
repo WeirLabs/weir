@@ -236,4 +236,63 @@ describe('hash_edit tool', () => {
     apply(ctx, { hideStockEdit: true })
     expect(restricted).toEqual([{ deny: ['edit'] }])
   })
+
+  it('hideStockEdit on an unscoped mount restricts each created agent instead', () => {
+    const restrictedBy = []
+    const listeners = {}
+    const ctx = {
+      tools: {
+        register: () => {},
+        get: (toolName) => (toolName === 'edit' ? { name: 'edit' } : undefined),
+        restrict: () => {
+          throw new Error('tools.restrict() requires a scoped context (agent.ctx): a context-global restriction would mask every agent')
+        },
+      },
+      fs: {},
+      on: (event, listener) => {
+        listeners[event] = listener
+      },
+    }
+    apply(ctx, { hideStockEdit: true })
+    expect(typeof listeners['agent/created']).toBe('function')
+    listeners['agent/created']({ agent: { ctx: { tools: { restrict: (filter) => restrictedBy.push(filter) } } } })
+    expect(restrictedBy).toEqual([{ deny: ['edit'] }])
+  })
+
+  it('hideStockEdit fallback is a no-op for agents when the composition has no stock edit', () => {
+    const listeners = {}
+    let restricted = 0
+    const ctx = {
+      tools: {
+        register: () => {},
+        get: () => undefined,
+        restrict: () => {
+          throw new Error('tools.restrict() requires a scoped context (agent.ctx): a context-global restriction would mask every agent')
+        },
+      },
+      fs: {},
+      on: (event, listener) => {
+        listeners[event] = listener
+      },
+    }
+    apply(ctx, { hideStockEdit: true })
+    expect(typeof listeners['agent/created']).toBe('function')
+    listeners['agent/created']({ agent: { ctx: { tools: { restrict: () => restricted++ } } } })
+    expect(restricted).toBe(0)
+  })
+
+  it('hideStockEdit propagates unexpected restrict errors', () => {
+    const ctx = {
+      tools: {
+        register: () => {},
+        get: () => ({ name: 'edit' }),
+        restrict: () => {
+          throw new Error('tools.restrict() names unknown global tool "edit"')
+        },
+      },
+      fs: {},
+      on: () => {},
+    }
+    expect(() => apply(ctx, { hideStockEdit: true })).toThrow(/unknown global tool/)
+  })
 })
