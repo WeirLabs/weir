@@ -1,38 +1,44 @@
 # Orrery
 
-自建的 Orchestrator 中心 Harness 预设，以 DSH bundle `orrery-harness` 交付。
+> 让 AI 助手像一位总指挥（Orchestrator）一样为你工作：听懂意图、拆解任务、派出专长各异的子代理、盯着进度直到真正完成。
 
-## 仓库布局
+Orrery 是 DeepSeek Harness 的一款 agent 预设（preset）。安装后，你会在预设选择器中看到 **Orrery**——选中它，助手立刻获得一整套为"认真做完一件事"而设计的工作方式。
 
-```
-plugins/
-├── orrery-harness/        # 正式 bundle：预设声明 + 七个特性模块 + 技能
-└── orrery-test-harness/   # 开发专用集成测试装置（mock LLM + headless profile），不入正式 profile
-```
+## 为什么用 Orrery
 
-## 开发回路
+普通 AI 助手容易"聊着聊着就偏了"：任务做到一半停下等你催、上下文一满就丢三落四、什么活都用同一个模型硬扛。Orrery 针对这些顽疾做了一整套设计：
 
-```sh
-# 单元测试（node:test，无需安装额外工具链）
-pnpm --filter orrery-harness test
+- **听懂你的话**：一句"深度工作""仔细研究一下"，助手自动进入对应的工作模式；说"think"，它会用更深的推理档位回答你。
+- **总指挥坐镇**：助手以"总指挥"身份统筹全局——简单的活直接干，复杂的活拆给专长子代理，能并行的绝不排队，每个子任务都有明确的交付标准和验收。
+- **专业的事交给专业的模型**：九种任务类别（快速问答、深度分析、架构咨询……）各自绑定最合适的模型链，主模型不可用时自动降级到备选，绝不悄悄乱换。
+- **不催不停**：任务清单没做完，助手会自己接着干；你随时喊停它就停（你的打断永远优先）；供应商抖动时自动退避重试，连续失败会如实报告而不是假装没发生。
+- **长任务不丢上下文**：上下文将满时，助手会被提醒在合适的时机自行整理记忆；逼近极限时自动压缩，绝不让重要信息被生硬截断。
+- **后台任务不刷屏**：耗时的委派可以放后台跑，完成时只收到一条简短通知，想看细节再随时调取完整报告。
+- **编辑更稳更省**：文件读取自带锚点，编辑逐锚校验、有一处对不上就整体拒绝——改得准、不毁文件、还省 token。
 
-# 静态检查（tsc checkJs，覆盖强类型核心模块）
-pnpm --filter orrery-harness run check
+## 安装与启用
 
-# 集成测试（真实 headless runtime + 脚本化 mock LLM，写入 /tmp/orrery-it）
-pnpm --filter orrery-test-harness run test:integration
+1. 在 Harness 会话中由 `plugin_manager` 以本仓库 `plugins/orrery-harness` 目录安装 bundle（link 安装，随源码更新）。
+2. 打开 Web GUI 的预设选择器，选择 **Orrery** 创建新会话。
+3. 其他预设（如 standard）完全不受影响——Orrery 的一切只在它自己的会话里生效。
 
-# 安装/重装到当前 profile（在 Harness 会话内由 plugin_manager 执行：
-# install_bundle → target 为 plugins/orrery-harness 的绝对路径）
-# 代码或 patch 改动后用 set_bundle 先禁用再启用完成重应用。
-```
+## 内置工作技能
 
-## 版本控制纪律
+Orrery 自带四项开箱即用的工作技能，意图命中时自动加载，也可以随时手动调用：
 
-- 入库内容仅限插件实际内容（源码、测试、技能、包清单、构建配置）。
-- `.gitignore` 排除：`.claude/`、`.agent(s)/`、`openspec/`、`docs/`、AI 生成的工作报告、构建产物、敏感文件。
-- 阶段性 feat/fix 即提交（Conventional Commits），不攒超大 commit；提交信息严禁 `Co-authored-by` 与任何 AI 署名。
+| 技能 | 一句话说明 |
+|---|---|
+| `deep-work` | 证据驱动的端到端完成模式：不拿"看起来对了"当完成 |
+| `research` | 深度研究：并行检索代码、文档与网络，产出带引用的综述 |
+| `review-work` | 完工把关：先亲自在实际界面上验证，再从目标覆盖、代码质量、安全性审计 |
+| `debugging` | 假设驱动的调试：先复现、排序假设、用最便宜的判别实验定位根因 |
 
-## 流程
+## 了解更多
 
-OpenSpec 变更 `add-orrery-preset`（openspec/，本地过程材料，不入库）驱动任务分解与验收；设计细节在 `docs/design.md`（本地）。
+- 特性细节（行为、配置、设计、失败语义）：[docs/features/](docs/features/README.md)
+- 版本更新记录：[CHANGELOG.md](CHANGELOG.md)
+- 参与开发（纪律、环境、测试流程）：[AGENTS.md](AGENTS.md)
+
+## 许可
+
+私有项目，未授权分发。
