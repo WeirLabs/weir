@@ -1,8 +1,10 @@
 // Orrery todo driver: continues the session while todos remain unfinished.
-// Driven by the durable turn/end reason feed (session/event), continuations
-// are Agent.followup prompts; provider errors get counted, delayed retries.
+// Normal continuation steers at the sanctioned agent/turn-stopping boundary;
+// the provider-error path schedules a counted, delayed Agent.followup from a
+// timer (never inside an event dispatch — session appends reject reentry).
 // Plain ESM, ctx-only.
-import { createContinuationState, DEFAULTS, renderContinuation } from './state-machine.js'
+import { createContinuationState, DEFAULTS, isProviderError, renderContinuation } from './state-machine.js'
+import { userTextMessage } from '../shared/user-message.js'
 
 const name = 'orrery-todo-driver'
 const inject = ['tools', 'agents']
@@ -15,6 +17,8 @@ function apply(ctx, config = {}) {
   const states = new Map()
   /** Per-session pending delayed-continuation timer handles. */
   const timers = new Map()
+  /** Sessions whose current/last turn errored on a provider failure. */
+  const providerErrorPending = new Map()
 
   function stateOf(sessionId) {
     let state = states.get(sessionId)
@@ -50,45 +54,72 @@ function apply(ctx, config = {}) {
     }
   }
 
-  function scheduleContinuation(session, delayMs) {
-    const agent = ctx.agents.get(session.id)
-    if (!agent) return
+  /** Delayed followup continuation for the provider-error path. */
+  function scheduleRetry(session, delayMs) {
     const fire = () => {
       cancelTimer(session.id)
+      const agent = ctx.agents.get(session.id)
+      if (!agent) return
       const remaining = remainingTodos(session)
       if (remaining.length === 0) return
       if (!stateOf(session.id).armed) return
       try {
-        agent.followup([{ type: 'text', text: renderContinuation(remaining) }])
+        agent.followup(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
       } catch (error) {
         ctx.logger?.warn?.(`todo-driver: could not queue continuation for "${session.id}": ${error?.message ?? error}`)
       }
     }
-    if (delayMs <= 0) {
-      fire()
-      return
-    }
     cancelTimer(session.id)
     const setTimer = ctx.setTimeout ?? globalThis.setTimeout
-    timers.set(session.id, setTimer(fire, delayMs))
+    timers.set(session.id, setTimer(fire, Math.max(0, delayMs)))
   }
 
+  // The sanctioned continuation boundary: steer and the turn runs on.
+  ctx.on('agent/turn-stopping', ({ agent, signal }) => {
+    if (!opts.enabled) return
+    const aborted = signal.aborted
+    const cause = aborted ? abortCauseKind(signal.reason) : undefined
+    const state = stateOf(agent.id)
+    const remaining = remainingTodos(agent.session)
+    const decision = state.decideAtTurnStopping({
+      todosRemain: remaining.length > 0,
+      aborted,
+      abortCauseKind: cause,
+      providerErrorPending: providerErrorPending.has(agent.id),
+    })
+    if (decision.kind !== 'continue') return
+    try {
+      agent.steer(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
+    } catch (error) {
+      ctx.logger?.warn?.(`todo-driver: could not steer continuation for "${agent.id}": ${error?.message ?? error}`)
+    }
+  })
+
+  // Mark provider failures as they happen; the turn boundary owns the retry.
+  ctx.on('agent/error', ({ agent, error }) => {
+    if (isProviderError(error)) providerErrorPending.set(agent.id, error)
+  })
+
+  // Bookkeeping from the durable turn/end reason feed.
   ctx.on('session/event', (session, event) => {
     if (event.type === 'user/message') {
       // Genuine user input rearms; injected continuations carry our own source kind.
       const sourceKind = event.data?.source?.kind
       if (sourceKind !== 'orrery-todo-driver') {
         cancelTimer(session.id)
+        providerErrorPending.delete(session.id)
         stateOf(session.id).onUserMessage()
       }
       return
     }
     if (event.type !== 'turn/end') return
     if (!opts.enabled) return
+    const reason = event.data?.reason
     const state = stateOf(session.id)
-    const decision = state.decideTurnEnd(event.data?.reason, remainingTodos(session).length > 0)
+    const decision = state.decideTurnEnd(reason, remainingTodos(session).length > 0)
+    if (reason?.kind !== 'error') providerErrorPending.delete(session.id)
     if (decision.kind === 'continue') {
-      scheduleContinuation(session, decision.delayMs)
+      scheduleRetry(session, decision.delayMs)
     } else if (decision.kind === 'blocked') {
       try {
         session.append('orrery/continuation-blocked', { notice: decision.notice })
@@ -114,6 +145,7 @@ function apply(ctx, config = {}) {
       const reason = typeof args.reason === 'string' && args.reason.trim().length > 0 ? args.reason.trim() : 'unspecified'
       stateOf(exec.agent.id).onStopContinuation(reason)
       cancelTimer(exec.agent.id)
+      providerErrorPending.delete(exec.agent.id)
       try {
         exec.agent.session.append('orrery/continuation-stop', { reason })
       } catch {
@@ -128,7 +160,14 @@ function apply(ctx, config = {}) {
     for (const handle of timers.values()) clearTimeout(handle)
     timers.clear()
     states.clear()
+    providerErrorPending.clear()
   }
+}
+
+/** Read the abort cause kind off the turn signal's reason, when present. */
+function abortCauseKind(reason) {
+  if (reason && typeof reason === 'object' && typeof reason.kind === 'string') return reason.kind
+  return undefined
 }
 
 export { name, inject, apply }

@@ -1,11 +1,10 @@
 // Todo continuation state machine — pure core, one instance per session.
 //
-// Decides what to do when a turn ends, from the durable turn/end reason:
-// - completed + todos remain + armed  → continue now
-// - aborted by the user               → disarm until the next user message
-// - provider/network error            → delayed continuation with backoff and
-//                                       a consecutive-error cap, then disarm
-// - anything else                     → no continuation
+// Two decision points:
+// - decideAtTurnStopping (the sanctioned boundary: a listener steers and the
+//   machine runs another step) — the normal completed-turn continuation.
+// - decideTurnEnd (bookkeeping from the durable turn/end reason) — user-abort
+//   disarm and the provider-error delayed, counted retry path.
 // User input always rearms and resets every counter.
 
 export const PROVIDER_ERROR_CODES = new Set([
@@ -79,7 +78,33 @@ export function createContinuationState(options = {}) {
     },
 
     /**
-     * Decide the continuation action for one ended turn.
+     * Decide at the turn-stopping boundary (the sanctioned continuation point:
+     * a listener steers and the machine runs another step).
+     * @param {{ todosRemain: boolean, aborted: boolean, abortCauseKind?: string,
+     *   providerErrorPending: boolean }} input
+     * @returns {{ kind: 'continue' } | { kind: 'none' }}
+     */
+    decideAtTurnStopping(input) {
+      if (!opts.enabled || !state.armed) return { kind: 'none' }
+      if (input.aborted) {
+        // A user interrupt disarms; other abort causes leave the state alone.
+        if (input.abortCauseKind === 'user') {
+          state.armed = false
+          state.stopReason = 'user interrupt'
+        }
+        return { kind: 'none' }
+      }
+      // The provider-error path owns its own delayed, counted retry — never
+      // steer a fresh continuation in the same closing turn.
+      if (input.providerErrorPending) return { kind: 'none' }
+      if (!input.todosRemain) return { kind: 'none' }
+      if (state.consecutive >= opts.maxConsecutive) return { kind: 'none' }
+      state.consecutive += 1
+      return { kind: 'continue' }
+    },
+
+    /**
+     * Bookkeeping for one ended turn (durable turn/end reason).
      * @param {any} reason - TurnEndReason from the durable turn/end event
      * @param {boolean} todosRemain
      * @returns {{ kind: 'continue', delayMs: number }
@@ -87,15 +112,14 @@ export function createContinuationState(options = {}) {
      *   | { kind: 'none' }}
      */
     decideTurnEnd(reason, todosRemain) {
-      if (!opts.enabled || !state.armed) return { kind: 'none' }
+      if (!opts.enabled) return { kind: 'none' }
       if (!reason || typeof reason !== 'object') return { kind: 'none' }
 
       if (reason.kind === 'completed') {
+        // A healthy turn resets the provider-error streak. Continuation on
+        // completed turns is owned by the turn-stopping boundary, not here.
         state.errorStreak = 0
-        if (!todosRemain) return { kind: 'none' }
-        if (state.consecutive >= opts.maxConsecutive) return { kind: 'none' }
-        state.consecutive += 1
-        return { kind: 'continue', delayMs: 0 }
+        return { kind: 'none' }
       }
 
       if (reason.kind === 'aborted') {
@@ -106,6 +130,8 @@ export function createContinuationState(options = {}) {
         }
         return { kind: 'none' }
       }
+
+      if (!state.armed) return { kind: 'none' }
 
       if (reason.kind === 'error') {
         if (!todosRemain) return { kind: 'none' }
