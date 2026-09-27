@@ -3,7 +3,11 @@
 .agent/
 .agents/
 openspec/
-docs/
+
+# docs/: local design & spike notes stay uncommitted;
+# docs/features/ holds the versioned product feature docs (committed).
+docs/*
+!docs/features/
 
 # Harness runtime scratch (notepads, research notes written by orrery sessions)
 .orrery/
@@ -26,5 +30,6 @@ plugins/*/dist/
 *.key
 secrets/
 
-# OS junk
+# OS junk & editor config
 .DS_Store
+.vscode/

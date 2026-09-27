@@ -1,5 +1,7 @@
 # orrery-harness
 
+> 文档导航：产品门面见仓库根 [README.md](../../README.md)；各特性的行为/配置/设计/失败语义见 [docs/features/](../../docs/features/README.md)；版本记录见 [CHANGELOG.md](../../CHANGELOG.md)；开发纪律见 [AGENTS.md](../../AGENTS.md)。
+
 Orrery — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 `orrery`（GUI 显示名 "Orrery"），落地七项设计：
 
 | 模块 | 功能 |
