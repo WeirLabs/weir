@@ -27,7 +27,7 @@
 | `classifierTimeoutMs` | `1500` | 语义分类超时，超时即 fail-open |
 | `jev.*` | — | jev 模式连接参数（`endpoint`/`model`/`apiKeyEnv` 环境变量名取密钥，密钥永不入配置） |
 
-均为 volatile config：在线编辑即刻生效，无需重装 bundle。每次触发注入都记录为持久会话事件（`orrery/intent-hit`），语义分类决策记录为 `orrery/intent-classify`（模式、命中、回落原因），可审计。
+均为 volatile config：在线编辑即刻生效，无需重装 bundle。每次触发注入与每次分类决策都经**冷读安全审计通道**记录（`src/shared/audit.js`：cordis 运行时事件 + `<会话cwd>/.orrery/audit.jsonl` 磁盘双写）——会话日志不写入自定义事件类型（本运行时冷读拒绝未知类型，详见 AGENTS.md §3.6）。
 
 ## 设计细节
 
@@ -46,4 +46,4 @@
 ## 测试
 
 - 单元测试：`test/` 覆盖匹配（含代码区豁免）、武装/提醒降级、推理提档、配置热更；`test/intent-classifier.test.js` 覆盖三模式分派、正则短路、语义命中、unknown-answer 拒绝、超时/故障 fail-open、缓存、jev 适配、挂载层注入与审计。
-- 集成测试：`deepwork` 场景——关键词命中注入指令且 `orrery/intent-hit` 事件入持久日志；`semantic` 场景——无关键词提示词经 llm 模式语义命中注入且 `orrery/intent-classify` 审计在场。
+- 集成测试：`deepwork` 场景——关键词命中注入指令且 `orrery/intent-hit` 审计经 cordis 通道入 trace；`semantic` 场景——无关键词提示词经 llm 模式语义命中注入且 `orrery/intent-classify` 审计在场。

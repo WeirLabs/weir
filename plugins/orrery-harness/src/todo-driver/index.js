@@ -4,6 +4,7 @@
 // timer (never inside an event dispatch — session appends reject reentry).
 // Plain ESM, ctx-only.
 import { createContinuationState, DEFAULTS, isProviderError, renderContinuation } from './state-machine.js'
+import { createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 
 const name = 'orrery-todo-driver'
@@ -12,6 +13,7 @@ const inject = ['tools', 'agents']
 const STOP_CONTINUATION_DESCRIPTION = `Stop the todo continuation driver for this session. Call this ONLY when remaining todos are genuinely blocked: a decision only the user can make, a missing credential or permission, or repeated identical failures. Provide the concrete reason. Continuation stays off until the user's next message.`
 
 function apply(ctx, config = {}) {
+  const audit = createAudit(ctx)
   const opts = { ...DEFAULTS, ...config }
   /** Per-session continuation states. */
   const states = new Map()
@@ -121,11 +123,7 @@ function apply(ctx, config = {}) {
     if (decision.kind === 'continue') {
       scheduleRetry(session, decision.delayMs)
     } else if (decision.kind === 'blocked') {
-      try {
-        session.append('orrery/continuation-blocked', { notice: decision.notice })
-      } catch {
-        // log-only
-      }
+      audit(session, 'continuation-blocked', { notice: decision.notice })
       ctx.logger?.warn?.(`todo-driver: ${decision.notice}`)
     }
   })
@@ -150,11 +148,7 @@ function apply(ctx, config = {}) {
       stateOf(exec.agent.id).onStopContinuation(reason)
       cancelTimer(exec.agent.id)
       providerErrorPending.delete(exec.agent.id)
-      try {
-        exec.agent.session.append('orrery/continuation-stop', { reason })
-      } catch {
-        // log-only
-      }
+      audit(exec.agent.session, 'continuation-stop', { reason })
       return { stopped: true, reason }
     },
   })

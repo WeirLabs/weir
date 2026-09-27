@@ -140,11 +140,16 @@ describe('createClassifier', () => {
 describe('intent-gate with a semantic classifier', () => {
   function fakeCtx(llm) {
     const handlers = {}
+    const emitted = []
     return {
       handlers,
+      emitted,
       llm,
       on(event, handler) {
         handlers[event] = handler
+      },
+      emit(type, record) {
+        emitted.push({ type, record })
       },
     }
   }
@@ -192,13 +197,12 @@ describe('intent-gate with a semantic classifier', () => {
     const llm = fakeLlm('', { error: 'provider down' })
     const ctx = fakeCtx(llm)
     apply(ctx, { classifier: 'llm', classifierProvider: 'mock', classifierModel: 'mock-1' })
-    const appended = []
     const result = await ctx.handlers['agent/pre-step'](
-      { agent: agentOf(appended), messages: [promptMessage('no keywords here')], turn: 1, step: 1 },
+      { agent: agentOf([]), messages: [promptMessage('no keywords here')], turn: 1, step: 1 },
       async () => ({ kind: 'enter', messages: [] }),
     )
     expect(result.messages).toHaveLength(0)
-    expect(appended.some((e) => e.type === 'orrery/intent-classify' && e.data.fallback)).toBe(true)
+    expect(ctx.emitted.some((e) => e.type === 'orrery/intent-classify' && e.record.data.fallback)).toBe(true)
   })
 
   it('regex mode never touches the sidecar', async () => {

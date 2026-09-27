@@ -4,6 +4,7 @@
 // Optional semantic classification (llm sidecar / experimental jev) kicks in
 // only when regex misses. Plain ESM, ctx-only.
 import { createClassifier } from './classifier.js'
+import { createAudit } from '../shared/audit.js'
 import {
   compileIntentTable,
   DEFAULT_INTENTS,
@@ -41,6 +42,7 @@ function injectionMessage(text) {
 }
 
 function apply(ctx, config = {}) {
+  const audit = createAudit(ctx)
   const table = compileIntentTable(config.intents ?? DEFAULT_INTENTS)
   const disabled = new Set(Array.isArray(config.disabled) ? config.disabled : [])
   const intents = table.filter((intent) => !disabled.has(intent.id))
@@ -73,11 +75,7 @@ function apply(ctx, config = {}) {
       const semanticHit = await classifier(stripped, intents, {
         agent,
         onAudit: (event) => {
-          try {
-            agent.session.append('orrery/intent-classify', event)
-          } catch {
-            // log-only audit must never break a turn
-          }
+          audit(agent.session, 'intent-classify', event)
         },
       })
       if (semanticHit) {
@@ -129,13 +127,10 @@ function apply(ctx, config = {}) {
     return { ...configOut, reasoningEffort: hit.injection.reasoningEffort }
   })
 
-  // Best-effort durable audit of intent hits; append failures never block a turn.
+  // Cold-safe durable audit of intent hits (never session.append — see
+  // src/shared/audit.js for the hard contract).
   function record(_ctx, agent, intent, first) {
-    try {
-      agent.session.append('orrery/intent-hit', { intent: intent.id, first })
-    } catch {
-      // log-only audit must never break a turn
-    }
+    audit(agent.session, 'intent-hit', { intent: intent.id, first })
   }
 }
 

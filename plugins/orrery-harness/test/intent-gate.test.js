@@ -76,12 +76,15 @@ describe('matchIntents', () => {
 describe('intent-gate plugin', () => {
   function fakeCtx() {
     const handlers = {}
-    const appended = []
+    const emitted = []
     return {
       handlers,
-      appended,
+      emitted,
       on(event, handler) {
         handlers[event] = handler
+      },
+      emit(type, record) {
+        emitted.push({ type, record })
       },
     }
   }
@@ -97,9 +100,8 @@ describe('intent-gate plugin', () => {
 
   it('injects the full payload on first hit and a reminder on repeat', async () => {
     const ctx = fakeCtx()
-    const appended = []
     apply(ctx, {})
-    const agent = fakeAgent(appended)
+    const agent = fakeAgent([])
 
     const first = await ctx.handlers['agent/pre-step'](
       { agent, messages: [promptMessage('do deep work on this')], turn: 1, step: 1 },
@@ -117,7 +119,7 @@ describe('intent-gate plugin', () => {
     expect(second.messages).toHaveLength(1)
     expect(second.messages[0].content[0].text).toContain('already armed')
 
-    expect(appended.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(2)
+    expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(2)
   })
 
   it('passes through without keywords', async () => {

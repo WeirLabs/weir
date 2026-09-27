@@ -149,6 +149,7 @@ describe('todo-driver plugin', () => {
     const steers = []
     const followups = []
     const appended = []
+    const emitted = []
     const ctx = {
       tools: { register: (tool) => registered.push(tool) },
       agents: { get: (id) => harness0.agents.get(id) },
@@ -156,9 +157,10 @@ describe('todo-driver plugin', () => {
       on: (event, handler) => {
         handlers[event] = handler
       },
+      emit: (type, record) => emitted.push({ type, record }),
       logger: { warn: () => {} },
     }
-    return { handlers, registered, steers, followups, appended, agents: new Map(), ctx }
+    return { handlers, registered, steers, followups, appended, emitted, agents: new Map(), ctx }
   }
 
   function fakeSession(id, todos) {
@@ -230,11 +232,11 @@ describe('todo-driver plugin', () => {
   })
 
   it('stop_continuation disarms and records the reason', async () => {
-    const { registered, session, agent, appended, handlers } = setup()
+    const { registered, session, agent, emitted, handlers } = setup()
     const tool = registered.find((t) => t.name === 'stop_continuation')
     const result = await tool.execute({ reason: 'need user decision' }, { agent })
     expect(result.stopped).toBe(true)
-    expect(appended.some((e) => e.type === 'orrery/continuation-stop')).toBe(true)
+    expect(emitted.some((e) => e.type === 'orrery/continuation-stop')).toBe(true)
     handlers['agent/turn-stopping']({ agent, turn: 1, signal: notAbortedSignal() })
     expect(harness0.steers).toHaveLength(0)
   })

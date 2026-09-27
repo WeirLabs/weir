@@ -38,10 +38,11 @@ CHANGELOG.md                # 更新日志（入库）
 3. **realm 纪律**：凡 `inject` 的服务在某 `cordis:group` 被 `isolate`，本插件行必须与提供者同组（S11 事故）；host-plane 服务（tools/subagents/skills/jobs/llm/tokenMeter/systemPrompt/sessionProjections/fs 等）不受隔离影响。
 4. **消息纪律**：`steer`/`followup`/`inject` 入参必须是完整 UserMessage 对象（共享助手 `src/shared/user-message.js`）；`session/event` 监听器内禁止同步 followup（session.append 重入拒绝）；续推走 `agent/turn-stopping` 的 steer 或 timer 延迟 followup。
 5. **状态分类**：续推/重试的分类只依据 `turn/end` 的 `reason`（`completed` / `aborted{kind:'user'}` / `error{LlmFailure}`），禁止猜测其他启发式。
-6. **文本纪律**：模板层（提示词/通知/工具描述/技能正文/注入模板）一律英文；实例内容（标签、摘要、todo 文本等）跟随会话语言。文档层（README/docs/CHANGELOG/AGENTS.md）以中文为主、技术标识符保留英文。
-7. **依赖纪律**：bundle 保持 `private: true`、无 `dependencies`/`peerDependencies` 的官方模板风格（避免 pnpm auto-install-peers 去 registry 拉不存在的 `@deepseek-ai/dsh`）；确需引入真实 npm 依赖时须先 spike 验证 link 安装下的解析，并在变更提案中声明。
-8. **测试装置隔离**：`orrery-test-harness` 仅用于开发，严禁安装进任何正式 profile。
-9. **多 Agent 协作**：一切多 Agent 能力自研实现，**不依赖** DSH 官方 experimental Agent Team 插件。
+6. **会话日志纪律（冷读红线）**：严禁 `session.append` 自定义事件类型——本运行时的持久化在冷读（重启恢复/子代理 cold-resume）时拒绝解释含未知且未标 `ignorable` 类型的日志，而 `append` 无 ignorable 通道，写入即埋雷。审计一律走 `src/shared/audit.js`（cordis emit + `.orrery/audit.jsonl` 双写）。
+7. **文本纪律**：模板层（提示词/通知/工具描述/技能正文/注入模板）一律英文；实例内容（标签、摘要、todo 文本等）跟随会话语言。文档层（README/docs/CHANGELOG/AGENTS.md）以中文为主、技术标识符保留英文。
+8. **依赖纪律**：bundle 保持 `private: true`、无 `dependencies`/`peerDependencies` 的官方模板风格（避免 pnpm auto-install-peers 去 registry 拉不存在的 `@deepseek-ai/dsh`）；确需引入真实 npm 依赖时须先 spike 验证 link 安装下的解析，并在变更提案中声明。
+9. **测试装置隔离**：`orrery-test-harness` 仅用于开发，严禁安装进任何正式 profile。
+10. **多 Agent 协作**：一切多 Agent 能力自研实现，**不依赖** DSH 官方 experimental Agent Team 插件。
 
 ## 4. 版本控制纪律
 

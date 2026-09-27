@@ -1,6 +1,8 @@
 // Event tap for the integration profile: appends interesting session events
-// (orrery/*, compaction/*, todo/write, turn boundaries) to the same JSONL
-// trace the mock LLM writes (ORRERY_IT_TRACE). Dev-only.
+// (compaction/*, todo/write, turn boundaries) to the same JSONL trace the mock
+// LLM writes (ORRERY_IT_TRACE), and taps the cordis orrery/* audit channel
+// (session logs no longer carry custom-typed events — see
+// orrery-harness/src/shared/audit.js). Dev-only.
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -8,6 +10,9 @@ const name = 'orrery-it-event-tap'
 const inject = []
 
 const TRACE = process.env.ORRERY_IT_TRACE ?? '/tmp/orrery-it/trace.jsonl'
+
+/** The orrery audit vocabulary emitted on the cordis bus (keep in sync). */
+const ORRERY_AUDIT_TYPES = ['intent-hit', 'intent-classify', 'continuation-blocked', 'continuation-stop', 'supervision']
 
 function tap(record) {
   try {
@@ -39,6 +44,12 @@ function summarizeMessage(message) {
 }
 
 function apply(ctx) {
+  // Cordis audit channel (cold-safe; session logs stay clean).
+  for (const type of ORRERY_AUDIT_TYPES) {
+    ctx.on(`orrery/${type}`, (record) => {
+      tap({ kind: 'session-event', session: record?.session ?? null, type: record?.type ?? `orrery/${type}`, data: record?.data ?? null })
+    })
+  }
   ctx.on('agent/created', (payload) => {
     tap({ kind: 'agent-created', session: payload?.agent?.id, origin: payload?.agent?.session?.header?.origin, depth: payload?.agent?.session?.header?.delegationDepth })
   })
@@ -48,7 +59,7 @@ function apply(ctx) {
   ctx.on('session/event', (session, event) => {
     const type = event?.type
     if (typeof type !== 'string') return
-    if (type.startsWith('orrery/') || type.startsWith('compaction/') || type === 'todo/write') {
+    if (type.startsWith('compaction/') || type === 'todo/write') {
       tap({ kind: 'session-event', session: session.id, type, data: event.data ?? null })
       return
     }
