@@ -172,9 +172,15 @@ function apply(ctx, config = {}) {
 
   // LSP management endpoints (status/install over the community catalog):
   // wired here on the profile-level settings row so the preset needs no new
-  // package subpath (S14: new exports require an app restart). Optional
-  // services; absent → the module warns and registers nothing.
-  const offLspAdmin = registerLspAdminEndpoints(ctx)
+  // package subpath (S14: new exports require an app restart). The services
+  // resolve through ctx.inject — ctx.get does not see them from this scope
+  // (verified live); absent → the callback never fires and nothing registers.
+  let offLspAdmin = () => {}
+  ctx.inject?.(['connection', 'subprocess'], (scope) => {
+    const off = registerLspAdminEndpoints(scope)
+    offLspAdmin = off
+    return off
+  })
 
   return () => offLspAdmin()
 }
