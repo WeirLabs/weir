@@ -27,6 +27,9 @@ describe('orrery settings client half', () => {
       settingsNumberField: (field) => ({ field, kind: 'number' }),
       settingsTextField: (field) => ({ field, kind: 'text' }),
       SettingsValueField: (props) => ({ __field: props }),
+      Switch: (props) => ({ __switch: props }),
+      SegmentedControl: (props) => ({ __segmented: props }),
+      Tag: (props) => ({ __tag: props }),
       SettingsForm: (props) => ({ __form: props }),
       SettingsFormModel: class {
         constructor(scope, specs) {
@@ -156,6 +159,22 @@ describe('orrery settings client half', () => {
       discard: () => {},
     })
     expect(rendered.__type).toBeTruthy()
-    expect(rendered.children).toHaveLength(22)
+    // 7 group headers + 22 field rows
+    expect(rendered.children).toHaveLength(29)
+    expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
+    // 6 choice rows (1 enum + 5 booleans) vs 16 value-field rows
+    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(16)
+
+    // boolean rows render Switch; the enum row renders SegmentedControl
+    const booleanRow = rendered.children.find((child) => child.descriptor?.kind === 'boolean')
+    const booleanRendered = booleanRow.__type({ descriptor: booleanRow.descriptor, field: { text: 'true', overridden: false }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
+    expect(booleanRendered.children[1].children[2].checked).toBe(true)
+    expect(typeof booleanRendered.children[1].children[2].onChange).toBe('function')
+    const enumRow = rendered.children.find((child) => child.descriptor?.kind === 'enum')
+    const enumRendered = enumRow.__type({ descriptor: enumRow.descriptor, field: { text: 'llm', overridden: true }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
+    expect(enumRendered.children[1].children[2].value).toBe('llm')
+    expect(enumRendered.children[1].children[2].options).toHaveLength(3)
+    expect(enumRendered.children[1].children[0].children).toBe('overridden')
   })
 })
