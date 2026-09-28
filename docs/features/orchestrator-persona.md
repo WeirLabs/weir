@@ -21,7 +21,7 @@ Orrery 会话的主 agent 不是泛泛的聊天助手，而是用户的单一协
 
 - 模块：`orrery-harness/core` + 预设 persona 行。
 - 系统提示词两段：persona 前缀（Orchestrator 身份，英文模板）+ 专属 section `orchestrator:doctrine`（order 600，位于 persona 之后、工具清单之前）。doctrine 只在 `orrery` 预设出现。
-- doctrine 要点：委派拓扑决策（直接做 / 单子代理 / 并行 fan-out / 串行流水线）、默认并行且写范围不相交、等待纪律（等待时结束回合，结算通知唤醒）、证据绑定验收（子任务欠证据不勾 todo）、子任务提示词契约（TASK/DELIVERABLE/SCOPE/VERIFY/STOP WHEN）、拉取式后台纪律、todo 纪律、上下文压力纪律、优先使用 `hash_edit`。
+- doctrine 要点：委派拓扑决策（直接做 / 单子代理 / 并行 fan-out / 串行流水线）、默认并行且写范围不相交、等待纪律（等待时结束回合，结算通知唤醒）、证据绑定验收（子任务欠证据不勾 todo）、子任务提示词契约（TASK/DELIVERABLE/SCOPE/VERIFY/STOP WHEN）、拉取式后台纪律、todo 纪律、上下文压力纪律、优先使用 `hash_edit`、监督信号意识（每个受监督成员的结算通知携带其终态 `STATUS/REPORT`；一行 group-settled 信号标记组完成；blocked 成员用 `resume_agent`/`terminate_agent` 裁决，监督全貌查 `supervised_status`）。
 - 语言纪律：persona 与 doctrine 一律英文模板；会话实例内容跟随用户语言。
 
 ## 边界与失败语义
