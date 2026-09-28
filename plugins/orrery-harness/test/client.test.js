@@ -74,7 +74,7 @@ describe('orrery settings client half', () => {
     }
     const surface = loaded[0].factory(requireStub)
 
-    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote', 'remote.session'])
+    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote', 'remote.session', 'remote.commands'])
     expect(surface.NS).toBe('settings.orrery')
 
     // apply: locale dictionaries, form card, whileServed → slot registration
@@ -124,14 +124,22 @@ describe('orrery settings client half', () => {
     expect(whileServedCalls).toHaveLength(1)
     expect(whileServedCalls[0].namespaces).toEqual(['orrery-settings'])
 
-    // drive the whileServed registration: three slot injects
+    // drive the whileServed registration: the LSP toggle registered at apply,
+    // then three page-chain slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['settings.section', 'settings.orrery.item', 'plugins.item'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.session.header.utilities', 'settings.section', 'settings.orrery.item', 'plugins.item'])
 
-    // the top-level settings section registration
+    // the per-session LSP toggle in the conversation header utilities slot
     slotInjects[0].fn()
     expect(slotRegistrations).toHaveLength(1)
-    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[0]
+    expect(slotRegistrations[0].definition.name).toBe('conversation.session.header.utilities')
+    expect(slotRegistrations[0].definition.id).toBe('orrery-lsp-toggle')
+    expect(slotRegistrations[0].definition.order).toBe(100)
+
+    // the top-level settings section registration
+    slotInjects[1].fn()
+    expect(slotRegistrations).toHaveLength(2)
+    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[1]
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
     expect(sectionDef.order).toBe(40)
@@ -140,15 +148,15 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[1].fn()
-    expect(slotRegistrations).toHaveLength(2)
-    expect(slotRegistrations[1].definition.name).toBe('settings.orrery.item')
-    expect(slotRegistrations[1].definition.id).toBe('orrery-config')
-
-    // the Plugins-page entry
     slotInjects[2].fn()
     expect(slotRegistrations).toHaveLength(3)
-    const { definition, component } = slotRegistrations[2]
+    expect(slotRegistrations[2].definition.name).toBe('settings.orrery.item')
+    expect(slotRegistrations[2].definition.id).toBe('orrery-config')
+
+    // the Plugins-page entry
+    slotInjects[3].fn()
+    expect(slotRegistrations).toHaveLength(4)
+    const { definition, component } = slotRegistrations[3]
     expect(definition.name).toBe('plugins.item')
     expect(definition.id).toBe('orrery-settings')
     expect(definition.order).toBe(30)
@@ -233,3 +241,198 @@ describe('orrery settings client half', () => {
     expect(enumRendered.children[1].children[1].children[0].children).toBe('overridden')
   })
 })
+
+describe('orrery session LSP toggle', () => {
+  it('injects the header switch, drives /lsp via commands, and reads the projection', async () => {
+    // Fresh module instance (cache-busted) with a hook-state-preserving react
+    // stub so the component can be re-rendered across async state updates.
+    const loaded = []
+    globalThis.window = {
+      __ModuleLoader__: {
+        load: (definition) => loaded.push(definition),
+      },
+    }
+    await import('../lib/client.js?lsp-toggle=1')
+
+    const reactState = []
+    let hookCursor = 0
+    const reactStub = {
+      reset() {
+        reactState.length = 0
+      },
+      begin() {
+        hookCursor = 0
+      },
+      useState(initial) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = [initial, (next) => {
+          reactState[at][0] = next
+        }]
+        return reactState[at]
+      },
+      useEffect(fn) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = { cleanup: fn() }
+        return undefined
+      },
+      useRef: (initial) => ({ current: initial }),
+    }
+    const requireStub = (name) => {
+      if (name === 'react') return reactStub
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {
+        settingsNumberField: (field) => ({ field, kind: 'number' }),
+        settingsTextField: (field) => ({ field, kind: 'text' }),
+        SettingsValueField: (props) => ({ __field: props }),
+        Switch: (props) => ({ __switch: props }),
+        SegmentedControl: (props) => ({ __segmented: props }),
+        Tag: (props) => ({ __tag: props }),
+        SettingsForm: (props) => ({ __form: props }),
+        SettingsFormModel: class {
+          bind(project) {
+            return { marker: 'store', set: () => {} }
+          }
+          field() {
+            return { text: '', overridden: false, invalid: false }
+          }
+          shell() {
+            return { available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false }
+          }
+          actions() {
+            return { edit: () => {}, resetField: () => {}, save: async () => {}, discard: () => {} }
+          }
+          dispose() {}
+        },
+      }
+      if (name === 'orrery-model-picker') return { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: class { render() { return null } } }
+      throw new Error(`unexpected require ${name}`)
+    }
+    const surface = loaded[0].factory(requireStub)
+    expect(surface.inject).toContain('remote.commands')
+
+    const executed = []
+    const slotInjects = []
+    const slotRegistrations = []
+    const ctx = {
+      locale: {
+        bind: () => (key) => key,
+        register: () => {},
+      },
+      effect: (fn) => {
+        fn()
+        return () => {}
+      },
+      configForms: {
+        get: () => ({}),
+        whileServed: () => () => {},
+      },
+      remote: {
+        session: {
+          modelCatalog: async () => ({ ok: true, value: { groups: [] } }),
+          projections: async ({ sessionId }) => ({ ok: true, value: sessionId === 'on-session' ? { orreryLsp: { enabled: true } } : null }),
+        },
+        commands: {
+          execute: async (sessionId, input, args) => {
+            executed.push({ sessionId, input, args })
+            if (input === '/lsp on') return { ok: true, value: { kind: 'success' } }
+            return { ok: false, error: { message: 'boom', code: 'X' } }
+          },
+          list: async (sessionId) => ({ ok: true, value: [{ name: 'lsp' }, { name: 'plan' }] }),
+        },
+      },
+      slots: {
+        inject: (name, fn) => {
+          slotInjects.push({ name, fn })
+          return () => {}
+        },
+        register: (definition, component) => {
+          slotRegistrations.push({ definition, component })
+          return () => {}
+        },
+      },
+    }
+    surface.apply(ctx)
+
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.session.header.utilities'])
+    slotInjects[0].fn()
+    const { definition, component } = slotRegistrations[0]
+    expect(definition.id).toBe('orrery-lsp-toggle')
+    expect(definition.locale).toBe('settings.orrery')
+
+    // inject without a session id renders nothing
+    expect(definition.inject(undefined)).toEqual({})
+
+    // inject verbs: toggleLsp maps /lsp on|off through remote commands
+    const injected = definition.inject('sess-1')
+    expect(injected.sessionId).toBe('sess-1')
+    expect(await injected.toggleLsp(true)).toBe(null)
+    expect(executed).toEqual([{ sessionId: 'sess-1', input: '/lsp on', args: [] }])
+    expect(await injected.toggleLsp(false)).toBe('boom (X)')
+    expect(executed[1]).toEqual({ sessionId: 'sess-1', input: '/lsp off', args: [] })
+    expect(await injected.commandsList('sess-1')).toEqual([{ name: 'lsp' }, { name: 'plan' }])
+    expect(await injected.fetchLspState()).toBe(undefined)
+    const onInjected = definition.inject('on-session')
+    expect(await onInjected.fetchLspState()).toBe(true)
+
+    // component: renders null until the command catalog confirms availability
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const baseProps = {
+      sessionId: 'sess-1',
+      t: (key) => key,
+      toggleLsp: async () => null,
+      fetchLspState: async () => undefined,
+      commandsList: async () => [{ name: 'lsp' }],
+    }
+    const settle = async (props) => {
+      reactStub.reset()
+      reactStub.begin()
+      const first = component(props)
+      await flush()
+      reactStub.begin()
+      return { first, settled: component(props) }
+    }
+    const { first, settled } = await settle(baseProps)
+    expect(first).toBe(null)
+    expect(settled['data-orrery-lsp-state']).toBe('off')
+
+    // with useProjection the switch shows the host-folded state
+    const { settled: onButton } = await settle({ ...baseProps, useProjection: (key) => (key === 'orreryLsp' ? { enabled: true } : undefined) })
+    expect(onButton.__type).toBe('button')
+    expect(onButton['data-orrery-lsp-toggle']).toBe('')
+    expect(onButton['data-orrery-lsp-state']).toBe('on')
+    expect(onButton['aria-pressed']).toBe(true)
+    expect(onButton.title).toBe('lspToggleTitle')
+
+    // without useProjection the fallback fetch seeds the local state
+    const { settled: fallbackButton } = await settle({ ...baseProps, fetchLspState: async () => true })
+    expect(fallbackButton['data-orrery-lsp-state']).toBe('on')
+
+    // clicking toggles and, without the projection hook, updates optimistically
+    let lastToggle = null
+    const clickProps = { ...baseProps, toggleLsp: async (enabled) => {
+      lastToggle = enabled
+      return null
+    } }
+    const clickRun = await settle(clickProps)
+    expect(clickRun.settled['data-orrery-lsp-state']).toBe('off')
+    clickRun.settled.onClick()
+    await flush()
+    reactStub.begin()
+    const afterClick = component(clickProps)
+    expect(lastToggle).toBe(true)
+    expect(afterClick['data-orrery-lsp-state']).toBe('on')
+
+    // a failing toggle surfaces the error in the title
+    const failingProps = { ...baseProps, toggleLsp: async () => 'nope' }
+    const failingRun = await settle(failingProps)
+    failingRun.settled.onClick()
+    await flush()
+    reactStub.begin()
+    expect(component(failingProps).title).toBe('nope')
+
+    // capability absent from the catalog → no switch
+    const absentRun = await settle({ ...baseProps, commandsList: async () => [] })
+    expect(absentRun.settled).toBe(null)
+  })
+})
+

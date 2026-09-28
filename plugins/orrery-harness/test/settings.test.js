@@ -42,14 +42,18 @@ describe('settings plugin apply', () => {
   function harness(config, settingsForms) {
     const provided = []
     const configured = []
+    const handlers = {}
     const ctx = {
       reflect: {
         provide: (name, impl) => provided.push({ name, impl }),
       },
       get: (key) => (key === 'settings' ? settingsForms : undefined),
+      on: (event, handler) => {
+        handlers[event] = handler
+      },
     }
     applySettings(ctx, config)
-    return { provided, configured, service: provided[0]?.impl }
+    return { provided, configured, handlers, service: provided[0]?.impl }
   }
 
   it('provides the orrerySettings service returning user-set sections', () => {
@@ -95,6 +99,39 @@ describe('settings plugin apply', () => {
 
   it('stays silent without the forms service', () => {
     harness({}, undefined) // must not throw
+  })
+
+  it('recomputes sections live from the mutated config reference (volatile commit)', () => {
+    const config = { todoMaxConsecutive: 3 }
+    const { service } = harness(config)
+    expect(service.get('todoDriver')).toEqual({ maxConsecutive: 3 })
+    config.todoMaxConsecutive = 9
+    config.lspEnabled = true
+    expect(service.get('todoDriver')).toEqual({ maxConsecutive: 9 })
+    expect(service.get('lsp')).toEqual({ enabled: true })
+    delete config.lspEnabled
+    expect(service.get('lsp')).toBe(undefined)
+  })
+
+  it('re-parses live categoryChains only when the raw string changes', () => {
+    const config = { delegateCategoryChains: '{"quick":[{"provider":"p","model":"m"}]}' }
+    const { service } = harness(config)
+    const first = service.get('delegate')
+    const second = service.get('delegate')
+    expect(second.categoryChains).toEqual(first.categoryChains)
+    config.delegateCategoryChains = '{"deep":[{"provider":"q","model":"n"}]}'
+    expect(service.get('delegate').categoryChains).toEqual({ deep: [{ provider: 'q', model: 'n' }] })
+  })
+
+  it('onChange subscribers fire on loader/volatile-update', () => {
+    const { handlers, service } = harness({})
+    const calls = []
+    const unsubscribe = service.onChange(() => calls.push(1))
+    handlers['loader/volatile-update']([['lspEnabled']])
+    expect(calls).toHaveLength(1)
+    unsubscribe()
+    handlers['loader/volatile-update']([['lspEnabled']])
+    expect(calls).toHaveLength(1)
   })
 })
 
