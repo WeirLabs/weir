@@ -9,7 +9,7 @@ import { dirname } from 'node:path'
 const name = 'orrery-it-event-tap'
 const inject = []
 
-const TRACE = process.env.ORRERY_IT_TRACE ?? '/tmp/orrery-it/trace.jsonl'
+const TRACE = process.env.ORRERY_IT_TRACE ?? '/Users/young/.orrery-it/trace.jsonl'
 
 /** The orrery audit vocabulary emitted on the cordis bus (keep in sync). */
 const ORRERY_AUDIT_TYPES = ['intent-hit', 'intent-classify', 'continuation-blocked', 'continuation-stop', 'supervision']

@@ -10,8 +10,8 @@ const name = 'orrery-it-mock-llm'
 const inject = ['llm']
 
 const SCENARIO = process.env.ORRERY_IT_SCENARIO ?? 'deepwork'
-const TRACE = process.env.ORRERY_IT_TRACE ?? '/tmp/orrery-it/trace.jsonl'
-const FIXTURE = process.env.ORRERY_IT_FIXTURE ?? '/tmp/orrery-it/ws/fixture.txt'
+const TRACE = process.env.ORRERY_IT_TRACE ?? '/Users/young/.orrery-it/trace.jsonl'
+const FIXTURE = process.env.ORRERY_IT_FIXTURE ?? '/Users/young/.orrery-it/ws/fixture.txt'
 const WINDOW = Number(process.env.ORRERY_IT_WINDOW ?? '128000')
 const LONG_FILLER = 'Filler line to raise pressure. '.repeat(600)
 
@@ -183,7 +183,7 @@ function decideSemantic(options) {
   return textChunks('unhandled semantic turn')
 }
 
-const TSFIXTURE = process.env.ORRERY_IT_TSFIXTURE ?? '/tmp/orrery-it/ws/probe.ts'
+const TSFIXTURE = process.env.ORRERY_IT_TSFIXTURE ?? '/Users/young/.orrery-it/ws/probe.ts'
 
 function decideLsp(options) {
   const history = transcript(options)

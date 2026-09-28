@@ -14,7 +14,10 @@ const WS_ROOT = join(HERE, '..', '..')
 const NODE = '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
 const PNPM = '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs'
 const DSH_BIN = '/tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
-const IT_ROOT = '/tmp/orrery-it'
+// Relocated off /tmp: writableRoots(workspace-write) always contains /tmp and tmpdir(),
+// so a sandbox-mirroring regression (S23) can only reproduce a denial when the
+// test workspace lives OUTSIDE every unconditional writable root.
+const IT_ROOT = '/Users/young/.orrery-it'
 const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
@@ -71,6 +74,7 @@ function runScenario(scenario) {
   const env = {
     ...process.env,
     DSH_HOME: HOME,
+    ORRERY_IT_ROOT: IT_ROOT,
     ORRERY_IT_SCENARIO: scenario,
     ORRERY_IT_TRACE: trace,
     ORRERY_IT_FIXTURE: join(WS, 'fixture.txt'),

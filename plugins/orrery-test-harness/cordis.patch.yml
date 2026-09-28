@@ -8,6 +8,15 @@
   config:
     provider: mock
     model: mock-1
+# Mirror the desktop host's sandbox semantics (S23): pin the DEPLOYMENT
+# fallback workspace root AWAY from the session workspace, so any ctx.fs
+# writer that omits the per-call policy is denied exactly like desktop
+# sessions. The test workspace lives outside /tmp and tmpdir(), so the
+# unconditional writable roots cannot rescue a faulty call either.
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js (process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it') + '/outside'
 - insert:
     - id: orrery-it-mock-llm
       name: 'orrery-test-harness/mock-llm'
@@ -53,7 +62,7 @@
         servers:
           typescript:
             command: '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
-            args: ['/tmp/orrery-it/ws/mock-lsp-server.js']
+            args: [!!js (process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it') + '/ws/mock-lsp-server.js']
             installHint: 'not-needed-in-tests'
     # Mirror the real preset's realm structure: the compaction provider and the
     # context-guard consumer co-isolated in one group. This reproduces the
