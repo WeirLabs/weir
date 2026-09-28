@@ -4,6 +4,7 @@ window.__ModuleLoader__.load({
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		// The Orrery settings page, browser half: one flat form over the
@@ -16,6 +17,7 @@ window.__ModuleLoader__.load({
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
 				{ field: "intentGateProvider", kind: "text" },
 				{ field: "intentGateModel", kind: "text" },
+				{ field: "intentGateReasoningEffort", kind: "text" },
 				{ field: "intentGateTimeoutMs", kind: "number" },
 				{ field: "jevEndpoint", kind: "text" },
 				{ field: "jevModel", kind: "text" },
@@ -176,9 +178,7 @@ window.__ModuleLoader__.load({
 					react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
 				] }),
-				react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-					field.overridden ? react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }) : null,
-					field.overridden ? react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: t("reset") }) : null,
+				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
 						checked: field.text === "true",
 						onChange: (checked) => props.onChange(String(checked)),
@@ -191,42 +191,123 @@ window.__ModuleLoader__.load({
 						onChange: (value) => props.onChange(value),
 						disabled,
 						label: t(descriptor.field)
-					})
+					}),
+					field.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+						react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
+						react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: t("reset") })
+					] }) : null
 				] })
 			] });
 		}
+		const menuStyle = {
+			position: "absolute",
+			top: "calc(100% + 4px)",
+			right: 0,
+			zIndex: 1000,
+			minWidth: "260px",
+			maxHeight: "320px",
+			overflowY: "auto",
+			background: "var(--dsw-specific-selector)",
+			border: "1px solid var(--dsw-alias-border-l2)",
+			borderRadius: "var(--dsw-radius-md)",
+			boxShadow: "var(--dsw-elevation-soft)",
+			padding: "4px"
+		};
+		const menuRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", width: "100%", padding: "8px 10px", borderRadius: "var(--dsw-radius-sm)", background: "none", border: "none", cursor: "pointer", fontSize: "13px", lineHeight: "18px", textAlign: "left", color: "var(--dsw-alias-label-primary)" };
+		const menuHeaderStyle = { fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dsw-alias-label-secondary)", padding: "8px 10px 2px" };
 		function ModelPickerField(props) {
-			const { descriptor, providerText, modelText, catalog, t, disabled } = props;
-			const groups = catalog.status === "ready" ? catalog.groups : [];
-			const providerGroups = groups.filter((group) => group.models?.length > 0);
+			const { descriptor, providerText, modelText, effortText, catalog, t, disabled, providerOverridden, modelOverridden, effortOverridden } = props;
+			const [open, setOpen] = react.useState(false);
+			const [pane, setPane] = react.useState("root");
+			const rootRef = react.useRef(null);
+			react.useEffect(() => {
+				if (!open) return;
+				const onDown = (event) => {
+					if (rootRef.current?.contains(event.target) === true) return;
+					setOpen(false);
+					setPane("root");
+				};
+				const onKey = (event) => {
+					if (event.key === "Escape") {
+						setOpen(false);
+						setPane("root");
+					}
+				};
+				document.addEventListener("mousedown", onDown);
+				document.addEventListener("keydown", onKey);
+				return () => {
+					document.removeEventListener("mousedown", onDown);
+					document.removeEventListener("keydown", onKey);
+				};
+			}, [open]);
+			const groups = catalog.status === "ready" ? catalog.groups.filter((group) => group.models?.length > 0) : [];
+			const models = groups.flatMap((group) => group.models.map((model) => ({ group, model })));
 			const provider = providerText.trim();
-			const currentGroup = providerGroups.find((group) => group.id === provider);
-			const modelOptions = currentGroup?.models ?? [];
-			const selectProps = (field, options, value) => ({
-				style: selectStyle,
-				value,
-				disabled,
-				onChange: (event) => props.onChange(field, event.target.value)
-			});
-			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
+			const model = modelText.trim();
+			const current = models.find((entry) => entry.group.id === provider && entry.model.id === model);
+			const reasoning = current?.model.reasoning;
+			const effortChoices = reasoning === undefined ? [] : [
+				...(reasoning.defaultEffort === undefined ? [{ id: "", label: t("effortProviderDefault") }] : []),
+				...(reasoning.efforts ?? []).map((effort) => ({ id: effort.id, label: effort.name }))
+			];
+			const modelLabel = current?.model.name ?? (provider || model ? `${provider}/${model}` : t("modelEmpty"));
+			const effortLabel = reasoning === undefined ? "" : effortChoices.find((choice) => choice.id === effortText.trim())?.label ?? (effortText.trim() || t("effortProviderDefault"));
+			const overridden = providerOverridden || modelOverridden || effortOverridden;
+			const menuRow = (item) => react_jsx_runtime.jsxs("button", { type: "button", style: menuRowStyle, onClick: () => item.onSelect(), children: [
+				react_jsx_runtime.jsx("span", { children: item.label }),
+				item.checked ? react_jsx_runtime.jsx("span", { style: { opacity: 0.9 }, children: "✓" }) : item.chevron ? react_jsx_runtime.jsx("span", { style: { opacity: 0.6 }, children: "›" }) : null
+			] });
+			return react_jsx_runtime.jsx("div", { ref: rootRef, style: { position: "relative", ...rowStyle }, children: [
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
 					react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: catalog.status === "error" ? t("catalogFailed") : t(`${descriptor.field}Hint`) })
 				] }),
-				react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-					props.providerOverridden ? react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }) : null,
-					props.providerOverridden ? react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => props.onReset("intentGateProvider"), children: t("reset") }) : null,
-					react_jsx_runtime.jsxs("select", { ...selectProps("intentGateProvider", providerGroups.map((group) => group.id), provider), children: [
-						react_jsx_runtime.jsx("option", { value: "", children: catalog.status === "ready" ? t("providerEmpty") : t("catalogLoading") }),
-						...providerGroups.map((group) => react_jsx_runtime.jsx("option", { value: group.id, children: group.id, key: group.id }))
-					] }),
-					props.modelOverridden ? react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }) : null,
-					props.modelOverridden ? react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => props.onReset("intentGateModel"), children: t("reset") }) : null,
-					react_jsx_runtime.jsxs("select", { ...selectProps("intentGateModel", modelOptions.map((model) => model.id), modelText.trim()), children: [
-						react_jsx_runtime.jsx("option", { value: "", children: t("modelEmpty") }),
-						...modelOptions.map((model) => react_jsx_runtime.jsx("option", { value: model.id, children: model.id, key: model.id }))
-					] })
-				] })
+				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+					react_jsx_runtime.jsx("button", {
+						type: "button",
+						style: { ...selectStyle, maxWidth: "280px", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" },
+						disabled,
+						onClick: () => {
+							setOpen(!open);
+							setPane("root");
+						},
+						children: catalog.status === "ready" ? `${modelLabel}${effortLabel ? ` · ${effortLabel}` : ""}` : catalog.status === "error" ? (provider || model ? modelLabel : t("catalogFailed")) : t("catalogLoading")
+					}),
+					overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+						react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
+						react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => {
+							props.onReset("intentGateProvider");
+							props.onReset("intentGateModel");
+							props.onReset("intentGateReasoningEffort");
+						}, children: t("reset") })
+					] }) : null
+				] }),
+				open ? react_jsx_runtime.jsxs("div", { role: "menu", style: menuStyle, children: pane === "root" ? [
+					menuRow({ label: t("pickerModel"), chevron: true, onSelect: () => setPane("model") }),
+					menuRow({ label: t("pickerEffort"), chevron: true, onSelect: () => setPane("effort") })
+				] : pane === "model" ? groups.flatMap((group) => [
+					react_jsx_runtime.jsx("div", { style: menuHeaderStyle, children: group.id, key: `h-${group.id}` }),
+					...group.models.map((entry) => menuRow({
+						label: entry.model.name ?? entry.model.id,
+						checked: provider === group.id && model === entry.model.id,
+						onSelect: () => {
+							props.onChange("intentGateProvider", group.id);
+							props.onChange("intentGateModel", entry.model.id);
+							const defaultEffort = entry.model.reasoning?.defaultEffort;
+							if (defaultEffort !== undefined) props.onChange("intentGateReasoningEffort", defaultEffort);
+							setOpen(false);
+							setPane("root");
+						}
+					}))
+				]) : effortChoices.map((choice) => menuRow({
+					label: choice.label,
+					checked: choice.id === "" ? !effortText.trim() : effortText.trim() === choice.id,
+					onSelect: () => {
+						props.onChange("intentGateReasoningEffort", choice.id);
+						setOpen(false);
+						setPane("root");
+					}
+				})) }) : null
 			] });
 		}
 		function OrreryCard(props) {
@@ -237,16 +318,20 @@ window.__ModuleLoader__.load({
 			const children = GROUPS.flatMap((group, groupIndex) => {
 				const rows = group.fields.map((descriptor) => {
 					const field = state.fields[descriptor.field];
-					if (descriptor.field === "intentGateProvider" || descriptor.field === "intentGateModel") {
-						const providerText = state.fields.intentGateProvider.text;
-						const modelText = state.fields.intentGateModel.text;
+					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort") {
+						// folded into the single ModelPickerField row below
+						return null;
+					}
+					if (descriptor.field === "intentGateProvider") {
 						return react_jsx_runtime.jsx(ModelPickerField, {
 							descriptor,
-							providerText,
-							modelText,
+							providerText: state.fields.intentGateProvider.text,
+							modelText: state.fields.intentGateModel.text,
+							effortText: state.fields.intentGateReasoningEffort.text,
 							catalog: state.catalog,
 							providerOverridden: state.fields.intentGateProvider.overridden,
 							modelOverridden: state.fields.intentGateModel.overridden,
+							effortOverridden: state.fields.intentGateReasoningEffort.overridden,
 							t,
 							disabled,
 							onChange: (fieldName, text) => props.edit(fieldName, text),
@@ -284,7 +369,7 @@ window.__ModuleLoader__.load({
 				return [
 					react_jsx_runtime.jsx("h3", { style: groupIndex === 0 ? firstGroupTitleStyle : groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),
 					...rows
-				];
+				].filter(Boolean);
 			});
 			return react_jsx_runtime.jsxs(primitives.SettingsForm, {
 				labels: formLabels(t),
@@ -306,6 +391,9 @@ window.__ModuleLoader__.load({
 			reset: "Reset to default",
 			invalidValue: "Enter a value this field accepts, or leave blank to use the default.",
 			catalogLoading: "Loading providers…",
+			pickerModel: "Model",
+			pickerEffort: "Reasoning",
+			effortProviderDefault: "Provider default",
 			catalogFailed: "Provider catalog unavailable; enter provider and model manually.",
 			providerEmpty: "Select a provider",
 			modelEmpty: "Select a model",
@@ -376,6 +464,9 @@ window.__ModuleLoader__.load({
 			reset: "恢复默认",
 			invalidValue: "请输入该字段接受的值，或留空以使用默认值。",
 			catalogLoading: "正在加载 provider…",
+			pickerModel: "模型",
+			pickerEffort: "推理",
+			effortProviderDefault: "跟随 provider 默认",
 			catalogFailed: "Provider 目录不可用；可手动填写 provider 与模型。",
 			providerEmpty: "选择 provider",
 			modelEmpty: "选择模型",

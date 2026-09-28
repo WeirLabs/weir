@@ -68,6 +68,7 @@ function apply(ctx, config = {}) {
     routeOverride: {
       ...(config.classifierProvider ? { provider: config.classifierProvider } : {}),
       ...(config.classifierModel ? { model: config.classifierModel } : {}),
+      ...(config.classifierReasoningEffort ? { reasoningEffort: config.classifierReasoningEffort } : {}),
     },
     timeoutMs: config.classifierTimeoutMs,
     jev: config.jev,
