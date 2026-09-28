@@ -14,7 +14,7 @@
 - **监督可见性**（`supervised_status` 工具，仅主 agent 可用）：逐子代理报告 id/名称/组/状态（`running`/`blocked`/`completed`/`terminated`）/续推次数/报告摘要，逐组报告成员数与 sealed/settled 状态；并对 DSH catalog 中未被协调器登记的 continuable 子代理做**孤儿检测**（标记 untracked，绝不与空注册表混淆）。
 - 模型链逐档解析：首选不可用自动落到下一档；整链不可用时**显式报错**（点名类别与尝试过的档位），绝不悄悄换到别的模型族。
 - `deep` 类别子代理若首行返回 `ESCALATE: deep-plus`，自动携带其发现重派到 `deep-plus` 一层，并声明发生了升级。
-- 只读代理试图写/改文件会被拒绝（只读是强制的，不是建议）；其 bash 访问受**只读白名单守卫**：白名单内只读命令（`ls`、`cat`、`grep`、`find`、`jq`、`git status/log/show/diff/blame` 等）正常执行；写命令、解释器、嵌套 shell、写重定向、以及守卫无法证明只读的命令一律 **fail-closed 拒绝**（v1 不覆盖 `pwsh`，一律拒绝）。
+- 只读代理试图写/改文件会被拒绝（只读是强制的，不是建议）；其 shell 访问受**只读白名单守卫**（bash；Windows 上预设禁用 bash、改挂 pwsh 工具，守卫经独立的 PowerShell 解析路径覆盖 pwsh）：白名单内只读命令（bash 侧 `ls`、`cat`、`grep`、`find`、`jq`、`git status/log/show/diff/blame` 等；pwsh 侧 `Get-Content`、`Get-ChildItem`、`Select-String`、`Test-Path` 等只读 cmdlet 与共享的 git 子命令门控）正常执行；写命令、解释器、嵌套 shell、写重定向、pwsh 逃逸向量（`iex`/`Invoke-Expression`/`Start-Process`/`` i`ex `` 转义拼接等）、以及守卫无法证明只读的命令一律 **fail-closed 拒绝**。pwsh 解析按 PowerShell 词法自实现：反引号转义先还原再查表（`` i`ex `` → `iex` → 拒绝）、`&` 调用操作符剥除、`$(...)`/`(...)` 递归校验、here-string 检测、内建只读别名表展开、**大小写不敏感**查表（deny 优先）、`--%` 直拒。**验收边界（显式登记）**：开发与 CI 均无 Windows 环境——pwsh 解析正确性与绕过抵抗由单测语料（对照 PowerShell 官方语法）与 mock wiring 单测保证，真实 pwsh 行为与桌面实机验收待用户在 Windows 环境执行。
 
 ## 配置
 
@@ -28,6 +28,7 @@
 | `readOnlyBash.gitAllow` | 10 个子命令 | git 只读子命令白名单（`status log show diff blame grep ls-files ls-tree rev-parse describe shortlog`）。设置页键：`robashGitAllow` |
 | `readOnlyBash.deny` | 显式 deny 列表 | 优先于 allow 的整词 deny（`rm`、`sudo`、解释器、包管理器等）。设置页键：`robashDeny` |
 | 白名单三表语义 | 缺席回退 / 在场权威 | 每个列表键独立解析：未设置 → 回退下层（行 config → 模块默认）；已设置（含 `[]`）→ 权威生效，**空数组 = 显式清空（fail-closed 更严），不回退默认**；坏 JSON 设置服务激活即败。设置页提供结构化行编辑（`RobashListEditorField`），无需手写 JSON |
+| `readOnlyPwsh.allow` / `readOnlyPwsh.deny` | 初版 pwsh 白名单 | pwsh 侧只读 cmdlet 白名单与逃逸向量 deny（大小写不敏感、deny 优先、内建别名表展开后查表）。设置页键：`robashPwshAllow` / `robashPwshDeny`（JSON 字符串数组，语义同上表）；git 子命令门控共享 `robashGitAllow` |
 | `supervision.maxRetries` | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用） |
 | `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
 | `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |
