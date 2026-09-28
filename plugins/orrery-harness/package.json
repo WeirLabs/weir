@@ -14,6 +14,7 @@
     "./hashline-edit": "./src/hashline-edit/index.js",
     "./settings": "./src/settings/index.js",
     "./lsp": "./src/lsp/index.js",
+    "./lsp-admin": "./src/lsp/admin.js",
     "./client": "./lib/client.js",
     "./index.js": "./lib/index.js",
     ".": "./lib/index.js"

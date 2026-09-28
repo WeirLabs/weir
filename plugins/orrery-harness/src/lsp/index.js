@@ -54,12 +54,16 @@ export function foldLspState(state, event) {
 }
 
 function apply(ctx, config = {}) {
-  // Capability gate: settings overlay wins over the row config; the settings
-  // service is re-resolved and read at every evaluation so volatile commits
-  // propagate live (the service recomputes sections from the mutated config).
+  // Settings overlay wins over the row config; the settings service is
+  // re-resolved and read at every evaluation so volatile commits propagate
+  // live (the service recomputes sections from the mutated config).
+  const settingsSection = () => ctx.get?.('orrerySettings')?.get('lsp')
+  const option = (key, fallback) => {
+    const value = settingsSection()?.[key]
+    return value === undefined ? fallback : value
+  }
   const gate = () => {
-    const settings = ctx.get?.('orrerySettings')
-    const enabled = settings?.get('lsp')?.enabled ?? config.enabled
+    const enabled = settingsSection()?.enabled ?? config.enabled
     return enabled === true
   }
 
@@ -78,9 +82,9 @@ function apply(ctx, config = {}) {
       fs: ctx.fs,
       registry: buildRegistry(config.servers),
       options: {
-        idleMs: config.idleMs ?? LSP_DEFAULTS.idleMs,
-        requestTimeoutMs: config.requestTimeoutMs ?? LSP_DEFAULTS.requestTimeoutMs,
-        diagnosticsWaitMs: config.diagnosticsWaitMs ?? LSP_DEFAULTS.diagnosticsWaitMs,
+        idleMs: option('idleMs', config.idleMs ?? LSP_DEFAULTS.idleMs),
+        requestTimeoutMs: option('requestTimeoutMs', config.requestTimeoutMs ?? LSP_DEFAULTS.requestTimeoutMs),
+        diagnosticsWaitMs: option('diagnosticsWaitMs', config.diagnosticsWaitMs ?? LSP_DEFAULTS.diagnosticsWaitMs),
       },
     })
     return manager
@@ -93,7 +97,7 @@ function apply(ctx, config = {}) {
       manager,
       ctx,
       agent,
-      diagnosticsWaitMs: config.diagnosticsWaitMs ?? LSP_DEFAULTS.diagnosticsWaitMs,
+      diagnosticsWaitMs: option('diagnosticsWaitMs', config.diagnosticsWaitMs ?? LSP_DEFAULTS.diagnosticsWaitMs),
     }).map((definition) => agent.ctx.tools.register(definition))
     enabled.set(agent.id, { disposers })
   }
@@ -225,9 +229,20 @@ function apply(ctx, config = {}) {
     void disableFor(agent)
   })
 
-  // Live gate: volatile settings commits re-register the surface in place.
+  // Live gate + tuning: volatile settings commits re-register the surface
+  // and merge new tuning values into the running manager in place.
   const settings = ctx.get?.('orrerySettings')
-  const offSettings = settings?.onChange?.(applyGate)
+  const offSettings = settings?.onChange?.(() => {
+    applyGate()
+    if (surface && manager) {
+      const next = {
+        idleMs: option('idleMs', config.idleMs),
+        requestTimeoutMs: option('requestTimeoutMs', config.requestTimeoutMs),
+        diagnosticsWaitMs: option('diagnosticsWaitMs', config.diagnosticsWaitMs),
+      }
+      manager.setOptions(Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)))
+    }
+  })
   applyGate()
 
   return () => {

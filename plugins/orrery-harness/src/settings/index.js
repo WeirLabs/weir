@@ -41,6 +41,9 @@ export const Config = z.object({
   hashlineHideStockEdit: z.boolean().volatile().description('Hide the stock edit tool (hash_edit only)'),
   robashEnabled: z.boolean().volatile().description('Guarded read-only bash for curated agents (master switch)'),
   lspEnabled: z.boolean().volatile().description('LSP capability master switch (default off; when on, sessions start with LSP off and toggle it from the session header switch or the lsp tool)'),
+  lspIdleMs: z.number().volatile().description('LSP server idle shutdown threshold (ms)'),
+  lspRequestTimeoutMs: z.number().volatile().description('LSP request timeout (ms)'),
+  lspDiagnosticsWaitMs: z.number().volatile().description('LSP diagnostics publish wait window (ms)'),
 })
 
 /** Flat field names per section key (the service regroups them). */
@@ -81,6 +84,9 @@ const SECTIONS = {
   },
   lsp: {
     enabled: 'lspEnabled',
+    idleMs: 'lspIdleMs',
+    requestTimeoutMs: 'lspRequestTimeoutMs',
+    diagnosticsWaitMs: 'lspDiagnosticsWaitMs',
   },
 }
 

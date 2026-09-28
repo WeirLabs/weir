@@ -65,7 +65,10 @@ window.__ModuleLoader__.load({
 				{ field: "robashEnabled", kind: "boolean" }
 			] },
 			{ id: "lsp", fields: [
-				{ field: "lspEnabled", kind: "boolean" }
+				{ field: "lspEnabled", kind: "boolean" },
+				{ field: "lspIdleMs", kind: "number" },
+				{ field: "lspRequestTimeoutMs", kind: "number" },
+				{ field: "lspDiagnosticsWaitMs", kind: "number" }
 			] }
 		];
 		const FIELDS = GROUPS.flatMap((group) => group.fields);
@@ -305,6 +308,123 @@ window.__ModuleLoader__.load({
 				] })
 			] });
 		}
+		/** Error boundary isolating the LSP manager panel from the settings page. */
+		class LspManagerBoundary extends react.Component {
+			constructor(props) {
+				super(props);
+				this.state = { failed: false };
+			}
+			static getDerivedStateFromError() {
+				return { failed: true };
+			}
+			render() {
+				if (this.state.failed) {
+					return react_jsx_runtime.jsx("div", { style: hintStyle, children: this.props.t?.("lspManagerFailed") ?? "LSP manager failed" });
+				}
+				return this.props.children;
+			}
+		}
+		const lspServerRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "6px 0" };
+		const lspDot = (on) => ({ width: "7px", height: "7px", borderRadius: "50%", display: "inline-block", background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-disabled, #999)" });
+		/** LSP service manager: status over the community catalog + one-click install. */
+		function LspManagerField(props) {
+			const [open, setOpen] = react.useState(false);
+			const [view, setView] = react.useState(null);
+			const [confirming, setConfirming] = react.useState(null);
+			const [busy, setBusy] = react.useState(null);
+			const [result, setResult] = react.useState(null);
+			const t = props.t;
+			const load = () => {
+				setView({ status: "loading" });
+				fetch("api/orrery-lsp/status", { method: "POST", credentials: "include" })
+					.then((response) => response.json())
+					.then((payload) => {
+						setView(payload?.ok ? { status: "ready", servers: payload.value.servers } : { status: "error", message: payload?.error?.message ?? "unknown" });
+					})
+					.catch((error) => setView({ status: "error", message: String(error?.message ?? error) }));
+			};
+			const toggle = () => {
+				const next = !open;
+				setOpen(next);
+				setConfirming(null);
+				setResult(null);
+				if (next) load();
+			};
+			const runInstall = (family) => {
+				setConfirming(null);
+				setBusy(family);
+				setResult(null);
+				fetch("api/orrery-lsp/install", {
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ family })
+				})
+					.then((response) => response.json())
+					.then((payload) => {
+						setBusy(null);
+						setResult(payload?.ok ? { family, output: payload.value.output, exitCode: payload.value.exitCode, timedOut: payload.value.timedOut } : { family, error: payload?.error?.message ?? "unknown" });
+						if (payload?.ok) load();
+					})
+					.catch((error) => {
+						setBusy(null);
+						setResult({ family, error: String(error?.message ?? error) });
+					});
+			};
+			const serverRow = (server) => {
+				const label = t(`lspFamily_${server.family}`);
+				if (confirming === server.family) {
+					return react_jsx_runtime.jsxs("div", { style: lspServerRowStyle, key: server.family, children: [
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: label }),
+						react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+							react_jsx_runtime.jsx("code", { style: hintStyle, children: server.installCommand || server.installHint }),
+							react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+								react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, onClick: () => runInstall(server.family), children: t("lspManagerConfirmInstall") }),
+								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: () => setConfirming(null), children: t("lspManagerCancel") })
+							] })
+						] })
+					] });
+				}
+				const isBusy = busy === server.family;
+				return react_jsx_runtime.jsxs("div", { style: lspServerRowStyle, key: server.family, children: [
+					react_jsx_runtime.jsxs("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px" }, children: [
+						react_jsx_runtime.jsx("span", { style: lspDot(server.installed), "aria-hidden": true }),
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: label })
+					] }),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "2px" }, children: [
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: server.installed ? (server.version ?? t("lspManagerInstalled")) : t("lspManagerMissing") }),
+						!server.installed && server.installCommand ? react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: isBusy, onClick: () => setConfirming(server.family), children: isBusy ? t("lspManagerInstalling") : t("lspManagerInstall") }) : null
+					] })
+				] });
+			};
+			const panelBody = () => {
+				if (view === null) return null;
+				if (view.status === "loading") return react_jsx_runtime.jsx("div", { style: hintStyle, children: t("lspManagerLoading") });
+				if (view.status === "error") {
+					return react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "12px", alignItems: "center" }, children: [
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: `${t("lspManagerUnavailable")} ${view.message}` }),
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: load, children: t("lspManagerRetry") })
+					] });
+				}
+				return react_jsx_runtime.jsxs("div", { children: [
+					...(view.servers ?? []).map(serverRow),
+					result ? react_jsx_runtime.jsxs("div", { style: { ...chainPanelStyle, gap: "6px" }, children: [
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: `${t(`lspFamily_${result.family}`)} — ${result.error ?? `${t("lspManagerExitCode")} ${result.exitCode ?? "?"}${result.timedOut ? ` ${t("lspManagerTimedOut")}` : ""}`}` }),
+						result.output ? react_jsx_runtime.jsx("pre", { style: { ...hintStyle, whiteSpace: "pre-wrap", maxHeight: "160px", overflow: "auto" }, children: result.output }) : null
+					] }) : null
+				] });
+			};
+			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
+					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: t("lspManager") }),
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: t("lspManagerHint") })
+					] }),
+					react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: toggle, children: open ? t("chainCancel") : t("chainEdit") })
+				] }),
+				open ? react_jsx_runtime.jsx(LspManagerBoundary, { t, children: panelBody() }) : null
+			] });
+		}
 		function OrreryCard(props) {
 			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
 			const { t } = props;
@@ -441,6 +561,9 @@ window.__ModuleLoader__.load({
 						key: descriptor.field
 					});
 				});
+				if (group.id === "lsp") {
+					rows.push(react_jsx_runtime.jsx(LspManagerField, { t, key: "lsp-manager" }));
+				}
 				return [
 					react_jsx_runtime.jsx("h3", { style: groupIndex === 0 ? firstGroupTitleStyle : groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),
 					...rows
@@ -552,6 +675,39 @@ window.__ModuleLoader__.load({
 			robashEnabledHint: "Guarded read-only bash for curated agents, master switch (true/false).",
 			lspEnabled: "LSP semantic tools",
 			lspEnabledHint: "Capability master switch: off removes LSP entirely; on adds a per-session switch in the composer bar (sessions start with LSP off).",
+			lspIdleMs: "Server idle shutdown (ms)",
+			lspIdleMsHint: "Idle servers shut down after this many milliseconds.",
+			lspRequestTimeoutMs: "Request timeout (ms)",
+			lspRequestTimeoutMsHint: "Per-request LSP timeout; timeouts are ordinary tool errors.",
+			lspDiagnosticsWaitMs: "Diagnostics wait (ms)",
+			lspDiagnosticsWaitMsHint: "How long to wait for published diagnostics before answering.",
+			lspManager: "Manage LSP services",
+			lspManagerHint: "Check which language servers are installed and install the missing ones from the community catalog.",
+			lspManagerLoading: "Loading…",
+			lspManagerFailed: "The LSP manager failed; check the runtime log.",
+			lspManagerUnavailable: "LSP management endpoints unavailable in this deployment:",
+			lspManagerRetry: "Retry",
+			lspManagerInstall: "Install",
+			lspManagerCancel: "Cancel",
+			lspManagerConfirmInstall: "Run install",
+			lspManagerInstalling: "Installing…",
+			lspManagerInstalled: "Installed",
+			lspManagerMissing: "Not installed",
+			lspManagerExitCode: "Exit code",
+			lspManagerTimedOut: "(timed out)",
+			lspFamily_typescript: "TypeScript",
+			lspFamily_python: "Python",
+			lspFamily_go: "Go",
+			lspFamily_rust: "Rust",
+			lspFamily_json: "JSON",
+			lspFamily_html: "HTML",
+			lspFamily_css: "CSS",
+			lspFamily_markdown: "Markdown",
+			lspFamily_bash: "Bash",
+			lspFamily_dockerfile: "Dockerfile",
+			lspFamily_yaml: "YAML",
+			lspFamily_lua: "Lua",
+			lspFamily_cpp: "C/C++",
 			lspToggleLabel: "LSP",
 			lspToggleTitle: "Toggle LSP semantic tools for this session"
 		};
@@ -653,6 +809,39 @@ window.__ModuleLoader__.load({
 			robashEnabledHint: "精选只读代理的受守卫 bash 总开关（true/false）。",
 			lspEnabled: "LSP 语义工具",
 			lspEnabledHint: "能力总开关：关闭则完全移除 LSP；开启后输入栏出现本会话开关（新会话默认关，按会话启用）。",
+			lspIdleMs: "服务器空闲关停（毫秒）",
+			lspIdleMsHint: "空闲的语言服务器超过该时长自动关停。",
+			lspRequestTimeoutMs: "请求超时（毫秒）",
+			lspRequestTimeoutMsHint: "单请求 LSP 超时；超时为普通工具错误。",
+			lspDiagnosticsWaitMs: "诊断等待（毫秒）",
+			lspDiagnosticsWaitMsHint: "回答前等待诊断发布的窗口时长。",
+			lspManager: "管理 LSP 服务",
+			lspManagerHint: "查看各语言服务器安装状态，一键安装缺失的社区服务器。",
+			lspManagerLoading: "加载中…",
+			lspManagerFailed: "LSP 管理面板异常，请查看运行时日志。",
+			lspManagerUnavailable: "此部署不提供 LSP 管理端点：",
+			lspManagerRetry: "重试",
+			lspManagerInstall: "安装",
+			lspManagerCancel: "取消",
+			lspManagerConfirmInstall: "确认安装",
+			lspManagerInstalling: "安装中…",
+			lspManagerInstalled: "已安装",
+			lspManagerMissing: "未安装",
+			lspManagerExitCode: "退出码",
+			lspManagerTimedOut: "（超时）",
+			lspFamily_typescript: "TypeScript",
+			lspFamily_python: "Python",
+			lspFamily_go: "Go",
+			lspFamily_rust: "Rust",
+			lspFamily_json: "JSON",
+			lspFamily_html: "HTML",
+			lspFamily_css: "CSS",
+			lspFamily_markdown: "Markdown",
+			lspFamily_bash: "Bash",
+			lspFamily_dockerfile: "Dockerfile",
+			lspFamily_yaml: "YAML",
+			lspFamily_lua: "Lua",
+			lspFamily_cpp: "C/C++",
 			lspToggleLabel: "LSP",
 			lspToggleTitle: "为本会话启用/禁用 LSP 语义工具"
 		};
@@ -852,6 +1041,7 @@ window.__ModuleLoader__.load({
 		exports.apply = apply;
 		exports.inject = inject;
 		exports.chainEditor = { jsonToChains, chainsToJson };
+		exports.lspManager = { LspManagerField };
 		return module.exports;
 	}
 });

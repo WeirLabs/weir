@@ -151,5 +151,10 @@ export function createLspManager({ subprocess, fs, registry, options = {} }) {
     servers.clear()
   }
 
-  return { call, releaseSession, dispose, _servers: servers }
+  /** Merge tuning values in place: new values apply to later operations and new servers. */
+  function setOptions(partial = {}) {
+    Object.assign(opts, partial)
+  }
+
+  return { call, releaseSession, dispose, setOptions, _servers: servers }
 }
