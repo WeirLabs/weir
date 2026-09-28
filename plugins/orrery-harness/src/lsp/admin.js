@@ -157,12 +157,18 @@ export async function runInstall(registry, subprocess, family, timeoutMs = DEFAU
   return { output: output.slice(-8000), exitCode, timedOut }
 }
 
-function apply(ctx, config = {}) {
+/**
+ * Register the LSP management endpoints on a context that resolves
+ * `connection`/`subprocess` through ctx.get. Used by the settings row
+ * (profile-level, avoids a new package subpath — S14 stale-manifest class)
+ * and by this module's own apply when mounted directly.
+ */
+export function registerLspAdminEndpoints(ctx, config = {}) {
   const connection = ctx.get?.('connection')
   const subprocess = ctx.get?.('subprocess')
   if (!connection?.fetch?.register || !subprocess) {
     ctx.logger?.warn?.('orrery-lsp-admin: connection/subprocess unavailable — LSP management endpoints not registered')
-    return
+    return () => {}
   }
   // The panel manages the built-in community catalog; user `lsp.servers`
   // overlays live in the lsp module row config (documented).
@@ -200,7 +206,13 @@ function apply(ctx, config = {}) {
       },
     }),
   )
-  return () => disposers.forEach((dispose) => dispose?.())
+  return () => disposers.forEach((dispose) => {
+    if (typeof dispose === 'function') dispose()
+  })
+}
+
+function apply(ctx, config = {}) {
+  return registerLspAdminEndpoints(ctx, config)
 }
 
 export { name, inject, apply }

@@ -12,6 +12,7 @@
 // vendored DSH-fork schemastery (see ../vendor/THIRD-PARTY.md).
 import z from '../vendor/schemastery.js'
 import { isVolatile } from '../vendor/cosmokit.js'
+import { registerLspAdminEndpoints } from '../lsp/admin.js'
 
 const name = 'orrery-settings'
 const inject = []
@@ -168,6 +169,14 @@ function apply(ctx, config = {}) {
   } catch {
     // page policy is best-effort
   }
+
+  // LSP management endpoints (status/install over the community catalog):
+  // wired here on the profile-level settings row so the preset needs no new
+  // package subpath (S14: new exports require an app restart). Optional
+  // services; absent → the module warns and registers nothing.
+  const offLspAdmin = registerLspAdminEndpoints(ctx)
+
+  return () => offLspAdmin()
 }
 
 export { name, inject, apply }

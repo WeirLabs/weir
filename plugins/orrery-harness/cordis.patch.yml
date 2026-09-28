@@ -37,11 +37,6 @@
     # boundary, so a picker failure can never blank the page.
     - id: ui-orrery-model-picker
       name: 'orrery-model-picker'
-    # LSP service manager: profile-level admin endpoints backing the settings
-    # panel's manage/install UI (status + one-click install over the community
-    # catalog). Mounts harmlessly without the connection service.
-    - id: orrery-lsp-admin
-      name: 'orrery-harness/lsp-admin'
     - id: preset-orrery
       name: '@deepseek-ai/dsh-agent-preset'
       config:

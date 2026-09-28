@@ -55,10 +55,6 @@
             command: '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
             args: ['/tmp/orrery-it/ws/mock-lsp-server.js']
             installHint: 'not-needed-in-tests'
-    # LSP admin mounts harmlessly without the connection service (proves the
-    # optional-service degradation path headlessly).
-    - id: orrery-it-lsp-admin
-      name: 'orrery-harness/lsp-admin'
     # Mirror the real preset's realm structure: the compaction provider and the
     # context-guard consumer co-isolated in one group. This reproduces the
     # "waiting for compaction" preset-load failure class headlessly.

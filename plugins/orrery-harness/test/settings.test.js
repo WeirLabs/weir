@@ -56,6 +56,27 @@ describe('settings plugin apply', () => {
     return { provided, configured, handlers, service: provided[0]?.impl }
   }
 
+  it('wires the LSP admin endpoints when connection/subprocess exist', () => {
+    const endpoints = []
+    const provided = []
+    const ctx = {
+      reflect: { provide: (name, impl) => provided.push({ name, impl }) },
+      get: (key) => {
+        if (key === 'connection') return { fetch: { register: (definition) => {
+          endpoints.push(definition)
+          return () => {}
+        } } }
+        if (key === 'subprocess') return { spawns: [] }
+        return undefined
+      },
+      on: () => {},
+    }
+    const dispose = applySettings(ctx, {})
+    expect(endpoints.map((definition) => definition.path)).toEqual(['/api/orrery-lsp/status', '/api/orrery-lsp/install'])
+    expect(typeof dispose).toBe('function')
+    dispose()
+  })
+
   it('provides the orrerySettings service returning user-set sections', () => {
     const { provided, service } = harness({ todoMaxConsecutive: 3 })
     expect(provided[0].name).toBe('orrerySettings')
