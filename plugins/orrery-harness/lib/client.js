@@ -97,25 +97,61 @@ window.__ModuleLoader__.load({
 			store;
 			catalogStatus = "idle";
 			catalogGroups = [];
+			catalogRetries = 0;
+			catalogInflight = void 0;
+			catalogTimer = void 0;
 			constructor(scope, remote) {
 				this.remote = remote;
 				this.form = new primitives.SettingsFormModel(scope, FIELDS.map(specFor));
 				this.store = this.form.bind(() => this.projection());
-				this.loadCatalog();
 			}
-			async loadCatalog() {
-				if (this.catalogStatus === "loading" || this.catalogStatus === "ready") return;
+			// Load lazily on first page render and retry with backoff after
+			// failures: at plugin mount the RPC bridge/session domain may not
+			// be ready yet, and a settings page must not depend on boot order.
+			ensureCatalog() {
+				if (this.catalogStatus === "ready" || this.catalogInflight !== void 0) return;
 				this.catalogStatus = "loading";
 				this.republish();
-				try {
-					const response = await this.remote.session.modelCatalog();
-					if (!response.ok) throw new Error(`${response.error?.code ?? ""}: ${response.error?.message ?? "catalog failed"}`);
-					this.catalogGroups = response.value.groups ?? [];
-					this.catalogStatus = "ready";
-				} catch {
+				this.catalogInflight = this.remote.session.modelCatalog().then((response) => {
+					this.catalogInflight = void 0;
+					if (response.ok) {
+						this.catalogGroups = response.value.groups ?? [];
+						this.catalogStatus = "ready";
+						this.catalogRetries = 0;
+					} else {
+						this.catalogStatus = "error";
+					}
+					this.republish();
+					if (this.catalogStatus === "error") this.scheduleRetry();
+				}).catch(() => {
+					this.catalogInflight = void 0;
 					this.catalogStatus = "error";
+					this.republish();
+					this.scheduleRetry();
+				});
+			}
+			scheduleRetry() {
+				if (this.catalogTimer !== void 0 || this.catalogRetries >= 4) return;
+				const delay = 2000 * 2 ** this.catalogRetries;
+				this.catalogRetries += 1;
+				this.catalogTimer = setTimeout(() => {
+					this.catalogTimer = void 0;
+					if (this.catalogStatus === "error") {
+						this.catalogStatus = "idle";
+						this.ensureCatalog();
+					}
+				}, delay);
+			}
+			retryCatalog() {
+				if (this.catalogTimer !== void 0) {
+					clearTimeout(this.catalogTimer);
+					this.catalogTimer = void 0;
 				}
-				this.republish();
+				if (this.catalogStatus === "error") {
+					this.catalogStatus = "idle";
+					this.catalogRetries = 0;
+				}
+				this.ensureCatalog();
 			}
 			republish() {
 				this.store?.set(this.projection());
@@ -135,7 +171,9 @@ window.__ModuleLoader__.load({
 			inject() {
 				return {
 					hooks: { orrerySettingsCard: this.store },
-					...this.form.actions()
+					...this.form.actions(),
+					ensureCatalog: () => this.ensureCatalog(),
+					retryCatalog: () => this.retryCatalog()
 				};
 			}
 			dispose() {
@@ -268,6 +306,7 @@ window.__ModuleLoader__.load({
 						style: { ...selectStyle, maxWidth: "280px", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" },
 						disabled,
 						onClick: () => {
+							if (catalog.status === "error") props.retryCatalog();
 							setOpen(!open);
 							setPane("root");
 						},
@@ -313,6 +352,7 @@ window.__ModuleLoader__.load({
 		function OrreryCard(props) {
 			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
 			const { t } = props;
+			props.ensureCatalog();
 			if (props.view === "summary") return t("description");
 			const disabled = !state.writable;
 			const children = GROUPS.flatMap((group, groupIndex) => {
@@ -336,6 +376,7 @@ window.__ModuleLoader__.load({
 							disabled,
 							onChange: (fieldName, text) => props.edit(fieldName, text),
 							onReset: (fieldName) => props.resetField(fieldName),
+							retryCatalog: () => props.retryCatalog(),
 							key: descriptor.field
 						});
 					}
