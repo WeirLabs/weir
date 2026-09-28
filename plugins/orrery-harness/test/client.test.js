@@ -180,13 +180,26 @@ describe('orrery settings client half', () => {
       ensureCatalog: () => {},
       retryCatalog: () => {},
     })
+    // pure chain helpers: JSON synthesis round-trips through the visual model
+    const { jsonToChains, chainsToJson } = surface.chainEditor
+    const chains = jsonToChains('{"deep":[{"provider":"p","model":"m","reasoningEffort":"max"}],"bogus":[{"provider":"x","model":"y"}]}')
+    expect(chains.deep).toEqual([{ provider: 'p', model: 'm', reasoningEffort: 'max' }])
+    expect(chains.quick).toEqual([])
+    expect(JSON.parse(chainsToJson({ deep: [{ provider: 'p', model: 'm', reasoningEffort: '' }, { provider: '', model: 'm2', reasoningEffort: '' }], quick: [] }))).toEqual({ deep: [{ provider: 'p', model: 'm' }] })
+    expect(jsonToChains('not-json').deep).toEqual([])
+    expect(chainsToJson(jsonToChains(undefined))).toBe('{}')
+
     expect(rendered.__type).toBeTruthy()
     // 7 group headers + 6 choice rows + 1 model picker + 14 value-field rows
     expect(rendered.children).toHaveLength(28)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(14)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(13)
+    // the category-chains row renders the visual editor with its Edit button
+    const chainsRow = rendered.children.find((child) => child.text !== undefined && child.edit !== undefined)
+    expect(chainsRow).toBeTruthy()
+    expect(typeof chainsRow.getSession).toBe('function')
 
     // the single model picker row: the library picker inside its error boundary
     const pickerRow = rendered.children.find((child) => child.key === 'intentGateProvider')
