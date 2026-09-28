@@ -244,6 +244,17 @@ window.__ModuleLoader__.load({
 			lspEnabledHint: "新会话的 LSP 语义工具；默认关，会话内可用 lsp 工具随时开关（true/false）。"
 		};
 		const NS = "settings.orrery";
+		const SECTION_ID = "orrery-settings";
+		const ITEM_SLOT = "settings.orrery.item";
+		const columnStyle = {
+			display: "flex",
+			flexDirection: "column",
+			gap: "var(--dsw-spacing-3, 12px)"
+		};
+		const OrrerySection = ({ renderSlot }) => react_jsx_runtime.jsx("div", {
+			style: columnStyle,
+			children: renderSlot(ITEM_SLOT)
+		});
 		const inject = ["slots", "locale", "configForms"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
@@ -252,14 +263,42 @@ window.__ModuleLoader__.load({
 			ctx.effect(() => () => {
 				card.dispose();
 			}, "ui-orrery-settings: form subscription");
-			ctx.effect(() => ctx.configForms.whileServed([ORRERY_NS], () => ctx.slots.inject("plugins.item", () => ctx.slots.register({
-				name: "plugins.item",
-				id: "orrery-settings",
-				order: 30,
-				label: () => t("title"),
-				locale: NS,
-				inject: () => card.inject()
-			}, OrreryCard))), "ui-orrery-settings: page");
+			// Top-level Settings section (same place as dsh-web-kimi and the
+			// built-in General/Models sections), with a nested item slot
+			// hosting the form; plus a Plugins-page entry for discoverability.
+			ctx.effect(() => ctx.configForms.whileServed([ORRERY_NS], () => {
+				const offSection = ctx.slots.inject("settings.section", () => ctx.slots.register({
+					name: "settings.section",
+					id: SECTION_ID,
+					order: 40,
+					label: () => t("title"),
+					locale: NS,
+					children: { [ITEM_SLOT]: {
+						kind: "list",
+						scope: "root"
+					} }
+				}, OrrerySection));
+				const offItem = ctx.slots.inject(ITEM_SLOT, () => ctx.slots.register({
+					name: ITEM_SLOT,
+					id: "orrery-config",
+					order: 0,
+					locale: NS,
+					inject: () => card.inject()
+				}, OrreryCard));
+				const offPluginsItem = ctx.slots.inject("plugins.item", () => ctx.slots.register({
+					name: "plugins.item",
+					id: "orrery-settings",
+					order: 30,
+					label: () => t("title"),
+					locale: NS,
+					inject: () => card.inject()
+				}, OrreryCard));
+				return () => {
+					offSection();
+					offItem();
+					offPluginsItem();
+				};
+			}), "ui-orrery-settings: page");
 		}
 		exports.NS = NS;
 		exports.apply = apply;

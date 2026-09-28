@@ -102,15 +102,31 @@ describe('orrery settings client half', () => {
     expect(whileServedCalls).toHaveLength(1)
     expect(whileServedCalls[0].namespaces).toEqual(['orrery-settings'])
 
-    // drive the whileServed registration: slot inject on "plugins.item"
+    // drive the whileServed registration: three slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    expect(slotInjects).toHaveLength(1)
-    expect(slotInjects[0].name).toBe('plugins.item')
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['settings.section', 'settings.orrery.item', 'plugins.item'])
 
-    // drive the slot inject: the page registration itself
+    // the top-level settings section registration
     slotInjects[0].fn()
     expect(slotRegistrations).toHaveLength(1)
-    const { definition, component } = slotRegistrations[0]
+    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[0]
+    expect(sectionDef.name).toBe('settings.section')
+    expect(sectionDef.id).toBe('orrery-settings')
+    expect(sectionDef.order).toBe(40)
+    expect(sectionDef.children['settings.orrery.item']).toEqual({ kind: 'list', scope: 'root' })
+    expect(typeof sectionDef.label).toBe('function')
+    expect(sectionComponent({ renderSlot: (slot) => slot })).toBeTruthy()
+
+    // the item slot registration hosting the form card
+    slotInjects[1].fn()
+    expect(slotRegistrations).toHaveLength(2)
+    expect(slotRegistrations[1].definition.name).toBe('settings.orrery.item')
+    expect(slotRegistrations[1].definition.id).toBe('orrery-config')
+
+    // the Plugins-page entry
+    slotInjects[2].fn()
+    expect(slotRegistrations).toHaveLength(3)
+    const { definition, component } = slotRegistrations[2]
     expect(definition.name).toBe('plugins.item')
     expect(definition.id).toBe('orrery-settings')
     expect(definition.order).toBe(30)
