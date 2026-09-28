@@ -40,7 +40,7 @@ export const Config = z.object({
   guardHardThreshold: z.number().volatile().description('Hard pressure threshold (forced compaction)'),
   hashlineHideStockEdit: z.boolean().volatile().description('Hide the stock edit tool (hash_edit only)'),
   robashEnabled: z.boolean().volatile().description('Guarded read-only bash for curated agents (master switch)'),
-  lspEnabled: z.boolean().volatile().description('LSP semantic tools (default off; per-session toggle also available via the lsp tool)'),
+  lspEnabled: z.boolean().volatile().description('LSP capability master switch (default off; when on, sessions start with LSP off and toggle it from the session header switch or the lsp tool)'),
 })
 
 /** Flat field names per section key (the service regroups them). */
@@ -105,36 +105,55 @@ function apply(ctx, config = {}) {
   // The DSH-fork schemastery materializes volatile fields as {get()} refs
   // (unset → get() === undefined); unwrap and drop unset fields so modules
   // read the same "absent means absent" values as before.
-  const flat = {}
-  for (const [key, rawValue] of Object.entries(config ?? {})) {
-    const value = isVolatile(rawValue) ? rawValue.get() : rawValue
-    if (value === undefined) continue
-    flat[key] = value
+  //
+  // Sections are recomputed on every get(): volatile settings commits mutate
+  // this `config` reference IN PLACE (no remount), so live reads see saved
+  // values immediately; consumers resolve `ctx.get('orrerySettings')` at
+  // read time for the same freshness.
+  let chainsCache = { raw: undefined, parsed: undefined }
+
+  function compute() {
+    const flat = {}
+    for (const [key, rawValue] of Object.entries(config ?? {})) {
+      const value = isVolatile(rawValue) ? rawValue.get() : rawValue
+      if (value === undefined) continue
+      flat[key] = value
+    }
+    const sections = {}
+    for (const key of Object.keys(SECTIONS)) {
+      const fields = SECTIONS[key]
+      const out = {}
+      for (const [field, flatKey] of Object.entries(fields)) {
+        if (Object.hasOwn(flat, flatKey)) out[field] = flat[flatKey]
+      }
+      if (key === 'delegate' && typeof out.categoryChains === 'string' && out.categoryChains.trim().length > 0) {
+        if (chainsCache.raw !== out.categoryChains) {
+          chainsCache = { raw: out.categoryChains, parsed: parseChains(out.categoryChains) }
+        }
+        out.categoryChains = chainsCache.parsed
+      }
+      if (Object.keys(out).length > 0) sections[key] = out
+    }
+    return sections
   }
 
-  /** Regroup flat fields into the sectioned API modules consume. */
-  function section(key) {
-    const fields = SECTIONS[key]
-    if (!fields) return undefined
-    const out = {}
-    for (const [field, flatKey] of Object.entries(fields)) {
-      if (Object.hasOwn(flat, flatKey)) out[field] = flat[flatKey]
-    }
-    if (key === 'delegate' && typeof out.categoryChains === 'string' && out.categoryChains.trim().length > 0) {
-      out.categoryChains = parseChains(out.categoryChains)
-    }
-    return Object.keys(out).length > 0 ? out : undefined
-  }
+  // Compute eagerly: malformed categoryChains must fail activation loud.
+  compute()
 
-  // Regroup eagerly: malformed categoryChains must fail activation loud.
-  const sections = {}
-  for (const key of Object.keys(SECTIONS)) sections[key] = section(key)
-
-  // Host-plane service: preset modules read their override section at mount.
+  const listeners = new Set()
+  // Host-plane service: preset modules read their override section on demand.
   ctx.reflect.provide('orrerySettings', {
     get(key) {
-      return sections[key]
+      return compute()[key]
     },
+    /** Subscribe to volatile settings commits (loader/volatile-update). */
+    onChange(callback) {
+      listeners.add(callback)
+      return () => listeners.delete(callback)
+    },
+  })
+  ctx.on('loader/volatile-update', () => {
+    for (const callback of listeners) callback()
   })
 
   // Settings page policy; optional in compositions without the forms service.

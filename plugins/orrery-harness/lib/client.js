@@ -8,11 +8,27 @@ window.__ModuleLoader__.load({
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let modelPicker = require("orrery-model-picker");
-		// The Orrery settings page, browser half: one flat form over the
+		// Orrery settings page, browser half: one flat form over the
 		// `orrery-settings` namespace (the shared SettingsFormModel only
 		// addresses flat fields). Registers into the Plugins page's
-		// `plugins.item` slot while the Host serves that namespace.
+		// `plugins.item` slot while the Host serves that namespace; also
+		// injects the per-session LSP toggle into the conversation header.
 		const ORRERY_NS = "orrery-settings";
+		// Local bus: settings saves bump a revision so the open session's
+		// LSP toggle re-checks command availability (capability gate flipped)
+		// without a reload.
+		const settingsBus = (() => {
+			const listeners = new Set();
+			return {
+				subscribe(callback) {
+					listeners.add(callback);
+					return () => listeners.delete(callback);
+				},
+				notify() {
+					for (const callback of listeners) callback();
+				}
+			};
+		})();
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
@@ -116,9 +132,18 @@ window.__ModuleLoader__.load({
 				};
 			}
 			inject() {
+				const actions = this.form.actions();
 				return {
 					hooks: { orrerySettingsCard: this.store },
-					...this.form.actions(),
+					...actions,
+					// After a successful settings save the host committed new
+					// volatile values: bump the bus so session-surface consumers
+					// (the LSP toggle) re-check live.
+					save: (...args) => {
+						const result = actions.save(...args);
+						Promise.resolve(result).then(() => settingsBus.notify(), () => {});
+						return result;
+					},
 					getSession: () => this.getSession()
 				};
 			}
@@ -526,7 +551,9 @@ window.__ModuleLoader__.load({
 			robashEnabled: "Read-only bash guard",
 			robashEnabledHint: "Guarded read-only bash for curated agents, master switch (true/false).",
 			lspEnabled: "LSP semantic tools",
-			lspEnabledHint: "LSP semantic tools for new sessions; off by default, per-session toggle available via the lsp tool (true/false)."
+			lspEnabledHint: "Capability master switch: off removes LSP entirely; on adds a per-session switch in the conversation header (sessions start with LSP off).",
+			lspToggleLabel: "LSP",
+			lspToggleTitle: "Toggle LSP semantic tools for this session"
 		};
 		const zh = {
 			title: "Orrery",
@@ -625,7 +652,9 @@ window.__ModuleLoader__.load({
 			robashEnabled: "只读 bash 守卫",
 			robashEnabledHint: "精选只读代理的受守卫 bash 总开关（true/false）。",
 			lspEnabled: "LSP 语义工具",
-			lspEnabledHint: "新会话的 LSP 语义工具；默认关，会话内可用 lsp 工具随时开关（true/false）。"
+			lspEnabledHint: "能力总开关：关闭则完全移除 LSP；开启后会话头出现本会话开关（新会话默认关，按会话启用）。",
+			lspToggleLabel: "LSP",
+			lspToggleTitle: "为本会话启用/禁用 LSP 语义工具"
 		};
 		const NS = "settings.orrery";
 		const SECTION_ID = "orrery-settings";
@@ -639,7 +668,109 @@ window.__ModuleLoader__.load({
 			style: columnStyle,
 			children: renderSlot(ITEM_SLOT)
 		});
-		const inject = ["slots", "locale", "configForms", "remote", "remote.session"];
+		// ---- Per-session LSP toggle (conversation header utilities slot) ----
+		const LSP_PROJECTION_KEY = "orreryLsp";
+		const lspToggleStyle = {
+			display: "inline-flex",
+			alignItems: "center",
+			gap: "6px",
+			background: "none",
+			border: "1px solid var(--dsw-alias-border-l2)",
+			borderRadius: "var(--dsw-radius-sm)",
+			cursor: "pointer",
+			padding: "3px 8px",
+			fontSize: "12px",
+			lineHeight: "16px",
+			color: "var(--dsw-alias-label-secondary)"
+		};
+		const lspDotStyle = (on) => ({
+			width: "7px",
+			height: "7px",
+			borderRadius: "50%",
+			background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-disabled, #999)"
+		});
+		function LspToggle(props) {
+			const hasProjectionHook = typeof props.useProjection === "function";
+			const projection = hasProjectionHook ? props.useProjection(LSP_PROJECTION_KEY) : undefined;
+			const [available, setAvailable] = react.useState(null);
+			const [pending, setPending] = react.useState(false);
+			const [error, setError] = react.useState(null);
+			const [localState, setLocalState] = react.useState(undefined);
+			const sessionId = props.sessionId;
+			const t = props.t;
+			react.useEffect(() => {
+				if (!sessionId) {
+					setAvailable(false);
+					return undefined;
+				}
+				let alive = true;
+				const check = () => {
+					Promise.resolve(props.commandsList(sessionId))
+						.then((list) => {
+							if (alive) setAvailable(Array.isArray(list) && list.some((entry) => entry?.name === "lsp"));
+						})
+						.catch(() => {
+							if (alive) setAvailable(false);
+						});
+				};
+				setAvailable(null);
+				check();
+				const unsubscribe = settingsBus.subscribe(check);
+				return () => {
+					alive = false;
+					unsubscribe();
+				};
+			}, [sessionId]);
+			// Fallback initial state when the slot does not inject useProjection.
+			react.useEffect(() => {
+				if (hasProjectionHook || localState !== undefined || !sessionId) return;
+				let alive = true;
+				Promise.resolve(props.fetchLspState())
+					.then((enabled) => {
+						if (alive && typeof enabled === "boolean") setLocalState(enabled);
+					})
+					.catch(() => {});
+				return () => {
+					alive = false;
+				};
+			}, [sessionId, hasProjectionHook, localState]);
+			if (available !== true) return null;
+			const on = hasProjectionHook ? projection?.enabled === true : localState === true;
+			const toggle = () => {
+				if (pending) return;
+				setPending(true);
+				setError(null);
+				Promise.resolve(props.toggleLsp(!on)).then(
+					(failure) => {
+						setPending(false);
+						if (failure) {
+							setError(failure);
+						} else if (!hasProjectionHook) {
+							setLocalState(!on);
+						}
+					},
+					(reason) => {
+						setPending(false);
+						setError(reason instanceof Error ? reason.message : String(reason));
+					}
+				);
+			};
+			return react_jsx_runtime.jsxs("button", {
+				type: "button",
+				style: lspToggleStyle,
+				onClick: toggle,
+				disabled: pending,
+				"aria-pressed": on,
+				"data-orrery-lsp-toggle": "",
+				"data-orrery-lsp-state": on ? "on" : "off",
+				title: error ?? t("lspToggleTitle"),
+				children: [
+					react_jsx_runtime.jsx("span", { style: lspDotStyle(on), "aria-hidden": true }),
+					react_jsx_runtime.jsx("span", { children: t("lspToggleLabel") })
+				]
+			});
+		}
+		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-orrery-settings: dictionaries");
@@ -647,6 +778,37 @@ window.__ModuleLoader__.load({
 			ctx.effect(() => () => {
 				card.dispose();
 			}, "ui-orrery-settings: form subscription");
+			// Per-session LSP toggle in the conversation header utilities slot
+			// (same seat family as the built-in open-in-app action). The slot
+			// renders nothing while the `lsp` command is absent (gate off).
+			ctx.effect(() => ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
+				name: "conversation.session.header.utilities",
+				id: "orrery-lsp-toggle",
+				order: 100,
+				locale: NS,
+				inject: (sessionId) => {
+					if (!sessionId) return {};
+					return {
+						sessionId,
+						toggleLsp: async (enabled) => {
+							if (!ctx.remote.commands?.execute) return "unknown command: /lsp";
+							const result = await ctx.remote.commands.execute(sessionId, `/lsp ${enabled ? "on" : "off"}`, []);
+							if (!result.ok) return `${result.error.message} (${result.error.code})`;
+							if (result.value === undefined) return "unknown command: /lsp";
+							return null;
+						},
+						fetchLspState: async () => {
+							if (!ctx.remote.session?.projections) return undefined;
+							const result = await ctx.remote.session.projections({ sessionId });
+							return result.ok ? result.value?.[LSP_PROJECTION_KEY]?.enabled : undefined;
+						},
+						commandsList: (sid) => {
+							if (!ctx.remote.commands?.list) return Promise.resolve([]);
+							return ctx.remote.commands.list(sid).then((result) => (result.ok ? result.value : []));
+						}
+					};
+				}
+			}, LspToggle)), "ui-orrery-settings: lsp session switch");
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.
