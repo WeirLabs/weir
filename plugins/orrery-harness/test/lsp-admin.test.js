@@ -68,7 +68,7 @@ describe('lsp admin pure logic', () => {
     expect(subprocess.spawns.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('probeVersion returns the first output line and null on empty output', async () => {
+  it('probeVersion returns the first plausible output line and null on garbage', async () => {
     const subprocess = fakeSubprocess()
     const pending = probeVersion(subprocess, '/resolved/npm', ['--version'])
     subprocess.spawns[0].finish(0, ['10.2.3', 'extra'])
@@ -76,6 +76,17 @@ describe('lsp admin pure logic', () => {
     const empty = probeVersion(subprocess, '/resolved/npm', ['--version'])
     subprocess.spawns[1].finish(0, [])
     expect(await empty).toBe(null)
+    // stack traces from servers without --version support are not versions
+    const garbage = probeVersion(subprocess, '/resolved/npm', ['--version'])
+    subprocess.spawns[2].stderr.write('/Users/x/.npm-global/lib/node_modules/vscode-langservers-extracted/node_modules/vscode-languageserver/lib/node/main.js:214\n')
+    subprocess.spawns[2].finish(0, ['  throw new Error(\'Connection input stream is not set\')'])
+    expect(await garbage).toBe(null)
+    // gopls-style module paths with a version are still accepted
+    const gopls = probeVersion(subprocess, '/resolved/gopls', ['version'])
+    subprocess.spawns[3].finish(0, ['golang.org/x/tools/gopls v0.16.2'])
+    expect(await gopls).toBe('golang.org/x/tools/gopls v0.16.2')
+    // empty versionArgs skip the probe entirely
+    expect(await probeVersion(subprocess, '/resolved/x', [])).toBe(null)
   })
 
   it('runInstall validates families and installer availability', async () => {

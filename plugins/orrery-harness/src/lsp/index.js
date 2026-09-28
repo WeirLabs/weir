@@ -82,7 +82,9 @@ function apply(ctx, config = {}) {
       subprocess: ctx.subprocess,
       fs: ctx.fs,
       registry: buildRegistry(option('servers', config.servers)),
-      resolveExecutable: (command) => extendedResolveExecutable(ctx.subprocess, command),
+      // config.extraBinDirs overrides the extended-resolution scan dirs
+      // (hermetic tests; power users with exotic install locations)
+      resolveExecutable: (command) => extendedResolveExecutable(ctx.subprocess, command, config.extraBinDirs),
       options: {
         idleMs: option('idleMs', config.idleMs ?? LSP_DEFAULTS.idleMs),
         requestTimeoutMs: option('requestTimeoutMs', config.requestTimeoutMs ?? LSP_DEFAULTS.requestTimeoutMs),

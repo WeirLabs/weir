@@ -82,6 +82,7 @@ export const DEFAULT_SERVERS = {
   go: {
     command: 'gopls',
     args: [],
+    versionArgs: ['version'],
     manifests: ['go.mod'],
     installHint: 'go install golang.org/x/tools/gopls@latest',
     install: { command: 'go', args: ['install', 'golang.org/x/tools/gopls@latest'] },
@@ -96,6 +97,8 @@ export const DEFAULT_SERVERS = {
   json: {
     command: 'vscode-json-language-server',
     args: ['--stdio'],
+    // no --version support: the extracted servers throw without a connection
+    versionArgs: [],
     manifests: ['package.json'],
     installHint: 'npm install -g vscode-langservers-extracted',
     install: { command: 'npm', args: ['install', '-g', 'vscode-langservers-extracted'] },
@@ -103,6 +106,8 @@ export const DEFAULT_SERVERS = {
   html: {
     command: 'vscode-html-language-server',
     args: ['--stdio'],
+    // no --version support: the extracted servers throw without a connection
+    versionArgs: [],
     manifests: ['*.html'],
     installHint: 'npm install -g vscode-langservers-extracted',
     install: { command: 'npm', args: ['install', '-g', 'vscode-langservers-extracted'] },
@@ -110,6 +115,8 @@ export const DEFAULT_SERVERS = {
   css: {
     command: 'vscode-css-language-server',
     args: ['--stdio'],
+    // no --version support: the extracted servers throw without a connection
+    versionArgs: [],
     manifests: ['*.css'],
     installHint: 'npm install -g vscode-langservers-extracted',
     install: { command: 'npm', args: ['install', '-g', 'vscode-langservers-extracted'] },
@@ -117,6 +124,8 @@ export const DEFAULT_SERVERS = {
   markdown: {
     command: 'vscode-markdown-language-server',
     args: ['--stdio'],
+    // no --version support: the extracted servers throw without a connection
+    versionArgs: [],
     manifests: ['*.md'],
     installHint: 'npm install -g vscode-langservers-extracted',
     install: { command: 'npm', args: ['install', '-g', 'vscode-langservers-extracted'] },

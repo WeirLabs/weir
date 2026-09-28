@@ -407,8 +407,10 @@ describe('lsp tool flows (gate on)', () => {
     subprocess.resolveExecutable = async () => {
       throw new Error('not found')
     }
-    const ctx = fakeCtx(subprocess, { enabled: true })
-    apply(ctx, { enabled: true })
+    // hermetic: no extended-directory scan (the machine may really have
+    // typescript-language-server installed now)
+    const ctx = fakeCtx(subprocess, { enabled: true, extraBinDirs: [] })
+    apply(ctx, { enabled: true, extraBinDirs: [] })
     const agent = fakeAgent()
     await lspTool(ctx).execute({ enabled: true }, { agent })
     const diagnosticsTool = agent.scoped.find((tool) => tool.name === 'lsp_diagnostics')

@@ -38,8 +38,21 @@ export async function readJsonBody(request) {
   }
 }
 
-/** First output line of `<executable> <versionArgs>` within the timeout. */
+/** Accept only lines that plausibly carry a version (stack traces and
+ *  paths from servers without --version support are dropped). */
+export function looksLikeVersion(line) {
+  if (typeof line !== 'string') return false
+  if (line.length === 0 || line.length > 80) return false
+  if (!/\d/.test(line)) return false
+  if (line.includes('node_modules')) return false
+  if (/:[0-9]+$/.test(line)) return false
+  if (line.startsWith('at ') || line.startsWith('Error') || line.includes('throw new Error')) return false
+  return true
+}
+
+/** First plausible version line of `<executable> <versionArgs>` within the timeout. */
 export async function probeVersion(subprocess, executable, args = ['--version'], timeoutMs = VERSION_PROBE_TIMEOUT_MS) {
+  if (!Array.isArray(args) || args.length === 0) return null
   const handle = subprocess.spawn({
     argv: [executable, ...args],
     cwd: process.cwd(),
@@ -67,7 +80,7 @@ export async function probeVersion(subprocess, executable, args = ['--version'],
   })
   await Promise.race([handle.done, done])
   clearTimeout(timer)
-  const first = output.split('\n').map((line) => line.trim()).find((line) => line.length > 0)
+  const first = output.split('\n').map((line) => line.trim()).find(looksLikeVersion)
   return first ?? null
 }
 
