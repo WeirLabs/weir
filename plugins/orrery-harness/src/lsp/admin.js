@@ -4,7 +4,7 @@
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
 import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
-import { resolveExecutable as extendedResolveExecutable } from './executable.js'
+import { augmentedPath, npmGlobalPrefix, resolveExecutable as extendedResolveExecutable } from './executable.js'
 
 const name = 'orrery-lsp-admin'
 const inject = []
@@ -45,6 +45,7 @@ export async function probeVersion(subprocess, executable, args = ['--version'],
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
     graceMs: 3_000,
+    env: { PATH: augmentedPath() },
   })
   let output = ''
   let timer
@@ -127,11 +128,17 @@ export async function runInstall(registry, subprocess, family, timeoutMs = DEFAU
   if (!spec) throw new Error(`lsp: no installer for '${family}' on this platform — ${entry.installHint ?? 'see the install hint'}`)
   const executable = await extendedResolveExecutable(subprocess, spec.command, dirs).catch(() => undefined)
   if (!executable) throw new Error(`lsp: installer '${spec.command}' not found on PATH — install it first`)
+  // npm installs pin a user-writable prefix: the resolved npm may belong to
+  // a root-owned global prefix (/usr/local — EACCES on install).
+  const argv = spec.command === 'npm' && !(spec.args ?? []).includes('--prefix')
+    ? [executable, '--prefix', npmGlobalPrefix(), ...(spec.args ?? [])]
+    : [executable, ...(spec.args ?? [])]
   const handle = subprocess.spawn({
-    argv: [executable, ...(spec.args ?? [])],
+    argv,
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
     graceMs: 3_000,
+    env: { PATH: augmentedPath() },
   })
   let output = ''
   handle.stdout?.on('data', (chunk) => {

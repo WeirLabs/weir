@@ -5,7 +5,7 @@
 // ctx.subprocess.resolveExecutable() fails for them (S21). This helper
 // falls back to scanning well-known installation directories so servers and
 // their installers resolve the same way they do in the user's shell.
-import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,6 +22,9 @@ export function extraBinDirectories(env = process.env) {
     // no nvm
   }
   return [
+    // nvm first: its installs are user-writable (the /usr/local prefix is
+    // root-owned on Homebrew-admin installs and fails with EACCES)
+    ...nvmBins,
     '/opt/homebrew/bin',
     '/opt/homebrew/opt/llvm/bin',
     '/usr/local/bin',
@@ -32,8 +35,19 @@ export function extraBinDirectories(env = process.env) {
     join(home, '.cargo', 'bin'),
     join(home, 'go', 'bin'),
     join(home, 'Library', 'pnpm'),
-    ...nvmBins,
   ]
+}
+
+/**
+ * User-writable npm global prefix for panel installs: `npm --prefix <dir>
+ * install -g …` lands servers here instead of a possibly root-owned global
+ * prefix, and this directory is already part of the extended scan.
+ */
+export function npmGlobalPrefix(env = process.env) {
+  const home = env.HOME ?? homedir()
+  const prefix = join(home, '.npm-global')
+  mkdirSync(prefix, { recursive: true })
+  return prefix
 }
 
 function isExecutableFile(path) {
@@ -45,6 +59,17 @@ function isExecutableFile(path) {
   } catch {
     return false
   }
+}
+
+/**
+ * Augmented PATH string for spawned children. npm/pipx-installed servers and
+ * the npm installer itself are `#!/usr/bin/env node` scripts; the scrubbed
+ * child environment inherits the minimal GUI PATH, so `env node` fails with
+ * exit 127. Spawn specs get `env: { PATH: augmentedPath() }` (S21 follow-up).
+ */
+export function augmentedPath(env = process.env) {
+  const existing = (env.PATH ?? '').split(':').filter(Boolean)
+  return [...new Set([...extraBinDirectories(env), ...existing])].join(':')
 }
 
 /**

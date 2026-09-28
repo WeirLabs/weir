@@ -2,6 +2,7 @@
 // lazy start, full-document sync, idle shutdown, per-session holder refcounts.
 import { createLspClient, handshake, shutdownClient } from './client.js'
 import { familyForLanguageId } from './registry.js'
+import { augmentedPath } from './executable.js'
 
 export const LSP_DEFAULTS = {
   idleMs: 600_000,
@@ -51,6 +52,7 @@ export function createLspManager({ subprocess, fs, registry, options = {}, resol
       cwd,
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
       graceMs: 3_000,
+      env: { PATH: augmentedPath() },
     })
     const record = createServerRecord(handle, key, opts)
     servers.set(key, record)

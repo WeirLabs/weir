@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { extraBinDirectories, resolveExecutable } from '../src/lsp/executable.js'
+import { augmentedPath, extraBinDirectories, resolveExecutable } from '../src/lsp/executable.js'
 
 describe('lsp executable resolution', () => {
   it('prefers the subprocess service resolver', async () => {
@@ -37,5 +37,14 @@ describe('lsp executable resolution', () => {
     expect(dirs).toContain('/usr/local/bin')
     expect(dirs).toContain('/Users/tester/.npm-global/bin')
     expect(dirs).toContain('/Users/tester/.cargo/bin')
+  })
+
+  it('augmentedPath prepends the extra directories and keeps the existing PATH', () => {
+    const path = augmentedPath({ HOME: '/Users/tester', PATH: '/usr/bin:/bin' })
+    const segments = path.split(':')
+    expect(segments[0]).toBe('/opt/homebrew/bin')
+    expect(segments).toContain('/usr/bin')
+    expect(segments).toContain('/bin')
+    expect(new Set(segments).size).toBe(segments.length) // deduped
   })
 })

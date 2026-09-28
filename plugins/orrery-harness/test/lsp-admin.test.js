@@ -92,7 +92,13 @@ describe('lsp admin pure logic', () => {
     const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript', undefined, [])
     await new Promise((resolve) => setImmediate(resolve))
     const handle = subprocess.spawns[0]
-    expect(handle.spec.argv).toEqual(['/resolved/npm', 'install', '-g', 'typescript-language-server', 'typescript'])
+    // npm installs pin a user-writable prefix (root-owned /usr/local → EACCES)
+    expect(handle.spec.argv[0]).toBe('/resolved/npm')
+    expect(handle.spec.argv[1]).toBe('--prefix')
+    expect(handle.spec.argv[2]).toContain('.npm-global')
+    expect(handle.spec.argv.slice(3)).toEqual(['install', '-g', 'typescript-language-server', 'typescript'])
+    // the child env carries the augmented PATH so `env node` scripts resolve
+    expect(handle.spec.env.PATH).toContain('/opt/homebrew/bin')
     handle.stderr.write('warning line\n')
     handle.finish(0, ['added 2 packages'])
     const result = await pending
