@@ -10,11 +10,10 @@ describe('settings Config schema', () => {
   it('accepts an empty config (all fields optional)', () => {
     const result = validate({})
     expect(result.issues).toBe(undefined)
-    // schemastery materializes section objects as empty; modules treat an
-    // empty section exactly like an absent one (?? {} merge)
-    for (const value of Object.values(result.value)) {
-      expect(value).toEqual({})
-    }
+    // The fork materializes unset volatile fields as {} wrappers; the
+    // service strips them so absent sections read undefined (covered by the
+    // apply-level tests below).
+    expect(typeof result.value).toBe('object')
   })
 
   it('accepts a fully-populated config', () => {
@@ -69,6 +68,20 @@ describe('settings plugin apply', () => {
     expect(() => harness({ delegate: { categoryChains: '[1,2]' } })).toThrow(/object map/)
     expect(() => harness({ delegate: { categoryChains: '{"quick":"nope"}' } })).toThrow(/array of rungs/)
     expect(() => harness({ delegate: { categoryChains: '{"quick":[{"provider":"p"}]}' } })).toThrow(/provider, model/)
+  })
+
+  it('unwraps volatile refs and drops unset fields (DSH-fork semantics)', () => {
+    // the real fork materializes volatile fields as {get()} refs: validate a
+    // config through the schema, then feed the RESULT through apply.
+    const validated = Config['~standard'].validate({
+      intentGate: { classifier: 'llm' },
+      todoDriver: { maxConsecutive: 3 },
+    })
+    expect(validated.issues).toBe(undefined)
+    const { service } = harness(validated.value)
+    expect(service.get('intentGate')).toEqual({ classifier: 'llm' })
+    expect(service.get('todoDriver')).toEqual({ maxConsecutive: 3 })
+    expect(service.get('contextGuard')).toBe(undefined)
   })
 
   it('registers the auto-page policy when the forms service exists', () => {
