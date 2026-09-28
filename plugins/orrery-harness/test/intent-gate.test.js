@@ -132,6 +132,72 @@ describe('intent-gate plugin', () => {
     )
     expect(result.messages).toHaveLength(0)
   })
+  it('ignores subagent settlement notices even when reports contain keywords', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const settled = {
+      id: 's1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Background subagent abc finished and will do no further work unless you send it more. Its closing message: skills: debugging, deep-work, research, review-work' }],
+      source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'abc' },
+    }
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [settled], turn: 3, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(0)
+    expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(0)
+  })
+
+  it('scans past injected messages to the newest genuine user prompt', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const settled = {
+      id: 's1',
+      role: 'user',
+      content: [{ type: 'text', text: 'deep work research debugging review' }],
+      source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'abc' },
+    }
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [settled, promptMessage('do deep work now')], turn: 3, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0].content[0].text).toContain('deep-work')
+  })
+
+  it('does not re-scan its own injected notices', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const own = {
+      id: 'g1',
+      role: 'user',
+      content: [{ type: 'text', text: 'The user request matched the "research" intent. Load and follow the "research" skill NOW.' }],
+      source: { kind: 'orrery-intent-gate' },
+    }
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [own], turn: 4, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(0)
+    expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(0)
+  })
+
+  it('ignores user-role messages without a source kind', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const sourceless = { id: 'x1', role: 'user', content: [{ type: 'text', text: 'research this for me' }] }
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [sourceless], turn: 5, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(0)
+    expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(0)
+  })
 
   it('raises reasoning effort for the think intent in the same turn', async () => {
     const ctx = fakeCtx()

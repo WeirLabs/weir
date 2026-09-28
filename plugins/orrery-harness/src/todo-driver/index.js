@@ -107,9 +107,9 @@ function apply(ctx, config = {}) {
   // Bookkeeping from the durable turn/end reason feed.
   ctx.on('session/event', (session, event) => {
     if (event.type === 'user/message') {
-      // Genuine user input rearms; injected continuations carry our own source kind.
+      // Only genuine user input (source.kind 'user') rearms; all runtime injections are skipped.
       const sourceKind = event.data?.source?.kind
-      if (sourceKind !== 'orrery-todo-driver') {
+      if (sourceKind === 'user') {
         cancelTimer(session.id)
         providerErrorPending.delete(session.id)
         stateOf(session.id).onUserMessage()

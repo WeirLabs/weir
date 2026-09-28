@@ -17,11 +17,12 @@ import {
 const name = 'orrery-intent-gate'
 const inject = ['llm']
 
-/** Extract the text of the newest user message in the proposed step batch. */
+/** Extract the text of the newest genuine user message in the proposed step batch. Runtime-injected messages (settlement notices, continuation nudges, this gate's own notices) share the user role but carry producer sources; only source.kind 'user' is a fresh user prompt. */
 function latestUserText(messages) {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
     if (!message || message.role !== 'user' || !Array.isArray(message.content)) continue
+    if (message.source?.kind !== 'user') continue
     const text = message.content
       .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
       .map((block) => block.text)

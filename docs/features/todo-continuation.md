@@ -32,15 +32,15 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 - todo 读取：`sessionProjections` 的 todos 投影（live 引用，只读）。
 - 续推挂点：`agent/turn-stopping`——回合收尾且无欠账时触发，监听器内 `agent.steer(...)` 注入续推消息，机器重读 inbox 再跑一步（协议认可的正规续推方式；`session/event` 监听器内禁止同步 followup）。
 - 结束原因分类严格依据 `turn/end` 的 `reason`：`completed` → 续推；`aborted{kind:'user'}` → disarm；`error{LlmFailure}` → 退避延迟续推+计数；其余（max-tokens/interrupted/forked 等）不续推。禁止启发式猜测。
-- 续推消息为完整 UserMessage 对象（`src/shared/user-message.js`），自身注入的消息不会被误判为用户输入。
+- 续推消息为完整 UserMessage 对象（`src/shared/user-message.js`），重新武装只认 `source.kind === 'user'` 的真实用户输入——自身注入、子代理结算通知（`subagent-settled`）、上下文压力提醒等运行时注入消息一律不触发 rearm。
 
 ## 边界与失败语义
 
 - todo 全完成时不续推（不会无事生非）。
-- disarm 状态（用户打断/逃生舱/计数耗尽）下任何路径都不会续推，只有新用户消息重新武装。
+- disarm 状态（用户打断/逃生舱/计数耗尽）下任何路径都不会续推，只有真实的新用户消息（`source.kind === 'user'`）重新武装。
 - **保证**：用户打断后零自动续推；连续续推永不超上限。
 
 ## 测试
 
-- 单元测试：`test/` 覆盖续推 steer、完成静默、用户打断 disarm、供应商错误退避与计数、逃生舱、用户消息复位、自注入豁免。
+- 单元测试：`test/` 覆盖续推 steer、完成静默、用户打断 disarm、供应商错误退避与计数、逃生舱、用户消息复位、注入豁免（自身注入/结算通知/其他插件注入均不 rearm）。
 - 集成测试：`deepwork` 场景——续推消息进入会话日志并到达模型。
