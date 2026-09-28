@@ -25,6 +25,7 @@ plugins/*/dist/
 # The bundle's client half is AUTHORED in the build-output format (no build
 # step — zero-dependency discipline); un-ignore that one directory's files.
 !plugins/orrery-harness/lib/
+!plugins/orrery-model-picker/lib/
 
 # Secrets & credentials (never committed)
 .env
