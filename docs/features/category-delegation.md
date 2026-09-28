@@ -23,10 +23,11 @@
 | 类别注册表 | 内置 9 类别 | 每类别：`description`、`guidance`、`promptAppend`、有序 `chain: [{provider, model, reasoningEffort?}]`、可选 `gateModels`、`disabled` |
 | 代理注册表 | `explore`/`librarian`/`oracle` | 精选只读代理定义 |
 | 模型族提示词变体表 | 内置 | 按模型族选择提示词变体（Claude/Kimi 式清单风格、GPT 式原则风格、其余中性），可覆盖 |
-| `readOnlyBash.enabled` | `true` | 只读 bash 守卫开关；`false` 时只读代理工具面回落到 v0.1.0（无 bash） |
-| `readOnlyBash.allow` | 初版白名单 | 命令级只读白名单（basename 匹配），可迭代补全 |
-| `readOnlyBash.gitAllow` | 10 个子命令 | git 只读子命令白名单（`status log show diff blame grep ls-files ls-tree rev-parse describe shortlog`） |
-| `readOnlyBash.deny` | 显式 deny 列表 | 优先于 allow 的整词 deny（`rm`、`sudo`、解释器、包管理器等） |
+| `readOnlyBash.enabled` | `true` | 只读 bash 守卫开关；`false` 时只读代理工具面回落到 v0.1.0（无 bash）。设置页键：`robashEnabled` |
+| `readOnlyBash.allow` | 初版白名单 | 命令级只读白名单（basename 匹配），可迭代补全。设置页键：`robashAllow`（JSON 字符串数组） |
+| `readOnlyBash.gitAllow` | 10 个子命令 | git 只读子命令白名单（`status log show diff blame grep ls-files ls-tree rev-parse describe shortlog`）。设置页键：`robashGitAllow` |
+| `readOnlyBash.deny` | 显式 deny 列表 | 优先于 allow 的整词 deny（`rm`、`sudo`、解释器、包管理器等）。设置页键：`robashDeny` |
+| 白名单三表语义 | 缺席回退 / 在场权威 | 每个列表键独立解析：未设置 → 回退下层（行 config → 模块默认）；已设置（含 `[]`）→ 权威生效，**空数组 = 显式清空（fail-closed 更严），不回退默认**；坏 JSON 设置服务激活即败。设置页提供结构化行编辑（`RobashListEditorField`），无需手写 JSON |
 | `supervision.maxRetries` | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用） |
 | `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
 | `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |
