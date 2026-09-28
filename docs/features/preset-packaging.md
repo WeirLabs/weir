@@ -20,7 +20,7 @@ bundle 无运行时配置项。预设组合由 `plugins/orrery-harness/cordis.pa
 
 ### Orrery 设置面板（一站式配置）
 
-bundle 另在 profile 层插入 `orrery-harness/settings` 行：以 schemastery 的 DSH fork（`src/vendor/` 内置，含 volatile 机制）声明整树**扁平** schema，全部字段标记 volatile（设置页前置条件，S16）；**Orrery 设置页**由本包 client 半包（`lib/client.js`，手写 `__ModuleLoader__` 格式、零构建）注册为 Settings 应用的**顶层 "Orrery" 分区**（`settings.section` 槽，dsh-web-kimi/内置 General 同款落点；另注册 `plugins.item` 条目），表单经共享 SettingsFormModel（仅支持扁平寻址，故 schema 拍平）读写该命名空间；同行提供 host 层 `orrerySettings` 服务，预设模块按 **模块默认值 ← 行 config ← 设置服务值** 读取生效配置（服务缺席=现状不变；设置作用于之后创建的 agent，进行中的会话保持原组合）。schema 不带默认值——产品默认以 settings 行 `config:` 承载（与模块代码默认 1:1 镜像，页面据此显示 effective 值），用户编辑成为覆盖层。页面按 7 组呈现：布尔→开关、分类器枚举→分段选择、其余→文本/数字输入。
+bundle 另在 profile 层插入 `orrery-harness/settings` 行：以 schemastery 的 DSH fork（`src/vendor/` 内置，含 volatile 机制）声明整树**扁平** schema，全部字段标记 volatile（设置页前置条件，S16）；**Orrery 设置页**由本包 client 半包（`lib/client.js`，手写 `__ModuleLoader__` 格式、零构建）注册为 Settings 应用的**顶层 "Orrery" 分区**（`settings.section` 槽，dsh-web-kimi/内置 General 同款落点；另注册 `plugins.item` 条目），表单经共享 SettingsFormModel（仅支持扁平寻址，故 schema 拍平）读写该命名空间；同行提供 host 层 `orrerySettings` 服务，预设模块按 **模块默认值 ← 行 config ← 设置服务值** 读取生效配置（服务缺席=现状不变；设置作用于之后创建的 agent，进行中的会话保持原组合）。schema 不带默认值——产品默认以 settings 行 `config:` 承载（与模块代码默认 1:1 镜像，页面据此显示 effective 值），用户编辑成为覆盖层。页面按 7 组呈现（组间分割线、字号/字重分层）：布尔→开关、分类器枚举→分段选择、provider/model→模型目录下拉（`remote.session.modelCatalog()` 数据源，composer 选择器同款样式）、其余→文本/数字输入。
 
 面板覆盖：意图分类器（classifier/sidecar 路由/超时/jev 连接）、委派（9 类别模型链 JSON 编辑 + 受监督退避三键）、todo 续推（开关/上限/退避）、上下文压力（开关/软硬阈值）、锚点编辑（hideStockEdit 开关）、只读 bash 总开关（robash.enabled）。白名单明细编辑与富 UI 面板为后续项。
 
