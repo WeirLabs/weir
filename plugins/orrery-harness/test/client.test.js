@@ -163,7 +163,7 @@ describe('orrery settings client half', () => {
 
     // the card component renders a summary for the summary view and a form otherwise
     const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled']
-    expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }) })).toBe('description')
+    expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), ensureCatalog: () => {} })).toBe('description')
     const rendered = component({
       view: 'form',
       t: (key) => key,
@@ -176,6 +176,8 @@ describe('orrery settings client half', () => {
       resetField: () => {},
       save: () => {},
       discard: () => {},
+      ensureCatalog: () => {},
+      retryCatalog: () => {},
     })
     expect(rendered.__type).toBeTruthy()
     // 7 group headers + 6 choice rows + 1 model picker + 14 value-field rows
