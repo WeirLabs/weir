@@ -163,7 +163,7 @@ describe('anchorReadContent', () => {
 })
 
 describe('hash_edit tool', () => {
-  function harness(fileContent) {
+  function harness(fileContent, opts = {}) {
     const files = new Map([['/ws/a.js', fileContent]])
     const handlers = {}
     const registered = []
@@ -180,10 +180,17 @@ describe('hash_edit tool', () => {
         readText: async (target) => files.get(target.targetKey),
         writeText: async (target, content, expected, signal, policy) => {
           writes.push({ target, content, expected, signal, policy })
+          if (opts.denyError) {
+            const error = new Error(opts.denyError.message ?? '[sandbox: file access denied under workspace-write mode]')
+            if (opts.denyError.code) error.code = opts.denyError.code
+            throw error
+          }
           files.set(target.targetKey, content)
           return { operation: 'update', version: 'v2', before: null, after: content }
         },
+        ...(opts.sandboxMode !== undefined ? { sandboxMode: opts.sandboxMode } : {}),
       },
+      get: (name) => opts.services?.[name],
       on: (event, handler) => {
         handlers[event] = handler
       },
@@ -193,7 +200,7 @@ describe('hash_edit tool', () => {
     }
     apply(ctx, {})
     const tool = registered.find((t) => t.name === HASH_EDIT_NAME)
-    const exec = { agent: { session: { header: { cwd: '/ws' } } }, signal: new AbortController().signal }
+    const exec = { agent: { session: { header: { cwd: '/ws' } } }, callId: 'call-1', signal: new AbortController().signal }
     return { tool, files, exec, handlers, registered, writes, injected }
   }
 
@@ -330,5 +337,97 @@ describe('hash_edit tool', () => {
     listeners['agent/created']({ agent })
     expect(getScope).toBe(agent)
     expect(restrictedBy).toEqual([{ deny: ['edit'] }])
+  })
+  it('advertises the escalation fields only under a confining backend', () => {
+    const plain = harness('x')
+    expect(plain.tool.parameters.properties.sandbox_permissions).toBeUndefined()
+    expect(plain.tool.parameters.properties.justification).toBeUndefined()
+    const confined = harness('x', { sandboxMode: 'workspace-write' })
+    expect(confined.tool.parameters.properties.sandbox_permissions).toEqual({
+      type: 'string',
+      enum: ['workspace-write', 'danger-full-access'],
+      description: 'The narrowest wider sandbox mode for a one-shot retry of the exact operation the sandbox just denied; the retry asks the user for approval.',
+    })
+    expect(confined.tool.parameters.properties.justification.type).toBe('string')
+    expect(confined.tool.parameters.required).toEqual(['file_path', 'edits'])
+  })
+
+  it('grants a strictly wider one-shot policy through the approval service', async () => {
+    const { tool, exec, injected, writes, files } = harness('alpha\nbeta\ngamma', {
+      sandboxMode: 'workspace-write',
+      services: { approval: { request: async (req) => { return req.callId === 'call-1' ? 'allowed-once' : 'rejected' } } },
+    })
+    const standing = { mode: 'workspace-write', workspaceRoot: '/ws', sessionId: 's1' }
+    injected[0].cb({ sandboxPolicy: { resolve: () => standing } })
+    const anchor = anchorFor(2, 'beta')
+    await tool.execute(
+      {
+        file_path: '/ws/a.js',
+        edits: [{ op: 'replace', pos: anchor, lines: ['BETA'] }],
+        sandbox_permissions: 'danger-full-access',
+        justification: 'the report must land outside the workspace',
+      },
+      exec,
+    )
+    expect(writes).toHaveLength(1)
+    expect(writes[0].policy).toEqual({ mode: 'danger-full-access', workspaceRoot: '/ws', sessionId: 's1' })
+    expect(files.get('/ws/a.js')).toBe('alpha\nBETA\ngamma')
+  })
+
+  it('rejects a malformed escalation pairing before any filesystem work', async () => {
+    const { tool, exec, writes } = harness('alpha', { sandboxMode: 'workspace-write' })
+    await expect(async () =>
+      tool.execute(
+        { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: '1#VK', lines: ['A'] }], sandbox_permissions: 'danger-full-access' },
+        exec,
+      ),
+    ).rejects.toThrow(/sandbox_permissions requires a justification/)
+    expect(writes).toHaveLength(0)
+  })
+
+  it('fails closed when escalation is requested without a sandbox backend', async () => {
+    const { tool, exec } = harness('alpha')
+    await expect(async () =>
+      tool.execute(
+        {
+          file_path: '/ws/a.js',
+          edits: [{ op: 'replace', pos: '1#VK', lines: ['A'] }],
+          sandbox_permissions: 'workspace-write',
+          justification: 'needs it',
+        },
+        exec,
+      ),
+    ).rejects.toThrow(/no sandboxing filesystem to escalate/)
+  })
+
+  it('maps a sandbox denial to the shared marker plus the escalation hint', async () => {
+    const { tool, exec, files } = harness('alpha', {
+      sandboxMode: 'workspace-write',
+      denyError: { code: 'FS_SANDBOX_DENIED' },
+    })
+    await expect(async () =>
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), lines: ['A'] }] }, exec),
+    ).rejects.toThrow(/\[sandbox: file access denied under unknown mode\]\n\[sandbox: escalation available/)
+    expect(files.get('/ws/a.js')).toBe('alpha')
+  })
+
+  it('detects the denial by marker text when the code channel is absent', async () => {
+    const { tool, exec } = harness('alpha', {
+      sandboxMode: 'workspace-write',
+      denyError: { message: 'writeText failed: [sandbox: file access denied under workspace-write mode]' },
+    })
+    await expect(async () =>
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), lines: ['A'] }] }, exec),
+    ).rejects.toThrow(/\[sandbox: escalation available/)
+  })
+
+  it('passes non-denial write errors through untouched', async () => {
+    const { tool, exec } = harness('alpha', {
+      sandboxMode: 'workspace-write',
+      denyError: { code: 'FS_STALE_VERSION' },
+    })
+    await expect(async () =>
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), lines: ['A'] }] }, exec),
+    ).rejects.toThrow(/file changed on disk/)
   })
 })
