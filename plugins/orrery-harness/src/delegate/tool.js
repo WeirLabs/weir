@@ -34,7 +34,7 @@ Children cannot delegate further. Curated agents are read-only and never write f
  * @property {(skillName: string) => Promise<string>} loadSkill
  * @property {object} subagents - ctx.subagents
  * @property {object | undefined} jobs - ctx.jobs when mounted
- * @property {{ enabled: boolean, lists: { allow: string[], gitAllow: string[], deny: string[] } }} robash - read-only bash guard config
+ * @property {{ enabled: boolean, lists: { bash: { allow: string[], gitAllow: string[], deny: string[] }, pwsh: { allow: string[], gitAllow: string[], deny: string[] } } }} robash - read-only shell guard config (bash + pwsh list sets)
  * @property {(parentAgent: object) => object} coordinatorFor - supervised group coordinator for one parent agent
  * @property {object | undefined} agents - ctx.agents (live agent lookup by child id)
  */
@@ -262,9 +262,11 @@ async function withEscalation(started, item, deps, exec) {
   }
 }
 
-/** Attach the read-only bash guard to a spawned read-only child (fail-closed). */
+/** Attach the read-only shell guard to a spawned read-only child (fail-closed). */
 function attachGuardIfReadOnly(started, target, deps) {
   if (!target.readOnly || !deps.robash?.enabled) return
+  // deps.robash.lists carries both list sets ({ bash, pwsh }); the guard
+  // dispatches on execution.name.
   try {
     attachReadOnlyBashGuard(started.localAgent, deps.robash.lists)
   } catch (error) {
@@ -310,7 +312,7 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
       const member = coordinator.registerMember({ id: started.childId, name: target.label, group: groupName })
       members.push({ id: started.childId, name: target.label, member })
       // startContinuable returns { childId, messageId } (no localAgent), so
-      // the read-only bash guard attaches through the live agent handle —
+      // the read-only shell guard attaches through the live agent handle —
       // same guard, same fail-closed semantics as the other lanes.
       if (target.readOnly) {
         const childAgent = deps.agents?.get(started.childId)

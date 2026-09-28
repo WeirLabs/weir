@@ -45,6 +45,8 @@ export const Config = z.object({
   robashAllow: z.string().volatile().description('JSON array of allowed command names for the read-only bash guard (authoritative when set, including an empty array)'),
   robashGitAllow: z.string().volatile().description('JSON array of allowed git subcommands for the read-only bash guard (authoritative when set, including an empty array)'),
   robashDeny: z.string().volatile().description('JSON array of explicitly denied command names for the read-only bash guard (authoritative when set, including an empty array)'),
+  robashPwshAllow: z.string().volatile().description('JSON array of allowed command names for the read-only pwsh guard (authoritative when set, including an empty array)'),
+  robashPwshDeny: z.string().volatile().description('JSON array of explicitly denied command names for the read-only pwsh guard (authoritative when set, including an empty array)'),
   lspEnabled: z.boolean().volatile().description('LSP capability master switch (default off; when on, sessions start with LSP off and toggle it from the session header switch or the lsp tool)'),
   lspIdleMs: z.number().volatile().description('LSP server idle shutdown threshold (ms)'),
   lspRequestTimeoutMs: z.number().volatile().description('LSP request timeout (ms)'),
@@ -90,6 +92,8 @@ const SECTIONS = {
     allow: 'robashAllow',
     gitAllow: 'robashGitAllow',
     deny: 'robashDeny',
+    pwshAllow: 'robashPwshAllow',
+    pwshDeny: 'robashPwshDeny',
   },
   lsp: {
     enabled: 'lspEnabled',
@@ -170,6 +174,8 @@ function apply(ctx, config = {}) {
     allow: { raw: undefined, parsed: undefined },
     gitAllow: { raw: undefined, parsed: undefined },
     deny: { raw: undefined, parsed: undefined },
+    pwshAllow: { raw: undefined, parsed: undefined },
+    pwshDeny: { raw: undefined, parsed: undefined },
   }
 
   function compute() {
@@ -204,7 +210,7 @@ function apply(ctx, config = {}) {
         // present non-empty string parses into an authoritative array —
         // including '[]', an explicitly cleared list (fail-closed stricter,
         // never a fallback to defaults). Bad JSON fails activation loud.
-        for (const [field, flatKey] of [['allow', 'robashAllow'], ['gitAllow', 'robashGitAllow'], ['deny', 'robashDeny']]) {
+        for (const [field, flatKey] of [['allow', 'robashAllow'], ['gitAllow', 'robashGitAllow'], ['deny', 'robashDeny'], ['pwshAllow', 'robashPwshAllow'], ['pwshDeny', 'robashPwshDeny']]) {
           if (typeof out[field] !== 'string') continue
           if (out[field].trim().length === 0) {
             delete out[field]

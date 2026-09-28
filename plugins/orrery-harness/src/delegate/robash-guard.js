@@ -1,9 +1,13 @@
 // Read-only bash guard: fail-closed validation of bash commands for curated
 // read-only children and readOnly categories. Pure functions, no ctx access —
 // the mount layer (index.js) reads config and attaches the guard to the
-// child's scope.
+// child's scope. pwsh executions dispatch to the independent PowerShell
+// parsing path in robash-guard-pwsh.js.
 
-/** Tool names the guard inspects. bash is validated; pwsh is denied (v1). */
+import { checkPwshCommand } from './robash-guard-pwsh.js'
+
+/** Tool names the guard inspects: bash and pwsh are each validated through
+ * their own parser (dispatched by execution name). */
 export const BASH_TOOL_NAMES = ['bash', 'pwsh']
 
 /** Initial whitelist (conservative; iterate via readOnlyBash config). */
@@ -66,18 +70,24 @@ export function checkBashCommand(command, lists) {
   return analyze(command, sets, 0)
 }
 
-/** Attach the guard to one read-only child's scope. */
+/** Attach the guard to one read-only child's scope. Dispatches on the tool
+ * name: bash commands validate against the bash lists, pwsh commands against
+ * the pwsh lists (gitAllow is shared). */
 export function attachReadOnlyBashGuard(agent, lists) {
   return agent.ctx.tools.guard((execution) => {
     if (execution.name === 'pwsh') {
-      return 'read-only agent: pwsh is not covered by the read-only bash guard in this version'
+      const command = execution.arguments?.command
+      if (typeof command !== 'string') {
+        return 'read-only agent: pwsh call without a command string is not allowed'
+      }
+      return checkPwshCommand(command, lists.pwsh)
     }
     if (execution.name !== 'bash') return undefined
     const command = execution.arguments?.command
     if (typeof command !== 'string') {
       return 'read-only agent: bash call without a command string is not allowed'
     }
-    return checkBashCommand(command, lists)
+    return checkBashCommand(command, lists.bash)
   })
 }
 
@@ -446,8 +456,9 @@ function parseRedirect(token) {
   return { kind: 'write' } // > >> >| >& <> &> &>>
 }
 
-/** git: skip known global flags, then gate the subcommand. */
-function checkGitArgs(args, gitAllow) {
+/** git: skip known global flags, then gate the subcommand. Shared with the
+ * pwsh guard (the gitAllow list is merged once, on the bash side). */
+export function checkGitArgs(args, gitAllow) {
   // `git --version` / `git --help` are complete read-only invocations.
   if (args.length > 0 && args.every((arg) => arg === '--version' || arg === '--help')) return undefined
   let i = 0

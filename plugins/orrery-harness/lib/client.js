@@ -65,7 +65,9 @@ window.__ModuleLoader__.load({
 				{ field: "robashEnabled", kind: "boolean" },
 				{ field: "robashAllow", kind: "text" },
 				{ field: "robashGitAllow", kind: "text" },
-				{ field: "robashDeny", kind: "text" }
+				{ field: "robashDeny", kind: "text" },
+				{ field: "robashPwshAllow", kind: "text" },
+				{ field: "robashPwshDeny", kind: "text" }
 			] },
 			{ id: "lsp", fields: [
 				{ field: "lspEnabled", kind: "boolean" },
@@ -618,7 +620,7 @@ window.__ModuleLoader__.load({
 							key: descriptor.field
 						});
 					}
-					if (descriptor.field === "robashAllow" || descriptor.field === "robashGitAllow" || descriptor.field === "robashDeny") {
+					if (descriptor.field === "robashAllow" || descriptor.field === "robashGitAllow" || descriptor.field === "robashDeny" || descriptor.field === "robashPwshAllow" || descriptor.field === "robashPwshDeny") {
 						return react_jsx_runtime.jsx(RobashListEditorField, {
 							field: descriptor.field,
 							text: field.text,
@@ -869,6 +871,10 @@ window.__ModuleLoader__.load({
 			robashGitAllowHint: "Git subcommands the read-only bash guard accepts; the list applies exactly as saved.",
 			robashDeny: "Deny list",
 			robashDenyHint: "Command names the read-only bash guard always rejects; the list applies exactly as saved.",
+			robashPwshAllow: "Pwsh allow list",
+			robashPwshAllowHint: "Command names the read-only pwsh guard accepts (Windows read-only shell); the list applies exactly as saved — an empty list allows nothing.",
+			robashPwshDeny: "Pwsh deny list",
+			robashPwshDenyHint: "Command names the read-only pwsh guard always rejects (Windows read-only shell); the list applies exactly as saved.",
 			robashListEntries: "entries",
 			robashListAdd: "Add entry",
 			robashListInvalid: "The stored value is not a JSON string array; the list editor cannot open it.",
@@ -1024,6 +1030,10 @@ window.__ModuleLoader__.load({
 			robashGitAllowHint: "只读 bash 守卫放行的 git 子命令；列表按保存内容整体生效。",
 			robashDeny: "拒绝列表",
 			robashDenyHint: "只读 bash 守卫一律拒绝的命令名；列表按保存内容整体生效。",
+			robashPwshAllow: "pwsh 允许列表",
+			robashPwshAllowHint: "只读 pwsh 守卫放行的命令名（Windows 只读 shell）；列表按保存内容整体生效——空列表全不放行。",
+			robashPwshDeny: "pwsh 拒绝列表",
+			robashPwshDenyHint: "只读 pwsh 守卫一律拒绝的命令名（Windows 只读 shell）；列表按保存内容整体生效。",
 			robashListEntries: "条目",
 			robashListAdd: "添加条目",
 			robashListInvalid: "已保存的值不是 JSON 字符串数组，列表编辑器无法打开。",

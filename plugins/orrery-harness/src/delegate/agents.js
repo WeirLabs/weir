@@ -6,10 +6,19 @@
 /** Read-only tool allowlist shared by the curated agents. */
 export const READONLY_TOOLS = ['read', 'glob', 'grep']
 
-/** Appended to curated agent personas when the read-only bash guard is enabled. */
-export const READONLY_BASH_NOTE = `
+/** Appended to curated agent personas when the read-only shell guard is enabled. */
+export function readOnlyShellNote(shell) {
+  if (shell === 'pwsh') {
+    return `
+
+You also have \`pwsh\`, guarded read-only: whitelisted read cmdlets (Get-Content, Get-ChildItem, Select-String, Test-Path, git status/log/show/diff/blame, ...) run normally; write cmdlets, expression invokers (iex, Invoke-Expression, ...), and anything the guard cannot prove read-only are denied. Do not fight the guard — work within read-only commands.`
+  }
+  return `
 
 You also have \`bash\`, guarded read-only: whitelisted read commands (ls, cat, grep, find, jq, git status/log/show/diff/blame, ...) run normally; write commands, interpreters, nested shells, and anything the guard cannot prove read-only are denied. Do not fight the guard — work within read-only commands.`
+}
+
+
 
 /**
  * @typedef {object} CuratedAgentDefinition

@@ -2,7 +2,7 @@
 // tool. Plain ESM, ctx-only.
 import { openSync, readSync, closeSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { CURATED_AGENTS, READONLY_BASH_NOTE } from './agents.js'
+import { CURATED_AGENTS, readOnlyShellNote } from './agents.js'
 import { DEFAULT_CATEGORIES } from './categories.js'
 import { modelFamily, pickVariant } from './families.js'
 import { createStatusTool } from './status-tool.js'
@@ -10,12 +10,20 @@ import { createGroupCoordinator } from './group-coordinator.js'
 import { rehydrateSupervision, applyChildLogRecovery } from './rehydrate.js'
 import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './resolver.js'
 import { attachReadOnlyBashGuard, DEFAULT_ROBASH } from './robash-guard.js'
+import { DEFAULT_ROBASH_PWSH } from './robash-guard-pwsh.js'
 import { createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createDelegateTool } from './tool.js'
 
 const name = 'orrery-delegate'
 const inject = ['tools', 'subagents', 'llm', 'skills']
+
+/** The shell tool a read-only child gets: pwsh on Windows (where the preset
+ * disables bash and mounts pwsh), bash everywhere else. Pure — parameterized
+ * on platform for tests. */
+export function readOnlyShellName(platform) {
+  return platform === 'win32' ? 'pwsh' : 'bash'
+}
 
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
@@ -51,19 +59,30 @@ function apply(ctx, config = {}) {
     }
   }
 
-  // Read-only bash guard: curated agents and readOnly categories get bash
-  // behind a fail-closed whitelist guard when enabled.
+  // Read-only shell guard: curated agents and readOnly categories get the
+  // platform shell (bash, pwsh on win32) behind a fail-closed whitelist
+  // guard when enabled.
   // Layering contract (D2, pinned): the settings service only delivers list
   // keys the user actually set, so this spread gives absent key → fall back
   // to the lower layer (row config → DEFAULT_ROBASH) and present key →
   // authoritative — INCLUDING an empty array, an explicitly cleared list
-  // (fail-closed stricter, never a fallback to defaults).
+  // (fail-closed stricter, never a fallback to defaults). The pwsh lists
+  // merge the same way: DEFAULT_ROBASH_PWSH ← config.readOnlyPwsh ← the
+  // settings section's pwshAllow/pwshDeny keys. gitAllow is merged once on
+  // the bash side and shared with the pwsh git gate.
   const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
+  const pwshOverride = {}
+  if (robashOverride && Object.hasOwn(robashOverride, 'pwshAllow')) pwshOverride.allow = robashOverride.pwshAllow
+  if (robashOverride && Object.hasOwn(robashOverride, 'pwshDeny')) pwshOverride.deny = robashOverride.pwshDeny
+  const pwshConfig = { ...DEFAULT_ROBASH_PWSH, ...(config.readOnlyPwsh ?? {}), ...pwshOverride }
   const robash = {
     enabled: robashConfig.enabled !== false,
-    lists: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },
+    lists: {
+      bash: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },
+      pwsh: { allow: pwshConfig.allow, gitAllow: robashConfig.gitAllow, deny: pwshConfig.deny },
+    },
   }
-  const readOnlyTools = (base) => (robash.enabled ? [...new Set([...base, 'bash'])] : base)
+  const readOnlyTools = (base) => (robash.enabled ? [...new Set([...base, readOnlyShellName(process.platform)])] : base)
 
   // Supervised group coordinators, one per parent session.
   /** @type {Map<string, { coordinator: object, parent: object }>} */
@@ -306,7 +325,7 @@ function apply(ctx, config = {}) {
       if (agent.disabled) throw new Error(`delegate: agent "${item.agent}" is disabled`)
       const label = item.name ?? item.task_summary ?? `${item.agent}: ${firstLine(item.prompt)}`
       return {
-        persona: agent.prompt + (robash.enabled ? READONLY_BASH_NOTE : ''),
+        persona: agent.prompt + (robash.enabled ? readOnlyShellNote(readOnlyShellName(process.platform)) : ''),
         toolFilter: { allow: readOnlyTools(agent.tools) },
         label,
         readOnly: true,
