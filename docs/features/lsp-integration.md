@@ -21,7 +21,7 @@ Orrery 的 LSP 集成把四个只读语义工具带给单个会话：`lsp_diagno
 - 会话级状态持久化：会话重启/应用重启后，之前点亮 LSP 的会话自动恢复四个工具。
 - 工具都以 1-based 位置入参，回答结构化的 `路径:行:列` 结果；文档在查询前自动全文同步。
 - 语言服务器二进制缺失时，工具返回含安装指引的可读错误（如 `npm install -g typescript-language-server typescript`），不崩溃、不毁回合。
-- **PATH 扩展解析**：GUI 进程 PATH 仅含系统目录（LaunchServices 启动），nvm/Homebrew/cargo/go 的 bin 不在其中；服务器与安装器解析在服务失败后自动扫描常见安装目录，安装完成后即刻可被识别。
+- **PATH 扩展解析与用户前缀**：GUI 进程 PATH 仅含系统目录（LaunchServices 启动），nvm/Homebrew/cargo/go 的 bin 不在其中；服务器与安装器解析在服务失败后自动扫描常见安装目录（nvm 优先），子进程注入扩展 PATH（`env node` 脚本可用），npm 安装统一落用户可写前缀 `~/.npm-global`；安装完成后即刻可被识别。
 - 服务器空闲 10 分钟自动关停（可配）；下次调用懒重启。
 
 ## 配置
