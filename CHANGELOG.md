@@ -5,11 +5,7 @@
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
-
-<!-- 纪律（见 AGENTS.md §5.2）：
-     每个 feat/fix 合入时在此添加条目；
-     打版时本段固化为版本段并打 tag。 -->
+## [0.2.0] - 2026-09-28
 
 ### Changed
 
