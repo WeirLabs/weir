@@ -100,8 +100,11 @@ window.__ModuleLoader__.load({
 			catalogRetries = 0;
 			catalogInflight = void 0;
 			catalogTimer = void 0;
-			constructor(scope, remote) {
-				this.remote = remote;
+			constructor(scope, ctx) {
+				// Keep the plugin context; the remote.session domain resolves
+				// lazily at call time (it may not be wired yet during apply,
+				// and `remote.session` is inject-guarded by its own entry).
+				this.ctx = ctx;
 				this.form = new primitives.SettingsFormModel(scope, FIELDS.map(specFor));
 				this.store = this.form.bind(() => this.projection());
 			}
@@ -112,7 +115,7 @@ window.__ModuleLoader__.load({
 				if (this.catalogStatus === "ready" || this.catalogInflight !== void 0) return;
 				this.catalogStatus = "loading";
 				this.republish();
-				this.catalogInflight = this.remote.session.modelCatalog().then((response) => {
+				this.catalogInflight = this.ctx.remote.session.modelCatalog().then((response) => {
 					this.catalogInflight = void 0;
 					if (response.ok) {
 						this.catalogGroups = response.value.groups ?? [];
@@ -584,11 +587,11 @@ window.__ModuleLoader__.load({
 			style: columnStyle,
 			children: renderSlot(ITEM_SLOT)
 		});
-		const inject = ["slots", "locale", "configForms", "remote"];
+		const inject = ["slots", "locale", "configForms", "remote", "remote.session"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-orrery-settings: dictionaries");
-			const card = new OrreryCardController(ctx.configForms.get(ORRERY_NS), ctx.remote);
+			const card = new OrreryCardController(ctx.configForms.get(ORRERY_NS), ctx);
 			ctx.effect(() => () => {
 				card.dispose();
 			}, "ui-orrery-settings: form subscription");

@@ -73,7 +73,7 @@ describe('orrery settings client half', () => {
     }
     const surface = loaded[0].factory(requireStub)
 
-    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote'])
+    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote', 'remote.session'])
     expect(surface.NS).toBe('settings.orrery')
 
     // apply: locale dictionaries, form card, whileServed → slot registration
