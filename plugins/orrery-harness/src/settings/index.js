@@ -42,6 +42,9 @@ export const Config = z.object({
   guardHardThreshold: z.number().volatile().description('Hard pressure threshold (forced compaction)'),
   hashlineHideStockEdit: z.boolean().volatile().description('Hide the stock edit tool (hash_edit only)'),
   robashEnabled: z.boolean().volatile().description('Guarded read-only bash for curated agents (master switch)'),
+  robashAllow: z.string().volatile().description('JSON array of allowed command names for the read-only bash guard (authoritative when set, including an empty array)'),
+  robashGitAllow: z.string().volatile().description('JSON array of allowed git subcommands for the read-only bash guard (authoritative when set, including an empty array)'),
+  robashDeny: z.string().volatile().description('JSON array of explicitly denied command names for the read-only bash guard (authoritative when set, including an empty array)'),
   lspEnabled: z.boolean().volatile().description('LSP capability master switch (default off; when on, sessions start with LSP off and toggle it from the session header switch or the lsp tool)'),
   lspIdleMs: z.number().volatile().description('LSP server idle shutdown threshold (ms)'),
   lspRequestTimeoutMs: z.number().volatile().description('LSP request timeout (ms)'),
@@ -84,6 +87,9 @@ const SECTIONS = {
   },
   robash: {
     enabled: 'robashEnabled',
+    allow: 'robashAllow',
+    gitAllow: 'robashGitAllow',
+    deny: 'robashDeny',
   },
   lsp: {
     enabled: 'lspEnabled',
@@ -128,6 +134,27 @@ export function parseLspServers(raw) {
   return parsed
 }
 
+
+/** Parse + validate one robash whitelist JSON string: a JSON array of strings;
+ * bad input fails activation loud with the settings key named in the error. */
+export function parseRobashLists(key, raw) {
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`orrery-settings: ${key} must be a JSON array of strings (invalid JSON)`)
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`orrery-settings: ${key} must be a JSON array of strings`)
+  }
+  for (const entry of parsed) {
+    if (typeof entry !== 'string') {
+      throw new Error(`orrery-settings: ${key} entries must all be strings`)
+    }
+  }
+  return parsed
+}
+
 function apply(ctx, config = {}) {
   // The DSH-fork schemastery materializes volatile fields as {get()} refs
   // (unset → get() === undefined); unwrap and drop unset fields so modules
@@ -139,6 +166,11 @@ function apply(ctx, config = {}) {
   // read time for the same freshness.
   let chainsCache = { raw: undefined, parsed: undefined }
   let lspServersCache = { raw: undefined, parsed: undefined }
+  const robashListCaches = {
+    allow: { raw: undefined, parsed: undefined },
+    gitAllow: { raw: undefined, parsed: undefined },
+    deny: { raw: undefined, parsed: undefined },
+  }
 
   function compute() {
     const flat = {}
@@ -166,12 +198,31 @@ function apply(ctx, config = {}) {
         }
         out.servers = lspServersCache.parsed
       }
+      if (key === 'robash') {
+        // Empty-vs-absent (D2): an unset or empty-string list key is dropped
+        // so the guard merge layer falls back to the lower config layer; a
+        // present non-empty string parses into an authoritative array —
+        // including '[]', an explicitly cleared list (fail-closed stricter,
+        // never a fallback to defaults). Bad JSON fails activation loud.
+        for (const [field, flatKey] of [['allow', 'robashAllow'], ['gitAllow', 'robashGitAllow'], ['deny', 'robashDeny']]) {
+          if (typeof out[field] !== 'string') continue
+          if (out[field].trim().length === 0) {
+            delete out[field]
+            continue
+          }
+          if (robashListCaches[field].raw !== out[field]) {
+            robashListCaches[field] = { raw: out[field], parsed: parseRobashLists(flatKey, out[field]) }
+          }
+          out[field] = robashListCaches[field].parsed
+        }
+      }
       if (Object.keys(out).length > 0) sections[key] = out
     }
     return sections
   }
 
-  // Compute eagerly: malformed categoryChains/lspServers fail activation loud.
+  // Compute eagerly: malformed categoryChains/lspServers/robash lists fail
+  // activation loud.
   compute()
 
   const listeners = new Set()

@@ -62,7 +62,10 @@ window.__ModuleLoader__.load({
 				{ field: "hashlineHideStockEdit", kind: "boolean" }
 			] },
 			{ id: "robash", fields: [
-				{ field: "robashEnabled", kind: "boolean" }
+				{ field: "robashEnabled", kind: "boolean" },
+				{ field: "robashAllow", kind: "text" },
+				{ field: "robashGitAllow", kind: "text" },
+				{ field: "robashDeny", kind: "text" }
 			] },
 			{ id: "lsp", fields: [
 				{ field: "lspEnabled", kind: "boolean" },
@@ -197,12 +200,29 @@ window.__ModuleLoader__.load({
 			}
 			return JSON.stringify(out, null, 2);
 		}
+		/** Parse a stored robash whitelist JSON into a string list (invalid → null). */
+		function jsonToStringList(raw) {
+			if (typeof raw !== "string" || !raw.trim()) return null;
+			let parsed;
+			try {
+				parsed = JSON.parse(raw);
+			} catch {
+				return null;
+			}
+			if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) return null;
+			return parsed;
+		}
+		/** Synthesize the stored JSON from a staged string list (blank entries dropped). */
+		function stringListToJson(list) {
+			return JSON.stringify((list ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0));
+		}
 		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)", marginTop: "8px" };
 		const chainCategoryStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px" };
 		const chainDescStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
 		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
 		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
 		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
+		const robashEntryInputStyle = { flex: 1, minWidth: 0, background: "var(--dsw-alias-interactive-bg-solid)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 8px", fontSize: "13px" };
 		/** Visual editor for the category model chains: pick models per lane, JSON synthesized on save. */
 		function ChainEditorField(props) {
 			const [open, setOpen] = react.useState(false);
@@ -273,6 +293,75 @@ window.__ModuleLoader__.load({
 							] })
 						] });
 					}),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", justifyContent: "flex-end", gap: "12px" }, children: [
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: cancel, children: props.t("chainCancel") }),
+						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: props.disabled, onClick: save, children: props.t("chainSave") })
+					] })
+				] }) : null
+			] });
+		}
+		/** Visual editor for one robash whitelist: rows of command names, JSON synthesized on save. */
+		function RobashListEditorField(props) {
+			const [open, setOpen] = react.useState(false);
+			const [staged, setStaged] = react.useState(null);
+			const [invalid, setInvalid] = react.useState(false);
+			const parsed = jsonToStringList(props.text);
+			const openEditor = () => {
+				const list = jsonToStringList(props.text);
+				if (list === null) {
+					// fail-closed UX: report the bad stored value and refuse to open
+					setInvalid(true);
+					return;
+				}
+				setInvalid(false);
+				setStaged(list);
+				setOpen(true);
+			};
+			const save = () => {
+				props.edit(props.field, stringListToJson(staged ?? []));
+				setOpen(false);
+				setStaged(null);
+			};
+			const cancel = () => {
+				setOpen(false);
+				setStaged(null);
+			};
+			const updateEntry = (index, value) => setStaged((current) => (current ?? []).map((entry, at) => at === index ? value : entry));
+			const addEntry = () => setStaged((current) => [...(current ?? []), ""]);
+			const removeEntry = (index) => setStaged((current) => (current ?? []).filter((entry, at) => at !== index));
+			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
+					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: props.t(props.field) }),
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t(`${props.field}Hint`) })
+					] }),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+						react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+							parsed !== null ? react_jsx_runtime.jsx("span", { style: hintStyle, children: `${parsed.length} ${props.t("robashListEntries")}` }) : null,
+							react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: openEditor, children: props.t("chainEdit") })
+						] }),
+						parsed === null || invalid ? react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("robashListInvalid") }) : null,
+						props.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+							react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: props.t("overridden") }),
+							react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: props.t("reset") })
+						] }) : null
+					] })
+				] }),
+				open && staged !== null ? react_jsx_runtime.jsxs("div", { style: chainPanelStyle, children: [
+					react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("robashListPanelHint") }),
+					...staged.map((entry, index) => react_jsx_runtime.jsxs("div", { style: chainRungStyle, key: index, children: [
+						react_jsx_runtime.jsx("input", {
+							style: robashEntryInputStyle,
+							value: entry,
+							disabled: props.disabled,
+							placeholder: props.t("robashListEntryPlaceholder"),
+							onChange: (event) => updateEntry(index, event.target.value)
+						}),
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => removeEntry(index), children: props.t("chainRemove") })
+					] })),
+					react_jsx_runtime.jsxs("div", { children: [
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: addEntry, children: `+ ${props.t("robashListAdd")}` })
+					] }),
 					react_jsx_runtime.jsxs("div", { style: { display: "flex", justifyContent: "flex-end", gap: "12px" }, children: [
 						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: cancel, children: props.t("chainCancel") }),
 						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: props.disabled, onClick: save, children: props.t("chainSave") })
@@ -529,6 +618,18 @@ window.__ModuleLoader__.load({
 							key: descriptor.field
 						});
 					}
+					if (descriptor.field === "robashAllow" || descriptor.field === "robashGitAllow" || descriptor.field === "robashDeny") {
+						return react_jsx_runtime.jsx(RobashListEditorField, {
+							field: descriptor.field,
+							text: field.text,
+							overridden: field.overridden,
+							edit: (name, text) => props.edit(name, text),
+							onReset: () => props.resetField(descriptor.field),
+							t,
+							disabled,
+							key: descriptor.field
+						});
+					}
 					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort" || descriptor.field === "lspServers") {
 						// folded into the model-picker row / the LSP manager panel
 						return null;
@@ -762,6 +863,17 @@ window.__ModuleLoader__.load({
 			hashlineHideStockEditHint: "Hide the stock edit tool, leaving hash_edit as the only editor (true/false).",
 			robashEnabled: "Read-only bash guard",
 			robashEnabledHint: "Guarded read-only bash for curated agents, master switch (true/false).",
+			robashAllow: "Allow list",
+			robashAllowHint: "Command names the read-only bash guard accepts; the list applies exactly as saved — an empty list allows nothing.",
+			robashGitAllow: "Git subcommand allow list",
+			robashGitAllowHint: "Git subcommands the read-only bash guard accepts; the list applies exactly as saved.",
+			robashDeny: "Deny list",
+			robashDenyHint: "Command names the read-only bash guard always rejects; the list applies exactly as saved.",
+			robashListEntries: "entries",
+			robashListAdd: "Add entry",
+			robashListInvalid: "The stored value is not a JSON string array; the list editor cannot open it.",
+			robashListPanelHint: "One command name per row. Saving replaces the list wholesale — save an empty list to allow nothing; use reset to fall back to the product default.",
+			robashListEntryPlaceholder: "command name",
 			lspEnabled: "LSP semantic tools",
 			lspEnabledHint: "Capability master switch: off removes LSP entirely; on adds a per-session switch in the composer bar (sessions start with LSP off).",
 			lspIdleMs: "Server idle shutdown (ms)",
@@ -906,6 +1018,17 @@ window.__ModuleLoader__.load({
 			hashlineHideStockEditHint: "隐藏 stock edit，hash_edit 成为唯一编辑器（true/false）。",
 			robashEnabled: "只读 bash 守卫",
 			robashEnabledHint: "精选只读代理的受守卫 bash 总开关（true/false）。",
+			robashAllow: "允许列表",
+			robashAllowHint: "只读 bash 守卫放行的命令名；列表按保存内容整体生效——空列表全不放行。",
+			robashGitAllow: "git 子命令允许列表",
+			robashGitAllowHint: "只读 bash 守卫放行的 git 子命令；列表按保存内容整体生效。",
+			robashDeny: "拒绝列表",
+			robashDenyHint: "只读 bash 守卫一律拒绝的命令名；列表按保存内容整体生效。",
+			robashListEntries: "条目",
+			robashListAdd: "添加条目",
+			robashListInvalid: "已保存的值不是 JSON 字符串数组，列表编辑器无法打开。",
+			robashListPanelHint: "每行一个命令名。保存即整体替换列表——保存空列表则全不放行；恢复产品默认请用重置。",
+			robashListEntryPlaceholder: "命令名",
 			lspEnabled: "LSP 语义工具",
 			lspEnabledHint: "能力总开关：关闭则完全移除 LSP；开启后输入栏出现本会话开关（新会话默认关，按会话启用）。",
 			lspIdleMs: "服务器空闲关停（毫秒）",
@@ -1151,6 +1274,7 @@ window.__ModuleLoader__.load({
 		exports.inject = inject;
 		exports.chainEditor = { jsonToChains, chainsToJson };
 		exports.lspManager = { LspManagerField, jsonToLspServers, lspServersToJson };
+		exports.robashEditor = { jsonToStringList, stringListToJson };
 		return module.exports;
 	}
 });

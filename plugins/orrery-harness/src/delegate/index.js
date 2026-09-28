@@ -53,6 +53,11 @@ function apply(ctx, config = {}) {
 
   // Read-only bash guard: curated agents and readOnly categories get bash
   // behind a fail-closed whitelist guard when enabled.
+  // Layering contract (D2, pinned): the settings service only delivers list
+  // keys the user actually set, so this spread gives absent key → fall back
+  // to the lower layer (row config → DEFAULT_ROBASH) and present key →
+  // authoritative — INCLUDING an empty array, an explicitly cleared list
+  // (fail-closed stricter, never a fallback to defaults).
   const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
   const robash = {
     enabled: robashConfig.enabled !== false,
