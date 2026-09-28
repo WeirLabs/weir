@@ -81,6 +81,14 @@ function apply(ctx, config = {}) {
   if (settingsOverride && typeof settingsOverride === 'object') {
     config = { ...config, ...settingsOverride }
   }
+  // Optional sandbox policy capture (S23): the sandboxed fs backend enforces
+  // the session policy only when the caller passes it per call. Absent service
+  // (headless test compositions, other hosts) = today's call shape.
+  let sandboxPolicyRef = null
+  ctx.inject?.(['sandboxPolicy'], (scope) => {
+    sandboxPolicyRef = scope.sandboxPolicy
+  })
+
   // Read enhancer: annotate read results with anchors.
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const downstream = await next()
@@ -133,7 +141,9 @@ function apply(ctx, config = {}) {
       }
 
       const cwd = exec.agent?.session?.header?.cwd
-      const target = await ctx.fs.resolve(args.file_path, cwd ? { cwd } : {})
+      const policy = sandboxPolicyRef?.resolve({ session: exec.agent?.session })
+      const resolveCwd = policy?.workspaceRoot ?? cwd
+      const target = await ctx.fs.resolve(args.file_path, resolveCwd ? { cwd: resolveCwd } : {})
       const info = await ctx.fs.stat(target, exec.signal)
       if (!info || info.type !== 'file') {
         throw new Error(`hash_edit: no regular file at ${args.file_path}`)
@@ -154,6 +164,7 @@ function apply(ctx, config = {}) {
           after,
           { kind: 'replaceIfVersion', version: info.version },
           exec.signal,
+          policy,
         )
       } catch (error) {
         if (String(error?.code ?? error?.message ?? '').includes('FS_STALE_VERSION')) {

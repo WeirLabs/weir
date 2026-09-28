@@ -167,6 +167,8 @@ describe('hash_edit tool', () => {
     const files = new Map([['/ws/a.js', fileContent]])
     const handlers = {}
     const registered = []
+    const writes = []
+    const injected = []
     const ctx = {
       tools: {
         register: (tool) => registered.push(tool),
@@ -176,7 +178,8 @@ describe('hash_edit tool', () => {
         resolve: async (path) => ({ targetKey: path, displayPath: path }),
         stat: async (target) => (files.has(target.targetKey) ? { version: 'v1', type: 'file' } : undefined),
         readText: async (target) => files.get(target.targetKey),
-        writeText: async (target, content, expected) => {
+        writeText: async (target, content, expected, signal, policy) => {
+          writes.push({ target, content, expected, signal, policy })
           files.set(target.targetKey, content)
           return { operation: 'update', version: 'v2', before: null, after: content }
         },
@@ -184,11 +187,14 @@ describe('hash_edit tool', () => {
       on: (event, handler) => {
         handlers[event] = handler
       },
+      inject: (deps, cb) => {
+        injected.push({ deps, cb })
+      },
     }
     apply(ctx, {})
     const tool = registered.find((t) => t.name === HASH_EDIT_NAME)
     const exec = { agent: { session: { header: { cwd: '/ws' } } }, signal: new AbortController().signal }
-    return { tool, files, exec, handlers, registered }
+    return { tool, files, exec, handlers, registered, writes, injected }
   }
 
   it('applies a valid edit and returns a diff', async () => {
@@ -202,6 +208,37 @@ describe('hash_edit tool', () => {
     expect(result.diff).toContain('-beta')
     expect(result.diff).toContain('+BETA')
     expect(result.ops).toBe(1)
+  })
+
+  it('passes the session-resolved sandbox policy to writeText (S23)', async () => {
+    const { tool, files, exec, injected, writes } = harness('alpha\nbeta\ngamma')
+    expect(injected).toHaveLength(1)
+    expect(injected[0].deps).toEqual(['sandboxPolicy'])
+    const fakePolicy = { mode: 'workspace-write', workspaceRoot: '/ws', sessionId: 's1' }
+    let resolvedReq = null
+    injected[0].cb({ sandboxPolicy: { resolve: (req) => {
+      resolvedReq = req
+      return fakePolicy
+    } } })
+    const anchor = anchorFor(2, 'beta')
+    await tool.execute(
+      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, lines: ['BETA'] }] },
+      exec,
+    )
+    expect(resolvedReq).toEqual({ session: exec.agent.session })
+    expect(writes).toHaveLength(1)
+    expect(writes[0].policy).toBe(fakePolicy)
+    expect(files.get('/ws/a.js')).toBe('alpha\nBETA\ngamma')
+  })
+
+  it('preserves the no-policy shape when the sandbox service is absent', async () => {
+    const { tool, exec, writes } = harness('alpha')
+    const anchor = anchorFor(1, 'alpha')
+    await tool.execute(
+      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, lines: ['A'] }] },
+      exec,
+    )
+    expect(writes[0].policy).toBeUndefined()
   })
 
   it('fails closed on a stale anchor: zero writes', async () => {
