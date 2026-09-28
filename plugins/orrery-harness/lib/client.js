@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
 		// `orrery-settings` namespace (the shared SettingsFormModel only
 		// addresses flat fields). Registers into the Plugins page's
 		// `plugins.item` slot while the Host serves that namespace; also
-		// injects the per-session LSP toggle into the conversation header.
+		// injects the per-session LSP toggle into the conversation composer bar.
 		const ORRERY_NS = "orrery-settings";
 		// Local bus: settings saves bump a revision so the open session's
 		// LSP toggle re-checks command availability (capability gate flipped)
@@ -551,7 +551,7 @@ window.__ModuleLoader__.load({
 			robashEnabled: "Read-only bash guard",
 			robashEnabledHint: "Guarded read-only bash for curated agents, master switch (true/false).",
 			lspEnabled: "LSP semantic tools",
-			lspEnabledHint: "Capability master switch: off removes LSP entirely; on adds a per-session switch in the conversation header (sessions start with LSP off).",
+			lspEnabledHint: "Capability master switch: off removes LSP entirely; on adds a per-session switch in the composer bar (sessions start with LSP off).",
 			lspToggleLabel: "LSP",
 			lspToggleTitle: "Toggle LSP semantic tools for this session"
 		};
@@ -652,7 +652,7 @@ window.__ModuleLoader__.load({
 			robashEnabled: "只读 bash 守卫",
 			robashEnabledHint: "精选只读代理的受守卫 bash 总开关（true/false）。",
 			lspEnabled: "LSP 语义工具",
-			lspEnabledHint: "能力总开关：关闭则完全移除 LSP；开启后会话头出现本会话开关（新会话默认关，按会话启用）。",
+			lspEnabledHint: "能力总开关：关闭则完全移除 LSP；开启后输入栏出现本会话开关（新会话默认关，按会话启用）。",
 			lspToggleLabel: "LSP",
 			lspToggleTitle: "为本会话启用/禁用 LSP 语义工具"
 		};
@@ -668,7 +668,7 @@ window.__ModuleLoader__.load({
 			style: columnStyle,
 			children: renderSlot(ITEM_SLOT)
 		});
-		// ---- Per-session LSP toggle (conversation header utilities slot) ----
+		// ---- Per-session LSP toggle (conversation composer bar) ----
 		const LSP_PROJECTION_KEY = "orreryLsp";
 		const lspToggleStyle = {
 			display: "inline-flex",
@@ -778,11 +778,13 @@ window.__ModuleLoader__.load({
 			ctx.effect(() => () => {
 				card.dispose();
 			}, "ui-orrery-settings: form subscription");
-			// Per-session LSP toggle in the conversation header utilities slot
-			// (same seat family as the built-in open-in-app action). The slot
-			// renders nothing while the `lsp` command is absent (gate off).
-			ctx.effect(() => ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
-				name: "conversation.session.header.utilities",
+			// Per-session LSP toggle in the conversation composer bar (next to
+			// the model selector; visible in blank and active sessions alike —
+			// the session-header utilities slot only renders once the session
+			// has content). Renders nothing while the `lsp` command is absent
+			// (capability gate off).
+			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
+				name: "conversation.input.right",
 				id: "orrery-lsp-toggle",
 				order: 100,
 				locale: NS,

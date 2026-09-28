@@ -127,12 +127,12 @@ describe('orrery settings client half', () => {
     // drive the whileServed registration: the LSP toggle registered at apply,
     // then three page-chain slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.session.header.utilities', 'settings.section', 'settings.orrery.item', 'plugins.item'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'settings.section', 'settings.orrery.item', 'plugins.item'])
 
-    // the per-session LSP toggle in the conversation header utilities slot
+    // the per-session LSP toggle in the conversation composer bar slot
     slotInjects[0].fn()
     expect(slotRegistrations).toHaveLength(1)
-    expect(slotRegistrations[0].definition.name).toBe('conversation.session.header.utilities')
+    expect(slotRegistrations[0].definition.name).toBe('conversation.input.right')
     expect(slotRegistrations[0].definition.id).toBe('orrery-lsp-toggle')
     expect(slotRegistrations[0].definition.order).toBe(100)
 
@@ -243,7 +243,7 @@ describe('orrery settings client half', () => {
 })
 
 describe('orrery session LSP toggle', () => {
-  it('injects the header switch, drives /lsp via commands, and reads the projection', async () => {
+  it('injects the composer-bar switch, drives /lsp via commands, and reads the projection', async () => {
     // Fresh module instance (cache-busted) with a hook-state-preserving react
     // stub so the component can be re-rendered across async state updates.
     const loaded = []
@@ -353,7 +353,7 @@ describe('orrery session LSP toggle', () => {
     }
     surface.apply(ctx)
 
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.session.header.utilities'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right'])
     slotInjects[0].fn()
     const { definition, component } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')

@@ -138,6 +138,12 @@ function apply(ctx, config = {}) {
           stateSchema: lspStateSchema,
           init: () => ({ enabled: false }),
           apply: foldLspState,
+          // Client-visible wire: only wired units reach the browser-side
+          // projection store (the panel switch reads the host-folded state).
+          wire: {
+            viewSchema: lspStateSchema,
+            view: (state) => state,
+          },
         }),
       )
     }
