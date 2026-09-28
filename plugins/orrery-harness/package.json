@@ -13,11 +13,22 @@
     "./context-guard": "./src/context-guard/index.js",
     "./hashline-edit": "./src/hashline-edit/index.js",
     "./settings": "./src/settings/index.js",
-    "./lsp": "./src/lsp/index.js"
+    "./lsp": "./src/lsp/index.js",
+    "./client": "./lib/client.js",
+    "./index.js": "./lib/index.js",
+    ".": "./lib/index.js"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
     }
   },
   "scripts": {

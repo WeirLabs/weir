@@ -7,6 +7,10 @@
     # host-plane orrerySettings service the preset modules overlay with.
     - id: orrery-settings
       name: 'orrery-harness/settings'
+    # Browser half of the same package: the Orrery settings page registered
+    # into the Settings Plugins page (./client export, dsh.client manifest).
+    - id: ui-orrery-settings
+      name: 'orrery-harness'
     - id: preset-orrery
       name: '@deepseek-ai/dsh-agent-preset'
       config:
