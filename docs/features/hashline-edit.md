@@ -28,6 +28,7 @@ volatile config，在线编辑即刻生效。
 - 锚点生成：`tools/post-execute` 增强 `read` 结果；两字符码取自字符集 `ZPMQVRWSNKTXJBYH`，由行内容哈希（自实现 xxHash32）导出；纯空白行以行号为种子，保证可区分。
 - 校验模型：fail-closed——所有锚点先对当前文件内容验明正身，全部通过才应用任一操作；应用按行号自底向上，避免位移污染。
 - 工具定义为纯对象 + object-rooted JSON Schema（严格供应商兼容）。
+- 写入走 `ctx.fs` 并**携带 per-call sandboxPolicy**（`sandboxPolicy.resolve({ session })` 现算，作 `writeText` 第 5 参；服务缺席时退化为无策略调用形态）——会话沙箱策略（模式 + 会话工作区根）对写入生效，与 stock `write`/`edit` 工具同契约（S23 事故修复）。
 - 作用域注册可遮蔽全局同名工具。`hideStockEdit` 统一为**逐 agent 限制**：`agent/created` 时按 agent 视角检查存在性（`ctx.tools.get('edit', agent)`）后 `agent.ctx.tools.restrict({ deny: ['edit'] })`——agent scope 下 stock `edit` 恒为继承（全局层或预设层），可 restrict、目录真隐藏；挂载期 restrict 在 host 层（无作用域）与预设 standing scope（fs 行的 scoped edit 不可 restrict）都不可行，此为统一正确机制（S15 事故修复）。
 
 ## 边界与失败语义
@@ -35,8 +36,10 @@ volatile config，在线编辑即刻生效。
 - 锚点过期/篡改/拼写错误 → 整体拒绝 + mismatch 报告，**保证**文件字节级不变（零写入）。
 - 多操作调用中仅一个锚点失效 → 同样整体拒绝（原子性）。
 - **保证**：任何失败路径都不产生部分写入。
+- 沙箱拒绝（目标不在会话工作区可写根内）→ 普通工具错误，消息点名拒绝模式（如 `workspace-write`），文件零写入；会话切到 `danger-full-access` 后写入不再受限。
+- 升权（`sandbox_permissions` 重试 + 审批）为文档化后续项：当前被拒后按错误提示改用其他方式（重新读取、改用 `write` 工具）即可。
 
 ## 测试
 
 - 单元测试：`test/` 覆盖锚点确定性、三类操作、多操作原子性、mismatch 报告、diff 输出、`hideStockEdit` 逐 agent 机制（逐 agent 限制 / 存在性检查的 agent 视角 / 无 stock edit 豁免）。
-- 集成测试：`hashline` 场景——读取结果带锚点到达模型、`hash_edit` 成功改写目标行、模型工具目录中 stock `edit` 缺席且 `hash_edit` 在场。
+- 集成测试：`hashline` 场景——读取结果带锚点到达模型、`hash_edit` 成功改写目标行、模型工具目录中 stock `edit` 缺席且 `hash_edit` 在场。测试装置镜像了沙箱语义（部署回退根故意不含测试工作区、工作区置于 /tmp 之外），无 per-call policy 的写入会像 desktop 实况一样被拒（S23 回归）。
