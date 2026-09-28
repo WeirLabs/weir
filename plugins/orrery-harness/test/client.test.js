@@ -23,6 +23,7 @@ describe('orrery settings client half', () => {
 
     // stub baseline requires: jsx runtime returns marker objects; primitives
     // exposes the pieces the page consumes.
+    const specsSeen = []
     const primitivesStub = {
       settingsNumberField: (field) => ({ field, kind: 'number' }),
       settingsTextField: (field) => ({ field, kind: 'text' }),
@@ -35,6 +36,7 @@ describe('orrery settings client half', () => {
         constructor(scope, specs) {
           this.scope = scope
           this.specs = specs
+          specsSeen.push(...specs)
           this.store = { marker: 'store' }
         }
         bind(project) {
@@ -177,7 +179,7 @@ describe('orrery settings client half', () => {
     expect(typeof injected.discard).toBe('function')
 
     // the card component renders a summary for the summary view and a form otherwise
-    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
+    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','robashAllow','robashGitAllow','robashDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
     expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), ensureCatalog: () => {} })).toBe('description')
     const rendered = component({
       view: 'form',
@@ -205,8 +207,8 @@ describe('orrery settings client half', () => {
 
     expect(rendered.__type).toBeTruthy()
     // 7 group headers + 6 choice rows + 1 model picker + 17 value-field rows
-    // (3 new LSP tuning rows) + 1 LSP manager row
-    expect(rendered.children).toHaveLength(32)
+    // + 1 LSP manager row + 3 robash list-editor rows
+    expect(rendered.children).toHaveLength(35)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
@@ -219,6 +221,39 @@ describe('orrery settings client half', () => {
     const chainsRow = rendered.children.find((child) => child.text !== undefined && child.edit !== undefined)
     expect(chainsRow).toBeTruthy()
     expect(typeof chainsRow.getSession).toBe('function')
+
+    // the three robash whitelist rows render the list editor (GROUPS.robash)
+    const robashRows = rendered.children.filter((child) => child.field === 'robashAllow' || child.field === 'robashGitAllow' || child.field === 'robashDeny')
+    expect(robashRows).toHaveLength(3)
+    expect(robashRows.map((row) => row.key)).toEqual(['robashAllow', 'robashGitAllow', 'robashDeny'])
+    expect(robashRows.every((row) => typeof row.__type === 'function' && typeof row.edit === 'function' && typeof row.onReset === 'function')).toBe(true)
+    // and the form model tracks them as flat text fields
+    expect(specsSeen.filter((spec) => spec.field === 'robashAllow' || spec.field === 'robashGitAllow' || spec.field === 'robashDeny')).toHaveLength(3)
+
+    // pure robash list helpers: round-trip, invalid → null, empty ↔ "[]"
+    const { jsonToStringList, stringListToJson } = surface.robashEditor
+    expect(jsonToStringList('["ls","cat"]')).toEqual(['ls', 'cat'])
+    expect(jsonToStringList('[]')).toEqual([])
+    expect(stringListToJson([])).toBe('[]')
+    expect(jsonToStringList(stringListToJson(['ls', 'cat']))).toEqual(['ls', 'cat'])
+    expect(stringListToJson([' ls ', '', '  ', 'cat'])).toBe('["ls","cat"]')
+    expect(jsonToStringList('not-json')).toBe(null)
+    expect(jsonToStringList('{"a":1}')).toBe(null)
+    expect(jsonToStringList('[1,"ls"]')).toBe(null)
+    expect(jsonToStringList('')).toBe(null)
+
+    // the collapsed robash row: label + hint + entry count + Edit button
+    const collapsed = robashRows[0].__type({ field: 'robashAllow', text: '["ls","cat"]', overridden: true, edit: () => {}, onReset: () => {}, t: (key) => key, disabled: false })
+    expect(collapsed.children[0].children[0].children[0].children).toBe('robashAllow')
+    expect(collapsed.children[0].children[0].children[1].children).toBe('robashAllowHint')
+    const collapsedRight = collapsed.children[0].children[1]
+    expect(collapsedRight.children[0].children[0].children).toBe('2 robashListEntries')
+    expect(collapsedRight.children[0].children[1].children).toBe('chainEdit')
+    // overridden → Tag + reset below the Edit button
+    expect(collapsedRight.children[2].children[0].children).toBe('overridden')
+    // a bad stored value shows the invalid hint instead of the entry count
+    const badRow = robashRows[0].__type({ field: 'robashAllow', text: 'not-json', overridden: false, edit: () => {}, onReset: () => {}, t: (key) => key, disabled: false })
+    expect(badRow.children[0].children[1].children[1].children).toBe('robashListInvalid')
 
     // the single model picker row: the library picker inside its error boundary
     const pickerRow = rendered.children.find((child) => child.key === 'intentGateProvider')

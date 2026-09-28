@@ -272,7 +272,7 @@ describe('delegate plugin apply', () => {
     expect(registered.map((tool) => tool.name)).toEqual(['delegate', 'resume_agent', 'terminate_agent', 'supervised_status'])
   })
 
-  function applyHarness(config = {}) {
+  function applyHarness(config = {}, settingsSections = undefined) {
     const registered = []
     const spawned = []
     const guards = []
@@ -300,7 +300,7 @@ describe('delegate plugin apply', () => {
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
-      get: () => undefined,
+      get: (name) => (name === 'orrerySettings' && settingsSections ? { get: (section) => settingsSections[section] } : undefined),
       on: () => {},
     }
     apply(ctx, config)
@@ -331,6 +331,31 @@ describe('delegate plugin apply', () => {
     expect(spawned[0].request.toolFilter.allow).not.toContain('bash')
     expect(spawned[0].request.persona).not.toContain('guarded read-only')
     expect(guards).toHaveLength(0)
+  })
+
+  it('settings override allow: [] clears the default allow list (fail-closed)', async () => {
+    const { tool, guards } = applyHarness({}, { robash: { allow: [] } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards).toHaveLength(1)
+    // the present empty array is authoritative: even a default command misses
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toMatch(/not on the read-only allow list/)
+    // absent override keys still fall back to the module defaults
+    expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/explicitly denied/)
+  })
+
+  it('settings override deny: ["ls"] denies ls but keeps the default allow list', async () => {
+    const { tool, guards } = applyHarness({}, { robash: { deny: ['ls'] } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards).toHaveLength(1)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toMatch(/explicitly denied/)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'cat x' } })).toBe(undefined)
+  })
+
+  it('settings service without a robash section keeps the module defaults', async () => {
+    const { tool, guards } = applyHarness({}, { delegate: { supervisionMaxRetries: 2 } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards).toHaveLength(1)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
   })
 
   it('a failing guard attach disposes the child and fails the call', async () => {

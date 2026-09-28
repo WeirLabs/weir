@@ -1,5 +1,5 @@
 import { describe, expect, it } from './helpers.js'
-import { apply as applySettings, Config, parseLspServers } from '../src/settings/index.js'
+import { apply as applySettings, Config, parseLspServers, parseRobashLists } from '../src/settings/index.js'
 import { apply as applyIntentGate } from '../src/intent-gate/index.js'
 import { apply as applyTodoDriver } from '../src/todo-driver/index.js'
 import { apply as applyHashline } from '../src/hashline-edit/index.js'
@@ -27,6 +27,9 @@ describe('settings Config schema', () => {
       guardSoftThreshold: 0.6,
       hashlineHideStockEdit: false,
       robashEnabled: false,
+      robashAllow: '["ls","cat"]',
+      robashGitAllow: '["status"]',
+      robashDeny: '["rm"]',
     })
     expect(result.issues).toBe(undefined)
   })
@@ -43,6 +46,14 @@ describe('settings Config schema', () => {
     expect(() => parseLspServers('[1]')).toThrow(/object map/)
     expect(() => parseLspServers('{"zig":{}}')).toThrow(/command/)
     expect(() => parseLspServers('{"zig":{"command":"zls","args":"--stdio"}}')).toThrow(/args/)
+  })
+
+  it('validates robash list JSON (fail loud, key named)', () => {
+    expect(parseRobashLists('robashAllow', '["ls","cat"]')).toEqual(['ls', 'cat'])
+    expect(parseRobashLists('robashDeny', '[]')).toEqual([])
+    expect(() => parseRobashLists('robashAllow', 'not-json')).toThrow(/robashAllow/)
+    expect(() => parseRobashLists('robashGitAllow', '{"a":1}')).toThrow(/robashGitAllow/)
+    expect(() => parseRobashLists('robashDeny', '[1,"rm"]')).toThrow(/robashDeny/)
   })
 })
 
@@ -120,6 +131,57 @@ describe('settings plugin apply', () => {
     expect(() => harness({ delegateCategoryChains: '[1,2]' })).toThrow(/object map/)
     expect(() => harness({ delegateCategoryChains: '{"quick":"nope"}' })).toThrow(/array of rungs/)
     expect(() => harness({ delegateCategoryChains: '{"quick":[{"provider":"p"}]}' })).toThrow(/provider, model/)
+  })
+
+  it('parses robash list JSON into arrays in the robash section', () => {
+    const { service } = harness({
+      robashEnabled: true,
+      robashAllow: '["ls","cat"]',
+      robashGitAllow: '["status","log"]',
+      robashDeny: '["rm"]',
+    })
+    expect(service.get('robash')).toEqual({ enabled: true, allow: ['ls', 'cat'], gitAllow: ['status', 'log'], deny: ['rm'] })
+  })
+
+  it('delivers a present empty array and drops absent or empty-string list keys', () => {
+    const { service } = harness({ robashEnabled: true, robashAllow: '[]' })
+    expect(service.get('robash')).toEqual({ enabled: true, allow: [] })
+    // an empty string reads as absent: the key falls back to the lower layer
+    const blank = harness({ robashAllow: '  ' })
+    expect(blank.service.get('robash')).toBe(undefined)
+  })
+
+  it('fails activation loud on malformed robash lists (key named)', () => {
+    expect(() => harness({ robashAllow: 'not-json' })).toThrow(/robashAllow/)
+    expect(() => harness({ robashGitAllow: '{"a":1}' })).toThrow(/robashGitAllow/)
+    expect(() => harness({ robashDeny: '[1]' })).toThrow(/robashDeny/)
+  })
+
+  it('re-parses live robash lists only when the raw string changes', () => {
+    const config = { robashAllow: '["ls"]' }
+    const { service } = harness(config)
+    const first = service.get('robash')
+    expect(first.allow).toEqual(['ls'])
+    expect(service.get('robash').allow).toBe(first.allow) // raw-cache hit: same instance
+    config.robashAllow = '["ls","cat"]'
+    expect(service.get('robash').allow).toEqual(['ls', 'cat'])
+    config.robashDeny = '["rm"]'
+    expect(service.get('robash')).toEqual({ allow: ['ls', 'cat'], deny: ['rm'] })
+    delete config.robashAllow
+    delete config.robashDeny
+    expect(service.get('robash')).toBe(undefined)
+  })
+
+  it('recomputes robash sections after a volatile commit notification', () => {
+    const config = { robashAllow: '["ls"]' }
+    const { handlers, service } = harness(config)
+    const calls = []
+    service.onChange(() => calls.push(1))
+    expect(service.get('robash')).toEqual({ allow: ['ls'] })
+    config.robashAllow = '[]'
+    handlers['loader/volatile-update']([['robashAllow']])
+    expect(calls).toHaveLength(1)
+    expect(service.get('robash')).toEqual({ allow: [] })
   })
 
   it('unwraps volatile refs and drops unset fields (DSH-fork semantics)', () => {
