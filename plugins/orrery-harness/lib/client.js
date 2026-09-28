@@ -134,6 +134,124 @@ window.__ModuleLoader__.load({
 		const firstGroupTitleStyle = { ...groupTitleStyle, borderTop: "none", paddingTop: "0" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
+		const CHAIN_CATEGORIES = ["quick", "deep", "deep-plus", "visual", "writing", "general-low", "general-high", "artistry", "architect"];
+		/** Parse the stored JSON into a staged chains map (invalid → empty). */
+		function jsonToChains(raw) {
+			const empty = Object.fromEntries(CHAIN_CATEGORIES.map((name) => [name, []]));
+			if (!raw || !raw.trim()) return empty;
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+				for (const [category, rungs] of Object.entries(parsed)) {
+					if (!Array.isArray(rungs)) continue;
+					empty[category] = rungs.map((rung) => ({
+						provider: typeof rung?.provider === "string" ? rung.provider : "",
+						model: typeof rung?.model === "string" ? rung.model : "",
+						reasoningEffort: typeof rung?.reasoningEffort === "string" ? rung.reasoningEffort : ""
+					}));
+				}
+			} catch {
+				return empty;
+			}
+			return empty;
+		}
+		/** Synthesize the stored JSON from the staged chains map. */
+		function chainsToJson(chains) {
+			const out = {};
+			for (const category of CHAIN_CATEGORIES) {
+				const rungs = (chains?.[category] ?? []).filter((rung) => rung.provider && rung.model).map((rung) => ({
+					provider: rung.provider,
+					model: rung.model,
+					...(rung.reasoningEffort ? { reasoningEffort: rung.reasoningEffort } : {})
+				}));
+				if (rungs.length > 0) out[category] = rungs;
+			}
+			return JSON.stringify(out, null, 2);
+		}
+		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)", marginTop: "8px" };
+		const chainCategoryStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px" };
+		const chainDescStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
+		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
+		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
+		/** Visual editor for the category model chains: pick models per lane, JSON synthesized on save. */
+		function ChainEditorField(props) {
+			const [open, setOpen] = react.useState(false);
+			const [staged, setStaged] = react.useState(null);
+			const openEditor = () => {
+				setStaged(jsonToChains(props.text));
+				setOpen(true);
+			};
+			const save = () => {
+				props.edit("delegateCategoryChains", chainsToJson(staged));
+				setOpen(false);
+				setStaged(null);
+			};
+			const cancel = () => {
+				setOpen(false);
+				setStaged(null);
+			};
+			const updateRung = (category, index, rung) => setStaged((current) => ({
+				...current,
+				[category]: (current?.[category] ?? []).map((entry, at) => at === index ? { ...entry, ...rung } : entry)
+			}));
+			const addRung = (category) => setStaged((current) => ({
+				...current,
+				[category]: [...(current?.[category] ?? []), { provider: "", model: "", reasoningEffort: "" }]
+			}));
+			const removeRung = (category, index) => setStaged((current) => ({
+				...current,
+				[category]: (current?.[category] ?? []).filter((entry, at) => at !== index)
+			}));
+			const clearCategory = (category) => setStaged((current) => ({ ...current, [category]: [] }));
+			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
+					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: props.t("delegateCategoryChains") }),
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("delegateCategoryChainsHint") })
+					] }),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: openEditor, children: props.t("chainEdit") }),
+						props.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+							react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: props.t("overridden") }),
+							react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: props.t("reset") })
+						] }) : null
+					] })
+				] }),
+				open && staged !== null ? react_jsx_runtime.jsxs("div", { style: chainPanelStyle, children: [
+					react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("chainPanelHint") }),
+					...CHAIN_CATEGORIES.map((category) => {
+						const rungs = staged[category] ?? [];
+						return react_jsx_runtime.jsxs("div", { key: category, children: [
+							react_jsx_runtime.jsxs("div", { children: [
+								react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: props.t(`chainCategory_${category}`) }),
+								" ",
+								react_jsx_runtime.jsx("span", { style: chainDescStyle, children: props.t(`chainCategory_${category}_desc`) })
+							] }),
+							...rungs.map((rung, index) => react_jsx_runtime.jsxs("div", { style: chainRungStyle, key: index, children: [
+								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
+									value: rung,
+									onChange: (selection) => updateRung(category, index, selection),
+									getSession: () => props.getSession(),
+									t: props.t,
+									disabled: props.disabled
+								}),
+								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => removeRung(category, index), children: props.t("chainRemove") })
+							] })),
+							react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "12px" }, children: [
+								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => addRung(category), children: `+ ${props.t("chainAddRung")}` }),
+								rungs.length > 0 ? react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => clearCategory(category), children: props.t("chainClear") }) : null
+							] })
+						] });
+					}),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", justifyContent: "flex-end", gap: "12px" }, children: [
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: cancel, children: props.t("chainCancel") }),
+						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: props.disabled, onClick: save, children: props.t("chainSave") })
+					] })
+				] }) : null
+			] });
+		}
+
 		function ChoiceField(props) {
 			const { descriptor, field, t, disabled } = props;
 			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
@@ -170,6 +288,18 @@ window.__ModuleLoader__.load({
 			const children = GROUPS.flatMap((group, groupIndex) => {
 				const rows = group.fields.map((descriptor) => {
 					const field = state.fields[descriptor.field];
+					if (descriptor.field === "delegateCategoryChains") {
+						return react_jsx_runtime.jsx(ChainEditorField, {
+							text: state.fields.delegateCategoryChains.text,
+							overridden: state.fields.delegateCategoryChains.overridden,
+							edit: (field, text) => props.edit(field, text),
+							onReset: () => props.resetField("delegateCategoryChains"),
+							getSession: () => props.getSession(),
+							t,
+							disabled,
+							key: descriptor.field
+						});
+					}
 					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort") {
 						// folded into the single ModelPickerField row below
 						return null;
@@ -343,7 +473,32 @@ window.__ModuleLoader__.load({
 			jevApiKeyEnv: "Jev API key env var",
 			jevApiKeyEnvHint: "Environment variable name holding the Jev API key (the key itself never enters config).",
 			delegateCategoryChains: "Category model chains (JSON)",
-			delegateCategoryChainsHint: "JSON map of category → ordered [{provider, model, reasoningEffort?}] rungs; replaces the category chain wholesale.",
+			delegateCategoryChainsHint: "Which model each category's children run on, edited visually; rungs fall back in order.",
+			chainEdit: "Edit",
+			chainPanelHint: "Pick models per category lane; an empty lane inherits the session route. Rungs fall back in order.",
+			chainSave: "Save",
+			chainCancel: "Cancel",
+			chainAddRung: "Add rung",
+			chainRemove: "Remove",
+			chainClear: "Clear (inherit)",
+			chainCategory_quick: "Quick",
+			chainCategory_quick_desc: "Trivial mechanical work: single-file changes, typo fixes, boilerplate.",
+			chainCategory_deep: "Deep",
+			chainCategory_deep_desc: "One goal, one deliverable: debugging, cross-module work, subtle logic.",
+			"chainCategory_deep-plus": "Deep plus",
+			"chainCategory_deep-plus_desc": "Escalation lane: trade-offs, contracts, invariants evidence cannot settle.",
+			chainCategory_visual: "Visual",
+			chainCategory_visual_desc: "Frontend, UI/UX, styling, animation, layout.",
+			chainCategory_writing: "Writing",
+			chainCategory_writing_desc: "Documentation, prose, technical writing, README and guides.",
+			"chainCategory_general-low": "General (low)",
+			"chainCategory_general-low_desc": "Small tasks that fit no other category.",
+			"chainCategory_general-high": "General (high)",
+			"chainCategory_general-high_desc": "Standard features spanning a few files with known patterns.",
+			chainCategory_artistry: "Artistry",
+			chainCategory_artistry_desc: "Highly creative or artistic tasks, novel ideas, design exploration.",
+			chainCategory_architect: "Architect",
+			chainCategory_architect_desc: "Advisory architecture consult: boundaries, decomposition, trade-offs (read-only).",
 			supervisionMaxRetries: "Supervision retry cap",
 			supervisionMaxRetriesHint: "Supervised continuation retry cap.",
 			supervisionInitialBackoffMs: "Supervision initial backoff (ms)",
@@ -417,7 +572,32 @@ window.__ModuleLoader__.load({
 			jevApiKeyEnv: "Jev 密钥环境变量名",
 			jevApiKeyEnvHint: "持有 Jev API 密钥的环境变量名（密钥本身永不入配置）。",
 			delegateCategoryChains: "类别模型链（JSON）",
-			delegateCategoryChainsHint: "类别 → 有序 [{provider, model, reasoningEffort?}] 档位的 JSON 映射；整链替换该类别的 chain。",
+			delegateCategoryChainsHint: "每个类别的子代理跑哪个模型，可视化配置；档位按序回退。",
+			chainEdit: "编辑",
+			chainPanelHint: "按类别车道挑选模型；空车道继承会话路由。档位按序回退，首选不可用时用下一个。",
+			chainSave: "保存",
+			chainCancel: "取消",
+			chainAddRung: "添加档位",
+			chainRemove: "删除",
+			chainClear: "清空（恢复继承）",
+			chainCategory_quick: "quick（快活）",
+			chainCategory_quick_desc: "机械性小活：单文件修改、错别字、样板代码。",
+			chainCategory_deep: "deep（攻坚）",
+			chainCategory_deep_desc: "一个目标一个交付物：调试、跨模块、微妙逻辑。",
+			"chainCategory_deep-plus": "deep-plus（升级）",
+			"chainCategory_deep-plus_desc": "升级车道：证据无法定夺的权衡、契约、不变量。",
+			chainCategory_visual: "visual（视觉）",
+			chainCategory_visual_desc: "前端、UI/UX、样式、动画、布局。",
+			chainCategory_writing: "writing（写作）",
+			chainCategory_writing_desc: "文档、散文、技术写作、README 与指南。",
+			"chainCategory_general-low": "general-low（通用低）",
+			"chainCategory_general-low_desc": "不属于任何专业类别的小任务。",
+			"chainCategory_general-high": "general-high（通用高）",
+			"chainCategory_general-high_desc": "跨几个文件、有既定模式的标准特性。",
+			chainCategory_artistry: "artistry（艺术）",
+			chainCategory_artistry_desc: "高度创意或艺术性任务、新颖想法、设计探索。",
+			chainCategory_architect: "architect（架构）",
+			chainCategory_architect_desc: "咨询式架构评估：模块边界、拆分、权衡（只读）。",
 			supervisionMaxRetries: "监督续推上限",
 			supervisionMaxRetriesHint: "受监督续推连续上限。",
 			supervisionInitialBackoffMs: "监督续推初始退避（毫秒）",
@@ -507,6 +687,7 @@ window.__ModuleLoader__.load({
 		exports.NS = NS;
 		exports.apply = apply;
 		exports.inject = inject;
+		exports.chainEditor = { jsonToChains, chainsToJson };
 		return module.exports;
 	}
 });
