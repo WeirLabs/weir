@@ -15,12 +15,13 @@ Orrery 的 LSP 集成把四个只读语义工具带给单个会话：`lsp_diagno
 
 - 默认（设置关）：没有任何 LSP 表面，也不运行任何语言服务器。
 - 设置开启后：会话输入栏（模型选择器旁）出现 **LSP 开关**（不亮 = 本会话未启用）；点击点亮 → 本会话注册四个工具，首次使用时按 (cwd, 语言族) 懒启动语言服务器；再次点击熄灭 → 工具即刻消失、本会话持有的服务器全部关停。
-- 设置页 LSP 节提供 **"管理 LSP 服务"** 面板：列出全部 13 族服务器的安装状态与版本；缺失的服务器**一键安装**（先展示完整命令 → 确认 → 执行 → 输出与退出码回显）。
+- 设置页 LSP 节提供 **"管理 LSP 服务"** 面板：列出全部 13 族服务器的安装状态与版本；缺失的服务器**一键安装**（先展示完整命令 → 确认 → 执行 → 输出与退出码回显）。面板底部可**添加/删除自定义语言服务器**（族名/命令/参数/安装命令，随设置保存，保存后检测并同样支持一键安装）。
 - 模型也可以自行调用 `lsp {enabled: true/false}` 切换，与面板开关共享同一状态。
 - 设置关闭时正在启用的会话被立即清理（工具注销、服务器关停、开关消失）；重新开启后会话回到默认关。
 - 会话级状态持久化：会话重启/应用重启后，之前点亮 LSP 的会话自动恢复四个工具。
 - 工具都以 1-based 位置入参，回答结构化的 `路径:行:列` 结果；文档在查询前自动全文同步。
 - 语言服务器二进制缺失时，工具返回含安装指引的可读错误（如 `npm install -g typescript-language-server typescript`），不崩溃、不毁回合。
+- **PATH 扩展解析**：GUI 进程 PATH 仅含系统目录（LaunchServices 启动），nvm/Homebrew/cargo/go 的 bin 不在其中；服务器与安装器解析在服务失败后自动扫描常见安装目录，安装完成后即刻可被识别。
 - 服务器空闲 10 分钟自动关停（可配）；下次调用懒重启。
 
 ## 配置
@@ -32,6 +33,7 @@ Orrery 的 LSP 集成把四个只读语义工具带给单个会话：`lsp_diagno
 | `lsp.idleMs` | `600000` | 空闲自动关停阈值 |
 | `lsp.requestTimeoutMs` | `15000` | 单请求超时（超时为普通工具错误） |
 | `lsp.diagnosticsWaitMs` | `2000` | 诊断未发布时的短暂等待窗口 |
+| `lsp.servers` | 内置注册表 | 用户自定义服务器（`lspServers` 设置，面板可视化编辑）：每族 `{command, args?, manifests?, installHint?, install?}`，覆盖/扩展内置目录 |
 
 内置注册表 13 族：typescript、python（basedpyright）、go（gopls）、rust（rust-analyzer）、json/html/css/markdown（`vscode-langservers-extracted`）、bash、dockerfile、yaml、lua、cpp（clangd）。配方取自社区注册表（nvim-lspconfig / lsp-mode / Helix / vscode-langservers-extracted，来源注明于 `src/lsp/registry.js`）。每族带平台化安装命令（npm/pipx/go/rustup/brew/apt），由管理面板执行。
 
@@ -48,7 +50,8 @@ Orrery 的 LSP 集成把四个只读语义工具带给单个会话：`lsp_diagno
 - **持久状态**：`orreryLsp` 会话投影（stateVersion 1，声明 `wire` 以推送到客户端）纯折叠会话日志——`tool/call`（name `lsp`，`arguments.enabled`）与 `command/run`（name `lsp`，args `on`/`off`）更新 `{enabled}`；`agent/created` 时按投影恢复（冷 resume 后工具仍在），`agent/disposed` 清理。
 - **双通道**：`/lsp on|off`（面板，`ctx.commands.register`，invocation.agent 缺失/坏参返回 error）与 `lsp` 工具（模型，exec.agent）共享同一 per-session 运行时状态；面板开关状态由客户端 `useProjection("orreryLsp")` 读宿主折叠值。
 - 客户端面板开关：注入 `conversation.input.right` 槽（composer 栏，空白与有内容会话均常驻；会话头 utilities 槽仅在会话有内容后出现）；命令目录不含 `lsp` 时不渲染（能力关）；点击经 `remote.commands.execute(sessionId, "/lsp on|off", [])`；无 `useProjection` 注入时降级为投影拉取 + 乐观更新。
-- 管理端点：profile 级模块 `orrery-harness/lsp-admin` 经 `ctx.connection.fetch.register` 注册 `POST /api/orrery-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/orrery-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
+- 管理端点：`src/lsp/admin.js` 经 `ctx.connection.fetch.register` 注册（由 profile 级 settings 行接线，避免新增包子路径）；注册表为 live provider（内置 + `lspServers`）；status 含 `installerAvailable`（安装器自身可否解析）。
+- 可执行解析：`src/lsp/executable.js` 服务优先、扩展目录扫描回退（S21：GUI 进程 PATH 最小化事故）。 `POST /api/orrery-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/orrery-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
 - 语言识别：按目标文件扩展名映射 LSP languageId（`.ts/.tsx/.js/.py/.go/.rs`…），扩展名未知直接拒绝（不起服务器）。
 
 ## 边界与失败语义
