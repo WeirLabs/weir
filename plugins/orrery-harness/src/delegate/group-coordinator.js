@@ -27,6 +27,9 @@ export const DEFAULT_SUPERVISION = {
   maxBackoffMs: 300_000,
 }
 
+/** Bounded wait for the last settlement notice before the fallback delivery. */
+export const SIGNAL_FALLBACK_MS = 1000
+
 /** Parse a child's final assistant text into a terminal status, or null. */
 export function parseTerminalStatus(text) {
   if (typeof text !== 'string' || text.length === 0) return null
@@ -44,17 +47,18 @@ export function parseTerminalStatus(text) {
  * @param {(childId: string) => void} deps.interruptChild - interrupt a running child
  * @param {(delayMs: number, fn: () => void) => void} deps.schedule - delayed retry scheduler
  * @param {(reason: string) => void} [deps.onAudit]
- * @param {(fact: object) => void} [deps.onFact] - structured supervision facts (durability)
- */
+  * @param {(fact: object) => void} [deps.onFact] - structured supervision facts (durability)
+  * @param {(text: string) => void} [deps.notifyParent] - deliver a parent-facing signal (timer-deferred followup)
+  */
 export function createGroupCoordinator(deps, config = {}) {
   const cfg = { ...DEFAULT_SUPERVISION, ...config }
   /** @type {Map<string, { id: string, name: string, group: string, status: string, report: string, retries: number, lastText: string }>} */
   const children = new Map()
   /** @type {Map<string, { name: string, memberIds: string[], settled: boolean }>} */
   const groups = new Map()
-  /** Outbound notices for the parent, flushed at turn boundaries. */
-  const outbox = []
-  /** Rehydration metadata (confidence/untracked), set by hydrate(). */
+  /** Settlement notices observed in the parent log, per member id (ordering gate). */
+  const noticesSeen = new Set()
+  /** Coordination state (no outbox — parent signals go through deps.notifyParent). */
   let meta
 
   function groupLive(name) {
@@ -111,9 +115,6 @@ export function createGroupCoordinator(deps, config = {}) {
     child.status = status
     child.report = report
     deps.onFact?.({ kind: 'settle', childId: child.id, status, report: report ?? '' })
-    if (status === 'blocked') {
-      outbox.push(renderBlockedNotice(child))
-    }
     checkGroupCompletion(child.group)
   }
 
@@ -127,7 +128,49 @@ export function createGroupCoordinator(deps, config = {}) {
     if (!allSettled) return
     entry.settled = true
     deps.onFact?.({ kind: 'group-settled', group: groupName })
-    outbox.push(renderGroupReport(entry, children))
+    requestSignal(groupName)
+  }
+
+  /**
+   * Deliver the group-settled signal only after every member's terminal
+   * settlement notice has been observed in the parent log (strict ordering:
+   * the signal always follows the last Background notice). A bounded fallback
+   * timer keeps the signal from being lost when a notice never arrives (e.g.
+   * a bookkeeping-terminated member whose activation already settled).
+   */
+  function requestSignal(groupName) {
+    const entry = groups.get(groupName)
+    if (!entry) return
+    const allNoticed = entry.memberIds.every((id) => noticesSeen.has(id))
+    if (allNoticed) {
+      deps.notifyParent?.(renderGroupSettled(groupName, entry.memberIds.length))
+      return
+    }
+    entry.signalPending = true
+    deps.schedule(SIGNAL_FALLBACK_MS, () => {
+      const current = groups.get(groupName)
+      if (current && current.signalPending) {
+        current.signalPending = false
+        deps.notifyParent?.(renderGroupSettled(groupName, current.memberIds.length))
+      }
+    })
+  }
+
+  /**
+   * Observe one built-in settlement notice in the parent log. Only a notice
+   * arriving AFTER the child reached its terminal status counts — a resumed
+   * or nudged child's earlier notice must not satisfy the ordering gate.
+   */
+  function noteSettlementNotice(childId) {
+    const child = children.get(childId)
+    if (!child) return
+    if (child.status !== 'completed' && child.status !== 'terminated') return
+    noticesSeen.add(childId)
+    const entry = groups.get(child.group)
+    if (!entry || !entry.settled || !entry.signalPending) return
+    if (!entry.memberIds.every((id) => noticesSeen.has(id))) return
+    entry.signalPending = false
+    deps.notifyParent?.(renderGroupSettled(entry.name, entry.memberIds.length))
   }
 
   /**
@@ -151,7 +194,13 @@ export function createGroupCoordinator(deps, config = {}) {
         return 'settled'
       }
       child.retries += 1
-      await deps.sendTo(childId, NUDGE_MESSAGE)
+      try {
+        await deps.sendTo(childId, NUDGE_MESSAGE)
+      } catch (error) {
+        deps.onAudit?.(`child ${child.name}: nudge delivery failed`)
+        settle(child, 'blocked', `Nudge delivery failed: ${String(error?.message ?? error)}`)
+        return 'settled'
+      }
       return 'nudged'
     }
 
@@ -184,15 +233,29 @@ export function createGroupCoordinator(deps, config = {}) {
       return 'settled'
     }
     child.retries += 1
-    await deps.sendTo(childId, NUDGE_MESSAGE)
+    try {
+      await deps.sendTo(childId, NUDGE_MESSAGE)
+    } catch (error) {
+      deps.onAudit?.(`child ${child.name}: nudge delivery failed`)
+      settle(child, 'blocked', `Nudge delivery failed: ${String(error?.message ?? error)}`)
+      return 'settled'
+    }
     return 'nudged'
   }
 
   function scheduleRetry(childId, delay) {
     deps.onAudit?.(`child ${children.get(childId)?.name}: retry in ${delay}ms`)
-    deps.schedule(delay, () => {
-      void deps.sendTo(childId, RETRY_MESSAGE)
-    })
+    deps.schedule(delay, () =>
+      Promise.resolve()
+        .then(() => deps.sendTo(childId, RETRY_MESSAGE))
+        .catch((error) => {
+          const child = children.get(childId)
+          deps.onAudit?.(`child ${child?.name}: retry delivery failed`)
+          if (child && child.status === 'running') {
+            settle(child, 'blocked', `Retry delivery failed: ${String(error?.message ?? error)}`)
+          }
+        })
+    )
   }
 
   /** resume_agent: blocked → running with resume context. */
@@ -205,7 +268,13 @@ export function createGroupCoordinator(deps, config = {}) {
     child.retries = 0
     child.status = 'running'
     deps.onFact?.({ kind: 'resume', childId: child.id })
-    await deps.sendTo(child.id, renderResumeMessage(context))
+    try {
+      await deps.sendTo(child.id, renderResumeMessage(context))
+    } catch (error) {
+      child.status = 'blocked'
+      deps.onAudit?.(`child ${child.name}: resume delivery failed`)
+      throw new Error(`resume_agent: could not deliver resume context to "${child.name}" — ${String(error?.message ?? error)}`)
+    }
     return { id: child.id, name: child.name, status: child.status }
   }
 
@@ -223,15 +292,26 @@ export function createGroupCoordinator(deps, config = {}) {
     return { id: child.id, name: child.name, status: child.status, interrupted: wasRunning }
   }
 
-  /** Drain queued parent notices (turn-boundary flush). */
-  function drainOutbox() {
-    return outbox.splice(0, outbox.length)
+  /**
+   * Release a failed-batch group name: unsealed and fully terminated only.
+   * A never-registered name (zero members spawned) releases as a no-op.
+   */
+  function releaseGroup(name) {
+    const entry = groups.get(name)
+    if (!entry) return
+    if (entry.sealed) throw new Error(`delegate: group "${name}" is sealed and cannot be released`)
+    const allTerminated = entry.memberIds.every((id) => children.get(id)?.status === 'terminated')
+    if (!allTerminated) throw new Error(`delegate: group "${name}" has non-terminated members and cannot be released`)
+    groups.delete(name)
+    deps.onFact?.({ kind: 'group-released', group: name })
   }
+
+
 
   /**
    * Load a rehydrated state snapshot (restart rebuild). Fills the registry,
-   * records rehydration meta for the visibility tool, and re-emits one merged
-   * group report per fully-settled group (the pre-restart outbox is lost).
+   * records rehydration meta for the visibility tool, and re-emits one
+   * group-settled signal per fully-settled group.
    * @param {{ children: object[], groups: object[], untracked: object[], confidence: string }} state
    */
   function hydrate(state) {
@@ -259,7 +339,7 @@ export function createGroupCoordinator(deps, config = {}) {
     meta = { confidence: state.confidence ?? 'partial', untracked: state.untracked ?? [], hydrated: true }
     for (const group of groups.values()) {
       if (group.sealed && group.settled && group.memberIds.length > 0) {
-        outbox.push(renderGroupReport(group, children))
+        deps.notifyParent?.(renderGroupSettled(group.name, group.memberIds.length))
       }
     }
   }
@@ -269,10 +349,11 @@ export function createGroupCoordinator(deps, config = {}) {
     assertGroupAvailable,
     sealGroup,
     noteAssistantText,
+    noteSettlementNotice,
     onTurnEnd,
     resume,
     terminate,
-    drainOutbox,
+    releaseGroup,
     hydrate,
     memberByRef,
     groupLive,
@@ -316,26 +397,7 @@ STATUS: blocked
 REPORT: <what blocks you>`
 }
 
-function renderBlockedNotice(child) {
-  return `<supervised_blocked child="${child.name}" id="${child.id}">
-STATUS: blocked
-REPORT:
-${child.report || '(no report body)'}
-
-You may resume this child with resume_agent (attach unblocking context), or terminate it with terminate_agent.
-</supervised_blocked>`
-}
-
-function renderGroupReport(group, children) {
-  const lines = group.memberIds.map((id, index) => {
-    const child = children.get(id)
-    const status = child?.status ?? 'unknown'
-    const report = child?.report?.trim() || '(no report)'
-    return `## ${index + 1}. ${child?.name ?? id} — ${status}\n\n${report}`
-  })
-  return `<supervised_group_report group="${group.name}" members="${group.memberIds.length}">
-All members of this group reached a terminal state. Merged report:
-
-${lines.join('\n\n')}
-</supervised_group_report>`
+/** One-line group-settled signal: member bodies ride the built-in settlement notices. */
+function renderGroupSettled(groupName, memberCount) {
+  return `<supervised_group_settled group="${groupName}" members="${memberCount}">All ${memberCount} member(s) reached a terminal state.</supervised_group_settled>`
 }

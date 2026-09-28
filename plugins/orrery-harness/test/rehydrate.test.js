@@ -28,6 +28,17 @@ describe('rehydrateSupervision', () => {
     ])
     expect(state.untracked).toEqual([])
   })
+  it('replays a group-released fact and drops the released group', () => {
+    const records = [
+      record('parent-1', 'orrery/supervision/spawn', { kind: 'spawn', childId: 'c1', name: 'alpha', group: 'scan' }),
+      record('parent-1', 'orrery/supervision/terminate', { kind: 'terminate', childId: 'c1', reason: 'rollback' }),
+      record('parent-1', 'orrery/supervision/group-released', { kind: 'group-released', group: 'scan' }),
+    ]
+    const state = rehydrateSupervision({ parentId: 'parent-1', records, catalogChildren: [] })
+    expect(state.groups).toEqual([]) // not live after rebuild
+    expect(state.children).toHaveLength(1)
+    expect(state.children[0].status).toBe('terminated')
+  })
 
   it('reports partial confidence with untracked catalog children when no facts exist', () => {
     const catalog = [
@@ -72,18 +83,21 @@ describe('rehydrateSupervision', () => {
     expect(state.untracked).toEqual([])
   })
 })
-
 describe('coordinator.hydrate', () => {
   function plainDeps() {
+    const notifications = []
     return {
       sendTo: async () => {},
       interruptChild: () => {},
       schedule: () => {},
+      notifyParent: (text) => notifications.push(text),
+      notifications,
     }
   }
 
-  it('loads a rehydrated snapshot and re-emits the merged report for settled groups', () => {
-    const coordinator = createGroupCoordinator(plainDeps())
+  it('loads a rehydrated snapshot and re-emits one group-settled signal for settled groups', () => {
+    const deps = plainDeps()
+    const coordinator = createGroupCoordinator(deps)
     const state = {
       children: [
         { id: 'c1', name: 'alpha', group: 'scan', status: 'completed', report: 'alpha done' },
@@ -97,22 +111,23 @@ describe('coordinator.hydrate', () => {
     expect(coordinator._children.size).toBe(2)
     expect(coordinator.meta.confidence).toBe('full')
     expect(coordinator.meta.untracked).toEqual([])
-    const notices = coordinator.drainOutbox()
-    expect(notices).toHaveLength(1)
-    expect(notices[0]).toContain('supervised_group_report')
-    expect(notices[0]).toContain('alpha done')
-    expect(notices[0]).toContain('terminated')
+    expect(deps.notifications).toHaveLength(1)
+    expect(deps.notifications[0]).toContain('supervised_group_settled')
+    expect(deps.notifications[0]).toContain('group="scan"')
+    expect(deps.notifications[0]).toContain('members="2"')
+    expect(deps.notifications[0]).not.toContain('alpha done')
   })
 
-  it('does not re-emit a merged report for unsettled groups', () => {
-    const coordinator = createGroupCoordinator(plainDeps())
+  it('does not re-emit a group-settled signal for unsettled groups', () => {
+    const deps = plainDeps()
+    const coordinator = createGroupCoordinator(deps)
     coordinator.hydrate({
       children: [{ id: 'c1', name: 'alpha', group: 'scan', status: 'blocked', report: 'stuck' }],
       groups: [{ name: 'scan', memberIds: ['c1'], sealed: true, settled: false }],
       untracked: [],
       confidence: 'full',
     })
-    expect(coordinator.drainOutbox()).toEqual([])
+    expect(deps.notifications).toEqual([])
   })
 
   it('records partial-confidence meta with untracked rows', () => {

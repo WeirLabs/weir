@@ -84,6 +84,32 @@ function apply(ctx, config = {}) {
           onFact: (fact) => {
             audit(parent.session, `supervision/${fact.kind}`, fact)
           },
+          notifyParent: (text) => {
+            // Reliable parent-facing delivery: timer-deferred, mirroring the
+            // built-in settlement channel (sendWaking): steer into the current
+            // turn when the parent is busy so the signal lands right after the
+            // last member's settlement notice; followup wake when idle. Bounded
+            // retry; the final failure is audited.
+            const message = userTextMessage(text, 'orrery-delegate')
+            const deliver = (attempt) => {
+              const delay = attempt === 1 ? 0 : 200 * (attempt - 1)
+              const timer = setTimeout(() => {
+                let outcome
+                try {
+                  outcome = parent.status === 'idle' ? parent.followup(message) : parent.steer(message)
+                } catch (error) {
+                  outcome = Promise.reject(error)
+                }
+                Promise.resolve(outcome).catch((error) => {
+                  ctx.logger?.warn?.(`orrery-delegate: group-settled signal delivery (attempt ${attempt}) failed: ${error?.message ?? error}`)
+                  if (attempt < 3) deliver(attempt + 1)
+                  else audit(parent.session, 'supervision', { note: `group-settled signal delivery failed after ${attempt} attempts: ${String(error?.message ?? error)}` })
+                })
+              }, delay)
+              timer.unref?.() // never hold the process for a pending signal delivery
+            }
+            deliver(1)
+          },
         },
         config.supervision,
       )
@@ -121,35 +147,21 @@ function apply(ctx, config = {}) {
     return undefined
   }
 
-  // Parent busy ledger: turn/start … turn/end of the parent's own session.
-  const parentBusy = new Map()
-
-  /**
-   * Deliver queued notices: steer at turn-stopping while the parent is busy,
-   * followup (deferred — session/event listeners must not follow up
-   * synchronously) when the parent is idle.
-   */
-  function maybeDeliver(entry) {
-    if (parentBusy.get(entry.parent.id)) return // busy: turn-stopping flush covers it
-    const notices = entry.coordinator.drainOutbox()
-    if (notices.length === 0) return
-    const message = userTextMessage(notices.join('\n\n'), 'orrery-delegate')
-    setTimeout(() => {
-      try {
-        entry.parent.followup(message)
-      } catch {
-        // wake is best-effort; nothing else depends on it
-      }
-    }, 0)
-  }
-
   // Supervision feed: child assistant text + turn ends drive the state machine;
-  // parent turn boundaries maintain the busy ledger.
+  // the parent's own log feeds the settlement-notice ordering gate. Parent-facing
+  // signals are delivered through the coordinator's notifyParent effector
+  // (timer-deferred dispatch), never synchronously from inside event dispatch.
   ctx.on('session/event', (session, event) => {
     const parentEntry = coordinators.get(session.id)
     if (parentEntry) {
-      if (event?.type === 'turn/start') parentBusy.set(session.id, true)
-      if (event?.type === 'turn/end') parentBusy.set(session.id, false)
+      // Strict ordering: the group-settled signal must follow every member's
+      // built-in settlement notice, so observe them as they land in the parent log.
+      if (event?.type === 'user/message' && event.data?.source?.kind === 'subagent-settled') {
+        const senderId = event.data?.source?.senderSessionId
+        if (typeof senderId === 'string' && senderId.length > 0) {
+          parentEntry.coordinator.noteSettlementNotice(senderId)
+        }
+      }
       return
     }
     const entry = entryOfChild(session.id)
@@ -170,25 +182,21 @@ function apply(ctx, config = {}) {
   })
 
   async function driveTurnEnd(entry, childId, reason) {
-    await entry.coordinator.onTurnEnd(childId, reason)
-    maybeDeliver(entry)
+    try {
+      await entry.coordinator.onTurnEnd(childId, reason)
+    } catch (error) {
+      audit(entry.parent.session, 'supervision', { note: `turn-end processing failed for child ${childId}: ${String(error?.message ?? error)}` })
+    }
   }
 
-  // Turn-boundary flush: deliver queued blocked notices and merged group
-  // reports as one steered message (never mid-turn interjection).
-  ctx.on('agent/turn-stopping', ({ agent }) => {
-    const entry = coordinators.get(agent.id)
-    if (!entry) return
-    const notices = entry.coordinator.drainOutbox()
-    if (notices.length === 0) return
-    agent.steer(userTextMessage(notices.join('\n\n'), 'orrery-delegate'))
-  })
+
 
   ctx.tools.register(
     createDelegateTool({
       resolveTarget,
       loadSkill,
       subagents: ctx.subagents,
+      agents: ctx.get('agents'),
       jobs: ctx.get('jobs'),
       robash,
       coordinatorFor,

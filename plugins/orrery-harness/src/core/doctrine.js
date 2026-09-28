@@ -36,6 +36,10 @@ When you are waiting on children or background jobs, end the turn. Settlement no
 
 Background completions arrive as compact notices (id, status, one-line summary). Pull the full report with \`job_output\` only when you decide you need it. Your context is the most expensive resource in the system.
 
+## Supervised signals
+
+Each supervised member's settlement notice carries that member's terminal \`STATUS\`/\`REPORT\` body. The one-line group-settled signal marks group completion. Respond to a blocked member with \`resume_agent\` or \`terminate_agent\`; consult \`supervised_status\` for the registry view.
+
 ## Evidence closes work
 
 A todo is \`completed\` only when its evidence exists in this conversation: the command that ran, the output that proves it, the diff that changed it. A child's done-claim is not evidence until you have read the result. Never mark done on inference.

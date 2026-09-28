@@ -16,9 +16,9 @@ Each call item MUST provide exactly one of:
 
 NEVER pass model together with category: category-routed children take their model from the registry. model is honored for agent spawns only.
 
-Options: run_in_background (return a job id immediately; the completion arrives as a compact notice and you pull the report with job_output), load_skills (skill bodies prepended to the child's prompt), name (stable handle), task_summary (one-line label), group (supervised group: all items of THIS call form one group whose members run as supervised continuable children; groups never accept later insertion; when every member settles you receive ONE merged group report).
+Options: run_in_background (return a job id immediately; the completion arrives as a compact notice and you pull the report with job_output), load_skills (skill bodies prepended to the child's prompt), name (stable handle), task_summary (one-line label), group (supervised group: all items of THIS call form one group whose members run as supervised continuable children; groups never accept later insertion; when every member settles you receive ONE group-settled signal — each member's terminal report arrives individually in that member's settlement notice).
 
-Supervised children report a binary terminal status (completed or blocked). A blocked report reaches you promptly; resume a blocked child with resume_agent (attach unblocking context) or terminate it with terminate_agent. Terminate a blocked child and delegate a fresh one when the task's direction changed substantially.
+Supervised children report a binary terminal status (completed or blocked). A member's terminal report reaches you in its settlement notice; resume a blocked member with resume_agent (attach unblocking context) or terminate it with terminate_agent. Terminate a blocked child and delegate a fresh one when the task's direction changed substantially.
 
 Batch form: tasks (1-16 items) shares top-level options; an item-level run_in_background must agree with the top level.
 
@@ -36,6 +36,7 @@ Children cannot delegate further. Curated agents are read-only and never write f
  * @property {object | undefined} jobs - ctx.jobs when mounted
  * @property {{ enabled: boolean, lists: { allow: string[], gitAllow: string[], deny: string[] } }} robash - read-only bash guard config
  * @property {(parentAgent: object) => object} coordinatorFor - supervised group coordinator for one parent agent
+ * @property {object | undefined} agents - ctx.agents (live agent lookup by child id)
  */
 
 /**
@@ -73,7 +74,7 @@ export function createDelegateTool(deps) {
         load_skills: { type: 'array', items: { type: 'string' }, description: 'Skills to prepend to the child prompt.' },
         name: { type: 'string', description: 'Stable handle for the child.' },
         task_summary: { type: 'string', description: 'One-line label (<=80 chars) for the UI.' },
-        group: { type: 'string', description: 'Supervised group name: every item of this call joins the group (no later insertion); merged report when all settle.' },
+        group: { type: 'string', description: 'Supervised group name: every item of this call joins the group (no later insertion); a one-line group-settled signal arrives when all members settle.' },
       },
     },
     output: {
@@ -273,16 +274,24 @@ function attachGuardIfReadOnly(started, target, deps) {
   }
 }
 
-/** Supervised group lane: spawn every item as a continuable supervised child. */
+/** Supervised group lane: resolve every member first, then spawn as continuable supervised children. */
 async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
   const coordinator = await deps.coordinatorFor(exec.agent)
   coordinator.assertGroupAvailable(groupName)
 
+  // Phase 1: resolve every member (pure — no side effects) so a bad item
+  // fails before any child is spawned and no live unsealed group remains.
+  const plans = []
+  for (const item of items) {
+    const target = await deps.resolveTarget(item, parentRouteOf(exec))
+    const prompt = await buildPrompt(item, deps)
+    plans.push({ target, prompt })
+  }
+
   const members = []
   try {
-    for (const item of items) {
-      const target = await deps.resolveTarget(item, parentRouteOf(exec))
-      const prompt = await buildPrompt(item, deps)
+    for (const plan of plans) {
+      const { target, prompt } = plan
       const started = await deps.subagents.startContinuable({
         provider: 'spawn',
         label: target.label,
@@ -296,18 +305,34 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
         },
         signal: exec.signal,
       })
+      // Register BEFORE the guard attach: a guard failure must leave the member
+      // in the rollback list so it is terminated, never left running unguarded.
       const member = coordinator.registerMember({ id: started.childId, name: target.label, group: groupName })
       members.push({ id: started.childId, name: target.label, member })
+      // startContinuable returns { childId, messageId } (no localAgent), so
+      // the read-only bash guard attaches through the live agent handle —
+      // same guard, same fail-closed semantics as the other lanes.
+      if (target.readOnly) {
+        const childAgent = deps.agents?.get(started.childId)
+        if (!childAgent) throw new Error(`delegate: read-only supervised member spawned but no live agent handle is available for "${started.childId}"`)
+        attachReadOnlyBashGuard(childAgent, deps.robash.lists)
+      }
     }
   } catch (error) {
-    // Roll back partially spawned members so the group name is freed.
-    for (const { id, name } of members) {
+    // Roll back partially spawned members and free the group name.
+    for (const { id } of members) {
       try {
+        // terminate() already interrupts running children — no second interrupt.
         coordinator.terminate(id, `Supervised spawn aborted: ${String(error?.message ?? error)}`)
-        deps.subagents.interrupt(id, { kind: 'ancestor', agent: exec.agent })
       } catch {
         // best-effort rollback
       }
+    }
+    try {
+      coordinator.releaseGroup(groupName)
+    } catch {
+      // best-effort: a failed release leaves an unsealed group whose members
+      // are all terminated — releaseGroup semantics keep the name reusable
     }
     throw error
   }
@@ -356,7 +381,7 @@ function renderDelegateResult(value) {
   if (!value || typeof value !== 'object') return String(value)
   if (value.supervised) {
     const lines = value.members.map((member) => `- ${member.name} (${member.id})`)
-    return `Supervised group "${value.group}" started with ${value.members.length} member(s); they now run as supervised continuable children:\n${lines.join('\n')}\n\nEach member will report a terminal status (completed/blocked). Blocked reports reach you promptly; the merged group report arrives when every member settles.`
+    return `Supervised group "${value.group}" started with ${value.members.length} member(s); they now run as supervised continuable children:\n${lines.join('\n')}\n\nEach member will report a terminal status (completed/blocked); each member's report reaches you in that member's settlement notice. A one-line group-settled signal arrives when every member settles.`
   }
   if (value.background) {
     const lines = value.jobs.map((job) => `- ${job.job_id}: ${job.label}`)

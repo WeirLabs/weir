@@ -19,7 +19,7 @@ export function digestReport(report, max = 200) {
 export function createStatusTool(deps) {
   return {
     name: 'supervised_status',
-    description: `Render the supervised-child registry of this session: per child the id, name, group, status (running/blocked/completed/terminated), retries, and a truncated report digest; per group the member count and sealed/settled state; plus continuable children in the DSH subagent catalog that this coordinator does not track (flagged untracked). Main agent only.`,
+    description: `Render the supervised-child registry of this session: per child the id, name, group, status (running/blocked/completed/terminated), retries, and a truncated report digest; per group the member count and sealed/settled state; plus continuable children in the DSH subagent catalog that this coordinator does not track (flagged untracked). Main agent only. Member report bodies live in the built-in settlement notices and the registry digest; respond to a blocked member with resume_agent or terminate_agent.`,
     parameters: {
       type: 'object',
       properties: {},

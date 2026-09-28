@@ -28,7 +28,6 @@ describe('supervised_status tool', () => {
     coordinator.sealGroup('scan')
     coordinator.noteAssistantText('child-1', 'STATUS: blocked\nREPORT: beta stuck on missing input')
     await coordinator.onTurnEnd('child-1', { kind: 'completed' })
-    coordinator.drainOutbox() // discard the blocked notice
 
     const tool = makeTool({ coordinator })
     const value = await tool.execute({}, execStub())

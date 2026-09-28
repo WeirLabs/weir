@@ -112,6 +112,10 @@ function applyFact(fact, children, groups) {
       entry.settled = true
       return
     }
+    case 'group-released': {
+      groups.delete(fact.group)
+      return
+    }
     default:
       return
   }

@@ -34,17 +34,20 @@ describe('group coordinator', () => {
     const scheduled = []
     const audits = []
     const facts = []
+    const notifications = []
     return {
       sent,
       interrupted,
       scheduled,
       audits,
       facts,
+      notifications,
       sendTo: async (childId, text) => sent.push({ childId, text }),
       interruptChild: (childId) => interrupted.push(childId),
       schedule: (delayMs, fn) => scheduled.push({ delayMs, fn }),
       onAudit: (note) => audits.push(note),
       onFact: (fact) => facts.push(fact),
+      notifyParent: (text) => notifications.push(text),
     }
   }
 
@@ -70,34 +73,73 @@ describe('group coordinator', () => {
     coordinator.assertGroupAvailable('scan') // settled group name is reusable
   })
 
-  it('settles completed members and emits one merged report in assignment order', async () => {
+  it('settles members and emits one group-settled signal once every terminal notice is observed', async () => {
     const deps = fakeDeps()
     const coordinator = groupOfTwo(deps)
     coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: alpha done')
     expect(await coordinator.onTurnEnd('c1', { kind: 'completed' })).toBe('settled')
-    expect(coordinator.drainOutbox()).toHaveLength(0) // group not complete yet
+    expect(deps.notifications).toHaveLength(0) // group not complete yet
 
     coordinator.noteAssistantText('c2', 'STATUS: completed\nREPORT: beta done')
     await coordinator.onTurnEnd('c2', { kind: 'completed' })
-    const notices = coordinator.drainOutbox()
-    expect(notices).toHaveLength(1)
-    expect(notices[0]).toContain('supervised_group_report')
-    expect(notices[0]).toContain('group="scan"')
-    expect(notices[0].indexOf('alpha done') < notices[0].indexOf('beta done')).toBe(true)
+    expect(deps.notifications).toHaveLength(0) // ordering gate: no notices observed yet
+
+    coordinator.noteSettlementNotice('c1')
+    expect(deps.notifications).toHaveLength(0) // still missing c2's notice
+    coordinator.noteSettlementNotice('c2')
+    expect(deps.notifications).toHaveLength(1)
+    expect(deps.notifications[0]).toContain('supervised_group_settled')
+    expect(deps.notifications[0]).toContain('group="scan"')
+    expect(deps.notifications[0]).toContain('members="2"')
+    expect(deps.notifications[0]).not.toContain('alpha done') // bodies ride the built-in settlement notices
+    expect(deps.notifications[0]).not.toContain('beta done')
   })
 
-  it('delivers a blocked report promptly, ahead of the group merge', async () => {
+  it('ignores a pre-terminal notice (nudged/resumed child) for the ordering gate', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    coordinator.noteAssistantText('c1', 'STATUS: blocked\nREPORT: stuck')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    coordinator.noteSettlementNotice('c1') // blocked-era notice: status not terminal
+    expect(deps.notifications).toHaveLength(0)
+
+    await coordinator.resume('c1', 'unblocked')
+    coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: alpha finally done')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    coordinator.noteAssistantText('c2', 'STATUS: completed\nREPORT: beta done')
+    await coordinator.onTurnEnd('c2', { kind: 'completed' })
+    expect(deps.notifications).toHaveLength(0) // gate still closed: c1's terminal notice missing
+    coordinator.noteSettlementNotice('c2')
+    expect(deps.notifications).toHaveLength(0)
+    coordinator.noteSettlementNotice('c1') // terminal notice arrives last, after the signal would have fired
+    expect(deps.notifications).toHaveLength(1)
+  })
+
+  it('falls back to a bounded delayed delivery when a member notice never arrives', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: alpha done')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    coordinator.noteSettlementNotice('c1')
+    coordinator.noteAssistantText('c2', 'STATUS: completed\nREPORT: beta done')
+    await coordinator.onTurnEnd('c2', { kind: 'completed' })
+    expect(deps.notifications).toHaveLength(0)
+    const fallback = deps.scheduled.at(-1)
+    expect(fallback.delayMs).toBe(1000)
+    await fallback.fn()
+    expect(deps.notifications).toHaveLength(1)
+    expect(deps.notifications[0]).toContain('supervised_group_settled')
+  })
+
+  it('emits no parent notice on a blocked settle (the built-in settlement channel carries it)', async () => {
     const deps = fakeDeps()
     const coordinator = groupOfTwo(deps)
     coordinator.noteAssistantText('c1', 'STATUS: blocked\nREPORT: need api key')
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
-    const notices = coordinator.drainOutbox()
-    expect(notices).toHaveLength(1)
-    expect(notices[0]).toContain('supervised_blocked')
-    expect(notices[0]).toContain('need api key')
-    expect(notices[0]).toContain('resume_agent')
-    // group still open: no merged report
-    expect(notices[0]).not.toContain('supervised_group_report')
+    expect(deps.notifications).toHaveLength(0)
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberByRef('c1').report).toBe('need api key')
+    expect(deps.facts.at(-1)).toEqual({ kind: 'settle', childId: 'c1', status: 'blocked', report: 'need api key' })
   })
 
   it('nudges a child that ended without a STATUS marker', async () => {
@@ -133,8 +175,6 @@ describe('group coordinator', () => {
     }
     expect(coordinator.memberByRef('c1').status).toBe('blocked')
     expect(coordinator.memberByRef('c1').report).toContain('exhausted')
-    const notices = coordinator.drainOutbox()
-    expect(notices.some((n) => n.includes('supervised_blocked'))).toBe(true)
   })
 
   it('marks blocked after exhausting provider-error retries', async () => {
@@ -201,7 +241,6 @@ describe('group coordinator', () => {
     const coordinator = groupOfTwo(deps)
     coordinator.noteAssistantText('c1', 'STATUS: blocked\nREPORT: stuck')
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
-    coordinator.drainOutbox()
 
     const outcome = coordinator.terminate('alpha')
     expect(outcome.interrupted).toBe(false)
@@ -209,16 +248,18 @@ describe('group coordinator', () => {
     expect(coordinator.memberByRef('c1').status).toBe('terminated')
   })
 
-  it('counts termination toward group completion', async () => {
+  it('counts termination toward group completion and emits the settle signal after both notices', async () => {
     const deps = fakeDeps()
     const coordinator = groupOfTwo(deps)
     coordinator.terminate('c1', 'redirected')
     coordinator.noteAssistantText('c2', 'STATUS: completed\nREPORT: beta done')
     await coordinator.onTurnEnd('c2', { kind: 'completed' })
-    const notices = coordinator.drainOutbox()
-    expect(notices).toHaveLength(1)
-    expect(notices[0]).toContain('terminated')
-    expect(notices[0]).toContain('beta done')
+    expect(deps.notifications).toHaveLength(0) // ordering gate
+    coordinator.noteSettlementNotice('c1')
+    coordinator.noteSettlementNotice('c2')
+    expect(deps.notifications).toHaveLength(1)
+    expect(deps.notifications[0]).toContain('supervised_group_settled')
+    expect(deps.notifications[0]).not.toContain('beta done')
   })
 
   it('emits structured facts across the full supervision lifecycle', async () => {
@@ -232,12 +273,10 @@ describe('group coordinator', () => {
 
     coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: alpha done')
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
-    coordinator.drainOutbox()
     expect(deps.facts.at(-1)).toEqual({ kind: 'settle', childId: 'c1', status: 'completed', report: 'alpha done' })
 
     coordinator.noteAssistantText('c2', 'STATUS: blocked\nREPORT: beta stuck')
     await coordinator.onTurnEnd('c2', { kind: 'completed' })
-    coordinator.drainOutbox()
     expect(deps.facts.at(-1)).toEqual({ kind: 'settle', childId: 'c2', status: 'blocked', report: 'beta stuck' })
 
     await coordinator.resume('c2', 'unblocked')
@@ -257,8 +296,74 @@ describe('group coordinator', () => {
     const report = 'line one\nline two\nneeds: x'
     coordinator.noteAssistantText('c1', `STATUS: blocked\nREPORT: ${report}`)
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
-    coordinator.drainOutbox()
     const settle = deps.facts.find((fact) => fact.kind === 'settle')
     expect(settle.report).toBe(report)
+  })
+
+  it('releases a failed-batch group name: unsealed and all members terminated', async () => {
+    const deps = fakeDeps()
+    const coordinator = createGroupCoordinator(deps)
+    coordinator.assertGroupAvailable('scan')
+    coordinator.registerMember({ id: 'c1', name: 'alpha', group: 'scan' })
+    coordinator.registerMember({ id: 'c2', name: 'beta', group: 'scan' })
+    // no sealGroup: a failed batch never seals
+    coordinator.terminate('c1', 'rollback')
+    coordinator.terminate('c2', 'rollback')
+    coordinator.releaseGroup('scan')
+    expect(deps.facts.at(-1)).toEqual({ kind: 'group-released', group: 'scan' })
+    expect(coordinator.groupLive('scan')).toBe(false)
+    coordinator.assertGroupAvailable('scan') // name reusable
+  })
+
+  it('refuses to release a sealed group or a group with live members', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    expect(() => coordinator.releaseGroup('scan')).toThrow(/cannot be released/) // sealed
+    const unsealed = createGroupCoordinator(deps)
+    unsealed.registerMember({ id: 'c1', name: 'alpha', group: 'open' })
+    expect(() => unsealed.releaseGroup('open')).toThrow(/cannot be released/) // running member
+    let threw = false
+    try {
+      unsealed.releaseGroup('ghost') // never registered: no-op
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(false)
+  })
+
+  it('degrades a failed nudge delivery to blocked with an audit note', async () => {
+    const deps = fakeDeps()
+    deps.sendTo = async () => { throw new Error('sendMessage down') }
+    const coordinator = createGroupCoordinator(deps)
+    coordinator.registerMember({ id: 'c1', name: 'alpha', group: 'g' })
+    coordinator.sealGroup('g')
+    coordinator.noteAssistantText('c1', 'chatter')
+    expect(await coordinator.onTurnEnd('c1', { kind: 'completed' })).toBe('settled')
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberByRef('c1').report).toContain('Nudge delivery failed')
+    expect(deps.audits.some((note) => note.includes('nudge delivery failed'))).toBe(true)
+  })
+
+  it('degrades a failed retry delivery to blocked (scheduled timer path)', async () => {
+    const deps = fakeDeps()
+    deps.sendTo = async () => { throw new Error('sendMessage down') }
+    const coordinator = createGroupCoordinator(deps, { maxRetries: 2 })
+    coordinator.registerMember({ id: 'c1', name: 'alpha', group: 'g' })
+    coordinator.sealGroup('g')
+    await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '429' } })
+    expect(deps.scheduled).toHaveLength(1)
+    await deps.scheduled[0].fn()
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberByRef('c1').report).toContain('Retry delivery failed')
+  })
+
+  it('reverts a failed resume delivery to blocked and throws', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    coordinator.noteAssistantText('c1', 'STATUS: blocked\nREPORT: stuck')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    deps.sendTo = async () => { throw new Error('sendMessage down') }
+    await expect(async () => coordinator.resume('alpha', 'back up')).rejects.toThrow(/could not deliver resume context/)
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
   })
 })

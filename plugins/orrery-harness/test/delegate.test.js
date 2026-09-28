@@ -7,7 +7,7 @@ import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
 import { parseEscalation } from '../src/delegate/escalate.js'
 import { modelFamily, pickVariant } from '../src/delegate/families.js'
 import { resolveCategory, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
-import { createDelegateTool, normalizeItems, supervisedToolFilter } from '../src/delegate/tool.js'
+import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply } from '../src/delegate/index.js'
 
 describe('resolver', () => {
@@ -389,13 +389,14 @@ describe('supervised groups (mount layer)', () => {
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
-      get: () => undefined,
+      get: (name) => (name === 'agents' ? { get: (id) => ({ id, ctx: { tools: { guard: (fn) => { guards.push(fn); return () => {} } } } }) } : undefined),
       on(event, handler) {
         handlers[event] = handler
       },
       emit: (type, record) => emitted.push({ type, record }),
     }
     const emitted = []
+    const guards = []
     let catalogEntries = []
     apply(ctx, config)
     return {
@@ -408,6 +409,7 @@ describe('supervised groups (mount layer)', () => {
       steered,
       sessionEvents,
       emitted,
+      guards,
       setCatalog: (entries) => {
         catalogEntries = entries
       },
@@ -503,59 +505,109 @@ describe('supervised groups (mount layer)', () => {
     ).rejects.toThrow(/cannot be combined/)
   })
 
-  it('drives child turn ends through the state machine and flushes at turn-stopping', async () => {
+  it('delivers one group-settled signal via deferred followup after every settlement notice', async () => {
+    const followedUp = []
     const { tools, handlers } = groupHarness()
+    const parentExec = () => ({ agent: { id: 'parent-session', status: 'idle', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, followup: (message) => followedUp.push(message) }, signal: new AbortController().signal })
+    const notice = (childId) => handlers['session/event']({ id: 'parent-session' }, { type: 'user/message', data: { source: { kind: 'subagent-settled', senderSessionId: childId }, message: { content: [] } } })
     await tools.delegate.execute(
       { group: 'scan', tasks: [
         { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
         { category: 'quick', prompt: 'TASK: b', name: 'beta' },
       ] },
-      execStub(),
+      parentExec(),
     )
-    const agent = { id: 'parent-session', steer: (message) => steered.push(message) }
-    const steered = []
 
-    // parent is mid-turn: notices queue and flush at turn-stopping
-    handlers['session/event']({ id: 'parent-session' }, { type: 'turn/start', data: { turn: 1 } })
-
-    // child-1 completes; child-2 reports blocked → blocked notice flushes first
     handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
     await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
-    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: beta stuck' }] } } })
-    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(followedUp).toHaveLength(0) // group still open
 
-    handlers['agent/turn-stopping']({ agent })
+    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
+    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(followedUp).toHaveLength(0) // ordering gate: notices not observed yet
+
+    notice('child-1')
+    expect(followedUp).toHaveLength(0)
+    notice('child-2')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(followedUp).toHaveLength(1)
+    expect(followedUp[0].content[0].text).toContain('supervised_group_settled')
+    expect(followedUp[0].content[0].text).toContain('group="scan"')
+    expect(followedUp[0].content[0].text).not.toContain('alpha done') // no member bodies
+    expect(followedUp[0].source.kind).toBe('orrery-delegate')
+  })
+
+  it('steers the group-settled signal into the current turn after every settlement notice', async () => {
+    const steered = []
+    const { tools, handlers } = groupHarness()
+    const busyExec = () => ({ agent: { id: 'parent-session', status: 'streaming', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, steer: (message) => steered.push(message) }, signal: new AbortController().signal })
+    const notice = (childId) => handlers['session/event']({ id: 'parent-session' }, { type: 'user/message', data: { source: { kind: 'subagent-settled', senderSessionId: childId }, message: { content: [] } } })
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [
+        { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
+        { category: 'quick', prompt: 'TASK: b', name: 'beta' },
+      ] },
+      busyExec(),
+    )
+    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
+    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
+    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(steered).toHaveLength(0) // ordering gate
+    notice('child-1')
+    notice('child-2')
+    await new Promise((resolve) => setTimeout(resolve, 20))
     expect(steered).toHaveLength(1)
-    expect(steered[0].content[0].text).toContain('supervised_blocked')
-    expect(steered[0].content[0].text).toContain('beta stuck')
-    expect(steered[0].content[0].text).not.toContain('supervised_group_report')
+    expect(steered[0].content[0].text).toContain('supervised_group_settled')
     expect(steered[0].source.kind).toBe('orrery-delegate')
   })
 
-  it('merged report flushes after the last member settles (termination counts)', async () => {
+  it('emits no parent signal while the group is still open (blocked member)', async () => {
+    const followedUp = []
     const { tools, handlers } = groupHarness()
+    const parentExec = () => ({ agent: { id: 'parent-session', status: 'idle', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, followup: (message) => followedUp.push(message) }, signal: new AbortController().signal })
     await tools.delegate.execute(
       { group: 'scan', tasks: [
         { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
         { category: 'quick', prompt: 'TASK: b', name: 'beta' },
       ] },
-      execStub(),
+      parentExec(),
     )
-    const steered = []
-    const agent = { id: 'parent-session', steer: (message) => steered.push(message) }
+    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: beta stuck' }] } } })
+    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(followedUp).toHaveLength(0) // blocked settle emits no Orrery notice
+    const status = await tools.supervised_status.execute({}, parentExec())
+    expect(status.children.find((child) => child.id === 'child-1').status).toBe('blocked')
+  })
 
-    // parent is mid-turn: the merged report flushes at turn-stopping
-    handlers['session/event']({ id: 'parent-session' }, { type: 'turn/start', data: { turn: 1 } })
+  it('group-settled signal fires after termination once both notices are observed', async () => {
+    const followedUp = []
+    const { tools, handlers } = groupHarness()
+    const parentExec = () => ({ agent: { id: 'parent-session', status: 'idle', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, followup: (message) => followedUp.push(message) }, signal: new AbortController().signal })
+    const notice = (childId) => handlers['session/event']({ id: 'parent-session' }, { type: 'user/message', data: { source: { kind: 'subagent-settled', senderSessionId: childId }, message: { content: [] } } })
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [
+        { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
+        { category: 'quick', prompt: 'TASK: b', name: 'beta' },
+      ] },
+      parentExec(),
+    )
 
-    await tools.terminate_agent.execute({ agent: 'alpha', reason: 'redirected' }, execStub())
+    await tools.terminate_agent.execute({ agent: 'alpha', reason: 'redirected' }, parentExec())
     handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
     await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
-
-    handlers['agent/turn-stopping']({ agent })
-    expect(steered).toHaveLength(1)
-    expect(steered[0].content[0].text).toContain('supervised_group_report')
-    expect(steered[0].content[0].text).toContain('terminated')
-    expect(steered[0].content[0].text).toContain('beta done')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(followedUp).toHaveLength(0) // ordering gate
+    notice('child-1')
+    notice('child-2')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(followedUp).toHaveLength(1)
+    expect(followedUp[0].content[0].text).toContain('supervised_group_settled')
+    expect(followedUp[0].content[0].text).toContain('members="2"')
   })
 
   it('resume_agent delivers context and flips the child back to running', async () => {
@@ -595,6 +647,83 @@ describe('supervised groups (mount layer)', () => {
     ).rejects.toThrow(/no supervised child named/)
   })
 
+
+  it('resolves every member before spawning any child (no live group after a resolution failure)', async () => {
+    const { tools, continued, emitted } = groupHarness()
+    await expect(async () =>
+      tools.delegate.execute(
+        { group: 'scan', tasks: [
+          { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
+          { category: 'unknown-category', prompt: 'TASK: b', name: 'beta' },
+        ] },
+        execStub(),
+      ),
+    ).rejects.toThrow(/unknown_target/)
+    expect(continued).toHaveLength(0) // phase 1 failed: zero spawns
+    expect(emitted.some((entry) => entry.type === 'orrery/supervision/seal')).toBe(false)
+
+    // the group name is still free
+    const result = await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
+      execStub(),
+    )
+    expect(result.supervised).toBe(true)
+  })
+
+  it('rolls back spawned members and releases the group name when a mid-batch spawn fails', async () => {
+    const { ctx, tools, continued, interruptedCalls, emitted } = groupHarness()
+    let calls = 0
+    ctx.subagents.startContinuable = async (spec) => {
+      calls += 1
+      if (calls === 2) throw new Error('spawn exploded')
+      continued.push(spec)
+      return { childId: `child-${calls}`, messageId: `msg-${calls}` }
+    }
+    await expect(async () =>
+      tools.delegate.execute(
+        { group: 'scan', tasks: [
+          { category: 'quick', prompt: 'TASK: a', name: 'alpha' },
+          { category: 'quick', prompt: 'TASK: b', name: 'beta' },
+        ] },
+        execStub(),
+      ),
+    ).rejects.toThrow(/spawn exploded/)
+    expect(interruptedCalls.length).toBeGreaterThanOrEqual(1) // rollback interrupt
+    expect(emitted.some((entry) => entry.type === 'orrery/supervision/group-released')).toBe(true)
+
+    // the name is reusable after the failed batch
+    const result = await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: c', name: 'gamma' }] },
+      execStub(),
+    )
+    expect(result.supervised).toBe(true)
+    expect(result.members).toHaveLength(1)
+  })
+
+  it('attaches the read-only bash guard to read-only supervised members via the live agent handle', async () => {
+    const { tools, guards } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'architect', prompt: 'TASK: a' }] },
+      execStub(),
+    )
+    expect(guards).toHaveLength(1)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'git status' } })).toBe(undefined)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/explicitly denied/)
+  })
+
+  it('keeps the new signal contract in the tool description and result text', async () => {
+    expect(DELEGATE_DESCRIPTION).toContain('group-settled signal')
+    expect(DELEGATE_DESCRIPTION).not.toContain('merged group report')
+    const { tools } = groupHarness()
+    const result = await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
+      execStub(),
+    )
+    const rendered = tools.delegate.output.render({}, result)[0].text
+    expect(rendered).toContain('group-settled signal')
+    expect(rendered).toContain('settlement notice')
+    expect(rendered).not.toContain('merged group report')
+  })
   it('appends an untracked-catalog hint when rebuilt state is partial', async () => {
     const { tools, setCatalog } = groupHarness()
     setCatalog([{ id: 'orphan-9', label: 'leftover', mode: 'continuable' }])
