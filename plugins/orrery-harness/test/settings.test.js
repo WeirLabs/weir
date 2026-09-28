@@ -1,5 +1,5 @@
 import { describe, expect, it } from './helpers.js'
-import { apply as applySettings, Config } from '../src/settings/index.js'
+import { apply as applySettings, Config, parseLspServers } from '../src/settings/index.js'
 import { apply as applyIntentGate } from '../src/intent-gate/index.js'
 import { apply as applyTodoDriver } from '../src/todo-driver/index.js'
 import { apply as applyHashline } from '../src/hashline-edit/index.js'
@@ -35,6 +35,14 @@ describe('settings Config schema', () => {
     expect(validate({ intentGateClassifier: 'bogus' }).issues).not.toBe(undefined)
     expect(validate({ todoMaxConsecutive: 'eight' }).issues).not.toBe(undefined)
     expect(validate({ hashlineHideStockEdit: 'yes' }).issues).not.toBe(undefined)
+  })
+
+  it('validates lspServers JSON structure (fail loud)', () => {
+    expect(parseLspServers('{"zig":{"command":"zls"}}')).toEqual({ zig: { command: 'zls' } })
+    expect(() => parseLspServers('not-json')).toThrow()
+    expect(() => parseLspServers('[1]')).toThrow(/object map/)
+    expect(() => parseLspServers('{"zig":{}}')).toThrow(/command/)
+    expect(() => parseLspServers('{"zig":{"command":"zls","args":"--stdio"}}')).toThrow(/args/)
   })
 })
 
@@ -147,12 +155,14 @@ describe('settings plugin apply', () => {
     config.lspIdleMs = 123_000
     config.lspRequestTimeoutMs = 8_000
     config.lspDiagnosticsWaitMs = 500
+    config.lspServers = '{"zig":{"command":"zls","args":["--stdio"]}}'
     expect(service.get('todoDriver')).toEqual({ maxConsecutive: 9 })
-    expect(service.get('lsp')).toEqual({ enabled: true, idleMs: 123_000, requestTimeoutMs: 8_000, diagnosticsWaitMs: 500 })
+    expect(service.get('lsp')).toEqual({ enabled: true, idleMs: 123_000, requestTimeoutMs: 8_000, diagnosticsWaitMs: 500, servers: { zig: { command: 'zls', args: ['--stdio'] } } })
     delete config.lspEnabled
     delete config.lspIdleMs
     delete config.lspRequestTimeoutMs
     delete config.lspDiagnosticsWaitMs
+    delete config.lspServers
     expect(service.get('lsp')).toBe(undefined)
   })
 

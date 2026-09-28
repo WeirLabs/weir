@@ -177,7 +177,7 @@ describe('orrery settings client half', () => {
     expect(typeof injected.discard).toBe('function')
 
     // the card component renders a summary for the summary view and a form otherwise
-    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs']
+    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
     expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), ensureCatalog: () => {} })).toBe('description')
     const rendered = component({
       view: 'form',
@@ -527,8 +527,9 @@ describe('orrery LSP manager panel', () => {
     expect(typeof LspManagerField).toBe('function')
 
     const SERVERS = [
-      { family: 'lua', languageIds: ['lua'], command: 'lua-language-server', installed: false, version: null, installCommand: 'brew install lua-language-server', installHint: '' },
-      { family: 'typescript', languageIds: ['typescript'], command: 'typescript-language-server', installed: true, version: '5.0', installCommand: 'npm install -g typescript-language-server typescript', installHint: '' },
+      { family: 'lua', languageIds: ['lua'], command: 'lua-language-server', installed: false, version: null, installCommand: 'brew install lua-language-server', installHint: '', installerAvailable: true },
+      { family: 'typescript', languageIds: ['typescript'], command: 'typescript-language-server', installed: true, version: '5.0', installCommand: 'npm install -g typescript-language-server typescript', installHint: '', installerAvailable: true },
+      { family: 'cpp', languageIds: ['cpp'], command: 'clangd', installed: false, version: null, installCommand: 'brew install llvm', installHint: '', installerAvailable: false },
     ]
     const fetchCalls = []
     const fetchStub = (url, init) => {
@@ -545,18 +546,20 @@ describe('orrery LSP manager panel', () => {
     globalThis.fetch = fetchStub
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
     const props = { t: (key) => key }
-    const render = () => {
+    const renderWith = (componentProps) => {
       reactStub.begin()
-      return LspManagerField(props)
+      return LspManagerField(componentProps)
     }
-    const settle = async () => {
+    const render = () => renderWith(props)
+    const settleWith = async (componentProps) => {
       reactStub.reset()
       reactStub.begin()
-      const first = LspManagerField(props)
+      const first = LspManagerField(componentProps)
       await flush()
       reactStub.begin()
-      return { first, settled: LspManagerField(props) }
+      return { first, settled: LspManagerField(componentProps) }
     }
+    const settle = async () => settleWith(props)
 
     try {
       // closed: a labeled row with the open button
@@ -582,13 +585,22 @@ describe('orrery LSP manager panel', () => {
       const confirming = render()
       const confirmRow = confirming.children[1].children.children[0]
       expect(confirmRow.children[1].children[0].children).toBe('brew install lua-language-server')
+      // an unavailable installer disables the confirm and warns
+      const cppRow = confirming.children[1].children.children[2]
+      cppRow.children[1].children[1].onClick()
+      await flush()
+      const cppConfirm = render().children[1].children.children[2]
+      expect(cppConfirm.children[1].children[1].children).toBe('lspManagerInstallerMissing')
+      expect(cppConfirm.children[1].children[2].children[0].disabled).toBe(true)
+      cppConfirm.children[1].children[2].children[1].onClick()
+      await flush()
       // run the install → the endpoint is called with the family
-      confirmRow.children[1].children[1].children[0].onClick()
+      confirmRow.children[1].children[2].children[0].onClick()
       await flush()
       expect(fetchCalls[1].url).toBe('api/orrery-lsp/install')
       expect(JSON.parse(fetchCalls[1].init.body)).toEqual({ family: 'lua' })
       const afterInstall = render()
-      const resultBlock = afterInstall.children[1].children.children[2]
+      const resultBlock = afterInstall.children[1].children.children[3]
       expect(resultBlock).toBeTruthy()
       expect(resultBlock.children[0].children).toContain('lspFamily_lua')
       expect(resultBlock.children[1].children).toBe('added 2 packages')
@@ -609,6 +621,41 @@ describe('orrery LSP manager panel', () => {
       const failedBoundary = new Boundary({ t: (key) => key, children: 'inner' })
       failedBoundary.state = { failed: true }
       expect(failedBoundary.render().children).toBe('lspManagerFailed')
+
+      // custom servers: the add form synthesizes the lspServers JSON
+      globalThis.fetch = fetchStub
+      const edited = []
+      const customProps = { t: (key) => key, serversText: '{}', edit: (field, text) => edited.push({ field, text }) }
+      const customRun = await settleWith(customProps)
+      customRun.settled.children[0].children[1].onClick()
+      await flush()
+      const formRow = () => {
+        const panel = renderWith(customProps)
+        const panelBody = panel.children[1].children
+        const section = panelBody.children[panelBody.children.length - 1]
+        return section.children[section.children.length - 1]
+      }
+      expect(formRow()).toBeTruthy()
+      formRow().children[0].onChange({ target: { value: 'zig' } })
+      await flush()
+      formRow().children[1].onChange({ target: { value: 'zls' } })
+      await flush()
+      formRow().children[2].onChange({ target: { value: '--stdio' } })
+      await flush()
+      formRow().children[3].onChange({ target: { value: 'npm i -g zls' } })
+      await flush()
+      formRow().children[4].onClick()
+      expect(edited).toHaveLength(1)
+      expect(edited[0].field).toBe('lspServers')
+      const parsed = JSON.parse(edited[0].text)
+      expect(parsed.zig.command).toBe('zls')
+      expect(parsed.zig.args).toEqual(['--stdio'])
+      expect(parsed.zig.install).toEqual({ command: 'npm', args: ['i', '-g', 'zls'] })
+      // helper round-trips
+      const { jsonToLspServers, lspServersToJson } = surface.lspManager
+      expect(jsonToLspServers('not-json')).toEqual({})
+      expect(jsonToLspServers(edited[0].text).zig.command).toBe('zls')
+      expect(lspServersToJson({})).toBe('{}')
     } finally {
       globalThis.fetch = originalFetch
     }

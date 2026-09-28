@@ -53,7 +53,7 @@ function fakeRequest(body) {
 describe('lsp admin pure logic', () => {
   it('lspStatusFor reports installed/missing per family with versions', async () => {
     const subprocess = fakeSubprocess({ present: ['typescript-language-server', 'gopls'] })
-    const servers = await lspStatusFor(DEFAULT_SERVERS, subprocess, { probeTimeoutMs: 40 })
+    const servers = await lspStatusFor(DEFAULT_SERVERS, subprocess, { probeTimeoutMs: 40, dirs: [] })
     expect(servers).toHaveLength(Object.keys(DEFAULT_SERVERS).length)
     const typescript = servers.find((server) => server.family === 'typescript')
     expect(typescript.installed).toBe(true)
@@ -62,6 +62,8 @@ describe('lsp admin pure logic', () => {
     const lua = servers.find((server) => server.family === 'lua')
     expect(lua.installed).toBe(false)
     expect(lua.installCommand).toBe('brew install lua-language-server')
+    expect(lua.installerAvailable).toBe(false)
+    expect(typescript.installerAvailable).toBe(false) // npm not present in the fake
     // version probes consumed the spawned handles (any present command resolves)
     expect(subprocess.spawns.length).toBeGreaterThanOrEqual(2)
   })
@@ -78,16 +80,16 @@ describe('lsp admin pure logic', () => {
 
   it('runInstall validates families and installer availability', async () => {
     const subprocess = fakeSubprocess()
-    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'bogus')).rejects.toThrow(/unknown language family/)
+    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'bogus', undefined, [])).rejects.toThrow(/unknown language family/)
     // a family whose entry carries no install spec for this platform
     const custom = { command: 'custom-ls', installHint: 'see the docs' }
-    await expect(async () => runInstall({ custom }, subprocess, 'custom')).rejects.toThrow(/no installer/)
-    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp')).rejects.toThrow(/installer 'brew' not found/)
+    await expect(async () => runInstall({ custom }, subprocess, 'custom', undefined, [])).rejects.toThrow(/no installer/)
+    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp', undefined, [])).rejects.toThrow(/installer 'brew' not found/)
   })
 
   it('runInstall captures output and normalizes the exit code', async () => {
     const subprocess = fakeSubprocess({ present: ['npm'] })
-    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript')
+    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript', undefined, [])
     await new Promise((resolve) => setImmediate(resolve))
     const handle = subprocess.spawns[0]
     expect(handle.spec.argv).toEqual(['/resolved/npm', 'install', '-g', 'typescript-language-server', 'typescript'])
@@ -102,7 +104,7 @@ describe('lsp admin pure logic', () => {
 
   it('runInstall terminates on timeout', async () => {
     const subprocess = fakeSubprocess({ present: ['npm'] })
-    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript', 30)
+    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript', 30, [])
     await new Promise((resolve) => setImmediate(resolve))
     await new Promise((resolve) => setTimeout(resolve, 60))
     const result = await pending
@@ -137,7 +139,7 @@ describe('lsp admin plugin', () => {
     const ctx = {
       get: (name) => (name === 'connection' ? { fetch: { register: (definition) => endpoints.push(definition) } } : name === 'subprocess' ? subprocess : undefined),
     }
-    apply(ctx)
+    apply(ctx, { dirs: [] })
     expect(endpoints.map((definition) => definition.path)).toEqual(['/api/orrery-lsp/status', '/api/orrery-lsp/install'])
 
     // status endpoint returns the catalog
@@ -161,5 +163,41 @@ describe('lsp admin plugin', () => {
     expect(installBody.ok).toBe(true)
     expect(installBody.value.exitCode).toBe(0)
     expect(installBody.value.output).toContain('done')
+  })
+
+  it('serves a live custom registry through the provider and installs custom families', async () => {
+    const endpoints = []
+    const subprocess = fakeSubprocess({ present: ['npm'] })
+    const ctx = {
+      get: (name) => (name === 'connection' ? { fetch: { register: (definition) => {
+        endpoints.push(definition)
+        return () => {}
+      } } } : name === 'subprocess' ? subprocess : undefined),
+    }
+    let custom = {
+      zig: { command: 'zls', args: [], installHint: 'npm install -g zls', install: { command: 'npm', args: ['install', '-g', 'zls'] } },
+    }
+    apply(ctx, { dirs: [], registry: () => ({ ...DEFAULT_SERVERS, ...custom }) })
+
+    // the custom family appears in status with its install command
+    const statusBody = JSON.parse(await (await endpoints[0].fetch(fakeRequest({}))).text())
+    const zig = statusBody.value.servers.find((server) => server.family === 'zig')
+    expect(zig).toBeTruthy()
+    expect(zig.installed).toBe(false)
+    expect(zig.installCommand).toBe('npm install -g zls')
+    expect(zig.installerAvailable).toBe(true)
+
+    // installing the custom family runs its own install spec
+    const installPending = endpoints[1].fetch(fakeRequest({ family: 'zig' }))
+    await new Promise((resolve) => setImmediate(resolve))
+    subprocess.spawns[0].finish(0, ['zls added'])
+    const installBody = JSON.parse(await (await installPending).text())
+    expect(installBody.ok).toBe(true)
+    expect(installBody.value.output).toContain('zls added')
+
+    // dropping the custom entry removes it from the live catalog
+    custom = {}
+    const statusBody2 = JSON.parse(await (await endpoints[0].fetch(fakeRequest({}))).text())
+    expect(statusBody2.value.servers.some((server) => server.family === 'zig')).toBe(false)
   })
 })
