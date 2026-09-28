@@ -275,7 +275,7 @@ function attachGuardIfReadOnly(started, target, deps) {
 
 /** Supervised group lane: spawn every item as a continuable supervised child. */
 async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
-  const coordinator = deps.coordinatorFor(exec.agent)
+  const coordinator = await deps.coordinatorFor(exec.agent)
   coordinator.assertGroupAvailable(groupName)
 
   const members = []
@@ -290,7 +290,7 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
           prompt,
           parent: exec.agent,
           ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
-          ...(target.toolFilter ? { toolFilter: target.toolFilter } : {}),
+          toolFilter: supervisedToolFilter(target.toolFilter),
           maxDepth: 1,
           persona: target.persona + SUPERVISION_CONTRACT,
         },
@@ -317,6 +317,19 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
     group: groupName,
     members: members.map(({ id, name }) => ({ id, name })),
   }
+}
+
+/**
+ * Supervised members must report through the terminal-status channel only:
+ * deny the DSH send_message tool. Allow-list filters (read-only targets) already
+ * exclude it and stay unchanged; deny-list filters get send_message merged in.
+ * @param {object | undefined} toolFilter
+ * @returns {object} a tool filter that always denies send_message
+ */
+export function supervisedToolFilter(toolFilter) {
+  if (!toolFilter) return { deny: ['send_message'] }
+  if (toolFilter.allow !== undefined) return toolFilter
+  return { ...toolFilter, deny: [...new Set([...(toolFilter.deny ?? []), 'send_message'])] }
 }
 
 /** The calling agent's current route, when the session has one. */

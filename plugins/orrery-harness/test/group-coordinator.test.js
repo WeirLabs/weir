@@ -33,15 +33,18 @@ describe('group coordinator', () => {
     const interrupted = []
     const scheduled = []
     const audits = []
+    const facts = []
     return {
       sent,
       interrupted,
       scheduled,
       audits,
+      facts,
       sendTo: async (childId, text) => sent.push({ childId, text }),
       interruptChild: (childId) => interrupted.push(childId),
       schedule: (delayMs, fn) => scheduled.push({ delayMs, fn }),
       onAudit: (note) => audits.push(note),
+      onFact: (fact) => facts.push(fact),
     }
   }
 
@@ -216,5 +219,46 @@ describe('group coordinator', () => {
     expect(notices).toHaveLength(1)
     expect(notices[0]).toContain('terminated')
     expect(notices[0]).toContain('beta done')
+  })
+
+  it('emits structured facts across the full supervision lifecycle', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    expect(deps.facts.slice(0, 3)).toEqual([
+      { kind: 'spawn', childId: 'c1', name: 'alpha', group: 'scan' },
+      { kind: 'spawn', childId: 'c2', name: 'beta', group: 'scan' },
+      { kind: 'seal', group: 'scan', memberIds: ['c1', 'c2'] },
+    ])
+
+    coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: alpha done')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    coordinator.drainOutbox()
+    expect(deps.facts.at(-1)).toEqual({ kind: 'settle', childId: 'c1', status: 'completed', report: 'alpha done' })
+
+    coordinator.noteAssistantText('c2', 'STATUS: blocked\nREPORT: beta stuck')
+    await coordinator.onTurnEnd('c2', { kind: 'completed' })
+    coordinator.drainOutbox()
+    expect(deps.facts.at(-1)).toEqual({ kind: 'settle', childId: 'c2', status: 'blocked', report: 'beta stuck' })
+
+    await coordinator.resume('c2', 'unblocked')
+    expect(deps.facts.at(-1)).toEqual({ kind: 'resume', childId: 'c2' })
+
+    coordinator.terminate('c2', 'redirected')
+    expect(deps.facts.at(-2)).toEqual({ kind: 'terminate', childId: 'c2', reason: 'redirected' })
+    expect(deps.facts.at(-1)).toEqual({ kind: 'group-settled', group: 'scan' })
+
+    coordinator.terminate('c1', 'done elsewhere')
+    expect(deps.facts.at(-1)).toEqual({ kind: 'terminate', childId: 'c1', reason: 'done elsewhere' })
+  })
+
+  it('records settle facts with verbatim report bodies', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    const report = 'line one\nline two\nneeds: x'
+    coordinator.noteAssistantText('c1', `STATUS: blocked\nREPORT: ${report}`)
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    coordinator.drainOutbox()
+    const settle = deps.facts.find((fact) => fact.kind === 'settle')
+    expect(settle.report).toBe(report)
   })
 })

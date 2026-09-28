@@ -44,6 +44,7 @@ export function parseTerminalStatus(text) {
  * @param {(childId: string) => void} deps.interruptChild - interrupt a running child
  * @param {(delayMs: number, fn: () => void) => void} deps.schedule - delayed retry scheduler
  * @param {(reason: string) => void} [deps.onAudit]
+ * @param {(fact: object) => void} [deps.onFact] - structured supervision facts (durability)
  */
 export function createGroupCoordinator(deps, config = {}) {
   const cfg = { ...DEFAULT_SUPERVISION, ...config }
@@ -53,6 +54,8 @@ export function createGroupCoordinator(deps, config = {}) {
   const groups = new Map()
   /** Outbound notices for the parent, flushed at turn boundaries. */
   const outbox = []
+  /** Rehydration metadata (confidence/untracked), set by hydrate(). */
+  let meta
 
   function groupLive(name) {
     const group = groups.get(name)
@@ -78,13 +81,17 @@ export function createGroupCoordinator(deps, config = {}) {
       groups.set(group, entry)
     }
     entry.memberIds.push(id)
+    deps.onFact?.({ kind: 'spawn', childId: id, name, group })
     return entry
   }
 
   /** Seal a group after its batch is fully registered. */
   function sealGroup(name) {
     const entry = groups.get(name)
-    if (entry) entry.sealed = true
+    if (entry) {
+      entry.sealed = true
+      deps.onFact?.({ kind: 'seal', group: name, memberIds: [...entry.memberIds] })
+    }
   }
 
   function memberByRef(ref) {
@@ -103,6 +110,7 @@ export function createGroupCoordinator(deps, config = {}) {
   function settle(child, status, report) {
     child.status = status
     child.report = report
+    deps.onFact?.({ kind: 'settle', childId: child.id, status, report: report ?? '' })
     if (status === 'blocked') {
       outbox.push(renderBlockedNotice(child))
     }
@@ -118,6 +126,7 @@ export function createGroupCoordinator(deps, config = {}) {
     })
     if (!allSettled) return
     entry.settled = true
+    deps.onFact?.({ kind: 'group-settled', group: groupName })
     outbox.push(renderGroupReport(entry, children))
   }
 
@@ -195,6 +204,7 @@ export function createGroupCoordinator(deps, config = {}) {
     }
     child.retries = 0
     child.status = 'running'
+    deps.onFact?.({ kind: 'resume', childId: child.id })
     await deps.sendTo(child.id, renderResumeMessage(context))
     return { id: child.id, name: child.name, status: child.status }
   }
@@ -208,6 +218,7 @@ export function createGroupCoordinator(deps, config = {}) {
     if (wasRunning) deps.interruptChild(child.id)
     child.status = 'terminated'
     child.report = reason ?? (wasRunning ? 'Terminated by the main agent.' : 'Terminated by the main agent (state bookkeeping).')
+    deps.onFact?.({ kind: 'terminate', childId: child.id, reason: child.report })
     checkGroupCompletion(child.group)
     return { id: child.id, name: child.name, status: child.status, interrupted: wasRunning }
   }
@@ -215,6 +226,42 @@ export function createGroupCoordinator(deps, config = {}) {
   /** Drain queued parent notices (turn-boundary flush). */
   function drainOutbox() {
     return outbox.splice(0, outbox.length)
+  }
+
+  /**
+   * Load a rehydrated state snapshot (restart rebuild). Fills the registry,
+   * records rehydration meta for the visibility tool, and re-emits one merged
+   * group report per fully-settled group (the pre-restart outbox is lost).
+   * @param {{ children: object[], groups: object[], untracked: object[], confidence: string }} state
+   */
+  function hydrate(state) {
+    for (const child of state.children ?? []) {
+      if (!children.has(child.id)) {
+        children.set(child.id, {
+          id: child.id,
+          name: child.name ?? child.id,
+          group: child.group ?? 'unknown',
+          status: child.status ?? 'unknown',
+          report: child.report ?? '',
+          retries: 0,
+          lastText: '',
+        })
+      }
+    }
+    for (const group of state.groups ?? []) {
+      groups.set(group.name, {
+        name: group.name,
+        memberIds: [...(group.memberIds ?? [])],
+        sealed: group.sealed === true,
+        settled: group.settled === true,
+      })
+    }
+    meta = { confidence: state.confidence ?? 'partial', untracked: state.untracked ?? [], hydrated: true }
+    for (const group of groups.values()) {
+      if (group.sealed && group.settled && group.memberIds.length > 0) {
+        outbox.push(renderGroupReport(group, children))
+      }
+    }
   }
 
   return {
@@ -226,10 +273,17 @@ export function createGroupCoordinator(deps, config = {}) {
     resume,
     terminate,
     drainOutbox,
+    hydrate,
     memberByRef,
     groupLive,
     _children: children,
     _groups: groups,
+    get meta() {
+      return meta
+    },
+    set meta(value) {
+      meta = value
+    },
   }
 }
 

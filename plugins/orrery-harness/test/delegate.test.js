@@ -1,10 +1,13 @@
 import { describe, expect, it } from './helpers.js'
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { CURATED_AGENTS } from '../src/delegate/agents.js'
 import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
 import { parseEscalation } from '../src/delegate/escalate.js'
 import { modelFamily, pickVariant } from '../src/delegate/families.js'
 import { resolveCategory, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
-import { createDelegateTool, normalizeItems } from '../src/delegate/tool.js'
+import { createDelegateTool, normalizeItems, supervisedToolFilter } from '../src/delegate/tool.js'
 import { apply } from '../src/delegate/index.js'
 
 describe('resolver', () => {
@@ -266,7 +269,7 @@ describe('delegate plugin apply', () => {
       on: () => {},
     }
     apply(ctx, {})
-    expect(registered.map((tool) => tool.name)).toEqual(['delegate', 'resume_agent', 'terminate_agent'])
+    expect(registered.map((tool) => tool.name)).toEqual(['delegate', 'resume_agent', 'terminate_agent', 'supervised_status'])
   })
 
   function applyHarness(config = {}) {
@@ -357,7 +360,7 @@ describe('delegate plugin apply', () => {
 })
 
 describe('supervised groups (mount layer)', () => {
-  const execStub = () => ({ agent: { id: 'parent-session', session: { header: { delegationDepth: 0 } } }, signal: new AbortController().signal })
+  const execStub = () => ({ agent: { id: 'parent-session', session: { id: 'parent-session', header: { delegationDepth: 0 } } }, signal: new AbortController().signal })
 
   function groupHarness(config = {}) {
     const registered = []
@@ -382,6 +385,7 @@ describe('supervised groups (mount layer)', () => {
         interrupt(targetId, authority) {
           interruptedCalls.push({ targetId, authority })
         },
+        listChildren: async () => catalogEntries,
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
@@ -392,6 +396,7 @@ describe('supervised groups (mount layer)', () => {
       emit: (type, record) => emitted.push({ type, record }),
     }
     const emitted = []
+    let catalogEntries = []
     apply(ctx, config)
     return {
       ctx,
@@ -403,6 +408,9 @@ describe('supervised groups (mount layer)', () => {
       steered,
       sessionEvents,
       emitted,
+      setCatalog: (entries) => {
+        catalogEntries = entries
+      },
       tools: Object.fromEntries(registered.map((tool) => [tool.name, tool])),
     }
   }
@@ -433,12 +441,59 @@ describe('supervised groups (mount layer)', () => {
     expect(continued[0].request.maxDepth).toBe(1)
   })
 
+  it('denies send_message on category members without a caller filter', async () => {
+    const { tools, continued } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a' }] },
+      execStub(),
+    )
+    expect(continued[0].request.toolFilter.deny).toContain('send_message')
+  })
+
+  it('writes structured supervision facts to the cold-safe audit channel', async () => {
+    const { tools, emitted } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
+      execStub(),
+    )
+    const spawnRecord = emitted.find((entry) => entry.type === 'orrery/supervision/spawn')
+    const sealRecord = emitted.find((entry) => entry.type === 'orrery/supervision/seal')
+    expect(spawnRecord).toBeTruthy()
+    expect(spawnRecord.record.session).toBe('parent-session')
+    expect(spawnRecord.record.data).toEqual({ kind: 'spawn', childId: 'child-1', name: 'alpha', group: 'scan' })
+    expect(sealRecord).toBeTruthy()
+    expect(sealRecord.record.data).toEqual({ kind: 'seal', group: 'scan', memberIds: ['child-1'] })
+  })
+
+  it('keeps the allow-list filter unchanged for read-only members', async () => {
+    const { tools, continued } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'architect', prompt: 'TASK: a' }] },
+      execStub(),
+    )
+    expect(continued[0].request.toolFilter.allow).toContain('read')
+    expect(continued[0].request.toolFilter.deny).toBeUndefined()
+  })
+
   it('rejects a second delegation into a live group', async () => {
     const { tools } = groupHarness()
     await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a' }, execStub())
     await expect(async () =>
       tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: b' }, execStub()),
     ).rejects.toThrow(/does not accept insertion/)
+  })
+
+  it('supervised_status renders the live registry through the mount layer', async () => {
+    const { tools } = groupHarness()
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
+      execStub(),
+    )
+    const value = await tools.supervised_status.execute({}, execStub())
+    const text = value.children.map((child) => `${child.name}:${child.status}`).join(',')
+    expect(text).toContain('alpha:running')
+    expect(value.groups[0].name).toBe('scan')
+    expect(value.groups[0].sealed).toBe(true)
   })
 
   it('rejects group combined with run_in_background', async () => {
@@ -530,5 +585,56 @@ describe('supervised groups (mount layer)', () => {
     const childExec = () => ({ agent: { id: 'child-x', session: { header: { delegationDepth: 1 } } }, signal: undefined })
     await expect(async () => tools.resume_agent.execute({ agent: 'x', context: 'y' }, childExec())).rejects.toThrow(/only the main agent/)
     await expect(async () => tools.terminate_agent.execute({ agent: 'x' }, childExec())).rejects.toThrow(/only the main agent/)
+  })
+
+  it('never claims no supervised children after a restart rebuild', async () => {
+    const { tools } = groupHarness()
+    // No prior spawn, no audit: coordinatorFor rehydrates an empty registry.
+    await expect(async () =>
+      tools.resume_agent.execute({ agent: 'ghost', context: 'x' }, execStub()),
+    ).rejects.toThrow(/no supervised child named/)
+  })
+
+  it('appends an untracked-catalog hint when rebuilt state is partial', async () => {
+    const { tools, setCatalog } = groupHarness()
+    setCatalog([{ id: 'orphan-9', label: 'leftover', mode: 'continuable' }])
+    await expect(async () =>
+      tools.resume_agent.execute({ agent: 'ghost', context: 'x' }, execStub()),
+    ).rejects.toThrow(/untracked continuable child/)
+  })
+
+  it('rehydrates a full registry from the audit JSONL and resumes a blocked child', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'orrery-audit-'))
+    mkdirSync(join(cwd, '.orrery'), { recursive: true })
+    const line = (type, data) => `${JSON.stringify({ time: 1, session: 'parent-1', type, data })}\n`
+    writeFileSync(join(cwd, '.orrery', 'audit.jsonl'), [
+      line('orrery/supervision/spawn', { kind: 'spawn', childId: 'child-1', name: 'alpha', group: 'scan' }),
+      line('orrery/supervision/seal', { kind: 'seal', group: 'scan', memberIds: ['child-1'] }),
+      line('orrery/supervision/settle', { kind: 'settle', childId: 'child-1', status: 'blocked', report: 'stuck before restart' }),
+    ].join(''))
+    const { tools, sent } = groupHarness()
+    const restartExec = () => ({ agent: { id: 'parent-1', session: { id: 'parent-1', header: { delegationDepth: 0, cwd } } }, signal: new AbortController().signal })
+    const outcome = await tools.resume_agent.execute({ agent: 'alpha', context: 'restored' }, restartExec())
+    expect(outcome.status).toBe('running')
+    expect(sent.at(-1).text).toContain('restored')
+    expect(sent.at(-1).targetId).toBe('child-1')
+  })
+})
+
+describe('supervisedToolFilter', () => {
+  it('returns a send_message deny filter when no caller filter exists', () => {
+    expect(supervisedToolFilter(undefined)).toEqual({ deny: ['send_message'] })
+  })
+
+  it('keeps allow-list filters unchanged (read-only targets)', () => {
+    const allow = { allow: ['read', 'glob', 'grep'] }
+    expect(supervisedToolFilter(allow)).toBe(allow)
+  })
+
+  it('merges send_message into caller deny lists without duplicates', () => {
+    const merged = supervisedToolFilter({ deny: ['write'] })
+    expect(merged.deny).toEqual(['write', 'send_message'])
+    const deduped = supervisedToolFilter({ deny: ['send_message', 'write'] })
+    expect(deduped.deny).toEqual(['send_message', 'write'])
   })
 })

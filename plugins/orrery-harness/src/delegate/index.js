@@ -1,9 +1,13 @@
 // Orrery delegate plugin: category registry + curated agents + the delegate
 // tool. Plain ESM, ctx-only.
+import { openSync, readSync, closeSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { CURATED_AGENTS, READONLY_BASH_NOTE } from './agents.js'
 import { DEFAULT_CATEGORIES } from './categories.js'
 import { modelFamily, pickVariant } from './families.js'
+import { createStatusTool } from './status-tool.js'
 import { createGroupCoordinator } from './group-coordinator.js'
+import { rehydrateSupervision, applyChildLogRecovery } from './rehydrate.js'
 import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './resolver.js'
 import { attachReadOnlyBashGuard, DEFAULT_ROBASH } from './robash-guard.js'
 import { createAudit } from '../shared/audit.js'
@@ -59,7 +63,7 @@ function apply(ctx, config = {}) {
   // Supervised group coordinators, one per parent session.
   /** @type {Map<string, { coordinator: object, parent: object }>} */
   const coordinators = new Map()
-  function coordinatorFor(parent) {
+  async function coordinatorFor(parent) {
     let entry = coordinators.get(parent.id)
     if (!entry) {
       const coordinator = createGroupCoordinator(
@@ -77,13 +81,36 @@ function apply(ctx, config = {}) {
           onAudit: (note) => {
             audit(parent.session, 'supervision', { note })
           },
+          onFact: (fact) => {
+            audit(parent.session, `supervision/${fact.kind}`, fact)
+          },
         },
         config.supervision,
       )
+      // Restart rebuild: replay durable facts, cross-check the DSH catalog.
+      const state = await rehydrateForParent(parent)
+      coordinator.hydrate(state)
       entry = { coordinator, parent }
       coordinators.set(parent.id, entry)
     }
     return entry.coordinator
+  }
+
+  /** Best-effort rehydration inputs for one parent: audit tail + catalog. */
+  async function rehydrateForParent(parent) {
+    const records = readAuditTail(auditFilePathOf(parent.session))
+    let catalogChildren = []
+    try {
+      catalogChildren = await ctx.subagents.listChildren(parent.id) ?? []
+    } catch {
+      // catalog unavailable: partial-confidence rebuild still proceeds
+    }
+    const state = rehydrateSupervision({ parentId: parent.id, records, catalogChildren })
+    const sessionQuery = ctx.get?.('sessionQuery')
+    if (sessionQuery?.readSession) {
+      return applyChildLogRecovery(state, (childId) => readChildFinalText(sessionQuery, childId))
+    }
+    return state
   }
 
   /** Find the entry owning a given child session id (event filter). */
@@ -189,9 +216,12 @@ function apply(ctx, config = {}) {
       if (depth >= 1) throw new Error('resume_agent: only the main agent may resume supervised children')
       if (typeof args.agent !== 'string' || args.agent.length === 0) throw new Error('resume_agent: agent must be a non-empty string')
       if (typeof args.context !== 'string' || args.context.trim().length === 0) throw new Error('resume_agent: context must be a non-empty string')
-      const entry = coordinators.get(exec.agent.id)
-      if (!entry) throw new Error('resume_agent: this session has no supervised children')
-      return entry.coordinator.resume(args.agent, args.context)
+      const coordinator = await coordinatorFor(exec.agent)
+      try {
+        return await coordinator.resume(args.agent, args.context)
+      } catch (error) {
+        throw withUntrackedHint(error, coordinator)
+      }
     },
   })
 
@@ -214,11 +244,27 @@ function apply(ctx, config = {}) {
       const depth = exec.agent?.session?.header?.delegationDepth ?? 0
       if (depth >= 1) throw new Error('terminate_agent: only the main agent may terminate supervised children')
       if (typeof args.agent !== 'string' || args.agent.length === 0) throw new Error('terminate_agent: agent must be a non-empty string')
-      const entry = coordinators.get(exec.agent.id)
-      if (!entry) throw new Error('terminate_agent: this session has no supervised children')
-      return entry.coordinator.terminate(args.agent, args.reason)
+      const coordinator = await coordinatorFor(exec.agent)
+      try {
+        return coordinator.terminate(args.agent, args.reason)
+      } catch (error) {
+        throw withUntrackedHint(error, coordinator)
+      }
     },
   })
+
+  ctx.tools.register(
+    createStatusTool({
+      coordinatorFor,
+      listChildren: async (parentId) => {
+        try {
+          return await ctx.subagents.listChildren(parentId)
+        } catch {
+          return null
+        }
+      },
+    }),
+  )
 
 
   // Provider snapshot cache, invalidated on adapter topology changes.
@@ -310,6 +356,97 @@ function apply(ctx, config = {}) {
 
 function firstLine(text) {
   return text.split('\n', 1)[0].slice(0, 80)
+}
+
+/** Audit JSONL location for one session (cold-safe channel; may not exist). */
+export function auditFilePathOf(session) {
+  const cwd = session?.header?.cwd
+  if (typeof cwd !== 'string' || cwd.length === 0) return null
+  return join(cwd, '.orrery', 'audit.jsonl')
+}
+
+/**
+ * When a rebuilt registry cannot find a named child but the DSH catalog shows
+ * continuable children, the error must say so — never claim no children exist.
+ * @param {Error} error
+ * @param {object} coordinator
+ * @returns {Error}
+ */
+export function withUntrackedHint(error, coordinator) {
+  const untracked = coordinator?.meta?.untracked
+  if (Array.isArray(untracked) && untracked.length > 0 && /no supervised child/.test(String(error?.message ?? ''))) {
+    return new Error(`${error.message} Note: ${untracked.length} untracked continuable child(ren) exist in the DSH catalog — supervision state may have been rebuilt with partial confidence.`)
+  }
+  return error
+}
+
+/**
+ * Tail-read the audit JSONL (best-effort): returns parsed records, or [] when
+ * the file is missing/unreadable. A partial first line is dropped.
+ * @param {string | null} filePath
+ * @param {number} [maxBytes]
+ * @returns {object[]}
+ */
+export function readAuditTail(filePath, maxBytes = 256 * 1024) {
+  if (typeof filePath !== 'string' || filePath.length === 0) return []
+  let size
+  try {
+    size = statSync(filePath).size
+  } catch {
+    return []
+  }
+  if (size === 0) return []
+  const start = Math.max(0, size - maxBytes)
+  const length = size - start
+  let buffer
+  try {
+    buffer = Buffer.alloc(length)
+    const fd = openSync(filePath, 'r')
+    try {
+      readSync(fd, buffer, 0, length, start)
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return []
+  }
+  const lines = buffer.toString('utf8').split('\n')
+  if (start > 0 && lines.length > 0) lines.shift()
+  const records = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    try {
+      records.push(JSON.parse(trimmed))
+    } catch {
+      // tolerate malformed lines (best-effort tail)
+    }
+  }
+  return records
+}
+
+/**
+ * L3 reader: last assistant text of a child session, or null when unreadable.
+ * @param {object} sessionQuery - DSH sessionQuery service
+ * @param {string} childId
+ * @returns {Promise<string | null>}
+ */
+export async function readChildFinalText(sessionQuery, childId) {
+  const read = await sessionQuery.readSession(childId)
+  const events = read?.events ?? []
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event?.type !== 'assistant/message') continue
+    const content = event?.data?.message?.content
+    if (!Array.isArray(content)) continue
+    const text = content
+      .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('\n')
+    if (text.length > 0) return text
+    return null
+  }
+  return null
 }
 
 export { name, inject, apply }
