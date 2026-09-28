@@ -230,9 +230,10 @@ with one `verify-N` todo, transitions in real time.
   copied verbatim from read output).
 - Structural pattern transformations: preview first (e.g. `sg --pattern ...
   --rewrite ...` when ast-grep is installed), review the preview, then apply.
-- Symbol renames: use LSP rename when a semantic lane is available; otherwise
-  careful grep-mapped anchored edits with a post-rename grep sweep for
-  stragglers.
+- Symbol renames: use the `lsp_rename` tool when LSP is enabled for the
+  session (the language server computes the cross-file edit set and the
+  plugin applies it through the fs version guard); otherwise careful
+  grep-mapped anchored edits with a post-rename grep sweep for stragglers.
 
 **Post-step verification (MANDATORY)**: type/lint check → no new errors; test
 command → all pass. Pass → todo completed. Fail → **STOP AND FIX**.
