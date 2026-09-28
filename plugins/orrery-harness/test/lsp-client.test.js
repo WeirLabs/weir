@@ -84,6 +84,22 @@ describe('lsp client framing', () => {
     expect(sent).toContain('"method":"initialized"')
   })
 
+  it('handshake declares rename and changes-only workspaceEdit capabilities', async () => {
+    const { stdin, stdout } = fakeChannel()
+    const client = createLspClient({ stdin, stdout })
+    const shake = handshake(client, 'file:///ws')
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5))
+    stdout.write(framed({ jsonrpc: '2.0', id: 1, result: { capabilities: {} } }))
+    await shake
+    const sent = stdin.read()?.toString() ?? ''
+    const headerEnd = sent.indexOf('\r\n\r\n')
+    const length = Number.parseInt(/Content-Length:[ \t]*(\d+)/i.exec(sent.slice(0, headerEnd))?.[1] ?? '0', 10)
+    const initialize = JSON.parse(sent.slice(headerEnd + 4, headerEnd + 4 + length))
+    const capabilities = initialize.params.capabilities
+    expect(capabilities.textDocument.rename).toEqual({})
+    expect(capabilities.workspace).toEqual({ workspaceEdit: { documentChanges: false } })
+  })
+
   it('shutdownClient requests shutdown, notifies exit, terminates', async () => {
     const { stdin, stdout } = fakeChannel()
     const client = createLspClient({ stdin, stdout })

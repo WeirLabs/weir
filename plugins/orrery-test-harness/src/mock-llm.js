@@ -211,7 +211,13 @@ function decideLsp(options) {
     const toolText = lastOfRole(options, 'tool')
     if (toolText.includes('unknown tool')) return textChunks('lsp scenario done')
     if (toolText.includes('disabled for this session')) return toolCallChunks('lsp_diagnostics', { file_path: TSFIXTURE })
-    if (toolText.includes('fixtureSymbol')) return toolCallChunks('lsp', { enabled: false })
+    // The stale-version probe finished (ordinary tool error naming the
+    // written/not-written lists) → toggle the tool set off.
+    if (toolText.includes('filesNotWritten')) return toolCallChunks('lsp', { enabled: false })
+    // Cross-file rename applied → run the deterministic stale-version probe.
+    if (toolText.includes('across 2 file(s)')) return toolCallChunks('lsp_rename', { file_path: TSFIXTURE, line: 1, character: 14, new_name: 'staleProbe' })
+    // Document symbols listed → run the cross-file rename.
+    if (toolText.includes('Document symbols:')) return toolCallChunks('lsp_rename', { file_path: TSFIXTURE, line: 1, character: 14, new_name: 'renamedSymbol' })
     if (toolText.includes('reference(s)')) return toolCallChunks('lsp_symbols', { file_path: TSFIXTURE })
     if (toolText.includes('Definition location')) return toolCallChunks('lsp_references', { file_path: TSFIXTURE, line: 3, character: 5 })
     if (toolText.includes('diagnostic(s) for')) return toolCallChunks('lsp_definition', { file_path: TSFIXTURE, line: 3, character: 5 })
@@ -533,6 +539,8 @@ async function* streamScenario(options) {
     rehydrateResumedReportSeen: transcript(options).includes('beta resumed after restart'),
     rehydrateChildASeen: transcript(options).includes('REHYDRATE_CHILD_A'),
     lspToggledOn: transcript(options).includes('LSP semantic tools enabled'),
+    lspRenameSeen: transcript(options).includes('across 2 file(s)'),
+    lspRenameStaleSeen: transcript(options).includes('filesAlreadyWritten') && transcript(options).includes('filesNotWritten'),
     lspDiagSeen: transcript(options).includes('mock-diagnostic'),
     lspDefSeen: transcript(options).includes('probe.ts:3:5'),
     lspRefsSeen: transcript(options).includes('2 reference(s)'),

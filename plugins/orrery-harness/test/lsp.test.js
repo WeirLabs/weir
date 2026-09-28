@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { apply, foldLspState, LSP_PROJECTION_KEY } from '../src/lsp/index.js'
 
 /** Scripted fake LSP server over PassThrough pipes (auto-handshakes). */
-function fakeSubprocess() {
+function fakeSubprocess(options = {}) {
   const spawns = []
   const subprocess = {
     spawns,
@@ -37,7 +37,7 @@ function fakeSubprocess() {
           const body = buffer.slice(headerEnd + 4, headerEnd + 4 + length)
           buffer = buffer.slice(headerEnd + 4 + length)
           const message = JSON.parse(body.toString('utf8'))
-          answer(message, stdout)
+          answer(message, stdout, options)
         }
       })
       spawns.push(handle)
@@ -47,13 +47,13 @@ function fakeSubprocess() {
   return subprocess
 }
 
-function answer(message, stdout) {
+function answer(message, stdout, serverOptions = {}) {
   const reply = (response) => {
     const body = JSON.stringify(response)
     stdout.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`)
   }
   if (message.method === 'initialize') {
-    reply({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } })
+    reply({ jsonrpc: '2.0', id: message.id, result: { capabilities: serverOptions.capabilities ?? {} } })
     return
   }
   if (message.method === 'shutdown') {
@@ -104,6 +104,11 @@ function answer(message, stdout) {
     })
     return
   }
+  if (message.method === 'textDocument/rename') {
+    const result = serverOptions.renameResponder ? serverOptions.renameResponder(message) : null
+    reply({ jsonrpc: '2.0', id: message.id, result })
+    return
+  }
   if (message.id !== undefined) reply({ jsonrpc: '2.0', id: message.id, result: null })
 }
 
@@ -129,6 +134,49 @@ function fakeSettings() {
   }
 }
 
+const FAKE_FS_DEFAULT_TEXT = 'const alphaFn = () => 1\n'
+
+/**
+ * In-memory fs for tool flows: unknown paths read as the default text (the
+ * read-only tools only need syncDocument to succeed); rename tests plant
+ * per-path `{ text, version }` entries in `files`. `onWrite` is an optional
+ * hook invoked at the top of each writeText — the deterministic mid-write
+ * stale injection point (bump another file's version there).
+ */
+function fakeFs() {
+  const files = {}
+  const writes = []
+  const fs = {
+    files,
+    writes,
+    onWrite: null,
+    resolve: async (path) => ({ displayPath: path, processPath: path }),
+    stat: async (target) => {
+      const entry = files[target.displayPath]
+      if (!entry) return undefined
+      return { version: entry.version ?? 'v1', type: 'file', size: Buffer.byteLength(entry.text, 'utf8') }
+    },
+    readText: async (target) => files[target.displayPath]?.text ?? FAKE_FS_DEFAULT_TEXT,
+    readByteRange: async (target, range) => {
+      const text = files[target.displayPath]?.text ?? FAKE_FS_DEFAULT_TEXT
+      return Buffer.from(text, 'utf8').subarray(range.offset, range.offset + range.length)
+    },
+    writeText: async (target, content, expected) => {
+      fs.onWrite?.(target.displayPath)
+      const entry = files[target.displayPath]
+      writes.push(target.displayPath)
+      if (!entry) throw new Error(`cannot write "${target.displayPath}": not found`)
+      if (expected?.kind === 'replaceIfVersion' && (entry.version ?? 'v1') !== expected.version) {
+        throw new Error(`cannot write "${target.displayPath}": file changed since it was read (FS_STALE_VERSION)`)
+      }
+      entry.text = content
+      entry.version = `${expected?.version ?? 'v1'}+w${writes.length}`
+      return { version: entry.version }
+    },
+  }
+  return fs
+}
+
 function fakeCtx(subprocess, config, services = {}) {
   const registered = []
   const handlers = {}
@@ -148,10 +196,7 @@ function fakeCtx(subprocess, config, services = {}) {
       },
     },
     subprocess,
-    fs: {
-      resolve: async (path) => ({ displayPath: path, processPath: path }),
-      readText: async () => 'const alphaFn = () => 1\n',
-    },
+    fs: services.fs ?? fakeFs(),
     get: (name) => {
       if (name === 'orrerySettings') return settings.service
       if (name === 'commands') {
@@ -240,7 +285,7 @@ describe('lsp capability gate', () => {
     const agent = fakeAgent()
     ctx.handlers['agent/created']({ agent })
     await lspTool(ctx).execute({ enabled: true }, { agent })
-    expect(agent.scoped).toHaveLength(4)
+    expect(agent.scoped).toHaveLength(5)
     settings.setLsp(false)
     expect(ctx.registered).toHaveLength(0)
     expect(ctx.commandDefs).toHaveLength(0)
@@ -267,7 +312,7 @@ describe('lsp toggle tool', () => {
     apply(ctx, { enabled: true })
     const agent = fakeAgent()
     await lspTool(ctx).execute({ enabled: true }, { agent })
-    expect(agent.scoped.map((tool) => tool.name).sort()).toEqual(['lsp_definition', 'lsp_diagnostics', 'lsp_references', 'lsp_symbols'])
+    expect(agent.scoped.map((tool) => tool.name).sort()).toEqual(['lsp_definition', 'lsp_diagnostics', 'lsp_references', 'lsp_rename', 'lsp_symbols'])
     await lspTool(ctx).execute({ enabled: false }, { agent })
     expect(agent.scoped).toHaveLength(0)
   })
@@ -289,7 +334,7 @@ describe('lsp command', () => {
     const agent = fakeAgent()
     const on = await lspCommand(ctx).handler({ agent, rawInput: 'on' })
     expect(on.kind).toBe('success')
-    expect(agent.scoped.map((tool) => tool.name).sort()).toEqual(['lsp_definition', 'lsp_diagnostics', 'lsp_references', 'lsp_symbols'])
+    expect(agent.scoped.map((tool) => tool.name).sort()).toEqual(['lsp_definition', 'lsp_diagnostics', 'lsp_references', 'lsp_rename', 'lsp_symbols'])
     const off = await lspCommand(ctx).handler({ agent, rawInput: 'off' })
     expect(off.kind).toBe('success')
     expect(agent.scoped).toHaveLength(0)
@@ -341,7 +386,7 @@ describe('agent restore sync', () => {
     apply(ctx, { enabled: true })
     const agent = fakeAgent('agent-1', { [LSP_PROJECTION_KEY]: { enabled: true } })
     ctx.handlers['agent/created']({ agent })
-    expect(agent.scoped).toHaveLength(4)
+    expect(agent.scoped).toHaveLength(5)
   })
 
   it('agent/disposed cleans up an enabled session', async () => {
@@ -349,7 +394,7 @@ describe('agent restore sync', () => {
     apply(ctx, { enabled: true })
     const agent = fakeAgent()
     await lspTool(ctx).execute({ enabled: true }, { agent })
-    expect(agent.scoped).toHaveLength(4)
+    expect(agent.scoped).toHaveLength(5)
     ctx.handlers['agent/disposed']({ agent })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(agent.scoped).toHaveLength(0)
@@ -362,7 +407,7 @@ describe('agent restore sync', () => {
     settings.setLsp(true)
     const agent = fakeAgent('agent-1', { [LSP_PROJECTION_KEY]: { enabled: true } })
     ctx.handlers['agent/created']({ agent })
-    expect(agent.scoped).toHaveLength(4)
+    expect(agent.scoped).toHaveLength(5)
   })
 })
 
@@ -461,5 +506,204 @@ describe('lsp tool flows (gate on)', () => {
     expect(subprocess.spawns).toHaveLength(2)
     await new Promise((resolve) => setTimeout(resolve, 250))
     expect(subprocess.spawns[1].terminated).toBe(0)
+  })
+})
+
+describe('lsp_rename tool', () => {
+  const renameEdit = (sl, sc, el, ec, newText) => ({
+    range: { start: { line: sl, character: sc }, end: { line: el, character: ec } },
+    newText,
+  })
+
+  async function renameTool(ctx, agent) {
+    await lspTool(ctx).execute({ enabled: true }, { agent })
+    return agent.scoped.find((tool) => tool.name === 'lsp_rename')
+  }
+
+  it('applies a cross-file WorkspaceEdit through the version guard and renders diffs + summary', async () => {
+    const seen = []
+    const subprocess = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: (message) => {
+        seen.push(message.params.newName)
+        return {
+          changes: {
+            'file:///ws/a.ts': [renameEdit(0, 6, 0, 13, message.params.newName)],
+            'file:///ws/b.ts': [renameEdit(0, 9, 0, 16, message.params.newName)],
+          },
+        }
+      },
+    })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    ctx.fs.files['/ws/b.ts'] = { text: 'import { alphaFn } from "./a"\n', version: 'v9' }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    const result = await rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: '  betaFn  ' }, { agent, signal: undefined })
+    expect(seen).toEqual(['betaFn']) // new_name is trimmed before the request
+    expect(ctx.fs.files['/ws/a.ts'].text).toBe('const betaFn = () => 1\n')
+    expect(ctx.fs.files['/ws/b.ts'].text).toBe('import { betaFn } from "./a"\n')
+    expect(result.text).toContain('renamed: 2 edit(s) across 2 file(s)')
+    expect(result.text).toContain('--- a//ws/a.ts')
+    expect(result.text).toContain('--- a//ws/b.ts')
+    expect(result.text).toContain('-const alphaFn = () => 1')
+    expect(result.text).toContain('+const betaFn = () => 1')
+  })
+
+  it('preserves the CRLF line-ending style on write-back', async () => {
+    const subprocess = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: (message) => ({
+        changes: {
+          'file:///ws/c.ts': [renameEdit(0, 6, 0, 13, message.params.newName), renameEdit(1, 9, 1, 16, message.params.newName)],
+        },
+      }),
+    })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/c.ts'] = { text: 'const alphaFn = 1\r\nexport { alphaFn }\r\n', version: 'v1' }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    const result = await rename.execute({ file_path: '/ws/c.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })
+    expect(ctx.fs.files['/ws/c.ts'].text).toBe('const betaFn = 1\r\nexport { betaFn }\r\n')
+    expect(result.text).toContain('renamed: 2 edit(s) across 1 file(s)')
+  })
+
+  it('fails as an ordinary tool error when the server did not advertise renameProvider', async () => {
+    const subprocess = fakeSubprocess({ capabilities: { definitionProvider: true } })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    await expect(async () => rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })).rejects.toThrow(/does not support rename/)
+    expect(ctx.fs.writes).toHaveLength(0)
+  })
+
+  it('rejects a documentChanges response explicitly and writes nothing', async () => {
+    const subprocess = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: () => ({ documentChanges: [{ textDocument: { uri: 'file:///ws/a.ts', version: 1 }, edits: [] }] }),
+    })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    await expect(async () => rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })).rejects.toThrow(/documentChanges.*does not apply/)
+    expect(ctx.fs.writes).toHaveLength(0)
+  })
+
+  it('reports a no-op for empty changes and for identity edits (zero writes)', async () => {
+    const subprocess = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: () => ({ changes: {} }),
+    })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    const empty = await rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })
+    expect(empty.text).toContain('no-op')
+    expect(ctx.fs.writes).toHaveLength(0)
+    // identity: the server's edit replaces the symbol with the same text
+    const identitySub = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: () => ({ changes: { 'file:///ws/a.ts': [renameEdit(0, 6, 0, 13, 'alphaFn')] } }),
+    })
+    const ctx2 = fakeCtx(identitySub, { enabled: true })
+    ctx2.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    apply(ctx2, { enabled: true })
+    const agent2 = fakeAgent()
+    const rename2 = await renameTool(ctx2, agent2)
+    const identity = await rename2.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'alphaFn' }, { agent: agent2, signal: undefined })
+    expect(identity.text).toContain('no-op')
+    expect(identity.text).toContain('unchanged')
+    expect(ctx2.fs.writes).toHaveLength(0)
+  })
+
+  it('preflight failure (out-of-bounds or overlapping edits) writes nothing at all', async () => {
+    const subprocess = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: () => ({
+        changes: {
+          'file:///ws/a.ts': [renameEdit(0, 6, 0, 13, 'betaFn')],
+          'file:///ws/b.ts': [renameEdit(4, 0, 4, 3, 'betaFn')],
+        },
+      }),
+    })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    ctx.fs.files['/ws/b.ts'] = { text: 'import { alphaFn } from "./a"\n', version: 'v9' }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    await expect(async () => rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })).rejects.toThrow(/out of bounds/)
+    expect(ctx.fs.writes).toHaveLength(0)
+    expect(ctx.fs.files['/ws/a.ts'].text).toBe('const alphaFn = () => 1\n')
+    expect(ctx.fs.files['/ws/b.ts'].text).toBe('import { alphaFn } from "./a"\n')
+
+    const overlapping = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: () => ({ changes: { 'file:///ws/a.ts': [renameEdit(0, 0, 0, 10, 'x'), renameEdit(0, 6, 0, 13, 'y')] } }),
+    })
+    const ctx2 = fakeCtx(overlapping, { enabled: true })
+    ctx2.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    apply(ctx2, { enabled: true })
+    const agent2 = fakeAgent()
+    const rename2 = await renameTool(ctx2, agent2)
+    await expect(async () => rename2.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent: agent2, signal: undefined })).rejects.toThrow(/overlapping/)
+    expect(ctx2.fs.writes).toHaveLength(0)
+  })
+
+  it('a stale version mid-write stops immediately and names written/not-written files', async () => {
+    const subprocess = fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: (message) => ({
+        changes: {
+          'file:///ws/a.ts': [renameEdit(0, 6, 0, 13, message.params.newName)],
+          'file:///ws/b.ts': [renameEdit(0, 9, 0, 16, message.params.newName)],
+        },
+      }),
+    })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    ctx.fs.files['/ws/b.ts'] = { text: 'import { alphaFn } from "./a"\n', version: 'v9' }
+    // Deterministic mid-write injection: the first write bumps b's version,
+    // so b's replaceIfVersion rejects exactly like an external modification
+    // between preflight and write.
+    ctx.fs.onWrite = (path) => {
+      if (path === '/ws/a.ts') ctx.fs.files['/ws/b.ts'].version = 'external-edit'
+    }
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    let failure
+    try {
+      await rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeTruthy()
+    expect(failure.message).toContain('FS_STALE_VERSION')
+    expect(failure.message).toContain('filesAlreadyWritten: [/ws/a.ts]')
+    expect(failure.message).toContain('filesNotWritten: [/ws/b.ts]')
+    // a.ts was written; b.ts kept its original bytes; nothing further written
+    expect(ctx.fs.files['/ws/a.ts'].text).toBe('const betaFn = () => 1\n')
+    expect(ctx.fs.files['/ws/b.ts'].text).toBe('import { alphaFn } from "./a"\n')
+    expect(ctx.fs.writes).toEqual(['/ws/a.ts', '/ws/b.ts'])
+  })
+
+  it('rejects an empty or blank new_name before any server round-trip', async () => {
+    const subprocess = fakeSubprocess({ capabilities: { renameProvider: true } })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    const rename = await renameTool(ctx, agent)
+    await expect(async () => rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: '' }, { agent, signal: undefined })).rejects.toThrow(/new_name/)
+    await expect(async () => rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: '   ' }, { agent, signal: undefined })).rejects.toThrow(/new_name/)
+    expect(subprocess.spawns).toHaveLength(0)
   })
 })

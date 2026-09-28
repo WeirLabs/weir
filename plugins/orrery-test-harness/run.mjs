@@ -57,7 +57,10 @@ function setup() {
   writeFileSync(join(HOME, 'denied.txt'), 'outside one\noutside two\n')
   // LSP scenario fixtures: a .ts target and the mock LSP server INSIDE the
   // workspace (spawned processes may only read inside the sandbox root).
+  // probe-other.ts is deliberately CRLF: the rename scenario asserts the
+  // write-back preserves the original line-ending style end-to-end.
   writeFileSync(join(WS, 'probe.ts'), 'export const fixtureSymbol = 1\n')
+  writeFileSync(join(WS, 'probe-other.ts'), 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n')
   writeFileSync(join(WS, 'mock-lsp-server.js'), readFileSync(join(HERE, 'src', 'mock-lsp-server.js'), 'utf8'))
 }
 
@@ -270,6 +273,18 @@ function assertLsp(run) {
   check('lsp', 'toggle enabled the LSP tool set', requests.some((r) => r.lspToggledOn), JSON.stringify(requests.map((r) => r.lspToggledOn)))
   check('lsp', 'diagnostics delivered through the mock LSP server', requests.some((r) => r.lspDiagSeen), JSON.stringify(requests.map((r) => r.lspDiagSeen)))
   check('lsp', 'definition, references, and symbols answered', requests.some((r) => r.lspDefSeen) && requests.some((r) => r.lspRefsSeen) && requests.some((r) => r.lspSymbolsSeen), JSON.stringify(requests.map((r) => [r.lspDefSeen, r.lspRefsSeen, r.lspSymbolsSeen])))
+  // Rename probes: fixtureSymbol → renamedSymbol (cross-file), then
+  // renamedSymbol → staleProbe (deterministic stale-version injection — the
+  // mock's WorkspaceEdit carries a same-file alias entry ordered after the
+  // real one, so the alias's replaceIfVersion always rejects mid-write).
+  // Final on-disk state reflects BOTH renames on the real entries only.
+  const probeTs = readFileSync(join(WS, 'probe.ts'), 'utf8')
+  const probeOther = readFileSync(join(WS, 'probe-other.ts'), 'utf8')
+  check('lsp', 'rename summary rendered to the model', requests.some((r) => r.lspRenameSeen), JSON.stringify(requests.map((r) => r.lspRenameSeen)))
+  check('lsp', 'cross-file rename rewrote both fixtures on disk', probeTs === 'export const staleProbe = 1\n' && probeOther === 'import { staleProbe } from "./probe"\r\nexport const useIt = staleProbe + 1\r\n', JSON.stringify([probeTs, probeOther]))
+  check('lsp', 'CRLF fixture kept its line-ending style on write-back', probeOther.includes('\r\n') && probeOther.split('\r\n').every((line) => !line.includes('\n')), JSON.stringify(probeOther))
+  check('lsp', 'stale-version write stopped mid-pass and named written/not-written files', requests.some((r) => r.lspRenameStaleSeen), JSON.stringify(requests.map((r) => r.lspRenameStaleSeen)))
+  check('lsp', 'the rejected alias write never landed (no X-suffixed content)', !probeTs.includes('staleProbeX') && !probeOther.includes('staleProbeX'), JSON.stringify([probeTs, probeOther]))
   check('lsp', 'tools unregistered after toggle off', requests.some((r) => r.lspUnknownAfterOff), JSON.stringify(requests.map((r) => r.lspUnknownAfterOff)))
   check('lsp', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
