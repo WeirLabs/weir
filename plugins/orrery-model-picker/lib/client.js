@@ -36,10 +36,9 @@ window.__ModuleLoader__.load({
 			overflow: "hidden",
 			textOverflow: "ellipsis"
 		};
-		const menuStyle = {
+		const menuBaseStyle = {
 			position: "absolute",
 			top: "calc(100% + 4px)",
-			right: 0,
 			zIndex: 1000,
 			minWidth: "260px",
 			maxHeight: "320px",
@@ -56,6 +55,8 @@ window.__ModuleLoader__.load({
 			const { value, onChange, getSession, t, disabled = false } = props;
 			const [open, setOpen] = react.useState(false);
 			const [pane, setPane] = react.useState("root");
+			const [align, setAlign] = react.useState("left");
+			const triggerRef = react.useRef(null);
 			const [catalog, setCatalog] = react.useState({ status: "idle", groups: [] });
 			const inflightRef = react.useRef(null);
 			const retriesRef = react.useRef(0);
@@ -149,17 +150,24 @@ window.__ModuleLoader__.load({
 			] });
 			return react_jsx_runtime.jsxs("div", { ref: rootRef, style: { position: "relative" }, children: [
 				react_jsx_runtime.jsx("button", {
+					ref: triggerRef,
 					type: "button",
 					style: triggerStyle,
 					disabled,
 					onClick: () => {
 						if (catalog.status === "error") retry();
+						// Viewport-aware alignment: grow right when the trigger
+						// sits near the left (e.g. inside an editor panel),
+						// grow left when it sits near the right edge (settings
+						// rows) — otherwise the menu overflows its container.
+						const rect = triggerRef.current?.getBoundingClientRect();
+						if (rect) setAlign(rect.left + 272 < (globalThis.innerWidth ?? 100000) ? "left" : "right");
 						setOpen(!open);
 						setPane("root");
 					},
 					children: catalog.status === "ready" ? `${modelLabel}${effortLabel ? ` · ${effortLabel}` : ""}` : catalog.status === "error" ? (provider || model ? modelLabel : t("catalogFailed")) : t("catalogLoading")
 				}),
-				open ? react_jsx_runtime.jsxs("div", { role: "menu", style: menuStyle, children: pane === "root" ? [
+				open ? react_jsx_runtime.jsxs("div", { role: "menu", style: { ...menuBaseStyle, ...(align === "left" ? { left: 0 } : { right: 0 }) }, children: pane === "root" ? [
 					menuRow({ label: t("pickerModel"), chevron: true, onSelect: () => setPane("model") }),
 					menuRow({ label: t("pickerEffort"), chevron: true, onSelect: () => setPane("effort") })
 				] : pane === "model" ? groups.flatMap((group) => [
