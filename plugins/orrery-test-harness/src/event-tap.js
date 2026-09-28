@@ -30,7 +30,7 @@ function summarizeMessage(message) {
       .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
       .map((block) => block.text)
       .join('\n')
-      .slice(0, 160)
+      .slice(0, 600)
   }
   // followup/steer inputs are raw ContentBlock arrays before admission
   if (Array.isArray(message)) {
@@ -38,7 +38,7 @@ function summarizeMessage(message) {
       .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
       .map((block) => block.text)
       .join('\n')
-      .slice(0, 160)
+      .slice(0, 600)
   }
   return ''
 }

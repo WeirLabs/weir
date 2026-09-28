@@ -225,18 +225,18 @@ function decideRehydrate(options) {
     return textChunks('STATUS: blocked\nREPORT: rehydrate child stuck on missing payload')
   }
   // Parent phase 2 (adopted session, fresh process): resume the blocked child
-  // on the rehydrated registry, then observe the merged report.
+  // on the rehydrated registry, then observe the group-settled signal.
   if (history.includes('rehydrate-resume-probe')) {
-    if (history.includes('<supervised_group_report')) {
-      return textChunks('parent observed post-restart group merge')
+    if (history.includes('<supervised_group_settled')) {
+      return textChunks('parent observed post-restart group-settled signal')
     }
     if (history.includes('Resumed supervised child') && !history.includes('REHYDRATE_WAITED')) {
       return toolCallChunks('bash', { command: 'echo REHYDRATE_WAITED && sleep 2', description: 'Let the resumed child settle' })
     }
     if (history.includes('REHYDRATE_WAITED')) {
-      // End the turn: the merged report then arrives via the busy turn-stopping
-      // flush or the idle followup wake — never loop on sleeps.
-      return textChunks('waiting for the post-restart merged report')
+      // End the turn: the group-settled signal then arrives via the deferred
+      // followup — never loop on sleeps.
+      return textChunks('waiting for the post-restart group-settled signal')
     }
     return toolCallChunks('resume_agent', { agent: 'beta', context: 'payload ready' })
   }
@@ -251,8 +251,8 @@ function decideRehydrate(options) {
     }
     return textChunks('unhandled rehydrate tool turn')
   }
-  if (history.includes('<supervised_blocked')) {
-    return textChunks('parent observed blocked notice; stopping before the simulated restart')
+  if (history.includes('rehydrate child stuck on missing payload')) {
+    return textChunks('parent observed the built-in blocked settlement; stopping before the simulated restart')
   }
   if (history.includes('rehydrate-probe') && !history.includes('Supervised group')) {
     return toolCallChunks('delegate', {
@@ -279,11 +279,11 @@ function decideGrouped(options) {  const history = transcript(options)
   if (history.includes('GROUPED_CHILD_B') && !history.includes('grouped-probe')) {
     return textChunks('STATUS: completed\nREPORT: beta finished first try')
   }
-  // Parent: observe the merged group report; after the delegate tool result,
+  // Parent: observe the group-settled signal; after the delegate tool result,
   // pad the busy window so the headless one-shot driver does not exit before
   // the (instant-mock) children settle; then end the turn and wait.
-  if (history.includes('<supervised_group_report')) {
-    return textChunks('parent observed group merge')
+  if (history.includes('<supervised_group_settled')) {
+    return textChunks('parent observed group-settled signal')
   }
   const lastRole = options.messages?.at(-1)?.role
   if (lastRole === 'tool') {
@@ -291,7 +291,7 @@ function decideGrouped(options) {  const history = transcript(options)
     if (toolText.includes('Supervised group')) {
       return toolCallChunks('bash', { command: 'sleep 1', description: 'Let supervised children settle' })
     }
-    return textChunks('group started, waiting for the merged report')
+    return textChunks('group started, waiting for the settle signal')
   }
   if (history.includes('grouped-probe') && !history.includes('Supervised group')) {
     return toolCallChunks('delegate', {
@@ -303,6 +303,104 @@ function decideGrouped(options) {  const history = transcript(options)
     })
   }
   return textChunks('unhandled grouped turn')
+}
+
+function decideEscalate(options) {
+  const history = transcript(options)
+  // First deep child returns an ESCALATE; the respawned deep-plus child settles.
+  if (history.includes('ESCALATE_CHILD') && !history.includes('escalate-probe')) {
+    if (history.includes('escalation_findings')) return textChunks('escalated child settled properly')
+    return textChunks('ESCALATE: deep-plus\nfirst pass hit a boundary')
+  }
+  const lastRole = options.messages?.at(-1)?.role
+  if (lastRole === 'tool') {
+    const toolText = lastOfRole(options, 'tool')
+    if (toolText.includes('escalated to deep-plus')) return textChunks('parent observed the escalation respawn')
+    return textChunks('unhandled escalate tool turn')
+  }
+  if (history.includes('escalate-probe') && !history.includes('ESCALATE_CHILD')) {
+    return toolCallChunks('delegate', { category: 'deep', prompt: 'ESCALATE_CHILD\nTASK: probe escalation\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' })
+  }
+  return textChunks('unhandled escalate turn')
+}
+
+function decideBackground(options) {
+  const history = transcript(options)
+  // Background child brain: produce the report marker.
+  if (history.includes('BACKGROUND_CHILD') && !history.includes('background-probe')) {
+    return textChunks('BACKGROUND_CHILD_MARKER: background child finished its work')
+  }
+  // Parent: keep the turn alive until the compact job notice arrives, then
+  // observe it WITHOUT pulling — the pull-only discipline is the contract.
+  // (The full report must never enter the parent context.)
+  const lastRole = options.messages?.at(-1)?.role
+  if (lastRole === 'tool') {
+    const toolText = lastOfRole(options, 'tool')
+    if (toolText.includes('Delegated in the background')) {
+      return toolCallChunks('bash', { command: 'echo WAITED_FOR_JOB && sleep 1', description: 'Keep the turn alive until the background job settles' })
+    }
+    if (toolText.includes('WAITED_FOR_JOB')) {
+      if (history.includes('finished [status: completed]')) {
+        return textChunks('parent observed the compact notice; the full report stays pull-only')
+      }
+      return toolCallChunks('bash', { command: 'echo WAITED_FOR_JOB && sleep 1', description: 'Wait for the job notice' })
+    }
+    return textChunks('unhandled background tool turn')
+  }
+  if (history.includes('finished [status: completed]') && history.includes('background job')) {
+    return textChunks('parent observed the compact notice; the full report stays pull-only')
+  }
+  if (history.includes('background-probe') && !history.includes('BACKGROUND_CHILD')) {
+    return toolCallChunks('delegate', { agent: 'explore', prompt: 'BACKGROUND_CHILD\nTASK: finish the background work\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done', run_in_background: true })
+  }
+  return textChunks('unhandled background turn')
+}
+
+function decideTerminate(options) {
+  const history = transcript(options)
+  // Child A: stays busy so the parent can interrupt it mid-flight.
+  if (history.includes('TERMINATE_CHILD_A') && !history.includes('terminate-probe')) {
+    return toolCallChunks('bash', { command: 'sleep 30', description: 'Stay busy so the parent can interrupt' })
+  }
+  // Child B: completes immediately.
+  if (history.includes('TERMINATE_CHILD_B') && !history.includes('terminate-probe')) {
+    return textChunks('STATUS: completed\nREPORT: beta finished for termination count')
+  }
+  // Parent: wait briefly, terminate the busy member, then observe the signal.
+  // Keyed off history: the child's settlement notice may interleave as a user
+  // message between the sleep result and the terminate call.
+  if (history.includes('<supervised_group_settled')) {
+    return textChunks('parent observed the settle signal after termination')
+  }
+  if (history.includes('TERMINATE_WAITED') && !history.includes('interrupted while running') && !history.includes('state bookkeeping')) {
+    return toolCallChunks('terminate_agent', { agent: 'alpha' })
+  }
+  const lastRole = options.messages?.at(-1)?.role
+  if (lastRole === 'tool') {
+    const toolText = lastOfRole(options, 'tool')
+    if (toolText.includes('Supervised group')) {
+      return toolCallChunks('bash', { command: 'echo TERMINATE_WAITED && sleep 1', description: 'Let the busy child start, then interrupt it' })
+    }
+    if (toolText.includes('interrupted while running')) {
+      // Keep the turn alive: the aborted member's settlement notice and the
+      // gated group-settled signal land right after the interrupt result.
+      return toolCallChunks('bash', { command: 'echo TERMINATE_DONE && sleep 1', description: 'Let the final notice and signal land' })
+    }
+    if (toolText.includes('TERMINATE_DONE')) {
+      return textChunks('parent terminated alpha; waiting for the settle signal')
+    }
+    return textChunks('unhandled terminate tool turn')
+  }
+  if (history.includes('terminate-probe') && !history.includes('Supervised group')) {
+    return toolCallChunks('delegate', {
+      group: 'probe-group',
+      tasks: [
+        { category: 'quick', name: 'alpha', prompt: 'TERMINATE_CHILD_A\nTASK: stay busy\nDELIVERABLE: nothing\nSCOPE: nothing else\nVERIFY: n/a\nSTOP WHEN: interrupted' },
+        { category: 'quick', name: 'beta', prompt: 'TERMINATE_CHILD_B\nTASK: finish\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' },
+      ],
+    })
+  }
+  return textChunks('unhandled terminate turn')
 }
 
 function decideRobash(options) {
@@ -355,6 +453,12 @@ function decide(options) {
       return decideSemantic(options)
     case 'grouped':
       return decideGrouped(options)
+    case 'escalate':
+      return decideEscalate(options)
+    case 'background':
+      return decideBackground(options)
+    case 'terminate':
+      return decideTerminate(options)
     case 'rehydrate':
       return decideRehydrate(options)
     case 'lsp':
@@ -394,9 +498,16 @@ async function* streamScenario(options) {
     groupRetrySeen: transcript(options).includes('Continue the task now, and remember to end'),
     mergedAlphaSeen: transcript(options).includes('alpha finished after one retry'),
     mergedBetaSeen: transcript(options).includes('beta finished first try'),
+    groupSettledSignalSeen: transcript(options).includes('<supervised_group_settled'),
     sawRehydrateProbe: transcript(options).includes('rehydrate-probe'),
-    rehydrateBlockedNoticeSeen: transcript(options).includes('<supervised_blocked'),
+    settlementBlockedSeen: transcript(options).includes('rehydrate child stuck on missing payload'),
     rehydrateResumeCallSeen: transcript(options).includes('rehydrate-resume-probe'),
+    sawEscalateProbe: transcript(options).includes('escalate-probe'),
+    escalationFindingsSeen: transcript(options).includes('escalation_findings'),
+    sawBackgroundProbe: transcript(options).includes('background-probe'),
+    backgroundChildSeen: transcript(options).includes('BACKGROUND_CHILD') && !transcript(options).includes('background-probe'),
+    backgroundMarkerInParentContext: transcript(options).includes('BACKGROUND_CHILD_MARKER') && transcript(options).includes('background-probe'),
+    sawTerminateProbe: transcript(options).includes('terminate-probe'),
     rehydrateResumeContextSeen: transcript(options).includes('Your parent cleared your blocker'),
     rehydrateResumedReportSeen: transcript(options).includes('beta resumed after restart'),
     rehydrateChildASeen: transcript(options).includes('REHYDRATE_CHILD_A'),
@@ -407,7 +518,9 @@ async function* streamScenario(options) {
     lspSymbolsSeen: transcript(options).includes('fixtureSymbol'),
     lspUnknownAfterOff: transcript(options).includes('unknown tool "lsp_diagnostics"'),
     emitted: out.filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.type ?? 'unknown'),
+    emittedNames: out.filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.name ?? chunk.block?.type ?? 'unknown'),
     lastUser: lastOfRole(options, 'user').slice(0, 200),
+    lastTool: lastOfRole(options, 'tool').slice(0, 300),
   })
   yield* out
 }

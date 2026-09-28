@@ -22,7 +22,7 @@ const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
-const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'rehydrate', 'lsp']
+const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp']
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -68,6 +68,9 @@ function runScenario(scenario) {
     // no intent keywords: only the semantic classifier can arm deep-work here
     semantic: '把这个任务从头到尾彻底完成，每一步都要拿出证据',
     grouped: 'grouped-probe',
+    escalate: 'escalate-probe',
+    background: 'background-probe',
+    terminate: 'terminate-probe',
     rehydrate: 'rehydrate-probe',
     lsp: 'lsp-probe',
   }[scenario]
@@ -246,10 +249,13 @@ function assertSemantic(run) {
 function assertGrouped(run) {
   const trace = readTrace(run.trace)
   const requests = trace.filter((r) => Array.isArray(r.emitted))
+  const events = trace.filter((r) => r.kind === 'session-event')
   check('grouped', 'parent delegated a supervised group', requests.some((r) => r.emitted.includes('tool-call') && r.sawGroupProbe), JSON.stringify(requests.map((r) => r.emitted)))
   check('grouped', 'provider-error retry path exercised', requests.some((r) => r.groupRetrySeen), JSON.stringify(requests.map((r) => r.groupRetrySeen)))
-  check('grouped', 'merged report carried both member reports', requests.some((r) => r.mergedAlphaSeen) && requests.some((r) => r.mergedBetaSeen), JSON.stringify(requests.map((r) => [r.mergedAlphaSeen, r.mergedBetaSeen])))
-  check('grouped', 'parent observed the merged group report', run.stdout.includes('parent observed group merge'), run.stdout.slice(-400))
+  check('grouped', 'built-in settlement notices reached the parent session', events.some((e) => e.type === 'user/message' && e.source === 'subagent-settled'), JSON.stringify(events.filter((e) => e.type === 'user/message').map((e) => [e.session, e.source])))
+  check('grouped', 'member reports arrived via the built-in settlement notices', requests.some((r) => r.mergedAlphaSeen) && requests.some((r) => r.mergedBetaSeen), JSON.stringify(requests.map((r) => [r.mergedAlphaSeen, r.mergedBetaSeen])))
+  check('grouped', 'one-line group-settled signal reached the parent', requests.some((r) => r.groupSettledSignalSeen), JSON.stringify(requests.map((r) => r.groupSettledSignalSeen)))
+  check('grouped', 'parent observed the group-settled signal', run.stdout.includes('parent observed group-settled signal'), run.stdout.slice(-400))
   check('grouped', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
@@ -269,14 +275,46 @@ function assertRehydrate(run) {
   const requests2 = trace2.filter((r) => Array.isArray(r.emitted))
   check('rehydrate', 'phase 1 session id captured', typeof run.sessionId === 'string' && run.sessionId.length > 0, JSON.stringify(run.sessionId))
   check('rehydrate', 'parent delegated a supervised group in phase 1', requests1.some((r) => r.emitted.includes('tool-call') && r.sawRehydrateProbe), JSON.stringify(requests1.map((r) => [r.sawRehydrateProbe, r.emitted])))
-  check('rehydrate', 'blocked notice reached the parent before the restart', requests1.some((r) => r.rehydrateBlockedNoticeSeen), JSON.stringify(requests1.map((r) => r.rehydrateBlockedNoticeSeen)))
+  check('rehydrate', 'built-in settlement notice carried the blocked report in phase 1', requests1.some((r) => r.settlementBlockedSeen), JSON.stringify(requests1.map((r) => r.settlementBlockedSeen)))
   check('rehydrate', 'supervised members exclude send_message, the parent keeps it', requests1.some((r) => r.rehydrateChildASeen && r.tools.length > 0 && r.tools.includes('bash') && !r.tools.includes('send_message')) && requests1.some((r) => r.sawRehydrateProbe && r.tools.includes('send_message')), JSON.stringify(requests1.map((r) => [r.rehydrateChildASeen, r.tools.length, r.tools.includes('send_message')])))
   check('rehydrate', 'audit JSONL recorded supervision facts in phase 1', auditFactsSeen(run.sessionId), '')
   check('rehydrate', 'parent resumed the blocked child on the rebuilt registry', requests2.some((r) => r.emitted.includes('tool-call') && r.rehydrateResumeCallSeen), JSON.stringify(requests2.map((r) => [r.rehydrateResumeCallSeen, r.emitted])))
   check('rehydrate', 'resume context reached the child after the restart', requests2.some((r) => r.rehydrateResumeContextSeen), JSON.stringify(requests2.map((r) => r.rehydrateResumeContextSeen)))
   check('rehydrate', 'resumed child reported completion', requests2.some((r) => r.rehydrateResumedReportSeen), JSON.stringify(requests2.map((r) => r.rehydrateResumedReportSeen)))
-  check('rehydrate', 'parent observed the merged group report after the restart', run.stdout.includes('parent observed post-restart group merge'), run.stdout.slice(-400))
+  check('rehydrate', 'parent observed the group-settled signal after the restart', run.stdout.includes('parent observed post-restart group-settled signal'), run.stdout.slice(-400))
   check('rehydrate', 'phase 2 exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
+function assertEscalate(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  check('escalate', 'parent delegated a deep child', requests.some((r) => r.emitted.includes('tool-call') && r.sawEscalateProbe), JSON.stringify(requests.map((r) => r.emitted)))
+  check('escalate', 'respawned child received the escalation findings', requests.some((r) => r.escalationFindingsSeen), JSON.stringify(requests.map((r) => r.escalationFindingsSeen)))
+  check('escalate', 'parent observed the escalation respawn', run.stdout.includes('parent observed the escalation respawn'), run.stdout.slice(-400))
+  check('escalate', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
+function assertBackground(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  const inserted = trace.filter((r) => r.kind === 'inbox-inserted')
+  check('background', 'parent delegated with run_in_background', requests.some((r) => r.emitted.includes('tool-call') && r.sawBackgroundProbe), JSON.stringify(requests.map((r) => r.emitted)))
+  check('background', 'background child ran and produced its marker', requests.some((r) => r.backgroundChildSeen), JSON.stringify(requests.map((r) => r.backgroundChildSeen)))
+  check('background', 'compact job notice reached the parent', inserted.some((r) => (r.text ?? '').includes('finished [status: completed]')), JSON.stringify(inserted.map((r) => (r.text ?? '').slice(0, 80))))
+  check('background', 'full report stayed out of the parent context (pull-only)', !requests.some((r) => r.backgroundMarkerInParentContext), JSON.stringify(requests.map((r) => r.backgroundMarkerInParentContext)))
+  check('background', 'parent observed the compact notice', run.stdout.includes('parent observed the compact notice'), run.stdout.slice(-400))
+  check('background', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
+function assertTerminate(run) {
+  const trace = readTrace(run.trace)
+  const requests = trace.filter((r) => Array.isArray(r.emitted))
+  const events = trace.filter((r) => r.kind === 'session-event')
+  check('terminate', 'parent delegated a supervised group', requests.some((r) => r.emitted.includes('tool-call') && r.sawTerminateProbe), JSON.stringify(requests.map((r) => r.emitted)))
+  check('terminate', 'running member was interrupted for real (child turn aborted)', events.some((e) => e.type === 'turn/end' && e.reason === 'aborted'), JSON.stringify(events.filter((e) => e.type === 'turn/end').map((e) => [e.session, e.reason])))
+  check('terminate', 'group-settled signal arrived after termination', requests.some((r) => r.groupSettledSignalSeen), JSON.stringify(requests.map((r) => r.groupSettledSignalSeen)))
+  check('terminate', 'parent observed the settle signal after termination', run.stdout.includes('parent observed the settle signal after termination'), run.stdout.slice(-400))
+  check('terminate', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
 function auditFactsSeen(sessionId) {
@@ -297,7 +335,7 @@ function auditFactsSeen(sessionId) {
     })
     .filter((record) => record?.session === sessionId && typeof record?.type === 'string' && record.type.startsWith('orrery/supervision/'))
   const kinds = records.map((record) => record.data?.kind)
-  return kinds.includes('spawn') && kinds.includes('seal') && kinds.includes('settle')
+  return kinds.includes('spawn') && kinds.includes('seal') && kinds.includes('settle') && kinds.includes('resume') && kinds.includes('group-settled')
 }
 
 async function main() {
@@ -317,6 +355,9 @@ async function main() {
     if (scenario === 'robash') assertRobash(run)
     if (scenario === 'semantic') assertSemantic(run)
     if (scenario === 'grouped') assertGrouped(run)
+    if (scenario === 'escalate') assertEscalate(run)
+    if (scenario === 'background') assertBackground(run)
+    if (scenario === 'terminate') assertTerminate(run)
     if (scenario === 'rehydrate') assertRehydrate(run)
     if (scenario === 'lsp') assertLsp(run)
   }
