@@ -32,6 +32,11 @@
     # into the Settings Plugins page (./client export, dsh.client manifest).
     - id: ui-orrery-settings
       name: 'orrery-harness'
+    # Isolated reusable model picker client module (own package + own client
+    # export): the settings page requires it and renders it inside an error
+    # boundary, so a picker failure can never blank the page.
+    - id: ui-orrery-model-picker
+      name: 'orrery-model-picker'
     - id: preset-orrery
       name: '@deepseek-ai/dsh-agent-preset'
       config:

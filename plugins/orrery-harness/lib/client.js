@@ -7,6 +7,7 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+		let modelPicker = require("orrery-model-picker");
 		// The Orrery settings page, browser half: one flat form over the
 		// `orrery-settings` namespace (the shared SettingsFormModel only
 		// addresses flat fields). Registers into the Plugins page's
@@ -95,88 +96,30 @@ window.__ModuleLoader__.load({
 		var OrreryCardController = class {
 			form;
 			store;
-			catalogStatus = "idle";
-			catalogGroups = [];
-			catalogRetries = 0;
-			catalogInflight = void 0;
-			catalogTimer = void 0;
 			constructor(scope, ctx) {
-				// Keep the plugin context; the remote.session domain resolves
-				// lazily at call time (it may not be wired yet during apply,
-				// and `remote.session` is inject-guarded by its own entry).
+				// Keep the plugin context; the model picker resolves the
+				// remote.session domain lazily at call time (it may not be
+				// wired yet during apply).
 				this.ctx = ctx;
 				this.form = new primitives.SettingsFormModel(scope, FIELDS.map(specFor));
 				this.store = this.form.bind(() => this.projection());
 			}
-			// Load lazily on first page render and retry with backoff after
-			// failures: at plugin mount the RPC bridge/session domain may not
-			// be ready yet, and a settings page must not depend on boot order.
-			ensureCatalog() {
-				if (this.catalogStatus === "ready" || this.catalogInflight !== void 0) return;
-				this.catalogStatus = "loading";
-				this.republish();
-				this.catalogInflight = this.ctx.remote.session.modelCatalog().then((response) => {
-					this.catalogInflight = void 0;
-					if (response.ok) {
-						this.catalogGroups = response.value.groups ?? [];
-						this.catalogStatus = "ready";
-						this.catalogRetries = 0;
-					} else {
-						this.catalogStatus = "error";
-					}
-					this.republish();
-					if (this.catalogStatus === "error") this.scheduleRetry();
-				}).catch(() => {
-					this.catalogInflight = void 0;
-					this.catalogStatus = "error";
-					this.republish();
-					this.scheduleRetry();
-				});
-			}
-			scheduleRetry() {
-				if (this.catalogTimer !== void 0 || this.catalogRetries >= 4) return;
-				const delay = 2000 * 2 ** this.catalogRetries;
-				this.catalogRetries += 1;
-				this.catalogTimer = setTimeout(() => {
-					this.catalogTimer = void 0;
-					if (this.catalogStatus === "error") {
-						this.catalogStatus = "idle";
-						this.ensureCatalog();
-					}
-				}, delay);
-			}
-			retryCatalog() {
-				if (this.catalogTimer !== void 0) {
-					clearTimeout(this.catalogTimer);
-					this.catalogTimer = void 0;
-				}
-				if (this.catalogStatus === "error") {
-					this.catalogStatus = "idle";
-					this.catalogRetries = 0;
-				}
-				this.ensureCatalog();
-			}
-			republish() {
-				this.store?.set(this.projection());
+			getSession() {
+				return this.ctx.remote.session;
 			}
 			projection() {
 				const fields = {};
 				for (const descriptor of FIELDS) fields[descriptor.field] = this.form.field(descriptor.field);
 				return {
 					...this.form.shell(),
-					fields,
-					catalog: {
-						status: this.catalogStatus,
-						groups: this.catalogGroups
-					}
+					fields
 				};
 			}
 			inject() {
 				return {
 					hooks: { orrerySettingsCard: this.store },
 					...this.form.actions(),
-					ensureCatalog: () => this.ensureCatalog(),
-					retryCatalog: () => this.retryCatalog()
+					getSession: () => this.getSession()
 				};
 			}
 			dispose() {
@@ -191,27 +134,6 @@ window.__ModuleLoader__.load({
 		const firstGroupTitleStyle = { ...groupTitleStyle, borderTop: "none", paddingTop: "0" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
-		const chevron = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")";
-		const selectStyle = {
-			borderRadius: "var(--dsw-radius-sm)",
-			maxWidth: "220px",
-			height: "28px",
-			color: "var(--dsw-alias-label-secondary)",
-			whiteSpace: "nowrap",
-			cursor: "pointer",
-			appearance: "none",
-			backgroundColor: "transparent",
-			backgroundImage: chevron,
-			backgroundPosition: "right 4px center",
-			backgroundRepeat: "no-repeat",
-			backgroundSize: "12px 12px",
-			border: "none",
-			outline: "none",
-			padding: "0 20px 0 8px",
-			fontSize: "13px",
-			fontWeight: 500,
-			lineHeight: "20px"
-		};
 		function ChoiceField(props) {
 			const { descriptor, field, t, disabled } = props;
 			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
@@ -240,128 +162,9 @@ window.__ModuleLoader__.load({
 				] })
 			] });
 		}
-		const menuStyle = {
-			position: "absolute",
-			top: "calc(100% + 4px)",
-			right: 0,
-			zIndex: 1000,
-			minWidth: "260px",
-			maxHeight: "320px",
-			overflowY: "auto",
-			background: "var(--dsw-specific-selector)",
-			border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-md)",
-			boxShadow: "var(--dsw-elevation-soft)",
-			padding: "4px"
-		};
-		const menuRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", width: "100%", padding: "8px 10px", borderRadius: "var(--dsw-radius-sm)", background: "none", border: "none", cursor: "pointer", fontSize: "13px", lineHeight: "18px", textAlign: "left", color: "var(--dsw-alias-label-primary)" };
-		const menuHeaderStyle = { fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dsw-alias-label-secondary)", padding: "8px 10px 2px" };
-		function ModelPickerField(props) {
-			const { descriptor, providerText, modelText, effortText, catalog, t, disabled, providerOverridden, modelOverridden, effortOverridden } = props;
-			const [open, setOpen] = react.useState(false);
-			const [pane, setPane] = react.useState("root");
-			const rootRef = react.useRef(null);
-			react.useEffect(() => {
-				if (!open) return;
-				const onDown = (event) => {
-					if (rootRef.current?.contains(event.target) === true) return;
-					setOpen(false);
-					setPane("root");
-				};
-				const onKey = (event) => {
-					if (event.key === "Escape") {
-						setOpen(false);
-						setPane("root");
-					}
-				};
-				document.addEventListener("mousedown", onDown);
-				document.addEventListener("keydown", onKey);
-				return () => {
-					document.removeEventListener("mousedown", onDown);
-					document.removeEventListener("keydown", onKey);
-				};
-			}, [open]);
-			const groups = catalog.status === "ready" ? catalog.groups.filter((group) => group.models?.length > 0) : [];
-			const models = groups.flatMap((group) => group.models.map((model) => ({ group, model })));
-			const provider = providerText.trim();
-			const model = modelText.trim();
-			const current = models.find((entry) => entry.group.id === provider && entry.model.id === model);
-			const reasoning = current?.model.reasoning;
-			const effortChoices = reasoning === undefined ? [] : [
-				...(reasoning.defaultEffort === undefined ? [{ id: "", label: t("effortProviderDefault") }] : []),
-				...(reasoning.efforts ?? []).map((effort) => ({ id: effort.id, label: effort.name }))
-			];
-			const modelLabel = current?.model.name ?? (provider || model ? `${provider}/${model}` : t("modelEmpty"));
-			const effortLabel = reasoning === undefined ? "" : effortChoices.find((choice) => choice.id === effortText.trim())?.label ?? (effortText.trim() || t("effortProviderDefault"));
-			const overridden = providerOverridden || modelOverridden || effortOverridden;
-			const menuRow = (item) => react_jsx_runtime.jsxs("button", { type: "button", style: menuRowStyle, onClick: () => item.onSelect(), children: [
-				react_jsx_runtime.jsx("span", { children: item.label }),
-				item.checked ? react_jsx_runtime.jsx("span", { style: { opacity: 0.9 }, children: "✓" }) : item.chevron ? react_jsx_runtime.jsx("span", { style: { opacity: 0.6 }, children: "›" }) : null
-			] });
-			return react_jsx_runtime.jsx("div", { ref: rootRef, style: { position: "relative", ...rowStyle }, children: [
-				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-					react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: catalog.status === "error" ? t("catalogFailed") : t(`${descriptor.field}Hint`) })
-				] }),
-				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-					react_jsx_runtime.jsx("button", {
-						type: "button",
-						style: { ...selectStyle, maxWidth: "280px", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" },
-						disabled,
-						onClick: () => {
-							if (catalog.status === "error") props.retryCatalog();
-							setOpen(!open);
-							setPane("root");
-						},
-						children: catalog.status === "ready" ? `${modelLabel}${effortLabel ? ` · ${effortLabel}` : ""}` : catalog.status === "error" ? (provider || model ? modelLabel : t("catalogFailed")) : t("catalogLoading")
-					}),
-					overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-						react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
-						react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => {
-							props.onReset("intentGateProvider");
-							props.onReset("intentGateModel");
-							props.onReset("intentGateReasoningEffort");
-						}, children: t("reset") })
-					] }) : null
-				] }),
-				open ? react_jsx_runtime.jsxs("div", { role: "menu", style: menuStyle, children: pane === "root" ? [
-					menuRow({ label: t("pickerModel"), chevron: true, onSelect: () => setPane("model") }),
-					menuRow({ label: t("pickerEffort"), chevron: true, onSelect: () => setPane("effort") })
-				] : pane === "model" ? groups.flatMap((group) => [
-					react_jsx_runtime.jsx("div", { style: menuHeaderStyle, children: group.id, key: `h-${group.id}` }),
-					...group.models.map((entry) => menuRow({
-						label: entry.model.name ?? entry.model.id,
-						checked: provider === group.id && model === entry.model.id,
-						onSelect: () => {
-							props.onChange("intentGateProvider", group.id);
-							props.onChange("intentGateModel", entry.model.id);
-							const defaultEffort = entry.model.reasoning?.defaultEffort;
-							if (defaultEffort !== undefined) props.onChange("intentGateReasoningEffort", defaultEffort);
-							setOpen(false);
-							setPane("root");
-						}
-					}))
-				]) : effortChoices.map((choice) => menuRow({
-					label: choice.label,
-					checked: choice.id === "" ? !effortText.trim() : effortText.trim() === choice.id,
-					onSelect: () => {
-						props.onChange("intentGateReasoningEffort", choice.id);
-						setOpen(false);
-						setPane("root");
-					}
-				})) }) : null
-			] });
-		}
 		function OrreryCard(props) {
 			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
 			const { t } = props;
-			// Post-commit kick: republishing the store during render would
-			// crash the React tree, so the (idempotent) catalog load runs
-			// after this component commits. Hook order stays stable ahead of
-			// the summary early-return.
-			react.useEffect(() => {
-				props.ensureCatalog();
-			}, []);
 			if (props.view === "summary") return t("description");
 			const disabled = !state.writable;
 			const children = GROUPS.flatMap((group, groupIndex) => {
@@ -372,21 +175,88 @@ window.__ModuleLoader__.load({
 						return null;
 					}
 					if (descriptor.field === "intentGateProvider") {
-						return react_jsx_runtime.jsx(ModelPickerField, {
-							descriptor,
-							providerText: state.fields.intentGateProvider.text,
-							modelText: state.fields.intentGateModel.text,
-							effortText: state.fields.intentGateReasoningEffort.text,
-							catalog: state.catalog,
-							providerOverridden: state.fields.intentGateProvider.overridden,
-							modelOverridden: state.fields.intentGateModel.overridden,
-							effortOverridden: state.fields.intentGateReasoningEffort.overridden,
-							t,
-							disabled,
-							onChange: (fieldName, text) => props.edit(fieldName, text),
-							onReset: (fieldName) => props.resetField(fieldName),
-							retryCatalog: () => props.retryCatalog(),
-							key: descriptor.field
+						const pickerOverridden = state.fields.intentGateProvider.overridden || state.fields.intentGateModel.overridden || state.fields.intentGateReasoningEffort.overridden;
+						const pickerRow = react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
+							react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
+								react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
+								react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
+							] }),
+							react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
+									value: {
+										provider: state.fields.intentGateProvider.text,
+										model: state.fields.intentGateModel.text,
+										reasoningEffort: state.fields.intentGateReasoningEffort.text
+									},
+									onChange: (selection) => {
+										props.edit("intentGateProvider", selection.provider ?? "");
+										props.edit("intentGateModel", selection.model ?? "");
+										props.edit("intentGateReasoningEffort", selection.reasoningEffort ?? "");
+									},
+									getSession: () => props.getSession(),
+									t,
+									disabled
+								}),
+								pickerOverridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+									react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
+									react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => {
+										props.resetField("intentGateProvider");
+										props.resetField("intentGateModel");
+										props.resetField("intentGateReasoningEffort");
+									}, children: t("reset") })
+								] }) : null
+							] })
+						] });
+						// The picker runs inside an error boundary: a picker
+						// failure degrades to plain text fields instead of
+						// blanking the settings page.
+						return react_jsx_runtime.jsx(modelPicker.ModelPickerBoundary, {
+							key: descriptor.field,
+							fallback: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+								react_jsx_runtime.jsx(primitives.SettingsValueField, {
+									id: "plugin-config-fallback-intentGateProvider",
+									label: t("intentGateProvider"),
+									hint: t("intentGateProviderHint"),
+									overriddenLabel: t("overridden"),
+									resetLabel: t("reset"),
+									invalidLabel: t("invalidValue"),
+									disabled,
+									text: state.fields.intentGateProvider.text,
+									invalid: state.fields.intentGateProvider.invalid,
+									overridden: state.fields.intentGateProvider.overridden,
+									onChange: (text) => props.edit("intentGateProvider", text),
+									onReset: () => props.resetField("intentGateProvider")
+								}),
+								react_jsx_runtime.jsx(primitives.SettingsValueField, {
+									id: "plugin-config-fallback-intentGateModel",
+									label: t("intentGateModel"),
+									hint: t("intentGateModelHint"),
+									overriddenLabel: t("overridden"),
+									resetLabel: t("reset"),
+									invalidLabel: t("invalidValue"),
+									disabled,
+									text: state.fields.intentGateModel.text,
+									invalid: state.fields.intentGateModel.invalid,
+									overridden: state.fields.intentGateModel.overridden,
+									onChange: (text) => props.edit("intentGateModel", text),
+									onReset: () => props.resetField("intentGateModel")
+								}),
+								react_jsx_runtime.jsx(primitives.SettingsValueField, {
+									id: "plugin-config-fallback-intentGateReasoningEffort",
+									label: t("intentGateReasoningEffort"),
+									hint: t("intentGateReasoningEffortHint"),
+									overriddenLabel: t("overridden"),
+									resetLabel: t("reset"),
+									invalidLabel: t("invalidValue"),
+									disabled,
+									text: state.fields.intentGateReasoningEffort.text,
+									invalid: state.fields.intentGateReasoningEffort.invalid,
+									overridden: state.fields.intentGateReasoningEffort.overridden,
+									onChange: (text) => props.edit("intentGateReasoningEffort", text),
+									onReset: () => props.resetField("intentGateReasoningEffort")
+								})
+							] }),
+							children: pickerRow
 						});
 					}
 					if (descriptor.kind === "boolean" || descriptor.kind === "enum") {
@@ -463,6 +333,7 @@ window.__ModuleLoader__.load({
 			intentGateProviderHint: "Sidecar route override; blank follows the session route.",
 			intentGateModel: "Classifier model (llm mode)",
 			intentGateModelHint: "Sidecar model override; blank follows the session route.",
+			intentGateReasoningEffortHint: "Sidecar reasoning-effort override; blank follows the model default.",
 			intentGateTimeoutMs: "Classifier timeout (ms)",
 			intentGateTimeoutMsHint: "Classification fails open to the regex result on timeout.",
 			jevEndpoint: "Jev endpoint",
@@ -536,6 +407,7 @@ window.__ModuleLoader__.load({
 			intentGateProviderHint: "sidecar 路由覆盖；留空跟随会话路由。",
 			intentGateModel: "分类器 model（llm 模式）",
 			intentGateModelHint: "sidecar 模型覆盖；留空跟随会话路由。",
+			intentGateReasoningEffortHint: "sidecar 推理等级覆盖；留空跟随模型默认。",
 			intentGateTimeoutMs: "分类器超时（毫秒）",
 			intentGateTimeoutMsHint: "超时按正则结果 fail-open。",
 			jevEndpoint: "Jev 端点",
