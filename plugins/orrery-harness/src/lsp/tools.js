@@ -1,8 +1,12 @@
-// The four read-only LSP semantic tools. Pure-object definitions with
-// object-rooted schemas; 1-based positions in, structured text out; every LSP
-// failure becomes an ordinary tool error result, never a broken turn.
+// The LSP semantic tools: four read-only queries plus `lsp_rename`, the one
+// rewriting tool (cross-file WorkspaceEdit application through the fs version
+// guard). Pure-object definitions with object-rooted schemas; 1-based
+// positions in, structured text out; every LSP failure becomes an ordinary
+// tool error result, never a broken turn.
 import { familyForLanguageId, languageIdForFile } from './registry.js'
 import { uriToPath } from './manager.js'
+import { applyTextEdits, detectLineEndings, extractChanges, normalizeLineEndings, restoreLineEndings } from './rename.js'
+import { unifiedDiff } from '../hashline-edit/diff.js'
 
 const SEVERITY = { 1: 'error', 2: 'warning', 3: 'information', 4: 'hint' }
 
@@ -30,8 +34,18 @@ function asLocationArray(result) {
     .filter(Boolean)
 }
 
-/** Build the four tool definitions for one calling agent's enable. */
+/** Build the five tool definitions for one calling agent's enable. */
 export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 }) {
+  // Optional sandbox policy capture (S23, mirrors hashline-edit): the
+  // sandboxed fs backend enforces the session policy only when the caller
+  // passes it per call. Absent service (headless test compositions, other
+  // hosts) = today's call shape. lsp_rename v1 does no escalation
+  // orchestration — only the policy-aware write.
+  let sandboxPolicyRef = null
+  ctx.inject?.(['sandboxPolicy'], (scope) => {
+    sandboxPolicyRef = scope.sandboxPolicy
+  })
+
   async function resolveTarget(args, exec) {
     const cwd = exec.agent?.session?.header?.cwd
     const target = await ctx.fs.resolve(args.file_path, cwd ? { cwd } : {})
@@ -169,6 +183,108 @@ export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 
         return {
           text: lines.length > 0 ? `Document symbols:\n${lines.join('\n')}` : 'No document symbols reported.',
         }
+      },
+    },
+    {
+      name: 'lsp_rename',
+      description: `Rename the symbol at a 1-based position across the workspace: the language server computes every edit location and the resulting WorkspaceEdit is applied to disk through the filesystem version guard. Every target file is preflighted before anything is written (a bad edit range aborts the call with zero writes); then files are written one by one and a mid-write failure (file changed on disk, sandbox denial, I/O) stops immediately, reporting exactly which files were already written and which were not. The original line-ending style (LF/CRLF) of each file is preserved.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          ...positionParams,
+          new_name: { type: 'string', description: 'The new symbol name (must be non-empty after trimming).' },
+        },
+        required: ['file_path', 'line', 'character', 'new_name'],
+      },
+      output: {
+        schema: { type: 'object' },
+        render: (_args, value) => [{ type: 'text', text: value.text }],
+      },
+      async execute(args, exec) {
+        const line = zeroBased(args.line, 'line')
+        const character = zeroBased(args.character, 'character')
+        const newName = typeof args.new_name === 'string' ? args.new_name.trim() : ''
+        if (newName.length === 0) throw new Error('lsp_rename: new_name must be a non-empty string')
+
+        const { cwd, target, languageId } = await resolveTarget(args, exec)
+        const workspaceEdit = await manager.call(languageId, cwd ?? '.', target, agent.id, async (record, uri) => {
+          if (!record.capabilities?.renameProvider) {
+            throw new Error('lsp_rename: the language server does not support rename')
+          }
+          return record.client.request('textDocument/rename', {
+            textDocument: { uri },
+            position: { line, character },
+            newName,
+          })
+        }, exec.signal)
+
+        // Throws on documentChanges (v1 does not apply them); null = no-op.
+        const changes = extractChanges(workspaceEdit)
+        if (!changes) {
+          return { text: `lsp_rename: no-op — the server returned no edits for that symbol; nothing was written.` }
+        }
+
+        // Per-call sandbox policy (S23 shape): resolve once, use its root as
+        // the resolve cwd, and pass it as the 5th writeText argument.
+        const policy = sandboxPolicyRef?.resolve({ session: exec.agent?.session })
+        const resolveCwd = policy?.workspaceRoot ?? cwd
+        const resolveOpts = resolveCwd ? { cwd: resolveCwd } : {}
+
+        // Phase 1 — preflight, ZERO writes: resolve, stat, read, sample the
+        // line-ending style, and synthesize the new full text of EVERY target
+        // file. Any failure here aborts the whole call untouched.
+        const plans = []
+        for (const change of changes) {
+          const fileTarget = await ctx.fs.resolve(change.path, resolveOpts)
+          const info = await ctx.fs.stat(fileTarget, exec.signal)
+          if (!info || info.type !== 'file') {
+            throw new Error(`lsp_rename: no regular file at ${change.path} — preflight failed, no files were written`)
+          }
+          const before = await ctx.fs.readText(fileTarget, exec.signal)
+          const sample = await ctx.fs.readByteRange(fileTarget, { offset: 0, length: Math.min(info.size, 65536) }, exec.signal)
+          const style = detectLineEndings(sample)
+          const normalized = normalizeLineEndings(before)
+          const afterNormalized = applyTextEdits(normalized, change.edits)
+          plans.push({
+            target: fileTarget,
+            version: info.version,
+            edits: change.edits.length,
+            before,
+            normalized,
+            afterNormalized,
+            after: restoreLineEndings(afterNormalized, style),
+          })
+        }
+
+        // Byte identity (restored synthesis === original bytes) = no-op.
+        const writePlans = plans.filter((plan) => plan.after !== plan.before)
+        if (writePlans.length === 0) {
+          return { text: `lsp_rename: no-op — the server's edits leave every file unchanged; nothing was written.` }
+        }
+
+        // Phase 2 — write pass: one atomic replaceIfVersion write per file.
+        // A failure stops the pass immediately and names both file lists.
+        const written = []
+        for (const plan of writePlans) {
+          try {
+            await ctx.fs.writeText(plan.target, plan.after, { kind: 'replaceIfVersion', version: plan.version }, exec.signal, policy)
+            written.push(plan)
+          } catch (error) {
+            const notWritten = writePlans.slice(written.length).map((plan) => plan.target.displayPath)
+            const already = written.map((plan) => plan.target.displayPath)
+            throw new Error(
+              `lsp_rename: write failed for ${plan.target.displayPath}: ${error?.message ?? error}\n` +
+                `Rename partially applied. filesAlreadyWritten: [${already.join(', ')}]; filesNotWritten: [${notWritten.join(', ')}]`,
+            )
+          }
+        }
+
+        const editCount = writePlans.reduce((sum, plan) => sum + plan.edits, 0)
+        const summary = `renamed: ${editCount} edit(s) across ${written.length} file(s)`
+        const diffs = written
+          .map((plan) => unifiedDiff(plan.target.displayPath, plan.normalized, plan.afterNormalized))
+          .filter((diff) => diff.length > 0)
+        return { text: diffs.length > 0 ? `${summary}\n\n${diffs.join('\n\n')}` : summary }
       },
     },
   ]

@@ -110,7 +110,13 @@ export async function handshake(client, rootUri, clientInfo = { name: 'orrery-ls
         definition: {},
         references: {},
         documentSymbol: {},
+        rename: {},
         publishDiagnostics: {},
+      },
+      workspace: {
+        // v1 applies the plain `changes` form only; a server answering with
+        // documentChanges is rejected explicitly at apply time.
+        workspaceEdit: { documentChanges: false },
       },
     },
     clientInfo,

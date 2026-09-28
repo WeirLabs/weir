@@ -158,7 +158,7 @@ function apply(ctx, config = {}) {
     disposers.push(
       ctx.tools.register({
         name: 'lsp',
-        description: `Toggle LSP semantic tools for THIS session (lsp_diagnostics, lsp_definition, lsp_references, lsp_symbols). Off by default — enable when you want language-server answers (definitions, references, symbols, diagnostics) for the current workspace; disable to remove the tools and shut the servers down. Language servers must be installed separately; a missing server reports an install hint on first use.`,
+        description: `Toggle LSP semantic tools for THIS session (lsp_diagnostics, lsp_definition, lsp_references, lsp_symbols, lsp_rename). Off by default — enable when you want language-server answers (definitions, references, symbols, diagnostics, renames) for the current workspace; disable to remove the tools and shut the servers down. Language servers must be installed separately; a missing server reports an install hint on first use.`,
         parameters: {
           type: 'object',
           properties: {
