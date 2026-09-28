@@ -69,6 +69,7 @@ describe('orrery settings client half', () => {
       }
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitivesStub
+      if (name === 'orrery-model-picker') return { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: class { constructor(props) { this.props = props } render() { return this.props.children } } }
       throw new Error(`unexpected require ${name}`)
     }
     const surface = loaded[0].factory(requireStub)
@@ -183,17 +184,23 @@ describe('orrery settings client half', () => {
     // 7 group headers + 6 choice rows + 1 model picker + 14 value-field rows
     expect(rendered.children).toHaveLength(28)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
-    expect(rendered.children.filter((child) => child.descriptor && child.providerText === undefined)).toHaveLength(6)
-    expect(rendered.children.filter((child) => child.descriptor && child.providerText !== undefined)).toHaveLength(1)
+    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
+    expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
     expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(14)
 
-    // the single model picker row: trigger button with the current selection
-    const pickerRow = rendered.children.find((child) => child.descriptor?.field === 'intentGateProvider')
-    const pickerRendered = pickerRow.__type({ ...pickerRow, t: (key) => key })
-    const trigger = pickerRendered.children[1].children[0]
-    expect(trigger.style.appearance).toBe('none')
-    expect(typeof trigger.onClick).toBe('function')
-    expect(trigger.children).toBe('modelEmpty')
+    // the single model picker row: the library picker inside its error boundary
+    const pickerRow = rendered.children.find((child) => child.key === 'intentGateProvider')
+    const boundary = pickerRow.__type
+    const boundaryInstance = new boundary(pickerRow)
+    expect(boundaryInstance.render()).toBe(pickerRow.children)
+    // inner row renders the picker library component bound to the form fields
+    const innerRow = boundaryInstance.props.children
+    const picker = innerRow.children[1].children[0]
+    expect(picker.value.provider).toBe('')
+    expect(picker.value.model).toBe('')
+    expect(picker.value.reasoningEffort).toBe('')
+    expect(typeof picker.onChange).toBe('function')
+    expect(typeof picker.getSession).toBe('function')
 
     // boolean rows render Switch; the enum row renders SegmentedControl
     const booleanRow = rendered.children.find((child) => child.descriptor?.kind === 'boolean')
