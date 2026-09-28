@@ -4,6 +4,7 @@
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
 import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
+import { resolveExecutable as extendedResolveExecutable } from './executable.js'
 
 const name = 'orrery-lsp-admin'
 const inject = []
@@ -72,13 +73,14 @@ export async function probeVersion(subprocess, executable, args = ['--version'],
 /** Per-family status rows over the community catalog. */
 export async function lspStatusFor(registry, subprocess, options = {}) {
   const probeTimeoutMs = options.probeTimeoutMs ?? VERSION_PROBE_TIMEOUT_MS
+  const dirs = options.dirs ?? undefined
   const servers = []
   for (const [family, entry] of Object.entries(registry)) {
     let installed = false
     let version = null
     try {
-      const executable = await subprocess.resolveExecutable(entry.command)
-      installed = true
+      const executable = await extendedResolveExecutable(subprocess, entry.command, dirs)
+      installed = Boolean(executable)
       if (executable) {
         try {
           version = await probeVersion(subprocess, executable, entry.versionArgs ?? ['--version'], probeTimeoutMs)
@@ -89,6 +91,15 @@ export async function lspStatusFor(registry, subprocess, options = {}) {
     } catch {
       // unresolvable command = not installed
     }
+    let installerAvailable = false
+    const installerSpec = installSpecFor(entry)
+    if (installerSpec) {
+      try {
+        installerAvailable = Boolean(await extendedResolveExecutable(subprocess, installerSpec.command, dirs))
+      } catch {
+        installerAvailable = false
+      }
+    }
     servers.push({
       family,
       languageIds: languageIdsForFamily(family),
@@ -97,6 +108,7 @@ export async function lspStatusFor(registry, subprocess, options = {}) {
       version,
       installCommand: displayInstallCommand(entry),
       installHint: entry.installHint ?? '',
+      installerAvailable,
     })
   }
   return servers
@@ -106,14 +118,14 @@ export async function lspStatusFor(registry, subprocess, options = {}) {
  * Run one family's install command: argv-only (no shell), output captured,
  * bounded by a timeout. Resolves `{ output, exitCode, timedOut }`; throws a
  * structured Error for unknown families, missing installers, or a missing
- * installer binary.
+ * installer binary. `dirs` overrides the extra bin-directory scan (tests).
  */
-export async function runInstall(registry, subprocess, family, timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS) {
+export async function runInstall(registry, subprocess, family, timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS, dirs = undefined) {
   const entry = registry[family]
   if (!entry) throw new Error(`lsp: unknown language family '${family}'`)
   const spec = installSpecFor(entry)
   if (!spec) throw new Error(`lsp: no installer for '${family}' on this platform — ${entry.installHint ?? 'see the install hint'}`)
-  const executable = await subprocess.resolveExecutable(spec.command).catch(() => undefined)
+  const executable = await extendedResolveExecutable(subprocess, spec.command, dirs).catch(() => undefined)
   if (!executable) throw new Error(`lsp: installer '${spec.command}' not found on PATH — install it first`)
   const handle = subprocess.spawn({
     argv: [executable, ...(spec.args ?? [])],
@@ -163,17 +175,20 @@ export async function runInstall(registry, subprocess, family, timeoutMs = DEFAU
  * resolved through ctx.get). Wired from the settings row via
  * ctx.inject(['connection', 'subprocess'], ...) — ctx.get alone does not
  * resolve these services from the settings row's scope (verified live).
+ * @param options.registry - function returning the live server registry
+ *   (built-in catalog merged with user `lspServers`); defaults to the
+ *   community catalog.
  */
-export function registerLspAdminEndpoints(ctx, config = {}) {
+export function registerLspAdminEndpoints(ctx, options = {}) {
   const connection = ctx.connection ?? ctx.get?.('connection')
   const subprocess = ctx.subprocess ?? ctx.get?.('subprocess')
   if (!connection?.fetch?.register || !subprocess) {
     ctx.logger?.warn?.('orrery-lsp-admin: connection/subprocess unavailable — LSP management endpoints not registered')
     return () => {}
   }
-  // The panel manages the built-in community catalog; user `lsp.servers`
-  // overlays live in the lsp module row config (documented).
-  const registry = DEFAULT_SERVERS
+  const registryProvider = typeof options.registry === 'function' ? options.registry : () => DEFAULT_SERVERS
+  const installTimeoutMs = options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS
+  const dirs = options.dirs ?? undefined
   const disposers = []
   disposers.push(
     connection.fetch.register({
@@ -182,7 +197,7 @@ export function registerLspAdminEndpoints(ctx, config = {}) {
       requestBody: 'buffered',
       fetch: async () => {
         try {
-          const servers = await lspStatusFor(registry, subprocess)
+          const servers = await lspStatusFor(registryProvider(), subprocess, { dirs })
           return jsonResponse({ ok: true, value: { servers } })
         } catch (error) {
           return errorResponse(error instanceof Error ? error.message : String(error), 500)
@@ -199,7 +214,7 @@ export function registerLspAdminEndpoints(ctx, config = {}) {
         const body = await readJsonBody(request)
         if (!body || typeof body.family !== 'string') return errorResponse('body needs { family }')
         try {
-          const result = await runInstall(registry, subprocess, body.family, config.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS)
+          const result = await runInstall(registryProvider(), subprocess, body.family, installTimeoutMs, dirs)
           return jsonResponse({ ok: true, value: result })
         } catch (error) {
           return errorResponse(error instanceof Error ? error.message : String(error), 400)

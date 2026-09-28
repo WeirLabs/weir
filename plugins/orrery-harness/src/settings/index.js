@@ -12,6 +12,7 @@
 // vendored DSH-fork schemastery (see ../vendor/THIRD-PARTY.md).
 import z from '../vendor/schemastery.js'
 import { isVolatile } from '../vendor/cosmokit.js'
+import { buildRegistry } from '../lsp/registry.js'
 import { registerLspAdminEndpoints } from '../lsp/admin.js'
 
 const name = 'orrery-settings'
@@ -45,6 +46,7 @@ export const Config = z.object({
   lspIdleMs: z.number().volatile().description('LSP server idle shutdown threshold (ms)'),
   lspRequestTimeoutMs: z.number().volatile().description('LSP request timeout (ms)'),
   lspDiagnosticsWaitMs: z.number().volatile().description('LSP diagnostics publish wait window (ms)'),
+  lspServers: z.string().volatile().description('JSON map of custom language servers: family → { command, args?, manifests?, installHint?, install? }'),
 })
 
 /** Flat field names per section key (the service regroups them). */
@@ -88,6 +90,7 @@ const SECTIONS = {
     idleMs: 'lspIdleMs',
     requestTimeoutMs: 'lspRequestTimeoutMs',
     diagnosticsWaitMs: 'lspDiagnosticsWaitMs',
+    servers: 'lspServers',
   },
 }
 
@@ -108,6 +111,23 @@ function parseChains(raw) {
   return parsed
 }
 
+/** Parse + validate the lspServers JSON map (bad input fails activation loud). */
+export function parseLspServers(raw) {
+  const parsed = JSON.parse(raw)
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('orrery-settings: lspServers must be a JSON object map')
+  }
+  for (const [family, entry] of Object.entries(parsed)) {
+    if (!entry || typeof entry !== 'object' || typeof entry.command !== 'string' || entry.command.trim().length === 0) {
+      throw new Error(`orrery-settings: lspServers.${family} needs a { command } entry`)
+    }
+    if (entry.args !== undefined && !Array.isArray(entry.args)) {
+      throw new Error(`orrery-settings: lspServers.${family}.args must be an array`)
+    }
+  }
+  return parsed
+}
+
 function apply(ctx, config = {}) {
   // The DSH-fork schemastery materializes volatile fields as {get()} refs
   // (unset → get() === undefined); unwrap and drop unset fields so modules
@@ -118,6 +138,7 @@ function apply(ctx, config = {}) {
   // values immediately; consumers resolve `ctx.get('orrerySettings')` at
   // read time for the same freshness.
   let chainsCache = { raw: undefined, parsed: undefined }
+  let lspServersCache = { raw: undefined, parsed: undefined }
 
   function compute() {
     const flat = {}
@@ -139,12 +160,18 @@ function apply(ctx, config = {}) {
         }
         out.categoryChains = chainsCache.parsed
       }
+      if (key === 'lsp' && typeof out.servers === 'string' && out.servers.trim().length > 0) {
+        if (lspServersCache.raw !== out.servers) {
+          lspServersCache = { raw: out.servers, parsed: parseLspServers(out.servers) }
+        }
+        out.servers = lspServersCache.parsed
+      }
       if (Object.keys(out).length > 0) sections[key] = out
     }
     return sections
   }
 
-  // Compute eagerly: malformed categoryChains must fail activation loud.
+  // Compute eagerly: malformed categoryChains/lspServers fail activation loud.
   compute()
 
   const listeners = new Set()
@@ -175,9 +202,12 @@ function apply(ctx, config = {}) {
   // package subpath (S14: new exports require an app restart). The services
   // resolve through ctx.inject — ctx.get does not see them from this scope
   // (verified live); absent → the callback never fires and nothing registers.
+  // The registry is live: user `lspServers` merge over the built-in catalog.
   let offLspAdmin = () => {}
   ctx.inject?.(['connection', 'subprocess'], (scope) => {
-    const off = registerLspAdminEndpoints(scope)
+    const off = registerLspAdminEndpoints(scope, {
+      registry: () => buildRegistry(compute().lsp?.servers),
+    })
     offLspAdmin = off
     return off
   })

@@ -9,6 +9,11 @@ export const LSP_DEFAULTS = {
   diagnosticsWaitMs: 2_000,
 }
 
+/** Default resolution: the subprocess service only (manager unit tests). */
+function defaultResolveExecutable(subprocess) {
+  return async (command) => subprocess.resolveExecutable(command)
+}
+
 /** file:// URI for an absolute path. */
 export function pathToUri(absolutePath) {
   const normalized = absolutePath.replace(/\\/g, '/')
@@ -22,8 +27,9 @@ export function uriToPath(uri) {
   return decodeURIComponent(uri.slice('file://'.length))
 }
 
-export function createLspManager({ subprocess, fs, registry, options = {} }) {
+export function createLspManager({ subprocess, fs, registry, options = {}, resolveExecutable: resolveExec = defaultResolveExecutable(subprocess) }) {
   const opts = { ...LSP_DEFAULTS, ...options }
+  let currentRegistry = registry
   /** @type {Map<string, object>} key `${cwd}:${family}` → server record */
   const servers = new Map()
 
@@ -34,9 +40,9 @@ export function createLspManager({ subprocess, fs, registry, options = {} }) {
       existing.touch()
       return existing
     }
-    const definition = registry[family]
+    const definition = currentRegistry[family]
     if (!definition) throw new Error(`lsp: no language server registered for '${family}'`)
-    const command = await subprocess.resolveExecutable(definition.command).catch(() => undefined)
+    const command = await resolveExec(definition.command).catch(() => undefined)
     if (!command) {
       throw new Error(`lsp: language server '${definition.command}' not found on PATH — install it first: ${definition.installHint}`)
     }
@@ -156,5 +162,10 @@ export function createLspManager({ subprocess, fs, registry, options = {} }) {
     Object.assign(opts, partial)
   }
 
-  return { call, releaseSession, dispose, setOptions, _servers: servers }
+  /** Swap the server registry in place: later operations resolve from it. */
+  function setRegistry(next) {
+    currentRegistry = next
+  }
+
+  return { call, releaseSession, dispose, setOptions, setRegistry, _servers: servers }
 }

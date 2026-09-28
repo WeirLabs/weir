@@ -68,7 +68,8 @@ window.__ModuleLoader__.load({
 				{ field: "lspEnabled", kind: "boolean" },
 				{ field: "lspIdleMs", kind: "number" },
 				{ field: "lspRequestTimeoutMs", kind: "number" },
-				{ field: "lspDiagnosticsWaitMs", kind: "number" }
+				{ field: "lspDiagnosticsWaitMs", kind: "number" },
+				{ field: "lspServers", kind: "text" }
 			] }
 		];
 		const FIELDS = GROUPS.flatMap((group) => group.fields);
@@ -326,14 +327,39 @@ window.__ModuleLoader__.load({
 		}
 		const lspServerRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "6px 0" };
 		const lspDot = (on) => ({ width: "7px", height: "7px", borderRadius: "50%", display: "inline-block", background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-disabled, #999)" });
-		/** LSP service manager: status over the community catalog + one-click install. */
+		const lspInputStyle = { background: "var(--dsw-alias-interactive-bg-solid)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 8px", fontSize: "13px", minWidth: 0 };
+		/** Parse the stored lspServers JSON into a plain map (invalid → empty). */
+		function jsonToLspServers(raw) {
+			if (!raw || !raw.trim()) return {};
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+				return parsed;
+			} catch {
+				return {};
+			}
+		}
+		/** Synthesize the stored lspServers JSON from a plain map. */
+		function lspServersToJson(map) {
+			return JSON.stringify(map ?? {}, null, 2);
+		}
+		/** Split a shell-style command string into { command, args }. */
+		function splitInstallCommand(text) {
+			const parts = String(text ?? "").trim().split(/\s+/).filter(Boolean);
+			if (parts.length === 0) return undefined;
+			return { command: parts[0], args: parts.slice(1) };
+		}
+		/** LSP service manager: status over the catalog + one-click install + custom servers. */
 		function LspManagerField(props) {
 			const [open, setOpen] = react.useState(false);
 			const [view, setView] = react.useState(null);
 			const [confirming, setConfirming] = react.useState(null);
 			const [busy, setBusy] = react.useState(null);
 			const [result, setResult] = react.useState(null);
+			const [customDraft, setCustomDraft] = react.useState({ family: "", command: "", args: "", installCommand: "" });
 			const t = props.t;
+			const canEdit = typeof props.edit === "function";
+			const customEntries = jsonToLspServers(props.serversText);
 			const load = () => {
 				setView({ status: "loading" });
 				fetch("api/orrery-lsp/status", { method: "POST", credentials: "include" })
@@ -371,6 +397,30 @@ window.__ModuleLoader__.load({
 						setResult({ family, error: String(error?.message ?? error) });
 					});
 			};
+			const addCustomServer = () => {
+				const family = customDraft.family.trim();
+				const command = customDraft.command.trim();
+				if (!family || !command) return;
+				const install = splitInstallCommand(customDraft.installCommand);
+				const next = {
+					...customEntries,
+					[family]: {
+						command,
+						...(customDraft.args.trim() ? { args: customDraft.args.trim().split(/\s+/).filter(Boolean) } : {}),
+						...(install ? { install } : {}),
+						...(install ? { installHint: customDraft.installCommand.trim() } : {}),
+					},
+				};
+				props.edit("lspServers", lspServersToJson(next));
+				setCustomDraft({ family: "", command: "", args: "", installCommand: "" });
+			};
+			const removeCustomServer = (family) => {
+				const next = { ...customEntries };
+				delete next[family];
+				props.edit("lspServers", lspServersToJson(next));
+				load();
+			};
+			const statusOf = (family) => (view?.status === "ready" ? view.servers.find((server) => server.family === family) : undefined);
 			const serverRow = (server) => {
 				const label = t(`lspFamily_${server.family}`);
 				if (confirming === server.family) {
@@ -378,8 +428,9 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("span", { style: labelStyle, children: label }),
 						react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 							react_jsx_runtime.jsx("code", { style: hintStyle, children: server.installCommand || server.installHint }),
+							server.installerAvailable === false ? react_jsx_runtime.jsx("span", { style: hintStyle, children: t("lspManagerInstallerMissing") }) : null,
 							react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-								react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, onClick: () => runInstall(server.family), children: t("lspManagerConfirmInstall") }),
+								react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: server.installerAvailable === false, onClick: () => runInstall(server.family), children: t("lspManagerConfirmInstall") }),
 								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: () => setConfirming(null), children: t("lspManagerCancel") })
 							] })
 						] })
@@ -397,6 +448,38 @@ window.__ModuleLoader__.load({
 					] })
 				] });
 			};
+			const customRow = (family, entry) => {
+				const host = statusOf(family);
+				return react_jsx_runtime.jsxs("div", { style: lspServerRowStyle, key: family, children: [
+					react_jsx_runtime.jsxs("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px" }, children: [
+						react_jsx_runtime.jsx("span", { style: lspDot(host ? host.installed : false), "aria-hidden": true }),
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: family }),
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: entry.command })
+					] }),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "2px" }, children: [
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: host ? (host.installed ? t("lspManagerInstalled") : t("lspManagerMissing")) : t("lspManagerPendingStatus") }),
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: () => removeCustomServer(family), children: t("lspManagerRemove") })
+					] })
+				] });
+			};
+			const customSection = () => {
+				if (!canEdit) return null;
+				return react_jsx_runtime.jsxs("div", { style: { ...chainPanelStyle, gap: "8px" }, children: [
+					react_jsx_runtime.jsxs("div", { children: [
+						react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: t("lspManagerCustom") }),
+						" ",
+						react_jsx_runtime.jsx("span", { style: chainDescStyle, children: t("lspManagerCustomHint") })
+					] }),
+					...Object.entries(customEntries).map(([family, entry]) => customRow(family, entry)),
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }, children: [
+						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerFamily"), value: customDraft.family, onChange: (event) => setCustomDraft({ ...customDraft, family: event.target.value }) }),
+						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerCommand"), value: customDraft.command, onChange: (event) => setCustomDraft({ ...customDraft, command: event.target.value }) }),
+						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerArgs"), value: customDraft.args, onChange: (event) => setCustomDraft({ ...customDraft, args: event.target.value }) }),
+						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerInstallCmd"), value: customDraft.installCommand, onChange: (event) => setCustomDraft({ ...customDraft, installCommand: event.target.value }) }),
+						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: !customDraft.family.trim() || !customDraft.command.trim(), onClick: addCustomServer, children: t("lspManagerAddServer") })
+					] })
+				] });
+			};
 			const panelBody = () => {
 				if (view === null) return null;
 				if (view.status === "loading") return react_jsx_runtime.jsx("div", { style: hintStyle, children: t("lspManagerLoading") });
@@ -411,7 +494,8 @@ window.__ModuleLoader__.load({
 					result ? react_jsx_runtime.jsxs("div", { style: { ...chainPanelStyle, gap: "6px" }, children: [
 						react_jsx_runtime.jsx("span", { style: labelStyle, children: `${t(`lspFamily_${result.family}`)} — ${result.error ?? `${t("lspManagerExitCode")} ${result.exitCode ?? "?"}${result.timedOut ? ` ${t("lspManagerTimedOut")}` : ""}`}` }),
 						result.output ? react_jsx_runtime.jsx("pre", { style: { ...hintStyle, whiteSpace: "pre-wrap", maxHeight: "160px", overflow: "auto" }, children: result.output }) : null
-					] }) : null
+					] }) : null,
+					customSection()
 				] });
 			};
 			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
@@ -445,8 +529,8 @@ window.__ModuleLoader__.load({
 							key: descriptor.field
 						});
 					}
-					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort") {
-						// folded into the single ModelPickerField row below
+					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort" || descriptor.field === "lspServers") {
+						// folded into the model-picker row / the LSP manager panel
 						return null;
 					}
 					if (descriptor.field === "intentGateProvider") {
@@ -562,7 +646,12 @@ window.__ModuleLoader__.load({
 					});
 				});
 				if (group.id === "lsp") {
-					rows.push(react_jsx_runtime.jsx(LspManagerField, { t, key: "lsp-manager" }));
+					rows.push(react_jsx_runtime.jsx(LspManagerField, {
+						t,
+						key: "lsp-manager",
+						serversText: state.fields.lspServers?.text ?? "",
+						edit: (field, text) => props.edit(field, text)
+					}));
 				}
 				return [
 					react_jsx_runtime.jsx("h3", { style: groupIndex === 0 ? firstGroupTitleStyle : groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),
@@ -695,6 +784,16 @@ window.__ModuleLoader__.load({
 			lspManagerMissing: "Not installed",
 			lspManagerExitCode: "Exit code",
 			lspManagerTimedOut: "(timed out)",
+			lspManagerCustom: "Custom servers",
+			lspManagerCustomHint: "Add your own language servers; saved with the settings and detected on the next status load.",
+			lspManagerAddServer: "Add server",
+			lspManagerRemove: "Remove",
+			lspManagerFamily: "family name",
+			lspManagerCommand: "command",
+			lspManagerArgs: "args (space separated)",
+			lspManagerInstallCmd: "install command (optional)",
+			lspManagerPendingStatus: "detected after save",
+			lspManagerInstallerMissing: "Installer unavailable: install it first, then retry.",
 			lspFamily_typescript: "TypeScript",
 			lspFamily_python: "Python",
 			lspFamily_go: "Go",
@@ -829,6 +928,16 @@ window.__ModuleLoader__.load({
 			lspManagerMissing: "未安装",
 			lspManagerExitCode: "退出码",
 			lspManagerTimedOut: "（超时）",
+			lspManagerCustom: "自定义服务器",
+			lspManagerCustomHint: "添加你自己的语言服务器；随设置保存，下次状态加载时检测。",
+			lspManagerAddServer: "添加服务器",
+			lspManagerRemove: "删除",
+			lspManagerFamily: "族名",
+			lspManagerCommand: "命令",
+			lspManagerArgs: "参数（空格分隔）",
+			lspManagerInstallCmd: "安装命令（可空）",
+			lspManagerPendingStatus: "保存后检测",
+			lspManagerInstallerMissing: "安装器不可用：请先安装安装器，再重试。",
 			lspFamily_typescript: "TypeScript",
 			lspFamily_python: "Python",
 			lspFamily_go: "Go",
@@ -1041,7 +1150,7 @@ window.__ModuleLoader__.load({
 		exports.apply = apply;
 		exports.inject = inject;
 		exports.chainEditor = { jsonToChains, chainsToJson };
-		exports.lspManager = { LspManagerField };
+		exports.lspManager = { LspManagerField, jsonToLspServers, lspServersToJson };
 		return module.exports;
 	}
 });

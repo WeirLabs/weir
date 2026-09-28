@@ -8,6 +8,7 @@
 // ESM, ctx-only.
 import { createLspManager, LSP_DEFAULTS } from './manager.js'
 import { buildRegistry } from './registry.js'
+import { resolveExecutable as extendedResolveExecutable } from './executable.js'
 import { createLspTools } from './tools.js'
 
 const name = 'orrery-lsp'
@@ -80,7 +81,8 @@ function apply(ctx, config = {}) {
     manager = createLspManager({
       subprocess: ctx.subprocess,
       fs: ctx.fs,
-      registry: buildRegistry(config.servers),
+      registry: buildRegistry(option('servers', config.servers)),
+      resolveExecutable: (command) => extendedResolveExecutable(ctx.subprocess, command),
       options: {
         idleMs: option('idleMs', config.idleMs ?? LSP_DEFAULTS.idleMs),
         requestTimeoutMs: option('requestTimeoutMs', config.requestTimeoutMs ?? LSP_DEFAULTS.requestTimeoutMs),
@@ -241,6 +243,7 @@ function apply(ctx, config = {}) {
         diagnosticsWaitMs: option('diagnosticsWaitMs', config.diagnosticsWaitMs),
       }
       manager.setOptions(Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)))
+      manager.setRegistry(buildRegistry(option('servers', config.servers)))
     }
   })
   applyGate()
