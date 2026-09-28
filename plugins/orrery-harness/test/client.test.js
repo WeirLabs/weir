@@ -65,6 +65,12 @@ describe('orrery settings client half', () => {
           },
           useEffect: (fn) => fn(),
           useRef: (initial) => ({ current: initial }),
+          Component: class {
+            constructor(props) {
+              this.props = props
+              this.state = undefined
+            }
+          },
         }
       }
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
@@ -171,7 +177,7 @@ describe('orrery settings client half', () => {
     expect(typeof injected.discard).toBe('function')
 
     // the card component renders a summary for the summary view and a form otherwise
-    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled']
+    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs']
     expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), ensureCatalog: () => {} })).toBe('description')
     const rendered = component({
       view: 'form',
@@ -198,12 +204,17 @@ describe('orrery settings client half', () => {
     expect(chainsToJson(jsonToChains(undefined))).toBe('{}')
 
     expect(rendered.__type).toBeTruthy()
-    // 7 group headers + 6 choice rows + 1 model picker + 14 value-field rows
-    expect(rendered.children).toHaveLength(28)
+    // 7 group headers + 6 choice rows + 1 model picker + 17 value-field rows
+    // (3 new LSP tuning rows) + 1 LSP manager row
+    expect(rendered.children).toHaveLength(32)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(13)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(16)
+    // the LSP manager row opens the service management panel
+    const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
+    expect(managerRow).toBeTruthy()
+    expect(typeof managerRow.__type).toBe('function')
     // the category-chains row renders the visual editor with its Edit button
     const chainsRow = rendered.children.find((child) => child.text !== undefined && child.edit !== undefined)
     expect(chainsRow).toBeTruthy()
@@ -276,6 +287,12 @@ describe('orrery session LSP toggle', () => {
         return undefined
       },
       useRef: (initial) => ({ current: initial }),
+      Component: class {
+        constructor(props) {
+          this.props = props
+          this.state = undefined
+        }
+      },
     }
     const requireStub = (name) => {
       if (name === 'react') return reactStub
@@ -433,6 +450,168 @@ describe('orrery session LSP toggle', () => {
     // capability absent from the catalog → no switch
     const absentRun = await settle({ ...baseProps, commandsList: async () => [] })
     expect(absentRun.settled).toBe(null)
+  })
+})
+
+describe('orrery LSP manager panel', () => {
+  it('loads the catalog, confirms installs, runs them, and degrades on errors', async () => {
+    const loaded = []
+    globalThis.window = {
+      __ModuleLoader__: {
+        load: (definition) => loaded.push(definition),
+      },
+    }
+    await import('../lib/client.js?lsp-manager=1')
+
+    const reactState = []
+    let hookCursor = 0
+    const reactStub = {
+      reset() {
+        reactState.length = 0
+      },
+      begin() {
+        hookCursor = 0
+      },
+      useState(initial) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = [initial, (next) => {
+          reactState[at][0] = next
+        }]
+        return reactState[at]
+      },
+      useEffect(fn) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = { cleanup: fn() }
+        return undefined
+      },
+      useRef: (initial) => ({ current: initial }),
+      Component: class {
+        constructor(props) {
+          this.props = props
+          this.state = undefined
+        }
+      },
+    }
+    const requireStub = (name) => {
+      if (name === 'react') return reactStub
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {
+        settingsNumberField: (field) => ({ field, kind: 'number' }),
+        settingsTextField: (field) => ({ field, kind: 'text' }),
+        SettingsValueField: (props) => ({ __field: props }),
+        Switch: (props) => ({ __switch: props }),
+        SegmentedControl: (props) => ({ __segmented: props }),
+        Tag: (props) => ({ __tag: props }),
+        SettingsForm: (props) => ({ __form: props }),
+        SettingsFormModel: class {
+          bind() {
+            return { marker: 'store', set: () => {} }
+          }
+          field() {
+            return { text: '', overridden: false, invalid: false }
+          }
+          shell() {
+            return { available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false }
+          }
+          actions() {
+            return { edit: () => {}, resetField: () => {}, save: async () => {}, discard: () => {} }
+          }
+          dispose() {}
+        },
+      }
+      if (name === 'orrery-model-picker') return { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: class { render() { return null } } }
+      throw new Error(`unexpected require ${name}`)
+    }
+    const surface = loaded[0].factory(requireStub)
+    const { LspManagerField } = surface.lspManager
+    expect(typeof LspManagerField).toBe('function')
+
+    const SERVERS = [
+      { family: 'lua', languageIds: ['lua'], command: 'lua-language-server', installed: false, version: null, installCommand: 'brew install lua-language-server', installHint: '' },
+      { family: 'typescript', languageIds: ['typescript'], command: 'typescript-language-server', installed: true, version: '5.0', installCommand: 'npm install -g typescript-language-server typescript', installHint: '' },
+    ]
+    const fetchCalls = []
+    const fetchStub = (url, init) => {
+      fetchCalls.push({ url, init })
+      if (url === 'api/orrery-lsp/status') {
+        return Promise.resolve({ json: async () => ({ ok: true, value: { servers: SERVERS } }) })
+      }
+      if (url === 'api/orrery-lsp/install') {
+        return Promise.resolve({ json: async () => ({ ok: true, value: { output: 'added 2 packages', exitCode: 0, timedOut: false } }) })
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchStub
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const props = { t: (key) => key }
+    const render = () => {
+      reactStub.begin()
+      return LspManagerField(props)
+    }
+    const settle = async () => {
+      reactStub.reset()
+      reactStub.begin()
+      const first = LspManagerField(props)
+      await flush()
+      reactStub.begin()
+      return { first, settled: LspManagerField(props) }
+    }
+
+    try {
+      // closed: a labeled row with the open button
+      const initial = await settle()
+      expect(initial.settled.children[0].children[1].children).toBe('chainEdit')
+      // open it → status loads
+      initial.settled.children[0].children[1].onClick()
+      await flush()
+      const opened = render()
+      const body = opened.children[1].children
+      expect(body.__type).toBe('div')
+      expect(fetchCalls[0].url).toBe('api/orrery-lsp/status')
+      // two server rows: lua missing (install button), typescript installed (version)
+      const luaRow = body.children[0]
+      expect(luaRow.children[1].children[0].children).toBe('lspManagerMissing')
+      expect(luaRow.children[1].children[1].children).toBe('lspManagerInstall')
+      const tsRow = body.children[1]
+      expect(tsRow.children[1].children[0].children).toBe('5.0')
+      expect(tsRow.children[1].children[1]).toBe(null)
+      // install → confirm state shows the exact command first
+      luaRow.children[1].children[1].onClick()
+      await flush()
+      const confirming = render()
+      const confirmRow = confirming.children[1].children.children[0]
+      expect(confirmRow.children[1].children[0].children).toBe('brew install lua-language-server')
+      // run the install → the endpoint is called with the family
+      confirmRow.children[1].children[1].children[0].onClick()
+      await flush()
+      expect(fetchCalls[1].url).toBe('api/orrery-lsp/install')
+      expect(JSON.parse(fetchCalls[1].init.body)).toEqual({ family: 'lua' })
+      const afterInstall = render()
+      const resultBlock = afterInstall.children[1].children.children[2]
+      expect(resultBlock).toBeTruthy()
+      expect(resultBlock.children[0].children).toContain('lspFamily_lua')
+      expect(resultBlock.children[1].children).toBe('added 2 packages')
+      // fetch failure → inline error row with retry
+      globalThis.fetch = () => Promise.reject(new Error('down'))
+      const failed = await settle()
+      failed.settled.children[0].children[1].onClick()
+      await flush()
+      const errored = render()
+      const errorBody = errored.children[1].children
+      expect(errorBody.children[0].children).toContain('lspManagerUnavailable')
+      expect(errorBody.children[1].children).toBe('lspManagerRetry')
+      // the boundary isolates rendering failures
+      const Boundary = errored.children[1].__type
+      const boundaryInstance = new Boundary({ t: (key) => key, children: 'inner' })
+      expect(boundaryInstance.render()).toBe('inner')
+      Boundary.getDerivedStateFromError()
+      const failedBoundary = new Boundary({ t: (key) => key, children: 'inner' })
+      failedBoundary.state = { failed: true }
+      expect(failedBoundary.render().children).toBe('lspManagerFailed')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
 

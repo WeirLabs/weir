@@ -107,9 +107,15 @@ describe('settings plugin apply', () => {
     expect(service.get('todoDriver')).toEqual({ maxConsecutive: 3 })
     config.todoMaxConsecutive = 9
     config.lspEnabled = true
+    config.lspIdleMs = 123_000
+    config.lspRequestTimeoutMs = 8_000
+    config.lspDiagnosticsWaitMs = 500
     expect(service.get('todoDriver')).toEqual({ maxConsecutive: 9 })
-    expect(service.get('lsp')).toEqual({ enabled: true })
+    expect(service.get('lsp')).toEqual({ enabled: true, idleMs: 123_000, requestTimeoutMs: 8_000, diagnosticsWaitMs: 500 })
     delete config.lspEnabled
+    delete config.lspIdleMs
+    delete config.lspRequestTimeoutMs
+    delete config.lspDiagnosticsWaitMs
     expect(service.get('lsp')).toBe(undefined)
   })
 

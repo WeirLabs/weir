@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { createLspClient, handshake, shutdownClient } from '../src/lsp/client.js'
 import { pathToUri, uriToPath } from '../src/lsp/manager.js'
-import { buildRegistry, familyForLanguageId, languageIdForFile } from '../src/lsp/registry.js'
+import { DEFAULT_SERVERS, buildRegistry, displayInstallCommand, familyForLanguageId, installSpecFor, languageIdForFile } from '../src/lsp/registry.js'
 
 function fakeChannel() {
   const stdin = new PassThrough()
@@ -106,9 +106,17 @@ describe('lsp registry and uri helpers', () => {
     expect(languageIdForFile('/x/c.py')).toBe('python')
     expect(languageIdForFile('/x/d.go')).toBe('go')
     expect(languageIdForFile('/x/e.rs')).toBe('rust')
-    expect(languageIdForFile('/x/f.md')).toBe(undefined)
+    expect(languageIdForFile('/x/f.md')).toBe('markdown')
+    expect(languageIdForFile('/x/g.yml')).toBe('yaml')
+    expect(languageIdForFile('/x/h.lua')).toBe('lua')
+    expect(languageIdForFile('/x/i.cpp')).toBe('cpp')
+    expect(languageIdForFile('/x/j.sh')).toBe('bash')
+    expect(languageIdForFile('/x/Dockerfile')).toBe('dockerfile')
+    expect(languageIdForFile('/x/unknown.xyz')).toBe(undefined)
     expect(familyForLanguageId('typescriptreact')).toBe('typescript')
     expect(familyForLanguageId('python')).toBe('python')
+    expect(familyForLanguageId('c')).toBe('cpp')
+    expect(familyForLanguageId('jsonc')).toBe('json')
   })
 
   it('overlays user server config over defaults', () => {
@@ -117,6 +125,16 @@ describe('lsp registry and uri helpers', () => {
     expect(registry.typescript.args).toEqual(['--stdio'])
     expect(registry.kotlin.command).toBe('kotlin-ls')
     expect(registry.go.command).toBe('gopls')
+  })
+
+  it('resolves platform install specs and display commands', () => {
+    expect(installSpecFor(DEFAULT_SERVERS.typescript, 'darwin')).toEqual({ command: 'npm', args: ['install', '-g', 'typescript-language-server', 'typescript'] })
+    expect(installSpecFor(DEFAULT_SERVERS.lua, 'darwin')).toEqual({ command: 'brew', args: ['install', 'lua-language-server'] })
+    expect(installSpecFor(DEFAULT_SERVERS.lua, 'linux')).toBe(undefined)
+    expect(installSpecFor(DEFAULT_SERVERS.cpp, 'linux')).toEqual({ command: 'sudo', args: ['apt-get', 'install', '-y', 'clangd'] })
+    expect(installSpecFor({ command: 'x' }, 'darwin')).toBe(undefined)
+    expect(displayInstallCommand(DEFAULT_SERVERS.typescript)).toBe('npm install -g typescript-language-server typescript')
+    expect(displayInstallCommand(DEFAULT_SERVERS.lua)).toBe('brew install lua-language-server')
   })
 
   it('round-trips file URIs', () => {

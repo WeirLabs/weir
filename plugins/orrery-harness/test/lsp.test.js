@@ -120,8 +120,10 @@ function fakeSettings() {
         return () => listeners.delete(callback)
       },
     },
-    setLsp(enabled) {
-      holder.lsp = enabled === undefined ? undefined : { enabled }
+    setLsp(value) {
+      if (value === undefined || value === null) holder.lsp = undefined
+      else if (value === true || value === false) holder.lsp = { enabled: value }
+      else holder.lsp = value
       for (const callback of listeners) callback()
     },
   }
@@ -420,7 +422,7 @@ describe('lsp tool flows (gate on)', () => {
     const agent = fakeAgent()
     await lspTool(ctx).execute({ enabled: true }, { agent })
     const diagnosticsTool = agent.scoped.find((tool) => tool.name === 'lsp_diagnostics')
-    await expect(async () => diagnosticsTool.execute({ file_path: '/ws/notes.md' }, { agent, signal: undefined })).rejects.toThrow(/no language server for file type/)
+    await expect(async () => diagnosticsTool.execute({ file_path: '/ws/notes.xyz' }, { agent, signal: undefined })).rejects.toThrow(/no language server for file type/)
     expect(subprocess.spawns).toHaveLength(0)
   })
 
@@ -435,5 +437,27 @@ describe('lsp tool flows (gate on)', () => {
     expect(subprocess.spawns).toHaveLength(1)
     await lspTool(ctx).execute({ enabled: false }, { agent })
     expect(subprocess.spawns[0].terminated).toBe(1)
+  })
+
+  it('settings tuning values feed the manager and apply live', async () => {
+    const settings = fakeSettings()
+    settings.setLsp({ enabled: true, idleMs: 50 })
+    const subprocess = fakeSubprocess()
+    const ctx = fakeCtx(subprocess, {}, { settings })
+    apply(ctx, {})
+    const agent = fakeAgent()
+    await lspTool(ctx).execute({ enabled: true }, { agent })
+    const diagnosticsTool = agent.scoped.find((tool) => tool.name === 'lsp_diagnostics')
+    await diagnosticsTool.execute({ file_path: '/ws/a.ts' }, { agent, signal: undefined })
+    expect(subprocess.spawns).toHaveLength(1)
+    // idle 50ms from the settings section fires the shutdown
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(subprocess.spawns[0].terminated).toBe(1)
+    // live tuning: raise the idle threshold; the next server must not shut down
+    settings.setLsp({ enabled: true, idleMs: 60_000 })
+    await diagnosticsTool.execute({ file_path: '/ws/a.ts' }, { agent, signal: undefined })
+    expect(subprocess.spawns).toHaveLength(2)
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(subprocess.spawns[1].terminated).toBe(0)
   })
 })
