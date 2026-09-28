@@ -4,7 +4,7 @@
 // as one JSON line to ORRERY_IT_TRACE for the driver to assert on.
 // Dev-only: never install into a real profile.
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const name = 'orrery-it-mock-llm'
 const inject = ['llm']
@@ -12,6 +12,9 @@ const inject = ['llm']
 const SCENARIO = process.env.ORRERY_IT_SCENARIO ?? 'deepwork'
 const TRACE = process.env.ORRERY_IT_TRACE ?? '/Users/young/.orrery-it/trace.jsonl'
 const FIXTURE = process.env.ORRERY_IT_FIXTURE ?? '/Users/young/.orrery-it/ws/fixture.txt'
+// Out-of-workspace file for the hashline denial probe: readable (reads are
+// unfenced) but outside every writable root under workspace-write.
+const DENIED = join(process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it', 'home', 'denied.txt')
 const WINDOW = Number(process.env.ORRERY_IT_WINDOW ?? '128000')
 const LONG_FILLER = 'Filler line to raise pressure. '.repeat(600)
 
@@ -147,6 +150,21 @@ function decideHashline(options) {
   const lastRole = messages.at(-1)?.role
   if (lastRole === 'tool') {
     const toolText = lastOfRole(options, 'tool')
+    // The denied edit's tool result carries the shared sandbox marker.
+    if (history.includes('[sandbox: file access denied under')) {
+      return textChunks('hashline escalation denial observed')
+    }
+    // Fixture edit done: read the out-of-workspace file for the denial probe.
+    if (history.includes('hash_edit applied') && !history.includes('outside one')) {
+      return toolCallChunks('read', { file_path: DENIED })
+    }
+    const deniedAnchor = /\n1#([ZPMQVRWSNKTXJBYH]{2})\|/.exec(`\n${toolText}`)
+    if (deniedAnchor && history.includes('outside one')) {
+      return toolCallChunks('hash_edit', {
+        file_path: DENIED,
+        edits: [{ op: 'replace', pos: `1#${deniedAnchor[1]}`, lines: ['DENIED_EDIT_TRIED'] }],
+      })
+    }
     const anchor = /\n2#([ZPMQVRWSNKTXJBYH]{2})\|/.exec(`\n${toolText}`)
     if (anchor && !history.includes('hash_edit applied')) {
       return toolCallChunks('hash_edit', {
@@ -154,7 +172,7 @@ function decideHashline(options) {
         edits: [{ op: 'replace', pos: `2#${anchor[1]}`, lines: ['CHANGED-BY-HASHLINE'] }],
       })
     }
-    return textChunks('hashline edit applied')
+    return textChunks('unhandled hashline tool turn')
   }
   if (history.includes('hashline-probe')) {
     return toolCallChunks('read', { file_path: FIXTURE })
@@ -484,6 +502,9 @@ async function* streamScenario(options) {
     scenario: SCENARIO,
     purpose: options.purpose ?? 'main',
     tools,
+    hashEditEscalationEnum: (options.tools ?? []).find((tool) => tool.name === 'hash_edit')?.parameters?.properties?.sandbox_permissions?.enum ?? null,
+    escalationDenialSeen: transcript(options).includes('[sandbox: file access denied under'),
+    escalationHintSeen: transcript(options).includes('[sandbox: escalation available'),
     intentInjected: transcript(options).includes('<intent-gate id="deep-work"'),
     continuationSeen: transcript(options).includes('<todo_continuation>'),
     pressureAdvisorySeen: transcript(options).includes('<context_pressure>'),

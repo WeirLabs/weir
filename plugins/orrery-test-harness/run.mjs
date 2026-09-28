@@ -52,6 +52,9 @@ function setup() {
   writeFileSync(join(PROFILE, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
   execFileSync(NODE, [PNPM, 'install', '--reporter', 'silent'], { cwd: PROFILE, stdio: 'inherit' })
   writeFileSync(join(WS, 'fixture.txt'), 'line one\nline two\nline three\n')
+  // Denial probe target: OUTSIDE the session workspace but readable — the
+  // hashline scenario edits it to observe the sandbox denial marker + hint.
+  writeFileSync(join(HOME, 'denied.txt'), 'outside one\noutside two\n')
   // LSP scenario fixtures: a .ts target and the mock LSP server INSIDE the
   // workspace (spawned processes may only read inside the sandbox root).
   writeFileSync(join(WS, 'probe.ts'), 'export const fixtureSymbol = 1\n')
@@ -206,6 +209,8 @@ function assertHashline(run) {
   check('hashline', 'hash_edit rewrote line two', fixture.split('\n')[1] === 'CHANGED-BY-HASHLINE', fixture)
   check('hashline', 'stock edit hidden from the model tool catalog', requests.length > 0 && requests.every((r) => !r.tools.includes('edit')), JSON.stringify(requests.map((r) => r.tools)))
   check('hashline', 'hash_edit present in the model tool catalog', requests.some((r) => r.tools.includes('hash_edit')), JSON.stringify(requests.map((r) => r.tools)))
+  check('hashline', 'hash_edit schema advertises the sandbox escalation fields', requests.some((r) => Array.isArray(r.hashEditEscalationEnum) && r.hashEditEscalationEnum.includes('workspace-write') && r.hashEditEscalationEnum.includes('danger-full-access')), JSON.stringify(requests.map((r) => r.hashEditEscalationEnum)))
+  check('hashline', 'out-of-workspace edit denied with the shared marker and the escalation hint', requests.some((r) => r.escalationDenialSeen && r.escalationHintSeen), JSON.stringify(requests.map((r) => [r.escalationDenialSeen, r.escalationHintSeen])))
   check('hashline', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
