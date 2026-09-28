@@ -17,9 +17,8 @@
     - id: orrery-it-settings
       name: 'orrery-harness/settings'
       config:
-        intentGate:
-          classifierProvider: mock
-          classifierModel: mock-1
+        intentGateProvider: mock
+        intentGateModel: mock-1
     - id: orrery-it-event-tap
       name: 'orrery-test-harness/event-tap'
     - id: orrery-it-core

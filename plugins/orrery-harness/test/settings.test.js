@@ -18,20 +18,23 @@ describe('settings Config schema', () => {
 
   it('accepts a fully-populated config', () => {
     const result = validate({
-      intentGate: { classifier: 'llm', classifierTimeoutMs: 900, jevEndpoint: 'https://jev.example' },
-      delegate: { categoryChains: '{"quick":[{"provider":"p","model":"m"}]}', supervisionMaxRetries: 3 },
-      todoDriver: { maxConsecutive: 4 },
-      contextGuard: { softThreshold: 0.6 },
-      hashlineEdit: { hideStockEdit: false },
-      robash: { enabled: false },
+      intentGateClassifier: 'llm',
+      intentGateTimeoutMs: 900,
+      jevEndpoint: 'https://jev.example',
+      delegateCategoryChains: '{"quick":[{"provider":"p","model":"m"}]}',
+      supervisionMaxRetries: 3,
+      todoMaxConsecutive: 4,
+      guardSoftThreshold: 0.6,
+      hashlineHideStockEdit: false,
+      robashEnabled: false,
     })
     expect(result.issues).toBe(undefined)
   })
 
   it('rejects bad enum and bad types', () => {
-    expect(validate({ intentGate: { classifier: 'bogus' } }).issues).not.toBe(undefined)
-    expect(validate({ todoDriver: { maxConsecutive: 'eight' } }).issues).not.toBe(undefined)
-    expect(validate({ hashlineEdit: { hideStockEdit: 'yes' } }).issues).not.toBe(undefined)
+    expect(validate({ intentGateClassifier: 'bogus' }).issues).not.toBe(undefined)
+    expect(validate({ todoMaxConsecutive: 'eight' }).issues).not.toBe(undefined)
+    expect(validate({ hashlineHideStockEdit: 'yes' }).issues).not.toBe(undefined)
   })
 })
 
@@ -50,7 +53,7 @@ describe('settings plugin apply', () => {
   }
 
   it('provides the orrerySettings service returning user-set sections', () => {
-    const { provided, service } = harness({ todoDriver: { maxConsecutive: 3 } })
+    const { provided, service } = harness({ todoMaxConsecutive: 3 })
     expect(provided[0].name).toBe('orrerySettings')
     expect(service.get('todoDriver')).toEqual({ maxConsecutive: 3 })
     expect(service.get('intentGate')).toBe(undefined)
@@ -58,24 +61,24 @@ describe('settings plugin apply', () => {
 
   it('parses categoryChains JSON into a validated object map', () => {
     const { service } = harness({
-      delegate: { categoryChains: '{"quick":[{"provider":"p","model":"m","reasoningEffort":"low"}]}' },
+      delegateCategoryChains: '{"quick":[{"provider":"p","model":"m","reasoningEffort":"low"}]}',
     })
     expect(service.get('delegate').categoryChains).toEqual({ quick: [{ provider: 'p', model: 'm', reasoningEffort: 'low' }] })
   })
 
   it('fails activation loud on malformed categoryChains', () => {
-    expect(() => harness({ delegate: { categoryChains: 'not-json' } })).toThrow()
-    expect(() => harness({ delegate: { categoryChains: '[1,2]' } })).toThrow(/object map/)
-    expect(() => harness({ delegate: { categoryChains: '{"quick":"nope"}' } })).toThrow(/array of rungs/)
-    expect(() => harness({ delegate: { categoryChains: '{"quick":[{"provider":"p"}]}' } })).toThrow(/provider, model/)
+    expect(() => harness({ delegateCategoryChains: 'not-json' })).toThrow()
+    expect(() => harness({ delegateCategoryChains: '[1,2]' })).toThrow(/object map/)
+    expect(() => harness({ delegateCategoryChains: '{"quick":"nope"}' })).toThrow(/array of rungs/)
+    expect(() => harness({ delegateCategoryChains: '{"quick":[{"provider":"p"}]}' })).toThrow(/provider, model/)
   })
 
   it('unwraps volatile refs and drops unset fields (DSH-fork semantics)', () => {
     // the real fork materializes volatile fields as {get()} refs: validate a
     // config through the schema, then feed the RESULT through apply.
     const validated = Config['~standard'].validate({
-      intentGate: { classifier: 'llm' },
-      todoDriver: { maxConsecutive: 3 },
+      intentGateClassifier: 'llm',
+      todoMaxConsecutive: 3,
     })
     expect(validated.issues).toBe(undefined)
     const { service } = harness(validated.value)
