@@ -17,6 +17,8 @@ importers:
 
   plugins/orrery-harness: {}
 
+  plugins/orrery-model-picker: {}
+
   plugins/orrery-test-harness: {}
 
 packages:
