@@ -7,6 +7,27 @@
     # host-plane orrerySettings service the preset modules overlay with.
     - id: orrery-settings
       name: 'orrery-harness/settings'
+      config:
+        # Product defaults, mirrored 1:1 from the preset modules' code
+        # defaults so the settings page shows EFFECTIVE values (the row is the
+        # composition base; user edits override it). Keep in sync with the
+        # module defaults on every change.
+        intentGateClassifier: regex
+        intentGateTimeoutMs: 1500
+        supervisionMaxRetries: 5
+        supervisionInitialBackoffMs: 30000
+        supervisionMaxBackoffMs: 300000
+        todoEnabled: true
+        todoMaxConsecutive: 8
+        todoErrorRetryMax: 5
+        todoErrorBackoffBaseMs: 30000
+        todoErrorBackoffCapMs: 300000
+        guardEnabled: true
+        guardSoftThreshold: 0.72
+        guardHardThreshold: 0.88
+        hashlineHideStockEdit: true
+        robashEnabled: true
+        lspEnabled: false
     # Browser half of the same package: the Orrery settings page registered
     # into the Settings Plugins page (./client export, dsh.client manifest).
     - id: ui-orrery-settings

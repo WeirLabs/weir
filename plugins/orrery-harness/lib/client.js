@@ -11,30 +11,45 @@ window.__ModuleLoader__.load({
 		// addresses flat fields). Registers into the Plugins page's
 		// `plugins.item` slot while the Host serves that namespace.
 		const ORRERY_NS = "orrery-settings";
-		const FIELDS = [
-			{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
-			{ field: "intentGateProvider", kind: "text" },
-			{ field: "intentGateModel", kind: "text" },
-			{ field: "intentGateTimeoutMs", kind: "number" },
-			{ field: "jevEndpoint", kind: "text" },
-			{ field: "jevModel", kind: "text" },
-			{ field: "jevApiKeyEnv", kind: "text" },
-			{ field: "delegateCategoryChains", kind: "text" },
-			{ field: "supervisionMaxRetries", kind: "number" },
-			{ field: "supervisionInitialBackoffMs", kind: "number" },
-			{ field: "supervisionMaxBackoffMs", kind: "number" },
-			{ field: "todoEnabled", kind: "boolean" },
-			{ field: "todoMaxConsecutive", kind: "number" },
-			{ field: "todoErrorRetryMax", kind: "number" },
-			{ field: "todoErrorBackoffBaseMs", kind: "number" },
-			{ field: "todoErrorBackoffCapMs", kind: "number" },
-			{ field: "guardEnabled", kind: "boolean" },
-			{ field: "guardSoftThreshold", kind: "number" },
-			{ field: "guardHardThreshold", kind: "number" },
-			{ field: "hashlineHideStockEdit", kind: "boolean" },
-			{ field: "robashEnabled", kind: "boolean" },
-			{ field: "lspEnabled", kind: "boolean" },
+		const GROUPS = [
+			{ id: "intent", fields: [
+				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
+				{ field: "intentGateProvider", kind: "text" },
+				{ field: "intentGateModel", kind: "text" },
+				{ field: "intentGateTimeoutMs", kind: "number" },
+				{ field: "jevEndpoint", kind: "text" },
+				{ field: "jevModel", kind: "text" },
+				{ field: "jevApiKeyEnv", kind: "text" }
+			] },
+			{ id: "delegate", fields: [
+				{ field: "delegateCategoryChains", kind: "text" },
+				{ field: "supervisionMaxRetries", kind: "number" },
+				{ field: "supervisionInitialBackoffMs", kind: "number" },
+				{ field: "supervisionMaxBackoffMs", kind: "number" }
+			] },
+			{ id: "todo", fields: [
+				{ field: "todoEnabled", kind: "boolean" },
+				{ field: "todoMaxConsecutive", kind: "number" },
+				{ field: "todoErrorRetryMax", kind: "number" },
+				{ field: "todoErrorBackoffBaseMs", kind: "number" },
+				{ field: "todoErrorBackoffCapMs", kind: "number" }
+			] },
+			{ id: "guard", fields: [
+				{ field: "guardEnabled", kind: "boolean" },
+				{ field: "guardSoftThreshold", kind: "number" },
+				{ field: "guardHardThreshold", kind: "number" }
+			] },
+			{ id: "editing", fields: [
+				{ field: "hashlineHideStockEdit", kind: "boolean" }
+			] },
+			{ id: "robash", fields: [
+				{ field: "robashEnabled", kind: "boolean" }
+			] },
+			{ id: "lsp", fields: [
+				{ field: "lspEnabled", kind: "boolean" }
+			] }
 		];
+		const FIELDS = GROUPS.flatMap((group) => group.fields);
 		function booleanSpec(field) {
 			return {
 				field,
@@ -100,28 +115,78 @@ window.__ModuleLoader__.load({
 				this.form.dispose();
 			}
 		};
+		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" };
+		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "4px" };
+		const labelStyle = { fontSize: "14px" };
+		const hintStyle = { fontSize: "12px", opacity: 0.7 };
+		const groupTitleStyle = { fontSize: "13px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", margin: "16px 0 0", opacity: 0.75 };
+		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px" };
+		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", opacity: 0.8 };
+		function ChoiceField(props) {
+			const { descriptor, field, t, disabled } = props;
+			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
+				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
+					react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
+					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
+				] }),
+				react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+					field.overridden ? react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }) : null,
+					field.overridden ? react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: t("reset") }) : null,
+					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
+						checked: field.text === "true",
+						onChange: (checked) => props.onChange(String(checked)),
+						disabled,
+						label: t(descriptor.field)
+					}) : react_jsx_runtime.jsx(primitives.SegmentedControl, {
+						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
+						value: field.text,
+						options: descriptor.values.map((value) => ({ value, label: t(`${descriptor.field}Option${value.charAt(0).toUpperCase()}${value.slice(1)}`) })),
+						onChange: (value) => props.onChange(value),
+						disabled,
+						label: t(descriptor.field)
+					})
+				] })
+			] });
+		}
 		function OrreryCard(props) {
 			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
 			const { t } = props;
 			if (props.view === "summary") return t("description");
 			const disabled = !state.writable;
-			const children = FIELDS.map((descriptor) => {
-				const field = state.fields[descriptor.field];
-				return react_jsx_runtime.jsx(primitives.SettingsValueField, {
-					id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
-					label: t(descriptor.field),
-					hint: t(`${descriptor.field}Hint`),
-					overriddenLabel: t("overridden"),
-					resetLabel: t("reset"),
-					invalidLabel: t("invalidValue"),
-					disabled,
-					text: field.text,
-					invalid: field.invalid,
-					overridden: field.overridden,
-					onChange: (text) => props.edit(descriptor.field, text),
-					onReset: () => props.resetField(descriptor.field),
-					key: descriptor.field
+			const children = GROUPS.flatMap((group) => {
+				const rows = group.fields.map((descriptor) => {
+					const field = state.fields[descriptor.field];
+					if (descriptor.kind === "boolean" || descriptor.kind === "enum") {
+						return react_jsx_runtime.jsx(ChoiceField, {
+							descriptor,
+							field,
+							t,
+							disabled,
+							onChange: (text) => props.edit(descriptor.field, text),
+							onReset: () => props.resetField(descriptor.field),
+							key: descriptor.field
+						});
+					}
+					return react_jsx_runtime.jsx(primitives.SettingsValueField, {
+						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
+						label: t(descriptor.field),
+						hint: t(`${descriptor.field}Hint`),
+						overriddenLabel: t("overridden"),
+						resetLabel: t("reset"),
+						invalidLabel: t("invalidValue"),
+						disabled,
+						text: field.text,
+						invalid: field.invalid,
+						overridden: field.overridden,
+						onChange: (text) => props.edit(descriptor.field, text),
+						onReset: () => props.resetField(descriptor.field),
+						key: descriptor.field
+					});
 				});
+				return [
+					react_jsx_runtime.jsx("h3", { style: groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),
+					...rows
+				];
 			});
 			return react_jsx_runtime.jsxs(primitives.SettingsForm, {
 				labels: formLabels(t),
@@ -142,6 +207,16 @@ window.__ModuleLoader__.load({
 			overridden: "Overridden",
 			reset: "Reset to default",
 			invalidValue: "Enter a value this field accepts, or leave blank to use the default.",
+			groupIntent: "Intent",
+			groupDelegate: "Delegation",
+			groupTodo: "Continuation",
+			groupGuard: "Context pressure",
+			groupEditing: "Editing",
+			groupRobash: "Read-only bash",
+			groupLsp: "LSP",
+			intentGateClassifierOptionRegex: "regex",
+			intentGateClassifierOptionLlm: "llm",
+			intentGateClassifierOptionJev: "jev",
 			intentGateClassifier: "Intent classifier",
 			intentGateClassifierHint: "regex (default, zero cost), llm (sidecar semantic classification), jev (experimental, off by default).",
 			intentGateProvider: "Classifier provider (llm mode)",
@@ -198,6 +273,16 @@ window.__ModuleLoader__.load({
 			overridden: "已覆盖",
 			reset: "恢复默认",
 			invalidValue: "请输入该字段接受的值，或留空以使用默认值。",
+			groupIntent: "意图分类",
+			groupDelegate: "委派与模型链",
+			groupTodo: "续推",
+			groupGuard: "上下文压力",
+			groupEditing: "编辑",
+			groupRobash: "只读 bash",
+			groupLsp: "LSP 语义工具",
+			intentGateClassifierOptionRegex: "regex（正则）",
+			intentGateClassifierOptionLlm: "llm（语义）",
+			intentGateClassifierOptionJev: "jev（实验）",
 			intentGateClassifier: "意图分类器",
 			intentGateClassifierHint: "regex（默认，零成本）、llm（sidecar 语义分类）、jev（实验，默认关闭）。",
 			intentGateProvider: "分类器 provider（llm 模式）",
