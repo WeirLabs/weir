@@ -19,6 +19,7 @@ let callSeq = 0
 
 function trace(record) {
   try {
+
     mkdirSync(dirname(TRACE), { recursive: true })
     appendFileSync(TRACE, JSON.stringify({ seq: ++callSeq, ...record }) + '\n')
   } catch {
@@ -205,6 +206,66 @@ function decideLsp(options) {
   return textChunks('unhandled lsp turn')
 }
 
+function decideRehydrate(options) {
+  const history = transcript(options)
+  // Child A: proves the inherited toolset works via bash, then completes.
+  // (The bash round-trip makes a second request whose tool list is observable
+  // in the trace — the first request of an agent carries no tools there.)
+  if (history.includes('REHYDRATE_CHILD_A') && !history.includes('rehydrate-probe') && !history.includes('rehydrate-resume-probe')) {
+    if (options.messages?.at(-1)?.role === 'tool') {
+      return textChunks('STATUS: completed\nREPORT: alpha rehydrate done')
+    }
+    return toolCallChunks('bash', { command: 'echo REHYDRATE_A_BASH_RAN', description: 'prove the inherited toolset works' })
+  }
+  // Child B: blocks in phase 1; after the post-restart resume message, completes.
+  if (history.includes('REHYDRATE_CHILD_B') && !history.includes('rehydrate-probe') && !history.includes('rehydrate-resume-probe')) {
+    if (history.includes('Your parent cleared your blocker')) {
+      return textChunks('STATUS: completed\nREPORT: beta resumed after restart')
+    }
+    return textChunks('STATUS: blocked\nREPORT: rehydrate child stuck on missing payload')
+  }
+  // Parent phase 2 (adopted session, fresh process): resume the blocked child
+  // on the rehydrated registry, then observe the merged report.
+  if (history.includes('rehydrate-resume-probe')) {
+    if (history.includes('<supervised_group_report')) {
+      return textChunks('parent observed post-restart group merge')
+    }
+    if (history.includes('Resumed supervised child') && !history.includes('REHYDRATE_WAITED')) {
+      return toolCallChunks('bash', { command: 'echo REHYDRATE_WAITED && sleep 2', description: 'Let the resumed child settle' })
+    }
+    if (history.includes('REHYDRATE_WAITED')) {
+      // End the turn: the merged report then arrives via the busy turn-stopping
+      // flush or the idle followup wake — never loop on sleeps.
+      return textChunks('waiting for the post-restart merged report')
+    }
+    return toolCallChunks('resume_agent', { agent: 'beta', context: 'payload ready' })
+  }
+  // Parent phase 1: delegate the group, then STOP once the blocked notice
+  // arrives — the run exits with the child still blocked (simulated restart
+  // happens between the two phases).
+  const lastRole = options.messages?.at(-1)?.role
+  if (lastRole === 'tool') {
+    const toolText = lastOfRole(options, 'tool')
+    if (toolText.includes('Supervised group')) {
+      return toolCallChunks('bash', { command: 'sleep 1', description: 'Let supervised children settle' })
+    }
+    return textChunks('unhandled rehydrate tool turn')
+  }
+  if (history.includes('<supervised_blocked')) {
+    return textChunks('parent observed blocked notice; stopping before the simulated restart')
+  }
+  if (history.includes('rehydrate-probe') && !history.includes('Supervised group')) {
+    return toolCallChunks('delegate', {
+      group: 'probe-group',
+      tasks: [
+        { category: 'quick', name: 'alpha', prompt: 'REHYDRATE_CHILD_A\nTASK: probe alpha\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' },
+        { category: 'quick', name: 'beta', prompt: 'REHYDRATE_CHILD_B\nTASK: probe beta\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' },
+      ],
+    })
+  }
+  return textChunks('unhandled rehydrate turn')
+}
+
 function decideGrouped(options) {  const history = transcript(options)
   // Child A: first turn fails with a provider error; the coordinator's retry
   // message (RETRY_MESSAGE) then gets a clean terminal report.
@@ -294,6 +355,8 @@ function decide(options) {
       return decideSemantic(options)
     case 'grouped':
       return decideGrouped(options)
+    case 'rehydrate':
+      return decideRehydrate(options)
     case 'lsp':
       return decideLsp(options)
     default:
@@ -331,6 +394,12 @@ async function* streamScenario(options) {
     groupRetrySeen: transcript(options).includes('Continue the task now, and remember to end'),
     mergedAlphaSeen: transcript(options).includes('alpha finished after one retry'),
     mergedBetaSeen: transcript(options).includes('beta finished first try'),
+    sawRehydrateProbe: transcript(options).includes('rehydrate-probe'),
+    rehydrateBlockedNoticeSeen: transcript(options).includes('<supervised_blocked'),
+    rehydrateResumeCallSeen: transcript(options).includes('rehydrate-resume-probe'),
+    rehydrateResumeContextSeen: transcript(options).includes('Your parent cleared your blocker'),
+    rehydrateResumedReportSeen: transcript(options).includes('beta resumed after restart'),
+    rehydrateChildASeen: transcript(options).includes('REHYDRATE_CHILD_A'),
     lspToggledOn: transcript(options).includes('LSP semantic tools enabled'),
     lspDiagSeen: transcript(options).includes('mock-diagnostic'),
     lspDefSeen: transcript(options).includes('probe.ts:3:5'),

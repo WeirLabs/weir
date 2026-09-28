@@ -22,7 +22,7 @@ const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
-const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'lsp']
+const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'rehydrate', 'lsp']
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -68,6 +68,7 @@ function runScenario(scenario) {
     // no intent keywords: only the semantic classifier can arm deep-work here
     semantic: '把这个任务从头到尾彻底完成，每一步都要拿出证据',
     grouped: 'grouped-probe',
+    rehydrate: 'rehydrate-probe',
     lsp: 'lsp-probe',
   }[scenario]
   const trace = join(IT_ROOT, `trace-${scenario}.jsonl`)
@@ -97,6 +98,71 @@ function readTrace(path) {
     return readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   } catch {
     return []
+  }
+}
+
+/**
+ * Two-phase restart simulation: phase 1 spawns the supervised group and exits
+ * with a member still blocked; phase 2 adopts the SAME session in a fresh
+ * process (empty coordinator registry) and resumes on the rebuilt state.
+ */
+async function runRehydrateScenario() {
+  const trace1 = join(IT_ROOT, 'trace-rehydrate.jsonl')
+  const trace2 = join(IT_ROOT, 'trace-rehydrate-phase2.jsonl')
+  const baseEnv = {
+    ...process.env,
+    DSH_HOME: HOME,
+    ORRERY_IT_ROOT: IT_ROOT,
+    ORRERY_IT_SCENARIO: 'rehydrate',
+    ORRERY_IT_FIXTURE: join(WS, 'fixture.txt'),
+  }
+  const phase1 = new Promise((resolvePromise) => {
+    execFile(
+      NODE,
+      [DSH_BIN, 'orrery-it', '--json', 'rehydrate-probe'],
+      { cwd: WS, env: { ...baseEnv, ORRERY_IT_TRACE: trace1 }, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        resolvePromise({ code: error?.code ?? 0, stdout, stderr })
+      },
+    )
+  })
+  const p1 = await phase1
+  const sessionLine = p1.stdout
+    .trim()
+    .split('\n')
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .find((entry) => entry?.type === 'session')
+  const sessionId = sessionLine?.sessionId
+  if (!sessionId) {
+    return { scenario: 'rehydrate', trace: trace1, trace2, sessionId: null, code: p1.code, stdout: p1.stdout, stderr: p1.stderr, phase1: p1, phase2: null }
+  }
+  const phase2 = new Promise((resolvePromise) => {
+    execFile(
+      NODE,
+      [DSH_BIN, 'orrery-it', '--session-id', sessionId, 'rehydrate-resume-probe'],
+      { cwd: WS, env: { ...baseEnv, ORRERY_IT_TRACE: trace2 }, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        resolvePromise({ code: error?.code ?? 0, stdout, stderr })
+      },
+    )
+  })
+  const p2 = await phase2
+  return {
+    scenario: 'rehydrate',
+    trace: trace1,
+    trace2,
+    sessionId,
+    code: p2.code,
+    stdout: p2.stdout,
+    stderr: p2.stderr,
+    phase1: p1,
+    phase2: p2,
   }
 }
 
@@ -196,6 +262,43 @@ function assertLsp(run) {
   check('lsp', 'tools unregistered after toggle off', requests.some((r) => r.lspUnknownAfterOff), JSON.stringify(requests.map((r) => r.lspUnknownAfterOff)))
   check('lsp', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
+function assertRehydrate(run) {
+  const trace1 = readTrace(run.trace)
+  const trace2 = readTrace(run.trace2)
+  const requests1 = trace1.filter((r) => Array.isArray(r.emitted))
+  const requests2 = trace2.filter((r) => Array.isArray(r.emitted))
+  check('rehydrate', 'phase 1 session id captured', typeof run.sessionId === 'string' && run.sessionId.length > 0, JSON.stringify(run.sessionId))
+  check('rehydrate', 'parent delegated a supervised group in phase 1', requests1.some((r) => r.emitted.includes('tool-call') && r.sawRehydrateProbe), JSON.stringify(requests1.map((r) => [r.sawRehydrateProbe, r.emitted])))
+  check('rehydrate', 'blocked notice reached the parent before the restart', requests1.some((r) => r.rehydrateBlockedNoticeSeen), JSON.stringify(requests1.map((r) => r.rehydrateBlockedNoticeSeen)))
+  check('rehydrate', 'supervised members exclude send_message, the parent keeps it', requests1.some((r) => r.rehydrateChildASeen && r.tools.length > 0 && r.tools.includes('bash') && !r.tools.includes('send_message')) && requests1.some((r) => r.sawRehydrateProbe && r.tools.includes('send_message')), JSON.stringify(requests1.map((r) => [r.rehydrateChildASeen, r.tools.length, r.tools.includes('send_message')])))
+  check('rehydrate', 'audit JSONL recorded supervision facts in phase 1', auditFactsSeen(run.sessionId), '')
+  check('rehydrate', 'parent resumed the blocked child on the rebuilt registry', requests2.some((r) => r.emitted.includes('tool-call') && r.rehydrateResumeCallSeen), JSON.stringify(requests2.map((r) => [r.rehydrateResumeCallSeen, r.emitted])))
+  check('rehydrate', 'resume context reached the child after the restart', requests2.some((r) => r.rehydrateResumeContextSeen), JSON.stringify(requests2.map((r) => r.rehydrateResumeContextSeen)))
+  check('rehydrate', 'resumed child reported completion', requests2.some((r) => r.rehydrateResumedReportSeen), JSON.stringify(requests2.map((r) => r.rehydrateResumedReportSeen)))
+  check('rehydrate', 'parent observed the merged group report after the restart', run.stdout.includes('parent observed post-restart group merge'), run.stdout.slice(-400))
+  check('rehydrate', 'phase 2 exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
+function auditFactsSeen(sessionId) {
+  if (!sessionId) return false
+  let lines = []
+  try {
+    lines = readFileSync(join(WS, '.orrery', 'audit.jsonl'), 'utf8').trim().split('\n')
+  } catch {
+    return false
+  }
+  const records = lines
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .filter((record) => record?.session === sessionId && typeof record?.type === 'string' && record.type.startsWith('orrery/supervision/'))
+  const kinds = records.map((record) => record.data?.kind)
+  return kinds.includes('spawn') && kinds.includes('seal') && kinds.includes('settle')
+}
 
 async function main() {
   const selected = process.argv.slice(2).length > 0 ? process.argv.slice(2) : SCENARIOS
@@ -203,7 +306,7 @@ async function main() {
   setup()
   for (const scenario of selected) {
     console.log(`[run] ${scenario}`)
-    const run = await runScenario(scenario)
+    const run = scenario === 'rehydrate' ? await runRehydrateScenario() : await runScenario(scenario)
     if (run.stderr.trim().length > 0) {
       console.log(`[stderr:${scenario}] ${run.stderr.trim().split('\n').slice(-3).join('\n')}`)
     }
@@ -214,6 +317,7 @@ async function main() {
     if (scenario === 'robash') assertRobash(run)
     if (scenario === 'semantic') assertSemantic(run)
     if (scenario === 'grouped') assertGrouped(run)
+    if (scenario === 'rehydrate') assertRehydrate(run)
     if (scenario === 'lsp') assertLsp(run)
   }
   const failed = results.filter((result) => !result.ok)
