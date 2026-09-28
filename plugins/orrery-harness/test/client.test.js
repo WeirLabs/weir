@@ -55,6 +55,18 @@ describe('orrery settings client half', () => {
       },
     }
     const requireStub = (name) => {
+      if (name === 'react') {
+        return {
+          useState: (initial) => {
+            let value = initial
+            return [value, (next) => {
+              value = next
+            }]
+          },
+          useEffect: (fn) => fn(),
+          useRef: (initial) => ({ current: initial }),
+        }
+      }
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitivesStub
       throw new Error(`unexpected require ${name}`)
@@ -150,7 +162,7 @@ describe('orrery settings client half', () => {
     expect(typeof injected.discard).toBe('function')
 
     // the card component renders a summary for the summary view and a form otherwise
-    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled']
+    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','lspEnabled']
     expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }) })).toBe('description')
     const rendered = component({
       view: 'form',
@@ -166,28 +178,36 @@ describe('orrery settings client half', () => {
       discard: () => {},
     })
     expect(rendered.__type).toBeTruthy()
-    // 7 group headers + 22 field rows
-    expect(rendered.children).toHaveLength(29)
+    // 7 group headers + 6 choice rows + 1 model picker + 14 value-field rows
+    expect(rendered.children).toHaveLength(28)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
-    // 6 choice rows (1 enum + 5 booleans) + 2 model-picker rows vs 14 value-field rows
     expect(rendered.children.filter((child) => child.descriptor && child.providerText === undefined)).toHaveLength(6)
-    expect(rendered.children.filter((child) => child.descriptor && child.providerText !== undefined)).toHaveLength(2)
+    expect(rendered.children.filter((child) => child.descriptor && child.providerText !== undefined)).toHaveLength(1)
     expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(14)
 
-    // the provider/model rows render two selects fed by the model catalog
-    const providerRow = rendered.children.find((child) => child.descriptor?.field === 'intentGateProvider')
-    const providerRendered = providerRow.__type({ ...providerRow, t: (key) => key })
-    expect(providerRendered.children[1].children.filter((child) => child?.style?.appearance === 'none')).toHaveLength(2)
+    // the single model picker row: trigger button with the current selection
+    const pickerRow = rendered.children.find((child) => child.descriptor?.field === 'intentGateProvider')
+    const pickerRendered = pickerRow.__type({ ...pickerRow, t: (key) => key })
+    const trigger = pickerRendered.children[1].children[0]
+    expect(trigger.style.appearance).toBe('none')
+    expect(typeof trigger.onClick).toBe('function')
+    expect(trigger.children).toBe('modelEmpty')
 
     // boolean rows render Switch; the enum row renders SegmentedControl
     const booleanRow = rendered.children.find((child) => child.descriptor?.kind === 'boolean')
     const booleanRendered = booleanRow.__type({ descriptor: booleanRow.descriptor, field: { text: 'true', overridden: false }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
-    expect(booleanRendered.children[1].children[2].checked).toBe(true)
-    expect(typeof booleanRendered.children[1].children[2].onChange).toBe('function')
+    // switch on top, no reset line below
+    expect(booleanRendered.children[1].children[0].checked).toBe(true)
+    expect(typeof booleanRendered.children[1].children[0].onChange).toBe('function')
+    expect(booleanRendered.children[1].children[1]).toBe(null)
+    // overridden → the reset line appears BELOW the control (stable layout)
+    const overriddenRendered = booleanRow.__type({ descriptor: booleanRow.descriptor, field: { text: 'false', overridden: true }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
+    expect(overriddenRendered.children[1].children[1].children[0].children).toBe('overridden')
     const enumRow = rendered.children.find((child) => child.descriptor?.kind === 'enum')
     const enumRendered = enumRow.__type({ descriptor: enumRow.descriptor, field: { text: 'llm', overridden: true }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
-    expect(enumRendered.children[1].children[2].value).toBe('llm')
-    expect(enumRendered.children[1].children[2].options).toHaveLength(3)
-    expect(enumRendered.children[1].children[0].children).toBe('overridden')
+    // segmented control on top, reset line below
+    expect(enumRendered.children[1].children[0].value).toBe('llm')
+    expect(enumRendered.children[1].children[0].options).toHaveLength(3)
+    expect(enumRendered.children[1].children[1].children[0].children).toBe('overridden')
   })
 })
