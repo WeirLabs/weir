@@ -352,7 +352,13 @@ window.__ModuleLoader__.load({
 		function OrreryCard(props) {
 			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
 			const { t } = props;
-			props.ensureCatalog();
+			// Post-commit kick: republishing the store during render would
+			// crash the React tree, so the (idempotent) catalog load runs
+			// after this component commits. Hook order stays stable ahead of
+			// the summary early-return.
+			react.useEffect(() => {
+				props.ensureCatalog();
+			}, []);
 			if (props.view === "summary") return t("description");
 			const disabled = !state.writable;
 			const children = GROUPS.flatMap((group, groupIndex) => {
