@@ -39,6 +39,7 @@ describe('orrery settings client half', () => {
         }
         bind(project) {
           this.bound = project
+          this.store = { marker: 'store', set: () => {} }
           return this.store
         }
         field(name) {
@@ -60,7 +61,7 @@ describe('orrery settings client half', () => {
     }
     const surface = loaded[0].factory(requireStub)
 
-    expect(surface.inject).toEqual(['slots', 'locale', 'configForms'])
+    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote'])
     expect(surface.NS).toBe('settings.orrery')
 
     // apply: locale dictionaries, form card, whileServed → slot registration
@@ -84,6 +85,11 @@ describe('orrery settings client half', () => {
         whileServed: (namespaces, register) => {
           whileServedCalls.push({ namespaces, register })
           return () => {}
+        },
+      },
+      remote: {
+        session: {
+          modelCatalog: async () => ({ ok: true, value: { groups: [] } }),
         },
       },
       slots: {
@@ -152,6 +158,7 @@ describe('orrery settings client half', () => {
       useOrrerySettingsCard: (selector) => selector({
         writable: true,
         fields: Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }])),
+        catalog: { status: 'ready', groups: [] },
       }),
       edit: () => {},
       resetField: () => {},
@@ -162,9 +169,15 @@ describe('orrery settings client half', () => {
     // 7 group headers + 22 field rows
     expect(rendered.children).toHaveLength(29)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
-    // 6 choice rows (1 enum + 5 booleans) vs 16 value-field rows
-    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(16)
+    // 6 choice rows (1 enum + 5 booleans) + 2 model-picker rows vs 14 value-field rows
+    expect(rendered.children.filter((child) => child.descriptor && child.providerText === undefined)).toHaveLength(6)
+    expect(rendered.children.filter((child) => child.descriptor && child.providerText !== undefined)).toHaveLength(2)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(14)
+
+    // the provider/model rows render two selects fed by the model catalog
+    const providerRow = rendered.children.find((child) => child.descriptor?.field === 'intentGateProvider')
+    const providerRendered = providerRow.__type({ ...providerRow, t: (key) => key })
+    expect(providerRendered.children[1].children.filter((child) => child?.style?.appearance === 'none')).toHaveLength(2)
 
     // boolean rows render Switch; the enum row renders SegmentedControl
     const booleanRow = rendered.children.find((child) => child.descriptor?.kind === 'boolean')
