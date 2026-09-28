@@ -1,7 +1,10 @@
 import { describe, expect, it } from './helpers.js'
 import { attachReadOnlyBashGuard, checkBashCommand, DEFAULT_ROBASH } from '../src/delegate/robash-guard.js'
+import { DEFAULT_ROBASH_PWSH } from '../src/delegate/robash-guard-pwsh.js'
 
 const LISTS = DEFAULT_ROBASH
+// the guard takes both list sets; the pwsh git gate shares the bash gitAllow
+const BOTH_LISTS = { bash: LISTS, pwsh: { ...DEFAULT_ROBASH_PWSH, gitAllow: LISTS.gitAllow } }
 
 function allow(command) {
   return checkBashCommand(command, LISTS) === undefined
@@ -127,31 +130,42 @@ describe('attachReadOnlyBashGuard', () => {
 
   it('registers one guard on the child scope', () => {
     const { agent, guards } = fakeAgent()
-    attachReadOnlyBashGuard(agent, LISTS)
+    attachReadOnlyBashGuard(agent, BOTH_LISTS)
     expect(guards).toHaveLength(1)
   })
 
   it('passes non-bash tools through', () => {
     const { agent, guards } = fakeAgent()
-    attachReadOnlyBashGuard(agent, LISTS)
+    attachReadOnlyBashGuard(agent, BOTH_LISTS)
     expect(guards[0]({ name: 'read', arguments: {} })).toBe(undefined)
   })
 
-  it('denies pwsh outright', () => {
+  it('dispatches pwsh executions to the pwsh parser with the pwsh lists', () => {
     const { agent, guards } = fakeAgent()
-    attachReadOnlyBashGuard(agent, LISTS)
-    expect(guards[0]({ name: 'pwsh', arguments: { command: 'ls' } })).toMatch(/pwsh is not covered/)
+    attachReadOnlyBashGuard(agent, BOTH_LISTS)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toBe(undefined)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'gci | Select-String foo' } })).toBe(undefined)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'iex "rm x"' } })).toMatch(/'iex' is explicitly denied/)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'ls' } })).toBe(undefined) // alias: pwsh-side ls is Get-ChildItem
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'git status' } })).toBe(undefined) // shared gitAllow gate
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'git push' } })).toMatch(/git subcommand 'push'/)
+  })
+
+  it('denies pwsh calls without a command string', () => {
+    const { agent, guards } = fakeAgent()
+    attachReadOnlyBashGuard(agent, BOTH_LISTS)
+    expect(guards[0]({ name: 'pwsh', arguments: {} })).toMatch(/without a command string/)
   })
 
   it('denies bash calls without a command string', () => {
     const { agent, guards } = fakeAgent()
-    attachReadOnlyBashGuard(agent, LISTS)
+    attachReadOnlyBashGuard(agent, BOTH_LISTS)
     expect(guards[0]({ name: 'bash', arguments: {} })).toMatch(/without a command string/)
   })
 
   it('validates bash commands against the lists', () => {
     const { agent, guards } = fakeAgent()
-    attachReadOnlyBashGuard(agent, LISTS)
+    attachReadOnlyBashGuard(agent, BOTH_LISTS)
     expect(guards[0]({ name: 'bash', arguments: { command: 'git status' } })).toBe(undefined)
     expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/'rm' is explicitly denied/)
   })

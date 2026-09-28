@@ -30,6 +30,8 @@ describe('settings Config schema', () => {
       robashAllow: '["ls","cat"]',
       robashGitAllow: '["status"]',
       robashDeny: '["rm"]',
+      robashPwshAllow: '["Get-Content"]',
+      robashPwshDeny: '["iex"]',
     })
     expect(result.issues).toBe(undefined)
   })
@@ -54,6 +56,9 @@ describe('settings Config schema', () => {
     expect(() => parseRobashLists('robashAllow', 'not-json')).toThrow(/robashAllow/)
     expect(() => parseRobashLists('robashGitAllow', '{"a":1}')).toThrow(/robashGitAllow/)
     expect(() => parseRobashLists('robashDeny', '[1,"rm"]')).toThrow(/robashDeny/)
+    expect(parseRobashLists('robashPwshAllow', '["Get-Content"]')).toEqual(['Get-Content'])
+    expect(() => parseRobashLists('robashPwshAllow', 'not-json')).toThrow(/robashPwshAllow/)
+    expect(() => parseRobashLists('robashPwshDeny', '[1]')).toThrow(/robashPwshDeny/)
   })
 })
 
@@ -139,8 +144,10 @@ describe('settings plugin apply', () => {
       robashAllow: '["ls","cat"]',
       robashGitAllow: '["status","log"]',
       robashDeny: '["rm"]',
+      robashPwshAllow: '["Get-Content","Get-Date"]',
+      robashPwshDeny: '["iex"]',
     })
-    expect(service.get('robash')).toEqual({ enabled: true, allow: ['ls', 'cat'], gitAllow: ['status', 'log'], deny: ['rm'] })
+    expect(service.get('robash')).toEqual({ enabled: true, allow: ['ls', 'cat'], gitAllow: ['status', 'log'], deny: ['rm'], pwshAllow: ['Get-Content', 'Get-Date'], pwshDeny: ['iex'] })
   })
 
   it('delivers a present empty array and drops absent or empty-string list keys', () => {
@@ -149,12 +156,19 @@ describe('settings plugin apply', () => {
     // an empty string reads as absent: the key falls back to the lower layer
     const blank = harness({ robashAllow: '  ' })
     expect(blank.service.get('robash')).toBe(undefined)
+    // the pwsh keys follow the same semantics
+    const pwsh = harness({ robashPwshAllow: '[]' })
+    expect(pwsh.service.get('robash')).toEqual({ pwshAllow: [] })
+    const pwshBlank = harness({ robashPwshDeny: '  ' })
+    expect(pwshBlank.service.get('robash')).toBe(undefined)
   })
 
   it('fails activation loud on malformed robash lists (key named)', () => {
     expect(() => harness({ robashAllow: 'not-json' })).toThrow(/robashAllow/)
     expect(() => harness({ robashGitAllow: '{"a":1}' })).toThrow(/robashGitAllow/)
     expect(() => harness({ robashDeny: '[1]' })).toThrow(/robashDeny/)
+    expect(() => harness({ robashPwshAllow: 'not-json' })).toThrow(/robashPwshAllow/)
+    expect(() => harness({ robashPwshDeny: '{"a":1}' })).toThrow(/robashPwshDeny/)
   })
 
   it('re-parses live robash lists only when the raw string changes', () => {

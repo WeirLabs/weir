@@ -8,7 +8,7 @@ import { parseEscalation } from '../src/delegate/escalate.js'
 import { modelFamily, pickVariant } from '../src/delegate/families.js'
 import { resolveCategory, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
-import { apply } from '../src/delegate/index.js'
+import { apply, readOnlyShellName } from '../src/delegate/index.js'
 
 describe('resolver', () => {
   const snapshot = new Map([
@@ -319,6 +319,15 @@ describe('delegate plugin apply', () => {
     expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/explicitly denied/)
   })
 
+  it('readOnlyShellNote names the platform shell and keeps the guard contract wording', async () => {
+    const { readOnlyShellNote } = await import('../src/delegate/agents.js')
+    expect(readOnlyShellNote('bash')).toContain('`bash`')
+    expect(readOnlyShellNote('bash')).toContain('guarded read-only')
+    expect(readOnlyShellNote('pwsh')).toContain('`pwsh`')
+    expect(readOnlyShellNote('pwsh')).toContain('guarded read-only')
+    expect(readOnlyShellNote('pwsh')).not.toContain('`bash`')
+  })
+
   it('non-read-only targets get no guard', async () => {
     const { tool, guards } = applyHarness()
     await tool.execute({ category: 'quick', prompt: 'TASK: go' }, execStub())
@@ -358,6 +367,41 @@ describe('delegate plugin apply', () => {
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
   })
 
+  it('readOnlyShellName follows the platform (pwsh on win32, bash elsewhere)', () => {
+    expect(readOnlyShellName('win32')).toBe('pwsh')
+    expect(readOnlyShellName('darwin')).toBe('bash')
+    expect(readOnlyShellName('linux')).toBe('bash')
+  })
+
+  it('the live guard dispatches pwsh executions to the pwsh parser', async () => {
+    const { tool, guards } = applyHarness()
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards).toHaveLength(1)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content README.md' } })).toBe(undefined)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'iex "rm x"' } })).toMatch(/'iex' is explicitly denied/)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'git status' } })).toBe(undefined)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'git push' } })).toMatch(/git subcommand 'push'/)
+  })
+
+  it('settings override pwshAllow: [] clears the pwsh allow list (fail-closed), bash lists untouched', async () => {
+    const { tool, guards } = applyHarness({}, { robash: { pwshAllow: [] } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards).toHaveLength(1)
+    // the present empty array is authoritative: even a default cmdlet misses
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toMatch(/not on the read-only allow list/)
+    // the bash side keeps the module defaults
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+    // absent pwshDeny still falls back to the pwsh defaults
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'iex x' } })).toMatch(/explicitly denied/)
+  })
+
+  it('config.readOnlyPwsh merges over the pwsh defaults', async () => {
+    const { tool, guards } = applyHarness({ readOnlyPwsh: { allow: ['Get-Date'] } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Date' } })).toBe(undefined)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toMatch(/not on the read-only allow list/)
+  })
+
   it('a failing guard attach disposes the child and fails the call', async () => {
     const disposed = []
     const deps = {
@@ -376,7 +420,7 @@ describe('delegate plugin apply', () => {
         },
       },
       jobs: undefined,
-      robash: { enabled: true, lists: { allow: ['ls'], gitAllow: [], deny: [] } },
+      robash: { enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: ['Get-Content'], gitAllow: [], deny: [] } } },
     }
     const guardedTool = createDelegateTool(deps)
     await expect(async () => guardedTool.execute({ agent: 'explore', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)

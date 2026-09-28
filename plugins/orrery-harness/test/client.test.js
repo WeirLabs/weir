@@ -179,7 +179,7 @@ describe('orrery settings client half', () => {
     expect(typeof injected.discard).toBe('function')
 
     // the card component renders a summary for the summary view and a form otherwise
-    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','robashAllow','robashGitAllow','robashDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
+    const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
     expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), ensureCatalog: () => {} })).toBe('description')
     const rendered = component({
       view: 'form',
@@ -207,8 +207,8 @@ describe('orrery settings client half', () => {
 
     expect(rendered.__type).toBeTruthy()
     // 7 group headers + 6 choice rows + 1 model picker + 17 value-field rows
-    // + 1 LSP manager row + 3 robash list-editor rows
-    expect(rendered.children).toHaveLength(35)
+    // + 1 LSP manager row + 5 robash list-editor rows
+    expect(rendered.children).toHaveLength(37)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
@@ -222,13 +222,15 @@ describe('orrery settings client half', () => {
     expect(chainsRow).toBeTruthy()
     expect(typeof chainsRow.getSession).toBe('function')
 
-    // the three robash whitelist rows render the list editor (GROUPS.robash)
-    const robashRows = rendered.children.filter((child) => child.field === 'robashAllow' || child.field === 'robashGitAllow' || child.field === 'robashDeny')
-    expect(robashRows).toHaveLength(3)
-    expect(robashRows.map((row) => row.key)).toEqual(['robashAllow', 'robashGitAllow', 'robashDeny'])
+    // the five robash whitelist rows render the list editor (GROUPS.robash):
+    // bash allow/gitAllow/deny + pwsh allow/deny, reusing RobashListEditorField
+    const ROBASH_LIST_FIELDS = ['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny']
+    const robashRows = rendered.children.filter((child) => ROBASH_LIST_FIELDS.includes(child.field))
+    expect(robashRows).toHaveLength(5)
+    expect(robashRows.map((row) => row.key)).toEqual(ROBASH_LIST_FIELDS)
     expect(robashRows.every((row) => typeof row.__type === 'function' && typeof row.edit === 'function' && typeof row.onReset === 'function')).toBe(true)
     // and the form model tracks them as flat text fields
-    expect(specsSeen.filter((spec) => spec.field === 'robashAllow' || spec.field === 'robashGitAllow' || spec.field === 'robashDeny')).toHaveLength(3)
+    expect(specsSeen.filter((spec) => ROBASH_LIST_FIELDS.includes(spec.field))).toHaveLength(5)
 
     // pure robash list helpers: round-trip, invalid → null, empty ↔ "[]"
     const { jsonToStringList, stringListToJson } = surface.robashEditor
