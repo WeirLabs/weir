@@ -18,4 +18,5 @@
 | 拉取式后台通知 | [background-notification.md](background-notification.md) | DSH 内建 job 道 + 预设配置 |
 | 上下文压力守卫 | [context-pressure-guard.md](context-pressure-guard.md) | `orrery-harness/context-guard` |
 | 锚点编辑 | [hashline-edit.md](hashline-edit.md) | `orrery-harness/hashline-edit` |
+| hash_edit diff 面板 | [hash-edit-diff-view.md](hash-edit-diff-view.md) | `orrery-harness/hashline-edit` + `lib/client.js` |
 | LSP 语义工具 | [lsp-integration.md](lsp-integration.md) | `orrery-harness/lsp` |

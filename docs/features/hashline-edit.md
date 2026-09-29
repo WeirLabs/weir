@@ -11,7 +11,7 @@
 - 读取文件 → 每行前缀 `N#XX|`；同一文件读两次锚点完全相同（确定性）。
 - `hash_edit` 支持 `replace`（锚点区间）、`append`（锚点之后）、`prepend`（锚点之前），一次调用可携带多个操作，自底向上应用（同一调用内的行号都基于同一快照）。
 - 每个操作的内容由 `text` 给出：**单个字符串**，行之间用两字符转义 `\n`（如 `"text": "a\nb"`）。空串有特殊语义：`replace` 下删除锚点区间，`append`/`prepend` 下为无操作。（原 `lines` 字符串数组通道已移除，属 breaking 变更。）
-- 成功 → 返回 unified diff，改了什么一目了然。
+- 成功 → 返回 unified diff，改了什么一目了然；同时持久化结构化 diff 元数据（`meta.diffs`），会话中以 diff 面板呈现（见 [hash-edit-diff-view.md](hash-edit-diff-view.md)）。
 - 任一锚点失效 → 整体拒绝并给出 `>>> mismatch` 报告（点名失效锚点），**文件零写入**。
 - 与 stock `edit` 的关系：**预设默认隐藏 stock `edit`**，`hash_edit` 是唯一编辑工具；配置 `hideStockEdit: false` 可回归 v0.1.0 的共存模式（此时 doctrine 引导优先用 `hash_edit`）。其他预设不受影响。
 
@@ -47,5 +47,5 @@ volatile config，在线编辑即刻生效。
 
 ## 测试
 
-- 单元测试：`test/` 覆盖锚点确定性、三类操作、多操作原子性、mismatch 报告、diff 输出、`text` 切分规则（尾部空元素/内部空行/空串）、空串删除的字节断言、缺失/错类型 `text` 先于锚点校验的拒绝顺序与自纠措辞、schema 单通道形状（`required: ['op','pos','text']`、无 `lines`、无 `oneOf`）、工具描述内容锁定（`\n` 示例 / invalid-JSON 整轮警告 / 空串删除说明 / mismatch 段不变 / 无数组通道 / 长度上限）、`hideStockEdit` 逐 agent 机制（逐 agent 限制 / 存在性检查的 agent 视角 / 无 stock edit 豁免）。`test/sandbox.test.js` 锁定升权词汇文本、严格更宽表、参数配对、审批四结局、缺服务/缺 agent；`test/hashline-edit.test.js` 覆盖 schema 门控两态、升权成功路径的 writeText 策略断言、malformed 前置失败、拒绝标记与提示、非拒绝错误透传。
-- 集成测试：`hashline` 场景——读取结果带锚点到达模型、`hash_edit` 成功改写目标行、经 `text` 通道的大段 append 字节级落盘、模型工具目录中 stock `edit` 缺席且 `hash_edit` 在场、schema 广告升权字段、真实编辑工作区外文件被拒且错误携带共享标记与升权提示。测试装置镜像了沙箱语义（部署回退根故意不含测试工作区、工作区置于 /tmp 之外），无 per-call policy 的写入会像 desktop 实况一样被拒（S23 回归）。
+- 单元测试：`test/` 覆盖锚点确定性、三类操作、多操作原子性、mismatch 报告、diff 输出（含 `diffFragments` 结构化 hunk 与 `presentationMeta` 持久化/拒绝无元数据）、`text` 切分规则（尾部空元素/内部空行/空串）、空串删除的字节断言、缺失/错类型 `text` 先于锚点校验的拒绝顺序与自纠措辞、schema 单通道形状（`required: ['op','pos','text']`、无 `lines`、无 `oneOf`）、工具描述内容锁定（`\n` 示例 / invalid-JSON 整轮警告 / 空串删除说明 / mismatch 段不变 / 无数组通道 / 长度上限）、`hideStockEdit` 逐 agent 机制（逐 agent 限制 / 存在性检查的 agent 视角 / 无 stock edit 豁免）。`test/sandbox.test.js` 锁定升权词汇文本、严格更宽表、参数配对、审批四结局、缺服务/缺 agent；`test/hashline-edit.test.js` 覆盖 schema 门控两态、升权成功路径的 writeText 策略断言、malformed 前置失败、拒绝标记与提示、非拒绝错误透传。
+- 集成测试：`hashline` 场景——读取结果带锚点到达模型、`hash_edit` 成功改写目标行、经 `text` 通道的大段 append 字节级落盘、模型工具目录中 stock `edit` 缺席且 `hash_edit` 在场、schema 广告升权字段、成功调用持久化 `meta.diffs` 片段而失败调用无 diff 元数据、真实编辑工作区外文件被拒且错误携带共享标记与升权提示。测试装置镜像了沙箱语义（部署回退根故意不含测试工作区、工作区置于 /tmp 之外），无 per-call policy 的写入会像 desktop 实况一样被拒（S23 回归）。
