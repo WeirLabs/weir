@@ -5,6 +5,12 @@
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+
+- **只读白名单改为"产品默认 + 用户追加"（BREAKING）**：此前五张白名单表既由模块常量承载、又在 `cordis.patch.yml` 的 `orrery-settings` 行 `config:` 里逐字镜像，而 DSH 组合 patch 层是**整体替换 config 而非深合并**（`applyEntryPatches` 执行 `target[key] = value`）——于是**用户只要在设置页改过任一张表**，其完整列表就被写进 profile 行并冻结成快照，此后 bundle 更新追加的默认项**永远到不了那个用户**（`Start-Sleep` 缺失事故正是这条：仓库基线有、活会话没有、无任何信号）。现在默认值改由**独立的 `whitelist-defaults.json`** 交付：该文件由插件在**运行时按自身位置读取**，不经任何配置层，因此任何 profile 行都替换不掉它——**只改这一个文件，产品更新就能抵达全部安装**。合并语义随之由"在场即权威"改为**追加**：设置键在场且非空 → 条目**追加**到产品默认项之后（去重、保序）；键缺席或为 `[]` → 不追加。**任何配置都无法移除默认项**，因此"显式清空 = 全不放行"不再可用（该能力退役：同一个"清空"动作在 allow 侧是收紧、在 deny 侧却是全放行，语义本不自洽）；deny 侧的收紧能力完整保留。内置常量降级为**按表兜底**：默认值文件缺失/不可读或某表畸形时，该表回退到常量并记一行英文告警，其余表仍取自文件，**绝不因坏文件放宽守卫、也不拒绝启动**。高级用户可经 `robashDefaultsPath` 指向自己的副本以**整体接管**默认值，改完递增 `robashDefaultsReload` 即**显式重读**（每进程只读一次并缓存；两个键均为配置面键，刻意不出现在设置页）。`cordis.patch.yml` 中的五个白名单键已移除，该不变式（行内不得出现白名单键）由反转后的镜像测试守护并做过变异验证；旧的启动期基线漂移报告（`src/shared/whitelist-drift.js`）随之退役——它要报告的那类遮蔽已不可能发生。
+
 ## [0.4.0] - 2026-09-30
 ### Added
 - **只读 bash 白名单三表设置页可编辑**：`robashAllow` / `robashGitAllow` / `robashDeny` 三个 volatile 设置键（JSON 字符串数组）接管守卫的命令白名单 / git 子命令白名单 / deny 列表，设置页提供结构化行编辑面板（`RobashListEditorField`，逐行增删改、保存程序化合成 JSON），不再手写 JSON。每个键独立解析：未设置 → 回退下层（行 config → 模块默认）；已设置（含空数组）→ 权威生效——**显式清空 = 全不放行（fail-closed 更严），绝不回退默认**；坏 JSON 设置服务激活即败。命名约定 `robash<Shell>*` 为后续 pwsh 白名单键预留扩展位。

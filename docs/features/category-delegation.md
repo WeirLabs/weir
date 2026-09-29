@@ -27,11 +27,13 @@
 | `readOnlyBash.allow` | 初版白名单 | 命令级只读白名单（basename 匹配），可迭代补全。设置页键：`robashAllow`（JSON 字符串数组） |
 | `readOnlyBash.gitAllow` | 10 个子命令 | git 只读子命令白名单（`status log show diff blame grep ls-files ls-tree rev-parse describe shortlog`）。设置页键：`robashGitAllow` |
 | `readOnlyBash.deny` | 显式 deny 列表 | 优先于 allow 的整词 deny（`rm`、`sudo`、解释器、包管理器等）。设置页键：`robashDeny` |
-| 白名单三表语义 | 缺席回退 / 在场权威 | 每个列表键独立解析：未设置 → 回退下层（行 config → 模块默认）；已设置（含 `[]`）→ 权威生效，**空数组 = 显式清空（fail-closed 更严），不回退默认**；坏 JSON 设置服务激活即败。设置页提供结构化行编辑（`RobashListEditorField`），无需手写 JSON |
+| 白名单三表语义 | **产品默认 + 用户追加** | 每个列表键独立解析：产品默认项**无条件在场**；键在场且非空 → 其条目**追加**到默认项之后（去重、保序）；键缺席或为 `[]` → 不追加。**任何配置都无法移除默认项**，因此不再存在"空数组 = 显式清空"（该能力已退役）；坏 JSON 设置服务激活即败。设置页提供结构化行编辑（`RobashListEditorField`），无需手写 JSON，面板只呈现**你要追加的项** |
 | `readOnlyPwsh.allow` / `readOnlyPwsh.deny` | 初版 pwsh 白名单 | pwsh 侧只读 cmdlet 白名单与逃逸向量 deny（大小写不敏感、deny 优先、内建别名表展开后查表）。设置页键：`robashPwshAllow` / `robashPwshDeny`（JSON 字符串数组，语义同上表）；git 子命令门控共享 `robashGitAllow` |
 | 平台等待原语 | `sleep` / `Start-Sleep` | 两侧都放行：POSIX 侧 `sleep` 在 bash 白名单里，win32 侧 `Start-Sleep` 在 pwsh 白名单里，且 `sleep` 作为 pwsh 内建 ReadOnly 别名（→ `Start-Sleep`）登记在别名表。两侧必须同时在场，否则同一个“等待”操作会 macOS 放行、Windows 拒绝 |
-| 名单镜像不变式 | 行 config 与模块默认逐项一致 | `readOnlyPwsh.allow/deny` 与 `readOnlyBash.*` 在 `cordis.patch.yml` 的 `orrery-settings` 行里有 1:1 镜像，那是**预设的组合基线**；设置层最后合并且在场即权威，因此只改模块默认值在预设里是**空操作**。该不变式由 `test/robash-whitelist-parity.test.js` 直接读 patch 文件守护（此前仅靠注释，已真实漂移过一次） |
-| 基线漂移检测 | 启动报一次 | 预设基线在运行期**不可见**（patch 层整体替换、非深合并），因此 `settings` 启动时从 bundle 自己的 `cordis.patch.yml` 重读基线逐表比对，缺项则 `ctx.logger.warn` 一行英文警告（含补救动作）。**只报告不修改**；未声明白名单 / 显式清空 / 用户自行增项均不报；patch 文件不可读则静默降级 |
+| 名单来源不变式 | 行 config **不得**携带白名单表 | 五张表**不再**出现在 `cordis.patch.yml` 的 `orrery-settings` 行里——patch 层的 `config` 是**整体替换**而非深合并，任何住在行里的默认值都可能被某个 profile 行整块丢弃（这正是"改过列表的用户永远收不到后续默认项"的成因）。该不变式由 `test/robash-whitelist-parity.test.js` 守护：行内出现任一白名单键即失败（已做变异验证）。`robashEnabled` 这类纯开关仍留在行里 |
+| 默认值来源文件 | `whitelist-defaults.json`（bundle 根） | 五张表的**产品默认值**由插件在**运行时自己读取**该文件（`new URL('../../whitelist-defaults.json', import.meta.url)`），不经任何配置层，因此 profile 行替换不掉它。内置常量 `DEFAULT_ROBASH`/`DEFAULT_ROBASH_PWSH` 降级为**按表兜底**：文件缺失/不可读、或某表畸形/非字符串数组 → 该表回退到常量并记一行英文告警，其余表仍取自文件，**绝不因坏文件放宽守卫、也不拒绝启动**。该文件默认不向用户开放、不在设置页出现 |
+| 默认值接管与重读 | `robashDefaultsPath` / `robashDefaultsReload` | 高级用户可把路径指向自己的副本以**整体接管**默认值（此时该文件是其默认值的完整来源，缺项即不生效）；改完文件后递增 `robashDefaultsReload` 即**显式重读**（每进程只读一次并缓存，这是唯一重读入口，磁盘 IO 不进入守卫的逐命令判定路径）。两个键均为配置面键，刻意**不**出现在设置页 |
+| 旧的基线漂移报告 | 已退役 | `src/shared/whitelist-drift.js` 及其启动期告警随本变更移除：它的唯一职责是报告"行 config 遮蔽基线"，而默认值改由模块自己读文件交付后该类漂移在结构上不可能发生。其"运行时读随包文件"的范式被 `src/shared/whitelist-defaults.js` 继承 |
 | `supervision.maxRetries` | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用） |
 | `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
 | `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |
