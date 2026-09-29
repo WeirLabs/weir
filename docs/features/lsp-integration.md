@@ -24,6 +24,8 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 - 语言服务器二进制缺失时，工具返回含安装指引的可读错误（如 `npm install -g typescript-language-server typescript`），不崩溃、不毁回合。
 - **PATH 扩展解析与用户前缀**：GUI 进程 PATH 仅含系统目录（LaunchServices 启动），nvm/Homebrew/cargo/go 的 bin 不在其中；服务器与安装器解析在服务失败后自动扫描常见安装目录（nvm 优先），子进程注入扩展 PATH（`env node` 脚本可用），npm 安装统一落用户可写前缀 `~/.npm-global`；安装完成后即刻可被识别。
 - 服务器空闲 10 分钟自动关停（可配）；下次调用懒重启。
+- **握手失败自动恢复**：懒启动的 initialize 握手失败（如工作区 TypeScript 安装缺 tsserver）时，本次调用报握手错误、进程被终止、记录被丢弃——下一次调用起全新服务器重试，不会被「半死」记录卡住。
+- **跨文件覆盖面 = 本会话已同步文档集**（tsserver 实测）：rename/references 的跨文件结果只覆盖本会话经任一 lsp 工具同步（打开）过的文件；对目标外文件先跑一次 `lsp_diagnostics`（或任一 lsp 工具）再 rename，覆盖面才完整。编辑器态客户端天然如此（文件随访问打开），本集成按会话懒同步。
 
 ## 配置
 
