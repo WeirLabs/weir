@@ -34,16 +34,114 @@ export function uriToPath(uri) {
 }
 
 /**
- * npm's generated `.cmd` shim: the last interpreter invocation is
- * `"%_prog%" "%dp0%\<target>" %*` where `%dp0%` is the shim's own directory.
+ * An interpreter invocation inside a generated `.cmd` shim. Three families
+ * ship: npm's older `"%_prog%" "%dp0%\…"`, npm's own `"%NODE_EXE%"
+ * "%NPM_CLI_JS%"`, and pnpm/corepack's `"%~dp0\node.exe" "%~dp0\…"`. npm
+ * also writes the LITERAL two characters `\"` around its tokens, which is why
+ * quote-based matching silently missed that whole family and dropped it to the
+ * shell fallback. So the shape is found structurally instead: the last line that
+ * forwards to a `.js`/`.mjs`/`.cjs` script, tokenized on whitespace with quote
+ * characters stripped.
  */
-const NPM_SHIM_INVOCATION = /"(%_prog%|[^"]*)"\s+"?(%dp0%\\[^"]+?|node_modules\\[^"]+?)"?\s+%\*/gi
+const SHIM_FORWARD = /%\*\s*$/
 
-/** Resolve a shim path fragment to a real path (relative ones sit beside the shim). */
+/**
+ * A shim is only safe to hand to a shell if NEITHER the shim path NOR any
+ * argument can be re-parsed by cmd. `cmd.exe /c` re-reads its command line, and
+ * more than two quotes (a spaced path plus a spaced argument) or a metacharacter
+ * inside the quoted text makes it strip the quotes — which is how
+ * `C:\Program Files\nodejs\npm.cmd --prefix "C:\Users\John Smith\…"` dies with
+ * `'C:\Program' is not recognized`. So the shell path fails closed instead.
+ */
+const CMD_UNSAFE = /[\s&<>()@^|"%]/
+
+/**
+ * Expand the shim's own directory spellings (`%~dp0`, `%dp0%`) to that
+ * directory. cmd's `%~dp0` carries a trailing separator and `%dp0%` does not,
+ * so the separator is taken from what FOLLOWS the token — testing the fragment
+ * as a whole gets this wrong whenever a later backslash appears
+ * (`%~dp0\node_modules\…`).
+ */
+function expandDp0(fragment, shimDirectory) {
+  // two spellings, matched explicitly: `%~?dp0%?` would read `%dp0%` as `%d` + `p0%`
+  return fragment.replace(/%~dp0([\\/]?)|%dp0%([\\/]?)/gi, (_whole, tildeSep, plainSep) => {
+    const separator = tildeSep || plainSep
+    return separator ? `${shimDirectory}${separator}` : shimDirectory
+  })
+}
+
+/** Resolve a shim path fragment against the shim's directory (absolute ones pass through). */
 function resolveShimPath(fragment, shimDirectory, join) {
-  const raw = fragment.replace(/%dp0%\\?/gi, '')
-  if (/^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith('/')) return raw
-  return join(shimDirectory, raw)
+  const raw = expandDp0(fragment, shimDirectory)
+  if (/^[A-Za-z]:[\\/]/.test(raw) || /^[\\/]{2}/.test(raw)) return raw
+  return join(shimDirectory, raw.replace(/^[\\/]+/, ''))
+}
+
+/**
+ * The best value a shim assigns to a variable. A generated shim assigns the same
+ * name more than once (npm does: `NPM_CLI_JS` is set to its own path, to a
+ * `FOR`-loop artifact `%%F\…`, and back through a variable), and only some of
+ * those are resolvable at LAUNCH. So candidates are ranked: a literal path
+ * beats a chain through another variable, and a `%%`-prefixed value — an
+ * unexpanded FOR-loop variable — is never usable.
+ */
+function bestShimValue(name, text) {
+  const pattern = new RegExp(`SET\\s+"?%?${name}%?=([^"\\r\\n]+)`, 'gi')
+  const candidates = [...text.matchAll(pattern)]
+    .map((match) => match[1].trim())
+    .filter((value) => value.length > 0 && !value.includes('%%'))
+  if (candidates.length === 0) return undefined
+  const literal = candidates.find((value) => value.includes('%~dp0') || /^[A-Za-z]:[\\/]/.test(value))
+  return literal ?? candidates[0]
+}
+
+/**
+ * Expand the `%VAR%` / `%~dp0` spellings the shim itself defines. npm's own
+ * shim chains them (`NPM_CLI_JS=%NPM_PREFIX_NPM_CLI_JS%`, which is built from
+ * `%~dp0`), so the substitution iterates to a fixed point; an unresolvable token
+ * stays literal and the caller treats the shim as not understood.
+ */
+function expandShimToken(token, text, shimDirectory, join) {
+  let out = token
+  for (let pass = 0; pass < 6; pass++) {
+    const before = out
+    // A shim directory arrives either way round: literal in the invocation
+    // (`%~dp0\node_modules\…`) or via a variable the substitution just pulled in
+    // (`NPM_CLI_JS=%~dp0\node_modules\…`), so both passes run per iteration.
+    out = expandDp0(out, shimDirectory).replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (whole, name) => {
+      const value = bestShimValue(name, text)
+      return value ?? whole
+    })
+    if (out === before) break
+  }
+  return out
+}
+
+/**
+ * The last `%*` forward in a shim, as `{ program, target }`. Only quote escapes
+ * are dropped: `\"` is npm's literal spelling, while a lone backslash is a path
+ * separator that must survive for the variable pass that follows.
+ *
+ * The target is either a literal script path or a `%VAR%` whose NAME ends in the
+ * script extension (`"%NPM_CLI_JS%"` — npm never spells the file out), so both
+ * shapes are accepted and the variable pass resolves the latter.
+ */
+function lastShimInvocation(text) {
+  if (typeof text !== 'string') return null
+  const lines = text.split(/\r?\n/).filter((line) => SHIM_FORWARD.test(line))
+  const line = lines.at(-1)
+  if (!line) return null
+  const tokens = line.replace(/["\s]+/g, ' ').trim().split(' ').filter(Boolean)
+  const isScript = (token) => /\.(?:mjs|cjs|js)"?$/i.test(token) || /^%[A-Za-z_][A-Za-z0-9_]*%$/.test(token)
+  const targetIndex = tokens.findLastIndex(isScript)
+  if (targetIndex < 1) return null
+  const strip = (token) => token.replace(/^["\\]+|["\\]+$/g, '')
+  return { program: strip(tokens[targetIndex - 1]), target: strip(tokens[targetIndex]) }
+}
+
+/** True when a value carries nothing cmd would re-parse. */
+function shellSafe(value) {
+  return !CMD_UNSAFE.test(value)
 }
 
 /**
@@ -54,14 +152,19 @@ function resolveShimPath(fragment, shimDirectory, join) {
  * friends install need an interpreter in front:
  *
  * - `.cmd` / `.bat` shims are batch files — Node's spawn rejects them outright
- *   (EINVAL). They can be run by `cmd.exe /c`, but that re-parses the command
- *   line, so a shim under a path with a space (every `%APPDATA%\npm` install in
- *   a profile with a space, `C:\Program Files\nodejs\npm.cmd`, …) or an argument
- *   carrying cmd metacharacters is a startup failure or an injection. So the npm
- *   shim is READ instead: it ends in `"%_prog%" "%dp0%\node_modules\…\cli.mjs" %*`,
- *   which is unwrapped to `node <cli> <args>` — spawnable, space-safe, no shell.
- *   A malformed or unreadable shim falls back to `cmd.exe /d /c` (NOT `/s`,
- *   which disables the quote preservation that keeps such paths working).
+ *   (EINVAL). `cmd.exe /c` can run one, but it RE-PARSES its command line, and
+ *   cmd's quote preservation only survives the simple case: a spaced path plus
+ *   a spaced argument (four quotes) or a metacharacter inside the quoted text
+ *   makes it strip the quotes, reproducing `'C:\Program' is not recognized` for
+ *   `C:\Program Files\nodejs\npm.cmd --prefix "C:\Users\John Smith\…"`, and
+ *   letting an `&` in an argument be read as a command separator. So the shim is
+ *   READ instead: its last interpreter invocation is unwrapped to
+ *   `[interpreter, target, ...args]`, which spawns directly and is inert to
+ *   spaces and metacharacters.
+ * - A shim that cannot be unwrapped falls back to `cmd.exe /d /c` — never `/s`
+ *   — and only when the resolved paths and arguments are provably free of
+ *   spaces, quotes and cmd metacharacters. Otherwise it refuses loudly: failing
+ *   closed beats silently mangling a path or executing an injected command.
  * - `.ps1` shims run through powershell.exe with the execution policy bypassed
  *   (the preset ships PowerShell for exactly this host).
  * Everything else (`.exe`, `.com`) launches directly.
@@ -71,11 +174,12 @@ function resolveShimPath(fragment, shimDirectory, join) {
  * @param command - resolved absolute executable path
  * @param args - server arguments from the registry definition
  * @param platform - target platform (defaults to the host)
- * @param options - `{ binaryPath, readTextFile, join }` seams for tests
+ * @param options - `{ binaryPath, readTextFile, existsFile, join }` seams for tests
  */
 export function spawnArgv(command, args = [], platform = process.platform, options = {}) {
   const binaryPath = options.binaryPath ?? process.execPath
   const join = options.join ?? nodeJoin
+  const existsFile = options.existsFile ?? existsSync
   if (platform !== 'win32') return [command, ...args]
   if (/\.ps1$/i.test(command)) {
     return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', command, ...args]
@@ -88,34 +192,39 @@ export function spawnArgv(command, args = [], platform = process.platform, optio
       text = undefined
     }
     const shimDirectory = dirname(command)
-    // the LAST invocation is the real one (`endLocal & goto #_undefined_# …`); the
-    // earlier lines are the shim's own plumbing (dp0 lookup, PATHEXT fix-ups)
-    const invocations = text === undefined ? [] : [...text.matchAll(NPM_SHIM_INVOCATION)]
-    const last = invocations.at(-1)
-    if (last) {
-      const program = last[1]
-      const target = resolveShimPath(last[2], shimDirectory, join)
-      // The shim picks its interpreter at RUN time: `%dp0%\node.exe` when npm
-      // shipped one beside the shim, else the bare `node` the shim resolves
-      // through cmd's PATH — which the child environment here does not carry
-      // (it declares only our augmented PATH). So the interpreter is chosen the
-      // same way, with the running Node as the guaranteed last resort: it is
-      // finally just "run this .js file with node".
-      const besideShim = program === '%_prog%' || program.toLowerCase() === 'node'
-      let interpreter
-      if (besideShim) {
+    // the LAST line that forwards to a script is the real invocation
+    // (`endLocal & goto #_undefined_# …`); earlier lines are shim plumbing
+    const invocation = lastShimInvocation(text)
+    if (invocation) {
+      const program = expandShimToken(invocation.program, text, shimDirectory, join)
+      // the expansion already produced an absolute path (`%~dp0` is expanded to
+      // the shim directory), so only stray separators are collapsed here
+      const target = expandShimToken(invocation.target, text, shimDirectory, join).replace(/([^:\\/])[\\/]{2,}/g, '$1\\')
+      // The shim picks its interpreter at run time: one beside the shim when npm
+      // shipped it, else the bare `node` it resolves through cmd's PATH — which
+      // the declared child environment does not carry. So the running Node (or a
+      // local one) stands in: it is finally just "run this script with node".
+      const programIsNode = /^(?:node|node\.exe)$/i.test(program) || /node\.exe$/i.test(program)
+      let interpreter = null
+      if (programIsNode) {
         const localNode = join(shimDirectory, 'node.exe')
-        const localNodeExists = options.existsFile ? options.existsFile(localNode) : existsSync(localNode)
-        interpreter = localNodeExists ? localNode : binaryPath
+        interpreter = existsFile(localNode) ? localNode : binaryPath
       } else {
-        interpreter = resolveShimPath(program, shimDirectory, join)
+        const resolved = resolveShimPath(program, shimDirectory, join)
+        interpreter = existsFile(resolved) ? resolved : null
       }
-      const targetExists = options.existsFile ? options.existsFile(target) : existsSync(target)
-      if (targetExists) return [interpreter, target, ...args]
+      // an unresolvable token means the shim shape is not one we understand
+      const usable = interpreter && existsFile(target)
+      if (usable) return [interpreter, target, ...args]
     }
-    // Unknown shim shape: let cmd run it. `/d` skips AutoRun, `/c` runs and exits;
-    // no `/s`, so cmd keeps the quotes libuv adds around a spaced path.
-    return ['cmd.exe', '/d', '/c', command, ...args]
+    if (shellSafe(command) && args.every(shellSafe)) {
+      // Unknown shim, but nothing here can be re-parsed: let cmd run it.
+      return ['cmd.exe', '/d', '/c', command, ...args]
+    }
+    throw new Error(
+      `lsp: cannot start '${command}' on Windows — its .cmd shim could not be unwrapped and the path or an argument contains characters cmd.exe would re-parse. ` +
+        `Install the server as a plain .exe, or point lspServers at its node entry point.`,
+    )
   }
   return [command, ...args]
 }
