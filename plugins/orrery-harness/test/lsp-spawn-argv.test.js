@@ -25,6 +25,32 @@ const olderNpmShim = (target) => [
   '',
 ].join('\r\n')
 
+/**
+ * npm's bin linker emits an EXTENSIONLESS target whenever the package's bin
+ * script is spelled that way — `…\node_modules\typescript\bin\tsc`,
+ * `…\vscode-langservers-extracted\bin\vscode-json-language-server`. The target
+ * is the token right before `%*`, not a token that looks like a script file.
+ */
+const extensionlessShim = (target) => [
+  '@ECHO off',
+  'GOTO start',
+  ':find_dp0',
+  'SET dp0=%~dp0',
+  'EXIT /b',
+  ':start',
+  'SETLOCAL',
+  'CALL :find_dp0',
+  '',
+  'IF EXIST "%dp0%\\node.exe" (',
+  '  SET "_prog=%dp0%\\node.exe"',
+  ') ELSE (',
+  '  SET "_prog=node"',
+  ')',
+  '',
+  `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${target}" %*`,
+  '',
+].join('\r\n')
+
 const npmOwnShim = [
   ':: Created by npm, please do not edit manually.',
   '@ECHO OFF',
@@ -102,6 +128,21 @@ describe('lsp server launch shape', () => {
     ])
   })
 
+  it('unwraps a shim whose target has NO extension', () => {
+    // `~/.npm-global/vscode-json-language-server.cmd` and `tsc.cmd` on the
+    // reviewed machine are exactly this shape; an extension-based target test
+    // classified them as opaque and dropped them to the shell
+    const shim = 'C:\\Users\\tester\\.npm-global\\vscode-json-language-server.cmd'
+    const argv = spawnArgv(shim, ['--stdio'], 'win32', {
+      ...seams(extensionlessShim('node_modules\\vscode-langservers-extracted\\bin\\vscode-json-language-server')),
+    })
+    expect(argv).toEqual([
+      'C:\\node\\node.exe',
+      'C:\\Users\\tester\\.npm-global\\node_modules\\vscode-langservers-extracted\\bin\\vscode-json-language-server',
+      '--stdio',
+    ])
+  })
+
   it('survives a shim path containing a space', () => {
     const shim = 'C:\\Program Files\\nodejs\\typescript-language-server.cmd'
     const argv = spawnArgv(shim, ['--stdio'], 'win32', {
@@ -114,13 +155,14 @@ describe('lsp server launch shape', () => {
 
   it('falls back to cmd without /s only when nothing can be re-parsed', () => {
     const shim = 'C:\\tools\\opaque.cmd'
-    const argv = spawnArgv(shim, ['--stdio'], 'win32', { ...seams('@echo off\r\nsome opaque thing %*\r\n') })
+    // a shim with no interpreter forward at all: the shape cannot be unwrapped
+    const argv = spawnArgv(shim, ['--stdio'], 'win32', { ...seams('@echo off\r\nREM nothing to forward\r\n') })
     expect(argv).toEqual(['cmd.exe', '/d', '/c', shim, '--stdio'])
     expect(argv).not.toContain('/s')
   })
 
   it('refuses an opaque shim whose path or argument cmd would re-parse', () => {
-    const opaque = '@echo off\r\nsome opaque thing %*\r\n'
+    const opaque = '@echo off\r\nREM nothing to forward\r\n'
     // spaced shim path: cmd strips the quotes libuv adds (this is the shape that
     // failed with 'C:\Program' is not recognized)
     expect(() => spawnArgv('C:\\Program Files\\nodejs\\opaque.cmd', ['--stdio'], 'win32', { ...seams(opaque) }))
