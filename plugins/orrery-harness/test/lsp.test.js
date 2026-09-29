@@ -5,6 +5,7 @@ import { apply, foldLspState, LSP_PROJECTION_KEY } from '../src/lsp/index.js'
 /** Scripted fake LSP server over PassThrough pipes (auto-handshakes). */
 function fakeSubprocess(options = {}) {
   const spawns = []
+  let spawnCount = 0
   const subprocess = {
     spawns,
     resolveExecutable: async (command) => (command === 'missing-server' ? undefined : `/resolved/${command}`),
@@ -24,7 +25,12 @@ function fakeSubprocess(options = {}) {
         },
         spec,
       }
-      // auto-answer initialize and shutdown
+      // auto-answer initialize and shutdown; failFirstInitialize makes the
+      // FIRST spawned server fail the handshake (zombie-record regression)
+      const spawnIndex = spawnCount++
+      const spawnOptions = options.failFirstInitialize && spawnIndex === 0
+        ? { ...options, failInitialize: true }
+        : options
       let buffer = Buffer.alloc(0)
       stdin.on('data', (chunk) => {
         buffer = Buffer.concat([buffer, chunk])
@@ -37,7 +43,7 @@ function fakeSubprocess(options = {}) {
           const body = buffer.slice(headerEnd + 4, headerEnd + 4 + length)
           buffer = buffer.slice(headerEnd + 4 + length)
           const message = JSON.parse(body.toString('utf8'))
-          answer(message, stdout, options)
+          answer(message, stdout, spawnOptions)
         }
       })
       spawns.push(handle)
@@ -53,6 +59,10 @@ function answer(message, stdout, serverOptions = {}) {
     stdout.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`)
   }
   if (message.method === 'initialize') {
+    if (serverOptions.failInitialize) {
+      reply({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'boom: no tsserver' } })
+      return
+    }
     reply({ jsonrpc: '2.0', id: message.id, result: { capabilities: serverOptions.capabilities ?? {} } })
     return
   }
@@ -445,6 +455,21 @@ describe('lsp tool flows (gate on)', () => {
     const symbols = await symbolsTool.execute({ file_path: '/ws/a.ts' }, { agent, signal: undefined })
     expect(symbols.text).toContain('alphaFn (function) :1')
     expect(symbols.text).toContain('  helperVar (constant) :2')
+  })
+
+  it('a failed handshake tears the record down and the next call spawns fresh', async () => {
+    const subprocess = fakeSubprocess({ failFirstInitialize: true })
+    const ctx = fakeCtx(subprocess, { enabled: true })
+    apply(ctx, { enabled: true })
+    const agent = fakeAgent()
+    await lspTool(ctx).execute({ enabled: true }, { agent })
+    const diagnosticsTool = agent.scoped.find((tool) => tool.name === 'lsp_diagnostics')
+    await expect(async () => diagnosticsTool.execute({ file_path: '/ws/a.ts' }, { agent, signal: undefined })).rejects.toThrow(/boom/)
+    expect(subprocess.spawns).toHaveLength(1)
+    expect(subprocess.spawns[0].terminated).toBe(1)
+    const result = await diagnosticsTool.execute({ file_path: '/ws/a.ts' }, { agent, signal: undefined })
+    expect(result.text).toContain('fake error here')
+    expect(subprocess.spawns).toHaveLength(2)
   })
 
   it('missing server binary yields an actionable install hint', async () => {
