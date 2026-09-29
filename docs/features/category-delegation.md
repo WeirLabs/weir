@@ -29,6 +29,8 @@
 | `readOnlyBash.deny` | 显式 deny 列表 | 优先于 allow 的整词 deny（`rm`、`sudo`、解释器、包管理器等）。设置页键：`robashDeny` |
 | 白名单三表语义 | 缺席回退 / 在场权威 | 每个列表键独立解析：未设置 → 回退下层（行 config → 模块默认）；已设置（含 `[]`）→ 权威生效，**空数组 = 显式清空（fail-closed 更严），不回退默认**；坏 JSON 设置服务激活即败。设置页提供结构化行编辑（`RobashListEditorField`），无需手写 JSON |
 | `readOnlyPwsh.allow` / `readOnlyPwsh.deny` | 初版 pwsh 白名单 | pwsh 侧只读 cmdlet 白名单与逃逸向量 deny（大小写不敏感、deny 优先、内建别名表展开后查表）。设置页键：`robashPwshAllow` / `robashPwshDeny`（JSON 字符串数组，语义同上表）；git 子命令门控共享 `robashGitAllow` |
+| 平台等待原语 | `sleep` / `Start-Sleep` | 两侧都放行：POSIX 侧 `sleep` 在 bash 白名单里，win32 侧 `Start-Sleep` 在 pwsh 白名单里，且 `sleep` 作为 pwsh 内建 ReadOnly 别名（→ `Start-Sleep`）登记在别名表。两侧必须同时在场，否则同一个“等待”操作会 macOS 放行、Windows 拒绝 |
+| 名单镜像不变式 | 行 config 与模块默认逐项一致 | `readOnlyPwsh.allow/deny` 与 `readOnlyBash.*` 在 `cordis.patch.yml` 的 `orrery-settings` 行里有 1:1 镜像，那是**预设的组合基线**；设置层最后合并且在场即权威，因此只改模块默认值在预设里是**空操作**。该不变式由 `test/robash-whitelist-parity.test.js` 直接读 patch 文件守护（此前仅靠注释，已真实漂移过一次） |
 | `supervision.maxRetries` | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用） |
 | `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
 | `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |

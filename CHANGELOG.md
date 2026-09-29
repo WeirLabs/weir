@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 本项目的所有重要变更都记录在此文件。
 
@@ -21,6 +21,7 @@
 
 ### Fixed
 - **LSP 服务器握手失败残留僵尸记录**：懒启动的 initialize 握手失败（如工作区 TypeScript 安装缺 tsserver）后，该 (工作区, 语言族) 键被能力缺失的死记录占住，后续调用持续失败直至会话重开。修复为握手失败即终止进程、丢弃记录、原样抛错——下次调用起全新服务器（实况发现，附变异验证回归测试）。
+- **Windows 只读代理无法执行等待（平台能力不对称）**：同一个“等待”操作在 macOS 上放行、Windows 上被拒——POSIX 侧 `sleep` 在 bash 白名单里，而 win32 侧 `Start-Sleep` **两张表都没有**（当时 allow 与 deny 两张表逐项核实均无此名），并且 `sleep`（pwsh 内建 ReadOnly 别名 → `Start-Sleep`，已对真实 pwsh 7.6 实测核实）未被别名表登记，于是以原名撞 allow 表被拒（`'sleep' is not on the read-only allow list`）。修复为双管齐下：`Start-Sleep` 入 pwsh allow 表，`sleep` 登记入别名表（与 bash 侧的 `sleep` 对齐）；**两处必须同时在场**——预设 `cordis.patch.yml` 的 `robashPwshAllow` 是组合基线、且设置层最后合并在场即权威，所以只改模块默认值在预设里是**空操作**。由此新增一份**名单镜像不变式测试**（`test/robash-whitelist-parity.test.js` 直接读 patch 文件校验五张白名单逐项同序一致；已用**变异验证**确认：把 patch 行改回去，恰好该断言失败、退出码 1）——该不变式此前仅靠注释维护、已真实漂移过一次。装置侧把 `robash` 子成员的命令体改为一发 `echo-and-wait`，使其成为该修复的端到端钉；**覆盖边界要说准**：该装置不加载产品 bundle 与预设 patch（走模块默认值），因此这一钉只覆盖“模块默认 allow 项”，**预设 patch 行与别名行的缺失它看不见**，那两层分别由镜像不变式测试与别名语料守护。产品单测 671 条 / 670 通过 / 1 跳过，集成测试 73/73。
 - **白名单列表编辑器空白/非法值死路**：`RobashListEditorField` 原先对空白或非法存储值拒绝打开编辑器（字段永久不可编辑——旧 profile 的设置行 config 先于新键存在时必现）。改为空白值（各层均未设置）不报错并以空列表打开；非法值显示报错态但仍以空列表打开，保存即覆盖——任何存储态都不会把字段卡死。
 - **Windows 上 LSP 服务器不可用（解析与启动双断）**：插件在 Windows 下既解析不到语言服务器也启动不了。四处平台假设——① 绝对路径判定只认 `/`，`C:\...` 被当命令名交给服务解析器；② 扩展扫描目录只有 POSIX 布局，未含 npm 全局前缀 `%APPDATA%\npm`（`~/.npm-global` 的 shim 在根而非 `bin`）；③ 裸名不按 `PATHEXT` 探测扩展名；④ 子进程 PATH 用 `:` 拼接而被撕裂。另有两处启动级缺陷：CreateProcess 不执行批处理（Node 对 `.cmd` 直接 `EINVAL`），以及 NTFS 无执行位仍以 `X_OK` 作可执行判据。现按平台参数化解析（win32 目录/PATHEXT/分隔符），并以**不经 shell** 的启动形态交付：三类真实 `.cmd` shim（npm 自带的 `%NODE_EXE%`/`%NPM_CLI_JS%` 链、corepack/pnpm 的 `%~dp0` 形态、`%_prog%` 模板）都被读入拆包为 `node <cli>`，因此含空格的路径与 cmd 元字符都不再危险；仅当路径与参数可证明 cmd 安全时才回退 `cmd.exe /d /c`，否则明确拒绝；POSIX 行为不变。实机验收：本机四个真实 shim（npm 11.17.0 / pnpm 11.7.0 / ts-ls 6.0.1 / dsh 0.1.7-rc.2）均无 shell 启动成功；跨三文件五处 rename 成功（`file:///d:/` URI 形态正确）、CRLF 字节级保留、`FS_STALE_VERSION` 中途截断精确报出已写/未写文件。
 - **LSP 管理端点的两个定时器会拖住宿主进程**：`probeVersion` 在超时结算路径不释放定时器，留下已武装的 8 秒定时器；`runInstall` 的安装截止时间（默认 600 秒）未 `unref`——若安装 promise 无人等待（HTTP 处理已应答或调用方放弃），整个进程会被钉住至截止时间。两者现均在**所有**结算路径释放（`try/finally`——真正漏的是抛错路径：启动失败会从 race 中抛出，已武装的 8s 定时器让进程多活到它开火，实测 4ms 工作 / 8007ms 进程寿命 → 修后 7ms），截止时间另加 `unref()`。
