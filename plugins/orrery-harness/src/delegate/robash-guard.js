@@ -44,7 +44,35 @@ export const DEFAULT_ROBASH = {
   ],
 }
 
-const FIND_DENY_FLAGS = ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprintf', '-fprint', '-fprint0', '-fls']
+/** Per-command dangerous ARGUMENTS: flags (exact or prefix form) that turn an
+ * allow-listed read-only binary into a write or an arbitrary-execution
+ * primitive, and commands whose second positional argument names an output
+ * file. The corresponding verdicts are pinned in the guard tests. */
+const DANGEROUS_FLAGS = {
+  find: {
+    flags: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprintf', '-fprint', '-fprint0', '-fls'],
+  },
+  sort: {
+    flags: ['-o', '--output'],
+    flagPrefixes: ['--output'],
+    shortAttached: ['-o'],
+  },
+  rg: {
+    // --pre/--pre-glob/--hostname-bin run an arbitrary command or an arbitrary
+    // ripgrep build per file; --sort-files/--sort materialize a temp index.
+    flags: ['--sort-files', '--sort'],
+    flagPrefixes: ['--pre', '--hostname-bin', '--sort'],
+  },
+  // uniq FILE1 FILE2 writes its output to FILE2 (a guarded child gets no usable
+  // stdin, so a lone argument is a read and a second argument is a write).
+  uniq: {
+    positionalWrite: true,
+  },
+  date: {
+    flags: ['-s', '--set', '-f', '--file'],
+    flagPrefixes: ['--set', '--file'],
+  },
+}
 
 /** git global flags accepted before the subcommand. */
 const GIT_GLOBAL_FLAGS = new Set([
@@ -378,14 +406,33 @@ function checkSegment(segment, sets) {
   if (!sets.allow.has(command)) return `read-only agent: '${command}' is not on the read-only allow list`
 
   if (command === 'git') return checkGitArgs(args, sets.gitAllow)
-  if (command === 'find') {
-    const hit = args.find((arg) => FIND_DENY_FLAGS.includes(arg))
-    if (hit) return `read-only agent: find flag '${hit}' is not allowed`
+
+  // Positional arguments are the non-flag words; only the FIRST is ever an
+  // input for the commands below (a guarded child gets no usable stdin).
+  const positionalArgs = args.filter((arg) => !arg.startsWith('-'))
+
+  // Per-command dangerous flags. The allow list gate decides WHICH binary runs;
+  // this table decides which of its ARGUMENTS turn a read-only command into a
+  // write or an arbitrary-execution primitive. Keep it declarative: a new
+  // binary joins by adding one row, not one more `if`.
+  const spec = DANGEROUS_FLAGS[command]
+  if (spec !== undefined) {
+    for (const flag of args) {
+      const hit =
+        spec.flags?.find((name) => name === flag) ??
+        spec.flagPrefixes?.find((prefix) => flag.startsWith(prefix)) ??
+        spec.shortAttached?.find((prefix) => flag.startsWith(prefix) && flag.length > prefix.length)
+      if (hit !== undefined) {
+        return `read-only agent: ${command} flag '${hit}' writes a file or executes a command and is not allowed`
+      }
+    }
+    // Commands whose trailing positional arguments name output files rather
+    // than inputs: one is a read, two or more means the last one is written.
+    if (spec.positionalWrite === true && positionalArgs.length > 1) {
+      return `read-only agent: ${command} with more than one file argument writes a file and is not allowed`
+    }
   }
-  if (command === 'sort') {
-    const hit = args.find((arg) => arg === '-o' || arg.startsWith('--output') || /^-o\S/.test(arg))
-    if (hit) return `read-only agent: sort flag '${hit}' writes a file and is not allowed`
-  }
+
   return undefined
 }
 
