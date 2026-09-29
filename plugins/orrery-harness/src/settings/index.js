@@ -12,6 +12,7 @@
 // vendored DSH-fork schemastery (see ../vendor/THIRD-PARTY.md).
 import z from '../vendor/schemastery.js'
 import { isVolatile } from '../vendor/cosmokit.js'
+import { diffWhitelist, readBaselineWhitelists, renderDriftWarning } from '../shared/whitelist-drift.js'
 import { buildRegistry } from '../lsp/registry.js'
 import { registerLspAdminEndpoints } from '../lsp/admin.js'
 
@@ -159,7 +160,21 @@ export function parseRobashLists(key, raw) {
   return parsed
 }
 
+// The recomputed section uses the NESTED field names (`allow`, `pwshAllow`, ...)
+// while the patch row and the baseline use the FLAT ones (`robashAllow`, ...).
+// Without this map the drift check would compare against `undefined` on every
+// key and silently never fire — the same class of blind spot it exists to catch.
+const DRIFT_FIELD_TO_FLAT = {
+  allow: 'robashAllow',
+  gitAllow: 'robashGitAllow',
+  deny: 'robashDeny',
+  pwshAllow: 'robashPwshAllow',
+  pwshDeny: 'robashPwshDeny',
+}
+
 function apply(ctx, config = {}) {
+  // One drift report per process; compute() runs on every settings get().
+  let driftReported = false
   // The DSH-fork schemastery materializes volatile fields as {get()} refs
   // (unset → get() === undefined); unwrap and drop unset fields so modules
   // read the same "absent means absent" values as before.
@@ -223,6 +238,22 @@ function apply(ctx, config = {}) {
         }
       }
       if (Object.keys(out).length > 0) sections[key] = out
+    }
+    // Report (never rewrite) whitelist drift once per process. Silent when the
+    // composition declares no whitelist at all — that is the layered case, where
+    // the guard falls back to module defaults by design (and what the headless
+    // integration profile relies on).
+    if (!driftReported) {
+      driftReported = true
+      const declared = {}
+      const robash = sections.robash
+      if (robash) {
+        for (const [field, flatKey] of Object.entries(DRIFT_FIELD_TO_FLAT)) {
+          if (Array.isArray(robash[field])) declared[flatKey] = robash[field]
+        }
+      }
+      const drift = diffWhitelist(declared, readBaselineWhitelists())
+      if (drift) ctx.logger?.warn?.(renderDriftWarning(drift))
     }
     return sections
   }

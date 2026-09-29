@@ -2,6 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { apply as applySettings, Config, parseLspServers, parseRobashLists } from '../src/settings/index.js'
 import { apply as applyIntentGate } from '../src/intent-gate/index.js'
 import { apply as applyTodoDriver } from '../src/todo-driver/index.js'
+import { readBaselineWhitelists } from '../src/shared/whitelist-drift.js'
 import { apply as applyHashline } from '../src/hashline-edit/index.js'
 
 describe('settings Config schema', () => {
@@ -184,6 +185,56 @@ describe('settings plugin apply', () => {
     delete config.robashAllow
     delete config.robashDeny
     expect(service.get('robash')).toBe(undefined)
+  })
+
+  it('reports whitelist drift once, naming the missing baseline entry', () => {
+    // Pins the WIRING, not just the detector module: every failure mode of this
+    // feature is "silently never warns", so a broken nested->flat mapping or a
+    // renamed section field would leave the module tests green and the feature
+    // dead. The baseline is read from the shipped patch file, which carries
+    // Start-Sleep — so narrowing robashPwshAllow to a subset must warn.
+    const warnings = []
+    const ctx = {
+      reflect: { provide: () => {} },
+      get: () => undefined,
+      on: () => {},
+      logger: { warn: (line) => warnings.push(line) },
+    }
+    // Declare every table with baseline content EXCEPT the pwsh allow list, which
+    // is narrowed. Then the only drift reported is that one table, so the
+    // warning's capped listing is exactly about it (a config that omits tables
+    // would report hundreds of entries across all five and cap away the one of
+    // interest).
+    const baseline = readBaselineWhitelists()
+    const narrower = baseline.robashPwshAllow.filter((entry) => entry !== 'Start-Sleep')
+    applySettings(ctx, {
+      robashAllow: JSON.stringify(baseline.robashAllow),
+      robashGitAllow: JSON.stringify(baseline.robashGitAllow),
+      robashDeny: JSON.stringify(baseline.robashDeny),
+      robashPwshAllow: JSON.stringify(narrower),
+      robashPwshDeny: JSON.stringify(baseline.robashPwshDeny),
+    })
+
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain('whitelist drift')
+    expect(warnings[0]).toContain('robashPwshAllow')
+    expect(warnings[0]).toContain('Start-Sleep')
+
+    // Exactly one warning: compute() re-runs on every settings read, so the
+    // once-per-process flag is what keeps this from spamming the log.
+    expect(warnings.length).toBe(1)
+  })
+
+  it('stays silent when the composition declares no whitelist at all', () => {
+    const warnings = []
+    const ctx = {
+      reflect: { provide: () => {} },
+      get: () => undefined,
+      on: () => {},
+      logger: { warn: (line) => warnings.push(line) },
+    }
+    applySettings(ctx, { intentGateProvider: 'mock', intentGateModel: 'mock-1' })
+    expect(warnings).toEqual([])
   })
 
   it('recomputes robash sections after a volatile commit notification', () => {
