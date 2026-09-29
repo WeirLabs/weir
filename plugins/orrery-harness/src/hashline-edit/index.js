@@ -31,12 +31,12 @@ function hideStockEdit(ctx) {
 
 export const HASH_EDIT_DESCRIPTION = `Edit a UTF-8 text file through hash anchors (\`LINE#ID\`) from read output.
 
-SNAPSHOT: All edits in one call reference the ORIGINAL file state. Anchors MUST be copied exactly from a recent read result — never hand-transcribed, never guessed. Any stale or mismatched anchor rejects the WHOLE call with a \`>>> mismatch\` report and leaves the file byte-identical (fail-closed, zero writes).
+SNAPSHOT: All edits in one call reference the ORIGINAL file state. Anchors MUST be copied exactly from a recent read result — never hand-transcribed, never guessed. Any stale or mismatched anchor rejects the WHOLE call with a \`>>> mismatch\` report and leaves the file byte-identical (zero writes). Invalid-JSON arguments fail the ENTIRE turn before this tool runs — no write, no report.
 
-Operations:
-- replace: { op:'replace', pos:'N#XX', end?:'N#YY', lines:[...] } — replace the anchored line, or the inclusive pos..end range, with lines.
-- append: { op:'append', pos:'N#XX', lines:[...] } — insert lines AFTER the anchored line.
-- prepend: { op:'prepend', pos:'N#XX', lines:[...] } — insert lines BEFORE the anchored line.
+Operations (\`text\`: one string, \\n between lines, e.g. "a\\nb"):
+- replace: { op:'replace', pos:'N#XX', end?:'N#YY', text:'...' } — replace the anchored line, or the inclusive pos..end range; text:'' deletes the range.
+- append: { op:'append', pos:'N#XX', text:'...' } — insert AFTER the anchored line (never empty).
+- prepend: { op:'prepend', pos:'N#XX', text:'...' } — insert BEFORE the anchored line (never empty).
 
 On a mismatch report, re-read the file and copy the current anchors verbatim before retrying.`
 
@@ -136,9 +136,9 @@ function apply(ctx, config = {}) {
               op: { type: 'string', enum: ['replace', 'append', 'prepend'] },
               pos: { type: 'string', description: 'Anchor N#XX copied from read output.' },
               end: { type: 'string', description: 'Inclusive end anchor for replace ranges.' },
-              lines: { type: 'array', items: { type: 'string' }, description: 'Replacement or inserted lines.' },
+              text: { type: 'string', description: 'Content as one string, lines joined by the two-character escape \\n. Empty string deletes the anchored range under replace.' },
             },
-            required: ['op', 'pos', 'lines'],
+            required: ['op', 'pos', 'text'],
           },
         },
         // One-shot sandbox escalation, advertised only under a confining
@@ -169,7 +169,7 @@ function apply(ctx, config = {}) {
         throw new Error('hash_edit: file_path must be a non-empty string')
       }
       if (!Array.isArray(args.edits) || args.edits.length === 0) {
-        throw new Error('hash_edit: edits must be a non-empty array')
+        throw new Error('hash_edit: edits must be a non-empty array of edit objects — call again with the corrected shape')
       }
 
       const cwd = exec.agent?.session?.header?.cwd

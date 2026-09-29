@@ -9,9 +9,22 @@ import { anchorFor, parseAnchor, validateAnchor } from './anchors.js'
  * @property {'replace' | 'append' | 'prepend'} op
  * @property {string} [pos] - anchor `N#XX` (replace: first line; append: after; prepend: before)
  * @property {string} [end] - inclusive end anchor for replace ranges
- * @property {string[]} lines - replacement/inserted lines
+ * @property {string} text - content as ONE string, lines joined by '\n'
+ *    ('' = empty content: pure deletion for replace, no-op for append/prepend)
  */
 
+/**
+ * Split an edit's `text` into lines: split at '\n', drop at most one trailing
+ * empty element, preserve interior empty lines. `''` yields `[]`, so a
+ * split-join round-trip can never add or drop a blank line.
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function splitText(text) {
+  const parts = text.split('\n')
+  if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop()
+  return parts
+}
 /**
  * Validate every anchor in the op list against current lines.
  * @param {HashEditOp[]} ops
@@ -26,8 +39,8 @@ export function validateOps(ops, lines) {
       mismatches.push(`${where}: unknown op ${JSON.stringify(op.op)}`)
       continue
     }
-    if (!Array.isArray(op.lines)) {
-      mismatches.push(`${where}: lines must be an array of strings`)
+    if (typeof op.text !== 'string') {
+      mismatches.push(`${where}: text must be a string (one string, \\n between lines) — call again with the corrected shape`)
       continue
     }
     const pos = parseAnchor(op.pos)
@@ -71,12 +84,12 @@ export function applyOps(lines, ops) {
     if (op.op === 'replace') {
       const endAnchor = op.end === undefined ? null : parseAnchor(op.end)
       const endLine = endAnchor === null ? pos.line : endAnchor.line
-      planned.push({ at: pos.line, deleteCount: endLine - pos.line + 1, insert: op.lines })
+      planned.push({ at: pos.line, deleteCount: endLine - pos.line + 1, insert: splitText(op.text) })
     } else if (op.op === 'append') {
-      planned.push({ at: pos.line + 1, deleteCount: 0, insert: op.lines })
+      planned.push({ at: pos.line + 1, deleteCount: 0, insert: splitText(op.text) })
     } else {
       // prepend
-      planned.push({ at: pos.line, deleteCount: 0, insert: op.lines })
+      planned.push({ at: pos.line, deleteCount: 0, insert: splitText(op.text) })
     }
   }
   planned.sort((a, b) => b.at - a.at)

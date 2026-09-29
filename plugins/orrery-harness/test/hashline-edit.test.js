@@ -1,8 +1,8 @@
 import { describe, expect, it } from './helpers.js'
 import { anchorFor, anchorIdFor, parseAnchor, validateAnchor } from '../src/hashline-edit/anchors.js'
-import { applyOps, renderMismatch, validateOps } from '../src/hashline-edit/apply-ops.js'
+import { applyOps, renderMismatch, splitText, validateOps } from '../src/hashline-edit/apply-ops.js'
 import { unifiedDiff } from '../src/hashline-edit/diff.js'
-import { anchorReadContent, HASH_EDIT_NAME } from '../src/hashline-edit/index.js'
+import { anchorReadContent, HASH_EDIT_DESCRIPTION, HASH_EDIT_NAME } from '../src/hashline-edit/index.js'
 import { apply } from '../src/hashline-edit/index.js'
 import { xxh32 } from '../src/hashline-edit/xxhash32.js'
 
@@ -66,21 +66,21 @@ describe('validateOps + applyOps', () => {
   const anchorAt = (n) => anchorFor(n, lines[n - 1])
 
   it('replaces a single line', () => {
-    const ops = [{ op: 'replace', pos: anchorAt(2), lines: ['B'] }]
+    const ops = [{ op: 'replace', pos: anchorAt(2), text: 'B' }]
     expect(validateOps(ops, lines).ok).toBe(true)
     expect(applyOps(lines, ops)).toEqual(['a', 'B', 'c', 'd', 'e'])
   })
 
   it('replaces an inclusive range', () => {
-    const ops = [{ op: 'replace', pos: anchorAt(2), end: anchorAt(4), lines: ['B', 'C'] }]
+    const ops = [{ op: 'replace', pos: anchorAt(2), end: anchorAt(4), text: 'B\nC' }]
     expect(validateOps(ops, lines).ok).toBe(true)
     expect(applyOps(lines, ops)).toEqual(['a', 'B', 'C', 'e'])
   })
 
   it('appends after and prepends before', () => {
     const ops = [
-      { op: 'append', pos: anchorAt(5), lines: ['f'] },
-      { op: 'prepend', pos: anchorAt(1), lines: ['0'] },
+      { op: 'append', pos: anchorAt(5), text: 'f' },
+      { op: 'prepend', pos: anchorAt(1), text: '0' },
     ]
     expect(validateOps(ops, lines).ok).toBe(true)
     expect(applyOps(lines, ops)).toEqual(['0', 'a', 'b', 'c', 'd', 'e', 'f'])
@@ -88,16 +88,16 @@ describe('validateOps + applyOps', () => {
 
   it('applies multiple ops against original coordinates (bottom-up)', () => {
     const ops = [
-      { op: 'replace', pos: anchorAt(2), lines: ['B', 'B2'] },
-      { op: 'replace', pos: anchorAt(4), lines: ['D'] },
+      { op: 'replace', pos: anchorAt(2), text: 'B\nB2' },
+      { op: 'replace', pos: anchorAt(4), text: 'D' },
     ]
     expect(applyOps(lines, ops)).toEqual(['a', 'B', 'B2', 'c', 'D', 'e'])
   })
 
   it('rejects the whole call on one stale anchor', () => {
     const ops = [
-      { op: 'replace', pos: anchorAt(1), lines: ['A'] },
-      { op: 'replace', pos: anchorFor(3, 'CHANGED'), lines: ['C'] },
+      { op: 'replace', pos: anchorAt(1), text: 'A' },
+      { op: 'replace', pos: anchorFor(3, 'CHANGED'), text: 'C' },
     ]
     const result = validateOps(ops, lines)
     expect(result.ok).toBe(false)
@@ -106,15 +106,49 @@ describe('validateOps + applyOps', () => {
   })
 
   it('rejects malformed and reversed anchors', () => {
-    expect(validateOps([{ op: 'replace', pos: 'nope', lines: [] }], lines).ok).toBe(false)
-    const reversed = [{ op: 'replace', pos: anchorAt(4), end: anchorAt(2), lines: ['x'] }]
+    expect(validateOps([{ op: 'replace', pos: 'nope', text: '' }], lines).ok).toBe(false)
+    const reversed = [{ op: 'replace', pos: anchorAt(4), end: anchorAt(2), text: 'x' }]
     const result = validateOps(reversed, lines)
     expect(result.ok).toBe(false)
     expect(result.mismatches[0]).toContain('precedes')
   })
 
   it('rejects unknown ops', () => {
-    expect(validateOps([{ op: 'delete', pos: anchorAt(1), lines: [] }], lines).ok).toBe(false)
+    expect(validateOps([{ op: 'delete', pos: anchorAt(1), text: '' }], lines).ok).toBe(false)
+  })
+
+  it('splits text at \\n dropping at most one trailing empty element', () => {
+    expect(splitText('a\nb\n')).toEqual(['a', 'b'])
+    expect(splitText('a\n\nb')).toEqual(['a', '', 'b'])
+    expect(splitText('a')).toEqual(['a'])
+    expect(splitText('')).toEqual([])
+  })
+
+  it('reports a missing text before any anchor validation', () => {
+    const stale = anchorFor(3, 'CHANGED')
+    const result = validateOps([{ op: 'append', pos: stale }], lines)
+    expect(result.ok).toBe(false)
+    expect(result.mismatches).toHaveLength(1)
+    expect(result.mismatches[0]).toContain('edit 1 (append): text must be a string')
+    expect(result.mismatches[0]).toContain('call again with the corrected shape')
+  })
+
+  it('rejects a non-string text with the corrected-shape hint', () => {
+    const result = validateOps([{ op: 'replace', pos: anchorAt(1), text: ['A'] }], lines)
+    expect(result.ok).toBe(false)
+    expect(result.mismatches[0]).toContain('text must be a string')
+    expect(result.mismatches[0]).toContain('call again with the corrected shape')
+  })
+
+  it('deletes the anchored range on empty text (replace) and no-ops on append/prepend', () => {
+    const del = [{ op: 'replace', pos: anchorAt(2), end: anchorAt(4), text: '' }]
+    expect(validateOps(del, lines).ok).toBe(true)
+    expect(applyOps(lines, del).join('\n')).toBe('a\ne')
+    const noop = [
+      { op: 'append', pos: anchorAt(5), text: '' },
+      { op: 'prepend', pos: anchorAt(1), text: '' },
+    ]
+    expect(applyOps(lines, noop).join('\n')).toBe('a\nb\nc\nd\ne')
   })
 
   it('renders the fail-closed mismatch report', () => {
@@ -208,7 +242,7 @@ describe('hash_edit tool', () => {
     const { tool, files, exec } = harness('alpha\nbeta\ngamma')
     const anchor = anchorFor(2, 'beta')
     const result = await tool.execute(
-      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, lines: ['BETA'] }] },
+      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, text: 'BETA' }] },
       exec,
     )
     expect(files.get('/ws/a.js')).toBe('alpha\nBETA\ngamma')
@@ -229,7 +263,7 @@ describe('hash_edit tool', () => {
     } } })
     const anchor = anchorFor(2, 'beta')
     await tool.execute(
-      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, lines: ['BETA'] }] },
+      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, text: 'BETA' }] },
       exec,
     )
     expect(resolvedReq).toEqual({ session: exec.agent.session })
@@ -242,7 +276,7 @@ describe('hash_edit tool', () => {
     const { tool, exec, writes } = harness('alpha')
     const anchor = anchorFor(1, 'alpha')
     await tool.execute(
-      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, lines: ['A'] }] },
+      { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, text: 'A' }] },
       exec,
     )
     expect(writes[0].policy).toBeUndefined()
@@ -252,16 +286,16 @@ describe('hash_edit tool', () => {
     const { tool, files, exec } = harness('alpha\nbeta\ngamma')
     const stale = anchorFor(2, 'beta-OLD')
     await expect(async () =>
-      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: stale, lines: ['BETA'] }] }, exec),
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: stale, text: 'BETA' }] }, exec),
     ).rejects.toThrow(/>>> mismatch/)
     expect(files.get('/ws/a.js')).toBe('alpha\nbeta\ngamma')
   })
 
   it('rejects missing files and malformed anchors', async () => {
     const { tool, exec } = harness('x')
-    await expect(async () => tool.execute({ file_path: '/ws/absent.js', edits: [{ op: 'replace', pos: '1#VK', lines: [] }] }, exec))
+    await expect(async () => tool.execute({ file_path: '/ws/absent.js', edits: [{ op: 'replace', pos: '1#VK', text: '' }] }, exec))
       .rejects.toThrow(/no regular file/)
-    await expect(async () => tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: 'bad', lines: [] }] }, exec))
+    await expect(async () => tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: 'bad', text: '' }] }, exec))
       .rejects.toThrow(/malformed/)
   })
 
@@ -363,7 +397,7 @@ describe('hash_edit tool', () => {
     await tool.execute(
       {
         file_path: '/ws/a.js',
-        edits: [{ op: 'replace', pos: anchor, lines: ['BETA'] }],
+        edits: [{ op: 'replace', pos: anchor, text: 'BETA' }],
         sandbox_permissions: 'danger-full-access',
         justification: 'the report must land outside the workspace',
       },
@@ -378,7 +412,7 @@ describe('hash_edit tool', () => {
     const { tool, exec, writes } = harness('alpha', { sandboxMode: 'workspace-write' })
     await expect(async () =>
       tool.execute(
-        { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: '1#VK', lines: ['A'] }], sandbox_permissions: 'danger-full-access' },
+        { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: '1#VK', text: 'A' }], sandbox_permissions: 'danger-full-access' },
         exec,
       ),
     ).rejects.toThrow(/sandbox_permissions requires a justification/)
@@ -391,7 +425,7 @@ describe('hash_edit tool', () => {
       tool.execute(
         {
           file_path: '/ws/a.js',
-          edits: [{ op: 'replace', pos: '1#VK', lines: ['A'] }],
+          edits: [{ op: 'replace', pos: '1#VK', text: 'A' }],
           sandbox_permissions: 'workspace-write',
           justification: 'needs it',
         },
@@ -406,7 +440,7 @@ describe('hash_edit tool', () => {
       denyError: { code: 'FS_SANDBOX_DENIED' },
     })
     await expect(async () =>
-      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), lines: ['A'] }] }, exec),
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'A' }] }, exec),
     ).rejects.toThrow(/\[sandbox: file access denied under unknown mode\]\n\[sandbox: escalation available/)
     expect(files.get('/ws/a.js')).toBe('alpha')
   })
@@ -417,7 +451,7 @@ describe('hash_edit tool', () => {
       denyError: { message: 'writeText failed: [sandbox: file access denied under workspace-write mode]' },
     })
     await expect(async () =>
-      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), lines: ['A'] }] }, exec),
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'A' }] }, exec),
     ).rejects.toThrow(/\[sandbox: escalation available/)
   })
 
@@ -427,7 +461,40 @@ describe('hash_edit tool', () => {
       denyError: { code: 'FS_STALE_VERSION' },
     })
     await expect(async () =>
-      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), lines: ['A'] }] }, exec),
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'A' }] }, exec),
     ).rejects.toThrow(/file changed on disk/)
+  })
+
+  it('registers the single-channel text schema', () => {
+    const { tool } = harness('x')
+    const items = tool.parameters.properties.edits.items
+    expect(items.required).toEqual(['op', 'pos', 'text'])
+    expect(items.properties.text.type).toBe('string')
+    expect(items.properties.lines).toBeUndefined()
+    expect(JSON.stringify(tool.parameters)).not.toContain('oneOf')
+  })
+
+  it('teaches exactly one content channel in the description', () => {
+    expect(HASH_EDIT_DESCRIPTION).toContain('e.g. "a\\nb"')
+    expect(HASH_EDIT_DESCRIPTION).toContain('Invalid-JSON arguments fail the ENTIRE turn')
+    expect(HASH_EDIT_DESCRIPTION).toContain("text:'' deletes the range")
+    expect(HASH_EDIT_DESCRIPTION).toContain('On a mismatch report, re-read the file and copy the current anchors verbatim before retrying.')
+    expect(HASH_EDIT_DESCRIPTION).not.toContain('`lines`')
+    expect(HASH_EDIT_DESCRIPTION).not.toContain('lines:[')
+    // Pre-change length: 818; cap is 120% (two spec-mandated additions).
+    expect(HASH_EDIT_DESCRIPTION.length <= 981).toBe(true)
+  })
+
+  it('names the fix on shape errors and keeps the re-read advice on anchor mismatch', async () => {
+    const { tool, exec } = harness('alpha')
+    await expect(async () =>
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'append', pos: anchorFor(1, 'alpha'), text: ['A'] }] }, exec),
+    ).rejects.toThrow(/text must be a string.*call again with the corrected shape/)
+    await expect(async () =>
+      tool.execute({ file_path: '/ws/a.js', edits: { op: 'append', pos: '1#VK', text: 'A' } }, exec),
+    ).rejects.toThrow(/edits must be a non-empty array.*call again with the corrected shape/)
+    await expect(async () =>
+      tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha-OLD'), text: 'A' }] }, exec),
+    ).rejects.toThrow(/Re-read the file and copy the current anchors/)
   })
 })

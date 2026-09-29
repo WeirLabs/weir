@@ -210,6 +210,7 @@ function assertHashline(run) {
   const fixture = readFileSync(join(WS, 'fixture.txt'), 'utf8')
   check('hashline', 'read result carried anchors to the model', requests.some((r) => r.anchoredReadSeen), JSON.stringify(requests.map((r) => r.emitted)))
   check('hashline', 'hash_edit rewrote line two', fixture.split('\n')[1] === 'CHANGED-BY-HASHLINE', fixture)
+  check('hashline', 'bulk append through the text channel landed byte-exact', fixture === 'line one\nCHANGED-BY-HASHLINE\nbulk 一\nbulk 二\nbulk 三\nline three\n', fixture)
   check('hashline', 'stock edit hidden from the model tool catalog', requests.length > 0 && requests.every((r) => !r.tools.includes('edit')), JSON.stringify(requests.map((r) => r.tools)))
   check('hashline', 'hash_edit present in the model tool catalog', requests.some((r) => r.tools.includes('hash_edit')), JSON.stringify(requests.map((r) => r.tools)))
   check('hashline', 'hash_edit schema advertises the sandbox escalation fields', requests.some((r) => Array.isArray(r.hashEditEscalationEnum) && r.hashEditEscalationEnum.includes('workspace-write') && r.hashEditEscalationEnum.includes('danger-full-access')), JSON.stringify(requests.map((r) => r.hashEditEscalationEnum)))
@@ -240,7 +241,7 @@ function assertRobash(run) {
   check('robash', 'parent delegated to a curated explore child', created.some((r) => r.origin === 'subagent' && r.depth === 1), JSON.stringify(created))
   check('robash', 'child ran an allowed bash command through the guard', requests.some((r) => r.sawRobashChild && r.roBashLsSeen), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashLsSeen])))
   check('robash', 'child write command was denied by the guard', requests.some((r) => r.sawRobashChild && r.roBashRmDenied), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashRmDenied])))
-  check('robash', 'fixture survived the denied rm', fixture.split('\n')[0] === 'line one' && fixture.trim().split('\n').length === 3, fixture)
+  check('robash', 'fixture survived the denied rm', fixture.split('\n')[0] === 'line one' && fixture.includes('CHANGED-BY-HASHLINE'), fixture)
   check('robash', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 

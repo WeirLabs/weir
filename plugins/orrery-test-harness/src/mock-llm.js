@@ -162,14 +162,17 @@ function decideHashline(options) {
     if (deniedAnchor && history.includes('outside one')) {
       return toolCallChunks('hash_edit', {
         file_path: DENIED,
-        edits: [{ op: 'replace', pos: `1#${deniedAnchor[1]}`, lines: ['DENIED_EDIT_TRIED'] }],
+        edits: [{ op: 'replace', pos: `1#${deniedAnchor[1]}`, text: 'DENIED_EDIT_TRIED' }],
       })
     }
     const anchor = /\n2#([ZPMQVRWSNKTXJBYH]{2})\|/.exec(`\n${toolText}`)
     if (anchor && !history.includes('hash_edit applied')) {
       return toolCallChunks('hash_edit', {
         file_path: FIXTURE,
-        edits: [{ op: 'replace', pos: `2#${anchor[1]}`, lines: ['CHANGED-BY-HASHLINE'] }],
+        edits: [
+          { op: 'replace', pos: `2#${anchor[1]}`, text: 'CHANGED-BY-HASHLINE' },
+          { op: 'append', pos: `2#${anchor[1]}`, text: 'bulk 一\nbulk 二\nbulk 三' },
+        ],
       })
     }
     return textChunks('unhandled hashline tool turn')
