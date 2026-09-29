@@ -61,7 +61,9 @@
         enabled: true
         servers:
           typescript:
-            command: '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
+            # process.execPath = the interpreter that booted this profile, so the
+            # mock server launches on any platform without a hardcoded path.
+            command: !!js process.execPath
             args: [!!js (process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it') + '/ws/mock-lsp-server.js']
             installHint: 'not-needed-in-tests'
     # Mirror the real preset's realm structure: the compaction provider and the

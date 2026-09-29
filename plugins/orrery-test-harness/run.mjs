@@ -1,28 +1,53 @@
 // Integration driver for orrery-harness: boots a real headless DSH runtime
 // (bundled node + extracted dsh CLI) with a scripted mock LLM, runs one
 // scenario per invocation, and asserts on the mock trace, the durable session
-// log, and fixture files. Dev-only; writes everything under /tmp/orrery-it.
+// log, and fixture files. Dev-only; writes everything under the IT_ROOT below.
 //
 //   node run.mjs [scenario ...]     (default: all)
 import { execFileSync, execFile } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const WS_ROOT = join(HERE, '..', '..')
-const NODE = '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
-const PNPM = '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs'
-const DSH_BIN = '/tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
+// Toolchain + the booted CLI are env-overridable so the same driver runs on a
+// POSIX dev box and on Windows. The POSIX values stay the defaults, so the
+// macOS dev loop is byte-for-byte unchanged.
+const IS_WINDOWS = process.platform === 'win32'
+const NODE =
+  process.env.ORRERY_IT_NODE ??
+  (IS_WINDOWS
+    ? join(homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe')
+    : '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node')
+const PNPM =
+  process.env.ORRERY_IT_PNPM ??
+  (IS_WINDOWS
+    ? join(homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
+    : '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs')
+// The extracted-DSH reference (/tmp/dsh-src) is POSIX-only. Windows uses the
+// npm-global install of the same dsh version instead.
+const DSH_BIN =
+  process.env.ORRERY_IT_DSH ??
+  (IS_WINDOWS
+    ? join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    : '/tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js')
 // Relocated off /tmp: writableRoots(workspace-write) always contains /tmp and tmpdir(),
 // so a sandbox-mirroring regression (S23) can only reproduce a denial when the
 // test workspace lives OUTSIDE every unconditional writable root.
-const IT_ROOT = '/Users/young/.orrery-it'
+// ORRERY_IT_ROOT overrides the write root; a POSIX dev box keeps /Users/young.
+// On Windows the ACLs, not the POSIX writable-root list, define the sandbox,
+// so the root is an absolute path on a drive outside the session workspace.
+const IT_ROOT = process.env.ORRERY_IT_ROOT ?? (IS_WINDOWS ? 'D:\\.orrery-it' : '/Users/young/.orrery-it')
 const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
 
 const SCENARIOS = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp']
+// Per-platform tool name: the read-only shell is `pwsh` on win32 and `bash`
+// elsewhere (the curated-agent allowlist picks it by platform).
+const READONLY_SHELL = IS_WINDOWS ? 'pwsh' : 'bash'
 
 function setup() {
   rmSync(IT_ROOT, { recursive: true, force: true })
@@ -35,6 +60,8 @@ function setup() {
         name: 'dsh-profile-orrery-it',
         private: true,
         dependencies: {
+          // Raw absolute paths: pnpm `link:` takes a native path on every platform,
+          // and file:// URL pathnames would mangle a Windows drive letter (/D:/…).
           'orrery-harness': `link:${join(WS_ROOT, 'plugins/orrery-harness')}`,
           'orrery-test-harness': `link:${join(WS_ROOT, 'plugins/orrery-test-harness')}`,
         },
@@ -297,7 +324,7 @@ function assertRehydrate(run) {
   check('rehydrate', 'phase 1 session id captured', typeof run.sessionId === 'string' && run.sessionId.length > 0, JSON.stringify(run.sessionId))
   check('rehydrate', 'parent delegated a supervised group in phase 1', requests1.some((r) => r.emitted.includes('tool-call') && r.sawRehydrateProbe), JSON.stringify(requests1.map((r) => [r.sawRehydrateProbe, r.emitted])))
   check('rehydrate', 'built-in settlement notice carried the blocked report in phase 1', requests1.some((r) => r.settlementBlockedSeen), JSON.stringify(requests1.map((r) => r.settlementBlockedSeen)))
-  check('rehydrate', 'supervised members exclude send_message, the parent keeps it', requests1.some((r) => r.rehydrateChildASeen && r.tools.length > 0 && r.tools.includes('bash') && !r.tools.includes('send_message')) && requests1.some((r) => r.sawRehydrateProbe && r.tools.includes('send_message')), JSON.stringify(requests1.map((r) => [r.rehydrateChildASeen, r.tools.length, r.tools.includes('send_message')])))
+  check('rehydrate', 'supervised members exclude send_message, the parent keeps it', requests1.some((r) => r.rehydrateChildASeen && r.tools.length > 0 && r.tools.includes(READONLY_SHELL) && !r.tools.includes('send_message')) && requests1.some((r) => r.sawRehydrateProbe && r.tools.includes('send_message')), JSON.stringify(requests1.map((r) => [r.rehydrateChildASeen, r.tools.length, r.tools.includes('send_message')])))
   check('rehydrate', 'audit JSONL recorded supervision facts in phase 1', auditFactsSeen(run.sessionId), '')
   check('rehydrate', 'parent resumed the blocked child on the rebuilt registry', requests2.some((r) => r.emitted.includes('tool-call') && r.rehydrateResumeCallSeen), JSON.stringify(requests2.map((r) => [r.rehydrateResumeCallSeen, r.emitted])))
   check('rehydrate', 'resume context reached the child after the restart', requests2.some((r) => r.rehydrateResumeContextSeen), JSON.stringify(requests2.map((r) => r.rehydrateResumeContextSeen)))

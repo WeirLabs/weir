@@ -5,16 +5,28 @@
 // Dev-only: never install into a real profile.
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { shellCommand, shellToolName } from './shell.js'
 
 const name = 'orrery-it-mock-llm'
 const inject = ['llm']
 
+// The driver (run.mjs) owns the authoritative root; these defaults only matter
+// when the mock module is mounted without its driver. Derive from IT_ROOT so the
+// two can never disagree on a platform.
+const IT_ROOT =
+  process.env.ORRERY_IT_ROOT ?? (process.platform === 'win32' ? 'D:\\.orrery-it' : '/Users/young/.orrery-it')
+const SHELL = shellToolName()
+// The curated-agent shell is `pwsh` on win32 and `bash` elsewhere, so the mock
+// emits named operations and lets src/shell.js render the platform command.
+function shellCall(operation, args, description) {
+  return toolCallChunks(SHELL, { command: shellCommand(operation, process.platform, args), description })
+}
 const SCENARIO = process.env.ORRERY_IT_SCENARIO ?? 'deepwork'
-const TRACE = process.env.ORRERY_IT_TRACE ?? '/Users/young/.orrery-it/trace.jsonl'
-const FIXTURE = process.env.ORRERY_IT_FIXTURE ?? '/Users/young/.orrery-it/ws/fixture.txt'
+const TRACE = process.env.ORRERY_IT_TRACE ?? join(IT_ROOT, 'trace.jsonl')
+const FIXTURE = process.env.ORRERY_IT_FIXTURE ?? join(IT_ROOT, 'ws', 'fixture.txt')
 // Out-of-workspace file for the hashline denial probe: readable (reads are
 // unfenced) but outside every writable root under workspace-write.
-const DENIED = join(process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it', 'home', 'denied.txt')
+const DENIED = join(IT_ROOT, 'home', 'denied.txt')
 const WINDOW = Number(process.env.ORRERY_IT_WINDOW ?? '128000')
 const LONG_FILLER = 'Filler line to raise pressure. '.repeat(600)
 
@@ -205,7 +217,7 @@ function decideSemantic(options) {
   return textChunks('unhandled semantic turn')
 }
 
-const TSFIXTURE = process.env.ORRERY_IT_TSFIXTURE ?? '/Users/young/.orrery-it/ws/probe.ts'
+const TSFIXTURE = process.env.ORRERY_IT_TSFIXTURE ?? join(IT_ROOT, 'ws', 'probe.ts')
 
 function decideLsp(options) {
   const history = transcript(options)
@@ -242,7 +254,7 @@ function decideRehydrate(options) {
     if (options.messages?.at(-1)?.role === 'tool') {
       return textChunks('STATUS: completed\nREPORT: alpha rehydrate done')
     }
-    return toolCallChunks('bash', { command: 'echo REHYDRATE_A_BASH_RAN', description: 'prove the inherited toolset works' })
+    return shellCall('echo-only', { text: 'REHYDRATE_A_BASH_RAN' }, 'prove the inherited toolset works')
   }
   // Child B: blocks in phase 1; after the post-restart resume message, completes.
   if (history.includes('REHYDRATE_CHILD_B') && !history.includes('rehydrate-probe') && !history.includes('rehydrate-resume-probe')) {
@@ -258,7 +270,7 @@ function decideRehydrate(options) {
       return textChunks('parent observed post-restart group-settled signal')
     }
     if (history.includes('Resumed supervised child') && !history.includes('REHYDRATE_WAITED')) {
-      return toolCallChunks('bash', { command: 'echo REHYDRATE_WAITED && sleep 2', description: 'Let the resumed child settle' })
+      return shellCall('echo-and-wait', { text: 'REHYDRATE_WAITED', seconds: 2 }, 'Let the resumed child settle')
     }
     if (history.includes('REHYDRATE_WAITED')) {
       // End the turn: the group-settled signal then arrives via the deferred
@@ -274,7 +286,7 @@ function decideRehydrate(options) {
   if (lastRole === 'tool') {
     const toolText = lastOfRole(options, 'tool')
     if (toolText.includes('Supervised group')) {
-      return toolCallChunks('bash', { command: 'sleep 1', description: 'Let supervised children settle' })
+      return shellCall('wait', { seconds: 1 }, 'Let supervised children settle')
     }
     return textChunks('unhandled rehydrate tool turn')
   }
@@ -316,7 +328,7 @@ function decideGrouped(options) {  const history = transcript(options)
   if (lastRole === 'tool') {
     const toolText = lastOfRole(options, 'tool')
     if (toolText.includes('Supervised group')) {
-      return toolCallChunks('bash', { command: 'sleep 1', description: 'Let supervised children settle' })
+      return shellCall('wait', { seconds: 1 }, 'Let supervised children settle')
     }
     return textChunks('group started, waiting for the settle signal')
   }
@@ -364,13 +376,13 @@ function decideBackground(options) {
   if (lastRole === 'tool') {
     const toolText = lastOfRole(options, 'tool')
     if (toolText.includes('Delegated in the background')) {
-      return toolCallChunks('bash', { command: 'echo WAITED_FOR_JOB && sleep 1', description: 'Keep the turn alive until the background job settles' })
+      return shellCall('echo-and-wait', { text: 'WAITED_FOR_JOB', seconds: 1 }, 'Keep the turn alive until the background job settles')
     }
     if (toolText.includes('WAITED_FOR_JOB')) {
       if (history.includes('finished [status: completed]')) {
         return textChunks('parent observed the compact notice; the full report stays pull-only')
       }
-      return toolCallChunks('bash', { command: 'echo WAITED_FOR_JOB && sleep 1', description: 'Wait for the job notice' })
+      return shellCall('echo-and-wait', { text: 'WAITED_FOR_JOB', seconds: 1 }, 'Wait for the job notice')
     }
     return textChunks('unhandled background tool turn')
   }
@@ -387,7 +399,7 @@ function decideTerminate(options) {
   const history = transcript(options)
   // Child A: stays busy so the parent can interrupt it mid-flight.
   if (history.includes('TERMINATE_CHILD_A') && !history.includes('terminate-probe')) {
-    return toolCallChunks('bash', { command: 'sleep 30', description: 'Stay busy so the parent can interrupt' })
+    return shellCall('stay-busy', { seconds: 30 }, 'Stay busy so the parent can interrupt')
   }
   // Child B: completes immediately.
   if (history.includes('TERMINATE_CHILD_B') && !history.includes('terminate-probe')) {
@@ -406,12 +418,12 @@ function decideTerminate(options) {
   if (lastRole === 'tool') {
     const toolText = lastOfRole(options, 'tool')
     if (toolText.includes('Supervised group')) {
-      return toolCallChunks('bash', { command: 'echo TERMINATE_WAITED && sleep 1', description: 'Let the busy child start, then interrupt it' })
+      return shellCall('echo-and-wait', { text: 'TERMINATE_WAITED', seconds: 1 }, 'Let the busy child start, then interrupt it')
     }
     if (toolText.includes('interrupted while running')) {
       // Keep the turn alive: the aborted member's settlement notice and the
       // gated group-settled signal land right after the interrupt result.
-      return toolCallChunks('bash', { command: 'echo TERMINATE_DONE && sleep 1', description: 'Let the final notice and signal land' })
+      return shellCall('echo-and-wait', { text: 'TERMINATE_DONE', seconds: 1 }, 'Let the final notice and signal land')
     }
     if (toolText.includes('TERMINATE_DONE')) {
       return textChunks('parent terminated alpha; waiting for the settle signal')
@@ -438,11 +450,11 @@ function decideRobash(options) {
     if (lastRole === 'tool') {
       const toolText = lastOfRole(options, 'tool')
       if (toolText.includes('ROBASH_LS_RAN') && !history.includes('read-only agent')) {
-        return toolCallChunks('bash', { command: 'rm -rf fixture.txt', description: 'Try to delete the fixture' })
+        return shellCall('remove-file', { path: 'fixture.txt' }, 'Try to delete the fixture')
       }
       return textChunks('MARKER_ROBASH_OK: ls ran, rm was denied')
     }
-    return toolCallChunks('bash', { command: 'echo ROBASH_LS_RAN', description: 'Prove bash executed' })
+    return shellCall('echo-only', { text: 'ROBASH_LS_RAN' }, 'Prove the read-only shell executed')
   }
   // Parent brain: delegate to the explore curated agent.
   if (lastRole === 'tool') {
