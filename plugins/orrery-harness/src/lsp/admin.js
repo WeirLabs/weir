@@ -69,6 +69,10 @@ export async function probeVersion(subprocess, executable, args = ['--version'],
       } catch {
         // termination is best-effort
       }
+      // Release the timer that fired: an armed 8s timeout would otherwise keep
+      // the host process alive long after the probe settled (observed as a
+      // `node --test` run that printed its summary and never exited).
+      clearTimeout(timer)
       resolve(null)
     }, timeoutMs)
   })
@@ -167,9 +171,17 @@ export async function runInstall(registry, subprocess, family, timeoutMs = DEFAU
       timedOut = true
       resolve()
     }, timeoutMs)
+    // The deadline exists to bound a silent installer, never to keep the host
+    // process alive: an install promise nothing awaits (the HTTP handler already
+    // answered, or the caller gave up) would otherwise pin an event loop — and a
+    // `node --test` suite — for the whole window (ten minutes by default).
+    timer.unref?.()
   })
-  await Promise.race([handle.done, deadline])
-  clearTimeout(timer)
+  try {
+    await Promise.race([handle.done, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
   if (timedOut) {
     try {
       handle.terminate?.()

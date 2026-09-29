@@ -307,16 +307,19 @@ describe('delegate plugin apply', () => {
     return { tool: registered[0], spawned, guards }
   }
 
-  it('curated spawns get bash in the allowlist, a persona note, and a live guard', async () => {
+  it('curated spawns get the platform shell in the allowlist, a persona note, and a live guard', async () => {
     const { tool, spawned, guards } = applyHarness()
     const result = await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
     expect(result.results[0].text).toBe('ro findings')
-    expect(spawned[0].request.toolFilter.allow).toContain('bash')
+    // win32 gets pwsh, elsewhere bash: the read-only shell follows the platform
+    const shell = readOnlyShellName(process.platform)
+    expect(spawned[0].request.toolFilter.allow).toContain(shell)
     expect(spawned[0].request.toolFilter.allow).toContain('read')
     expect(spawned[0].request.persona).toContain('guarded read-only')
     expect(guards).toHaveLength(1)
-    expect(guards[0]({ name: 'bash', arguments: { command: 'git status' } })).toBe(undefined)
-    expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/explicitly denied/)
+    expect(guards[0]({ name: shell, arguments: { command: 'git status' } })).toBe(undefined)
+    const denied = shell === 'pwsh' ? { command: 'iex "rm x"' } : { command: 'rm x' }
+    expect(guards[0]({ name: shell, arguments: denied })).toMatch(/read-only agent/)
   })
 
   it('readOnlyShellNote names the platform shell and keeps the guard contract wording', async () => {
@@ -334,10 +337,10 @@ describe('delegate plugin apply', () => {
     expect(guards).toHaveLength(0)
   })
 
-  it('readOnlyBash disabled drops bash from the allowlist and skips the guard', async () => {
+  it('readOnlyBash disabled drops the shell from the allowlist and skips the guard', async () => {
     const { tool, spawned, guards } = applyHarness({ readOnlyBash: { enabled: false } })
     await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
-    expect(spawned[0].request.toolFilter.allow).not.toContain('bash')
+    expect(spawned[0].request.toolFilter.allow).not.toContain(readOnlyShellName(process.platform))
     expect(spawned[0].request.persona).not.toContain('guarded read-only')
     expect(guards).toHaveLength(0)
   })
