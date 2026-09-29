@@ -357,8 +357,17 @@ function checkSegment(segment, sets) {
   }
 
   // Strip leading environment assignments (FOO=bar, quoted or substituted values).
+  // GIT_CONFIG_* names smuggle `-c`-equivalent git config (pager included)
+  // through the environment — refuse them outright.
   let cursor = 0
-  while (cursor < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[cursor])) cursor++
+  while (cursor < words.length) {
+    const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(words[cursor])
+    if (assignment === null) break
+    if (/^GIT_CONFIG_/.test(assignment[1])) {
+      return 'read-only agent: GIT_CONFIG_* environment assignments are not allowed'
+    }
+    cursor++
+  }
   if (cursor >= words.length) return undefined // assignments only: no command runs
 
   const commandWord = unquote(words[cursor]).replace(/^\\+/, '')
@@ -471,10 +480,12 @@ export function checkGitArgs(args, gitAllow) {
       continue
     }
     if (GIT_GLOBAL_VALUE_FLAGS.has(flagName)) {
-      // -c <name>=<value>: alias.* keys redefine subcommands and can smuggle
-      // arbitrary executables (git -c alias.log=!rm log) — always denied.
+      // -c <name>=<value>: alias.* keys redefine subcommands, and core.pager
+      // /pager.* keys run an arbitrary pager executable — all smuggle
+      // executables (git -c alias.log=!rm log, git -p -c core.pager=cat log)
+      // — always denied (case-insensitive).
       const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[i + 1]
-      if (flagName === '-c' && typeof value === 'string' && /^alias\./.test(value)) {
+      if (flagName === '-c' && typeof value === 'string' && /^(alias\.|core\.pager($|=)|pager\.)/i.test(value)) {
         return `read-only agent: git config key '${value.split('=', 1)[0]}' is not allowed`
       }
       i += arg.includes('=') ? 1 : 2

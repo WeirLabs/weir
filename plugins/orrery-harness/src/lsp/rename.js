@@ -1,10 +1,16 @@
 // Pure core of lsp_rename: WorkspaceEdit → per-file synthesized content.
-// Server coordinates are UTF-16 code units over the LF-normalized document
-// text (what syncDocument sends); JS string indices are UTF-16 code units
-// too, so positions map 1:1 and astral characters (surrogate pairs) just
-// work. writeText writes content verbatim (no line-ending restore), so the
-// original style is detected by byte sampling and restored on write-back —
-// all mirrored from dsh-fs-local semantics, self-implemented (link rule).
+// syncDocument sends readText bytes verbatim — no normalization — so the
+// server's coordinates are UTF-16 code units over the file's original text,
+// CRLF and all. The LF-normalized synthesis basis below stays aligned with
+// those coordinates because LSP positions are line-relative: collapsing
+// \r\n → \n never renumbers a line, and the \r lives in the line
+// terminator, so in-line character offsets into content are unchanged. The
+// basis switch is symmetric and explicit: normalizeLineEndings →
+// applyTextEdits → restoreLineEndings on write-back (writeText writes
+// content verbatim; the original style is detected by byte sampling). JS
+// string indices are UTF-16 code units too, so astral characters
+// (surrogate pairs) just work — all mirrored from dsh-fs-local semantics,
+// self-implemented (link rule).
 import { uriToPath } from './manager.js'
 
 /**

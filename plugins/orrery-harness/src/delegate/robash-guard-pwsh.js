@@ -3,8 +3,15 @@
 // pwsh instead). Mirrors the bash guard's three-layer shape (scan →
 // tokenizeSegment → checkSegment) but with pwsh-native lexing: backtick is
 // the escape char, `&` is the call operator, here-strings instead of
-// here-docs, and all name lookups are case-insensitive. Fail-closed like the
-// bash side: anything the parser cannot statically prove read-only is denied.
+// here-docs, and all name lookups are case-insensitive. Scriptblock and
+// hashtable literals ({ ... } / @{ ... }) are refused outright: PowerShell
+// EXECUTES scriptblock bodies (Where-Object/Sort-Object/Format-* parameters),
+// and the executable surface of expression syntax proved unenumerable, so a
+// bare { or } outside quotes denies the whole call. Static member access (::)
+// and method invocation (any spelling) are denied in the two remaining
+// expression lanes: assignment right-hand sides and (...) expression groups.
+// Fail-closed like the bash side: anything the parser cannot statically
+// prove read-only is denied.
 
 import { checkGitArgs } from './robash-guard.js'
 
@@ -55,15 +62,54 @@ export function checkPwshCommand(command, lists) {
 }
 
 // ---------------------------------------------------------------------------
-// Layer 1: scan the command line — recurse into $(...)/(...) and here-strings,
-// split top-level segments (pipes/sequences/newlines), then check each segment.
+// Layer 1: scan the command line — recurse into $(...)/(...) groups and
+// here-strings, refuse bare { } braces outright, split top-level segments
+// (pipes/sequences/newlines), then check each segment with the mode's
+// statement checker.
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalize scanner input. Two PowerShell lexical facts the scanner must see
+ * through:
+ * - backtick + newline is the documented line continuation — pwsh removes the
+ *   pair BEFORE tokenization (inside double-quoted/interpolating strings it
+ *   is an escaped newline; inside single quotes it is literal — in both
+ *   string cases the join only alters inert content, never the verdict), so
+ *   `$_.Kill`<backtick><LF>`()` tokenizes exactly like `$_.Kill()`;
+ * - CR, LF, and CRLF are ALL statement terminators (about_Parsing new-line
+ *   production), so lone CR must not merge two statements into one segment.
+ */
+function normalizeInput(text) {
+  return text.replace(/`(\r\n|\r|\n)/g, '').replace(/\r\n?/g, '\n')
+}
 
 function analyze(command, sets, depth) {
   if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
   if (typeof command !== 'string' || command.trim().length === 0) return undefined
-  const text = command.replace(/\r\n/g, '\n')
+  return scanStatements(normalizeInput(command), sets, depth, checkSegment)
+}
 
+
+
+/**
+ * Validate the body of an expression-shaped (...) group statement-by-statement
+ * (same separators, quoting, and substitution recursion as the top level; only
+ * the statement dispatch differs — see checkGroupStatement). An empty or
+ * whitespace-only body runs nothing and is allowed.
+ */
+function analyzeExpressionGroup(body, sets, depth) {
+  if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  if (typeof body !== 'string' || body.trim().length === 0) return undefined
+  return scanStatements(normalizeInput(body), sets, depth, checkGroupStatement)
+}
+
+/**
+ * Shared char-level scanner: resolves quotes/backticks/comments, recurses
+ * into substitutions and literals (replaced with \x00 placeholders once
+ * validated), splits top-level statements, and checks each with
+ * checkStatement(segment, sets).
+ */
+function scanStatements(text, sets, depth, checkStatement) {
   const segments = []
   let current = ''
   let quote = null // null | "'" | '"'
@@ -164,9 +210,21 @@ function analyze(command, sets, depth) {
         i = close + 2
         continue
       }
+      // Bare braces outside quotes: scriptblock and hashtable literals are
+      // refused outright — PowerShell EXECUTES scriptblock bodies
+      // (Where-Object/Select-Object/Sort-Object/Format-* parameters), and the
+      // executable surface of expression syntax proved unenumerable. Applies at
+      // every nesting level (this scanner is shared by $( ) recursion); braces
+      // inside single/double quotes are literal content and never reach here.
+      // ${var} braced-variable reads are refused along with them (declared
+      // fail-closed over-denial).
+      if (ch === '{' || ch === '}') {
+        return 'read-only agent: scriptblock and hashtable literals ({ ... }) are not allowed'
+      }
     }
 
-    // $( ) subexpressions — live in normal and double-quoted mode
+    // $( ) subexpressions — live in normal and double-quoted mode; they run
+    // real statements, so the body always validates in command mode.
     if (ch === '$' && text[i + 1] === '(') {
       const inner = readParen(text, i + 1)
       if (inner === null) return 'read-only agent: command could not be proven read-only (unbalanced subexpression)'
@@ -176,11 +234,20 @@ function analyze(command, sets, depth) {
       i = inner.end
       continue
     }
-    // ( ) groupings — top level only; recurse like subexpressions
+    // ( ) groupings — top level only. A group whose inner first statement is
+    // expression-shaped (leading $, [, quote, or digit) is an expression, not a
+    // command: it validates statement-by-statement with the two-rule
+    // expression validator (see checkGroupStatement) so property reads like
+    // ($_.Name) don't hit the command allow list while method invocations like
+    // ($y.Kill()) are still refused. All other groups stay command-mode
+    // recursion (a leading & or . keeps the dynamic-invocation/dot-source
+    // denials).
     if (ch === '(' && quote === null) {
       const inner = readParen(text, i)
       if (inner === null) return 'read-only agent: command could not be proven read-only (unbalanced grouping)'
-      const nested = analyze(inner.body, sets, depth + 1)
+      const nested = isExpressionGroupBody(inner.body)
+        ? analyzeExpressionGroup(inner.body, sets, depth + 1)
+        : analyze(inner.body, sets, depth + 1)
       if (nested) return nested
       current += '\x00'
       i = inner.end
@@ -194,24 +261,35 @@ function analyze(command, sets, depth) {
   flushSegment()
 
   for (const segment of segments) {
-    const reason = checkSegment(segment, sets)
+    const reason = checkStatement(segment, sets)
     if (reason) return reason
   }
   return undefined
 }
 
+/** A (...) group's body reads as an expression when its first statement
+ * starts with $, [, a quote, or a digit (e.g. ($_.Name), (1 + 2)). */
+function isExpressionGroupBody(body) {
+  const match = /\S/.exec(body)
+  return match !== null && /[$\['"\d]/.test(match[0])
+}
+
 /** Scan an interpolating here-string body: validate only nested $( ). */
 function scanHereString(body, sets, depth) {
   if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  // Backtick continuations and lone-CR lines are normalized here as well:
+  // otherwise `$`<backtick><LF>`(...)` would hide a live subexpression from
+  // the scan below (and a lone CR could shift its boundaries).
+  const text = normalizeInput(body)
   let i = 0
-  while (i < body.length) {
-    const ch = body[i]
+  while (i < text.length) {
+    const ch = text[i]
     if (ch === '`') {
       i += 2
       continue
     }
-    if (ch === '$' && body[i + 1] === '(') {
-      const inner = readParen(body, i + 1)
+    if (ch === '$' && text[i + 1] === '(') {
+      const inner = readParen(text, i + 1)
       if (inner === null) return 'read-only agent: command could not be proven read-only (unbalanced subexpression in here-string)'
       const nested = analyze(inner.body, sets, depth + 1)
       if (nested) return nested
@@ -277,7 +355,88 @@ function readParen(text, openIndex) {
 function checkSegment(segment, sets) {
   const tokens = tokenizeSegment(segment)
   if (tokens === null) return 'read-only agent: command could not be proven read-only (unparseable segment)'
+  return checkTokens(tokens, sets)
+}
 
+/**
+ * Validate one statement of an expression-shaped (...) group body.
+ * - Assignment and redirection shapes carry the same execution/write surface
+ *   as commands ($x = Set-Content ... runs Set-Content; "x" > out.txt
+ *   writes), so they take the full command path (which also validates the
+ *   assignment right-hand side — see checkTokens).
+ * - A leading bareword is a command statement → the normal segment path.
+ * - Otherwise (leading $, (, quote, digit, or [) it is an expression
+ *   statement → the two-rule expression validator.
+ */
+function checkGroupStatement(statement, sets) {
+  const tokens = tokenizeSegment(statement)
+  if (tokens === null) return 'read-only agent: command could not be proven read-only (unparseable segment)'
+  if (tokens.length === 0) return undefined
+  if (isAssignmentStatement(tokens) || tokens.some((token) => parseRedirect(token) !== null)) {
+    return checkTokens(tokens, sets)
+  }
+  if (/^[$(\[\d'"]/.test(tokens[0])) return checkExpression(tokens)
+  return checkTokens(tokens, sets)
+}
+
+const ASSIGNMENT_OPERATORS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '??='])
+
+/** An assignment statement's RHS can be a command invocation ($x =
+ * Set-Content ... runs Set-Content) — detect every PowerShell assignment
+ * shape (fused $x=5, spaced $x = 5, compound +=/??=/…) so it takes the
+ * command path instead of the expression validator. Quoted first tokens are
+ * string literals, never lvalues. */
+function isAssignmentStatement(tokens) {
+  const first = tokens[0]
+  if (first.startsWith("'") || first.startsWith('"')) return false
+  if (/[+\-*\/%]?=/.test(first)) return true
+  const op = tokens[1] ?? ''
+  return ASSIGNMENT_OPERATORS.has(op) || /^[+\-*\/%]=/.test(op) || /^=./.test(op)
+}
+
+/**
+ * Expression validator for the two remaining expression lanes (assignment
+ * right-hand sides and expression-shaped (...) groups). The complete denial
+ * surface is exactly two rules:
+ * 1. any `::` in the tokens → deny (static member access:
+ *    [IO.File]::WriteAllText(...) is an arbitrary write; the [math]::pi
+ *    over-denial is accepted);
+ * 2. method invocation in any spelling → deny:
+ *    - glued: a token containing `.` + non-space chars up to a validated
+ *      group placeholder ($x.Kill\x00, dynamic $_.$m\x00, quoted $x.'Kill'\x00,
+ *      chained \x00.Delete\x00);
+ *    - spaced: a token ending in a member name whose NEXT token starts with
+ *      a group placeholder ($x.Kill \x00, $x.'Kill' \x00, $x.Kill \x00.Bar);
+ *    - dot-space: a token ending in a bare `.` whose member name lives in the
+ *      next token ($_. Kill\x00, $_. Kill \x00).
+ * Everything else (property reads $_.Name, comparisons, arithmetic, literals,
+ * variable references) invokes nothing and passes.
+ */
+function checkExpression(tokens) {
+  for (let t = 0; t < tokens.length; t++) {
+    const token = tokens[t]
+    if (token.includes('::')) {
+      return 'read-only agent: static member access (::) is not allowed in expressions'
+    }
+    // glued call forms: $x.Kill\x00, $_.$m\x00, $x.'Kill'\x00, \x00.Delete\x00
+    if (/\.\S*\x00/.test(token)) {
+      return 'read-only agent: method invocation is not allowed in expressions'
+    }
+    const next = tokens[t + 1]
+    // spaced call forms: $x.Kill \x00, $x.'Kill' \x00, $x.$m \x00 (chained
+    // $x.Kill \x00.Bar is already caught here, at $x.Kill)
+    if (next !== undefined && next.startsWith('\x00') && /\.\S+$/.test(token)) {
+      return 'read-only agent: method invocation is not allowed in expressions'
+    }
+    // whitespace after the dot: $_. Kill\x00, $_. $m\x00, $_. Kill \x00
+    if (next !== undefined && token.endsWith('.') && (next.includes('\x00') || (tokens[t + 2] ?? '').startsWith('\x00'))) {
+      return 'read-only agent: method invocation is not allowed in expressions'
+    }
+  }
+  return undefined
+}
+
+function checkTokens(tokens, sets) {
   const words = []
   for (let t = 0; t < tokens.length; t++) {
     const redirect = parseRedirect(tokens[t])
@@ -300,11 +459,23 @@ function checkSegment(segment, sets) {
   // A bare-word RHS is a command invocation in PowerShell ($x = iex ... runs
   // iex), so only quoted/numeric/variable/substituted values are consumed as
   // literals; a bare word is re-checked as the command word below.
+  // A literal-shaped RHS is NOT automatically safe: $x = $_.Kill() invokes a
+  // method and $x = [IO.File]::WriteAllText(...) a static one, so the RHS
+  // (with the rest of the statement as lookahead for spaced call spellings)
+  // must pass the two expression rules before being accepted as a literal.
+  // GIT_CONFIG_* names smuggle `-c`-equivalent git config (pager included)
+  // through the environment — refuse them outright.
   let cursor = 0
   while (cursor < words.length) {
     const assignment = assignmentAt(words, cursor)
     if (!assignment) break
+    const nameMatch = /^\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(words[cursor])
+    if (nameMatch && /^GIT_CONFIG_/i.test(nameMatch[1])) {
+      return 'read-only agent: GIT_CONFIG_* environment assignments are not allowed'
+    }
     if (isLiteralValue(assignment.value)) {
+      const violation = checkExpression([assignment.value, ...words.slice(cursor + assignment.consumed)])
+      if (violation) return violation
       cursor += assignment.consumed
       continue
     }
@@ -327,17 +498,23 @@ function checkSegment(segment, sets) {
   const resolved = resolveWord(words[commandIndex]).replace(/\x00/g, '')
   if (resolved === '') {
     // a pure $( )/( ) span in command position: its content was validated
-    // recursively during the scan, nothing else runs
+    // recursively during the scan, nothing else runs (braces never reach a
+    // placeholder — they are refused outright during the scan)
     return substituted ? undefined : 'read-only agent: command could not be proven read-only (empty command word)'
   }
   if (substituted) return 'read-only agent: dynamic invocation cannot be proven read-only'
 
-  // alias expansion → basename on both \ and / → case-insensitive lookup
-  const expanded = PWSH_ALIASES[resolved.toLowerCase()] ?? resolved
+  // alias expansion → basename on both \ and / → case-insensitive lookup.
+  // The deny list matches BOTH the raw (pre-expansion) and the expanded name
+  // (deny precedence unchanged); the allow list checks the expanded name
+  // only (the alias table holds read-only aliases exclusively).
+  const rawName = resolved.toLowerCase()
+  const expanded = PWSH_ALIASES[rawName] ?? resolved
   const parts = expanded.split(/[\\/]/)
   const name = parts[parts.length - 1].toLowerCase()
   const args = words.slice(commandIndex + 1).map((word) => resolveWord(word).replace(/\x00/g, ''))
 
+  if (sets.deny.has(rawName)) return `read-only agent: '${rawName}' is explicitly denied`
   if (sets.deny.has(name)) return `read-only agent: '${name}' is explicitly denied`
   if (!sets.allow.has(name)) return `read-only agent: '${name}' is not on the read-only allow list`
 

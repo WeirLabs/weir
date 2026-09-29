@@ -25,7 +25,10 @@ export function pathToUri(absolutePath) {
 /** Absolute path back from a file:// URI. */
 export function uriToPath(uri) {
   if (typeof uri !== 'string' || !uri.startsWith('file://')) return uri
-  return decodeURIComponent(uri.slice('file://'.length))
+  const decoded = decodeURIComponent(uri.slice('file://'.length))
+  // file:///C:/ws/a.ts decodes to /C:/ws/a.ts — strip the leading slash on
+  // drive-letter paths; POSIX paths (no drive-letter shape) keep theirs.
+  return decoded.replace(/^\/([A-Za-z]:[\/])/, '$1')
 }
 
 export function createLspManager({ subprocess, fs, registry, options = {}, resolveExecutable: resolveExec = defaultResolveExecutable(subprocess) }) {
