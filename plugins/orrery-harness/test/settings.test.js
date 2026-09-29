@@ -1,8 +1,11 @@
 import { describe, expect, it } from './helpers.js'
 import { apply as applySettings, Config, parseLspServers, parseRobashLists } from '../src/settings/index.js'
+import { DEFAULT_WHITELIST_PATH, WHITELIST_KEYS } from '../src/shared/whitelist-defaults.js'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { apply as applyIntentGate } from '../src/intent-gate/index.js'
 import { apply as applyTodoDriver } from '../src/todo-driver/index.js'
-import { readBaselineWhitelists } from '../src/shared/whitelist-drift.js'
 import { apply as applyHashline } from '../src/hashline-edit/index.js'
 
 describe('settings Config schema', () => {
@@ -148,20 +151,42 @@ describe('settings plugin apply', () => {
       robashPwshAllow: '["Get-Content","Get-Date"]',
       robashPwshDeny: '["iex"]',
     })
-    expect(service.get('robash')).toEqual({ enabled: true, allow: ['ls', 'cat'], gitAllow: ['status', 'log'], deny: ['rm'], pwshAllow: ['Get-Content', 'Get-Date'], pwshDeny: ['iex'] })
+    const robash = service.get('robash')
+    // the user's keys are ADDITIONS, delivered as parsed arrays
+    expect(robash.enabled).toBe(true)
+    expect(robash.allow).toEqual(['ls', 'cat'])
+    expect(robash.gitAllow).toEqual(['status', 'log'])
+    expect(robash.deny).toEqual(['rm'])
+    expect(robash.pwshAllow).toEqual(['Get-Content', 'Get-Date'])
+    expect(robash.pwshDeny).toEqual(['iex'])
+    // ...and the product defaults ride along from the plugin's own data file,
+    // regardless of what the row config declares
+    expect(Object.keys(robash.defaults).sort()).toEqual([...WHITELIST_KEYS].sort())
+    expect(robash.defaults.robashAllow).toContain('sleep')
+    for (const key of WHITELIST_KEYS) expect(robash.defaultsSource[key]).toBe('file')
   })
 
-  it('delivers a present empty array and drops absent or empty-string list keys', () => {
+  it('treats a present empty array as a no-op addition, and drops absent or empty-string keys', () => {
+    // Append semantics: '[]' adds nothing, so it is indistinguishable from
+    // absent. It no longer means "clear this whitelist" — the product defaults
+    // are always in effect and no configuration value can remove them.
     const { service } = harness({ robashEnabled: true, robashAllow: '[]' })
-    expect(service.get('robash')).toEqual({ enabled: true, allow: [] })
-    // an empty string reads as absent: the key falls back to the lower layer
+    const robash = service.get('robash')
+    expect(robash.enabled).toBe(true)
+    expect(robash.allow).toBeUndefined()
+    expect(robash.defaults.robashAllow).toContain('sleep')
+    // an empty string reads as absent too
     const blank = harness({ robashAllow: '  ' })
-    expect(blank.service.get('robash')).toBe(undefined)
+    expect(blank.service.get('robash').allow).toBeUndefined()
     // the pwsh keys follow the same semantics
     const pwsh = harness({ robashPwshAllow: '[]' })
-    expect(pwsh.service.get('robash')).toEqual({ pwshAllow: [] })
+    expect(pwsh.service.get('robash').pwshAllow).toBeUndefined()
     const pwshBlank = harness({ robashPwshDeny: '  ' })
-    expect(pwshBlank.service.get('robash')).toBe(undefined)
+    expect(pwshBlank.service.get('robash').pwshDeny).toBeUndefined()
+    // a config that declares no robash key at all still carries the defaults
+    const none = harness({ intentGateProvider: 'mock' }).service.get('robash')
+    expect(none.allow).toBeUndefined()
+    expect(none.defaults.robashDeny).toContain('rm')
   })
 
   it('fails activation loud on malformed robash lists (key named)', () => {
@@ -181,18 +206,78 @@ describe('settings plugin apply', () => {
     config.robashAllow = '["ls","cat"]'
     expect(service.get('robash').allow).toEqual(['ls', 'cat'])
     config.robashDeny = '["rm"]'
-    expect(service.get('robash')).toEqual({ allow: ['ls', 'cat'], deny: ['rm'] })
+    const both = service.get('robash')
+    expect(both.allow).toEqual(['ls', 'cat'])
+    expect(both.deny).toEqual(['rm'])
     delete config.robashAllow
     delete config.robashDeny
-    expect(service.get('robash')).toBe(undefined)
+    // no list left to add, but the product defaults are still published, so the
+    // section survives — it is no longer "undefined means nothing configured"
+    expect(service.get('robash').defaults.robashAllow).toContain('sleep')
   })
 
-  it('reports whitelist drift once, naming the missing baseline entry', () => {
-    // Pins the WIRING, not just the detector module: every failure mode of this
-    // feature is "silently never warns", so a broken nested->flat mapping or a
-    // renamed section field would leave the module tests green and the feature
-    // dead. The baseline is read from the shipped patch file, which carries
-    // Start-Sleep — so narrowing robashPwshAllow to a subset must warn.
+  it('publishes the product defaults from the plugin data file, and a configured path takes over', () => {
+    // The gap this pins: the defaults must NOT depend on any configuration layer,
+    // because a patch row is replaced wholesale. A row that declares nothing at
+    // all still gets the full shipped defaults.
+    const clean = harness({ robashEnabled: true })
+    const shipped = clean.service.get('robash').defaults
+    expect(shipped.robashPwshAllow).toContain('Start-Sleep')
+    expect(shipped.robashAllow).toContain('sleep')
+    expect(shipped.robashDeny).toContain('rm')
+    for (const key of WHITELIST_KEYS) expect(clean.service.get('robash').defaultsSource[key]).toBe('file')
+
+    // A path key TAKES OVER: the taken-over file is the complete source, and
+    // entries it omits are not in effect. A table it omits falls back per table.
+    const takenOver = join(mkdtempSync(join(tmpdir(), 'orrery-defaults-')), 'mine.json')
+    writeFileSync(takenOver, JSON.stringify({ robashAllow: ['ls'], robashPwshAllow: ['Get-Content'] }))
+    const custom = harness({ robashDefaultsPath: takenOver })
+    const tables = custom.service.get('robash').defaults
+    expect(tables.robashAllow).toEqual(['ls'])
+    expect(tables.robashAllow).not.toContain('sleep')
+    expect(tables.robashPwshAllow).toEqual(['Get-Content'])
+    // omitted tables fall back to the built-in constants, not to the shipped file
+    expect(tables.robashDeny).toContain('rm')
+    expect(custom.service.get('robash').defaultsSource.robashDeny).toBe('fallback')
+    expect(custom.service.get('robash').defaultsSource.robashAllow).toBe('file')
+    // the configuration keys are not part of the guard's policy surface
+    expect(custom.service.get('robash').defaultsPath).toBeUndefined()
+    expect(custom.service.get('robash').defaultsReload).toBeUndefined()
+  })
+
+  it('re-reads the defaults file when the reload entry is bumped', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orrery-reload-'))
+    const file = join(dir, 'defaults.json')
+    const write = (allow) => writeFileSync(file, JSON.stringify({
+      robashAllow: allow, robashGitAllow: ['status'], robashDeny: ['rm'],
+      robashPwshAllow: ['Get-Content'], robashPwshDeny: ['iex'],
+    }))
+    write(['ls'])
+
+    const config = { robashDefaultsPath: file, robashDefaultsReload: 1 }
+    const { handlers, service } = harness(config)
+    expect(service.get('robash').defaults.robashAllow).toEqual(['ls'])
+    expect(service.get('robash').defaultsSource.robashAllow).toBe('file')
+
+    // editing the file alone changes nothing: the read is explicit, not mtime-driven
+    write(['ls', 'probe'])
+    expect(service.get('robash').defaults.robashAllow).toEqual(['ls'])
+
+    // an unrelated volatile commit changes nothing: the reload is marker-driven
+    handlers['loader/volatile-update']([])
+    expect(service.get('robash').defaults.robashAllow).toEqual(['ls'])
+
+    // bumping the entry clears the cache, so the next read is the edited file
+    config.robashDefaultsReload = 2
+    handlers['loader/volatile-update']([])
+    expect(service.get('robash').defaults.robashAllow).toEqual(['ls', 'probe'])
+  })
+
+  it('retires the drift report: it never warns about a shadowed whitelist baseline', () => {
+    // The old warning existed because a profile row could freeze a baseline
+    // snapshot. The defaults no longer ride the row, so there is nothing to
+    // shadow and nothing to warn about — a narrowed user list is simply a list
+    // of additions, and the defaults are still published beside it.
     const warnings = []
     const ctx = {
       reflect: { provide: () => {} },
@@ -200,29 +285,8 @@ describe('settings plugin apply', () => {
       on: () => {},
       logger: { warn: (line) => warnings.push(line) },
     }
-    // Declare every table with baseline content EXCEPT the pwsh allow list, which
-    // is narrowed. Then the only drift reported is that one table, so the
-    // warning's capped listing is exactly about it (a config that omits tables
-    // would report hundreds of entries across all five and cap away the one of
-    // interest).
-    const baseline = readBaselineWhitelists()
-    const narrower = baseline.robashPwshAllow.filter((entry) => entry !== 'Start-Sleep')
-    applySettings(ctx, {
-      robashAllow: JSON.stringify(baseline.robashAllow),
-      robashGitAllow: JSON.stringify(baseline.robashGitAllow),
-      robashDeny: JSON.stringify(baseline.robashDeny),
-      robashPwshAllow: JSON.stringify(narrower),
-      robashPwshDeny: JSON.stringify(baseline.robashPwshDeny),
-    })
-
-    expect(warnings.length).toBe(1)
-    expect(warnings[0]).toContain('whitelist drift')
-    expect(warnings[0]).toContain('robashPwshAllow')
-    expect(warnings[0]).toContain('Start-Sleep')
-
-    // Exactly one warning: compute() re-runs on every settings read, so the
-    // once-per-process flag is what keeps this from spamming the log.
-    expect(warnings.length).toBe(1)
+    applySettings(ctx, { robashPwshAllow: JSON.stringify(['Get-Content']) })
+    expect(warnings).toEqual([])
   })
 
   it('stays silent when the composition declares no whitelist at all', () => {
@@ -242,11 +306,13 @@ describe('settings plugin apply', () => {
     const { handlers, service } = harness(config)
     const calls = []
     service.onChange(() => calls.push(1))
-    expect(service.get('robash')).toEqual({ allow: ['ls'] })
+    expect(service.get('robash').allow).toEqual(['ls'])
     config.robashAllow = '[]'
     handlers['loader/volatile-update']([['robashAllow']])
     expect(calls).toHaveLength(1)
-    expect(service.get('robash')).toEqual({ allow: [] })
+    // '[]' adds nothing, so the addition is gone; the defaults remain in effect
+    expect(service.get('robash').allow).toBeUndefined()
+    expect(service.get('robash').defaults.robashAllow).toContain('sleep')
   })
 
   it('unwraps volatile refs and drops unset fields (DSH-fork semantics)', () => {

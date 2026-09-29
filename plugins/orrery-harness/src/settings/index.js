@@ -12,7 +12,7 @@
 // vendored DSH-fork schemastery (see ../vendor/THIRD-PARTY.md).
 import z from '../vendor/schemastery.js'
 import { isVolatile } from '../vendor/cosmokit.js'
-import { diffWhitelist, readBaselineWhitelists, renderDriftWarning } from '../shared/whitelist-drift.js'
+import { createWhitelistDefaultsCache, DEFAULT_WHITELIST_PATH } from '../shared/whitelist-defaults.js'
 import { buildRegistry } from '../lsp/registry.js'
 import { registerLspAdminEndpoints } from '../lsp/admin.js'
 
@@ -43,11 +43,13 @@ export const Config = z.object({
   guardHardThreshold: z.number().volatile().description('Hard pressure threshold (forced compaction)'),
   hashlineHideStockEdit: z.boolean().volatile().description('Hide the stock edit tool (hash_edit only)'),
   robashEnabled: z.boolean().volatile().description('Guarded read-only bash for curated agents (master switch)'),
-  robashAllow: z.string().volatile().description('JSON array of allowed command names for the read-only bash guard (authoritative when set, including an empty array)'),
-  robashGitAllow: z.string().volatile().description('JSON array of allowed git subcommands for the read-only bash guard (authoritative when set, including an empty array)'),
-  robashDeny: z.string().volatile().description('JSON array of explicitly denied command names for the read-only bash guard (authoritative when set, including an empty array)'),
-  robashPwshAllow: z.string().volatile().description('JSON array of allowed command names for the read-only pwsh guard (authoritative when set, including an empty array)'),
-  robashPwshDeny: z.string().volatile().description('JSON array of explicitly denied command names for the read-only pwsh guard (authoritative when set, including an empty array)'),
+  robashAllow: z.string().volatile().description('JSON array of command names to APPEND to the product-default bash allow list (empty adds nothing; the defaults are always in effect)'),
+  robashGitAllow: z.string().volatile().description('JSON array of git subcommands to APPEND to the product-default git allow list (empty adds nothing; the defaults are always in effect)'),
+  robashDeny: z.string().volatile().description('JSON array of command names to APPEND to the product-default bash deny list (empty adds nothing; the defaults are always in effect)'),
+  robashPwshAllow: z.string().volatile().description('JSON array of command names to APPEND to the product-default pwsh allow list (empty adds nothing; the defaults are always in effect)'),
+  robashPwshDeny: z.string().volatile().description('JSON array of command names to APPEND to the product-default pwsh deny list (empty adds nothing; the defaults are always in effect)'),
+  robashDefaultsPath: z.string().volatile().description('Path to a whitelist defaults file that TAKES OVER the shipped one (JSON object keyed by the five robash* table names); empty uses the shipped defaults'),
+  robashDefaultsReload: z.number().volatile().description('Bump this number to re-read the whitelist defaults file without restarting (advanced/debug entry)'),
   lspEnabled: z.boolean().volatile().description('LSP capability master switch (default off; when on, sessions start with LSP off and toggle it from the session header switch or the lsp tool)'),
   lspIdleMs: z.number().volatile().description('LSP server idle shutdown threshold (ms)'),
   lspRequestTimeoutMs: z.number().volatile().description('LSP request timeout (ms)'),
@@ -95,6 +97,8 @@ const SECTIONS = {
     deny: 'robashDeny',
     pwshAllow: 'robashPwshAllow',
     pwshDeny: 'robashPwshDeny',
+    defaultsPath: 'robashDefaultsPath',
+    defaultsReload: 'robashDefaultsReload',
   },
   lsp: {
     enabled: 'lspEnabled',
@@ -160,21 +164,12 @@ export function parseRobashLists(key, raw) {
   return parsed
 }
 
-// The recomputed section uses the NESTED field names (`allow`, `pwshAllow`, ...)
-// while the patch row and the baseline use the FLAT ones (`robashAllow`, ...).
-// Without this map the drift check would compare against `undefined` on every
-// key and silently never fire — the same class of blind spot it exists to catch.
-const DRIFT_FIELD_TO_FLAT = {
-  allow: 'robashAllow',
-  gitAllow: 'robashGitAllow',
-  deny: 'robashDeny',
-  pwshAllow: 'robashPwshAllow',
-  pwshDeny: 'robashPwshDeny',
-}
 
 function apply(ctx, config = {}) {
-  // One drift report per process; compute() runs on every settings get().
-  let driftReported = false
+  // The whitelist defaults cache: the defaults file is read once per process,
+  // and an explicit reload entry (robashDefaultsReload) clears it. Nothing here
+  // runs on the guard's per-command decision path.
+  const whitelistDefaults = createWhitelistDefaultsCache({ logger: ctx.logger })
   // The DSH-fork schemastery materializes volatile fields as {get()} refs
   // (unset → get() === undefined); unwrap and drop unset fields so modules
   // read the same "absent means absent" values as before.
@@ -220,11 +215,12 @@ function apply(ctx, config = {}) {
         out.servers = lspServersCache.parsed
       }
       if (key === 'robash') {
-        // Empty-vs-absent (D2): an unset or empty-string list key is dropped
-        // so the guard merge layer falls back to the lower config layer; a
-        // present non-empty string parses into an authoritative array —
-        // including '[]', an explicitly cleared list (fail-closed stricter,
-        // never a fallback to defaults). Bad JSON fails activation loud.
+        // Append semantics: an unset or empty-string list key is dropped so the
+        // guard merges no additions; a present non-empty string parses into that
+        // list's ADDITIONS — including '[]', which adds nothing. The product
+        // defaults never come from here (a patch row can be replaced wholesale);
+        // they are published below from the defaults file the plugin reads
+        // itself. Bad JSON still fails activation loud.
         for (const [field, flatKey] of [['allow', 'robashAllow'], ['gitAllow', 'robashGitAllow'], ['deny', 'robashDeny'], ['pwshAllow', 'robashPwshAllow'], ['pwshDeny', 'robashPwshDeny']]) {
           if (typeof out[field] !== 'string') continue
           if (out[field].trim().length === 0) {
@@ -234,26 +230,28 @@ function apply(ctx, config = {}) {
           if (robashListCaches[field].raw !== out[field]) {
             robashListCaches[field] = { raw: out[field], parsed: parseRobashLists(flatKey, out[field]) }
           }
+          // an explicitly empty array is a no-op addition, i.e. indistinguishable
+          // from absent: drop it so the consumer has ONE shape to handle
+          if (robashListCaches[field].parsed.length === 0) {
+            delete out[field]
+            continue
+          }
           out[field] = robashListCaches[field].parsed
         }
+        // The product defaults, read from the plugin's own data file and
+        // therefore immune to whole-value patch composition. Published to the
+        // consumer as plain arrays (never callables) so a cached section cannot
+        // throw a temporal-dead-zone error when an async consumer reads it late.
+        const path = typeof out.defaultsPath === 'string' && out.defaultsPath.trim().length > 0
+          ? out.defaultsPath.trim()
+          : undefined
+        delete out.defaultsPath
+        delete out.defaultsReload
+        const read = whitelistDefaults.tables(path ?? DEFAULT_WHITELIST_PATH)
+        out.defaults = read.tables
+        out.defaultsSource = read.source
       }
       if (Object.keys(out).length > 0) sections[key] = out
-    }
-    // Report (never rewrite) whitelist drift once per process. Silent when the
-    // composition declares no whitelist at all — that is the layered case, where
-    // the guard falls back to module defaults by design (and what the headless
-    // integration profile relies on).
-    if (!driftReported) {
-      driftReported = true
-      const declared = {}
-      const robash = sections.robash
-      if (robash) {
-        for (const [field, flatKey] of Object.entries(DRIFT_FIELD_TO_FLAT)) {
-          if (Array.isArray(robash[field])) declared[flatKey] = robash[field]
-        }
-      }
-      const drift = diffWhitelist(declared, readBaselineWhitelists())
-      if (drift) ctx.logger?.warn?.(renderDriftWarning(drift))
     }
     return sections
   }
@@ -274,7 +272,28 @@ function apply(ctx, config = {}) {
       return () => listeners.delete(callback)
     },
   })
+  // The explicit defaults-reload entry (robashDefaultsReload): a volatile commit
+  // that only bumps this number clears the cache, so an edited defaults file is
+  // picked up without a restart. It is a setting, not a tool, on purpose — the
+  // entry exists for an administrator debugging their own whitelist file, and no
+  // agent-facing surface should be able to widen the guard mid-session.
+  // Read the marker off the raw config, not off `sections`: compute() consumes
+  // these two keys (they configure the read, they are not part of the guard's
+  // policy surface), so a section lookup would always see `undefined` and the
+  // entry would never fire.
+  const rawConfigValue = (key) => {
+    const raw = config?.[key]
+    return isVolatile(raw) ? raw.get() : raw
+  }
+  let lastReloadMarker = undefined
+  const observeReloadEntry = () => {
+    const marker = rawConfigValue('robashDefaultsReload')
+    if (lastReloadMarker !== undefined && marker !== lastReloadMarker) whitelistDefaults.reload()
+    lastReloadMarker = marker
+  }
+  observeReloadEntry()
   ctx.on('loader/volatile-update', () => {
+    observeReloadEntry()
     for (const callback of listeners) callback()
   })
 

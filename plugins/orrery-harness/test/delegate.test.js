@@ -9,16 +9,25 @@ import { modelFamily, pickVariant } from '../src/delegate/families.js'
 import { resolveCategory, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
+import { readWhitelistDefaults } from '../src/shared/whitelist-defaults.js'
 /** Mutable settings service with an onChange broadcast (mirrors lsp.test.js).
  * Sections start undefined so the existing fallback semantics stay observable;
  * commit() publishes one section change to every subscriber, exactly like the
  * real service does on loader/volatile-update. Shared by both harnesses below. */
+// The real settings service publishes the product defaults beside the user's
+// list keys (they come from the plugin's own data file, not from any config
+// row). A stub that omitted them would test a state the product cannot reach.
+function withDefaults(section) {
+  if (!section || section.defaults) return section
+  return { ...section, defaults: readWhitelistDefaults().tables }
+}
+
 function liveSettings(initial = {}) {
   const listeners = new Set()
   const sections = { robash: undefined, delegate: undefined, ...initial }
   return {
     service: {
-      get: (key) => sections[key],
+      get: (key) => withDefaults(sections[key]),
       onChange: (callback) => {
         listeners.add(callback)
         return () => listeners.delete(callback)
@@ -324,7 +333,7 @@ describe('delegate plugin apply', () => {
       skills: {},
       get: (name) =>
         name === 'orrerySettings'
-          ? (settingsService ?? (settingsSections ? { get: (section) => settingsSections[section] } : undefined))
+          ? (settingsService ?? (settingsSections ? { get: (section) => withDefaults(settingsSections[section]) } : undefined))
           : undefined,
       on: () => {},
     }
@@ -371,14 +380,25 @@ describe('delegate plugin apply', () => {
     expect(guards).toHaveLength(0)
   })
 
-  it('settings override allow: [] clears the default allow list (fail-closed)', async () => {
+  it('settings override allow: [] adds nothing and the product defaults still govern', async () => {
     const { tool, guards } = applyHarness({}, { robash: { allow: [] } })
     await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
-    // the present empty array is authoritative: even a default command misses
-    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toMatch(/not on the read-only allow list/)
-    // absent override keys still fall back to the module defaults
+    // an empty addition is a no-op: the default command still passes, and no
+    // configuration value can clear the whitelist any more
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+    // the product defaults for the deny side are in effect too
     expect(guards[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/explicitly denied/)
+  })
+
+  it('settings allow additions are APPENDED to the product defaults, never substituted for them', async () => {
+    // `uniq` is a product default; `sort` is too. The addition names neither, so
+    // a substitution-style merge would drop both and only allow the addition.
+    const { tool, guards } = applyHarness({}, { robash: { allow: ['custom-reader'] } })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards[0]({ name: 'bash', arguments: { command: 'custom-reader x' } })).toBe(undefined)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'uniq a.txt' } })).toBe(undefined)
   })
 
   it('settings override deny: ["ls"] denies ls but keeps the default allow list', async () => {
@@ -424,11 +444,16 @@ describe('delegate plugin apply', () => {
     await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
 
-    // Explicit empty list is authoritative: even a default command now misses.
+    // A committed empty list adds nothing, so the defaults still govern.
     live.commit('robash', { allow: [] })
 
     await tool.execute({ agent: 'explore', prompt: 'TASK: find again' }, execStub())
-    expect(guards[1]({ name: 'bash', arguments: { command: 'ls' } })).toMatch(/not on the read-only allow list/)
+    expect(guards[1]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+    // ...and a committed ADDITION is visible to the next delegation
+    live.commit('robash', { allow: ['custom-reader'] })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find once more' }, execStub())
+    expect(guards[2]({ name: 'bash', arguments: { command: 'custom-reader x' } })).toBe(undefined)
+    expect(guards[2]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
   })
 
   it('hot reload: the before-commit spawn is unaffected by a later commit', async () => {
@@ -471,23 +496,27 @@ describe('delegate plugin apply', () => {
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'git push' } })).toMatch(/git subcommand 'push'/)
   })
 
-  it('settings override pwshAllow: [] clears the pwsh allow list (fail-closed), bash lists untouched', async () => {
+  it('settings override pwshAllow: [] adds nothing; the pwsh defaults and the bash defaults both govern', async () => {
     const { tool, guards } = applyHarness({}, { robash: { pwshAllow: [] } })
     await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
-    // the present empty array is authoritative: even a default cmdlet misses
-    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toMatch(/not on the read-only allow list/)
-    // the bash side keeps the module defaults
+    // the empty addition is a no-op: default cmdlets still pass
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toBe(undefined)
+    // the bash side keeps the product defaults
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
-    // absent pwshDeny still falls back to the pwsh defaults
+    // the product defaults for pwshDeny are in effect too
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'iex x' } })).toMatch(/explicitly denied/)
   })
 
-  it('config.readOnlyPwsh merges over the pwsh defaults', async () => {
+  it('config.readOnlyPwsh ADDS to the pwsh defaults instead of replacing them', async () => {
     const { tool, guards } = applyHarness({ readOnlyPwsh: { allow: ['Get-Date'] } })
     await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    // the row-config addition is accepted...
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Date' } })).toBe(undefined)
-    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toMatch(/not on the read-only allow list/)
+    // ...and the product defaults are still there (a spread would have dropped them)
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toBe(undefined)
+    // an addition cannot shrink the defaults either, and things outside both lists stay denied
+    expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-ChildItem' } })).toBe(undefined)
   })
 
   it('a failing guard attach disposes the child and fails the call', async () => {

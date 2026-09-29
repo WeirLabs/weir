@@ -12,6 +12,7 @@ import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './r
 import { attachReadOnlyBashGuard, DEFAULT_ROBASH } from './robash-guard.js'
 import { DEFAULT_ROBASH_PWSH } from './robash-guard-pwsh.js'
 import { createAudit } from '../shared/audit.js'
+import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createDelegateTool } from './tool.js'
 
@@ -23,6 +24,34 @@ const inject = ['tools', 'subagents', 'llm', 'skills']
  * on platform for tests. */
 export function readOnlyShellName(platform) {
   return platform === 'win32' ? 'pwsh' : 'bash'
+}
+
+/**
+ * The effective list for one guard table: the product defaults first, then every
+ * addition, de-duplicated on first occurrence. Case is preserved — the pwsh path
+ * lowercases at lookup time (its matching is case-insensitive) while the POSIX
+ * path stays case-sensitive, so folding here would destroy that distinction.
+ */
+export function mergeWhitelist(defaults, additions) {
+  const merged = []
+  const seen = new Set()
+  for (const entry of [...(defaults ?? []), ...(additions ?? [])]) {
+    if (typeof entry !== 'string' || entry.length === 0) continue
+    if (seen.has(entry)) continue
+    seen.add(entry)
+    merged.push(entry)
+  }
+  return merged
+}
+
+/** The settings section's ADDITION lists, per field name, as `[]` when absent. */
+function additionsOf(section, fields) {
+  const out = {}
+  for (const field of fields) {
+    const value = section?.[field]
+    out[field] = Array.isArray(value) ? value : []
+  }
+  return out
 }
 
 function apply(ctx, config = {}) {
@@ -74,26 +103,49 @@ function apply(ctx, config = {}) {
   // Read-only shell guard: curated agents and readOnly categories get the
   // platform shell (bash, pwsh on win32) behind a fail-closed whitelist
   // guard when enabled.
-  // Layering contract (D2, pinned): the settings service only delivers list
-  // keys the user actually set, so this spread gives absent key → fall back
-  // to the lower layer (row config → DEFAULT_ROBASH) and present key →
-  // authoritative — INCLUDING an empty array, an explicitly cleared list
-  // (fail-closed stricter, never a fallback to defaults). The pwsh lists
-  // merge the same way: DEFAULT_ROBASH_PWSH ← config.readOnlyPwsh ← the
-  // settings section's pwshAllow/pwshDeny keys. gitAllow is merged once on
-  // the bash side and shared with the pwsh git gate.
+  //
+  // Layering contract (append semantics):
+  //   default (from the product defaults file the plugin reads itself)
+  //     ∪ row config additions (config.readOnlyBash / readOnlyPwsh)
+  //     ∪ user additions (the settings section's list keys)
+  //
+  // The product defaults are NOT read from the settings row: a DSH patch row is
+  // replaced wholesale rather than deep-merged, so a default that rides one can
+  // be discarded by any profile that declares its own row — that is how a
+  // whitelist addition once became unreachable for every profile that had ever
+  // edited a list. The file is read by the plugin at its own path, which no
+  // configuration layer can replace.
+  //
+  // Every layer only ADDS. Nothing here removes a default entry, and an empty
+  // array adds nothing rather than clearing the list: appending to allow/gitAllow
+  // widens what is permitted, appending to deny tightens it, and neither can
+  // shrink the product defaults. The union is de-duplicated preserving first
+  // occurrence, so the effective order is defaults first, additions after.
   function robashNow() {
     const robashOverride = robashOverrideNow()
+    const defaults = robashOverride?.defaults ?? FALLBACK_TABLES
     const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
-    const pwshOverride = {}
-    if (robashOverride && Object.hasOwn(robashOverride, 'pwshAllow')) pwshOverride.allow = robashOverride.pwshAllow
-    if (robashOverride && Object.hasOwn(robashOverride, 'pwshDeny')) pwshOverride.deny = robashOverride.pwshDeny
-    const pwshConfig = { ...DEFAULT_ROBASH_PWSH, ...(config.readOnlyPwsh ?? {}), ...pwshOverride }
+    const pwshConfig = { ...DEFAULT_ROBASH_PWSH, ...(config.readOnlyPwsh ?? {}) }
+    const bashAdditions = additionsOf(robashOverride, ['allow', 'gitAllow', 'deny'])
+    const pwshAdditions = additionsOf(robashOverride, ['pwshAllow', 'pwshDeny'])
+    const gitAdditions = [...(robashConfig.gitAllow ?? []), ...bashAdditions.gitAllow]
     return {
+      // enablement is a plain switch and still takes the section's last word;
+      // only the LISTS changed to append semantics below
       enabled: robashConfig.enabled !== false,
       lists: {
-        bash: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },
-        pwsh: { allow: pwshConfig.allow, gitAllow: robashConfig.gitAllow, deny: pwshConfig.deny },
+        bash: {
+          allow: mergeWhitelist(defaults.robashAllow, [...(robashConfig.allow ?? []), ...bashAdditions.allow]),
+          gitAllow: mergeWhitelist(defaults.robashGitAllow, gitAdditions),
+          deny: mergeWhitelist(defaults.robashDeny, [...(robashConfig.deny ?? []), ...bashAdditions.deny]),
+        },
+        pwsh: {
+          allow: mergeWhitelist(defaults.robashPwshAllow, [...(pwshConfig.allow ?? []), ...pwshAdditions.pwshAllow]),
+          // gitAllow is merged once on the bash side and shared with the pwsh
+          // git gate, so a pwsh-specific git list is not consulted here.
+          gitAllow: mergeWhitelist(defaults.robashGitAllow, gitAdditions),
+          deny: mergeWhitelist(defaults.robashPwshDeny, [...(pwshConfig.deny ?? []), ...pwshAdditions.pwshDeny]),
+        },
       },
     }
   }
