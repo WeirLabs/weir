@@ -6,7 +6,7 @@
 // so the assertions can actually disagree with the implementation.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { SHELL_OPERATIONS, shellCommand, shellToolName } from '../src/shell.js'
+import { ARG_VALIDATORS, SHELL_OPERATIONS, shellCommand, shellToolName } from '../src/shell.js'
 
 describe('shellToolName', () => {
   it('names pwsh on win32 (the read-only shell the delegate allowlist picks)', () => {
@@ -28,6 +28,18 @@ describe('SHELL_OPERATIONS vocabulary', () => {
       'stay-busy',
       'wait',
     ])
+  })
+
+  it('has exactly one arg validator per operation (no verb can skip validation)', () => {
+    assert.deepEqual(Object.keys(ARG_VALIDATORS).sort(), [...SHELL_OPERATIONS].sort())
+  })
+
+  it('gives every operation a builder on every platform (tables cannot drift apart)', () => {
+    for (const operation of SHELL_OPERATIONS) {
+      for (const platform of ['darwin', 'linux', 'win32']) {
+        assert.equal(typeof shellCommand(operation, platform, { text: 'X', path: 'x.txt', seconds: 1 }), 'string')
+      }
+    }
   })
 })
 
