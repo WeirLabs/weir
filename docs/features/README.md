@@ -21,3 +21,4 @@
 | hash_edit diff 面板 | [hash-edit-diff-view.md](hash-edit-diff-view.md) | `orrery-harness/hashline-edit` + `lib/client.js` |
 | LSP 语义工具 | [lsp-integration.md](lsp-integration.md) | `orrery-harness/lsp` |
 | Windows 沙箱 shell 约束 | [windows-sandbox-shell-constraint.md](windows-sandbox-shell-constraint.md) | 平台约束（DSH 桌面宿主） |
+| 集成测试装置 | [integration-test-harness.md](integration-test-harness.md) | `plugins/orrery-test-harness`（开发专用） |
