@@ -80,5 +80,5 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 ## 测试
 
 - 单元测试：`test/lsp-client.test.js`（帧编解码、握手、路由、通知、超时、关停；注册表语言映射、平台安装命令解析）与 `test/lsp.test.js`（门闸开/关、settings 覆盖优先、命令 on/off/坏参/无 agent、投影折叠、agent/created 恢复、实时翻转、实时调参、五工具链路、安装指引、类型拒绝、用后关停）；`test/lsp-admin.test.js`（status/install/版本探测/退出码归一化/超时终止/HTTP 接线/缺席降级）与 `test/lsp-admin-probe.test.js`（探测超时结算后不留下已武装的定时器）。
-- 平台可移植语料：`test/lsp-executable-win32.test.js`（win32 绝对路径形态、`%APPDATA%\npm` 与 `~/.npm-global` 扫描、PATHEXT 探测、PATH 分号拼接、npm 前缀）与 `test/lsp-spawn-argv.test.js`（`.cmd` → `cmd.exe /d /s /c`、`.ps1` → powershell、`.exe` 直启、POSIX 不变）。既有 POSIX 语料改为显式传平台（`{ platform: 'darwin' }`）并用跨平台可执行夹具（拷贝当前解释器），使其在 Windows 上同样可跑。
+- 平台可移植语料：`test/lsp-executable-win32.test.js`（win32 绝对路径形态、`%APPDATA%\npm` 与 `~/.npm-global` 扫描、PATHEXT 探测、无扩展名同名文件不算可执行、PATH 分号拼接、npm 前缀、子环境变量）与 `test/lsp-spawn-argv.test.js`（三类真实 shim 拆包（含 npm 自带的 `%NODE_EXE%`/`%NPM_CLI_JS%` 链与**无扩展名目标**）、含空格路径、拆包失败时 `cmd /d /c` 回退且**不含 `/s`**、不安全形状明确拒绝、`.ps1` → powershell、`.exe` 直启、POSIX 不变）。既有 POSIX 语料改为显式传平台（`{ platform: 'darwin' }`）并用跨平台可执行夹具（拷贝当前解释器），使其在 Windows 上同样可跑。已知语言限制：语料中的 corepack fixture 只建模 `IF EXIST "%~dp0\node.exe"` 那一支（真实 `pnpm.CMD` 最后一行 `%*` 属该支；`ELSE` 的裸 `node` 支未被覆盖，因测试的 `existsFile` 接缝使其不可达）。
 - 真实 GUI 验收：设置开 → 会话头开关出现 → 点亮 → 四工具可见 → 熄灭 → 消失 → 设置关 → 开关消失（用户桌面验收）。
