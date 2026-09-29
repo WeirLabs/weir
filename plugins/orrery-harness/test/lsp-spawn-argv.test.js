@@ -1,7 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep, win32 } from 'node:path'
 import { spawnArgv } from '../src/lsp/manager.js'
 
 /**
@@ -108,7 +108,11 @@ const corepackShim = (target) => [
 
 const seams = (text, { localNode = false } = {}) => ({
   binaryPath: 'C:\\node\\node.exe',
+  // win32 path arithmetic, not the host's: a shim path is a Windows command
+  // string whatever machine is reading it, so `dirname` rides beside `join`
+  // and the corpus asserts the same argv on every host.
   join: (base, rest) => `${base}\\${rest}`,
+  dirname: win32.dirname,
   // faithful to the real layout: npm only ships a node.exe beside a shim when
   // the prefix was created that way, and the target scripts exist
   existsFile: (path) => (localNode ? true : !/node\.exe$/i.test(path)),
@@ -233,23 +237,33 @@ describe('lsp server launch shape', () => {
     expect(argv).toEqual(['cmd.exe', '/d', '/c', shim, '--stdio'])
   })
 
-  it('drives the real existence predicate: a directory is not a target', () => {
+  it('drives the shipped file predicate: a directory is not a target', () => {
     const dir = mkdtempSync(join(tmpdir(), 'orrery-shim-'))
     try {
+      // The launch SHAPE is win32 throughout, but the predicate under test is
+      // the one `spawnArgv` ships, and it stats the real filesystem — so the
+      // path the shim NAMES is spelled with this host's separator. `%~dp0` and
+      // `%dp0%` expand to their directory plus the separator that follows them,
+      // which is how every generator writes them, so this is still the real
+      // shape while pointing at a path this filesystem can actually resolve.
       const shim = join(dir, 'real.cmd')
-      // the target is a DIRECTORY here: `existsSync` would accept it and hand
-      // node a folder, so the default predicate must reject the unwrap
+      const named = (name) => `%dp0%${sep}node_modules${sep}${name}`
+      const hostPath = (name) => join(dir, 'node_modules', name)
       mkdirSync(join(dir, 'node_modules'), { recursive: true })
-      mkdirSync(join(dir, 'node_modules', 'cli-dir.mjs'), { recursive: true })
-      writeFileSync(shim, '@echo off\r\n"%_prog%"  "%dp0%\\node_modules\\cli-dir.mjs" %*\r\n', 'utf8')
-      // no options at all: the shipped defaults are what runs here
-      expect(spawnArgv(shim, ['--stdio'], 'win32', { binaryPath: 'C:\\node\\node.exe' })[0]).toBe('cmd.exe')
-      // ...and a real FILE target does unwrap
-      writeFileSync(join(dir, 'node_modules', 'cli-file.mjs'), 'export {}\n', 'utf8')
-      writeFileSync(shim, '@echo off\r\n"%_prog%"  "%dp0%\\node_modules\\cli-file.mjs" %*\r\n', 'utf8')
-      expect(spawnArgv(shim, ['--stdio'], 'win32', { binaryPath: 'C:\\node\\node.exe' })).toEqual([
-        'C:\\node\\node.exe',
-        join(dir, 'node_modules', 'cli-file.mjs'),
+      // the target is a DIRECTORY here: `existsSync` would accept it and hand
+      // node a folder, so the shipped predicate must reject the unwrap
+      mkdirSync(hostPath('cli-dir.mjs'), { recursive: true })
+      writeFileSync(shim, `@echo off\r\n"%_prog%"  "${named('cli-dir.mjs')}" %*\r\n`, 'utf8')
+      const wired = { binaryPath: join(dir, 'node.exe'), join }
+      const refused = spawnArgv(shim, ['--stdio'], 'win32', wired)
+      expect(refused[0]).toBe('cmd.exe')
+      expect(refused).not.toContain(hostPath('cli-dir.mjs'))
+      // ...and a real FILE at the very same relative place does unwrap
+      writeFileSync(hostPath('cli-file.mjs'), 'export {}\n', 'utf8')
+      writeFileSync(shim, `@echo off\r\n"%_prog%"  "${named('cli-file.mjs')}" %*\r\n`, 'utf8')
+      expect(spawnArgv(shim, ['--stdio'], 'win32', wired)).toEqual([
+        join(dir, 'node.exe'),
+        hostPath('cli-file.mjs'),
         '--stdio',
       ])
     } finally {

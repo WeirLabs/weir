@@ -151,8 +151,11 @@ describe('lsp registry and uri helpers', () => {
     expect(installSpecFor({ command: 'x' }, 'darwin')).toBe(undefined)
     expect(displayInstallCommand(DEFAULT_SERVERS.typescript)).toBe('npm install -g typescript-language-server typescript')
     expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'darwin')).toBe('brew install lua-language-server')
-    // with no platform given it falls back to the multi-platform hint, not the spec
-    expect(displayInstallCommand(DEFAULT_SERVERS.lua)).toBe(DEFAULT_SERVERS.lua.installHint)
+    // where the platform has no spec, the display form falls back to the
+    // multi-platform hint rather than an empty or wrong command. The platform is
+    // passed explicitly: its default is the HOST, so an argument-less call pins a
+    // different string on every machine and passed on Windows alone.
+    expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'linux')).toBe(DEFAULT_SERVERS.lua.installHint)
   })
 
   it('round-trips file URIs', () => {

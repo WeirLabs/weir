@@ -229,11 +229,15 @@ function shellSafe(value) {
  * @param command - resolved absolute executable path
  * @param args - server arguments from the registry definition
  * @param platform - target platform (defaults to the host)
- * @param options - `{ binaryPath, readTextFile, existsFile, join }` seams for tests
+ * @param options - `{ binaryPath, readTextFile, existsFile, join, dirname }` seams for tests
  */
 export function spawnArgv(command, args = [], platform = process.platform, options = {}) {
   const binaryPath = options.binaryPath ?? process.execPath
   const join = options.join ?? nodeJoin
+  // `dirname` is host-shaped on POSIX and drive-shaped on Windows, so it is a
+  // seam beside `join`: the win32 shim corpus drives BOTH to read a Windows
+  // command string identically on either host.
+  const dirnameOf = options.dirname ?? dirname
   // a DIRECTORY must not qualify: the unwrap is accepted on this check alone
   const existsFile = options.existsFile ?? ((path) => {
     try {
@@ -253,7 +257,7 @@ export function spawnArgv(command, args = [], platform = process.platform, optio
     } catch {
       text = undefined
     }
-    const shimDirectory = dirname(command)
+    const shimDirectory = dirnameOf(command)
     // the LAST line that forwards to a script is the real invocation
     // (`endLocal & goto #_undefined_# …`); earlier lines are shim plumbing
     const invocation = lastShimInvocation(text)
