@@ -1,8 +1,10 @@
 // LSP server lifecycle manager: one server per (workspace, language family),
 // lazy start, full-document sync, idle shutdown, per-session holder refcounts.
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join as nodeJoin } from 'node:path'
 import { createLspClient, handshake, shutdownClient } from './client.js'
 import { familyForLanguageId } from './registry.js'
-import { augmentedPath } from './executable.js'
+import { childEnvironment } from './executable.js'
 
 export const LSP_DEFAULTS = {
   idleMs: 600_000,
@@ -32,31 +34,90 @@ export function uriToPath(uri) {
 }
 
 /**
+ * npm's generated `.cmd` shim: the last interpreter invocation is
+ * `"%_prog%" "%dp0%\<target>" %*` where `%dp0%` is the shim's own directory.
+ */
+const NPM_SHIM_INVOCATION = /"(%_prog%|[^"]*)"\s+"?(%dp0%\\[^"]+?|node_modules\\[^"]+?)"?\s+%\*/gi
+
+/** Resolve a shim path fragment to a real path (relative ones sit beside the shim). */
+function resolveShimPath(fragment, shimDirectory, join) {
+  const raw = fragment.replace(/%dp0%\\?/gi, '')
+  if (/^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith('/')) return raw
+  return join(shimDirectory, raw)
+}
+
+/**
  * Arguments `subprocess.spawn` needs to actually START a resolved executable.
  *
  * POSIX needs nothing: the resolved path is directly executable. Windows has no
- * execute bit and no shebang handling in CreateProcess, so the two shapes npm
- * and friends install need an interpreter in front:
+ * execute bit and no shebang handling in CreateProcess, so the shapes npm and
+ * friends install need an interpreter in front:
+ *
  * - `.cmd` / `.bat` shims are batch files — Node's spawn rejects them outright
- *   (EINVAL), so they run through cmd.exe. npm's shim also reads the child env
- *   as `SET "_prog=node"` with no `node` on the declared PATH, which cmd.exe
- *   resolves from its own PATH instead of failing.
+ *   (EINVAL). They can be run by `cmd.exe /c`, but that re-parses the command
+ *   line, so a shim under a path with a space (every `%APPDATA%\npm` install in
+ *   a profile with a space, `C:\Program Files\nodejs\npm.cmd`, …) or an argument
+ *   carrying cmd metacharacters is a startup failure or an injection. So the npm
+ *   shim is READ instead: it ends in `"%_prog%" "%dp0%\node_modules\…\cli.mjs" %*`,
+ *   which is unwrapped to `node <cli> <args>` — spawnable, space-safe, no shell.
+ *   A malformed or unreadable shim falls back to `cmd.exe /d /c` (NOT `/s`,
+ *   which disables the quote preservation that keeps such paths working).
  * - `.ps1` shims run through powershell.exe with the execution policy bypassed
  *   (the preset ships PowerShell for exactly this host).
  * Everything else (`.exe`, `.com`) launches directly.
  *
- * `platform` is injectable, mirroring `installSpecFor(entry, platform)`.
+ * `platform` is injectable, mirroring `installSpecFor(entry, platform)`;
+ * `binaryPath` overrides the interpreter used to unwrap a shim.
  * @param command - resolved absolute executable path
  * @param args - server arguments from the registry definition
+ * @param platform - target platform (defaults to the host)
+ * @param options - `{ binaryPath, readTextFile, join }` seams for tests
  */
-export function spawnArgv(command, args = [], platform = process.platform) {
-  const argv = [command, ...args]
-  if (platform !== 'win32') return argv
-  if (/\.(?:cmd|bat)$/i.test(command)) return ['cmd.exe', '/d', '/s', '/c', ...argv]
+export function spawnArgv(command, args = [], platform = process.platform, options = {}) {
+  const binaryPath = options.binaryPath ?? process.execPath
+  const join = options.join ?? nodeJoin
+  if (platform !== 'win32') return [command, ...args]
   if (/\.ps1$/i.test(command)) {
-    return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ...argv]
+    return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', command, ...args]
   }
-  return argv
+  if (/\.(?:cmd|bat)$/i.test(command)) {
+    let text
+    try {
+      text = options.readTextFile ? options.readTextFile(command) : readFileSync(command, 'utf8')
+    } catch {
+      text = undefined
+    }
+    const shimDirectory = dirname(command)
+    // the LAST invocation is the real one (`endLocal & goto #_undefined_# …`); the
+    // earlier lines are the shim's own plumbing (dp0 lookup, PATHEXT fix-ups)
+    const invocations = text === undefined ? [] : [...text.matchAll(NPM_SHIM_INVOCATION)]
+    const last = invocations.at(-1)
+    if (last) {
+      const program = last[1]
+      const target = resolveShimPath(last[2], shimDirectory, join)
+      // The shim picks its interpreter at RUN time: `%dp0%\node.exe` when npm
+      // shipped one beside the shim, else the bare `node` the shim resolves
+      // through cmd's PATH — which the child environment here does not carry
+      // (it declares only our augmented PATH). So the interpreter is chosen the
+      // same way, with the running Node as the guaranteed last resort: it is
+      // finally just "run this .js file with node".
+      const besideShim = program === '%_prog%' || program.toLowerCase() === 'node'
+      let interpreter
+      if (besideShim) {
+        const localNode = join(shimDirectory, 'node.exe')
+        const localNodeExists = options.existsFile ? options.existsFile(localNode) : existsSync(localNode)
+        interpreter = localNodeExists ? localNode : binaryPath
+      } else {
+        interpreter = resolveShimPath(program, shimDirectory, join)
+      }
+      const targetExists = options.existsFile ? options.existsFile(target) : existsSync(target)
+      if (targetExists) return [interpreter, target, ...args]
+    }
+    // Unknown shim shape: let cmd run it. `/d` skips AutoRun, `/c` runs and exits;
+    // no `/s`, so cmd keeps the quotes libuv adds around a spaced path.
+    return ['cmd.exe', '/d', '/c', command, ...args]
+  }
+  return [command, ...args]
 }
 
 export function createLspManager({ subprocess, fs, registry, options = {}, resolveExecutable: resolveExec = defaultResolveExecutable(subprocess) }) {
@@ -83,7 +144,7 @@ export function createLspManager({ subprocess, fs, registry, options = {}, resol
       cwd,
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
       graceMs: 3_000,
-      env: { PATH: augmentedPath() },
+      env: childEnvironment(),
     })
     const record = createServerRecord(handle, key, opts)
     servers.set(key, record)

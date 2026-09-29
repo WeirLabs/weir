@@ -1,8 +1,19 @@
 import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { apply, errorResponse, jsonResponse, lspStatusFor, probeVersion, readJsonBody, runInstall } from '../src/lsp/admin.js'
-import { DEFAULT_SERVERS, installSpecFor } from '../src/lsp/registry.js'
+import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor } from '../src/lsp/registry.js'
 import { augmentedPath, npmGlobalPrefix } from '../src/lsp/executable.js'
+import { spawnArgv } from '../src/lsp/manager.js'
+
+/**
+ * What the double's resolver hands back. The launch shape is then the shipped
+ * one (`spawnArgv`), so these assertions fail if a spawn site stops routing
+ * through it — they do not reimplement the shape's own logic.
+ */
+const resolvedAs = (command) => `/resolved/${command}`
+
+/** True when the spec's argv is exactly what the shipped launch shape produces. */
+const launched = (spec, executable, args) => JSON.stringify(spec.argv) === JSON.stringify(spawnArgv(executable, args))
 
 function fakeSubprocess({ present = ['npm'], versions = {} } = {}) {
   const spawns = []
@@ -10,7 +21,7 @@ function fakeSubprocess({ present = ['npm'], versions = {} } = {}) {
     spawns,
     resolveExecutable: async (command) => {
       if (!present.includes(command)) throw new Error(`${command} not found`)
-      return `/resolved/${command}`
+      return resolvedAs(command)
     },
     spawn(spec) {
       const stdin = new PassThrough()
@@ -62,7 +73,7 @@ describe('lsp admin pure logic', () => {
     expect(typescript.languageIds).toContain('typescript')
     const lua = servers.find((server) => server.family === 'lua')
     expect(lua.installed).toBe(false)
-    expect(lua.installCommand).toContain('brew install lua-language-server')
+    expect(lua.installCommand).toBe(displayInstallCommand(DEFAULT_SERVERS.lua, process.platform))
     expect(lua.installerAvailable).toBe(false)
     expect(typescript.installerAvailable).toBe(false) // npm not present in the fake
     // version probes consumed the spawned handles (any present command resolves)
@@ -110,10 +121,14 @@ describe('lsp admin pure logic', () => {
     await new Promise((resolve) => setImmediate(resolve))
     const handle = subprocess.spawns[0]
     // npm installs pin a user-writable prefix (root-owned /usr/local → EACCES)
-    expect(handle.spec.argv[0]).toBe('/resolved/npm')
-    expect(handle.spec.argv[1]).toBe('--prefix')
-    expect(handle.spec.argv[2]).toBe(npmGlobalPrefix())
-    expect(handle.spec.argv.slice(3)).toEqual(['install', '-g', 'typescript-language-server', 'typescript'])
+    const installer = resolvedAs('npm')
+    const installArgs = ['--prefix', npmGlobalPrefix(), 'install', '-g', 'typescript-language-server', 'typescript']
+    // the installer goes through the shipped launch shape (on win32 that means
+    // the resolved .cmd is unwrapped or wrapped — never handed to CreateProcess raw)
+    expect(launched(handle.spec, installer, installArgs)).toBe(true)
+    expect(handle.spec.argv).toContain('--prefix')
+    expect(handle.spec.argv).toContain(npmGlobalPrefix())
+    expect(handle.spec.argv.slice(-4)).toEqual(['install', '-g', 'typescript-language-server', 'typescript'])
     // the child env carries the augmented PATH so `env node` scripts resolve
     expect(handle.spec.env.PATH).toBe(augmentedPath())
     handle.stderr.write('warning line\n')

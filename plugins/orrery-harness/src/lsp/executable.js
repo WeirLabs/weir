@@ -165,10 +165,25 @@ export async function resolveExecutable(subprocess, command, dirs = extraBinDire
  * Augmented PATH string for spawned children. npm/pipx-installed servers and
  * the npm installer itself are `#!/usr/bin/env node` scripts; the scrubbed
  * child environment inherits the minimal GUI PATH, so `env node` fails with
- * exit 127. Spawn specs get `env: { PATH: augmentedPath() }` (S21 follow-up).
+ * exit 127. Spawn specs get `env: childEnvironment()` (S21 follow-up).
  */
 export function augmentedPath(env = process.env, platform = process.platform) {
   const separator = platform === 'win32' ? ';' : ':'
   const existing = (env.PATH ?? '').split(separator).filter(Boolean)
   return [...new Set([...extraBinDirectories(env, platform), ...existing])].join(separator)
+}
+
+/**
+ * The environment every spawned server / installer / probe gets. PATH is the
+ * point of it; on Windows `SystemRoot` and `ComSpec` ride along because the
+ * launch shape may hand the command to `cmd.exe`, which needs both (and the
+ * scrubbed child environment otherwise has neither).
+ */
+export function childEnvironment(env = process.env, platform = process.platform) {
+  const child = { PATH: augmentedPath(env, platform) }
+  if (platform === 'win32') {
+    if (env.SystemRoot) child.SystemRoot = env.SystemRoot
+    if (env.ComSpec) child.ComSpec = env.ComSpec
+  }
+  return child
 }
