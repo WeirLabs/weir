@@ -72,7 +72,7 @@ patch 层把 compaction provider 与 context-guard 消费者放进同一个 `iso
 - **`rehydrate` 是两阶段**：phase 1 让一个成员停在 `blocked` 后进程退出；phase 2 用**同一个 session id** 在新进程里接管（协调器注册表为空），断言注册表能从 audit JSONL 重建并恢复被阻塞的子成员。
 - **`robash` 的拒绝证据是平台平行的**：POSIX 侧断言 `rm` 被拒，win32 侧断言 `Remove-Item` 被拒——两者都命中各自的默认 deny 列表，是平行证据而非同一条。**覆盖边界要说准**：win32 上被拒绝的是*写命令本身*（守卫在派生前就否决），而*放行*那一跳执行的是真实 pwsh（标记经真实工具结果回传）；因此未被覆盖的是 pwsh 侧的写入行为，不是 pwsh 本身。
 - **不覆盖**：真实语言服务器行为（`lsp` 用脚本化 mock 服务器）、GUI/桌面链路、真实供应商调用。
-- **已登记的潜在缺口（Windows 专属，本次未修）**：`wait` / `stay-busy` 在 win32 渲染为 `Start-Sleep`，而它**不在** `DEFAULT_ROBASH_PWSH.allow` 里（POSIX 侧对应的 `sleep` 在 `DEFAULT_ROBASH.allow` 里）。当前没有任何场景在**受守卫生效的子成员**里等待（`robash` 子成员只 echo 与尝试删除；`terminate` 的忙碌子成员是 `quick` 类别、不受只读守卫约束），因此不影响今天的结果；但将来若新增这类场景，它会“macOS 过、Windows 败”——正是本次要消灭的那类平台差异。修它需动产品侧 deny/allow 表，超出本次「产品零改动」边界，故仅登记。
+- **平台等待原语的端到端覆盖（已修复）**：`wait` / `stay-busy` 在 win32 渲染为 `Start-Sleep`。该 cmdlet 一度只在 bash 侧有对应物（`sleep`）、pwsh 侧两张表都没有，因此“同一个等待操作 macOS 放行、Windows 拒绝”。现在两侧都放行（`Start-Sleep` 入 pwsh 白名单 + `sleep` 登记为内建只读别名），且 `robash` 子成员的命令体改为一发 `echo-and-wait`，使它成为该修复的端到端钉。**覆盖边界要说准**：本装置**不加载产品 bundle 与预设 patch**（bundle 仅作 `link:` 依赖供模块解析，profile 自己的 patch 写为 `[]`，其 settings 行也不含 robash 键），因此实际生效的是**模块默认值** `DEFAULT_ROBASH_PWSH`。后果：该钉只覆盖“模块默认 allow 项”这一层；**预设 patch 行的缺失它看不见**（把 patch 行改回去，集成套件仍会全绿）。镜像行由 `test/robash-whitelist-parity.test.js` 守护，别名行由 `robash-guard-pwsh.test.js` 的别名语料守护——两者都是单元层。
 
 ## 测试
 
