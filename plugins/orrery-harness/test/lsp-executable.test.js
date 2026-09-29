@@ -31,6 +31,17 @@ describe('lsp executable resolution', () => {
     expect(await resolveExecutable({}, join(dir, 'missing'), [], { platform: 'darwin' })).toBe(undefined)
   })
 
+  // The execute bit is a POSIX property: NTFS grants X_OK to every existing
+  // file, so this assertion would be vacuous on Windows and is skipped there.
+  const posixOnly = process.platform === 'win32' ? it.skip : it
+  posixOnly('rejects a regular file without the execute bit (POSIX)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orrery-bin-'))
+    const plain = join(dir, 'plain-ls')
+    writeFileSync(plain, '#!/bin/sh\n', { mode: 0o644 })
+    expect(await resolveExecutable({}, plain, [], { platform: 'linux' })).toBe(undefined)
+    expect(await resolveExecutable({}, 'plain-ls', [dir], { platform: 'linux' })).toBe(undefined)
+  })
+
   it('lists the standard well-known directories with nvm versions', () => {
     const dirs = extraBinDirectories({ HOME: '/Users/tester' }, 'darwin')
     expect(dirs).toContain('/opt/homebrew/bin')
