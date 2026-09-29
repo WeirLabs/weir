@@ -60,8 +60,8 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
   - 扩展目录 win32 为 `%APPDATA%\npm`（npm 全局前缀，`.cmd`/`.ps1` shim 坐落于此）、`~/.npm-global` 根与其 `bin`、`~/.local/bin`、`~/.cargo/bin`、`~/go/bin`、`scoop\shims`；POSIX 为 nvm 版本 bin + Homebrew/usr/local/opt/local + `~/.npm-global/bin` 等；
   - `augmentedPath()` 用目标平台分隔符拼接（win32 `;`，POSIX `:`），子进程环境只有 `PATH` 一个键；
   - `npmGlobalPrefix()` win32 返回 `%APPDATA%\npm`，POSIX 返回 `~/.npm-global`。
-- **启动形态包装**：`spawnArgv(command, args, platform)` 决定真正交给 `ctx.subprocess.spawn` 的 argv——Windows 的 CreateProcess 既不执行批处理也无 shebang 处理（Node 对 `.cmd` 直接 `EINVAL`），故 `.cmd`/`.bat` 经 `cmd.exe /d /s /c`（npm shim 内部的 `SET "_prog=node"` 也因此能在 cmd 自身 PATH 下解析到 node）、`.ps1` 经 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`、`.exe`/`.com` 直启；POSIX 保持 `[command, ...args]`。
-- 管理端点的两个定时器均不拖住宿主：`probeVersion` 的探测超时与 `runInstall` 的安装截止时间都会在结算时 `clearTimeout`，且安装截止时间 `unref()`（否则一个无人等待的安装 promise 会把整个进程钉住十分钟）。
+- **启动形态包装**：`spawnArgv(command, args, platform)` 决定真正交给 `ctx.subprocess.spawn` 的 argv——Windows 的 CreateProcess 既不执行批处理也无 shebang 处理（Node 对 `.cmd` 直接 `EINVAL`）。**不经 shell**：`.cmd`/`.bat` shim 被读入并**拆包**（npm 生成的 shim 末尾为 `"%_prog%" "%dp0%\node_modules\…\cli.*" %*`），交付 `node <cli> <args>`；解释器按 shim 自身规则选（`%dp0%\node.exe` 存在则用它，否则用当前运行的 Node——shim 会用的裸 `node` 并不在声明的子环境 PATH 里）。拆包不可行时才回退 `cmd.exe /d /c`（**不用 `/s`**：它会关掉引号保留，使含空格的路径在 `C:\Program` 处断掉）。`.ps1` 经 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`，`.exe`/`.com` 直启，POSIX 维持 `[command, ...args]`。服务器、版本探测、面板安装器三个 spawn 点共用该形态；`childEnvironment()` 在 Windows 额外带上 `SystemRoot`/`ComSpec`（供 cmd 回退使用）。
+- 管理端点的两个定时器均不拖住宿主：`probeVersion` 的探测窗口与 `runInstall` 的安装截止时间都会在**所有结算路径**释放（`try/finally`——真正漏的是**抛错路径**：启动失败（spawn EINVAL）会从 race 中抛出，此前已武装的 8s 定时器会让进程多活到它开火；实测 4ms 工作 → 8007ms 进程寿命，修后 7ms），且安装截止时间另加 `unref()`。
 - `POST /api/orrery-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/orrery-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
 - 语言识别：按目标文件扩展名映射 LSP languageId（`.ts/.tsx/.js/.py/.go/.rs`…），扩展名未知直接拒绝（不起服务器）。
 
