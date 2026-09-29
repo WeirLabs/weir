@@ -214,6 +214,15 @@ window.__ModuleLoader__.load({
 			if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) return null;
 			return parsed;
 		}
+		/** Open-state decision for the list editor: blank (unset at every layer)
+		 * and malformed stored values both open with an EMPTY staged list — no
+		 * stored state may strand the field uneditable; `invalid` distinguishes
+		 * malformed (show the hint) from merely unset (no hint). */
+		function robashEditorOpenState(text) {
+			const parsed = jsonToStringList(text);
+			const blank = typeof text !== "string" || text.trim() === "";
+			return { list: parsed ?? [], invalid: !blank && parsed === null, parsed };
+		}
 		/** Synthesize the stored JSON from a staged string list (blank entries dropped). */
 		function stringListToJson(list) {
 			return JSON.stringify((list ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0));
@@ -306,17 +315,13 @@ window.__ModuleLoader__.load({
 		function RobashListEditorField(props) {
 			const [open, setOpen] = react.useState(false);
 			const [staged, setStaged] = react.useState(null);
-			const [invalid, setInvalid] = react.useState(false);
-			const parsed = jsonToStringList(props.text);
+			const openState = robashEditorOpenState(props.text);
+			const parsed = openState.parsed;
 			const openEditor = () => {
-				const list = jsonToStringList(props.text);
-				if (list === null) {
-					// fail-closed UX: report the bad stored value and refuse to open
-					setInvalid(true);
-					return;
-				}
-				setInvalid(false);
-				setStaged(list);
+				// Blank (unset) and malformed stored values both open with an empty
+				// staged list: no stored state may strand the field uneditable. The
+				// invalid hint (openState.invalid) stays visible in that case.
+				setStaged(openState.list);
 				setOpen(true);
 			};
 			const save = () => {
@@ -342,7 +347,7 @@ window.__ModuleLoader__.load({
 							parsed !== null ? react_jsx_runtime.jsx("span", { style: hintStyle, children: `${parsed.length} ${props.t("robashListEntries")}` }) : null,
 							react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: openEditor, children: props.t("chainEdit") })
 						] }),
-						parsed === null || invalid ? react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("robashListInvalid") }) : null,
+						openState.invalid ? react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("robashListInvalid") }) : null,
 						props.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
 							react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: props.t("overridden") }),
 							react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: props.t("reset") })
@@ -877,7 +882,7 @@ window.__ModuleLoader__.load({
 			robashPwshDenyHint: "Command names the read-only pwsh guard always rejects (Windows read-only shell); the list applies exactly as saved.",
 			robashListEntries: "entries",
 			robashListAdd: "Add entry",
-			robashListInvalid: "The stored value is not a JSON string array; the list editor cannot open it.",
+			robashListInvalid: "The stored value is not a JSON string array; the editor opened with an empty list — saving replaces the stored value.",
 			robashListPanelHint: "One command name per row. Saving replaces the list wholesale — save an empty list to allow nothing; use reset to fall back to the product default.",
 			robashListEntryPlaceholder: "command name",
 			lspEnabled: "LSP semantic tools",
@@ -1036,7 +1041,7 @@ window.__ModuleLoader__.load({
 			robashPwshDenyHint: "只读 pwsh 守卫一律拒绝的命令名（Windows 只读 shell）；列表按保存内容整体生效。",
 			robashListEntries: "条目",
 			robashListAdd: "添加条目",
-			robashListInvalid: "已保存的值不是 JSON 字符串数组，列表编辑器无法打开。",
+			robashListInvalid: "已保存的值不是 JSON 字符串数组；编辑器已以空列表打开——保存将覆盖该值。",
 			robashListPanelHint: "每行一个命令名。保存即整体替换列表——保存空列表则全不放行；恢复产品默认请用重置。",
 			robashListEntryPlaceholder: "命令名",
 			lspEnabled: "LSP 语义工具",
@@ -1284,7 +1289,7 @@ window.__ModuleLoader__.load({
 		exports.inject = inject;
 		exports.chainEditor = { jsonToChains, chainsToJson };
 		exports.lspManager = { LspManagerField, jsonToLspServers, lspServersToJson };
-		exports.robashEditor = { jsonToStringList, stringListToJson };
+		exports.robashEditor = { jsonToStringList, stringListToJson, robashEditorOpenState };
 		return module.exports;
 	}
 });
