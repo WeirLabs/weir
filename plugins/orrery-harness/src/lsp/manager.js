@@ -1,6 +1,6 @@
 // LSP server lifecycle manager: one server per (workspace, language family),
 // lazy start, full-document sync, idle shutdown, per-session holder refcounts.
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { dirname, join as nodeJoin } from 'node:path'
 import { createLspClient, handshake, shutdownClient } from './client.js'
 import { familyForLanguageId } from './registry.js'
@@ -118,30 +118,32 @@ function expandShimToken(token, text, shimDirectory, join) {
 }
 
 /**
- * The last `%*` forward in a shim, as `{ program, target }`. Only quote escapes
- * are dropped: `\"` is npm's literal spelling, while a lone backslash is a path
- * separator that must survive for the variable pass that follows.
+ * The last `%*` forward in a shim, as `{ program, target }`.
  *
- * The target is either a literal script path or a `%VAR%` whose NAME ends in the
- * script extension (`"%NPM_CLI_JS%"` — npm never spells the file out), so both
- * shapes are accepted and the variable pass resolves the latter.
+ * Tokenizing drops only quote escapes — `\"` is npm's literal spelling, while a
+ * lone backslash is a path separator that must survive for the variable pass.
+ * The target is the token immediately before `%*`, which is what EVERY shipped
+ * shim shape puts there (`"%NODE_EXE%" "%NPM_CLI_JS%" %*`, `"%~dp0\node.exe"
+ * "%~dp0\…\pnpm.js" %*`, `"%_prog%" "%dp0%\…\cli.mjs" %*`). It is NOT
+ * identified by extension: npm's bin linker emits extensionless targets for any
+ * package whose bin script is spelled that way, so `…\bin\tsc` and
+ * `…\bin\vscode-json-language-server` are ordinary targets here.
  */
 function lastShimInvocation(text) {
   if (typeof text !== 'string') return null
   const lines = text.split(/\r?\n/).filter((line) => SHIM_FORWARD.test(line))
   const line = lines.at(-1)
   if (!line) return null
-  const tokens = line.replace(/["\s]+/g, ' ').trim().split(' ').filter(Boolean)
-  const isScript = (token) => /\.(?:mjs|cjs|js)"?$/i.test(token) || /^%[A-Za-z_][A-Za-z0-9_]*%$/.test(token)
-  const targetIndex = tokens.findLastIndex(isScript)
-  if (targetIndex < 1) return null
   const strip = (token) => token.replace(/^["\\]+|["\\]+$/g, '')
-  return { program: strip(tokens[targetIndex - 1]), target: strip(tokens[targetIndex]) }
+  const tokens = line.replace(/["\s]+/g, ' ').trim().split(' ').filter(Boolean).map(strip)
+  // `%*` is last, so the target and its interpreter sit right before it
+  if (tokens.length < 3) return null
+  return { program: tokens[tokens.length - 3], target: tokens[tokens.length - 2] }
 }
 
 /** True when a value carries nothing cmd would re-parse. */
 function shellSafe(value) {
-  return !CMD_UNSAFE.test(value)
+  return value.length > 0 && !CMD_UNSAFE.test(value)
 }
 
 /**
@@ -179,7 +181,14 @@ function shellSafe(value) {
 export function spawnArgv(command, args = [], platform = process.platform, options = {}) {
   const binaryPath = options.binaryPath ?? process.execPath
   const join = options.join ?? nodeJoin
-  const existsFile = options.existsFile ?? existsSync
+  // a DIRECTORY must not qualify: the unwrap is accepted on this check alone
+  const existsFile = options.existsFile ?? ((path) => {
+    try {
+      return statSync(path).isFile()
+    } catch {
+      return false
+    }
+  })
   if (platform !== 'win32') return [command, ...args]
   if (/\.ps1$/i.test(command)) {
     return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', command, ...args]
