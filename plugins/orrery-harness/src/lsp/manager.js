@@ -31,6 +31,34 @@ export function uriToPath(uri) {
   return decoded.replace(/^\/([A-Za-z]:[\/])/, '$1')
 }
 
+/**
+ * Arguments `subprocess.spawn` needs to actually START a resolved executable.
+ *
+ * POSIX needs nothing: the resolved path is directly executable. Windows has no
+ * execute bit and no shebang handling in CreateProcess, so the two shapes npm
+ * and friends install need an interpreter in front:
+ * - `.cmd` / `.bat` shims are batch files — Node's spawn rejects them outright
+ *   (EINVAL), so they run through cmd.exe. npm's shim also reads the child env
+ *   as `SET "_prog=node"` with no `node` on the declared PATH, which cmd.exe
+ *   resolves from its own PATH instead of failing.
+ * - `.ps1` shims run through powershell.exe with the execution policy bypassed
+ *   (the preset ships PowerShell for exactly this host).
+ * Everything else (`.exe`, `.com`) launches directly.
+ *
+ * `platform` is injectable, mirroring `installSpecFor(entry, platform)`.
+ * @param command - resolved absolute executable path
+ * @param args - server arguments from the registry definition
+ */
+export function spawnArgv(command, args = [], platform = process.platform) {
+  const argv = [command, ...args]
+  if (platform !== 'win32') return argv
+  if (/\.(?:cmd|bat)$/i.test(command)) return ['cmd.exe', '/d', '/s', '/c', ...argv]
+  if (/\.ps1$/i.test(command)) {
+    return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ...argv]
+  }
+  return argv
+}
+
 export function createLspManager({ subprocess, fs, registry, options = {}, resolveExecutable: resolveExec = defaultResolveExecutable(subprocess) }) {
   const opts = { ...LSP_DEFAULTS, ...options }
   let currentRegistry = registry
@@ -51,7 +79,7 @@ export function createLspManager({ subprocess, fs, registry, options = {}, resol
       throw new Error(`lsp: language server '${definition.command}' not found on PATH — install it first: ${definition.installHint}`)
     }
     const handle = subprocess.spawn({
-      argv: [command, ...definition.args],
+      argv: spawnArgv(command, definition.args),
       cwd,
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
       graceMs: 3_000,
