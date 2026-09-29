@@ -31,6 +31,7 @@
 | `readOnlyPwsh.allow` / `readOnlyPwsh.deny` | 初版 pwsh 白名单 | pwsh 侧只读 cmdlet 白名单与逃逸向量 deny（大小写不敏感、deny 优先、内建别名表展开后查表）。设置页键：`robashPwshAllow` / `robashPwshDeny`（JSON 字符串数组，语义同上表）；git 子命令门控共享 `robashGitAllow` |
 | 平台等待原语 | `sleep` / `Start-Sleep` | 两侧都放行：POSIX 侧 `sleep` 在 bash 白名单里，win32 侧 `Start-Sleep` 在 pwsh 白名单里，且 `sleep` 作为 pwsh 内建 ReadOnly 别名（→ `Start-Sleep`）登记在别名表。两侧必须同时在场，否则同一个“等待”操作会 macOS 放行、Windows 拒绝 |
 | 名单镜像不变式 | 行 config 与模块默认逐项一致 | `readOnlyPwsh.allow/deny` 与 `readOnlyBash.*` 在 `cordis.patch.yml` 的 `orrery-settings` 行里有 1:1 镜像，那是**预设的组合基线**；设置层最后合并且在场即权威，因此只改模块默认值在预设里是**空操作**。该不变式由 `test/robash-whitelist-parity.test.js` 直接读 patch 文件守护（此前仅靠注释，已真实漂移过一次） |
+| 基线漂移检测 | 启动报一次 | 预设基线在运行期**不可见**（patch 层整体替换、非深合并），因此 `settings` 启动时从 bundle 自己的 `cordis.patch.yml` 重读基线逐表比对，缺项则 `ctx.logger.warn` 一行英文警告（含补救动作）。**只报告不修改**；未声明白名单 / 显式清空 / 用户自行增项均不报；patch 文件不可读则静默降级 |
 | `supervision.maxRetries` | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用） |
 | `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
 | `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |
