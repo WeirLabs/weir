@@ -34,7 +34,7 @@ Children cannot delegate further. Curated agents are read-only and never write f
  * @property {(skillName: string) => Promise<string>} loadSkill
  * @property {object} subagents - ctx.subagents
  * @property {object | undefined} jobs - ctx.jobs when mounted
- * @property {{ enabled: boolean, lists: { bash: { allow: string[], gitAllow: string[], deny: string[] }, pwsh: { allow: string[], gitAllow: string[], deny: string[] } } }} robash - read-only shell guard config (bash + pwsh list sets)
+ * @property {() => { enabled: boolean, lists: { bash: { allow: string[], gitAllow: string[], deny: string[] }, pwsh: { allow: string[], gitAllow: string[], deny: string[] } } }} robash - live resolver for the read-only shell guard config (bash + pwsh list sets); resolved per delegation so a settings commit is visible to the next spawn
  * @property {(parentAgent: object) => object} coordinatorFor - supervised group coordinator for one parent agent
  * @property {object | undefined} agents - ctx.agents (live agent lookup by child id)
  */
@@ -264,11 +264,15 @@ async function withEscalation(started, item, deps, exec) {
 
 /** Attach the read-only shell guard to a spawned read-only child (fail-closed). */
 function attachGuardIfReadOnly(started, target, deps) {
-  if (!target.readOnly || !deps.robash?.enabled) return
-  // deps.robash.lists carries both list sets ({ bash, pwsh }); the guard
+  // deps.robash is a live resolver (the settings overlay can change between
+  // delegations), so resolve it once here: the enabled check and the lists
+  // handed to the guard must describe the same committed snapshot.
+  const robash = deps.robash?.()
+  if (!target.readOnly || !robash?.enabled) return
+  // robash.lists carries both list sets ({ bash, pwsh }); the guard
   // dispatches on execution.name.
   try {
-    attachReadOnlyBashGuard(started.localAgent, deps.robash.lists)
+    attachReadOnlyBashGuard(started.localAgent, robash.lists)
   } catch (error) {
     // A read-only child must never run unguarded: tear it down and fail loud.
     started.dispose()
@@ -317,7 +321,11 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
       if (target.readOnly) {
         const childAgent = deps.agents?.get(started.childId)
         if (!childAgent) throw new Error(`delegate: read-only supervised member spawned but no live agent handle is available for "${started.childId}"`)
-        attachReadOnlyBashGuard(childAgent, deps.robash.lists)
+        const robash = deps.robash?.()
+        // Guard disabled in this snapshot: the member keeps its shell-free
+        // surface (resolveTarget already withheld the shell tool).
+        if (!robash?.enabled) continue
+        attachReadOnlyBashGuard(childAgent, robash.lists)
       }
     }
   } catch (error) {

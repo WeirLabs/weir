@@ -366,4 +366,97 @@ describe('group coordinator', () => {
     await expect(async () => coordinator.resume('alpha', 'back up')).rejects.toThrow(/could not deliver resume context/)
     expect(coordinator.memberByRef('c1').status).toBe('blocked')
   })
+
+  // --- Live supervision tuning (volatile settings commit) ------------------
+  // spec: category-delegation / "volatile 设置在同一进程内即提交即生效".
+  // A coordinator is long-lived (one per parent session), so a settings commit
+  // has to reach the running instance, not just the next one.
+
+  it('setSupervision tightens the retry cap for an already-running child', async () => {
+    const deps = fakeDeps()
+    const coordinator = createGroupCoordinator(deps, { maxRetries: 5 })
+    coordinator.assertGroupAvailable('g')
+    coordinator.registerMember({ id: 'c1', name: 'alpha', group: 'g' })
+    coordinator.sealGroup('g')
+
+    // one provider-error retry, well under the original cap of 5
+    await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    expect(coordinator.memberByRef('c1').status).toBe('running')
+
+    // the settings commit lands while the child is still running
+    coordinator.setSupervision({ maxRetries: 1 })
+
+    const outcome = await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    expect(outcome).toBe('settled')
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberByRef('c1').report).toContain('provider-error')
+  })
+
+  it('setSupervision retunes the backoff without touching registry state', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    // settle one member so there is observable registry state to preserve
+    coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: one')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    const before = coordinator.memberByRef('c2')
+
+    coordinator.setSupervision({ initialBackoffMs: 1000, maxBackoffMs: 2000 })
+
+    // registry untouched: same members, same statuses, same retry counters
+    expect(coordinator.memberByRef('c1').status).toBe('completed')
+    expect(coordinator.memberByRef('c2')).toBe(before)
+
+    // and the new backoff governs the next scheduled retry
+    await coordinator.onTurnEnd('c2', { kind: 'error', error: { message: '500' } })
+    expect(deps.scheduled.at(-1).delayMs).toBe(1000)
+  })
+
+  it('setSupervision ignores keys outside the three tuning values', async () => {
+    const deps = fakeDeps()
+    const coordinator = groupOfTwo(deps)
+    // a caller must not be able to smuggle state in through the settings door
+    coordinator.setSupervision({ maxRetries: 1, children: new Map(), groups: new Map(), meta: { hijacked: true } })
+    await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    const outcome = await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    expect(outcome).toBe('settled')
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.meta?.hijacked).toBe(undefined)
+  })
+  it('a tightened cap settles a mid-flight child exactly once', async () => {
+    // 3.3 boundary: the new cap can land below the child's current retry count.
+    // The very next decision must terminate it — and further turn ends must not
+    // re-settle it (a duplicate settle would emit a second durable fact and
+    // perturb group completion).
+    const deps = fakeDeps()
+    const coordinator = createGroupCoordinator(deps, { maxRetries: 5 })
+    coordinator.assertGroupAvailable('g')
+    coordinator.registerMember({ id: 'c1', name: 'alpha', group: 'g' })
+    coordinator.sealGroup('g')
+
+    // build up a retry count that the new cap will sit below
+    await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    expect(coordinator.memberByRef('c1').status).toBe('running')
+
+    coordinator.setSupervision({ maxRetries: 1 })
+    expect(await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })).toBe('settled')
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+
+    const settles = deps.facts.filter((fact) => fact.kind === 'settle' && fact.childId === 'c1')
+    expect(settles).toHaveLength(1)
+    const retriesScheduled = deps.scheduled.length
+
+    // A late turn end can still reach a blocked child (blocked, unlike
+    // completed/terminated, is not filtered out of turn-end processing). What
+    // must hold is that the exhausted budget is never re-armed: no further
+    // retry is scheduled and the status stays blocked. Re-settling emits an
+    // extra durable fact, but applyFact is idempotent for settle, so restart
+    // rehydration is unaffected.
+    await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
+    expect(deps.scheduled.length).toBe(retriesScheduled)
+    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberByRef('c1').retries).toBe(2)
+    // the blocked verdict text is the exhaustion one either way
+    expect(coordinator.memberByRef('c1').report).toContain('exhausted')
+  })
 })
