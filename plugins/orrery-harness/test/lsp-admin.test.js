@@ -1,7 +1,8 @@
 import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { apply, errorResponse, jsonResponse, lspStatusFor, probeVersion, readJsonBody, runInstall } from '../src/lsp/admin.js'
-import { DEFAULT_SERVERS } from '../src/lsp/registry.js'
+import { DEFAULT_SERVERS, installSpecFor } from '../src/lsp/registry.js'
+import { augmentedPath, npmGlobalPrefix } from '../src/lsp/executable.js'
 
 function fakeSubprocess({ present = ['npm'], versions = {} } = {}) {
   const spawns = []
@@ -61,7 +62,7 @@ describe('lsp admin pure logic', () => {
     expect(typescript.languageIds).toContain('typescript')
     const lua = servers.find((server) => server.family === 'lua')
     expect(lua.installed).toBe(false)
-    expect(lua.installCommand).toBe('brew install lua-language-server')
+    expect(lua.installCommand).toContain('brew install lua-language-server')
     expect(lua.installerAvailable).toBe(false)
     expect(typescript.installerAvailable).toBe(false) // npm not present in the fake
     // version probes consumed the spawned handles (any present command resolves)
@@ -95,21 +96,26 @@ describe('lsp admin pure logic', () => {
     // a family whose entry carries no install spec for this platform
     const custom = { command: 'custom-ls', installHint: 'see the docs' }
     await expect(async () => runInstall({ custom }, subprocess, 'custom', undefined, [])).rejects.toThrow(/no installer/)
-    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp', undefined, [])).rejects.toThrow(/installer 'brew' not found/)
+    // the installer that IS selected for a family is the host platform's: win32
+    // resolves via npm/pipx/go on the PATH, macOS/Linux via brew or apt
+    const cpp = installSpecFor(DEFAULT_SERVERS.cpp)
+    if (cpp) {
+      await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp', undefined, [])).rejects.toThrow(`installer '${cpp.command}' not found`)
+    }
   })
 
   it('runInstall captures output and normalizes the exit code', async () => {
     const subprocess = fakeSubprocess({ present: ['npm'] })
-    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript', undefined, [])
+    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'typescript', 5_000, [])
     await new Promise((resolve) => setImmediate(resolve))
     const handle = subprocess.spawns[0]
     // npm installs pin a user-writable prefix (root-owned /usr/local → EACCES)
     expect(handle.spec.argv[0]).toBe('/resolved/npm')
     expect(handle.spec.argv[1]).toBe('--prefix')
-    expect(handle.spec.argv[2]).toContain('.npm-global')
+    expect(handle.spec.argv[2]).toBe(npmGlobalPrefix())
     expect(handle.spec.argv.slice(3)).toEqual(['install', '-g', 'typescript-language-server', 'typescript'])
     // the child env carries the augmented PATH so `env node` scripts resolve
-    expect(handle.spec.env.PATH).toContain('/opt/homebrew/bin')
+    expect(handle.spec.env.PATH).toBe(augmentedPath())
     handle.stderr.write('warning line\n')
     handle.finish(0, ['added 2 packages'])
     const result = await pending

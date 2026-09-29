@@ -150,7 +150,7 @@ describe('lsp registry and uri helpers', () => {
     expect(installSpecFor(DEFAULT_SERVERS.cpp, 'linux')).toEqual({ command: 'sudo', args: ['apt-get', 'install', '-y', 'clangd'] })
     expect(installSpecFor({ command: 'x' }, 'darwin')).toBe(undefined)
     expect(displayInstallCommand(DEFAULT_SERVERS.typescript)).toBe('npm install -g typescript-language-server typescript')
-    expect(displayInstallCommand(DEFAULT_SERVERS.lua)).toBe('brew install lua-language-server')
+    expect(displayInstallCommand(DEFAULT_SERVERS.lua)).toContain('brew install lua-language-server')
   })
 
   it('round-trips file URIs', () => {
