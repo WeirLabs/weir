@@ -47,12 +47,12 @@
 
 装置必须在 macOS 与 Windows 上给出**同一套断言语义**。为此三条纪律：
 
-1. **路径一律「环境变量覆盖 → 平台默认」**。`run.mjs`、`src/mock-llm.js`、`src/event-tap.js`、`cordis.patch.yml` 都遵守这条；POSIX 默认值逐字保留，macOS 开发机行为不变。`cordis.patch.yml` 里 LSP mock 服务器的 `command` 用 `!!js process.execPath`——即启动本 profile 的解释器——因此不需要任何解释器绝对路径。
+1. **路径一律「环境变量覆盖 → 平台默认」**。`run.mjs`、`src/mock-llm.js`、`src/event-tap.js` 都遵守这条；POSIX 默认值逐字保留，macOS 开发机行为不变。`cordis.patch.yml` 是例外也是更彻底的做法：它的 `workspaceRoot` 与 LSP mock 服务器路径由 `ORRERY_IT_ROOT` 注入、解释器用 `!!js process.execPath`（即启动本 profile 的解释器），因此该文件**不含任何平台默认值**，也就不会漂移。
 2. **shell 命令走具名操作，不写字面命令**。受管代理拿到的只读 shell 按平台选择：win32 → `pwsh`，其余 → `bash`（与产品侧 `readOnlyShellName` 同源约定）。因此 mock 不能硬发 `bash` 命令。`src/shell.js` 导出：
    - `shellToolName(platform)`：平台工具名。
    - `shellCommand(operation, platform, args)`：把具名操作渲染成该平台的命令。
    - `SHELL_OPERATIONS`：全部合法操作（`echo-only` / `echo-and-wait` / `wait` / `stay-busy` / `remove-file`）。
-   它**刻意不是通用 shell 翻译器**：只覆盖场景真正用到的动词；每个参数都过严格语法校验（标记与文件名只允许 `[A-Za-z0-9_][A-Za-z0-9_.-]*`，秒数必须是非负整数），因此场景字符串无法夹带 shell 语法。新增动词 = 在 `src/shell.js` 加 builder + 在 `test/shell.test.js` 加契约用例。
+   它**刻意不是通用 shell 翻译器**：只覆盖场景真正用到的动词；每个参数都过严格语法校验（标记与文件名只允许 `[A-Za-z0-9_][A-Za-z0-9_.-]*`，秒数必须是非负整数），因此场景字符串无法夹带 shell 语法。动词与校验器分居 `POSIX_BUILDERS` / `WIN32_BUILDERS` / `ARG_VALIDATORS` 三张同名表，契约测试钉死三表键集一致——因此“新增动词却忘了写校验”在结构上不可能。新增动词 = 三张表各加一项 + 在 `test/shell.test.js` 加命令字面量用例。
 3. **断言里的工具名按平台取**。例如 `rehydrate` 场景断言"受监督成员的工具面不含 `send_message`、但含只读 shell"，这个 shell 名必须平台化（`run.mjs` 的 `READONLY_SHELL`）。
 
 ### 沙箱语义镜像（S23）
@@ -70,10 +70,11 @@ patch 层把 compaction provider 与 context-guard 消费者放进同一个 `iso
 - **mock 的严格供应商校验**：`mock-llm.js` 在每次请求前检查每个工具的 `parameters.type === 'object'`（`deferLoading` 的除外），不合规即抛 `Invalid schema for function '...'`。这是 S12 事故的防线——新工具 schema 不合规会让 headless 测试直接失败，而不是留到真实供应商那里才炸。
 - **trace 永不阻断测试**：mock 与 event-tap 的写盘都在 `try/catch` 里，失败即忽略。缺 trace 的后果是断言失败（信息更少），而不是测试崩溃。
 - **`rehydrate` 是两阶段**：phase 1 让一个成员停在 `blocked` 后进程退出；phase 2 用**同一个 session id** 在新进程里接管（协调器注册表为空），断言注册表能从 audit JSONL 重建并恢复被阻塞的子成员。
-- **`robash` 的拒绝证据是平台平行的**：POSIX 侧断言 `rm` 被拒，win32 侧断言 `Remove-Item` 被拒——两者都命中各自的默认 deny 列表，是平行证据而非同一条。真实 pwsh 行为不在此覆盖。
+- **`robash` 的拒绝证据是平台平行的**：POSIX 侧断言 `rm` 被拒，win32 侧断言 `Remove-Item` 被拒——两者都命中各自的默认 deny 列表，是平行证据而非同一条。**覆盖边界要说准**：win32 上被拒绝的是*写命令本身*（守卫在派生前就否决），而*放行*那一跳执行的是真实 pwsh（标记经真实工具结果回传）；因此未被覆盖的是 pwsh 侧的写入行为，不是 pwsh 本身。
 - **不覆盖**：真实语言服务器行为（`lsp` 用脚本化 mock 服务器）、GUI/桌面链路、真实供应商调用。
+- **已登记的潜在缺口（Windows 专属，本次未修）**：`wait` / `stay-busy` 在 win32 渲染为 `Start-Sleep`，而它**不在** `DEFAULT_ROBASH_PWSH.allow` 里（POSIX 侧对应的 `sleep` 在 `DEFAULT_ROBASH.allow` 里）。当前没有任何场景在**受守卫生效的子成员**里等待（`robash` 子成员只 echo 与尝试删除；`terminate` 的忙碌子成员是 `quick` 类别、不受只读守卫约束），因此不影响今天的结果；但将来若新增这类场景，它会“macOS 过、Windows 败”——正是本次要消灭的那类平台差异。修它需动产品侧 deny/allow 表，超出本次「产品零改动」边界，故仅登记。
 
 ## 测试
 
-- 单元测试：`plugins/orrery-test-harness/test/shell.test.js` —— 钉死平台工具名、五个操作的 POSIX/win32 命令字面量、以及输入卫生（未知操作/未知平台/非法秒数/可夹带语法的标记与路径一律抛错）。期望值是独立字面量而非重算，因此断言能与实现真正分歧。
+- 单元测试：`plugins/orrery-test-harness/test/shell.test.js` —— 钉死平台工具名、五个操作的 POSIX/win32 命令字面量、输入卫生（未知操作/未知平台/非法秒数/可夹带语法的标记与路径一律抛错），以及**三张表键集一致**（每个动词在两侧都有 builder、且都有校验器）。期望值是独立字面量而非重算，因此断言能与实现真正分歧。
 - 集成测试：`pnpm --filter orrery-test-harness run test:integration` —— 装置自身就是那一层；12 个场景即验收门。

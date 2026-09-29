@@ -39,6 +39,20 @@ const SHELL_OPERATIONS = Object.freeze(Object.keys(POSIX_BUILDERS))
 const SAFE_TOKEN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/
 
 /**
+ * The per-verb argument validators, exported so the contract test can pin that
+ * every verb has exactly one on every platform. Keeping this table keyed by the
+ * same verb names as the builder tables, and asserted symmetric by the contract
+ * test, is what makes "a new verb without validation" structurally impossible.
+ */
+const ARG_VALIDATORS = {
+  'echo-only': (args) => ({ text: requireSafeToken(args.text, 'text') }),
+  'echo-and-wait': (args) => ({ text: requireSafeToken(args.text, 'text'), seconds: requireSeconds(args) }),
+  wait: (args) => ({ seconds: requireSeconds(args) }),
+  'stay-busy': (args) => ({ seconds: requireSeconds(args) }),
+  'remove-file': (args) => ({ path: requireSafeToken(args.path, 'path') }),
+}
+
+/**
  * The read-only shell tool name a curated agent receives on this platform.
  * @param {string} [platform] - defaults to the host platform
  * @returns {'pwsh'|'bash'}
@@ -68,6 +82,7 @@ function requireSafeToken(value, field) {
   return value
 }
 
+
 /**
  * Render one named shell operation for a platform.
  * @param {string} operation - a member of SHELL_OPERATIONS
@@ -81,16 +96,11 @@ function shellCommand(operation, platform, args = {}) {
   if (typeof build !== 'function') {
     throw new Error(`shellCommand: unknown shell operation '${operation}' (known: ${SHELL_OPERATIONS.join(', ')})`)
   }
-  if (operation === 'remove-file') {
-    return build({ path: requireSafeToken(args.path, 'path') })
-  }
-  if (operation === 'echo-only') {
-    return build({ text: requireSafeToken(args.text, 'text') })
-  }
-  if (operation === 'echo-and-wait') {
-    return build({ text: requireSafeToken(args.text, 'text'), seconds: requireSeconds(args) })
-  }
-  return build({ seconds: requireSeconds(args) })
+  // Args validators live in a table keyed by the same verb names as the builder
+  // tables, so a new verb cannot be added without also declaring how its
+  // arguments are validated (the contract test pins the three tables' key sets
+  // to be identical).
+  return build(ARG_VALIDATORS[operation](args))
 }
 
-export { SHELL_OPERATIONS, shellCommand, shellToolName }
+export { ARG_VALIDATORS, SHELL_OPERATIONS, shellCommand, shellToolName }

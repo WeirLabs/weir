@@ -266,9 +266,9 @@ function assertRobash(run) {
   const created = trace.filter((r) => r.kind === 'agent-created')
   const fixture = readFileSync(join(WS, 'fixture.txt'), 'utf8')
   check('robash', 'parent delegated to a curated explore child', created.some((r) => r.origin === 'subagent' && r.depth === 1), JSON.stringify(created))
-  check('robash', 'child ran an allowed bash command through the guard', requests.some((r) => r.sawRobashChild && r.roBashLsSeen), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashLsSeen])))
+  check('robash', 'child ran an allowed read-only shell command through the guard', requests.some((r) => r.sawRobashChild && r.roBashLsSeen), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashLsSeen])))
   check('robash', 'child write command was denied by the guard', requests.some((r) => r.sawRobashChild && r.roBashRmDenied), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashRmDenied])))
-  check('robash', 'fixture survived the denied rm', fixture.split('\n')[0] === 'line one' && fixture.includes('CHANGED-BY-HASHLINE'), fixture)
+  check('robash', 'fixture survived the denied write command', fixture.split('\n')[0] === 'line one' && fixture.includes('CHANGED-BY-HASHLINE'), fixture)
   check('robash', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
