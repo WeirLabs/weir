@@ -22,7 +22,7 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 - 工具都以 1-based 位置入参，回答结构化的 `路径:行:列` 结果；文档在查询前自动全文同步。
 - **`lsp_rename` 语义重命名**：以 1-based 位置与 `new_name` 调用，语言服务器算出跨文件的全部改动位置（WorkspaceEdit），插件经 fs 版本护栏落盘——先对**每个**目标文件预检（解析/stat/读取/合成新全文），全部通过才逐文件原子写回；写盘后逐文件渲染 unified diff 与「N edit(s) across M file(s)」汇总。服务器不支持 rename、返回 `documentChanges`（文件移动/删除）、或符号无改动时，分别报错/拒绝/报空操作，均零写入。
 - 语言服务器二进制缺失时，工具返回含安装指引的可读错误（如 `npm install -g typescript-language-server typescript`），不崩溃、不毁回合。
-- **PATH 扩展解析与用户前缀**：GUI 进程 PATH 仅含系统目录（LaunchServices 启动），nvm/Homebrew/cargo/go 的 bin 不在其中；服务器与安装器解析在服务失败后自动扫描常见安装目录（nvm 优先），子进程注入扩展 PATH（`env node` 脚本可用），npm 安装统一落用户可写前缀 `~/.npm-global`；安装完成后即刻可被识别。
+- **PATH 扩展解析与用户前缀**：GUI 进程 PATH 仅含系统目录（macOS 上由 LaunchServices 启动），nvm/Homebrew/cargo/go 的 bin 不在其中；服务器与安装器解析在服务失败后自动扫描常见安装目录（nvm 优先），子进程注入扩展 PATH（`env node` 脚本可用），npm 安装统一落用户可写前缀；安装完成后即刻可被识别。**Windows 走独立方言**：扫描 `%APPDATA%\npm`（npm 全局前缀，`.cmd`/`.ps1` shim 所在）与 `~/.npm-global`，裸名按 `PATHEXT` 探测，PATH 用 `;` 拼接，npm 安装前缀为 `%APPDATA%\npm`；`.cmd` 经 `cmd.exe` 启动（CreateProcess 不执行批处理）。
 - 服务器空闲 10 分钟自动关停（可配）；下次调用懒重启。
 - **握手失败自动恢复**：懒启动的 initialize 握手失败（如工作区 TypeScript 安装缺 tsserver）时，本次调用报握手错误、进程被终止、记录被丢弃——下一次调用起全新服务器重试，不会被「半死」记录卡住。
 - **跨文件覆盖面 = 本会话已同步文档集**（tsserver 实测）：rename/references 的跨文件结果只覆盖本会话经任一 lsp 工具同步（打开）过的文件；对目标外文件先跑一次 `lsp_diagnostics`（或任一 lsp 工具）再 rename，覆盖面才完整。编辑器态客户端天然如此（文件随访问打开），本集成按会话懒同步。
@@ -54,7 +54,15 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 - **双通道**：`/lsp on|off`（面板，`ctx.commands.register`，invocation.agent 缺失/坏参返回 error）与 `lsp` 工具（模型，exec.agent）共享同一 per-session 运行时状态；面板开关状态由客户端 `useProjection("orreryLsp")` 读宿主折叠值。
 - 客户端面板开关：注入 `conversation.input.right` 槽（composer 栏，空白与有内容会话均常驻；会话头 utilities 槽仅在会话有内容后出现）；命令目录不含 `lsp` 时不渲染（能力关）；点击经 `remote.commands.execute(sessionId, "/lsp on|off", [])`；无 `useProjection` 注入时降级为投影拉取 + 乐观更新。
 - 管理端点：`src/lsp/admin.js` 经 `ctx.connection.fetch.register` 注册（由 profile 级 settings 行接线，避免新增包子路径）；注册表为 live provider（内置 + `lspServers`）；status 含 `installerAvailable`（安装器自身可否解析）。
-- 可执行解析：`src/lsp/executable.js` 服务优先、扩展目录扫描回退（S21：GUI 进程 PATH 最小化事故）。 `POST /api/orrery-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/orrery-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
+- **可执行解析的平台分支**：`src/lsp/executable.js` 服务优先、扩展目录扫描回退（S21：GUI 进程 PATH 最小化事故）。解析接口按目标平台参数化（默认宿主，沿用 `installSpecFor(entry, platform)` 先例）：
+  - 路径形态（含 `/` 或 `\`，如 `C:\bin\ls.cmd`、`C:/bin/ls`、`./ls`）直接按文件系统判定，**不**交给服务解析器当命令名；
+  - 裸名先走服务解析器，再扫扩展目录；win32 扫描按 `PATHEXT` 依次探测 `.com/.exe/.bat/.cmd`（小写化，因 npm 写 `.cmd` 而 PATHEXT 拼 `.CMD`），命中扩展名即视为可执行（NTFS 无执行位）；POSIX 仍以执行位判定；
+  - 扩展目录 win32 为 `%APPDATA%\npm`（npm 全局前缀，`.cmd`/`.ps1` shim 坐落于此）、`~/.npm-global` 根与其 `bin`、`~/.local/bin`、`~/.cargo/bin`、`~/go/bin`、`scoop\shims`；POSIX 为 nvm 版本 bin + Homebrew/usr/local/opt/local + `~/.npm-global/bin` 等；
+  - `augmentedPath()` 用目标平台分隔符拼接（win32 `;`，POSIX `:`），子进程环境只有 `PATH` 一个键；
+  - `npmGlobalPrefix()` win32 返回 `%APPDATA%\npm`，POSIX 返回 `~/.npm-global`。
+- **启动形态包装**：`spawnArgv(command, args, platform)` 决定真正交给 `ctx.subprocess.spawn` 的 argv——Windows 的 CreateProcess 既不执行批处理也无 shebang 处理（Node 对 `.cmd` 直接 `EINVAL`），故 `.cmd`/`.bat` 经 `cmd.exe /d /s /c`（npm shim 内部的 `SET "_prog=node"` 也因此能在 cmd 自身 PATH 下解析到 node）、`.ps1` 经 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`、`.exe`/`.com` 直启；POSIX 保持 `[command, ...args]`。
+- 管理端点的两个定时器均不拖住宿主：`probeVersion` 的探测超时与 `runInstall` 的安装截止时间都会在结算时 `clearTimeout`，且安装截止时间 `unref()`（否则一个无人等待的安装 promise 会把整个进程钉住十分钟）。
+- `POST /api/orrery-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/orrery-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
 - 语言识别：按目标文件扩展名映射 LSP languageId（`.ts/.tsx/.js/.py/.go/.rs`…），扩展名未知直接拒绝（不起服务器）。
 
 ## 边界与失败语义
@@ -71,6 +79,6 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 
 ## 测试
 
-- 单元测试：`test/lsp-client.test.js`（帧编解码、握手、路由、通知、超时、关停；注册表语言映射、平台安装命令解析）与 `test/lsp.test.js`（门闸开/关、settings 覆盖优先、命令 on/off/坏参/无 agent、投影折叠、agent/created 恢复、实时翻转、实时调参、四工具链路、安装指引、类型拒绝、用后关停）；`test/lsp-admin.test.js`（status/install/版本探测/退出码归一化/超时终止/HTTP 接线/缺席降级）。
-- 集成测试：`lsp` 场景——模拟 LSP 服务器全协议链路：toggle on → 诊断/定义/引用/符号逐一应答 → toggle off → 工具消失（`unknown tool`）；IT 行 `enabled: true` 镜像能力闸开启。
+- 单元测试：`test/lsp-client.test.js`（帧编解码、握手、路由、通知、超时、关停；注册表语言映射、平台安装命令解析）与 `test/lsp.test.js`（门闸开/关、settings 覆盖优先、命令 on/off/坏参/无 agent、投影折叠、agent/created 恢复、实时翻转、实时调参、五工具链路、安装指引、类型拒绝、用后关停）；`test/lsp-admin.test.js`（status/install/版本探测/退出码归一化/超时终止/HTTP 接线/缺席降级）与 `test/lsp-admin-probe.test.js`（探测超时结算后不留下已武装的定时器）。
+- 平台可移植语料：`test/lsp-executable-win32.test.js`（win32 绝对路径形态、`%APPDATA%\npm` 与 `~/.npm-global` 扫描、PATHEXT 探测、PATH 分号拼接、npm 前缀）与 `test/lsp-spawn-argv.test.js`（`.cmd` → `cmd.exe /d /s /c`、`.ps1` → powershell、`.exe` 直启、POSIX 不变）。既有 POSIX 语料改为显式传平台（`{ platform: 'darwin' }`）并用跨平台可执行夹具（拷贝当前解释器），使其在 Windows 上同样可跑。
 - 真实 GUI 验收：设置开 → 会话头开关出现 → 点亮 → 四工具可见 → 熄灭 → 消失 → 设置关 → 开关消失（用户桌面验收）。
