@@ -2,7 +2,7 @@
 // hash_edit tool. Plain ESM, ctx-only.
 import { anchorFor } from './anchors.js'
 import { applyOps, renderMismatch, validateOps } from './apply-ops.js'
-import { unifiedDiff } from './diff.js'
+import { diffResult } from './diff.js'
 import { approveEscalation, escalationHintMarker, sandboxDenialMarker, sandboxPermissionsDescription, validateEscalationArgs } from './sandbox.js'
 
 const name = 'orrery-hashline-edit'
@@ -163,6 +163,9 @@ function apply(ctx, config = {}) {
     output: {
       schema: { type: 'object' },
       render: (_args, value) => [{ type: 'text', text: `hash_edit applied ${value.ops} op(s) to ${value.path}:\n\n${value.diff}` }],
+      // Persisted presentation metadata for the conversation diff view
+      // (keyed `tool.call.toolview`); same comparison as the rendered text.
+      presentationMeta: (_args, value) => ({ diffs: Array.isArray(value.fragments) ? value.fragments : [] }),
     },
     async execute(args, exec) {
       if (typeof args.file_path !== 'string' || args.file_path.length === 0) {
@@ -237,11 +240,12 @@ function apply(ctx, config = {}) {
         }
         throw error
       }
-
+      const result = diffResult(target.displayPath, before, after)
       return {
         path: target.displayPath,
         ops: args.edits.length,
-        diff: unifiedDiff(target.displayPath, before, after),
+        diff: result.text,
+        fragments: result.fragments,
         version: String(outcome.version),
       }
     },

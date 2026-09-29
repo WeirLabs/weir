@@ -1,7 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { anchorFor, anchorIdFor, parseAnchor, validateAnchor } from '../src/hashline-edit/anchors.js'
 import { applyOps, renderMismatch, splitText, validateOps } from '../src/hashline-edit/apply-ops.js'
-import { unifiedDiff } from '../src/hashline-edit/diff.js'
+import { diffFragments, unifiedDiff } from '../src/hashline-edit/diff.js'
 import { anchorReadContent, HASH_EDIT_DESCRIPTION, HASH_EDIT_NAME } from '../src/hashline-edit/index.js'
 import { apply } from '../src/hashline-edit/index.js'
 import { xxh32 } from '../src/hashline-edit/xxhash32.js'
@@ -174,6 +174,40 @@ describe('unifiedDiff', () => {
   })
 })
 
+describe('diffFragments', () => {
+  it('yields one fragment per hunk in file order with context on both sides', () => {
+    const before = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n')
+    const after = before.replace('line2', 'TWO').replace('line18', 'EIGHTEEN')
+    const fragments = diffFragments('a.js', before, after)
+    expect(fragments).toHaveLength(2)
+    expect(fragments[0].path).toBe('a.js')
+    expect(fragments[0].oldText).toContain('line2')
+    expect(fragments[0].newText).toContain('TWO')
+    expect(fragments[0].oldText).toContain('line1') // leading context
+    expect(fragments[0].newText).toContain('line1')
+    expect(fragments[1].oldText).toContain('line18')
+    expect(fragments[1].newText).toContain('EIGHTEEN')
+    expect(fragments[0].oldText).not.toContain('line18') // hunks stay separate
+  })
+
+  it('carries a context-only oldText for a mid-file insertion', () => {
+    const before = 'alpha\nbeta\ngamma\ndelta'
+    const after = 'alpha\nbeta\nINSERTED\ngamma\ndelta'
+    const fragments = diffFragments('a.js', before, after)
+    expect(fragments).toHaveLength(1)
+    const [fragment] = fragments
+    expect(fragment.oldText).not.toContain('INSERTED')
+    expect(fragment.oldText.length > 0).toBe(true)
+    for (const line of fragment.oldText.split('\n')) expect(before.split('\n')).toContain(line)
+    expect(fragment.newText).toContain('INSERTED')
+    expect(fragment.newText).toContain('beta') // context on the new side too
+  })
+
+  it('is empty for identical content', () => {
+    expect(diffFragments('a.js', 'same', 'same')).toEqual([])
+  })
+})
+
 describe('anchorReadContent', () => {
   it('anchors numbered lines and preserves everything else', () => {
     const value = { lines: [{ number: 1, text: 'hello' }, { number: 2, text: 'world' }] }
@@ -249,6 +283,41 @@ describe('hash_edit tool', () => {
     expect(result.diff).toContain('-beta')
     expect(result.diff).toContain('+BETA')
     expect(result.ops).toBe(1)
+  })
+
+  it('persists structured diff fragments via presentationMeta', async () => {
+    const { tool, exec } = harness('alpha\nbeta\ngamma')
+    const anchor = anchorFor(2, 'beta')
+    const args = { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchor, text: 'BETA' }] }
+    const result = await tool.execute(args, exec)
+    expect(Array.isArray(result.fragments)).toBe(true)
+    expect(result.fragments).toHaveLength(1)
+    expect(result.fragments[0].path).toBe('/ws/a.js')
+    expect(result.fragments[0].oldText).toContain('beta')
+    expect(result.fragments[0].newText).toContain('BETA')
+    // The presentation meta channel mirrors the same comparison.
+    const meta = tool.output.presentationMeta(args, result)
+    expect(meta.diffs).toEqual(result.fragments)
+    // The model-facing rendered text is unchanged in shape.
+    const rendered = tool.output.render(args, result)
+    expect(rendered[0].text).toContain('hash_edit applied 1 op(s) to /ws/a.js:')
+    expect(rendered[0].text).toContain('-beta')
+    expect(rendered[0].text).toContain('+BETA')
+  })
+
+  it('persists no diff metadata for a rejected call', async () => {
+    const { tool, exec } = harness('alpha\nbeta\ngamma')
+    let thrown
+    try {
+      await tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: '2#ZZ', text: 'BETA' }] }, exec)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown !== undefined).toBe(true)
+    expect(String(thrown.message)).toContain('>>> mismatch')
+    // presentationMeta is only invoked by the runtime on success; a
+    // fragments-less value narrows to an empty diff list defensively.
+    expect(tool.output.presentationMeta({}, {})).toEqual({ diffs: [] })
   })
 
   it('passes the session-resolved sandbox policy to writeText (S23)', async () => {

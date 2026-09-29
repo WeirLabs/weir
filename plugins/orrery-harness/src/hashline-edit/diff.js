@@ -10,9 +10,43 @@ const CONTEXT_LINES = 3
  * @returns {string} unified-ish diff text (empty string when identical)
  */
 export function unifiedDiff(path, before, after) {
-  const beforeLines = before.split('\n')
-  const afterLines = after.split('\n')
-  const hunks = computeHunks(beforeLines, afterLines)
+  return renderUnified(path, hunksFor(before, after))
+}
+
+/**
+ * Structured per-hunk fragments of the same comparison, for persisted
+ * presentation metadata (`meta.diffs`). Each fragment carries the hunk's
+ * removed/added lines plus context on BOTH sides; `oldText` is null only
+ * when the hunk has no old-side lines at all (e.g. file creation).
+ * @param {string} path
+ * @param {string} before
+ * @param {string} after
+ * @returns {Array<{ path: string, oldText: string | null, newText: string }>} one fragment per hunk, in file order
+ */
+export function diffFragments(path, before, after) {
+  return fragmentsFor(path, hunksFor(before, after))
+}
+
+/**
+ * One-pass comparison feeding both the rendered text and the persisted
+ * metadata, so the two channels can never disagree.
+ * @param {string} path
+ * @param {string} before
+ * @param {string} after
+ * @returns {{ text: string, fragments: Array<{ path: string, oldText: string | null, newText: string }> }}
+ */
+export function diffResult(path, before, after) {
+  const hunks = hunksFor(before, after)
+  return { text: renderUnified(path, hunks), fragments: fragmentsFor(path, hunks) }
+}
+
+/** @param {string} before @param {string} after */
+function hunksFor(before, after) {
+  return computeHunks(before.split('\n'), after.split('\n'))
+}
+
+/** @param {string} path @param {ReturnType<typeof computeHunks>} hunks */
+function renderUnified(path, hunks) {
   if (hunks.length === 0) return ''
 
   const output = [`--- a/${path}`, `+++ b/${path}`]
@@ -24,6 +58,16 @@ export function unifiedDiff(path, before, after) {
   }
   return output.join('\n')
 }
+
+/** @param {string} path @param {ReturnType<typeof computeHunks>} hunks */
+function fragmentsFor(path, hunks) {
+  return hunks.map((hunk) => ({
+    path,
+    oldText: hunk.oldLines.length > 0 ? hunk.oldLines.map((op) => op.line).join('\n') : null,
+    newText: hunk.newLines.map((op) => op.line).join('\n'),
+  }))
+}
+
 
 /**
  * Compute hunks with a longest-common-substring-free approach: walk both line
