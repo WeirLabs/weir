@@ -12,6 +12,10 @@ docs/*
 # Harness runtime scratch (notepads, research notes written by orrery sessions)
 .orrery/
 
+# Handoff and install runbooks (local process material, distributed with the tree)
+handoff-*.md
+install-guide-*.md
+
 # AI-generated working reports (kept locally only)
 omo-feature-inventory.md
 omo-architecture-map.md
