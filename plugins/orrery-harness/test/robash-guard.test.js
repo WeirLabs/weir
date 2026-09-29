@@ -48,6 +48,24 @@ describe('robash-guard: allowed corpus', () => {
     'echo a | grep a > /dev/null',
     'git --version',
     'git -c color.ui=false log',
+    // ripgrep/uniq/date legitimate read-only uses: the dangerous-argument
+    // table must not over-block these (the --pre rule keys on the flag, not on
+    // the substring, and -o for rg means --only-matching, a read)
+    'rg pattern file.txt',
+    'rg -n pattern file.txt',
+    'rg -o pattern file.txt',
+    'rg -i -C3 pattern file.txt',
+    'rg --json pattern file.txt',
+    'rg --replace X pattern file.txt',
+    'rg --files-with-matches pattern file.txt',
+    'rg --files',
+    'uniq in.txt',
+    'uniq -c in.txt',
+    'sort -n in.txt',
+    'sort in.txt out.txt',
+    'date',
+    'date +%Y',
+    'date -u +%s',
   ]
   for (const command of corpus) {
     it(`allows: ${command}`, () => {
@@ -96,6 +114,23 @@ describe('robash-guard: denied corpus', () => {
     ['if ls; then echo x; fi', /'if' is not on the read-only allow list/],
     ['unknowncmd --help', /'unknowncmd' is not on the read-only allow list/],
     ['echo $(( a[$(rm x)] ))', /'rm' is explicitly denied/],
+    // dangerous per-command ARGUMENTS (the class this table closes): a flag
+    // that executes a command or writes a file turns an allow-listed binary
+    // into an escape. --pre is an arbitrary-command primitive.
+    ['rg --pre "rm x" y', /rg flag '--pre'/],
+    ['rg --pre=rm y', /rg flag '--pre'/],
+    ['rg --pre-glob "*.c" a b', /rg flag '--pre'/],
+    ['rg --hostname-bin evil x', /rg flag '--hostname-bin'/],
+    ['rg --sort-files pat', /rg flag '--sort-files'/],
+    ['rg --sort path pat', /rg flag '--sort'/],
+    ['uniq in.txt out.txt', /uniq with more than one file argument/],
+    ['date -s 2020-01-01', /date flag '-s'/],
+    ['date --set=2020-01-01', /date flag '--set'/],
+    ['date -f dates.txt', /date flag '-f'/],
+    ['date --file=dates.txt', /date flag '--file'/],
+    // attached/equality spellings of the sort write sink stay denied
+    ['sort -oout.txt in.txt', /sort flag/],
+    ['sort --output=out.txt in.txt', /sort flag/],
   ]
   for (const [command, pattern] of corpus) {
     it(`denies: ${command}`, () => {
