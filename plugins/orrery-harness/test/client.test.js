@@ -257,6 +257,22 @@ describe('orrery settings client half', () => {
     const badRow = robashRows[0].__type({ field: 'robashAllow', text: 'not-json', overridden: false, edit: () => {}, onReset: () => {}, t: (key) => key, disabled: false })
     expect(badRow.children[0].children[1].children[1].children).toBe('robashListInvalid')
 
+    // open-state decisions (robash-list-editor-recovery): blank opens empty
+    // WITHOUT the hint; malformed opens empty WITH the hint; valid opens the
+    // parsed list. No stored state may strand the field uneditable.
+    const { robashEditorOpenState } = surface.robashEditor
+    expect(robashEditorOpenState('')).toEqual({ list: [], invalid: false, parsed: null })
+    expect(robashEditorOpenState('   ')).toEqual({ list: [], invalid: false, parsed: null })
+    expect(robashEditorOpenState('not-json')).toEqual({ list: [], invalid: true, parsed: null })
+    expect(robashEditorOpenState('[1,"ls"]')).toEqual({ list: [], invalid: true, parsed: null })
+    expect(robashEditorOpenState('["ls","cat"]')).toEqual({ list: ['ls', 'cat'], invalid: false, parsed: ['ls', 'cat'] })
+    // a blank stored value renders neither the entry count nor the invalid hint
+    const blankRow = robashRows[0].__type({ field: 'robashAllow', text: '', overridden: false, edit: () => {}, onReset: () => {}, t: (key) => key, disabled: false })
+    // blank: no entry count (null first control) and no invalid hint; the Edit button is still there
+    expect(blankRow.children[0].children[1].children[0].children[0]).toBe(null)
+    expect(blankRow.children[0].children[1].children[0].children[1].children).toBe('chainEdit')
+    expect(blankRow.children[0].children[1].children[1]).toBe(null)
+
     // the single model picker row: the library picker inside its error boundary
     const pickerRow = rendered.children.find((child) => child.key === 'intentGateProvider')
     const boundary = pickerRow.__type
