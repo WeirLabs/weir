@@ -4,12 +4,19 @@
 // (session logs no longer carry custom-typed events — see
 // orrery-harness/src/shared/audit.js). Dev-only.
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const name = 'orrery-it-event-tap'
 const inject = []
 
-const TRACE = process.env.ORRERY_IT_TRACE ?? '/Users/young/.orrery-it/trace.jsonl'
+// Mirrors the driver's root so the mock and the tap can never disagree on a
+// platform; the driver always passes ORRERY_IT_TRACE explicitly.
+const TRACE =
+  process.env.ORRERY_IT_TRACE ??
+  join(
+    process.env.ORRERY_IT_ROOT ?? (process.platform === 'win32' ? 'D:\\.orrery-it' : '/Users/young/.orrery-it'),
+    'trace.jsonl',
+  )
 
 /** The orrery audit vocabulary emitted on the cordis bus (keep in sync). */
 const ORRERY_AUDIT_TYPES = ['intent-hit', 'intent-classify', 'continuation-blocked', 'continuation-stop', 'supervision']

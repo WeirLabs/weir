@@ -7,7 +7,8 @@
   "exports": {
     "./package.json": "./package.json",
     "./mock-llm": "./src/mock-llm.js",
-    "./event-tap": "./src/event-tap.js"
+    "./event-tap": "./src/event-tap.js",
+    "./shell": "./src/shell.js"
   },
   "dsh": {
     "bundle": {
@@ -15,6 +16,7 @@
     }
   },
   "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
     "test:integration": "node run.mjs"
   }
 }
