@@ -33,7 +33,12 @@
 | `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
 | `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |
 
-均为 volatile config，在线编辑即刻生效。
+以上 `readOnlyBash.*` / `readOnlyPwsh.*` / `supervision.*` 均为 volatile config，**在同一进程内即提交即生效，无需重启应用、无需重建会话**。生效时机分两条路径，二者都实现，不能只靠一条：
+
+- **读取时解析**——设置服务每次 `get` 都重新计算 section，因此 `delegate` 在**每次消费点**重新解析，而不是在 `apply` 期读一次：委派时解析只读工具面与守卫列表（一次委派内取同一份快照，不会出现「已授予 shell 但守卫已关」），建协调器时解析监督参数。
+- **提交时推送**——协调器是按父会话缓存的长生命周期对象，不会再随新委派重建；因此 `apply` 同时订阅设置服务的变更广播，把新的监督参数推入**已存在**的协调器（与 `src/lsp/index.js` 同一范式）。
+
+注：`intentGate`/`todoDriver`/`contextGuard`/`hashlineEdit` 四个插件仍在 `apply` 期做同类快照，**热更新语义未覆盖它们**，需重启才生效。
 
 ## 设计细节
 
@@ -51,8 +56,9 @@
 - 类别整链不可解析 → 显式 "category unavailable" 错误，点名类别与档位。
 - 只读代理的写/编辑调用 → 拒绝并注明只读原因；精选代理调 `delegate` → 深度限制错误。
 - **保证**：子代理永不可再委派（拓扑深度恒为 1）。
+- 设置提交的**原子边界**：一次委派内的工具面与守卫列表来自同一份解析结果；提交只影响**此后**的委派，以及**已建立**协调器的**后续**续推判定。已派发代理已拿到的工具面不被回溯收改（与只读守卫「挂载即生效、逐调用判定」的既有语义一致）。
 
 ## 测试
 
-- 单元测试：`test/` 覆盖参数校验、链解析（含死链报错）、变体选择、ESCALATE 重派、批量默认值；`test/robash-guard.test.js` 覆盖守卫语料（放行/拒绝/注入绕过/自定义列表）与挂载层（白名单附加、守卫注册、禁用回落、挂载失败销毁）；`test/group-coordinator.test.js` 覆盖协调器全分支（组登记/禁插入/终态解析/催促/退避/耗尽/打断分类/resume/terminate/group-settled 信号渲染/失败批次释放组名/各投递失败降级）与挂载层（组派发、两阶段解析、回滚与组名复用、只读成员守卫、延迟 followup 投递）。
+- 单元测试：`test/` 覆盖参数校验、链解析（含死链报错）、变体选择、ESCALATE 重派、批量默认值；`test/robash-guard.test.js` 覆盖守卫语料（放行/拒绝/注入绕过/自定义列表）与挂载层（白名单附加、守卫注册、禁用回落、挂载失败销毁）；`test/group-coordinator.test.js` 覆盖协调器全分支（组登记/禁插入/终态解析/催促/退避/耗尽/打断分类/resume/terminate/group-settled 信号渲染/失败批次释放组名/各投递失败降级）与挂载层（组派发、两阶段解析、回滚与组名复用、只读成员守卫、延迟 followup 投递）；**volatile 热更新**由 `test/delegate.test.js` 的四条 `hot reload:` 用例（提交后新委派的守卫行为与服务面立即改变、提交后新委派 fail-closed、提交不回溯收改已派发代理、dispose 退订）与两条挂载层用例（提交抵达**已建立**协调器、提交改变下一次受监督派发的只读面）覆盖；`test/group-coordinator.test.js` 另有 `setSupervision` 三条用例（收紧上限、重调退避而不动登记状态、忽略三个调参键之外的键）。
 - 集成测试：`delegate` 场景（父委派、子会话、结果回传）；`robash` 场景——只读子代理的受守卫 bash：放行命令执行、写命令拒绝、目标文件零损伤；`grouped` 场景——受监督分组端到端：批量派发、供应商错误成员退避续推恢复、成员正文经 DSH 内建结算通知（`subagent-settled` 源）送达父会话、一行 group-settled 信号到达、父 agent 观察到信号；`escalate` 场景（ESCALATE 重派与发现传递）；`background` 场景（后台委派：紧凑通知到达、报告全文不入父上下文、父 agent 观察到通知）；`terminate` 场景（运行中成员真打断（turn aborted）、组 settle 信号到达）；`rehydrate` 场景（两阶段重启：blocked 报告经内建结算通知送达、send_message 工具面契约、审计事实链含 resume 与 group-settled、重建后 resume_agent 复工、group-settled 信号重发）。
