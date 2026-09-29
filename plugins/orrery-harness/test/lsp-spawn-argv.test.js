@@ -1,4 +1,7 @@
 import { describe, expect, it } from './helpers.js'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { spawnArgv } from '../src/lsp/manager.js'
 
 /**
@@ -12,6 +15,10 @@ import { spawnArgv } from '../src/lsp/manager.js'
  *
  * The shim texts below are the real shapes these tools emit, including npm's
  * literal `\"` escaping and its `%NODE_EXE%` / `%NPM_CLI_JS%` variable chain.
+ *
+ * One case drives the REAL default existence predicate (`statSync().isFile()`),
+ * because that predicate is the only gate on the unwrap: the positional rule
+ * carries no positive signal of its own.
  */
 const olderNpmShim = (target) => [
   '@ECHO off',
@@ -75,12 +82,27 @@ const npmOwnShim = [
   '',
 ].join('\r\n')
 
+/**
+ * corepack's `pnpm`/`yarn` shim. Both arms are modelled because the real file has
+ * them and the ELSE arm is the one a machine without a beside-shim `node.exe`
+ * actually takes (there the interpreter is the bare `node` on PATH).
+ */
 const corepackShim = (target) => [
-  '#!/bin/sh',
-  'basedir=$(dirname "$(echo "$0" | sed -e \'s,\\\\,/,g\')")',
   '@ECHO off',
+  'GOTO start',
+  ':find_dp0',
+  'SET dp0=%~dp0',
+  'EXIT /b',
+  ':start',
   'SETLOCAL',
-  `"%~dp0\\node.exe"  "%~dp0\\${target}" %*`,
+  'CALL :find_dp0',
+  '',
+  'IF EXIST "%~dp0\\node.exe" (',
+  `  "%~dp0\\node.exe"  "%~dp0\\${target}" %*`,
+  ') ELSE (',
+  '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+  `  node  "%~dp0\\${target}" %*`,
+  ')',
   '',
 ].join('\r\n')
 
@@ -143,6 +165,28 @@ describe('lsp server launch shape', () => {
     ])
   })
 
+  it('uses the PATH node for a shim arm that spells a bare `node`', () => {
+    // the real pnpm.CMD ELSE arm: `node "%~dp0\…" %*`. No beside-shim node.exe,
+    // so the interpreter has to come from the runtime that is executing us.
+    const shim = 'C:\\Program Files\\nodejs\\pnpm.CMD'
+    const argv = spawnArgv(shim, ['--version'], 'win32', {
+      ...seams(corepackShim('node_modules\\corepack\\dist\\pnpm.js')),
+    })
+    expect(argv).toEqual([
+      'C:\\node\\node.exe',
+      'C:\\Program Files\\nodejs\\node_modules\\corepack\\dist\\pnpm.js',
+      '--version',
+    ])
+  })
+
+  it('prefers a node.exe sitting beside the shim when there is one', () => {
+    const shim = 'C:\\tools\\pnpm.CMD'
+    const argv = spawnArgv(shim, ['--version'], 'win32', {
+      ...seams(corepackShim('node_modules\\corepack\\dist\\pnpm.js'), { localNode: true }),
+    })
+    expect(argv[0]).toBe('C:\\tools\\node.exe')
+  })
+
   it('survives a shim path containing a space', () => {
     const shim = 'C:\\Program Files\\nodejs\\typescript-language-server.cmd'
     const argv = spawnArgv(shim, ['--stdio'], 'win32', {
@@ -170,8 +214,47 @@ describe('lsp server launch shape', () => {
     // metacharacter in an argument: cmd would read it as a command separator
     expect(() => spawnArgv('C:\\tools\\opaque.cmd', ['--prefix', 'C:\\a&b\\npm'], 'win32', { ...seams(opaque) }))
       .toThrow(/could not be unwrapped/)
+    // an empty argument would vanish: `cmd /c x ''` drops it without a word
+    expect(() => spawnArgv('C:\\tools\\opaque.cmd', ['--prefix', ''], 'win32', { ...seams(opaque) }))
+      .toThrow(/could not be unwrapped/)
     // and the safe case still goes through cmd rather than refusing
     expect(spawnArgv('C:\\tools\\opaque.cmd', ['--stdio'], 'win32', { ...seams(opaque) })[0]).toBe('cmd.exe')
+  })
+
+  it('falls back to cmd for a forward whose target does not exist', () => {
+    const shim = 'C:\\tools\\missing-target.cmd'
+    const text = '@echo off\r\n"%_prog%"  "%dp0%\\node_modules\\gone\\cli.mjs" %*\r\n'
+    // the forward IS understood, but the script it names is not there: the shim
+    // is not unwrapped, so it takes the shell path when that is provably safe
+    const argv = spawnArgv(shim, ['--stdio'], 'win32', {
+      ...seams(text),
+      existsFile: () => false,
+    })
+    expect(argv).toEqual(['cmd.exe', '/d', '/c', shim, '--stdio'])
+  })
+
+  it('drives the real existence predicate: a directory is not a target', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orrery-shim-'))
+    try {
+      const shim = join(dir, 'real.cmd')
+      // the target is a DIRECTORY here: `existsSync` would accept it and hand
+      // node a folder, so the default predicate must reject the unwrap
+      mkdirSync(join(dir, 'node_modules'), { recursive: true })
+      mkdirSync(join(dir, 'node_modules', 'cli-dir.mjs'), { recursive: true })
+      writeFileSync(shim, '@echo off\r\n"%_prog%"  "%dp0%\\node_modules\\cli-dir.mjs" %*\r\n', 'utf8')
+      // no options at all: the shipped defaults are what runs here
+      expect(spawnArgv(shim, ['--stdio'], 'win32', { binaryPath: 'C:\\node\\node.exe' })[0]).toBe('cmd.exe')
+      // ...and a real FILE target does unwrap
+      writeFileSync(join(dir, 'node_modules', 'cli-file.mjs'), 'export {}\n', 'utf8')
+      writeFileSync(shim, '@echo off\r\n"%_prog%"  "%dp0%\\node_modules\\cli-file.mjs" %*\r\n', 'utf8')
+      expect(spawnArgv(shim, ['--stdio'], 'win32', { binaryPath: 'C:\\node\\node.exe' })).toEqual([
+        'C:\\node\\node.exe',
+        join(dir, 'node_modules', 'cli-file.mjs'),
+        '--stdio',
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('runs a real win32 executable directly', () => {

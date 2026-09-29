@@ -34,14 +34,18 @@ export function uriToPath(uri) {
 }
 
 /**
- * An interpreter invocation inside a generated `.cmd` shim. Three families
- * ship: npm's older `"%_prog%" "%dp0%\…"`, npm's own `"%NODE_EXE%"
- * "%NPM_CLI_JS%"`, and pnpm/corepack's `"%~dp0\node.exe" "%~dp0\…"`. npm
- * also writes the LITERAL two characters `\"` around its tokens, which is why
- * quote-based matching silently missed that whole family and dropped it to the
- * shell fallback. So the shape is found structurally instead: the last line that
- * forwards to a `.js`/`.mjs`/`.cjs` script, tokenized on whitespace with quote
- * characters stripped.
+ * An interpreter invocation inside a generated `.cmd` shim: the last line that
+ * forwards its arguments with `%*`. The generators this integration targets —
+ * npm's bin linker (both its older `"%_prog%"` template and its own
+ * `"%NODE_EXE%" "%NPM_CLI_JS%"` shim) and corepack's `%~dp0` template — put the
+ * target immediately before `%*`. npm also writes the LITERAL two characters
+ * `\"` around its tokens, which is why a quote-shaped match silently missed that
+ * family and dropped it to the shell fallback; the shape is therefore located by
+ * this marker and tokenized positionally (see `lastShimInvocation`).
+ *
+ * Do NOT reintroduce an extension requirement on the target here: npm emits
+ * extensionless targets for packages whose bin script is spelled that way
+ * (`…\typescript\bin\tsc`, `…\vscode-langservers-extracted\bin\vscode-json-language-server`).
  */
 const SHIM_FORWARD = /%\*\s*$/
 
@@ -118,25 +122,74 @@ function expandShimToken(token, text, shimDirectory, join) {
 }
 
 /**
- * The last `%*` forward in a shim, as `{ program, target }`.
+ * How a shim's forward line is read — shared by `tokenizeShimLine` and
+ * `lastShimInvocation` right below.
  *
- * Tokenizing drops only quote escapes — `\"` is npm's literal spelling, while a
- * lone backslash is a path separator that must survive for the variable pass.
- * The target is the token immediately before `%*`, which is what EVERY shipped
- * shim shape puts there (`"%NODE_EXE%" "%NPM_CLI_JS%" %*`, `"%~dp0\node.exe"
- * "%~dp0\…\pnpm.js" %*`, `"%_prog%" "%dp0%\…\cli.mjs" %*`). It is NOT
- * identified by extension: npm's bin linker emits extensionless targets for any
- * package whose bin script is spelled that way, so `…\bin\tsc` and
- * `…\bin\vscode-json-language-server` are ordinary targets here.
+ * Quotes cannot simply be replaced by spaces: a quoted path may CONTAIN a space
+ * (`"C:\Program Files\node.exe"`), and flattening it would split one token into
+ * two and shift the positional rule. npm's literal two-character spelling `\"`
+ * counts as a quote as well, while a LONE backslash is a path separator that
+ * must survive for the variable pass.
+ *
+ * The target is the token immediately before `%*`, which is where the generators
+ * this integration targets put it (`"%NODE_EXE%" "%NPM_CLI_JS%" %*`,
+ * `"%~dp0\node.exe" "%~dp0\…\pnpm.js" %*`, `"%_prog%" "%dp0%\…\cli.mjs" %*`).
+ * It is NOT identified by extension: npm's bin linker emits extensionless
+ * targets for any package whose bin script is spelled that way, so `…\bin\tsc`
+ * and `…\bin\vscode-json-language-server` are ordinary targets here.
+ *
+ * Known limit: corepack's generator can emit `${progArgs}%*`, which puts a flag
+ * where the target is expected. No catalog server is corepack-installed today,
+ * and that mis-read fails closed — the token resolves to nothing, so the shim is
+ * refused or falls back instead of launching the wrong thing.
+ */
+function tokenizeShimLine(line) {
+  const tokens = []
+  let current = ''
+  let quote = null
+  let escaped = false
+  for (const character of line) {
+    if (escaped) {
+      if (character === '"') current += '"'
+      else current += `\\${character}`
+      escaped = false
+      continue
+    }
+    if (quote) {
+      if (character === quote) quote = null
+      else current += character
+      continue
+    }
+    if (character === '"') {
+      quote = '"'
+      continue
+    }
+    if (character === '\\') {
+      escaped = true
+      continue
+    }
+    if (/\s/.test(character)) {
+      if (current.length > 0) tokens.push(current)
+      current = ''
+      continue
+    }
+    current += character
+  }
+  if (escaped) current += '\\'
+  if (current.length > 0) tokens.push(current)
+  return tokens
+}
+
+/**
+ * The last `%*` forward in a shim, as `{ program, target }`: the two tokens
+ * immediately before the trailing `%*`.
  */
 function lastShimInvocation(text) {
   if (typeof text !== 'string') return null
   const lines = text.split(/\r?\n/).filter((line) => SHIM_FORWARD.test(line))
   const line = lines.at(-1)
   if (!line) return null
-  const strip = (token) => token.replace(/^["\\]+|["\\]+$/g, '')
-  const tokens = line.replace(/["\s]+/g, ' ').trim().split(' ').filter(Boolean).map(strip)
-  // `%*` is last, so the target and its interpreter sit right before it
+  const tokens = tokenizeShimLine(line)
   if (tokens.length < 3) return null
   return { program: tokens[tokens.length - 3], target: tokens[tokens.length - 2] }
 }
@@ -213,7 +266,10 @@ export function spawnArgv(command, args = [], platform = process.platform, optio
       // shipped it, else the bare `node` it resolves through cmd's PATH — which
       // the declared child environment does not carry. So the running Node (or a
       // local one) stands in: it is finally just "run this script with node".
-      const programIsNode = /^(?:node|node\.exe)$/i.test(program) || /node\.exe$/i.test(program)
+      // `%_prog%` is the older npm template's own variable for exactly that
+      // choice, and it is NOT a path: expanding it would have to know whether
+      // `<shim>\node.exe` exists, which is the same question answered here.
+      const programIsNode = /^(?:node|node\.exe|%_prog%)$/i.test(program) || /node\.exe$/i.test(program)
       let interpreter = null
       if (programIsNode) {
         const localNode = join(shimDirectory, 'node.exe')
