@@ -931,7 +931,24 @@ window.__ModuleLoader__.load({
 			lspFamily_lua: "Lua",
 			lspFamily_cpp: "C/C++",
 			lspToggleLabel: "LSP",
-			lspToggleTitle: "Toggle LSP semantic tools for this session"
+			lspToggleTitle: "Toggle LSP semantic tools for this session",
+			hashEditTitle: "Edit file",
+			hashEditPreparing: "Preparing edit",
+			hashEditPlanned: "Planned edit — the applied diff appears when the call settles.",
+			hashEditRunning: "Editing…",
+			hashEditFailed: "Edit failed",
+			hashEditStopped: "Interrupted",
+			hashEditInput: "Input",
+			hashEditOutput: "Output",
+			hashEditCodeLabel: "diff",
+			hashEditCopy: "Copy",
+			hashEditCopied: "Copied",
+			hashEditWrap: "Wrap lines",
+			hashEditUnwrap: "Disable line wrap",
+			hashEditCollapse: "Collapse",
+			hashEditCollapseAria: "Collapse diff",
+			hashEditExpand: "Show {count} more",
+			hashEditExpandAria: "Expand {count} more rows"
 		};
 		const zh = {
 			title: "Orrery",
@@ -1090,7 +1107,24 @@ window.__ModuleLoader__.load({
 			lspFamily_lua: "Lua",
 			lspFamily_cpp: "C/C++",
 			lspToggleLabel: "LSP",
-			lspToggleTitle: "为本会话启用/禁用 LSP 语义工具"
+			lspToggleTitle: "为本会话启用/禁用 LSP 语义工具",
+			hashEditTitle: "编辑文件",
+			hashEditPreparing: "准备编辑",
+			hashEditPlanned: "计划编辑——调用完成后此处显示实际应用的 diff。",
+			hashEditRunning: "编辑中…",
+			hashEditFailed: "编辑失败",
+			hashEditStopped: "已中断",
+			hashEditInput: "输入",
+			hashEditOutput: "输出",
+			hashEditCodeLabel: "diff",
+			hashEditCopy: "复制",
+			hashEditCopied: "已复制",
+			hashEditWrap: "自动换行",
+			hashEditUnwrap: "取消换行",
+			hashEditCollapse: "收起",
+			hashEditCollapseAria: "收起 diff",
+			hashEditExpand: "展开剩余 {count} 行",
+			hashEditExpandAria: "展开剩余 {count} 行"
 		};
 		const NS = "settings.orrery";
 		const SECTION_ID = "orrery-settings";
@@ -1206,6 +1240,206 @@ window.__ModuleLoader__.load({
 				]
 			});
 		}
+		// ---- hash_edit conversation diff view (keyed tool.call.toolview) ----
+		// hash_edit calls render as a diff panel: applied hunks come from the
+		// persisted result metadata (`meta.diffs`), the running preview from the
+		// call arguments. Absent or malformed data degrades to the generic
+		// flattened input/output body rather than throwing.
+		const HASH_EDIT_TOOL = "hash_edit";
+		/** Narrow one opaque persisted diff fragment; null when unusable. */
+		function narrowDiffFragment(value) {
+			if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+			const { path, oldText, newText } = value;
+			if (typeof path !== "string") return null;
+			if (oldText !== null && typeof oldText !== "string") return null;
+			if (typeof newText !== "string") return null;
+			return { path, oldText, newText };
+		}
+		/** Narrow persisted result metadata to a non-empty fragment list, else null. */
+		function appliedDiffFragments(meta) {
+			if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return null;
+			const diffs = meta.diffs;
+			if (!Array.isArray(diffs) || diffs.length === 0) return null;
+			const out = [];
+			for (const entry of diffs) {
+				const fragment = narrowDiffFragment(entry);
+				if (fragment === null) return null;
+				out.push(fragment);
+			}
+			return out;
+		}
+		/** Parse the raw JSON arguments of a hash_edit call; null when unusable. */
+		function parseHashEditArgs(argsRaw) {
+			if (typeof argsRaw !== "string" || argsRaw.trim() === "") return null;
+			let parsed;
+			try {
+				parsed = JSON.parse(argsRaw);
+			} catch {
+				return null;
+			}
+			if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+			const path = parsed.file_path;
+			if (typeof path !== "string" || path.trim() === "") return null;
+			if (!Array.isArray(parsed.edits)) return null;
+			const ops = [];
+			for (const edit of parsed.edits) {
+				if (typeof edit !== "object" || edit === null) return null;
+				if (typeof edit.op !== "string" || typeof edit.pos !== "string" || typeof edit.text !== "string") return null;
+				ops.push({ op: edit.op, pos: edit.pos, text: edit.text });
+			}
+			return { path, ops };
+		}
+		/** Planned fragments from parsed args: one addition fragment per content-bearing op. */
+		function plannedDiffFragments(parsed) {
+			if (parsed === null) return null;
+			const fragments = parsed.ops.filter((op) => op.text !== "").map((op) => ({ path: parsed.path, oldText: null, newText: op.text }));
+			return fragments.length > 0 ? fragments : null;
+		}
+		/** The raw argument string of a start or result block, when present. */
+		function hashEditArgsRaw(block) {
+			if (typeof block?.argsRaw === "string") return block.argsRaw;
+			if (typeof block?.call?.argsRaw === "string") return block.call.argsRaw;
+			return null;
+		}
+		/** Joined text of a result block's content parts. */
+		function hashEditResultText(block) {
+			if (!Array.isArray(block?.content)) return "";
+			return block.content.map((part) => part?.type === "text" && typeof part.text === "string" ? part.text : "").filter((text) => text !== "").join("\n");
+		}
+		/** Lifecycle state of the call, driving tone and status text. */
+		function hashEditState(phase, block) {
+			if (phase === "preparing") return "preparing";
+			if (phase === "start") return "running";
+			if (block?.isError) return block?.error?.code === "interrupted" ? "stopped" : "error";
+			return "ok";
+		}
+		/** Relativize a path to the session cwd first, then the host home. */
+		function hashEditDisplayPath(path, cwd, home) {
+			if (typeof path !== "string") return "";
+			if (typeof cwd === "string" && cwd !== "") {
+				const prefix = cwd.endsWith("/") ? cwd : `${cwd}/`;
+				if (path.startsWith(prefix)) return path.slice(prefix.length);
+			}
+			if (typeof home === "string" && home !== "") {
+				const prefix = home.endsWith("/") ? home : `${home}/`;
+				if (path.startsWith(prefix)) return `~/${path.slice(prefix.length)}`;
+			}
+			return path;
+		}
+		/** Localized chrome labels for the DiffBlock primitive. */
+		function hashEditDiffLabels(t) {
+			return {
+				codeLabel: t("hashEditCodeLabel"),
+				wrapLabel: t("hashEditWrap"),
+				unwrapLabel: t("hashEditUnwrap"),
+				copy: t("hashEditCopy"),
+				copied: t("hashEditCopied"),
+				collapseAria: t("hashEditCollapseAria"),
+				expandAria: (count) => t("hashEditExpandAria", { count }),
+				collapse: t("hashEditCollapse"),
+				expand: (count) => t("hashEditExpand", { count })
+			};
+		}
+		const hashEditHeaderStyle = { display: "flex", alignItems: "center", gap: "8px", padding: "6px 4px", cursor: "pointer", userSelect: "none", borderRadius: "var(--dsw-radius-sm)" };
+		const hashEditTitleStyle = { fontSize: "13px", fontWeight: 500, lineHeight: "18px", flexShrink: 0 };
+		const hashEditPathStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
+		const hashEditMetaStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", flexShrink: 0 };
+		const hashEditHintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", padding: "4px 4px" };
+		const hashEditPreStyle = { margin: 0, padding: "8px 10px", fontSize: "12px", lineHeight: "16px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)" };
+		/** Status tone: errors and interruptions stay explicit in the header. */
+		function hashEditStateColor(state) {
+			if (state === "error") return "var(--dsw-alias-state-business-danger, #d64545)";
+			if (state === "stopped") return "var(--dsw-alias-state-business-warning, #b07707)";
+			return "var(--dsw-alias-label-secondary)";
+		}
+		/** Keyed conversation view for hash_edit: one row, expandable diff panel. */
+		function HashEditRow(props) {
+			const state = hashEditState(props.phase, props.block);
+			if (state === "preparing") {
+				return react_jsx_runtime.jsx("div", {
+					"data-tool": HASH_EDIT_TOOL,
+					"data-state": "preparing",
+					children: react_jsx_runtime.jsxs("div", { style: { ...hashEditHeaderStyle, cursor: "default" }, children: [
+						react_jsx_runtime.jsx(primitives.IconEditOutlineRegular, { size: 14 }),
+						react_jsx_runtime.jsx("span", { style: hashEditTitleStyle, children: props.t("hashEditTitle") }),
+						react_jsx_runtime.jsx("span", { style: hashEditMetaStyle, children: props.t("hashEditPreparing") })
+					] })
+				});
+			}
+			return react_jsx_runtime.jsx(StartedHashEditRow, { ...props, state });
+		}
+		function StartedHashEditRow(props) {
+			const { block, cwd, home, openFile, t, state } = props;
+			const [expanded, setExpanded] = react.useState(false);
+			const argsRaw = hashEditArgsRaw(block);
+			const parsed = parseHashEditArgs(argsRaw);
+			const applied = state === "ok" ? appliedDiffFragments(block?.meta) : null;
+			const planned = state === "running" ? plannedDiffFragments(parsed) : null;
+			const diffs = applied ?? planned;
+			const output = hashEditResultText(block);
+			const path = parsed?.path ?? applied?.[0]?.path;
+			const totals = diffs ? primitives.diffTotals(diffs) : null;
+			const statusText = state === "running" ? t("hashEditRunning") : state === "error" ? t("hashEditFailed") : state === "stopped" ? t("hashEditStopped") : null;
+			const toggle = () => setExpanded((value) => !value);
+			const onKey = (event) => {
+				if (event.key !== "Enter" && event.key !== " ") return;
+				event.preventDefault();
+				toggle();
+			};
+			let body = null;
+			if (expanded) {
+				if (diffs) {
+					body = react_jsx_runtime.jsxs("div", { children: [
+						planned ? react_jsx_runtime.jsx("div", { style: hashEditHintStyle, children: t("hashEditPlanned") }) : null,
+						react_jsx_runtime.jsx(primitives.DiffBlock, { diffs, labels: hashEditDiffLabels(t) })
+					] });
+				} else {
+					body = react_jsx_runtime.jsxs("div", { children: [
+						argsRaw !== null ? react_jsx_runtime.jsxs("div", { children: [
+							react_jsx_runtime.jsx("div", { style: hashEditHintStyle, children: t("hashEditInput") }),
+							react_jsx_runtime.jsx("pre", { style: hashEditPreStyle, children: argsRaw })
+						] }) : null,
+						output !== "" ? react_jsx_runtime.jsxs("div", { children: [
+							react_jsx_runtime.jsx("div", { style: hashEditHintStyle, children: t("hashEditOutput") }),
+							react_jsx_runtime.jsx("pre", { style: hashEditPreStyle, children: output })
+						] }) : null
+					] });
+				}
+			}
+			return react_jsx_runtime.jsxs("div", {
+				"data-tool": HASH_EDIT_TOOL,
+				"data-state": state,
+				children: [
+					react_jsx_runtime.jsxs("div", {
+						style: hashEditHeaderStyle,
+						role: "button",
+						tabIndex: 0,
+						"aria-expanded": expanded,
+						onClick: toggle,
+						onKeyDown: onKey,
+						children: [
+							react_jsx_runtime.jsx(primitives.IconEditOutlineRegular, { size: 14 }),
+							react_jsx_runtime.jsx("span", { style: hashEditTitleStyle, children: t("hashEditTitle") }),
+							path ? react_jsx_runtime.jsx("button", {
+								type: "button",
+								style: hashEditPathStyle,
+								title: path,
+								onClick: (event) => {
+									event.stopPropagation();
+									if (typeof openFile === "function") openFile(path);
+								},
+								children: hashEditDisplayPath(path, cwd, home)
+							}) : null,
+							totals ? react_jsx_runtime.jsx("span", { style: hashEditMetaStyle, children: `+${totals.added} \u2212${totals.removed}` }) : null,
+							statusText ? react_jsx_runtime.jsx("span", { style: { ...hashEditMetaStyle, color: hashEditStateColor(state) }, children: statusText }) : null,
+							react_jsx_runtime.jsx("span", { style: { flex: 1 } }),
+							react_jsx_runtime.jsx(primitives.IconChevronDownOutlineRegular, { size: 14, style: { transform: expanded ? "rotate(180deg)" : "none", transition: "transform 120ms" } })
+						]
+					}),
+					body
+				]
+			});
+		}
 		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
@@ -1247,6 +1481,14 @@ window.__ModuleLoader__.load({
 					};
 				}
 			}, LspToggle)), "ui-orrery-settings: lsp session switch");
+			// Keyed conversation view: hash_edit renders as a diff panel. Its own
+			// effect scope: a slot-registration failure must not take down the
+			// settings page or the LSP toggle.
+			ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({
+				name: "tool.call.toolview",
+				key: HASH_EDIT_TOOL,
+				locale: NS
+			}, HashEditRow)), "ui-orrery-settings: hash_edit toolview");
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.
@@ -1290,6 +1532,7 @@ window.__ModuleLoader__.load({
 		exports.chainEditor = { jsonToChains, chainsToJson };
 		exports.lspManager = { LspManagerField, jsonToLspServers, lspServersToJson };
 		exports.robashEditor = { jsonToStringList, stringListToJson, robashEditorOpenState };
+		exports.hashEditView = { HashEditRow, parseHashEditArgs, plannedDiffFragments, appliedDiffFragments, hashEditArgsRaw, hashEditResultText, hashEditState, hashEditDisplayPath, hashEditDiffLabels };
 		return module.exports;
 	}
 });

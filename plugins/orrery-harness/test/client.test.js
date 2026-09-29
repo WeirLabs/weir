@@ -135,7 +135,7 @@ describe('orrery settings client half', () => {
     // drive the whileServed registration: the LSP toggle registered at apply,
     // then three page-chain slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'settings.section', 'settings.orrery.item', 'plugins.item'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'settings.section', 'settings.orrery.item', 'plugins.item'])
 
     // the per-session LSP toggle in the conversation composer bar slot
     slotInjects[0].fn()
@@ -144,10 +144,19 @@ describe('orrery settings client half', () => {
     expect(slotRegistrations[0].definition.id).toBe('orrery-lsp-toggle')
     expect(slotRegistrations[0].definition.order).toBe(100)
 
-    // the top-level settings section registration
+    // the keyed hash_edit conversation view registration
     slotInjects[1].fn()
     expect(slotRegistrations).toHaveLength(2)
-    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[1]
+    const { definition: toolviewDef, component: toolviewComponent } = slotRegistrations[1]
+    expect(toolviewDef.name).toBe('tool.call.toolview')
+    expect(toolviewDef.key).toBe('hash_edit')
+    expect(toolviewDef.locale).toBe('settings.orrery')
+    expect(typeof toolviewComponent).toBe('function')
+
+    // the top-level settings section registration
+    slotInjects[2].fn()
+    expect(slotRegistrations).toHaveLength(3)
+    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[2]
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
     expect(sectionDef.order).toBe(40)
@@ -156,15 +165,15 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[2].fn()
-    expect(slotRegistrations).toHaveLength(3)
-    expect(slotRegistrations[2].definition.name).toBe('settings.orrery.item')
-    expect(slotRegistrations[2].definition.id).toBe('orrery-config')
-
-    // the Plugins-page entry
     slotInjects[3].fn()
     expect(slotRegistrations).toHaveLength(4)
-    const { definition, component } = slotRegistrations[3]
+    expect(slotRegistrations[3].definition.name).toBe('settings.orrery.item')
+    expect(slotRegistrations[3].definition.id).toBe('orrery-config')
+
+    // the Plugins-page entry
+    slotInjects[4].fn()
+    expect(slotRegistrations).toHaveLength(5)
+    const { definition, component } = slotRegistrations[4]
     expect(definition.name).toBe('plugins.item')
     expect(definition.id).toBe('orrery-settings')
     expect(definition.order).toBe(30)
@@ -423,7 +432,7 @@ describe('orrery session LSP toggle', () => {
     }
     surface.apply(ctx)
 
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview'])
     slotInjects[0].fn()
     const { definition, component } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')
@@ -712,6 +721,221 @@ describe('orrery LSP manager panel', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+})
+
+describe('orrery hash_edit diff view', () => {
+  // Load a fresh module instance with hook-state-preserving stubs, returning
+  // the plugin surface and the jsx marker factory.
+  async function loadSurface() {
+    const loaded = []
+    globalThis.window = {
+      __ModuleLoader__: {
+        load: (definition) => loaded.push(definition),
+      },
+    }
+    await import(`../lib/client.js?hash-edit-view=${Math.random()}`)
+    const reactState = []
+    let hookCursor = 0
+    const reactStub = {
+      reset() {
+        reactState.length = 0
+      },
+      begin() {
+        hookCursor = 0
+      },
+      useState(initial) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = [initial, (next) => {
+          reactState[at][0] = typeof next === 'function' ? next(reactState[at][0]) : next
+        }]
+        return reactState[at]
+      },
+      useEffect(fn) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = { cleanup: fn() }
+        return undefined
+      },
+      useRef: (initial) => ({ current: initial }),
+      Component: class {
+        constructor(props) {
+          this.props = props
+        }
+      },
+    }
+    const requireStub = (name) => {
+      if (name === 'react') return reactStub
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {
+        settingsNumberField: (field) => ({ field, kind: 'number' }),
+        settingsTextField: (field) => ({ field, kind: 'text' }),
+        DiffBlock: (props) => ({ __diff: props }),
+        diffTotals: (diffs) => {
+          let added = 0
+          let removed = 0
+          for (const diff of diffs) {
+            added += diff.newText.split('\n').length
+            removed += diff.oldText === null ? 0 : diff.oldText.split('\n').length
+          }
+          return { added, removed }
+        },
+        IconEditOutlineRegular: (props) => ({ __icon: 'edit', ...props }),
+        IconChevronDownOutlineRegular: (props) => ({ __icon: 'chevron', ...props }),
+        SettingsFormModel: class {
+          bind() {
+            return { marker: 'store', set: () => {} }
+          }
+          dispose() {}
+        },
+      }
+      if (name === 'orrery-model-picker') return { ModelPickerField: () => null, ModelPickerBoundary: class { render() { return null } } }
+      throw new Error(`unexpected require ${name}`)
+    }
+    return { surface: loaded[0].factory(requireStub), reactStub }
+  }
+
+  it('narrows applied diff metadata defensively', async () => {
+    const { surface } = await loadSurface()
+    const { appliedDiffFragments } = surface.hashEditView
+    const fragment = { path: 'a.js', oldText: 'old', newText: 'new' }
+    expect(appliedDiffFragments({ diffs: [fragment] })).toEqual([fragment])
+    expect(appliedDiffFragments({ diffs: [{ path: 'a.js', oldText: null, newText: 'x' }] })).toEqual([{ path: 'a.js', oldText: null, newText: 'x' }])
+    // absent / empty / malformed all decline to the generic body
+    expect(appliedDiffFragments(undefined)).toBe(null)
+    expect(appliedDiffFragments(null)).toBe(null)
+    expect(appliedDiffFragments({})).toBe(null)
+    expect(appliedDiffFragments({ diffs: [] })).toBe(null)
+    expect(appliedDiffFragments({ diffs: 'nope' })).toBe(null)
+    expect(appliedDiffFragments({ diffs: [{ path: 'a.js', oldText: 1, newText: 'x' }] })).toBe(null)
+    expect(appliedDiffFragments({ diffs: [{ path: 'a.js', newText: 'x' }] })).toBe(null)
+    expect(appliedDiffFragments({ diffs: [fragment, { bad: true }] })).toBe(null)
+  })
+
+  it('parses call arguments and derives planned fragments', async () => {
+    const { surface } = await loadSurface()
+    const { parseHashEditArgs, plannedDiffFragments } = surface.hashEditView
+    const parsed = parseHashEditArgs(JSON.stringify({
+      file_path: '/ws/a.js',
+      edits: [
+        { op: 'replace', pos: '2#VK', text: 'BETA' },
+        { op: 'append', pos: '3#XX', text: '' },
+        { op: 'prepend', pos: '1#YY', text: 'TOP', extra: 'ignored' },
+      ],
+    }))
+    expect(parsed.path).toBe('/ws/a.js')
+    expect(parsed.ops).toHaveLength(3)
+    // empty-text ops (pure deletions) have no planned fragment
+    const planned = plannedDiffFragments(parsed)
+    expect(planned).toEqual([
+      { path: '/ws/a.js', oldText: null, newText: 'BETA' },
+      { path: '/ws/a.js', oldText: null, newText: 'TOP' },
+    ])
+    // unusable argument shapes decline
+    expect(parseHashEditArgs('')).toBe(null)
+    expect(parseHashEditArgs('not-json')).toBe(null)
+    expect(parseHashEditArgs('{"file_path":"/ws/a.js"}')).toBe(null)
+    expect(parseHashEditArgs('{"file_path":" ","edits":[]}')).toBe(null)
+    expect(parseHashEditArgs('{"file_path":"/ws/a.js","edits":[{"op":"replace","pos":"1#AA"}]}')).toBe(null)
+    expect(parseHashEditArgs(null)).toBe(null)
+    expect(plannedDiffFragments(null)).toBe(null)
+    expect(plannedDiffFragments({ path: '/ws/a.js', ops: [{ op: 'replace', pos: '1#AA', text: '' }] })).toBe(null)
+  })
+
+  it('reads args from start and result blocks and derives state', async () => {
+    const { surface } = await loadSurface()
+    const { hashEditArgsRaw, hashEditResultText, hashEditState, hashEditDisplayPath } = surface.hashEditView
+    expect(hashEditArgsRaw({ argsRaw: '{"a":1}' })).toBe('{"a":1}')
+    expect(hashEditArgsRaw({ call: { argsRaw: '{"b":2}' } })).toBe('{"b":2}')
+    expect(hashEditArgsRaw({})).toBe(null)
+    expect(hashEditResultText({ content: [{ type: 'text', text: 'one' }, { type: 'image' }, { type: 'text', text: 'two' }] })).toBe('one\ntwo')
+    expect(hashEditResultText({})).toBe('')
+    expect(hashEditState('preparing', undefined)).toBe('preparing')
+    expect(hashEditState('start', {})).toBe('running')
+    expect(hashEditState('result', { isError: false })).toBe('ok')
+    expect(hashEditState('result', { isError: true })).toBe('error')
+    expect(hashEditState('result', { isError: true, error: { code: 'interrupted' } })).toBe('stopped')
+    expect(hashEditDisplayPath('/ws/src/a.js', '/ws', '/home/u')).toBe('src/a.js')
+    expect(hashEditDisplayPath('/home/u/a.js', '/ws', '/home/u')).toBe('~/a.js')
+    expect(hashEditDisplayPath('/other/a.js', '/ws', '/home/u')).toBe('/other/a.js')
+  })
+
+  it('renders preparing, applied-diff, planned-diff, and failure bodies', async () => {
+    const { surface, reactStub } = await loadSurface()
+    const { HashEditRow } = surface.hashEditView
+    const t = (key) => key
+
+    // preparing: one non-expandable streaming row
+    const preparing = HashEditRow({ phase: 'preparing', block: { phase: 'preparing' }, t })
+    expect(preparing['data-state']).toBe('preparing')
+    expect(preparing.children.children[1].children).toBe('hashEditTitle')
+
+    const renderStarted = (props) => {
+      reactStub.begin()
+      const row = HashEditRow(props)
+      reactStub.begin()
+      return row.__type(row)
+    }
+    const META = { diffs: [{ path: '/ws/a.js', oldText: 'beta', newText: 'BETA' }] }
+    const RESULT_BLOCK = {
+      kind: 'tool-result',
+      call: { name: 'hash_edit', argsRaw: '{"file_path":"/ws/a.js","edits":[{"op":"replace","pos":"2#VK","text":"BETA"}]}' },
+      content: [{ type: 'text', text: 'hash_edit applied 1 op(s) to /ws/a.js:\n\n-diff' }],
+      isError: false,
+      meta: META,
+    }
+    const okProps = { phase: 'result', block: RESULT_BLOCK, cwd: '/ws', home: '/home/u', openFile: () => {}, t }
+
+    // collapsed header: title, relativized path, totals, no status text
+    const collapsed = renderStarted(okProps)
+    expect(collapsed['data-state']).toBe('ok')
+    const header = collapsed.children[0]
+    expect(header.children[1].children).toBe('hashEditTitle')
+    expect(header.children[2].children).toBe('a.js')
+    expect(header.children[3].children).toBe('+1 −1')
+    expect(collapsed.children[1]).toBe(null) // body stays closed
+
+    // expand → the DiffBlock body carries the applied fragments and labels
+    header.onClick()
+    const expanded = renderStarted(okProps)
+    const body = expanded.children[1]
+    const diffCard = body.children[1]
+    expect(diffCard.diffs).toEqual(META.diffs)
+    expect(diffCard.labels.copy).toBe('hashEditCopy')
+    expect(typeof diffCard.labels.expand).toBe('function')
+    expect(body.children[0]).toBe(null) // no planned hint on a settled call
+
+    // running call: planned fragments from the arguments plus the hint
+    reactStub.reset() // fresh hook state per scenario
+    const startProps = { phase: 'start', block: { argsRaw: '{"file_path":"/ws/a.js","edits":[{"op":"append","pos":"2#VK","text":"NEW"}]}' }, cwd: '/ws', t }
+    const running = renderStarted(startProps)
+    expect(running['data-state']).toBe('running')
+    running.children[0].onClick()
+    const runningExpanded = renderStarted(startProps)
+    const plannedHint = runningExpanded.children[1].children[0]
+    expect(plannedHint.children).toBe('hashEditPlanned')
+    expect(runningExpanded.children[1].children[1].diffs).toEqual([{ path: '/ws/a.js', oldText: null, newText: 'NEW' }])
+    const runningStatus = running.children[0].children[4]
+    expect(runningStatus.children).toBe('hashEditRunning')
+
+    // failed call: no diff, flattened output, explicit failure status
+    const failedBlock = { ...RESULT_BLOCK, isError: true, meta: META, content: [{ type: 'text', text: '>>> mismatch report' }] }
+    reactStub.reset()
+    const failedProps = { phase: 'result', block: failedBlock, cwd: '/ws', t }
+    const failed = renderStarted(failedProps)
+    expect(failed['data-state']).toBe('error')
+    expect(failed.children[0].children[4].children).toBe('hashEditFailed')
+    failed.children[0].onClick()
+    const failedExpanded = renderStarted(failedProps)
+    const failureBody = failedExpanded.children[1]
+    expect(failureBody.children[1].children[1].children).toBe('>>> mismatch report')
+
+    // legacy result without metadata falls back to the flattened body
+    reactStub.reset()
+    const legacyProps = { phase: 'result', block: { ...RESULT_BLOCK, meta: undefined }, cwd: '/ws', t }
+    const legacy = renderStarted(legacyProps)
+    legacy.children[0].onClick()
+    const legacyExpanded = renderStarted(legacyProps)
+    expect(legacyExpanded.children[1].children[1].children[1].children).toContain('hash_edit applied 1 op(s)')
   })
 })
 
