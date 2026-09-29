@@ -46,6 +46,25 @@ describe('robash-guard-pwsh: allowed corpus', () => {
     'Write-Output "literal { brace }"',
     '$x = "literal { brace }"',
   ]
+  // wait primitives: `Start-Sleep` and its built-in read-only alias `sleep`
+  // (the POSIX side allow-lists `sleep`, so the two platforms must agree).
+  const waitCorpus = [
+    'Start-Sleep -Seconds 1',
+    'Start-Sleep -Seconds 30',
+    'Start-Sleep -Milliseconds 500',
+    'Start-Sleep 5',
+    'start-sleep -s 1',
+    'SLEEP 2',
+    'sleep 1',
+    'sleep 30',
+    'Get-Date; Start-Sleep -Seconds 1; Get-Location',
+    'Start-Sleep -Seconds 1 | Out-String',
+  ]
+  for (const command of waitCorpus) {
+    it(`allows: ${command}`, () => {
+      expect(denyReason(command)).toBe(undefined)
+    })
+  }
   for (const command of corpus) {
     it(`allows: ${command}`, () => {
       expect(denyReason(command)).toBe(undefined)

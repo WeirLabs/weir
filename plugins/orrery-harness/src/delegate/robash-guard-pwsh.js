@@ -24,6 +24,12 @@ const PWSH_ALIASES = {
   sls: 'select-string',
   sort: 'sort-object', where: 'where-object', measure: 'measure-object',
   select: 'select-object', echo: 'write-output',
+  // `sleep` is a built-in ReadOnly alias for Start-Sleep (verified against real
+  // pwsh 7.6). Without this row, `sleep` hits the allow list under its own name
+  // and is refused with "'sleep' is not on the read-only allow list" — while the
+  // POSIX side allow-lists `sleep`, so the same wait was portable on macOS and
+  // refused on Windows.
+  sleep: 'start-sleep',
 }
 
 /** Initial pwsh whitelist (conservative; iterate via readOnlyPwsh config and
@@ -34,7 +40,7 @@ export const DEFAULT_ROBASH_PWSH = {
     'Get-Content', 'Get-ChildItem', 'Get-Item', 'Get-Location', 'Get-Date', 'Get-Process',
     'Test-Path', 'Select-String', 'Select-Object', 'Sort-Object', 'Where-Object', 'Measure-Object',
     'Group-Object', 'Compare-Object', 'Format-Table', 'Format-List', 'Format-Wide', 'Out-String',
-    'Write-Output', 'ConvertTo-Json', 'git',
+    'Write-Output', 'ConvertTo-Json', 'git', 'Start-Sleep',
   ],
   deny: [
     'iex', 'Invoke-Expression', 'Invoke-Command', 'Start-Process', 'powershell', 'pwsh',

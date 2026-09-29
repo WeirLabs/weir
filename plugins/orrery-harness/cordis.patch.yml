@@ -36,7 +36,7 @@
         # Read-only pwsh guard whitelists, mirrored 1:1 from DEFAULT_ROBASH_PWSH
         # in src/delegate/robash-guard-pwsh.js (same order, same entries; JSON
         # string arrays in single-quoted YAML scalars).
-        robashPwshAllow: '["Get-Content","Get-ChildItem","Get-Item","Get-Location","Get-Date","Get-Process","Test-Path","Select-String","Select-Object","Sort-Object","Where-Object","Measure-Object","Group-Object","Compare-Object","Format-Table","Format-List","Format-Wide","Out-String","Write-Output","ConvertTo-Json","git"]'
+        robashPwshAllow: '["Get-Content","Get-ChildItem","Get-Item","Get-Location","Get-Date","Get-Process","Test-Path","Select-String","Select-Object","Sort-Object","Where-Object","Measure-Object","Group-Object","Compare-Object","Format-Table","Format-List","Format-Wide","Out-String","Write-Output","ConvertTo-Json","git","Start-Sleep"]'
         robashPwshDeny: '["iex","Invoke-Expression","Invoke-Command","Start-Process","powershell","pwsh","cmd","cscript","wscript","reg","icacls","Get-Credential","Invoke-WebRequest","Invoke-RestMethod","Set-Content","Out-File","Add-Content","Clear-Content","New-Item","Remove-Item","Move-Item","Copy-Item","Rename-Item","Set-Item","Set-ExecutionPolicy"]'
         lspEnabled: false
     # Browser half of the same package: the Orrery settings page registered
