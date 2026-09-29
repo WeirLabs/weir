@@ -309,3 +309,55 @@ describe('robash-guard-pwsh: line continuations and lone CR (B1/N1 regression pi
     expect(denyReason(`Get-Date${CR}Get-Location`)).toBe(undefined)
   })
 })
+
+describe('robash-guard-pwsh: lone & is a pipeline-chain separator (bypass regression pin)', () => {
+  // PowerShell 7 treats a lone `&` as the pipeline-chain operator, exactly like
+  // `&&`. The scanner previously split only on `&&`, so everything after a bare
+  // `&` was absorbed into the preceding segment and never validated: the leading
+  // allow-listed command decided the verdict. Verified against real pwsh 7.6 —
+  // the parser reports zero errors, the token stream contains a standalone
+  // Ampersand token, and the tail statement really executes.
+  const smuggled = [
+    'Get-Date & Remove-Item x',
+    'Get-Date & Start-Process calc',
+    'Get-Date & iex "rm x"',
+    'Get-Date & Set-Content a b',
+    'Get-Date & Invoke-Expression "rm x"',
+    'Get-Date & cmd /c dir',
+    'Get-Content a & Out-File b',
+    'Test-Path x & Remove-Item -Recurse -Force y',
+    'Get-Location & git push',
+    'Get-Date &$null',
+  ]
+  for (const command of smuggled) {
+    it(`denies the smuggled tail: ${command}`, () => {
+      // Pin WHY it is denied, not just that it is: these laundering cases must
+      // trip the background-operator rule (a reason-agnostic assertion would not
+      // notice if they started being denied for an unrelated, incidental reason).
+      expect(denyReason(command)).toMatch(/background operator is not allowed/)
+    })
+  }
+
+  it('denies a bare & even when the tail command is itself allow-listed', () => {
+    // The construct is what is unprovable, not the tail: `&` backgrounds the
+    // second command into a separate pipeline, so `Get-Date & Get-Location` is
+    // refused on principle. The reason is not pinned — dropping the ampersand
+    // rule while keeping the tail deny-listed would still be a correct outcome.
+    expect(denyReason('Get-Date & Get-Location')).not.toBeUndefined()
+  })
+
+  // `&&` (and the other documented separators) must keep working unchanged.
+  const stillAllowed = [
+    'Get-Date && Get-Location',
+    'Get-Date || Get-Location',
+    'Get-Date ; Get-Location',
+    'git log --oneline -5 | Select-Object -First 3',
+    '& git status',
+    '& "git" log --oneline -3',
+  ]
+  for (const command of stillAllowed) {
+    it(`still allows: ${command}`, () => {
+      expect(denyReason(command)).toBe(undefined)
+    })
+  }
+})
