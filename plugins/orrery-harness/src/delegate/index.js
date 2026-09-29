@@ -27,35 +27,47 @@ export function readOnlyShellName(platform) {
 
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
-  // Settings overlay (absent service = no-op): delegate + robash sections.
+  // Live settings overlay (absent service = no-op). Sections are re-resolved at
+  // every consumption point instead of snapshotted here: the service recomputes
+  // on each get() and broadcasts on commit, so reading late is what makes an
+  // online edit take effect in this same process (no app restart). See
+  // docs/features/category-delegation.md — "volatile config, 在线编辑即刻生效".
   const settings = ctx.get?.('orrerySettings')
-  const delegateOverride = settings?.get('delegate')
-  const robashOverride = settings?.get('robash')
+  const robashOverrideNow = () => settings?.get('robash')
+  const delegateOverrideNow = () => settings?.get('delegate')
 
-  let categories = { ...DEFAULT_CATEGORIES, ...(config.categories ?? {}) }
+  const baseCategories = () => ({ ...DEFAULT_CATEGORIES, ...(config.categories ?? {}) })
   const agents = { ...CURATED_AGENTS, ...(config.agents ?? {}) }
 
   // Settings category chains: wholesale chain replacement per named category.
-  if (delegateOverride?.categoryChains && typeof delegateOverride.categoryChains === 'object') {
-    for (const [category, chain] of Object.entries(delegateOverride.categoryChains)) {
-      if (!categories[category]) {
-        ctx.logger?.warn?.(`orrery-settings: categoryChains names unknown category "${category}" — ignored`)
-        continue
+  // Applied onto the base every time, so a commit is visible to the very next
+  // delegation rather than to the next process.
+  function categoriesNow() {
+    const categories = baseCategories()
+    const delegateOverride = delegateOverrideNow()
+    if (delegateOverride?.categoryChains && typeof delegateOverride.categoryChains === 'object') {
+      for (const [category, chain] of Object.entries(delegateOverride.categoryChains)) {
+        if (!categories[category]) {
+          ctx.logger?.warn?.(`orrery-settings: categoryChains names unknown category "${category}" — ignored`)
+          continue
+        }
+        categories[category] = { ...categories[category], chain }
       }
-      categories[category] = { ...categories[category], chain }
     }
+    return categories
   }
-  if (delegateOverride && typeof delegateOverride === 'object') {
-    const { categoryChains: _ignored, supervisionMaxRetries, supervisionInitialBackoffMs, supervisionMaxBackoffMs, ...rest } = delegateOverride
-    config = {
-      ...config,
-      ...rest,
-      supervision: {
-        ...(config.supervision ?? {}),
-        ...(supervisionMaxRetries !== undefined ? { maxRetries: supervisionMaxRetries } : {}),
-        ...(supervisionInitialBackoffMs !== undefined ? { initialBackoffMs: supervisionInitialBackoffMs } : {}),
-        ...(supervisionMaxBackoffMs !== undefined ? { maxBackoffMs: supervisionMaxBackoffMs } : {}),
-      },
+
+  // Supervision parameters the coordinator consumes. Resolved on demand (per
+  // coordinator, and pushed into live coordinators on commit) so the settings
+  // section stays authoritative without freezing into the row config.
+  function supervisionNow() {
+    const delegateOverride = delegateOverrideNow()
+    const { supervisionMaxRetries, supervisionInitialBackoffMs, supervisionMaxBackoffMs } = delegateOverride ?? {}
+    return {
+      ...(config.supervision ?? {}),
+      ...(supervisionMaxRetries !== undefined ? { maxRetries: supervisionMaxRetries } : {}),
+      ...(supervisionInitialBackoffMs !== undefined ? { initialBackoffMs: supervisionInitialBackoffMs } : {}),
+      ...(supervisionMaxBackoffMs !== undefined ? { maxBackoffMs: supervisionMaxBackoffMs } : {}),
     }
   }
 
@@ -70,19 +82,22 @@ function apply(ctx, config = {}) {
   // merge the same way: DEFAULT_ROBASH_PWSH ← config.readOnlyPwsh ← the
   // settings section's pwshAllow/pwshDeny keys. gitAllow is merged once on
   // the bash side and shared with the pwsh git gate.
-  const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
-  const pwshOverride = {}
-  if (robashOverride && Object.hasOwn(robashOverride, 'pwshAllow')) pwshOverride.allow = robashOverride.pwshAllow
-  if (robashOverride && Object.hasOwn(robashOverride, 'pwshDeny')) pwshOverride.deny = robashOverride.pwshDeny
-  const pwshConfig = { ...DEFAULT_ROBASH_PWSH, ...(config.readOnlyPwsh ?? {}), ...pwshOverride }
-  const robash = {
-    enabled: robashConfig.enabled !== false,
-    lists: {
-      bash: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },
-      pwsh: { allow: pwshConfig.allow, gitAllow: robashConfig.gitAllow, deny: pwshConfig.deny },
-    },
+  function robashNow() {
+    const robashOverride = robashOverrideNow()
+    const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
+    const pwshOverride = {}
+    if (robashOverride && Object.hasOwn(robashOverride, 'pwshAllow')) pwshOverride.allow = robashOverride.pwshAllow
+    if (robashOverride && Object.hasOwn(robashOverride, 'pwshDeny')) pwshOverride.deny = robashOverride.pwshDeny
+    const pwshConfig = { ...DEFAULT_ROBASH_PWSH, ...(config.readOnlyPwsh ?? {}), ...pwshOverride }
+    return {
+      enabled: robashConfig.enabled !== false,
+      lists: {
+        bash: { allow: robashConfig.allow, gitAllow: robashConfig.gitAllow, deny: robashConfig.deny },
+        pwsh: { allow: pwshConfig.allow, gitAllow: robashConfig.gitAllow, deny: pwshConfig.deny },
+      },
+    }
   }
-  const readOnlyTools = (base) => (robash.enabled ? [...new Set([...base, readOnlyShellName(process.platform)])] : base)
+  const readOnlyTools = (base, resolved = robashNow()) => (resolved.enabled ? [...new Set([...base, readOnlyShellName(process.platform)])] : base)
 
   // Supervised group coordinators, one per parent session.
   /** @type {Map<string, { coordinator: object, parent: object }>} */
@@ -135,7 +150,7 @@ function apply(ctx, config = {}) {
             deliver(1)
           },
         },
-        config.supervision,
+        supervisionNow(),
       )
       // Restart rebuild: replay durable facts, cross-check the DSH catalog.
       const state = await rehydrateForParent(parent)
@@ -222,7 +237,9 @@ function apply(ctx, config = {}) {
       subagents: ctx.subagents,
       agents: ctx.get('agents'),
       jobs: ctx.get('jobs'),
-      robash,
+      // A getter, not a snapshot: tool.js calls deps.robash() per delegation so
+      // the guard reflects whatever the settings committed at that moment.
+      robash: robashNow,
       coordinatorFor,
     }),
   )
@@ -317,6 +334,10 @@ function apply(ctx, config = {}) {
    * parentRoute (when known) gates effort hints on inherited routes.
    */
   async function resolveTarget(item, parentRoute) {
+    // Resolve the guard overlay once for this delegation, so every branch below
+    // describes one committed snapshot (see the hot-reload contract in
+    // docs/features/category-delegation.md).
+    const robash = robashNow()
     if (item.agent) {
       const agent = agents[item.agent]
       if (!agent) {
@@ -324,14 +345,20 @@ function apply(ctx, config = {}) {
       }
       if (agent.disabled) throw new Error(`delegate: agent "${item.agent}" is disabled`)
       const label = item.name ?? item.task_summary ?? `${item.agent}: ${firstLine(item.prompt)}`
+      // One resolution per delegation: the persona note, the tool surface and
+      // the guard all describe the same committed settings snapshot.
+      const robash = robashNow()
       return {
         persona: agent.prompt + (robash.enabled ? readOnlyShellNote(readOnlyShellName(process.platform)) : ''),
-        toolFilter: { allow: readOnlyTools(agent.tools) },
+        toolFilter: { allow: readOnlyTools(agent.tools, robash) },
         label,
         readOnly: true,
       }
     }
 
+    // Resolve once per delegation so the surface, the guard and the route all
+    // agree on one snapshot of the settings overlay.
+    const categories = categoriesNow()
     const category = categories[item.category]
     if (!category) {
       throw new Error(`delegate: unknown_target category "${item.category}" (available: ${Object.keys(categories).join(', ') || 'none'})`)
@@ -371,7 +398,7 @@ function apply(ctx, config = {}) {
 
     return {
       persona,
-      ...(category.readOnly ? { toolFilter: { allow: readOnlyTools(['read', 'glob', 'grep']) } } : {}),
+      ...(category.readOnly ? { toolFilter: { allow: readOnlyTools(['read', 'glob', 'grep'], robash) } } : {}),
       ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
       label,
       categoryName: item.category,
@@ -383,6 +410,20 @@ function apply(ctx, config = {}) {
     const skill = await ctx.skills.get(skillName)
     if (!skill) throw new Error(`delegate: unknown_skill "${skillName}" in load_skills`)
     return skill.content
+  }
+
+  // Volatile settings commits: read-time resolution already covers every new
+  // delegation, but a coordinator is long-lived (one per parent session), so its
+  // supervision parameters must be pushed into the live instances too. Mirrors
+  // src/lsp/index.js: the same broadcast that re-registers the LSP surface
+  // refreshes the supervision tuning here.
+  const offSettings = settings?.onChange?.(() => {
+    const supervision = supervisionNow()
+    for (const entry of coordinators.values()) entry.coordinator.setSupervision?.(supervision)
+  })
+
+  return () => {
+    offSettings?.()
   }
 }
 

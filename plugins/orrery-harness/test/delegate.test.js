@@ -9,6 +9,28 @@ import { modelFamily, pickVariant } from '../src/delegate/families.js'
 import { resolveCategory, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
+/** Mutable settings service with an onChange broadcast (mirrors lsp.test.js).
+ * Sections start undefined so the existing fallback semantics stay observable;
+ * commit() publishes one section change to every subscriber, exactly like the
+ * real service does on loader/volatile-update. Shared by both harnesses below. */
+function liveSettings(initial = {}) {
+  const listeners = new Set()
+  const sections = { robash: undefined, delegate: undefined, ...initial }
+  return {
+    service: {
+      get: (key) => sections[key],
+      onChange: (callback) => {
+        listeners.add(callback)
+        return () => listeners.delete(callback)
+      },
+    },
+    commit(section, value) {
+      sections[section] = value
+      for (const callback of listeners) callback()
+    },
+    listenerCount: () => listeners.size,
+  }
+}
 
 describe('resolver', () => {
   const snapshot = new Map([
@@ -272,7 +294,7 @@ describe('delegate plugin apply', () => {
     expect(registered.map((tool) => tool.name)).toEqual(['delegate', 'resume_agent', 'terminate_agent', 'supervised_status'])
   })
 
-  function applyHarness(config = {}, settingsSections = undefined) {
+  function applyHarness(config = {}, settingsSections = undefined, settingsService = undefined) {
     const registered = []
     const spawned = []
     const guards = []
@@ -300,12 +322,16 @@ describe('delegate plugin apply', () => {
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
-      get: (name) => (name === 'orrerySettings' && settingsSections ? { get: (section) => settingsSections[section] } : undefined),
+      get: (name) =>
+        name === 'orrerySettings'
+          ? (settingsService ?? (settingsSections ? { get: (section) => settingsSections[section] } : undefined))
+          : undefined,
       on: () => {},
     }
-    apply(ctx, config)
-    return { tool: registered[0], spawned, guards }
+    const dispose = apply(ctx, config)
+    return { tool: registered[0], spawned, guards, ctx, dispose }
   }
+
 
   it('curated spawns get the platform shell in the allowlist, a persona note, and a live guard', async () => {
     const { tool, spawned, guards } = applyHarness()
@@ -370,6 +396,65 @@ describe('delegate plugin apply', () => {
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
   })
 
+  // --- Volatile settings hot reload (same process, no plugin rebuild) -------
+  // spec: category-delegation / "volatile 设置在同一进程内即提交即生效".
+  // The settings service re-computes on every get() and broadcasts on commit;
+  // the delegate must consume both, or the feature doc's "在线编辑即刻生效"
+  // promise (_category-delegation.md_) is false and edits need an app restart.
+
+  it('hot reload: committing robashEnabled=false withdraws the shell without a rebuild', async () => {
+    const live = liveSettings()
+    const { tool, spawned } = applyHarness({}, undefined, live.service)
+    const shell = readOnlyShellName(process.platform)
+
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(spawned[0].request.toolFilter.allow).toContain(shell)
+
+    // Same process, same plugin instance: only the settings commit changes.
+    live.commit('robash', { enabled: false })
+
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find again' }, execStub())
+    expect(spawned[1].request.toolFilter.allow).not.toContain(shell)
+  })
+
+  it('hot reload: a committed allow list governs the next delegation fail-closed', async () => {
+    const live = liveSettings()
+    const { tool, guards } = applyHarness({}, undefined, live.service)
+
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+
+    // Explicit empty list is authoritative: even a default command now misses.
+    live.commit('robash', { allow: [] })
+
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find again' }, execStub())
+    expect(guards[1]({ name: 'bash', arguments: { command: 'ls' } })).toMatch(/not on the read-only allow list/)
+  })
+
+  it('hot reload: the before-commit spawn is unaffected by a later commit', async () => {
+    // Guards capture the lists they were handed at delegation time; a later
+    // commit must not retroactively change an already-granted surface, and the
+    // tool filter and the guard must agree within one delegation.
+    const live = liveSettings()
+    const { tool, guards } = applyHarness({}, undefined, live.service)
+
+    live.commit('robash', { allow: ['ls'] })
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+
+    live.commit('robash', { allow: [] })
+    // the earlier delegation keeps its own resolved allowlist
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+  })
+
+  it('hot reload: disposal unsubscribes so later commits are inert', async () => {
+    const live = liveSettings()
+    const { dispose } = applyHarness({}, undefined, live.service)
+    expect(live.listenerCount()).toBe(1)
+    dispose?.()
+    expect(live.listenerCount()).toBe(0)
+  })
+
   it('readOnlyShellName follows the platform (pwsh on win32, bash elsewhere)', () => {
     expect(readOnlyShellName('win32')).toBe('pwsh')
     expect(readOnlyShellName('darwin')).toBe('bash')
@@ -423,7 +508,8 @@ describe('delegate plugin apply', () => {
         },
       },
       jobs: undefined,
-      robash: { enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: ['Get-Content'], gitAllow: [], deny: [] } } },
+      // deps.robash is a live resolver resolved per delegation (see tool.js)
+      robash: () => ({ enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: ['Get-Content'], gitAllow: [], deny: [] } } }),
     }
     const guardedTool = createDelegateTool(deps)
     await expect(async () => guardedTool.execute({ agent: 'explore', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)
@@ -434,7 +520,7 @@ describe('delegate plugin apply', () => {
 describe('supervised groups (mount layer)', () => {
   const execStub = () => ({ agent: { id: 'parent-session', session: { id: 'parent-session', header: { delegationDepth: 0 } } }, signal: new AbortController().signal })
 
-  function groupHarness(config = {}) {
+  function groupHarness(config = {}, settingsService = undefined) {
     const registered = []
     const continued = []
     const sent = []
@@ -461,7 +547,11 @@ describe('supervised groups (mount layer)', () => {
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
-      get: (name) => (name === 'agents' ? { get: (id) => ({ id, ctx: { tools: { guard: (fn) => { guards.push(fn); return () => {} } } } }) } : undefined),
+      get: (name) => {
+        if (name === 'agents') return { get: (id) => ({ id, ctx: { tools: { guard: (fn) => { guards.push(fn); return () => {} } } } }) }
+        if (name === 'orrerySettings') return settingsService
+        return undefined
+      },
       on(event, handler) {
         handlers[event] = handler
       },
@@ -486,6 +576,7 @@ describe('supervised groups (mount layer)', () => {
         catalogEntries = entries
       },
       tools: Object.fromEntries(registered.map((tool) => [tool.name, tool])),
+      settingsService,
     }
   }
 
@@ -819,6 +910,67 @@ describe('supervised groups (mount layer)', () => {
     expect(outcome.status).toBe('running')
     expect(sent.at(-1).text).toContain('restored')
     expect(sent.at(-1).targetId).toBe('child-1')
+  })
+
+  // --- Live supervision tuning through the mount layer ---------------------
+  // spec: category-delegation / "volatile 设置在同一进程内即提交即生效".
+  // The coordinator is created on first delegation and cached per parent
+  // session, so this exercises the subscription path: a commit must reach the
+  // coordinator that is already serving this parent.
+
+  it('a settings commit reaches the coordinator of an already-delegated parent', async () => {
+    const live = liveSettings()
+    const { tools, handlers } = groupHarness({}, live.service)
+
+    // Establish the coordinator: one supervised member, still running.
+    await tools.delegate.execute(
+      { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
+      execStub(),
+    )
+    const memberOf = async () => (await tools.supervised_status.execute({}, execStub())).children[0]
+
+    // First provider error: well under the default cap of 5, so the child is
+    // retried and stays running.
+    handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'error', error: { message: '500' } } } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await memberOf()).retries).toBe(1)
+    expect((await memberOf()).status).toBe('running')
+
+    // Commit the settings change: no plugin rebuild, no new delegation.
+    live.commit('delegate', { supervisionMaxRetries: 1 })
+
+    // The tightened cap governs the coordinator that is already serving this
+    // parent: the very next provider error exhausts the budget.
+    handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'error', error: { message: '500' } } } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const settled = await memberOf()
+    expect(settled.status).toBe('blocked')
+    expect(settled.report).toContain('provider-error')
+  })
+
+  it('a settings commit changes the read-only surface of the next supervised spawn', async () => {
+    const shell = readOnlyShellName(process.platform)
+
+    // Before the commit: the guard is on and a curated member gets the shell.
+    const before = groupHarness()
+    await before.tools.delegate.execute(
+      { group: 'g1', tasks: [{ agent: 'explore', prompt: 'TASK: a' }] },
+      execStub(),
+    )
+    expect(before.continued[0].request.toolFilter.allow).toContain(shell)
+    expect(before.guards).toHaveLength(1)
+
+    // A commit turning the guard off governs the very next spawn: the same
+    // settings service now yields a shell-free, unguarded member.
+    const live = liveSettings()
+    const after = groupHarness({}, live.service)
+    live.commit('robash', { enabled: false })
+    await after.tools.delegate.execute(
+      { group: 'g1', tasks: [{ agent: 'explore', prompt: 'TASK: a' }] },
+      execStub(),
+    )
+    expect(after.continued[0].request.toolFilter.allow).not.toContain(shell)
+    expect(after.guards).toHaveLength(0)
   })
 })
 

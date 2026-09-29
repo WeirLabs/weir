@@ -306,6 +306,19 @@ export function createGroupCoordinator(deps, config = {}) {
     deps.onFact?.({ kind: 'group-released', group: name })
   }
 
+  /**
+   * Apply live supervision parameters (volatile settings commit). Unknown keys
+   * are ignored by construction: only the three tuning values are copied, so a
+   * caller cannot smuggle state into the coordinator through this door. The
+   * registry (children/groups) is untouched — a settings edit must never reset
+   * supervision state.
+   */
+  function setSupervision(config = {}) {
+    if (config.maxRetries !== undefined) cfg.maxRetries = config.maxRetries
+    if (config.initialBackoffMs !== undefined) cfg.initialBackoffMs = config.initialBackoffMs
+    if (config.maxBackoffMs !== undefined) cfg.maxBackoffMs = config.maxBackoffMs
+  }
+
 
 
   /**
@@ -355,6 +368,7 @@ export function createGroupCoordinator(deps, config = {}) {
     terminate,
     releaseGroup,
     hydrate,
+    setSupervision,
     memberByRef,
     groupLive,
     _children: children,
