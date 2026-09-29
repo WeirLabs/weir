@@ -1,8 +1,8 @@
 import { describe, expect, it } from './helpers.js'
-import { copyFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { augmentedPath, extraBinDirectories, npmGlobalPrefix, resolveExecutable } from '../src/lsp/executable.js'
+import { augmentedPath, childEnvironment, extraBinDirectories, npmGlobalPrefix, resolveExecutable } from '../src/lsp/executable.js'
 
 /**
  * Windows-portability corpus for executable resolution. Every case drives the
@@ -89,8 +89,31 @@ describe('lsp executable resolution on Windows', () => {
     const shim = join(dir, 'shimmed-ls.cmd')
     copyFileSync(process.execPath, shim)
     const subprocess = { resolveExecutable: async () => undefined }
-    // realpath: the temp dir resolves through its 8.3 short name (LINYAN~1),
-    // and the resolver returns the path it was handed, not the long spelling
-    expect(await resolveExecutable(subprocess, 'shimmed-ls', [dir], { platform: 'win32' })).toBe(realpathSync(shim))
+    expect(await resolveExecutable(subprocess, 'shimmed-ls', [dir], { platform: 'win32' })).toBe(join(dir, 'shimmed-ls.cmd'))
+  })
+
+  it('rejects a same-named file without an executable extension', async () => {
+    const dir = tempDir()
+    // the extensionless POSIX twin npm leaves beside every shim: CreateProcess
+    // would not run it, so resolution must not report it as installed
+    writeFileSync(join(dir, 'twin-ls'), '#!/bin/sh\n')
+    const subprocess = { resolveExecutable: async () => undefined }
+    expect(await resolveExecutable(subprocess, 'twin-ls', [dir], { platform: 'win32' })).toBe(undefined)
+    // and the .cmd beside it is the one that resolves
+    writeFileSync(join(dir, 'twin-ls.cmd'), '@echo off\n')
+    expect(await resolveExecutable(subprocess, 'twin-ls', [dir], { platform: 'win32' })).toBe(join(dir, 'twin-ls.cmd'))
+  })
+
+  it('carries SystemRoot and ComSpec so a cmd fallback can run', () => {
+    const child = childEnvironment({ ...WIN_ENV, SystemRoot: 'C:\\windows', ComSpec: 'C:\\windows\\system32\\cmd.exe', PATH: 'C:\\Windows' }, 'win32')
+    expect(child.SystemRoot).toBe('C:\\windows')
+    expect(child.ComSpec).toBe('C:\\windows\\system32\\cmd.exe')
+    expect(child.PATH).toContain('C:\\Windows')
+  })
+
+  it('adds no Windows variables on POSIX', () => {
+    const child = childEnvironment({ HOME: '/Users/tester', PATH: '/usr/bin', SystemRoot: 'C:\\windows' }, 'darwin')
+    expect(child.SystemRoot).toBe(undefined)
+    expect(child.PATH).toContain('/usr/bin')
   })
 })
