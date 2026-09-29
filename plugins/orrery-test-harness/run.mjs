@@ -214,6 +214,9 @@ function assertHashline(run) {
   check('hashline', 'stock edit hidden from the model tool catalog', requests.length > 0 && requests.every((r) => !r.tools.includes('edit')), JSON.stringify(requests.map((r) => r.tools)))
   check('hashline', 'hash_edit present in the model tool catalog', requests.some((r) => r.tools.includes('hash_edit')), JSON.stringify(requests.map((r) => r.tools)))
   check('hashline', 'hash_edit schema advertises the sandbox escalation fields', requests.some((r) => Array.isArray(r.hashEditEscalationEnum) && r.hashEditEscalationEnum.includes('workspace-write') && r.hashEditEscalationEnum.includes('danger-full-access')), JSON.stringify(requests.map((r) => r.hashEditEscalationEnum)))
+  const hashResults = trace.filter((r) => r.kind === 'session-event' && r.type === 'tool/result' && r.hashEdit)
+  check('hashline', 'successful hash_edit persisted meta.diffs fragments', hashResults.some((r) => !r.isError && Array.isArray(r.meta?.diffs) && r.meta.diffs.length > 0 && r.meta.diffs.every((d) => typeof d.path === 'string' && (d.oldText === null || typeof d.oldText === 'string') && typeof d.newText === 'string')), JSON.stringify(hashResults.map((r) => [r.isError, r.meta])))
+  check('hashline', 'failed hash_edit persisted no diff metadata', hashResults.filter((r) => r.isError).every((r) => r.meta == null || !Array.isArray(r.meta?.diffs)), JSON.stringify(hashResults.map((r) => [r.isError, r.meta])))
   check('hashline', 'out-of-workspace edit denied with the shared marker and the escalation hint', requests.some((r) => r.escalationDenialSeen && r.escalationHintSeen), JSON.stringify(requests.map((r) => [r.escalationDenialSeen, r.escalationHintSeen])))
   check('hashline', 'headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }

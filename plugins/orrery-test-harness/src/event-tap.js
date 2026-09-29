@@ -67,6 +67,14 @@ function apply(ctx) {
       tap({ kind: 'session-event', session: session.id, type, reason: event.data?.reason?.kind })
       return
     }
+    if (type === 'tool/result') {
+      const message = event.data?.message
+      const text = summarizeMessage(message)
+      if (text.startsWith('hash_edit applied') || text.startsWith('>>> mismatch')) {
+        tap({ kind: 'session-event', session: session.id, type, hashEdit: true, isError: message?.isError === true, meta: event.data?.meta ?? null })
+      }
+      return
+    }
     if (type === 'user/message') {
       tap({
         kind: 'session-event',
