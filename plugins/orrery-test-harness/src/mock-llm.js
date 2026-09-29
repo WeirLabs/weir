@@ -445,16 +445,20 @@ function decideTerminate(options) {
 function decideRobash(options) {
   const history = transcript(options)
   const lastRole = options.messages?.at(-1)?.role
-  // Child brain (explore curated agent): run an allowed command, then a denied one.
+  // Child brain (explore curated agent): prove the wait primitive is
+  // allow-listed, then run a denied write. The wait leg is the end-to-end
+  // regression pin for the cross-platform gap: `Start-Sleep` is unreachable on
+  // Windows unless BOTH the module default AND the preset patch row carry it,
+  // so without that pairing this child is refused here while passing on macOS.
   if (history.includes('ROBASH_CHILD') && !history.includes('robash-probe')) {
     if (lastRole === 'tool') {
       const toolText = lastOfRole(options, 'tool')
-      if (toolText.includes('ROBASH_LS_RAN') && !history.includes('read-only agent')) {
+      if (toolText.includes('ROBASH_WAIT_RAN') && !history.includes('read-only agent')) {
         return shellCall('remove-file', { path: 'fixture.txt' }, 'Try to delete the fixture')
       }
-      return textChunks('MARKER_ROBASH_OK: ls ran, rm was denied')
+      return textChunks('MARKER_ROBASH_OK: wait ran, write was denied')
     }
-    return shellCall('echo-only', { text: 'ROBASH_LS_RAN' }, 'Prove the read-only shell executed')
+    return shellCall('echo-and-wait', { text: 'ROBASH_WAIT_RAN', seconds: 1 }, 'Prove the read-only shell and its wait primitive both work')
   }
   // Parent brain: delegate to the explore curated agent.
   if (lastRole === 'tool') {
@@ -533,7 +537,7 @@ async function* streamScenario(options) {
     sawDelegateProbe: transcript(options).includes('delegate-probe'),
     sawChildMarker: transcript(options).includes('MARKER_CHILD_OK'),
     sawRobashChild: transcript(options).includes('ROBASH_CHILD'),
-    roBashLsSeen: transcript(options).includes('ROBASH_LS_RAN'),
+    roBashWaitSeen: transcript(options).includes('ROBASH_WAIT_RAN'),
     roBashRmDenied: transcript(options).includes('explicitly denied'),
     sawClassifyCall: (options.system ?? '').includes('You classify a user prompt'),
     sawGroupProbe: transcript(options).includes('grouped-probe'),
