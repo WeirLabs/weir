@@ -157,4 +157,12 @@ describe('lsp registry and uri helpers', () => {
     expect(pathToUri('/tmp/a b/x.ts')).toBe('file:///tmp/a%20b/x.ts')
     expect(uriToPath('file:///tmp/a%20b/x.ts')).toBe('/tmp/a b/x.ts')
   })
+
+  it('strips the leading slash on win32 drive-letter URIs only', () => {
+    expect(uriToPath('file:///C:/ws/a.ts')).toBe('C:/ws/a.ts')
+    expect(uriToPath('file:///c:/ws/a.ts')).toBe('c:/ws/a.ts')
+    // POSIX paths (no drive-letter shape) keep their leading slash
+    expect(uriToPath('file:///tmp/a%20b/x.ts')).toBe('/tmp/a b/x.ts')
+    expect(uriToPath('file:///home/u/x.ts')).toBe('/home/u/x.ts')
+  })
 })

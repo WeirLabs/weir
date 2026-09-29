@@ -47,6 +47,7 @@ describe('robash-guard: allowed corpus', () => {
     'echo $(<file)',
     'echo a | grep a > /dev/null',
     'git --version',
+    'git -c color.ui=false log',
   ]
   for (const command of corpus) {
     it(`allows: ${command}`, () => {
@@ -77,6 +78,12 @@ describe('robash-guard: denied corpus', () => {
     ['git checkout .', /git subcommand 'checkout'/],
     ['git -c alias.log=!rm log', /git config key 'alias.log'/],
     ['git -c=alias.st=!x st', /git config key 'alias.st'/],
+    ['git -p -c core.pager=cat log', /git config key 'core.pager'/],
+    ['git -c core.Pager=cat log', /git config key 'core.Pager'/],
+    ['git -c pager.log=cat log', /git config key 'pager.log'/],
+    ['git -c core.pager log', /git config key 'core.pager'/],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=cat git -p log', /GIT_CONFIG_\*/],
+    ['GIT_CONFIG_KEY_0=alias.st=!x git st', /GIT_CONFIG_\*/],
     ['git --exec-path', /git without a subcommand|not recognized/],
     ['find . -exec rm {} \\;', /find flag '-exec'/],
     ['find . -delete', /find flag '-delete'/],
