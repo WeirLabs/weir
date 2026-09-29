@@ -62,7 +62,15 @@ export function createLspManager({ subprocess, fs, registry, options = {}, resol
     handle.done.then(() => servers.delete(key)).catch(() => servers.delete(key))
     record.idleTimer = setTimeout(() => void shutdownRecord(record), opts.idleMs)
     record.idleTimer.unref?.()
-    await record.start(cwd)
+    try {
+      await record.start(cwd)
+    } catch (error) {
+      // A failed handshake must not poison the (workspace, family) key:
+      // tear the record down so the next call spawns a fresh server
+      // instead of reusing one whose capabilities never arrived.
+      await shutdownRecord(record)
+      throw error
+    }
     return record
   }
 
