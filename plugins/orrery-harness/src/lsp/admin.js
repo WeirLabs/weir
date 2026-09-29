@@ -4,7 +4,8 @@
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
 import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
-import { augmentedPath, npmGlobalPrefix, resolveExecutable as extendedResolveExecutable } from './executable.js'
+import { childEnvironment, npmGlobalPrefix, resolveExecutable as extendedResolveExecutable } from './executable.js'
+import { spawnArgv } from './manager.js'
 
 const name = 'orrery-lsp-admin'
 const inject = []
@@ -54,11 +55,11 @@ export function looksLikeVersion(line) {
 export async function probeVersion(subprocess, executable, args = ['--version'], timeoutMs = VERSION_PROBE_TIMEOUT_MS) {
   if (!Array.isArray(args) || args.length === 0) return null
   const handle = subprocess.spawn({
-    argv: [executable, ...args],
+    argv: spawnArgv(executable, args),
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
     graceMs: 3_000,
-    env: { PATH: augmentedPath() },
+    env: childEnvironment(),
   })
   let output = ''
   let timer
@@ -82,8 +83,16 @@ export async function probeVersion(subprocess, executable, args = ['--version'],
   handle.stderr?.on('data', (chunk) => {
     output += chunk.toString()
   })
-  await Promise.race([handle.done, done])
-  clearTimeout(timer)
+  try {
+    await Promise.race([handle.done, done])
+  } finally {
+    // Both settle paths release the probe window. The rejection path is the one
+    // that matters: a launch failure (spawn EINVAL — routine on Windows before
+    // shim unwrapping) throws out of the race, and the previously-armed 8s timer
+    // then kept the host process (and every `node --test` run) alive until it
+    // fired. Measured: 4ms of work, 8007ms of process lifetime.
+    clearTimeout(timer)
+  }
   const first = output.split('\n').map((line) => line.trim()).find(looksLikeVersion)
   return first ?? null
 }
@@ -147,15 +156,18 @@ export async function runInstall(registry, subprocess, family, timeoutMs = DEFAU
   if (!executable) throw new Error(`lsp: installer '${spec.command}' not found on PATH — install it first`)
   // npm installs pin a user-writable prefix: the resolved npm may belong to
   // a root-owned global prefix (/usr/local — EACCES on install).
-  const argv = spec.command === 'npm' && !(spec.args ?? []).includes('--prefix')
-    ? [executable, '--prefix', npmGlobalPrefix(), ...(spec.args ?? [])]
-    : [executable, ...(spec.args ?? [])]
+  // The installer is resolved the same way servers are, so it can be a `.cmd`
+  // shim too: it goes through the same launch shape (unwrapped, or cmd without
+  // /s) instead of being handed to CreateProcess raw.
+  const prefixArgs = spec.command === 'npm' && !(spec.args ?? []).includes('--prefix')
+    ? ['--prefix', npmGlobalPrefix(), ...(spec.args ?? [])]
+    : (spec.args ?? [])
   const handle = subprocess.spawn({
-    argv,
+    argv: spawnArgv(executable, prefixArgs),
     cwd: process.cwd(),
     stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
     graceMs: 3_000,
-    env: { PATH: augmentedPath() },
+    env: childEnvironment(),
   })
   let output = ''
   handle.stdout?.on('data', (chunk) => {
