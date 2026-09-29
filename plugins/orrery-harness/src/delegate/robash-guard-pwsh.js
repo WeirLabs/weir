@@ -194,10 +194,36 @@ function scanStatements(text, sets, depth, checkStatement) {
         i++
         continue
       }
-      if (ch === '&' && text[i + 1] === '&') {
-        i += 2
-        flushSegment()
-        continue
+      // A lone `&` is a pipeline-chain operator in pwsh, exactly like `&&`
+      // (verified on real pwsh 7.6: zero parse errors, a standalone Ampersand
+      // token, and the tail statement really executes). Splitting only on `&&`
+      // let any allow-listed command launder an arbitrary tail: `Get-Date &
+      // Remove-Item x` was read as ONE segment whose first command decided the
+      // verdict, so the denied cmdlet never reached the allow list.
+      //
+      // The `&` token has three roles, so three guards are needed:
+      //   1. `>&` is an fd-duplication redirection (`2>&1`) — pass it through so
+      //      the segment tokenizer can recognize it (it permits the form; it does
+      //      not range-check the fd number, which is pre-existing behaviour).
+      //   2. `&&` is a separator regardless of position (corpus-pinned).
+      //   3. a LONE `&` at segment start is the `& <word>` call operator — left
+      //      in place for the segment checker to unwrap, which is where dynamic
+      //      invocation (`& $(Get-Date)`) is refused.
+      // Anywhere else, a lone `&` backgrounds a tail we cannot prove read-only,
+      // so it fails closed — including an allow-listed tail, because the
+      // construct itself is what is unprovable.
+      if (ch === '&' && text[i - 1] !== '>') {
+        if (text[i + 1] === '&') {
+          flushSegment()
+          i += 2
+          continue
+        }
+        if (current.trim().length === 0) {
+          current += ch
+          i++
+          continue
+        }
+        return 'read-only agent: & background operator is not allowed (unprovable as read-only)'
       }
       // stop-parsing symbol: everything after it is unparseable by design
       if (ch === '-' && text[i + 1] === '-' && text[i + 2] === '%') {
