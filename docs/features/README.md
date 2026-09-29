@@ -19,3 +19,4 @@
 | 上下文压力守卫 | [context-pressure-guard.md](context-pressure-guard.md) | `orrery-harness/context-guard` |
 | 锚点编辑 | [hashline-edit.md](hashline-edit.md) | `orrery-harness/hashline-edit` |
 | LSP 语义工具 | [lsp-integration.md](lsp-integration.md) | `orrery-harness/lsp` |
+| Windows 沙箱 shell 约束 | [windows-sandbox-shell-constraint.md](windows-sandbox-shell-constraint.md) | 平台约束（DSH 桌面宿主） |
