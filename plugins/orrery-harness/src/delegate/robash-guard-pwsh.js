@@ -13,7 +13,7 @@
 // Fail-closed like the bash side: anything the parser cannot statically
 // prove read-only is denied.
 
-import { checkGitArgs } from './robash-guard.js'
+import { checkDepth, DEFAULT_TABLES, gateExecutable, isGitConfigEnvName, isRedirectSink, reasons } from './robash-guard-core.js'
 
 /** Read-only built-in aliases, expanded before the table lookup (lowercase). */
 const PWSH_ALIASES = {
@@ -34,22 +34,12 @@ const PWSH_ALIASES = {
 
 /** Initial pwsh whitelist (conservative; iterate via readOnlyPwsh config and
  * the robashPwshAllow/robashPwshDeny settings keys). Matching is
- * case-insensitive; the git subcommand gate is shared with the bash side. */
+ * case-insensitive; the git subcommand gate is shared with the bash side.
+ * The canonical entries live once in robash-guard-core.js (DEFAULT_TABLES);
+ * this re-export keeps the pre-refactor shape for existing consumers. */
 export const DEFAULT_ROBASH_PWSH = {
-  allow: [
-    'Get-Content', 'Get-ChildItem', 'Get-Item', 'Get-Location', 'Get-Date', 'Get-Process',
-    'Test-Path', 'Select-String', 'Select-Object', 'Sort-Object', 'Where-Object', 'Measure-Object',
-    'Group-Object', 'Compare-Object', 'Format-Table', 'Format-List', 'Format-Wide', 'Out-String',
-    'Write-Output', 'ConvertTo-Json', 'git', 'Start-Sleep',
-  ],
-  deny: [
-    'iex', 'Invoke-Expression', 'Invoke-Command', 'Start-Process', 'powershell', 'pwsh',
-    'cmd', 'cscript', 'wscript', 'reg', 'icacls', 'Get-Credential',
-    'Invoke-WebRequest', 'Invoke-RestMethod',
-    'Set-Content', 'Out-File', 'Add-Content', 'Clear-Content',
-    'New-Item', 'Remove-Item', 'Move-Item', 'Copy-Item', 'Rename-Item', 'Set-Item',
-    'Set-ExecutionPolicy',
-  ],
+  allow: DEFAULT_TABLES.robashPwshAllow,
+  deny: DEFAULT_TABLES.robashPwshDeny,
 }
 
 /**
@@ -90,7 +80,8 @@ function normalizeInput(text) {
 }
 
 function analyze(command, sets, depth) {
-  if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  const depthExceeded = checkDepth(depth)
+  if (depthExceeded) return depthExceeded
   if (typeof command !== 'string' || command.trim().length === 0) return undefined
   return scanStatements(normalizeInput(command), sets, depth, checkSegment)
 }
@@ -104,7 +95,8 @@ function analyze(command, sets, depth) {
  * whitespace-only body runs nothing and is allowed.
  */
 function analyzeExpressionGroup(body, sets, depth) {
-  if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  const depthExceeded = checkDepth(depth)
+  if (depthExceeded) return depthExceeded
   if (typeof body !== 'string' || body.trim().length === 0) return undefined
   return scanStatements(normalizeInput(body), sets, depth, checkGroupStatement)
 }
@@ -308,7 +300,8 @@ function isExpressionGroupBody(body) {
 
 /** Scan an interpolating here-string body: validate only nested $( ). */
 function scanHereString(body, sets, depth) {
-  if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  const depthExceeded = checkDepth(depth)
+  if (depthExceeded) return depthExceeded
   // Backtick continuations and lone-CR lines are normalized here as well:
   // otherwise `$`<backtick><LF>`(...)` would hide a live subexpression from
   // the scan below (and a lone CR could shift its boundaries).
@@ -476,11 +469,11 @@ function checkTokens(tokens, sets) {
       if (redirect.kind === 'read') return 'read-only agent: redirection is not allowed'
       if (redirect.kind === 'write') {
         const target = resolveWord(tokens[t + 1] ?? '').replace(/\x00/g, '')
-        if (target.toLowerCase() === '$null') {
+        if (isRedirectSink('pwsh', target)) {
           t++ // $null sink: no file write
           continue
         }
-        return `read-only agent: write redirection to '${target}' is not allowed`
+        return reasons.writeRedirect(target)
       }
       continue // fd duplication (2>&1): no file write, no target word
     }
@@ -502,8 +495,9 @@ function checkTokens(tokens, sets) {
     const assignment = assignmentAt(words, cursor)
     if (!assignment) break
     const nameMatch = /^\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(words[cursor])
-    if (nameMatch && /^GIT_CONFIG_/i.test(nameMatch[1])) {
-      return 'read-only agent: GIT_CONFIG_* environment assignments are not allowed'
+    // pwsh matched case-insensitively here before the core extraction (:505)
+    if (nameMatch && isGitConfigEnvName(nameMatch[1], { caseInsensitive: true })) {
+      return reasons.gitConfigEnv()
     }
     if (isLiteralValue(assignment.value)) {
       const violation = checkExpression([assignment.value, ...words.slice(cursor + assignment.consumed)])
@@ -546,12 +540,7 @@ function checkTokens(tokens, sets) {
   const name = parts[parts.length - 1].toLowerCase()
   const args = words.slice(commandIndex + 1).map((word) => resolveWord(word).replace(/\x00/g, ''))
 
-  if (sets.deny.has(rawName)) return `read-only agent: '${rawName}' is explicitly denied`
-  if (sets.deny.has(name)) return `read-only agent: '${name}' is explicitly denied`
-  if (!sets.allow.has(name)) return `read-only agent: '${name}' is not on the read-only allow list`
-
-  if (name === 'git') return checkGitArgs(args, sets.gitAllow)
-  return undefined
+  return gateExecutable({ name, rawName, args, sets, shell: 'pwsh' })
 }
 
 /** Split a segment into shell words; validated substitution spans are \x00

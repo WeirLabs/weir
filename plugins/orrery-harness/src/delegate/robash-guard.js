@@ -5,83 +5,22 @@
 // parsing path in robash-guard-pwsh.js.
 
 import { checkPwshCommand } from './robash-guard-pwsh.js'
+import { checkDepth, DEFAULT_TABLES, gateExecutable, isGitConfigEnvName, isRedirectSink, reasons } from './robash-guard-core.js'
 
 /** Tool names the guard inspects: bash and pwsh are each validated through
  * their own parser (dispatched by execution name). */
 export const BASH_TOOL_NAMES = ['bash', 'pwsh']
 
-/** Initial whitelist (conservative; iterate via readOnlyBash config). */
+/** Initial whitelist (conservative; iterate via readOnlyBash config). The
+ * canonical entries live once in robash-guard-core.js (DEFAULT_TABLES); this
+ * re-export keeps the pre-refactor shape for existing consumers. */
 export const DEFAULT_ROBASH = {
   enabled: true,
-  allow: [
-    'ls', 'cat', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'rg', 'wc', 'sort', 'uniq', 'tr', 'cut',
-    'fold', 'fmt', 'nl', 'rev', 'tac', 'comm', 'join', 'paste', 'diff', 'cmp', 'jq',
-    'pwd', 'echo', 'printf', 'date', 'uname', 'whoami', 'id', 'printenv', 'which', 'type',
-    'basename', 'dirname', 'readlink', 'realpath', 'stat', 'file', 'du', 'df',
-    'md5', 'md5sum', 'shasum', 'cksum', 'sleep',
-    'cd', 'pushd', 'popd', 'true', 'false', ':', 'test', '[',
-    'find', 'git',
-  ],
-  gitAllow: [
-    'status', 'log', 'show', 'diff', 'blame', 'grep', 'ls-files', 'ls-tree',
-    'rev-parse', 'describe', 'shortlog',
-  ],
-  deny: [
-    'rm', 'mv', 'cp', 'chmod', 'chown', 'chgrp', 'mkdir', 'rmdir', 'touch', 'ln', 'dd',
-    'mkfifo', 'mktemp', 'tee', 'tar', 'zip', 'unzip', 'gzip', 'gunzip', 'bzip2', 'xz',
-    'install', 'rsync', 'scp', 'ssh', 'sftp', 'curl', 'wget',
-    'sudo', 'su', 'doas', 'kill', 'pkill', 'killall', 'shutdown', 'reboot', 'halt', 'poweroff',
-    'launchctl', 'systemctl', 'service', 'crontab', 'at', 'batch',
-    'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
-    'eval', 'exec', 'source', '.', 'xargs', 'parallel', 'env',
-    'node', 'python', 'python3', 'ruby', 'perl', 'php', 'lua', 'julia',
-    'npm', 'pnpm', 'yarn', 'bun', 'deno', 'pip', 'pip3', 'conda',
-    'brew', 'apt', 'apt-get', 'yum', 'dnf', 'pacman',
-    'cargo', 'go', 'rustc', 'make', 'cmake', 'gcc', 'cc', 'g++', 'clang',
-    'java', 'javac', 'dotnet', 'mono', 'swift', 'gem', 'rake', 'gradle', 'mvn',
-    'docker', 'podman', 'kubectl', 'helm', 'terraform', 'ansible',
-    'vim', 'nano', 'emacs', 'code', 'open', 'pbcopy',
-  ],
+  allow: DEFAULT_TABLES.robashAllow,
+  gitAllow: DEFAULT_TABLES.robashGitAllow,
+  deny: DEFAULT_TABLES.robashDeny,
 }
 
-/** Per-command dangerous ARGUMENTS: flags (exact or prefix form) that turn an
- * allow-listed read-only binary into a write or an arbitrary-execution
- * primitive, and commands whose second positional argument names an output
- * file. The corresponding verdicts are pinned in the guard tests. */
-const DANGEROUS_FLAGS = {
-  find: {
-    flags: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprintf', '-fprint', '-fprint0', '-fls'],
-  },
-  sort: {
-    flags: ['-o', '--output'],
-    flagPrefixes: ['--output'],
-    shortAttached: ['-o'],
-  },
-  rg: {
-    // --pre/--pre-glob/--hostname-bin run an arbitrary command or an arbitrary
-    // ripgrep build per file; --sort-files/--sort materialize a temp index.
-    flags: ['--sort-files', '--sort'],
-    flagPrefixes: ['--pre', '--hostname-bin', '--sort'],
-  },
-  // uniq FILE1 FILE2 writes its output to FILE2 (a guarded child gets no usable
-  // stdin, so a lone argument is a read and a second argument is a write).
-  uniq: {
-    positionalWrite: true,
-  },
-  date: {
-    flags: ['-s', '--set', '-f', '--file'],
-    flagPrefixes: ['--set', '--file'],
-  },
-}
-
-/** git global flags accepted before the subcommand. */
-const GIT_GLOBAL_FLAGS = new Set([
-  '-p', '-P', '--paginate', '--no-pager', '--no-optional-locks', '--bare',
-  '--literal-pathspecs', '--glob-pathspecs', '--noglob-pathspecs', '--icase-pathspecs', '--no-replace-objects',
-  '--html-path', '--man-path', '--info-path', '--version', '--help',
-])
-/** Value-taking git global flags (consume the next arg, or use =). */
-const GIT_GLOBAL_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path'])
 
 /**
  * Validate one bash command line against the read-only lists.
@@ -125,7 +64,8 @@ export function attachReadOnlyBashGuard(agent, lists) {
 // ---------------------------------------------------------------------------
 
 function analyze(command, sets, depth) {
-  if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  const depthExceeded = checkDepth(depth)
+  if (depthExceeded) return depthExceeded
   if (typeof command !== 'string' || command.trim().length === 0) return undefined
   const text = command.replace(/\r\n/g, '\n').replace(/\\\n/g, '')
 
@@ -262,7 +202,8 @@ function analyze(command, sets, depth) {
 
 /** Scan expansions (arithmetic bodies etc.): validate only nested substitutions. */
 function scanExpansions(text, sets, depth) {
-  if (depth > 8) return 'read-only agent: command substitution is nested too deeply'
+  const depthExceeded = checkDepth(depth)
+  if (depthExceeded) return depthExceeded
   let quote = null
   let i = 0
   while (i < text.length) {
@@ -371,11 +312,11 @@ function checkSegment(segment, sets) {
       if (redirect.kind === 'heredoc') return 'read-only agent: here-documents are not allowed'
       if (redirect.kind === 'write') {
         const target = unquote(tokens[t + 1] ?? '')
-        if (target === '/dev/null' || /^\d+$/.test(target) || target === '-') {
+        if (isRedirectSink('bash', target)) {
           t++ // /dev/null sink, fd duplication (>&1), fd close (>&-): no writes
           continue
         }
-        return `read-only agent: write redirection to '${target}' is not allowed`
+        return reasons.writeRedirect(target)
       }
       // read redirection: consume its target word
       t++
@@ -391,8 +332,9 @@ function checkSegment(segment, sets) {
   while (cursor < words.length) {
     const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(words[cursor])
     if (assignment === null) break
-    if (/^GIT_CONFIG_/.test(assignment[1])) {
-      return 'read-only agent: GIT_CONFIG_* environment assignments are not allowed'
+    // bash matched case-sensitively here before the core extraction (:394)
+    if (isGitConfigEnvName(assignment[1])) {
+      return reasons.gitConfigEnv()
     }
     cursor++
   }
@@ -402,38 +344,7 @@ function checkSegment(segment, sets) {
   const command = basenameOf(commandWord)
   const args = words.slice(cursor + 1).map(unquote)
 
-  if (sets.deny.has(command)) return `read-only agent: '${command}' is explicitly denied`
-  if (!sets.allow.has(command)) return `read-only agent: '${command}' is not on the read-only allow list`
-
-  if (command === 'git') return checkGitArgs(args, sets.gitAllow)
-
-  // Positional arguments are the non-flag words; only the FIRST is ever an
-  // input for the commands below (a guarded child gets no usable stdin).
-  const positionalArgs = args.filter((arg) => !arg.startsWith('-'))
-
-  // Per-command dangerous flags. The allow list gate decides WHICH binary runs;
-  // this table decides which of its ARGUMENTS turn a read-only command into a
-  // write or an arbitrary-execution primitive. Keep it declarative: a new
-  // binary joins by adding one row, not one more `if`.
-  const spec = DANGEROUS_FLAGS[command]
-  if (spec !== undefined) {
-    for (const flag of args) {
-      const hit =
-        spec.flags?.find((name) => name === flag) ??
-        spec.flagPrefixes?.find((prefix) => flag.startsWith(prefix)) ??
-        spec.shortAttached?.find((prefix) => flag.startsWith(prefix) && flag.length > prefix.length)
-      if (hit !== undefined) {
-        return `read-only agent: ${command} flag '${hit}' writes a file or executes a command and is not allowed`
-      }
-    }
-    // Commands whose trailing positional arguments name output files rather
-    // than inputs: one is a read, two or more means the last one is written.
-    if (spec.positionalWrite === true && positionalArgs.length > 1) {
-      return `read-only agent: ${command} with more than one file argument writes a file and is not allowed`
-    }
-  }
-
-  return undefined
+  return gateExecutable({ name: command, rawName: command, args, sets, shell: 'bash' })
 }
 
 /** Split a segment into shell words; substitution spans are \x00 placeholders. */
@@ -510,42 +421,6 @@ function parseRedirect(token) {
   if (op === '<<' || op === '<<-') return { kind: 'heredoc' }
   if (op === '<<<' || op === '<' || op === '<&' || op === '&<') return { kind: 'read' }
   return { kind: 'write' } // > >> >| >& <> &> &>>
-}
-
-/** git: skip known global flags, then gate the subcommand. Shared with the
- * pwsh guard (the gitAllow list is merged once, on the bash side). */
-export function checkGitArgs(args, gitAllow) {
-  // `git --version` / `git --help` are complete read-only invocations.
-  if (args.length > 0 && args.every((arg) => arg === '--version' || arg === '--help')) return undefined
-  let i = 0
-  while (i < args.length) {
-    const arg = args[i]
-    if (!arg.startsWith('-')) break
-    const flagName = arg.split('=', 1)[0]
-    if (GIT_GLOBAL_FLAGS.has(flagName)) {
-      i++
-      continue
-    }
-    if (GIT_GLOBAL_VALUE_FLAGS.has(flagName)) {
-      // -c <name>=<value>: alias.* keys redefine subcommands, and core.pager
-      // /pager.* keys run an arbitrary pager executable — all smuggle
-      // executables (git -c alias.log=!rm log, git -p -c core.pager=cat log)
-      // — always denied (case-insensitive).
-      const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[i + 1]
-      if (flagName === '-c' && typeof value === 'string' && /^(alias\.|core\.pager($|=)|pager\.)/i.test(value)) {
-        return `read-only agent: git config key '${value.split('=', 1)[0]}' is not allowed`
-      }
-      i += arg.includes('=') ? 1 : 2
-      continue
-    }
-    return `read-only agent: git flag '${arg}' is not recognized`
-  }
-  const subcommand = args[i]
-  if (subcommand === undefined) return 'read-only agent: git without a subcommand is not allowed'
-  if (!gitAllow.has(subcommand)) {
-    return `read-only agent: git subcommand '${subcommand}' is not on the read-only allow list`
-  }
-  return undefined
 }
 
 function basenameOf(word) {

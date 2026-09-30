@@ -12,14 +12,13 @@
 // in `whitelist-defaults.json`, which the plugin reads itself at runtime, and
 // the row must stay free of them: putting them back re-arms the defect.
 //
-// The other half of the guard is that the data file and the built-in constants
-// agree entry for entry. The constants are the per-table fallback for a
-// defective file, so a silent divergence between them would let a broken file
-// quietly narrow the guard.
+// The other half of the guard is that the data file and the canonical
+// DEFAULT_TABLES in robash-guard-core.js agree entry for entry. The canonical
+// tables are the per-table fallback for a defective file, so a silent
+// divergence between them would let a broken file quietly narrow the guard.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from './helpers.js'
-import { DEFAULT_ROBASH_PWSH } from '../src/delegate/robash-guard-pwsh.js'
-import { DEFAULT_ROBASH } from '../src/delegate/robash-guard.js'
+import { DEFAULT_TABLES } from '../src/delegate/robash-guard-core.js'
 import { WHITELIST_KEYS } from '../src/shared/whitelist-defaults.js'
 
 const PATCH = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
@@ -42,27 +41,14 @@ describe('preset patch row does not carry the whitelist tables', () => {
   })
 })
 
-describe('defaults data file mirrors the built-in constants', () => {
-  it('robashAllow mirrors DEFAULT_ROBASH.allow (same order, same entries)', () => {
-    expect(DEFAULTS.robashAllow).toEqual([...DEFAULT_ROBASH.allow])
+describe('defaults data file mirrors the canonical DEFAULT_TABLES', () => {
+  it('every table mirrors DEFAULT_TABLES entry for entry, in order', () => {
+    // `toEqual` on the whole array, not `toContain`: a subset would satisfy a
+    // membership assertion while silently narrowing the guard.
+    for (const key of WHITELIST_KEYS) {
+      expect(DEFAULTS[key]).toEqual([...DEFAULT_TABLES[key]])
+    }
   })
-
-  it('robashGitAllow mirrors DEFAULT_ROBASH.gitAllow', () => {
-    expect(DEFAULTS.robashGitAllow).toEqual([...DEFAULT_ROBASH.gitAllow])
-  })
-
-  it('robashDeny mirrors DEFAULT_ROBASH.deny', () => {
-    expect(DEFAULTS.robashDeny).toEqual([...DEFAULT_ROBASH.deny])
-  })
-
-  it('robashPwshAllow mirrors DEFAULT_ROBASH_PWSH.allow', () => {
-    expect(DEFAULTS.robashPwshAllow).toEqual([...DEFAULT_ROBASH_PWSH.allow])
-  })
-
-  it('robashPwshDeny mirrors DEFAULT_ROBASH_PWSH.deny', () => {
-    expect(DEFAULTS.robashPwshDeny).toEqual([...DEFAULT_ROBASH_PWSH.deny])
-  })
-
   it('declares exactly the five tables, so a renamed key cannot go unnoticed', () => {
     expect(Object.keys(DEFAULTS).sort()).toEqual([...WHITELIST_KEYS].sort())
   })

@@ -9,8 +9,8 @@ import { createStatusTool } from './status-tool.js'
 import { createGroupCoordinator } from './group-coordinator.js'
 import { rehydrateSupervision, applyChildLogRecovery } from './rehydrate.js'
 import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './resolver.js'
-import { attachReadOnlyBashGuard, DEFAULT_ROBASH } from './robash-guard.js'
-import { DEFAULT_ROBASH_PWSH } from './robash-guard-pwsh.js'
+import { attachReadOnlyBashGuard } from './robash-guard.js'
+import { DEFAULT_TABLES } from './robash-guard-core.js'
 import { createAudit } from '../shared/audit.js'
 import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { userTextMessage } from '../shared/user-message.js'
@@ -124,8 +124,19 @@ function apply(ctx, config = {}) {
   function robashNow() {
     const robashOverride = robashOverrideNow()
     const defaults = robashOverride?.defaults ?? FALLBACK_TABLES
-    const robashConfig = { ...DEFAULT_ROBASH, ...(config.readOnlyBash ?? {}), ...(robashOverride ?? {}) }
-    const pwshConfig = { ...DEFAULT_ROBASH_PWSH, ...(config.readOnlyPwsh ?? {}) }
+    const robashConfig = {
+      enabled: true,
+      allow: DEFAULT_TABLES.robashAllow,
+      gitAllow: DEFAULT_TABLES.robashGitAllow,
+      deny: DEFAULT_TABLES.robashDeny,
+      ...(config.readOnlyBash ?? {}),
+      ...(robashOverride ?? {}),
+    }
+    const pwshConfig = {
+      allow: DEFAULT_TABLES.robashPwshAllow,
+      deny: DEFAULT_TABLES.robashPwshDeny,
+      ...(config.readOnlyPwsh ?? {}),
+    }
     const bashAdditions = additionsOf(robashOverride, ['allow', 'gitAllow', 'deny'])
     const pwshAdditions = additionsOf(robashOverride, ['pwshAllow', 'pwshDeny'])
     const gitAdditions = [...(robashConfig.gitAllow ?? []), ...bashAdditions.gitAllow]

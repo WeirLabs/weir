@@ -23,8 +23,7 @@
 // so tests can drive it without a runtime.
 
 import { readFileSync } from 'node:fs'
-import { DEFAULT_ROBASH_PWSH } from '../delegate/robash-guard-pwsh.js'
-import { DEFAULT_ROBASH } from '../delegate/robash-guard.js'
+import { DEFAULT_TABLES } from '../delegate/robash-guard-core.js'
 
 /** The five table names, in the order they are published. */
 export const WHITELIST_KEYS = Object.freeze([
@@ -41,11 +40,11 @@ export const WHITELIST_KEYS = Object.freeze([
  * drag the well-formed ones down with it.
  */
 export const FALLBACK_TABLES = Object.freeze({
-  robashAllow: [...DEFAULT_ROBASH.allow],
-  robashGitAllow: [...DEFAULT_ROBASH.gitAllow],
-  robashDeny: [...DEFAULT_ROBASH.deny],
-  robashPwshAllow: [...DEFAULT_ROBASH_PWSH.allow],
-  robashPwshDeny: [...DEFAULT_ROBASH_PWSH.deny],
+  robashAllow: [...DEFAULT_TABLES.robashAllow],
+  robashGitAllow: [...DEFAULT_TABLES.robashGitAllow],
+  robashDeny: [...DEFAULT_TABLES.robashDeny],
+  robashPwshAllow: [...DEFAULT_TABLES.robashPwshAllow],
+  robashPwshDeny: [...DEFAULT_TABLES.robashPwshDeny],
 })
 
 /**
