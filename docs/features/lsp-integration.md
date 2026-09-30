@@ -48,12 +48,12 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 
 - 模块：`orrery-harness/lsp`（`client.js` 协议端点、`manager.js` server record 生命周期、`child-process.js` 可执行解析→启动形态→受限运行、`uri.js` URI codec 纯叶子、`registry.js` 服务器注册表、`tools.js` 四工具、`index.js` 门闸与双通道开关）。
 - 客户端：Content-Length 帧缓冲拼接（粘包/分包容错、畸形头重同步）；JSON-RPC 请求-响应路由 + 通知分发；server→client 请求一律回 `result: null`（防对方阻塞）；`initialize`/`initialized`/`shutdown`/`exit` 状态机；每请求独立超时。
-- 生命周期：`${cwd}:${languageFamily}` 一实例；didOpen 首触/didChange 后续（Full 同步、版本自增）；`publishDiagnostics` 收集到 per-file 快照；会话为服务器 holder，toggle off 或会话销毁时按引用计数关停空服务器。
+- 生命周期：`${cwd}:${languageFamily}` 一实例；didOpen 首触/didChange 后续（Full 同步、版本自增）；`publishDiagnostics` 收集到 per-file 快照；会话为服务器 holder，toggle off 或会话销毁时按引用计数关停空服务器。manager 的对外接口是**命名操作**而非 record 回调——`requestOn`（同步 + `paramsOf(uri)` 请求）、`diagnosticsFor`（wait-once 策略内建）、`capabilitiesOf`（握手能力集，不做文档同步），record 形状、languageId 赋值与 holder 登记都收在私有 `prepare()` 后面；`createLspManager` 有独立直接单测套件。
 - **门闸状态机**：`gate = settings.get('lsp').enabled ?? 行配置 enabled ?? false`；开闸 `setupSurface()`（注册投影 + `lsp` 工具 + `/lsp` 命令，持有全部 disposer），关闸 `teardownSurface()`（注销面、清理已启用会话、终止全部服务器）；`settings.onChange` 驱动实时翻转。
 - **持久状态**：`orreryLsp` 会话投影（stateVersion 1，声明 `wire` 以推送到客户端）纯折叠会话日志——`tool/call`（name `lsp`，`arguments.enabled`）与 `command/run`（name `lsp`，args `on`/`off`）更新 `{enabled}`；`agent/created` 时按投影恢复（冷 resume 后工具仍在），`agent/disposed` 清理。
 - **双通道**：`/lsp on|off`（面板，`ctx.commands.register`，invocation.agent 缺失/坏参返回 error）与 `lsp` 工具（模型，exec.agent）共享同一 per-session 运行时状态；面板开关状态由客户端 `useProjection("orreryLsp")` 读宿主折叠值。
 - 客户端面板开关：注入 `conversation.input.right` 槽（composer 栏，空白与有内容会话均常驻；会话头 utilities 槽仅在会话有内容后出现）；命令目录不含 `lsp` 时不渲染（能力关）；点击经 `remote.commands.execute(sessionId, "/lsp on|off", [])`；无 `useProjection` 注入时降级为投影拉取 + 乐观更新。
-- 管理端点：`src/lsp/admin.js` 经 `ctx.connection.fetch.register` 注册（由 profile 级 settings 行接线，避免新增包子路径）；注册表为 live provider（内置 + `lspServers`）；status 含 `installerAvailable`（安装器自身可否解析）。
+- 管理端点：`src/lsp/admin.js` 经 `wireLspAdmin(ctx, getServers)` 被 **profile 级 settings 行调用**完成接线（调用点必须留在该行——S19 新增包子路径需应用重启；inject 元组、registry 构造与 disposer 簿记都收在 `wireLspAdmin` 体内，settings 行不再知晓它们）；注册表为 live provider（内置 + `lspServers`）；status 含 `installerAvailable`（安装器自身可否解析）。
 - **可执行解析的平台分支**：`src/lsp/child-process.js` 服务优先、扩展目录扫描回退（S21：GUI 进程 PATH 最小化事故）。解析接口按目标平台参数化（默认宿主，沿用 `installSpecFor(entry, platform)` 先例）：
   - 路径形态（含 `/` 或 `\`，如 `C:\bin\ls.cmd`、`C:/bin/ls`、`./ls`）直接按文件系统判定，**不**交给服务解析器当命令名；
   - 裸名先走服务解析器，再扫扩展目录；win32 扫描按 `PATHEXT` 依次探测 `.com/.exe/.bat/.cmd`（小写化，因 npm 写 `.cmd` 而 PATHEXT 拼 `.CMD`），命中扩展名即视为可执行（NTFS 无执行位）；POSIX 仍以执行位判定；
