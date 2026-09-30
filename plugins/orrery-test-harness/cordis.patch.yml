@@ -45,6 +45,11 @@
         supervision:
           initialBackoffMs: 50
           maxBackoffMs: 100
+        # Per-scenario registry-level disable: empty unless a scenario sets
+        # ORRERY_IT_DISABLED_CATEGORY (comma-separated), so the shared baseline
+        # keeps every category enabled. The `targets` scenario uses it to prove
+        # that a disabled target is neither advertised nor spawnable.
+        categories: !!js 'Object.fromEntries((process.env.ORRERY_IT_DISABLED_CATEGORY ?? "").split(",").filter(Boolean).map((name) => [name, { disabled: true }]))'
     - id: orrery-it-todo-driver
       name: 'orrery-harness/todo-driver'
     - id: orrery-it-hashline-edit

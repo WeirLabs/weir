@@ -14,8 +14,9 @@ import background from './background.js'
 import terminate from './terminate.js'
 import rehydrate from './rehydrate.js'
 import lsp from './lsp.js'
+import targets from './targets.js'
 
-const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp]
+const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets]
 
 /**
  * Find a scenario entry by id.
