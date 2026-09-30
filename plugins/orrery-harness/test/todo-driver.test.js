@@ -254,34 +254,15 @@ describe('todo-driver plugin', () => {
     expect(steers).toHaveLength(1)
   })
 
+  // Plugin-level behavior assertion: the driver's own injected continuation
+  // never rearms it. The full injection-source exemption matrix lives in
+  // test/runtime-messages.test.js.
   it('ignores its own injected messages as user input', () => {
     const { handlers, session, agent, steers } = setup()
     handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } })
     handlers['session/event'](session, {
       type: 'user/message',
       data: { content: [{ type: 'text', text: '<todo_continuation>...' }], source: { kind: 'orrery-todo-driver' } },
-    })
-    handlers['agent/turn-stopping']({ agent, turn: 2, signal: notAbortedSignal() })
-    expect(steers).toHaveLength(0)
-  })
-
-  it('ignores subagent settlement notices as user input', () => {
-    const { handlers, session, agent, steers } = setup()
-    handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } })
-    handlers['session/event'](session, {
-      type: 'user/message',
-      data: { content: [{ type: 'text', text: 'Background subagent abc finished. Its closing message: deep work research debugging review-work' }], source: { kind: 'subagent-settled', form: 'notice' } },
-    })
-    handlers['agent/turn-stopping']({ agent, turn: 2, signal: notAbortedSignal() })
-    expect(steers).toHaveLength(0)
-  })
-
-  it('ignores other injected messages as user input', () => {
-    const { handlers, session, agent, steers } = setup()
-    handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } })
-    handlers['session/event'](session, {
-      type: 'user/message',
-      data: { content: [{ type: 'text', text: 'context pressure advisory' }], source: { kind: 'orrery-context-guard' } },
     })
     handlers['agent/turn-stopping']({ agent, turn: 2, signal: notAbortedSignal() })
     expect(steers).toHaveLength(0)

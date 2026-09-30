@@ -2,6 +2,7 @@
 // model-timed compaction. Plain ESM, ctx-only.
 import { computePressure, createPressureState, PRESSURE_DEFAULTS, renderAdvisory, RESUME_AFTER_COMPACTION } from './pressure.js'
 import { userTextMessage } from '../shared/user-message.js'
+import { injectOrWarn, overlayConfig } from '../shared/runtime-messages.js'
 
 const name = 'orrery-context-guard'
 const inject = ['tools', 'agents', 'tokenMeter', 'compaction', 'llm']
@@ -10,8 +11,7 @@ const COMPACT_CONTEXT_DESCRIPTION = `Compact this session's conversation history
 
 function apply(ctx, config = {}) {
   // Settings overlay (absent service = no-op): contextGuard section wins over row config.
-  const settingsOverride = ctx.get?.('orrerySettings')?.get('contextGuard')
-  const opts = { ...PRESSURE_DEFAULTS, ...config, ...(settingsOverride ?? {}) }
+  const opts = overlayConfig(ctx, 'contextGuard', config, { defaults: PRESSURE_DEFAULTS })
   /** Per-session pressure hysteresis state. */
   const states = new Map()
   /** Sessions with a model-requested compaction pending at the boundary. */
@@ -65,11 +65,9 @@ function apply(ctx, config = {}) {
         new AbortController().signal,
       )
       stateOf(session.id).reset()
-      try {
+      injectOrWarn(ctx, `context-guard: post-compaction followup failed for "${session.id}"`, () => {
         agent.followup(userTextMessage(RESUME_AFTER_COMPACTION, 'orrery-context-guard'))
-      } catch (error) {
-        ctx.logger?.warn?.(`context-guard: post-compaction followup failed for "${session.id}": ${error?.message ?? error}`)
-      }
+      })
       return { kind: 'compacted', result }
     } catch (error) {
       const code = error?.code ?? error?.name ?? 'unknown'
@@ -93,11 +91,9 @@ function apply(ctx, config = {}) {
       if (decision.kind !== 'advise') return
       const agent = ctx.agents.get(sessionId)
       if (!agent) return
-      try {
+      injectOrWarn(ctx, `context-guard: advisory injection failed for "${sessionId}"`, () => {
         agent.inject(userTextMessage(renderAdvisory(pressure), 'orrery-context-guard'))
-      } catch (error) {
-        ctx.logger?.warn?.(`context-guard: advisory injection failed for "${sessionId}": ${error?.message ?? error}`)
-      }
+      })
       return
     }
 
@@ -114,11 +110,9 @@ function apply(ctx, config = {}) {
     if (decision.kind === 'advise') {
       const agent = ctx.agents.get(sessionId)
       if (!agent) return
-      try {
+      injectOrWarn(ctx, `context-guard: advisory injection failed for "${sessionId}"`, () => {
         agent.inject(userTextMessage(renderAdvisory(pressure), 'orrery-context-guard'))
-      } catch (error) {
-        ctx.logger?.warn?.(`context-guard: advisory injection failed for "${sessionId}": ${error?.message ?? error}`)
-      }
+      })
       return
     }
     if (decision.kind !== 'force') return

@@ -6,6 +6,7 @@
 import { createContinuationState, DEFAULTS, isProviderError, renderContinuation } from './state-machine.js'
 import { createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
+import { injectOrWarn, isGenuineUserMessage, overlayConfig } from '../shared/runtime-messages.js'
 
 const name = 'orrery-todo-driver'
 const inject = ['tools', 'agents']
@@ -15,8 +16,7 @@ const STOP_CONTINUATION_DESCRIPTION = `Stop the todo continuation driver for thi
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
   // Settings overlay (absent service = no-op): todoDriver section wins over row config.
-  const settingsOverride = ctx.get?.('orrerySettings')?.get('todoDriver')
-  const opts = { ...DEFAULTS, ...config, ...(settingsOverride ?? {}) }
+  const opts = overlayConfig(ctx, 'todoDriver', config, { defaults: DEFAULTS })
   /** Per-session continuation states. */
   const states = new Map()
   /** Per-session pending delayed-continuation timer handles. */
@@ -67,11 +67,9 @@ function apply(ctx, config = {}) {
       const remaining = remainingTodos(session)
       if (remaining.length === 0) return
       if (!stateOf(session.id).armed) return
-      try {
+      injectOrWarn(ctx, `todo-driver: could not queue continuation for "${session.id}"`, () => {
         agent.followup(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
-      } catch (error) {
-        ctx.logger?.warn?.(`todo-driver: could not queue continuation for "${session.id}": ${error?.message ?? error}`)
-      }
+      })
     }
     cancelTimer(session.id)
     const setTimer = ctx.setTimeout ?? globalThis.setTimeout
@@ -92,11 +90,9 @@ function apply(ctx, config = {}) {
       providerErrorPending: providerErrorPending.has(agent.id),
     })
     if (decision.kind !== 'continue') return
-    try {
+    injectOrWarn(ctx, `todo-driver: could not steer continuation for "${agent.id}"`, () => {
       agent.steer(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
-    } catch (error) {
-      ctx.logger?.warn?.(`todo-driver: could not steer continuation for "${agent.id}": ${error?.message ?? error}`)
-    }
+    })
   })
 
   // Mark provider failures as they happen; the turn boundary owns the retry.
@@ -108,8 +104,7 @@ function apply(ctx, config = {}) {
   ctx.on('session/event', (session, event) => {
     if (event.type === 'user/message') {
       // Only genuine user input (source.kind 'user') rearms; all runtime injections are skipped.
-      const sourceKind = event.data?.source?.kind
-      if (sourceKind === 'user') {
+      if (isGenuineUserMessage(event)) {
         cancelTimer(session.id)
         providerErrorPending.delete(session.id)
         stateOf(session.id).onUserMessage()

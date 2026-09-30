@@ -132,23 +132,6 @@ describe('intent-gate plugin', () => {
     )
     expect(result.messages).toHaveLength(0)
   })
-  it('ignores subagent settlement notices even when reports contain keywords', async () => {
-    const ctx = fakeCtx()
-    apply(ctx, {})
-    const agent = fakeAgent([])
-    const settled = {
-      id: 's1',
-      role: 'user',
-      content: [{ type: 'text', text: 'Background subagent abc finished and will do no further work unless you send it more. Its closing message: skills: debugging, deep-work, research, review-work' }],
-      source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'abc' },
-    }
-    const result = await ctx.handlers['agent/pre-step'](
-      { agent, messages: [settled], turn: 3, step: 1 },
-      async () => ({ kind: 'enter', messages: [] }),
-    )
-    expect(result.messages).toHaveLength(0)
-    expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(0)
-  })
 
   it('scans past injected messages to the newest genuine user prompt', async () => {
     const ctx = fakeCtx()
@@ -168,6 +151,9 @@ describe('intent-gate plugin', () => {
     expect(result.messages[0].content[0].text).toContain('deep-work')
   })
 
+  // Plugin-level behavior assertion: the gate's own injected notice is never
+  // treated as user intent. The full injection-source exemption matrix lives
+  // in test/runtime-messages.test.js.
   it('does not re-scan its own injected notices', async () => {
     const ctx = fakeCtx()
     apply(ctx, {})
@@ -180,19 +166,6 @@ describe('intent-gate plugin', () => {
     }
     const result = await ctx.handlers['agent/pre-step'](
       { agent, messages: [own], turn: 4, step: 1 },
-      async () => ({ kind: 'enter', messages: [] }),
-    )
-    expect(result.messages).toHaveLength(0)
-    expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(0)
-  })
-
-  it('ignores user-role messages without a source kind', async () => {
-    const ctx = fakeCtx()
-    apply(ctx, {})
-    const agent = fakeAgent([])
-    const sourceless = { id: 'x1', role: 'user', content: [{ type: 'text', text: 'research this for me' }] }
-    const result = await ctx.handlers['agent/pre-step'](
-      { agent, messages: [sourceless], turn: 5, step: 1 },
       async () => ({ kind: 'enter', messages: [] }),
     )
     expect(result.messages).toHaveLength(0)

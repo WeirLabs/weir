@@ -5,6 +5,8 @@
 // only when regex misses. Plain ESM, ctx-only.
 import { createClassifier } from './classifier.js'
 import { createAudit } from '../shared/audit.js'
+import { userTextMessage } from '../shared/user-message.js'
+import { isGenuineUserMessage, overlayConfig } from '../shared/runtime-messages.js'
 import {
   compileIntentTable,
   DEFAULT_INTENTS,
@@ -22,7 +24,7 @@ function latestUserText(messages) {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
     if (!message || message.role !== 'user' || !Array.isArray(message.content)) continue
-    if (message.source?.kind !== 'user') continue
+    if (!isGenuineUserMessage(message)) continue
     const text = message.content
       .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
       .map((block) => block.text)
@@ -32,32 +34,12 @@ function latestUserText(messages) {
   return undefined
 }
 
-/** Build the injection message appended to the step (durable, logged). */
-function injectionMessage(text) {
-  return {
-    id: crypto.randomUUID(),
-    role: 'user',
-    content: [{ type: 'text', text }],
-    source: { kind: 'orrery-intent-gate' },
-  }
-}
-
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
   // Settings overlay (absent service = no-op): intentGate section wins over row config.
-  const settingsOverride = ctx.get?.('orrerySettings')?.get('intentGate')
-  if (settingsOverride && typeof settingsOverride === 'object') {
-    const { jevEndpoint, jevModel, jevApiKeyEnv, ...rest } = settingsOverride
-    config = { ...config, ...rest }
-    if (jevEndpoint !== undefined || jevModel !== undefined || jevApiKeyEnv !== undefined) {
-      config.jev = {
-        ...(config.jev ?? {}),
-        ...(jevEndpoint !== undefined ? { endpoint: jevEndpoint } : {}),
-        ...(jevModel !== undefined ? { model: jevModel } : {}),
-        ...(jevApiKeyEnv !== undefined ? { apiKeyEnv: jevApiKeyEnv } : {}),
-      }
-    }
-  }
+  config = overlayConfig(ctx, 'intentGate', config, {
+    nestKeys: { jev: { endpoint: 'jevEndpoint', model: 'jevModel', apiKeyEnv: 'jevApiKeyEnv' } },
+  })
   const table = compileIntentTable(config.intents ?? DEFAULT_INTENTS)
   const disabled = new Set(Array.isArray(config.disabled) ? config.disabled : [])
   const intents = table.filter((intent) => !disabled.has(intent.id))
@@ -125,7 +107,7 @@ function apply(ctx, config = {}) {
       const body = intent.injection.kind === 'skill-pointer'
         ? (first ? renderSkillPointer(intent) : renderReminder(intent))
         : (first || !intent.oncePerSession ? intent.injection.text : renderReminder(intent))
-      injections.push(injectionMessage(body))
+      injections.push(userTextMessage(body, 'orrery-intent-gate'))
       record(ctx, agent, intent, first)
     }
 
@@ -147,6 +129,13 @@ function apply(ctx, config = {}) {
   // src/shared/audit.js for the hard contract).
   function record(_ctx, agent, intent, first) {
     audit(agent.session, 'intent-hit', { intent: intent.id, first })
+  }
+
+  // Dispose: clear the in-memory ledgers (symmetric with todo-driver /
+  // context-guard; the ctx.on listeners are reaped by the runtime itself).
+  return () => {
+    armed.clear()
+    effortTurns.clear()
   }
 }
 
