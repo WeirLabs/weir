@@ -12,9 +12,10 @@
   },
   // Curation rule: this list holds PURE modules only — no ctx adapters, no node:
   // builtin consumers (types: [] strips Node globals). Plugin index.js files,
-  // settings, lsp lifecycle, audit, whitelist-defaults, group-coordinator and
-  // rehydrate stay out for the same reason they always have. New pure modules
-  // MUST be added here when created.
+  // settings/index.js, lsp lifecycle, audit, whitelist-defaults,
+  // group-coordinator and rehydrate stay out, and so does anything importing
+  // the vendored schemastery/cosmokit (tsc follows imports into Node-global
+  // territory under types: []). New pure modules MUST be added here when created.
   "include": [
     "src/core/doctrine.js",
     "src/intent-gate/matcher.js",
@@ -22,7 +23,8 @@
     "src/shared/runtime-messages.js",
     "src/shared/user-message.js",
     "src/delegate/resolver.js",
-    "src/delegate/families.js",
+    "src/delegate/target-resolver.js",
+    "src/delegate/settings-overlay.js",
     "src/delegate/escalate.js",
     "src/delegate/categories.js",
     "src/delegate/agents.js",
