@@ -5,17 +5,18 @@
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.0] - 2026-10-01
 
 ### Added
 
-- **精选 agent 支持期望路由（`delegateAgentChains`）**：三个精选 agent（`finder`/`scholar`/`advisor`）此前在路由上**不可配置**——注册表条目没有 `chain`、设置页也没有对应键，于是只能静默继承父路由。现在精选 agent 与类别**共用同一条解析路径**（`resolveCategory` 更名 `resolveTargetRoute`）：链上首个「provider 已注册且列出该 model」的档位胜出；整链不可解析时显式报错并点名 agent 与尝试过的档位，**绝不回退继承**（否则「配错了」会变成「静默跑在别的模型上」）；空链保持继承父路由（向后兼容）。设置页新增 `delegateAgentChains`（JSON map，整链替换；未知 agent 名告警忽略，与 `delegateCategoryChains` 同语义）。
+- **精选 agent 支持期望路由（`delegateAgentChains`）**：三个精选 agent（`finder`/`scholar`/`advisor`）此前在路由上**不可配置**——注册表条目没有 `chain`、设置页也没有对应键，于是只能静默继承父路由。现在精选 agent 与类别**共用同一条解析路径**（`resolveCategory` 更名 `resolveTargetRoute`）：链上首个「provider 已注册且列出该 model」的档位胜出；整链不可解析时显式报错并点名 agent 与尝试过的档位，**绝不回退继承**（否则「配错了」会变成「静默跑在别的模型上」）；空链保持继承父路由（向后兼容）。设置页新增 `delegateAgentChains`（JSON map，整链替换；未知 agent 名告警忽略，与 `delegateCategoryChains` 同语义），并复用**与类别链同一个可视化编辑器**（按 agent 逐行加档位）。
 - **委托目标指引小节（`orchestrator:delegate-targets`）**：会话系统提示词新增一段常驻小节，说明 `delegate` 的正确用法（每条目必须且只能给 `category` 或 `agent` 之一；类别道**没有默认值**，必须点名类别），并列出**当前启用**的类别（名称 + 描述 + 路由指引）与精选 agent（名称 + 描述）。小节文本是静态模板，其中内嵌的变量由 DSH 在**每次提示词装配**时求值（不是注册期快照），因此设置提交在同一进程内即刻改变模型看到的目标集合，无需重启、无需重建会话。
 - **类别可在设置页停用（`delegateDisabledCategories`）**：设置页提供**逐类别勾选列表**（类别是封闭集合，不允许手写 JSON 漂出非法名），勾选结果由客户端合成 JSON 字符串数组；命中的类别被标为停用，注册表自带的 `disabled` 继续有效。停用语义贯通**三处**——指引小节不再列出它、派发它得到显式 disabled 错误、**未知目标报错里的 available 名单也不再把它列为可选**（与 robash 五表同一哲学：设置面只能追加停用，无法解除注册表级停用）。
 
 ### Changed
 
 - **三个精选 agent 改名（BREAKING）**：`explore` → `finder`、`librarian` → `scholar`、`oracle` → `advisor`。服务端注册表键与各条目 `name`、工具描述、doctrine 正文、设置页 agent 行列表全部随动；只读强制、只读 bash 守卫、不可再委派、路由解析与 persona 正文语义不变（唯一文本例外：原 librarian 的 persona 首句随名改为 "research scholar"，避免名称与自述分裂）。**不留别名**：旧名不再可寻址——`delegate(agent="explore"|"librarian"|"oracle")` 直接报 `unknown_target`，错误文本只列三个新名；`delegateAgentChains` 的 JSON key 即 agent 名，已写旧名的配置解析为未知 agent（告警忽略），需手工同步改名为 `finder`/`scholar`/`advisor`。
+- **三条客户端防呆护栏（开发门禁）**：本次交付暴露出三个同源盲区，现全部测试化——① **字典标签护栏**：设置页每个字段（含链编辑器的每条行）必须在英文与中文两套字典里解析出标签与说明，**不得退化成原始键名**（此前 locale 的 `lookup(...) ?? key` 兜底会把 `delegateAgentChains` 直接当标签显示，用户于是“看不到”已发布的功能；该护栏还揪出了两个历史上就缺标签的老字段）；② **客户端↔服务端名单对拍**：设置页的类别名单与精选 agent 名单分别钉在 `Object.keys(DEFAULT_CATEGORIES)` / `Object.keys(CURATED_AGENTS)` 上，任一侧漂移即红；③ **chunk mtime 护栏**：任何 `lib/client.*.js` 的 mtime 不得晚于入口 `lib/client.js`（把“chunk 编辑后必须重戳入口 rev”这条运维红线从纪律变成测试）。
 
 ### Fixed
 
