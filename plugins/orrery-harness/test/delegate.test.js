@@ -335,7 +335,25 @@ describe('delegate plugin apply', () => {
     expect(render()).not.toContain('quick')
   })
 
-  function applyHarness(config = {}, settingsSections = undefined, settingsService = undefined) {
+  it('routes a curated agent through its configured chain, not the caller route', async () => {
+    // The real overlay, the real resolver and the real tool wired together:
+    // the settings agentChains map must reach the spawn request's agentOptions.
+    const routedLlm = {
+      listProviders: () => [{ id: 'routed' }],
+      listModels: async () => [{ id: 'routed-1' }],
+    }
+    const settings = { delegate: { agentChains: { explore: [{ provider: 'routed', model: 'routed-1' }] } } }
+    const { tool, spawned } = applyHarness({}, settings, undefined, routedLlm)
+    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    expect(spawned[0].request.agentOptions).toEqual({ provider: 'routed', model: 'routed-1' })
+  })
+
+  it('fails loud when a configured agent chain resolves no rung', async () => {
+    const settings = { delegate: { agentChains: { explore: [{ provider: 'ghost', model: 'x' }] } } }
+    const { tool } = applyHarness({}, settings)
+    await expect(async () => tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())).rejects.toThrow(/agent "explore" unavailable/)
+  })
+  function applyHarness(config = {}, settingsSections = undefined, settingsService = undefined, llm = undefined) {
     const registered = []
     const spawned = []
     const guards = []
@@ -363,7 +381,7 @@ describe('delegate plugin apply', () => {
           }
         },
       },
-      llm: { listProviders: () => [], listModels: async () => [] },
+      llm: llm ?? { listProviders: () => [], listModels: async () => [] },
       skills: {},
       systemPrompt: {
         section: (section) => {
