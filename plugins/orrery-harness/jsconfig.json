@@ -18,6 +18,7 @@
   "include": [
     "src/core/doctrine.js",
     "src/intent-gate/matcher.js",
+    "src/shared/content-text.js",
     "src/shared/runtime-messages.js",
     "src/shared/user-message.js",
     "src/delegate/resolver.js",

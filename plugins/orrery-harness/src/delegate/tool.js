@@ -2,8 +2,8 @@
 // subagents spawn provider. Pure-object ToolDefinition (no defineTool import —
 // @deepseek-ai packages do not resolve from a linked bundle).
 import { parseEscalation } from './escalate.js'
-import { SUPERVISION_CONTRACT } from './group-coordinator.js'
-import { attachReadOnlyBashGuard } from './robash-guard.js'
+import { oneShotLane, spawnGuardedChild, supervisedLane } from './spawn-adapter.js'
+import { contentText } from '../shared/content-text.js'
 
 export const DELEGATE_TOOL_NAME = 'delegate'
 export const BATCH_LIMIT = 16
@@ -156,17 +156,7 @@ async function buildPrompt(item, deps) {
 async function spawnForeground(item, args, deps, exec) {
   const target = await deps.resolveTarget(item, parentRouteOf(exec))
   const prompt = await buildPrompt(item, deps)
-  const started = await deps.subagents.start('spawn', {
-    label: target.label,
-    prompt,
-    parent: exec.agent,
-    signal: exec.signal,
-    ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
-    ...(target.toolFilter ? { toolFilter: target.toolFilter } : {}),
-    maxDepth: 1,
-    persona: target.persona,
-  })
-  attachGuardIfReadOnly(started, target, deps)
+  const started = await spawnGuardedChild({ target, prompt, parent: exec.agent, signal: exec.signal }, oneShotLane(), deps)
   const result = await withEscalation(started, item, deps, exec)
   return {
     label: target.label,
@@ -192,17 +182,7 @@ async function spawnBackground(item, args, deps, exec) {
       if (parentSignal) parentSignal.addEventListener('abort', () => abort.abort(), { once: true })
       const done = (async () => {
         try {
-          const started = await deps.subagents.start('spawn', {
-            label: target.label,
-            prompt,
-            parent,
-            signal: abort.signal,
-            ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
-            ...(target.toolFilter ? { toolFilter: target.toolFilter } : {}),
-            maxDepth: 1,
-            persona: target.persona,
-          })
-          attachGuardIfReadOnly(started, target, deps)
+          const started = await spawnGuardedChild({ target, prompt, parent, signal: abort.signal }, oneShotLane(), deps)
           handle.updateProgress(`${target.label}: running`)
           const result = await withEscalation(started, item, deps, { agent: parent, signal: abort.signal })
           return {
@@ -229,7 +209,7 @@ async function spawnBackground(item, args, deps, exec) {
 /** Await one child, honoring the one-level ESCALATE contract. */
 async function withEscalation(started, item, deps, exec) {
   const first = await started.result
-  const text = textOf(first.output)
+  const text = contentText(first.output)
   const escalation = parseEscalation(text)
   if (!escalation) {
     return { id: started.id, status: first.stopReason, text }
@@ -242,41 +222,13 @@ async function withEscalation(started, item, deps, exec) {
   }
   const target = await deps.resolveTarget(escalatedItem, parentRouteOf(exec))
   const prompt = await buildPrompt(escalatedItem, deps)
-  const respawned = await deps.subagents.start('spawn', {
-    label: `${target.label} (escalated)`,
-    prompt,
-    parent: exec.agent,
-    signal: exec.signal,
-    ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
-    ...(target.toolFilter ? { toolFilter: target.toolFilter } : {}),
-    maxDepth: 1,
-    persona: target.persona,
-  })
-  attachGuardIfReadOnly(respawned, target, deps)
+  const respawned = await spawnGuardedChild({ target, prompt, parent: exec.agent, signal: exec.signal, label: `${target.label} (escalated)` }, oneShotLane(), deps)
   const second = await respawned.result
   return {
     id: respawned.id,
     status: second.stopReason,
-    text: textOf(second.output),
+    text: contentText(second.output),
     escalated: escalation.target,
-  }
-}
-
-/** Attach the read-only shell guard to a spawned read-only child (fail-closed). */
-function attachGuardIfReadOnly(started, target, deps) {
-  // deps.robash is a live resolver (the settings overlay can change between
-  // delegations), so resolve it once here: the enabled check and the lists
-  // handed to the guard must describe the same committed snapshot.
-  const robash = deps.robash?.()
-  if (!target.readOnly || !robash?.enabled) return
-  // robash.lists carries both list sets ({ bash, pwsh }); the guard
-  // dispatches on execution.name.
-  try {
-    attachReadOnlyBashGuard(started.localAgent, robash.lists)
-  } catch (error) {
-    // A read-only child must never run unguarded: tear it down and fail loud.
-    started.dispose()
-    throw new Error(`delegate: failed to attach the read-only bash guard — ${String(error?.message ?? error)}`)
   }
 }
 
@@ -291,42 +243,17 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
   for (const item of items) {
     const target = await deps.resolveTarget(item, parentRouteOf(exec))
     const prompt = await buildPrompt(item, deps)
-    plans.push({ target, prompt })
+    plans.push({ target, prompt, parent: exec.agent, signal: exec.signal })
   }
 
   const members = []
+  const lane = supervisedLane({ coordinator, groupName, members })
   try {
     for (const plan of plans) {
-      const { target, prompt } = plan
-      const started = await deps.subagents.startContinuable({
-        provider: 'spawn',
-        label: target.label,
-        request: {
-          prompt,
-          parent: exec.agent,
-          ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
-          toolFilter: supervisedToolFilter(target.toolFilter),
-          maxDepth: 1,
-          persona: target.persona + SUPERVISION_CONTRACT,
-        },
-        signal: exec.signal,
-      })
-      // Register BEFORE the guard attach: a guard failure must leave the member
-      // in the rollback list so it is terminated, never left running unguarded.
-      const member = coordinator.registerMember({ id: started.childId, name: target.label, group: groupName })
-      members.push({ id: started.childId, name: target.label, member })
-      // startContinuable returns { childId, messageId } (no localAgent), so
-      // the read-only shell guard attaches through the live agent handle —
-      // same guard, same fail-closed semantics as the other lanes.
-      if (target.readOnly) {
-        const childAgent = deps.agents?.get(started.childId)
-        if (!childAgent) throw new Error(`delegate: read-only supervised member spawned but no live agent handle is available for "${started.childId}"`)
-        const robash = deps.robash?.()
-        // Guard disabled in this snapshot: the member keeps its shell-free
-        // surface (resolveTarget already withheld the shell tool).
-        if (!robash?.enabled) continue
-        attachReadOnlyBashGuard(childAgent, robash.lists)
-      }
+      // Each plan is a spawn assignment: the adapter assembles the request,
+      // spawns, registers the member (before the guard attach), and attaches
+      // the read-only guard — fail-closed, so a throw lands in the rollback.
+      await spawnGuardedChild(plan, lane, deps)
     }
   } catch (error) {
     // Roll back partially spawned members and free the group name.
@@ -354,18 +281,10 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
   }
 }
 
-/**
- * Supervised members must report through the terminal-status channel only:
- * deny the DSH send_message tool. Allow-list filters (read-only targets) already
- * exclude it and stay unchanged; deny-list filters get send_message merged in.
- * @param {object | undefined} toolFilter
- * @returns {object} a tool filter that always denies send_message
- */
-export function supervisedToolFilter(toolFilter) {
-  if (!toolFilter) return { deny: ['send_message'] }
-  if (toolFilter.allow !== undefined) return toolFilter
-  return { ...toolFilter, deny: [...new Set([...(toolFilter.deny ?? []), 'send_message'])] }
-}
+// supervisedToolFilter moved to spawn-adapter.js (it is the supervised lane's
+// toolFilter transform); re-exported in place so existing imports keep working —
+// the named import in test/delegate.test.js is the migration canary.
+export { supervisedToolFilter } from './spawn-adapter.js'
 
 /** The calling agent's current route, when the session has one. */
 function parentRouteOf(exec) {
@@ -375,15 +294,6 @@ function parentRouteOf(exec) {
   } catch {
     return undefined
   }
-}
-
-/** Extract plain text from content blocks. */
-function textOf(output) {
-  if (!Array.isArray(output)) return ''
-  return output
-    .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
 }
 
 /** Model-facing rendering of the delegate result value. */

@@ -14,6 +14,7 @@ import { DEFAULT_TABLES } from './robash-guard-core.js'
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { userTextMessage } from '../shared/user-message.js'
+import { contentText } from '../shared/content-text.js'
 import { createDelegateTool } from './tool.js'
 
 const name = 'orrery-delegate'
@@ -269,12 +270,7 @@ function apply(ctx, config = {}) {
     const entry = entryOfChild(session.id)
     if (!entry) return
     if (event?.type === 'assistant/message') {
-      const text = Array.isArray(event.data?.message?.content)
-        ? event.data.message.content
-            .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
-            .map((block) => block.text)
-            .join('\n')
-        : ''
+      const text = contentText(event.data?.message?.content)
       entry.coordinator.noteAssistantText(session.id, text)
       return
     }
@@ -575,10 +571,7 @@ export async function readChildFinalText(sessionQuery, childId) {
     if (event?.type !== 'assistant/message') continue
     const content = event?.data?.message?.content
     if (!Array.isArray(content)) continue
-    const text = content
-      .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
-      .map((block) => block.text)
-      .join('\n')
+    const text = contentText(content)
     if (text.length > 0) return text
     return null
   }
