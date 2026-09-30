@@ -40,7 +40,7 @@ describe('orrery-core', () => {
       'disjoint write scopes',
       'delegate(category=...)',
       'delegate(agent=...)',
-      'explore', 'librarian', 'oracle',
+      'finder', 'scholar', 'advisor',
       'TASK:', 'DELIVERABLE', 'SCOPE', 'VERIFY', 'STOP WHEN',
       'end the turn',
       'job_output',
@@ -52,5 +52,11 @@ describe('orrery-core', () => {
     for (const phrase of required) {
       expect(DOCTRINE, `doctrine must mention ${phrase}`).toContain(phrase)
     }
+  })
+
+  it('doctrine carries no retired curated-agent name', () => {
+    expect(DOCTRINE).not.toContain('explore')
+    expect(DOCTRINE).not.toContain('librarian')
+    expect(DOCTRINE).not.toContain('oracle')
   })
 })

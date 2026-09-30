@@ -70,42 +70,42 @@ describe('target-resolver agent branch', () => {
 
   it('appends the persona note only when the guard is enabled', async () => {
     const on = makeResolver({ overlay: fakeOverlay({ robashEnabled: true, shellName: 'pwsh' }) })
-    const resolved = await on.resolveTarget({ agent: 'explore', prompt: 'TASK: find' })
+    const resolved = await on.resolveTarget({ agent: 'finder', prompt: 'TASK: find' })
     expect(resolved.persona).toContain('guarded read-only')
     expect(resolved.persona).toContain('`pwsh`')
     expect(resolved.toolFilter.allow).toContain('pwsh')
     expect(resolved.readOnly).toBe(true)
 
     const off = makeResolver({ overlay: fakeOverlay({ robashEnabled: false }) })
-    const unguarded = await off.resolveTarget({ agent: 'explore', prompt: 'TASK: find' })
+    const unguarded = await off.resolveTarget({ agent: 'finder', prompt: 'TASK: find' })
     expect(unguarded.persona).not.toContain('guarded read-only')
     expect(unguarded.toolFilter.allow).not.toContain('bash')
   })
 
   it('label priority: name > task_summary > first line of prompt', async () => {
     const { resolveTarget } = makeResolver()
-    expect((await resolveTarget({ agent: 'explore', prompt: 'p', name: 'nm' })).label).toBe('nm')
-    expect((await resolveTarget({ agent: 'explore', prompt: 'p', task_summary: 'ts' })).label).toBe('ts')
-    expect((await resolveTarget({ agent: 'explore', prompt: 'first line\nsecond' })).label).toBe('explore: first line')
+    expect((await resolveTarget({ agent: 'finder', prompt: 'p', name: 'nm' })).label).toBe('nm')
+    expect((await resolveTarget({ agent: 'finder', prompt: 'p', task_summary: 'ts' })).label).toBe('ts')
+    expect((await resolveTarget({ agent: 'finder', prompt: 'first line\nsecond' })).label).toBe('finder: first line')
   })
 
   it('resolves the guard overlay exactly once per delegation (D5)', async () => {
     const overlay = fakeOverlay()
     const { resolveTarget } = makeResolver({ overlay })
-    await resolveTarget({ agent: 'explore', prompt: 'x' })
+    await resolveTarget({ agent: 'finder', prompt: 'x' })
     expect(overlay.calls.robashNow).toBe(1)
   })
 
   it('a configured agent chain wins over inheritance', async () => {
     const routed = {
       ...CURATED_AGENTS,
-      explore: { ...CURATED_AGENTS.explore, chain: [{ provider: 'acme', model: 'm1' }] },
+      finder: { ...CURATED_AGENTS.finder, chain: [{ provider: 'acme', model: 'm1' }] },
     }
     const { resolveTarget } = makeResolver({
       overlay: fakeOverlay({ agents: routed }),
       llm: fakeLlm({ providers: [{ id: 'acme' }], models: { acme: [{ id: 'm1' }] } }),
     })
-    const resolved = await resolveTarget({ agent: 'explore', prompt: 'x' }, { provider: 'parent-p', model: 'parent-m' })
+    const resolved = await resolveTarget({ agent: 'finder', prompt: 'x' }, { provider: 'parent-p', model: 'parent-m' })
     expect(resolved.agentOptions).toEqual({ provider: 'acme', model: 'm1' })
     // routing never touches the read-only surface
     expect(resolved.readOnly).toBe(true)
@@ -114,30 +114,30 @@ describe('target-resolver agent branch', () => {
 
   it('an empty agent chain inherits the caller route and gates the effort hint on it', async () => {
     const parentRoute = { provider: 'p', model: 'm' }
-    // supported: the parent route advertises explore's 'low' hint
+    // supported: the parent route advertises finder's 'low' hint
     const supported = makeResolver({ llm: fakeLlm({ modelInfo: { 'p/m': { reasoning: { efforts: [{ id: 'low' }] } } } }) })
-    expect((await supported.resolveTarget({ agent: 'explore', prompt: 'x' }, parentRoute)).agentOptions).toEqual({ reasoningEffort: 'low' })
+    expect((await supported.resolveTarget({ agent: 'finder', prompt: 'x' }, parentRoute)).agentOptions).toEqual({ reasoningEffort: 'low' })
 
     // unsupported: dropped silently
     const unsupported = makeResolver({ llm: fakeLlm({ modelInfo: { 'p/m': { reasoning: { efforts: [{ id: 'high' }] } } } }) })
-    expect((await unsupported.resolveTarget({ agent: 'explore', prompt: 'x' }, parentRoute)).agentOptions).toBeUndefined()
+    expect((await unsupported.resolveTarget({ agent: 'finder', prompt: 'x' }, parentRoute)).agentOptions).toBeUndefined()
 
     // unknown route metadata: omit the hint rather than risk a rejection
     const noInfo = makeResolver()
-    expect((await noInfo.resolveTarget({ agent: 'explore', prompt: 'x' }, parentRoute)).agentOptions).toBeUndefined()
+    expect((await noInfo.resolveTarget({ agent: 'finder', prompt: 'x' }, parentRoute)).agentOptions).toBeUndefined()
     const throwing = makeResolver({ llm: { ...fakeLlm(), resolveModelInfo: async () => { throw new Error('no metadata') } } })
-    expect((await throwing.resolveTarget({ agent: 'explore', prompt: 'x' }, parentRoute)).agentOptions).toBeUndefined()
+    expect((await throwing.resolveTarget({ agent: 'finder', prompt: 'x' }, parentRoute)).agentOptions).toBeUndefined()
 
     // no known parent route: pure inheritance, no options at all
     const noParent = makeResolver()
-    expect((await noParent.resolveTarget({ agent: 'explore', prompt: 'x' })).agentOptions).toBeUndefined()
+    expect((await noParent.resolveTarget({ agent: 'finder', prompt: 'x' })).agentOptions).toBeUndefined()
   })
 
   it('a non-empty agent chain whose rungs all fail throws an explicit error naming agent and rungs', async () => {
     const dead = {
       ...CURATED_AGENTS,
-      explore: {
-        ...CURATED_AGENTS.explore,
+      finder: {
+        ...CURATED_AGENTS.finder,
         chain: [
           { provider: 'gone', model: 'x' },
           { provider: 'also-gone', model: 'y' },
@@ -145,11 +145,11 @@ describe('target-resolver agent branch', () => {
       },
     }
     const { resolveTarget } = makeResolver({ overlay: fakeOverlay({ agents: dead }) })
-    const error = await resolveTarget({ agent: 'explore', prompt: 'x' }).then(
+    const error = await resolveTarget({ agent: 'finder', prompt: 'x' }).then(
       () => { throw new Error('expected a rejection') },
       (err) => err,
     )
-    expect(error.message).toContain('agent "explore" unavailable')
+    expect(error.message).toContain('agent "finder" unavailable')
     expect(error.message).toContain('gone/x')
     expect(error.message).toContain('also-gone/y')
   })
@@ -159,34 +159,34 @@ describe('target-resolver agent branch', () => {
     // unlisted id is still attempted (catalogs are advisory).
     const routed = {
       ...CURATED_AGENTS,
-      explore: { ...CURATED_AGENTS.explore, chain: [{ provider: 'acme', model: 'm1' }] },
+      finder: { ...CURATED_AGENTS.finder, chain: [{ provider: 'acme', model: 'm1' }] },
     }
     const chained = makeResolver({
       overlay: fakeOverlay({ agents: routed }),
       llm: fakeLlm({ providers: [{ id: 'acme' }], models: { acme: [{ id: 'm1' }] } }),
     })
-    const overridden = await chained.resolveTarget({ agent: 'explore', model: 'unlisted-model', prompt: 'x' })
+    const overridden = await chained.resolveTarget({ agent: 'finder', model: 'unlisted-model', prompt: 'x' })
     expect(overridden.agentOptions).toEqual({ provider: 'acme', model: 'unlisted-model' })
 
     // Inherited route: the provider is the caller's.
     const plain = makeResolver()
-    const inherited = await plain.resolveTarget({ agent: 'explore', model: 'unlisted-model', prompt: 'x' }, { provider: 'parent-p', model: 'parent-m' })
+    const inherited = await plain.resolveTarget({ agent: 'finder', model: 'unlisted-model', prompt: 'x' }, { provider: 'parent-p', model: 'parent-m' })
     expect(inherited.agentOptions).toEqual({ provider: 'parent-p', model: 'unlisted-model' })
   })
 
   it('keeps a rung effort the resolved agent route advertises and drops one it does not', async () => {
     const rung = { provider: 'acme', model: 'm1', reasoningEffort: 'high' }
-    const routed = { ...CURATED_AGENTS, explore: { ...CURATED_AGENTS.explore, chain: [rung] } }
+    const routed = { ...CURATED_AGENTS, finder: { ...CURATED_AGENTS.finder, chain: [rung] } }
     const llmWith = (efforts) => fakeLlm({
       providers: [{ id: 'acme' }],
       models: { acme: [{ id: 'm1' }] },
       modelInfo: { 'acme/m1': { reasoning: { efforts } } },
     })
     const supported = makeResolver({ overlay: fakeOverlay({ agents: routed }), llm: llmWith([{ id: 'high' }]) })
-    expect((await supported.resolveTarget({ agent: 'explore', prompt: 'x' })).agentOptions).toEqual({ provider: 'acme', model: 'm1', reasoningEffort: 'high' })
+    expect((await supported.resolveTarget({ agent: 'finder', prompt: 'x' })).agentOptions).toEqual({ provider: 'acme', model: 'm1', reasoningEffort: 'high' })
 
     const unsupported = makeResolver({ overlay: fakeOverlay({ agents: routed }), llm: llmWith([{ id: 'low' }]) })
-    expect((await unsupported.resolveTarget({ agent: 'explore', prompt: 'x' })).agentOptions).toEqual({ provider: 'acme', model: 'm1' })
+    expect((await unsupported.resolveTarget({ agent: 'finder', prompt: 'x' })).agentOptions).toEqual({ provider: 'acme', model: 'm1' })
   })
 
   it('available-target lists in error messages name only enabled targets', async () => {
@@ -197,7 +197,7 @@ describe('target-resolver agent branch', () => {
       (err) => err,
     )
     expect(agentError.message).toContain('unknown_target "nope"')
-    expect(agentError.message).toContain('explore')
+    expect(agentError.message).toContain('finder')
     expect(agentError.message).not.toContain('hidden')
 
     const withDisabledCategory = { ...DEFAULT_CATEGORIES, secret: { chain: [], disabled: true } }

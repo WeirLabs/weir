@@ -4,7 +4,7 @@
 
 ## 概述
 
-`delegate` 是 Orchestrator 的执行手臂。任务类别（category）各自绑定一条按优先级排序的模型链和一份类别心智提示词；另有三个精选只读研究代理（`explore` 代码检索、`librarian` 文档/OSS 调研、`oracle` 架构咨询）。委派可单个、可批量（≤16）、可放后台；子代理不可再委派，保证拓扑可控。
+`delegate` 是 Orchestrator 的执行手臂。任务类别（category）各自绑定一条按优先级排序的模型链和一份类别心智提示词；另有三个精选只读研究代理（`finder` 代码检索、`scholar` 文档/OSS 调研、`advisor` 架构咨询）。委派可单个、可批量（≤16）、可放后台；子代理不可再委派，保证拓扑可控。
 
 ## 用户可见行为
 
@@ -23,7 +23,7 @@
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | 类别注册表 | 内置 9 类别 | 每类别：`description`、`guidance`、`promptAppend`、有序 `chain: [{provider, model, reasoningEffort?}]`、可选 `gateModels`、`disabled` |
-| 代理注册表 | `explore`/`librarian`/`oracle` | 精选只读代理定义；每条可选 `chain: [{provider, model, reasoningEffort?}]`、`reasoningEffort`、`disabled` |
+| 代理注册表 | `finder`/`scholar`/`advisor` | 精选只读代理定义；每条可选 `chain: [{provider, model, reasoningEffort?}]`、`reasoningEffort`、`disabled` |
 | `delegateAgentChains` | 空（继承调用方路由） | 精选 agent 链覆盖（JSON map，整链替换；未知名告警忽略）。设置页键：`delegateAgentChains` |
 | `delegateDisabledCategories` | 空 | 停用类别名单（JSON 字符串数组，只能追加停用）；停用者不入模型可见清单、不可派发。设置页键：`delegateDisabledCategories` |
 | 模型族提示词变体表 | 内置 | 按模型族选择提示词变体（Claude/Kimi 式清单风格、GPT 式原则风格、其余中性），可覆盖 |

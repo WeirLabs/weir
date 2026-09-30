@@ -1,6 +1,6 @@
-// Curated read-only specialist agents: explore, librarian, oracle.
+// Curated read-only specialist agents: finder, scholar, advisor.
 // Prompts ported in essence from OmO's curated agent set, re-grounded on the
-// DSH tool surface (read/glob/grep + web tools for librarian). Read-only is
+// DSH tool surface (read/glob/grep + web tools for scholar). Read-only is
 // enforced by toolFilter, not by the prompt.
 
 /** Read-only tool allowlist shared by the curated agents. */
@@ -31,8 +31,8 @@ You also have \`bash\`, guarded read-only: whitelisted read commands (ls, cat, g
 
 /** @type {Record<string, CuratedAgentDefinition>} */
 export const CURATED_AGENTS = {
-  explore: {
-    name: 'explore',
+  finder: {
+    name: 'finder',
     description:
       'Contextual codebase search: answers "where is X?", "which file has Y?", "find the code that does Z". Read-only, fast, parallel-first.',
     tools: READONLY_TOOLS,
@@ -87,13 +87,13 @@ Always end with this exact format:
 - Thoroughness levels: "quick" = a few targeted lookups; "medium" = moderate sweep; "very thorough" = exhaustive analysis with multiple rounds.`,
   },
 
-  librarian: {
-    name: 'librarian',
+  scholar: {
+    name: 'scholar',
     description:
       'Documentation and OSS research: official docs, library APIs, best practices, and real-world usage examples from public sources. Read-only.',
     tools: [...READONLY_TOOLS, 'web_search', 'web_fetch'],
     reasoningEffort: 'low',
-    prompt: `You are a research librarian for software work. Your job: answer with authoritative, current, cited knowledge.
+    prompt: `You are a research scholar for software work. Your job: answer with authoritative, current, cited knowledge.
 
 ## Your Mission
 
@@ -119,8 +119,8 @@ Always end with this exact format:
 </results>`,
   },
 
-  oracle: {
-    name: 'oracle',
+  advisor: {
+    name: 'advisor',
     description:
       'Architecture and design advisor: module boundaries, decomposition, trade-offs, review of proposed designs. Read-only, high reasoning.',
     tools: READONLY_TOOLS,

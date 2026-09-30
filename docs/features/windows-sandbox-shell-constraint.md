@@ -4,7 +4,7 @@
 
 ## 概述
 
-Orrery 的只读委派车道与文档化的测试流程都建立在"能启动子进程"这个前提上：curated 只读 Agent（`explore` / `librarian` / `oracle`）在 Windows 上被授予 `pwsh` 工具，`AGENTS.md` §6/§8 的 `pnpm run check`、`pnpm test`、`test:integration`、OpenSpec CLI 与 `git` 也都要派生进程。
+Orrery 的只读委派车道与文档化的测试流程都建立在"能启动子进程"这个前提上：curated 只读 Agent（`finder` / `scholar` / `advisor`）在 Windows 上被授予 `pwsh` 工具，`AGENTS.md` §6/§8 的 `pnpm run check`、`pnpm test`、`test:integration`、OpenSpec CLI 与 `git` 也都要派生进程。
 
 DSH 桌面版在 Windows 上以 Electron 为宿主，宿主是 GUI 进程、**不持有控制台**；而 Windows ACL 沙箱派生的受限子进程必须在控制台上完成 DLL 初始化。两件事相遇的结果是：`workspace-write`（默认文件策略）下**任何**子进程都以 `STATUS_DLL_INIT_FAILED` 死亡。
 

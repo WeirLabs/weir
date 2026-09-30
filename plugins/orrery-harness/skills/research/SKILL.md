@@ -1,6 +1,6 @@
 ---
 name: research
-description: "Deep research over code, docs, and the web: parallel explore/librarian fan-out, then a cited synthesis. Use when the research itself is the deliverable or a claim needs an execution-backed verdict."
+description: "Deep research over code, docs, and the web: parallel finder/scholar fan-out, then a cited synthesis. Use when the research itself is the deliverable or a claim needs an execution-backed verdict."
 metadata:
   short-description: Deep research workflow with cited synthesis
 ---
@@ -19,10 +19,10 @@ this workflow — read the code directly instead.
    sub-question: this codebase, official docs, OSS usage, or the web at large.
 
 2. **Fan out in parallel.** One background `delegate` child per lane:
-   - `agent="explore"` for this codebase (several in parallel for disjoint
+   - `agent="finder"` for this codebase (several in parallel for disjoint
      areas — name the area in each prompt),
-   - `agent="librarian"` for official docs / library APIs / OSS examples,
-   - `agent="oracle"` when the question is architectural.
+   - `agent="scholar"` for official docs / library APIs / OSS examples,
+   - `agent="advisor"` when the question is architectural.
    Every prompt is self-contained: TASK / DELIVERABLE (the cited answer, with
    file:line or URLs) / SCOPE / VERIFY / STOP WHEN.
 

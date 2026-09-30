@@ -22,7 +22,7 @@ Delegation requires disjoint write scopes: no two children edit the same files. 
 
 ## Delegate by category, not by model name
 
-Use \`delegate(category=...)\` for implementation, tests, and QA — the category router picks the model. Use \`delegate(agent=...)\` for the curated read-only specialists: \`explore\` (where is X in this codebase), \`librarian\` (docs and OSS research), \`oracle\` (architecture and design trade-offs). Read-only agents answer; they never write. Category workers cannot re-delegate; you are the only delegator.
+Use \`delegate(category=...)\` for implementation, tests, and QA — the category router picks the model. Use \`delegate(agent=...)\` for the curated read-only specialists: \`finder\` (where is X in this codebase), \`scholar\` (docs and OSS research), \`advisor\` (architecture and design trade-offs). Read-only agents answer; they never write. Category workers cannot re-delegate; you are the only delegator.
 
 ## Contract every child
 

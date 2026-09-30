@@ -9,15 +9,19 @@
 
 ### Added
 
-- **精选 agent 支持期望路由（`delegateAgentChains`）**：`explore`/`librarian`/`oracle` 此前在路由上**不可配置**——注册表条目没有 `chain`、设置页也没有对应键，于是只能静默继承父路由。现在精选 agent 与类别**共用同一条解析路径**（`resolveCategory` 更名 `resolveTargetRoute`）：链上首个「provider 已注册且列出该 model」的档位胜出；整链不可解析时显式报错并点名 agent 与尝试过的档位，**绝不回退继承**（否则「配错了」会变成「静默跑在别的模型上」）；空链保持继承父路由（向后兼容）。设置页新增 `delegateAgentChains`（JSON map，整链替换；未知 agent 名告警忽略，与 `delegateCategoryChains` 同语义）。
+- **精选 agent 支持期望路由（`delegateAgentChains`）**：三个精选 agent（`finder`/`scholar`/`advisor`）此前在路由上**不可配置**——注册表条目没有 `chain`、设置页也没有对应键，于是只能静默继承父路由。现在精选 agent 与类别**共用同一条解析路径**（`resolveCategory` 更名 `resolveTargetRoute`）：链上首个「provider 已注册且列出该 model」的档位胜出；整链不可解析时显式报错并点名 agent 与尝试过的档位，**绝不回退继承**（否则「配错了」会变成「静默跑在别的模型上」）；空链保持继承父路由（向后兼容）。设置页新增 `delegateAgentChains`（JSON map，整链替换；未知 agent 名告警忽略，与 `delegateCategoryChains` 同语义）。
 - **委托目标指引小节（`orchestrator:delegate-targets`）**：会话系统提示词新增一段常驻小节，说明 `delegate` 的正确用法（每条目必须且只能给 `category` 或 `agent` 之一；类别道**没有默认值**，必须点名类别），并列出**当前启用**的类别（名称 + 描述 + 路由指引）与精选 agent（名称 + 描述）。小节文本是静态模板，其中内嵌的变量由 DSH 在**每次提示词装配**时求值（不是注册期快照），因此设置提交在同一进程内即刻改变模型看到的目标集合，无需重启、无需重建会话。
 - **类别可在设置页停用（`delegateDisabledCategories`）**：JSON 字符串数组，命中的类别被标为停用；注册表自带的 `disabled` 继续有效。停用语义贯通**三处**——指引小节不再列出它、派发它得到显式 disabled 错误、**未知目标报错里的 available 名单也不再把它列为可选**（与 robash 五表同一哲学：设置面只能追加停用，无法解除注册表级停用）。
+
+### Changed
+
+- **三个精选 agent 改名（BREAKING）**：`explore` → `finder`、`librarian` → `scholar`、`oracle` → `advisor`。服务端注册表键与各条目 `name`、工具描述、doctrine 正文、设置页 agent 行列表全部随动；只读强制、只读 bash 守卫、不可再委派、路由解析与 persona 正文语义不变（唯一文本例外：原 librarian 的 persona 首句随名改为 "research scholar"，避免名称与自述分裂）。**不留别名**：旧名不再可寻址——`delegate(agent="explore"|"librarian"|"oracle")` 直接报 `unknown_target`，错误文本只列三个新名；`delegateAgentChains` 的 JSON key 即 agent 名，已写旧名的配置解析为未知 agent（告警忽略），需手工同步改名为 `finder`/`scholar`/`advisor`。
 
 ### Fixed
 
 - **委托目标靠「先失败一次」才学会（模型可见面缺陷，实测确证）**：`delegate` 工具描述声称类别清单与路由指引 "listed in the orchestration doctrine and this tool's runtime diagnostics"，但实测**两处都没有**——实测取证：本会话系统提示词的 `system/message` 与工具 schema 的 `request/header` 中，9 个类别名一个都不出现。Orchestrator 只能从一次**失败的调用**里学到「派发必须点名类别」以及类别名（唯一能学到清单的路径是 `unknown_target` 报错文本本身）。现由注入小节在**首次调用之前**交付用法与启用目标清单，工具描述同步删除该错误声明并改为指向小节。
 - **`model` 对 agent 派发完全无效（未兑现契约）**：工具描述承诺 "model is honored for agent spawns only"，但 `target-resolver.js` 的 agent 分支从不读 `item.model`——参数被 `normalizeItems` 校验通过后被静默丢弃。现生效为「否则会使用的那条路由」的 model id 覆盖（provider 取该路由的 provider；不因 provider catalog 未列出而拒绝——DSH 契约里 catalog 是 advisory）。
-- **精选 agent 的 `reasoningEffort` 是死数据**：`CURATED_AGENTS` 里的 `explore: low` / `oracle: high` 从未被应用（agent 分支此前不产生 `agentOptions`）。现在仅在所选路由确实声明该档位时应用，否则静默丢弃（与类别继承路径同一规则）。
+- **精选 agent 的 `reasoningEffort` 是死数据**：`CURATED_AGENTS` 里的 `finder: low` / `advisor: high` 从未被应用（agent 分支此前不产生 `agentOptions`）。现在仅在所选路由确实声明该档位时应用，否则静默丢弃（与类别继承路径同一规则）。
 
 ## [0.5.0] - 2026-10-01
 

@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
 		// test/client-settings-page.test.js pins this list to
 		// Object.keys(CURATED_AGENTS) from src/delegate/agents.js, so a registry
 		// rename cannot drift the two sides.
-		const CURATED_AGENT_NAMES = ["explore", "librarian", "oracle"];
+		const CURATED_AGENT_NAMES = ["finder", "scholar", "advisor"];
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },

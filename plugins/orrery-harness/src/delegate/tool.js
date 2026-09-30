@@ -12,7 +12,7 @@ export const DELEGATE_DESCRIPTION = `Delegate work to a specialist child agent. 
 
 Each call item MUST provide exactly one of category or agent (never both, never neither):
 - category: routed through the category registry; the child's model comes from the category's resolved chain. The category lane has no default — a category name must always be supplied. Available categories and their routing guidance are listed in the injected prompt section "orchestrator:delegate-targets".
-- agent: a curated read-only specialist by name: explore (codebase search), librarian (docs/OSS research), oracle (architecture advice).
+- agent: a curated read-only specialist by name: finder (codebase search), scholar (docs/OSS research), advisor (architecture advice).
 
 NEVER pass model together with category: category-routed children take their model from the registry. model is honored for agent spawns only.
 

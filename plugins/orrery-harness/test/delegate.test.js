@@ -139,11 +139,11 @@ describe('normalizeItems', () => {
   })
 
   it('rejects prompt+tasks together', () => {
-    expect(() => normalizeItems({ prompt: 'x', tasks: [{ prompt: 'y', agent: 'explore' }] })).toThrow(/either prompt/)
+    expect(() => normalizeItems({ prompt: 'x', tasks: [{ prompt: 'y', agent: 'finder' }] })).toThrow(/either prompt/)
   })
 
   it('rejects items with both or neither target', () => {
-    expect(() => normalizeItems({ tasks: [{ prompt: 'x', category: 'quick', agent: 'explore' }] })).toThrow(/exactly one/)
+    expect(() => normalizeItems({ tasks: [{ prompt: 'x', category: 'quick', agent: 'finder' }] })).toThrow(/exactly one/)
     expect(() => normalizeItems({ tasks: [{ prompt: 'x' }] })).toThrow(/exactly one/)
   })
 
@@ -152,7 +152,7 @@ describe('normalizeItems', () => {
   })
 
   it('caps batch size', () => {
-    const tasks = Array.from({ length: 17 }, (_, i) => ({ prompt: `t${i}`, agent: 'explore' }))
+    const tasks = Array.from({ length: 17 }, (_, i) => ({ prompt: `t${i}`, agent: 'finder' }))
     expect(() => normalizeItems({ tasks })).toThrow(/capped at 16/)
   })
 
@@ -188,7 +188,7 @@ describe('delegate tool', () => {
       resolveTarget: overrides.resolveTarget ?? (async (item) => ({
         persona: 'persona',
         label: item.name ?? 'child',
-        ...(item.agent === 'explore' ? { toolFilter: { allow: ['read'] } } : {}),
+        ...(item.agent === 'finder' ? { toolFilter: { allow: ['read'] } } : {}),
       })),
       loadSkill: async () => 'skill-body',
       subagents: {
@@ -235,7 +235,7 @@ describe('delegate tool', () => {
       },
     })
     const tool = createDelegateTool(deps)
-    const result = await tool.execute({ agent: 'explore', prompt: 'TASK: find', run_in_background: true }, fakeExec())
+    const result = await tool.execute({ agent: 'finder', prompt: 'TASK: find', run_in_background: true }, fakeExec())
     expect(result.background).toBe(true)
     expect(result.jobs[0].job_id).toBe('subagent-7')
     expect(started[0].kind).toBe('subagent')
@@ -245,7 +245,7 @@ describe('delegate tool', () => {
   it('fails background calls without a jobs registry', async () => {
     const tool = createDelegateTool(fakeDeps({ jobs: undefined }))
     await expect(async () =>
-      tool.execute({ agent: 'explore', prompt: 'x', run_in_background: true }, fakeExec()),
+      tool.execute({ agent: 'finder', prompt: 'x', run_in_background: true }, fakeExec()),
     ).rejects.toThrow(/background jobs are unavailable/)
   })
 
@@ -277,7 +277,7 @@ describe('registry defaults', () => {
     expect(Object.keys(DEFAULT_CATEGORIES).sort()).toEqual([
       'architect', 'artistry', 'deep', 'deep-plus', 'general-high', 'general-low', 'quick', 'visual', 'writing',
     ])
-    expect(Object.keys(CURATED_AGENTS).sort()).toEqual(['explore', 'librarian', 'oracle'])
+    expect(Object.keys(CURATED_AGENTS).sort()).toEqual(['advisor', 'finder', 'scholar'])
   })
 
   it('curated agents are read-only', () => {
@@ -329,7 +329,7 @@ describe('delegate plugin apply', () => {
     const rendered = render()
     expect(typeof rendered).toBe('string')
     expect(rendered).toContain('quick')
-    expect(rendered).toContain('explore')
+    expect(rendered).toContain('finder')
 
     settings.delegate = { disabledCategories: ['quick'] }
     expect(render()).not.toContain('quick')
@@ -342,16 +342,31 @@ describe('delegate plugin apply', () => {
       listProviders: () => [{ id: 'routed' }],
       listModels: async () => [{ id: 'routed-1' }],
     }
-    const settings = { delegate: { agentChains: { explore: [{ provider: 'routed', model: 'routed-1' }] } } }
+    const settings = { delegate: { agentChains: { finder: [{ provider: 'routed', model: 'routed-1' }] } } }
     const { tool, spawned } = applyHarness({}, settings, undefined, routedLlm)
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(spawned[0].request.agentOptions).toEqual({ provider: 'routed', model: 'routed-1' })
   })
 
   it('fails loud when a configured agent chain resolves no rung', async () => {
-    const settings = { delegate: { agentChains: { explore: [{ provider: 'ghost', model: 'x' }] } } }
+    const settings = { delegate: { agentChains: { finder: [{ provider: 'ghost', model: 'x' }] } } }
     const { tool } = applyHarness({}, settings)
-    await expect(async () => tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())).rejects.toThrow(/agent "explore" unavailable/)
+    await expect(async () => tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())).rejects.toThrow(/agent "finder" unavailable/)
+  })
+
+  it('a retired agent name is not addressable: unknown_target lists only the new names and no child starts', async () => {
+    const { tool, spawned } = applyHarness()
+    const error = await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub()).then(
+      () => { throw new Error('expected a rejection') },
+      (err) => err,
+    )
+    expect(error.message).toContain('unknown_target "explore"')
+    expect(error.message).toContain('finder')
+    expect(error.message).toContain('scholar')
+    expect(error.message).toContain('advisor')
+    expect(error.message).not.toContain('librarian')
+    expect(error.message).not.toContain('oracle')
+    expect(spawned).toHaveLength(0)
   })
   function applyHarness(config = {}, settingsSections = undefined, settingsService = undefined, llm = undefined) {
     const registered = []
@@ -406,7 +421,7 @@ describe('delegate plugin apply', () => {
 
   it('curated spawns get the platform shell in the allowlist, a persona note, and a live guard', async () => {
     const { tool, spawned, guards } = applyHarness()
-    const result = await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    const result = await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(result.results[0].text).toBe('ro findings')
     // win32 gets pwsh, elsewhere bash: the read-only shell follows the platform
     const shell = readOnlyShellName(process.platform)
@@ -436,7 +451,7 @@ describe('delegate plugin apply', () => {
 
   it('readOnlyBash disabled drops the shell from the allowlist and skips the guard', async () => {
     const { tool, spawned, guards } = applyHarness({ readOnlyBash: { enabled: false } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(spawned[0].request.toolFilter.allow).not.toContain(readOnlyShellName(process.platform))
     expect(spawned[0].request.persona).not.toContain('guarded read-only')
     expect(guards).toHaveLength(0)
@@ -444,7 +459,7 @@ describe('delegate plugin apply', () => {
 
   it('settings override allow: [] adds nothing and the product defaults still govern', async () => {
     const { tool, guards } = applyHarness({}, { robash: { allow: [] } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
     // an empty addition is a no-op: the default command still passes, and no
     // configuration value can clear the whitelist any more
@@ -457,7 +472,7 @@ describe('delegate plugin apply', () => {
     // `uniq` is a product default; `sort` is too. The addition names neither, so
     // a substitution-style merge would drop both and only allow the addition.
     const { tool, guards } = applyHarness({}, { robash: { allow: ['custom-reader'] } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards[0]({ name: 'bash', arguments: { command: 'custom-reader x' } })).toBe(undefined)
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
     expect(guards[0]({ name: 'bash', arguments: { command: 'uniq a.txt' } })).toBe(undefined)
@@ -465,7 +480,7 @@ describe('delegate plugin apply', () => {
 
   it('settings override deny: ["ls"] denies ls but keeps the default allow list', async () => {
     const { tool, guards } = applyHarness({}, { robash: { deny: ['ls'] } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toMatch(/explicitly denied/)
     expect(guards[0]({ name: 'bash', arguments: { command: 'cat x' } })).toBe(undefined)
@@ -473,7 +488,7 @@ describe('delegate plugin apply', () => {
 
   it('settings service without a robash section keeps the module defaults', async () => {
     const { tool, guards } = applyHarness({}, { delegate: { supervisionMaxRetries: 2 } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
   })
@@ -489,13 +504,13 @@ describe('delegate plugin apply', () => {
     const { tool, spawned } = applyHarness({}, undefined, live.service)
     const shell = readOnlyShellName(process.platform)
 
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(spawned[0].request.toolFilter.allow).toContain(shell)
 
     // Same process, same plugin instance: only the settings commit changes.
     live.commit('robash', { enabled: false })
 
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find again' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find again' }, execStub())
     expect(spawned[1].request.toolFilter.allow).not.toContain(shell)
   })
 
@@ -503,17 +518,17 @@ describe('delegate plugin apply', () => {
     const live = liveSettings()
     const { tool, guards } = applyHarness({}, undefined, live.service)
 
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
 
     // A committed empty list adds nothing, so the defaults still govern.
     live.commit('robash', { allow: [] })
 
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find again' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find again' }, execStub())
     expect(guards[1]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
     // ...and a committed ADDITION is visible to the next delegation
     live.commit('robash', { allow: ['custom-reader'] })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find once more' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find once more' }, execStub())
     expect(guards[2]({ name: 'bash', arguments: { command: 'custom-reader x' } })).toBe(undefined)
     expect(guards[2]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
   })
@@ -526,7 +541,7 @@ describe('delegate plugin apply', () => {
     const { tool, guards } = applyHarness({}, undefined, live.service)
 
     live.commit('robash', { allow: ['ls'] })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
 
     live.commit('robash', { allow: [] })
@@ -550,7 +565,7 @@ describe('delegate plugin apply', () => {
 
   it('the live guard dispatches pwsh executions to the pwsh parser', async () => {
     const { tool, guards } = applyHarness()
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content README.md' } })).toBe(undefined)
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'iex "rm x"' } })).toMatch(/'iex' is explicitly denied/)
@@ -560,7 +575,7 @@ describe('delegate plugin apply', () => {
 
   it('settings override pwshAllow: [] adds nothing; the pwsh defaults and the bash defaults both govern', async () => {
     const { tool, guards } = applyHarness({}, { robash: { pwshAllow: [] } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(guards).toHaveLength(1)
     // the empty addition is a no-op: default cmdlets still pass
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Content x' } })).toBe(undefined)
@@ -572,7 +587,7 @@ describe('delegate plugin apply', () => {
 
   it('config.readOnlyPwsh ADDS to the pwsh defaults instead of replacing them', async () => {
     const { tool, guards } = applyHarness({ readOnlyPwsh: { allow: ['Get-Date'] } })
-    await tool.execute({ agent: 'explore', prompt: 'TASK: find' }, execStub())
+    await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     // the row-config addition is accepted...
     expect(guards[0]({ name: 'pwsh', arguments: { command: 'Get-Date' } })).toBe(undefined)
     // ...and the product defaults are still there (a spread would have dropped them)
@@ -603,7 +618,7 @@ describe('delegate plugin apply', () => {
       robash: () => ({ enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: ['Get-Content'], gitAllow: [], deny: [] } } }),
     }
     const guardedTool = createDelegateTool(deps)
-    await expect(async () => guardedTool.execute({ agent: 'explore', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)
+    await expect(async () => guardedTool.execute({ agent: 'finder', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)
     expect(disposed).toEqual([true])
   })
 })
@@ -1048,7 +1063,7 @@ describe('supervised groups (mount layer)', () => {
     // Before the commit: the guard is on and a curated member gets the shell.
     const before = groupHarness()
     await before.tools.delegate.execute(
-      { group: 'g1', tasks: [{ agent: 'explore', prompt: 'TASK: a' }] },
+      { group: 'g1', tasks: [{ agent: 'finder', prompt: 'TASK: a' }] },
       execStub(),
     )
     expect(before.continued[0].request.toolFilter.allow).toContain(shell)
@@ -1060,7 +1075,7 @@ describe('supervised groups (mount layer)', () => {
     const after = groupHarness({}, live.service)
     live.commit('robash', { enabled: false })
     await after.tools.delegate.execute(
-      { group: 'g1', tasks: [{ agent: 'explore', prompt: 'TASK: a' }] },
+      { group: 'g1', tasks: [{ agent: 'finder', prompt: 'TASK: a' }] },
       execStub(),
     )
     expect(after.continued[0].request.toolFilter.allow).not.toContain(shell)

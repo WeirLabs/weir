@@ -113,14 +113,14 @@ describe('createSettingsOverlay', () => {
   it('agentChains replaces a named agent chain wholesale and warns on unknown agents', () => {
     const chain = [{ provider: 'acme', model: 'm1' }]
     const { overlay, warnings } = makeOverlay({
-      sections: { delegate: { agentChains: { explore: chain, bogus: chain } } },
+      sections: { delegate: { agentChains: { finder: chain, bogus: chain } } },
     })
     const agents = overlay.agentsNow()
-    expect(agents.explore.chain).toEqual(chain)
+    expect(agents.finder.chain).toEqual(chain)
     // the replacement keeps the agent's other fields
-    expect(agents.explore.reasoningEffort).toBe('low')
+    expect(agents.finder.reasoningEffort).toBe('low')
     // untouched agents keep having no chain (empty chain = inherit the caller route)
-    expect(agents.librarian.chain).toBeUndefined()
+    expect(agents.scholar.chain).toBeUndefined()
     expect(agents.bogus).toBeUndefined()
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toContain('bogus')
@@ -131,7 +131,7 @@ describe('createSettingsOverlay', () => {
     const { overlay } = makeOverlay({ config: { agents: { custom } } })
     const agents = overlay.agentsNow()
     expect(agents.custom).toEqual(custom)
-    expect(agents.oracle.name).toBe('oracle')
+    expect(agents.advisor.name).toBe('advisor')
   })
 
   it('disabledCategories marks named categories disabled and warns on unknown names', () => {
@@ -162,13 +162,13 @@ describe('createSettingsOverlay', () => {
 
   it('agentChains and disabledCategories resolve at read time (commit visible to the next call)', () => {
     const { overlay, live } = makeOverlay()
-    expect(overlay.agentsNow().explore.chain).toBeUndefined()
+    expect(overlay.agentsNow().finder.chain).toBeUndefined()
     expect(overlay.categoriesNow().quick.disabled).toBeUndefined()
     live.commit('delegate', {
-      agentChains: { explore: [{ provider: 'acme', model: 'm1' }] },
+      agentChains: { finder: [{ provider: 'acme', model: 'm1' }] },
       disabledCategories: ['quick'],
     })
-    expect(overlay.agentsNow().explore.chain).toEqual([{ provider: 'acme', model: 'm1' }])
+    expect(overlay.agentsNow().finder.chain).toEqual([{ provider: 'acme', model: 'm1' }])
     expect(overlay.categoriesNow().quick.disabled).toBe(true)
   })
 
@@ -199,7 +199,7 @@ describe('createSettingsOverlay', () => {
     })
     expect(overlay.robashNow().enabled).toBe(true)
     expect(overlay.supervisionNow()).toEqual({})
-    expect(overlay.agentsNow().explore.name).toBe('explore')
+    expect(overlay.agentsNow().finder.name).toBe('finder')
     expect(overlay.categoriesNow().quick.disabled).toBeUndefined()
   })
 

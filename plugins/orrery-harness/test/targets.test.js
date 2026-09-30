@@ -17,9 +17,9 @@ const CATEGORIES = {
 }
 
 const AGENTS = {
-  explore: { name: 'explore', description: 'Codebase search.', tools: ['read'] },
-  librarian: { name: 'librarian', description: 'Docs and OSS research.', tools: ['read'], disabled: true },
-  oracle: { name: 'oracle', description: 'Architecture advice.', tools: ['read'] },
+  finder: { name: 'finder', description: 'Codebase search.', tools: ['read'] },
+  scholar: { name: 'scholar', description: 'Docs and OSS research.', tools: ['read'], disabled: true },
+  advisor: { name: 'advisor', description: 'Architecture advice.', tools: ['read'] },
 }
 
 describe('delegate target wiring constants', () => {
@@ -57,8 +57,8 @@ describe('renderDelegateTargets', () => {
         '- deep — One goal, one deliverable. Routing guidance: The default deep lane.',
         '',
         'Curated agents:',
-        '- explore — Codebase search.',
-        '- oracle — Architecture advice.',
+        '- finder — Codebase search.',
+        '- advisor — Architecture advice.',
       ].join('\n'),
     )
   })
@@ -67,7 +67,7 @@ describe('renderDelegateTargets', () => {
     const output = renderDelegateTargets({ categories: CATEGORIES, agents: AGENTS })
     expect(output).not.toContain('visual')
     expect(output).not.toContain('Browser-facing work routes here.')
-    expect(output).not.toContain('librarian')
+    expect(output).not.toContain('scholar')
     expect(output).not.toContain('Docs and OSS research.')
   })
 
@@ -97,18 +97,18 @@ describe('renderDelegateTargets', () => {
   it('falls back to an explicit sentence when every entry in a set is disabled', () => {
     const output = renderDelegateTargets({
       categories: { quick: { description: 'Trivial mechanical work.', guidance: 'Default.', disabled: true } },
-      agents: { explore: { name: 'explore', description: 'Codebase search.', disabled: true } },
+      agents: { finder: { name: 'finder', description: 'Codebase search.', disabled: true } },
     })
     expect(output).toContain('No categories are currently enabled.')
     expect(output).toContain('No curated agents are currently enabled.')
     expect(output).not.toContain('quick')
-    expect(output).not.toContain('explore')
+    expect(output).not.toContain('finder')
   })
 
   it('renders an enabled set beside the fallback sentence of the empty one', () => {
     const output = renderDelegateTargets({ categories: {}, agents: AGENTS })
     expect(output).toContain('No categories are currently enabled.')
-    expect(output).toContain('- explore — Codebase search.')
+    expect(output).toContain('- finder — Codebase search.')
   })
 
   it('renders partial entries with placeholder text instead of throwing', () => {
@@ -127,7 +127,7 @@ describe('renderDelegateTargets', () => {
       {},
       { categories: undefined, agents: undefined },
       { categories: {}, agents: {} },
-      { categories: { quick: { disabled: true } }, agents: { explore: { disabled: true } } },
+      { categories: { quick: { disabled: true } }, agents: { finder: { disabled: true } } },
       { categories: { missing: null }, agents: { alsoMissing: undefined } },
     ]
     for (const input of inputs) {
@@ -149,5 +149,14 @@ describe('DELEGATE_DESCRIPTION (task 3.3)', () => {
     expect(DELEGATE_DESCRIPTION).toContain('exactly one of category or agent')
     expect(DELEGATE_DESCRIPTION).toContain('no default')
     expect(DELEGATE_DESCRIPTION).toContain('a category name must always be supplied')
+  })
+
+  it('names the three current curated agents and none of the retired names', () => {
+    expect(DELEGATE_DESCRIPTION).toContain('finder')
+    expect(DELEGATE_DESCRIPTION).toContain('scholar')
+    expect(DELEGATE_DESCRIPTION).toContain('advisor')
+    expect(DELEGATE_DESCRIPTION).not.toContain('explore')
+    expect(DELEGATE_DESCRIPTION).not.toContain('librarian')
+    expect(DELEGATE_DESCRIPTION).not.toContain('oracle')
   })
 })

@@ -42,7 +42,7 @@ first"). When unsure, take HEAVY. Never downgrade mid-task.
 1. **Survey skills, then discover.** Read the catalog, name the skills this
    task will use (skipping a fitting skill is a defect), then run the first
    discovery wave: parallel lookups over the code, git history of the paths to
-   touch, and prior evidence — fan out `delegate(agent="explore")` in the
+   touch, and prior evidence — fan out `delegate(agent="finder")` in the
    background for anything wider than one read wave.
 2. **Register the goal** with `create_goal`: every deliverable, every named
    surface, every constraint, plus the success criteria and a one-line WHEN TO
@@ -64,11 +64,11 @@ claim or change:
 
 1. Repo text, filenames, history → `grep`, `glob`, `git`, shell utilities.
 2. Architecture / blast radius across files → fan out PARALLEL
-   `delegate(agent="explore")` children, then synthesize.
+   `delegate(agent="finder")` children, then synthesize.
 3. Outside the repo (library APIs, docs, best practices) →
-   `delegate(agent="librarian")`.
+   `delegate(agent="scholar")`.
 4. Design trade-offs, module boundaries, hard decisions →
-   `delegate(agent="oracle")` or `delegate(category="architect")`.
+   `delegate(agent="advisor")` or `delegate(category="architect")`.
 
 Batch independent lookups in one assistant message; sequence only when an
 output feeds the next call.
@@ -124,7 +124,7 @@ An independent reviewer is earned by HEAVY tier or by the user demanding
 strict review — never by ambition:
 
 1. Spawn a reviewer child (`delegate(category="general-high")` for a review
-   that must run code, `delegate(agent="oracle")` for read-only review) with
+   that must run code, `delegate(agent="advisor")` for read-only review) with
    the goal, success criteria, evidence, and the full diff.
 2. Verify each concern yourself. A concern blocks only when it names a success
    criterion the evidence fails; others are notes — fixed or declined at your

@@ -8,7 +8,7 @@ Orrery — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 
 |---|---|
 | `orrery-harness/core` | Orchestrator 协作纪律提示词 section（`orchestrator:doctrine`） |
 | `orrery-harness/intent-gate` | 意图门：关键词命中 → 上下文注入 / 推理提档（`agent/pre-step` + `agent/request` 瀑布）；可选语义分类器（regex 默认 / llm sidecar / jev 实验，fail-open + 审计） |
-| `orrery-harness/delegate` | `delegate` 工具：类别路由（模型链解析）+ 精选只读代理（explore/librarian/oracle，bash 受只读白名单守卫）+ 批量 + 后台 job 道 + ESCALATE 契约 + 受监督分组（`group` 二元终态 + 异常续推 + 合并报告 + `resume_agent`/`terminate_agent`） |
+| `orrery-harness/delegate` | `delegate` 工具：类别路由（模型链解析）+ 精选只读代理（finder/scholar/advisor，bash 受只读白名单守卫）+ 批量 + 后台 job 道 + ESCALATE 契约 + 受监督分组（`group` 二元终态 + 异常续推 + 合并报告 + `resume_agent`/`terminate_agent`） |
 | `orrery-harness/todo-driver` | todo 空转续推：`turn/end` reason 区分用户打断/供应商错误，`stop_continuation` 逃生舱 |
 | `orrery-harness/context-guard` | 上下文压力阈值：软阈值提示 + `compact_context` 择时压缩 + 硬阈值边界强制 + 压缩后续推 |
 | `orrery-harness/hashline-edit` | read 锚点增强（`N#XX|`）+ fail-closed `hash_edit` 工具（预设默认唯一编辑工具，`hideStockEdit: false` 可回归共存） |

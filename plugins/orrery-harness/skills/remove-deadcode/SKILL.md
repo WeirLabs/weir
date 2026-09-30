@@ -49,13 +49,13 @@ This gives you the definitive list of unused locals, imports, parameters, and
 types with exact file:line locations. For non-TypeScript projects, use the
 language-native equivalent (compiler or linter warnings for unused code).
 
-**Explore children (fire ALL simultaneously in the background):**
+**Finder children (fire ALL simultaneously in the background):**
 
 ```
-delegate(agent="explore", run_in_background=true,
+delegate(agent="finder", run_in_background=true,
   prompt="TASK: Find files in src/ NOT imported by any other file. Check all import statements. EXCLUDE: index/barrel files, test files, entry points, docs, config. DELIVERABLE: file paths only. SCOPE: src/ VERIFY: each candidate's import count is zero. STOP WHEN: the list is complete")
 
-delegate(agent="explore", run_in_background=true,
+delegate(agent="finder", run_in_background=true,
   prompt="TASK: Find exported functions/types/constants in src/ that no other file imports. Cross-reference: for each export, grep the symbol name across src/ — if it only appears in its own file, it is a candidate. EXCLUDE: barrel/entry exports and test files. DELIVERABLE: file path, line, symbol name, export type. SCOPE: src/ VERIFY: every candidate cross-checked. STOP WHEN: the list is complete")
 ```
 

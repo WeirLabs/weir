@@ -47,5 +47,5 @@ hypotheses with evidence.
 - After 2 identical failed attempts, stop and surface the evidence to the
   user instead of retrying.
 - If the bug involves a library you have not verified, check the library's
-  actual behavior (run it, or `delegate(agent="librarian")`) before blaming
+  actual behavior (run it, or `delegate(agent="scholar")`) before blaming
   your own code — or theirs.

@@ -29,7 +29,7 @@ path).
 ## Phase 2 — Gate review (independent child)
 
 Spawn ONE reviewer child: `delegate(category="general-high")` when the review
-must run code, `delegate(agent="oracle")` for a read-only audit. Pass:
+must run code, `delegate(agent="advisor")` for a read-only audit. Pass:
 
 - the goal and success criteria,
 - the full diff (`git diff` of the change set),

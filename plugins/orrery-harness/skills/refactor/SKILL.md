@@ -72,10 +72,10 @@ execution, final verification).
 
 # PHASE 1: CODEBASE ANALYSIS (PARALLEL EXPLORATION)
 
-## 1.1: Launch Parallel Explore Children (BACKGROUND)
+## 1.1: Launch Parallel Finder Children (BACKGROUND)
 
 Fire all of these simultaneously as background `delegate` children
-(`agent="explore"`, one per lane):
+(`agent="finder"`, one per lane):
 
 1. **Target lookup**: all occurrences and definitions of [TARGET] — file
    paths, line numbers, usage patterns.
@@ -156,7 +156,7 @@ presence). Never invent a command the repo does not keep.
 
 ## 3.2: Analyze Coverage for the Target
 
-One synchronous `delegate(agent="explore")` child (or direct reading): which
+One synchronous `delegate(agent="finder")` child (or direct reading): which
 test files cover [TARGET], what cases exist, integration coverage, edge cases,
 estimated coverage level.
 
@@ -244,7 +244,7 @@ If any verification fails:
 
 1. **STOP** immediately. 2. **REVERT** the failed change. 3. **DIAGNOSE**.
 4. Options: fix and retry / skip if optional / consult
-   `delegate(agent="oracle")` / ask the user.
+   `delegate(agent="advisor")` / ask the user.
 
 **NEVER proceed to the next step with broken tests.**
 
@@ -328,11 +328,11 @@ protocol.
   definition/reference mapping, rename, and diagnostics; `sg` (ast-grep) for
   structural search/rewrite previews. Never block on their absence.
 - **Children**:
-  - `delegate(agent="explore")` — parallel codebase pattern discovery.
-  - `delegate(agent="oracle")` — read-only consultation for complex
+  - `delegate(agent="finder")` — parallel codebase pattern discovery.
+  - `delegate(agent="advisor")` — read-only consultation for complex
     architectural decisions and debugging.
   - `delegate(category="architect")` — plan generation and design review.
-  - `delegate(agent="librarian")` — **use proactively** on deprecated methods
+  - `delegate(agent="scholar")` — **use proactively** on deprecated methods
     or library migrations: fetch the recommended modern alternative and
     current API docs before changing call sites. Never auto-upgrade versions
     unless the user explicitly requested a migration.

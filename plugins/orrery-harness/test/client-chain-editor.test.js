@@ -136,14 +136,14 @@ describe('client.chain-editor chunk', () => {
   it('serves curated-agent lanes via props: agent dictionary stems and a field-targeted save', async () => {
     const { exports, model, reactStub } = await loadEditor()
     const { ChainEditorField } = exports
-    const AGENTS = ['explore', 'librarian', 'oracle']
+    const AGENTS = ['finder', 'scholar', 'advisor']
     const edited = []
     const props = {
       field: 'delegateAgentChains',
       rows: AGENTS,
       rowLabelPrefix: 'chainAgent_',
       panelHintKey: 'chainAgentPanelHint',
-      text: '{"explore":[{"provider":"p","model":"m"}],"deep":[{"provider":"x","model":"y"}],"ghost":[{"provider":"z","model":"w"}]}',
+      text: '{"finder":[{"provider":"p","model":"m"}],"deep":[{"provider":"x","model":"y"}],"ghost":[{"provider":"z","model":"w"}]}',
       overridden: false,
       edit: (field, text) => edited.push({ field, text }),
       onReset: () => {},
@@ -167,9 +167,9 @@ describe('client.chain-editor chunk', () => {
     expect(panel.children[0].children).toBe('chainAgentPanelHint')
     const lanes = panel.children.filter((child) => child?.key && child.children)
     expect(lanes.map((lane) => lane.key)).toEqual(AGENTS)
-    expect(lanes[0].children[0].children[0].children).toBe('chainAgent_explore')
-    expect(lanes[0].children[0].children[2].children).toBe('chainAgent_explore_desc')
-    // the stored explore rung is staged (normalized); category/unknown JSON
+    expect(lanes[0].children[0].children[0].children).toBe('chainAgent_finder')
+    expect(lanes[0].children[0].children[2].children).toBe('chainAgent_finder_desc')
+    // the stored finder rung is staged (normalized); category/unknown JSON
     // keys never surface as lanes
     expect(lanes[0].children[1].children[0].value).toEqual({ provider: 'p', model: 'm', reasoningEffort: '' })
 
@@ -178,6 +178,6 @@ describe('client.chain-editor chunk', () => {
     buttons.children[1].onClick()
     expect(edited).toHaveLength(1)
     expect(edited[0].field).toBe('delegateAgentChains')
-    expect(JSON.parse(edited[0].text)).toEqual({ explore: [{ provider: 'p', model: 'm' }] })
+    expect(JSON.parse(edited[0].text)).toEqual({ finder: [{ provider: 'p', model: 'm' }] })
   })
 })
