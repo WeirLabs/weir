@@ -11,7 +11,7 @@
 // string indices are UTF-16 code units too, so astral characters
 // (surrogate pairs) just work — all mirrored from dsh-fs-local semantics,
 // self-implemented (link rule).
-import { uriToPath } from './manager.js'
+import { uriToPath } from './uri.js'
 
 /**
  * LF-normalize: collapse every `\r\n` to `\n` (lone `\r` untouched) —

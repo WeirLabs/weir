@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { augmentedPath, extraBinDirectories, resolveExecutable } from '../src/lsp/executable.js'
+import { augmentedPath, extraBinDirectories, resolveExecutable } from '../src/lsp/child-process.js'
 
 describe('lsp executable resolution', () => {
   it('prefers the subprocess service resolver', async () => {

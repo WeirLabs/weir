@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { augmentedPath, childEnvironment, extraBinDirectories, npmGlobalPrefix, resolveExecutable } from '../src/lsp/executable.js'
+import { augmentedPath, childEnvironment, extraBinDirectories, npmGlobalPrefix, resolveExecutable } from '../src/lsp/child-process.js'
 
 /**
  * Windows-portability corpus for executable resolution. Every case drives the

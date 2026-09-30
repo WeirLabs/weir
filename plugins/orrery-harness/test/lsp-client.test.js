@@ -1,7 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { createLspClient, handshake, shutdownClient } from '../src/lsp/client.js'
-import { pathToUri, uriToPath } from '../src/lsp/manager.js'
+import { pathToUri, uriToPath } from '../src/lsp/uri.js'
 import { DEFAULT_SERVERS, buildRegistry, displayInstallCommand, familyForLanguageId, installSpecFor, languageIdForFile } from '../src/lsp/registry.js'
 
 function fakeChannel() {

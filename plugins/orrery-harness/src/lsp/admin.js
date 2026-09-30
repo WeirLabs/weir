@@ -4,8 +4,7 @@
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
 import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
-import { childEnvironment, npmGlobalPrefix, resolveExecutable as extendedResolveExecutable } from './executable.js'
-import { spawnArgv } from './manager.js'
+import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from './child-process.js'
 
 const name = 'orrery-lsp-admin'
 const inject = []
@@ -54,45 +53,10 @@ export function looksLikeVersion(line) {
 /** First plausible version line of `<executable> <versionArgs>` within the timeout. */
 export async function probeVersion(subprocess, executable, args = ['--version'], timeoutMs = VERSION_PROBE_TIMEOUT_MS) {
   if (!Array.isArray(args) || args.length === 0) return null
-  const handle = subprocess.spawn({
-    argv: spawnArgv(executable, args),
-    cwd: process.cwd(),
-    stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
-    graceMs: 3_000,
-    env: childEnvironment(),
-  })
-  let output = ''
-  let timer
-  const done = new Promise((resolve) => {
-    timer = setTimeout(() => {
-      try {
-        handle.terminate?.()
-      } catch {
-        // termination is best-effort
-      }
-      // Release the timer that fired: an armed 8s timeout would otherwise keep
-      // the host process alive long after the probe settled (observed as a
-      // `node --test` run that printed its summary and never exited).
-      clearTimeout(timer)
-      resolve(null)
-    }, timeoutMs)
-  })
-  handle.stdout?.on('data', (chunk) => {
-    output += chunk.toString()
-  })
-  handle.stderr?.on('data', (chunk) => {
-    output += chunk.toString()
-  })
-  try {
-    await Promise.race([handle.done, done])
-  } finally {
-    // Both settle paths release the probe window. The rejection path is the one
-    // that matters: a launch failure (spawn EINVAL — routine on Windows before
-    // shim unwrapping) throws out of the race, and the previously-armed 8s timer
-    // then kept the host process (and every `node --test` run) alive until it
-    // fired. Measured: 4ms of work, 8007ms of process lifetime.
-    clearTimeout(timer)
-  }
+  // unref: false — this settle is pinned to restore the host Timeout count
+  // synchronously (lsp-admin-probe.test.js); a fired unref'd timer lingers
+  // in getActiveResourcesInfo past the settle microtask (Node 24).
+  const { output } = await runBounded(subprocess, { argv: spawnArgv(executable, args), timeoutMs, unref: false })
   const first = output.split('\n').map((line) => line.trim()).find(looksLikeVersion)
   return first ?? null
 }
@@ -162,54 +126,9 @@ export async function runInstall(registry, subprocess, family, timeoutMs = DEFAU
   const prefixArgs = spec.command === 'npm' && !(spec.args ?? []).includes('--prefix')
     ? ['--prefix', npmGlobalPrefix(), ...(spec.args ?? [])]
     : (spec.args ?? [])
-  const handle = subprocess.spawn({
-    argv: spawnArgv(executable, prefixArgs),
-    cwd: process.cwd(),
-    stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
-    graceMs: 3_000,
-    env: childEnvironment(),
-  })
-  let output = ''
-  handle.stdout?.on('data', (chunk) => {
-    output += chunk.toString()
-  })
-  handle.stderr?.on('data', (chunk) => {
-    output += chunk.toString()
-  })
-  let timedOut = false
-  let timer
-  const deadline = new Promise((resolve) => {
-    timer = setTimeout(() => {
-      timedOut = true
-      resolve()
-    }, timeoutMs)
-    // The deadline exists to bound a silent installer, never to keep the host
-    // process alive: an install promise nothing awaits (the HTTP handler already
-    // answered, or the caller gave up) would otherwise pin an event loop — and a
-    // `node --test` suite — for the whole window (ten minutes by default).
-    timer.unref?.()
-  })
-  try {
-    await Promise.race([handle.done, deadline])
-  } finally {
-    clearTimeout(timer)
-  }
-  if (timedOut) {
-    try {
-      handle.terminate?.()
-    } catch {
-      // termination is best-effort
-    }
-  }
-  let exitCode = null
-  if (!timedOut) {
-    try {
-      const value = await handle.done
-      exitCode = value?.exitCode ?? (typeof value === 'number' ? value : null)
-    } catch {
-      exitCode = null
-    }
-  }
+  // unref: true — an install promise nothing awaits must not pin the host
+  // event loop for the whole deadline window (the doc :64 contract).
+  const { output, exitCode, timedOut } = await runBounded(subprocess, { argv: spawnArgv(executable, prefixArgs), timeoutMs, unref: true })
   return { output: output.slice(-8000), exitCode, timedOut }
 }
 

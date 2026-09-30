@@ -4,7 +4,7 @@
 // positions in, structured text out; every LSP failure becomes an ordinary
 // tool error result, never a broken turn.
 import { familyForLanguageId, languageIdForFile } from './registry.js'
-import { uriToPath } from './manager.js'
+import { uriToPath } from './uri.js'
 import { applyTextEdits, detectLineEndings, extractChanges, normalizeLineEndings, restoreLineEndings } from './rename.js'
 import { unifiedDiff } from '../hashline-edit/diff.js'
 

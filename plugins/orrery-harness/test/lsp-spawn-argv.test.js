@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep, win32 } from 'node:path'
-import { spawnArgv } from '../src/lsp/manager.js'
+import { spawnArgv } from '../src/lsp/child-process.js'
 
 /**
  * Launch-shape corpus for Windows language servers. CreateProcess runs neither
