@@ -17,6 +17,12 @@ window.__ModuleLoader__.load({
 		// a verbatim copy of the entry constant (same-package sync require is
 		// impossible in the ModuleLoader).
 		const ORRERY_NS = "orrery-settings";
+		// Curated read-only agent names, in registry order — the SINGLE
+		// client-side source for the agent chain-editor lanes (do not scatter).
+		// test/client-settings-page.test.js pins this list to
+		// Object.keys(CURATED_AGENTS) from src/delegate/agents.js, so a registry
+		// rename cannot drift the two sides.
+		const CURATED_AGENT_NAMES = ["explore", "librarian", "oracle"];
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
@@ -197,10 +203,29 @@ window.__ModuleLoader__.load({
 					const field = state.fields[descriptor.field];
 					if (descriptor.field === "delegateCategoryChains") {
 						return react_jsx_runtime.jsx(props.editors.ChainEditorField, {
+							field: "delegateCategoryChains",
 							text: state.fields.delegateCategoryChains.text,
 							overridden: state.fields.delegateCategoryChains.overridden,
 							edit: (field, text) => props.edit(field, text),
 							onReset: () => props.resetField("delegateCategoryChains"),
+							getSession: () => props.getSession(),
+							t,
+							disabled,
+							key: descriptor.field
+						});
+					}
+					if (descriptor.field === "delegateAgentChains") {
+						// The curated-agent counterpart of the category chains above:
+						// same visual editor, agent lanes and agent dictionary stems.
+						return react_jsx_runtime.jsx(props.editors.ChainEditorField, {
+							field: "delegateAgentChains",
+							rows: CURATED_AGENT_NAMES,
+							rowLabelPrefix: "chainAgent_",
+							panelHintKey: "chainAgentPanelHint",
+							text: state.fields.delegateAgentChains.text,
+							overridden: state.fields.delegateAgentChains.overridden,
+							edit: (field, text) => props.edit(field, text),
+							onReset: () => props.resetField("delegateAgentChains"),
 							getSession: () => props.getSession(),
 							t,
 							disabled,
@@ -367,6 +392,7 @@ window.__ModuleLoader__.load({
 			children: renderSlot(ITEM_SLOT)
 		});
 		exports.GROUPS = GROUPS;
+		exports.CURATED_AGENT_NAMES = CURATED_AGENT_NAMES;
 		exports.FIELDS = FIELDS;
 		exports.OrreryCardController = OrreryCardController;
 		exports.OrreryCard = OrreryCard;

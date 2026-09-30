@@ -9,7 +9,10 @@ window.__ModuleLoader__.load({
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let modelPicker = require("orrery-model-picker");
-		// Category model-chains editor. The chain model trio
+		// Model-chains editor with the lane list as a PROP: the category lanes
+		// are the default (no row props → the pre-generalization category
+		// behaviour, byte-identical); the curated-agent lanes pass their own
+		// rows, settings field, and dictionary-key stems. The chain model trio
 		// (client.chain-model.js) and `t` arrive via props. Style constants are
 		// verbatim copies of the settings-page constants this editor uses
 		// (same-package sync require is impossible in the ModuleLoader).
@@ -25,17 +28,46 @@ window.__ModuleLoader__.load({
 		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
 		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
 		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
-		/** Visual editor for the category model chains: pick models per lane, JSON synthesized on save. */
+		// DERIVED FROM lib/client.chain-model.js (chainsToJson): the same JSON
+		// synthesis generalized over a lane (row) parameter so non-category
+		// lanes (curated agents) serialize too — the model chunk is a frozen
+		// zero-dependency chunk, so the row-parameterized form lives here.
+		// Category-lane parity with the model original is pinned behaviourally
+		// in test/client-chain-editor.test.js.
+		function chainsToJson(rows, chains) {
+			const out = {};
+			for (const row of rows) {
+				const rungs = (chains?.[row] ?? []).filter((rung) => rung.provider && rung.model).map((rung) => ({
+					provider: rung.provider,
+					model: rung.model,
+					...(rung.reasoningEffort ? { reasoningEffort: rung.reasoningEffort } : {})
+				}));
+				if (rungs.length > 0) out[row] = rungs;
+			}
+			return JSON.stringify(out, null, 2);
+		}
+		/** Visual editor for one model-chains map: pick models per lane, JSON synthesized on save. */
 		function ChainEditorField(props) {
 			const model = props.model;
+			// Lane parameterization: which lanes render, which settings field
+			// the synthesized JSON is written to, and which dictionary stems
+			// label the rows — the defaults are exactly the category treatment.
+			const rows = props.rows ?? model.CHAIN_CATEGORIES;
+			const field = props.field ?? "delegateCategoryChains";
+			const rowLabelPrefix = props.rowLabelPrefix ?? "chainCategory_";
+			const panelHintKey = props.panelHintKey ?? "chainPanelHint";
 			const [open, setOpen] = react.useState(false);
 			const [staged, setStaged] = react.useState(null);
 			const openEditor = () => {
-				setStaged(model.jsonToChains(props.text));
+				// The model chunk's parser normalizes rungs and carries every
+				// stored lane verbatim (unknown keys included); keep only this
+				// editor's lanes.
+				const parsed = model.jsonToChains(props.text);
+				setStaged(Object.fromEntries(rows.map((row) => [row, parsed[row] ?? []])));
 				setOpen(true);
 			};
 			const save = () => {
-				props.edit("delegateCategoryChains", model.chainsToJson(staged));
+				props.edit(field, chainsToJson(rows, staged));
 				setOpen(false);
 				setStaged(null);
 			};
@@ -43,24 +75,24 @@ window.__ModuleLoader__.load({
 				setOpen(false);
 				setStaged(null);
 			};
-			const updateRung = (category, index, rung) => setStaged((current) => ({
+			const updateRung = (row, index, rung) => setStaged((current) => ({
 				...current,
-				[category]: (current?.[category] ?? []).map((entry, at) => at === index ? { ...entry, ...rung } : entry)
+				[row]: (current?.[row] ?? []).map((entry, at) => at === index ? { ...entry, ...rung } : entry)
 			}));
-			const addRung = (category) => setStaged((current) => ({
+			const addRung = (row) => setStaged((current) => ({
 				...current,
-				[category]: [...(current?.[category] ?? []), { provider: "", model: "", reasoningEffort: "" }]
+				[row]: [...(current?.[row] ?? []), { provider: "", model: "", reasoningEffort: "" }]
 			}));
-			const removeRung = (category, index) => setStaged((current) => ({
+			const removeRung = (row, index) => setStaged((current) => ({
 				...current,
-				[category]: (current?.[category] ?? []).filter((entry, at) => at !== index)
+				[row]: (current?.[row] ?? []).filter((entry, at) => at !== index)
 			}));
-			const clearCategory = (category) => setStaged((current) => ({ ...current, [category]: [] }));
+			const clearRow = (row) => setStaged((current) => ({ ...current, [row]: [] }));
 			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
 				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
 					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: props.t("delegateCategoryChains") }),
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("delegateCategoryChainsHint") })
+						react_jsx_runtime.jsx("span", { style: labelStyle, children: props.t(field) }),
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t(`${field}Hint`) })
 					] }),
 					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: openEditor, children: props.t("chainEdit") }),
@@ -71,28 +103,28 @@ window.__ModuleLoader__.load({
 					] })
 				] }),
 				open && staged !== null ? react_jsx_runtime.jsxs("div", { style: chainPanelStyle, children: [
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("chainPanelHint") }),
-					...model.CHAIN_CATEGORIES.map((category) => {
-						const rungs = staged[category] ?? [];
-						return react_jsx_runtime.jsxs("div", { key: category, children: [
+					react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t(panelHintKey) }),
+					...rows.map((row) => {
+						const rungs = staged[row] ?? [];
+						return react_jsx_runtime.jsxs("div", { key: row, children: [
 							react_jsx_runtime.jsxs("div", { children: [
-								react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: props.t(`chainCategory_${category}`) }),
+								react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: props.t(`${rowLabelPrefix}${row}`) }),
 								" ",
-								react_jsx_runtime.jsx("span", { style: chainDescStyle, children: props.t(`chainCategory_${category}_desc`) })
+								react_jsx_runtime.jsx("span", { style: chainDescStyle, children: props.t(`${rowLabelPrefix}${row}_desc`) })
 							] }),
 							...rungs.map((rung, index) => react_jsx_runtime.jsxs("div", { style: chainRungStyle, key: index, children: [
 								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
 									value: rung,
-									onChange: (selection) => updateRung(category, index, selection),
+									onChange: (selection) => updateRung(row, index, selection),
 									getSession: () => props.getSession(),
 									t: props.t,
 									disabled: props.disabled
 								}),
-								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => removeRung(category, index), children: props.t("chainRemove") })
+								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => removeRung(row, index), children: props.t("chainRemove") })
 							] })),
 							react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "12px" }, children: [
-								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => addRung(category), children: `+ ${props.t("chainAddRung")}` }),
-								rungs.length > 0 ? react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => clearCategory(category), children: props.t("chainClear") }) : null
+								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => addRung(row), children: `+ ${props.t("chainAddRung")}` }),
+								rungs.length > 0 ? react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => clearRow(row), children: props.t("chainClear") }) : null
 							] })
 						] });
 					}),

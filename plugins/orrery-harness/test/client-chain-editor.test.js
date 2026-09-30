@@ -102,4 +102,82 @@ describe('client.chain-editor chunk', () => {
     expect(edited[0].field).toBe('delegateCategoryChains')
     expect(JSON.parse(edited[0].text)).toEqual({ deep: [{ provider: 'p', model: 'm', reasoningEffort: 'max' }] })
   })
+
+  it('serializes the category lanes byte-identically to the model chunk (derived-copy parity pin)', async () => {
+    const { exports, model, reactStub } = await loadEditor()
+    const { ChainEditorField } = exports
+    // The editor chunk carries a row-parameterized DERIVED copy of the model's
+    // chainsToJson (the model chunk is frozen). For the default category rows
+    // the save output MUST equal the model original over the whole corpus.
+    const corpus = [
+      '',
+      'not json',
+      '{"deep":[{"provider":"p","model":"m","reasoningEffort":"max"}]}',
+      '{"deep":[{"provider":"","model":"m"}],"quick":[{"provider":"p","model":""}]}',
+      '{"quick":[{"provider":"p","model":"m","reasoningEffort":""}],"visual":[{"provider":"v","model":"m2"}],"unknown":[{"provider":"u","model":"m3"}]}',
+      '{"deep":"not-an-array","artistry":[{"provider":"a","model":"m","reasoningEffort":"low"}]}',
+    ]
+    for (const raw of corpus) {
+      const edited = []
+      const props = { text: raw, overridden: false, edit: (field, text) => edited.push({ field, text }), onReset: () => {}, getSession: () => ({}), t: (key) => key, disabled: false, model }
+      reactStub.reset()
+      reactStub.begin()
+      ChainEditorField(props).children[0].children[1].children[0].onClick() // Edit
+      reactStub.begin()
+      const open = ChainEditorField(props)
+      const panel = open.children[1]
+      panel.children[panel.children.length - 1].children[1].onClick() // Save
+      expect(edited).toHaveLength(1)
+      expect(edited[0].field).toBe('delegateCategoryChains')
+      expect(edited[0].text).toBe(model.chainsToJson(model.jsonToChains(raw)))
+    }
+  })
+
+  it('serves curated-agent lanes via props: agent dictionary stems and a field-targeted save', async () => {
+    const { exports, model, reactStub } = await loadEditor()
+    const { ChainEditorField } = exports
+    const AGENTS = ['explore', 'librarian', 'oracle']
+    const edited = []
+    const props = {
+      field: 'delegateAgentChains',
+      rows: AGENTS,
+      rowLabelPrefix: 'chainAgent_',
+      panelHintKey: 'chainAgentPanelHint',
+      text: '{"explore":[{"provider":"p","model":"m"}],"deep":[{"provider":"x","model":"y"}],"ghost":[{"provider":"z","model":"w"}]}',
+      overridden: false,
+      edit: (field, text) => edited.push({ field, text }),
+      onReset: () => {},
+      getSession: () => ({}),
+      t: (key) => key,
+      disabled: false,
+      model,
+    }
+
+    reactStub.reset()
+    reactStub.begin()
+    const closed = ChainEditorField(props)
+    // collapsed row reads the agent dictionary keys, not the category ones
+    expect(closed.children[0].children[0].children[0].children).toBe('delegateAgentChains')
+    expect(closed.children[0].children[0].children[1].children).toBe('delegateAgentChainsHint')
+    closed.children[0].children[1].children[0].onClick() // Edit
+    reactStub.begin()
+    const open = ChainEditorField(props)
+    const panel = open.children[1]
+    // the panel hint comes from the agent stem; one lane per agent row
+    expect(panel.children[0].children).toBe('chainAgentPanelHint')
+    const lanes = panel.children.filter((child) => child?.key && child.children)
+    expect(lanes.map((lane) => lane.key)).toEqual(AGENTS)
+    expect(lanes[0].children[0].children[0].children).toBe('chainAgent_explore')
+    expect(lanes[0].children[0].children[2].children).toBe('chainAgent_explore_desc')
+    // the stored explore rung is staged (normalized); category/unknown JSON
+    // keys never surface as lanes
+    expect(lanes[0].children[1].children[0].value).toEqual({ provider: 'p', model: 'm', reasoningEffort: '' })
+
+    // save → edit('delegateAgentChains', JSON carrying agent lanes only)
+    const buttons = panel.children[panel.children.length - 1]
+    buttons.children[1].onClick()
+    expect(edited).toHaveLength(1)
+    expect(edited[0].field).toBe('delegateAgentChains')
+    expect(JSON.parse(edited[0].text)).toEqual({ explore: [{ provider: 'p', model: 'm' }] })
+  })
 })

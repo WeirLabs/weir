@@ -1,4 +1,5 @@
 import { describe, expect, it } from './helpers.js'
+import { readdirSync, statSync } from 'node:fs'
 
 /**
  * Entry composition-root test for the browser half (lib/client.js, authored
@@ -488,5 +489,21 @@ describe('orrery settings client half', () => {
     expect(settled.model).toBe(hashEditModelChunk)
     expect(settled.phase).toBe('result')
     expect(settled.block).toBe(block)
+  })
+
+  it('keeps every client chunk older than the entry (the rev-restamp red line)', () => {
+    // docs/features/client-module-chunking.md: a chunk URL carries the ENTRY
+    // file's rev (derived from lib/client.js's mtime/ctime/size), so a chunk
+    // edit without re-touching lib/client.js leaves the browser requesting
+    // the chunks at a stale rev — a precise 404. Pin the discipline: no
+    // lib/client.*.js chunk may be newer than lib/client.js.
+    const libDir = new URL('../lib/', import.meta.url)
+    const entryMtimeMs = statSync(new URL('client.js', libDir)).mtimeMs
+    const chunks = readdirSync(libDir).filter((name) => /^client\..+\.js$/.test(name))
+    expect(chunks.length).toBeGreaterThan(0)
+    for (const name of chunks) {
+      const chunkMtimeMs = statSync(new URL(name, libDir)).mtimeMs
+      expect(chunkMtimeMs <= entryMtimeMs, `${name} is newer than lib/client.js — touch the entry to restamp the chunk rev`).toBe(true)
+    }
   })
 })

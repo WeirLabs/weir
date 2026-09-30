@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
+import { CURATED_AGENTS } from '../src/delegate/agents.js'
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
@@ -89,6 +90,25 @@ describe('client.settings-page chunk', () => {
     return { definition, exports, editors, specsSeen, reactStub }
   }
 
+  // Capture the entry's synchronously registered en/zh dictionaries by
+  // driving lib/client.js's apply with a minimal fake ctx (slot/config
+  // effects are inert stubs; only locale.register is observed).
+  async function loadDictionaries() {
+    const { exports: entry } = await loadClientChunk('lib/client.js', () => ({}))
+    const registrations = []
+    entry.apply({
+      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push({ ns, dicts }) },
+      effect: (fn) => {
+        fn()
+        return () => {}
+      },
+      slots: { inject: () => () => {} },
+      configForms: { whileServed: () => () => {} },
+      remote: {},
+    })
+    return registrations[0].dicts
+  }
+
   const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
 
   it('renders the GROUPS field table through the prop-injected editors', async () => {
@@ -119,22 +139,31 @@ describe('client.settings-page chunk', () => {
     })
 
     expect(rendered.__type).toBeTruthy()
-    // 7 group headers + 6 choice rows + 1 model picker + 19 value-field rows
-    // + 1 LSP manager row + 5 robash list-editor rows
+    // 7 group headers + 6 choice rows + 1 model picker + 17 value-field rows
+    // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
     expect(rendered.children).toHaveLength(39)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(18)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(17)
     // the LSP manager row opens the service management panel
     const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
     expect(managerRow).toBeTruthy()
     expect(managerRow.__type).toBe(editors.LspManagerField)
-    // the category-chains row renders the visual editor with its Edit button
-    const chainsRow = rendered.children.find((child) => child.text !== undefined && child.edit !== undefined)
-    expect(chainsRow).toBeTruthy()
-    expect(chainsRow.__type).toBe(editors.ChainEditorField)
-    expect(typeof chainsRow.getSession).toBe('function')
+    // the two chains rows render the visual editor: category lanes (default
+    // rows) and curated-agent lanes (rows from the pinned registry list)
+    const chainRows = rendered.children.filter((child) => child.__type === editors.ChainEditorField)
+    expect(chainRows).toHaveLength(2)
+    expect(chainRows[0].field).toBe('delegateCategoryChains')
+    expect(chainRows[0].rows).toBeUndefined()
+    expect(chainRows[0].key).toBe('delegateCategoryChains')
+    expect(typeof chainRows[0].getSession).toBe('function')
+    expect(chainRows[1].field).toBe('delegateAgentChains')
+    expect(chainRows[1].rows).toBe(exports.CURATED_AGENT_NAMES)
+    expect(chainRows[1].rowLabelPrefix).toBe('chainAgent_')
+    expect(chainRows[1].panelHintKey).toBe('chainAgentPanelHint')
+    expect(chainRows[1].key).toBe('delegateAgentChains')
+    expect(typeof chainRows[1].getSession).toBe('function')
 
     // the five robash whitelist rows render the list editor (GROUPS.robash):
     // bash allow/gitAllow/deny + pwsh allow/deny, reusing RobashListEditorField
@@ -222,5 +251,43 @@ describe('client.settings-page chunk', () => {
     expect(notifications).toEqual(['bump'])
 
     controller.dispose()
+  })
+  it('pins the curated agent lane names to the server registry (rename drift guard)', async () => {
+    const { exports } = await loadPage()
+    // The client keeps the curated agent names in ONE exported constant; the
+    // server registry (src/delegate/agents.js) is the authority. A rename on
+    // either side turns this red instead of drifting the settings page.
+    expect(exports.CURATED_AGENT_NAMES).toEqual(Object.keys(CURATED_AGENTS))
+  })
+
+  it('resolves a label and a hint for every GROUPS field in both dictionaries — never the raw key', async () => {
+    const { exports } = await loadPage()
+    const { exports: chainModel } = await loadClientChunk('lib/client.chain-model.js')
+    const dicts = await loadDictionaries()
+    // The locale service falls back to the KEY itself (lookup(...) ?? key), so
+    // a missing entry renders the raw camelCase key to the user — the exact
+    // gap that shipped delegateAgentChains / delegateDisabledCategories
+    // invisibly. Assert the RESOLVED text exists and differs from the key.
+    const expectResolved = (dict, key) => {
+      expect(typeof dict[key]).toBe('string')
+      expect(dict[key].length).toBeGreaterThan(0)
+      expect(dict[key]).not.toBe(key)
+    }
+    for (const locale of ['en', 'zh']) {
+      const dict = dicts[locale]
+      for (const descriptor of exports.GROUPS.flatMap((group) => group.fields)) {
+        expectResolved(dict, descriptor.field)
+        expectResolved(dict, `${descriptor.field}Hint`)
+      }
+      // every chain-editor lane (categories + curated agents) has a human label
+      const laneKeys = [
+        ...chainModel.CHAIN_CATEGORIES.map((name) => `chainCategory_${name}`),
+        ...exports.CURATED_AGENT_NAMES.map((name) => `chainAgent_${name}`),
+      ]
+      for (const key of laneKeys) {
+        expectResolved(dict, key)
+        expectResolved(dict, `${key}_desc`)
+      }
+    }
   })
 })
