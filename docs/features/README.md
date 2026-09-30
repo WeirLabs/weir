@@ -19,6 +19,8 @@
 | 上下文压力守卫 | [context-pressure-guard.md](context-pressure-guard.md) | `orrery-harness/context-guard` |
 | 锚点编辑 | [hashline-edit.md](hashline-edit.md) | `orrery-harness/hashline-edit` |
 | hash_edit diff 面板 | [hash-edit-diff-view.md](hash-edit-diff-view.md) | `orrery-harness/hashline-edit` + `lib/client.js` |
+| 客户端 chunk 化 | [client-module-chunking.md](client-module-chunking.md) | `orrery-harness` 浏览器半区 `lib/` |
 | LSP 语义工具 | [lsp-integration.md](lsp-integration.md) | `orrery-harness/lsp` |
+| 共享 runtime 消息助手 | [runtime-message-helpers.md](runtime-message-helpers.md) | `orrery-harness/shared`（被 intent-gate / todo-driver / context-guard 复用） |
 | Windows 沙箱 shell 约束 | [windows-sandbox-shell-constraint.md](windows-sandbox-shell-constraint.md) | 平台约束（DSH 桌面宿主） |
 | 集成测试装置 | [integration-test-harness.md](integration-test-harness.md) | `plugins/orrery-test-harness`（开发专用） |
