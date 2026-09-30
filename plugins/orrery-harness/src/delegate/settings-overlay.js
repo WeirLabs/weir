@@ -5,6 +5,7 @@
 // injected by the composition root, so nothing here touches `process` or
 // node: builtins.
 import { DEFAULT_CATEGORIES } from './categories.js'
+import { CURATED_AGENTS } from './agents.js'
 import { DEFAULT_TABLES } from './robash-guard-core.js'
 
 /** The shell tool a read-only child gets: pwsh on Windows (where the preset
@@ -64,6 +65,7 @@ export function createSettingsOverlay({ settings, config, logger, platform, fall
   const shellName = readOnlyShellName(platform)
 
   const baseCategories = () => ({ ...DEFAULT_CATEGORIES, ...(config.categories ?? {}) })
+  const baseAgents = () => ({ ...CURATED_AGENTS, ...(config.agents ?? {}) })
 
   // Settings category chains: wholesale chain replacement per named category.
   // Applied onto the base every time, so a commit is visible to the very next
@@ -80,7 +82,40 @@ export function createSettingsOverlay({ settings, config, logger, platform, fall
         categories[category] = { ...categories[category], chain }
       }
     }
+    // Settings-disabled categories (D5 append-only): the settings list can
+    // only ADD disables — a registry-level `disabled` flag stays in effect and
+    // no settings value can clear it. Unknown names warn and are ignored,
+    // exactly like categoryChains.
+    if (Array.isArray(delegateOverride?.disabledCategories)) {
+      for (const category of delegateOverride.disabledCategories) {
+        if (!categories[category]) {
+          logger?.warn?.(`orrery-settings: disabledCategories names unknown category "${category}" — ignored`)
+          continue
+        }
+        categories[category] = { ...categories[category], disabled: true }
+      }
+    }
     return categories
+  }
+
+  // Settings agent chains: wholesale chain replacement per named agent — the
+  // exact counterpart of the categoryChains overlay above (an agent whose
+  // chain stays empty inherits the caller route). Same read-late rule: applied
+  // onto the base on every read, so a commit is visible to the very next
+  // delegation rather than to the next process.
+  function agentsNow() {
+    const agents = baseAgents()
+    const delegateOverride = delegateOverrideNow()
+    if (delegateOverride?.agentChains && typeof delegateOverride.agentChains === 'object') {
+      for (const [agent, chain] of Object.entries(delegateOverride.agentChains)) {
+        if (!agents[agent]) {
+          logger?.warn?.(`orrery-settings: agentChains names unknown agent "${agent}" — ignored`)
+          continue
+        }
+        agents[agent] = { ...agents[agent], chain }
+      }
+    }
+    return agents
   }
 
   // Supervision parameters the coordinator consumes. Resolved on demand (per
@@ -159,5 +194,5 @@ export function createSettingsOverlay({ settings, config, logger, platform, fall
   }
   const readOnlyTools = (base, resolved = robashNow()) => (resolved.enabled ? [...new Set([...base, shellName])] : base)
 
-  return { categoriesNow, supervisionNow, robashNow, readOnlyTools, shellName }
+  return { categoriesNow, agentsNow, supervisionNow, robashNow, readOnlyTools, shellName }
 }

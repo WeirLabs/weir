@@ -28,6 +28,8 @@ describe('settings Config schema', () => {
       intentGateTimeoutMs: 900,
       jevEndpoint: 'https://jev.example',
       delegateCategoryChains: '{"quick":[{"provider":"p","model":"m"}]}',
+      delegateAgentChains: '{"explore":[{"provider":"p","model":"m"}]}',
+      delegateDisabledCategories: '["quick"]',
       supervisionMaxRetries: 3,
       todoMaxConsecutive: 4,
       guardSoftThreshold: 0.6,
@@ -65,6 +67,18 @@ describe('settings Config schema', () => {
     expect(computeSections({ robashPwshAllow: '["Get-Content"]' }).robash.pwshAllow).toEqual(['Get-Content'])
     expect(() => computeSections({ robashPwshAllow: 'not-json' })).toThrow(/robashPwshAllow/)
     expect(() => computeSections({ robashPwshDeny: '[1]' })).toThrow(/robashPwshDeny/)
+  })
+
+  it('validates delegate agentChains/disabledCategories JSON (fail loud, key named)', () => {
+    expect(computeSections({ delegateAgentChains: '{"explore":[{"provider":"p","model":"m"}]}' }).delegate.agentChains).toEqual({ explore: [{ provider: 'p', model: 'm' }] })
+    expect(computeSections({ delegateDisabledCategories: '["quick","deep"]' }).delegate.disabledCategories).toEqual(['quick', 'deep'])
+    expect(() => computeSections({ delegateAgentChains: 'not-json' })).toThrow(/delegateAgentChains/)
+    expect(() => computeSections({ delegateAgentChains: '[1]' })).toThrow(/delegateAgentChains/)
+    expect(() => computeSections({ delegateAgentChains: '{"explore":"nope"}' })).toThrow(/delegateAgentChains/)
+    expect(() => computeSections({ delegateAgentChains: '{"explore":[{"provider":"p"}]}' })).toThrow(/delegateAgentChains/)
+    expect(() => computeSections({ delegateDisabledCategories: 'not-json' })).toThrow(/delegateDisabledCategories/)
+    expect(() => computeSections({ delegateDisabledCategories: '{"quick":true}' })).toThrow(/delegateDisabledCategories/)
+    expect(() => computeSections({ delegateDisabledCategories: '["quick",1]' })).toThrow(/delegateDisabledCategories/)
   })
 })
 
@@ -113,6 +127,34 @@ describe('settings plugin apply', () => {
     expect(() => sections({ delegateCategoryChains: '[1,2]' })).toThrow(/object map/)
     expect(() => sections({ delegateCategoryChains: '{"quick":"nope"}' })).toThrow(/array of rungs/)
     expect(() => sections({ delegateCategoryChains: '{"quick":[{"provider":"p"}]}' })).toThrow(/provider, model/)
+  })
+
+  it('parses agentChains and disabledCategories JSON into the delegate section', () => {
+    const delegate = sections({
+      delegateAgentChains: '{"explore":[{"provider":"p","model":"m","reasoningEffort":"low"}]}',
+      delegateDisabledCategories: '["quick"]',
+    }).delegate
+    expect(delegate.agentChains).toEqual({ explore: [{ provider: 'p', model: 'm', reasoningEffort: 'low' }] })
+    expect(delegate.disabledCategories).toEqual(['quick'])
+  })
+
+  it('fails activation loud on malformed agentChains/disabledCategories (key named)', () => {
+    expect(() => sections({ delegateAgentChains: 'not-json' })).toThrow(/delegateAgentChains/)
+    expect(() => sections({ delegateAgentChains: '[1,2]' })).toThrow(/delegateAgentChains.*object map/)
+    expect(() => sections({ delegateAgentChains: '{"explore":"nope"}' })).toThrow(/delegateAgentChains.*array of rungs/)
+    expect(() => sections({ delegateAgentChains: '{"explore":[{"provider":"p"}]}' })).toThrow(/delegateAgentChains.*provider, model/)
+    expect(() => sections({ delegateDisabledCategories: 'not-json' })).toThrow(/delegateDisabledCategories/)
+    expect(() => sections({ delegateDisabledCategories: '{"a":1}' })).toThrow(/delegateDisabledCategories/)
+    expect(() => sections({ delegateDisabledCategories: '[1,"quick"]' })).toThrow(/delegateDisabledCategories/)
+  })
+
+  it('normalises empty-string and empty-value delegate keys to absent (ONE shape)', () => {
+    expect(sections({ delegateAgentChains: '' }).delegate).toBe(undefined)
+    expect(sections({ delegateAgentChains: '   ' }).delegate).toBe(undefined)
+    expect(sections({ delegateAgentChains: '{}' }).delegate?.agentChains).toBeUndefined()
+    expect(sections({ delegateDisabledCategories: '' }).delegate).toBe(undefined)
+    expect(sections({ delegateDisabledCategories: '  ' }).delegate).toBe(undefined)
+    expect(sections({ delegateDisabledCategories: '[]' }).delegate?.disabledCategories).toBeUndefined()
   })
 
   it('parses robash list JSON into arrays in the robash section', () => {
@@ -330,6 +372,22 @@ describe('settings plugin apply', () => {
     expect(second.categoryChains).toEqual(first.categoryChains)
     config.delegateCategoryChains = '{"deep":[{"provider":"q","model":"n"}]}'
     expect(sections(config).delegate.categoryChains).toEqual({ deep: [{ provider: 'q', model: 'n' }] })
+  })
+
+  it('re-parses live agentChains/disabledCategories only when the raw string changes', () => {
+    const config = {
+      delegateAgentChains: '{"explore":[{"provider":"p","model":"m"}]}',
+      delegateDisabledCategories: '["quick"]',
+    }
+    const first = sections(config).delegate
+    const second = sections(config).delegate
+    expect(second.agentChains).toBe(first.agentChains) // raw-cache hit: same instance
+    expect(second.disabledCategories).toBe(first.disabledCategories)
+    config.delegateAgentChains = '{"oracle":[{"provider":"q","model":"n"}]}'
+    config.delegateDisabledCategories = '["deep"]'
+    const next = sections(config).delegate
+    expect(next.agentChains).toEqual({ oracle: [{ provider: 'q', model: 'n' }] })
+    expect(next.disabledCategories).toEqual(['deep'])
   })
 
   it('onChange subscribers fire on loader/volatile-update', () => {

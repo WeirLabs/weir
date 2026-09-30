@@ -30,6 +30,8 @@ window.__ModuleLoader__.load({
 			] },
 			{ id: "delegate", fields: [
 				{ field: "delegateCategoryChains", kind: "text" },
+				{ field: "delegateAgentChains", kind: "text" },
+				{ field: "delegateDisabledCategories", kind: "text" },
 				{ field: "supervisionMaxRetries", kind: "number" },
 				{ field: "supervisionInitialBackoffMs", kind: "number" },
 				{ field: "supervisionMaxBackoffMs", kind: "number" }

@@ -22,6 +22,8 @@ const FIELDS = [
   { key: 'jevModel', section: 'intentGate', field: 'jevModel', type: 'string', description: 'Jev model name (experimental)' },
   { key: 'jevApiKeyEnv', section: 'intentGate', field: 'jevApiKeyEnv', type: 'string', description: 'Env var name holding the Jev API key' },
   { key: 'delegateCategoryChains', section: 'delegate', field: 'categoryChains', type: 'string', description: 'JSON map of category → ordered [{provider, model, reasoningEffort?}] rungs; replaces the category chain wholesale' },
+  { key: 'delegateAgentChains', section: 'delegate', field: 'agentChains', type: 'string', description: 'JSON map of curated agent → ordered [{provider, model, reasoningEffort?}] rungs; replaces that agent\'s chain wholesale (an agent with an empty chain inherits the caller route)' },
+  { key: 'delegateDisabledCategories', section: 'delegate', field: 'disabledCategories', type: 'string', description: 'JSON array of category names to disable; disabled categories are hidden from the model and cannot be delegated to' },
   { key: 'supervisionMaxRetries', section: 'delegate', field: 'supervisionMaxRetries', type: 'number', description: 'Supervised continuation retry cap' },
   { key: 'supervisionInitialBackoffMs', section: 'delegate', field: 'supervisionInitialBackoffMs', type: 'number', description: 'Supervised retry initial backoff (ms)' },
   { key: 'supervisionMaxBackoffMs', section: 'delegate', field: 'supervisionMaxBackoffMs', type: 'number', description: 'Supervised retry backoff cap (ms)' },
@@ -74,21 +76,40 @@ export const SECTIONS = FIELDS.reduce((acc, { key, section, field }) => {
 /** The five robash whitelist tables, derived from FIELDS (declared once). */
 const ROBASH_LIST_FIELDS = FIELDS.filter(({ section, list }) => section === 'robash' && list).map(({ key, field }) => [field, key])
 
-/** Parse + validate the categoryChains JSON map (bad input fails activation loud). */
-function validateChains(raw) {
-  const parsed = JSON.parse(raw)
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('orrery-settings: delegateCategoryChains must be a JSON object map')
+/** Parse + validate a chains JSON map (target → ordered rungs), shared by
+ * delegateCategoryChains and delegateAgentChains; bad input fails activation
+ * loud with the flat settings key named in every error. Partially applied per
+ * key (chainsValidator) so the parseJsonField memoization key — the validator
+ * function itself — is stable per settings key. */
+function validateChains(key, raw) {
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`orrery-settings: ${key} must be a JSON object map of rung arrays (invalid JSON)`)
   }
-  for (const [category, rungs] of Object.entries(parsed)) {
-    if (!Array.isArray(rungs)) throw new Error(`orrery-settings: delegateCategoryChains.${category} must be an array of rungs`)
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`orrery-settings: ${key} must be a JSON object map`)
+  }
+  for (const [target, rungs] of Object.entries(parsed)) {
+    if (!Array.isArray(rungs)) throw new Error(`orrery-settings: ${key}.${target} must be an array of rungs`)
     for (const rung of rungs) {
       if (!rung || typeof rung.provider !== 'string' || typeof rung.model !== 'string') {
-        throw new Error(`orrery-settings: delegateCategoryChains.${category} rungs need { provider, model }`)
+        throw new Error(`orrery-settings: ${key}.${target} rungs need { provider, model }`)
       }
     }
   }
   return parsed
+}
+
+const chainsValidators = new Map()
+function chainsValidator(key) {
+  let validate = chainsValidators.get(key)
+  if (!validate) {
+    validate = (raw) => validateChains(key, raw)
+    chainsValidators.set(key, validate)
+  }
+  return validate
 }
 
 /** Parse + validate the lspServers JSON map (bad input fails activation loud). */
@@ -108,13 +129,14 @@ function validateLspServers(raw) {
   return parsed
 }
 
-/** Parse + validate one robash whitelist JSON string: a JSON array of strings;
- * bad input fails activation loud with the settings key named in the error.
- * The validator is partially applied with the flat key so the memoization key
+/** Parse + validate one JSON-string field holding an array of strings; bad
+ * input fails activation loud with the settings key named in the error. Shared
+ * by the five robash whitelist tables and delegate disabledCategories. The
+ * validator is partially applied with the flat key so the memoization key
  * (the validator function itself) is stable per table. */
-const robashValidators = new Map()
-function robashListValidator(key) {
-  let validate = robashValidators.get(key)
+const listValidators = new Map()
+function jsonStringListValidator(key) {
+  let validate = listValidators.get(key)
   if (!validate) {
     validate = (raw) => {
       let parsed
@@ -133,7 +155,7 @@ function robashListValidator(key) {
       }
       return parsed
     }
-    robashValidators.set(key, validate)
+    listValidators.set(key, validate)
   }
   return validate
 }
@@ -154,8 +176,9 @@ export function parseJsonField(validate, raw) {
  * Regroup the flat (volatile-unwrapped) config into the service's section
  * tree. Pure: no ctx, no events, no node: — the whitelist defaults read is
  * injected. Replicates the previous compute() layering exactly:
- * - JSON-in-string fields (categoryChains/lspServers/five robash lists) parse
- *   through the memoized validators, bad input throws (fails activation loud);
+ * - JSON-in-string fields (categoryChains/agentChains/disabledCategories/
+ *   lspServers/five robash lists) parse through the memoized validators, bad
+ *   input throws (fails activation loud);
  * - robash list keys: unset or empty-string dropped; '[]' adds nothing and is
  *   dropped so consumers see ONE shape; a non-empty array becomes additions;
  * - robashDefaultsPath/defaultsReload configure the defaults read and never
@@ -172,8 +195,32 @@ export function computeSections(config, { readDefaults } = {}) {
     for (const [field, flatKey] of Object.entries(fields)) {
       if (Object.hasOwn(flat, flatKey)) out[field] = flat[flatKey]
     }
-    if (key === 'delegate' && typeof out.categoryChains === 'string' && out.categoryChains.trim().length > 0) {
-      out.categoryChains = parseJsonField(validateChains, out.categoryChains)
+    if (key === 'delegate') {
+      if (typeof out.categoryChains === 'string' && out.categoryChains.trim().length > 0) {
+        out.categoryChains = parseJsonField(chainsValidator('delegateCategoryChains'), out.categoryChains)
+      }
+      // The two newer delegate keys normalize harder than legacy categoryChains
+      // (whose 1.0 shape is kept): an empty string, an empty map, or an empty
+      // array is dropped so consumers see ONE shape — present-and-non-empty or
+      // absent. Bad JSON still fails activation loud, flat key named.
+      if (typeof out.agentChains === 'string') {
+        if (out.agentChains.trim().length === 0) {
+          delete out.agentChains
+        } else {
+          const parsed = parseJsonField(chainsValidator('delegateAgentChains'), out.agentChains)
+          if (Object.keys(parsed).length === 0) delete out.agentChains
+          else out.agentChains = parsed
+        }
+      }
+      if (typeof out.disabledCategories === 'string') {
+        if (out.disabledCategories.trim().length === 0) {
+          delete out.disabledCategories
+        } else {
+          const parsed = parseJsonField(jsonStringListValidator('delegateDisabledCategories'), out.disabledCategories)
+          if (parsed.length === 0) delete out.disabledCategories
+          else out.disabledCategories = parsed
+        }
+      }
     }
     if (key === 'lsp' && typeof out.servers === 'string' && out.servers.trim().length > 0) {
       out.servers = parseJsonField(validateLspServers, out.servers)
@@ -191,7 +238,7 @@ export function computeSections(config, { readDefaults } = {}) {
           delete out[field]
           continue
         }
-        const parsed = parseJsonField(robashListValidator(flatKey), out[field])
+        const parsed = parseJsonField(jsonStringListValidator(flatKey), out[field])
         // an explicitly empty array is a no-op addition, i.e. indistinguishable
         // from absent: drop it so the consumer has ONE shape to handle
         if (parsed.length === 0) {

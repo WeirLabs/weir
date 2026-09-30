@@ -110,6 +110,68 @@ describe('createSettingsOverlay', () => {
     expect(warnings[0]).toContain('bogus')
   })
 
+  it('agentChains replaces a named agent chain wholesale and warns on unknown agents', () => {
+    const chain = [{ provider: 'acme', model: 'm1' }]
+    const { overlay, warnings } = makeOverlay({
+      sections: { delegate: { agentChains: { explore: chain, bogus: chain } } },
+    })
+    const agents = overlay.agentsNow()
+    expect(agents.explore.chain).toEqual(chain)
+    // the replacement keeps the agent's other fields
+    expect(agents.explore.reasoningEffort).toBe('low')
+    // untouched agents keep having no chain (empty chain = inherit the caller route)
+    expect(agents.librarian.chain).toBeUndefined()
+    expect(agents.bogus).toBeUndefined()
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('bogus')
+  })
+
+  it('agentsNow overlays row config agents onto the curated registry', () => {
+    const custom = { name: 'custom', description: 'd', prompt: 'p', tools: ['read'] }
+    const { overlay } = makeOverlay({ config: { agents: { custom } } })
+    const agents = overlay.agentsNow()
+    expect(agents.custom).toEqual(custom)
+    expect(agents.oracle.name).toBe('oracle')
+  })
+
+  it('disabledCategories marks named categories disabled and warns on unknown names', () => {
+    const { overlay, warnings } = makeOverlay({
+      sections: { delegate: { disabledCategories: ['quick', 'bogus'] } },
+    })
+    const categories = overlay.categoriesNow()
+    expect(categories.quick.disabled).toBe(true)
+    // the disable keeps the category's other fields
+    expect(categories.quick.reasoningEffort).toBe('low')
+    expect(categories.deep.disabled).toBeUndefined()
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('bogus')
+  })
+
+  it('a registry-level disabled stays in effect; the settings list only ever adds disables', () => {
+    const { overlay } = makeOverlay({
+      config: { categories: { writing: { description: 'd', guidance: 'g', promptAppend: 'p', chain: [], disabled: true } } },
+      sections: { delegate: { disabledCategories: ['quick'] } },
+    })
+    const categories = overlay.categoriesNow()
+    // the registry-disabled category is not named in the settings list, and no
+    // settings value could clear its flag
+    expect(categories.writing.disabled).toBe(true)
+    expect(categories.quick.disabled).toBe(true)
+    expect(categories.deep.disabled).toBeUndefined()
+  })
+
+  it('agentChains and disabledCategories resolve at read time (commit visible to the next call)', () => {
+    const { overlay, live } = makeOverlay()
+    expect(overlay.agentsNow().explore.chain).toBeUndefined()
+    expect(overlay.categoriesNow().quick.disabled).toBeUndefined()
+    live.commit('delegate', {
+      agentChains: { explore: [{ provider: 'acme', model: 'm1' }] },
+      disabledCategories: ['quick'],
+    })
+    expect(overlay.agentsNow().explore.chain).toEqual([{ provider: 'acme', model: 'm1' }])
+    expect(overlay.categoriesNow().quick.disabled).toBe(true)
+  })
+
   it('supervisionNow merges row config with the three settings keys', () => {
     const { overlay } = makeOverlay({
       config: { supervision: { maxRetries: 9, initialBackoffMs: 1 } },
@@ -137,6 +199,8 @@ describe('createSettingsOverlay', () => {
     })
     expect(overlay.robashNow().enabled).toBe(true)
     expect(overlay.supervisionNow()).toEqual({})
+    expect(overlay.agentsNow().explore.name).toBe('explore')
+    expect(overlay.categoriesNow().quick.disabled).toBeUndefined()
   })
 
   it('readOnlyTools appends the platform shell only when the guard is enabled', () => {
