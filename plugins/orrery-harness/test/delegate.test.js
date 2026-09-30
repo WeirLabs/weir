@@ -6,10 +6,17 @@ import { CURATED_AGENTS } from '../src/delegate/agents.js'
 import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
 import { parseEscalation } from '../src/delegate/escalate.js'
 import { modelFamily, pickVariant } from '../src/delegate/target-resolver.js'
-import { resolveCategory, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
+import { resolveTargetRoute, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
 import { readWhitelistDefaults } from '../src/shared/whitelist-defaults.js'
+import { DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
+import {
+  DELEGATE_TARGETS_SECTION_NAME,
+  DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
+  DELEGATE_TARGETS_TEMPLATE,
+  DELEGATE_TARGETS_VARIABLE_NAME,
+} from '../src/delegate/targets.js'
 /** Mutable settings service with an onChange broadcast (mirrors lsp.test.js).
  * Sections start undefined so the existing fallback semantics stay observable;
  * commit() publishes one section change to every subscriber, exactly like the
@@ -54,7 +61,7 @@ describe('resolver', () => {
         { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'low' },
       ],
     }
-    const route = resolveCategory(category, snapshot, false)
+    const route = resolveTargetRoute(category, snapshot, false)
     expect(route.kind).toBe('resolved')
     expect(route.provider).toBe('deepseek')
     expect(route.model).toBe('deepseek-chat')
@@ -62,11 +69,11 @@ describe('resolver', () => {
   })
 
   it('inherits when the chain is empty', () => {
-    expect(resolveCategory({ chain: [] }, snapshot, false).kind).toBe('inherited')
+    expect(resolveTargetRoute({ chain: [] }, snapshot, false).kind).toBe('inherited')
   })
 
   it('reports unavailable when no rung resolves', () => {
-    const route = resolveCategory({ chain: [{ provider: 'absent', model: 'x' }] }, snapshot, false)
+    const route = resolveTargetRoute({ chain: [{ provider: 'absent', model: 'x' }] }, snapshot, false)
     expect(route.kind).toBe('unavailable')
     expect(route.reason).toContain('absent/x')
   })
@@ -77,8 +84,8 @@ describe('resolver', () => {
 
   it('enforces gateModels unless the user configured the category', () => {
     const category = { chain: [], gateModels: ['gpt-6-astra'] }
-    expect(resolveCategory(category, snapshot, false).kind).toBe('unavailable')
-    expect(resolveCategory(category, snapshot, true).kind).toBe('inherited')
+    expect(resolveTargetRoute(category, snapshot, false).kind).toBe('unavailable')
+    expect(resolveTargetRoute(category, snapshot, true).kind).toBe('inherited')
   })
 
   it('snapshots providers with catalog failure tolerance', async () => {
@@ -297,16 +304,43 @@ describe('delegate plugin apply', () => {
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
       get: () => undefined,
+      // The delegate plugin registers the guidance section + its variable on
+      // apply; the double only has to accept both registrations.
+      systemPrompt: { section: () => () => {}, variable: () => () => {} },
       on: () => {},
     }
     apply(ctx, {})
     expect(registered.map((tool) => tool.name)).toEqual(['delegate', 'resume_agent', 'terminate_agent', 'supervised_status'])
   })
 
+  it('registers the delegation-target guidance section and its live variable', () => {
+    // The variable provider is re-evaluated at every prompt assembly, so a
+    // settings commit must change its output within the same live overlay
+    // (design D1) — that is what this asserts, not just that it renders.
+    const settings = { delegate: {} }
+    const { sections, variables } = applyHarness({}, settings)
+    expect(sections).toHaveLength(1)
+    expect(sections[0].name).toBe(DELEGATE_TARGETS_SECTION_NAME)
+    expect(sections[0].order).toBe(DOCTRINE_SECTION_ORDER + DELEGATE_TARGETS_SECTION_ORDER_OFFSET)
+    expect(sections[0].text).toBe(DELEGATE_TARGETS_TEMPLATE)
+
+    const render = variables.get(DELEGATE_TARGETS_VARIABLE_NAME)
+    expect(typeof render).toBe('function')
+    const rendered = render()
+    expect(typeof rendered).toBe('string')
+    expect(rendered).toContain('quick')
+    expect(rendered).toContain('explore')
+
+    settings.delegate = { disabledCategories: ['quick'] }
+    expect(render()).not.toContain('quick')
+  })
+
   function applyHarness(config = {}, settingsSections = undefined, settingsService = undefined) {
     const registered = []
     const spawned = []
     const guards = []
+    const sections = []
+    const variables = new Map()
     const ctx = {
       tools: { register: (tool) => registered.push(tool) },
       subagents: {
@@ -331,6 +365,16 @@ describe('delegate plugin apply', () => {
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
+      systemPrompt: {
+        section: (section) => {
+          sections.push(section)
+          return () => {}
+        },
+        variable: (variableName, provider) => {
+          variables.set(variableName, provider)
+          return () => {}
+        },
+      },
       get: (name) =>
         name === 'orrerySettings'
           ? (settingsService ?? (settingsSections ? { get: (section) => withDefaults(settingsSections[section]) } : undefined))
@@ -338,7 +382,7 @@ describe('delegate plugin apply', () => {
       on: () => {},
     }
     const dispose = apply(ctx, config)
-    return { tool: registered[0], spawned, guards, ctx, dispose }
+    return { tool: registered[0], spawned, guards, ctx, dispose, sections, variables }
   }
 
 
@@ -576,6 +620,9 @@ describe('supervised groups (mount layer)', () => {
       },
       llm: { listProviders: () => [], listModels: async () => [] },
       skills: {},
+      // apply() registers the delegation-target guidance section + variable;
+      // this double only has to accept both registrations.
+      systemPrompt: { section: () => () => {}, variable: () => () => {} },
       get: (name) => {
         if (name === 'agents') return { get: (id) => ({ id, ctx: { tools: { guard: (fn) => { guards.push(fn); return () => {} } } } }) }
         if (name === 'orrerySettings') return settingsService

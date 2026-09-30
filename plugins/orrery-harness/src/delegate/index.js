@@ -11,9 +11,17 @@ import { mountSupervision } from './supervision-mount.js'
 import { createAudit } from '../shared/audit.js'
 import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { createDelegateTool } from './tool.js'
+import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
+import {
+  DELEGATE_TARGETS_SECTION_NAME,
+  DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
+  DELEGATE_TARGETS_TEMPLATE,
+  DELEGATE_TARGETS_VARIABLE_NAME,
+  renderDelegateTargets,
+} from './targets.js'
 
 const name = 'orrery-delegate'
-const inject = ['tools', 'subagents', 'llm', 'skills']
+const inject = ['tools', 'subagents', 'llm', 'skills', 'systemPrompt']
 
 // readOnlyShellName moved to settings-overlay.js; re-exported in place so
 // existing imports keep working (test/delegate.test.js is the canary) — same
@@ -39,6 +47,23 @@ function apply(ctx, config = {}) {
   const { coordinatorFor } = mount
 
   const agents = { ...CURATED_AGENTS, ...(config.agents ?? {}) }
+
+  // Standing delegation-target guidance: the tool's usage contract plus the
+  // live list of ENABLED targets, so the model knows how to call `delegate`
+  // before its first attempt instead of learning the rules from a failure.
+  // The section text is static; the list rides a prompt variable whose
+  // provider DSH calls at EVERY prompt assembly (design D1). A settings commit
+  // therefore changes what the model sees without re-registering the section
+  // and without restarting the app — the same volatile contract the rest of
+  // the overlay follows.
+  ctx.systemPrompt.section({
+    name: DELEGATE_TARGETS_SECTION_NAME,
+    order: DOCTRINE_SECTION_ORDER + DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
+    text: DELEGATE_TARGETS_TEMPLATE,
+  })
+  ctx.systemPrompt.variable(DELEGATE_TARGETS_VARIABLE_NAME, () =>
+    renderDelegateTargets({ categories: overlay.categoriesNow(), agents: overlay.agentsNow() }),
+  )
   const targetResolver = createTargetResolver({
     agents,
     userCategories: config.categories,

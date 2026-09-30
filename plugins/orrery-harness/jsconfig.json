@@ -29,6 +29,7 @@
     "src/delegate/categories.js",
     "src/delegate/agents.js",
     "src/delegate/robash-guard-core.js",
+    "src/delegate/targets.js",
     "src/todo-driver/state-machine.js",
     "src/context-guard/pressure.js",
     "src/context-guard/compaction-outcome.js",
