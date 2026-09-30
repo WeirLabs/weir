@@ -3,7 +3,7 @@
 // the community catalog). Plain ESM, ctx-only; `connection`/`subprocess`
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
-import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
+import { buildRegistry, DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
 import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from './child-process.js'
 
 const name = 'orrery-lsp-admin'
@@ -193,6 +193,27 @@ export function registerLspAdminEndpoints(ctx, options = {}) {
       if (typeof dispose === 'function') dispose()
     })
   }
+}
+
+/**
+ * Wire the LSP management endpoints from a profile-level row that cannot add
+ * package subpaths (S19: new exports need an app restart). The row calls this
+ * once with a live servers getter; service resolution goes through ctx.inject
+ * (S20: ctx.get does not see these services from a profile-row scope), so
+ * nothing registers when the connection/subprocess pair is absent. The
+ * registry stays live: user `lspServers` merge over the built-in catalog at
+ * call time. Returns an idempotent disposer.
+ */
+export function wireLspAdmin(ctx, getServers) {
+  let off = () => {}
+  ctx.inject?.(['connection', 'subprocess'], (scope) => {
+    const dispose = registerLspAdminEndpoints(scope, {
+      registry: () => buildRegistry(getServers()),
+    })
+    off = dispose
+    return dispose
+  })
+  return () => off()
 }
 
 function apply(ctx, config = {}) {

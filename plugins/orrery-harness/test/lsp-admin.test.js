@@ -239,3 +239,39 @@ describe('lsp admin plugin', () => {
     expect(statusBody2.value.servers.some((server) => server.family === 'zig')).toBe(false)
   })
 })
+
+describe('wireLspAdmin', () => {
+  it('wires the endpoints through the inject tuple when connection/subprocess exist', async () => {
+    const { wireLspAdmin } = await import('../src/lsp/admin.js')
+    const endpoints = []
+    let injectCallback
+    const ctx = {
+      inject: (dependencies, callback) => {
+        injectCallback = { dependencies, callback }
+        // simulate the injection resolving: the scope carries direct props
+        const scope = {
+          connection: { fetch: { register: (definition) => {
+            endpoints.push(definition)
+            return () => {}
+          } } },
+          subprocess: { spawns: [] },
+        }
+        callback(scope)
+        return () => {}
+      },
+    }
+    const dispose = wireLspAdmin(ctx, () => undefined)
+    expect(injectCallback.dependencies).toEqual(['connection', 'subprocess'])
+    expect(endpoints.map((definition) => definition.path)).toEqual(['/api/orrery-lsp/status', '/api/orrery-lsp/install'])
+    expect(typeof dispose).toBe('function')
+    dispose()
+    dispose() // idempotent
+  })
+
+  it('registers nothing and disposes harmlessly when inject is absent', async () => {
+    const { wireLspAdmin } = await import('../src/lsp/admin.js')
+    const dispose = wireLspAdmin({}, () => undefined)
+    expect(typeof dispose).toBe('function')
+    dispose() // no throw
+  })
+})

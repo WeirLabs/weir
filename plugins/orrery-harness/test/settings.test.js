@@ -1,5 +1,7 @@
 import { describe, expect, it } from './helpers.js'
-import { apply as applySettings, Config, parseLspServers, parseRobashLists } from '../src/settings/index.js'
+import { apply as applySettings, Config } from '../src/settings/index.js'
+import { computeSections } from '../src/settings/sections.js'
+import { createWhitelistDefaultsCache } from '../src/shared/whitelist-defaults.js'
 import { DEFAULT_WHITELIST_PATH, WHITELIST_KEYS } from '../src/shared/whitelist-defaults.js'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -47,22 +49,22 @@ describe('settings Config schema', () => {
   })
 
   it('validates lspServers JSON structure (fail loud)', () => {
-    expect(parseLspServers('{"zig":{"command":"zls"}}')).toEqual({ zig: { command: 'zls' } })
-    expect(() => parseLspServers('not-json')).toThrow()
-    expect(() => parseLspServers('[1]')).toThrow(/object map/)
-    expect(() => parseLspServers('{"zig":{}}')).toThrow(/command/)
-    expect(() => parseLspServers('{"zig":{"command":"zls","args":"--stdio"}}')).toThrow(/args/)
+    expect(computeSections({ lspServers: '{"zig":{"command":"zls"}}' }).lsp.servers).toEqual({ zig: { command: 'zls' } })
+    expect(() => computeSections({ lspServers: 'not-json' })).toThrow()
+    expect(() => computeSections({ lspServers: '[1]' })).toThrow(/object map/)
+    expect(() => computeSections({ lspServers: '{"zig":{}}' })).toThrow(/command/)
+    expect(() => computeSections({ lspServers: '{"zig":{"command":"zls","args":"--stdio"}}' })).toThrow(/args/)
   })
 
   it('validates robash list JSON (fail loud, key named)', () => {
-    expect(parseRobashLists('robashAllow', '["ls","cat"]')).toEqual(['ls', 'cat'])
-    expect(parseRobashLists('robashDeny', '[]')).toEqual([])
-    expect(() => parseRobashLists('robashAllow', 'not-json')).toThrow(/robashAllow/)
-    expect(() => parseRobashLists('robashGitAllow', '{"a":1}')).toThrow(/robashGitAllow/)
-    expect(() => parseRobashLists('robashDeny', '[1,"rm"]')).toThrow(/robashDeny/)
-    expect(parseRobashLists('robashPwshAllow', '["Get-Content"]')).toEqual(['Get-Content'])
-    expect(() => parseRobashLists('robashPwshAllow', 'not-json')).toThrow(/robashPwshAllow/)
-    expect(() => parseRobashLists('robashPwshDeny', '[1]')).toThrow(/robashPwshDeny/)
+    expect(computeSections({ robashAllow: '["ls","cat"]' }).robash.allow).toEqual(['ls', 'cat'])
+    expect(computeSections({ robashDeny: '[]' }).robash?.deny).toBe(undefined)
+    expect(() => computeSections({ robashAllow: 'not-json' })).toThrow(/robashAllow/)
+    expect(() => computeSections({ robashGitAllow: '{"a":1}' })).toThrow(/robashGitAllow/)
+    expect(() => computeSections({ robashDeny: '[1,"rm"]' })).toThrow(/robashDeny/)
+    expect(computeSections({ robashPwshAllow: '["Get-Content"]' }).robash.pwshAllow).toEqual(['Get-Content'])
+    expect(() => computeSections({ robashPwshAllow: 'not-json' })).toThrow(/robashPwshAllow/)
+    expect(() => computeSections({ robashPwshDeny: '[1]' })).toThrow(/robashPwshDeny/)
   })
 })
 
@@ -84,42 +86,13 @@ describe('settings plugin apply', () => {
     return { provided, configured, handlers, service: provided[0]?.impl }
   }
 
-  it('wires the LSP admin endpoints when connection/subprocess exist', () => {
-    const endpoints = []
-    const provided = []
-    let injectCallback
-    const ctx = {
-      reflect: { provide: (name, impl) => provided.push({ name, impl }) },
-      get: (key) => {
-        if (key === 'connection') return { fetch: { register: (definition) => {
-          endpoints.push(definition)
-          return () => {}
-        } } }
-        if (key === 'subprocess') return { spawns: [] }
-        return undefined
-      },
-      on: () => {},
-      inject: (dependencies, callback) => {
-        injectCallback = { dependencies, callback }
-        // simulate the injection resolving: the scope carries direct props
-        const scope = {
-          connection: { fetch: { register: (definition) => {
-            endpoints.push(definition)
-            return () => {}
-          } } },
-          subprocess: { spawns: [] },
-        }
-        callback(scope)
-        return () => {}
-      },
-    }
-    const dispose = applySettings(ctx, {})
-    expect(injectCallback.dependencies).toEqual(['connection', 'subprocess'])
-    expect(endpoints.map((definition) => definition.path)).toEqual(['/api/orrery-lsp/status', '/api/orrery-lsp/install'])
-    expect(typeof dispose).toBe('function')
-    dispose()
-    dispose() // idempotent
-  })
+  // Direct computeSections assertions (no fake ctx): the production wiring of
+  // the defaults read, minus the plugin shell.
+  function sections(config) {
+    const whitelistDefaults = createWhitelistDefaultsCache({ logger: undefined })
+    return computeSections(config, { readDefaults: (path) => whitelistDefaults.tables(path ?? DEFAULT_WHITELIST_PATH) })
+  }
+
 
   it('provides the orrerySettings service returning user-set sections', () => {
     const { provided, service } = harness({ todoMaxConsecutive: 3 })
@@ -129,29 +102,28 @@ describe('settings plugin apply', () => {
   })
 
   it('parses categoryChains JSON into a validated object map', () => {
-    const { service } = harness({
+    const delegate = sections({
       delegateCategoryChains: '{"quick":[{"provider":"p","model":"m","reasoningEffort":"low"}]}',
-    })
-    expect(service.get('delegate').categoryChains).toEqual({ quick: [{ provider: 'p', model: 'm', reasoningEffort: 'low' }] })
+    }).delegate
+    expect(delegate.categoryChains).toEqual({ quick: [{ provider: 'p', model: 'm', reasoningEffort: 'low' }] })
   })
 
   it('fails activation loud on malformed categoryChains', () => {
-    expect(() => harness({ delegateCategoryChains: 'not-json' })).toThrow()
-    expect(() => harness({ delegateCategoryChains: '[1,2]' })).toThrow(/object map/)
-    expect(() => harness({ delegateCategoryChains: '{"quick":"nope"}' })).toThrow(/array of rungs/)
-    expect(() => harness({ delegateCategoryChains: '{"quick":[{"provider":"p"}]}' })).toThrow(/provider, model/)
+    expect(() => sections({ delegateCategoryChains: 'not-json' })).toThrow()
+    expect(() => sections({ delegateCategoryChains: '[1,2]' })).toThrow(/object map/)
+    expect(() => sections({ delegateCategoryChains: '{"quick":"nope"}' })).toThrow(/array of rungs/)
+    expect(() => sections({ delegateCategoryChains: '{"quick":[{"provider":"p"}]}' })).toThrow(/provider, model/)
   })
 
   it('parses robash list JSON into arrays in the robash section', () => {
-    const { service } = harness({
+    const robash = sections({
       robashEnabled: true,
       robashAllow: '["ls","cat"]',
       robashGitAllow: '["status","log"]',
       robashDeny: '["rm"]',
       robashPwshAllow: '["Get-Content","Get-Date"]',
       robashPwshDeny: '["iex"]',
-    })
-    const robash = service.get('robash')
+    }).robash
     // the user's keys are ADDITIONS, delivered as parsed arrays
     expect(robash.enabled).toBe(true)
     expect(robash.allow).toEqual(['ls', 'cat'])
@@ -170,79 +142,72 @@ describe('settings plugin apply', () => {
     // Append semantics: '[]' adds nothing, so it is indistinguishable from
     // absent. It no longer means "clear this whitelist" — the product defaults
     // are always in effect and no configuration value can remove them.
-    const { service } = harness({ robashEnabled: true, robashAllow: '[]' })
-    const robash = service.get('robash')
+    const robash = sections({ robashEnabled: true, robashAllow: '[]' }).robash
     expect(robash.enabled).toBe(true)
     expect(robash.allow).toBeUndefined()
     expect(robash.defaults.robashAllow).toContain('sleep')
     // an empty string reads as absent too
-    const blank = harness({ robashAllow: '  ' })
-    expect(blank.service.get('robash').allow).toBeUndefined()
+    expect(sections({ robashAllow: '  ' }).robash.allow).toBeUndefined()
     // the pwsh keys follow the same semantics
-    const pwsh = harness({ robashPwshAllow: '[]' })
-    expect(pwsh.service.get('robash').pwshAllow).toBeUndefined()
-    const pwshBlank = harness({ robashPwshDeny: '  ' })
-    expect(pwshBlank.service.get('robash').pwshDeny).toBeUndefined()
+    expect(sections({ robashPwshAllow: '[]' }).robash.pwshAllow).toBeUndefined()
+    expect(sections({ robashPwshDeny: '  ' }).robash.pwshDeny).toBeUndefined()
     // a config that declares no robash key at all still carries the defaults
-    const none = harness({ intentGateProvider: 'mock' }).service.get('robash')
+    const none = sections({ intentGateProvider: 'mock' }).robash
     expect(none.allow).toBeUndefined()
     expect(none.defaults.robashDeny).toContain('rm')
   })
 
   it('fails activation loud on malformed robash lists (key named)', () => {
-    expect(() => harness({ robashAllow: 'not-json' })).toThrow(/robashAllow/)
-    expect(() => harness({ robashGitAllow: '{"a":1}' })).toThrow(/robashGitAllow/)
-    expect(() => harness({ robashDeny: '[1]' })).toThrow(/robashDeny/)
-    expect(() => harness({ robashPwshAllow: 'not-json' })).toThrow(/robashPwshAllow/)
-    expect(() => harness({ robashPwshDeny: '{"a":1}' })).toThrow(/robashPwshDeny/)
+    expect(() => sections({ robashAllow: 'not-json' })).toThrow(/robashAllow/)
+    expect(() => sections({ robashGitAllow: '{"a":1}' })).toThrow(/robashGitAllow/)
+    expect(() => sections({ robashDeny: '[1]' })).toThrow(/robashDeny/)
+    expect(() => sections({ robashPwshAllow: 'not-json' })).toThrow(/robashPwshAllow/)
+    expect(() => sections({ robashPwshDeny: '{"a":1}' })).toThrow(/robashPwshDeny/)
   })
 
   it('re-parses live robash lists only when the raw string changes', () => {
     const config = { robashAllow: '["ls"]' }
-    const { service } = harness(config)
-    const first = service.get('robash')
+    const first = sections(config).robash
     expect(first.allow).toEqual(['ls'])
-    expect(service.get('robash').allow).toBe(first.allow) // raw-cache hit: same instance
+    expect(sections(config).robash.allow).toBe(first.allow) // raw-cache hit: same instance
     config.robashAllow = '["ls","cat"]'
-    expect(service.get('robash').allow).toEqual(['ls', 'cat'])
+    expect(sections(config).robash.allow).toEqual(['ls', 'cat'])
     config.robashDeny = '["rm"]'
-    const both = service.get('robash')
+    const both = sections(config).robash
     expect(both.allow).toEqual(['ls', 'cat'])
     expect(both.deny).toEqual(['rm'])
     delete config.robashAllow
     delete config.robashDeny
     // no list left to add, but the product defaults are still published, so the
     // section survives — it is no longer "undefined means nothing configured"
-    expect(service.get('robash').defaults.robashAllow).toContain('sleep')
+    expect(sections(config).robash.defaults.robashAllow).toContain('sleep')
   })
 
   it('publishes the product defaults from the plugin data file, and a configured path takes over', () => {
     // The gap this pins: the defaults must NOT depend on any configuration layer,
     // because a patch row is replaced wholesale. A row that declares nothing at
     // all still gets the full shipped defaults.
-    const clean = harness({ robashEnabled: true })
-    const shipped = clean.service.get('robash').defaults
-    expect(shipped.robashPwshAllow).toContain('Start-Sleep')
-    expect(shipped.robashAllow).toContain('sleep')
-    expect(shipped.robashDeny).toContain('rm')
-    for (const key of WHITELIST_KEYS) expect(clean.service.get('robash').defaultsSource[key]).toBe('file')
+    const clean = sections({ robashEnabled: true }).robash
+    expect(clean.defaults.robashPwshAllow).toContain('Start-Sleep')
+    expect(clean.defaults.robashAllow).toContain('sleep')
+    expect(clean.defaults.robashDeny).toContain('rm')
+    for (const key of WHITELIST_KEYS) expect(clean.defaultsSource[key]).toBe('file')
 
     // A path key TAKES OVER: the taken-over file is the complete source, and
     // entries it omits are not in effect. A table it omits falls back per table.
     const takenOver = join(mkdtempSync(join(tmpdir(), 'orrery-defaults-')), 'mine.json')
     writeFileSync(takenOver, JSON.stringify({ robashAllow: ['ls'], robashPwshAllow: ['Get-Content'] }))
-    const custom = harness({ robashDefaultsPath: takenOver })
-    const tables = custom.service.get('robash').defaults
-    expect(tables.robashAllow).toEqual(['ls'])
-    expect(tables.robashAllow).not.toContain('sleep')
-    expect(tables.robashPwshAllow).toEqual(['Get-Content'])
+    const custom = sections({ robashDefaultsPath: takenOver }).robash
+    expect(custom.defaults.robashAllow).toEqual(['ls'])
+    expect(custom.defaults.robashAllow).not.toContain('sleep')
+    expect(custom.defaults.robashPwshAllow).toEqual(['Get-Content'])
     // omitted tables fall back to the built-in constants, not to the shipped file
-    expect(tables.robashDeny).toContain('rm')
-    expect(custom.service.get('robash').defaultsSource.robashDeny).toBe('fallback')
-    expect(custom.service.get('robash').defaultsSource.robashAllow).toBe('file')
+    expect(custom.defaults.robashDeny).toContain('rm')
+    expect(custom.defaultsSource.robashDeny).toBe('fallback')
+    expect(custom.defaultsSource.robashAllow).toBe('file')
     // the configuration keys are not part of the guard's policy surface
-    expect(custom.service.get('robash').defaultsPath).toBeUndefined()
-    expect(custom.service.get('robash').defaultsReload).toBeUndefined()
+    expect(custom.defaultsPath).toBeUndefined()
+    expect(custom.defaultsReload).toBeUndefined()
   })
 
   it('re-reads the defaults file when the reload entry is bumped', () => {
@@ -317,16 +282,16 @@ describe('settings plugin apply', () => {
 
   it('unwraps volatile refs and drops unset fields (DSH-fork semantics)', () => {
     // the real fork materializes volatile fields as {get()} refs: validate a
-    // config through the schema, then feed the RESULT through apply.
+    // config through the schema, then feed the RESULT through computeSections.
     const validated = Config['~standard'].validate({
       intentGateClassifier: 'llm',
       todoMaxConsecutive: 3,
     })
     expect(validated.issues).toBe(undefined)
-    const { service } = harness(validated.value)
-    expect(service.get('intentGate')).toEqual({ classifier: 'llm' })
-    expect(service.get('todoDriver')).toEqual({ maxConsecutive: 3 })
-    expect(service.get('contextGuard')).toBe(undefined)
+    const computed = sections(validated.value)
+    expect(computed.intentGate).toEqual({ classifier: 'llm' })
+    expect(computed.todoDriver).toEqual({ maxConsecutive: 3 })
+    expect(computed.contextGuard).toBe(undefined)
   })
 
   it('registers the auto-page policy when the forms service exists', () => {
@@ -341,32 +306,30 @@ describe('settings plugin apply', () => {
 
   it('recomputes sections live from the mutated config reference (volatile commit)', () => {
     const config = { todoMaxConsecutive: 3 }
-    const { service } = harness(config)
-    expect(service.get('todoDriver')).toEqual({ maxConsecutive: 3 })
+    expect(sections(config).todoDriver).toEqual({ maxConsecutive: 3 })
     config.todoMaxConsecutive = 9
     config.lspEnabled = true
     config.lspIdleMs = 123_000
     config.lspRequestTimeoutMs = 8_000
     config.lspDiagnosticsWaitMs = 500
     config.lspServers = '{"zig":{"command":"zls","args":["--stdio"]}}'
-    expect(service.get('todoDriver')).toEqual({ maxConsecutive: 9 })
-    expect(service.get('lsp')).toEqual({ enabled: true, idleMs: 123_000, requestTimeoutMs: 8_000, diagnosticsWaitMs: 500, servers: { zig: { command: 'zls', args: ['--stdio'] } } })
+    expect(sections(config).todoDriver).toEqual({ maxConsecutive: 9 })
+    expect(sections(config).lsp).toEqual({ enabled: true, idleMs: 123_000, requestTimeoutMs: 8_000, diagnosticsWaitMs: 500, servers: { zig: { command: 'zls', args: ['--stdio'] } } })
     delete config.lspEnabled
     delete config.lspIdleMs
     delete config.lspRequestTimeoutMs
     delete config.lspDiagnosticsWaitMs
     delete config.lspServers
-    expect(service.get('lsp')).toBe(undefined)
+    expect(sections(config).lsp).toBe(undefined)
   })
 
   it('re-parses live categoryChains only when the raw string changes', () => {
     const config = { delegateCategoryChains: '{"quick":[{"provider":"p","model":"m"}]}' }
-    const { service } = harness(config)
-    const first = service.get('delegate')
-    const second = service.get('delegate')
+    const first = sections(config).delegate
+    const second = sections(config).delegate
     expect(second.categoryChains).toEqual(first.categoryChains)
     config.delegateCategoryChains = '{"deep":[{"provider":"q","model":"n"}]}'
-    expect(service.get('delegate').categoryChains).toEqual({ deep: [{ provider: 'q', model: 'n' }] })
+    expect(sections(config).delegate.categoryChains).toEqual({ deep: [{ provider: 'q', model: 'n' }] })
   })
 
   it('onChange subscribers fire on loader/volatile-update', () => {
