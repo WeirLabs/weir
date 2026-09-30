@@ -6,12 +6,14 @@
 
 `plugins/orrery-test-harness/`（包名 `orrery-test-harness`）是 Orrery 唯一的集成测试层。它与单测的分工是：单测在进程内直接调用模块、用假 ctx 断言纯逻辑；集成装置**真的启动一个 DSH profile**，让预设组合、工具表面、续推/压缩/委派/编辑在真实运行时里跑一遍，然后按 trace、耐久会话日志与磁盘夹具断言结果。
 
-它由四部分组成：
+它由以下部分组成：
 
-- `run.mjs`：驱动。生成 profile（link 安装两个插件）、跑每个场景、按 trace 断言，最后汇总 `N/M integration checks passed`。
-- `src/mock-llm.js`：脚本化 mock LLM 适配器（provider `mock`）。按 `ORRERY_IT_SCENARIO` 用内容规则决定每一轮的输出，并把每次调用作为一行 JSON 写进 trace。
-- `src/event-tap.js`：事件探针。把 `compaction/*`、`todo/write`、`turn/end`、`user/message` 与 cordis 的 `orrery/*` 审计频道写进同一条 trace。
+- `run.mjs`：驱动。生成 profile（link 安装两个插件）、**按 scenario registry 通用循环**跑每个场景（自身零 per-scenario 分支）、经 `makeRunView` 预解析 trace 供断言回放，最后汇总 `N/M integration checks passed`。
+- `src/scenarios/`：**scenario registry**——每场景一个模块，导出 `{ id, prompt, decide, observe?, assert, run?, env? }`；`index.js` 导出有序 `SCENARIOS` 与 `byId` 查找。场景模块只允许 import node 内建模块与包内相对模块（mock 插件进程与驱动共用同一份 registry）。
+- `src/mock-llm.js`：脚本化 mock LLM 适配器（provider `mock`）。严格供应商 schema 闸门最先执行（逐字保留），每次请求只做**一次** `extract(options)` 观察提取（取代迁移前每请求约 39 次 transcript 重算），经 `byId` 查场景后产出 chunks；未知场景 id 在插件加载时**抛错**。
+- `src/event-tap.js`：事件探针。把 `compaction/*`、`todo/write`、`turn/end`、`user/message` 与 cordis 的 `orrery/*` 审计频道写进同一条 trace；审计类型词汇经**相对跨包 import** 自产品侧 `shared/audit.js` 单源消费（手抄清单已删除）。
 - `src/mock-lsp-server.js`：脚本化 LSP 服务器，给 `lsp` 场景提供协议夹具，不依赖任何外部安装。
+- 共享 helper：`src/mock-kit.js`（chunks/transcript/shellCall 等纯函数）、`src/message-text.js`（统一 `textOf`）、`src/jsonl.js`（逐行容错 JSONL 解析）、`src/run-view.js`（trace 预解析视图）。
 
 **它必须留在开发机**：AGENTS.md §3.9 明令不得安装进任何正式 profile（`run.mjs` 生成的 profile 名为 `orrery-it`，只存在于测试根目录下）。
 
@@ -21,8 +23,9 @@
 
 - `pnpm --filter orrery-test-harness run test:integration` 跑全部 12 个场景，逐条打印 `PASS`/`FAIL`，末尾给出通过计数；有失败则退出码非 0。
 - 也可以只跑指定场景：`node run.mjs lsp robash`。
-- 场景清单（`run.mjs` 的 `SCENARIOS`）：`deepwork`、`delegate`、`hashline`、`pressure`、`robash`、`semantic`、`grouped`、`escalate`、`background`、`terminate`、`rehydrate`、`lsp`。
-- `pnpm --filter orrery-test-harness test` 跑装置自身的单元测试（shell 抽象契约）。
+- 场景清单的权威来源是 `src/scenarios/index.js` 的有序 `SCENARIOS`：`deepwork`、`delegate`、`hashline`、`pressure`、`robash`、`semantic`、`grouped`、`escalate`、`background`、`terminate`、`rehydrate`、`lsp`。新增场景 = 新增一个场景模块并在索引登记一处（registry conformance 测试钉住齐备性）；**未知场景 id 是响亮失败**：`node run.mjs no-such-scenario` 在 setup 前退出码 1 并点名该 id。
+- `pnpm --filter orrery-test-harness test` 跑装置自身的单元测试（shell 契约 / registry / brains / replay / audit-types / trace-extract / jsonl / message-text 各套件）。
+- `pnpm --filter orrery-test-harness run record` 重录断言回放夹具（一次绿跑后把 `trace-<scenario>.jsonl` 拷入 `test/fixtures/traces/`，入库）。
 - 每次运行会把测试根目录整体删除重建；不在仓库内留任何产物（写入位置见下）。
 
 ## 配置
@@ -73,8 +76,9 @@ patch 层把 compaction provider 与 context-guard 消费者放进同一个 `iso
 - **`robash` 的拒绝证据是平台平行的**：POSIX 侧断言 `rm` 被拒，win32 侧断言 `Remove-Item` 被拒——两者都命中各自的默认 deny 列表，是平行证据而非同一条。**覆盖边界要说准**：win32 上被拒绝的是*写命令本身*（守卫在派生前就否决），而*放行*那一跳执行的是真实 pwsh（标记经真实工具结果回传）；因此未被覆盖的是 pwsh 侧的写入行为，不是 pwsh 本身。
 - **不覆盖**：真实语言服务器行为（`lsp` 用脚本化 mock 服务器）、GUI/桌面链路、真实供应商调用。
 - **平台等待原语的端到端覆盖（已修复）**：`wait` / `stay-busy` 在 win32 渲染为 `Start-Sleep`。该 cmdlet 一度只在 bash 侧有对应物（`sleep`）、pwsh 侧两张表都没有，因此“同一个等待操作 macOS 放行、Windows 拒绝”。现在两侧都放行（`Start-Sleep` 入 pwsh 白名单 + `sleep` 登记为内建只读别名），且 `robash` 子成员的命令体改为一发 `echo-and-wait`，使它成为该修复的端到端钉。**覆盖边界要说准**：本装置**不加载产品 bundle 与预设 patch**（bundle 仅作 `link:` 依赖供模块解析，profile 自己的 patch 写为 `[]`，其 settings 行也不含 robash 键），因此实际生效的是**模块默认值** `DEFAULT_ROBASH_PWSH`。后果：该钉只覆盖“模块默认 allow 项”这一层；**预设 patch 行的缺失它看不见**（把 patch 行改回去，集成套件仍会全绿）。镜像行由 `test/robash-whitelist-parity.test.js` 守护，别名行由 `robash-guard-pwsh.test.js` 的别名语料守护——两者都是单元层。
+- **审计词汇单源与 `supervision/<kind>` 子事件**：审计类型词汇的唯一权威来源是产品侧 `orrery-harness/src/shared/audit.js` 导出的 `AUDIT_TYPES` 冻结注册表；event-tap 经相对跨包 import 消费它（link 安装下可解析，每次 IT run 即实证），手抄清单已删除。关于动态子事件：`delegate` 的协调器在 `orrery/supervision` 之外还发射 `orrery/supervision/<kind>` 子事件。经查证，cordis 的事件分发按**精确事件名**解析监听器（`dispatch` 以 `this._hooks[name]` 对象键查找），**不支持前缀/通配订阅**，因此 tap 无法用一个订阅覆盖 `supervision/*`。结论：已知子类在 `audit.js` 登记为 `AUDIT_SUBTYPES` 导出（当前 7 种：spawn/seal/settle/group-settled/resume/terminate/group-released），event-tap 逐项展开订阅；`test/audit-types.test.js` 把协调器 `onFact` 的 kind 集合钉成与注册表一致，新增子类不登记即红。
 
 ## 测试
 
-- 单元测试：`plugins/orrery-test-harness/test/shell.test.js` —— 钉死平台工具名、五个操作的 POSIX/win32 命令字面量、输入卫生（未知操作/未知平台/非法秒数/可夹带语法的标记与路径一律抛错），以及**三张表键集一致**（每个动词在两侧都有 builder、且都有校验器）。期望值是独立字面量而非重算，因此断言能与实现真正分歧。
+- 单元测试（`plugins/orrery-test-harness/test/`）：`shell.test.js` —— 钉死平台工具名、五个操作的 POSIX/win32 命令字面量、输入卫生（未知操作/未知平台/非法秒数/可夹带语法的标记与路径一律抛错），以及**三张表键集一致**（每个动词在两侧都有 builder、且都有校验器）；期望值是独立字面量而非重算。`scenario-registry.test.js` —— registry 条目齐备性（id/prompt/decide/assert、id === 文件名、id 集与顺序钉死）。`decide-brains.test.js` —— 进程内直调各场景 `decide`，断言 chunk 序列关键点（不启动 headless profile；mock 的 decide 逻辑首次有单测）。`assert-replay.test.js` —— 录制 trace（`test/fixtures/traces/`，入库）经 `makeRunView` 回放各场景 `assert`，结论与原始运行一致，且 fixture 的 trace key 集与当前 writer 一致性校验（形状漂移即红）。`audit-types.test.js` —— 三路 conformance：tap 订阅集 === `Object.values(AUDIT_TYPES)` + `AUDIT_SUBTYPES` 展开、产品 emit 文件不得携带注册表外字面量、协调器 `onFact` kind 集 === `AUDIT_SUBTYPES.supervision`。`trace-extract.test.js` —— 每请求恰好一次 extract、trace record key 集与迁移前一致。`jsonl.test.js` 与 `message-text.test.js` —— 共享 helper 的容错与双形态语义。
 - 集成测试：`pnpm --filter orrery-test-harness run test:integration` —— 装置自身就是那一层；12 个场景即验收门。

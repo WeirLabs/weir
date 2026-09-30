@@ -1,0 +1,7 @@
+{
+  "scenario": "robash",
+  "code": 0,
+  "stdout": "parent observed robash child result\n",
+  "stderr": "",
+  "sessionId": null
+}

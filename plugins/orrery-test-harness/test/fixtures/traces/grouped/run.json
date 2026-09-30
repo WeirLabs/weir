@@ -1,0 +1,7 @@
+{
+  "scenario": "grouped",
+  "code": 0,
+  "stdout": "parent observed group-settled signal\n",
+  "stderr": "",
+  "sessionId": null
+}

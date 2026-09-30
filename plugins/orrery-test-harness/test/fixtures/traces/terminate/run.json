@@ -1,0 +1,7 @@
+{
+  "scenario": "terminate",
+  "code": 0,
+  "stdout": "parent observed the settle signal after termination\n",
+  "stderr": "",
+  "sessionId": null
+}

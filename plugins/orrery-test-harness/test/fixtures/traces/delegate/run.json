@@ -1,0 +1,7 @@
+{
+  "scenario": "delegate",
+  "code": 0,
+  "stdout": "parent observed child result\n",
+  "stderr": "",
+  "sessionId": null
+}

@@ -11,7 +11,7 @@ import { rehydrateSupervision, applyChildLogRecovery } from './rehydrate.js'
 import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './resolver.js'
 import { attachReadOnlyBashGuard } from './robash-guard.js'
 import { DEFAULT_TABLES } from './robash-guard-core.js'
-import { createAudit } from '../shared/audit.js'
+import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createDelegateTool } from './tool.js'
@@ -181,10 +181,10 @@ function apply(ctx, config = {}) {
             timer.unref?.()
           },
           onAudit: (note) => {
-            audit(parent.session, 'supervision', { note })
+            audit(parent.session, AUDIT_TYPES.supervision, { note })
           },
           onFact: (fact) => {
-            audit(parent.session, `supervision/${fact.kind}`, fact)
+            audit(parent.session, `${AUDIT_TYPES.supervision}/${fact.kind}`, fact)
           },
           notifyParent: (text) => {
             // Reliable parent-facing delivery: timer-deferred, mirroring the
@@ -205,7 +205,7 @@ function apply(ctx, config = {}) {
                 Promise.resolve(outcome).catch((error) => {
                   ctx.logger?.warn?.(`orrery-delegate: group-settled signal delivery (attempt ${attempt}) failed: ${error?.message ?? error}`)
                   if (attempt < 3) deliver(attempt + 1)
-                  else audit(parent.session, 'supervision', { note: `group-settled signal delivery failed after ${attempt} attempts: ${String(error?.message ?? error)}` })
+                  else audit(parent.session, AUDIT_TYPES.supervision, { note: `group-settled signal delivery failed after ${attempt} attempts: ${String(error?.message ?? error)}` })
                 })
               }, delay)
               timer.unref?.() // never hold the process for a pending signal delivery
@@ -287,7 +287,7 @@ function apply(ctx, config = {}) {
     try {
       await entry.coordinator.onTurnEnd(childId, reason)
     } catch (error) {
-      audit(entry.parent.session, 'supervision', { note: `turn-end processing failed for child ${childId}: ${String(error?.message ?? error)}` })
+      audit(entry.parent.session, AUDIT_TYPES.supervision, { note: `turn-end processing failed for child ${childId}: ${String(error?.message ?? error)}` })
     }
   }
 

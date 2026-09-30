@@ -1,0 +1,7 @@
+{
+  "scenario": "background",
+  "code": 0,
+  "stdout": "parent observed the compact notice; the full report stays pull-only\n",
+  "stderr": "",
+  "sessionId": null
+}

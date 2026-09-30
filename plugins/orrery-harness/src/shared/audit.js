@@ -10,6 +10,31 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /**
+ * The single authoritative audit-type vocabulary (design D4). Emit sites
+ * reference these constants instead of string literals; subscribers iterate
+ * `Object.values(AUDIT_TYPES)` so a new type is picked up without edits.
+ * Values are the event types WITHOUT the 'orrery/' prefix.
+ */
+export const AUDIT_TYPES = Object.freeze({
+  intentHit: 'intent-hit',
+  intentClassify: 'intent-classify',
+  continuationBlocked: 'continuation-blocked',
+  continuationStop: 'continuation-stop',
+  supervision: 'supervision',
+})
+
+/**
+ * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
+ * AUDIT_TYPES entry. cordis event dispatch is an exact-name lookup (no
+ * prefix/wildcard subscription), so subscribers must enumerate sub-events
+ * explicitly; this registry is the single source for that enumeration. Keys
+ * are AUDIT_TYPES member names; values are the emitted kind suffixes.
+ */
+export const AUDIT_SUBTYPES = Object.freeze({
+  supervision: Object.freeze(['spawn', 'seal', 'settle', 'group-settled', 'resume', 'terminate', 'group-released']),
+})
+
+/**
  * @param {object} ctx - plugin context (used for ctx.emit)
  * @returns {(session: object, type: string, data?: unknown) => void} audit emitter bound to ctx
  */

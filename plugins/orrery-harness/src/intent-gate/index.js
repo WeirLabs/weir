@@ -4,7 +4,7 @@
 // Optional semantic classification (llm sidecar / experimental jev) kicks in
 // only when regex misses. Plain ESM, ctx-only.
 import { createClassifier } from './classifier.js'
-import { createAudit } from '../shared/audit.js'
+import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { isGenuineUserMessage, overlayConfig } from '../shared/runtime-messages.js'
 import {
@@ -73,7 +73,7 @@ function apply(ctx, config = {}) {
       const semanticHit = await classifier(stripped, intents, {
         agent,
         onAudit: (event) => {
-          audit(agent.session, 'intent-classify', event)
+          audit(agent.session, AUDIT_TYPES.intentClassify, event)
         },
       })
       if (semanticHit) {
@@ -128,7 +128,7 @@ function apply(ctx, config = {}) {
   // Cold-safe durable audit of intent hits (never session.append — see
   // src/shared/audit.js for the hard contract).
   function record(_ctx, agent, intent, first) {
-    audit(agent.session, 'intent-hit', { intent: intent.id, first })
+    audit(agent.session, AUDIT_TYPES.intentHit, { intent: intent.id, first })
   }
 
   // Dispose: clear the in-memory ledgers (symmetric with todo-driver /

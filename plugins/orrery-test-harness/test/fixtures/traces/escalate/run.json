@@ -1,0 +1,7 @@
+{
+  "scenario": "escalate",
+  "code": 0,
+  "stdout": "parent observed the escalation respawn\n",
+  "stderr": "",
+  "sessionId": null
+}

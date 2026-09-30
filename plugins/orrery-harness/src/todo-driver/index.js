@@ -4,7 +4,7 @@
 // timer (never inside an event dispatch — session appends reject reentry).
 // Plain ESM, ctx-only.
 import { createContinuationState, DEFAULTS, isProviderError, renderContinuation } from './state-machine.js'
-import { createAudit } from '../shared/audit.js'
+import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { injectOrWarn, isGenuineUserMessage, overlayConfig } from '../shared/runtime-messages.js'
 
@@ -120,7 +120,7 @@ function apply(ctx, config = {}) {
     if (decision.kind === 'continue') {
       scheduleRetry(session, decision.delayMs)
     } else if (decision.kind === 'blocked') {
-      audit(session, 'continuation-blocked', { notice: decision.notice })
+      audit(session, AUDIT_TYPES.continuationBlocked, { notice: decision.notice })
       ctx.logger?.warn?.(`todo-driver: ${decision.notice}`)
     }
   })
@@ -145,7 +145,7 @@ function apply(ctx, config = {}) {
       stateOf(exec.agent.id).onStopContinuation(reason)
       cancelTimer(exec.agent.id)
       providerErrorPending.delete(exec.agent.id)
-      audit(exec.agent.session, 'continuation-stop', { reason })
+      audit(exec.agent.session, AUDIT_TYPES.continuationStop, { reason })
       return { stopped: true, reason }
     },
   })
