@@ -9,6 +9,8 @@
 ## 用户可见行为
 
 - 主 agent 调用 `delegate({ category, prompt })` 或 `delegate({ agent, prompt })`（两者必须且只能给其一），也可用 `tasks` 批量派发。
+- 类别与精选 agent 都可绑定**期望路由**：链上首个可解析档位胜出，整链不可解析时显式报错（**不回退继承**）；精选 agent 未配置链时继承调用方路由。二者均由设置页在线配置、即时生效。
+- **停用的目标对模型不可见**：停用类别/agent 不出现在委托目标指引里，也不出现在任何「可选目标」报错文本中；派发它得到显式 disabled 错误。
 - 后台委派（`run_in_background: true`）立即返回 job 标识；完成时主 agent 只收到紧凑通知，完整报告用 `job_output` 拉取——报告全文不会自动灌进上下文。
 - **受监督分组**（`group` 参数）：同一次调用内的全部任务构成一个组（**组不支持插入**——向已在场的组名再派即报错；批量派发先全量解析后 spawn，中途失败回滚已 spawn 成员并释放组名，未 seal 且全员 terminated 的组名可复用）；成员以 continuable 子代理运行，遵循二元终态契约（只可报 `STATUS: completed` 或 `STATUS: blocked`，无权判定任务存废）；**成员工具面不含 `send_message`**（spawn 时强制 deny，子→父直发通道关闭，唯一上报通道是终态契约；只读成员维持既有 allow 白名单不变且同样挂只读 bash 守卫，主 agent 自己的消息工具与 DSH 结算通知不受影响）；正常结束无终态报告会被催促续推、供应商错误按退避续推（默认 30s 翻倍、上限 5 次）；**每个成员的终态报告经 DSH 内建结算通知即时送达**（通知正文携带成员的 `STATUS/REPORT` 全文，Orrery 不再另发逐成员通知）；**组全员终态后送达恰好一条一行 group-settled 信号**（组名与成员数，不含成员正文；严格排在组内最后一条成员结算通知之后——以父会话日志观察到全员终态结算通知为准，通知缺失时 1s 兜底）；主 agent 可用 `resume_agent`（注入续推上下文恢复 blocked 子代理）、`terminate_agent`（运行中真正打断 / 非运行中仅状态簿记）裁决，以及 `supervised_status` 查看全量监督状态。
 - **监督可见性**（`supervised_status` 工具，仅主 agent 可用）：逐子代理报告 id/名称/组/状态（`running`/`blocked`/`completed`/`terminated`）/续推次数/报告摘要，逐组报告成员数与 sealed/settled 状态；并对 DSH catalog 中未被协调器登记的 continuable 子代理做**孤儿检测**（标记 untracked，绝不与空注册表混淆）。
@@ -21,7 +23,9 @@
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | 类别注册表 | 内置 9 类别 | 每类别：`description`、`guidance`、`promptAppend`、有序 `chain: [{provider, model, reasoningEffort?}]`、可选 `gateModels`、`disabled` |
-| 代理注册表 | `explore`/`librarian`/`oracle` | 精选只读代理定义 |
+| 代理注册表 | `explore`/`librarian`/`oracle` | 精选只读代理定义；每条可选 `chain: [{provider, model, reasoningEffort?}]`、`reasoningEffort`、`disabled` |
+| `delegateAgentChains` | 空（继承调用方路由） | 精选 agent 链覆盖（JSON map，整链替换；未知名告警忽略）。设置页键：`delegateAgentChains` |
+| `delegateDisabledCategories` | 空 | 停用类别名单（JSON 字符串数组，只能追加停用）；停用者不入模型可见清单、不可派发。设置页键：`delegateDisabledCategories` |
 | 模型族提示词变体表 | 内置 | 按模型族选择提示词变体（Claude/Kimi 式清单风格、GPT 式原则风格、其余中性），可覆盖 |
 | `readOnlyBash.enabled` | `true` | 只读 bash 守卫开关；`false` 时只读代理工具面回落到 v0.1.0（无 bash）。设置页键：`robashEnabled` |
 | `readOnlyBash.allow` | 初版白名单 | 命令级只读白名单（basename 匹配），可迭代补全。设置页键：`robashAllow`（JSON 字符串数组） |
@@ -50,6 +54,10 @@
 - 模块布局（`orrery-harness/delegate`）：`index.js` 是约 90 行的组合根，实际职责分住五个命名模块——`settings-overlay.js`（delegate 专属的设置覆盖层工厂：三层 append/去重与整链替换语义，刻意不套用 shared `overlayConfig` 的浅合并模型）、`target-resolver.js`（「item + 父路由 → persona/options/filter/label」唯一脊柱，provider 快照缓存闭包化）、`supervision-mount.js`（协调器工厂与六个效应器）、`supervision-tools.js`（`resume_agent`/`terminate_agent` 定义，object-rooted schema）、`audit-readers.js`（监督重建的三个冷读读取器）；派发走 `ctx.subagents.start`，一次调用携带 `agentOptions`（钉模型与推理档）、`persona`、`toolFilter`（只读白名单）、`maxDepth: 1`（禁止再委派——该拓扑契约全仓只剩一处）。
 - spawn 道轴收编在 `spawn-adapter.js`：`spawnGuardedChild` 让「started ⇒ 已挂守卫」成为不变量，三条道（一次性/后台 job 包装/受监督）按 lane policy 参数化共享同一份请求装配与守卫核心；编排层（escalation 重派、两阶段/回滚/seal）留在 `tool.js`。
 - 链解析规则：provider 已注册且（其 catalog 为空或包含该 model）即可解析；`reasoningEffort` 支持度经模型信息校验；适配器更新事件触发重解析。
+- 精选 agent 与类别**共用同一条解析路径**：`resolveTargetRoute`（原 `resolveCategory`）对任何 `{ chain, gateModels, disabled }` 目标定义生效。agent 分支的基线注册表经 `overlay.agentsNow()` 取得（`CURATED_AGENTS` ∪ 行 config，再叠设置面的整链替换），与 `categoriesNow()` 同形；agent 整链不可解析时抛显式错误并点名 agent 与尝试过的档位，**不回退继承**。
+- 兑现两处既有契约：`delegate(agent=…, model=…)` 的 `model` 覆盖生效为「否则会使用的那条路由」的 model id 覆盖（provider 取该路由的 provider；provider catalog 未列出不拒绝——DSH 契约里 catalog 是 advisory）；精选 agent 的 `reasoningEffort` 提示仅在所选路由确实声明该档位时应用，否则静默丢弃。
+- 委托目标指引：delegate 插件注册 prompt section `orchestrator:delegate-targets`（order = doctrine + 10），文本是静态英文模板 + 变量 `{{orrery_delegate_targets}}`；provider 在**每次提示词装配**时读 `categoriesNow()`/`agentsNow()` 求值，故设置提交即改变清单。清单渲染是纯模块 `src/delegate/targets.js`（启用过滤、注册表顺序、空集合兜底）。
+- 可见性三处收口：指引清单过滤 `disabled`；派发路径复用既有 unavailable 错误；`unknown_target` 的 available 名单只列启用目标。
 - 后台道一律走 one-shot job（拉取语义），保证报告全文不自动入上下文。
 - 类别与 `model` 同时提供会被拒绝（类别已含路由，不允许二义）。
 - 多 Agent 协作全部自研，不依赖 DSH 官方 experimental Agent Team 插件。
@@ -64,8 +72,12 @@
 - 只读代理的写/编辑调用 → 拒绝并注明只读原因；精选代理调 `delegate` → 深度限制错误。
 - **保证**：子代理永不可再委派（拓扑深度恒为 1）。
 - 设置提交的**原子边界**：一次委派内的工具面与守卫列表来自同一份解析结果；提交只影响**此后**的委派，以及**已建立**协调器的**后续**续推判定。已派发代理已拿到的工具面不被回溯收改（与只读守卫「挂载即生效、逐调用判定」的既有语义一致）。
+- 精选 agent 整链不可解析 → 显式错误点名 agent 与尝试过的档位，**不回退**到继承路由；只有空链才继承。
+- 停用目标**保证**不出现在任何模型可见面（指引清单、工具描述、报错名单）；注册表级 `disabled` 不可被设置面解除（设置面只能追加停用）。
 
 ## 测试
 
 - 单元测试：`test/` 覆盖参数校验、链解析（含死链报错）、变体选择、ESCALATE 重派、批量默认值；五个布局模块各有直测套件——`settings-overlay.test.js`（三层 append/去重语义与平台注入）、`target-resolver.test.js`（解析脊柱与「每次解析恰好一次覆盖层」）、`supervision-tools.test.js`（schema 形状与 depth 门）、`supervision-mount.test.js`（notifyParent 策略与 feed 路由，真实短定时器）、`audit-readers.test.js`（临时目录 JSONL 夹具），spawn 道轴由 `spawn-adapter.test.js`（装配形状/两种拆除语义/调用次序/禁用边角）钉住；守卫采用「一个深核心 + 两个薄壳适配器」结构——`src/delegate/robash-guard-core.js` 收编全部跨壳共享策略（canonical 白名单 `DEFAULT_TABLES`、git 门控、`GIT_CONFIG_*` 拒绝、递归预算、重定向 sink 策略、`gateExecutable` 判定尾段、按壳键控的 `DANGEROUS_FLAGS` 与共享理由模板 `reasons`），`robash-guard.js`/`robash-guard-pwsh.js` 只保留壳词法（scanner/tokenizer/别名展开）并各导出同一签名 `check(command, lists)`；`test/robash-guard.test.js` 与 `test/robash-guard-pwsh.test.js` 的语料（放行/拒绝/注入绕过/自定义列表）作为行为冻结证据逐字存活；`test/robash-whitelist-parity.test.js` 缩为「`whitelist-defaults.json` ↔ `DEFAULT_TABLES`」单组比对 + 行内不得出现白名单键的既有不变式；`test/group-coordinator.test.js` 覆盖协调器全分支（组登记/禁插入/终态解析/催促/退避/耗尽/打断分类/resume/terminate/group-settled 信号渲染/失败批次释放组名/各投递失败降级）与挂载层（组派发、两阶段解析、回滚与组名复用、只读成员守卫、延迟 followup 投递）；**volatile 热更新**由 `test/delegate.test.js` 的四条 `hot reload:` 用例（提交后新委派的守卫行为与服务面立即改变、提交后新委派 fail-closed、提交不回溯收改已派发代理、dispose 退订）与两条挂载层用例（提交抵达**已建立**协调器、提交改变下一次受监督派发的只读面）覆盖；`test/group-coordinator.test.js` 另有 `setSupervision` 三条用例（收紧上限、重调退避而不动登记状态、忽略三个调参键之外的键）。
+- 新增 `test/targets.test.js`：指引渲染（启用过滤 / 注册表顺序 / 空集合与全停用兜底 / 模板只引用已注册变量）；`target-resolver.test.js` 补 agent 链解析、`model` 覆盖、effort 支持度、报错 available 名单过滤；`settings-overlay.test.js` 补 `agentsNow()` 与 `disabledCategories` 合并；`settings.test.js` 补两个新键的解析与坏 JSON 报错。
 - 集成测试：`delegate` 场景（父委派、子会话、结果回传）；`robash` 场景——只读子代理的受守卫 bash：放行命令执行、写命令拒绝、目标文件零损伤；`grouped` 场景——受监督分组端到端：批量派发、供应商错误成员退避续推恢复、成员正文经 DSH 内建结算通知（`subagent-settled` 源）送达父会话、一行 group-settled 信号到达、父 agent 观察到信号；`escalate` 场景（ESCALATE 重派与发现传递）；`background` 场景（后台委派：紧凑通知到达、报告全文不入父上下文、父 agent 观察到通知）；`terminate` 场景（运行中成员真打断（turn aborted）、组 settle 信号到达）；`rehydrate` 场景（两阶段重启：blocked 报告经内建结算通知送达、send_message 工具面契约、审计事实链含 resume 与 group-settled、重建后 resume_agent 复工、group-settled 信号重发）。
+- `delegate` 场景断言父系统提示词含委托目标指引（含启用类别名与精选 agent 名）；新增停用场景：被停用类别既不在小节里，派发它又得到显式 disabled 错误且不出现于 available 名单。
