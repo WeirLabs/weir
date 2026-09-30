@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import {
   backoffDelay,
+  classifyTurnOutcome,
   createContinuationState,
   isProviderError,
   renderContinuation,
@@ -33,51 +34,113 @@ describe('backoffDelay', () => {
   })
 })
 
+describe('classifyTurnOutcome', () => {
+  const cases = [
+    // Row 1: durable completed.
+    { name: 'durable completed', input: { reason: { kind: 'completed' } }, expected: { kind: 'completed' } },
+    // Row 2: durable user abort.
+    { name: 'durable user abort', input: { reason: { kind: 'aborted', reason: { kind: 'user' } } }, expected: { kind: 'user-abort' } },
+    // Row 3: durable non-user abort carries the cause kind (when known).
+    { name: 'durable hook abort', input: { reason: { kind: 'aborted', reason: { kind: 'hook', reason: 'policy' } } }, expected: { kind: 'abort', causeKind: 'hook' } },
+    { name: 'durable abort without a cause', input: { reason: { kind: 'aborted' } }, expected: { kind: 'abort' } },
+    // Row 4: durable provider error.
+    { name: 'durable provider error', input: { reason: { kind: 'error', error: { status: 503 } } }, expected: { kind: 'provider-error', failure: { status: 503 } } },
+    // Row 5: durable non-provider error.
+    { name: 'durable non-provider error', input: { reason: { kind: 'error', error: { status: 400 } } }, expected: { kind: 'error', failure: { status: 400 } } },
+    // Row 6: durable other/unknown kinds.
+    { name: 'durable blocked', input: { reason: { kind: 'blocked' } }, expected: { kind: 'other' } },
+    { name: 'durable max-tokens', input: { reason: { kind: 'max-tokens' } }, expected: { kind: 'other' } },
+    { name: 'durable interrupted', input: { reason: { kind: 'interrupted' } }, expected: { kind: 'other' } },
+    { name: 'durable forked', input: { reason: { kind: 'forked' } }, expected: { kind: 'other' } },
+    { name: 'durable unknown kind', input: { reason: { kind: 'some-unknown' } }, expected: { kind: 'other' } },
+    // Row 7: signal pre-classifies a user abort.
+    { name: 'signal user abort', input: { signal: { aborted: true, reason: { kind: 'user' } } }, expected: { kind: 'user-abort' } },
+    // Row 8: signal pre-classifies other/missing-cause aborts.
+    { name: 'signal parent abort', input: { signal: { aborted: true, reason: { kind: 'parent' } } }, expected: { kind: 'abort', causeKind: 'parent' } },
+    { name: 'signal abort without a cause', input: { signal: { aborted: true } }, expected: { kind: 'abort' } },
+    // Row 9: side-channel provider error.
+    { name: 'pending provider error', input: { error: { code: 'ECONNRESET' } }, expected: { kind: 'provider-error', failure: { code: 'ECONNRESET' } } },
+    // Row 10: side-channel non-provider error.
+    { name: 'pending non-provider error', input: { error: { status: 400 } }, expected: { kind: 'error', failure: { status: 400 } } },
+    // Row 11: nothing anomalous.
+    { name: 'empty input', input: {}, expected: { kind: 'ok' } },
+    { name: 'signal not aborted', input: { signal: { aborted: false } }, expected: { kind: 'ok' } },
+    { name: 'null reason', input: { reason: null }, expected: { kind: 'ok' } },
+    { name: 'non-object reason', input: { reason: 'completed' }, expected: { kind: 'ok' } },
+  ]
+  for (const { name, input, expected } of cases) {
+    it(`${name} → ${expected.kind}`, () => {
+      expect(classifyTurnOutcome(input)).toEqual(expected)
+    })
+  }
+
+  it('durable reason wins over signal and side-channel error', () => {
+    expect(
+      classifyTurnOutcome({
+        reason: { kind: 'completed' },
+        signal: { aborted: true, reason: { kind: 'user' } },
+        error: { status: 503 },
+      }),
+    ).toEqual({ kind: 'completed' })
+    expect(
+      classifyTurnOutcome({
+        reason: { kind: 'aborted', reason: { kind: 'user' } },
+        error: { status: 503 },
+      }),
+    ).toEqual({ kind: 'user-abort' })
+  })
+
+  it('signal pre-classifies before the side-channel error', () => {
+    expect(
+      classifyTurnOutcome({
+        signal: { aborted: true, reason: { kind: 'user' } },
+        error: { status: 503 },
+      }),
+    ).toEqual({ kind: 'user-abort' })
+  })
+})
+
 describe('decideAtTurnStopping', () => {
   it('continues when todos remain', () => {
     const state = createContinuationState()
-    const decision = state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false })
+    const decision = state.decideAtTurnStopping({ todosRemain: true, signal: notAbortedSignal() })
     expect(decision.kind).toBe('continue')
     expect(state.consecutive).toBe(1)
   })
 
   it('stays quiet when no todos remain', () => {
     const state = createContinuationState()
-    expect(state.decideAtTurnStopping({ todosRemain: false, aborted: false, providerErrorPending: false }).kind).toBe('none')
+    expect(state.decideAtTurnStopping({ todosRemain: false, signal: notAbortedSignal() }).kind).toBe('none')
   })
 
   it('disarms on user abort', () => {
     const state = createContinuationState()
-    expect(
-      state.decideAtTurnStopping({ todosRemain: true, aborted: true, abortCauseKind: 'user', providerErrorPending: false }).kind,
-    ).toBe('none')
+    expect(state.decideAtTurnStopping({ todosRemain: true, signal: abortedSignal('user') }).kind).toBe('none')
     expect(state.armed).toBe(false)
-    expect(state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false }).kind).toBe('none')
-    state.onUserMessage()
-    expect(state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false }).kind).toBe('continue')
+    expect(state.stopReason).toBe('user interrupt')
   })
 
   it('does not disarm on non-user aborts', () => {
     const state = createContinuationState()
-    state.decideAtTurnStopping({ todosRemain: true, aborted: true, abortCauseKind: 'parent', providerErrorPending: false })
+    state.decideAtTurnStopping({ todosRemain: true, signal: abortedSignal('parent') })
     expect(state.armed).toBe(true)
   })
 
   it('never doubles up while a provider-error retry is pending', () => {
     const state = createContinuationState()
-    expect(state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: true }).kind).toBe('none')
+    expect(state.decideAtTurnStopping({ todosRemain: true, signal: notAbortedSignal(), error: { status: 503 } }).kind).toBe('none')
   })
 
   it('honors the consecutive cap', () => {
     const state = createContinuationState({ maxConsecutive: 2 })
-    state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false })
-    state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false })
-    expect(state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false }).kind).toBe('none')
+    state.decideAtTurnStopping({ todosRemain: true, signal: notAbortedSignal() })
+    state.decideAtTurnStopping({ todosRemain: true, signal: notAbortedSignal() })
+    expect(state.decideAtTurnStopping({ todosRemain: true, signal: notAbortedSignal() }).kind).toBe('none')
   })
 
   it('disabled config never continues', () => {
     const state = createContinuationState({ enabled: false })
-    expect(state.decideAtTurnStopping({ todosRemain: true, aborted: false, providerErrorPending: false }).kind).toBe('none')
+    expect(state.decideAtTurnStopping({ todosRemain: true, signal: notAbortedSignal() }).kind).toBe('none')
   })
 })
 

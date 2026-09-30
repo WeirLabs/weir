@@ -27,7 +27,7 @@
 
 - 模块：`orrery-harness/context-guard`。
 - 压力来源：`tokenMeter.measure(session)` 的 `totalTokens`（确定性测量，无模型调用）÷ 上下文窗口（`session.requestContext()`，缺省时经模型信息解析兜底，带缓存）。
-- 压缩走 `ctx.compaction.compactNow`（绑定 agent 的维护例程，idle-only）；忙碌/进行中/span 变更等抛出结构化错误 → 工具返回"排队到下一边界重试"语义而非失败。
+- 压缩走 `ctx.compaction.compactNow`（绑定 agent 的维护例程，idle-only）；忙碌/进行中/span 变更等抛出结构化错误 → 工具返回"排队到下一边界重试"语义而非失败。结果分类的唯一实现是纯函数 `classifyCompactionOutcome(error) → 'busy' | 'failed'`（`src/context-guard/compaction-outcome.js`）：宿主 `ManualCompactionError` 的稳定 `code` 字段优先——`code === 'busy'` 判 busy、其他任何 string code 判 failed 且**消息文本永不参与**（防止非 busy 错误的措辞碰巧含 "active" 而被无限重排）；无 string code 时遗留消息正则兼底。此前版本只对消息文本做正则匹配，实测把宿主两个真实 busy 变体（"already has an open turn" / "requires an idle agent"）误牲为 failed → **排队压缩被静默丢弃**，该缺陷已随结构化分类修复（红绿证据见测试）。
 - 完成后续推经 `agent.followup` 注入英文模板指令。
 - 术语纪律：全模板与文档统一称 "context pressure"。
 - realm 纪律：本模块与压缩服务提供者同组部署（隔离服务的消费者必须同 realm，历史事故已固化进集成测试结构）。
@@ -40,5 +40,5 @@
 
 ## 测试
 
-- 单元测试：`test/` 覆盖压力计算、软阈值一次性提示与滞回、排队语义、硬阈值边界触发、失败记录（14 项）。
+- 单元测试：`test/` 覆盖压力计算、软阈值一次性提示与滞回、排队语义、硬阈值边界触发、失败记录；`classifyCompactionOutcome` 为表驱动套件（全部级联行 + 非 busy code 含 busy 词的反例 + 宿主真实措辞），另有插件级 busy → 下一边界重排队的闭环用例（首次 turn/end 无 warn、第二次边界再次触发 compactNow）。
 - 集成测试：`pressure` 场景——压力提示或强制压缩触发、压缩事件入持久日志、摘要模型调用被服务、压缩后续推恢复任务。

@@ -1,6 +1,7 @@
 // Orrery context guard: context-pressure monitoring and boundary-safe,
 // model-timed compaction. Plain ESM, ctx-only.
 import { computePressure, createPressureState, PRESSURE_DEFAULTS, renderAdvisory, RESUME_AFTER_COMPACTION } from './pressure.js'
+import { classifyCompactionOutcome } from './compaction-outcome.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { injectOrWarn, overlayConfig } from '../shared/runtime-messages.js'
 
@@ -70,8 +71,7 @@ function apply(ctx, config = {}) {
       })
       return { kind: 'compacted', result }
     } catch (error) {
-      const code = error?.code ?? error?.name ?? 'unknown'
-      if (/busy|active|not idle|running/i.test(String(error?.message ?? code))) {
+      if (classifyCompactionOutcome(error) === 'busy') {
         return { kind: 'busy' }
       }
       ctx.logger?.warn?.(`context-guard: compaction (${origin}) failed for "${session.id}": ${error?.message ?? error}`)

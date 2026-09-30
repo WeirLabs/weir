@@ -79,15 +79,12 @@ function apply(ctx, config = {}) {
   // The sanctioned continuation boundary: steer and the turn runs on.
   ctx.on('agent/turn-stopping', ({ agent, signal }) => {
     if (!opts.enabled) return
-    const aborted = signal.aborted
-    const cause = aborted ? abortCauseKind(signal.reason) : undefined
     const state = stateOf(agent.id)
     const remaining = remainingTodos(agent.session)
     const decision = state.decideAtTurnStopping({
       todosRemain: remaining.length > 0,
-      aborted,
-      abortCauseKind: cause,
-      providerErrorPending: providerErrorPending.has(agent.id),
+      signal,
+      error: providerErrorPending.get(agent.id),
     })
     if (decision.kind !== 'continue') return
     injectOrWarn(ctx, `todo-driver: could not steer continuation for "${agent.id}"`, () => {
@@ -157,12 +154,6 @@ function apply(ctx, config = {}) {
     states.clear()
     providerErrorPending.clear()
   }
-}
-
-/** Read the abort cause kind off the turn signal's reason, when present. */
-function abortCauseKind(reason) {
-  if (reason && typeof reason === 'object' && typeof reason.kind === 'string') return reason.kind
-  return undefined
 }
 
 export { name, inject, apply }

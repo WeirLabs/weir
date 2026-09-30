@@ -29,6 +29,67 @@ export function backoffDelay(errorStreak, baseMs = 30_000, capMs = 300_000) {
   return Math.min(baseMs * 2 ** exponent, capMs)
 }
 
+/**
+ * Turn-outcome classification — the single readable home of the AGENTS.md
+ * §3.5 vocabulary. First hit wins; the row order IS the priority:
+ * - Rows 1-6: a durable turn/end `reason`, when present, is the sole
+ *   authority — `signal`/`error` inputs never override its conclusion.
+ * - Rows 7-10 (reason absent): pre-classification only, at the turn-stopping
+ *   moment before a durable turn/end exists. Signal before error, so a
+ *   same-turn user interrupt is never masked by a pending provider error.
+ * - Row 11: nothing anomalous — a turn closing normally.
+ * @param {{ signal?: { aborted?: boolean, reason?: any }, reason?: any, error?: any }} input
+ * @returns {{ kind: 'completed' } | { kind: 'user-abort' }
+ *   | { kind: 'abort', causeKind?: string }
+ *   | { kind: 'provider-error', failure: any } | { kind: 'error', failure: any }
+ *   | { kind: 'other' } | { kind: 'ok' }}
+ */
+export function classifyTurnOutcome({ signal, reason, error } = {}) {
+  if (reason && typeof reason === 'object') {
+    if (reason.kind === 'completed') return { kind: 'completed' }
+    if (reason.kind === 'aborted') {
+      if (reason.reason?.kind === 'user') return { kind: 'user-abort' }
+      return abortOutcome(causeKindOf(reason.reason))
+    }
+    if (reason.kind === 'error') {
+      return isProviderError(reason.error)
+        ? { kind: 'provider-error', failure: reason.error }
+        : { kind: 'error', failure: reason.error }
+    }
+    return { kind: 'other' }
+  }
+  if (signal?.aborted) {
+    const causeKind = causeKindOf(signal.reason)
+    if (causeKind === 'user') return { kind: 'user-abort' }
+    return abortOutcome(causeKind)
+  }
+  if (error) {
+    return isProviderError(error)
+      ? { kind: 'provider-error', failure: error }
+      : { kind: 'error', failure: error }
+  }
+  return { kind: 'ok' }
+}
+
+/**
+ * An abort classification carries the cause kind only when one is known.
+ * @param {string | undefined} causeKind
+ * @returns {{ kind: 'abort', causeKind?: string }}
+ */
+function abortOutcome(causeKind) {
+  return causeKind === undefined ? { kind: 'abort' } : { kind: 'abort', causeKind }
+}
+
+/**
+ * Read the kind off an abort-cause payload, when it is an object with a string kind.
+ * @param {any} cause
+ * @returns {string | undefined}
+ */
+function causeKindOf(cause) {
+  if (cause && typeof cause === 'object' && typeof cause.kind === 'string') return cause.kind
+  return undefined
+}
+
 export const DEFAULTS = {
   enabled: true,
   maxConsecutive: 8,
@@ -49,6 +110,13 @@ export function createContinuationState(options = {}) {
     /** @type {string | null} */
     stopReason: null,
   }
+
+  /** A user interrupt disarms continuation until the next genuine user message. */
+  function disarmUserInterrupt() {
+    state.armed = false
+    state.stopReason = 'user interrupt'
+  }
+
   return {
     get armed() {
       return state.armed
@@ -80,23 +148,24 @@ export function createContinuationState(options = {}) {
     /**
      * Decide at the turn-stopping boundary (the sanctioned continuation point:
      * a listener steers and the machine runs another step).
-     * @param {{ todosRemain: boolean, aborted: boolean, abortCauseKind?: string,
-     *   providerErrorPending: boolean }} input
+     * @param {{ todosRemain: boolean, signal?: { aborted?: boolean, reason?: any },
+     *   error?: any }} input
      * @returns {{ kind: 'continue' } | { kind: 'none' }}
      */
     decideAtTurnStopping(input) {
       if (!opts.enabled || !state.armed) return { kind: 'none' }
-      if (input.aborted) {
+      const outcome = classifyTurnOutcome({ signal: input.signal, error: input.error })
+      if (outcome.kind === 'user-abort') {
         // A user interrupt disarms; other abort causes leave the state alone.
-        if (input.abortCauseKind === 'user') {
-          state.armed = false
-          state.stopReason = 'user interrupt'
-        }
+        disarmUserInterrupt()
         return { kind: 'none' }
       }
+      if (outcome.kind === 'abort') return { kind: 'none' }
       // The provider-error path owns its own delayed, counted retry — never
       // steer a fresh continuation in the same closing turn.
-      if (input.providerErrorPending) return { kind: 'none' }
+      if (outcome.kind === 'provider-error') return { kind: 'none' }
+      // A pre-classified non-provider error does not suppress the steer — the
+      // adapter's side channel only ever holds provider errors.
       if (!input.todosRemain) return { kind: 'none' }
       if (state.consecutive >= opts.maxConsecutive) return { kind: 'none' }
       state.consecutive += 1
@@ -113,34 +182,30 @@ export function createContinuationState(options = {}) {
      */
     decideTurnEnd(reason, todosRemain) {
       if (!opts.enabled) return { kind: 'none' }
-      if (!reason || typeof reason !== 'object') return { kind: 'none' }
+      const outcome = classifyTurnOutcome({ reason })
 
-      if (reason.kind === 'completed') {
+      if (outcome.kind === 'completed') {
         // A healthy turn resets the provider-error streak. Continuation on
         // completed turns is owned by the turn-stopping boundary, not here.
         state.errorStreak = 0
         return { kind: 'none' }
       }
 
-      if (reason.kind === 'aborted') {
-        const cause = reason.reason
-        if (cause && cause.kind === 'user') {
-          state.armed = false
-          state.stopReason = 'user interrupt'
-        }
+      if (outcome.kind === 'user-abort') {
+        disarmUserInterrupt()
         return { kind: 'none' }
       }
 
-      if (!state.armed) return { kind: 'none' }
+      if (outcome.kind === 'abort') return { kind: 'none' }
 
-      if (reason.kind === 'error') {
+      if (outcome.kind === 'provider-error') {
+        if (!state.armed) return { kind: 'none' }
         if (!todosRemain) return { kind: 'none' }
-        if (!isProviderError(reason.error)) return { kind: 'none' }
         if (state.errorStreak >= opts.errorRetryMax) {
           state.armed = false
           return {
             kind: 'blocked',
-            notice: `Continuation stopped after ${state.errorStreak} consecutive provider errors (${reason.error?.code ?? reason.error?.status ?? 'unknown'}). The todo list remains unfinished.`,
+            notice: `Continuation stopped after ${state.errorStreak} consecutive provider errors (${outcome.failure?.code ?? outcome.failure?.status ?? 'unknown'}). The todo list remains unfinished.`,
           }
         }
         state.errorStreak += 1
@@ -148,7 +213,7 @@ export function createContinuationState(options = {}) {
         return { kind: 'continue', delayMs: backoffDelay(state.errorStreak, opts.errorBackoffBaseMs, opts.errorBackoffCapMs) }
       }
 
-      // blocked / max-tokens / interrupted / forked and unknown kinds never continue.
+      // error (non-provider) / other / ok and unknown kinds never continue.
       return { kind: 'none' }
     },
   }

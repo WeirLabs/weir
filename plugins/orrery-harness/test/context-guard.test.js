@@ -5,7 +5,45 @@ import {
   renderAdvisory,
   RESUME_AFTER_COMPACTION,
 } from '../src/context-guard/pressure.js'
+import { classifyCompactionOutcome } from '../src/context-guard/compaction-outcome.js'
 import { apply } from '../src/context-guard/index.js'
+
+describe('classifyCompactionOutcome', () => {
+  // The live-bug wording: the current host throws this busy variant whose
+  // message matches none of the legacy regex words.
+  const HOST_BUSY_MESSAGE = 'manual compaction requires an idle agent with no waking queued work'
+  const cases = [
+    // Row 1: structured string code 'busy' decides, whatever the message says.
+    { name: 'structured busy code', error: { code: 'busy' }, expected: 'busy' },
+    { name: 'structured busy code with regex-miss wording', error: { code: 'busy', message: HOST_BUSY_MESSAGE }, expected: 'busy' },
+    // Row 2: any other string code fails, never falling back to the regex.
+    { name: 'persistence code', error: { code: 'persistence', message: 'could not persist' }, expected: 'failed' },
+    { name: 'commit code', error: { code: 'commit' }, expected: 'failed' },
+    { name: 'changed code', error: { code: 'changed' }, expected: 'failed' },
+    { name: 'summary code', error: { code: 'summary' }, expected: 'failed' },
+    { name: 'cancelled code', error: { code: 'cancelled' }, expected: 'failed' },
+    { name: 'unknown future code', error: { code: 'some-future-code', message: 'x' }, expected: 'failed' },
+    // Counterexample: non-busy code whose message contains busy words must not re-queue.
+    { name: 'non-busy code with busy words in message', error: { code: 'commit', message: 'commit failed while another job is active' }, expected: 'failed' },
+    // Row 3: no string code — legacy message regex fallback (name as last resort).
+    { name: 'legacy busy message', error: { message: 'agent is busy' }, expected: 'busy' },
+    { name: 'legacy active message', error: { message: 'another compaction is active' }, expected: 'busy' },
+    { name: 'legacy not-idle message', error: { message: 'agent is not idle' }, expected: 'busy' },
+    { name: 'legacy running message', error: { message: 'compaction already running' }, expected: 'busy' },
+    { name: 'legacy name fallback', error: { name: 'BusyError' }, expected: 'busy' },
+    // Row 4: everything else fails.
+    { name: 'plain unmatched message', error: { message: 'disk full' }, expected: 'failed' },
+    { name: 'non-string code falls through to the regex', error: { code: 42, message: '42' }, expected: 'failed' },
+    { name: 'empty object', error: {}, expected: 'failed' },
+    { name: 'undefined error', error: undefined, expected: 'failed' },
+    { name: 'null error', error: null, expected: 'failed' },
+  ]
+  for (const { name, error, expected } of cases) {
+    it(`${name} → ${expected}`, () => {
+      expect(classifyCompactionOutcome(error)).toBe(expected)
+    })
+  }
+})
 
 describe('computePressure', () => {
   it('computes the ratio', () => {
@@ -69,12 +107,13 @@ describe('templates', () => {
 })
 
 describe('context-guard plugin', () => {
-  function harness(pressure) {
+  function harness(pressure, options = {}) {
     const handlers = {}
     const registered = []
     const injected = []
     const followups = []
     const compactions = []
+    const warns = []
     const agents = new Map()
     const totalTokens = 100_000
     const contextWindow = Math.round(totalTokens / pressure)
@@ -98,6 +137,7 @@ describe('context-guard plugin', () => {
       compaction: {
         compactNow: async (agentCtx) => {
           compactions.push(agentCtx)
+          if (options.compactNowError) throw options.compactNowError
           return { kind: 'ok' }
         },
       },
@@ -105,10 +145,10 @@ describe('context-guard plugin', () => {
       on: (event, handler) => {
         handlers[event] = handler
       },
-      logger: { warn: () => {} },
+      logger: { warn: (message) => warns.push(message) },
     }
     apply(ctx, {})
-    return { handlers, registered, injected, followups, compactions, session, agent }
+    return { handlers, registered, injected, followups, compactions, warns, session, agent }
   }
 
   it('advises mid-turn at step boundaries over the soft threshold', async () => {
@@ -155,5 +195,20 @@ describe('context-guard plugin', () => {
     await handlers['session/event'](session, { type: 'turn/end', data: {} })
     expect(compactions[0].options.provider).toBe('deepseek')
     expect(compactions[0].options.model).toBe('deepseek-chat')
+  })
+
+  it('re-queues a busy compaction at the next boundary without warning', async () => {
+    // The host's real busy wording matches none of the legacy regex words;
+    // only the structured code classifies it.
+    const busy = { code: 'busy', message: 'manual compaction requires an idle agent with no waking queued work' }
+    const { handlers, registered, compactions, warns, session, agent } = harness(0.5, { compactNowError: busy })
+    const tool = registered.find((t) => t.name === 'compact_context')
+    await tool.execute({}, { agent, concludeTurn: () => {} })
+    await handlers['session/event'](session, { type: 'turn/end', data: {} })
+    expect(compactions).toHaveLength(1)
+    expect(warns).toHaveLength(0) // busy stays queued; no failed warn
+    await handlers['session/event'](session, { type: 'turn/end', data: {} })
+    expect(compactions).toHaveLength(2) // retried at the next boundary
+    expect(warns).toHaveLength(0)
   })
 })

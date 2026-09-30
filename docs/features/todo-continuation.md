@@ -31,7 +31,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 - 模块：`orrery-harness/todo-driver`。
 - todo 读取：`sessionProjections` 的 todos 投影（live 引用，只读）。
 - 续推挂点：`agent/turn-stopping`——回合收尾且无欠账时触发，监听器内 `agent.steer(...)` 注入续推消息，机器重读 inbox 再跑一步（协议认可的正规续推方式；`session/event` 监听器内禁止同步 followup）。
-- 结束原因分类严格依据 `turn/end` 的 `reason`：`completed` → 续推；`aborted{kind:'user'}` → disarm；`error{LlmFailure}` → 退避延迟续推+计数；其余（max-tokens/interrupted/forked 等）不续推。禁止启发式猜测。
+- 结束原因分类严格依据 `turn/end` 的 `reason`（AGENTS.md §3.5）：`completed` → 续推；`aborted{kind:'user'}` → disarm；`error{LlmFailure}` → 退避延迟续推+计数；其余（max-tokens/interrupted/forked 等）不续推。禁止启发式猜测。分类词汇的唯一实现是纯函数 `classifyTurnOutcome({ signal, reason, error })`（`state-machine.js`，11 行优先级真值表：durable reason 绝对优先于 signal/error 预分类——后者仅在 `turn/end` 尚不存在的 turn-stopping 时刻生效；signal 先于 error），两个决策点（turn-stopping 的 steer 与 turn/end 的计数/复位）消费同一结果，user-interrupt disarm 收敛为单一实现。
 - 续推消息为完整 UserMessage 对象（`src/shared/user-message.js`），重新武装只认 `source.kind === 'user'` 的真实用户输入——自身注入、子代理结算通知（`subagent-settled`）、上下文压力提醒等运行时注入消息一律不触发 rearm。
 
 ## 边界与失败语义
@@ -42,5 +42,5 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 
 ## 测试
 
-- 单元测试：`test/` 覆盖续推 steer、完成静默、用户打断 disarm、供应商错误退避与计数、逃生舱、用户消息复位、注入豁免（自身注入/结算通知/其他插件注入均不 rearm）。
+- 单元测试：`test/` 覆盖续推 steer、完成静默、用户打断 disarm、供应商错误退避与计数、逃生舱、用户消息复位、注入豁免（自身注入/结算通知/其他插件注入均不 rearm）；`classifyTurnOutcome` 为表驱动套件（11 行真值全表 + durable-priority 与 signal-before-error 两条顺序不变量）。
 - 集成测试：`deepwork` 场景——续推消息进入会话日志并到达模型。
