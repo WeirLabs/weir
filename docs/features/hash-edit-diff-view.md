@@ -20,8 +20,9 @@
 ## 设计细节
 
 - **元数据通道**：`hashline-edit` 工具定义新增 `output.presentationMeta(args, value)`，返回 `{ diffs }`——每 hunk 一个 `{ path, oldText, newText }` 片段（两侧各带 3 行上下文；`oldText` 仅在该 hunk 完全没有旧侧行时为 `null`）。`src/hashline-edit/diff.js` 的 `diffResult` 一趟比较同时产出渲染文本与结构化片段，两个通道不会互相矛盾。宿主运行时仅在成功且为根调用时持久化 meta（PTC 子调用无 meta，客户端自动回退）。
+- **计划预览契约（生产者侧唯一权威）**：start 阶段浏览器手里只有 `argsRaw`（宿主 `tool/call` 事件形状固定、无 start 期 meta 通道——结构性结论，见设计档案）。入参窄化与计划片段投影的唯一权威实现是 `src/hashline-edit/planned-fragments.js`（纯 ESM：`parseHashEditArgsRaw` / `plannedDiffFragments` / `narrowDiffFragment`）：计划片段是 **op 形**（每个含内容的编辑操作一条，`oldText` 按构造为 `null`——与 applied 的「无旧侧行才为 null」同一字段在不同阶段的语义），纯删除（`text: ''`）无预览片段。浏览器侧 `lib/client.hash-edit-model.js` 携带该模块的**逐字派生副本**（DERIVED FROM 头注；chunk 零依赖纪律下不能 import src/），由跨侧 parity 测试钉住：同一语料两侧逐案等价，且首次对账 planned（op 形）与 applied（hunk 形）——同一形状守卫、path 一致、每条 planned `newText` 落在 applied 各片段 `newText` 并集内。任何单侧漂移（改 src/ 忘同步 chunk 或反之）立即红。
 - **客户端注册**：`lib/client.js`（入口组合根，见 [client-module-chunking.md](client-module-chunking.md)）的 `apply` 在独立 `ctx.effect` 中 `ctx.slots.inject('tool.call.toolview', … key: 'hash_edit', locale: NS)`——与 `dsh-client-ui-skill` 注册 `skill` 视图同一模式；视图本体住在 `lib/client.hash-edit-view.js` chunk（`require.async` 到达，到达前复用既有通用扁平 body 降级，到达后无缝换成 diff 面板）；注册失败不影响设置页与 LSP 开关。
-- **视图组件**：`HashEditRow` 按 `phase` 分派——`preparing` 占位行；`start` 从 `argsRaw` 防御性解析出入参并合成计划片段（空 `text` 的纯删除无预览片段）；`result` 窄化 `block.meta.diffs` 后交给 `primitives.DiffBlock`，行内样式沿用 bundle 既有约定，文案全部走 bundle 自有 en/zh 词典。所有 wire 数据（重放日志、缺失 meta、畸形 args）都做防御性窄化，失败即回退平铺展示，绝不抛异常。
+- **视图组件**：`HashEditRow` 按 `phase` 分派——`preparing` 占位行；`start` 经共享计划预览契约（逐字派生副本）解析入参并合成计划片段（空 `text` 的纯删除无预览片段）；`result` 窄化 `block.meta.diffs` 后交给 `primitives.DiffBlock`，行内样式沿用 bundle 既有约定，文案全部走 bundle 自有 en/zh 词典。所有 wire 数据（重放日志、缺失 meta、畸形 args）都做防御性窄化，失败即回退平铺展示，绝不抛异常。
 
 ## 边界与失败语义
 
@@ -31,5 +32,5 @@
 
 ## 测试
 
-- 单元测试：`test/hashline-edit.test.js` 覆盖 `diffFragments`（分 hunk、上下文、纯插入的 context-only oldText、相同内容为空）与 `presentationMeta`（成功持久化片段、拒绝调用无元数据、渲染文本不变）；`test/client.test.js` 覆盖视图模型助手（meta 窄化、args 解析、状态推导、路径相对化）与 `HashEditRow` 各阶段渲染决策（含注册形状断言 `{ name: 'tool.call.toolview', key: 'hash_edit' }`）。
+- 单元测试：`test/hashline-edit.test.js` 覆盖 `diffFragments`（分 hunk、上下文、纯插入的 context-only oldText、相同内容为空）与 `presentationMeta`（成功持久化片段、拒绝调用无元数据、渲染文本不变）；`test/hashline-planned-fragments.test.js` 覆盖计划预览契约三节（src 模块单测语料 / chunk↔src 等价钉 / planned↔applied 对账）；`test/client-hash-edit-model.test.js` 与 `test/client-hash-edit-view.test.js` 覆盖视图模型助手（meta 窄化、args 解析、状态推导、路径相对化）与 `HashEditRow` 各阶段渲染决策（含注册形状断言 `{ name: 'tool.call.toolview', key: 'hash_edit' }`）。
 - 集成测试：`orrery-test-harness` 的 hashline 场景新增两条断言——成功 `hash_edit` 的 `tool/result` 事件持久化 `meta.diffs` 片段；失败调用无 diff 元数据。

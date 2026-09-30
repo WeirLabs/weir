@@ -25,6 +25,7 @@
 - **同步 require 面不扩大**：全 lib/ 的同步 require 说明符仍只有 `react`、`react/jsx-runtime`、`@deepseek-ai/dsh-client-ui-primitives`、`orrery-model-picker` 四个（S14）；`orrery-model-picker` 经组合图跨模块同步到达（S18 先例）。
 - **宿主缓存约束**：宿主按入口缓存 slot `inject()` face，因此设置卡片 face 自带一个稳定的 deferred snapshot store；controller 在 chunk 到达时于入口侧构造（生命周期绑定 serve 代次），不建在 react 树内。
 - **样式常量按 chunk 复制**：同包同步 require 不可能，故各 UI chunk 逐字携带自用的样式常量与 `ORRERY_NS` / `LSP_PROJECTION_KEY`（入口为自己的闭包保留副本）——这是该宿主约束下的显式取舍，不是疏漏。
+- **派生副本纪律（逻辑级复制）**：当某个纯契约的权威实现住在 `src/`（宿主侧）而 chunk 也需要它时，chunk 携带**逐字派生副本**（`DERIVED FROM <src 路径>` 头注）而不是 import——首例是 `client.hash-edit-model.js` 对 `src/hashline-edit/planned-fragments.js`（见 [hash-edit-diff-view.md](hash-edit-diff-view.md)）。漂移由行为等价钉结构性兜底：同一语料两侧逐案等价，单侧修改即红（改 src/ 忘同步 chunk 或反之）。该模式从「常量复制」（上条）升格到「逻辑复制」的唯一通行证就是这类 parity 钉；没有钉就不允许复制逻辑。
 - **rev 重戳纪律（运维红线）**：chunk URL 携带**入口**文件的 rev（由 `lib/client.js` 的 mtime/ctime/size 派生）。**任何 chunk 编辑后必须重新 touch `lib/client.js`**，否则浏览器按旧 rev 请求 chunk 会精确 404。CI/验收层有终检，但纪律靠每个改动者执行。
 - **S17 保持**：`remote.session` 惰性访问以 `getSession` 闭包注入，chunk 不做早解引用（有单测钉零解引用）。
 

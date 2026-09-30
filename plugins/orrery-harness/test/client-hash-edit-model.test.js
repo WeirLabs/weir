@@ -4,7 +4,12 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 /**
  * Zero-dependency view-model chunk test: driven with the default throwing
  * require (zero stubs). Assertions migrated verbatim from the pre-split
- * client.test.js hash_edit diff view describe.
+ * client.test.js hash_edit diff view describe. The chunk's
+ * parseHashEditArgs/plannedDiffFragments/narrowDiffFragment are a byte-verbatim
+ * derived copy of the producer-side contract module
+ * src/hashline-edit/planned-fragments.js (see the chunk's DERIVED FROM
+ * marker); these assertions now pin the derived copy's behavior, and the
+ * cross-side equivalence pin lives in test/hashline-planned-fragments.test.js.
  */
 
 describe('client.hash-edit-model chunk', () => {
