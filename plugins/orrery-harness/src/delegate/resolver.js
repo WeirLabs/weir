@@ -1,8 +1,9 @@
-// Category chain resolution — pure core, testable without a running Harness.
-// A chain rung resolves when its provider is registered and either that
-// provider advertises no catalog (catalog is advisory per the runtime
-// contract) or the model is listed. An empty chain inherits the caller's
-// route. A configured chain with no resolvable rung fails explicitly.
+// Target chain resolution — pure core, testable without a running Harness.
+// Shared by both delegation lanes (categories and curated agents). A chain
+// rung resolves when its provider is registered and either that provider
+// advertises no catalog (catalog is advisory per the runtime contract) or
+// the model is listed. An empty chain inherits the caller's route. A
+// configured chain with no resolvable rung fails explicitly.
 
 /**
  * @typedef {object} ChainRung
@@ -46,19 +47,20 @@ export function rungResolves(rung, snapshot) {
 }
 
 /**
- * Resolve a category's route.
- * @param {any} category - registry entry { chain, gateModels?, disabled? }
+ * Resolve a target definition's route (category or curated agent — both lanes
+ * share this one path).
+ * @param {any} target - registry entry { chain, gateModels?, disabled? }
  * @param {ProviderSnapshot} snapshot
- * @param {boolean} hasExplicitUserConfig - any explicit user config for this category
+ * @param {boolean} hasExplicitUserConfig - any explicit user config for this target
  * @returns {{ kind: 'resolved', provider: string, model: string, reasoningEffort?: string }
  *   | { kind: 'inherited' }
  *   | { kind: 'unavailable', reason: string }}
  */
-export function resolveCategory(category, snapshot, hasExplicitUserConfig) {
-  if (category.disabled) {
+export function resolveTargetRoute(target, snapshot, hasExplicitUserConfig) {
+  if (target.disabled) {
     return { kind: 'unavailable', reason: 'category disabled by configuration' }
   }
-  const gateModels = category.gateModels
+  const gateModels = target.gateModels
   if (!hasExplicitUserConfig && Array.isArray(gateModels) && gateModels.length > 0) {
     // Gates are fail-closed: only an explicit catalog listing satisfies them;
     // a provider without a catalog (unknown) never opens a gate.
@@ -72,7 +74,7 @@ export function resolveCategory(category, snapshot, hasExplicitUserConfig) {
       return { kind: 'unavailable', reason: `category requires one of ${gateModels.join(', ')}; none is registered` }
     }
   }
-  const chain = Array.isArray(category.chain) ? category.chain : []
+  const chain = Array.isArray(target.chain) ? target.chain : []
   if (chain.length === 0) return { kind: 'inherited' }
   for (const rung of chain) {
     if (rungResolves(rung, snapshot)) {

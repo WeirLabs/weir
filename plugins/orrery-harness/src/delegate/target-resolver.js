@@ -4,7 +4,7 @@
 // subscription and the settings overlay bundle are all injected, so nothing
 // here touches ctx, `process` or node: builtins.
 import { readOnlyShellNote } from './agents.js'
-import { filterUnsupportedEffort, resolveCategory, snapshotProviders } from './resolver.js'
+import { filterUnsupportedEffort, resolveTargetRoute, snapshotProviders } from './resolver.js'
 
 // Model-family detection for prompt-append variant selection.
 // Claude/Kimi-like models follow mechanics-driven checklist prompts best;
@@ -42,11 +42,24 @@ function firstLine(text) {
 }
 
 /**
+ * The ENABLED names of one registry, for error surfaces only: a disabled
+ * target must never be advertised back to the model as available (D6).
+ * @param {Record<string, { disabled?: boolean }>} registry
+ * @returns {string[]}
+ */
+function enabledNames(registry) {
+  return Object.keys(registry).filter((name) => !registry[name]?.disabled)
+}
+
+/**
  * Build the target resolver.
  * @param {object} deps
- * @param {any} deps.agents - merged agent registry (CURATED_AGENTS ∪ row config agents)
+ * @param {any} deps.agents - startup agent registry (CURATED_AGENTS ∪ row config agents);
+ *   the live registry is read per delegation from overlay.agentsNow(); this
+ *   startup snapshot stays as the reference for detecting a settings-replaced
+ *   chain (a fresh array the registry does not carry)
  * @param {any} deps.userCategories - row config categories (config.categories)
- * @param {any} deps.overlay - settings overlay bundle { categoriesNow, robashNow, readOnlyTools, shellName }
+ * @param {any} deps.overlay - settings overlay bundle { categoriesNow, agentsNow, robashNow, readOnlyTools, shellName }
  * @param {any} deps.llm - ctx.llm
  * @param {(fn: () => void) => void} deps.onAdaptersUpdated - llm/adapters-updated subscription
  */
@@ -66,7 +79,8 @@ export function createTargetResolver({ agents, userCategories, overlay, llm, onA
   /**
    * Resolve one delegation item to persona + agentOptions + toolFilter.
    * Throws explicit errors for unknown/disabled/unavailable targets.
-   * parentRoute (when known) gates effort hints on inherited routes.
+   * parentRoute (when known) gates effort hints and the model override on
+   * inherited routes.
    */
   async function resolveTarget(item, parentRoute) {
     // Resolve the guard overlay once for this delegation, so every branch below
@@ -74,15 +88,76 @@ export function createTargetResolver({ agents, userCategories, overlay, llm, onA
     // docs/features/category-delegation.md).
     const robash = overlay.robashNow()
     if (item.agent) {
-      const agent = agents[item.agent]
+      // The live registry rides the overlay: agentsNow() applies the settings
+      // agentChains map onto the startup registry every call, so a committed
+      // settings edit governs the very next delegation (volatile contract).
+      // Called unconditionally: the overlay always provides agentsNow(), and a
+      // missing accessor must fail loud instead of silently serving the startup
+      // registry.
+      const liveAgents = overlay.agentsNow()
+      const agent = liveAgents[item.agent]
       if (!agent) {
-        throw new Error(`delegate: unknown_target "${item.agent}" (available agents: ${Object.keys(agents).join(', ') || 'none'})`)
+        throw new Error(`delegate: unknown_target "${item.agent}" (available agents: ${enabledNames(liveAgents).join(', ') || 'none'})`)
       }
       if (agent.disabled) throw new Error(`delegate: agent "${item.agent}" is disabled`)
       const label = item.name ?? item.task_summary ?? `${item.agent}: ${firstLine(item.prompt)}`
+
+      // Agent routing shares the category path exactly: cached provider
+      // snapshot → resolveTargetRoute → filterUnsupportedEffort. The settings
+      // agentChains map names this agent by replacing its chain wholesale in
+      // agentsNow(); the replaced array is a fresh reference, so a live chain
+      // the startup registry does not carry marks explicit user config (the
+      // gate for gateModels, mirroring the category lane's userCategories).
+      const providers = await snapshotNow()
+      const hasUserConfig = Array.isArray(agent.chain) && agent.chain !== agents[item.agent]?.chain
+      let route = resolveTargetRoute(agent, providers, hasUserConfig)
+      if (route.kind === 'unavailable') {
+        // A configured chain that resolves nothing fails loud, naming the
+        // agent and the attempted rungs — never a silent fall back to the
+        // caller's route.
+        throw new Error(`delegate: agent "${item.agent}" unavailable — ${route.reason}`)
+      }
+      if (route.kind === 'resolved') {
+        route = await filterUnsupportedEffort(llm, route)
+      }
+
+      const agentOptions = {}
+      if (route.kind === 'resolved') {
+        agentOptions.provider = route.provider
+        // model is honored for agent spawns only (the tool rejects
+        // model+category): it overrides the route's model id, never its
+        // provider. An id the provider catalog does not list is still
+        // attempted — catalogs are advisory in DSH.
+        agentOptions.model = item.model || route.model
+        if (route.reasoningEffort) agentOptions.reasoningEffort = route.reasoningEffort
+      } else {
+        // Empty chain: inherit the caller's route — no provider/model options.
+        // The agent's effort hint is kept only when the route it will actually
+        // run on advertises it; dropped silently otherwise (and when the model
+        // info is unavailable) — the category lane's contract verbatim.
+        if (agent.reasoningEffort && parentRoute?.provider && parentRoute?.model) {
+          try {
+            const info = await llm.resolveModelInfo(parentRoute.provider, parentRoute.model)
+            const efforts = info?.reasoning?.efforts
+            if (Array.isArray(efforts) && efforts.some((effort) => effort.id === agent.reasoningEffort)) {
+              agentOptions.reasoningEffort = agent.reasoningEffort
+            }
+          } catch {
+            // unknown route metadata: omit the hint rather than risk a rejection
+          }
+        }
+        if (item.model) {
+          // The route is the caller's: keep its provider when known, override
+          // only the model id.
+          if (parentRoute?.provider) agentOptions.provider = parentRoute.provider
+          agentOptions.model = item.model
+        }
+      }
+
       return {
         persona: agent.prompt + (robash.enabled ? readOnlyShellNote(overlay.shellName) : ''),
         toolFilter: { allow: overlay.readOnlyTools(agent.tools, robash) },
+        ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
         label,
         readOnly: true,
       }
@@ -93,11 +168,11 @@ export function createTargetResolver({ agents, userCategories, overlay, llm, onA
     const categories = overlay.categoriesNow()
     const category = categories[item.category]
     if (!category) {
-      throw new Error(`delegate: unknown_target category "${item.category}" (available: ${Object.keys(categories).join(', ') || 'none'})`)
+      throw new Error(`delegate: unknown_target category "${item.category}" (available: ${enabledNames(categories).join(', ') || 'none'})`)
     }
     const providers = await snapshotNow()
     const hasUserConfig = Boolean(userCategories?.[item.category])
-    let route = resolveCategory(category, providers, hasUserConfig)
+    let route = resolveTargetRoute(category, providers, hasUserConfig)
     if (route.kind === 'unavailable') {
       throw new Error(`delegate: category "${item.category}" unavailable — ${route.reason}`)
     }
