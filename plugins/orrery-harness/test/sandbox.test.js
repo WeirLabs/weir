@@ -4,6 +4,8 @@ import {
   WIDER_MODES,
   approveEscalation,
   escalationHintMarker,
+  probeEscalation,
+  resolveCallPolicy,
   sandboxDenialMarker,
   sandboxPermissionsDescription,
   validateEscalationArgs,
@@ -128,5 +130,136 @@ describe('approveEscalation', () => {
   it('rejects unknown outcome tokens instead of granting', async () => {
     await expect(async () => approveEscalation(request('danger-full-access'), approvalOf(['allowed-forever']).approval)).rejects
       .toThrow(/unexpected approval outcome/)
+  })
+})
+
+describe('probeEscalation', () => {
+  it('returns null when the backend exposes no sandboxMode', () => {
+    expect(probeEscalation(undefined)).toBe(null)
+    expect(probeEscalation({})).toBe(null)
+  })
+
+  it('advertises the modes and schema fields under a confining backend', () => {
+    const probe = probeEscalation({ sandboxMode: 'workspace-write' })
+    expect(probe.modes).toEqual(ESCALATION_TARGETS)
+    expect(probe.fields.sandbox_permissions).toEqual({
+      type: 'string',
+      enum: ['workspace-write', 'danger-full-access'],
+      description: 'The narrowest wider sandbox mode for a one-shot retry of the exact operation the sandbox just denied; the retry asks the user for approval.',
+    })
+    expect(probe.fields.justification).toEqual({
+      type: 'string',
+      description: 'Required with sandbox_permissions: one sentence for the user explaining why this exact file operation needs the wider access. Use the language of the user’s current request.',
+    })
+  })
+})
+
+describe('resolveCallPolicy', () => {
+  const session = { id: 'session-1' }
+  const standing = { mode: 'workspace-write', workspaceRoot: '/ws', sessionId: 's1' }
+
+  // Plain arg/env fakes: no filesystem, no ctx. `requests` counts approval
+  // asks, `resolveCalls` pins the standing-resolve input shape.
+  const envOf = (overrides = {}) => {
+    const requests = []
+    const resolveCalls = []
+    const env = {
+      escalation: probeEscalation({ sandboxMode: 'workspace-write' }),
+      sandboxPolicy: {
+        resolve: (req) => {
+          resolveCalls.push(req)
+          return standing
+        },
+      },
+      session,
+      sessionCwd: '/session-cwd',
+      approval: {
+        approver: { request: async (req) => { requests.push(req); return 'allowed-once' } },
+        agent: { id: 'agent-1' },
+        toolName: 'hash_edit',
+        callId: 'call-1',
+      },
+      ...overrides,
+    }
+    return { env, requests, resolveCalls }
+  }
+
+  it('throws the pairing errors verbatim before any approval request', async () => {
+    const { env, requests } = envOf()
+    await expect(async () => resolveCallPolicy({ sandbox_permissions: 'danger-full-access' }, env)).rejects
+      .toThrow(/sandbox_permissions requires a justification/)
+    await expect(async () => resolveCallPolicy({ justification: 'because' }, env)).rejects
+      .toThrow(/justification is only valid together with sandbox_permissions/)
+    await expect(async () => resolveCallPolicy({ sandbox_permissions: 'danger-full-access', justification: '   ' }, env)).rejects
+      .toThrow(/expected a non-empty sentence/)
+    expect(requests).toHaveLength(0)
+  })
+
+  it('returns the standing policy by reference when no escalation args are present', async () => {
+    const { env, requests, resolveCalls } = envOf()
+    const result = await resolveCallPolicy({ file_path: '/ws/a.js', edits: [] }, env)
+    expect(result.policy).toBe(standing)
+    expect(result.resolveCwd).toBe('/ws')
+    expect(result.advertisedFields).toBe(env.escalation.fields)
+    expect(requests).toHaveLength(0)
+    expect(resolveCalls).toEqual([{ session }])
+  })
+
+  it('derives resolveCwd from the session cwd when no standing policy resolves', async () => {
+    const { env } = envOf({ sandboxPolicy: undefined })
+    const result = await resolveCallPolicy({}, env)
+    expect(result.policy).toBeUndefined()
+    expect(result.resolveCwd).toBe('/session-cwd')
+  })
+
+  it('repeats the effective mode without an approval request', async () => {
+    const { env, requests } = envOf()
+    const result = await resolveCallPolicy(
+      { sandbox_permissions: 'workspace-write', justification: 'still inside the workspace' },
+      env,
+    )
+    expect(requests).toHaveLength(0)
+    expect(result.policy).toEqual({ mode: 'workspace-write', workspaceRoot: '/ws', sessionId: 's1' })
+    expect(result.resolveCwd).toBe('/ws')
+  })
+
+  it('merges the granted mode over the standing policy on a strictly wider grant', async () => {
+    const { env, requests } = envOf()
+    const result = await resolveCallPolicy(
+      { sandbox_permissions: 'danger-full-access', justification: 'the report must land outside the workspace' },
+      env,
+    )
+    expect(requests).toHaveLength(1)
+    expect(result.policy).toEqual({ mode: 'danger-full-access', workspaceRoot: '/ws', sessionId: 's1' })
+  })
+
+  it('gates escalation before the approval ask when no sandboxing filesystem exists', async () => {
+    const { env, requests } = envOf({ escalation: null })
+    await expect(async () =>
+      resolveCallPolicy({ sandbox_permissions: 'danger-full-access', justification: 'needs it' }, env),
+    ).rejects.toThrow(/no sandboxing filesystem to escalate/)
+    expect(requests).toHaveLength(0)
+  })
+
+  it('advertises no fields when the capability is absent', async () => {
+    const { env } = envOf({ escalation: null })
+    const result = await resolveCallPolicy({}, env)
+    expect(result.advertisedFields).toEqual({})
+  })
+
+  it('passes the approval failure outcomes through unchanged', async () => {
+    for (const [outcome, pattern] of [
+      ['rejected', /user rejected escalating this operation/],
+      ['cancelled', /was cancelled/],
+      ['unavailable', /no approval channel is available/],
+      ['allowed-forever', /unexpected approval outcome/],
+    ]) {
+      const { env } = envOf({
+        approval: { approver: { request: async () => outcome }, agent: { id: 'agent-1' }, toolName: 'hash_edit' },
+      })
+      await expect(async () =>
+        resolveCallPolicy({ sandbox_permissions: 'danger-full-access', justification: 'needs it' }, env),
+      ).rejects.toThrow(pattern)
+    }
   })
 })

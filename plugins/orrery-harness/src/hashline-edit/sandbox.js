@@ -50,6 +50,32 @@ export function sandboxPermissionsDescription(subject) {
 }
 
 /**
+ * Probe the composed filesystem's escalation capability once at registration.
+ * A confining backend exposes `fs.sandboxMode`; anything else means the
+ * composition has no sandbox to escalate, so the escalation fields stay
+ * unadvertised. The returned `fields` drop straight into the tool schema.
+ * @param fs - the host filesystem service reference (may be undefined)
+ * @param subject - mirror vocabulary for the field descriptions
+ * @returns null, or { modes, fields } for the schema and the runtime gate
+ */
+export function probeEscalation(fs, subject = 'operation') {
+  if (fs?.sandboxMode === undefined) return null
+  return {
+    modes: ESCALATION_TARGETS,
+    fields: {
+      sandbox_permissions: {
+        type: 'string',
+        enum: [...ESCALATION_TARGETS],
+        description: sandboxPermissionsDescription(subject),
+      },
+      justification: {
+        type: 'string',
+        description: 'Required with sandbox_permissions: one sentence for the user explaining why this exact file operation needs the wider access. Use the language of the user’s current request.',
+      },
+    },
+  }
+}
+/**
  * Resolve a sandbox permission request before execution. Repeating the call's
  * effective mode returns it without approval. A strictly wider mode requires
  * approval and applies only to this call. Narrower or unsupported targets,
@@ -94,4 +120,38 @@ export async function approveEscalation(request, approval) {
     default:
       throw new Error(`unexpected approval outcome: ${String(outcome)}`)
   }
+}
+/**
+ * Resolve the policy for one whole tool call, mirroring the stock tools'
+ * resolvePolicy ordering exactly: standing policy first (S23, computed per
+ * call), then the escalation pairing validation, then the no-capability
+ * gate, then the approval ask, then the one-shot merge. A same-mode repeat
+ * rides the standing policy without asking; a strictly wider grant widens
+ * THIS call only. ctx-free by construction so unit tests drive it with
+ * plain fakes.
+ * @param args - raw tool arguments (only sandbox_permissions / justification are read)
+ * @param env - { escalation, sandboxPolicy, session, sessionCwd, approval: { approver, agent, toolName, callId?, signal? }, subject? }
+ * @returns { policy, resolveCwd, advertisedFields }
+ */
+export async function resolveCallPolicy(args, env) {
+  const standingPolicy = env.sandboxPolicy?.resolve({ session: env.session })
+  validateEscalationArgs(args.sandbox_permissions, args.justification)
+  let policy = standingPolicy
+  if (args.sandbox_permissions !== undefined || args.justification !== undefined) {
+    if (env.escalation === null) {
+      throw new Error('sandbox_permissions is not available in this composition (no sandboxing filesystem to escalate)')
+    }
+    const granted = await approveEscalation(
+      {
+        requestedMode: args.sandbox_permissions,
+        effectiveMode: standingPolicy?.mode,
+        justification: args.justification,
+        subject: env.subject ?? 'operation',
+      },
+      env.approval,
+    )
+    policy = { ...(standingPolicy ?? {}), mode: granted }
+  }
+  const resolveCwd = policy?.workspaceRoot ?? env.sessionCwd
+  return { policy, resolveCwd, advertisedFields: env.escalation?.fields ?? {} }
 }

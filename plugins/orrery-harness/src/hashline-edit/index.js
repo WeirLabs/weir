@@ -3,7 +3,7 @@
 import { anchorFor } from './anchors.js'
 import { applyOps, renderMismatch, validateOps } from './apply-ops.js'
 import { diffResult } from './diff.js'
-import { approveEscalation, escalationHintMarker, sandboxDenialMarker, sandboxPermissionsDescription, validateEscalationArgs } from './sandbox.js'
+import { escalationHintMarker, probeEscalation, resolveCallPolicy, sandboxDenialMarker } from './sandbox.js'
 
 const name = 'orrery-hashline-edit'
 const inject = ['tools', 'fs']
@@ -103,7 +103,7 @@ function apply(ctx, config = {}) {
   // Sandbox escalation capability fact (mirrors the stock fs tools): a
   // confining backend exposes ctx.fs.sandboxMode; only then does hash_edit
   // advertise the one-shot escalation fields.
-  const escalationModes = ctx.fs?.sandboxMode === undefined ? [] : ['workspace-write', 'danger-full-access']
+  const escalation = probeEscalation(ctx.fs)
 
   // Read enhancer: annotate read results with anchors.
   ctx.on('tools/post-execute', async (exec, result, next) => {
@@ -144,19 +144,7 @@ function apply(ctx, config = {}) {
         // One-shot sandbox escalation, advertised only under a confining
         // filesystem backend — the same fields the stock write/edit tools
         // expose, with the same descriptions.
-        ...(escalationModes.length > 0
-          ? {
-              sandbox_permissions: {
-                type: 'string',
-                enum: [...escalationModes],
-                description: sandboxPermissionsDescription('operation'),
-              },
-              justification: {
-                type: 'string',
-                description: 'Required with sandbox_permissions: one sentence for the user explaining why this exact file operation needs the wider access. Use the language of the user’s current request.',
-              },
-            }
-          : {}),
+        ...(escalation?.fields ?? {}),
       },
       required: ['file_path', 'edits'],
     },
@@ -175,36 +163,23 @@ function apply(ctx, config = {}) {
         throw new Error('hash_edit: edits must be a non-empty array of edit objects — call again with the corrected shape')
       }
 
-      const cwd = exec.agent?.session?.header?.cwd
-      const standingPolicy = sandboxPolicyRef?.resolve({ session: exec.agent?.session })
       // One-shot escalation (mirrors the stock resolvePolicy): the malformed
       // pairing fails before any filesystem work; a same-mode repeat rides
       // the standing policy; a strictly wider mode runs through the user
       // approval channel and widens THIS call only.
-      validateEscalationArgs(args.sandbox_permissions, args.justification)
-      let policy = standingPolicy
-      if (args.sandbox_permissions !== undefined || args.justification !== undefined) {
-        if (escalationModes.length === 0) {
-          throw new Error('sandbox_permissions is not available in this composition (no sandboxing filesystem to escalate)')
-        }
-        const granted = await approveEscalation(
-          {
-            requestedMode: args.sandbox_permissions,
-            effectiveMode: standingPolicy?.mode,
-            justification: args.justification,
-            subject: 'operation',
-          },
-          {
-            approver: ctx.get?.('approval'),
-            agent: exec.agent,
-            toolName: HASH_EDIT_NAME,
-            ...(exec.callId !== undefined ? { callId: exec.callId } : {}),
-            ...(exec.signal ? { signal: exec.signal } : {}),
-          },
-        )
-        policy = { ...(standingPolicy ?? {}), mode: granted }
-      }
-      const resolveCwd = policy?.workspaceRoot ?? cwd
+      const { policy, resolveCwd } = await resolveCallPolicy(args, {
+        escalation,
+        sandboxPolicy: sandboxPolicyRef,
+        session: exec.agent?.session,
+        sessionCwd: exec.agent?.session?.header?.cwd,
+        approval: {
+          approver: ctx.get?.('approval'),
+          agent: exec.agent,
+          toolName: HASH_EDIT_NAME,
+          ...(exec.callId !== undefined ? { callId: exec.callId } : {}),
+          ...(exec.signal ? { signal: exec.signal } : {}),
+        },
+      })
       const target = await ctx.fs.resolve(args.file_path, resolveCwd ? { cwd: resolveCwd } : {})
       const info = await ctx.fs.stat(target, exec.signal)
       if (!info || info.type !== 'file') {
@@ -235,7 +210,7 @@ function apply(ctx, config = {}) {
         // Sandbox denial: report the shared marker naming the effective mode
         // plus the same-turn escalation hint (only when this composition
         // advertises the escalation fields). Any other error passes through.
-        if (isSandboxDenial(error) && escalationModes.length > 0) {
+        if (isSandboxDenial(error) && escalation !== null) {
           throw new Error(`${sandboxDenialMarker(policy?.mode ?? 'unknown')}\n${escalationHintMarker('operation')}`)
         }
         throw error

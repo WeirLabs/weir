@@ -2,7 +2,7 @@
 // Ops reference the ORIGINAL file state through `LINE#ID` anchors; every
 // anchor is validated against current content before anything is computed.
 // Any mismatch rejects the whole call with a mismatch report and zero writes.
-import { anchorFor, parseAnchor, validateAnchor } from './anchors.js'
+import { parseAnchor, validateAnchor } from './anchors.js'
 
 /**
  * @typedef {object} HashEditOp
@@ -95,7 +95,7 @@ export function applyOps(lines, ops) {
   planned.sort((a, b) => b.at - a.at)
   for (const plan of planned) {
     // `at` is a 1-based line coordinate of the original file; splice is 0-based.
-    const index = plan.deleteCount > 0 ? plan.at - 1 : plan.at - 1
+    const index = plan.at - 1
     result.splice(Math.max(0, index), plan.deleteCount, ...plan.insert)
   }
   return result
@@ -111,5 +111,3 @@ export function renderMismatch(mismatches) {
     'Re-read the file and copy the current anchors verbatim before retrying.',
   ].join('\n')
 }
-
-export { anchorFor }
