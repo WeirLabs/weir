@@ -78,8 +78,11 @@ window.__ModuleLoader__.load({
 			delegateCategoryChainsHint: "Which model each category's children run on, edited visually; rungs fall back in order.",
 			delegateAgentChains: "Agent model chains (JSON)",
 			delegateAgentChainsHint: "Which model each curated agent runs on, edited visually; an empty lane inherits the caller route.",
-			delegateDisabledCategories: "Disabled categories (JSON)",
-			delegateDisabledCategoriesHint: "JSON array of category names to disable, e.g. [\"artistry\"]: disabled categories leave the delegate target list and cannot be delegated to. Append-only — registry-level disables always stay in effect; unknown names are ignored with a warning.",
+			delegateDisabledCategories: "Disabled categories",
+			delegateDisabledCategoriesHint: "Pick the categories to disable from the registry list: disabled categories leave the delegate target list and cannot be delegated to. Append-only — a registry-level disable always stays in effect and cannot be cleared from here; unknown names are no longer reachable through this control.",
+			disabledCategoriesCount: "disabled",
+			disabledCategoriesPanelHint: "One switch per category. Saving writes exactly the switched-on names; switching everything off saves an empty list, which the server reads as \"nothing disabled\".",
+			disabledCategoriesInvalid: "The stored value is not a JSON string array; the editor opened with every category off — saving replaces the stored value.",
 			chainAgent_finder: "Finder",
 			chainAgent_finder_desc: "Contextual codebase search: answers \"where is X?\" and \"find the code that does Z\". Read-only, fast, parallel-first.",
 			chainAgent_scholar: "Scholar",
@@ -270,8 +273,11 @@ window.__ModuleLoader__.load({
 			delegateCategoryChainsHint: "每个类别的子代理跑哪个模型，可视化配置；档位按序回退。",
 			delegateAgentChains: "精选 agent 模型链（JSON）",
 			delegateAgentChainsHint: "每个精选 agent 跑哪个模型，可视化配置；空车道继承调用方路由。",
-			delegateDisabledCategories: "停用类别（JSON）",
-			delegateDisabledCategoriesHint: "要停用的类别名 JSON 数组，如 [\"artistry\"]：停用类别从委派目标清单消失且不可派发。只能追加停用——注册表级 disabled 始终生效；未知名告警并忽略。",
+			delegateDisabledCategories: "停用类别",
+			delegateDisabledCategoriesHint: "从注册表清单勾选要停用的类别：停用类别从委派目标清单消失且不可派发。只能追加停用——注册表级 disabled 始终生效，无法在此清除；未知名已无法通过此控件写入。",
+			disabledCategoriesCount: "个已停用",
+			disabledCategoriesPanelHint: "每个类别一个开关。保存时只写入打开的类别名；全部关闭则保存空数组，服务器视为「未停用任何类别」。",
+			disabledCategoriesInvalid: "已保存的值不是 JSON 字符串数组；编辑器已以全部关闭打开——保存将覆盖该值。",
 			chainAgent_finder: "finder（检索）",
 			chainAgent_finder_desc: "代码库上下文检索：回答「X 在哪里」「做 Z 的代码在哪」。只读、快速、并行优先。",
 			chainAgent_scholar: "scholar（调研）",
@@ -585,7 +591,7 @@ window.__ModuleLoader__.load({
 			// hosting the form; plus a Plugins-page entry for discoverability.
 			ctx.effect(() => ctx.configForms.whileServed([ORRERY_NS], () => {
 				const scope = ctx.configForms.get(ORRERY_NS);
-				// The settings page arrives as 7 package-local chunks in one
+				// The settings page arrives as 8 package-local chunks in one
 				// parallel batch (started lazily on the first surface open). The
 				// form controller is constructed here on arrival — never inside the
 				// react tree — and disposed with this serve generation; the slot
@@ -609,11 +615,12 @@ window.__ModuleLoader__.load({
 							require.async("./client.settings-page.js"),
 							require.async("./client.chain-editor.js"),
 							require.async("./client.robash-editor.js"),
+							require.async("./client.disabled-categories-editor.js"),
 							require.async("./client.lsp-panel.js"),
 							require.async("./client.chain-model.js"),
 							require.async("./client.robash-model.js"),
 							require.async("./client.lsp-model.js")
-						]).then(([settingsPage, chainEditor, robashEditor, lspPanel, chainModel, robashModel, lspModel]) => {
+						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel]) => {
 							if (serving) {
 								controller = new settingsPage.OrreryCardController(scope, { settingsBus, getSession: () => ctx.remote.session });
 								deferredStore.attach(controller.store);
@@ -624,6 +631,7 @@ window.__ModuleLoader__.load({
 							const editors = {
 								ChainEditorField: (editorProps) => react_jsx_runtime.jsx(chainEditor.ChainEditorField, { ...editorProps, model: chainModel }),
 								RobashListEditorField: (editorProps) => react_jsx_runtime.jsx(robashEditor.RobashListEditorField, { ...editorProps, model: robashModel }),
+								DisabledCategoriesEditorField: (editorProps) => react_jsx_runtime.jsx(disabledCategoriesEditor.DisabledCategoriesEditorField, editorProps),
 								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel })
 							};
 							return { settingsPage, editors };

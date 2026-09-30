@@ -25,7 +25,7 @@
 | 类别注册表 | 内置 9 类别 | 每类别：`description`、`guidance`、`promptAppend`、有序 `chain: [{provider, model, reasoningEffort?}]`、可选 `gateModels`、`disabled` |
 | 代理注册表 | `finder`/`scholar`/`advisor` | 精选只读代理定义；每条可选 `chain: [{provider, model, reasoningEffort?}]`、`reasoningEffort`、`disabled` |
 | `delegateAgentChains` | 空（继承调用方路由） | 精选 agent 链覆盖（JSON map，整链替换；未知名告警忽略）。设置页键：`delegateAgentChains` |
-| `delegateDisabledCategories` | 空 | 停用类别名单（JSON 字符串数组，只能追加停用）；停用者不入模型可见清单、不可派发。设置页键：`delegateDisabledCategories` |
+| `delegateDisabledCategories` | 空 | 停用类别名单（设置页提供**逐类别勾选列表**，勾选结果合成 JSON 字符串数组；只能追加停用）；停用者不入模型可见清单、不可派发。设置页键：`delegateDisabledCategories` |
 | 模型族提示词变体表 | 内置 | 按模型族选择提示词变体（Claude/Kimi 式清单风格、GPT 式原则风格、其余中性），可覆盖 |
 | `readOnlyBash.enabled` | `true` | 只读 bash 守卫开关；`false` 时只读代理工具面回落到 v0.1.0（无 bash）。设置页键：`robashEnabled` |
 | `readOnlyBash.allow` | 初版白名单 | 命令级只读白名单（basename 匹配），可迭代补全。设置页键：`robashAllow`（JSON 字符串数组） |

@@ -23,6 +23,12 @@ window.__ModuleLoader__.load({
 		// Object.keys(CURATED_AGENTS) from src/delegate/agents.js, so a registry
 		// rename cannot drift the two sides.
 		const CURATED_AGENT_NAMES = ["finder", "scholar", "advisor"];
+		// Delegation category names, in registry order — the SINGLE client-side
+		// source for the disabled-categories editor rows (do not scatter).
+		// test/client-settings-page.test.js pins this list to
+		// Object.keys(DEFAULT_CATEGORIES) from src/delegate/categories.js, so a
+		// registry change cannot drift the two sides.
+		const CATEGORY_NAMES = ["quick", "deep", "deep-plus", "visual", "writing", "general-low", "general-high", "artistry", "architect"];
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
@@ -232,6 +238,22 @@ window.__ModuleLoader__.load({
 							key: descriptor.field
 						});
 					}
+					if (descriptor.field === "delegateDisabledCategories") {
+						// The closed-set counterpart of the editors above: one switch
+						// per registry category, the JSON array of the switched-on
+						// names synthesized on save.
+						return react_jsx_runtime.jsx(props.editors.DisabledCategoriesEditorField, {
+							field: "delegateDisabledCategories",
+							rows: CATEGORY_NAMES,
+							text: state.fields.delegateDisabledCategories.text,
+							overridden: state.fields.delegateDisabledCategories.overridden,
+							edit: (field, text) => props.edit(field, text),
+							onReset: () => props.resetField("delegateDisabledCategories"),
+							t,
+							disabled,
+							key: descriptor.field
+						});
+					}
 					if (descriptor.field === "robashAllow" || descriptor.field === "robashGitAllow" || descriptor.field === "robashDeny" || descriptor.field === "robashPwshAllow" || descriptor.field === "robashPwshDeny") {
 						return react_jsx_runtime.jsx(props.editors.RobashListEditorField, {
 							field: descriptor.field,
@@ -393,6 +415,7 @@ window.__ModuleLoader__.load({
 		});
 		exports.GROUPS = GROUPS;
 		exports.CURATED_AGENT_NAMES = CURATED_AGENT_NAMES;
+		exports.CATEGORY_NAMES = CATEGORY_NAMES;
 		exports.FIELDS = FIELDS;
 		exports.OrreryCardController = OrreryCardController;
 		exports.OrreryCard = OrreryCard;

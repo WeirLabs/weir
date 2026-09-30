@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 import { CURATED_AGENTS } from '../src/delegate/agents.js'
+import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
@@ -85,6 +86,7 @@ describe('client.settings-page chunk', () => {
     const editors = {
       ChainEditorField: (props) => ({ __chainEditor: props }),
       RobashListEditorField: (props) => ({ __robashEditor: props }),
+      DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }),
       LspManagerField: (props) => ({ __lspPanel: props }),
     }
     return { definition, exports, editors, specsSeen, reactStub }
@@ -139,13 +141,14 @@ describe('client.settings-page chunk', () => {
     })
 
     expect(rendered.__type).toBeTruthy()
-    // 7 group headers + 6 choice rows + 1 model picker + 17 value-field rows
+    // 7 group headers + 6 choice rows + 1 model picker + 16 value-field rows
     // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
+    // + 1 disabled-categories editor row
     expect(rendered.children).toHaveLength(39)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(17)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(16)
     // the LSP manager row opens the service management panel
     const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
     expect(managerRow).toBeTruthy()
@@ -164,6 +167,16 @@ describe('client.settings-page chunk', () => {
     expect(chainRows[1].panelHintKey).toBe('chainAgentPanelHint')
     expect(chainRows[1].key).toBe('delegateAgentChains')
     expect(typeof chainRows[1].getSession).toBe('function')
+
+    // the disabled-categories row renders the toggle editor over the
+    // parity-pinned category rows
+    const disabledRow = rendered.children.find((child) => child.key === 'delegateDisabledCategories')
+    expect(disabledRow).toBeTruthy()
+    expect(disabledRow.__type).toBe(editors.DisabledCategoriesEditorField)
+    expect(disabledRow.field).toBe('delegateDisabledCategories')
+    expect(disabledRow.rows).toBe(exports.CATEGORY_NAMES)
+    expect(typeof disabledRow.edit).toBe('function')
+    expect(typeof disabledRow.onReset).toBe('function')
 
     // the five robash whitelist rows render the list editor (GROUPS.robash):
     // bash allow/gitAllow/deny + pwsh allow/deny, reusing RobashListEditorField
@@ -260,6 +273,15 @@ describe('client.settings-page chunk', () => {
     expect(exports.CURATED_AGENT_NAMES).toEqual(Object.keys(CURATED_AGENTS))
   })
 
+  it('pins the category names to the server registry (registry drift guard)', async () => {
+    const { exports } = await loadPage()
+    // The client keeps the delegation category names in ONE exported constant;
+    // the server registry (src/delegate/categories.js) is the authority. A
+    // registry change on either side turns this red instead of drifting the
+    // disabled-categories editor rows.
+    expect(exports.CATEGORY_NAMES).toEqual(Object.keys(DEFAULT_CATEGORIES))
+  })
+
   it('resolves a label and a hint for every GROUPS field in both dictionaries — never the raw key', async () => {
     const { exports } = await loadPage()
     const { exports: chainModel } = await loadClientChunk('lib/client.chain-model.js')
@@ -287,6 +309,10 @@ describe('client.settings-page chunk', () => {
       for (const key of laneKeys) {
         expectResolved(dict, key)
         expectResolved(dict, `${key}_desc`)
+      }
+      // the disabled-categories editor's own panel keys resolve too
+      for (const key of ['disabledCategoriesCount', 'disabledCategoriesPanelHint', 'disabledCategoriesInvalid']) {
+        expectResolved(dict, key)
       }
     }
   })

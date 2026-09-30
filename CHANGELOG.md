@@ -11,7 +11,7 @@
 
 - **精选 agent 支持期望路由（`delegateAgentChains`）**：三个精选 agent（`finder`/`scholar`/`advisor`）此前在路由上**不可配置**——注册表条目没有 `chain`、设置页也没有对应键，于是只能静默继承父路由。现在精选 agent 与类别**共用同一条解析路径**（`resolveCategory` 更名 `resolveTargetRoute`）：链上首个「provider 已注册且列出该 model」的档位胜出；整链不可解析时显式报错并点名 agent 与尝试过的档位，**绝不回退继承**（否则「配错了」会变成「静默跑在别的模型上」）；空链保持继承父路由（向后兼容）。设置页新增 `delegateAgentChains`（JSON map，整链替换；未知 agent 名告警忽略，与 `delegateCategoryChains` 同语义）。
 - **委托目标指引小节（`orchestrator:delegate-targets`）**：会话系统提示词新增一段常驻小节，说明 `delegate` 的正确用法（每条目必须且只能给 `category` 或 `agent` 之一；类别道**没有默认值**，必须点名类别），并列出**当前启用**的类别（名称 + 描述 + 路由指引）与精选 agent（名称 + 描述）。小节文本是静态模板，其中内嵌的变量由 DSH 在**每次提示词装配**时求值（不是注册期快照），因此设置提交在同一进程内即刻改变模型看到的目标集合，无需重启、无需重建会话。
-- **类别可在设置页停用（`delegateDisabledCategories`）**：JSON 字符串数组，命中的类别被标为停用；注册表自带的 `disabled` 继续有效。停用语义贯通**三处**——指引小节不再列出它、派发它得到显式 disabled 错误、**未知目标报错里的 available 名单也不再把它列为可选**（与 robash 五表同一哲学：设置面只能追加停用，无法解除注册表级停用）。
+- **类别可在设置页停用（`delegateDisabledCategories`）**：设置页提供**逐类别勾选列表**（类别是封闭集合，不允许手写 JSON 漂出非法名），勾选结果由客户端合成 JSON 字符串数组；命中的类别被标为停用，注册表自带的 `disabled` 继续有效。停用语义贯通**三处**——指引小节不再列出它、派发它得到显式 disabled 错误、**未知目标报错里的 available 名单也不再把它列为可选**（与 robash 五表同一哲学：设置面只能追加停用，无法解除注册表级停用）。
 
 ### Changed
 

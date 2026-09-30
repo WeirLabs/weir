@@ -89,6 +89,7 @@ describe('orrery settings client half', () => {
     }
     const chainEditorChunk = { ChainEditorField: (props) => ({ __chainEditor: props }) }
     const robashEditorChunk = { RobashListEditorField: (props) => ({ __robashEditor: props }) }
+    const disabledCategoriesEditorChunk = { DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }) }
     const lspPanelChunk = { LspManagerField: (props) => ({ __lspPanel: props }) }
     const chainModelChunk = { marker: 'chain-model' }
     const robashModelChunk = { marker: 'robash-model' }
@@ -100,6 +101,7 @@ describe('orrery settings client half', () => {
       './client.settings-page.js': settingsPageChunk,
       './client.chain-editor.js': chainEditorChunk,
       './client.robash-editor.js': robashEditorChunk,
+      './client.disabled-categories-editor.js': disabledCategoriesEditorChunk,
       './client.lsp-panel.js': lspPanelChunk,
       './client.chain-model.js': chainModelChunk,
       './client.robash-model.js': robashModelChunk,
@@ -124,6 +126,7 @@ describe('orrery settings client half', () => {
       sentinelSnapshot,
       settingsPageChunk,
       chainEditorChunk,
+      disabledCategoriesEditorChunk,
       chainModelChunk,
       lspToggleChunk,
       hashEditViewChunk,
@@ -196,6 +199,7 @@ describe('orrery settings client half', () => {
     './client.settings-page.js',
     './client.chain-editor.js',
     './client.robash-editor.js',
+    './client.disabled-categories-editor.js',
     './client.lsp-panel.js',
     './client.chain-model.js',
     './client.robash-model.js',
@@ -211,6 +215,7 @@ describe('orrery settings client half', () => {
     expect(surface.chainEditor).toBeUndefined()
     expect(surface.lspManager).toBeUndefined()
     expect(surface.robashEditor).toBeUndefined()
+    expect(surface.disabledCategoriesEditor).toBeUndefined()
     expect(surface.hashEditView).toBeUndefined()
 
     // apply: locale dictionaries registered synchronously, then the slot
@@ -294,8 +299,8 @@ describe('orrery settings client half', () => {
     expect(sessionAccesses()).toBe(0)
   })
 
-  it('fans out the 7 settings chunks, constructs the controller on arrival, and renders loading/arrived states', async () => {
-    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, chainEditorChunk, chainModelChunk, lspToggleChunk } = await loadEntry()
+  it('fans out the 8 settings chunks, constructs the controller on arrival, and renders loading/arrived states', async () => {
+    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
@@ -323,12 +328,17 @@ describe('orrery settings client half', () => {
     expect(settled.view).toBe('form')
     expect(typeof settled.editors.ChainEditorField).toBe('function')
     expect(typeof settled.editors.RobashListEditorField).toBe('function')
+    expect(typeof settled.editors.DisabledCategoriesEditorField).toBe('function')
     expect(typeof settled.editors.LspManagerField).toBe('function')
     // editors arrive pre-bound with their model chunks (stable identity)
     const boundChain = settled.editors.ChainEditorField({ text: 'x' })
     expect(boundChain.__type).toBe(chainEditorChunk.ChainEditorField)
     expect(boundChain.text).toBe('x')
     expect(boundChain.model).toBe(chainModelChunk)
+    // the disabled-categories editor arrives bound to its chunk (no model)
+    const boundDisabled = settled.editors.DisabledCategoriesEditorField({ text: 'x' })
+    expect(boundDisabled.__type).toBe(disabledCategoriesEditorChunk.DisabledCategoriesEditorField)
+    expect(boundDisabled.text).toBe('x')
 
     // the controller was constructed on arrival with the served scope and the
     // prop-injected deps; the deferred store now serves its snapshot
