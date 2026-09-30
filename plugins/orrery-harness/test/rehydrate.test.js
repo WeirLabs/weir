@@ -108,9 +108,9 @@ describe('coordinator.hydrate', () => {
       confidence: 'full',
     }
     coordinator.hydrate(state)
-    expect(coordinator._children.size).toBe(2)
-    expect(coordinator.meta.confidence).toBe('full')
-    expect(coordinator.meta.untracked).toEqual([])
+    expect(coordinator.snapshot().children.length).toBe(2)
+    expect(coordinator.snapshot().meta.confidence).toBe('full')
+    expect(coordinator.snapshot().meta.untracked).toEqual([])
     expect(deps.notifications).toHaveLength(1)
     expect(deps.notifications[0]).toContain('supervised_group_settled')
     expect(deps.notifications[0]).toContain('group="scan"')
@@ -138,7 +138,7 @@ describe('coordinator.hydrate', () => {
       untracked: [{ id: 'orphan-1', label: 'leftover', mode: 'continuable' }],
       confidence: 'partial',
     })
-    expect(coordinator.meta).toEqual({
+    expect(coordinator.snapshot().meta).toEqual({
       confidence: 'partial',
       untracked: [{ id: 'orphan-1', label: 'leftover', mode: 'continuable' }],
       hydrated: true,

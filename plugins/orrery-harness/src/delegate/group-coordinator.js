@@ -40,6 +40,46 @@ export function parseTerminalStatus(text) {
 }
 
 /**
+ * Canonical member record shape: eight fields, fixed order. The single source
+ * every construction site converges on (registerMember, hydrate, rehydrate).
+ * Status/report defaults express a fresh spawn; rebuild callers pass their own
+ * (e.g. hydrate's `status ?? 'unknown'`) explicitly at the call site.
+ */
+export function createMemberRecord({ id, name = id, group = 'unknown', status = 'running', report = '' }) {
+  return { id, name, group, status, report, retries: 0, lastText: '' }
+}
+
+/** Canonical group record shape. memberIds is copied into the record. */
+export function createGroupRecord(name, { sealed = false, settled = false, memberIds = [] } = {}) {
+  return { name, memberIds: [...memberIds], sealed, settled }
+}
+
+/**
+ * Single exit for the terminal-status predicate: statuses that count toward
+ * group completion (blocked waits for a resume, so it is NOT terminal here).
+ */
+export function isTerminalStatus(status) {
+  return status === 'completed' || status === 'terminated'
+}
+
+/**
+ * Single exit for the untracked-catalog predicate: continuable catalog entries
+ * the registry does not track. mode is normalized (undefined → 'continuable');
+ * the row shape is { id, label, mode }. `isTracked(id)` is the caller's lookup.
+ */
+export function untrackedCatalogEntries(entries, isTracked) {
+  const untracked = []
+  for (const entry of entries ?? []) {
+    if (!entry || typeof entry !== 'object') continue
+    const mode = entry.mode === undefined ? 'continuable' : entry.mode
+    if (mode !== 'continuable') continue
+    if (isTracked(entry.id)) continue
+    untracked.push({ id: entry.id, label: entry.label ?? '', mode })
+  }
+  return untracked
+}
+
+/**
  * Create the coordinator for one parent agent's supervised delegations.
  * Effectors are injected so the state machine stays testable:
  * @param {object} deps
@@ -78,10 +118,10 @@ export function createGroupCoordinator(deps, config = {}) {
 
   /** Register one freshly spawned supervised member (call-level gate did the check). */
   function registerMember({ id, name, group }) {
-    children.set(id, { id, name, group, status: 'running', report: '', retries: 0, lastText: '' })
+    children.set(id, createMemberRecord({ id, name, group }))
     let entry = groups.get(group)
     if (!entry) {
-      entry = { name: group, memberIds: [], settled: false }
+      entry = createGroupRecord(group)
       groups.set(group, entry)
     }
     entry.memberIds.push(id)
@@ -106,6 +146,54 @@ export function createGroupCoordinator(deps, config = {}) {
     return undefined
   }
 
+  /** Ownership query: is this child session supervised by this coordinator? */
+  function ownsChild(id) {
+    return children.has(id)
+  }
+
+  /**
+   * Look up one member by id or name. Returns a shallow COPY without
+   * `lastText` (internal nudge input) — holders cannot mutate the registry.
+   */
+  function memberOf(ref) {
+    const child = memberByRef(ref)
+    if (!child) return undefined
+    const { lastText: _dropped, ...row } = child
+    return row
+  }
+
+  /**
+   * Whole-registry snapshot for rendering: every value is a copy (member
+   * records minus lastText, group rows with a copied memberIds array, meta as
+   * a per-key copy of the hydrate-written shape — null before any hydrate).
+   */
+  function snapshot() {
+    return {
+      children: [...children.values()].map((child) => {
+        const { lastText: _dropped, ...row } = child
+        return row
+      }),
+      groups: [...groups.values()].map((group) => ({
+        name: group.name,
+        memberIds: [...group.memberIds],
+        sealed: group.sealed,
+        settled: group.settled,
+      })),
+      meta: meta == null
+        ? null
+        : {
+            confidence: meta.confidence,
+            untracked: [...(meta.untracked ?? [])],
+            hydrated: meta.hydrated,
+          },
+    }
+  }
+
+  /** Catalog cross-check: continuable catalog entries this registry does not track. */
+  function untrackedAgainstCatalog(entries) {
+    return untrackedCatalogEntries(entries, (id) => children.has(id))
+  }
+
   function noteAssistantText(childId, text) {
     const child = children.get(childId)
     if (child && typeof text === 'string' && text.length > 0) child.lastText = text
@@ -121,10 +209,7 @@ export function createGroupCoordinator(deps, config = {}) {
   function checkGroupCompletion(groupName) {
     const entry = groups.get(groupName)
     if (!entry || entry.settled || !entry.sealed) return
-    const allSettled = entry.memberIds.every((id) => {
-      const status = children.get(id)?.status
-      return status === 'completed' || status === 'terminated'
-    })
+    const allSettled = entry.memberIds.every((id) => isTerminalStatus(children.get(id)?.status))
     if (!allSettled) return
     entry.settled = true
     deps.onFact?.({ kind: 'group-settled', group: groupName })
@@ -164,7 +249,7 @@ export function createGroupCoordinator(deps, config = {}) {
   function noteSettlementNotice(childId) {
     const child = children.get(childId)
     if (!child) return
-    if (child.status !== 'completed' && child.status !== 'terminated') return
+    if (!isTerminalStatus(child.status)) return
     noticesSeen.add(childId)
     const entry = groups.get(child.group)
     if (!entry || !entry.settled || !entry.signalPending) return
@@ -330,24 +415,21 @@ export function createGroupCoordinator(deps, config = {}) {
   function hydrate(state) {
     for (const child of state.children ?? []) {
       if (!children.has(child.id)) {
-        children.set(child.id, {
+        children.set(child.id, createMemberRecord({
           id: child.id,
           name: child.name ?? child.id,
           group: child.group ?? 'unknown',
           status: child.status ?? 'unknown',
           report: child.report ?? '',
-          retries: 0,
-          lastText: '',
-        })
+        }))
       }
     }
     for (const group of state.groups ?? []) {
-      groups.set(group.name, {
-        name: group.name,
-        memberIds: [...(group.memberIds ?? [])],
+      groups.set(group.name, createGroupRecord(group.name, {
         sealed: group.sealed === true,
         settled: group.settled === true,
-      })
+        memberIds: group.memberIds ?? [],
+      }))
     }
     meta = { confidence: state.confidence ?? 'partial', untracked: state.untracked ?? [], hydrated: true }
     for (const group of groups.values()) {
@@ -369,16 +451,11 @@ export function createGroupCoordinator(deps, config = {}) {
     releaseGroup,
     hydrate,
     setSupervision,
-    memberByRef,
     groupLive,
-    _children: children,
-    _groups: groups,
-    get meta() {
-      return meta
-    },
-    set meta(value) {
-      meta = value
-    },
+    ownsChild,
+    memberOf,
+    snapshot,
+    untrackedAgainstCatalog,
   }
 }
 

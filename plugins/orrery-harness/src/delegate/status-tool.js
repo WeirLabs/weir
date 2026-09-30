@@ -41,8 +41,9 @@ export function createStatusTool(deps) {
 
 /** Gather registry state from one coordinator into a plain, renderable value. */
 export function collectStatus(coordinator) {
+  const snap = coordinator.snapshot()
   const children = []
-  for (const child of coordinator._children.values()) {
+  for (const child of snap.children) {
     children.push({
       id: child.id,
       name: child.name,
@@ -53,7 +54,7 @@ export function collectStatus(coordinator) {
     })
   }
   const groups = []
-  for (const group of coordinator._groups.values()) {
+  for (const group of snap.groups) {
     groups.push({
       name: group.name,
       memberCount: group.memberIds.length,
@@ -61,7 +62,7 @@ export function collectStatus(coordinator) {
       settled: group.settled === true,
     })
   }
-  return { children, groups, untracked: null, meta: coordinator.meta ?? {} }
+  return { children, groups, untracked: null, meta: snap.meta ?? {} }
 }
 
 /**
@@ -77,14 +78,7 @@ export async function catalogUntracked(coordinator, parentId, listChildren) {
     return null
   }
   if (!Array.isArray(catalog)) return null
-  const untracked = []
-  for (const entry of catalog) {
-    if (!entry || typeof entry !== 'object') continue
-    if (entry.mode !== undefined && entry.mode !== 'continuable') continue
-    if (coordinator._children.has(entry.id)) continue
-    untracked.push({ id: entry.id, label: entry.label ?? '', mode: entry.mode ?? 'continuable' })
-  }
-  return untracked
+  return coordinator.untrackedAgainstCatalog(catalog)
 }
 
 /** Model-facing text rendering of the registry value. */

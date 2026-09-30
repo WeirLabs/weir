@@ -92,7 +92,7 @@ describe('supervised_status tool', () => {
 
   it('surfaces the rehydration confidence marker when present', async () => {
     const coordinator = makeCoordinator()
-    coordinator.meta = { confidence: 'partial' }
+    coordinator.hydrate({ children: [], groups: [], untracked: [], confidence: 'partial' })
     const tool = makeTool({ coordinator })
     const value = await tool.execute({}, execStub())
     const text = renderStatus(value)

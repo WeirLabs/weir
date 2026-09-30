@@ -244,7 +244,7 @@ function apply(ctx, config = {}) {
   /** Find the entry owning a given child session id (event filter). */
   function entryOfChild(sessionId) {
     for (const entry of coordinators.values()) {
-      if (entry.coordinator._children.has(sessionId)) return entry
+      if (entry.coordinator.ownsChild(sessionId)) return entry
     }
     return undefined
   }
@@ -509,7 +509,7 @@ export function auditFilePathOf(session) {
  * @returns {Error}
  */
 export function withUntrackedHint(error, coordinator) {
-  const untracked = coordinator?.meta?.untracked
+  const untracked = coordinator?.snapshot().meta?.untracked
   if (Array.isArray(untracked) && untracked.length > 0 && /no supervised child/.test(String(error?.message ?? ''))) {
     return new Error(`${error.message} Note: ${untracked.length} untracked continuable child(ren) exist in the DSH catalog — supervision state may have been rebuilt with partial confidence.`)
   }

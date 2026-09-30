@@ -2,7 +2,7 @@
 // restart. Pure logic — the mount layer feeds it parsed audit records and the
 // DSH catalog; no DSH imports, no fs.
 
-import { parseTerminalStatus } from './group-coordinator.js'
+import { parseTerminalStatus, createMemberRecord, createGroupRecord, isTerminalStatus, untrackedCatalogEntries } from './group-coordinator.js'
 
 /**
  * Rebuild supervision state by replaying structured audit facts and
@@ -32,22 +32,12 @@ export function rehydrateSupervision({ parentId, records, catalogChildren }) {
 
   // Recompute group settle state from member statuses (authoritative).
   for (const group of groups.values()) {
-    const terminal = group.memberIds.every((id) => {
-      const status = children.get(id)?.status
-      return status === 'completed' || status === 'terminated'
-    })
+    const terminal = group.memberIds.every((id) => isTerminalStatus(children.get(id)?.status))
     group.settled = group.sealed === true && group.memberIds.length > 0 && terminal
   }
 
   // Catalog cross-check: continuable children the registry does not track.
-  const untracked = []
-  for (const entry of catalogChildren ?? []) {
-    if (!entry || typeof entry !== 'object') continue
-    const mode = entry.mode === undefined ? 'continuable' : entry.mode
-    if (mode !== 'continuable') continue
-    if (children.has(entry.id)) continue
-    untracked.push({ id: entry.id, label: entry.label ?? '', mode })
-  }
+  const untracked = untrackedCatalogEntries(catalogChildren, (id) => children.has(id))
 
   return {
     children: [...children.values()],
@@ -64,15 +54,11 @@ function applyFact(fact, children, groups) {
     case 'spawn': {
       if (typeof fact.childId !== 'string' || fact.childId.length === 0) return
       if (!children.has(fact.childId)) {
-        children.set(fact.childId, {
+        children.set(fact.childId, createMemberRecord({
           id: fact.childId,
           name: typeof fact.name === 'string' && fact.name.length > 0 ? fact.name : fact.childId,
           group: typeof fact.group === 'string' && fact.group.length > 0 ? fact.group : 'unknown',
-          status: 'running',
-          report: '',
-          retries: 0,
-          lastText: '',
-        })
+        }))
       }
       ensureGroup(groups, fact.group, fact.childId)
       return
@@ -125,7 +111,7 @@ function ensureGroup(groups, name, childId) {
   if (typeof name !== 'string' || name.length === 0) return
   let entry = groups.get(name)
   if (!entry) {
-    entry = { name, memberIds: [], sealed: false, settled: false }
+    entry = createGroupRecord(name)
     groups.set(name, entry)
   }
   if (!entry.memberIds.includes(childId)) entry.memberIds.push(childId)
@@ -152,15 +138,13 @@ export async function applyChildLogRecovery(state, readChildFinalText) {
   for (const entry of state.untracked ?? []) {
     const terminal = parseTerminalStatus(await safeRead(readChildFinalText, entry.id))
     if (terminal) {
-      state.children.push({
+      state.children.push(createMemberRecord({
         id: entry.id,
         name: entry.label || entry.id,
         group: RECOVERED_GROUP,
         status: terminal.status,
         report: terminal.report,
-        retries: 0,
-        lastText: '',
-      })
+      }))
       recoveredIds.push(entry.id)
     } else {
       remainingUntracked.push(entry)
@@ -168,7 +152,7 @@ export async function applyChildLogRecovery(state, readChildFinalText) {
   }
   state.untracked = remainingUntracked
   if (recoveredIds.length > 0) {
-    state.groups.push({ name: RECOVERED_GROUP, memberIds: recoveredIds, sealed: true, settled: true })
+    state.groups.push(createGroupRecord(RECOVERED_GROUP, { memberIds: recoveredIds, sealed: true, settled: true }))
   }
 
   for (const child of state.children) {
@@ -197,10 +181,7 @@ async function safeRead(readChildFinalText, childId) {
 function recomputeGroupSettle(state) {
   const byId = new Map(state.children.map((child) => [child.id, child]))
   for (const group of state.groups) {
-    const terminal = group.memberIds.every((id) => {
-      const status = byId.get(id)?.status
-      return status === 'completed' || status === 'terminated'
-    })
+    const terminal = group.memberIds.every((id) => isTerminalStatus(byId.get(id)?.status))
     group.settled = group.sealed === true && group.memberIds.length > 0 && terminal
   }
 }

@@ -137,8 +137,8 @@ describe('group coordinator', () => {
     coordinator.noteAssistantText('c1', 'STATUS: blocked\nREPORT: need api key')
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
     expect(deps.notifications).toHaveLength(0)
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toBe('need api key')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toBe('need api key')
     expect(deps.facts.at(-1)).toEqual({ kind: 'settle', childId: 'c1', status: 'blocked', report: 'need api key' })
   })
 
@@ -173,8 +173,8 @@ describe('group coordinator', () => {
       coordinator.noteAssistantText('c1', `chatter ${round}`)
       await coordinator.onTurnEnd('c1', { kind: 'completed' })
     }
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toContain('exhausted')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toContain('exhausted')
   })
 
   it('marks blocked after exhausting provider-error retries', async () => {
@@ -186,8 +186,8 @@ describe('group coordinator', () => {
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     expect(await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })).toBe('settled')
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toContain('provider-error')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toContain('provider-error')
   })
 
   it('never auto-continues a user interruption', async () => {
@@ -195,15 +195,15 @@ describe('group coordinator', () => {
     const coordinator = groupOfTwo(deps)
     expect(await coordinator.onTurnEnd('c1', { kind: 'aborted', reason: { kind: 'user' } })).toBe('settled')
     expect(deps.sent).toHaveLength(0)
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toContain('Interrupted by the user')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toContain('Interrupted by the user')
   })
 
   it('treats non-user aborts as termination', async () => {
     const deps = fakeDeps()
     const coordinator = groupOfTwo(deps)
     await coordinator.onTurnEnd('c1', { kind: 'aborted', reason: { kind: 'parent' } })
-    expect(coordinator.memberByRef('c1').status).toBe('terminated')
+    expect(coordinator.memberOf('c1').status).toBe('terminated')
   })
 
   it('resumes a blocked child with context and resets its counter', async () => {
@@ -214,7 +214,7 @@ describe('group coordinator', () => {
 
     const resumed = await coordinator.resume('alpha', 'the registry is back up')
     expect(resumed.status).toBe('running')
-    expect(coordinator.memberByRef('c1').retries).toBe(0)
+    expect(coordinator.memberOf('c1').retries).toBe(0)
     expect(deps.sent.at(-1).text).toContain('the registry is back up')
     expect(deps.sent.at(-1).text).toContain('resume_context')
   })
@@ -232,8 +232,8 @@ describe('group coordinator', () => {
     const outcome = coordinator.terminate('alpha', 'direction changed')
     expect(outcome.interrupted).toBe(true)
     expect(deps.interrupted).toEqual(['c1'])
-    expect(coordinator.memberByRef('c1').status).toBe('terminated')
-    expect(coordinator.memberByRef('c1').report).toBe('direction changed')
+    expect(coordinator.memberOf('c1').status).toBe('terminated')
+    expect(coordinator.memberOf('c1').report).toBe('direction changed')
   })
 
   it('terminates a blocked child as pure bookkeeping', async () => {
@@ -245,7 +245,7 @@ describe('group coordinator', () => {
     const outcome = coordinator.terminate('alpha')
     expect(outcome.interrupted).toBe(false)
     expect(deps.interrupted).toHaveLength(0)
-    expect(coordinator.memberByRef('c1').status).toBe('terminated')
+    expect(coordinator.memberOf('c1').status).toBe('terminated')
   })
 
   it('counts termination toward group completion and emits the settle signal after both notices', async () => {
@@ -339,8 +339,8 @@ describe('group coordinator', () => {
     coordinator.sealGroup('g')
     coordinator.noteAssistantText('c1', 'chatter')
     expect(await coordinator.onTurnEnd('c1', { kind: 'completed' })).toBe('settled')
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toContain('Nudge delivery failed')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toContain('Nudge delivery failed')
     expect(deps.audits.some((note) => note.includes('nudge delivery failed'))).toBe(true)
   })
 
@@ -353,8 +353,8 @@ describe('group coordinator', () => {
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '429' } })
     expect(deps.scheduled).toHaveLength(1)
     await deps.scheduled[0].fn()
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toContain('Retry delivery failed')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toContain('Retry delivery failed')
   })
 
   it('reverts a failed resume delivery to blocked and throws', async () => {
@@ -364,7 +364,7 @@ describe('group coordinator', () => {
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
     deps.sendTo = async () => { throw new Error('sendMessage down') }
     await expect(async () => coordinator.resume('alpha', 'back up')).rejects.toThrow(/could not deliver resume context/)
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
   })
 
   // --- Live supervision tuning (volatile settings commit) ------------------
@@ -381,15 +381,15 @@ describe('group coordinator', () => {
 
     // one provider-error retry, well under the original cap of 5
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
-    expect(coordinator.memberByRef('c1').status).toBe('running')
+    expect(coordinator.memberOf('c1').status).toBe('running')
 
     // the settings commit lands while the child is still running
     coordinator.setSupervision({ maxRetries: 1 })
 
     const outcome = await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     expect(outcome).toBe('settled')
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').report).toContain('provider-error')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').report).toContain('provider-error')
   })
 
   it('setSupervision retunes the backoff without touching registry state', async () => {
@@ -398,13 +398,13 @@ describe('group coordinator', () => {
     // settle one member so there is observable registry state to preserve
     coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: one')
     await coordinator.onTurnEnd('c1', { kind: 'completed' })
-    const before = coordinator.memberByRef('c2')
+    const before = coordinator.memberOf('c2')
 
     coordinator.setSupervision({ initialBackoffMs: 1000, maxBackoffMs: 2000 })
 
     // registry untouched: same members, same statuses, same retry counters
-    expect(coordinator.memberByRef('c1').status).toBe('completed')
-    expect(coordinator.memberByRef('c2')).toBe(before)
+    expect(coordinator.memberOf('c1').status).toBe('completed')
+    expect(coordinator.memberOf('c2')).toEqual(before) // copy semantics: field-deep equal, not identity
 
     // and the new backoff governs the next scheduled retry
     await coordinator.onTurnEnd('c2', { kind: 'error', error: { message: '500' } })
@@ -419,8 +419,8 @@ describe('group coordinator', () => {
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     const outcome = await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     expect(outcome).toBe('settled')
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.meta?.hijacked).toBe(undefined)
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.snapshot().meta?.hijacked).toBe(undefined)
   })
   it('a tightened cap settles a mid-flight child exactly once', async () => {
     // 3.3 boundary: the new cap can land below the child's current retry count.
@@ -436,11 +436,11 @@ describe('group coordinator', () => {
     // build up a retry count that the new cap will sit below
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
-    expect(coordinator.memberByRef('c1').status).toBe('running')
+    expect(coordinator.memberOf('c1').status).toBe('running')
 
     coordinator.setSupervision({ maxRetries: 1 })
     expect(await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })).toBe('settled')
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
 
     const settles = deps.facts.filter((fact) => fact.kind === 'settle' && fact.childId === 'c1')
     expect(settles).toHaveLength(1)
@@ -454,9 +454,9 @@ describe('group coordinator', () => {
     // rehydration is unaffected.
     await coordinator.onTurnEnd('c1', { kind: 'error', error: { message: '500' } })
     expect(deps.scheduled.length).toBe(retriesScheduled)
-    expect(coordinator.memberByRef('c1').status).toBe('blocked')
-    expect(coordinator.memberByRef('c1').retries).toBe(2)
+    expect(coordinator.memberOf('c1').status).toBe('blocked')
+    expect(coordinator.memberOf('c1').retries).toBe(2)
     // the blocked verdict text is the exhaustion one either way
-    expect(coordinator.memberByRef('c1').report).toContain('exhausted')
+    expect(coordinator.memberOf('c1').report).toContain('exhausted')
   })
 })
