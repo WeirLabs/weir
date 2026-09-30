@@ -131,7 +131,7 @@ export async function approveEscalation(request, approval) {
  * plain fakes.
  * @param args - raw tool arguments (only sandbox_permissions / justification are read)
  * @param env - { escalation, sandboxPolicy, session, sessionCwd, approval: { approver, agent, toolName, callId?, signal? }, subject? }
- * @returns { policy, resolveCwd, advertisedFields }
+ * @returns {Promise<{ policy: any, resolveCwd: Function, advertisedFields: any }>}
  */
 export async function resolveCallPolicy(args, env) {
   const standingPolicy = env.sandboxPolicy?.resolve({ session: env.session })

@@ -12,7 +12,7 @@
  * callers (batch-scan semantics differ per plugin); this function only judges
  * the source kind.
  *
- * @param {object} messageOrEvent - a UserMessage-shaped object or a session/event event
+ * @param {any} messageOrEvent - a UserMessage-shaped object or a session/event event
  * @returns {boolean}
  */
 export function isGenuineUserMessage(messageOrEvent) {
@@ -33,7 +33,7 @@ export function isGenuineUserMessage(messageOrEvent) {
  * keys are removed from the flat merge and, when defined, merge into the
  * existing config[subKey] (undefined never overrides).
  *
- * @param {object} ctx - plugin context (reads the orrerySettings service)
+ * @param {any} ctx - plugin context (reads the orrerySettings service)
  * @param {string} section - settings section name, e.g. 'intentGate'
  * @param {object} config - inline plugin config
  * @param {object} [options]
@@ -72,7 +72,7 @@ export function overlayConfig(ctx, section, config, options = {}) {
  * current turn. The caller passes the warn prefix verbatim (existing wording
  * is pinned by plugin tests); this module appends the error summary.
  *
- * @param {object} ctx - plugin context (ctx.logger)
+ * @param {any} ctx - plugin context (ctx.logger)
  * @param {string} message - full warn prefix, e.g. `todo-driver: could not steer continuation for "${id}"`
  * @param {() => unknown} fn - the injection call
  * @returns {unknown} fn()'s result, or undefined when it threw
@@ -80,7 +80,7 @@ export function overlayConfig(ctx, section, config, options = {}) {
 export function injectOrWarn(ctx, message, fn) {
   try {
     return fn()
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     ctx.logger?.warn?.(`${message}: ${error?.message ?? error}`)
     return undefined
   }

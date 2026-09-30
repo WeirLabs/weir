@@ -10,19 +10,31 @@
     "noEmit": true,
     "types": []
   },
+  // Curation rule: this list holds PURE modules only — no ctx adapters, no node:
+  // builtin consumers (types: [] strips Node globals). Plugin index.js files,
+  // settings, lsp lifecycle, audit, whitelist-defaults, group-coordinator and
+  // rehydrate stay out for the same reason they always have. New pure modules
+  // MUST be added here when created.
   "include": [
     "src/core/doctrine.js",
     "src/intent-gate/matcher.js",
+    "src/shared/runtime-messages.js",
+    "src/shared/user-message.js",
     "src/delegate/resolver.js",
     "src/delegate/families.js",
     "src/delegate/escalate.js",
     "src/delegate/categories.js",
     "src/delegate/agents.js",
+    "src/delegate/robash-guard-core.js",
     "src/todo-driver/state-machine.js",
     "src/context-guard/pressure.js",
+    "src/context-guard/compaction-outcome.js",
     "src/hashline-edit/xxhash32.js",
     "src/hashline-edit/anchors.js",
     "src/hashline-edit/apply-ops.js",
-    "src/hashline-edit/diff.js"
+    "src/hashline-edit/diff.js",
+    "src/hashline-edit/planned-fragments.js",
+    "src/hashline-edit/sandbox.js",
+    "src/lsp/uri.js",
   ]
 }
