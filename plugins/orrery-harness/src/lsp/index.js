@@ -101,7 +101,6 @@ function apply(ctx, config = {}) {
       manager,
       ctx,
       agent,
-      diagnosticsWaitMs: option('diagnosticsWaitMs', config.diagnosticsWaitMs ?? LSP_DEFAULTS.diagnosticsWaitMs),
     }).map((definition) => agent.ctx.tools.register(definition))
     enabled.set(agent.id, { disposers })
   }

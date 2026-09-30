@@ -35,7 +35,7 @@ function asLocationArray(result) {
 }
 
 /** Build the five tool definitions for one calling agent's enable. */
-export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 }) {
+export function createLspTools({ manager, ctx, agent }) {
   // Optional sandbox policy capture (S23, mirrors hashline-edit): the
   // sandboxed fs backend enforces the session policy only when the caller
   // passes it per call. Absent service (headless test compositions, other
@@ -58,9 +58,7 @@ export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 
 
   async function resolveAndCall(args, exec, method, paramsOf) {
     const { cwd, target, languageId } = await resolveTarget(args, exec)
-    return manager.call(languageId, cwd ?? '.', target, agent.id, async (record, uri) => {
-      return record.client.request(method, paramsOf(uri))
-    }, exec.signal)
+    return manager.requestOn(languageId, cwd ?? '.', target, agent.id, method, paramsOf, exec.signal)
   }
 
   const positionParams = {
@@ -86,15 +84,8 @@ export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 
       },
       async execute(args, exec) {
         const { cwd, target, languageId } = await resolveTarget(args, exec)
-        const { uri, items } = await manager.call(languageId, cwd ?? '.', target, agent.id, async (record, uri) => {
-          let entry = record.diagnostics.get(uri)
-          if (!entry) {
-            await new Promise((resolvePromise) => setTimeout(resolvePromise, diagnosticsWaitMs))
-            entry = record.diagnostics.get(uri)
-          }
-          return { uri, items: entry?.diagnostics ?? [] }
-        }, exec.signal)
-        const lines = items.map((diagnostic) => {
+        const { uri, diagnostics } = await manager.diagnosticsFor(languageId, cwd ?? '.', target, agent.id, exec.signal)
+        const lines = diagnostics.map((diagnostic) => {
           const severity = SEVERITY[diagnostic.severity] ?? `severity-${diagnostic.severity ?? '?'}`
           const line = (diagnostic.range?.start?.line ?? 0) + 1
           const character = (diagnostic.range?.start?.character ?? 0) + 1
@@ -102,7 +93,7 @@ export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 
         })
         return {
           text: lines.length > 0
-            ? `${items.length} diagnostic(s) for ${uriToPath(uri)}:\n${lines.join('\n')}`
+            ? `${diagnostics.length} diagnostic(s) for ${uriToPath(uri)}:\n${lines.join('\n')}`
             : `No diagnostics reported for ${uriToPath(uri)}.`,
         }
       },
@@ -207,16 +198,15 @@ export function createLspTools({ manager, ctx, agent, diagnosticsWaitMs = 2_000 
         if (newName.length === 0) throw new Error('lsp_rename: new_name must be a non-empty string')
 
         const { cwd, target, languageId } = await resolveTarget(args, exec)
-        const workspaceEdit = await manager.call(languageId, cwd ?? '.', target, agent.id, async (record, uri) => {
-          if (!record.capabilities?.renameProvider) {
-            throw new Error('lsp_rename: the language server does not support rename')
-          }
-          return record.client.request('textDocument/rename', {
-            textDocument: { uri },
-            position: { line, character },
-            newName,
-          })
-        }, exec.signal)
+        const capabilities = await manager.capabilitiesOf(languageId, cwd ?? '.', agent.id, exec.signal)
+        if (!capabilities?.renameProvider) {
+          throw new Error('lsp_rename: the language server does not support rename')
+        }
+        const workspaceEdit = await manager.requestOn(languageId, cwd ?? '.', target, agent.id, 'textDocument/rename', (uri) => ({
+          textDocument: { uri },
+          position: { line, character },
+          newName,
+        }), exec.signal)
 
         // Throws on documentChanges (v1 does not apply them); null = no-op.
         const changes = extractChanges(workspaceEdit)

@@ -123,22 +123,74 @@ export function createLspManager({ subprocess, fs, registry, options = {}, resol
   }
 
   /**
-   * Run one LSP operation against a synced document.
+   * Shared operation preamble, never exported (D2): resolve the language
+   * family, lazy-start the server, stamp the operation's languageId on the
+   * record (didOpen consumes it via targetLanguageId — the mutation stays an
+   * internal invariant), register the session holder, refresh the idle timer.
+   * The record it returns MUST NOT cross the interface boundary.
    * @param {string} languageId - LSP languageId of the target file
    * @param {string} cwd - workspace root
-   * @param {object} target - resolved fs target
    * @param {string} sessionId - calling session (server holder)
-   * @param {(record: object, uri: string) => Promise<unknown>} fn
    */
-  async function call(languageId, cwd, target, sessionId, fn, signal) {
+  async function prepare(languageId, cwd, sessionId) {
     const family = familyForLanguageId(languageId)
     if (!family) throw new Error(`lsp: no language server family for '${languageId}'`)
     const record = await serverFor(family, cwd)
     record.languageId = languageId
     record.holders.add(sessionId)
     record.touch()
+    return record
+  }
+
+  /**
+   * Sync the target document, then issue one LSP request and return its
+   * result. `paramsOf` is a pure constructor over the synced uri — it never
+   * sees the record.
+   * @param {string} languageId - LSP languageId of the target file
+   * @param {string} cwd - workspace root
+   * @param {object} target - resolved fs target
+   * @param {string} sessionId - calling session (server holder)
+   * @param {string} method - LSP request method
+   * @param {(uri: string) => object} paramsOf
+   */
+  async function requestOn(languageId, cwd, target, sessionId, method, paramsOf, signal) {
+    const record = await prepare(languageId, cwd, sessionId)
     const uri = await syncDocument(record, target, signal)
-    return fn(record, uri)
+    return record.client.request(method, paramsOf(uri))
+  }
+
+  /**
+   * Sync the target document, then read its published diagnostics. Wait-once
+   * policy lives here: when the server has not published for the uri yet, wait
+   * up to `opts.diagnosticsWaitMs` and re-check once. Always resolves to
+   * `{ uri, diagnostics }` — an empty array when nothing was ever published.
+   * @param {string} languageId - LSP languageId of the target file
+   * @param {string} cwd - workspace root
+   * @param {object} target - resolved fs target
+   * @param {string} sessionId - calling session (server holder)
+   */
+  async function diagnosticsFor(languageId, cwd, target, sessionId, signal) {
+    const record = await prepare(languageId, cwd, sessionId)
+    const uri = await syncDocument(record, target, signal)
+    let entry = record.diagnostics.get(uri)
+    if (!entry) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, opts.diagnosticsWaitMs))
+      entry = record.diagnostics.get(uri)
+    }
+    return { uri, diagnostics: entry?.diagnostics ?? [] }
+  }
+
+  /**
+   * The server's handshake capabilities. Capabilities are a per-server
+   * handshake product, not per-document — this operation deliberately does
+   * NOT sync any document (D1/D4).
+   * @param {string} languageId - LSP languageId selecting the server family
+   * @param {string} cwd - workspace root
+   * @param {string} sessionId - calling session (server holder)
+   */
+  async function capabilitiesOf(languageId, cwd, sessionId, signal) {
+    const record = await prepare(languageId, cwd, sessionId)
+    return record.capabilities
   }
 
   /** Release every server hold of one session; empty servers shut down. */
@@ -165,5 +217,5 @@ export function createLspManager({ subprocess, fs, registry, options = {}, resol
     currentRegistry = next
   }
 
-  return { call, releaseSession, dispose, setOptions, setRegistry, _servers: servers }
+  return { requestOn, diagnosticsFor, capabilitiesOf, releaseSession, dispose, setOptions, setRegistry }
 }
