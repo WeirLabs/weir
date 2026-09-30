@@ -20,7 +20,7 @@
 ## 设计细节
 
 - **元数据通道**：`hashline-edit` 工具定义新增 `output.presentationMeta(args, value)`，返回 `{ diffs }`——每 hunk 一个 `{ path, oldText, newText }` 片段（两侧各带 3 行上下文；`oldText` 仅在该 hunk 完全没有旧侧行时为 `null`）。`src/hashline-edit/diff.js` 的 `diffResult` 一趟比较同时产出渲染文本与结构化片段，两个通道不会互相矛盾。宿主运行时仅在成功且为根调用时持久化 meta（PTC 子调用无 meta，客户端自动回退）。
-- **客户端注册**：`lib/client.js` 的 `apply` 在独立 `ctx.effect` 中 `ctx.slots.inject('tool.call.toolview', … key: 'hash_edit', locale: NS)`——与 `dsh-client-ui-skill` 注册 `skill` 视图同一模式；注册失败不影响设置页与 LSP 开关。
+- **客户端注册**：`lib/client.js`（入口组合根，见 [client-module-chunking.md](client-module-chunking.md)）的 `apply` 在独立 `ctx.effect` 中 `ctx.slots.inject('tool.call.toolview', … key: 'hash_edit', locale: NS)`——与 `dsh-client-ui-skill` 注册 `skill` 视图同一模式；视图本体住在 `lib/client.hash-edit-view.js` chunk（`require.async` 到达，到达前复用既有通用扁平 body 降级，到达后无缝换成 diff 面板）；注册失败不影响设置页与 LSP 开关。
 - **视图组件**：`HashEditRow` 按 `phase` 分派——`preparing` 占位行；`start` 从 `argsRaw` 防御性解析出入参并合成计划片段（空 `text` 的纯删除无预览片段）；`result` 窄化 `block.meta.diffs` 后交给 `primitives.DiffBlock`，行内样式沿用 bundle 既有约定，文案全部走 bundle 自有 en/zh 词典。所有 wire 数据（重放日志、缺失 meta、畸形 args）都做防御性窄化，失败即回退平铺展示，绝不抛异常。
 
 ## 边界与失败语义

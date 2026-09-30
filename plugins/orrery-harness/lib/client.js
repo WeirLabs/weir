@@ -6,13 +6,12 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
-		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
-		let modelPicker = require("orrery-model-picker");
-		// Orrery settings page, browser half: one flat form over the
-		// `orrery-settings` namespace (the shared SettingsFormModel only
-		// addresses flat fields). Registers into the Plugins page's
-		// `plugins.item` slot while the Host serves that namespace; also
-		// injects the per-session LSP toggle into the conversation composer bar.
+		// Orrery client, browser half — composition root: synchronously
+		// registers the en/zh dictionaries, the inject declarations, and the
+		// slot wrappers for every lazily delivered surface (settings page,
+		// composer LSP toggle, hash_edit conversation view). Each wrapper fans
+		// out one Promise.all over package-local require.async chunks
+		// (lib/client.*.js); the feature code lives in those chunks.
 		const ORRERY_NS = "orrery-settings";
 		// Local bus: settings saves bump a revision so the open session's
 		// LSP toggle re-checks command availability (capability gate flipped)
@@ -29,754 +28,11 @@ window.__ModuleLoader__.load({
 				}
 			};
 		})();
-		const GROUPS = [
-			{ id: "intent", fields: [
-				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
-				{ field: "intentGateProvider", kind: "text" },
-				{ field: "intentGateModel", kind: "text" },
-				{ field: "intentGateReasoningEffort", kind: "text" },
-				{ field: "intentGateTimeoutMs", kind: "number" },
-				{ field: "jevEndpoint", kind: "text" },
-				{ field: "jevModel", kind: "text" },
-				{ field: "jevApiKeyEnv", kind: "text" }
-			] },
-			{ id: "delegate", fields: [
-				{ field: "delegateCategoryChains", kind: "text" },
-				{ field: "supervisionMaxRetries", kind: "number" },
-				{ field: "supervisionInitialBackoffMs", kind: "number" },
-				{ field: "supervisionMaxBackoffMs", kind: "number" }
-			] },
-			{ id: "todo", fields: [
-				{ field: "todoEnabled", kind: "boolean" },
-				{ field: "todoMaxConsecutive", kind: "number" },
-				{ field: "todoErrorRetryMax", kind: "number" },
-				{ field: "todoErrorBackoffBaseMs", kind: "number" },
-				{ field: "todoErrorBackoffCapMs", kind: "number" }
-			] },
-			{ id: "guard", fields: [
-				{ field: "guardEnabled", kind: "boolean" },
-				{ field: "guardSoftThreshold", kind: "number" },
-				{ field: "guardHardThreshold", kind: "number" }
-			] },
-			{ id: "editing", fields: [
-				{ field: "hashlineHideStockEdit", kind: "boolean" }
-			] },
-			{ id: "robash", fields: [
-				{ field: "robashEnabled", kind: "boolean" },
-				{ field: "robashAllow", kind: "text" },
-				{ field: "robashGitAllow", kind: "text" },
-				{ field: "robashDeny", kind: "text" },
-				{ field: "robashPwshAllow", kind: "text" },
-				{ field: "robashPwshDeny", kind: "text" }
-			] },
-			{ id: "lsp", fields: [
-				{ field: "lspEnabled", kind: "boolean" },
-				{ field: "lspIdleMs", kind: "number" },
-				{ field: "lspRequestTimeoutMs", kind: "number" },
-				{ field: "lspDiagnosticsWaitMs", kind: "number" },
-				{ field: "lspServers", kind: "text" }
-			] }
-		];
-		const FIELDS = GROUPS.flatMap((group) => group.fields);
-		function booleanSpec(field) {
-			return {
-				field,
-				format: (value) => value === true ? "true" : value === false ? "false" : "",
-				parse: (text) => {
-					const trimmed = text.trim().toLowerCase();
-					if (trimmed === "") return { kind: "clear" };
-					if (trimmed === "true") return { kind: "set", value: true };
-					if (trimmed === "false") return { kind: "set", value: false };
-					return void 0;
-				}
-			};
-		}
-		function enumSpec(field, values) {
-			return {
-				field,
-				format: (value) => typeof value === "string" ? value : "",
-				parse: (text) => {
-					const trimmed = text.trim();
-					if (trimmed === "") return { kind: "clear" };
-					if (values.includes(trimmed)) return { kind: "set", value: trimmed };
-					return void 0;
-				}
-			};
-		}
-		function specFor(descriptor) {
-			if (descriptor.kind === "number") return primitives.settingsNumberField(descriptor.field);
-			if (descriptor.kind === "text") return primitives.settingsTextField(descriptor.field);
-			if (descriptor.kind === "boolean") return booleanSpec(descriptor.field);
-			return enumSpec(descriptor.field, descriptor.values);
-		}
-		function formLabels(t) {
-			return {
-				unavailable: t("unavailable"),
-				readOnly: t("readOnly"),
-				saveFailed: t("saveFailed"),
-				save: t("save"),
-				saving: t("saving")
-			};
-		}
-		var OrreryCardController = class {
-			form;
-			store;
-			constructor(scope, ctx) {
-				// Keep the plugin context; the model picker resolves the
-				// remote.session domain lazily at call time (it may not be
-				// wired yet during apply).
-				this.ctx = ctx;
-				this.form = new primitives.SettingsFormModel(scope, FIELDS.map(specFor));
-				this.store = this.form.bind(() => this.projection());
-			}
-			getSession() {
-				return this.ctx.remote.session;
-			}
-			projection() {
-				const fields = {};
-				for (const descriptor of FIELDS) fields[descriptor.field] = this.form.field(descriptor.field);
-				return {
-					...this.form.shell(),
-					fields
-				};
-			}
-			inject() {
-				const actions = this.form.actions();
-				return {
-					hooks: { orrerySettingsCard: this.store },
-					...actions,
-					// After a successful settings save the host committed new
-					// volatile values: bump the bus so session-surface consumers
-					// (the LSP toggle) re-check live.
-					save: (...args) => {
-						const result = actions.save(...args);
-						Promise.resolve(result).then(() => settingsBus.notify(), () => {});
-						return result;
-					},
-					getSession: () => this.getSession()
-				};
-			}
-			dispose() {
-				this.form.dispose();
-			}
-		};
-		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
-		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
-		const labelStyle = { fontSize: "14px", fontWeight: 500, lineHeight: "20px" };
-		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const groupTitleStyle = { fontSize: "12px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--dsw-alias-label-secondary)", padding: "18px 0 6px", borderTop: "1px solid var(--dsw-alias-border-l2)" };
-		const firstGroupTitleStyle = { ...groupTitleStyle, borderTop: "none", paddingTop: "0" };
-		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
-		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
-		const CHAIN_CATEGORIES = ["quick", "deep", "deep-plus", "visual", "writing", "general-low", "general-high", "artistry", "architect"];
-		/** Parse the stored JSON into a staged chains map (invalid → empty). */
-		function jsonToChains(raw) {
-			const empty = Object.fromEntries(CHAIN_CATEGORIES.map((name) => [name, []]));
-			if (!raw || !raw.trim()) return empty;
-			try {
-				const parsed = JSON.parse(raw);
-				if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
-				for (const [category, rungs] of Object.entries(parsed)) {
-					if (!Array.isArray(rungs)) continue;
-					empty[category] = rungs.map((rung) => ({
-						provider: typeof rung?.provider === "string" ? rung.provider : "",
-						model: typeof rung?.model === "string" ? rung.model : "",
-						reasoningEffort: typeof rung?.reasoningEffort === "string" ? rung.reasoningEffort : ""
-					}));
-				}
-			} catch {
-				return empty;
-			}
-			return empty;
-		}
-		/** Synthesize the stored JSON from the staged chains map. */
-		function chainsToJson(chains) {
-			const out = {};
-			for (const category of CHAIN_CATEGORIES) {
-				const rungs = (chains?.[category] ?? []).filter((rung) => rung.provider && rung.model).map((rung) => ({
-					provider: rung.provider,
-					model: rung.model,
-					...(rung.reasoningEffort ? { reasoningEffort: rung.reasoningEffort } : {})
-				}));
-				if (rungs.length > 0) out[category] = rungs;
-			}
-			return JSON.stringify(out, null, 2);
-		}
-		/** Parse a stored robash whitelist JSON into a string list (invalid → null). */
-		function jsonToStringList(raw) {
-			if (typeof raw !== "string" || !raw.trim()) return null;
-			let parsed;
-			try {
-				parsed = JSON.parse(raw);
-			} catch {
-				return null;
-			}
-			if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) return null;
-			return parsed;
-		}
-		/** Open-state decision for the list editor: blank (unset at every layer)
-		 * and malformed stored values both open with an EMPTY staged list — no
-		 * stored state may strand the field uneditable; `invalid` distinguishes
-		 * malformed (show the hint) from merely unset (no hint). */
-		function robashEditorOpenState(text) {
-			const parsed = jsonToStringList(text);
-			const blank = typeof text !== "string" || text.trim() === "";
-			return { list: parsed ?? [], invalid: !blank && parsed === null, parsed };
-		}
-		/** Synthesize the stored JSON from a staged string list (blank entries dropped). */
-		function stringListToJson(list) {
-			return JSON.stringify((list ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0));
-		}
-		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)", marginTop: "8px" };
-		const chainCategoryStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px" };
-		const chainDescStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
-		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
-		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
-		const robashEntryInputStyle = { flex: 1, minWidth: 0, background: "var(--dsw-alias-interactive-bg-solid)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 8px", fontSize: "13px" };
-		/** Visual editor for the category model chains: pick models per lane, JSON synthesized on save. */
-		function ChainEditorField(props) {
-			const [open, setOpen] = react.useState(false);
-			const [staged, setStaged] = react.useState(null);
-			const openEditor = () => {
-				setStaged(jsonToChains(props.text));
-				setOpen(true);
-			};
-			const save = () => {
-				props.edit("delegateCategoryChains", chainsToJson(staged));
-				setOpen(false);
-				setStaged(null);
-			};
-			const cancel = () => {
-				setOpen(false);
-				setStaged(null);
-			};
-			const updateRung = (category, index, rung) => setStaged((current) => ({
-				...current,
-				[category]: (current?.[category] ?? []).map((entry, at) => at === index ? { ...entry, ...rung } : entry)
-			}));
-			const addRung = (category) => setStaged((current) => ({
-				...current,
-				[category]: [...(current?.[category] ?? []), { provider: "", model: "", reasoningEffort: "" }]
-			}));
-			const removeRung = (category, index) => setStaged((current) => ({
-				...current,
-				[category]: (current?.[category] ?? []).filter((entry, at) => at !== index)
-			}));
-			const clearCategory = (category) => setStaged((current) => ({ ...current, [category]: [] }));
-			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
-				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
-					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: props.t("delegateCategoryChains") }),
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("delegateCategoryChainsHint") })
-					] }),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: openEditor, children: props.t("chainEdit") }),
-						props.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-							react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: props.t("overridden") }),
-							react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: props.t("reset") })
-						] }) : null
-					] })
-				] }),
-				open && staged !== null ? react_jsx_runtime.jsxs("div", { style: chainPanelStyle, children: [
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("chainPanelHint") }),
-					...CHAIN_CATEGORIES.map((category) => {
-						const rungs = staged[category] ?? [];
-						return react_jsx_runtime.jsxs("div", { key: category, children: [
-							react_jsx_runtime.jsxs("div", { children: [
-								react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: props.t(`chainCategory_${category}`) }),
-								" ",
-								react_jsx_runtime.jsx("span", { style: chainDescStyle, children: props.t(`chainCategory_${category}_desc`) })
-							] }),
-							...rungs.map((rung, index) => react_jsx_runtime.jsxs("div", { style: chainRungStyle, key: index, children: [
-								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
-									value: rung,
-									onChange: (selection) => updateRung(category, index, selection),
-									getSession: () => props.getSession(),
-									t: props.t,
-									disabled: props.disabled
-								}),
-								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => removeRung(category, index), children: props.t("chainRemove") })
-							] })),
-							react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "12px" }, children: [
-								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => addRung(category), children: `+ ${props.t("chainAddRung")}` }),
-								rungs.length > 0 ? react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => clearCategory(category), children: props.t("chainClear") }) : null
-							] })
-						] });
-					}),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", justifyContent: "flex-end", gap: "12px" }, children: [
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: cancel, children: props.t("chainCancel") }),
-						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: props.disabled, onClick: save, children: props.t("chainSave") })
-					] })
-				] }) : null
-			] });
-		}
-		/** Visual editor for one robash whitelist: rows of command names, JSON synthesized on save. */
-		function RobashListEditorField(props) {
-			const [open, setOpen] = react.useState(false);
-			const [staged, setStaged] = react.useState(null);
-			const openState = robashEditorOpenState(props.text);
-			const parsed = openState.parsed;
-			const openEditor = () => {
-				// Blank (unset) and malformed stored values both open with an empty
-				// staged list: no stored state may strand the field uneditable. The
-				// invalid hint (openState.invalid) stays visible in that case.
-				setStaged(openState.list);
-				setOpen(true);
-			};
-			const save = () => {
-				props.edit(props.field, stringListToJson(staged ?? []));
-				setOpen(false);
-				setStaged(null);
-			};
-			const cancel = () => {
-				setOpen(false);
-				setStaged(null);
-			};
-			const updateEntry = (index, value) => setStaged((current) => (current ?? []).map((entry, at) => at === index ? value : entry));
-			const addEntry = () => setStaged((current) => [...(current ?? []), ""]);
-			const removeEntry = (index) => setStaged((current) => (current ?? []).filter((entry, at) => at !== index));
-			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
-				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
-					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: props.t(props.field) }),
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t(`${props.field}Hint`) })
-					] }),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-						react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-							parsed !== null ? react_jsx_runtime.jsx("span", { style: hintStyle, children: `${parsed.length} ${props.t("robashListEntries")}` }) : null,
-							react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: openEditor, children: props.t("chainEdit") })
-						] }),
-						openState.invalid ? react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("robashListInvalid") }) : null,
-						props.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-							react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: props.t("overridden") }),
-							react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: props.t("reset") })
-						] }) : null
-					] })
-				] }),
-				open && staged !== null ? react_jsx_runtime.jsxs("div", { style: chainPanelStyle, children: [
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("robashListPanelHint") }),
-					...staged.map((entry, index) => react_jsx_runtime.jsxs("div", { style: chainRungStyle, key: index, children: [
-						react_jsx_runtime.jsx("input", {
-							style: robashEntryInputStyle,
-							value: entry,
-							disabled: props.disabled,
-							placeholder: props.t("robashListEntryPlaceholder"),
-							onChange: (event) => updateEntry(index, event.target.value)
-						}),
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: () => removeEntry(index), children: props.t("chainRemove") })
-					] })),
-					react_jsx_runtime.jsxs("div", { children: [
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: addEntry, children: `+ ${props.t("robashListAdd")}` })
-					] }),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", justifyContent: "flex-end", gap: "12px" }, children: [
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: cancel, children: props.t("chainCancel") }),
-						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: props.disabled, onClick: save, children: props.t("chainSave") })
-					] })
-				] }) : null
-			] });
-		}
-
-		function ChoiceField(props) {
-			const { descriptor, field, t, disabled } = props;
-			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
-				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-					react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
-				] }),
-				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
-						checked: field.text === "true",
-						onChange: (checked) => props.onChange(String(checked)),
-						disabled,
-						label: t(descriptor.field)
-					}) : react_jsx_runtime.jsx(primitives.SegmentedControl, {
-						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
-						value: field.text,
-						options: descriptor.values.map((value) => ({ value, label: t(`${descriptor.field}Option${value.charAt(0).toUpperCase()}${value.slice(1)}`) })),
-						onChange: (value) => props.onChange(value),
-						disabled,
-						label: t(descriptor.field)
-					}),
-					field.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-						react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
-						react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: props.onReset, children: t("reset") })
-					] }) : null
-				] })
-			] });
-		}
-		/** Error boundary isolating the LSP manager panel from the settings page. */
-		class LspManagerBoundary extends react.Component {
-			constructor(props) {
-				super(props);
-				this.state = { failed: false };
-			}
-			static getDerivedStateFromError() {
-				return { failed: true };
-			}
-			render() {
-				if (this.state.failed) {
-					return react_jsx_runtime.jsx("div", { style: hintStyle, children: this.props.t?.("lspManagerFailed") ?? "LSP manager failed" });
-				}
-				return this.props.children;
-			}
-		}
-		const lspServerRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "6px 0" };
-		const lspDot = (on) => ({ width: "7px", height: "7px", borderRadius: "50%", display: "inline-block", background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-disabled, #999)" });
-		const lspInputStyle = { background: "var(--dsw-alias-interactive-bg-solid)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 8px", fontSize: "13px", minWidth: 0 };
-		/** Parse the stored lspServers JSON into a plain map (invalid → empty). */
-		function jsonToLspServers(raw) {
-			if (!raw || !raw.trim()) return {};
-			try {
-				const parsed = JSON.parse(raw);
-				if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-				return parsed;
-			} catch {
-				return {};
-			}
-		}
-		/** Synthesize the stored lspServers JSON from a plain map. */
-		function lspServersToJson(map) {
-			return JSON.stringify(map ?? {}, null, 2);
-		}
-		/** Split a shell-style command string into { command, args }. */
-		function splitInstallCommand(text) {
-			const parts = String(text ?? "").trim().split(/\s+/).filter(Boolean);
-			if (parts.length === 0) return undefined;
-			return { command: parts[0], args: parts.slice(1) };
-		}
-		/** LSP service manager: status over the catalog + one-click install + custom servers. */
-		function LspManagerField(props) {
-			const [open, setOpen] = react.useState(false);
-			const [view, setView] = react.useState(null);
-			const [confirming, setConfirming] = react.useState(null);
-			const [busy, setBusy] = react.useState(null);
-			const [result, setResult] = react.useState(null);
-			const [customDraft, setCustomDraft] = react.useState({ family: "", command: "", args: "", installCommand: "" });
-			const t = props.t;
-			const canEdit = typeof props.edit === "function";
-			const customEntries = jsonToLspServers(props.serversText);
-			const load = () => {
-				setView({ status: "loading" });
-				fetch("api/orrery-lsp/status", { method: "POST", credentials: "include" })
-					.then((response) => response.json())
-					.then((payload) => {
-						setView(payload?.ok ? { status: "ready", servers: payload.value.servers } : { status: "error", message: payload?.error?.message ?? "unknown" });
-					})
-					.catch((error) => setView({ status: "error", message: String(error?.message ?? error) }));
-			};
-			const toggle = () => {
-				const next = !open;
-				setOpen(next);
-				setConfirming(null);
-				setResult(null);
-				if (next) load();
-			};
-			const runInstall = (family) => {
-				setConfirming(null);
-				setBusy(family);
-				setResult(null);
-				fetch("api/orrery-lsp/install", {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ family })
-				})
-					.then((response) => response.json())
-					.then((payload) => {
-						setBusy(null);
-						setResult(payload?.ok ? { family, output: payload.value.output, exitCode: payload.value.exitCode, timedOut: payload.value.timedOut } : { family, error: payload?.error?.message ?? "unknown" });
-						if (payload?.ok) load();
-					})
-					.catch((error) => {
-						setBusy(null);
-						setResult({ family, error: String(error?.message ?? error) });
-					});
-			};
-			const addCustomServer = () => {
-				const family = customDraft.family.trim();
-				const command = customDraft.command.trim();
-				if (!family || !command) return;
-				const install = splitInstallCommand(customDraft.installCommand);
-				const next = {
-					...customEntries,
-					[family]: {
-						command,
-						...(customDraft.args.trim() ? { args: customDraft.args.trim().split(/\s+/).filter(Boolean) } : {}),
-						...(install ? { install } : {}),
-						...(install ? { installHint: customDraft.installCommand.trim() } : {}),
-					},
-				};
-				props.edit("lspServers", lspServersToJson(next));
-				setCustomDraft({ family: "", command: "", args: "", installCommand: "" });
-			};
-			const removeCustomServer = (family) => {
-				const next = { ...customEntries };
-				delete next[family];
-				props.edit("lspServers", lspServersToJson(next));
-				load();
-			};
-			const statusOf = (family) => (view?.status === "ready" ? view.servers.find((server) => server.family === family) : undefined);
-			const serverRow = (server) => {
-				const label = t(`lspFamily_${server.family}`);
-				if (confirming === server.family) {
-					return react_jsx_runtime.jsxs("div", { style: lspServerRowStyle, key: server.family, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: label }),
-						react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-							react_jsx_runtime.jsx("code", { style: hintStyle, children: server.installCommand || server.installHint }),
-							server.installerAvailable === false ? react_jsx_runtime.jsx("span", { style: hintStyle, children: t("lspManagerInstallerMissing") }) : null,
-							react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-								react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: server.installerAvailable === false, onClick: () => runInstall(server.family), children: t("lspManagerConfirmInstall") }),
-								react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: () => setConfirming(null), children: t("lspManagerCancel") })
-							] })
-						] })
-					] });
-				}
-				const isBusy = busy === server.family;
-				return react_jsx_runtime.jsxs("div", { style: lspServerRowStyle, key: server.family, children: [
-					react_jsx_runtime.jsxs("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px" }, children: [
-						react_jsx_runtime.jsx("span", { style: lspDot(server.installed), "aria-hidden": true }),
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: label })
-					] }),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "2px" }, children: [
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: server.installed ? (server.version ?? t("lspManagerInstalled")) : t("lspManagerMissing") }),
-						!server.installed && server.installCommand ? react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: isBusy, onClick: () => setConfirming(server.family), children: isBusy ? t("lspManagerInstalling") : t("lspManagerInstall") }) : null
-					] })
-				] });
-			};
-			const customRow = (family, entry) => {
-				const host = statusOf(family);
-				return react_jsx_runtime.jsxs("div", { style: lspServerRowStyle, key: family, children: [
-					react_jsx_runtime.jsxs("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px" }, children: [
-						react_jsx_runtime.jsx("span", { style: lspDot(host ? host.installed : false), "aria-hidden": true }),
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: family }),
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: entry.command })
-					] }),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "2px" }, children: [
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: host ? (host.installed ? t("lspManagerInstalled") : t("lspManagerMissing")) : t("lspManagerPendingStatus") }),
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: () => removeCustomServer(family), children: t("lspManagerRemove") })
-					] })
-				] });
-			};
-			const customSection = () => {
-				if (!canEdit) return null;
-				return react_jsx_runtime.jsxs("div", { style: { ...chainPanelStyle, gap: "8px" }, children: [
-					react_jsx_runtime.jsxs("div", { children: [
-						react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: t("lspManagerCustom") }),
-						" ",
-						react_jsx_runtime.jsx("span", { style: chainDescStyle, children: t("lspManagerCustomHint") })
-					] }),
-					...Object.entries(customEntries).map(([family, entry]) => customRow(family, entry)),
-					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }, children: [
-						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerFamily"), value: customDraft.family, onChange: (event) => setCustomDraft({ ...customDraft, family: event.target.value }) }),
-						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerCommand"), value: customDraft.command, onChange: (event) => setCustomDraft({ ...customDraft, command: event.target.value }) }),
-						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerArgs"), value: customDraft.args, onChange: (event) => setCustomDraft({ ...customDraft, args: event.target.value }) }),
-						react_jsx_runtime.jsx("input", { type: "text", style: lspInputStyle, placeholder: t("lspManagerInstallCmd"), value: customDraft.installCommand, onChange: (event) => setCustomDraft({ ...customDraft, installCommand: event.target.value }) }),
-						react_jsx_runtime.jsx("button", { type: "button", style: chainSaveStyle, disabled: !customDraft.family.trim() || !customDraft.command.trim(), onClick: addCustomServer, children: t("lspManagerAddServer") })
-					] })
-				] });
-			};
-			const panelBody = () => {
-				if (view === null) return null;
-				if (view.status === "loading") return react_jsx_runtime.jsx("div", { style: hintStyle, children: t("lspManagerLoading") });
-				if (view.status === "error") {
-					return react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "12px", alignItems: "center" }, children: [
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: `${t("lspManagerUnavailable")} ${view.message}` }),
-						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: load, children: t("lspManagerRetry") })
-					] });
-				}
-				return react_jsx_runtime.jsxs("div", { children: [
-					...(view.servers ?? []).map(serverRow),
-					result ? react_jsx_runtime.jsxs("div", { style: { ...chainPanelStyle, gap: "6px" }, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: `${t(`lspFamily_${result.family}`)} — ${result.error ?? `${t("lspManagerExitCode")} ${result.exitCode ?? "?"}${result.timedOut ? ` ${t("lspManagerTimedOut")}` : ""}`}` }),
-						result.output ? react_jsx_runtime.jsx("pre", { style: { ...hintStyle, whiteSpace: "pre-wrap", maxHeight: "160px", overflow: "auto" }, children: result.output }) : null
-					] }) : null,
-					customSection()
-				] });
-			};
-			return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
-				react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
-					react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: t("lspManager") }),
-						react_jsx_runtime.jsx("span", { style: hintStyle, children: t("lspManagerHint") })
-					] }),
-					react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: toggle, children: open ? t("chainCancel") : t("chainEdit") })
-				] }),
-				open ? react_jsx_runtime.jsx(LspManagerBoundary, { t, children: panelBody() }) : null
-			] });
-		}
-		function OrreryCard(props) {
-			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
-			const { t } = props;
-			if (props.view === "summary") return t("description");
-			const disabled = !state.writable;
-			const children = GROUPS.flatMap((group, groupIndex) => {
-				const rows = group.fields.map((descriptor) => {
-					const field = state.fields[descriptor.field];
-					if (descriptor.field === "delegateCategoryChains") {
-						return react_jsx_runtime.jsx(ChainEditorField, {
-							text: state.fields.delegateCategoryChains.text,
-							overridden: state.fields.delegateCategoryChains.overridden,
-							edit: (field, text) => props.edit(field, text),
-							onReset: () => props.resetField("delegateCategoryChains"),
-							getSession: () => props.getSession(),
-							t,
-							disabled,
-							key: descriptor.field
-						});
-					}
-					if (descriptor.field === "robashAllow" || descriptor.field === "robashGitAllow" || descriptor.field === "robashDeny" || descriptor.field === "robashPwshAllow" || descriptor.field === "robashPwshDeny") {
-						return react_jsx_runtime.jsx(RobashListEditorField, {
-							field: descriptor.field,
-							text: field.text,
-							overridden: field.overridden,
-							edit: (name, text) => props.edit(name, text),
-							onReset: () => props.resetField(descriptor.field),
-							t,
-							disabled,
-							key: descriptor.field
-						});
-					}
-					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort" || descriptor.field === "lspServers") {
-						// folded into the model-picker row / the LSP manager panel
-						return null;
-					}
-					if (descriptor.field === "intentGateProvider") {
-						const pickerOverridden = state.fields.intentGateProvider.overridden || state.fields.intentGateModel.overridden || state.fields.intentGateReasoningEffort.overridden;
-						const pickerRow = react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
-							react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-								react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
-								react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
-							] }),
-							react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
-									value: {
-										provider: state.fields.intentGateProvider.text,
-										model: state.fields.intentGateModel.text,
-										reasoningEffort: state.fields.intentGateReasoningEffort.text
-									},
-									onChange: (selection) => {
-										props.edit("intentGateProvider", selection.provider ?? "");
-										props.edit("intentGateModel", selection.model ?? "");
-										props.edit("intentGateReasoningEffort", selection.reasoningEffort ?? "");
-									},
-									getSession: () => props.getSession(),
-									t,
-									disabled
-								}),
-								pickerOverridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-									react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
-									react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => {
-										props.resetField("intentGateProvider");
-										props.resetField("intentGateModel");
-										props.resetField("intentGateReasoningEffort");
-									}, children: t("reset") })
-								] }) : null
-							] })
-						] });
-						// The picker runs inside an error boundary: a picker
-						// failure degrades to plain text fields instead of
-						// blanking the settings page.
-						return react_jsx_runtime.jsx(modelPicker.ModelPickerBoundary, {
-							key: descriptor.field,
-							fallback: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
-								react_jsx_runtime.jsx(primitives.SettingsValueField, {
-									id: "plugin-config-fallback-intentGateProvider",
-									label: t("intentGateProvider"),
-									hint: t("intentGateProviderHint"),
-									overriddenLabel: t("overridden"),
-									resetLabel: t("reset"),
-									invalidLabel: t("invalidValue"),
-									disabled,
-									text: state.fields.intentGateProvider.text,
-									invalid: state.fields.intentGateProvider.invalid,
-									overridden: state.fields.intentGateProvider.overridden,
-									onChange: (text) => props.edit("intentGateProvider", text),
-									onReset: () => props.resetField("intentGateProvider")
-								}),
-								react_jsx_runtime.jsx(primitives.SettingsValueField, {
-									id: "plugin-config-fallback-intentGateModel",
-									label: t("intentGateModel"),
-									hint: t("intentGateModelHint"),
-									overriddenLabel: t("overridden"),
-									resetLabel: t("reset"),
-									invalidLabel: t("invalidValue"),
-									disabled,
-									text: state.fields.intentGateModel.text,
-									invalid: state.fields.intentGateModel.invalid,
-									overridden: state.fields.intentGateModel.overridden,
-									onChange: (text) => props.edit("intentGateModel", text),
-									onReset: () => props.resetField("intentGateModel")
-								}),
-								react_jsx_runtime.jsx(primitives.SettingsValueField, {
-									id: "plugin-config-fallback-intentGateReasoningEffort",
-									label: t("intentGateReasoningEffort"),
-									hint: t("intentGateReasoningEffortHint"),
-									overriddenLabel: t("overridden"),
-									resetLabel: t("reset"),
-									invalidLabel: t("invalidValue"),
-									disabled,
-									text: state.fields.intentGateReasoningEffort.text,
-									invalid: state.fields.intentGateReasoningEffort.invalid,
-									overridden: state.fields.intentGateReasoningEffort.overridden,
-									onChange: (text) => props.edit("intentGateReasoningEffort", text),
-									onReset: () => props.resetField("intentGateReasoningEffort")
-								})
-							] }),
-							children: pickerRow
-						});
-					}
-					if (descriptor.kind === "boolean" || descriptor.kind === "enum") {
-						return react_jsx_runtime.jsx(ChoiceField, {
-							descriptor,
-							field,
-							t,
-							disabled,
-							onChange: (text) => props.edit(descriptor.field, text),
-							onReset: () => props.resetField(descriptor.field),
-							key: descriptor.field
-						});
-					}
-					return react_jsx_runtime.jsx(primitives.SettingsValueField, {
-						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
-						label: t(descriptor.field),
-						hint: t(`${descriptor.field}Hint`),
-						overriddenLabel: t("overridden"),
-						resetLabel: t("reset"),
-						invalidLabel: t("invalidValue"),
-						disabled,
-						text: field.text,
-						invalid: field.invalid,
-						overridden: field.overridden,
-						onChange: (text) => props.edit(descriptor.field, text),
-						onReset: () => props.resetField(descriptor.field),
-						key: descriptor.field
-					});
-				});
-				if (group.id === "lsp") {
-					rows.push(react_jsx_runtime.jsx(LspManagerField, {
-						t,
-						key: "lsp-manager",
-						serversText: state.fields.lspServers?.text ?? "",
-						edit: (field, text) => props.edit(field, text)
-					}));
-				}
-				return [
-					react_jsx_runtime.jsx("h3", { style: groupIndex === 0 ? firstGroupTitleStyle : groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),
-					...rows
-				].filter(Boolean);
-			});
-			return react_jsx_runtime.jsxs(primitives.SettingsForm, {
-				labels: formLabels(t),
-				state,
-				onSave: props.save,
-				onDiscard: props.discard,
-				children
-			});
-		}
 		const en = {
 			title: "Orrery",
 			description: "One-stop configuration for the Orrery preset: intent classification, model chains, continuation, context pressure, editing, read-only bash, and LSP.",
+			loading: "Loading Orrery settings…",
+			loadFailed: "Orrery settings could not be loaded:",
 			unavailable: "This plugin is not loaded, so it cannot be configured right now.",
 			readOnly: "This deployment stores settings read-only.",
 			saveFailed: "The deployment did not accept these values; they were left for you to correct.",
@@ -953,6 +209,8 @@ window.__ModuleLoader__.load({
 		const zh = {
 			title: "Orrery",
 			description: "Orrery 预设的一站式配置：意图分类、模型链、续推、上下文压力、编辑、只读 bash 与 LSP。",
+			loading: "正在加载 Orrery 设置…",
+			loadFailed: "Orrery 设置加载失败：",
 			unavailable: "此插件未加载，当前无法配置。",
 			readOnly: "此部署的设置为只读。",
 			saveFailed: "部署未接受这些值，已保留供你修正。",
@@ -1129,325 +387,128 @@ window.__ModuleLoader__.load({
 		const NS = "settings.orrery";
 		const SECTION_ID = "orrery-settings";
 		const ITEM_SLOT = "settings.orrery.item";
-		const columnStyle = {
-			display: "flex",
-			flexDirection: "column",
-			gap: "var(--dsw-spacing-3, 12px)"
-		};
-		const OrrerySection = ({ renderSlot }) => react_jsx_runtime.jsx("div", {
-			style: columnStyle,
-			children: renderSlot(ITEM_SLOT)
-		});
-		// ---- Per-session LSP toggle (conversation composer bar) ----
-		const LSP_PROJECTION_KEY = "orreryLsp";
-		const lspToggleStyle = {
-			display: "inline-flex",
-			alignItems: "center",
-			gap: "6px",
-			background: "none",
-			border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-sm)",
-			cursor: "pointer",
-			padding: "3px 8px",
-			fontSize: "12px",
-			lineHeight: "16px",
-			color: "var(--dsw-alias-label-secondary)"
-		};
-		const lspDotStyle = (on) => ({
-			width: "7px",
-			height: "7px",
-			borderRadius: "50%",
-			background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-disabled, #999)"
-		});
-		function LspToggle(props) {
-			const hasProjectionHook = typeof props.useProjection === "function";
-			const projection = hasProjectionHook ? props.useProjection(LSP_PROJECTION_KEY) : undefined;
-			const [available, setAvailable] = react.useState(null);
-			const [pending, setPending] = react.useState(false);
-			const [error, setError] = react.useState(null);
-			const [localState, setLocalState] = react.useState(undefined);
-			const sessionId = props.sessionId;
-			const t = props.t;
-			react.useEffect(() => {
-				if (!sessionId) {
-					setAvailable(false);
-					return undefined;
+		// ---- Package-local chunk wiring (composition root) ----
+		// Same-package sync require is impossible in the ModuleLoader, so each
+		// lazily delivered surface fans out one Promise.all over
+		// require.async("./client.<name>.js") chunks. Success is memoized for the
+		// factory's lifetime; a failure clears the memo so re-entering the
+		// surface retries (the transport already retries a stale URL once — no
+		// retry storm here).
+		const lazyChunks = (load) => {
+			let pending = null;
+			return () => {
+				if (pending === null) {
+					const promise = load();
+					pending = promise;
+					promise.then(undefined, () => {
+						if (pending === promise) pending = null;
+					});
 				}
-				let alive = true;
-				const check = () => {
-					Promise.resolve(props.commandsList(sessionId))
-						.then((list) => {
-							if (alive) setAvailable(Array.isArray(list) && list.some((entry) => entry?.name === "lsp"));
-						})
-						.catch(() => {
-							if (alive) setAvailable(false);
-						});
-				};
-				setAvailable(null);
-				check();
-				const unsubscribe = settingsBus.subscribe(check);
-				return () => {
-					alive = false;
-					unsubscribe();
-				};
-			}, [sessionId]);
-			// Fallback initial state when the slot does not inject useProjection.
+				return pending;
+			};
+		};
+		const loadHashEditChunks = lazyChunks(() => Promise.all([
+			require.async("./client.hash-edit-view.js"),
+			require.async("./client.hash-edit-model.js")
+		]));
+		/** Shared arrival state for one async chunk surface: null while in
+		 * flight, { chunks } once arrived, { error } after a failed load. */
+		const useChunkArrival = (load, enabled = true) => {
+			const [arrival, setArrival] = react.useState(null);
 			react.useEffect(() => {
-				if (hasProjectionHook || localState !== undefined || !sessionId) return;
+				if (!enabled) return undefined;
 				let alive = true;
-				Promise.resolve(props.fetchLspState())
-					.then((enabled) => {
-						if (alive && typeof enabled === "boolean") setLocalState(enabled);
-					})
-					.catch(() => {});
-				return () => {
-					alive = false;
-				};
-			}, [sessionId, hasProjectionHook, localState]);
-			if (available !== true) return null;
-			const on = hasProjectionHook ? projection?.enabled === true : localState === true;
-			const toggle = () => {
-				if (pending) return;
-				setPending(true);
-				setError(null);
-				Promise.resolve(props.toggleLsp(!on)).then(
-					(failure) => {
-						setPending(false);
-						if (failure) {
-							setError(failure);
-						} else if (!hasProjectionHook) {
-							setLocalState(!on);
-						}
+				load().then(
+					(chunks) => {
+						if (alive) setArrival({ chunks });
 					},
-					(reason) => {
-						setPending(false);
-						setError(reason instanceof Error ? reason.message : String(reason));
+					(error) => {
+						if (alive) setArrival({ error });
 					}
 				);
+				return () => {
+					alive = false;
+				};
+			}, [enabled]);
+			return arrival;
+		};
+		// Pre-arrival (or failed-load) presentation of a hash_edit call: the
+		// generic flattened input/output body — the same presentation the view
+		// chunk's own metadata-absent degradation renders (same-package sync
+		// require is impossible, so the tiny body is mirrored here, not shared).
+		const hashEditFallbackHintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", padding: "4px 4px" };
+		const hashEditFallbackPreStyle = { margin: 0, padding: "8px 10px", fontSize: "12px", lineHeight: "16px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)" };
+		function HashEditFallbackBody(props) {
+			const block = props.block;
+			const t = props.t;
+			const argsRaw = typeof block?.argsRaw === "string" ? block.argsRaw : typeof block?.call?.argsRaw === "string" ? block.call.argsRaw : null;
+			const output = Array.isArray(block?.content) ? block.content.map((part) => part?.type === "text" && typeof part.text === "string" ? part.text : "").filter((text) => text !== "").join("\n") : "";
+			return react_jsx_runtime.jsxs("div", { "data-tool": "hash_edit", children: [
+				argsRaw !== null ? react_jsx_runtime.jsxs("div", { children: [
+					react_jsx_runtime.jsx("div", { style: hashEditFallbackHintStyle, children: t("hashEditInput") }),
+					react_jsx_runtime.jsx("pre", { style: hashEditFallbackPreStyle, children: argsRaw })
+				] }) : null,
+				output !== "" ? react_jsx_runtime.jsxs("div", { children: [
+					react_jsx_runtime.jsx("div", { style: hashEditFallbackHintStyle, children: t("hashEditOutput") }),
+					react_jsx_runtime.jsx("pre", { style: hashEditFallbackPreStyle, children: output })
+				] }) : null
+			] });
+		}
+		/** Keyed toolview wrapper: renders the flattened fallback until the
+		 * view+model chunks arrive, then the structured diff panel. */
+		function HashEditToolView(props) {
+			const arrival = useChunkArrival(loadHashEditChunks);
+			if (arrival?.chunks) {
+				const [view, model] = arrival.chunks;
+				return react_jsx_runtime.jsx(view.HashEditRow, { ...props, model });
+			}
+			return react_jsx_runtime.jsx(HashEditFallbackBody, props);
+		}
+		const loadLspToggleChunk = lazyChunks(() => require.async("./client.lsp-toggle.js"));
+		/** Composer-bar wrapper: renders nothing until the toggle chunk arrives
+		 * (and nothing at all when the slot injected no session id — the
+		 * capability gate's absence case, which must not pull the chunk). */
+		function LspToggleWrapper(props) {
+			const arrival = useChunkArrival(loadLspToggleChunk, typeof props.sessionId === "string" && props.sessionId !== "");
+			if (!arrival?.chunks) return null;
+			return react_jsx_runtime.jsx(arrival.chunks.LspToggle, { ...props, settingsBus });
+		}
+		/** Snapshot-store facade with a stable identity: the host caches slot
+		 * inject faces on first render, so the settings card's hooks source must
+		 * exist before the settings-page chunk arrives; attach() re-points the
+		 * facade at the real controller store and notifies subscribers. */
+		const createDeferredStore = () => {
+			let inner = null;
+			const listeners = new Set();
+			const publish = () => {
+				for (const listener of listeners) listener();
 			};
-			return react_jsx_runtime.jsxs("button", {
-				type: "button",
-				style: lspToggleStyle,
-				onClick: toggle,
-				disabled: pending,
-				"aria-pressed": on,
-				"data-orrery-lsp-toggle": "",
-				"data-orrery-lsp-state": on ? "on" : "off",
-				title: error ?? t("lspToggleTitle"),
-				children: [
-					react_jsx_runtime.jsx("span", { style: lspDotStyle(on), "aria-hidden": true }),
-					react_jsx_runtime.jsx("span", { children: t("lspToggleLabel") })
-				]
-			});
-		}
-		// ---- hash_edit conversation diff view (keyed tool.call.toolview) ----
-		// hash_edit calls render as a diff panel: applied hunks come from the
-		// persisted result metadata (`meta.diffs`), the running preview from the
-		// call arguments. Absent or malformed data degrades to the generic
-		// flattened input/output body rather than throwing.
-		const HASH_EDIT_TOOL = "hash_edit";
-		/** Narrow one opaque persisted diff fragment; null when unusable. */
-		function narrowDiffFragment(value) {
-			if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-			const { path, oldText, newText } = value;
-			if (typeof path !== "string") return null;
-			if (oldText !== null && typeof oldText !== "string") return null;
-			if (typeof newText !== "string") return null;
-			return { path, oldText, newText };
-		}
-		/** Narrow persisted result metadata to a non-empty fragment list, else null. */
-		function appliedDiffFragments(meta) {
-			if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return null;
-			const diffs = meta.diffs;
-			if (!Array.isArray(diffs) || diffs.length === 0) return null;
-			const out = [];
-			for (const entry of diffs) {
-				const fragment = narrowDiffFragment(entry);
-				if (fragment === null) return null;
-				out.push(fragment);
-			}
-			return out;
-		}
-		/** Parse the raw JSON arguments of a hash_edit call; null when unusable. */
-		function parseHashEditArgs(argsRaw) {
-			if (typeof argsRaw !== "string" || argsRaw.trim() === "") return null;
-			let parsed;
-			try {
-				parsed = JSON.parse(argsRaw);
-			} catch {
-				return null;
-			}
-			if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-			const path = parsed.file_path;
-			if (typeof path !== "string" || path.trim() === "") return null;
-			if (!Array.isArray(parsed.edits)) return null;
-			const ops = [];
-			for (const edit of parsed.edits) {
-				if (typeof edit !== "object" || edit === null) return null;
-				if (typeof edit.op !== "string" || typeof edit.pos !== "string" || typeof edit.text !== "string") return null;
-				ops.push({ op: edit.op, pos: edit.pos, text: edit.text });
-			}
-			return { path, ops };
-		}
-		/** Planned fragments from parsed args: one addition fragment per content-bearing op. */
-		function plannedDiffFragments(parsed) {
-			if (parsed === null) return null;
-			const fragments = parsed.ops.filter((op) => op.text !== "").map((op) => ({ path: parsed.path, oldText: null, newText: op.text }));
-			return fragments.length > 0 ? fragments : null;
-		}
-		/** The raw argument string of a start or result block, when present. */
-		function hashEditArgsRaw(block) {
-			if (typeof block?.argsRaw === "string") return block.argsRaw;
-			if (typeof block?.call?.argsRaw === "string") return block.call.argsRaw;
-			return null;
-		}
-		/** Joined text of a result block's content parts. */
-		function hashEditResultText(block) {
-			if (!Array.isArray(block?.content)) return "";
-			return block.content.map((part) => part?.type === "text" && typeof part.text === "string" ? part.text : "").filter((text) => text !== "").join("\n");
-		}
-		/** Lifecycle state of the call, driving tone and status text. */
-		function hashEditState(phase, block) {
-			if (phase === "preparing") return "preparing";
-			if (phase === "start") return "running";
-			if (block?.isError) return block?.error?.code === "interrupted" ? "stopped" : "error";
-			return "ok";
-		}
-		/** Relativize a path to the session cwd first, then the host home. */
-		function hashEditDisplayPath(path, cwd, home) {
-			if (typeof path !== "string") return "";
-			if (typeof cwd === "string" && cwd !== "") {
-				const prefix = cwd.endsWith("/") ? cwd : `${cwd}/`;
-				if (path.startsWith(prefix)) return path.slice(prefix.length);
-			}
-			if (typeof home === "string" && home !== "") {
-				const prefix = home.endsWith("/") ? home : `${home}/`;
-				if (path.startsWith(prefix)) return `~/${path.slice(prefix.length)}`;
-			}
-			return path;
-		}
-		/** Localized chrome labels for the DiffBlock primitive. */
-		function hashEditDiffLabels(t) {
 			return {
-				codeLabel: t("hashEditCodeLabel"),
-				wrapLabel: t("hashEditWrap"),
-				unwrapLabel: t("hashEditUnwrap"),
-				copy: t("hashEditCopy"),
-				copied: t("hashEditCopied"),
-				collapseAria: t("hashEditCollapseAria"),
-				expandAria: (count) => t("hashEditExpandAria", { count }),
-				collapse: t("hashEditCollapse"),
-				expand: (count) => t("hashEditExpand", { count })
-			};
-		}
-		const hashEditHeaderStyle = { display: "flex", alignItems: "center", gap: "8px", padding: "6px 4px", cursor: "pointer", userSelect: "none", borderRadius: "var(--dsw-radius-sm)" };
-		const hashEditTitleStyle = { fontSize: "13px", fontWeight: 500, lineHeight: "18px", flexShrink: 0 };
-		const hashEditPathStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
-		const hashEditMetaStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", flexShrink: 0 };
-		const hashEditHintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", padding: "4px 4px" };
-		const hashEditPreStyle = { margin: 0, padding: "8px 10px", fontSize: "12px", lineHeight: "16px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)" };
-		/** Status tone: errors and interruptions stay explicit in the header. */
-		function hashEditStateColor(state) {
-			if (state === "error") return "var(--dsw-alias-state-business-danger, #d64545)";
-			if (state === "stopped") return "var(--dsw-alias-state-business-warning, #b07707)";
-			return "var(--dsw-alias-label-secondary)";
-		}
-		/** Keyed conversation view for hash_edit: one row, expandable diff panel. */
-		function HashEditRow(props) {
-			const state = hashEditState(props.phase, props.block);
-			if (state === "preparing") {
-				return react_jsx_runtime.jsx("div", {
-					"data-tool": HASH_EDIT_TOOL,
-					"data-state": "preparing",
-					children: react_jsx_runtime.jsxs("div", { style: { ...hashEditHeaderStyle, cursor: "default" }, children: [
-						react_jsx_runtime.jsx(primitives.IconEditOutlineRegular, { size: 14 }),
-						react_jsx_runtime.jsx("span", { style: hashEditTitleStyle, children: props.t("hashEditTitle") }),
-						react_jsx_runtime.jsx("span", { style: hashEditMetaStyle, children: props.t("hashEditPreparing") })
-					] })
-				});
-			}
-			return react_jsx_runtime.jsx(StartedHashEditRow, { ...props, state });
-		}
-		function StartedHashEditRow(props) {
-			const { block, cwd, home, openFile, t, state } = props;
-			const [expanded, setExpanded] = react.useState(false);
-			const argsRaw = hashEditArgsRaw(block);
-			const parsed = parseHashEditArgs(argsRaw);
-			const applied = state === "ok" ? appliedDiffFragments(block?.meta) : null;
-			const planned = state === "running" ? plannedDiffFragments(parsed) : null;
-			const diffs = applied ?? planned;
-			const output = hashEditResultText(block);
-			const path = parsed?.path ?? applied?.[0]?.path;
-			const totals = diffs ? primitives.diffTotals(diffs) : null;
-			const statusText = state === "running" ? t("hashEditRunning") : state === "error" ? t("hashEditFailed") : state === "stopped" ? t("hashEditStopped") : null;
-			const toggle = () => setExpanded((value) => !value);
-			const onKey = (event) => {
-				if (event.key !== "Enter" && event.key !== " ") return;
-				event.preventDefault();
-				toggle();
-			};
-			let body = null;
-			if (expanded) {
-				if (diffs) {
-					body = react_jsx_runtime.jsxs("div", { children: [
-						planned ? react_jsx_runtime.jsx("div", { style: hashEditHintStyle, children: t("hashEditPlanned") }) : null,
-						react_jsx_runtime.jsx(primitives.DiffBlock, { diffs, labels: hashEditDiffLabels(t) })
-					] });
-				} else {
-					body = react_jsx_runtime.jsxs("div", { children: [
-						argsRaw !== null ? react_jsx_runtime.jsxs("div", { children: [
-							react_jsx_runtime.jsx("div", { style: hashEditHintStyle, children: t("hashEditInput") }),
-							react_jsx_runtime.jsx("pre", { style: hashEditPreStyle, children: argsRaw })
-						] }) : null,
-						output !== "" ? react_jsx_runtime.jsxs("div", { children: [
-							react_jsx_runtime.jsx("div", { style: hashEditHintStyle, children: t("hashEditOutput") }),
-							react_jsx_runtime.jsx("pre", { style: hashEditPreStyle, children: output })
-						] }) : null
-					] });
+				getSnapshot: () => inner?.getSnapshot(),
+				subscribe: (listener) => {
+					listeners.add(listener);
+					return () => listeners.delete(listener);
+				},
+				attach: (store) => {
+					if (inner !== null || store == null || typeof store.subscribe !== "function") return;
+					inner = store;
+					inner.subscribe(publish);
+					publish();
 				}
-			}
-			return react_jsx_runtime.jsxs("div", {
-				"data-tool": HASH_EDIT_TOOL,
-				"data-state": state,
-				children: [
-					react_jsx_runtime.jsxs("div", {
-						style: hashEditHeaderStyle,
-						role: "button",
-						tabIndex: 0,
-						"aria-expanded": expanded,
-						onClick: toggle,
-						onKeyDown: onKey,
-						children: [
-							react_jsx_runtime.jsx(primitives.IconEditOutlineRegular, { size: 14 }),
-							react_jsx_runtime.jsx("span", { style: hashEditTitleStyle, children: t("hashEditTitle") }),
-							path ? react_jsx_runtime.jsx("button", {
-								type: "button",
-								style: hashEditPathStyle,
-								title: path,
-								onClick: (event) => {
-									event.stopPropagation();
-									if (typeof openFile === "function") openFile(path);
-								},
-								children: hashEditDisplayPath(path, cwd, home)
-							}) : null,
-							totals ? react_jsx_runtime.jsx("span", { style: hashEditMetaStyle, children: `+${totals.added} \u2212${totals.removed}` }) : null,
-							statusText ? react_jsx_runtime.jsx("span", { style: { ...hashEditMetaStyle, color: hashEditStateColor(state) }, children: statusText }) : null,
-							react_jsx_runtime.jsx("span", { style: { flex: 1 } }),
-							react_jsx_runtime.jsx(primitives.IconChevronDownOutlineRegular, { size: 14, style: { transform: expanded ? "rotate(180deg)" : "none", transition: "transform 120ms" } })
-						]
-					}),
-					body
-				]
-			});
-		}
+			};
+		};
+		/** The failure reason one chunk-arrival error state names. */
+		const describeChunkError = (error) => error instanceof Error ? error.message : String(error);
+		const settingsLoadingStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", padding: "10px 0" };
+		const settingsLoadFailedStyle = { ...settingsLoadingStyle, color: "var(--dsw-alias-state-business-danger, #d64545)" };
+		// Verbatim copy of the lsp-toggle chunk's projection key: the composer
+		// inject closures below read it, and same-package sync require is
+		// impossible (the chunk owns the canonical export).
+		const LSP_PROJECTION_KEY = "orreryLsp";
 		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-orrery-settings: dictionaries");
-			const card = new OrreryCardController(ctx.configForms.get(ORRERY_NS), ctx);
-			ctx.effect(() => () => {
-				card.dispose();
-			}, "ui-orrery-settings: form subscription");
 			// Per-session LSP toggle in the conversation composer bar (next to
 			// the model selector; visible in blank and active sessions alike —
 			// the session-header utilities slot only renders once the session
@@ -1480,19 +541,93 @@ window.__ModuleLoader__.load({
 						}
 					};
 				}
-			}, LspToggle)), "ui-orrery-settings: lsp session switch");
+			}, LspToggleWrapper)), "ui-orrery-settings: lsp session switch");
 			// Keyed conversation view: hash_edit renders as a diff panel. Its own
 			// effect scope: a slot-registration failure must not take down the
-			// settings page or the LSP toggle.
+			// settings page or the LSP toggle. The wrapper registers under the
+			// literal key (no chunk pull just to register); it renders the generic
+			// flattened input/output body until the view+model chunks arrive.
 			ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({
 				name: "tool.call.toolview",
-				key: HASH_EDIT_TOOL,
+				key: "hash_edit",
 				locale: NS
-			}, HashEditRow)), "ui-orrery-settings: hash_edit toolview");
+			}, HashEditToolView)), "ui-orrery-settings: hash_edit toolview");
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.
 			ctx.effect(() => ctx.configForms.whileServed([ORRERY_NS], () => {
+				const scope = ctx.configForms.get(ORRERY_NS);
+				// The settings page arrives as 7 package-local chunks in one
+				// parallel batch (started lazily on the first surface open). The
+				// form controller is constructed here on arrival — never inside the
+				// react tree — and disposed with this serve generation; the slot
+				// inject faces (cached by the host on first render) carry a
+				// stable deferred store plus delegating actions.
+				let controller = null;
+				let serving = true;
+				const deferredStore = createDeferredStore();
+				const cardFace = {
+					hooks: { orrerySettingsCard: deferredStore },
+					edit: (field, text) => controller?.inject().edit(field, text),
+					resetField: (field) => controller?.inject().resetField(field),
+					save: (...args) => controller?.inject().save(...args),
+					discard: () => controller?.inject().discard(),
+					getSession: () => ctx.remote.session
+				};
+				let arrival = null;
+				const ensureSettingsChunks = () => {
+					if (arrival === null) {
+						arrival = Promise.all([
+							require.async("./client.settings-page.js"),
+							require.async("./client.chain-editor.js"),
+							require.async("./client.robash-editor.js"),
+							require.async("./client.lsp-panel.js"),
+							require.async("./client.chain-model.js"),
+							require.async("./client.robash-model.js"),
+							require.async("./client.lsp-model.js")
+						]).then(([settingsPage, chainEditor, robashEditor, lspPanel, chainModel, robashModel, lspModel]) => {
+							if (serving) {
+								controller = new settingsPage.OrreryCardController(scope, { settingsBus, getSession: () => ctx.remote.session });
+								deferredStore.attach(controller.store);
+							}
+							// Editor components pre-bound with their model chunks,
+							// created once per arrival so their identity is stable
+							// across re-renders (no remount of an open editor).
+							const editors = {
+								ChainEditorField: (editorProps) => react_jsx_runtime.jsx(chainEditor.ChainEditorField, { ...editorProps, model: chainModel }),
+								RobashListEditorField: (editorProps) => react_jsx_runtime.jsx(robashEditor.RobashListEditorField, { ...editorProps, model: robashModel }),
+								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel })
+							};
+							return { settingsPage, editors };
+						}, (error) => {
+							// Failure is not memoized: re-entering the surface retries.
+							arrival = null;
+							throw error;
+						});
+					}
+					return arrival;
+				};
+				function SettingsSectionWrapper(props) {
+					const sectionArrival = useChunkArrival(ensureSettingsChunks);
+					if (sectionArrival?.chunks) {
+						return react_jsx_runtime.jsx(sectionArrival.chunks.settingsPage.OrrerySection, { renderSlot: props.renderSlot });
+					}
+					if (sectionArrival?.error) {
+						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(sectionArrival.error)}` });
+					}
+					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
+				}
+				function SettingsCardWrapper(props) {
+					const cardArrival = useChunkArrival(ensureSettingsChunks, props.view !== "summary");
+					if (props.view === "summary") return props.t("description");
+					if (cardArrival?.chunks) {
+						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.OrreryCard, { ...props, editors: cardArrival.chunks.editors });
+					}
+					if (cardArrival?.error) {
+						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(cardArrival.error)}` });
+					}
+					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
+				}
 				const offSection = ctx.slots.inject("settings.section", () => ctx.slots.register({
 					name: "settings.section",
 					id: SECTION_ID,
@@ -1503,23 +638,25 @@ window.__ModuleLoader__.load({
 						kind: "list",
 						scope: "root"
 					} }
-				}, OrrerySection));
+				}, SettingsSectionWrapper));
 				const offItem = ctx.slots.inject(ITEM_SLOT, () => ctx.slots.register({
 					name: ITEM_SLOT,
 					id: "orrery-config",
 					order: 0,
 					locale: NS,
-					inject: () => card.inject()
-				}, OrreryCard));
+					inject: () => cardFace
+				}, SettingsCardWrapper));
 				const offPluginsItem = ctx.slots.inject("plugins.item", () => ctx.slots.register({
 					name: "plugins.item",
 					id: "orrery-settings",
 					order: 30,
 					label: () => t("title"),
 					locale: NS,
-					inject: () => card.inject()
-				}, OrreryCard));
+					inject: () => cardFace
+				}, SettingsCardWrapper));
 				return () => {
+					serving = false;
+					controller?.dispose();
 					offSection();
 					offItem();
 					offPluginsItem();
@@ -1529,10 +666,6 @@ window.__ModuleLoader__.load({
 		exports.NS = NS;
 		exports.apply = apply;
 		exports.inject = inject;
-		exports.chainEditor = { jsonToChains, chainsToJson };
-		exports.lspManager = { LspManagerField, jsonToLspServers, lspServersToJson };
-		exports.robashEditor = { jsonToStringList, stringListToJson, robashEditorOpenState };
-		exports.hashEditView = { HashEditRow, parseHashEditArgs, plannedDiffFragments, appliedDiffFragments, hashEditArgsRaw, hashEditResultText, hashEditState, hashEditDisplayPath, hashEditDiffLabels };
 		return module.exports;
 	}
 });
