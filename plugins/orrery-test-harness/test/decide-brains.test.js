@@ -72,11 +72,11 @@ describe('robash brain', () => {
     assert.ok(args.command.includes('ROBASH_WAIT_RAN'), `command ${args.command} carries the wait marker`)
   })
 
-  it('parent brain delegates to the explore curated agent', () => {
+  it('parent brain delegates to the finder curated agent', () => {
     const chunks = run('robash', userOptions('robash-probe'))
     const blocks = blockEnds(chunks)
     assert.equal(blocks[0].name, 'delegate')
-    assert.equal(JSON.parse(blocks[0].arguments).agent, 'explore')
+    assert.equal(JSON.parse(blocks[0].arguments).agent, 'finder')
   })
 })
 

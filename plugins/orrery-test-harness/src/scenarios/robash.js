@@ -11,7 +11,7 @@ const prompt = 'robash-probe'
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
   const lastRole = options.messages?.at(-1)?.role
-  // Child brain (explore curated agent): prove the wait primitive is
+  // Child brain (finder curated agent): prove the wait primitive is
   // allow-listed, then run a denied write. The wait leg is the end-to-end
   // regression pin for the cross-platform gap: `Start-Sleep` is unreachable on
   // Windows unless BOTH the module default AND the preset patch row carry it,
@@ -26,13 +26,13 @@ function decide(options, obs) {
     }
     return shellCall('echo-and-wait', { text: 'ROBASH_WAIT_RAN', seconds: 1 }, 'Prove the read-only shell and its wait primitive both work')
   }
-  // Parent brain: delegate to the explore curated agent.
+  // Parent brain: delegate to the finder curated agent.
   if (lastRole === 'tool') {
     return textChunks('parent observed robash child result')
   }
   if (history.includes('robash-probe')) {
     return toolCallChunks('delegate', {
-      agent: 'explore',
+      agent: 'finder',
       prompt: 'ROBASH_CHILD\nTASK: prove bash works, then attempt a write command\nDELIVERABLE: report both outcomes\nSCOPE: bash only\nVERIFY: the echo output and the denial both observed\nSTOP WHEN: reported',
       task_summary: 'robash child',
     })
@@ -52,7 +52,7 @@ function assert(run) {
   const requests = run.requests
   const created = run.created
   const fixture = readFileSync(join(run.ws, 'fixture.txt'), 'utf8')
-  run.check('parent delegated to a curated explore child', created.some((r) => r.origin === 'subagent' && r.depth === 1), JSON.stringify(created))
+  run.check('parent delegated to a curated finder child', created.some((r) => r.origin === 'subagent' && r.depth === 1), JSON.stringify(created))
   run.check('child ran an allowed read-only shell command through the guard', requests.some((r) => r.sawRobashChild && r.roBashWaitSeen), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashWaitSeen])))
   run.check('child write command was denied by the guard', requests.some((r) => r.sawRobashChild && r.roBashRmDenied), JSON.stringify(requests.map((r) => [r.sawRobashChild, r.roBashRmDenied])))
   run.check('fixture survived the denied write command', fixture.split('\n')[0] === 'line one' && fixture.includes('CHANGED-BY-HASHLINE'), fixture)

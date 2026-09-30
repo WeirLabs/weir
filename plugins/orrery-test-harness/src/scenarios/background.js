@@ -33,7 +33,7 @@ function decide(options, obs) {
     return textChunks('parent observed the compact notice; the full report stays pull-only')
   }
   if (history.includes('background-probe') && !history.includes('BACKGROUND_CHILD')) {
-    return toolCallChunks('delegate', { agent: 'explore', prompt: 'BACKGROUND_CHILD\nTASK: finish the background work\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done', run_in_background: true })
+    return toolCallChunks('delegate', { agent: 'finder', prompt: 'BACKGROUND_CHILD\nTASK: finish the background work\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done', run_in_background: true })
   }
   return textChunks('unhandled background turn')
 }

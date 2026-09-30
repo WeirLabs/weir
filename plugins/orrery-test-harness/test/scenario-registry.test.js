@@ -9,10 +9,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
 
-const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp']
+const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets']
 
 describe('scenario registry', () => {
-  it('holds exactly the 12 historical scenarios, in the historical order', () => {
+  it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
     assert.deepEqual(SCENARIOS.map((s) => s.id), EXPECTED_ORDER)
   })
 

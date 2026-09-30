@@ -58,6 +58,13 @@ const PRE_MIGRATION_KEYS = [
   'lspRefsSeen',
   'lspSymbolsSeen',
   'lspUnknownAfterOff',
+  // Delegation-target guidance observations (targets scenario + the guidance
+  // assertions added to the delegate scenario).
+  'sawTargetsGuidance',
+  'guidanceListsQuick',
+  'guidanceListsEnabledCategory',
+  'guidanceListsDisabledCategory',
+  'guidanceLeftVariableRaw',
   'emitted',
   'emittedNames',
   'lastUser',
