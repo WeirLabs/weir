@@ -1,6 +1,25 @@
 import { expect, it } from './helpers.js'
 import { createEditLockState } from '../src/edit-lock/state.js'
 
+it('checkpoints detached lifetime tombstones without serializing execution receipts', () => {
+  const { operations, authority } = createEditLockState('manager-1')
+  const alice = authority.openSession('alice')
+  const token = operations.acquire(alice, 'file:a')
+  operations.release(token)
+  authority.issueExecutionReceipt(alice, 'continue-1')
+  const checkpoint = authority.checkpoint()
+  expect(checkpoint).toEqual({
+    managerIncarnation: 'manager-1',
+    sessions: [{ sessionId: 'alice', executionEpoch: 1, interrupted: false }],
+    locks: [], generations: [{ resourceId: 'file:a', generation: 1 }],
+    issuedRequests: [{ sessionId: 'alice', requestId: 'continue-1' }],
+  })
+  checkpoint.generations[0].generation = 99
+  checkpoint.sessions[0].interrupted = true
+  expect(authority.checkpoint().generations[0].generation).toBe(1)
+  expect(operations.acquire(alice, 'file:a').generation).toBe(2)
+})
+
 it('grants exclusive canonical-resource ownership with separate fencing credentials', () => {
   const { operations, authority } = createEditLockState('manager-1')
   const alice = authority.openSession('alice')

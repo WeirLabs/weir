@@ -9,6 +9,7 @@
 
 ### Added
 
+- **Edit Lock 内核历史导出（开发中，未挂载）**：私有 `checkpoint()` 保留 released-generation 与 issued-request 墓碑，返回 detached 数据且不序列化执行 receipt；为后续持久事务提供完整历史，不新增恢复或运行时授权入口。
 - **Edit Lock 发布前取消内部入口（开发中，未挂载）**：持久 publishing 意图新增仅存活 attempt 可用的未调用结算例外，以私有一次性证据保证实际调用与取消互斥；已调用、恢复历史、过期 revision 与普通 raw record 不得使用此例外。结算仍需持久确认，IO 失败毒化 handle。不接入 manager、宿主编辑或 UI，不构成运行权限。此前历史层「publishing 不得回退」仅为此私有证据入口收窄，unknown 仍不可改写。
 - **Edit Lock 权限状态内核（开发中，未挂载）**：新增内部纯内存状态模块，分离归属与执行授权，建模会话中断闩锁和逐文件恢复确认。不接入编辑工具、设置或 UI，用户现有行为不变；持久化、实际提交和运行时接入另行验收。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
 - **Edit Lock 规范资源身份（开发中，未挂载）**：新增内部只读模块 `src/edit-lock/resource-identity.js`（`createResourceIdentity().resolve/revalidate`），同步观察真实文件系统的规范身份：既有普通单链接文件给出 native canonical `resourceId`，缺失目标只给出「规范祖先 + 逐字未解析后缀」且**不带任何 resource key**；观察按构造冻结、只对本 factory 私有，重校验只接受本实例发出的原对象，内容与兄弟文件变化不影响，文件替换、symlink 替换/改向、祖先替换与新增硬链接一律拒绝（`topology changed` / `not editable`）。不折叠词法 `..`、不做大小写/Unicode 归一；不做原子快照、无法证明不存在 inode reuse/ABA；不写文件、不发放所有权或发布权。选项 C 的缺失目标创建协议仍是设计（未实现）。不接入工具、设置或 UI，用户现有行为不变。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。

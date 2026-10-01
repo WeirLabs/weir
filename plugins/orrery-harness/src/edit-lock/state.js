@@ -101,6 +101,15 @@ export function createEditLockState(managerIncarnation) {
   }
 
   const authority = {
+    /** Detached historical core, not a permission or a restore credential. */
+    checkpoint() {
+      return {
+        ...operations.status(),
+        generations: [...generations].map(([resourceId, generation]) => ({ resourceId, generation })),
+        issuedRequests: [...issuedRequests].flatMap(([sessionId, requests]) =>
+          [...requests].map(requestId => ({ sessionId, requestId }))),
+      }
+    },
     /** Register a trusted initial execution, never rearm an existing session.
      * @param {string} sessionId @returns {Execution} */
     openSession(sessionId) {
