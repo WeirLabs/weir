@@ -396,6 +396,23 @@ function managerCore(store, kernel) {
       const captured = { ...token }
       return transact(draft => draft.operations.release(captured))
     },
+    /** Consented transfer: release the holder's exact generation and acquire
+     * for the requester in ONE durable transaction. Either side cancelled,
+     * stale or interrupted rejects the whole transfer and ownership stays.
+     * @param {import('./state.js').Ownership} holder @param {import('./state.js').Execution} requester */
+    transfer(holder, requester) {
+      const from = { ...holder }, to = { ...requester }
+      return transact(draft => {
+        if (cancelled.has(from.sessionId) || cancelled.has(to.sessionId)) throw new Error('session cancelled')
+        draft.operations.release(from)
+        return draft.operations.acquire(to, from.resourceId)
+      }).then(async token => {
+        const cancellation = cancelled.get(to.sessionId)
+        if (cancellation) { await cancellation; throw new Error('session cancelled during transfer') }
+        healthy()
+        return token
+      })
+    },
     /** Synchronous denial overlay must be checked before publication.
      * @param {import('./state.js').Ownership} token */
     checkWrite(token) {

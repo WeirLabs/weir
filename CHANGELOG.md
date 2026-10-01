@@ -9,6 +9,7 @@
 
 ### Added
 
+- **Edit Lock 归属工具与协商（开发中，默认关闭）**：启用组合后提供 `edit_lock_acquire`／`edit_lock_release`／`edit_lock_status` 与不等待的 `edit_lock_try_steal`；持有者仅在有待答请求时获得 `edit_lock_reply`，只有当前持有者执行的及时答复才会在一个持久事务里转交，沉默、过期、旧 generation 与已中断持有者一律保留归属。安装版真实回合隔离组合 22/22 通过。
 - **Edit Lock 组合插件（开发中，默认关闭，未加入预设）**：新增 `orrery-harness/edit-lock`，启用后为一个工作目录提供唯一锁服务：隐藏 stock write/edit、受控 write 与 `hash_edit` 经锁发布，未受管的写工具一律拒绝；Stop 持久中断会话，只有 `/edit-lock resume` 与逐文件 `/edit-lock confirm` 恢复编辑，todo 续推随之暂停。安装版真实回合隔离组合 16/16 通过；释放/协商工具、UI 与正式 GUI 验收尚未完成。
 - **Edit Lock 远端工具接线原语（开发中，未挂载）**：远端服务绑定真实 agent 且无本地发布回退；write 作用域覆盖经安装版 Agent factory／ToolRuntime 检查，卸载不恢复 stock 写工具。正式预设组合尚未接入。
 - **Edit Lock IPC 原语（开发中，未部署）**：固定 host 认证身份，限制消息帧与积压，断连触发撤权；客户端取消保守返回 UNKNOWN。隔离双进程到安装版 FS 发布及 EOF 持久撤权验证通过，正式 Agent 认证接线与 GUI 验收仍未完成。

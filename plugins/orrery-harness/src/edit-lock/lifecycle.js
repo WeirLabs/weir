@@ -1,11 +1,13 @@
 import { createEditLockHost } from './host.js'
+import { createNegotiation } from './negotiation.js'
 
 /** Host-owned lifecycle controller. The authenticated transport must await stop;
  * stock GUI cancel acceptance alone does not constitute this acknowledgement.
  * Resume and confirm are trusted human ingress only; never expose them as tools.
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
- * @param {(agent: object) => string | undefined} sessionForAgent */
-export function createEditLockLifecycle(runtime, sessionForAgent) {
+ * @param {(agent: object) => string | undefined} sessionForAgent
+ * @param {{deliver?: (agent: object, text: string) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number}} [options] */
+export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
   /** @typedef {{sessionId:string, state:'starting'|'active'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
   const entries = new Map()
@@ -16,6 +18,14 @@ export function createEditLockLifecycle(runtime, sessionForAgent) {
   let closed = false
   /** @type {Promise<void> | undefined} */
   let shutdown
+  const negotiation = createNegotiation({
+    control: runtime.control,
+    executionFor: agent => host.executionFor(agent),
+    agentFor: sessionId => [...entries].find(([agent, entry]) => entry.sessionId === sessionId && sessionForAgent(agent) === sessionId)?.[0],
+    deliver: options.deliver ?? (() => {}),
+    onPending: options.onPending,
+    timeoutMs: options.negotiationTimeoutMs,
+  })
   /** Close admission synchronously, then revoke at the manager queue position.
    * @param {Entry} entry */
   function revoke(entry) {
@@ -58,7 +68,18 @@ export function createEditLockLifecycle(runtime, sessionForAgent) {
   }
   return Object.freeze({
     // Only this narrowed service belongs in the tool context.
-    service: Object.freeze({publish: host.publish, publishBatch: host.publishBatch}),
+    service: Object.freeze({publish: host.publish, publishBatch: host.publishBatch,
+      acquire: host.acquire, release: host.release, locks: host.locks,
+      /** @param {{agent: object}} exec @param {{filePath: string, cwd: string}} request */
+      async trySteal(exec, request) {
+        host.executionFor(exec.agent)
+        return negotiation.request(exec.agent, runtime.requests.resource(request.filePath, request.cwd))
+      },
+      /** @param {{agent: object}} exec @param {{requestId: string, decision: 'release'|'keep'}} request */
+      async reply(exec, request) { return negotiation.reply(exec.agent, request.requestId, request.decision) },
+      /** @param {{agent: object}} exec */
+      pendingRequests(exec) { return negotiation.pending(host.executionFor(exec.agent).sessionId) },
+    }),
     /** Register once before publishing an agent's editing tools. A session the
      * manager already knows (restart, re-created agent) is never re-armed: it
      * starts interrupted and needs trusted resume. @param {object} agent
@@ -145,6 +166,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent) {
     close() {
       if (shutdown) return shutdown
       closed = true
+      negotiation.close()
       const stops = [...entries.keys()].map(stop)
       shutdown = (async () => {
         const results = await Promise.allSettled(stops)

@@ -65,6 +65,11 @@ export async function openEditLockRuntime(options) {
       requests: Object.freeze({
         /** @param {import('./state.js').Execution} execution @param {string[]} paths @param {string} cwd */
         acquireBatch(execution, paths, cwd) { return run(() => publisher.acquireBatch(execution, paths, cwd)) },
+        /** @param {string} path @param {string} cwd */
+        resource(path, cwd) {
+          if (closing) throw new Error('edit lock runtime closing')
+          return publisher.resource(path, cwd)
+        },
         /** @param {Parameters<typeof publisher.prepare>[0]} execution
          * @param {Parameters<typeof publisher.prepare>[1]} request
          * @param {AbortSignal} signal */

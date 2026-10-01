@@ -3,7 +3,7 @@ import { diffResult } from '../hashline-edit/diff.js'
 
 /** Build only; the lifecycle mount must hide the inherited stock definition
  * before registering this tool. Never falls back to local mutation.
- * @param {any} ctx @param {ReturnType<typeof import('./host.js').createEditLockHost>} host
+ * @param {any} ctx @param {{publish: (exec: any, request: any) => Promise<any>}} host
  * @param {any} sandboxPolicy */
 export function createManagedWriteTool(ctx, host, sandboxPolicy) {
   const escalation = probeEscalation(ctx.fs)
@@ -17,10 +17,10 @@ export function createManagedWriteTool(ctx, host, sandboxPolicy) {
     }, required: ['file_path', 'content'] },
     output: {
       schema: { type: 'object' },
-      render: (_args, value) => [{ type: 'text', text: `${value.operation === 'create' ? 'Created' : 'Updated'} file: ${value.path}` }],
-      presentationMeta: (_args, value) => ({ diffs: value.fragments }),
+      render: (/** @type {any} */ _args, /** @type {any} */ value) => [{ type: 'text', text: `${value.operation === 'create' ? 'Created' : 'Updated'} file: ${value.path}` }],
+      presentationMeta: (/** @type {any} */ _args, /** @type {any} */ value) => ({ diffs: value.fragments }),
     },
-    async execute(args, exec) {
+    async execute(/** @type {any} */ args, /** @type {any} */ exec) {
       if (typeof args.file_path !== 'string' || !args.file_path.trim() || typeof args.content !== 'string') throw new Error('write requires file_path and content strings')
       const { policy, resolveCwd } = await resolveCallPolicy(args, {
         escalation, sandboxPolicy, session: exec.agent?.session, sessionCwd: exec.agent?.session?.header?.cwd,

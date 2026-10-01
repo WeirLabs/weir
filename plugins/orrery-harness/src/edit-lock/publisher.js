@@ -20,6 +20,15 @@ export function createPublisher({ manager, fs, root, assertExclusive = () => {} 
     if (suffix === '..' || suffix.startsWith('../') || isAbsolute(suffix)) throw new Error('outside management domain')
   }
   return Object.freeze({
+    /** Canonical identity of one existing in-domain regular file; never a
+     * creation key and never a permission. @param {string} path @param {string} cwd */
+    resource(path, cwd) {
+      assertExclusive()
+      const observation = identity.resolve(path, { cwd })
+      if (observation.kind !== 'file') throw new Error('lock target must be an existing regular file')
+      contained(observation.resourceId)
+      return observation.resourceId
+    },
     /** Resolve the entire existing-file set before atomic ownership acquisition.
      * @param {import('./state.js').Execution} execution
      * @param {string[]} paths @param {string} cwd */

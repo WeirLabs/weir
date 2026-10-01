@@ -101,6 +101,37 @@ export function createEditLockHost(runtime, isRegisteredAgent) {
         exec.signal.removeEventListener('abort', abort)
       }
     },
+    /** Ordinary owner tool: acquire one existing file. Activates this
+     * session's own pending-confirmation lock; never steals another owner's.
+     * @param {{agent: object}} exec @param {{filePath: string, cwd: string}} request */
+    async acquire(exec, request) {
+      live()
+      const execution = executions.get(exec.agent)
+      if (!execution || !isRegisteredAgent(exec.agent)) throw new Error('agent has no authenticated edit execution')
+      const resourceId = runtime.requests.resource(request.filePath, request.cwd)
+      const token = await runtime.control.acquire(execution, resourceId)
+      return { resourceId, generation: token.generation }
+    },
+    /** Ordinary owner tool: release one owned lock. Release never asserts
+     * content correctness. @param {{agent: object}} exec @param {{filePath: string, cwd: string}} request */
+    async release(exec, request) {
+      live()
+      const execution = executions.get(exec.agent)
+      if (!execution || !isRegisteredAgent(exec.agent)) throw new Error('agent has no authenticated edit execution')
+      const resourceId = runtime.requests.resource(request.filePath, request.cwd)
+      const lock = runtime.control.status().locks.find(/** @param {any} item */ item => item.resourceId === resourceId)
+      if (!lock || lock.owner !== execution.sessionId) throw new Error('lock not owned by this session')
+      await runtime.control.release({ ...execution, resourceId, generation: lock.generation })
+      return { resourceId, released: true }
+    },
+    /** Effective lock observation for one admitted agent; grants nothing.
+     * @param {{agent: object}} exec */
+    locks(exec) {
+      live()
+      const execution = executions.get(exec.agent)
+      if (!execution || !isRegisteredAgent(exec.agent)) throw new Error('agent has no authenticated edit execution')
+      return runtime.control.status().locks.map(/** @param {any} lock */ lock => ({ ...lock, mine: lock.owner === execution.sessionId }))
+    },
     close() { closed = true; return adapter.close() },
   })
 }

@@ -57,6 +57,78 @@ test('stop latches, restart starts interrupted, resume needs fresh request and p
   await lifecycle.close()
 })
 
+test('owner tools acquire, release and confirm by acquisition without stealing', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
+  const alice = { id: 'alice' }, bob = { id: 'bob' }
+  await lifecycle.start(alice); await lifecycle.start(bob)
+  const tools = lifecycle.service
+  const request = { filePath: 'a.txt', cwd: root }
+  assert.equal((await tools.acquire({ agent: alice }, request)).generation, 1)
+  await assert.rejects(tools.acquire({ agent: bob }, request), /owned/)
+  await assert.rejects(tools.release({ agent: bob }, request), /not owned/)
+  await assert.rejects(tools.acquire({ agent: alice }, { filePath: 'missing.txt', cwd: root }), /existing regular file/)
+  await assert.rejects(tools.acquire({ agent: alice }, { filePath: '../outside', cwd: root }), /./)
+  assert.equal((await tools.locks({ agent: bob }))[0].mine, false)
+  await lifecycle.stop(alice)
+  await assert.rejects(tools.release({ agent: alice }, request), /authenticated/)
+  await lifecycle.resume(alice, 'r')
+  assert.equal(lifecycle.status(alice).locks[0].status, 'pending-confirmation')
+  await tools.acquire({ agent: alice }, request)
+  assert.equal(lifecycle.status(alice).locks[0].status, 'active')
+  await tools.release({ agent: alice }, request)
+  assert.equal((await tools.acquire({ agent: bob }, request)).generation, 2)
+  await lifecycle.close()
+})
+
+test('try_steal negotiation transfers only on a current holder reply', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const notices = []
+  const pending = new Map()
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, {
+    deliver: (agent, text) => notices.push([agent.id, text]),
+    onPending: (agent, count) => pending.set(agent.id, count),
+    negotiationTimeoutMs: 40,
+  })
+  const alice = { id: 'alice' }, bob = { id: 'bob' }
+  await lifecycle.start(alice); await lifecycle.start(bob)
+  const tools = lifecycle.service
+  const file = { filePath: 'a.txt', cwd: root }
+  await assert.rejects(tools.trySteal({ agent: bob }, file), /acquire it instead/)
+  await tools.acquire({ agent: alice }, file)
+  const first = await tools.trySteal({ agent: bob }, file)
+  assert.equal(first.state, 'pending')
+  assert.equal(pending.get('alice'), 1)
+  assert.match(notices.at(-1)[1], /requests ownership/)
+  await assert.rejects(tools.reply({ agent: bob }, { requestId: first.requestId, decision: 'release' }), /bound holder/)
+  assert.equal((await tools.reply({ agent: alice }, { requestId: first.requestId, decision: 'keep' })).state, 'declined')
+  assert.equal(pending.get('alice'), 0)
+  await assert.rejects(tools.reply({ agent: alice }, { requestId: first.requestId, decision: 'release' }), /not pending/)
+  // Silence expires and keeps ownership.
+  const silent = await tools.trySteal({ agent: bob }, file)
+  await new Promise(resolve => setTimeout(resolve, 60))
+  await assert.rejects(tools.reply({ agent: alice }, { requestId: silent.requestId, decision: 'release' }), /not pending/)
+  assert.equal(lifecycle.status(alice).locks.length, 1)
+  assert.match(notices.find(([id, text]) => id === 'bob' && /expired/.test(text))[1], /unchanged/)
+  // A generation change makes earlier consent stale.
+  const stale = await tools.trySteal({ agent: bob }, file)
+  await tools.release({ agent: alice }, file)
+  await tools.acquire({ agent: alice }, file)
+  await assert.rejects(tools.reply({ agent: alice }, { requestId: stale.requestId, decision: 'release' }), /ownership changed/)
+  const granted = await tools.trySteal({ agent: bob }, file)
+  assert.equal((await tools.reply({ agent: alice }, { requestId: granted.requestId, decision: 'release' })).state, 'transferred')
+  assert.equal(lifecycle.status(bob).locks[0].generation, 3)
+  assert.equal(lifecycle.status(alice).locks.length, 0)
+  // A stopped holder cannot answer, and the request is never delivered to it.
+  const back = await tools.trySteal({ agent: alice }, file)
+  await lifecycle.stop(bob)
+  await assert.rejects(tools.reply({ agent: bob }, { requestId: back.requestId, decision: 'release' }), /authenticated/)
+  assert.equal(lifecycle.status(bob).locks[0].status, 'user-interrupted')
+  await lifecycle.close()
+})
+
 test('store mode refuses unknown authority content', async () => {
   const { base } = await fixture()
   const fresh = join(base, 'fresh')
@@ -75,7 +147,7 @@ function fakeHost(root) {
     on(name, fn) { listeners.set(name, [...(listeners.get(name) ?? []), fn]) },
     reflect: { provide(name, value) { provided.set(name, value) } },
     get(name) { return name === 'commands' ? { register(definition) { command = definition; return () => { command = undefined } } } : provided.get(name) },
-    tools: { get(name, agent) { return agent.visible.get(name) } },
+    tools: { get(name, agent) { return agent.visible.get(name) }, register() { return () => {} } },
   }
   const stock = { write: { name: 'write', execute() {} }, edit: { name: 'edit', execute() {} } }
   function agent(id) {
