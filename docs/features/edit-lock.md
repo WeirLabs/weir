@@ -1,6 +1,6 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **开发中，未挂载**：共享工作目录下的编辑权仲裁；当前已落地两个包内切片（纯内存状态内核 + 只读规范资源身份），均未挂载，用户可见面零变化。
+> **开发中，未挂载**：共享工作目录下的编辑权仲裁；当前已落地三个包内切片（纯内存状态内核 + 只读规范资源身份 + 历史快照存储），均未挂载，用户可见面零变化。
 
 ## 概述
 
@@ -8,7 +8,7 @@
 
 范围与上线硬门槛由本地 OpenSpec 变更材料定义（`openspec/changes/edit-lock-arbitration/`，过程材料不入库）：提案、设计决策 D1–D6、`edit-lock` 能力规格与任务清单均已就绪，**任务清单第 1 组起全部未勾选**。受影响的既有能力为 [hashline-edit.md](hashline-edit.md)、[lsp-integration.md](lsp-integration.md) 与 [todo-continuation.md](todo-continuation.md)；委派与续推调度、共享 runtime 消息、设置与客户端 UI 同在影响面内。
 
-包内已落地两个切片，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。设计中的 manager/gateway、跨进程仲裁、缺失目标的创建协议、可靠存储与 UI 尚未产品化。
+包内已落地三个切片，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-1 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。设计中的 manager/gateway、跨进程仲裁、缺失目标的创建协议、可靠 intent/outcome 与 UI 尚未产品化。
 
 ## 用户可见行为
 
@@ -45,6 +45,17 @@
 
 平台与失败语义：仅 darwin/linux，其他平台 factory 直接抛错（Linux 只经代码路径允许，未实机验证）；目录、dangling symlink、symlink 环、特殊文件、`nlink > 1`、`missing/..`、相对 cwd、空路径与含 NUL 路径全部拒绝，不做本地无锁后备。
 
+**历史快照存储切片（持久化历史，不是授权来源）**。`src/edit-lock/store.js` 提供 `openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot()` / `record({ expectedRevision, nextState })` / `close()`：
+
+- **封闭 version-1 历史镜像**：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）与 recovery（累计 charge）。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
+- **规范编码与完整性**：object key 按 UTF-16 排序、无空白、数组保序的 canonical JSON；`{version,domainId,revision,state}` payload 加 `{payload,checksum}` envelope，checksum 为 SHA-256。读取要求严格 UTF-8、**逐字节**等于重新规范化的结果（每一层的重复键、非规范数字/转义写法、空白与乱序因而全部被拒绝）、精确 schema 与 version/domain/revision/checksum 一致。checksum 只检测意外损坏，**不是**认证，也不防回滚。
+- **写序与确认**：独占 sibling temp（`wx`、0600）→ 全量写入 → file sync → file close → rename → 目录 open（`O_DIRECTORY|O_NOFOLLOW`）→ 目录 sync → 目录 close，之后才确认并更新内存。失败不回滚、不删 temp、不提升遗留 temp；rename 之后的不确定性保守记为 `uncertain`。
+- **串行本地 revision CAS**：每 handle 一条串行队列，`expectedRevision` 与当前 revision 不符即 conflict，溢出拒绝且不写入、不毒化。这是 **handle 内**的 CAS，不是跨进程/跨 handle CAS，也不是单实例选举。
+- **持久化 IO 失败毒化整个 handle**：任何持久化失败（含真实 syscall 错误）都毒化 handle，排队中与后续的 `record` **连同 `snapshot()`** 一律拒绝——过期内存不得冒充回滚后的状态；参数、CAS、transition 与溢出错误不毒化。错误 code 为 `EDIT_LOCK_STORE_PERSISTENCE`，`commitStatus` 区分 `not-renamed` 与 `uncertain`。
+- **外部前提由调用方证明**：模块要求调用方在**模块之外**证明该目录的独占生命周期与旧 publisher 静默，并持续到 `close()`；目录需预先 provision，`create` 只接受空目录，目录与其祖先不得被并发替换。模块不提供 singleton election、PID 超时接管、租约或 handover。
+- **恢复语义**：`recover` 只读 `snapshot.json`，拒绝 symlink/特殊文件/目录，并在打开前后两次确认 regular file；committed snapshot 缺失或非法即失败，**不初始化、不修复、不重试 create**，合法 committed snapshot 可与遗留 temp 共存。面向支持文件与目录 sync 的 POSIX 本地文件系统；不承诺网络文件系统、Windows 或掉电硬件语义。
+- **仍然没有的**：不保存也不签发 receipt（receipt 是进程内能力，禁止持久化）；没有 operation intent/outcome 账本、幂等记录、目标文件发布、commit-boundary 围栏、kernel restore、manager incarnation 安装、重启围栏与任何挂载。
+
 **Option C 的创建协议是计划中的写入归属例外**。缺失目标的创建成功路径不沿用「先取得归属再写入」的顺序：它没有既有节点可绑定，因此按已确认的 Option C 契约经 manager 串行发布道发布——幂等绑定优先，其次节点存在性冲突判定（既有节点一律冲突，冲突先于任何目标侧副作用），再经 manager 实际持有的 `ctx.fs` 发布，发布成功后解析规范身份并绑定归属与持久结果才返回成功；**创建意图不是所有权**，不发放所有权令牌，也不构造规范资源键，未知结果由持久 intent/outcome、无过期恢复围栏与墓碑兜住。该例外已写入设计材料（D3/D5 与任务 1.6/2.5/2.6），**尚未实现**；本切片的只读观察不属于该路径，也不能当作它的替代。
 
 **取消是独立 ingress，不是回合结束的副产品**。当前安装版实测（`.orrery/edit-lock-verification/current-ingress/REPORT.md`，本地过程材料不入库）确定了三件事：
@@ -64,11 +75,11 @@
 ## 边界与失败语义
 
 - **未挂载即无行为**：没有插件行、没有服务、没有工具、没有 UI 元素，装载与否不改变任何现有会话。
-- **无持久化保证**：内核是内存态，进程结束即丢失；崩溃恢复、幂等记录、单实例选举、重启后旧授权失效均**未实现**。「不确定即保留归属、超时/沉默/投递失败不等于同意、中途崩溃保留 uncertain」是后续阶段的目标语义，当前只能用进程内状态表达。
+- **权威状态：内核仍是内存态，磁盘上已有历史镜像（未挂载）**：内核在进程内运行，进程结束即丢失；`src/edit-lock/store.js` 已能把权威状态落成单文件历史快照并在下次打开时读回，因此「无持久化」作为笼统说法**已经过时**。但**运行授权本身仍无持久化**：没有 intent/outcome 账本、没有幂等记录、没有单实例选举、没有重启围栏、没有 kernel restore；有历史镜像也不等于能恢复——恢复出的历史 active 状态不构成当前授权。「不确定即保留归属、超时/沉默/投递失败不等于同意、中途崩溃保留 uncertain」仍是后续阶段的目标语义。
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份切片自行从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**仍不判定缺失名称的等价性**——不预创建占位文件、不猜测别名，该问题交由 Option C 的创建协议解决；两个切片都不执行任何文件写入，release 也不等于验证通过。
 - **未承诺的时点保证**：观察是一串同步 filesystem 调用，**不是原子快照**；外部 shell/IDE 在调用之间改变盘面不在保证内，dev/ino 连续性无法证明不存在 inode reuse 或「改后复原」（ABA）。调用方必须先自行协调变更顺序（manager 生命周期/发布协调）。
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）、不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外）、不承诺分布式多机共识。
-- **OpenSpec 任务保持未勾选**：`openspec/changes/edit-lock-arbitration/tasks.md` 第 1 组起全部未完成；任务 2.1 下只有一条阶段进度注记（不勾选、也不代表 2.1 完成）；本文档不把它们标为完成，也不作为启用依据。
+- **OpenSpec 任务保持未勾选**：`openspec/changes/edit-lock-arbitration/tasks.md` 第 1 组起全部未完成；任务 2.1 下有两条、任务 2.2 下有一条阶段进度注记（均不勾选、也不代表对应任务完成——存储切片只是 2.2 的 partial foundation，缺 intent/outcome 与幂等记录）；本文档不把它们标为完成，也不作为启用依据。
 
 ## 测试
 
@@ -76,6 +87,8 @@
 - **资源身份单测**：`plugins/orrery-harness/test/edit-lock-resource-identity.test.js` 14 项全部通过（真实 `mkdtemp`/`write`/`mkdir`/`symlink`/`link`/`rename`，真实 `/dev/null` 作特殊节点；平台 dispatch 在独立子进程中替换 `process.platform` 检查，不伪造文件系统成功）。独立装置另跑 `.orrery/edit-lock-verification/resource-review/adversarial.test.mjs`（22 项真 FS 语义）与 `scaling.test.mjs`（1 项）共 23 项通过。
 - **复杂度缺陷（已修复，含红绿证据）**：独立装置先复现了指数级父路径重放——`self -> .` 重复 4/8/12/16 次时 lstat 159/2559/40959/655359、readlink 15/255/4095/65535；`traceLink` 当时对相对 target 拼接原始 parent spelling，递归重走了已观察的 symlink 父路径。修复改为从已见证的**物理**父路径逐组件推进：先 lstat 记 inode，是 symlink 才递归记录 target/hop，之后再 native realpath 推进游标；不预先归一整个 target，也不省略嵌套 link。修复后同装置读数为 lstat 17/25/33/41、readlink 4/8/12/16。产品侧同时落一条回归测试：在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），要求每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并断言观察仍是同一个真实文件；无 wall-clock 断言，也无 mock 文件系统。该修复消除已观察父拼写的指数重放，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 - **静态检查与产品单测**：改动 `src/**` 后按 AGENTS.md §6 跑 `pnpm --filter orrery-harness run check` 与 `pnpm --filter orrery-harness test`。项目 curated 清单只收无 `node:` 内建依赖的纯模块，因此收录纯内核 `src/edit-lock/state.js`，而 `resource-identity.js` **刻意排除**（`types: []` 剥离 Node 全局）——项目 `run check` 通过**不能**替代该模块自己的严格检查。作为本地补充检查，另用 `--allowJs --checkJs --strict --types node` 直接检查该文件，`typeRoots` 指向本机既有的 `@types/node` 22.20.1，exit 0、零诊断；这是**本机不可移植的补充证据**（该 `typeRoots` 不是仓库依赖，也未被写入 `jsconfig.json`），全程未安装依赖、未写类型 stub、未改仓库 TypeScript 配置。本轮产品全量 988/988 通过、0 跳过。内核批次合入前不引用历史基线的通过数字作为本特性的证据。
+- **历史快照存储单测**：`plugins/orrery-harness/test/edit-lock-store.test.js` 33 项通过、0 失败（含 16 项持久化故障注入子测试与 6 项 SIGKILL 子测试），覆盖 create/record/recover 的 detached 语义、封闭 schema 与引用完整性、历史单调性与墓碑、create 前提（缺失/非空/别名目录）、canonical/checksum/domain/version 与 symlink/目录/FIFO committed entry 拒绝、每个持久化 syscall 边界的 before/after 故障毒化与 `commitStatus`、每 handle 队列 CAS 与 close drain、lossy JS 输入拒绝、revision 耗尽、release 后重获拒绝。故障注入围绕真实 syscall；SIGKILL 是真实子进程在 barrier 处被杀后重新 recover，**不是**掉电、内核崩溃、扇区撕裂或硬件缓存持久性证明。独立复核另跑 `.orrery/edit-lock-verification/store-review/independent.test.mjs`（30 项真实文件系统测试：真实部分写加注入 ENOSPC、passthrough rename 错误分类、既有目录生命周期与失败 create 恢复、canonical/重复键/UTF-8/checksum/缺失/symlink 拒绝、内核 cancel/resume 历史不被过度拒绝）全部通过，并复跑同一产品 suite 33/33。本批次产品全量 1021/1021 通过、147 suites。`store.js` 与 `resource-identity.js` 一样被 curated 清单排除（`types: []`），故另做本机直接 strict 检查（`--allowJs --checkJs --strict --types node`，`typeRoots` 指向本机既有 `@types/node` 22.20.1），exit 0、零诊断——同属**本机不可移植的补充证据**。
+- **独立复核发现并接受的边界（不是缺陷，也不是授权判定）**：独立装置确认「interrupted 由 true 翻成 false、epoch 2→3、且全程没有任何 receipt」的历史镜像会被存储接受（`.orrery/edit-lock-verification/store-review/independent.test.mjs`）。这是历史存储的既定性质：store 从不校验 receipt，也不构成 auth boundary。后续 manager **绝不得**把恢复出的 active 状态当作当前授权——显式恢复路径（Continue receipt）仍待实施。
 - **当前安装版组件级核验（已完成，但不是产品验收）**：DSH desktop `0.2.0-rc.2`（asar 内 DSH 模块同版本、Cordis 4.0.4）上的四份有界运行证据，全部只覆盖组件，不覆盖完整 Loader/profile/GUI：
   - `.orrery/edit-lock-verification/current-dispatch/REPORT.md`：15 项检查。真实 `ToolRuntime.execute` 与 staged scheduler 两条派发路径、同作用域替换 stock `write`/`edit`、每次调用携带有效沙箱策略、取消 signal 传递、拒绝后字节不变、卸载 shadow 后为 `UNKNOWN_TOOL`。调用侧 agent 仍是 fixture，网关是探针实现。
   - `.orrery/edit-lock-verification/current-agent/REPORT.md`：14 项检查、2 个 factory 创建的 agent、10 个完整 turn。真实 `AgentRegistry.create → AgentLoop factory → ReactLoopAgent → scripted LLM → stock write/edit → turn/end`；该组合内父取消不级联子代理（结论限于 Agent factory/driver 本身）。
