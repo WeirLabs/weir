@@ -5,6 +5,12 @@
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **Edit Lock 权限状态内核（开发中，未挂载）**：新增内部纯内存状态模块，分离归属与执行授权，建模会话中断闩锁和逐文件恢复确认。不接入编辑工具、设置或 UI，用户现有行为不变；持久化、实际提交和运行时接入另行验收。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+
 ## [0.6.0] - 2026-10-01
 
 ### Added
