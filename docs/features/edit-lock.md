@@ -10,9 +10,11 @@
 
 包内已落地四个内部模块，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-2 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。④ **持久 operation history** `src/edit-lock/operation-history.js`：在同一镜像里记录操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层，同样是历史而非授权，也没有发布入口（见下节）。设计中的 manager/gateway、跨进程仲裁、受控创建通道的串行发布、kernel restore 与 UI 尚未产品化。
 
+新增第五个未挂载模块 **manager 初始事务层** `src/edit-lock/manager.js`：仅接受 revision 0、无 incarnation 的新 store，串行提供可信 `openSession/acquire/cancel/status`；调用方仍须独占 store 生命周期，且 acquire 输入必须已经是可信规范资源身份。会话与归属增权执行 draft → 完整镜像持久确认 → install → 返回；持久或安装失败毒化整个 manager，排队及后续操作拒绝。取消同步叠加仅减权的 deny overlay，再串行持久撤权；持久等待期间取消的 acquire 不返回令牌，保留 interrupted 归属。凭据入队前复制。status 是有效状态观察，不是磁盘 ack 或可转移写入许可。当前不提供文件发布、resume、恢复、singleton、IPC 或宿主接入；也未覆盖首次 openSession 未确认时的按会话取消入口，不能用本切片启用功能。
+
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 
-内核私有 authority 的 `checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史，不导出 receipt 对象。`begin()` 在分离的内核上复用同一 transition；`checkpoint(draft)` 供 manager 持久化候选；`install(draft)` 一次性安装本内核当前 revision 的候选，`discard(draft)` 关闭候选。任意 live mutation 尝试均保守地使旧 draft 过期（包括拒绝）；跨内核、JSON 伪造、重复安装与关闭后的 facet 调用拒绝。安装复制状态且关闭 draft，不提供 raw hydrate。暂存 resume 成功立即烧掉 live receipt，丢弃不复活，并使其他 draft 过期；暂存签发的 receipt 仅 install 后激活，丢弃不激活。receipt 不跨重启恢复。该内核不执行 IO，manager 的“持久 ack 后 install”、同步取消封门与持久失败 poison 衔接仍未接入，不能把 draft 当作可发布权限。
+内核私有 authority 的 `checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史，不导出 receipt 对象。`begin()` 在分离的内核上复用同一 transition；`checkpoint(draft)` 供 manager 持久化候选；`install(draft)` 一次性安装本内核当前 revision 的候选，`discard(draft)` 关闭候选。任意 live mutation 尝试均保守地使旧 draft 过期（包括拒绝）；跨内核、JSON 伪造、重复安装与关闭后的 facet 调用拒绝。安装复制状态且关闭 draft，不提供 raw hydrate。暂存 resume 成功立即烧掉 live receipt，丢弃不复活，并使其他 draft 过期；暂存签发的 receipt 仅 install 后激活，丢弃不激活。receipt 不跨重启恢复。内核自身不执行 IO；初始 manager 已为 openSession/acquire/cancel 接入持久后安装，但不能把 draft 当作可发布权限，receipt 与实际发布仍未接入。
 
 私有 `settleCreated(origin, resourceId)` 仅供可信 manager 在确认原生创建成功与规范身份后结算；拒绝收编任何既有锁，沿用 generation 墓碑。相同当前 epoch 且会话未中断时为 active；取消或旧 epoch 的迟到成功只保留 user-interrupted 归属，即使会话已经 Continue 也不自动重臂该锁。未知会话、其他 incarnation、未来或非法 epoch 一律拒绝。它本身不验证磁盘成功、operation 去重或发布围栏，不得暴露为普通 acquire 或工具入口；这些检查仍属未落地的 manager。异常分类继续由现有 markAbnormal 完成。
 ### 发布前取消内部入口（开发中）
@@ -97,13 +99,15 @@
 ## 边界与失败语义
 
 - **未挂载即无行为**：没有插件行、没有服务、没有工具、没有 UI 元素，装载与否不改变任何现有会话。
-- **权威状态：内核仍是内存态，磁盘上已有历史镜像（未挂载）**：内核在进程内运行，进程结束即丢失；`src/edit-lock/store.js` 已能把权威状态连同持久 operation history 落成单文件历史快照并在下次打开时读回，因此「无持久化」作为笼统说法**已经过时**。但**运行授权本身仍无持久化**：没有 manager/kernel restore、没有运行时发布或授权入口、没有 live fence enforcement（围栏只是历史断言，既不提供运行时清除也不做 admission 判定）、没有幂等重放通道、没有单实例选举、没有重启围栏；有历史镜像也不等于能恢复——恢复出的历史 active 状态不构成当前授权。「不确定即保留归属、超时/沉默/投递失败不等于同意、中途崩溃保留 uncertain」仍是后续阶段的目标语义。
+- **权威状态：初始 manager 已持久后安装，但不可重启恢复（未挂载）**：`openSession/acquire/cancel` 通过真实 store 确认后才安装候选，取消 overlay 可先行减权；进程退出后不能重新装载授权。没有 manager/kernel restore、实际发布、live fence enforcement、幂等重放、单实例选举或重启围栏。磁盘历史 active 状态不构成当前授权；非新 store 明确拒绝初始化 manager。
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份切片自行从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**仍不判定缺失名称的等价性**——不预创建占位文件、不猜测别名，该问题交由 Option C 的创建协议解决；状态内核与资源身份切片不执行任何目标文件写入，store 只写自己的 `snapshot.json`、operation history 只写同一镜像，release 也不等于验证通过。
 - **未承诺的时点保证**：观察是一串同步 filesystem 调用，**不是原子快照**；外部 shell/IDE 在调用之间改变盘面不在保证内，dev/ino 连续性无法证明不存在 inode reuse 或「改后复原」（ABA）。调用方必须先自行协调变更顺序（manager 生命周期/发布协调）。
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）、不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外）、不承诺分布式多机共识。
 - **OpenSpec 任务保持未勾选**：`openspec/changes/edit-lock-arbitration/tasks.md` 第 1 组起全部未完成；任务 2.1 下有两条、任务 2.2 下有两条，任务 2.5 与 2.6 各有一条阶段进度注记（均不勾选、也不代表对应任务完成——存储与 operation history 只是 2.2/2.5/2.6 的 partial foundation：没有受控创建通道的串行发布、没有 manager/kernel restore、没有运行时围栏执行与授权，ID_REUSE 只是历史绑定比对而非重放通道）；本文档不把它们标为完成，也不作为启用依据。
 
 ## 测试
+
+- **初始 manager 事务**：6 项真实 store 测试通过，覆盖目录 sync 前授权不可见、取消同步减权与持久 ack、取消期间 acquire 保留 interrupted 归属但拒绝返回令牌、入队前凭据快照、竞争冲突不毒化、取消不影响另一会话、历史 store 拒绝初始化，以及 uncertain IO 失败后的排队/后续操作全拒绝。全量 1074/1074、0 fail、0 skip；常规 check 与包含 manager/store/state 的本机 direct strict 检查通过。本切片未做独立子代理评审（遵守本轮亲自实施约束），不代表创建发布或宿主验收通过。
 
 - **状态内核单测**：`plugins/orrery-harness/test/edit-lock-state.test.js` 9 项通过，覆盖独立围栏、零锁中断、一次性 receipt、逐文件确认、子会话独立、异常保留与查询快照隔离；独立审查另跑 5 项公开接口补充测试（含 100 次取消/恢复循环）通过。这是历史内核批次的证据，不代表运行时接入验收。
 - **资源身份单测**：`plugins/orrery-harness/test/edit-lock-resource-identity.test.js` 14 项全部通过（真实 `mkdtemp`/`write`/`mkdir`/`symlink`/`link`/`rename`，真实 `/dev/null` 作特殊节点；平台 dispatch 在独立子进程中替换 `process.platform` 检查，不伪造文件系统成功）。独立装置另跑 `.orrery/edit-lock-verification/resource-review/adversarial.test.mjs`（22 项真 FS 语义）与 `scaling.test.mjs`（1 项）共 23 项通过。

@@ -9,6 +9,7 @@
 
 ### Added
 
+- **Edit Lock 初始 manager 事务（开发中，未挂载）**：新 store 的会话注册、规范资源 acquire 与取消经真实持久确认后安装；取消同步仅减权，在途 acquire 不返回旧授权，持久/安装失败拒绝整个 manager 的后续操作。新增真实目录同步屏障与 IO 故障测试。不提供创建发布、恢复或宿主入口，功能仍不可启用。
 - **Edit Lock 内核暂存事务（开发中，未挂载）**：私有 begin/checkpoint/install/discard 复用同一授权规则，候选不改变 live 状态；一次性、revision 绑定安装拒绝跨内核与过期候选。暂存恢复消费 receipt 不可回滚，暂存签发仅安装后激活；不提供 JSON restore，尚未接入 manager 持久 ack 与取消封门。
 - **Edit Lock 创建成功归属结算（开发中，未挂载）**：内核私有 `settleCreated` 保留取消后迟到成功的 interrupted 归属，不重臂旧 epoch，也不收编既有锁；未知/非法来源拒绝，generation 墓碑延续。尚未接入实际创建、manager 事务或 UI。
 - **Edit Lock 内核历史导出（开发中，未挂载）**：私有 `checkpoint()` 保留 released-generation 与 issued-request 墓碑，返回 detached 数据且不序列化执行 receipt；为后续持久事务提供完整历史，不新增恢复或运行时授权入口。

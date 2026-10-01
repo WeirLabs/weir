@@ -121,6 +121,7 @@ export function createEditLockState(managerIncarnation) {
       const entry = { base: revision, closed: false, child, core, issued: new Map() }
       /** @param {object} facet */
       const guard = facet => Object.freeze(Object.fromEntries(Object.entries(facet).map(([key, method]) => [key,
+        /** @param {...any} args */
         (...args) => {
           if (entry.closed || entry.base !== revision) throw new Error('invalid or stale draft')
           if (['begin', 'install', 'discard'].includes(key)) {
@@ -247,10 +248,11 @@ export function createEditLockState(managerIncarnation) {
     },
   }
   // Advance even on rejection: conservatively invalidate outstanding candidates.
-  /** @param {object} facet @param {string[]} names */
+  /** @param {Record<string, (...args: any[]) => any>} facet @param {string[]} names */
   function track(facet, names) {
     for (const name of names) {
       const method = facet[name]
+      /** @param {...any} args */
       facet[name] = (...args) => { revision += 1; return method(...args) }
     }
   }
