@@ -7,7 +7,7 @@ test('stop during registration closes admission and waits for durable revocation
   const opened = new Promise(resolve => {registered = resolve})
   const cancellation = new Promise(resolve => {revoked = resolve})
   let cancels = 0
-  const runtime = {control:{openSession:() => opened, cancelSession:() => {cancels++; return cancellation}},requests:{},close:async () => { assert.equal(acknowledged, true) }}
+  const runtime = {control:{status:() => ({managerIncarnation:'m',sessions:[],locks:[]}),openSession:() => opened, cancelSession:() => {cancels++; return cancellation}},requests:{},close:async () => { assert.equal(acknowledged, true) }}
   const agent = {}
   const lifecycle = createEditLockLifecycle(runtime, candidate => candidate === agent ? 's' : undefined)
   const start = lifecycle.start(agent)

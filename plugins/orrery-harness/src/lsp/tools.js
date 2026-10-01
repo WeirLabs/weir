@@ -68,7 +68,7 @@ export function createLspTools({ manager, ctx, agent }) {
     character: { type: 'number', description: '1-based column of the symbol.' },
   }
 
-  return [
+  const tools = [
     {
       name: 'lsp_diagnostics',
       description: `Language-server diagnostics for one file (errors, warnings, hints with ranges). Read-only. The document is synced before reading; if the server has not published yet, the answer may lag one call behind on very large projects.`,
@@ -284,6 +284,9 @@ export function createLspTools({ manager, ctx, agent }) {
       },
     },
   ]
+  // Only a definition built with the captured service is admitted by Edit Lock.
+  if (editLock) for (const tool of tools) if (tool.name === 'lsp_rename') editLock.claim?.(tool)
+  return tools
 }
 
 const SYMBOL_KINDS = {

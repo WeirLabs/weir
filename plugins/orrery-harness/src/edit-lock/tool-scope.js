@@ -13,6 +13,8 @@ export function installEditLockWriteScope(agent, ctx, service, sandboxPolicy) {
   // Restrictions remain on teardown: unmount must never expose stock writers.
   agent.ctx.tools.restrict({deny:['write','edit']})
   const definition = createManagedWriteTool(ctx, service, sandboxPolicy)
+  // Composition guards admit only claimed definitions.
+  service.claim?.(definition)
   const dispose = agent.ctx.tools.register(definition)
   if (ctx.tools.get('edit',agent) || ctx.tools.get('write',agent) !== definition) {
     dispose()

@@ -1,6 +1,6 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **开发中，未挂载**：已实现内部状态、历史持久化和串行发布链路，并新增可信调用 capsule 与宿主适配层；尚未接入正式工具、跨进程宿主握手和 GUI，用户可见面零变化。
+> **开发中，默认关闭**：已提供可选组合插件 `orrery-harness/edit-lock`（`enabled: true` 才生效），尚未加入正式预设行；协商工具、受控解锁、UI、跨进程客户端和 GUI 验收未完成，默认用户可见面零变化。
 
 ## 概述
 
@@ -10,6 +10,16 @@
 
 ### 当前发布链路（未启用）
 
+**组合插件 `orrery-harness/edit-lock`（默认关闭，未加入预设）**。行配置 `{enabled: true, root, authorityDirectory, domainId?}` 才启用；`root` 是唯一管理域，`authorityDirectory` 必须在域外（空目录新建，含 `snapshot.json` 则恢复，其余内容拒绝）。启用后：
+
+- 挂载时捕获原始 `ctx.fs`，以跨进程预约打开唯一 runtime，并提供 `orreryEditLock` 服务。cordis 的兄弟行服务在其 apply 之后才可见，因此 `hash_edit` 同时接受挂载时与延迟 inject 的服务；一旦受管，服务移除只会拒绝，不回退直写。
+- `tools/pre-execute` 守卫：`write`、`edit`、`hash_edit`、`lsp_rename`、`str_replace_editor` 中凡执行函数未经服务 `claim` 的定义一律拒绝。组合顺序错误、晚装服务或未知编辑器因此 fail closed。
+- `agent/created`（发布前 await）安装写作用域：隐藏继承 stock write/edit，注册受控 write；随后注册会话。管理器已知的会话（重启恢复、同会话重建 agent）一律以中断态开始，不隐式重臂。
+- active 回合内 stock Stop 同步触发 turn signal，立即封闭准入并持久撤权；idle Stop 没有 signal，使用 `/edit-lock stop` 获得可等待的持久撤权确认。`agent/disposed` 同样撤权。
+- 可信人类入口 `/edit-lock`：`status`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`（仅激活本会话 pending-confirmation 锁，不获取无主资源）。普通消息、状态查询都不恢复权限；todo 续推在会话非 active 时不触发。
+- 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
+
+安装版 0.2.0-rc.2 隔离组合实测（真实 Agent factory、真实回合、ToolRuntime、stock fs、observation policy 与本插件 + hashline-edit）16/16：受控 write 创建、owner hash_edit、他人 hash_edit/write 以 `resource owned` 拒绝且字节不变、active Stop 闩锁、普通下一条消息不恢复、命令 resume 后 pending-confirmation 拒写、confirm 后可写、idle 命令撤权、卸载释放预约。当前限制：单文件发布获得的锁在没有 release/try_steal 工具与受控解锁之前不会释放，其他会话对同一文件持续被拒绝——这正是尚不能加入预设的原因之一。仍未覆盖：正式 profile/Loader 挂载、GUI、LSP 实际 rename 回合、跨进程第二 Harness（第二进程目前因预约冲突整体拒绝受控写入）。
 可信宿主桥 `createEditLockHost` 以真实 agent 对象的 WeakMap 绑定已持久注册／恢复的 execution，逐次用宿主 registry 检查对象身份；模型参数不能注册身份。detach 先删除调用授权，再请求 durable cancel。`hash_edit` 已添加可选 `orreryEditLock` 入口：在插件挂载时捕获服务，发布完整合成内容、原始参数、版本 guard、实际有效 policy 与 exec；服务拒绝或关闭不能回退原生直写。没有服务时保持既有行为，因此正式启用须在编辑工具挂载前安装服务，并整体覆盖 write/LSP，不能热插入局部接管。当前未注册服务、未加启用设置。
 
 受控 `write` 定义已提供但未注册：复用现有单次沙箱策略解析，保留 `fs/write-intent` 返回的 createIfAbsent／replaceIfVersion，缺少明确 guard 时拒绝，不用新 stat 覆盖旧观察版本。成功后发送标准 `fs/observed` 并返回内容差异；没有本地写入 fallback。独立工具定义经安装版 FS 创建实接验证，不等于正式工具表的覆盖验收；生命周期挂载仍须在 agent 发布前隐藏原 stock write/edit。
@@ -71,7 +81,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ## 配置
 
-本特性无配置项：当前既没有设置键，也没有 `cordis.patch.yml` 行。设计材料里出现的参数（协商时限、单次/累计暂停预算、恢复重试预算）都是待实施参数——其中「有限累计暂停预算」尚未获用户确认，未确认前自动暂停保持禁用。
+正式预设与设置页都没有本特性的配置项，`cordis.patch.yml` 也没有对应行。开发组合可单独挂载 `orrery-harness/edit-lock` 行，配置 `enabled`（默认 false）、`root`、`authorityDirectory` 与可选 `domainId`；该行须排在 hashline-edit 与 lsp 之前。设计材料里出现的参数（协商时限、单次/累计暂停预算、恢复重试预算）都是待实施参数——其中「有限累计暂停预算」尚未获用户确认，未确认前自动暂停保持禁用。
 
 ## 设计细节
 

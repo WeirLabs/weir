@@ -332,6 +332,29 @@ function managerCore(store, kernel) {
         return token
       })
     },
+    /** Trusted per-file confirmation after explicit resume. Never acquires an
+     * unowned resource: only this session's pending-confirmation lock activates.
+     * @param {import('./state.js').Execution} execution @param {string} resourceId */
+    confirm(execution, resourceId) {
+      const captured = { ...execution }
+      return transact(draft => {
+        if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        const lock = operations.status().locks.find(item => item.resourceId === resourceId)
+        if (!lock || lock.owner !== captured.sessionId || lock.status !== 'pending-confirmation') {
+          throw new Error('resource has no pending confirmation for this session')
+        }
+        return draft.operations.acquire(captured, resourceId)
+      }).then(async token => {
+        const cancellation = cancelled.get(captured.sessionId)
+        if (cancellation) {
+          await cancellation
+          throw new Error('session cancelled during confirmation')
+        }
+        healthy()
+        operations.checkWrite(token)
+        return token
+      })
+    },
     /** Success-only cleanup is atomic; cancellation retains all batch ownership.
      * @param {import('./state.js').Ownership[]} tokens */
     releaseMany(tokens) {
@@ -354,7 +377,7 @@ function managerCore(store, kernel) {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
         const before = operations.status().locks
         if (before.some(lock => ids.includes(lock.resourceId) && lock.status === 'pending-confirmation')) {
-          throw new Error('batch requires explicit per-file confirmation')
+          throw new Error('resource requires explicit per-file confirmation (/edit-lock confirm <path>)')
         }
         const tokens = ids.map(resourceId => draft.operations.acquire(captured, resourceId))
         for (const token of tokens) draft.operations.checkWrite(token)

@@ -29,6 +29,14 @@ export function createEditLockHost(runtime, isRegisteredAgent) {
       if (!execution) throw new Error('agent has no edit execution')
       return runtime.control.cancelSession(execution.sessionId)
     },
+    /** Trusted lifecycle lookup of the current admitted execution only.
+     * @param {object} agent */
+    executionFor(agent) {
+      live()
+      const execution = executions.get(agent)
+      if (!execution || !isRegisteredAgent(agent)) throw new Error('agent has no authenticated edit execution')
+      return execution
+    },
     /** Tool implementation ingress AFTER effective policy resolution.
      * @param {{agent: object, signal: AbortSignal, callId: string}} exec
      * @param {Parameters<typeof adapter.publish>[1] & {cwd: string, effectivePolicy: unknown}} request */
