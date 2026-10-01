@@ -111,6 +111,54 @@ export function createEditLockState(managerIncarnation) {
   }
 
   const authority = {
+    /** Import only a validated historical checkpoint into a fresh kernel.
+     * The opaque candidate has no mutation facets; it can only be inspected,
+     * installed after persistence, or discarded. No receipts are imported.
+     * @param {{ managerIncarnation: string, sessions: Session[], locks: Lock[], generations: {resourceId: string, generation: number}[], issuedRequests: {sessionId: string, requestId: string}[] }} history */
+    beginRecovery(history) {
+      if (revision !== 0) throw new Error('recovery requires fresh kernel')
+      if (!history || history.managerIncarnation === managerIncarnation) throw new Error('recovery requires new incarnation')
+      requireId(history.managerIncarnation)
+      const child = createEditLockState(managerIncarnation)
+      const core = cores.get(child)
+      for (const session of history.sessions) {
+        requireId(session.sessionId)
+        const epoch = session.executionEpoch + (session.interrupted ? 0 : 1)
+        if (typeof session.interrupted !== 'boolean' || !Number.isSafeInteger(session.executionEpoch) ||
+            session.executionEpoch < 1 || !Number.isSafeInteger(epoch) || core.sessions.has(session.sessionId)) throw new Error('invalid recovery session')
+        core.sessions.set(session.sessionId, { sessionId: session.sessionId, executionEpoch: epoch, interrupted: true })
+      }
+      for (const item of history.generations) {
+        requireId(item.resourceId)
+        if (!Number.isSafeInteger(item.generation) || item.generation < 1 || core.generations.has(item.resourceId)) throw new Error('invalid recovery generation')
+        core.generations.set(item.resourceId, item.generation)
+      }
+      for (const lock of history.locks) {
+        requireId(lock.resourceId)
+        if (!core.sessions.has(lock.owner) || core.locks.has(lock.resourceId) || core.generations.get(lock.resourceId) !== lock.generation ||
+            !['active', 'pending-confirmation', 'user-interrupted', 'abnormal'].includes(lock.status)) throw new Error('invalid recovery lock')
+        if (lock.status === 'abnormal') {
+          if (typeof lock.reason !== 'string') throw new Error('invalid recovery reason')
+          requireId(lock.reason)
+        }
+        core.locks.set(lock.resourceId, { resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation,
+          status: lock.status === 'abnormal' ? 'abnormal' : 'user-interrupted',
+          ...(lock.status === 'abnormal' ? { reason: lock.reason } : {}) })
+      }
+      for (const item of history.issuedRequests) {
+        requireId(item.requestId)
+        if (!core.sessions.has(item.sessionId)) throw new Error('invalid recovery request')
+        const issued = core.issuedRequests.get(item.sessionId) ?? new Set()
+        if (issued.has(item.requestId)) throw new Error('duplicate recovery request')
+        issued.add(item.requestId)
+        core.issuedRequests.set(item.sessionId, issued)
+      }
+      // Seal the fresh-only ingress and invalidate earlier empty candidates.
+      revision += 1
+      const draft = Object.freeze({})
+      drafts.set(draft, { base: revision, closed: false, child, core, issued: new Map() })
+      return draft
+    },
     begin() {
       const child = createEditLockState(managerIncarnation)
       const core = cores.get(child)
@@ -124,7 +172,7 @@ export function createEditLockState(managerIncarnation) {
         /** @param {...any} args */
         (...args) => {
           if (entry.closed || entry.base !== revision) throw new Error('invalid or stale draft')
-          if (['begin', 'install', 'discard'].includes(key)) {
+          if (['begin', 'beginRecovery', 'install', 'discard'].includes(key)) {
             throw new Error('operation unavailable in draft')
           }
           if (key === 'issueExecutionReceipt') {

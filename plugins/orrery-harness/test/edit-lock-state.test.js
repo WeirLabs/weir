@@ -1,6 +1,61 @@
 import { expect, it } from './helpers.js'
 import { createEditLockState } from '../src/edit-lock/state.js'
 
+it('preserves stopped epochs and abnormal reasons without restoring receipts or mutable recovery facets', () => {
+  const old = createEditLockState('old')
+  const execution = old.authority.openSession('alice')
+  const token = old.operations.acquire(execution, 'file')
+  old.authority.markAbnormal(token, 'uncertain-publication')
+  const stopped = old.authority.cancel(execution)
+  const receipt = old.authority.issueExecutionReceipt(stopped, 'continue')
+  const fresh = createEditLockState('new')
+  const empty = fresh.authority.begin()
+  const draft = fresh.authority.beginRecovery(old.authority.checkpoint())
+  expect(draft.operations).toBe(undefined)
+  expect(() => fresh.authority.install(empty)).toThrow(/stale/)
+  fresh.authority.install(draft)
+  expect(fresh.operations.status().sessions[0].executionEpoch).toBe(stopped.executionEpoch)
+  expect(fresh.operations.status().locks[0].reason).toBe('uncertain-publication')
+  const current = { ...stopped, managerIncarnation: 'new' }
+  expect(() => fresh.operations.resume(current, 'continue', receipt)).toThrow(/receipt/)
+  expect(() => fresh.authority.issueExecutionReceipt(current, 'continue')).toThrow(/already/)
+})
+
+it('rejects inconsistent recovery histories without installing partial authority', () => {
+  const old = createEditLockState('old')
+  old.operations.acquire(old.authority.openSession('alice'), 'file')
+  const history = old.authority.checkpoint()
+  const fresh = createEditLockState('new')
+  expect(() => fresh.authority.beginRecovery({ ...history, generations: [] })).toThrow(/lock/)
+  expect(fresh.operations.status().sessions.length).toBe(0)
+  const draft = fresh.authority.beginRecovery(history)
+  fresh.authority.discard(draft)
+  expect(() => fresh.authority.install(draft)).toThrow(/draft/)
+  expect(() => fresh.authority.beginRecovery(history)).toThrow(/fresh/)
+  expect(() => createEditLockState('old').authority.beginRecovery(history)).toThrow(/incarnation/)
+})
+
+it('recovers historical authority only as a fresh disarmed staged image', () => {
+  const old = createEditLockState('old')
+  const execution = old.authority.openSession('alice')
+  const token = old.operations.acquire(execution, 'file')
+  old.authority.issueExecutionReceipt(execution, 'intent')
+  const history = old.authority.checkpoint()
+  const fresh = createEditLockState('new')
+  const draft = fresh.authority.beginRecovery(history)
+  expect(fresh.operations.status().sessions.length).toBe(0)
+  const recovered = fresh.authority.checkpoint(draft)
+  expect(recovered.sessions[0].interrupted).toBe(true)
+  expect(recovered.sessions[0].executionEpoch).toBe(2)
+  expect(recovered.locks[0].status).toBe('user-interrupted')
+  expect(recovered.generations).toEqual(history.generations)
+  expect(recovered.issuedRequests).toEqual(history.issuedRequests)
+  fresh.authority.install(draft)
+  expect(() => fresh.operations.checkWrite(token)).toThrow(/incarnation/)
+  expect(() => fresh.authority.openSession('alice')).toThrow(/registered/)
+  expect(() => fresh.authority.beginRecovery(history)).toThrow(/fresh/)
+})
+
 it('rejects bad staged receipt bindings without burning valid intent and fences competing drafts', () => {
   const { operations, authority } = createEditLockState('manager-1')
   const stopped = authority.cancel(authority.openSession('alice'))

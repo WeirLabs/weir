@@ -16,6 +16,8 @@
 
 **后续凭据生命周期增量（仍未挂载）**：manager 新增可信 `issueExecutionReceipt` 与 `resume`，取代上段「不提供 resume」的阶段性描述。签发先持久 requestId 墓碑、安装后才返回进程内 receipt；恢复先消费一次性 receipt、持久后安装新 epoch，保留锁仅进入 pending-confirmation，不自动重臂。复制/伪造 receipt 和重复 requestId 拒绝。签发或恢复等待持久确认期间取消，不返回旧 receipt/execution；`cancel(execution)` 仍在入口校验当前凭据，但撤权队列执行时使用此会话最新已安装 epoch，避免前置 resume 安装导致撤权因 stale epoch 落空。receipt 不序列化，不支持进程重启恢复。宿主人类意图认证仍未接入，以上入口不能暴露给模型工具。真实存储专项 11/11 通过，包含签发/恢复两种持久等待取消竞态；常规 check 与 direct strict 通过。
 
+**保守恢复内核增量（仍未挂载）**：私有 `beginRecovery(history)` 仅在未发生变更的新内核上接受不同 incarnation 的历史 core；active 会话 epoch 增一后中断，原 interrupted 会话保留 epoch，所有非 abnormal 锁改为 user-interrupted，异常原因和 generation/request 墓碑保持。旧 receipt 不导入，重复注册不能绕过中断。恢复候选是无 mutation facet 的不透明对象，供 checkpoint、持久确认后 install 或 discard；创建候选即关闭再次导入入口并使先前空 draft 失效。重复/不一致引用和不安全 epoch 拒绝，不安装部分历史。输入应来自已验证 store，不是模型可调用的 JSON hydrate。该内核尚未接入 manager 启动、历史发布转换或恢复围栏，不宣称重启恢复可用。内核专项 21/21、全量 1082/1082（0 fail、0 skip）、check 与 direct strict 通过。
+
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 
 内核私有 authority 的 `checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史，不导出 receipt 对象。`begin()` 在分离的内核上复用同一 transition；`checkpoint(draft)` 供 manager 持久化候选；`install(draft)` 一次性安装本内核当前 revision 的候选，`discard(draft)` 关闭候选。任意 live mutation 尝试均保守地使旧 draft 过期（包括拒绝）；跨内核、JSON 伪造、重复安装与关闭后的 facet 调用拒绝。安装复制状态且关闭 draft，不提供 raw hydrate。暂存 resume 成功立即烧掉 live receipt，丢弃不复活，并使其他 draft 过期；暂存签发的 receipt 仅 install 后激活，丢弃不激活。receipt 不跨重启恢复。内核自身不执行 IO；初始 manager 已为 openSession/acquire/cancel 接入持久后安装，但不能把 draft 当作可发布权限，receipt 与实际发布仍未接入。
