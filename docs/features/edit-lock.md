@@ -22,6 +22,8 @@
 
 **请求绑定前置（仍未挂载）**：`canonicalRequestData` 对普通数据先检查 descriptor，不执行 getter，拒绝 undefined、非有限数、-0、symbol、非普通 prototype、隐藏属性、稀疏/附加属性数组及环。对象 key 排序而数组/字符串保序；`bindRequest` 计算原始参数与实际 UTF-8 内容 SHA-256，以版本化 envelope 绑定 literal path、cwd、writeText、原 expected、完整 effectivePolicy 和原 target，返回深冻结 detached binding，不含当前 epoch/incarnation。创建仅接受 write。该 seam 面向可信 adapter 数据，不是恶意 Proxy 沙箱；target 完整 schema、策略授权、物理路径观测与发布许可仍由后续 manager/store 验证，摘要本身不是授权。专项 4/4、全量 1089/1089（0 fail、0 skip）、check/direct strict 通过；尚无 prepare/commit 或宿主编辑接入。
 
+请求绑定现已复用 `validateBinding` 校验完整目标 schema，不再把 target 结构校验推迟到 store：create descriptor 必须为绝对 ancestor、无 `..` 的相对 suffix 与 createIfAbsent；update 必须为绝对资源、正安全 generation 与 replaceIfVersion，version 仍是原样 opaque string。策略授权和物理观测仍非摘要职责。专项 5/5、全量 1090/1090、check/direct strict 通过。
+
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 
 内核私有 authority 的 `checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史，不导出 receipt 对象。`begin()` 在分离的内核上复用同一 transition；`checkpoint(draft)` 供 manager 持久化候选；`install(draft)` 一次性安装本内核当前 revision 的候选，`discard(draft)` 关闭候选。任意 live mutation 尝试均保守地使旧 draft 过期（包括拒绝）；跨内核、JSON 伪造、重复安装与关闭后的 facet 调用拒绝。安装复制状态且关闭 draft，不提供 raw hydrate。暂存 resume 成功立即烧掉 live receipt，丢弃不复活，并使其他 draft 过期；暂存签发的 receipt 仅 install 后激活，丢弃不激活。receipt 不跨重启恢复。内核自身不执行 IO；初始 manager 已为 openSession/acquire/cancel 接入持久后安装，但不能把 draft 当作可发布权限，receipt 与实际发布仍未接入。

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { canonicalRequestData } from './request-data.js'
+import { validateBinding } from './operation-history.js'
 
 /** @param {string} value */
 const digest = value => createHash('sha256').update(Buffer.from(value, 'utf8')).digest('hex')
@@ -34,6 +35,8 @@ export function bindRequest(input) {
     }
     return value
   }
-  return freeze({ tool: data.tool, filePath: data.filePath, cwd: data.cwd,
-    argsDigest, payloadDigest, requestDigest, target: data.target })
+  const binding = { tool: data.tool, filePath: data.filePath, cwd: data.cwd,
+    argsDigest, payloadDigest, requestDigest, target: data.target }
+  validateBinding(binding)
+  return freeze(binding)
 }

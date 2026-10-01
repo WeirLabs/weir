@@ -26,3 +26,15 @@ test('requires complete policy data and reserves creation for write', () => {
   assert.throws(() => bindRequest({ ...request(), tool: 'hash_edit' }), /creation/)
   assert.throws(() => bindRequest({ ...request(), content: 42 }), /content/)
 })
+
+test('validates original target schema while preserving opaque update versions', () => {
+  for (const target of [
+    { ...request().target, suffix: '../escape' },
+    { ...request().target, policy: { kind: 'replaceIfVersion', version: 'v' } },
+    { kind: 'update', resourceId: '/workspace/file', generation: 0, policy: { kind: 'replaceIfVersion', version: '' } },
+  ]) assert.throws(() => bindRequest({ ...request(), target }), /invalid operation/)
+  for (const version of ['', '\0', '\r\n']) {
+    const target = { kind: 'update', resourceId: '/workspace/file', generation: 1, policy: { kind: 'replaceIfVersion', version } }
+    assert.equal(bindRequest({ ...request(), tool: 'hash_edit', target }).target.policy.version, version)
+  }
+})

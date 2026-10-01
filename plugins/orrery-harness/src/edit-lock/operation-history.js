@@ -39,7 +39,7 @@ function array(value) {
   }
 }
 /** @param {Binding} binding */
-function validateBinding(binding) {
+export function validateBinding(binding) {
   shape(binding, ['tool', 'filePath', 'cwd', 'requestDigest', 'argsDigest', 'payloadDigest', 'target'])
   valid(['write', 'hash_edit', 'edit'].includes(binding.tool), 'tool')
   valid(id(binding.filePath) && id(binding.cwd) && isAbsolute(binding.cwd), 'literal path/cwd')
