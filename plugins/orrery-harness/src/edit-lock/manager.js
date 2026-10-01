@@ -3,15 +3,43 @@ import { createEditLockState } from './state.js'
 /**
  * Unmounted trusted manager core. Caller exclusively owns the store lifecycle;
  * this factory does not elect a singleton or expose any file publication path.
- * Recovery is not implemented: only a pristine store is accepted.
+ * This fresh-store factory is separate from the trusted recovery entrypoint.
  * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string}} options
  */
 export function createEditLockManager({ store, managerIncarnation }) {
-  const { operations, authority } = createEditLockState(managerIncarnation)
-  let confirmed = store.snapshot()
+  const confirmed = store.snapshot()
   if (confirmed.revision !== 0 || confirmed.state.managerIncarnation !== null) {
-    throw new Error('fresh store required; recovery unavailable')
+    throw new Error('fresh store required; use trusted recovery entrypoint')
   }
+  return managerCore(store, createEditLockState(managerIncarnation))
+}
+
+/** Trusted lifecycle only: caller must establish exclusive ownership and old
+ * publisher quiescence before opening the store. No IPC or automatic election.
+ * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string}} options */
+export async function recoverEditLockManager({ store, managerIncarnation }) {
+  const previous = store.snapshot()
+  if (!previous.state.managerIncarnation) throw new Error('historical store required')
+  const kernel = createEditLockState(managerIncarnation)
+  const draft = kernel.authority.beginRecovery({ ...previous.state, managerIncarnation: previous.state.managerIncarnation })
+  const operations = previous.state.operations.map(operation => {
+    if (operation.phase === 'prepared') return { ...operation, phase: 'not-published',
+      outcome: { kind: 'not-published', reason: 'rejected-before-dispatch' } }
+    if (operation.phase === 'publishing') return { ...operation, phase: 'unknown', outcome: { kind: 'unknown' } }
+    return operation
+  })
+  await store.record({ expectedRevision: previous.revision,
+    nextState: { ...previous.state, ...kernel.authority.checkpoint(draft), operations } })
+  kernel.authority.install(draft)
+  return managerCore(store, kernel)
+}
+
+/** @param {Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>} store
+ * @param {ReturnType<typeof createEditLockState>} kernel */
+function managerCore(store, kernel) {
+  const { operations, authority } = kernel
+  const managerIncarnation = operations.status().managerIncarnation
+  let confirmed = store.snapshot()
   let tail = Promise.resolve()
   /** @type {unknown} */
   let poison
@@ -24,6 +52,11 @@ export function createEditLockManager({ store, managerIncarnation }) {
   function transact(transition) {
     const pending = tail.then(async () => {
       healthy()
+      // Until canonical overlap admission is wired, unresolved publication
+      // conservatively closes the entire recovered manager to mutations.
+      if (confirmed.state.operations.some(operation => ['publishing', 'unknown'].includes(operation.phase))) {
+        throw new Error('unresolved publication fence')
+      }
       const draft = authority.begin()
       let result
       try { result = transition(draft) } catch (error) {

@@ -18,6 +18,8 @@
 
 **保守恢复内核增量（仍未挂载）**：私有 `beginRecovery(history)` 仅在未发生变更的新内核上接受不同 incarnation 的历史 core；active 会话 epoch 增一后中断，原 interrupted 会话保留 epoch，所有非 abnormal 锁改为 user-interrupted，异常原因和 generation/request 墓碑保持。旧 receipt 不导入，重复注册不能绕过中断。恢复候选是无 mutation facet 的不透明对象，供 checkpoint、持久确认后 install 或 discard；创建候选即关闭再次导入入口并使先前空 draft 失效。重复/不一致引用和不安全 epoch 拒绝，不安装部分历史。输入应来自已验证 store，不是模型可调用的 JSON hydrate。该内核尚未接入 manager 启动、历史发布转换或恢复围栏，不宣称重启恢复可用。内核专项 21/21、全量 1082/1082（0 fail、0 skip）、check 与 direct strict 通过。
 
+**manager 启动恢复增量（仍未挂载）**：独立可信 `recoverEditLockManager` 接入上述候选，历史 prepared → not-published/rejected-before-dispatch，publishing → unknown，原 fence、terminal/unknown 历史和预算不改写；新 incarnation、保守 core 与转换后 operations 同镜像持久确认，再安装并返回 manager。真实 store close/recover 与目录同步屏障验证无提前交付，IO 失败拒绝启动。调用方必须先保证独占 store 生命周期与旧 publisher 已静止；此入口自身不证明 singleton/quiescence。存在 publishing/unknown 时暂保守拒绝整个 manager 的所有 mutation，仅 status 诊断，不提供清围栏或重放。这是未完成精确范围 admission 前的内部安全状态，不是产品可用性验收。专项 14/14、全量 1085/1085（0 fail、0 skip）、常规 check 与 direct strict 通过。创建发布、宿主生命周期及 GUI 尚未接入。
+
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 
 内核私有 authority 的 `checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史，不导出 receipt 对象。`begin()` 在分离的内核上复用同一 transition；`checkpoint(draft)` 供 manager 持久化候选；`install(draft)` 一次性安装本内核当前 revision 的候选，`discard(draft)` 关闭候选。任意 live mutation 尝试均保守地使旧 draft 过期（包括拒绝）；跨内核、JSON 伪造、重复安装与关闭后的 facet 调用拒绝。安装复制状态且关闭 draft，不提供 raw hydrate。暂存 resume 成功立即烧掉 live receipt，丢弃不复活，并使其他 draft 过期；暂存签发的 receipt 仅 install 后激活，丢弃不激活。receipt 不跨重启恢复。内核自身不执行 IO；初始 manager 已为 openSession/acquire/cancel 接入持久后安装，但不能把 draft 当作可发布权限，receipt 与实际发布仍未接入。

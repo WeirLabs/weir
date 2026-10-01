@@ -6,6 +6,114 @@ import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager } from '../src/edit-lock/manager.js'
 
+it('settles historical prepared work and fences unresolved publication without replay', async () => {
+  const { recoverEditLockManager } = await import('../src/edit-lock/manager.js')
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
+  try {
+    const original = createEditLockManager({ store, managerIncarnation: 'old' })
+    await original.openSession('alice')
+    const state = store.snapshot().state
+    const digest = 'a'.repeat(64)
+    const prepared = {
+      sessionId: 'alice', operationId: 'prepared', origin: { executionEpoch: 1, managerIncarnation: 'old' },
+      binding: { tool: 'write', filePath: 'new.txt', cwd: '/workspace', requestDigest: digest, argsDigest: digest, payloadDigest: digest,
+        target: { kind: 'create', ancestor: '/workspace', suffix: 'new.txt', policy: { kind: 'createIfAbsent' } } },
+      phase: 'prepared', fence: null, outcome: null, closeouts: [],
+    }
+    state.operations = [prepared, { ...structuredClone(prepared), operationId: 'publishing' }]
+    await store.record({ expectedRevision: store.snapshot().revision, nextState: state })
+    state.operations[1].phase = 'publishing'
+    state.operations[1].fence = { kind: 'domain', basis: 'containment-unproved' }
+    await store.record({ expectedRevision: store.snapshot().revision, nextState: state })
+    const recovered = await recoverEditLockManager({ store, managerIncarnation: 'new' })
+    const history = store.snapshot().state.operations
+    assert.equal(history[0].phase, 'not-published')
+    assert.equal(history[0].outcome.reason, 'rejected-before-dispatch')
+    assert.equal(history[1].phase, 'unknown')
+    assert.deepEqual(history[1].fence, state.operations[1].fence)
+    await assert.rejects(recovered.openSession('bob'), /fence/)
+    assert.equal(recovered.status().sessions[0].interrupted, true)
+  } finally {
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('does not expose a recovered manager before persistence and rejects uncertain recovery IO', async () => {
+  const { recoverEditLockManager } = await import('../src/edit-lock/manager.js')
+  for (const fail of [false, true]) {
+    const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+    const gate = Promise.withResolvers()
+    const entered = Promise.withResolvers()
+    let barrier
+    const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' }, {
+      checkpoint: point => point === 'before:directory-sync' ? barrier?.() : undefined,
+    })
+    try {
+      const original = createEditLockManager({ store, managerIncarnation: 'old' })
+      await original.openSession('alice')
+      // No original manager calls after handing this exclusively owned store over.
+      barrier = async () => { entered.resolve(); await gate.promise; if (fail) throw new Error('recovery IO fault') }
+      let delivered = false
+      const recovering = recoverEditLockManager({ store, managerIncarnation: 'new' }).then(manager => {
+        delivered = true
+        return manager
+      })
+      const rejected = fail ? assert.rejects(recovering, error => {
+        assert.match(error.message, /persistence failed; handle poisoned/)
+        assert.equal(error.cause.message, 'recovery IO fault')
+        return true
+      }) : undefined
+      await entered.promise
+      assert.equal(delivered, false)
+      gate.resolve()
+      if (fail) {
+        await rejected
+        assert.equal(delivered, false)
+      } else {
+        const recovered = await recovering
+        assert.equal(recovered.status().sessions[0].interrupted, true)
+        assert.equal(store.snapshot().state.managerIncarnation, 'new')
+      }
+    } finally {
+      gate.resolve()
+      await store.close()
+      // directory is the exact absolute mkdtemp result created by this test.
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+})
+
+it('durably disarms historical ownership before returning a recovered manager', async () => {
+  const { recoverEditLockManager } = await import('../src/edit-lock/manager.js')
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  let store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
+  try {
+    const original = createEditLockManager({ store, managerIncarnation: 'old' })
+    const execution = await original.openSession('alice')
+    await original.acquire(execution, 'file')
+    await store.close()
+    store = await openEditLockStore({ directory, domainId: 'test', mode: 'recover' })
+    const recovered = await recoverEditLockManager({ store, managerIncarnation: 'new' })
+    assert.equal(store.snapshot().state.managerIncarnation, 'new')
+    assert.equal(recovered.status().sessions[0].interrupted, true)
+    assert.equal(recovered.status().locks[0].status, 'user-interrupted')
+    await assert.rejects(recovered.acquire(execution, 'file'), /incarnation/)
+    await assert.rejects(recovered.openSession('alice'), /registered/)
+    const stopped = { ...execution, managerIncarnation: 'new', executionEpoch: 2 }
+    const receipt = await recovered.issueExecutionReceipt(stopped, 'new-intent')
+    const resumed = await recovered.resume(stopped, 'new-intent', receipt)
+    assert.equal(recovered.status().locks[0].status, 'pending-confirmation')
+    assert.equal((await recovered.acquire(resumed, 'file')).generation, 1)
+  } finally {
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('withholds a receipt cancelled during its durable issuance', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
   const gate = Promise.withResolvers()
