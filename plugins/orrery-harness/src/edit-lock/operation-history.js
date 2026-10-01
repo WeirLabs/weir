@@ -57,7 +57,7 @@ function validateBinding(binding) {
     shape(target, ['kind', 'resourceId', 'generation', 'policy'])
     valid(target.kind === 'update' && id(target.resourceId) && isAbsolute(target.resourceId) && positive(target.generation), 'update descriptor')
     shape(target.policy, ['kind', 'version'])
-    valid(target.policy.kind === 'replaceIfVersion' && id(target.policy.version), 'guarded update policy')
+    valid(target.policy.kind === 'replaceIfVersion' && typeof target.policy.version === 'string', 'guarded update policy')
   }
 }
 /** Store-internal validation; collections are never a second authority map.
@@ -92,7 +92,7 @@ export function validateOperations(state) {
       else {
         shape(op.outcome, ['kind', 'resourceId', 'generation', 'version'])
         valid(op.outcome.kind === 'created' || op.outcome.kind === 'updated', 'success outcome')
-        valid(op.outcome.kind === op.phase && id(op.outcome.resourceId) && isAbsolute(op.outcome.resourceId) && positive(op.outcome.generation) && id(op.outcome.version), 'outcome')
+        valid(op.outcome.kind === op.phase && id(op.outcome.resourceId) && isAbsolute(op.outcome.resourceId) && positive(op.outcome.generation) && typeof op.outcome.version === 'string', 'outcome')
         // Lifetime references survive release/reownership; current locks are irrelevant.
         valid((generations.get(op.outcome.resourceId) ?? 0) >= op.outcome.generation, 'success generation history')
         valid(op.phase === (op.binding.target.kind === 'create' ? 'created' : 'updated'), 'outcome channel')

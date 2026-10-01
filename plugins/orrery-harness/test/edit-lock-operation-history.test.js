@@ -39,6 +39,31 @@ async function record(store, state) {
   return store.record({ expectedRevision: store.snapshot().revision, nextState: state })
 }
 
+test('opaque filesystem version strings survive guarded update history and recovery unchanged', async t => {
+  for (const version of ['', '\0provider-token']) {
+    const directory = await fixture(t)
+    const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
+    const state = image()
+    state.generations.push({ resourceId: '/workspace/file', generation: 1 })
+    state.locks.push({ resourceId: '/workspace/file', owner: 'alice', generation: 1, status: 'active' })
+    const op = prepared()
+    op.binding.target = { kind: 'update', resourceId: '/workspace/file', generation: 1, policy: { kind: 'replaceIfVersion', version } }
+    state.operations.push(op)
+    await record(store, state)
+    op.phase = 'publishing'
+    op.fence = { kind: 'resource', resourceId: '/workspace/file' }
+    await record(store, state)
+    op.phase = 'updated'
+    op.outcome = { kind: 'updated', resourceId: '/workspace/file', generation: 1, version }
+    await record(store, state)
+    await store.close()
+    const recovered = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+    const historical = recovered.snapshot().state.operations[0]
+    assert.equal(historical.binding.target.policy.version, version)
+    assert.equal(historical.outcome.version, version)
+    await recovered.close()
+  }
+})
 test('v2 operations live in the same atomic snapshot and prepared creates own nothing', async t => {
   const directory = await fixture(t)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
@@ -123,7 +148,7 @@ test('raw records enforce durable publishing then atomic ownership/outcome, surv
   assert.equal(reopened.snapshot().state.operations[0].phase, 'publishing')
   for (const alter of [
     s => { s.locks = [] }, s => { s.locks[0].generation = 2 },
-    s => { s.operations[0].outcome.version = '' }, s => { s.operations[0].outcome.extra = 'receipt' },
+    s => { s.operations[0].outcome.version = null }, s => { s.operations[0].outcome.extra = 'receipt' },
     s => { s.operations[0].fence = null },
   ]) {
     const invalid = created(started); alter(invalid)
