@@ -10,7 +10,9 @@
 
 包内已落地四个内部模块，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-2 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。④ **持久 operation history** `src/edit-lock/operation-history.js`：在同一镜像里记录操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层，同样是历史而非授权，也没有发布入口（见下节）。设计中的 manager/gateway、跨进程仲裁、受控创建通道的串行发布、kernel restore 与 UI 尚未产品化。
 
-新增第五个未挂载模块 **manager 初始事务层** `src/edit-lock/manager.js`：仅接受 revision 0、无 incarnation 的新 store，串行提供可信 `openSession/acquire/cancel/status`；调用方仍须独占 store 生命周期，且 acquire 输入必须已经是可信规范资源身份。会话与归属增权执行 draft → 完整镜像持久确认 → install → 返回；持久或安装失败毒化整个 manager，排队及后续操作拒绝。取消同步叠加仅减权的 deny overlay，再串行持久撤权；持久等待期间取消的 acquire 不返回令牌，保留 interrupted 归属。凭据入队前复制。status 是有效状态观察，不是磁盘 ack 或可转移写入许可。当前不提供文件发布、resume、恢复、singleton、IPC 或宿主接入；也未覆盖首次 openSession 未确认时的按会话取消入口，不能用本切片启用功能。
+新增第五个未挂载模块 **manager 初始事务层** `src/edit-lock/manager.js`：仅接受 revision 0、无 incarnation 的新 store，串行提供可信 `openSession/acquire/cancel/cancelSession/status`；调用方仍须独占 store 生命周期，且 acquire 输入必须已经是可信规范资源身份。会话与归属增权执行 draft → 完整镜像持久确认 → install → 返回；持久或安装失败毒化整个 manager，排队及后续操作拒绝。取消同步叠加仅减权的 deny overlay，再串行持久撤权；持久等待期间取消的 acquire 不返回令牌，保留 interrupted 归属。凭据入队前复制。可信生命周期 `cancelSession(sessionId)` 独立于 execution，关闭首次 openSession 等待持久确认时的授权返回空窗；取消先于注册时返回 unknown session、保留拒绝闩锁，后续注册不写入 active 会话，其他会话不受影响。这不是持久撤权成功 ack，也没有自动清闩锁入口。status 是有效状态观察，不是磁盘 ack 或可转移写入许可。当前不提供文件发布、resume、恢复、singleton、IPC 或宿主接入，不能用本切片启用功能。
+
+首次注册取消增量：真实 store 屏障与提前取消两条回归红→绿，manager 专项 8/8；全量 1076/1076、0 fail、0 skip，direct strict 检查通过。未接入宿主 Stop，不作为 GUI 撤权验收。
 
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 

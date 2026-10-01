@@ -6,6 +6,52 @@ import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager } from '../src/edit-lock/manager.js'
 
+it('does not install initial authority after an unresolved early cancellation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'manager-1' })
+    await assert.rejects(manager.cancelSession('alice'), /unknown session/)
+    const revision = store.snapshot().revision
+    await assert.rejects(manager.openSession('alice'), /cancelled/)
+    assert.equal(store.snapshot().revision, revision)
+    assert.deepEqual(manager.status().sessions, [])
+    assert.equal((await manager.openSession('bob')).executionEpoch, 1)
+  } finally {
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('trusted session cancellation prevents the first pending execution from escaping', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  const gate = Promise.withResolvers()
+  const entered = Promise.withResolvers()
+  let barrier
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' }, {
+    checkpoint: point => point === 'before:directory-sync' ? barrier?.() : undefined,
+  })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'manager-1' })
+    barrier = () => { entered.resolve(); return gate.promise }
+    const opening = manager.openSession('alice')
+    const rejected = assert.rejects(opening, /cancelled/)
+    await entered.promise
+    const cancellation = manager.cancelSession('alice')
+    gate.resolve()
+    await rejected
+    assert.equal((await cancellation).executionEpoch, 2)
+    assert.equal(manager.status().sessions[0].interrupted, true)
+    assert.equal(store.snapshot().state.sessions[0].interrupted, true)
+  } finally {
+    gate.resolve()
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('persists ownership, rejects competitors without poisoning, and refuses historical reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
   const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })

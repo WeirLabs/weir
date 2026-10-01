@@ -46,7 +46,37 @@ export function createEditLockManager({ store, managerIncarnation }) {
   }
   return Object.freeze({
     /** @param {string} sessionId */
-    openSession(sessionId) { return transact(draft => draft.authority.openSession(sessionId)) },
+    openSession(sessionId) {
+      return transact(draft => {
+        if (cancelled.has(sessionId)) throw new Error('session cancelled')
+        return draft.authority.openSession(sessionId)
+      }).then(async execution => {
+        const cancellation = cancelled.get(sessionId)
+        if (cancellation) {
+          await cancellation
+          throw new Error('session cancelled during registration')
+        }
+        healthy()
+        return execution
+      })
+    },
+    /** Trusted lifecycle ingress, never a model-facing authority argument.
+     * Cancels the session at its queue position, including pending registration.
+     * @param {string} sessionId */
+    cancelSession(sessionId) {
+      healthy()
+      if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('invalid session')
+      const existing = cancelled.get(sessionId)
+      if (existing) return existing
+      const pending = transact(draft => {
+        const session = operations.status().sessions.find(s => s.sessionId === sessionId)
+        if (!session) throw new Error('unknown session')
+        return draft.authority.cancel({ sessionId, executionEpoch: session.executionEpoch, managerIncarnation })
+      })
+      cancelled.set(sessionId, pending)
+      void pending.then(() => cancelled.delete(sessionId), () => {})
+      return pending
+    },
     /** Trusted canonical identity input only; not a path-based tool interface.
      * @param {import('./state.js').Execution} execution @param {string} resourceId */
     acquire(execution, resourceId) {
