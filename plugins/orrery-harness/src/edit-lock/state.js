@@ -101,6 +101,25 @@ export function createEditLockState(managerIncarnation) {
   }
 
   const authority = {
+    /** Record only a trusted, already successful native creation, never an acquisition.
+     * The manager must validate publishing history and canonical identity first.
+     * @param {Execution} origin @param {string} resourceId @returns {Ownership} */
+    settleCreated(origin, resourceId) {
+      requireId(resourceId)
+      if (!origin || origin.managerIncarnation !== managerIncarnation) throw new Error('stale incarnation')
+      const session = sessions.get(origin.sessionId)
+      if (!session) throw new Error('unknown session')
+      if (!Number.isSafeInteger(origin.executionEpoch) || origin.executionEpoch < 1 ||
+          origin.executionEpoch > session.executionEpoch) throw new Error('invalid creation epoch')
+      if (locks.has(resourceId)) throw new Error('resource owned')
+      const generation = (generations.get(resourceId) ?? 0) + 1
+      if (!Number.isSafeInteger(generation)) throw new Error('generation exhausted')
+      const active = !session.interrupted && origin.executionEpoch === session.executionEpoch
+      locks.set(resourceId, { resourceId, owner: session.sessionId, generation,
+        status: active ? 'active' : 'user-interrupted' })
+      generations.set(resourceId, generation)
+      return { managerIncarnation, sessionId: session.sessionId, executionEpoch: session.executionEpoch, resourceId, generation }
+    },
     /** Detached historical core, not a permission or a restore credential. */
     checkpoint() {
       return {

@@ -13,6 +13,8 @@
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 
 内核私有 authority 的 `checkpoint()` 额外导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史；不导出 receipt 对象，不提供恢复或重新放权入口。它只是后续暂存事务接入的基础，尚不构成持久化前后原子安装。
+
+私有 `settleCreated(origin, resourceId)` 仅供可信 manager 在确认原生创建成功与规范身份后结算；拒绝收编任何既有锁，沿用 generation 墓碑。相同当前 epoch 且会话未中断时为 active；取消或旧 epoch 的迟到成功只保留 user-interrupted 归属，即使会话已经 Continue 也不自动重臂该锁。未知会话、其他 incarnation、未来或非法 epoch 一律拒绝。它本身不验证磁盘成功、operation 去重或发布围栏，不得暴露为普通 acquire 或工具入口；这些检查仍属未落地的 manager。异常分类继续由现有 markAbnormal 完成。
 ### 发布前取消内部入口（开发中）
 
 存储新增 `beginPublication(input, key, mutation)`：仅当前 handle 新登记的 prepared 操作可持久化 publishing 后取得一次性 attempt；恢复时已有的全部操作键拒绝重新领取。attempt 的 `invoke()` 与 `finishWithoutDispatch(reason)` 同步互斥：后者永久关闭调用机会，以 handle 私有 WeakMap 证据执行仅本次 publishing → not-published 转换并移除未使用围栏，结果仍需落盘后确认。证据绑定完整 operation（含 origin/binding/fence）与持久 revision，不序列化、不对外返回；普通 `record` 仍禁止该转换。调用一旦发生，即使同步抛错也不再提供未发布证明。revision 变化、close 或 poison 后拒绝操作；结算 IO 失败毒化 handle，保留恢复围栏。该接口不验证运行权限、不接入真实 `ctx.fs`，调用方仍必须独占原始 mutation、序列化生命周期并证明单 manager；它不是可直接交给工具调用者的权限 API。

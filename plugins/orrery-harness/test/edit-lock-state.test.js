@@ -1,6 +1,47 @@
 import { expect, it } from './helpers.js'
 import { createEditLockState } from '../src/edit-lock/state.js'
 
+it('creation settlement rejects invalid origins and preserves generation history', () => {
+  const { operations, authority } = createEditLockState('manager-1')
+  const alice = authority.openSession('alice')
+  const before = authority.checkpoint()
+  for (const origin of [
+    { ...alice, managerIncarnation: 'old' }, { ...alice, sessionId: 'unknown' },
+    { ...alice, executionEpoch: 0 }, { ...alice, executionEpoch: 2 },
+    { ...alice, executionEpoch: 1.5 },
+  ]) expect(() => authority.settleCreated(origin, 'file:new')).toThrow()
+  expect(authority.checkpoint()).toEqual(before)
+  const token = authority.settleCreated(alice, 'file:new')
+  expect(operations.checkWrite(token)).toEqual({ allowed: true })
+  operations.release(token)
+  expect(authority.settleCreated(alice, 'file:new').generation).toBe(2)
+})
+
+it('old creation origin stays disarmed even after the owner explicitly resumes', () => {
+  const { operations, authority } = createEditLockState('manager-1')
+  const origin = authority.openSession('alice')
+  const cancelled = authority.cancel(origin)
+  const receipt = authority.issueExecutionReceipt(cancelled, 'continue')
+  operations.resume(cancelled, 'continue', receipt)
+  const token = authority.settleCreated(origin, 'file:late')
+  expect(() => operations.checkWrite(token)).toThrow(/active/)
+  expect(operations.status().sessions[0].interrupted).toBe(false)
+  expect(operations.status().locks[0].status).toBe('user-interrupted')
+})
+
+it('settles a late successful creation as retained interrupted ownership without rearming', () => {
+  const { operations, authority } = createEditLockState('manager-1')
+  const alice = authority.openSession('alice')
+  authority.cancel(alice)
+  const token = authority.settleCreated(alice, 'file:new')
+  expect(operations.status().locks).toEqual([
+    { resourceId: 'file:new', owner: 'alice', generation: 1, status: 'user-interrupted' },
+  ])
+  expect(() => operations.checkWrite(token)).toThrow(/active/)
+  expect(operations.status().sessions[0]).toEqual({ sessionId: 'alice', executionEpoch: 2, interrupted: true })
+  expect(() => authority.settleCreated(alice, 'file:new')).toThrow(/owned/)
+})
+
 it('checkpoints detached lifetime tombstones without serializing execution receipts', () => {
   const { operations, authority } = createEditLockState('manager-1')
   const alice = authority.openSession('alice')

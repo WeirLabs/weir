@@ -9,6 +9,7 @@
 
 ### Added
 
+- **Edit Lock 创建成功归属结算（开发中，未挂载）**：内核私有 `settleCreated` 保留取消后迟到成功的 interrupted 归属，不重臂旧 epoch，也不收编既有锁；未知/非法来源拒绝，generation 墓碑延续。尚未接入实际创建、manager 事务或 UI。
 - **Edit Lock 内核历史导出（开发中，未挂载）**：私有 `checkpoint()` 保留 released-generation 与 issued-request 墓碑，返回 detached 数据且不序列化执行 receipt；为后续持久事务提供完整历史，不新增恢复或运行时授权入口。
 - **Edit Lock 发布前取消内部入口（开发中，未挂载）**：持久 publishing 意图新增仅存活 attempt 可用的未调用结算例外，以私有一次性证据保证实际调用与取消互斥；已调用、恢复历史、过期 revision 与普通 raw record 不得使用此例外。结算仍需持久确认，IO 失败毒化 handle。不接入 manager、宿主编辑或 UI，不构成运行权限。此前历史层「publishing 不得回退」仅为此私有证据入口收窄，unknown 仍不可改写。
 - **Edit Lock 权限状态内核（开发中，未挂载）**：新增内部纯内存状态模块，分离归属与执行授权，建模会话中断闩锁和逐文件恢复确认。不接入编辑工具、设置或 UI，用户现有行为不变；持久化、实际提交和运行时接入另行验收。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
