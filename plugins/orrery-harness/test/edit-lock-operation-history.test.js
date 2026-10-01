@@ -39,6 +39,88 @@ async function record(store, state) {
   return store.record({ expectedRevision: store.snapshot().revision, nextState: state })
 }
 
+test('revision advance closes a live attempt without invoking or clearing its fence', async t => {
+  const directory = await fixture(t)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
+  const state = image(); state.operations.push(prepared())
+  await record(store, state)
+  const target = join(directory, 'stale-write')
+  const attempt = await store.beginPublication({ expectedRevision: store.snapshot().revision, nextState: publishing(state) },
+    { sessionId: 'alice', operationId: 'op-1' }, () => writeFile(target, 'bad'))
+  await record(store, store.snapshot().state)
+  await assert.rejects(attempt.finishWithoutDispatch('cancelled-before-dispatch'), /stale/)
+  assert.throws(() => attempt.invoke(), /closed/)
+  assert.equal(store.snapshot().state.operations[0].phase, 'publishing')
+  await assert.rejects(lstat(target), { code: 'ENOENT' })
+  await store.close()
+})
+
+test('settlement persistence failure poisons the handle and permanently closes invocation', async t => {
+  const directory = await fixture(t)
+  let fail = false
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' }, {
+    checkpoint(point) { if (fail && point === 'before:temp-open') throw new Error('settlement disk failure') },
+  })
+  const state = image(); state.operations.push(prepared())
+  await record(store, state)
+  const target = join(directory, 'failed-settlement-write')
+  const attempt = await store.beginPublication({ expectedRevision: store.snapshot().revision, nextState: publishing(state) },
+    { sessionId: 'alice', operationId: 'op-1' }, () => writeFile(target, 'bad'))
+  fail = true
+  await assert.rejects(attempt.finishWithoutDispatch('cancelled-before-dispatch'), e => e.code === 'EDIT_LOCK_STORE_PERSISTENCE' && e.cause?.message === 'settlement disk failure')
+  assert.throws(() => store.snapshot(), /poisoned/)
+  assert.throws(() => attempt.invoke(), /closed/)
+  await assert.rejects(lstat(target), { code: 'ENOENT' })
+  await store.close()
+  const recovered = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  assert.equal(recovered.snapshot().state.operations[0].phase, 'publishing')
+  await recovered.close()
+})
+test('invocation burns cancellation proof even when original mutation throws synchronously', async t => {
+  const directory = await fixture(t)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
+  const state = image(); state.operations.push(prepared())
+  await record(store, state)
+  const failure = new Error('native failure')
+  const attempt = await store.beginPublication({ expectedRevision: store.snapshot().revision, nextState: publishing(state) },
+    { sessionId: 'alice', operationId: 'op-1' }, () => { throw failure })
+  assert.throws(() => attempt.invoke(), e => e === failure)
+  await assert.rejects(attempt.finishWithoutDispatch('cancelled-before-dispatch'), /closed/)
+  assert.throws(() => attempt.invoke(), /closed/)
+  assert.equal(store.snapshot().state.operations[0].phase, 'publishing')
+  assert.notEqual(store.snapshot().state.operations[0].fence, null)
+  await store.close()
+})
+test('recovery cannot manufacture a live publication attempt from prepared history', async t => {
+  const directory = await fixture(t)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
+  const state = image(); state.operations.push(prepared())
+  await record(store, state); await store.close()
+  const recovered = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  await assert.rejects(recovered.beginPublication({ expectedRevision: recovered.snapshot().revision, nextState: publishing(state) },
+    { sessionId: 'alice', operationId: 'op-1' }, () => writeFile(join(directory, 'no-replay'), 'bad')), /live prepared/)
+  assert.equal(recovered.snapshot().state.operations[0].phase, 'prepared')
+  await recovered.close()
+})
+test('live publication attempt can close before invocation without allowing a late write', async t => {
+  const directory = await fixture(t)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
+  const state = image(); state.operations.push(prepared())
+  await record(store, state)
+  const target = join(directory, 'never-created.txt')
+  const attempt = await store.beginPublication({ expectedRevision: store.snapshot().revision, nextState: publishing(state) },
+    { sessionId: 'alice', operationId: 'op-1' }, () => writeFile(target, 'forbidden', { flag: 'wx' }))
+  await attempt.finishWithoutDispatch('cancelled-before-dispatch')
+  assert.equal(store.snapshot().state.operations[0].phase, 'not-published')
+  assert.equal(store.snapshot().state.operations[0].fence, null)
+  assert.throws(() => attempt.invoke(), /closed/)
+  await assert.rejects(attempt.finishWithoutDispatch('cancelled-before-dispatch'), /closed/)
+  await assert.rejects(lstat(target), { code: 'ENOENT' })
+  await store.close()
+  const recovered = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  assert.equal(recovered.snapshot().state.operations[0].outcome.reason, 'cancelled-before-dispatch')
+  await recovered.close()
+})
 test('opaque filesystem version strings survive guarded update history and recovery unchanged', async t => {
   for (const version of ['', '\0provider-token']) {
     const directory = await fixture(t)

@@ -11,6 +11,11 @@
 包内已落地四个内部模块，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-2 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。④ **持久 operation history** `src/edit-lock/operation-history.js`：在同一镜像里记录操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层，同样是历史而非授权，也没有发布入口（见下节）。设计中的 manager/gateway、跨进程仲裁、受控创建通道的串行发布、kernel restore 与 UI 尚未产品化。
 
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
+
+### 发布前取消内部入口（开发中）
+
+存储新增 `beginPublication(input, key, mutation)`：仅当前 handle 新登记的 prepared 操作可持久化 publishing 后取得一次性 attempt；恢复时已有的全部操作键拒绝重新领取。attempt 的 `invoke()` 与 `finishWithoutDispatch(reason)` 同步互斥：后者永久关闭调用机会，以 handle 私有 WeakMap 证据执行仅本次 publishing → not-published 转换并移除未使用围栏，结果仍需落盘后确认。证据绑定完整 operation（含 origin/binding/fence）与持久 revision，不序列化、不对外返回；普通 `record` 仍禁止该转换。调用一旦发生，即使同步抛错也不再提供未发布证明。revision 变化、close 或 poison 后拒绝操作；结算 IO 失败毒化 handle，保留恢复围栏。该接口不验证运行权限、不接入真实 `ctx.fs`，调用方仍必须独占原始 mutation、序列化生命周期并证明单 manager；它不是可直接交给工具调用者的权限 API。
+
 ## 用户可见行为
 
 **当前：零变化。** 本特性未挂载，因此：
@@ -62,7 +67,7 @@
 - **键与查询**：域内键是 `(sessionId, operationId)`；`lookupOperation` 优先查历史、**不检查当前 authority**、返回 detached 数据，同一键换 binding 即 `ID_REUSE`（绑定按结构比较，与键序无关）。origin（executionEpoch/managerIncarnation）是不可变历史、**不是重试键**；调用方认证与授权仍属未来的 manager。
 - **冻结的 binding**：tool（`write`/`hash_edit`/`edit`）、原始 filePath、绝对 cwd、request/args/payload 三个 SHA-256 摘要，以及目标与冻结策略（create → `createIfAbsent`；update → `replaceIfVersion` + version）。**存入的字符串不等于认证**：摘要必须由未来的可信 publisher 按规范请求、原始参数与实际 payload 字节自行计算。
 - **通道划分**：create 仅允许受控 `write`，`hash_edit`/`edit` 只更新既有资源。prepared create **不含 resourceId**、不发放任何所有权，同一目标的多个 prepared 意图可以共存。
-- **持久阶段与合法转换**（raw `store.record` 同样强制，不只是恢复时）：prepared → publishing → created/updated/unknown；prepared → not-published **仅**表示 dispatch 前的取消或拒绝；不能跳过 publishing；publishing/unknown 一律不得改写为 not-published；历史条目不可删除、不可重绑、origin 不可重写。
+- **持久阶段与合法转换**（raw `store.record` 同样强制，不只是恢复时）：prepared → publishing → created/updated/unknown；prepared → not-published **仅**表示 dispatch 前的取消或拒绝；不能跳过 publishing；普通 raw record 的 publishing/unknown 不得改写为 not-published，唯一例外为上述 live attempt 的私有未调用证明（unknown 无例外）；历史条目不可删除、不可重绑、origin 不可重写。
 - **成功归属是 transition-local**：同一次 before/after 里，成功 outcome 必须有匹配 owner/generation 的锁，且 created 不能收编既有锁（要求该资源此前无锁）。完成历史在后来 release 之后保留，不因当前无锁失效；但 owner 转手或 epoch/incarnation 前进时保留的锁必须记为 interrupted/abnormal，不得是 active。
 - **未结算 update 保留原归属**：publishing/unknown 的 update 必须保留原 owner/generation，不能经 release/transfer/re-generation 绕过；晚到成功保留 interrupted/abnormal 分类、不重臂被取消的 epoch；取消与 unknown settlement 本身也不能重臂。
 - **围栏与 closeout 都是历史断言**：update 用 resource fence，create 用观察到的祖先子树（`observed-ancestor`）、保守祖先（`conservative-ancestor`）或 containment-unproved 的 domain 断言；closeout 是 append-only 的 `{kind, assertionId}`（`abandoned-unknown` / `not-published-evidence`），只允许出现在 unknown 阶段。本层只验证结构与词法包含，**不认证**文件系统/别名证明，也不实现 unrelated-work admission；**没有 TTL**、不按名字猜等价、不自动升级为全域围栏；围栏一旦持久化即不可变，closeout **不清围栏**、不改原 unknown outcome、不允许重放，也没有 `publisherDead`/`humanApproved` 伪认证或运行时 clearFence 接口。

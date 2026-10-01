@@ -115,7 +115,10 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
   /** @type {unknown} */
   let poison
   function healthy() { if (poison) throw new Error('store poisoned; recover under exclusive lifecycle', { cause: poison }) }
-  return {
+  /** Process-local evidence is issued only after permanently closing a live attempt. */
+  const undispatched = new WeakMap()
+  const recoveredKeys = new Set(current.state.operations.map(o => canonical([o.sessionId, o.operationId])))
+  const api = {
     snapshot() { healthy(); return structuredClone(current) },
     /** @param {{ expectedRevision: number, nextState: AuthorityImage }} input */
     async record(input) {
@@ -127,10 +130,22 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       validateImage(nextState)
       const state = structuredClone(nextState)
       validateImage(state)
+      const proof = undispatched.get(input)
+      undispatched.delete(input)
       const pending = tail.then(async () => {
         healthy()
         if (expectedRevision !== current.revision) throw new Error('revision conflict')
-        validateTransition(current.state, state)
+        let previous = current.state
+        if (proof) {
+          const index = previous.operations.findIndex(o => o.sessionId === proof.sessionId && o.operationId === proof.operationId)
+          valid(index >= 0 && canonical(previous.operations[index]) === proof.operation, 'undispatched binding')
+          previous = structuredClone(previous)
+          // Validate the ordinary prepared -> not-published transition, only for
+          // the privately proven never-invoked operation. All other invariants remain.
+          previous.operations[index].phase = 'prepared'
+          previous.operations[index].fence = null
+        }
+        validateTransition(previous, state)
         valid(integer(current.revision + 1), 'revision overflow')
         const next = { revision: current.revision + 1, state }
         try { await persist(next) } catch (error) { poison = error; throw error }
@@ -140,8 +155,48 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       tail = pending.then(() => {}, () => {})
       return pending
     },
+    /** Internal manager seam, not a tool API or an authorization check.
+     * The caller exclusively owns the original mutation closure and lifecycle.
+     * @template T
+     * @param {{ expectedRevision: number, nextState: AuthorityImage }} input
+     * @param {{sessionId: string, operationId: string}} key
+     * @param {() => T} mutation */
+    async beginPublication(input, key, mutation) {
+      healthy()
+      valid(typeof mutation === 'function', 'original mutation')
+      const sessionId = key.sessionId, operationId = key.operationId
+      const old = current.state.operations.find(o => o.sessionId === sessionId && o.operationId === operationId)
+      valid(old?.phase === 'prepared' && !recoveredKeys.has(canonical([sessionId, operationId])), 'live prepared attempt required')
+      const next = input.nextState.operations.find(o => o.sessionId === sessionId && o.operationId === operationId)
+      valid(next?.phase === 'publishing', 'publishing intent required')
+      const saved = await api.record(input)
+      const operation = saved.state.operations.find(o => o.sessionId === sessionId && o.operationId === operationId)
+      let available = true
+      function consume() {
+        if (!available) throw new Error('publication attempt closed')
+        available = false
+        healthy()
+        if (closed || current.revision !== saved.revision) throw new Error('publication attempt stale or store closed')
+      }
+      return Object.freeze({
+        invoke() { consume(); return mutation() },
+        /** @param {'cancelled-before-dispatch'|'rejected-before-dispatch'} reason */
+        async finishWithoutDispatch(reason) {
+          consume()
+          const state = structuredClone(saved.state)
+          const op = state.operations.find(o => o.sessionId === sessionId && o.operationId === operationId)
+          if (!op) throw new Error('missing publication')
+          op.phase = 'not-published'; op.fence = null
+          op.outcome = { kind: 'not-published', reason }
+          const settlement = { expectedRevision: saved.revision, nextState: state }
+          undispatched.set(settlement, { sessionId, operationId, operation: canonical(operation) })
+          return api.record(settlement)
+        },
+      })
+    },
     async close() { closed = true; await tail },
   }
+  return Object.freeze(api)
 }
 
 /** Deterministic JSON: UTF-16 key order, JSON scalar spelling, no whitespace.
