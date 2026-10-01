@@ -9,6 +9,7 @@
 
 ### Added
 
+- **Edit Lock 串行发布与可信调用适配（开发中，未挂载）**：内部 manager 接通持久 prepare/commit、一次发布和取消后的归属保留；新增原始 FS 五参数 publisher、opaque call adapter 与生命周期包装。真实 store 创建/取消/幂等回归通过；尚未通过真实宿主、跨进程与 GUI 门槛，不启用正式编辑接管。
 - **Edit Lock 请求绑定前置（开发中，未挂载）**：新增严格 canonical JSON 与实际 UTF-8 payload 摘要，绑定原始参数、路径、策略及目标，拒绝有损数据和 getter；`hash_edit` 不进入创建通道。仅计算历史绑定，不授予发布权限。专项 4/4、全量 1089/1089 通过。
 - **Edit Lock 目标绑定校验（开发中，未挂载）**：摘要构建复用持久历史的目标 schema，拒绝越界 suffix、错误 guard 和无效 generation；opaque version 不改写。专项 5/5、全量 1090/1090 通过。
 - **Edit Lock manager 启动恢复（开发中，未挂载）**：保守历史转换与新 incarnation 同镜像持久后才返回 manager；未决发布不重放、保留原围栏，暂拒绝整个工作域的变更。真实重开/同步屏障及 IO 故障覆盖，专项 14/14、全量 1085/1085。独占与旧 publisher 静止仍由可信调用方保证，尚无产品恢复入口。

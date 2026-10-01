@@ -1,4 +1,7 @@
 import { createEditLockState } from './state.js'
+import { bindRequest } from './request-binding.js'
+import { lookupOperation } from './operation-history.js'
+import { canonicalRequestData } from './request-data.js'
 
 /**
  * Unmounted trusted manager core. Caller exclusively owns the store lifecycle;
@@ -43,18 +46,33 @@ function managerCore(store, kernel) {
   let tail = Promise.resolve()
   /** @type {unknown} */
   let poison
+  let closed = false
   // Denial only: never a second ownership ledger or a grant source.
   const cancelled = new Map()
   function healthy() {
+    if (closed) throw new Error('manager closed')
     if (poison) throw new Error('manager poisoned', { cause: poison })
   }
-  /** @param {(draft: ReturnType<typeof authority.begin>) => any} transition */
-  function transact(transition) {
+  /** @typedef {{validate: () => void, publish: () => Promise<{version: string}>, identify: () => string}} Publisher
+   * @type {WeakMap<object, {execution: import('./state.js').Execution, request: any, hooks: Publisher}>} */
+  const submissions = new WeakMap()
+  /** @param {import('./state.js').Execution} execution */
+  function checkExecution(execution) {
+    healthy()
+    const session = operations.status().sessions.find(s => s.sessionId === execution.sessionId)
+    if (!session || execution.managerIncarnation !== managerIncarnation ||
+        execution.executionEpoch !== session.executionEpoch || session.interrupted || cancelled.has(execution.sessionId)) {
+      throw new Error('execution is not active')
+    }
+  }
+  /** @param {(draft: ReturnType<typeof authority.begin>) => any} transition
+   * @param {boolean} [revocation] Only subtractive cancellation may cross an unresolved fence. */
+  function transact(transition, revocation = false) {
     const pending = tail.then(async () => {
       healthy()
       // Until canonical overlap admission is wired, unresolved publication
       // conservatively closes the entire recovered manager to mutations.
-      if (confirmed.state.operations.some(operation => ['publishing', 'unknown'].includes(operation.phase))) {
+      if (!revocation && confirmed.state.operations.some(operation => ['publishing', 'unknown'].includes(operation.phase))) {
         throw new Error('unresolved publication fence')
       }
       const draft = authority.begin()
@@ -78,6 +96,154 @@ function managerCore(store, kernel) {
     return pending
   }
   return Object.freeze({
+    /** Historical target lookup for a trusted authenticated session; never acquires.
+     * @param {string} sessionId @param {string} operationId */
+    history(sessionId, operationId) {
+      healthy()
+      if (!operations.status().sessions.some(s => s.sessionId === sessionId)) throw new Error('unknown session')
+      const operation = confirmed.state.operations.find(o => o.sessionId === sessionId && o.operationId === operationId)
+      return operation ? structuredClone(operation) : null
+    },
+    /** Trusted adapter ingress: binding and observed target are immutable data.
+     * validate must synchronously recheck policy/topology/signal at queue position.
+     * Existing history is returned before current authority checks, never replayed.
+     * @param {import('./state.js').Execution} execution
+     * @param {Parameters<typeof bindRequest>[0] & {operationId: string}} request
+     * @param {Publisher} publisher */
+    prepare(execution, request, publisher) {
+      const hooks = Object.freeze({ validate: publisher.validate, publish: publisher.publish, identify: publisher.identify })
+      const captured = { ...execution }
+      const data = JSON.parse(canonicalRequestData(request))
+      const binding = bindRequest(data)
+      if (typeof data.operationId !== 'string' || !data.operationId.trim()) throw new Error('invalid operation id')
+      const pending = tail.then(async () => {
+        healthy()
+        if (!operations.status().sessions.some(s => s.sessionId === captured.sessionId)) throw new Error('unknown session')
+        const previous = lookupOperation(confirmed.state, { sessionId: captured.sessionId, operationId: data.operationId, binding })
+        if (previous) return { kind: 'history', operation: previous }
+        checkExecution(captured)
+        if (confirmed.state.operations.some(o => ['publishing', 'unknown'].includes(o.phase))) throw new Error('unresolved publication fence')
+        if (binding.target.kind === 'update') operations.checkWrite({ ...captured,
+          resourceId: binding.target.resourceId, generation: binding.target.generation })
+        hooks.validate()
+        /** @type {import('./operation-history.js').Operation} */
+        const operation = { sessionId: captured.sessionId, operationId: data.operationId,
+          origin: { executionEpoch: captured.executionEpoch, managerIncarnation: captured.managerIncarnation },
+          binding, phase: 'prepared', fence: null, outcome: null, closeouts: [] }
+        try {
+          confirmed = await store.record({ expectedRevision: confirmed.revision,
+            nextState: { ...confirmed.state, operations: [...confirmed.state.operations, operation] } })
+        } catch (error) { poison = error; throw error }
+        // A cancellation during durability must not deliver a ready submission.
+        if (cancelled.has(captured.sessionId)) {
+          const rejected = { ...operation, phase: /** @type {const} */ ('not-published'),
+            outcome: { kind: /** @type {const} */ ('not-published'), reason: /** @type {const} */ ('cancelled-before-dispatch') } }
+          try {
+            confirmed = await store.record({ expectedRevision: confirmed.revision,
+              nextState: { ...confirmed.state, operations: confirmed.state.operations.map(o => o === confirmed.state.operations.at(-1) ? rejected : o) } })
+          } catch (error) { poison = error; throw error }
+          throw new Error('session cancelled during preparation')
+        }
+        const submission = Object.freeze({})
+        submissions.set(submission, { execution: captured, request: data, hooks })
+        return { kind: 'ready', submission }
+      })
+      tail = pending.then(() => {}, () => {})
+      return pending
+    },
+    /** Trusted publisher hooks must close over the original fs and frozen call.
+     * No caller may dispatch outside this serialized task.
+     * @param {object} submission */
+    commit(submission) {
+      const job = submissions.get(submission)
+      if (!job) throw new Error('unknown submission')
+      const { execution, request, hooks } = job
+      const binding = bindRequest(request)
+      const key = { sessionId: execution.sessionId, operationId: request.operationId, binding }
+      const pending = tail.then(async () => {
+        healthy()
+        const original = lookupOperation(confirmed.state, key)
+        if (!original) throw new Error('missing prepared history')
+        if (original.phase !== 'prepared') return original
+        /** @param {import('./operation-history.js').Operation} operation
+         * @param {ReturnType<typeof authority.begin>} [draft] */
+        const save = async (operation, draft) => {
+          try {
+            const saved = await store.record({ expectedRevision: confirmed.revision, nextState: {
+              ...confirmed.state, ...(draft ? authority.checkpoint(draft) : {}),
+              operations: confirmed.state.operations.map(o => o.sessionId === key.sessionId && o.operationId === key.operationId ? operation : o),
+            } })
+            if (draft) authority.install(draft)
+            confirmed = saved
+          } catch (error) { poison = error; throw error }
+        }
+        const validate = () => {
+          checkExecution(execution)
+          if (binding.target.kind === 'update') operations.checkWrite({ ...execution,
+            resourceId: binding.target.resourceId, generation: binding.target.generation })
+          hooks.validate()
+        }
+        try {
+          if (confirmed.state.operations.some(o => ['publishing', 'unknown'].includes(o.phase))) throw new Error('unresolved publication fence')
+          validate()
+        } catch (error) {
+          await save({ ...original, phase: 'not-published', outcome: { kind: 'not-published',
+            reason: cancelled.has(execution.sessionId) ? 'cancelled-before-dispatch' : 'rejected-before-dispatch' } })
+          throw error
+        }
+        /** @type {import('./operation-history.js').Operation} */
+        const publishing = { ...original, phase: 'publishing', fence: binding.target.kind === 'update'
+          ? { kind: 'resource', resourceId: binding.target.resourceId }
+          : { kind: 'subtree', ancestor: binding.target.ancestor, basis: 'observed-ancestor' } }
+        let attempt
+        try {
+          attempt = await store.beginPublication({ expectedRevision: confirmed.revision,
+            nextState: { ...confirmed.state, operations: confirmed.state.operations.map(o =>
+              o.sessionId === key.sessionId && o.operationId === key.operationId ? publishing : o) } }, key, hooks.publish)
+          confirmed = store.snapshot()
+        } catch (error) { poison = error; throw error }
+        try { validate() } catch (error) {
+          try {
+            confirmed = await attempt.finishWithoutDispatch(cancelled.has(execution.sessionId)
+              ? 'cancelled-before-dispatch' : 'rejected-before-dispatch')
+          } catch (failure) { poison = failure; throw failure }
+          throw error
+        }
+        let draft
+        try {
+          const result = await attempt.invoke()
+          const resourceId = hooks.identify()
+          draft = authority.begin()
+          let ownership
+          if (binding.target.kind === 'create') ownership = draft.authority.settleCreated(execution, resourceId)
+          else {
+            if (resourceId !== binding.target.resourceId) throw new Error('published identity changed')
+            ownership = { ...execution, resourceId, generation: binding.target.generation }
+            draft.operations.checkWrite(ownership)
+          }
+          if (cancelled.has(execution.sessionId)) draft.authority.cancel(execution)
+          const kind = binding.target.kind === 'create' ? 'created' : 'updated'
+          const completed = { ...publishing, phase: /** @type {'created'|'updated'} */ (kind),
+            outcome: { kind: /** @type {'created'|'updated'} */ (kind), resourceId, generation: ownership.generation, version: result.version } }
+          await save(completed, draft)
+          draft = undefined
+          // Cancellation can arrive while the successful active image is syncing.
+          const session = operations.status().sessions.find(s => s.sessionId === execution.sessionId)
+          if (cancelled.has(execution.sessionId) && session && !session.interrupted) {
+            const corrective = authority.begin()
+            corrective.authority.cancel(execution)
+            await save(completed, corrective)
+          }
+          return completed
+        } catch (error) {
+          if (draft) { try { authority.discard(draft) } catch {} }
+          if (!poison) await save({ ...publishing, phase: 'unknown', outcome: { kind: 'unknown' } })
+          throw error
+        }
+      })
+      tail = pending.then(() => {}, () => {})
+      return pending
+    },
     /** Only authenticated human intent may reach this trusted ingress.
      * @param {import('./state.js').Execution} execution @param {string} requestId */
     issueExecutionReceipt(execution, requestId) {
@@ -141,8 +307,9 @@ function managerCore(store, kernel) {
       const pending = transact(draft => {
         const session = operations.status().sessions.find(s => s.sessionId === sessionId)
         if (!session) throw new Error('unknown session')
+        if (session.interrupted) return { sessionId, executionEpoch: session.executionEpoch, managerIncarnation }
         return draft.authority.cancel({ sessionId, executionEpoch: session.executionEpoch, managerIncarnation })
-      })
+      }, true)
       cancelled.set(sessionId, pending)
       void pending.then(() => cancelled.delete(sessionId), () => {})
       return pending
@@ -165,6 +332,42 @@ function managerCore(store, kernel) {
         return token
       })
     },
+    /** Atomic acquisition of existing canonical resources for a trusted batch editor.
+     * Pre-existing ownership is retained and explicitly excluded from cleanup.
+     * @param {import('./state.js').Execution} execution @param {string[]} resourceIds */
+    acquireMany(execution, resourceIds) {
+      const captured = { ...execution }
+      const ids = [...new Set(resourceIds)].sort()
+      return transact(draft => {
+        if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        const before = operations.status().locks
+        if (before.some(lock => ids.includes(lock.resourceId) && lock.status === 'pending-confirmation')) {
+          throw new Error('batch requires explicit per-file confirmation')
+        }
+        const tokens = ids.map(resourceId => draft.operations.acquire(captured, resourceId))
+        for (const token of tokens) draft.operations.checkWrite(token)
+        return { tokens, temporary: tokens.filter(token => !before.some(lock => lock.resourceId === token.resourceId)) }
+      }).then(async result => {
+        const cancellation = cancelled.get(captured.sessionId)
+        if (cancellation) { await cancellation; throw new Error('session cancelled during batch acquisition') }
+        healthy()
+        for (const token of result.tokens) operations.checkWrite(token)
+        return result
+      })
+    },
+    /** Cleanup authenticates the captured owner/generation through the kernel.
+     * @param {import('./state.js').Ownership} token */
+    release(token) {
+      const captured = { ...token }
+      return transact(draft => draft.operations.release(captured))
+    },
+    /** Synchronous denial overlay must be checked before publication.
+     * @param {import('./state.js').Ownership} token */
+    checkWrite(token) {
+      healthy()
+      if (cancelled.has(token.sessionId)) throw new Error('session cancelled')
+      return operations.checkWrite(token)
+    },
     /** @param {import('./state.js').Execution} execution */
     cancel(execution) {
       healthy()
@@ -180,13 +383,18 @@ function managerCore(store, kernel) {
         // earlier queued resume that installs before this revocation is durable.
         const current = operations.status().sessions.find(s => s.sessionId === execution.sessionId)
         if (!current) throw new Error('unknown session')
+        if (current.interrupted) return { ...execution, executionEpoch: current.executionEpoch }
         return draft.authority.cancel({ ...execution, executionEpoch: current.executionEpoch })
-      })
+      }, true)
       cancelled.set(execution.sessionId, pending)
       // Keep denial on failure; poisoned state must never expose rollback authority.
       void pending.then(() => cancelled.delete(execution.sessionId), () => {})
       return pending
     },
+    /** Host shutdown waits for every queued authority and publication mutation. */
+    async drain() { await tail },
+    /** Seal authority after draining; never a permission to enable unlocked edits. */
+    async close() { closed = true; await tail },
     status() {
       healthy()
       const snapshot = operations.status()

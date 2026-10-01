@@ -1,6 +1,6 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **开发中，未挂载**：共享工作目录下的编辑权仲裁；当前已落地四个包内模块（纯内存状态内核 + 只读规范资源身份 + 历史快照存储 + 持久 operation history 历史层），均未挂载，用户可见面零变化。
+> **开发中，未挂载**：已实现内部状态、历史持久化和串行发布链路，并新增可信调用 capsule 与宿主适配层；尚未接入正式工具、跨进程宿主握手和 GUI，用户可见面零变化。
 
 ## 概述
 
@@ -8,6 +8,13 @@
 
 范围与上线硬门槛由本地 OpenSpec 变更材料定义（`openspec/changes/edit-lock-arbitration/`，过程材料不入库）：提案、设计决策 D1–D6、`edit-lock` 能力规格与任务清单均已就绪，**任务清单第 1 组起全部未勾选**。受影响的既有能力为 [hashline-edit.md](hashline-edit.md)、[lsp-integration.md](lsp-integration.md) 与 [todo-continuation.md](todo-continuation.md)；委派与续推调度、共享 runtime 消息、设置与客户端 UI 同在影响面内。
 
+### 当前发布链路（未启用）
+
+manager 的 `prepare` 持久绑定原请求，返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。
+
+publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标、完整内容、原版本策略、signal、effectivePolicy）；adapter 用进程内不可伪造 call 绑定可信 execution/cwd/policy/callId，单次消费，不向工具参数暴露凭据。历史 prepared/unknown/not-published 不作为工具成功返回。生命周期包装提供进程内域去重、关闭入口与排队任务排空，但**仍要求调用方提供真实跨进程排他和旧 publisher 静止证明**，不能以进程内 Set 替代跨进程仲裁。
+
+当前证据包含真实 store 创建/取消/重试与批量冲突回归、全链 strict 检查、1095/1095 产品回归，以及隔离 Electron fixture 内产品 runtime/adapter → 安装版 native FS 的实际创建成功（文件内容和持久归属一致）。它不等于双 Harness 或 GUI 验收。批量获取锁不隐式确认 pending-confirmation；未决围栏仅放行减权取消，不放行增权或发布。正式启用仍受原硬门槛约束，尚未实现精确围栏放行与人工结清、工具/LSP/UI 全面接入。下列内容保留此前分阶段实现记录，若与本节冲突，以本节为当前状态。
 包内已落地四个内部模块，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-2 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。④ **持久 operation history** `src/edit-lock/operation-history.js`：在同一镜像里记录操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层，同样是历史而非授权，也没有发布入口（见下节）。设计中的 manager/gateway、跨进程仲裁、受控创建通道的串行发布、kernel restore 与 UI 尚未产品化。
 
 新增第五个未挂载模块 **manager 初始事务层** `src/edit-lock/manager.js`：仅接受 revision 0、无 incarnation 的新 store，串行提供可信 `openSession/acquire/cancel/cancelSession/status`；调用方仍须独占 store 生命周期，且 acquire 输入必须已经是可信规范资源身份。会话与归属增权执行 draft → 完整镜像持久确认 → install → 返回；持久或安装失败毒化整个 manager，排队及后续操作拒绝。取消同步叠加仅减权的 deny overlay，再串行持久撤权；持久等待期间取消的 acquire 不返回令牌，保留 interrupted 归属。凭据入队前复制。可信生命周期 `cancelSession(sessionId)` 独立于 execution，关闭首次 openSession 等待持久确认时的授权返回空窗；取消先于注册时返回 unknown session、保留拒绝闩锁，后续注册不写入 active 会话，其他会话不受影响。这不是持久撤权成功 ack，也没有自动清闩锁入口。status 是有效状态观察，不是磁盘 ack 或可转移写入许可。当前不提供文件发布、resume、恢复、singleton、IPC 或宿主接入，不能用本切片启用功能。
