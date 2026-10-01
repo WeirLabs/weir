@@ -161,6 +161,15 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       entryFor(agent)
       await runtime.control.confirm(host.executionFor(agent), resourceId)
     },
+    /** Trusted human unlock by exact generation; never exposed as a tool.
+     * Session interruption and pending confirmations are untouched.
+     * @param {string} resourceId @param {number} generation */
+    unlock(resourceId, generation) {
+      if (closed) return Promise.reject(new Error('edit lifecycle closed'))
+      return runtime.control.adminUnlock(resourceId, generation)
+    },
+    /** Domain-wide observation for trusted UI/commands; grants nothing. */
+    locks() { return runtime.control.status().locks },
     /** Effective observation for trusted UI/commands; not a write permission. */
     status: statusOf,
     close() {

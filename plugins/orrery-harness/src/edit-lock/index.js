@@ -70,7 +70,27 @@ async function runCommand(lifecycle, agent, raw, commandId) {
     await lifecycle.confirm(agent, observation.resourceId)
     return `Confirmed ${observation.resourceId}.\n${describe(lifecycle.status(agent))}`
   }
-  throw new Error('Usage: /edit-lock [status|stop|resume|confirm <path>]')
+  if (verb === 'locks') {
+    const locks = lifecycle.locks()
+    return locks.length ? locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.owner} [${lock.status}${lock.reason ? `: ${lock.reason}` : ''}] generation ${lock.generation}`).join('\n') : 'No Edit Lock ownership is held.'
+  }
+  if (verb === 'unlock') {
+    const generation = Number(rest.at(-1))
+    const path = rest.slice(0, -1).join(' ')
+    if (!path || !Number.isSafeInteger(generation)) throw new Error('Usage: /edit-lock unlock <path> <generation> (see /edit-lock locks)')
+    // An exact listed resource id also works for files that no longer exist.
+    let resourceId = lifecycle.locks().find((/** @type {any} */ lock) => lock.resourceId === path)?.resourceId
+    if (!resourceId) {
+      const cwd = agent?.session?.header?.cwd
+      if (typeof cwd !== 'string') throw new Error('session cwd unavailable')
+      const observation = createResourceIdentity().resolve(path, { cwd })
+      if (observation.kind !== 'file') throw new Error('unlock requires an existing regular file or an exact locked resource id')
+      resourceId = observation.resourceId
+    }
+    const result = await lifecycle.unlock(resourceId, generation)
+    return `Unlocked ${result.resourceId} (generation ${result.generation}, owner ${result.owner}). Content was not validated.`
+  }
+  throw new Error('Usage: /edit-lock [status|locks|stop|resume|confirm <path>|unlock <path> <generation>]')
 }
 
 /** Ordinary owner tools. Ownership derives from exec.agent, never arguments.
@@ -272,8 +292,8 @@ const apply = (ctx, config = {}) => {
   const commands = ctx.get?.('commands')
   const offCommand = commands?.register({
     name: 'edit-lock',
-    description: 'Edit Lock for this session: status, stop (durable revoke), resume (explicit Continue), confirm <path>.',
-    input: { hint: 'status | stop | resume | confirm <path>' },
+    description: 'Edit Lock: status, locks, stop (durable revoke), resume (explicit Continue), confirm <path>, unlock <path> <generation>.',
+    input: { hint: 'status | locks | stop | resume | confirm <path> | unlock <path> <generation>' },
     handler: async (/** @type {any} */ invocation) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }

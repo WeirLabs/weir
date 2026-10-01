@@ -413,6 +413,23 @@ function managerCore(store, kernel) {
         return token
       })
     },
+    /** Controlled human unlock. Runs at its FIFO position, so every earlier
+     * commit has settled; refuses while any publication is unresolved (the
+     * transaction fence) and unless the expected generation is current. A
+     * prepared old-owner write then fails its generation check. There is no
+     * unconditional variant. @param {string} resourceId @param {number} generation */
+    adminUnlock(resourceId, generation) {
+      return transact(draft => {
+        const status = operations.status()
+        const lock = status.locks.find(item => item.resourceId === resourceId)
+        if (!lock) throw new Error('resource is not locked')
+        if (lock.generation !== generation) throw new Error(`expected generation ${generation}, current is ${lock.generation}`)
+        const session = status.sessions.find(item => item.sessionId === lock.owner)
+        if (!session) throw new Error('owner session unknown')
+        draft.operations.release({ managerIncarnation, sessionId: lock.owner, executionEpoch: session.executionEpoch, resourceId, generation })
+        return { resourceId, generation, owner: lock.owner }
+      })
+    },
     /** Synchronous denial overlay must be checked before publication.
      * @param {import('./state.js').Ownership} token */
     checkWrite(token) {

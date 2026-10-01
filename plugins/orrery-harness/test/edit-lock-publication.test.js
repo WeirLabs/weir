@@ -55,3 +55,38 @@ test('batch ownership rejects a conflict atomically and excludes pre-existing lo
     assert.equal(batch.tokens.length, 2)
   } finally { await store.close() }
 })
+
+test('controlled unlock waits for the in-flight commit, checks generation, and fences the old owner', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-unlock-'))
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'manager' })
+    const alice = await manager.openSession('alice')
+    await manager.acquire(alice, '/workspace/file')
+    const update = (operationId, content) => ({ operationId, tool: 'hash_edit', filePath: 'file', cwd: '/workspace', args: { content },
+      content, effectivePolicy: { mode: 'workspace-write' },
+      target: { kind: 'update', resourceId: '/workspace/file', generation: 1, policy: { kind: 'replaceIfVersion', version: 'v1' } } })
+    const started = Promise.withResolvers(), finish = Promise.withResolvers()
+    let lateInvoked = false
+    const first = await manager.prepare(alice, update('one', 'a'), { validate() {},
+      publish() { started.resolve(); return finish.promise }, identify() { return '/workspace/file' } })
+    const late = await manager.prepare(alice, update('two', 'b'), { validate() {},
+      publish() { lateInvoked = true; throw new Error('late old-owner publication must not run') }, identify() { return '/workspace/file' } })
+    const committing = manager.commit(first.submission)
+    await started.promise
+    let unlocked = false
+    const wrong = assert.rejects(manager.adminUnlock('/workspace/file', 2), /expected generation 2/)
+    const unlocking = manager.adminUnlock('/workspace/file', 1).then(result => { unlocked = true; return result })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(unlocked, false)
+    finish.resolve({ version: 'v2' })
+    assert.equal((await committing).phase, 'updated')
+    await wrong
+    assert.equal((await unlocking).owner, 'alice')
+    assert.equal(manager.status().locks.length, 0)
+    await assert.rejects(manager.commit(late.submission))
+    assert.equal(lateInvoked, false)
+    assert.equal(manager.history('alice', 'two').phase, 'not-published')
+    assert.equal(manager.status().sessions[0].interrupted, false)
+  } finally { await store.close() }
+})
