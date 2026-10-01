@@ -9,6 +9,7 @@
 
 ### Added
 
+- **Edit Lock 内核暂存事务（开发中，未挂载）**：私有 begin/checkpoint/install/discard 复用同一授权规则，候选不改变 live 状态；一次性、revision 绑定安装拒绝跨内核与过期候选。暂存恢复消费 receipt 不可回滚，暂存签发仅安装后激活；不提供 JSON restore，尚未接入 manager 持久 ack 与取消封门。
 - **Edit Lock 创建成功归属结算（开发中，未挂载）**：内核私有 `settleCreated` 保留取消后迟到成功的 interrupted 归属，不重臂旧 epoch，也不收编既有锁；未知/非法来源拒绝，generation 墓碑延续。尚未接入实际创建、manager 事务或 UI。
 - **Edit Lock 内核历史导出（开发中，未挂载）**：私有 `checkpoint()` 保留 released-generation 与 issued-request 墓碑，返回 detached 数据且不序列化执行 receipt；为后续持久事务提供完整历史，不新增恢复或运行时授权入口。
 - **Edit Lock 发布前取消内部入口（开发中，未挂载）**：持久 publishing 意图新增仅存活 attempt 可用的未调用结算例外，以私有一次性证据保证实际调用与取消互斥；已调用、恢复历史、过期 revision 与普通 raw record 不得使用此例外。结算仍需持久确认，IO 失败毒化 handle。不接入 manager、宿主编辑或 UI，不构成运行权限。此前历史层「publishing 不得回退」仅为此私有证据入口收窄，unknown 仍不可改写。

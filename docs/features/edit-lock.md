@@ -12,7 +12,7 @@
 
 `FsVersion` 作为宿主提供的不透明字符串保存：更新 guard 与成功 outcome 均允许空串和含 NUL 的字符串，JSON 恢复后原样保留；不解析版本格式、不强制转换类型，非字符串仍拒绝。该兼容修复的真实快照回归通过；本轮专项 66/66、全量 1054/1054（无跳过）及常规静态检查通过，尚不代表真实 manager 发布验收。
 
-内核私有 authority 的 `checkpoint()` 额外导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史；不导出 receipt 对象，不提供恢复或重新放权入口。它只是后续暂存事务接入的基础，尚不构成持久化前后原子安装。
+内核私有 authority 的 `checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，补齐 status 不含的持久历史，不导出 receipt 对象。`begin()` 在分离的内核上复用同一 transition；`checkpoint(draft)` 供 manager 持久化候选；`install(draft)` 一次性安装本内核当前 revision 的候选，`discard(draft)` 关闭候选。任意 live mutation 尝试均保守地使旧 draft 过期（包括拒绝）；跨内核、JSON 伪造、重复安装与关闭后的 facet 调用拒绝。安装复制状态且关闭 draft，不提供 raw hydrate。暂存 resume 成功立即烧掉 live receipt，丢弃不复活，并使其他 draft 过期；暂存签发的 receipt 仅 install 后激活，丢弃不激活。receipt 不跨重启恢复。该内核不执行 IO，manager 的“持久 ack 后 install”、同步取消封门与持久失败 poison 衔接仍未接入，不能把 draft 当作可发布权限。
 
 私有 `settleCreated(origin, resourceId)` 仅供可信 manager 在确认原生创建成功与规范身份后结算；拒绝收编任何既有锁，沿用 generation 墓碑。相同当前 epoch 且会话未中断时为 active；取消或旧 epoch 的迟到成功只保留 user-interrupted 归属，即使会话已经 Continue 也不自动重臂该锁。未知会话、其他 incarnation、未来或非法 epoch 一律拒绝。它本身不验证磁盘成功、operation 去重或发布围栏，不得暴露为普通 acquire 或工具入口；这些检查仍属未落地的 manager。异常分类继续由现有 markAbnormal 完成。
 ### 发布前取消内部入口（开发中）

@@ -11,6 +11,8 @@
  * @typedef {{ resourceId: string, owner: string, generation: number, status: 'active' | 'user-interrupted' | 'pending-confirmation' | 'abnormal', reason?: string }} Lock
  */
 
+/** Private transfer seam; no raw hydration is exported. */
+const cores = new WeakMap()
 /** @param {string} managerIncarnation */
 export function createEditLockState(managerIncarnation) {
   requireId(managerIncarnation)
@@ -26,6 +28,14 @@ export function createEditLockState(managerIncarnation) {
   // Keep request tombstones for this in-memory manager lifetime, even after consumption.
   /** @type {Map<string, Set<string>>} */
   const issuedRequests = new Map()
+  let revision = 0
+  const drafts = new WeakMap()
+  /** @param {object} draft */
+  function draftFor(draft) {
+    const entry = drafts.get(draft)
+    if (!entry || entry.closed || entry.base !== revision) throw new Error('invalid or stale draft')
+    return entry
+  }
 
   /** @param {Execution} execution */
   function sessionFor(execution) {
@@ -101,6 +111,68 @@ export function createEditLockState(managerIncarnation) {
   }
 
   const authority = {
+    begin() {
+      const child = createEditLockState(managerIncarnation)
+      const core = cores.get(child)
+      for (const [key, value] of sessions) core.sessions.set(key, { ...value })
+      for (const [key, value] of locks) core.locks.set(key, { ...value })
+      for (const [key, value] of generations) core.generations.set(key, value)
+      for (const [key, value] of issuedRequests) core.issuedRequests.set(key, new Set(value))
+      const entry = { base: revision, closed: false, child, core, issued: new Map() }
+      /** @param {object} facet */
+      const guard = facet => Object.freeze(Object.fromEntries(Object.entries(facet).map(([key, method]) => [key,
+        (...args) => {
+          if (entry.closed || entry.base !== revision) throw new Error('invalid or stale draft')
+          if (['begin', 'install', 'discard'].includes(key)) {
+            throw new Error('operation unavailable in draft')
+          }
+          if (key === 'issueExecutionReceipt') {
+            const receipt = method(...args)
+            entry.issued.set(receipt, core.receipts.get(receipt))
+            core.receipts.delete(receipt)
+            return receipt
+          }
+          if (key === 'resume') {
+            const receipt = args[2]
+            const binding = receipts.get(receipt)
+            if (!binding) throw new Error('invalid receipt')
+            core.receipts.set(receipt, binding)
+            try {
+              const result = method(...args)
+              receipts.delete(receipt)
+              revision += 1
+              entry.base = revision
+              return result
+            } finally {
+              core.receipts.delete(receipt)
+            }
+          }
+          return method(...args)
+        },
+      ])))
+      const draft = Object.freeze({ operations: guard(child.operations), authority: guard(child.authority) })
+      drafts.set(draft, entry)
+      return draft
+    },
+    /** @param {object} draft */
+    install(draft) {
+      const entry = draftFor(draft)
+      entry.closed = true
+      sessions.clear(); locks.clear(); generations.clear(); issuedRequests.clear()
+      for (const [key, value] of entry.core.sessions) sessions.set(key, { ...value })
+      for (const [key, value] of entry.core.locks) locks.set(key, { ...value })
+      for (const [key, value] of entry.core.generations) generations.set(key, value)
+      for (const [key, value] of entry.core.issuedRequests) issuedRequests.set(key, new Set(value))
+      for (const [receipt, binding] of entry.issued) receipts.set(receipt, binding)
+      entry.issued.clear()
+      revision += 1
+    },
+    /** @param {object} draft */
+    discard(draft) {
+      const entry = draftFor(draft)
+      entry.closed = true
+      entry.issued.clear()
+    },
     /** Record only a trusted, already successful native creation, never an acquisition.
      * The manager must validate publishing history and canonical identity first.
      * @param {Execution} origin @param {string} resourceId @returns {Ownership} */
@@ -120,8 +192,10 @@ export function createEditLockState(managerIncarnation) {
       generations.set(resourceId, generation)
       return { managerIncarnation, sessionId: session.sessionId, executionEpoch: session.executionEpoch, resourceId, generation }
     },
-    /** Detached historical core, not a permission or a restore credential. */
-    checkpoint() {
+    /** Detached historical core, not a permission or a restore credential.
+     * @param {object} [draft] */
+    checkpoint(draft) {
+      if (draft) return draftFor(draft).child.authority.checkpoint()
       return {
         ...operations.status(),
         generations: [...generations].map(([resourceId, generation]) => ({ resourceId, generation })),
@@ -172,7 +246,19 @@ export function createEditLockState(managerIncarnation) {
       return receipt
     },
   }
-  return { operations, authority }
+  // Advance even on rejection: conservatively invalidate outstanding candidates.
+  /** @param {object} facet @param {string[]} names */
+  function track(facet, names) {
+    for (const name of names) {
+      const method = facet[name]
+      facet[name] = (...args) => { revision += 1; return method(...args) }
+    }
+  }
+  track(operations, ['acquire', 'release', 'resume'])
+  track(authority, ['openSession', 'cancel', 'markAbnormal', 'issueExecutionReceipt', 'settleCreated'])
+  const kernel = { operations: Object.freeze(operations), authority: Object.freeze(authority) }
+  cores.set(kernel, { sessions, locks, generations, issuedRequests, receipts })
+  return Object.freeze(kernel)
 }
 
 /** Validate opaque identifiers without interpreting or normalizing paths.
