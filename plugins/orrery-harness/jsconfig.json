@@ -33,6 +33,7 @@
     "src/todo-driver/state-machine.js",
     "src/context-guard/pressure.js",
     "src/context-guard/compaction-outcome.js",
+    "src/edit-lock/state.js",
     "src/hashline-edit/xxhash32.js",
     "src/hashline-edit/anchors.js",
     "src/hashline-edit/apply-ops.js",

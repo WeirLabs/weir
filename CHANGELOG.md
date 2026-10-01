@@ -10,6 +10,11 @@
 ### Added
 
 - **Edit Lock 权限状态内核（开发中，未挂载）**：新增内部纯内存状态模块，分离归属与执行授权，建模会话中断闩锁和逐文件恢复确认。不接入编辑工具、设置或 UI，用户现有行为不变；持久化、实际提交和运行时接入另行验收。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+- **Edit Lock 规范资源身份（开发中，未挂载）**：新增内部只读模块 `src/edit-lock/resource-identity.js`（`createResourceIdentity().resolve/revalidate`），同步观察真实文件系统的规范身份：既有普通单链接文件给出 native canonical `resourceId`，缺失目标只给出「规范祖先 + 逐字未解析后缀」且**不带任何 resource key**；观察按构造冻结、只对本 factory 私有，重校验只接受本实例发出的原对象，内容与兄弟文件变化不影响，文件替换、symlink 替换/改向、祖先替换与新增硬链接一律拒绝（`topology changed` / `not editable`）。不折叠词法 `..`、不做大小写/Unicode 归一；不做原子快照、无法证明不存在 inode reuse/ABA；不写文件、不发放所有权或发布权。选项 C 的缺失目标创建协议仍是设计（未实现）。不接入工具、设置或 UI，用户现有行为不变。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+
+### Fixed
+
+- **Edit Lock 资源身份模块的指数级遍历（开发中切片缺陷，未发布；独立复核发现后修复）**：`traceLink` 对相对 symlink target 拼接原始 parent spelling，递归重走已观察的父路径——`self -> .` 重复 4/8/12/16 次时 lstat 调用达 159/2559/40959/655359、readlink 达 15/255/4095/65535，即每多 4 个组件调用数约乘 16（`2^n` 量级）。现从已见证的**物理**父路径逐组件推进：先 lstat 记 inode，是 symlink 才递归记录 target/hop，之后才用 native realpath 推进游标；不预先归一整个 target、不省略嵌套 link、不新增缓存或深度上限。修复后同装置读数为 lstat 17/25/33/41、readlink 4/8/12/16。新增产品回归测试在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），断言每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并同时断言观察仍是同一个真实文件（无 wall-clock 断言、无 mock 文件系统）。修复只消除已观察父拼写的重放，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 
 ## [0.6.0] - 2026-10-01
 
