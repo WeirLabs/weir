@@ -9,14 +9,14 @@ const digest = value => createHash('sha256').update(Buffer.from(value, 'utf8')).
 /** Compute historical binding only; never grants publication authority.
  * Caller supplies trusted, fully resolved policy and observed target, not model
  * assertions. Policy authorization and topology checks remain manager duties.
- * @param {{tool: 'write'|'hash_edit', filePath: string, cwd: string, args: unknown, content: string,
+ * @param {{tool: 'write'|'hash_edit'|'lsp_rename', filePath: string, cwd: string, args: unknown, content: string,
  * effectivePolicy: unknown, target: import('./operation-history.js').Target}} input
  * @returns {import('./operation-history.js').Binding} */
 export function bindRequest(input) {
   // Validate before property reads/copying, so ordinary getters never execute.
   const data = JSON.parse(canonicalRequestData(input))
   if (typeof data.content !== 'string') throw new Error('invalid content')
-  if (!['write', 'hash_edit'].includes(data.tool)) throw new Error('invalid tool')
+  if (!['write', 'hash_edit', 'lsp_rename'].includes(data.tool)) throw new Error('invalid tool')
   if (typeof data.filePath !== 'string' || !data.filePath || data.filePath.includes('\0') ||
       typeof data.cwd !== 'string' || !isAbsolute(data.cwd) || data.cwd.includes('\0')) throw new Error('invalid request path')
   if (!data.target || !['create', 'update'].includes(data.target.kind)) throw new Error('invalid target')

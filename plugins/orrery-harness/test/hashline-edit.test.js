@@ -272,6 +272,24 @@ describe('hash_edit tool', () => {
     return { tool, files, exec, handlers, registered, writes, injected }
   }
 
+  it('uses the captured lock publisher and never falls back after its rejection', async () => {
+    const calls = []
+    const services = { orreryEditLock: { publish: async (exec, request) => {
+      calls.push({ exec, request })
+      throw new Error('lock conflict')
+    } } }
+    const { tool, exec, writes } = harness('alpha', { services })
+    delete services.orreryEditLock
+    let failure
+    try { await tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'beta' }] }, exec) }
+    catch (error) { failure = error }
+    expect(failure.message).toBe('lock conflict')
+    expect(writes.length).toBe(0)
+    expect(calls.length).toBe(1)
+    expect(calls[0].exec).toBe(exec)
+    expect(calls[0].request.content).toBe('beta')
+    expect(calls[0].request.expected.version).toBe('v1')
+  })
   it('applies a valid edit and returns a diff', async () => {
     const { tool, files, exec } = harness('alpha\nbeta\ngamma')
     const anchor = anchorFor(2, 'beta')

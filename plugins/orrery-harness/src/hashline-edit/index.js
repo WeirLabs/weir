@@ -87,6 +87,8 @@ function isSandboxDenial(error) {
 }
 
 function apply(ctx, config = {}) {
+  // Capture once: disposal of managed editing must fail closed, not downgrade.
+  const editLock = ctx.get?.('orreryEditLock')
   // Settings overlay (absent service = no-op): hashlineEdit section wins over row config.
   const settingsOverride = ctx.get?.('orrerySettings')?.get('hashlineEdit')
   if (settingsOverride && typeof settingsOverride === 'object') {
@@ -196,7 +198,11 @@ function apply(ctx, config = {}) {
       const after = applyOps(lines, args.edits).join('\n')
       let outcome
       try {
-        outcome = await ctx.fs.writeText(
+        outcome = editLock ? await editLock.publish(exec, {
+          tool: 'hash_edit', filePath: args.file_path, args, content: after,
+          expected: { kind: 'replaceIfVersion', version: info.version },
+          cwd: resolveCwd, effectivePolicy: policy,
+        }) : await ctx.fs.writeText(
           target,
           after,
           { kind: 'replaceIfVersion', version: info.version },

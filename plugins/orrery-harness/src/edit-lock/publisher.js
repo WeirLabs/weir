@@ -6,8 +6,8 @@ import { canonicalRequestData } from './request-data.js'
  * The trusted host owns policy provenance, execution authentication, exclusive
  * manager lifetime and exclusion of external topology writers.
  * @param {{manager: ReturnType<typeof import('./manager.js').createEditLockManager>,
- * fs: {resolve: (path: string, options: {cwd: string}) => Promise<any>, writeText: (...args: any[]) => Promise<{version: string}>}, root: string}} options */
-export function createPublisher({ manager, fs, root }) {
+ * fs: {resolve: (path: string, options: {cwd: string}) => Promise<any>, writeText: (...args: any[]) => Promise<{version: string}>}, root: string, assertExclusive?: () => void}} options */
+export function createPublisher({ manager, fs, root, assertExclusive = () => {} }) {
   if (!isAbsolute(root)) throw new Error('absolute domain root required')
   const resolve = fs.resolve.bind(fs)
   const writeText = fs.writeText.bind(fs)
@@ -20,10 +20,27 @@ export function createPublisher({ manager, fs, root }) {
     if (suffix === '..' || suffix.startsWith('../') || isAbsolute(suffix)) throw new Error('outside management domain')
   }
   return Object.freeze({
+    /** Resolve the entire existing-file set before atomic ownership acquisition.
+     * @param {import('./state.js').Execution} execution
+     * @param {string[]} paths @param {string} cwd */
+    acquireBatch(execution, paths, cwd) {
+      assertExclusive()
+      const observations = paths.map(path => {
+        const observation = identity.resolve(path, { cwd })
+        if (observation.kind !== 'file') throw new Error('rename requires existing regular files')
+        contained(observation.resourceId)
+        return observation
+      })
+      if (new Set(observations.map(item => item.resourceId)).size !== paths.length) throw new Error('duplicate canonical rename target')
+      return manager.acquireMany(execution, observations.map(item => item.resourceId)).then(ownership => ({
+        ...ownership, ordered: observations.map(item => ownership.tokens.find(/** @param {import('./state.js').Ownership} token */ token => token.resourceId === item.resourceId)),
+      }))
+    },
     /** Trusted adapter only: content is the fully synthesized original tool payload.
      * @param {import('./state.js').Execution} execution
-     * @param {{operationId: string, tool: 'write'|'hash_edit', filePath: string, cwd: string,
+     * @param {{operationId: string, tool: 'write'|'hash_edit'|'lsp_rename', filePath: string, cwd: string,
      * args: unknown, content: string, effectivePolicy: any,
+     * batchOwnership?: import('./state.js').Ownership,
      * expected: {kind: 'createIfAbsent'}|{kind: 'replaceIfVersion', version: string}}} request
      * @param {AbortSignal} signal */
     async prepare(execution, request, signal) {
@@ -56,10 +73,19 @@ export function createPublisher({ manager, fs, root }) {
         descriptor = { kind: 'create', ancestor: observation.ancestor, suffix: observation.suffix, policy: data.expected }
       } else {
         if (data.expected.kind !== 'replaceIfVersion') throw new Error('existing resource requires original version guard')
-        const { tokens: [ownership] } = await manager.acquireMany(execution, [observation.resourceId])
+        let ownership = data.batchOwnership
+        if (data.tool === 'lsp_rename') {
+          if (!ownership || ownership.resourceId !== observation.resourceId || ownership.sessionId !== execution.sessionId ||
+              ownership.executionEpoch !== execution.executionEpoch || ownership.managerIncarnation !== execution.managerIncarnation) throw new Error('rename batch ownership changed')
+          manager.checkWrite(ownership)
+        } else {
+          const acquired = await manager.acquireMany(execution, [observation.resourceId])
+          ownership = acquired.tokens[0]
+        }
         descriptor = { kind: 'update', resourceId: observation.resourceId, generation: ownership.generation, policy: data.expected }
       }
       const validate = () => {
+        assertExclusive()
         if (signal.aborted) throw new Error('call aborted')
         if (data.effectivePolicy?.mode === 'read-only') throw new Error('read-only policy')
         identity.revalidate(observation)

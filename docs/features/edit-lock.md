@@ -10,6 +10,9 @@
 
 ### 当前发布链路（未启用）
 
+可信宿主桥 `createEditLockHost` 以真实 agent 对象的 WeakMap 绑定已持久注册／恢复的 execution，逐次用宿主 registry 检查对象身份；模型参数不能注册身份。detach 先删除调用授权，再请求 durable cancel。`hash_edit` 已添加可选 `orreryEditLock` 入口：在插件挂载时捕获服务，发布完整合成内容、原始参数、版本 guard、实际有效 policy 与 exec；服务拒绝或关闭不能回退原生直写。没有服务时保持既有行为，因此正式启用须在编辑工具挂载前安装服务，并整体覆盖 write/LSP，不能热插入局部接管。当前未注册服务、未加启用设置。
+
+`lsp_rename` 同样捕获可选服务，完成原有全文件内容预检后，整组规范资源原子获取，再逐文件按原版本发布。批量入口拒绝缺失节点与重复规范目标，不发创建意图；仅全成功时原子释放本批新增临时锁，已有锁保持。失败保留归属并区分 written / not-written / uncertain，不宣称跨文件回滚。同批 operation 历史存在时拒绝重启整批，需检查历史处理；尚不提供批量历史聚合重试。runtime 控制入口关闭后拒绝新调用，并在发布前再次调用独占断言；断言仍须由真实跨进程宿主提供。
 manager 的 `prepare` 持久绑定原请求，返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。
 
 publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标、完整内容、原版本策略、signal、effectivePolicy）；adapter 用进程内不可伪造 call 绑定可信 execution/cwd/policy/callId，单次消费，不向工具参数暴露凭据。历史 prepared/unknown/not-published 不作为工具成功返回。生命周期包装提供进程内域去重、关闭入口与排队任务排空，但**仍要求调用方提供真实跨进程排他和旧 publisher 静止证明**，不能以进程内 Set 替代跨进程仲裁。

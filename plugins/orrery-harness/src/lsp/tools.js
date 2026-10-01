@@ -36,6 +36,7 @@ function asLocationArray(result) {
 
 /** Build the five tool definitions for one calling agent's enable. */
 export function createLspTools({ manager, ctx, agent }) {
+  const editLock = ctx.get?.('orreryEditLock')
   // Optional sandbox policy capture (S23, mirrors hashline-edit): the
   // sandboxed fs backend enforces the session policy only when the caller
   // passes it per call. Absent service (headless test compositions, other
@@ -236,6 +237,7 @@ export function createLspTools({ manager, ctx, agent }) {
           const normalized = normalizeLineEndings(before)
           const afterNormalized = applyTextEdits(normalized, change.edits)
           plans.push({
+            filePath: change.path,
             target: fileTarget,
             version: info.version,
             edits: change.edits.length,
@@ -255,7 +257,11 @@ export function createLspTools({ manager, ctx, agent }) {
         // Phase 2 — write pass: one atomic replaceIfVersion write per file.
         // A failure stops the pass immediately and names both file lists.
         const written = []
-        for (const plan of writePlans) {
+        if (editLock) {
+          await editLock.publishBatch(exec, {cwd: resolveCwd, effectivePolicy: policy, args,
+            plans: writePlans.map(plan => ({filePath: plan.filePath, content: plan.after, version: plan.version}))})
+          written.push(...writePlans)
+        } else for (const plan of writePlans) {
           try {
             await ctx.fs.writeText(plan.target, plan.after, { kind: 'replaceIfVersion', version: plan.version }, exec.signal, policy)
             written.push(plan)

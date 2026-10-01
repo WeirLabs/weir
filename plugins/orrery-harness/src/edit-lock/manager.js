@@ -332,6 +332,18 @@ function managerCore(store, kernel) {
         return token
       })
     },
+    /** Success-only cleanup is atomic; cancellation retains all batch ownership.
+     * @param {import('./state.js').Ownership[]} tokens */
+    releaseMany(tokens) {
+      const captured = tokens.map(token => ({ ...token }))
+      return transact(draft => {
+        for (const token of captured) {
+          if (cancelled.has(token.sessionId)) throw new Error('session cancelled')
+          draft.operations.checkWrite(token)
+        }
+        for (const token of captured) draft.operations.release(token)
+      })
+    },
     /** Atomic acquisition of existing canonical resources for a trusted batch editor.
      * Pre-existing ownership is retained and explicitly excluded from cleanup.
      * @param {import('./state.js').Execution} execution @param {string[]} resourceIds */

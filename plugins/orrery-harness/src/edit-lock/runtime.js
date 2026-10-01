@@ -31,7 +31,7 @@ export async function openEditLockRuntime(options) {
     const manager = options.mode === 'recover'
       ? await recoverEditLockManager({ store, managerIncarnation: randomUUID() })
       : createEditLockManager({ store, managerIncarnation: randomUUID() })
-    const publisher = createPublisher({ manager, fs: options.fs, root })
+    const publisher = createPublisher({ manager, fs: options.fs, root, assertExclusive: options.assertExclusive })
     let closing = false
     /** @type {Promise<void> | undefined} */
     let shutdown
@@ -46,10 +46,25 @@ export async function openEditLockRuntime(options) {
       void work.then(() => pending.delete(work), () => pending.delete(work))
       return work
     }
+    // Preserve synchronous cancellation overlays while sealing every public
+    // control admission. Manager FIFO drain covers asynchronous control work.
+    const control = new Proxy({ ...manager }, {
+      get(target, property, receiver) {
+        const method = Reflect.get(target, property, receiver)
+        if (typeof method !== 'function') return method
+        return (/** @type {any[]} */ ...args) => {
+          if (closing) throw new Error('edit lock runtime closing')
+          options.assertExclusive()
+          return method.apply(target, args)
+        }
+      },
+    })
     return Object.freeze({
       // Trusted host control only; must never be passed to a tool's arguments.
-      control: manager,
+      control,
       requests: Object.freeze({
+        /** @param {import('./state.js').Execution} execution @param {string[]} paths @param {string} cwd */
+        acquireBatch(execution, paths, cwd) { return run(() => publisher.acquireBatch(execution, paths, cwd)) },
         /** @param {Parameters<typeof publisher.prepare>[0]} execution
          * @param {Parameters<typeof publisher.prepare>[1]} request
          * @param {AbortSignal} signal */

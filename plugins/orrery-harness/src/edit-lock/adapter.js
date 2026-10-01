@@ -21,7 +21,8 @@ export function createEditLockAdapter(runtime) {
       return call
     },
     /** @param {object} call
-     * @param {{tool: 'write'|'hash_edit', filePath: string, args: unknown, content: string,
+     * @param {{tool: 'write'|'hash_edit'|'lsp_rename', filePath: string, args: unknown, content: string,
+     * batchOwnership?: import('./state.js').Ownership,
      * expected: {kind: 'createIfAbsent'}|{kind: 'replaceIfVersion', version: string}}} request */
     async publish(call, request) {
       if (closing) throw new Error('edit lock adapter closing')

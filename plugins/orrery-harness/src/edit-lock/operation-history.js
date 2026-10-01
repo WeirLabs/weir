@@ -4,7 +4,7 @@ import { isAbsolute, relative } from 'node:path'
  * Digests MUST be computed by a future trusted publisher over canonical requests,
  * original arguments and actual payload bytes. Strings supplied here are not proof.
  * @typedef {{ kind: 'create', ancestor: string, suffix: string, policy: { kind: 'createIfAbsent' } } | { kind: 'update', resourceId: string, generation: number, policy: { kind: 'replaceIfVersion', version: string } }} Target
- * @typedef {{ tool: 'write'|'hash_edit'|'edit', filePath: string, cwd: string, requestDigest: string, argsDigest: string, payloadDigest: string, target: Target }} Binding
+ * @typedef {{ tool: 'write'|'hash_edit'|'edit'|'lsp_rename', filePath: string, cwd: string, requestDigest: string, argsDigest: string, payloadDigest: string, target: Target }} Binding
  * @typedef {{ kind: 'resource', resourceId: string } | { kind: 'subtree', ancestor: string, basis: 'observed-ancestor'|'conservative-ancestor' } | { kind: 'domain', basis: 'containment-unproved' }} Fence
  * @typedef {{ kind: 'created'|'updated', resourceId: string, generation: number, version: string } | { kind: 'unknown' } | { kind: 'not-published', reason: 'cancelled-before-dispatch'|'rejected-before-dispatch' }} Outcome
  * @typedef {{ kind: 'abandoned-unknown'|'not-published-evidence', assertionId: string }} Closeout
@@ -41,7 +41,7 @@ function array(value) {
 /** @param {Binding} binding */
 export function validateBinding(binding) {
   shape(binding, ['tool', 'filePath', 'cwd', 'requestDigest', 'argsDigest', 'payloadDigest', 'target'])
-  valid(['write', 'hash_edit', 'edit'].includes(binding.tool), 'tool')
+  valid(['write', 'hash_edit', 'edit', 'lsp_rename'].includes(binding.tool), 'tool')
   valid(id(binding.filePath) && id(binding.cwd) && isAbsolute(binding.cwd), 'literal path/cwd')
   for (const digest of [binding.requestDigest, binding.argsDigest, binding.payloadDigest]) {
     valid(typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest), 'digest')
