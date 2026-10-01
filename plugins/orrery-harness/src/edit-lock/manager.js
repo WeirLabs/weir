@@ -45,6 +45,43 @@ export function createEditLockManager({ store, managerIncarnation }) {
     return pending
   }
   return Object.freeze({
+    /** Only authenticated human intent may reach this trusted ingress.
+     * @param {import('./state.js').Execution} execution @param {string} requestId */
+    issueExecutionReceipt(execution, requestId) {
+      const captured = { ...execution }
+      return transact(draft => {
+        if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        return draft.authority.issueExecutionReceipt(captured, requestId)
+      }).then(async receipt => {
+        const cancellation = cancelled.get(captured.sessionId)
+        if (cancellation) {
+          await cancellation
+          throw new Error('session cancelled during receipt issuance')
+        }
+        healthy()
+        const current = operations.status().sessions.find(s => s.sessionId === captured.sessionId)
+        if (current?.executionEpoch !== captured.executionEpoch) throw new Error('stale receipt execution')
+        return receipt
+      })
+    },
+    /** @param {import('./state.js').Execution} execution @param {string} requestId @param {object} receipt */
+    resume(execution, requestId, receipt) {
+      const captured = { ...execution }
+      return transact(draft => {
+        if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        return draft.operations.resume(captured, requestId, receipt)
+      }).then(async resumed => {
+        const cancellation = cancelled.get(captured.sessionId)
+        if (cancellation) {
+          await cancellation
+          throw new Error('session cancelled during resume')
+        }
+        healthy()
+        const current = operations.status().sessions.find(s => s.sessionId === captured.sessionId)
+        if (current?.interrupted || current?.executionEpoch !== resumed.executionEpoch) throw new Error('stale resumed execution')
+        return resumed
+      })
+    },
     /** @param {string} sessionId */
     openSession(sessionId) {
       return transact(draft => {
@@ -105,7 +142,13 @@ export function createEditLockManager({ store, managerIncarnation }) {
       }
       const existing = cancelled.get(execution.sessionId)
       if (existing) return existing
-      const pending = transact(draft => draft.authority.cancel(execution))
+      const pending = transact(draft => {
+        // Admission authenticated the live execution; cancellation also seals an
+        // earlier queued resume that installs before this revocation is durable.
+        const current = operations.status().sessions.find(s => s.sessionId === execution.sessionId)
+        if (!current) throw new Error('unknown session')
+        return draft.authority.cancel({ ...execution, executionEpoch: current.executionEpoch })
+      })
       cancelled.set(execution.sessionId, pending)
       // Keep denial on failure; poisoned state must never expose rollback authority.
       void pending.then(() => cancelled.delete(execution.sessionId), () => {})

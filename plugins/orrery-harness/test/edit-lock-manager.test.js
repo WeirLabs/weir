@@ -6,6 +6,90 @@ import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager } from '../src/edit-lock/manager.js'
 
+it('withholds a receipt cancelled during its durable issuance', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  const gate = Promise.withResolvers()
+  const entered = Promise.withResolvers()
+  let barrier
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' }, {
+    checkpoint: point => point === 'before:directory-sync' ? barrier?.() : undefined,
+  })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'manager-1' })
+    const initial = await manager.openSession('alice')
+    barrier = () => { entered.resolve(); return gate.promise }
+    const issuing = manager.issueExecutionReceipt(initial, 'continue')
+    const rejected = assert.rejects(issuing, /cancelled/)
+    await entered.promise
+    const cancellation = manager.cancelSession('alice')
+    gate.resolve()
+    await rejected
+    const stopped = await cancellation
+    assert.equal(stopped.executionEpoch, 2)
+    await assert.rejects(manager.issueExecutionReceipt(stopped, 'continue'), /already issued/)
+  } finally {
+    gate.resolve()
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('cancels a pending resume using its installed epoch rather than stale credentials', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  const gate = Promise.withResolvers()
+  const entered = Promise.withResolvers()
+  let barrier
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' }, {
+    checkpoint: point => point === 'before:directory-sync' ? barrier?.() : undefined,
+  })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'manager-1' })
+    const initial = await manager.openSession('alice')
+    const stopped = await manager.cancel(initial)
+    const receipt = await manager.issueExecutionReceipt(stopped, 'continue')
+    barrier = () => { entered.resolve(); return gate.promise }
+    const resuming = manager.resume(stopped, 'continue', receipt)
+    const rejected = assert.rejects(resuming, /cancelled/)
+    await entered.promise
+    assert.equal(manager.status().sessions[0].interrupted, true)
+    const cancellation = manager.cancel(stopped)
+    gate.resolve()
+    await rejected
+    assert.equal((await cancellation).executionEpoch, 4)
+    assert.equal(store.snapshot().state.sessions[0].interrupted, true)
+  } finally {
+    gate.resolve()
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('persists one-use execution intent and resumes without rearming retained locks', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'manager-1' })
+    const initial = await manager.openSession('alice')
+    await manager.acquire(initial, 'file:canonical')
+    const stopped = await manager.cancel(initial)
+    const receipt = await manager.issueExecutionReceipt(stopped, 'human-continue-1')
+    assert.deepEqual(store.snapshot().state.issuedRequests, [{ sessionId: 'alice', requestId: 'human-continue-1' }])
+    await assert.rejects(manager.resume(stopped, 'human-continue-1', {}), /receipt/)
+    const resumed = await manager.resume(stopped, 'human-continue-1', receipt)
+    assert.equal(resumed.executionEpoch, 3)
+    assert.equal(store.snapshot().state.sessions[0].interrupted, false)
+    assert.equal(manager.status().locks[0].status, 'pending-confirmation')
+    await assert.rejects(manager.resume(resumed, 'human-continue-1', receipt), /receipt/)
+    await assert.rejects(manager.issueExecutionReceipt(resumed, 'human-continue-1'), /already issued/)
+  } finally {
+    await store.close()
+    // directory is the exact absolute mkdtemp result created by this test.
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('does not install initial authority after an unresolved early cancellation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-'))
   const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
