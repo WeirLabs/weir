@@ -14,6 +14,8 @@
 
 受控 `write` 定义已提供但未注册：复用现有单次沙箱策略解析，保留 `fs/write-intent` 返回的 createIfAbsent／replaceIfVersion，缺少明确 guard 时拒绝，不用新 stat 覆盖旧观察版本。成功后发送标准 `fs/observed` 并返回内容差异；没有本地写入 fallback。独立工具定义经安装版 FS 创建实接验证，不等于正式工具表的覆盖验收；生命周期挂载仍须在 agent 发布前隐藏原 stock write/edit。
 
+生命周期控制器 `createEditLockLifecycle` 提供显式 start／stop／close，工具只拿到 publish／publishBatch，不暴露注册权。stop 同步关闭 registry 准入并等待 durable cancel；注册尚未结算时停止也不能晚到附着。重复 start 不恢复中断会话，close 先撤权再关闭 runtime。它仍是未挂载控制器：真实 registry、agent 发布前的工具覆盖、idle Stop transport、恢复授权及 IPC shutdown 须由正式宿主接入，不能把 stock Stop accepted 当作持久撤权确认。
+
 `lsp_rename` 同样捕获可选服务，完成原有全文件内容预检后，整组规范资源原子获取，再逐文件按原版本发布。批量入口拒绝缺失节点与重复规范目标，不发创建意图；仅全成功时原子释放本批新增临时锁，已有锁保持。失败保留归属并区分 written / not-written / uncertain，不宣称跨文件回滚。同批 operation 历史存在时拒绝重启整批，需检查历史处理；尚不提供批量历史聚合重试。runtime 控制入口关闭后拒绝新调用，并在发布前再次调用独占断言；断言仍须由真实跨进程宿主提供。
 manager 的 `prepare` 持久绑定原请求，返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。
 
