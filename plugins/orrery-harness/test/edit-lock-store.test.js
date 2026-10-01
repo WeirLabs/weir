@@ -18,12 +18,12 @@ async function fixture(t) {
 }
 
 const emptyState = () => ({
-  version: 1, managerIncarnation: null, sessions: [], generations: [],
-  locks: [], issuedRequests: [], recovery: [],
+  version: 2, managerIncarnation: null, sessions: [], generations: [],
+  locks: [], issuedRequests: [], recovery: [], operations: [],
 })
 
 const authorityImage = () => ({
-  version: 1, managerIncarnation: 'historical-manager-1',
+  version: 2, managerIncarnation: 'historical-manager-1', operations: [],
   sessions: [{ sessionId: 'alice', executionEpoch: 2, interrupted: true }],
   generations: [{ resourceId: 'file:a', generation: 1 }],
   locks: [{ resourceId: 'file:a', owner: 'alice', generation: 1, status: 'user-interrupted' }],
@@ -54,7 +54,7 @@ test('closed schema rejects malformed authority and references without poisoning
   const directory = await fixture(t)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
   const invalid = [
-    s => { s.extra = true }, s => { delete s.recovery }, s => { s.version = 2 },
+    s => { s.extra = true }, s => { delete s.recovery }, s => { s.version = 1 },
     s => { s.receipts = [{}] }, s => { s.managerIncarnation = null },
     s => { s.sessions[0].executionEpoch = 0 }, s => { s.sessions[0].executionEpoch = Number.MAX_SAFE_INTEGER + 1 },
     s => { s.sessions[0].interrupted = 'yes' }, s => { s.sessions[0].extra = 1 },
@@ -155,7 +155,8 @@ test('recovery rejects noncanonical, duplicate, corrupt, incompatible and unsafe
     original + '\n', original.replace('"checksum":', '"extra":1,"checksum":'),
     original.replace('"revision":0', '"revision":0,"revision":0'),
     original.replace('"revision":0', '"revision":1'), original.slice(0, -4),
-    encode({ ...payload, version: 2 }), encode({ ...payload, domainId: 'other' }),
+    encode({ ...payload, version: 1 }), encode({ ...payload, version: 99 }), encode({ ...payload, domainId: 'other' }),
+    encode({ ...payload, state: { ...emptyState(), version: 1 } }),
     encode({ ...payload, revision: -1 }), encode({ ...payload, state: { ...emptyState(), receipts: [] } }),
   ]) {
     await writeFile(target, bytes)
@@ -290,7 +291,7 @@ test('retained abnormal reasons cannot be silently cleared within one ownership 
 test('revision exhaustion rejects without writing or poisoning the recovered image', async t => {
   const { writeFile, readFile } = await import('node:fs/promises')
   const directory = await fixture(t)
-  const bytes = encode({ version: 1, domainId: 'd', revision: Number.MAX_SAFE_INTEGER, state: emptyState() })
+  const bytes = encode({ version: 2, domainId: 'd', revision: Number.MAX_SAFE_INTEGER, state: emptyState() })
   await writeFile(join(directory, 'snapshot.json'), bytes)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   await assert.rejects(store.record({ expectedRevision: Number.MAX_SAFE_INTEGER, nextState: emptyState() }), /overflow/)

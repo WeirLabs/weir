@@ -2,13 +2,14 @@ import { createHash, randomUUID } from 'node:crypto'
 import { open, rename, lstat, readdir } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { validateOperations, validateOperationTransitions } from './operation-history.js'
 
 /**
  * Unmounted historical Edit Lock snapshot storage, NOT a kernel restore interface.
  * The caller MUST already hold an externally proven exclusive directory lifecycle
  * and establish old-publisher quiescence, continuously through close(). This module
- * supplies neither singleton election nor cross-handle CAS, authentication or fences.
- * No intent/outcome ledger, operation idempotency or file publication lives here.
+ * supplies neither singleton election nor cross-handle CAS, authentication or live fences.
+ * Operation history shares this image; it cannot publish files or restore authority.
  * Receipts are process-local capabilities and MUST NOT be persisted.
  * POSIX local-filesystem foundation: the dedicated directory and its ancestors
  * must remain under the caller's exclusive control, with no concurrent mutation.
@@ -23,7 +24,7 @@ import { join, resolve } from 'node:path'
  * @typedef {{ resourceId: string, owner: string, generation: number, status: 'active'|'user-interrupted'|'pending-confirmation'|'abnormal', reason?: string }} Lock
  * @typedef {{ sessionId: string, requestId: string }} IssuedRequest
  * @typedef {{ sessionId: string, attempts: number, elapsedMs: number, pauseMs: number }} Recovery
- * @typedef {{ version: 1, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[] }} AuthorityImage
+ * @typedef {{ version: 2, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
  * @typedef {{ revision: number, state: AuthorityImage }} Snapshot
  */
 
@@ -45,7 +46,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
   let current
   /** @param {Snapshot} snapshot */
   async function persist(snapshot) {
-    const payload = { version: 1, domainId, ...snapshot }
+    const payload = { version: 2, domainId, ...snapshot }
     const body = canonical(payload)
     const bytes = canonical({ payload, checksum: createHash('sha256').update(body).digest('hex') })
     const temporary = join(resolve(directory), `.snapshot-${randomUUID()}.tmp`)
@@ -85,7 +86,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
     }
   }
   if (mode === 'create') {
-    current = { revision: 0, state: { version: 1, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [] } }
+    current = { revision: 0, state: { version: 2, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [], operations: [] } }
     await persist(current)
   } else {
     valid((await lstat(target)).isFile(), 'snapshot must be regular file')
@@ -101,7 +102,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       shape(envelope, ['payload', 'checksum'])
       const payload = envelope.payload
       shape(payload, ['version', 'domainId', 'revision', 'state'])
-      valid(payload.version === 1 && payload.domainId === domainId, 'snapshot version/domain')
+      valid(payload.version === 2 && payload.domainId === domainId, 'snapshot version/domain')
       valid(integer(payload.revision), 'snapshot revision')
       valid(typeof envelope.checksum === 'string' && envelope.checksum === createHash('sha256').update(canonical(payload)).digest('hex'), 'snapshot checksum')
       const state = /** @type {AuthorityImage} */ (payload.state)
@@ -176,8 +177,8 @@ function shape(value, keys) {
 }
 /** @param {AuthorityImage} state */
 function validateImage(state) {
-  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery'])
-  valid(state.version === 1, 'image version')
+  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'operations'])
+  valid(state.version === 2, 'image version')
   valid(state.managerIncarnation === null || id(state.managerIncarnation), 'incarnation')
   for (const collection of [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery]) {
     valid(Array.isArray(collection) && Object.getPrototypeOf(collection) === Array.prototype, 'collection')
@@ -187,7 +188,7 @@ function validateImage(state) {
       valid(descriptor && 'value' in descriptor && descriptor.enumerable, 'collection data property')
     }
   }
-  valid(state.managerIncarnation !== null || [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery].every(list => list.length === 0), 'null incarnation with history')
+  valid(state.managerIncarnation !== null || [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.operations].every(list => list.length === 0), 'null incarnation with history')
   const sessions = new Map(state.sessions.map(session => {
     shape(session, ['sessionId', 'executionEpoch', 'interrupted'])
     valid(id(session.sessionId) && integer(session.executionEpoch, 1) && typeof session.interrupted === 'boolean', 'session')
@@ -226,6 +227,7 @@ function validateImage(state) {
     valid(integer(recovery.attempts) && integer(recovery.elapsedMs) && integer(recovery.pauseMs), 'recovery counters')
     recoveries.add(recovery.sessionId)
   }
+  validateOperations(state)
 }
 
 
@@ -233,6 +235,7 @@ function validateImage(state) {
  * Counters are cumulative lifetime charges, never resettable retry policy.
  * @param {AuthorityImage} before @param {AuthorityImage} after */
 function validateTransition(before, after) {
+  validateOperationTransitions(before, after)
   valid(before.managerIncarnation === null || after.managerIncarnation !== null, 'incarnation history')
   const sessions = new Map(after.sessions.map(s => [s.sessionId, s]))
   for (const old of before.sessions) {

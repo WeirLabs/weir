@@ -1,6 +1,6 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **开发中，未挂载**：共享工作目录下的编辑权仲裁；当前已落地三个包内切片（纯内存状态内核 + 只读规范资源身份 + 历史快照存储），均未挂载，用户可见面零变化。
+> **开发中，未挂载**：共享工作目录下的编辑权仲裁；当前已落地四个包内模块（纯内存状态内核 + 只读规范资源身份 + 历史快照存储 + 持久 operation history 历史层），均未挂载，用户可见面零变化。
 
 ## 概述
 
@@ -8,7 +8,7 @@
 
 范围与上线硬门槛由本地 OpenSpec 变更材料定义（`openspec/changes/edit-lock-arbitration/`，过程材料不入库）：提案、设计决策 D1–D6、`edit-lock` 能力规格与任务清单均已就绪，**任务清单第 1 组起全部未勾选**。受影响的既有能力为 [hashline-edit.md](hashline-edit.md)、[lsp-integration.md](lsp-integration.md) 与 [todo-continuation.md](todo-continuation.md)；委派与续推调度、共享 runtime 消息、设置与客户端 UI 同在影响面内。
 
-包内已落地三个切片，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-1 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。设计中的 manager/gateway、跨进程仲裁、缺失目标的创建协议、可靠 intent/outcome 与 UI 尚未产品化。
+包内已落地四个内部模块，都不提供插件包导出、不注册工具、没有服务与挂载行，也没有设置键。① **状态内核** `src/edit-lock/state.js`：纯内存、不接触文件系统，只回答「按当前归属与执行授权，这次操作该接受还是拒绝」。② **规范资源身份** `src/edit-lock/resource-identity.js`：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。③ **历史快照存储** `src/edit-lock/store.js`：把权威状态按封闭 version-2 schema 落成单文件历史镜像（规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS），只保存与读回**历史事实**——不安装授权、不签发或恢复 receipt、不提供 restore。④ **持久 operation history** `src/edit-lock/operation-history.js`：在同一镜像里记录操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层，同样是历史而非授权，也没有发布入口（见下节）。设计中的 manager/gateway、跨进程仲裁、受控创建通道的串行发布、kernel restore 与 UI 尚未产品化。
 
 ## 用户可见行为
 
@@ -47,16 +47,29 @@
 
 **历史快照存储切片（持久化历史，不是授权来源）**。`src/edit-lock/store.js` 提供 `openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot()` / `record({ expectedRevision, nextState })` / `close()`：
 
-- **封闭 version-1 历史镜像**：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）与 recovery（累计 charge）。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
+- **封闭 version-2 历史镜像**：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）与 operations（持久 operation history，见下节）。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
 - **规范编码与完整性**：object key 按 UTF-16 排序、无空白、数组保序的 canonical JSON；`{version,domainId,revision,state}` payload 加 `{payload,checksum}` envelope，checksum 为 SHA-256。读取要求严格 UTF-8、**逐字节**等于重新规范化的结果（每一层的重复键、非规范数字/转义写法、空白与乱序因而全部被拒绝）、精确 schema 与 version/domain/revision/checksum 一致。checksum 只检测意外损坏，**不是**认证，也不防回滚。
 - **写序与确认**：独占 sibling temp（`wx`、0600）→ 全量写入 → file sync → file close → rename → 目录 open（`O_DIRECTORY|O_NOFOLLOW`）→ 目录 sync → 目录 close，之后才确认并更新内存。失败不回滚、不删 temp、不提升遗留 temp；rename 之后的不确定性保守记为 `uncertain`。
 - **串行本地 revision CAS**：每 handle 一条串行队列，`expectedRevision` 与当前 revision 不符即 conflict，溢出拒绝且不写入、不毒化。这是 **handle 内**的 CAS，不是跨进程/跨 handle CAS，也不是单实例选举。
 - **持久化 IO 失败毒化整个 handle**：任何持久化失败（含真实 syscall 错误）都毒化 handle，排队中与后续的 `record` **连同 `snapshot()`** 一律拒绝——过期内存不得冒充回滚后的状态；参数、CAS、transition 与溢出错误不毒化。错误 code 为 `EDIT_LOCK_STORE_PERSISTENCE`，`commitStatus` 区分 `not-renamed` 与 `uncertain`。
 - **外部前提由调用方证明**：模块要求调用方在**模块之外**证明该目录的独占生命周期与旧 publisher 静默，并持续到 `close()`；目录需预先 provision，`create` 只接受空目录，目录与其祖先不得被并发替换。模块不提供 singleton election、PID 超时接管、租约或 handover。
 - **恢复语义**：`recover` 只读 `snapshot.json`，拒绝 symlink/特殊文件/目录，并在打开前后两次确认 regular file；committed snapshot 缺失或非法即失败，**不初始化、不修复、不重试 create**，合法 committed snapshot 可与遗留 temp 共存。面向支持文件与目录 sync 的 POSIX 本地文件系统；不承诺网络文件系统、Windows 或掉电硬件语义。
-- **仍然没有的**：不保存也不签发 receipt（receipt 是进程内能力，禁止持久化）；没有 operation intent/outcome 账本、幂等记录、目标文件发布、commit-boundary 围栏、kernel restore、manager incarnation 安装、重启围栏与任何挂载。
+- **仍然没有的**：不保存也不签发 receipt（receipt 是进程内能力，禁止持久化）；没有目标文件发布、没有运行时发布或授权入口、没有 manager/kernel restore、没有 manager incarnation 安装、没有 live fence enforcement、没有幂等重放通道、没有重启围栏与任何挂载。持久 operation history（下节）只提供**历史事实**，不是授权来源。
+
+**持久 operation history 切片（历史层：不授权、不发布、不恢复）**。`src/edit-lock/operation-history.js` 提供 `operations[]` 的封闭 schema 与转换校验：历史与既有权威状态同处**同一份原子 snapshot 镜像**（envelope、canonical 编码、写序与串行 revision CAS 全部不变，镜像 version 由 1 升为 2），**没有**独立的第二本内存账本；`recover` 拒绝 version 1 与未知版本镜像，不自动迁移、不写回。
+
+- **键与查询**：域内键是 `(sessionId, operationId)`；`lookupOperation` 优先查历史、**不检查当前 authority**、返回 detached 数据，同一键换 binding 即 `ID_REUSE`（绑定按结构比较，与键序无关）。origin（executionEpoch/managerIncarnation）是不可变历史、**不是重试键**；调用方认证与授权仍属未来的 manager。
+- **冻结的 binding**：tool（`write`/`hash_edit`/`edit`）、原始 filePath、绝对 cwd、request/args/payload 三个 SHA-256 摘要，以及目标与冻结策略（create → `createIfAbsent`；update → `replaceIfVersion` + version）。**存入的字符串不等于认证**：摘要必须由未来的可信 publisher 按规范请求、原始参数与实际 payload 字节自行计算。
+- **通道划分**：create 仅允许受控 `write`，`hash_edit`/`edit` 只更新既有资源。prepared create **不含 resourceId**、不发放任何所有权，同一目标的多个 prepared 意图可以共存。
+- **持久阶段与合法转换**（raw `store.record` 同样强制，不只是恢复时）：prepared → publishing → created/updated/unknown；prepared → not-published **仅**表示 dispatch 前的取消或拒绝；不能跳过 publishing；publishing/unknown 一律不得改写为 not-published；历史条目不可删除、不可重绑、origin 不可重写。
+- **成功归属是 transition-local**：同一次 before/after 里，成功 outcome 必须有匹配 owner/generation 的锁，且 created 不能收编既有锁（要求该资源此前无锁）。完成历史在后来 release 之后保留，不因当前无锁失效；但 owner 转手或 epoch/incarnation 前进时保留的锁必须记为 interrupted/abnormal，不得是 active。
+- **未结算 update 保留原归属**：publishing/unknown 的 update 必须保留原 owner/generation，不能经 release/transfer/re-generation 绕过；晚到成功保留 interrupted/abnormal 分类、不重臂被取消的 epoch；取消与 unknown settlement 本身也不能重臂。
+- **围栏与 closeout 都是历史断言**：update 用 resource fence，create 用观察到的祖先子树（`observed-ancestor`）、保守祖先（`conservative-ancestor`）或 containment-unproved 的 domain 断言；closeout 是 append-only 的 `{kind, assertionId}`（`abandoned-unknown` / `not-published-evidence`），只允许出现在 unknown 阶段。本层只验证结构与词法包含，**不认证**文件系统/别名证明，也不实现 unrelated-work admission；**没有 TTL**、不按名字猜等价、不自动升级为全域围栏；围栏一旦持久化即不可变，closeout **不清围栏**、不改原 unknown outcome、不允许重放，也没有 `publisherDead`/`humanApproved` 伪认证或运行时 clearFence 接口。
+- **独立复核修复的两项完整性缺陷**：① 事务级重复创建归因被拒绝——同一次转换里同一份新增 ownership 不得归给两个 operation（既有终局历史不计入，不同资源的批量成功与 release 后新 generation 重建仍合法）；② 成功终局要求保留的 lifetime generation ≥ 结果 generation（恢复与记录路径同时生效），且**不要求当前 owner/锁**——合法 release、他人重获与更高 generation 都可恢复。
 
 **Option C 的创建协议是计划中的写入归属例外**。缺失目标的创建成功路径不沿用「先取得归属再写入」的顺序：它没有既有节点可绑定，因此按已确认的 Option C 契约经 manager 串行发布道发布——幂等绑定优先，其次节点存在性冲突判定（既有节点一律冲突，冲突先于任何目标侧副作用），再经 manager 实际持有的 `ctx.fs` 发布，发布成功后解析规范身份并绑定归属与持久结果才返回成功；**创建意图不是所有权**，不发放所有权令牌，也不构造规范资源键，未知结果由持久 intent/outcome、无过期恢复围栏与墓碑兜住。该例外已写入设计材料（D3/D5 与任务 1.6/2.5/2.6），**尚未实现**；本切片的只读观察不属于该路径，也不能当作它的替代。
+
+**创建通道只归受控 `write`，`hash_edit` 只编辑**（用户本轮确认，已写入规格与设计 D2b）：目标没有既有文件节点时，`hash_edit`（以及可选共存的受控 stock `edit`）**零副作用拒绝**——不发 CreateIntent、不取得所有权、不构造规范资源键、不创建也不收养节点；规划之后出现的节点一律不收养、不取得、不覆盖；dangling 符号链接、特殊文件与目录按不可编辑拒绝且不跟随重定向。这与宿主既有语义一致（`write` 走受保护创建、`edit` 对缺失目标报 `FS_NOT_FOUND`、本仓 `hash_edit` 对非普通文件在提交前拒绝），但宿主证据源在 `/tmp/dsh-src`，仍须按上线硬门槛在当前 runtime 复核。
 
 **取消是独立 ingress，不是回合结束的副产品**。当前安装版实测（`.orrery/edit-lock-verification/current-ingress/REPORT.md`，本地过程材料不入库）确定了三件事：
 
@@ -75,11 +88,11 @@
 ## 边界与失败语义
 
 - **未挂载即无行为**：没有插件行、没有服务、没有工具、没有 UI 元素，装载与否不改变任何现有会话。
-- **权威状态：内核仍是内存态，磁盘上已有历史镜像（未挂载）**：内核在进程内运行，进程结束即丢失；`src/edit-lock/store.js` 已能把权威状态落成单文件历史快照并在下次打开时读回，因此「无持久化」作为笼统说法**已经过时**。但**运行授权本身仍无持久化**：没有 intent/outcome 账本、没有幂等记录、没有单实例选举、没有重启围栏、没有 kernel restore；有历史镜像也不等于能恢复——恢复出的历史 active 状态不构成当前授权。「不确定即保留归属、超时/沉默/投递失败不等于同意、中途崩溃保留 uncertain」仍是后续阶段的目标语义。
-- **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份切片自行从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**仍不判定缺失名称的等价性**——不预创建占位文件、不猜测别名，该问题交由 Option C 的创建协议解决；两个切片都不执行任何文件写入，release 也不等于验证通过。
+- **权威状态：内核仍是内存态，磁盘上已有历史镜像（未挂载）**：内核在进程内运行，进程结束即丢失；`src/edit-lock/store.js` 已能把权威状态连同持久 operation history 落成单文件历史快照并在下次打开时读回，因此「无持久化」作为笼统说法**已经过时**。但**运行授权本身仍无持久化**：没有 manager/kernel restore、没有运行时发布或授权入口、没有 live fence enforcement（围栏只是历史断言，既不提供运行时清除也不做 admission 判定）、没有幂等重放通道、没有单实例选举、没有重启围栏；有历史镜像也不等于能恢复——恢复出的历史 active 状态不构成当前授权。「不确定即保留归属、超时/沉默/投递失败不等于同意、中途崩溃保留 uncertain」仍是后续阶段的目标语义。
+- **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份切片自行从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**仍不判定缺失名称的等价性**——不预创建占位文件、不猜测别名，该问题交由 Option C 的创建协议解决；状态内核与资源身份切片不执行任何目标文件写入，store 只写自己的 `snapshot.json`、operation history 只写同一镜像，release 也不等于验证通过。
 - **未承诺的时点保证**：观察是一串同步 filesystem 调用，**不是原子快照**；外部 shell/IDE 在调用之间改变盘面不在保证内，dev/ino 连续性无法证明不存在 inode reuse 或「改后复原」（ABA）。调用方必须先自行协调变更顺序（manager 生命周期/发布协调）。
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）、不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外）、不承诺分布式多机共识。
-- **OpenSpec 任务保持未勾选**：`openspec/changes/edit-lock-arbitration/tasks.md` 第 1 组起全部未完成；任务 2.1 下有两条、任务 2.2 下有一条阶段进度注记（均不勾选、也不代表对应任务完成——存储切片只是 2.2 的 partial foundation，缺 intent/outcome 与幂等记录）；本文档不把它们标为完成，也不作为启用依据。
+- **OpenSpec 任务保持未勾选**：`openspec/changes/edit-lock-arbitration/tasks.md` 第 1 组起全部未完成；任务 2.1 下有两条、任务 2.2 下有两条，任务 2.5 与 2.6 各有一条阶段进度注记（均不勾选、也不代表对应任务完成——存储与 operation history 只是 2.2/2.5/2.6 的 partial foundation：没有受控创建通道的串行发布、没有 manager/kernel restore、没有运行时围栏执行与授权，ID_REUSE 只是历史绑定比对而非重放通道）；本文档不把它们标为完成，也不作为启用依据。
 
 ## 测试
 
@@ -88,6 +101,7 @@
 - **复杂度缺陷（已修复，含红绿证据）**：独立装置先复现了指数级父路径重放——`self -> .` 重复 4/8/12/16 次时 lstat 159/2559/40959/655359、readlink 15/255/4095/65535；`traceLink` 当时对相对 target 拼接原始 parent spelling，递归重走了已观察的 symlink 父路径。修复改为从已见证的**物理**父路径逐组件推进：先 lstat 记 inode，是 symlink 才递归记录 target/hop，之后再 native realpath 推进游标；不预先归一整个 target，也不省略嵌套 link。修复后同装置读数为 lstat 17/25/33/41、readlink 4/8/12/16。产品侧同时落一条回归测试：在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），要求每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并断言观察仍是同一个真实文件；无 wall-clock 断言，也无 mock 文件系统。该修复消除已观察父拼写的指数重放，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 - **静态检查与产品单测**：改动 `src/**` 后按 AGENTS.md §6 跑 `pnpm --filter orrery-harness run check` 与 `pnpm --filter orrery-harness test`。项目 curated 清单只收无 `node:` 内建依赖的纯模块，因此收录纯内核 `src/edit-lock/state.js`，而 `resource-identity.js` **刻意排除**（`types: []` 剥离 Node 全局）——项目 `run check` 通过**不能**替代该模块自己的严格检查。作为本地补充检查，另用 `--allowJs --checkJs --strict --types node` 直接检查该文件，`typeRoots` 指向本机既有的 `@types/node` 22.20.1，exit 0、零诊断；这是**本机不可移植的补充证据**（该 `typeRoots` 不是仓库依赖，也未被写入 `jsconfig.json`），全程未安装依赖、未写类型 stub、未改仓库 TypeScript 配置。本轮产品全量 988/988 通过、0 跳过。内核批次合入前不引用历史基线的通过数字作为本特性的证据。
 - **历史快照存储单测**：`plugins/orrery-harness/test/edit-lock-store.test.js` 33 项通过、0 失败（含 16 项持久化故障注入子测试与 6 项 SIGKILL 子测试），覆盖 create/record/recover 的 detached 语义、封闭 schema 与引用完整性、历史单调性与墓碑、create 前提（缺失/非空/别名目录）、canonical/checksum/domain/version 与 symlink/目录/FIFO committed entry 拒绝、每个持久化 syscall 边界的 before/after 故障毒化与 `commitStatus`、每 handle 队列 CAS 与 close drain、lossy JS 输入拒绝、revision 耗尽、release 后重获拒绝。故障注入围绕真实 syscall；SIGKILL 是真实子进程在 barrier 处被杀后重新 recover，**不是**掉电、内核崩溃、扇区撕裂或硬件缓存持久性证明。独立复核另跑 `.orrery/edit-lock-verification/store-review/independent.test.mjs`（30 项真实文件系统测试：真实部分写加注入 ENOSPC、passthrough rename 错误分类、既有目录生命周期与失败 create 恢复、canonical/重复键/UTF-8/checksum/缺失/symlink 拒绝、内核 cancel/resume 历史不被过度拒绝）全部通过，并复跑同一产品 suite 33/33。本批次产品全量 1021/1021 通过、147 suites。`store.js` 与 `resource-identity.js` 一样被 curated 清单排除（`types: []`），故另做本机直接 strict 检查（`--allowJs --checkJs --strict --types node`，`typeRoots` 指向本机既有 `@types/node` 22.20.1），exit 0、零诊断——同属**本机不可移植的补充证据**。
+- **持久 operation history 单测**：`plugins/orrery-harness/test/edit-lock-operation-history.test.js` 32 项通过、0 失败（含 11 项 test-only publisher 子进程 SIGKILL 场景：create 的 prepared/publishing/directories/published/outcome-renamed/outcome 与 update 的 prepared/publishing/published/outcome-renamed/outcome），与 store 的 33 项合计 focused **65/65**；store suite 随镜像升 v2 只同步了 version 断言与非法 version 语料。覆盖 v2 同镜像与空 prepared、binding 冻结与 `ID_REUSE`、阶段图（不可跳过 publishing、不可删除/重绑历史）、transition-local 成功归属与 created 不收编、retained unresolved ownership 与晚到成功分类、无 TTL/不可清除/不可重绑的围栏、closeout append-only、真实 `wx`/`EEXIST` 与 checksum-valid 损坏拒绝且磁盘字节不变。子进程用真实 fs（create `wx`、update version guard + `r+`、真实 file/dir sync）。**测试 driver 不是生产 publisher**：只在专属无并发真实目录里演示顺序与重启结果，不是 host `ctx.fs` 集成、沙箱授权、别名等价、跨进程 CAS、runtime 取消竞态、旧令牌拒绝、manager fence admission 或创建功能启用的证据。独立复核另跑 `.orrery/edit-lock-verification/operation-history-review/independent.test.mjs`（18 项，修复前 16 pass / 2 fail、exit 1）全绿；产品全量 **1053/1053**（147 suites）。`operation-history.js` 与 `store.js` 一样被 curated 清单排除（`jsconfig.json` 只收无 `node:` 内建依赖的纯模块），故另做本机直接 strict 检查（`--allowJs --checkJs --strict --types node`，`typeRoots` 指向本机既有 `@types/node` 22.20.1），exit 0、零诊断——同属**本机不可移植的补充证据**，全程未安装依赖、未写类型 stub、未改仓库 TypeScript 配置。
 - **独立复核发现并接受的边界（不是缺陷，也不是授权判定）**：独立装置确认「interrupted 由 true 翻成 false、epoch 2→3、且全程没有任何 receipt」的历史镜像会被存储接受（`.orrery/edit-lock-verification/store-review/independent.test.mjs`）。这是历史存储的既定性质：store 从不校验 receipt，也不构成 auth boundary。后续 manager **绝不得**把恢复出的 active 状态当作当前授权——显式恢复路径（Continue receipt）仍待实施。
 - **当前安装版组件级核验（已完成，但不是产品验收）**：DSH desktop `0.2.0-rc.2`（asar 内 DSH 模块同版本、Cordis 4.0.4）上的四份有界运行证据，全部只覆盖组件，不覆盖完整 Loader/profile/GUI：
   - `.orrery/edit-lock-verification/current-dispatch/REPORT.md`：15 项检查。真实 `ToolRuntime.execute` 与 staged scheduler 两条派发路径、同作用域替换 stock `write`/`edit`、每次调用携带有效沙箱策略、取消 signal 传递、拒绝后字节不变、卸载 shadow 后为 `UNKNOWN_TOOL`。调用侧 agent 仍是 fixture，网关是探针实现。
