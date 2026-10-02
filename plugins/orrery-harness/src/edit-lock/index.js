@@ -220,9 +220,20 @@ const apply = (ctx, config = {}) => {
   const sinks = new WeakMap()
   /** Settled domain per bound agent, for synchronous gates. @type {WeakMap<object, any>} */
   const settled = new WeakMap()
-  /** inject never wakes an idle or interrupted agent: no nested execution.
-   * @param {any} agent @param {string} text */
-  const deliverLocal = (agent, text) => agent.inject(userTextMessage(text, 'orrery-edit-lock'))
+  /** `wake` is used only for an ownership request addressed to an idle holder:
+   * inject alone would sit unread until the holder's next user message, which is
+   * how a request expired unanswered. Interrupted holders are never woken.
+   * @param {any} agent @param {string} text @param {boolean} [wake] */
+  const deliverLocal = (agent, text, wake = false) => {
+    const message = userTextMessage(text, 'orrery-edit-lock')
+    if (wake && agent?.status === 'idle' && agent?.followup) agent.followup(message)
+    else agent.inject(message)
+  }
+  /** @param {any} agent @param {any} event */
+  function deliverEvent(agent, event) {
+    if (event?.kind === 'notice' && typeof event.text === 'string') deliverLocal(agent, event.text, event.wake === true)
+    if (event?.kind === 'pending' && Number.isSafeInteger(event.count)) syncReplyTool(agent, event.count)
+  }
 
   /** @param {string} root @param {string} directory */
   async function openDomain(root, directory) {
@@ -235,14 +246,11 @@ const apply = (ctx, config = {}) => {
       if (/** @type {any} */ (error)?.code !== 'EEXIST') throw error
       // Another cooperating host publishes: become its client, never a writer.
       return remoteDomain(createRemoteEditLockDomain(endpointFor(directory), {
-        onNotice(agent, event) {
-          if (event?.kind === 'notice' && typeof event.text === 'string') deliverLocal(agent, event.text)
-          if (event?.kind === 'pending' && Number.isSafeInteger(event.count)) syncReplyTool(agent, event.count)
-        },
+        onNotice: deliverEvent,
       }))
     }
     const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
-      deliver: (agent, text) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text }); else deliverLocal(agent, text) },
+      deliver: (agent, text, wake) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text, wake: wake === true }); else deliverLocal(agent, text, wake) },
       onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
     })
     let endpoint
@@ -259,18 +267,27 @@ const apply = (ctx, config = {}) => {
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
 
-  /** The holder's structured reply tool exists only while it has pending requests.
-   * @type {WeakMap<object, () => void>} */
+  /** The holder's structured reply tool. It is registered on the first request
+   * and retired at a turn boundary once no request is pending: unregistering it
+   * mid-turn made an expired-but-retried reply report "unknown tool" instead of
+   * the real reason.
+   * @type {WeakMap<object, {dispose: () => void, stale: boolean}>} */
   const replyTools = new WeakMap()
   /** @param {any} agent @param {number} pending */
   function syncReplyTool(agent, pending) {
     const registered = replyTools.get(agent)
     if (pending > 0 && !registered && agent?.ctx?.tools?.register) {
-      replyTools.set(agent, agent.ctx.tools.register(replyToolDefinition(service)))
-    } else if (pending === 0 && registered) {
-      replyTools.delete(agent)
-      registered()
+      replyTools.set(agent, { dispose: agent.ctx.tools.register(replyToolDefinition(service)), stale: false })
+    } else if (registered) {
+      registered.stale = pending === 0
     }
+  }
+  /** @param {any} agent */
+  function retireReplyTool(agent) {
+    const registered = replyTools.get(agent)
+    if (!registered?.stale) return
+    replyTools.delete(agent)
+    registered.dispose()
   }
   /** @param {string} method */
   const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainOf(exec.agent)).service)[method](exec, request)
@@ -362,7 +379,12 @@ const apply = (ctx, config = {}) => {
     })
   })
 
+  // A reply tool may only disappear at a turn boundary, never mid-turn.
+  ctx.on('agent/turn-stopping', (/** @type {any} */ { agent }) => { retireReplyTool(agent) })
+
   ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
+    replyTools.get(agent)?.dispose()
+    replyTools.delete(agent)
     const domain = settled.get(agent)
     settled.delete(agent)
     if (domain) void Promise.resolve(domain.dispose(agent)).catch(() => {})

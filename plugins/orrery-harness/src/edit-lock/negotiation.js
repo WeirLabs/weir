@@ -12,13 +12,13 @@ import { randomUUID } from 'node:crypto'
  *   control: {status: () => any, transfer: (holder: any, requester: any) => Promise<any>},
  *   executionFor: (agent: object) => import('./state.js').Execution,
  *   agentFor: (sessionId: string) => object | undefined,
- *   deliver: (agent: object, text: string) => void,
+ *   deliver: (agent: object, text: string, wake?: boolean) => void,
  *   onPending?: (agent: object, pending: number) => void,
  *   timeoutMs?: number, now?: () => number,
  * }} options */
 export function createNegotiation(options) {
   const { control, executionFor, agentFor, deliver } = options
-  const timeoutMs = options.timeoutMs ?? 60_000
+  const timeoutMs = options.timeoutMs ?? 120_000
   const now = options.now ?? Date.now
   /** @typedef {{requestId: string, resourceId: string, generation: number,
    * holder: {sessionId: string, executionEpoch: number}, requester: import('./state.js').Execution,
@@ -28,11 +28,13 @@ export function createNegotiation(options) {
   const requests = new Map()
   let closed = false
 
-  /** @param {string} sessionId @param {string} text */
-  function notify(sessionId, text) {
+  /** `wake` opens an idle turn, which a holder needs in order to answer at all;
+   * it is never used for interrupted holders or for outcome notices.
+   * @param {string} sessionId @param {string} text @param {boolean} [wake] */
+  function notify(sessionId, text, wake = false) {
     const agent = agentFor(sessionId)
     if (!agent) return
-    try { deliver(agent, text) } catch { /* delivery failure never implies consent */ }
+    try { deliver(agent, text, wake) } catch { /* delivery failure never implies consent */ }
   }
   /** @param {string} sessionId */
   function pendingFor(sessionId) {
@@ -81,7 +83,7 @@ export function createNegotiation(options) {
       if (session && !session.interrupted) {
         refresh(lock.owner)
         notify(lock.owner, `Edit Lock: session ${requester.sessionId} requests ownership of ${resourceId} (request ${request.requestId}). ` +
-          `At a safe point call edit_lock_reply with this request_id and decision "release" to hand the file over, or "keep" to retain it. No reply keeps your ownership.`)
+          `Call edit_lock_reply with this request_id and decision "release" to hand the file over, or "keep" to retain it. No reply keeps your ownership.`, true)
       }
       return { requestId: request.requestId, state: 'pending', holder: lock.owner, holderStatus: lock.status }
     },
