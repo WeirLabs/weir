@@ -3,7 +3,8 @@ import { canonicalRequestData } from './request-data.js'
 /** Model-facing tool kinds and trusted human-ingress kinds. The connecting
  * host process is the trusted ingress for the latter (same trust base). */
 export const PEER_KINDS = Object.freeze(['publish', 'batch', 'acquire', 'release', 'locks', 'trySteal', 'reply', 'pending',
-  'status', 'stop', 'resume', 'confirm', 'unlock', 'allLocks', 'classifyAbnormal', 'recoveryUsage', 'chargeRecovery', 'pause', 'dispose'])
+  'status', 'stop', 'resume', 'confirm', 'unlock', 'allLocks', 'classifyAbnormal', 'recoveryUsage', 'chargeRecovery', 'pause',
+  'hold', 'turnStarted', 'releaseHeld', 'settleExpired', 'retention', 'dispose'])
 
 /** Bind an already authenticated, host-owned channel to ONE registered agent.
  * No identity or lifecycle capability is accepted in a wire message. The caller
@@ -61,6 +62,11 @@ export function createEditLockPeer(lifecycle, agent) {
           case 'recoveryUsage': return lifecycle.recoveryUsage(agent)
           case 'chargeRecovery': return await lifecycle.chargeRecovery(agent, request ?? {})
           case 'pause': return await lifecycle.pause(agent, Number(request?.minutes))
+          case 'hold': return await lifecycle.hold(agent, Number(request?.ms), { singleMaxMs: Number(request?.singleMaxMs), cumulativeMaxMs: Number(request?.cumulativeMaxMs) })
+          case 'turnStarted': return await lifecycle.turnStarted(agent)
+          case 'releaseHeld': return await lifecycle.settleExpired(agent, true)
+          case 'settleExpired': return await lifecycle.settleExpired(agent)
+          case 'retention': return lifecycle.retention(agent)
           case 'dispose': { closed = true; await lifecycle.dispose(agent); return { disposed: true } }
           default: throw new Error('invalid edit peer message')
         }

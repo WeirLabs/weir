@@ -22,6 +22,8 @@ import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from '
 import { localDomain, remoteDomain } from './domain.js'
 import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit } from './domains.js'
 import { createRecoveryDriver } from './recovery.js'
+import { createSettlementDriver } from './settle.js'
+import { editLockLimits } from '../settings/sections.js'
 
 const name = 'orrery-edit-lock'
 const inject = ['tools', 'fs', 'agents']
@@ -56,9 +58,23 @@ export function storeMode(directory) {
 function sessionOf(agent) {
   return typeof agent?.id === 'string' && agent.id ? agent.id : undefined
 }
+/** Confirm every pending-confirmation lock of one session. Each file goes
+ * through the ordinary per-file check, so a file that does not qualify is simply
+ * skipped; the bulk path can never widen authority. @param {any} domain
+ * @param {any} agent @param {{resourceId: string}[]} pending */
+async function confirmAll(domain, agent, pending) {
+  const confirmed = []
+  for (const lock of pending) {
+    try {
+      await domain.confirm(agent, lock.resourceId)
+      confirmed.push(lock.resourceId)
+    } catch { /* not confirmable any more; the next status shows why */ }
+  }
+  return confirmed
+}
 
-/** @param {any} domain @param {any} agent @param {string} raw @param {string} commandId */
-async function runCommand(domain, agent, raw, commandId) {
+/** @param {any} domain @param {any} agent @param {string} raw @param {string} commandId @param {{holdDefaultMinutes: number, holdSingleMaxMinutes: number, holdCumulativeMaxMinutes: number}} limits */
+async function runCommand(domain, agent, raw, commandId, limits) {
   const [verb, ...rest] = raw.trim().split(/\s+/u)
   if (!verb || verb === 'status') return describe(await domain.status(agent))
   if (verb === 'stop') {
@@ -68,11 +84,28 @@ async function runCommand(domain, agent, raw, commandId) {
   if (verb === 'resume') {
     const status = await domain.resume(agent, `command:${commandId}`)
     const pending = status.locks.filter(/** @param {any} lock */ lock => lock.status === 'pending-confirmation')
-    return `Edit authority resumed with a new execution epoch.${pending.length ? ' Confirm each retained file with /edit-lock confirm <path> before editing it.' : ''}\n${describe(status)}`
+    // Resuming is the human saying "go on with these files", so the retained files
+    // are confirmed in the same explicit action instead of one command per path.
+    const confirmed = await confirmAll(domain, agent, pending)
+    return `Edit authority resumed with a new execution epoch.${confirmed.length ? ` Confirmed ${confirmed.length} retained file(s).` : ''}\n${describe(await domain.status(agent))}`
+  }
+  if (verb === 'hold') {
+    const minutes = rest.length > 1 ? Number(rest.at(-1)) : limits.holdDefaultMinutes
+    if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('Usage: /edit-lock hold [minutes]')
+    const held = await domain.hold(agent, Math.round(minutes * 60_000), { singleMaxMs: limits.holdSingleMaxMinutes * 60_000, cumulativeMaxMs: limits.holdCumulativeMaxMinutes * 60_000 })
+    return `Keeping ${held.lockCount} file(s) until ${new Date(held.holdUntil).toLocaleTimeString()} (${Math.round(held.holdCumulativeMs / 60_000)} of ${limits.holdCumulativeMaxMinutes} minutes used in this batch).\n${describe(await domain.status(agent))}`
   }
   if (verb === 'confirm') {
+    // `--all` only replays the per-file confirmation over files that already
+    // qualify; it never widens authority (spec: One-step confirmation).
+    if (rest.length === 1 && rest[0] === '--all') {
+      const status = await domain.status(agent)
+      const pending = status.locks.filter(/** @param {any} lock */ lock => lock.status === 'pending-confirmation')
+      const confirmed = await confirmAll(domain, agent, pending)
+      return `Confirmed ${confirmed.length} of ${pending.length} retained file(s).\n${describe(await domain.status(agent))}`
+    }
     const path = rest.join(' ')
-    if (!path) throw new Error('Usage: /edit-lock confirm <path>')
+    if (!path) throw new Error('Usage: /edit-lock confirm <path> | /edit-lock confirm --all')
     const cwd = agent?.session?.header?.cwd
     if (typeof cwd !== 'string') throw new Error('session cwd unavailable')
     const observation = createResourceIdentity().resolve(path, { cwd })
@@ -100,7 +133,7 @@ async function runCommand(domain, agent, raw, commandId) {
     const result = await domain.unlock(agent, resourceId, generation)
     return `Unlocked ${result.resourceId} (generation ${result.generation}, owner ${result.owner}). Content was not validated.`
   }
-  throw new Error('Usage: /edit-lock [status|locks|stop|resume|confirm <path>|unlock <path> <generation>]')
+  throw new Error('Usage: /edit-lock [status|locks|hold [minutes]|stop|resume|confirm <path>|confirm --all|unlock <path> <generation>]')
 }
 
 /** Ordinary owner tools. Ownership derives from exec.agent, never arguments.
@@ -134,6 +167,21 @@ function registerLockTools(ctx, service) {
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const result = await service.release(exec, request(args, exec))
         return { ...result, message: `Released ${result.resourceId}.` }
+      },
+    }),
+    ctx.tools.register({
+      name: 'edit_lock_hold',
+      description: 'Ask to keep this session\'s Edit Lock ownership after the turn ends, for a bounded time, when you still need the files. The maximum per request and the budget for the whole batch are configurable; once the budget is used up you can only release. Keeping a file never grants permission you did not already have, and no file can be kept permanently.',
+      parameters: { type: 'object', properties: {
+        minutes: { type: 'number', description: 'How long to keep the files after this turn ends. Omit to use the configured default.' },
+      }, required: [] },
+      output: text('message'),
+      async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+        const minutes = args?.minutes === undefined ? undefined : Number(args.minutes)
+        if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) throw new Error('minutes must be a positive number')
+        const limits = editLockLimits(/** @type {any} */ (exec?.agent?.ctx?.get?.('orrerySettings'))?.get?.('editLock'))
+        const result = await service.hold(exec, Math.round((minutes ?? limits.holdDefaultMinutes) * 60_000))
+        return { ...result, message: `Keeping ${result.lockCount} file(s) until ${new Date(result.holdUntil).toISOString()}; ${Math.round(result.holdCumulativeMs / 60_000)} of ${limits.holdCumulativeMaxMinutes} minutes used in this batch.` }
       },
     }),
     ctx.tools.register({
@@ -195,6 +243,12 @@ function describe(status) {
   const recovery = status.recovery
   if (recovery && (recovery.attempts || recovery.elapsedMs || recovery.pauseMs)) {
     lines.push(`Recovery: ${recovery.attempts}/3 attempts, ${Math.round(recovery.elapsedMs / 1000)}s of 300s, pause ${Math.round(recovery.pauseMs / 60_000)}/30 min used`)
+  }
+  // Retention is reported as the one thing the user needs from it: how long the
+  // files stay reserved. The raw budget belongs to the structured view, not here.
+  const retention = status.retention
+  if (retention?.held && retention.remainingMs > 0) {
+    lines.push(`Reserved for ${Math.ceil(retention.remainingMs / 60_000)} more minute(s); ${Math.round(retention.holdCumulativeMs / 60_000)} minute(s) used in this batch.`)
   }
   return lines.join('\n')
 }
@@ -297,6 +351,47 @@ const apply = (ctx, config = {}) => {
     notify: deliverLocal,
     warn: message => ctx.logger?.warn?.(message),
   })
+  /** Retention policy is resolved once per read from the settings section, so a
+   * committed change takes effect without a restart and the kernel stays free of
+   * configuration. @returns {any} */
+  const limits = () => editLockLimits(ctx.get?.('orrerySettings')?.get?.('editLock'))
+  /** Turn-end settling: a finished turn that left locks behind is continued once,
+   * asking for each file to be released or kept explicitly (design D2/D3). Only
+   * `completed` enters here; the error and stop paths keep their own handling. */
+  const settle = createSettlementDriver({
+    domainFor: agent => settled.get(agent),
+    followup: (agent, text) => /** @type {any} */ (agent).followup(userTextMessage(text, 'orrery-edit-lock-settle')),
+    notify: deliverLocal,
+    limits,
+    warn: message => ctx.logger?.warn?.(message),
+  })
+  /** Expiry timers, keyed per agent. Read-time settlement is authoritative, so a
+   * lost timer (suspend, sleep) only delays the release, never the decision.
+   * @type {WeakMap<object, {timer?: any}>} */
+  const expiry = new WeakMap()
+  /** @param {any} agent @param {any} domain */
+  function armExpiry(agent, domain) {
+    const state = expiry.get(agent) ?? {}
+    expiry.set(agent, state)
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = undefined
+    const retention = domain.retention?.(agent)
+    if (!retention?.held || !(retention.remainingMs > 0)) return
+    const setTimer = ctx.setTimeout ?? globalThis.setTimeout
+    state.timer = setTimer(() => {
+      state.timer = undefined
+      void Promise.resolve(domain.settleExpired(agent)).then(result => {
+        if (result?.released?.length) {
+          settle.settled(agent)
+          deliverLocal(agent, `Edit Lock: the reservation ended, so ${result.released.length} file(s) are available to other sessions.`)
+        } else if (result?.deferred) {
+          // The period ran out mid-turn: release once that turn ends.
+          armExpiry(agent, domain)
+        }
+      }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry release failed: ${error?.message ?? error}`))
+    }, Math.min(retention.remainingMs, 2 ** 31 - 1))
+    state.timer?.unref?.()
+  }
   const service = Object.freeze({
     publish: route('publish'),
     publishBatch: route('publishBatch'),
@@ -308,6 +403,23 @@ const apply = (ctx, config = {}) => {
     reply: route('reply'),
     /** @param {any} exec @param {number} minutes */
     pause(exec, minutes) { return recovery.pause(exec.agent, minutes) },
+    /** Ask to keep this session's locks after the turn ends, for a bounded time.
+     * Retention only extends ownership; it grants nothing new (spec: Explicit
+     * bounded retention). @param {any} exec @param {number} ms */
+    async hold(exec, ms) {
+      const policy = limits()
+      const result = await (await domainOf(exec.agent)).hold(exec.agent, ms, {
+        singleMaxMs: policy.holdSingleMaxMinutes * 60_000,
+        cumulativeMaxMs: policy.holdCumulativeMaxMinutes * 60_000,
+      })
+      armExpiry(exec.agent, settled.get(exec.agent))
+      return result
+    },
+    /** Retention state for this session, settled against now. @param {any} exec */
+    retention(exec) {
+      const domain = settled.get(exec.agent)
+      return domain ? domain.retention(exec.agent) : null
+    },
     /** Mount-time handshake from a managed editor. @param {object} definition */
     claim(definition) {
       const execute = /** @type {any} */ (definition)?.execute
@@ -360,6 +472,13 @@ const apply = (ctx, config = {}) => {
   ctx.on('agent/pre-step', (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
     const { agent, signal } = event ?? {}
     const domain = agent && settled.get(agent)
+    // The holder is working again: every lock it holds leaves the holding state at
+    // once, without waiting for the reservation to run out (design D4), and the
+    // notice budget for this batch restarts.
+    if (domain) {
+      settle.turnStarted(agent)
+      void Promise.resolve(domain.turnStarted(agent)).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock turn start failed: ${error?.message ?? error}`))
+    }
     if (domain && signal && !watched.has(signal)) {
       watched.add(signal)
       const latch = () => { if (abortedByUser(signal)) domain.latch(agent) }
@@ -369,14 +488,25 @@ const apply = (ctx, config = {}) => {
     return next()
   })
 
-  // Abnormal classification reads only the durable turn/end reason (AGENTS §3.5).
+  // Classification and settling read only the durable turn/end reason
+  // (AGENTS §3.5): `error` classifies the locks abnormal, `completed` settles the
+  // locks the turn left behind, and `aborted` only latches. Nothing is inferred.
   ctx.on('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
     if (event?.type !== 'turn/end') return
     const agent = ctx.get?.('agents')?.get?.(session?.id)
-    if (!agent || !settled.get(agent)) return
+    const domain = agent && settled.get(agent)
+    if (!domain) return
     void recovery.onTurnEnd(agent, event.data?.reason).catch((/** @type {any} */ error) => {
       ctx.logger?.warn?.(`edit lock recovery classification failed: ${error?.message ?? error}`)
     })
+    settle.onTurnEnd(agent, event.data?.reason)
+    // A reservation that ran out during the turn is released here, never mid-turn.
+    void Promise.resolve(domain.settleExpired(agent)).then(result => {
+      if (result?.released?.length) {
+        settle.settled(agent)
+        deliverLocal(agent, `Edit Lock: the reservation ended, so ${result.released.length} file(s) are available to other sessions.`)
+      }
+    }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock deferred release failed: ${error?.message ?? error}`))
   })
 
   // A reply tool may only disappear at a turn boundary, never mid-turn.
@@ -385,6 +515,10 @@ const apply = (ctx, config = {}) => {
   ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
     replyTools.get(agent)?.dispose()
     replyTools.delete(agent)
+    const timer = expiry.get(agent)?.timer
+    if (timer) clearTimeout(timer)
+    expiry.delete(agent)
+    settle.settled(agent)
     const domain = settled.get(agent)
     settled.delete(agent)
     if (domain) void Promise.resolve(domain.dispose(agent)).catch(() => {})
@@ -393,14 +527,14 @@ const apply = (ctx, config = {}) => {
   const commands = ctx.get?.('commands')
   const offCommand = commands?.register({
     name: 'edit-lock',
-    description: 'Edit Lock: status, locks, stop (durable revoke), resume (explicit Continue), confirm <path>, unlock <path> <generation>.',
-    input: { hint: 'status | locks | stop | resume | confirm <path> | unlock <path> <generation>' },
+    description: 'Edit Lock: status, locks, hold [minutes], stop (durable revoke), resume (explicit Continue, confirms retained files), confirm <path> | --all, unlock <path> <generation>.',
+    input: { hint: 'status | locks | hold [minutes] | stop | resume | confirm <path> | unlock <path> <generation>' },
     handler: async (/** @type {any} */ invocation) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
         const domain = await domainOf(agent)
-        const text = await runCommand(domain, agent, String(invocation.rawInput ?? ''), String(invocation.commandId))
+        const text = await runCommand(domain, agent, String(invocation.rawInput ?? ''), String(invocation.commandId), limits())
         return { kind: 'success', text: `${text}\nDomain: ${registry.rootOf(agent)} (${domain.mode})` }
       } catch (error) {
         return { kind: 'error', text: `edit-lock: ${/** @type {any} */ (error)?.message ?? error}` }
@@ -411,6 +545,7 @@ const apply = (ctx, config = {}) => {
   return () => {
     closed = true
     recovery.close()
+    settle.close()
     offCommand?.()
     for (const off of offTools) off?.()
     // Stops every session durably, drains publication, then releases each

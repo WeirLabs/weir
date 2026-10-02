@@ -33,7 +33,20 @@ export function localDomain(lifecycle, endpoint) {
     chargeRecovery: (agent, delta) => lifecycle.chargeRecovery(agent, delta),
     /** @param {object} agent @param {number} minutes */
     pause: (agent, minutes) => lifecycle.pause(agent, minutes),
+    /** @param {object} agent @param {number} ms @param {{singleMaxMs: number, cumulativeMaxMs: number}} caps */
+    hold: (agent, ms, caps) => lifecycle.hold(agent, ms, caps),
+    /** The holder started a new turn: every held lock leaves holding at once.
+     * @param {object} agent */
+    turnStarted: agent => lifecycle.turnStarted(agent),
+    /** Release this session's active locks at their current generation, the
+     * disposition used when a finished turn's locks were never settled.
+     * @param {object} agent */
+    releaseHeld: agent => lifecycle.settleExpired(agent, true),
+    /** Read-time settlement plus the release half of an elapsed period. Also the
+     * trigger for the expiry timer. @param {object} agent */
+    settleExpired: agent => lifecycle.settleExpired(agent),
     /** @param {object} agent */
+    retention: agent => lifecycle.retention(agent),
     blocks(agent) { try { return lifecycle.status(agent).state !== 'active' } catch { return true } },
     async close() {
       // Seal remote admission and revoke its channels before local shutdown.
@@ -89,8 +102,17 @@ export function remoteDomain(remote) {
     recoveryUsage: agent => remote.call(agent, 'recoveryUsage'),
     /** @param {object} agent @param {any} delta */
     chargeRecovery: (agent, delta) => remote.call(agent, 'chargeRecovery', delta),
-    /** @param {object} agent @param {number} minutes */
     pause: (agent, minutes) => remote.call(agent, 'pause', { minutes }),
+    /** @param {object} agent @param {number} ms @param {{singleMaxMs: number, cumulativeMaxMs: number}} caps */
+    hold: (agent, ms, caps) => remote.call(agent, 'hold', { ms, singleMaxMs: caps.singleMaxMs, cumulativeMaxMs: caps.cumulativeMaxMs }),
+    /** @param {object} agent */
+    turnStarted: agent => remote.call(agent, 'turnStarted'),
+    /** @param {object} agent */
+    releaseHeld: agent => remote.call(agent, 'releaseHeld'),
+    /** @param {object} agent */
+    settleExpired: agent => remote.call(agent, 'settleExpired'),
+    /** @param {object} agent */
+    retention: agent => remote.call(agent, 'retention'),
     /** @param {object} agent */
     blocks: agent => remote.state(agent) !== 'active',
     async close() { remote.close() },

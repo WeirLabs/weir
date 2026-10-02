@@ -274,13 +274,19 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       return runtime.control.endHold(entry.sessionId, Date.now())
     },
     /** Read-time settlement plus its release half (design D5). Releases the
-     * session's active locks only when the period has genuinely run out, so it is
-     * idempotent and safe from a status read or a timer.
-     * @param {object} agent @returns {Promise<{released: string[]}>} */
-    async settleExpired(agent) {
+     * session's active locks when the period has genuinely run out, so it is
+     * idempotent and safe from a status read or a timer. A host that is mid-turn is
+     * never released implicitly: the release is deferred to the turn it ends on,
+     * because releasing under a running turn would drop the holder's own locks.
+     * `force` is the fallback disposition after the notices run out, which is a
+     * deliberate policy decision rather than an expiry.
+     * @param {object} agent @param {boolean} [force]
+     * @returns {Promise<{released: string[]}>} */
+    async settleExpired(agent, force = false) {
       const entry = entries.get(agent)
       if (!entry) return { released: [] }
-      if (!runtime.control.settlement(entry.sessionId, Date.now()).expired) return { released: [] }
+      if (!force && agent?.status !== 'idle') return { released: [], deferred: true }
+      if (!force && !runtime.control.settlement(entry.sessionId, Date.now()).expired) return { released: [] }
       const released = await runtime.control.releaseActive(entry.sessionId, Date.now())
       return { released }
     },
