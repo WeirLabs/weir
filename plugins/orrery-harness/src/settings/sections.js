@@ -94,6 +94,9 @@ export function editLockLimits(section) {
   take('holdDefaultMinutes', 'editLockHoldDefaultMinutes')
   take('holdSingleMaxMinutes', 'editLockHoldSingleMaxMinutes')
   take('holdCumulativeMaxMinutes', 'editLockHoldCumulativeMaxMinutes')
+  if (limits.holdDefaultMinutes > limits.holdSingleMaxMinutes) {
+    throw new Error('orrery-settings: editLockHoldDefaultMinutes must not exceed editLockHoldSingleMaxMinutes')
+  }
   if (limits.holdCumulativeMaxMinutes < limits.holdSingleMaxMinutes) {
     throw new Error('orrery-settings: editLockHoldCumulativeMaxMinutes must be at least editLockHoldSingleMaxMinutes')
   }

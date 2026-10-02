@@ -93,3 +93,10 @@ describe('editLockLimits (retention policy resolution)', () => {
     expect(() => { limits.holdSingleMaxMinutes = 9999 }).toThrow()
   })
 })
+
+describe('editLockLimits default/single coherence', () => {
+  it('refuses a default retention longer than the single cap, so a plain hold is never refused', () => {
+    expect(() => editLockLimits({ holdDefaultMinutes: 45 })).toThrow(/editLockHoldDefaultMinutes must not exceed editLockHoldSingleMaxMinutes/)
+    expect(editLockLimits({ holdDefaultMinutes: 45, holdSingleMaxMinutes: 60, holdCumulativeMaxMinutes: 120 }).holdDefaultMinutes).toBe(45)
+  })
+})

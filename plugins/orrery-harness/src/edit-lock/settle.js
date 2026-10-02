@@ -49,6 +49,8 @@ export function createSettlementDriver(options) {
   const notices = new WeakMap()
   /** @type {Set<Promise<unknown>>} */
   const running = new Set()
+  /** Agents whose next turn is the settle follow-up itself. @type {WeakSet<object>} */
+  const nudged = new WeakSet()
 
   /** The notice counter is keyed by the live agent object, so a non-object key can
    * never be remembered. Making that explicit turns a caller mistake into a clear
@@ -62,6 +64,7 @@ export function createSettlementDriver(options) {
   function forget(agent) {
     if (!agent || typeof agent !== 'object') return
     notices.delete(agent)
+    nudged.delete(agent)
   }
 
   /** @param {object} agent @param {any} domain @param {any[]} locks */
@@ -96,6 +99,9 @@ export function createSettlementDriver(options) {
     const attempts = notices.get(agent) ?? 0
     if (attempts >= limits.nudgeAttempts) { await dispose(agent, domain, held); return }
     notices.set(agent, attempts + 1)
+    // The follow-up starts a turn of its own; that turn must not count as the
+    // holder getting back to work, or the count would reset forever.
+    nudged.add(agent)
     const remainingMinutes = Math.max(0, Math.floor((limits.holdCumulativeMaxMinutes * 60_000 - retention.holdCumulativeMs) / 60_000))
     options.followup(agent, settlementPrompt(held, attempts + 1, limits.nudgeAttempts, {
       defaultMinutes: limits.holdDefaultMinutes,
@@ -120,7 +126,10 @@ export function createSettlementDriver(options) {
     /** The holder started a new turn, so the batch is in use again: the notice
      * budget restarts. Without this a long session would run out of notices over
      * unrelated turns. @param {object} agent */
-    turnStarted(agent) { forget(agent) },
+    turnStarted(agent) {
+      if (agent && typeof agent === 'object' && nudged.delete(agent)) return
+      forget(agent)
+    },
     /** The expiry timer released the batch: nothing left to settle. @param {object} agent */
     settled(agent) { forget(agent) },
     /** @param {object} agent */

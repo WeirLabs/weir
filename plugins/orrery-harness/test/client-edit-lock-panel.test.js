@@ -130,8 +130,11 @@ describe('client.edit-lock-panel chunk', () => {
     const { runs, render } = await mounted([viewOf('idle', [stuck, busy])])
     find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
     const tree = render()
-    expect(byAction(tree, 'unlock:/w/y.txt')).toBe(undefined)
-    byAction(tree, 'unlock:/w/x.txt').onClick(); await flush(); await flush()
+    expect(byAction(tree, 'arm-unlock:/w/y.txt')).toBe(undefined)
+    // Unlocking takes the file from another session: first click only arms it.
+    byAction(tree, 'arm-unlock:/w/x.txt').onClick()
+    expect(runs).toEqual([])
+    byAction(render(), 'unlock:/w/x.txt').onClick(); await flush(); await flush()
     expect(runs).toEqual(['unlock /w/x.txt 7'])
   })
 

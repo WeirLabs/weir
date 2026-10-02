@@ -91,7 +91,7 @@ async function runCommand(domain, agent, raw, commandId, limits) {
     return `Edit authority resumed with a new execution epoch.${pending.length ? ` ${pending.length} retained file(s) wait for confirmation: /edit-lock confirm --all, or /edit-lock confirm <path> for one.` : ''}\n${describe(status)}`
   }
   if (verb === 'hold') {
-    const minutes = rest.length > 1 ? Number(rest.at(-1)) : limits.holdDefaultMinutes
+    const minutes = rest.length > 0 && rest[0] !== '' ? Number(rest[0]) : limits.holdDefaultMinutes
     if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('Usage: /edit-lock hold [minutes]')
     const held = await domain.hold(agent, Math.round(minutes * 60_000), { singleMaxMs: limits.holdSingleMaxMinutes * 60_000, cumulativeMaxMs: limits.holdCumulativeMaxMinutes * 60_000 })
     return `Keeping ${held.lockCount} file(s) until ${new Date(held.holdUntil).toLocaleTimeString()} (${Math.round(held.holdCumulativeMs / 60_000)} of ${limits.holdCumulativeMaxMinutes} minutes used in this batch).\n${describe(await domain.status(agent))}`
@@ -183,17 +183,16 @@ function registerLockTools(ctx, service) {
     }),
     ctx.tools.register({
       name: 'edit_lock_hold',
-      description: 'Ask to keep this session\'s Edit Lock ownership after the turn ends, for a bounded time, when you still need the files. The maximum per request and the budget for the whole batch are configurable; once the budget is used up you can only release. Keeping a file never grants permission you did not already have, and no file can be kept permanently.',
+      description: 'Ask to keep this session\'s Edit Lock ownership for a bounded time counted from now, when you still need the files after this turn ends. The maximum per request and the budget for the whole batch are configurable; once the budget is used up you can only release. Keeping a file never grants permission you did not already have, and no file can be kept permanently.',
       parameters: { type: 'object', properties: {
-        minutes: { type: 'number', description: 'How long to keep the files after this turn ends. Omit to use the configured default.' },
+        minutes: { type: 'number', description: 'How long to keep the files, counted from now. Omit to use the configured default.' },
       }, required: [] },
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const minutes = args?.minutes === undefined ? undefined : Number(args.minutes)
         if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) throw new Error('minutes must be a positive number')
-        const limits = editLockLimits(/** @type {any} */ (exec?.agent?.ctx?.get?.('orrerySettings'))?.get?.('editLock'))
-        const result = await service.hold(exec, Math.round((minutes ?? limits.holdDefaultMinutes) * 60_000))
-        return { ...result, message: `Keeping ${result.lockCount} file(s) until ${new Date(result.holdUntil).toISOString()}; ${Math.round(result.holdCumulativeMs / 60_000)} of ${limits.holdCumulativeMaxMinutes} minutes used in this batch.` }
+        const result = await service.hold(exec, minutes === undefined ? undefined : Math.round(minutes * 60_000))
+        return { ...result, message: `Keeping ${result.lockCount} file(s) until ${new Date(result.holdUntil).toISOString()}; ${Math.round(result.holdCumulativeMs / 60_000)} of ${result.cumulativeMaxMinutes} minutes used in this batch.` }
       },
     }),
     ctx.tools.register({
@@ -399,25 +398,24 @@ const apply = (ctx, config = {}) => {
     expiry.set(agent, state)
     if (state.timer) clearTimeout(state.timer)
     state.timer = undefined
-    const retention = domain.retention?.(agent)
-    if (!retention?.held || !(retention.remainingMs > 0)) return
-    // Read the host timer through a guarded probe, not a bare member access: an
-    // unavailable cordis service throws on access rather than returning undefined,
-    // which would abort a hold request that is otherwise perfectly valid.
-    const setTimer = safeSetTimer(ctx) ?? globalThis.setTimeout
-    state.timer = setTimer(() => {
-      state.timer = undefined
-      void Promise.resolve(domain.settleExpired(agent)).then(result => {
-        if (result?.released?.length) {
+    // Awaited: a cross-process client answers retention asynchronously, and a
+    // synchronous read there never armed the timer at all.
+    void Promise.resolve(domain.retention?.(agent)).then(retention => {
+      if (!retention?.held || !(retention.remainingMs > 0)) return
+      // Read the host timer through a guarded probe, not a bare member access: an
+      // unavailable cordis service throws on access rather than returning undefined.
+      const setTimer = safeSetTimer(ctx) ?? globalThis.setTimeout
+      state.timer = setTimer(() => {
+        state.timer = undefined
+        // Busy at expiry: the turn-end handler releases it once that turn ends.
+        void Promise.resolve(domain.settleExpired(agent)).then(result => {
+          if (!result?.released?.length) return
           settle.settled(agent)
           deliverLocal(agent, `Edit Lock: the reservation ended, so ${result.released.length} file(s) are available to other sessions.`)
-        } else if (result?.deferred) {
-          // The period ran out mid-turn: release once that turn ends.
-          armExpiry(agent, domain)
-        }
-      }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry release failed: ${error?.message ?? error}`))
-    }, Math.min(retention.remainingMs, 2 ** 31 - 1))
-    state.timer?.unref?.()
+        }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry release failed: ${error?.message ?? error}`))
+      }, Math.min(retention.remainingMs, 2 ** 31 - 1))
+      state.timer?.unref?.()
+    }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry arm failed: ${error?.message ?? error}`))
   }
   const service = Object.freeze({
     publish: route('publish'),
@@ -435,12 +433,13 @@ const apply = (ctx, config = {}) => {
      * bounded retention). @param {any} exec @param {number} ms */
     async hold(exec, ms) {
       const policy = limits()
+      if (ms === undefined) ms = Math.round(policy.holdDefaultMinutes * 60_000)
       const result = await (await domainOf(exec.agent)).hold(exec.agent, ms, {
         singleMaxMs: policy.holdSingleMaxMinutes * 60_000,
         cumulativeMaxMs: policy.holdCumulativeMaxMinutes * 60_000,
       })
       armExpiry(exec.agent, settled.get(exec.agent))
-      return result
+      return { ...result, cumulativeMaxMinutes: policy.holdCumulativeMaxMinutes }
     },
     /** Retention state for this session, settled against now. Resolved through the
      * domain registry — the same path the lock list takes — rather than through the
@@ -541,14 +540,20 @@ const apply = (ctx, config = {}) => {
     void recovery.onTurnEnd(agent, event.data?.reason).catch((/** @type {any} */ error) => {
       ctx.logger?.warn?.(`edit lock recovery classification failed: ${error?.message ?? error}`)
     })
-    settle.onTurnEnd(agent, event.data?.reason)
-    // A reservation that ran out during the turn is released here, never mid-turn.
-    void Promise.resolve(domain.settleExpired(agent)).then(result => {
+    const reason = event.data?.reason
+    if (reason?.kind !== 'completed') return
+    // A reservation that ran out during the turn is released here (the turn is
+    // over, so the session counts as idle). Settling starts in the same tick, not
+    // after that release: a host that finishes when the agent goes idle would
+    // otherwise end before the follow-up is queued. Its own status read happens
+    // behind the release in the manager FIFO, so it sees the files already freed.
+    void Promise.resolve(domain.settleExpired(agent, true)).then(result => {
       if (result?.released?.length) {
         settle.settled(agent)
         deliverLocal(agent, `Edit Lock: the reservation ended, so ${result.released.length} file(s) are available to other sessions.`)
       }
     }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock deferred release failed: ${error?.message ?? error}`))
+    settle.onTurnEnd(agent, reason)
   })
 
   // A reply tool may only disappear at a turn boundary, never mid-turn.

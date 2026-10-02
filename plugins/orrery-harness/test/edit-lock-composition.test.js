@@ -429,3 +429,42 @@ test('a refused edit names the owner and the next step instead of a bare "resour
   assert.equal(lifecycle.status(alice).locks.length, 1)
   await lifecycle.close()
 })
+
+test('expiry release honours the idle flag from the host running the agent, and re-checks expiry inside the transaction', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
+  // A publisher-side channel agent: no status of its own.
+  const channel = Object.freeze({ id: 'remote' })
+  await lifecycle.start(channel)
+  await lifecycle.service.acquire({ agent: channel }, { filePath: 'a.txt', cwd: root })
+  await lifecycle.hold(channel, 60_000, { singleMaxMs: 60_000, cumulativeMaxMs: 120_000 })
+  // Not expired yet: even an idle report releases nothing.
+  assert.deepEqual((await lifecycle.settleExpired(channel, false, true)).released, [])
+  // Expired inside the kernel's view, but the transaction re-check still guards:
+  const sessionId = 'remote'
+  assert.deepEqual(await runtime.control.releaseActive(sessionId, Date.now(), true), [])
+  // Busy by the client's report: deferred, never released mid-turn.
+  assert.equal((await lifecycle.settleExpired(channel, false, false)).deferred, true)
+  // Once truly expired and idle, the ordinary release path frees the file.
+  assert.equal((await runtime.control.releaseActive(sessionId, Date.now() + 61_000, true)).length, 1)
+  assert.equal(lifecycle.status(channel).locks.length, 0)
+  await lifecycle.close()
+})
+
+test('/edit-lock hold uses the minutes the user typed', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  const agent = host.agent('s')
+  await host.emit('agent/created', { agent })
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  const held = await host.command().handler({ agent, rawInput: ' hold 5', commandId: 'h1' })
+  assert.equal(held.kind, 'success', held.text)
+  assert.match(held.text, /5 of 120 minutes/)
+  const refused = await host.command().handler({ agent, rawInput: ' hold 45', commandId: 'h2' })
+  assert.equal(refused.kind, 'error')
+  assert.match(refused.text, /limited to 30 minutes/)
+  dispose()
+})

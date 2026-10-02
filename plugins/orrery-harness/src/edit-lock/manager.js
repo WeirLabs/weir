@@ -402,8 +402,9 @@ function managerCore(store, kernel) {
      * finished turn's locks were never sorted out. Retention is a policy decision
      * that lives above this layer, so the caller supplies the cap. Refusal is
      * always safe. @param {string} sessionId @param {number} now */
-    releaseActive(sessionId, now) {
+    releaseActive(sessionId, now, requireExpired = false) {
       return transact(draft => {
+        if (requireExpired && !operations.settleHold(sessionId, now).expired) return []
         const status = operations.status()
         const session = status.sessions.find(item => item.sessionId === sessionId)
         if (!session) throw new Error('unknown session')
@@ -423,10 +424,11 @@ function managerCore(store, kernel) {
      * @param {{now: number, singleMaxMs: number, cumulativeMaxMs: number}} caps
      * @returns {Promise<import('./state.js').HoldState>} */
     hold(sessionId, ms, caps) {
-      // Compute first, persist second: the candidate is a pure value, so a store
-      // failure leaves the live kernel exactly where it was.
-      const candidate = kernel.operations.holdCandidate(sessionId, ms, caps)
-      return transact(draft => draft.operations.hold(candidate), true)
+      // The candidate is computed on the draft, i.e. at this request's FIFO
+      // position: computed earlier on the live kernel it could be based on a hold
+      // that a queued turn start is about to end, and would revive it. The draft
+      // is only installed after persistence, so a store failure changes nothing.
+      return transact(draft => draft.operations.hold(draft.operations.holdCandidate(sessionId, ms, caps)))
     },
     /** Retention state of one session, settled against the caller's instant so a
      * missed timer cannot leave stale ownership. Pure read; never mutates.

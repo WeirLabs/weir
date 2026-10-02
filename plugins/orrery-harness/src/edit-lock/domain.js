@@ -44,7 +44,7 @@ export function localDomain(lifecycle, endpoint) {
     releaseHeld: agent => lifecycle.settleExpired(agent, true),
     /** Read-time settlement plus the release half of an elapsed period. Also the
      * trigger for the expiry timer. @param {object} agent */
-    settleExpired: agent => lifecycle.settleExpired(agent),
+    settleExpired: (agent, idle) => lifecycle.settleExpired(agent, false, idle),
     /** @param {object} agent */
     retention: agent => lifecycle.retention(agent),
     blocks(agent) { try { return lifecycle.status(agent).state !== 'active' } catch { return true } },
@@ -110,7 +110,8 @@ export function remoteDomain(remote) {
     /** @param {object} agent */
     releaseHeld: agent => remote.call(agent, 'releaseHeld'),
     /** @param {object} agent */
-    settleExpired: agent => remote.call(agent, 'settleExpired'),
+    /** @param {object} agent @param {boolean} [idle] */
+    settleExpired: (agent, idle) => remote.call(agent, 'settleExpired', { idle: idle ?? /** @type {any} */ (agent)?.status === 'idle' }),
     /** @param {object} agent */
     retention: agent => remote.call(agent, 'retention'),
     /** @param {object} agent */

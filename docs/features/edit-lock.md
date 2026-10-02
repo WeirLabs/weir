@@ -25,6 +25,7 @@
 - `agent/created`（发布前 await）安装写作用域：隐藏继承 stock write/edit，注册受控 write；随后注册会话。管理器已知的会话（重启恢复、同会话重建 agent）一律以中断态开始，不隐式重臂。
 - active 回合内 stock Stop 同步触发 turn signal，立即封闭准入并持久撤权；idle Stop 没有 signal，使用 `/edit-lock stop` 获得可等待的持久撤权确认。`agent/disposed` 同样撤权。
 - 可信人类入口 `/edit-lock`：`status`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`（仅激活本会话 pending-confirmation 锁，不获取无主资源）。普通消息、状态查询都不恢复权限；todo 续推在会话非 active 时不触发。
+- 命令全集见上文「命令」表：另有 `hold [minutes]`、`release <path>` 与 `confirm --all`。
 - 普通 owner 工具（模型可调用，身份只来自 `exec.agent`）：`edit_lock_acquire`（获取既有文件；resume 后对 pending-confirmation 文件逐个调用即确认）、`edit_lock_release`（释放本会话的锁，不代表内容验证通过）、`edit_lock_status`（只读列出归属）与 `edit_lock_try_steal`（立即返回 pending requestId，从不等待持有者）。持有者有待答请求时才临时注册 `edit_lock_reply`（`release`／`keep`），通知经 `inject` 投递，**不唤醒** idle 或已中断会话。答复绑定 requestId、资源 generation、持有者 session 与 epoch；过期（默认 60 秒）、重复、旧 generation、非持有者或已停止持有者的答复一律拒绝，沉默保留归属。同意后由 manager 在**一个持久事务**里释放旧 generation 并为请求方获取，任一方已取消即整体失败。协商请求刻意只存在内存：重启推进所有 epoch 与 incarnation，旧请求只可能过期。
 - 受控人工解锁：`/edit-lock locks` 列出全部归属与 generation，`/edit-lock unlock <path|resourceId> <generation>` 只在期望 generation 仍为当前值时释放。它排在 manager FIFO 中，等待此前在途提交结算；存在未决发布时被事务围栏拒绝；不存在无条件强制解锁。已准备的旧 owner 写入随后因 generation 失效在派发前结算为 not-published。解锁不改变任何会话的中断闩锁，也不验证内容。D6 的「撤销旧 epoch」由 generation 围栏实现，不额外中断 owner 会话。
 - 跨进程（同一 `authorityDirectory` 的合作 Harness）：先抢到预约的进程成为唯一 publisher，并在用户私有临时目录下按 authority 规范路径哈希开一个 Unix socket 端点；预约冲突（`EEXIST`）的进程**不再整体拒绝**，而是成为客户端，从不自己落盘。每个客户端 agent 一条会话通道，首帧 `open {sessionId}` 后身份固定；工具、`/edit-lock` 命令、协商通知与临时答复工具都经该通道转发，发布仍由 publisher 持有的原始 `ctx.fs` 执行。通道 EOF（含客户端崩溃）由 publisher 持久撤权；重连的同会话总以中断态开始，需 `/edit-lock resume`。客户端只重试「建立通道」（等待旧通道 EOF 结算），从不重试调用；中断调用的结果按契约为 UNKNOWN。端点不做认证：可达同一用户临时目录的进程都在合作信任边界内，不防恶意同用户进程。publisher 退出后客户端不自立为写者，受控写入 fail closed，直到人工确认旧 publisher 静止并重启。
@@ -45,7 +46,7 @@
 
 生命周期控制器 `createEditLockLifecycle` 提供显式 start／stop／close，工具只拿到 publish／publishBatch，不暴露注册权。stop 同步关闭 registry 准入并等待 durable cancel；注册尚未结算时停止也不能晚到附着。重复 start 不恢复中断会话，close 先撤权再关闭 runtime。它仍是未挂载控制器：真实 registry、agent 发布前的工具覆盖、idle Stop transport、恢复授权及 IPC shutdown 须由正式宿主接入，不能把 stock Stop accepted 当作持久撤权确认。
 
-跨进程预约层 `openReservedEditLockRuntime` 使用预先配置、所有合作进程共用的 authority 规范目录对应的同级隐藏预约目录，通过原子 mkdir 排他；不污染 store 创建要求的空目录，第二进程被拒绝。每次断言核验原目录 inode，关闭 runtime 并等待发布排空后才非递归释放。启动失败或进程崩溃保留预约，不按 PID／超时删除或自动切主，须外部确认旧发布者静止后恢复。该层仅支持可信合作进程和本地目录，不提供重叠 workspace 的全局发现、网络盘保证、恶意同用户隔离或 IPC 身份认证；正式部署与恢复操作入口尚未接入。
+跨进程预约层 `openReservedEditLockRuntime` 使用预先配置、所有合作进程共用的 authority 规范目录对应的同级隐藏预约目录，通过原子 mkdir 排他；不污染 store 创建要求的空目录，第二进程被拒绝。每次断言核验原目录 inode，关闭 runtime 并等待发布排空后才非递归释放。打开 runtime 失败时释放本进程的预约（未发布任何内容）；打开之后崩溃或排空失败才保留预约，不按 PID／超时删除或自动切主，须外部确认旧发布者静止后恢复。该层仅支持可信合作进程和本地目录，不提供重叠 workspace 的全局发现、网络盘保证、恶意同用户隔离或 IPC 身份认证；正式部署与恢复操作入口尚未接入。
 
 IPC 原语（尚未部署）将 host 已认证的单个 agent 固定绑定到 peer，不接受消息中的身份／生命周期权限；长度前缀 JSON 在解析前限制 8 MiB，限制并发与响应积压，非法帧或断连封闭入口并触发持久撤权。客户端取消关闭整条会话通道，未确认发布一律 UNKNOWN，不等于未落盘或 manager 已确认撤权；禁止换 ID 自动重试。上层必须等待服务端 close 的结果，并只提供已认证的宿主通道。隔离双进程实接已验证子进程客户端→独占 manager→安装版 FS 创建及 EOF 后持久中断；使用可信 spawn 管道与夹具身份，不等于正式 Agent／GUI 身份接线。该层不创建公开监听端点，尚无客户端发现／认证和恢复入口。
 
@@ -93,7 +94,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **停止即收回**。你按停止（或面板「收回编辑权」）后，助手不能再编辑，直到你点「继续编辑」；面板的「继续编辑」是一个动作：恢复编辑权并一并确认本会话保留下来的文件（依次执行 `resume` 与 `confirm --all`，每个文件仍走原有确认检查）。
 - **状态入口**。输入栏右侧「编辑锁」按钮的圆点表示本会话状态：灰＝未占用文件，蓝（主题强调色）＝正在编辑／文件为本会话保留，琥珀黄＝编辑已停止或等你确认继续，红＝需要你处理。打开面板：
   - 只在需要时给**一个主动作**：已停止→「继续编辑」；等你确认→「继续编辑这些文件」；保留中→「立即释放全部文件」；正常编辑与空闲不给主动作。
-  - 文件按短名列出，每行至多一个动作：自己的文件「释放」（待确认的为「继续」）；其他会话停住或出错留下的文件「解锁」（按当前 generation 解锁）；其他会话正在编辑的文件不给动作。
+  - 文件按短名列出，每行至多一个动作：自己的文件「释放」（待确认的为「继续」）；其他会话停住或出错留下的文件「解锁」（按当前 generation 解锁，需第二次点击确认）；其他会话正在编辑的文件不给动作。
   - 「收回编辑权」是危险动作，需要第二次点击确认。
   - 会话 id、epoch、generation、绝对路径都收在「技术细节」里。
   - 面板读取的是只读的结构化视图，不轮询、不写入对话；每个动作都是一次显式 `/edit-lock` 命令，留在对话中作为记录。
@@ -151,7 +152,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 **历史快照存储切片（持久化历史，不是授权来源）**。`src/edit-lock/store.js` 提供 `openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot()` / `record({ expectedRevision, nextState })` / `close()`：
 
-- **封闭 version-2 历史镜像**：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）与 operations（持久 operation history，见下节）。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
+- **封闭历史镜像**（当前 version 3，新增 `holds` 保留表，见「保留与回合末处理」；version 2 恢复时无损升级）：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）与 operations（持久 operation history，见下节）。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
 - **规范编码与完整性**：object key 按 UTF-16 排序、无空白、数组保序的 canonical JSON；`{version,domainId,revision,state}` payload 加 `{payload,checksum}` envelope，checksum 为 SHA-256。读取要求严格 UTF-8、**逐字节**等于重新规范化的结果（每一层的重复键、非规范数字/转义写法、空白与乱序因而全部被拒绝）、精确 schema 与 version/domain/revision/checksum 一致。checksum 只检测意外损坏，**不是**认证，也不防回滚。
 - **写序与确认**：独占 sibling temp（`wx`、0600）→ 全量写入 → file sync → file close → rename → 目录 open（`O_DIRECTORY|O_NOFOLLOW`）→ 目录 sync → 目录 close，之后才确认并更新内存。失败不回滚、不删 temp、不提升遗留 temp；rename 之后的不确定性保守记为 `uncertain`。
 - **串行本地 revision CAS**：每 handle 一条串行队列，`expectedRevision` 与当前 revision 不符即 conflict，溢出拒绝且不写入、不毒化。这是 **handle 内**的 CAS，不是跨进程/跨 handle CAS，也不是单实例选举。

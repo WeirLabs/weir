@@ -122,16 +122,6 @@ it('only ordinary ownership is settled, never abnormal or pending locks', async 
   expect(calls.released).toBe(0)
 })
 
-it('a new turn restarts the notice budget for the batch', async () => {
-  const { calls, driver, turnEnd, agent } = harness({ nudgeAttempts: 1 })
-  await turnEnd()
-  expect(calls.followup).toHaveLength(1)
-  driver.turnStarted(agent)
-  await turnEnd()
-  expect(calls.followup).toHaveLength(2)
-  expect(calls.released).toBe(0)
-})
-
 it('reports the remaining retention budget in the notice', async () => {
   const { calls, turnEnd, setStatus } = harness({ holdCumulativeMaxMinutes: 120, holdSingleMaxMinutes: 30 })
   setStatus({
@@ -170,4 +160,26 @@ it('closed driver stops settling', async () => {
   driver.close()
   await turnEnd()
   expect(calls.followup).toHaveLength(0)
+})
+
+it('the turn a notice starts does not reset the count, so the fallback really fires', async () => {
+  const { calls, driver, turnEnd, agent } = harness({ nudgeAttempts: 2 })
+  // completed turn -> notice 1 -> its own turn starts -> ends without acting -> ...
+  await turnEnd()
+  driver.turnStarted(agent)
+  await turnEnd()
+  driver.turnStarted(agent)
+  await turnEnd()
+  expect(calls.followup).toHaveLength(2)
+  expect(calls.released).toBe(1)
+})
+
+it('a user turn after a notice still restarts the count', async () => {
+  const { calls, driver, turnEnd, agent } = harness({ nudgeAttempts: 1 })
+  await turnEnd()
+  driver.turnStarted(agent) // the notice's own turn
+  driver.turnStarted(agent) // the user's next turn
+  await turnEnd()
+  expect(calls.followup).toHaveLength(2)
+  expect(calls.released).toBe(0)
 })

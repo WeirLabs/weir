@@ -100,6 +100,9 @@ window.__ModuleLoader__.load({
 			const [error, setError] = react.useState(null);
 			const [pending, setPending] = react.useState(false);
 			const [armedRevoke, setArmedRevoke] = react.useState(false);
+			// Unlocking takes another session's file away, so like revoke it needs a
+			// second click; holds the path of the armed row.
+			const [armedUnlock, setArmedUnlock] = react.useState(null);
 			const [details, setDetails] = react.useState(false);
 			const refresh = () => Promise.resolve(props.fetchView?.()).then(
 				(next) => { if (next) setView(next); },
@@ -131,6 +134,7 @@ window.__ModuleLoader__.load({
 				setPending(true);
 				setError(null);
 				setArmedRevoke(false);
+				setArmedUnlock(null);
 				const list = [].concat(verbs).filter(Boolean);
 				(async () => {
 					for (const verb of list) {
@@ -181,7 +185,10 @@ window.__ModuleLoader__.load({
 					children: [
 						jsx("span", { style: nameStyle, title: file.detail.path, children: file.name }),
 						jsx("span", { style: mutedStyle, children: file.mine ? t(`editLockStatus_${file.status}`) : t("editLockOwnerOther") }),
-						rowCommand(file) ? action(`${file.action}:${file.detail.path}`, t(`editLockRow_${file.action}`), () => run(rowCommand(file))) : null
+						!rowCommand(file) ? null
+							: file.action === "unlock" && armedUnlock !== file.detail.path
+								? action(`arm-unlock:${file.detail.path}`, t("editLockRow_unlock"), () => setArmedUnlock(file.detail.path))
+								: action(`${file.action}:${file.detail.path}`, t(file.action === "unlock" ? "editLockRow_unlockConfirm" : `editLockRow_${file.action}`), () => run(rowCommand(file)), file.action === "unlock" ? dangerStyle : buttonStyle)
 					]
 				}, file.detail.path)) }, "files") : null,
 				error ? jsx("div", { style: errorStyle, "data-orrery-edit-lock-error": "", children: error }, "error") : null,

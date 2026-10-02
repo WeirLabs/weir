@@ -298,12 +298,17 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
      * deliberate policy decision rather than an expiry.
      * @param {object} agent @param {boolean} [force]
      * @returns {Promise<{released: string[]}>} */
-    async settleExpired(agent, force = false) {
+    async settleExpired(agent, force = false, idle = undefined) {
       const entry = entries.get(agent)
       if (!entry) return { released: [] }
-      if (!force && agent?.status !== 'idle') return { released: [], deferred: true }
+      // A channel agent on the publisher side has no status of its own; the host
+      // that runs the agent says whether it is idle.
+      const isIdle = idle ?? /** @type {any} */ (agent)?.status === 'idle'
+      if (!force && !isIdle) return { released: [], deferred: true }
       if (!force && !runtime.control.settlement(entry.sessionId, Date.now()).expired) return { released: [] }
-      const released = await runtime.control.releaseActive(entry.sessionId, Date.now())
+      // Expiry is re-checked inside the transaction, so a hold extended or ended
+      // after the check above is never released by this call.
+      const released = await runtime.control.releaseActive(entry.sessionId, Date.now(), !force)
       return { released }
     },
     /** Retention state of one session, settled. @param {object} agent */

@@ -399,3 +399,26 @@ it('poisons manager admission after an uncertain persistence failure', async () 
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+it('a hold computed behind a queued turn start does not revive the hold that turn start ends', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'orrery-manager-hold-'))
+  const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'm' })
+    const execution = await manager.openSession('alice')
+    await manager.acquire(execution, '/w/a.txt')
+    const caps = (now) => ({ now, singleMaxMs: 60_000, cumulativeMaxMs: 120_000 })
+    const start = Date.now()
+    await manager.hold('alice', 60_000, caps(start))
+    // The cross-process race: a turn start and a short hold arrive together.
+    const ended = manager.endHold('alice', start + 10)
+    const short = manager.hold('alice', 2_000, caps(start + 20))
+    await ended
+    const held = await short
+    assert.equal(held.holdUntil, start + 20 + 2_000)
+    assert.equal(manager.settlement('alice', start + 3_000).expired, true)
+  } finally {
+    await store.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

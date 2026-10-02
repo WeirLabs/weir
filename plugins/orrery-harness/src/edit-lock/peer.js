@@ -65,7 +65,7 @@ export function createEditLockPeer(lifecycle, agent) {
           case 'hold': return await lifecycle.hold(agent, Number(request?.ms), { singleMaxMs: Number(request?.singleMaxMs), cumulativeMaxMs: Number(request?.cumulativeMaxMs) })
           case 'turnStarted': return await lifecycle.turnStarted(agent)
           case 'releaseHeld': return await lifecycle.settleExpired(agent, true)
-          case 'settleExpired': return await lifecycle.settleExpired(agent)
+          case 'settleExpired': return await lifecycle.settleExpired(agent, false, request?.idle === true)
           case 'retention': return lifecycle.retention(agent)
           case 'dispose': { closed = true; await lifecycle.dispose(agent); return { disposed: true } }
           default: throw new Error('invalid edit peer message')

@@ -248,7 +248,7 @@ export function createEditLockState(managerIncarnation) {
             session.executionEpoch < 1 || !Number.isSafeInteger(epoch) || core.sessions.has(session.sessionId)) throw new Error('invalid recovery session')
         core.sessions.set(session.sessionId, { sessionId: session.sessionId, executionEpoch: epoch, interrupted: true })
         // Recovery restores ownership, never a running retention period, and the
-        // consumed allowance is not refunded (it is a lifetime charge).
+        // batch's consumed allowance is carried over, not refunded.
         core.holds.set(session.sessionId, { sessionId: session.sessionId, holding: false, holdUntil: null, holdCumulativeMs: 0 })
       }
       for (const held of history.holds ?? []) {

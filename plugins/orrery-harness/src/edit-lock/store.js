@@ -27,8 +27,8 @@ import { validateOperations, validateOperationTransitions } from './operation-hi
  * Retention (design D1) is a session-level budget: one lock batch shares one
  * cumulative allowance, and `holdUntil` is an absolute epoch-ms instant. A held
  * lock keeps its ordinary status, so `holds` is a separate table, never a lock
- * status. Version 3 adds it; version 2 images are refused rather than migrated
- * (the feature is experimental and has no released users).
+ * status. Version 3 adds it; a version 2 image is upgraded losslessly on recover
+ * (one empty retention row per session) and written back as version 3.
  * @typedef {{ sessionId: string, holding: boolean, holdUntil: number|null, holdCumulativeMs: number }} HoldState
  * @typedef {{ version: 3, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
  * @typedef {{ revision: number, state: AuthorityImage }} Snapshot
