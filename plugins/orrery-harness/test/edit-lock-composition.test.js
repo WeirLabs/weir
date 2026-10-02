@@ -76,7 +76,9 @@ test('owner tools acquire, release and confirm by acquisition without stealing',
   await assert.rejects(tools.acquire({ agent: alice }, { filePath: '../outside', cwd: root }), /./)
   assert.equal((await tools.locks({ agent: bob }))[0].mine, false)
   await lifecycle.stop(alice)
-  await assert.rejects(tools.release({ agent: alice }, request), /authenticated/)
+  // Stopped: acquisition is refused with the reason, observation still works.
+  await assert.rejects(tools.acquire({ agent: alice }, request), /was stopped/)
+  assert.equal((await tools.locks({ agent: alice }))[0].mine, true)
   await lifecycle.resume(alice, 'r')
   assert.equal(lifecycle.status(alice).locks[0].status, 'pending-confirmation')
   await tools.acquire({ agent: alice }, request)
@@ -128,7 +130,7 @@ test('try_steal negotiation transfers only on a current holder reply', async () 
   // A stopped holder cannot answer, and the request is never delivered to it.
   const back = await tools.trySteal({ agent: alice }, file)
   await lifecycle.stop(bob)
-  await assert.rejects(tools.reply({ agent: bob }, { requestId: back.requestId, decision: 'release' }), /authenticated/)
+  await assert.rejects(tools.reply({ agent: bob }, { requestId: back.requestId, decision: 'release' }), /was stopped/)
   assert.equal(lifecycle.status(bob).locks[0].status, 'user-interrupted')
   await lifecycle.close()
 })
@@ -227,7 +229,7 @@ test('remote channel opens a session, EOF revokes it, and reconnect starts inter
     // Reconnect immediately: never "already bound", always interrupted.
     assert.equal((await remote.channelFor(agent)).state, 'interrupted')
     assert.equal(runtime.control.status().locks[0].status, 'user-interrupted')
-    await assert.rejects(remote.call(agent, 'acquire', { filePath: 'a.txt', cwd: root }), /authenticated/)
+    await assert.rejects(remote.call(agent, 'acquire', { filePath: 'a.txt', cwd: root }), /was stopped/)
   } finally {
     remote.close()
     await server.close()
@@ -327,4 +329,37 @@ test('recovery driver schedules bounded cleanup turns and hands over on exhausti
   assert.equal(followups.length, 3)
   assert.match(notices.at(-1), /budget exhausted/)
   assert.equal(driver.state(agent), null)
+})
+
+test('stopped session is told why; status and release keep working; clean dispose releases, crash retains', async () => {
+  const { root, directory } = await fixture()
+  await writeFile(join(root, 'b.txt'), 'b')
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
+  const tools = lifecycle.service
+  const a = { id: 'a' }
+  await lifecycle.start(a)
+  await tools.acquire({ agent: a }, { filePath: 'a.txt', cwd: root })
+  await tools.acquire({ agent: a }, { filePath: 'b.txt', cwd: root })
+  await lifecycle.stop(a)
+  await assert.rejects(tools.acquire({ agent: a }, { filePath: 'a.txt', cwd: root }), /was stopped.*\/edit-lock resume/)
+  await assert.rejects(tools.publish({ agent: a, callId: 'c', signal: new AbortController().signal }, {}), /was stopped/)
+  assert.equal((await tools.locks({ agent: a })).length, 2)
+  await tools.release({ agent: a }, { filePath: 'a.txt', cwd: root })
+  // A stopped agent ending keeps its retained lock for a human.
+  await lifecycle.dispose(a)
+  assert.deepEqual(runtime.control.status().locks.map(lock => [lock.resourceId.endsWith('b.txt'), lock.status]), [[true, 'user-interrupted']])
+  // An active agent ending normally releases its active locks.
+  const child = { id: 'child' }
+  await lifecycle.start(child)
+  await tools.acquire({ agent: child }, { filePath: 'a.txt', cwd: root })
+  await lifecycle.dispose(child)
+  assert.equal(runtime.control.status().locks.some(lock => lock.owner === 'child'), false)
+  // Connection loss (forget) never releases.
+  const remote = { id: 'remote' }
+  await lifecycle.start(remote)
+  await tools.acquire({ agent: remote }, { filePath: 'a.txt', cwd: root })
+  await lifecycle.forget(remote)
+  assert.equal(runtime.control.status().locks.find(lock => lock.owner === 'remote').status, 'user-interrupted')
+  await lifecycle.close()
 })

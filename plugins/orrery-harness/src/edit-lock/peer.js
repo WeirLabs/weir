@@ -3,7 +3,7 @@ import { canonicalRequestData } from './request-data.js'
 /** Model-facing tool kinds and trusted human-ingress kinds. The connecting
  * host process is the trusted ingress for the latter (same trust base). */
 export const PEER_KINDS = Object.freeze(['publish', 'batch', 'acquire', 'release', 'locks', 'trySteal', 'reply', 'pending',
-  'status', 'stop', 'resume', 'confirm', 'unlock', 'allLocks', 'classifyAbnormal', 'recoveryUsage', 'chargeRecovery', 'pause'])
+  'status', 'stop', 'resume', 'confirm', 'unlock', 'allLocks', 'classifyAbnormal', 'recoveryUsage', 'chargeRecovery', 'pause', 'dispose'])
 
 /** Bind an already authenticated, host-owned channel to ONE registered agent.
  * No identity or lifecycle capability is accepted in a wire message. The caller
@@ -19,8 +19,9 @@ export function createEditLockPeer(lifecycle, agent) {
     if (closing) return closing
     closed = true
     // stop synchronously fences the registry before waiting for any publication;
-    // dispose also forgets the channel agent so a reconnect starts interrupted.
-    closing = lifecycle.dispose ? lifecycle.dispose(agent) : lifecycle.stop(agent)
+    // Connection loss may be a crash: revoke and forget, never release. A
+    // clean client end sends 'dispose' first.
+    closing = lifecycle.forget ? lifecycle.forget(agent) : lifecycle.stop(agent)
     return /** @type {Promise<void>} */ (closing)
   }
   return Object.freeze({
@@ -60,6 +61,7 @@ export function createEditLockPeer(lifecycle, agent) {
           case 'recoveryUsage': return lifecycle.recoveryUsage(agent)
           case 'chargeRecovery': return await lifecycle.chargeRecovery(agent, request ?? {})
           case 'pause': return await lifecycle.pause(agent, Number(request?.minutes))
+          case 'dispose': { closed = true; await lifecycle.dispose(agent); return { disposed: true } }
           default: throw new Error('invalid edit peer message')
         }
       } finally { pending.delete(message.callId) }

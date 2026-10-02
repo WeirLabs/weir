@@ -15,7 +15,7 @@ test('stop during registration closes admission and waits for durable revocation
   const stopped = lifecycle.stop(agent)
   let acknowledged = false
   void stopped.then(() => {acknowledged = true})
-  await assert.rejects(lifecycle.service.publish({agent}, {}), /authenticated/)
+  await assert.rejects(lifecycle.service.publish({agent}, {}), /was stopped/)
   registered({sessionId:'s',executionEpoch:1,managerIncarnation:'m'})
   await Promise.resolve()
   assert.equal(acknowledged, false)

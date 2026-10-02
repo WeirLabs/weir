@@ -26,6 +26,8 @@
 - 跨进程（同一 `authorityDirectory` 的合作 Harness）：先抢到预约的进程成为唯一 publisher，并在用户私有临时目录下按 authority 规范路径哈希开一个 Unix socket 端点；预约冲突（`EEXIST`）的进程**不再整体拒绝**，而是成为客户端，从不自己落盘。每个客户端 agent 一条会话通道，首帧 `open {sessionId}` 后身份固定；工具、`/edit-lock` 命令、协商通知与临时答复工具都经该通道转发，发布仍由 publisher 持有的原始 `ctx.fs` 执行。通道 EOF（含客户端崩溃）由 publisher 持久撤权；重连的同会话总以中断态开始，需 `/edit-lock resume`。客户端只重试「建立通道」（等待旧通道 EOF 结算），从不重试调用；中断调用的结果按契约为 UNKNOWN。端点不做认证：可达同一用户临时目录的进程都在合作信任边界内，不防恶意同用户进程。publisher 退出后客户端不自立为写者，受控写入 fail closed，直到人工确认旧 publisher 静止并重启。
 - 非用户异常的仅清理恢复（D4）：回合以 `turn/end` reason `error` 结束且会话持有锁时，这些锁标为 abnormal（不释放），会话进入 `recovering`：业务写入、新获取与 try_steal 全部拒绝，只能 `edit_lock_release`、`edit_lock_reply` 或 `edit_lock_pause`。驱动按 15／30／60 秒退避注入仅清理回合，至多 3 次或累计 5 分钟（以先到者为准）；暂停单次 ≤15 分钟、累计 ≤30 分钟（用户已确认），到期只重新检查，不释放、不自续。次数、恢复耗时与暂停时长都持久计入 authority 镜像的 `recovery`，重启不退还。预算耗尽或无剩余异常锁时停止并提示人工；恢复正常编辑只能经 `/edit-lock resume`，abnormal 锁保持 abnormal，须释放或人工解锁。用户 Stop（`aborted`）立即结束自动恢复且不唤醒会话。
 - GUI 入口：功能开启后，会话输入栏右侧（LSP 开关旁）出现「编辑锁」按钮，圆点颜色表示本会话状态（绿 active／黄 中断或待确认／红 异常恢复中／灰 未知）。点开面板显示 `/edit-lock status` 结果（每个锁的文件、状态、异常原因、generation，以及恢复次数、耗时与暂停额度），并提供刷新、全部锁、停止编辑、恢复四个按钮；每个按钮都是一次显式 `/edit-lock` 命令执行，会作为命令节点留在对话中，不轮询。查看不授予写权限；逐文件确认与人工解锁仍通过命令输入。命令不存在（功能关闭）时按钮不渲染、也不加载其 chunk。
+- 停止后的提示与清理：会话被 Stop 或 `/edit-lock stop` 停止后，写入、获取、转交与答复统一返回「editing in this session was stopped … until a human runs /edit-lock resume」，不再显示含糊的认证错误；`edit_lock_status` 与 `edit_lock_release` 在停止、恢复中状态仍可用（只读或只减权）。
+- agent 结束（`agent/disposed`）：仍处于 active 的 agent（例如正常完成的子代理）永远不会再写，先在一个事务里释放它的 active 锁，再撤权遗忘；已停止、异常或存在未决发布时保留，留给人工。跨进程连接断开可能是崩溃，只撤权不释放；客户端正常结束会先发送 `dispose` 再断开。
 - 操作身份按每次实际执行生成（`callId@uuid`）：部分供应商跨回合复用 tool-call id（如 `call_0`），不能直接作幂等键。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
 

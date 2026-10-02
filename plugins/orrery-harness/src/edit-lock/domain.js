@@ -60,7 +60,11 @@ export function remoteDomain(remote) {
     /** Awaits the publisher's durable revocation. @param {object} agent */
     stop: async agent => { const status = await remote.call(agent, 'stop'); remote.setState(agent, 'stopped'); return status },
     /** @param {object} agent */
-    dispose: async agent => remote.drop(agent),
+    dispose: async agent => {
+      // Clean end: let the publisher release this agent's active locks first.
+      try { await remote.call(agent, 'dispose') } catch { /* EOF below still revokes */ }
+      remote.drop(agent)
+    },
     /** @param {object} agent @param {string} requestId */
     resume: async (agent, requestId) => {
       const status = await remote.call(agent, 'resume', { requestId })

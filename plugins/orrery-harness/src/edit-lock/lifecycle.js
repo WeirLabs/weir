@@ -18,10 +18,27 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     // ingress is gated separately below.
     return !!entry && (entry.state === 'active' || entry.state === 'recovering') && sessionForAgent(agent) === entry.sessionId
   })
+  /** A stopped session must say so: the generic authentication error made a
+   * deliberate Stop look like a broken registration. @param {Entry | undefined} entry */
+  function denyStopped(entry) {
+    if (entry?.state === 'stopped' || entry?.state === 'resuming') {
+      throw new Error('Edit Lock: editing in this session was stopped (Stop or /edit-lock stop). Edits and new ownership stay denied until a human runs /edit-lock resume; edit_lock_release and edit_lock_status still work.')
+    }
+    if (entry?.state === 'starting') throw new Error('Edit Lock: this session is still registering; retry shortly.')
+  }
+  /** Session-owned token at the current epoch for subtractive cleanup only.
+   * @param {Entry} entry @param {string} resourceId */
+  function cleanupToken(entry, resourceId) {
+    const { status, session } = sessionStatus(entry.sessionId)
+    const lock = status.locks.find(/** @param {any} item */ item => item.resourceId === resourceId)
+    if (!session || !lock || lock.owner !== entry.sessionId) throw new Error('lock not owned by this session')
+    return { managerIncarnation: status.managerIncarnation, sessionId: entry.sessionId, executionEpoch: session.executionEpoch, resourceId, generation: lock.generation }
+  }
   /** Business edits and new ownership need an active (not recovering) session.
    * @param {any} exec */
   function business(exec) {
     const entry = entries.get(exec?.agent)
+    denyStopped(entry)
     if (entry?.state === 'recovering') throw new Error('cleanup-only recovery: business edits and new ownership are denied; release locks, answer requests or pause, then wait for a human /edit-lock resume')
   }
   let closed = false
@@ -65,6 +82,17 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     const status = runtime.control.status()
     return { status, session: status.sessions.find(/** @param {any} s */ s => s.sessionId === sessionId) }
   }
+  /** Stop, await durable revocation, then forget this agent object. A new
+   * agent for the same session starts interrupted. @param {object} agent */
+  async function forget(agent) {
+    if (!entries.has(agent)) return
+    // Forget synchronously (admission is already sealed by stop) so a
+    // reconnect for the same session can start interrupted at once.
+    const stopping = stop(agent)
+    entries.delete(agent)
+    disposing.add(stopping)
+    try { await stopping } finally { disposing.delete(stopping) }
+  }
   /** @param {object} agent */
   function statusOf(agent) {
     const entry = entryFor(agent)
@@ -87,7 +115,21 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       async publishBatch(exec, request) { business(exec); return host.publishBatch(exec, request) },
       /** @param {any} exec @param {any} request */
       async acquire(exec, request) { business(exec); return host.acquire(exec, request) },
-      release: host.release, locks: host.locks,
+      /** Release stays available while stopped or recovering: it only removes authority.
+       * @param {any} exec @param {{filePath: string, cwd: string}} request */
+      async release(exec, request) {
+        const entry = entries.get(exec?.agent)
+        if (!entry || sessionForAgent(exec.agent) !== entry.sessionId) throw new Error('agent has no authenticated edit execution')
+        const resourceId = runtime.requests.resource(request.filePath, request.cwd)
+        await runtime.control.release(cleanupToken(entry, resourceId))
+        return { resourceId, released: true }
+      },
+      /** Read-only observation; available in every lifecycle state. @param {any} exec */
+      locks(exec) {
+        const entry = entries.get(exec?.agent)
+        if (!entry || sessionForAgent(exec.agent) !== entry.sessionId) throw new Error('agent has no authenticated edit execution')
+        return runtime.control.status().locks.map(/** @param {any} lock */ lock => ({ ...lock, mine: lock.owner === entry.sessionId }))
+      },
       /** @param {{agent: object}} exec @param {{filePath: string, cwd: string}} request */
       async trySteal(exec, request) {
         business(exec)
@@ -95,7 +137,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
         return negotiation.request(exec.agent, runtime.requests.resource(request.filePath, request.cwd))
       },
       /** @param {{agent: object}} exec @param {{requestId: string, decision: 'release'|'keep'}} request */
-      async reply(exec, request) { return negotiation.reply(exec.agent, request.requestId, request.decision) },
+      async reply(exec, request) { denyStopped(entries.get(exec?.agent)); return negotiation.reply(exec.agent, request.requestId, request.decision) },
       /** @param {{agent: object}} exec */
       pendingRequests(exec) { return negotiation.pending(host.executionFor(exec.agent).sessionId) },
     }),
@@ -138,17 +180,26 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       return entry.ready
     },
     stop,
-    /** Stop, await durable revocation, then forget this agent object. A new
-     * agent for the same session starts interrupted. @param {object} agent */
+    /** Normal end of an agent: an agent that is still active (never stopped,
+     * not recovering) can never edit again, so its active locks are released
+     * first — otherwise every finished subagent would block its files forever.
+     * Stopped, abnormal and unresolved state is retained for a human.
+     * @param {object} agent */
     async dispose(agent) {
-      if (!entries.has(agent)) return
-      // Forget synchronously (admission is already sealed by stop) so a
-      // reconnect for the same session can start interrupted at once.
-      const stopping = stop(agent)
-      entries.delete(agent)
-      disposing.add(stopping)
-      try { await stopping } finally { disposing.delete(stopping) }
+      const entry = entries.get(agent)
+      if (entry?.state === 'active') {
+        try {
+          const tokens = sessionStatus(entry.sessionId).status.locks
+            .filter(/** @param {any} lock */ lock => lock.owner === entry.sessionId && lock.status === 'active')
+            .map(/** @param {any} lock */ lock => cleanupToken(entry, lock.resourceId))
+          if (tokens.length) await runtime.control.releaseMany(tokens)
+        } catch { /* an unresolved fence or race keeps the locks; revocation still follows */ }
+      }
+      return forget(agent)
     },
+    /** Connection loss or crash: stop and forget WITHOUT releasing anything.
+     * @param {object} agent */
+    forget,
     /** Trusted explicit Continue. Consumes a one-use receipt bound to requestId;
      * retained interrupted locks become pending-confirmation, never active.
      * @param {object} agent @param {string} requestId */
