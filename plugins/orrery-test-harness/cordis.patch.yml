@@ -50,33 +50,44 @@
         # keeps every category enabled. The `targets` scenario uses it to prove
         # that a disabled target is neither advertised nor spawnable.
         categories: !!js 'Object.fromEntries((process.env.ORRERY_IT_DISABLED_CATEGORY ?? "").split(",").filter(Boolean).map((name) => [name, { disabled: true }]))'
-    - id: orrery-it-todo-driver
-      name: 'orrery-harness/todo-driver'
-    # Edit Lock row in preset order (before hashline-edit). Enabled only for
-    # the editlock scenario so every other scenario keeps today's behavior.
-    - id: orrery-it-edit-lock
-      name: 'orrery-harness/edit-lock'
+    # Mirror the preset realm structure for the Edit Lock service: provider
+    # (edit-lock) and consumers (todo-driver, hashline-edit, lsp) share one
+    # isolated realm, exactly like the preset's delegation group. A consumer
+    # outside the realm would not see the service and its edits would be
+    # denied by the guard, so the editlock scenario fails on a realm mistake.
+    - id: orrery-it-editing
+      name: cordis:group
+      group: true
+      isolate:
+        orreryEditLock: true
       config:
-        enabled: !!js process.env.ORRERY_IT_EDIT_LOCK === '1'
-    - id: orrery-it-hashline-edit
-      name: 'orrery-harness/hashline-edit'
-      config:
-        # Mirror the real preset's default: hash_edit is the only edit tool.
-        hideStockEdit: true
-    # LSP module under test: registry points the typescript server at the
-    # scripted mock LSP server (protocol fixture, no external installs), with
-    # the capability gate ON (mirrors the settings row flipped on).
-    - id: orrery-it-lsp
-      name: 'orrery-harness/lsp'
-      config:
-        enabled: true
-        servers:
-          typescript:
-            # process.execPath = the interpreter that booted this profile, so the
-            # mock server launches on any platform without a hardcoded path.
-            command: !!js process.execPath
-            args: [!!js (process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it') + '/ws/mock-lsp-server.js']
-            installHint: 'not-needed-in-tests'
+        - id: orrery-it-todo-driver
+          name: 'orrery-harness/todo-driver'
+        # Edit Lock row in preset order (before hashline-edit). Enabled only for
+        # the editlock scenario so every other scenario keeps today's behavior.
+        - id: orrery-it-edit-lock
+          name: 'orrery-harness/edit-lock'
+          config:
+            enabled: !!js process.env.ORRERY_IT_EDIT_LOCK === '1'
+        - id: orrery-it-hashline-edit
+          name: 'orrery-harness/hashline-edit'
+          config:
+            # Mirror the real preset's default: hash_edit is the only edit tool.
+            hideStockEdit: true
+        # LSP module under test: registry points the typescript server at the
+        # scripted mock LSP server (protocol fixture, no external installs), with
+        # the capability gate ON (mirrors the settings row flipped on).
+        - id: orrery-it-lsp
+          name: 'orrery-harness/lsp'
+          config:
+            enabled: true
+            servers:
+              typescript:
+                # process.execPath = the interpreter that booted this profile, so the
+                # mock server launches on any platform without a hardcoded path.
+                command: !!js process.execPath
+                args: [!!js (process.env.ORRERY_IT_ROOT ?? '/Users/young/.orrery-it') + '/ws/mock-lsp-server.js']
+                installHint: 'not-needed-in-tests'
     # Mirror the real preset's realm structure: the compaction provider and the
     # context-guard consumer co-isolated in one group. This reproduces the
     # "waiting for compaction" preset-load failure class headlessly.
