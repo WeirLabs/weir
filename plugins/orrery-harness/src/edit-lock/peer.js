@@ -1,5 +1,10 @@
 import { canonicalRequestData } from './request-data.js'
 
+/** Model-facing tool kinds and trusted human-ingress kinds. The connecting
+ * host process is the trusted ingress for the latter (same trust base). */
+export const PEER_KINDS = Object.freeze(['publish', 'batch', 'acquire', 'release', 'locks', 'trySteal', 'reply', 'pending',
+  'status', 'stop', 'resume', 'confirm', 'unlock', 'allLocks'])
+
 /** Bind an already authenticated, host-owned channel to ONE registered agent.
  * No identity or lifecycle capability is accepted in a wire message. The caller
  * process is trusted to resolve policy; this is not remote attestation.
@@ -8,14 +13,15 @@ import { canonicalRequestData } from './request-data.js'
 export function createEditLockPeer(lifecycle, agent) {
   const pending = new Set()
   let closed = false
-  /** @type {Promise<void> | undefined} */
+  /** @type {Promise<unknown> | undefined} */
   let closing
   function disconnect() {
     if (closing) return closing
     closed = true
-    // stop synchronously fences the registry before waiting for any publication.
-    closing = lifecycle.stop(agent)
-    return closing
+    // stop synchronously fences the registry before waiting for any publication;
+    // dispose also forgets the channel agent so a reconnect starts interrupted.
+    closing = lifecycle.dispose ? lifecycle.dispose(agent) : lifecycle.stop(agent)
+    return /** @type {Promise<void>} */ (closing)
   }
   return Object.freeze({
     /** Transport must bound frame bytes before JSON parsing and call disconnect
@@ -26,16 +32,32 @@ export function createEditLockPeer(lifecycle, agent) {
       const message = JSON.parse(canonicalRequestData(input))
       if (!message || typeof message !== 'object' || Array.isArray(message)
         || Object.keys(message).sort().join(',') !== 'callId,kind,request'
-        || !['publish', 'batch'].includes(message.kind)
+        || !PEER_KINDS.includes(message.kind)
         || typeof message.callId !== 'string' || !message.callId.trim()) throw new Error('invalid edit peer message')
       if (pending.has(message.callId)) throw new Error('edit peer call already pending')
       if (pending.size >= 32) throw new Error('edit peer admission limit')
       pending.add(message.callId)
       try {
         const exec = {agent,callId:message.callId,signal:new AbortController().signal}
-        return message.kind === 'publish'
-          ? await lifecycle.service.publish(exec, message.request)
-          : await lifecycle.service.publishBatch(exec, message.request)
+        const request = /** @type {any} */ (message.request)
+        const service = /** @type {any} */ (lifecycle.service)
+        switch (message.kind) {
+          case 'publish': return await service.publish(exec, request)
+          case 'batch': return await service.publishBatch(exec, request)
+          case 'acquire': return await service.acquire(exec, request)
+          case 'release': return await service.release(exec, request)
+          case 'locks': return await service.locks(exec)
+          case 'trySteal': return await service.trySteal(exec, request)
+          case 'reply': return await service.reply(exec, request)
+          case 'pending': return await service.pendingRequests(exec)
+          case 'status': return lifecycle.status(agent)
+          case 'stop': await lifecycle.stop(agent); return lifecycle.status(agent)
+          case 'resume': return await lifecycle.resume(agent, `remote:${String(request?.requestId)}`)
+          case 'confirm': await lifecycle.confirm(agent, request?.resourceId); return lifecycle.status(agent)
+          case 'unlock': return await lifecycle.unlock(request?.resourceId, request?.generation)
+          case 'allLocks': return lifecycle.locks()
+          default: throw new Error('invalid edit peer message')
+        }
       } finally { pending.delete(message.callId) }
     },
     // Trusted channel lifecycle only, not a model-controlled request method.

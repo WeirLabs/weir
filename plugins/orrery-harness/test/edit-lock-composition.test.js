@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { apply, storeMode } from '../src/edit-lock/index.js'
+import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from '../src/edit-lock/remote.js'
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
@@ -204,4 +205,29 @@ test('enabled composition guards unclaimed editors, latches stop and resumes onl
   assert.equal((await host.command().handler({ agent, rawInput: 'resume', commandId: 'c3' })).kind, 'error')
   dispose()
   assert.equal(host.command(), undefined)
+})
+
+test('remote channel opens a session, EOF revokes it, and reconnect starts interrupted', async () => {
+  const { base, root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
+  const endpoint = endpointFor(directory)
+  await writeFile(join(base, 'not-a-socket'), '')
+  await assert.rejects(serveEditLockEndpoint(lifecycle, join(base, 'not-a-socket'), new WeakMap()), /unexpected node/)
+  const server = await serveEditLockEndpoint(lifecycle, endpoint, new WeakMap())
+  const remote = createRemoteEditLockDomain(endpoint, { onNotice() {} })
+  const agent = { id: 'remote-s' }
+  assert.equal((await remote.channelFor(agent)).state, 'active')
+  assert.equal((await remote.call(agent, 'acquire', { filePath: 'a.txt', cwd: root })).generation, 1)
+  try {
+    remote.drop(agent)
+    // Reconnect immediately: never "already bound", always interrupted.
+    assert.equal((await remote.channelFor(agent)).state, 'interrupted')
+    assert.equal(runtime.control.status().locks[0].status, 'user-interrupted')
+    await assert.rejects(remote.call(agent, 'acquire', { filePath: 'a.txt', cwd: root }), /authenticated/)
+  } finally {
+    remote.close()
+    await server.close()
+    await lifecycle.close()
+  }
 })

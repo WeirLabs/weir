@@ -18,6 +18,8 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
   let closed = false
   /** @type {Promise<void> | undefined} */
   let shutdown
+  /** @type {Set<Promise<unknown>>} */
+  const disposing = new Set()
   const negotiation = createNegotiation({
     control: runtime.control,
     executionFor: agent => host.executionFor(agent),
@@ -123,7 +125,12 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
      * agent for the same session starts interrupted. @param {object} agent */
     async dispose(agent) {
       if (!entries.has(agent)) return
-      try { await stop(agent) } finally { entries.delete(agent) }
+      // Forget synchronously (admission is already sealed by stop) so a
+      // reconnect for the same session can start interrupted at once.
+      const stopping = stop(agent)
+      entries.delete(agent)
+      disposing.add(stopping)
+      try { await stopping } finally { disposing.delete(stopping) }
     },
     /** Trusted explicit Continue. Consumes a one-use receipt bound to requestId;
      * retained interrupted locks become pending-confirmation, never active.
@@ -176,7 +183,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       if (shutdown) return shutdown
       closed = true
       negotiation.close()
-      const stops = [...entries.keys()].map(stop)
+      const stops = [...entries.keys()].map(stop).concat([...disposing])
       shutdown = (async () => {
         const results = await Promise.allSettled(stops)
         await Promise.allSettled([...entries.values()].map(entry => entry.ready))

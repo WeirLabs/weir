@@ -14,6 +14,8 @@ import { createEditLockLifecycle } from './lifecycle.js'
 import { installEditLockWriteScope } from './tool-scope.js'
 import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
+import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
+import { localDomain, remoteDomain } from './domain.js'
 
 const name = 'orrery-edit-lock'
 const inject = ['tools', 'fs']
@@ -47,16 +49,16 @@ function sessionOf(agent) {
   return typeof agent?.id === 'string' && agent.id ? agent.id : undefined
 }
 
-/** @param {any} lifecycle @param {any} agent @param {string} raw @param {string} commandId */
-async function runCommand(lifecycle, agent, raw, commandId) {
+/** @param {any} domain @param {any} agent @param {string} raw @param {string} commandId */
+async function runCommand(domain, agent, raw, commandId) {
   const [verb, ...rest] = raw.trim().split(/\s+/u)
-  if (!verb || verb === 'status') return describe(lifecycle.status(agent))
+  if (!verb || verb === 'status') return describe(await domain.status(agent))
   if (verb === 'stop') {
-    await lifecycle.stop(agent)
-    return `Edit authority durably revoked for this session.\n${describe(lifecycle.status(agent))}`
+    const status = await domain.stop(agent)
+    return `Edit authority durably revoked for this session.\n${describe(status)}`
   }
   if (verb === 'resume') {
-    const status = await lifecycle.resume(agent, `command:${commandId}`)
+    const status = await domain.resume(agent, `command:${commandId}`)
     const pending = status.locks.filter(/** @param {any} lock */ lock => lock.status === 'pending-confirmation')
     return `Edit authority resumed with a new execution epoch.${pending.length ? ' Confirm each retained file with /edit-lock confirm <path> before editing it.' : ''}\n${describe(status)}`
   }
@@ -67,11 +69,11 @@ async function runCommand(lifecycle, agent, raw, commandId) {
     if (typeof cwd !== 'string') throw new Error('session cwd unavailable')
     const observation = createResourceIdentity().resolve(path, { cwd })
     if (observation.kind !== 'file') throw new Error('confirm requires an existing regular file')
-    await lifecycle.confirm(agent, observation.resourceId)
-    return `Confirmed ${observation.resourceId}.\n${describe(lifecycle.status(agent))}`
+    const status = await domain.confirm(agent, observation.resourceId)
+    return `Confirmed ${observation.resourceId}.\n${describe(status)}`
   }
   if (verb === 'locks') {
-    const locks = lifecycle.locks()
+    const locks = await domain.locks(agent)
     return locks.length ? locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.owner} [${lock.status}${lock.reason ? `: ${lock.reason}` : ''}] generation ${lock.generation}`).join('\n') : 'No Edit Lock ownership is held.'
   }
   if (verb === 'unlock') {
@@ -79,7 +81,7 @@ async function runCommand(lifecycle, agent, raw, commandId) {
     const path = rest.slice(0, -1).join(' ')
     if (!path || !Number.isSafeInteger(generation)) throw new Error('Usage: /edit-lock unlock <path> <generation> (see /edit-lock locks)')
     // An exact listed resource id also works for files that no longer exist.
-    let resourceId = lifecycle.locks().find((/** @type {any} */ lock) => lock.resourceId === path)?.resourceId
+    let resourceId = (await domain.locks(agent)).find((/** @type {any} */ lock) => lock.resourceId === path)?.resourceId
     if (!resourceId) {
       const cwd = agent?.session?.header?.cwd
       if (typeof cwd !== 'string') throw new Error('session cwd unavailable')
@@ -87,7 +89,7 @@ async function runCommand(lifecycle, agent, raw, commandId) {
       if (observation.kind !== 'file') throw new Error('unlock requires an existing regular file or an exact locked resource id')
       resourceId = observation.resourceId
     }
-    const result = await lifecycle.unlock(resourceId, generation)
+    const result = await domain.unlock(agent, resourceId, generation)
     return `Unlocked ${result.resourceId} (generation ${result.generation}, owner ${result.owner}). Content was not validated.`
   }
   throw new Error('Usage: /edit-lock [status|locks|stop|resume|confirm <path>|unlock <path> <generation>]')
@@ -192,15 +194,37 @@ const apply = (ctx, config = {}) => {
   const managed = new WeakSet()
   let closed = false
   /** @type {any} */
-  let lifecycleNow
+  let domainNow
+  /** Remote channel agents on the publisher side → their notice sink.
+   * @type {WeakMap<object, (event: unknown) => void>} */
+  const sinks = new WeakMap()
+  /** inject never wakes an idle or interrupted agent: no nested execution.
+   * @param {any} agent @param {string} text */
+  const deliverLocal = (agent, text) => agent.inject(userTextMessage(text, 'orrery-edit-lock'))
   const ready = (async () => {
-    const mode = storeMode(options.directory)
-    const runtime = await openReservedEditLockRuntime({ ...options, mode, fs })
-    return createEditLockLifecycle(runtime, sessionOf, {
-      // inject never wakes an idle or interrupted agent: no nested execution.
-      deliver: (agent, text) => /** @type {any} */ (agent).inject(userTextMessage(text, 'orrery-edit-lock')),
-      onPending: syncReplyTool,
+    if (!existsSync(options.directory)) mkdirSync(options.directory, { recursive: true, mode: 0o700 })
+    let runtime
+    try {
+      // The store mode is read only after the reservation is held.
+      runtime = await openReservedEditLockRuntime({ ...options, mode: () => storeMode(options.directory), fs })
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== 'EEXIST') throw error
+      // Another cooperating host publishes: become its client, never a writer.
+      return remoteDomain(createRemoteEditLockDomain(endpointFor(options.directory), {
+        onNotice(agent, event) {
+          if (event?.kind === 'notice' && typeof event.text === 'string') deliverLocal(agent, event.text)
+          if (event?.kind === 'pending' && Number.isSafeInteger(event.count)) syncReplyTool(agent, event.count)
+        },
+      }))
+    }
+    const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
+      deliver: (agent, text) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text }); else deliverLocal(agent, text) },
+      onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
     })
+    let endpoint
+    try { endpoint = await serveEditLockEndpoint(lifecycle, endpointFor(options.directory), sinks) }
+    catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
+    return localDomain(lifecycle, endpoint)
   })()
   ready.catch((/** @type {any} */ error) => {
     ctx.logger?.warn?.(`edit lock unavailable; controlled writes fail closed: ${error?.message ?? error}`)
@@ -241,10 +265,10 @@ const apply = (ctx, config = {}) => {
     /** Continuation gate: an interrupted session is never re-armed implicitly.
      * Unknown/unavailable state also blocks. @param {any} agent */
     blocksContinuation(agent) {
-      try { return !lifecycleNow || lifecycleNow.status(agent).state !== 'active' } catch { return true }
+      return !domainNow || domainNow.blocks(agent)
     },
   })
-  void ready.then(lifecycle => { lifecycleNow = lifecycle }, () => {})
+  void ready.then(domain => { domainNow = domain }, () => {})
   ctx.reflect.provide('orreryEditLock', service)
 
   const offTools = registerLockTools(ctx, service)
@@ -275,10 +299,10 @@ const apply = (ctx, config = {}) => {
   const watched = new WeakSet()
   ctx.on('agent/pre-step', (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
     const { agent, signal } = event ?? {}
-    if (lifecycleNow && agent && signal && !watched.has(signal)) {
+    if (domainNow && agent && signal && !watched.has(signal)) {
       watched.add(signal)
-      const lifecycle = lifecycleNow
-      const latch = () => { lifecycle.stop(agent).catch(() => {}) }
+      const domain = domainNow
+      const latch = () => domain.latch(agent)
       if (signal.aborted) latch()
       else signal.addEventListener('abort', latch, { once: true })
     }
@@ -286,7 +310,7 @@ const apply = (ctx, config = {}) => {
   })
 
   ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
-    void ready.then(lifecycle => lifecycle.dispose(agent)).catch(() => {})
+    void ready.then(domain => domain.dispose(agent)).catch(() => {})
   })
 
   const commands = ctx.get?.('commands')
@@ -298,8 +322,8 @@ const apply = (ctx, config = {}) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
-        const lifecycle = await ready
-        return { kind: 'success', text: await runCommand(lifecycle, agent, String(invocation.rawInput ?? ''), String(invocation.commandId)) }
+        const domain = await ready
+        return { kind: 'success', text: await runCommand(domain, agent, String(invocation.rawInput ?? ''), String(invocation.commandId)) }
       } catch (error) {
         return { kind: 'error', text: `edit-lock: ${/** @type {any} */ (error)?.message ?? error}` }
       }
@@ -312,7 +336,7 @@ const apply = (ctx, config = {}) => {
     for (const off of offTools) off?.()
     // Stops every session durably, drains publication, then releases the
     // cross-process reservation. Failure retains it for operator recovery.
-    void ready.then(lifecycle => lifecycle.close()).catch((/** @type {any} */ error) => {
+    void ready.then(domain => domain.close()).catch((/** @type {any} */ error) => {
       ctx.logger?.warn?.(`edit lock shutdown incomplete; reservation retained: ${error?.message ?? error}`)
     })
   }

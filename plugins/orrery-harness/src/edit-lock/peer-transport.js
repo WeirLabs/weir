@@ -4,23 +4,24 @@ import { canonicalRequestData } from './request-data.js'
  * sockets or chooses a session from message fields. Length-prefixed JSON, 8 MiB
  * maximum; transport loss revokes the fixed peer and never elects a publisher.
  * @param {import('node:stream').Duplex} stream
- * @param {ReturnType<typeof import('./peer.js').createEditLockPeer>} peer */
+ * @param {{receive: (input: unknown) => Promise<unknown>, disconnect: () => Promise<unknown>}} peer */
 export function serveEditLockPeer(stream, peer) {
   const maxBytes = 8 * 1024 * 1024
   let buffer = Buffer.alloc(0)
   let ended = false
-  /** @type {Promise<void> | undefined} */
+  /** @type {Promise<unknown> | undefined} */
   let closing
   function close() {
     if (closing) return closing
     ended = true
     stream.pause()
     stream.destroy()
-    closing = peer.disconnect()
+    const disconnecting = Promise.resolve(peer.disconnect())
+    closing = disconnecting
     // Event callbacks cannot propagate an async rejection. Keep the original
     // rejected promise available to the owner, which MUST await close().
-    void closing.catch(() => {})
-    return closing
+    void disconnecting.catch(() => {})
+    return disconnecting
   }
   /** @param {unknown} response */
   function send(response) {
@@ -61,5 +62,9 @@ export function serveEditLockPeer(stream, peer) {
   stream.once('end', close)
   stream.once('error', close)
   stream.once('close', close)
-  return Object.freeze({close})
+  return Object.freeze({close,
+    /** Server-initiated notice frame; carries text/counters, never authority.
+     * @param {unknown} event */
+    notify(event) { try { send({event}) } catch { close() } },
+  })
 }
