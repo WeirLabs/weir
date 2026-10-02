@@ -13,7 +13,13 @@ const TARGET = join(WS, 'locked.txt')
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
-  if ((options.messages ?? []).at(-1)?.role !== 'tool') {
+  const last = (options.messages ?? []).at(-1)
+  // The turn-end settling notice arrives as a user message. The first one is
+  // answered with a bounded reservation; once reserved, the turn simply ends.
+  if (last?.role === 'user' && lastOfRole(options, 'user').startsWith('Edit Lock: the turn ended while this session still held')) {
+    return toolCallChunks('edit_lock_hold', { minutes: 30 })
+  }
+  if (last?.role !== 'tool') {
     return history.includes(prompt) ? toolCallChunks('write', { file_path: TARGET, content: 'first\n' }) : textChunks('unhandled editlock turn')
   }
   const toolText = lastOfRole(options, 'tool')
@@ -25,10 +31,15 @@ function decide(options, obs) {
     return toolCallChunks('hash_edit', { file_path: TARGET, edits: [{ op: 'replace', pos: `1#${anchor[1]}`, text: 'second' }] })
   }
   if (/hash_edit applied/.test(toolText)) return toolCallChunks('edit_lock_status', {})
-  if (/owner=this session/.test(toolText) && !history.includes('authority-probe')) {
+  // A reservation is visible in status — that is the state the user acts on — and
+  // the holder then releases it, so the batch ends instead of being held forever.
+  if (toolText.includes('Reserved for')) return toolCallChunks('edit_lock_release', { file_path: TARGET })
+  if (/Keeping \d+ file/.test(toolText)) return toolCallChunks('edit_lock_status', {})
+  if (/owner=this session/.test(toolText) && !history.includes('authority-probe') && !history.includes('Keeping')) {
     return toolCallChunks('write', { file_path: join(WS, '.orrery', 'edit-lock', 'snapshot.json'), content: 'authority-probe' })
   }
-  if (/not editable/.test(toolText)) return toolCallChunks('edit_lock_release', { file_path: TARGET })
+  // End the turn with the lock still held: the turn-end settling notice takes over.
+  if (/not editable/.test(toolText)) return textChunks('editlock turn ends holding')
   return textChunks('editlock done')
 }
 
@@ -38,7 +49,7 @@ function observe(obs) {
 
 function assert(run) {
   // Tool result text as the model saw it (the event tap carries no content).
-  const text = run.requests.map((r) => r.lastTool ?? '')
+  const text = run.requests.map((r) => `${r.lastTool ?? ''}\n${r.lastUser ?? ''}`)
   const tools = run.requests.flatMap((r) => r.tools ?? [])
   run.check('edit lock owner tools advertised', run.requests.some((r) => r.editLockToolsSeen) && ['edit_lock_acquire', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal'].every((name) => tools.includes(name)), JSON.stringify([...new Set(tools)]))
   run.check('stock edit hidden, managed write and hash_edit present', !tools.includes('edit') && tools.includes('write') && tools.includes('hash_edit'))
@@ -47,6 +58,11 @@ function assert(run) {
   // The snapshot is absent from committed replay fixtures (.orrery/ is ignored).
   const snapshot = join(run.ws, '.orrery', 'edit-lock', 'snapshot.json')
   run.check('authority files refused as edit targets', text.some((t) => t.includes('not editable')) && (!existsSync(snapshot) || readFileSync(snapshot, 'utf8') !== 'authority-probe'), text.join('\n').slice(-800))
+  // Retention: an explicit bounded keep is advertised, succeeds, and is visible in
+  // status as the one thing the user acts on (how long the files stay reserved).
+  run.check('retention tool advertised', tools.includes('edit_lock_hold'), JSON.stringify(tools))
+  run.check('bounded reservation accepted', text.some((t) => /Keeping \d+ file/.test(t)), text.join('\n').slice(-800))
+  run.check('status reports the reservation', text.some((t) => t.includes('Reserved for')), text.join('\n').slice(-800))
   run.check('release succeeded', text.some((t) => t.includes('Released')), text.join('\n').slice(-800))
   run.check('reservation released after headless exit', !existsSync(join(run.ws, '.orrery', '.edit-lock.publisher-reservation')))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
