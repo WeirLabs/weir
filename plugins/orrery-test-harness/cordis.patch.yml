@@ -52,6 +52,12 @@
         categories: !!js 'Object.fromEntries((process.env.ORRERY_IT_DISABLED_CATEGORY ?? "").split(",").filter(Boolean).map((name) => [name, { disabled: true }]))'
     - id: orrery-it-todo-driver
       name: 'orrery-harness/todo-driver'
+    # Edit Lock row in preset order (before hashline-edit). Enabled only for
+    # the editlock scenario so every other scenario keeps today's behavior.
+    - id: orrery-it-edit-lock
+      name: 'orrery-harness/edit-lock'
+      config:
+        enabled: !!js process.env.ORRERY_IT_EDIT_LOCK === '1'
     - id: orrery-it-hashline-edit
       name: 'orrery-harness/hashline-edit'
       config:

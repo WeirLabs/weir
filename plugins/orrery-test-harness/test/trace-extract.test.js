@@ -48,6 +48,7 @@ const PRE_MIGRATION_KEYS = [
   'backgroundMarkerInParentContext',
   'sawTerminateProbe',
   'rehydrateResumeContextSeen',
+  'editLockToolsSeen',
   'rehydrateResumedReportSeen',
   'rehydrateChildASeen',
   'lspToggledOn',
