@@ -1,5 +1,6 @@
 import { createEditLockHost } from './host.js'
 import { createNegotiation } from './negotiation.js'
+import { RECOVERY_LIMITS } from './recovery.js'
 
 /** Host-owned lifecycle controller. The authenticated transport must await stop;
  * stock GUI cancel acceptance alone does not constitute this acknowledgement.
@@ -8,13 +9,21 @@ import { createNegotiation } from './negotiation.js'
  * @param {(agent: object) => string | undefined} sessionForAgent
  * @param {{deliver?: (agent: object, text: string) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number}} [options] */
 export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
-  /** @typedef {{sessionId:string, state:'starting'|'active'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
+  /** @typedef {{sessionId:string, state:'starting'|'active'|'recovering'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
   const entries = new Map()
   const host = createEditLockHost(runtime, agent => {
     const entry = entries.get(agent)
-    return !!entry && entry.state === 'active' && sessionForAgent(agent) === entry.sessionId
+    // Cleanup-only recovery keeps the execution for release/reply; business
+    // ingress is gated separately below.
+    return !!entry && (entry.state === 'active' || entry.state === 'recovering') && sessionForAgent(agent) === entry.sessionId
   })
+  /** Business edits and new ownership need an active (not recovering) session.
+   * @param {any} exec */
+  function business(exec) {
+    const entry = entries.get(exec?.agent)
+    if (entry?.state === 'recovering') throw new Error('cleanup-only recovery: business edits and new ownership are denied; release locks, answer requests or pause, then wait for a human /edit-lock resume')
+  }
   let closed = false
   /** @type {Promise<void> | undefined} */
   let shutdown
@@ -66,14 +75,22 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       interrupted: session?.interrupted ?? null,
       executionEpoch: session?.executionEpoch ?? null,
       locks: status.locks.filter(/** @param {any} lock */ lock => lock.owner === entry.sessionId),
+      recovery: runtime.control.recoveryUsage(entry.sessionId),
     }
   }
   return Object.freeze({
     // Only this narrowed service belongs in the tool context.
-    service: Object.freeze({publish: host.publish, publishBatch: host.publishBatch,
-      acquire: host.acquire, release: host.release, locks: host.locks,
+    service: Object.freeze({
+      /** @param {any} exec @param {any} request */
+      async publish(exec, request) { business(exec); return host.publish(exec, request) },
+      /** @param {any} exec @param {any} request */
+      async publishBatch(exec, request) { business(exec); return host.publishBatch(exec, request) },
+      /** @param {any} exec @param {any} request */
+      async acquire(exec, request) { business(exec); return host.acquire(exec, request) },
+      release: host.release, locks: host.locks,
       /** @param {{agent: object}} exec @param {{filePath: string, cwd: string}} request */
       async trySteal(exec, request) {
+        business(exec)
         host.executionFor(exec.agent)
         return negotiation.request(exec.agent, runtime.requests.resource(request.filePath, request.cwd))
       },
@@ -138,6 +155,8 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     async resume(agent, requestId) {
       if (closed) throw new Error('edit lifecycle closed')
       const entry = entryFor(agent)
+      // A recovering session is first durably revoked; abnormal locks stay abnormal.
+      if (entry.state === 'recovering') revoke(entry)
       if (entry.state !== 'stopped' || !entry.stop) throw new Error('agent is not interrupted')
       await entry.stop
       if (closed || entry.state !== 'stopped') throw new Error('agent state changed before resume')
@@ -167,6 +186,34 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       if (closed) throw new Error('edit lifecycle closed')
       entryFor(agent)
       await runtime.control.confirm(host.executionFor(agent), resourceId)
+    },
+    /** Trusted classifier (durable turn/end error): retained locks become
+     * abnormal and the session enters cleanup-only recovery. No locks → no-op.
+     * @param {object} agent @param {string} reason @returns {Promise<string[]>} */
+    async classifyAbnormal(agent, reason) {
+      const entry = entryFor(agent)
+      if (entry.state !== 'active') return []
+      const marked = await runtime.control.markAbnormal(entry.sessionId, reason)
+      const abnormal = statusOf(agent).locks.some(/** @param {any} lock */ lock => lock.status === 'abnormal')
+      if (abnormal && entry.state === 'active') entry.state = 'recovering'
+      return marked
+    },
+    /** @param {object} agent */
+    recoveryUsage(agent) { return runtime.control.recoveryUsage(entryFor(agent).sessionId) },
+    /** @param {object} agent @param {{attempts?: number, elapsedMs?: number, pauseMs?: number}} delta */
+    chargeRecovery(agent, delta) { return runtime.control.chargeRecovery(entryFor(agent).sessionId, delta) },
+    /** Bounded pause; charged durably up front, never extends or releases.
+     * @param {object} agent @param {number} minutes */
+    async pause(agent, minutes) {
+      const entry = entryFor(agent)
+      if (entry.state !== 'recovering') throw new Error('pause is only available during cleanup-only recovery')
+      if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('minutes must be positive')
+      const ms = Math.round(minutes * 60_000)
+      if (ms > RECOVERY_LIMITS.singlePauseMs) throw new Error(`a single pause is limited to ${RECOVERY_LIMITS.singlePauseMs / 60_000} minutes`)
+      const usage = runtime.control.recoveryUsage(entry.sessionId)
+      if (usage.pauseMs + ms > RECOVERY_LIMITS.cumulativePauseMs) throw new Error(`cumulative pause budget exhausted (${Math.floor((RECOVERY_LIMITS.cumulativePauseMs - usage.pauseMs) / 60_000)} minutes left)`)
+      await runtime.control.chargeRecovery(entry.sessionId, { pauseMs: ms })
+      return { pausedMs: ms, cumulativePauseMs: usage.pauseMs + ms }
     },
     /** Trusted human unlock by exact generation; never exposed as a tool.
      * Session interruption and pending confirmations are untouched.

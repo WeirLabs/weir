@@ -66,8 +66,9 @@ function managerCore(store, kernel) {
     }
   }
   /** @param {(draft: ReturnType<typeof authority.begin>) => any} transition
-   * @param {boolean} [revocation] Only subtractive cancellation may cross an unresolved fence. */
-  function transact(transition, revocation = false) {
+   * @param {boolean} [revocation] Only subtractive cancellation may cross an unresolved fence.
+   * @param {(state: any) => object} [patch] Extra durable fields (recovery budgets only). */
+  function transact(transition, revocation = false, patch = undefined) {
     const pending = tail.then(async () => {
       healthy()
       // Until canonical overlap admission is wired, unresolved publication
@@ -83,6 +84,7 @@ function managerCore(store, kernel) {
       }
       try {
         const nextState = { ...confirmed.state, ...authority.checkpoint(draft) }
+        if (patch) Object.assign(nextState, patch(nextState))
         const saved = await store.record({ expectedRevision: confirmed.revision, nextState })
         authority.install(draft)
         confirmed = saved
@@ -429,6 +431,52 @@ function managerCore(store, kernel) {
         draft.operations.release({ managerIncarnation, sessionId: lock.owner, executionEpoch: session.executionEpoch, resourceId, generation })
         return { resourceId, generation, owner: lock.owner }
       })
+    },
+    /** Trusted classifier only (durable turn/end error). Marks every retained,
+     * not yet abnormal lock of the session abnormal; never releases. Subtractive,
+     * so it may cross an unresolved publication fence.
+     * @param {string} sessionId @param {string} reason */
+    markAbnormal(sessionId, reason) {
+      return transact(draft => {
+        const status = operations.status()
+        const session = status.sessions.find(item => item.sessionId === sessionId)
+        if (!session) throw new Error('unknown session')
+        const marked = []
+        for (const lock of status.locks) {
+          if (lock.owner !== sessionId || lock.status === 'abnormal') continue
+          draft.authority.markAbnormal({ managerIncarnation, sessionId, executionEpoch: session.executionEpoch, resourceId: lock.resourceId, generation: lock.generation }, reason)
+          marked.push(lock.resourceId)
+        }
+        return marked
+      }, true)
+    },
+    /** Monotonic durable recovery budget charge; restart never refunds it.
+     * @param {string} sessionId @param {{attempts?: number, elapsedMs?: number, pauseMs?: number}} delta */
+    chargeRecovery(sessionId, delta) {
+      for (const value of [delta.attempts ?? 0, delta.elapsedMs ?? 0, delta.pauseMs ?? 0]) {
+        if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid recovery charge')
+      }
+      /** @type {any} */
+      let charged
+      return transact(() => {
+        if (!operations.status().sessions.some(item => item.sessionId === sessionId)) throw new Error('unknown session')
+      }, true, state => {
+        const recovery = state.recovery.map(/** @param {any} item */ item => ({ ...item }))
+        let entry = recovery.find(/** @param {any} item */ item => item.sessionId === sessionId)
+        if (!entry) { entry = { sessionId, attempts: 0, elapsedMs: 0, pauseMs: 0 }; recovery.push(entry) }
+        entry.attempts += delta.attempts ?? 0
+        entry.elapsedMs += delta.elapsedMs ?? 0
+        entry.pauseMs += delta.pauseMs ?? 0
+        charged = { ...entry }
+        return { recovery }
+      }).then(() => charged)
+    },
+    /** Durable recovery usage of one session (zeros when never charged).
+     * @param {string} sessionId */
+    recoveryUsage(sessionId) {
+      healthy()
+      const entry = confirmed.state.recovery.find(/** @param {any} item */ item => item.sessionId === sessionId)
+      return entry ? { ...entry } : { sessionId, attempts: 0, elapsedMs: 0, pauseMs: 0 }
     },
     /** Synchronous denial overlay must be checked before publication.
      * @param {import('./state.js').Ownership} token */

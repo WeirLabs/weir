@@ -61,7 +61,8 @@ window.__ModuleLoader__.load({
 				{ field: "guardHardThreshold", kind: "number" }
 			] },
 			{ id: "editing", fields: [
-				{ field: "hashlineHideStockEdit", kind: "boolean" }
+				{ field: "hashlineHideStockEdit", kind: "boolean" },
+				{ field: "editLockEnabled", kind: "boolean" }
 			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },

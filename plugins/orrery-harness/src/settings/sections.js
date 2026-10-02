@@ -36,6 +36,7 @@ const FIELDS = [
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (advisory)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (forced compaction)' },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)' },
+  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (experimental, default off; applies after restart)' },
   { key: 'robashEnabled', section: 'robash', field: 'enabled', type: 'boolean', description: 'Guarded read-only bash for curated agents (master switch)' },
   { key: 'robashAllow', section: 'robash', field: 'allow', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default bash allow list (empty adds nothing; the defaults are always in effect)' },
   { key: 'robashGitAllow', section: 'robash', field: 'gitAllow', type: 'string', list: true, description: 'JSON array of git subcommands to APPEND to the product-default git allow list (empty adds nothing; the defaults are always in effect)' },

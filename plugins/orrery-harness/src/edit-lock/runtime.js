@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { openEditLockStore } from './store.js'
 import { createEditLockManager, recoverEditLockManager } from './manager.js'
 import { createPublisher } from './publisher.js'
+import { reservationPathFor } from './reservation.js'
 
 const domains = new Set()
 
@@ -17,11 +18,12 @@ export async function openEditLockRuntime(options) {
   const root = realpathSync.native(options.root)
   if (!statSync(root).isDirectory()) throw new Error('management root must be directory')
   if (domains.has(root)) throw new Error('management domain already open')
-  // Authority files must not be writable through the managed business publisher.
   if (!isAbsolute(options.directory)) throw new Error('absolute authority directory required')
   const directory = realpathSync.native(options.directory)
-  const suffix = relative(root, directory)
-  if (suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix)) throw new Error('authority directory overlaps business domain')
+  // The authority may live inside the domain, but its files and reservation
+  // are never targets of the managed business publisher.
+  const excluded = [directory, reservationPathFor(directory)]
+  if (excluded.some(path => path === root || !relative(path, root).startsWith('..'))) throw new Error('authority directory must not contain the business domain')
   domains.add(root)
   /** @type {Awaited<ReturnType<typeof openEditLockStore>> | undefined} */
   let store
@@ -31,7 +33,7 @@ export async function openEditLockRuntime(options) {
     const manager = options.mode === 'recover'
       ? await recoverEditLockManager({ store, managerIncarnation: randomUUID() })
       : createEditLockManager({ store, managerIncarnation: randomUUID() })
-    const publisher = createPublisher({ manager, fs: options.fs, root, assertExclusive: options.assertExclusive })
+    const publisher = createPublisher({ manager, fs: options.fs, root, excluded, assertExclusive: options.assertExclusive })
     let closing = false
     /** @type {Promise<void> | undefined} */
     let shutdown

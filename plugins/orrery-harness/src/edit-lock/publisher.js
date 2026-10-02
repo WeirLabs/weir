@@ -1,4 +1,4 @@
-import { isAbsolute, relative } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import { createResourceIdentity } from './resource-identity.js'
 import { canonicalRequestData } from './request-data.js'
 
@@ -6,8 +6,8 @@ import { canonicalRequestData } from './request-data.js'
  * The trusted host owns policy provenance, execution authentication, exclusive
  * manager lifetime and exclusion of external topology writers.
  * @param {{manager: ReturnType<typeof import('./manager.js').createEditLockManager>,
- * fs: {resolve: (path: string, options: {cwd: string}) => Promise<any>, writeText: (...args: any[]) => Promise<{version: string}>}, root: string, assertExclusive?: () => void}} options */
-export function createPublisher({ manager, fs, root, assertExclusive = () => {} }) {
+ * fs: {resolve: (path: string, options: {cwd: string}) => Promise<any>, writeText: (...args: any[]) => Promise<{version: string}>}, root: string, excluded?: string[], assertExclusive?: () => void}} options */
+export function createPublisher({ manager, fs, root, excluded = [], assertExclusive = () => {} }) {
   if (!isAbsolute(root)) throw new Error('absolute domain root required')
   const resolve = fs.resolve.bind(fs)
   const writeText = fs.writeText.bind(fs)
@@ -18,6 +18,10 @@ export function createPublisher({ manager, fs, root, assertExclusive = () => {} 
   function contained(path) {
     const suffix = relative(root, path)
     if (suffix === '..' || suffix.startsWith('../') || isAbsolute(suffix)) throw new Error('outside management domain')
+    for (const protectedPath of excluded) {
+      const inner = relative(protectedPath, path)
+      if (inner === '' || (!inner.startsWith('..') && !isAbsolute(inner))) throw new Error('Edit Lock authority files are not editable')
+    }
   }
   return Object.freeze({
     /** Canonical identity of one existing in-domain regular file; never a
@@ -75,6 +79,8 @@ export function createPublisher({ manager, fs, root, assertExclusive = () => {} 
       if (!['workspace-write', 'danger-full-access'].includes(data.effectivePolicy?.mode)) throw new Error('writable effective policy required')
       const observation = identity.resolve(data.filePath, { cwd: data.cwd })
       contained(observation.kind === 'file' ? observation.resourceId : observation.ancestor)
+      // The lexical creation target too: a missing protected subtree is not an escape.
+      if (observation.kind === 'missing') contained(join(observation.ancestor, observation.suffix))
       const target = await resolve(data.filePath, { cwd: data.cwd })
       let descriptor
       if (observation.kind === 'missing') {

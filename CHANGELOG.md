@@ -9,6 +9,7 @@
 
 ### Added
 
+- **编辑锁（实验，默认关闭）**：设置页「编辑」组新增「编辑锁（实验）」开关，打开并重启后生效。锁按会话所在 git 仓库根（否则工作目录）自动分域，状态保存在 `.orrery/edit-lock/` 并经 `.git/info/exclude` 排除，不改动受版本控制文件；会话出错时持有的锁转为异常，只允许释放、答复与有限暂停（单次 15 分钟、累计 30 分钟），自动清理至多 3 次或 5 分钟后交给人工，额度跨重启保留。真实 headless 集成场景通过。
 - **Edit Lock 跨进程客户端（开发中，默认关闭）**：共用同一 authority 目录的第二个 Harness 不再被整体拒绝，而是经本机 socket 成为唯一 publisher 的客户端：工具、`/edit-lock` 命令与协商都由 publisher 仲裁并发布，断连即持久撤权，重连需显式 resume。双进程真实 Agent 实测通过；端点仅面向可信合作进程，不做认证。
 - **Edit Lock 受控人工解锁（开发中，默认关闭）**：`/edit-lock locks` 查看全部归属，`/edit-lock unlock <path> <generation>` 仅在 generation 仍为当前值时释放，并在 manager 顺序中等待在途提交，未决发布时拒绝；无强制解锁，旧 owner 晚到写入不会派发。
 - **Edit Lock 归属工具与协商（开发中，默认关闭）**：启用组合后提供 `edit_lock_acquire`／`edit_lock_release`／`edit_lock_status` 与不等待的 `edit_lock_try_steal`；持有者仅在有待答请求时获得 `edit_lock_reply`，只有当前持有者执行的及时答复才会在一个持久事务里转交，沉默、过期、旧 generation 与已中断持有者一律保留归属。安装版真实回合隔离组合 22/22 通过。

@@ -24,4 +24,4 @@
 | 共享 runtime 消息助手 | [runtime-message-helpers.md](runtime-message-helpers.md) | `orrery-harness/shared`（被 intent-gate / todo-driver / context-guard 复用） |
 | Windows 沙箱 shell 约束 | [windows-sandbox-shell-constraint.md](windows-sandbox-shell-constraint.md) | 平台约束（DSH 桌面宿主） |
 | 集成测试装置 | [integration-test-harness.md](integration-test-harness.md) | `plugins/orrery-test-harness`（开发专用） |
-| Edit Lock 编辑锁仲裁 | [edit-lock.md](edit-lock.md) | 包内 `src/edit-lock/`（开发中，未挂载，无包导出） |
+| Edit Lock 编辑锁仲裁 | [edit-lock.md](edit-lock.md) | `orrery-harness/edit-lock`（实验，默认关闭，设置 `editLockEnabled`） |

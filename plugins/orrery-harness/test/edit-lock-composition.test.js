@@ -1,11 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, realpath, readFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { apply, storeMode } from '../src/edit-lock/index.js'
+import { managementRootFor, excludeFromGit } from '../src/edit-lock/domains.js'
+import { createRecoveryDriver } from '../src/edit-lock/recovery.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from '../src/edit-lock/remote.js'
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
@@ -230,4 +233,98 @@ test('remote channel opens a session, EOF revokes it, and reconnect starts inter
     await server.close()
     await lifecycle.close()
   }
+})
+
+test('session cwd domain: git root, in-tree authority excluded via info/exclude, nested sessions share', async () => {
+  const { base } = await fixture()
+  const repo = join(base, 'repo')
+  await mkdir(join(repo, 'pkg'), { recursive: true })
+  execFileSync('git', ['init', '-q', repo])
+  await writeFile(join(repo, 'pkg', 'a.txt'), 'a')
+  assert.equal(managementRootFor(join(repo, 'pkg')), repo)
+  const host = fakeHost(repo)
+  const dispose = apply(host.ctx, { enabled: true })
+  const outer = host.agent('outer'), inner = host.agent('inner')
+  inner.session.header.cwd = join(repo, 'pkg')
+  await host.emit('agent/created', { agent: outer })
+  await host.emit('agent/created', { agent: inner })
+  const service = host.provided.get('orreryEditLock')
+  assert.equal((await service.describe(inner)).root, repo)
+  assert.match(await readFile(join(repo, '.git', 'info', 'exclude'), 'utf8'), /\/\.orrery\/edit-lock\//)
+  excludeFromGit(repo)
+  assert.equal((await readFile(join(repo, '.git', 'info', 'exclude'), 'utf8')).match(/Orrery Edit Lock/g).length, 1)
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).includes('.orrery'), false)
+  await service.acquire({ agent: outer }, { filePath: 'pkg/a.txt', cwd: repo })
+  await assert.rejects(service.acquire({ agent: inner }, { filePath: 'a.txt', cwd: join(repo, 'pkg') }), /owned/)
+  await assert.rejects(service.acquire({ agent: outer }, { filePath: '.orrery/edit-lock/snapshot.json', cwd: repo }), /not editable/)
+  dispose()
+  await new Promise(resolve => setTimeout(resolve, 100))
+})
+
+test('cleanup-only recovery: abnormal on provider error, business denied, budgets durable and bounded', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
+  const agent = { id: 's' }
+  await lifecycle.start(agent)
+  const file = { filePath: 'a.txt', cwd: root }
+  assert.deepEqual(await lifecycle.classifyAbnormal(agent, 'provider-error'), [])
+  assert.equal(lifecycle.status(agent).state, 'active')
+  await lifecycle.service.acquire({ agent }, file)
+  await lifecycle.classifyAbnormal(agent, 'provider-error')
+  assert.equal(lifecycle.status(agent).state, 'recovering')
+  assert.equal(lifecycle.status(agent).locks[0].status, 'abnormal')
+  await assert.rejects(lifecycle.service.publish({ agent, callId: 'c', signal: new AbortController().signal }, {}), /cleanup-only/)
+  await assert.rejects(lifecycle.service.acquire({ agent }, file), /cleanup-only/)
+  await assert.rejects(lifecycle.pause(agent, 16), /15 minutes/)
+  await lifecycle.pause(agent, 15)
+  await lifecycle.pause(agent, 15)
+  await assert.rejects(lifecycle.pause(agent, 1), /cumulative pause budget/)
+  await lifecycle.chargeRecovery(agent, { attempts: 1, elapsedMs: 1000 })
+  assert.deepEqual(lifecycle.recoveryUsage(agent), { sessionId: 's', attempts: 1, elapsedMs: 1000, pauseMs: 30 * 60_000 })
+  // Resume needs a human, keeps abnormal; release still works during recovery.
+  const resumed = await lifecycle.resume(agent, 'r')
+  assert.equal(resumed.locks[0].status, 'abnormal')
+  await lifecycle.service.release({ agent }, file)
+  await lifecycle.close()
+  // Restart never refunds the budget.
+  const again = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'recover', fs: stubFs, assertExclusive() {} })
+  assert.equal(again.control.recoveryUsage('s').pauseMs, 30 * 60_000)
+  await again.close()
+})
+
+test('recovery driver schedules bounded cleanup turns and hands over on exhaustion', async () => {
+  let clock = 0
+  const timers = []
+  const followups = [], notices = []
+  const usage = { attempts: 0, elapsedMs: 0, pauseMs: 0 }
+  const status = { state: 'recovering', locks: [{ resourceId: '/w/a', status: 'abnormal', reason: 'provider-error' }] }
+  const domain = {
+    classifyAbnormal: async () => ['/w/a'],
+    status: async () => status,
+    recoveryUsage: async () => ({ ...usage }),
+    chargeRecovery: async (_agent, delta) => { usage.attempts += delta.attempts ?? 0; usage.elapsedMs += delta.elapsedMs ?? 0; return { ...usage } },
+    pause: async () => ({ pausedMs: 60_000, cumulativePauseMs: 60_000 }),
+  }
+  const driver = createRecoveryDriver({ domainFor: () => domain, followup: (_a, text) => followups.push(text), notify: (_a, text) => notices.push(text),
+    now: () => clock, setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t }, clearTimer: t => { t.cancelled = true } })
+  const agent = {}
+  const fire = async () => { const t = timers.filter(x => !x.cancelled && !x.fired).at(-1); t.fired = true; clock += t.ms; await t.fn(); await new Promise(r => setImmediate(r)) }
+  await driver.onTurnEnd(agent, { kind: 'completed' })
+  assert.equal(timers.length, 0)
+  await driver.onTurnEnd(agent, { kind: 'error' })
+  assert.equal(timers.at(-1).ms, 15_000)
+  await fire()
+  assert.match(followups.at(-1), /attempt 1 of 3/)
+  await driver.onTurnEnd(agent, { kind: 'completed' })
+  assert.equal(timers.at(-1).ms, 30_000)
+  await fire()
+  await driver.onTurnEnd(agent, { kind: 'completed' })
+  await fire()
+  assert.equal(followups.length, 3)
+  await driver.onTurnEnd(agent, { kind: 'completed' })
+  await fire()
+  assert.equal(followups.length, 3)
+  assert.match(notices.at(-1), /budget exhausted/)
+  assert.equal(driver.state(agent), null)
 })

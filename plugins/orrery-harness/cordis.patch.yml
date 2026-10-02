@@ -26,6 +26,7 @@
         guardSoftThreshold: 0.72
         guardHardThreshold: 0.88
         hashlineHideStockEdit: true
+        editLockEnabled: false
         robashEnabled: true
         # The five whitelist tables are NOT declared here on purpose. A patch
         # row's `config` is replaced WHOLE rather than deep-merged, so a default
@@ -182,6 +183,10 @@
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'orrery-harness/todo-driver'
+              # 编辑锁（实验，默认关）：设置 editLockEnabled 开启并重启后生效。
+              # 必须排在 hashline-edit / lsp 之前，二者在挂载时捕获锁服务。
+              - id: edit-lock
+                name: 'orrery-harness/edit-lock'
               # F7 锚点编辑：read 锚点增强 + fail-closed hash_edit 工具
               - id: hashline-edit
                 name: 'orrery-harness/hashline-edit'

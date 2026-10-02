@@ -1,6 +1,6 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **开发中，默认关闭**：已提供可选组合插件 `orrery-harness/edit-lock`（`enabled: true` 才生效），尚未加入正式预设行；协商工具、受控解锁、UI、跨进程客户端和 GUI 验收未完成，默认用户可见面零变化。
+> **实验特性，默认关闭**：`orrery-harness/edit-lock` 已加入 `orrery` 预设（排在 hashline-edit／lsp 之前），只有在 Orrery 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时没有服务、工具或监听器，行为与此前完全相同。真实 GUI 验收尚未完成。
 
 ## 概述
 
@@ -10,7 +10,11 @@
 
 ### 当前发布链路（未启用）
 
-**组合插件 `orrery-harness/edit-lock`（默认关闭，未加入预设）**。行配置 `{enabled: true, root, authorityDirectory, domainId?}` 才启用；`root` 是唯一管理域，`authorityDirectory` 必须在域外（空目录新建，含 `snapshot.json` 则恢复，其余内容拒绝）。启用后：
+**组合插件 `orrery-harness/edit-lock`**。启用条件：行配置或设置 `editLock.enabled` 为 true（挂载时读取，改动需重启）。
+
+**管理域**：每个 agent 在创建时按会话工作目录绑定一次管理根——位于 git 仓库内取仓库顶层（`git rev-parse --show-toplevel`），否则取工作目录本身；若某个上级目录已存在 `.orrery/edit-lock`，则并入该外层域，保证嵌套目录的会话共用一把锁。权威状态在 `<根>/.orrery/edit-lock/`（空目录新建，含 `snapshot.json` 则恢复，其余内容拒绝），预约在 `<根>/.orrery/.edit-lock.publisher-reservation`。git 仓库内首次打开时把这两项追加到仓库自身的 `.git/info/exclude`（worktree 感知，幂等），不改动任何受版本控制的文件。受控 write／hash_edit／lsp_rename 一律拒绝写入这两处（`Edit Lock authority files are not editable`）；shell 不在保证内，`git clean -fdx` 或手动删除 `.orrery/` 会丢失锁历史与未决发布围栏，下次启动按全新域处理。同一进程可同时持有多个根的域，按需打开。开发组合仍可用行配置 `{root, authorityDirectory}` 固定单一域。iCloud／Dropbox／网络盘不在支持范围。
+
+启用后：
 
 - 挂载时捕获原始 `ctx.fs`，以跨进程预约打开唯一 runtime，并提供 `orreryEditLock` 服务。cordis 的兄弟行服务在其 apply 之后才可见，因此 `hash_edit` 同时接受挂载时与延迟 inject 的服务；一旦受管，服务移除只会拒绝，不回退直写。
 - `tools/pre-execute` 守卫：`write`、`edit`、`hash_edit`、`lsp_rename`、`str_replace_editor` 中凡执行函数未经服务 `claim` 的定义一律拒绝。组合顺序错误、晚装服务或未知编辑器因此 fail closed。
@@ -20,6 +24,8 @@
 - 普通 owner 工具（模型可调用，身份只来自 `exec.agent`）：`edit_lock_acquire`（获取既有文件；resume 后对 pending-confirmation 文件逐个调用即确认）、`edit_lock_release`（释放本会话的锁，不代表内容验证通过）、`edit_lock_status`（只读列出归属）与 `edit_lock_try_steal`（立即返回 pending requestId，从不等待持有者）。持有者有待答请求时才临时注册 `edit_lock_reply`（`release`／`keep`），通知经 `inject` 投递，**不唤醒** idle 或已中断会话。答复绑定 requestId、资源 generation、持有者 session 与 epoch；过期（默认 60 秒）、重复、旧 generation、非持有者或已停止持有者的答复一律拒绝，沉默保留归属。同意后由 manager 在**一个持久事务**里释放旧 generation 并为请求方获取，任一方已取消即整体失败。协商请求刻意只存在内存：重启推进所有 epoch 与 incarnation，旧请求只可能过期。
 - 受控人工解锁：`/edit-lock locks` 列出全部归属与 generation，`/edit-lock unlock <path|resourceId> <generation>` 只在期望 generation 仍为当前值时释放。它排在 manager FIFO 中，等待此前在途提交结算；存在未决发布时被事务围栏拒绝；不存在无条件强制解锁。已准备的旧 owner 写入随后因 generation 失效在派发前结算为 not-published。解锁不改变任何会话的中断闩锁，也不验证内容。D6 的「撤销旧 epoch」由 generation 围栏实现，不额外中断 owner 会话。
 - 跨进程（同一 `authorityDirectory` 的合作 Harness）：先抢到预约的进程成为唯一 publisher，并在用户私有临时目录下按 authority 规范路径哈希开一个 Unix socket 端点；预约冲突（`EEXIST`）的进程**不再整体拒绝**，而是成为客户端，从不自己落盘。每个客户端 agent 一条会话通道，首帧 `open {sessionId}` 后身份固定；工具、`/edit-lock` 命令、协商通知与临时答复工具都经该通道转发，发布仍由 publisher 持有的原始 `ctx.fs` 执行。通道 EOF（含客户端崩溃）由 publisher 持久撤权；重连的同会话总以中断态开始，需 `/edit-lock resume`。客户端只重试「建立通道」（等待旧通道 EOF 结算），从不重试调用；中断调用的结果按契约为 UNKNOWN。端点不做认证：可达同一用户临时目录的进程都在合作信任边界内，不防恶意同用户进程。publisher 退出后客户端不自立为写者，受控写入 fail closed，直到人工确认旧 publisher 静止并重启。
+- 非用户异常的仅清理恢复（D4）：回合以 `turn/end` reason `error` 结束且会话持有锁时，这些锁标为 abnormal（不释放），会话进入 `recovering`：业务写入、新获取与 try_steal 全部拒绝，只能 `edit_lock_release`、`edit_lock_reply` 或 `edit_lock_pause`。驱动按 15／30／60 秒退避注入仅清理回合，至多 3 次或累计 5 分钟（以先到者为准）；暂停单次 ≤15 分钟、累计 ≤30 分钟（用户已确认），到期只重新检查，不释放、不自续。次数、恢复耗时与暂停时长都持久计入 authority 镜像的 `recovery`，重启不退还。预算耗尽或无剩余异常锁时停止并提示人工；恢复正常编辑只能经 `/edit-lock resume`，abnormal 锁保持 abnormal，须释放或人工解锁。用户 Stop（`aborted`）立即结束自动恢复且不唤醒会话。
+- 操作身份按每次实际执行生成（`callId@uuid`）：部分供应商跨回合复用 tool-call id（如 `call_0`），不能直接作幂等键。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
 
 安装版 0.2.0-rc.2 隔离组合实测（真实 Agent factory、真实回合、ToolRuntime、stock fs、observation policy 与本插件 + hashline-edit）25/25：受控 write 创建、owner hash_edit、他人 hash_edit/write 以 `resource owned` 拒绝且字节不变、try_steal 立即 pending、持有者经 inject 看到请求与临时答复工具并转交、新 owner 编辑后释放、释放后可重获、active Stop 闩锁、普通下一条消息不恢复、命令 resume 后 pending-confirmation 拒写、confirm 后可写、受控解锁拒绝旧 generation 且按当前 generation 释放、idle 命令撤权、卸载释放预约。另有双进程实测（publisher 与客户端各运行完整安装版 Agent 栈、共用 authority 目录）客户端 13/13、publisher 8/8：第二进程成为客户端、跨进程拒绝他人文件、客户端 try_steal 抵达本地持有者并转交、客户端编辑经 publisher 发布、客户端 active Stop 在 publisher 持久撤权、重连为中断态、远端 resume/confirm 后可写、远端 idle stop 确认、客户端进程退出后其锁在 publisher 保持 user-interrupted 并继续围栏、关闭后释放预约。当前限制：单文件发布获得的锁保持到 owner 主动 `edit_lock_release` 或同意转交；持有者沉默或已中断时，由人工 `/edit-lock unlock` 按 generation 释放。仍未覆盖：正式 profile/Loader 挂载、GUI、LSP 实际 rename 回合、双 Harness 在真实 GUI 中的部署。
@@ -71,7 +77,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 **当前：零变化。** 本特性未挂载，因此：
 
 - 没有新增工具（`acquire` / `release` / `try_steal` 与结构化答复工具均未实现、未注册）。
-- 没有新增设置键或设置页条目；`plugins/orrery-harness/cordis.patch.yml` 没有对应插件行。
+- 预设新增 `edit-lock` 行与设置键 `editLockEnabled`，默认关闭；关闭时该行在 apply 第一步返回，不提供服务、不注册工具或监听器。
 - 编辑行为不变：`hash_edit`、stock `write` / `edit`、`lsp_rename` 的锚点校验、版本护栏、沙箱策略与 diff 输出与未引入本特性时相同。
 - 未启用本特性的会话，续推与取消规则完全照旧（[todo-continuation.md](todo-continuation.md) 的现有语义不变）。
 
@@ -84,7 +90,11 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ## 配置
 
-正式预设与设置页都没有本特性的配置项，`cordis.patch.yml` 也没有对应行。开发组合可单独挂载 `orrery-harness/edit-lock` 行，配置 `enabled`（默认 false）、`root`、`authorityDirectory` 与可选 `domainId`；该行须排在 hashline-edit 与 lsp 之前。设计材料里出现的参数（协商时限、单次/累计暂停预算、恢复重试预算）都是待实施参数——其中「有限累计暂停预算」尚未获用户确认，未确认前自动暂停保持禁用。
+| 设置键 | 默认 | 说明 |
+|---|---|---|
+| `editLockEnabled`（设置页「编辑」组「编辑锁（实验）」） | `false` | 打开后重启 DeepSeek Harness 生效 |
+
+恢复与暂停参数为固定产品值：3 次／5 分钟、退避 15/30/60 秒、单次暂停 15 分钟、累计暂停 30 分钟、协商时限 60 秒。开发组合可在行配置写 `root` 与 `authorityDirectory` 固定单一域；该行须排在 hashline-edit 与 lsp 之前。设计材料里出现的参数（协商时限、单次/累计暂停预算、恢复重试预算）都是待实施参数——其中「有限累计暂停预算」尚未获用户确认，未确认前自动暂停保持禁用。
 
 ## 设计细节
 

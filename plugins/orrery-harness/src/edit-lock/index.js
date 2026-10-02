@@ -1,12 +1,16 @@
-// Orrery Edit Lock composition: one in-process authority for one configured
-// work-directory domain. Disabled (zero behavior, no service) unless the row
-// config sets `enabled: true`. Plain ESM, ctx-only.
+// Orrery Edit Lock composition. Disabled (zero behavior, no service) unless
+// enabled by the row config or the Orrery settings `editLock.enabled` key
+// (read at mount; a change applies after restart). Plain ESM, ctx-only.
 //
-// Order contract: this row MUST precede hashline-edit and lsp so they capture
-// the `orreryEditLock` service at mount. A mis-ordered or unmanaged editor is
-// not trusted to "probably" be fine: the pre-execute guard denies every
-// write/edit/hash_edit/lsp_rename definition that was not claimed through
-// this service, so composition mistakes fail closed instead of bypassing.
+// Domains: each agent binds at creation to the management root of its session
+// cwd (git top level, else the cwd; an enclosing existing authority wins). The
+// authority lives in <root>/.orrery/edit-lock and is excluded from git through
+// .git/info/exclude. The first host to reserve a root publishes for it; every
+// other cooperating host becomes its client over a local socket.
+//
+// Order contract: this row MUST precede hashline-edit and lsp. A mis-ordered
+// or unmanaged editor is not trusted: the pre-execute guard denies every
+// write/edit/hash_edit/lsp_rename definition not claimed through the service.
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { openReservedEditLockRuntime } from './reserved-runtime.js'
@@ -16,22 +20,26 @@ import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
 import { localDomain, remoteDomain } from './domain.js'
+import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit } from './domains.js'
+import { createRecoveryDriver } from './recovery.js'
 
 const name = 'orrery-edit-lock'
-const inject = ['tools', 'fs']
+const inject = ['tools', 'fs', 'agents']
 
 /** Tool names whose definitions must be Edit Lock routed when enabled. */
 export const GUARDED_TOOLS = Object.freeze(['write', 'edit', 'hash_edit', 'lsp_rename', 'str_replace_editor'])
 
-/** @param {unknown} config */
-export function editLockOptions(config) {
-  const value = /** @type {any} */ (config ?? {})
+/** Row config wins over the settings section; `root` + `authorityDirectory`
+ * pin one fixed domain (development compositions and probes).
+ * @param {unknown} config @param {unknown} [settings] */
+export function editLockOptions(config, settings) {
+  const value = { .../** @type {any} */ (settings ?? {}), .../** @type {any} */ (config ?? {}) }
   if (value.enabled !== true) return null
+  if (value.root === undefined && value.authorityDirectory === undefined) return { fixed: null }
   for (const key of ['root', 'authorityDirectory']) {
     if (typeof value[key] !== 'string' || !isAbsolute(value[key])) throw new Error(`edit lock: ${key} must be an absolute path`)
   }
-  if (value.domainId !== undefined && (typeof value.domainId !== 'string' || !value.domainId.trim())) throw new Error('edit lock: domainId must be a non-empty string')
-  return { root: value.root, directory: value.authorityDirectory, domainId: value.domainId ?? value.root }
+  return { fixed: { root: value.root, directory: value.authorityDirectory } }
 }
 
 /** Never initialize over unknown content: empty → create, committed snapshot → recover.
@@ -139,6 +147,16 @@ function registerLockTools(ctx, service) {
       },
     }),
     ctx.tools.register({
+      name: 'edit_lock_pause',
+      description: 'Only during Edit Lock cleanup-only recovery: ask to keep your abnormal locks while an external problem clears (for example a provider outage). Up to 15 minutes per pause and 30 minutes in total; expiry re-checks the situation, it never releases or extends the locks.',
+      parameters: { type: 'object', properties: { minutes: { type: 'number', description: 'Pause length in minutes (at most 15).' } }, required: ['minutes'] },
+      output: text('message'),
+      async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+        const result = await service.pause(exec, Number(args?.minutes))
+        return { ...result, message: `Paused for ${Math.round(result.pausedMs / 60_000)} minute(s); ${Math.round(result.cumulativePauseMs / 60_000)} of 30 cumulative minutes used.` }
+      },
+    }),
+    ctx.tools.register({
       name: 'edit_lock_status',
       description: 'List Edit Lock ownership in this work directory: file, owner session, status. Read-only; grants nothing.',
       parameters: { type: 'object', properties: {}, required: [] },
@@ -181,7 +199,7 @@ function describe(status) {
  * and then drops their returned disposer, which would leak the reservation.
  * @param {any} ctx @param {unknown} config */
 const apply = (ctx, config = {}) => {
-  const options = editLockOptions(config)
+  const options = editLockOptions(config, ctx.get?.('orrerySettings')?.get?.('editLock'))
   if (!options) return
   /** @type {any} */
   let sandboxPolicyRef = null
@@ -193,24 +211,26 @@ const apply = (ctx, config = {}) => {
   /** @type {WeakSet<Function>} */
   const managed = new WeakSet()
   let closed = false
-  /** @type {any} */
-  let domainNow
   /** Remote channel agents on the publisher side → their notice sink.
    * @type {WeakMap<object, (event: unknown) => void>} */
   const sinks = new WeakMap()
+  /** Settled domain per bound agent, for synchronous gates. @type {WeakMap<object, any>} */
+  const settled = new WeakMap()
   /** inject never wakes an idle or interrupted agent: no nested execution.
    * @param {any} agent @param {string} text */
   const deliverLocal = (agent, text) => agent.inject(userTextMessage(text, 'orrery-edit-lock'))
-  const ready = (async () => {
-    if (!existsSync(options.directory)) mkdirSync(options.directory, { recursive: true, mode: 0o700 })
+
+  /** @param {string} root @param {string} directory */
+  async function openDomain(root, directory) {
+    if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode: 0o700 })
     let runtime
     try {
       // The store mode is read only after the reservation is held.
-      runtime = await openReservedEditLockRuntime({ ...options, mode: () => storeMode(options.directory), fs })
+      runtime = await openReservedEditLockRuntime({ root, directory, domainId: root, mode: () => storeMode(directory), fs })
     } catch (error) {
       if (/** @type {any} */ (error)?.code !== 'EEXIST') throw error
       // Another cooperating host publishes: become its client, never a writer.
-      return remoteDomain(createRemoteEditLockDomain(endpointFor(options.directory), {
+      return remoteDomain(createRemoteEditLockDomain(endpointFor(directory), {
         onNotice(agent, event) {
           if (event?.kind === 'notice' && typeof event.text === 'string') deliverLocal(agent, event.text)
           if (event?.kind === 'pending' && Number.isSafeInteger(event.count)) syncReplyTool(agent, event.count)
@@ -222,13 +242,19 @@ const apply = (ctx, config = {}) => {
       onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
     })
     let endpoint
-    try { endpoint = await serveEditLockEndpoint(lifecycle, endpointFor(options.directory), sinks) }
+    try { endpoint = await serveEditLockEndpoint(lifecycle, endpointFor(directory), sinks) }
     catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
     return localDomain(lifecycle, endpoint)
-  })()
-  ready.catch((/** @type {any} */ error) => {
-    ctx.logger?.warn?.(`edit lock unavailable; controlled writes fail closed: ${error?.message ?? error}`)
+  }
+  const registry = createDomainRegistry(root => {
+    const fixed = options.fixed
+    if (fixed) return openDomain(fixed.root, fixed.directory)
+    try { excludeFromGit(root) } catch (error) { ctx.logger?.warn?.(`edit lock: could not update .git/info/exclude: ${/** @type {any} */ (error)?.message ?? error}`) }
+    return openDomain(root, join(root, AUTHORITY_DIR))
   })
+  /** @param {any} agent */
+  const domainOf = agent => registry.forAgent(agent)
+
   /** The holder's structured reply tool exists only while it has pending requests.
    * @type {WeakMap<object, () => void>} */
   const replyTools = new WeakMap()
@@ -242,33 +268,42 @@ const apply = (ctx, config = {}) => {
       registered()
     }
   }
+  /** @param {string} method */
+  const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainOf(exec.agent)).service)[method](exec, request)
+  const recovery = createRecoveryDriver({
+    domainFor: agent => settled.get(agent),
+    followup: (agent, text) => /** @type {any} */ (agent).followup(userTextMessage(text, 'orrery-edit-lock-recovery')),
+    notify: deliverLocal,
+    warn: message => ctx.logger?.warn?.(message),
+  })
   const service = Object.freeze({
-    /** @param {any} exec @param {any} request */
-    async publish(exec, request) { return (await ready).service.publish(exec, request) },
-    /** @param {any} exec @param {any} request */
-    async publishBatch(exec, request) { return (await ready).service.publishBatch(exec, request) },
-    /** @param {any} exec @param {any} request */
-    async acquire(exec, request) { return (await ready).service.acquire(exec, request) },
-    /** @param {any} exec @param {any} request */
-    async release(exec, request) { return (await ready).service.release(exec, request) },
+    publish: route('publish'),
+    publishBatch: route('publishBatch'),
+    acquire: route('acquire'),
+    release: route('release'),
     /** @param {any} exec */
-    async locks(exec) { return (await ready).service.locks(exec) },
-    /** @param {any} exec @param {any} request */
-    async trySteal(exec, request) { return (await ready).service.trySteal(exec, request) },
-    /** @param {any} exec @param {any} request */
-    async reply(exec, request) { return (await ready).service.reply(exec, request) },
+    async locks(exec) { return (await domainOf(exec.agent)).service.locks(exec) },
+    trySteal: route('trySteal'),
+    reply: route('reply'),
+    /** @param {any} exec @param {number} minutes */
+    pause(exec, minutes) { return recovery.pause(exec.agent, minutes) },
     /** Mount-time handshake from a managed editor. @param {object} definition */
     claim(definition) {
       const execute = /** @type {any} */ (definition)?.execute
       if (typeof execute === 'function') managed.add(execute)
     },
-    /** Continuation gate: an interrupted session is never re-armed implicitly.
-     * Unknown/unavailable state also blocks. @param {any} agent */
+    /** Continuation gate: an interrupted or recovering session is never
+     * re-armed implicitly. Unknown/unavailable state also blocks. @param {any} agent */
     blocksContinuation(agent) {
-      return !domainNow || domainNow.blocks(agent)
+      const domain = settled.get(agent)
+      return !domain || domain.blocks(agent)
+    },
+    /** Trusted UI observation for one agent; grants nothing. @param {any} agent */
+    async describe(agent) {
+      const domain = await domainOf(agent)
+      return { root: registry.rootOf(agent), mode: domain.mode, status: await domain.status(agent), locks: await domain.locks(agent), recovery: recovery.state(agent) }
     },
   })
-  void ready.then(domain => { domainNow = domain }, () => {})
   ctx.reflect.provide('orreryEditLock', service)
 
   const offTools = registerLockTools(ctx, service)
@@ -284,13 +319,17 @@ const apply = (ctx, config = {}) => {
     if (closed) return
     try {
       installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef)
+      registry.bind(agent, options.fixed?.root ?? agent?.session?.header?.cwd)
     } catch (error) {
       agent?.ctx?.tools?.restrict?.({ deny: [...GUARDED_TOOLS] })
       ctx.logger?.warn?.(`edit lock scope failed; edit tools denied: ${/** @type {any} */ (error)?.message ?? error}`)
       return
     }
-    try { await (await ready).start(agent) }
-    catch (error) { ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`) }
+    try {
+      const domain = await domainOf(agent)
+      await domain.start(agent)
+      settled.set(agent, domain)
+    } catch (error) { ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`) }
   })
 
   // Stock Stop aborts the active turn signal synchronously: close admission at
@@ -299,18 +338,30 @@ const apply = (ctx, config = {}) => {
   const watched = new WeakSet()
   ctx.on('agent/pre-step', (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
     const { agent, signal } = event ?? {}
-    if (domainNow && agent && signal && !watched.has(signal)) {
+    const domain = agent && settled.get(agent)
+    if (domain && signal && !watched.has(signal)) {
       watched.add(signal)
-      const domain = domainNow
-      const latch = () => domain.latch(agent)
+      const latch = () => { if (abortedByUser(signal)) domain.latch(agent) }
       if (signal.aborted) latch()
       else signal.addEventListener('abort', latch, { once: true })
     }
     return next()
   })
 
+  // Abnormal classification reads only the durable turn/end reason (AGENTS §3.5).
+  ctx.on('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
+    if (event?.type !== 'turn/end') return
+    const agent = ctx.get?.('agents')?.get?.(session?.id)
+    if (!agent || !settled.get(agent)) return
+    void recovery.onTurnEnd(agent, event.data?.reason).catch((/** @type {any} */ error) => {
+      ctx.logger?.warn?.(`edit lock recovery classification failed: ${error?.message ?? error}`)
+    })
+  })
+
   ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
-    void ready.then(domain => domain.dispose(agent)).catch(() => {})
+    const domain = settled.get(agent)
+    settled.delete(agent)
+    if (domain) void Promise.resolve(domain.dispose(agent)).catch(() => {})
   })
 
   const commands = ctx.get?.('commands')
@@ -322,8 +373,9 @@ const apply = (ctx, config = {}) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
-        const domain = await ready
-        return { kind: 'success', text: await runCommand(domain, agent, String(invocation.rawInput ?? ''), String(invocation.commandId)) }
+        const domain = await domainOf(agent)
+        const text = await runCommand(domain, agent, String(invocation.rawInput ?? ''), String(invocation.commandId))
+        return { kind: 'success', text: `${text}\nDomain: ${registry.rootOf(agent)} (${domain.mode})` }
       } catch (error) {
         return { kind: 'error', text: `edit-lock: ${/** @type {any} */ (error)?.message ?? error}` }
       }
@@ -332,14 +384,23 @@ const apply = (ctx, config = {}) => {
 
   return () => {
     closed = true
+    recovery.close()
     offCommand?.()
     for (const off of offTools) off?.()
-    // Stops every session durably, drains publication, then releases the
+    // Stops every session durably, drains publication, then releases each
     // cross-process reservation. Failure retains it for operator recovery.
-    void ready.then(domain => domain.close()).catch((/** @type {any} */ error) => {
-      ctx.logger?.warn?.(`edit lock shutdown incomplete; reservation retained: ${error?.message ?? error}`)
-    })
+    for (const domain of registry.all()) {
+      void domain.then(value => value.close()).catch((/** @type {any} */ error) => {
+        ctx.logger?.warn?.(`edit lock shutdown incomplete; reservation retained: ${error?.message ?? error}`)
+      })
+    }
   }
+}
+
+/** Any abort latches (denial is always safe) except disposal, which
+ * agent/disposed revokes and forgets. @param {AbortSignal} signal */
+function abortedByUser(signal) {
+  return /** @type {any} */ (signal.reason)?.kind !== 'disposed'
 }
 
 export { name, inject, apply }

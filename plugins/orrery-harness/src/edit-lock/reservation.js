@@ -1,6 +1,12 @@
 import { mkdirSync, realpathSync, lstatSync, rmdirSync } from 'node:fs'
 import { dirname, basename, join } from 'node:path'
 
+/** Deterministic sibling of a canonical authority directory.
+ * @param {string} authority */
+export function reservationPathFor(authority) {
+  return join(dirname(authority), `.${basename(authority)}.publisher-reservation`)
+}
+
 /** Conservative cross-process reservation for one preconfigured authority
  * directory on a local filesystem. All cooperating hosts MUST use the same
  * authority directory; this is not discovery for overlapping workspace roots.
@@ -12,7 +18,7 @@ export function reservePublisher(directory) {
   if (dirname(authority) === authority) throw new Error('filesystem root cannot be authority directory')
   // Keep the store directory empty for initial creation; use a deterministic
   // sibling reservation tied to the canonical authority path.
-  const path = join(dirname(authority), `.${basename(authority)}.publisher-reservation`)
+  const path = reservationPathFor(authority)
   // Atomic exclusive mkdir is the only election operation. EEXIST includes
   // stale reservations and requires external quiescence recovery, not retry.
   mkdirSync(path, {mode:0o700})

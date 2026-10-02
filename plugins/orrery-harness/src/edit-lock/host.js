@@ -1,4 +1,5 @@
 import { createEditLockAdapter } from './adapter.js'
+import { randomUUID } from 'node:crypto'
 import { canonicalRequestData } from './request-data.js'
 
 /** Trusted host binding. Registration is an explicit lifecycle action, never a
@@ -6,6 +7,16 @@ import { canonicalRequestData } from './request-data.js'
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
  * @param {(agent: object) => boolean} isRegisteredAgent */
 export function createEditLockHost(runtime, isRegisteredAgent) {
+  // Provider tool-call ids are not unique across turns (some reuse call_0):
+  // one operation identity per actual execution object, stable within it.
+  /** @type {WeakMap<object, string>} */
+  const operationIds = new WeakMap()
+  /** @param {{callId: string}} exec */
+  function operationIdFor(exec) {
+    let id = operationIds.get(exec)
+    if (!id) { id = `${exec.callId}@${randomUUID()}`; operationIds.set(exec, id) }
+    return id
+  }
   const adapter = createEditLockAdapter(runtime)
   /** @type {WeakMap<object, import('./state.js').Execution>} */
   const executions = new WeakMap()
@@ -45,7 +56,7 @@ export function createEditLockHost(runtime, isRegisteredAgent) {
       const execution = executions.get(exec.agent)
       if (!execution || !isRegisteredAgent(exec.agent)) throw new Error('agent has no authenticated edit execution')
       const call = adapter.bind(execution, { cwd: request.cwd, effectivePolicy: request.effectivePolicy,
-        callId: exec.callId, signal: exec.signal })
+        callId: operationIdFor(exec), signal: exec.signal })
       const operation = await adapter.publish(call, request)
       return operation.outcome
     },
@@ -60,7 +71,8 @@ export function createEditLockHost(runtime, isRegisteredAgent) {
       if (!execution || !isRegisteredAgent(exec.agent)) throw new Error('agent has no authenticated edit execution')
       if (exec.signal.aborted) throw new Error('call aborted')
       if (!['workspace-write', 'danger-full-access'].includes(request.effectivePolicy?.mode)) throw new Error('writable effective policy required')
-      const ids = request.plans.map((_, index) => JSON.stringify(['lsp_rename', exec.callId, index]))
+      const operation = operationIdFor(exec)
+      const ids = request.plans.map((_, index) => JSON.stringify(['lsp_rename', operation, index]))
       // Never restart a partially applied batch by reacquiring released ownership.
       for (const id of ids) if (runtime.control.history(execution.sessionId, id)) throw new Error('rename batch has history; inspect retained outcomes before retry')
       const batchKey = JSON.stringify([execution.sessionId, exec.callId])

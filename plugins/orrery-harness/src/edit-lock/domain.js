@@ -25,6 +25,14 @@ export function localDomain(lifecycle, endpoint) {
     locks: async _agent => lifecycle.locks(),
     /** @param {object} _agent @param {string} resourceId @param {number} generation */
     unlock: (_agent, resourceId, generation) => lifecycle.unlock(resourceId, generation),
+    /** @param {object} agent @param {string} reason */
+    classifyAbnormal: (agent, reason) => lifecycle.classifyAbnormal(agent, reason),
+    /** @param {object} agent */
+    recoveryUsage: async agent => lifecycle.recoveryUsage(agent),
+    /** @param {object} agent @param {any} delta */
+    chargeRecovery: (agent, delta) => lifecycle.chargeRecovery(agent, delta),
+    /** @param {object} agent @param {number} minutes */
+    pause: (agent, minutes) => lifecycle.pause(agent, minutes),
     /** @param {object} agent */
     blocks(agent) { try { return lifecycle.status(agent).state !== 'active' } catch { return true } },
     async close() {
@@ -67,6 +75,18 @@ export function remoteDomain(remote) {
     locks: agent => remote.call(agent, 'allLocks'),
     /** @param {object} agent @param {string} resourceId @param {number} generation */
     unlock: (agent, resourceId, generation) => remote.call(agent, 'unlock', { resourceId, generation }),
+    /** @param {object} agent @param {string} reason */
+    classifyAbnormal: async (agent, reason) => {
+      const marked = await remote.call(agent, 'classifyAbnormal', { reason })
+      if (marked.length) remote.setState(agent, 'recovering')
+      return marked
+    },
+    /** @param {object} agent */
+    recoveryUsage: agent => remote.call(agent, 'recoveryUsage'),
+    /** @param {object} agent @param {any} delta */
+    chargeRecovery: (agent, delta) => remote.call(agent, 'chargeRecovery', delta),
+    /** @param {object} agent @param {number} minutes */
+    pause: (agent, minutes) => remote.call(agent, 'pause', { minutes }),
     /** @param {object} agent */
     blocks: agent => remote.state(agent) !== 'active',
     async close() { remote.close() },
