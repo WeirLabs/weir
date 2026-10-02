@@ -75,6 +75,14 @@
 - 精选 agent 整链不可解析 → 显式错误点名 agent 与尝试过的档位，**不回退**到继承路由；只有空链才继承。
 - 停用目标**保证**不出现在任何模型可见面（指引清单、工具描述、报错名单）；注册表级 `disabled` 不可被设置面解除（设置面只能追加停用）。
 
+## 与编辑锁的关系
+
+[Edit Lock 编辑锁仲裁](edit-lock.md) 开启时（实验特性、默认关闭），每个子代理就是**它自己的会话**，持有自己的一份锁状态：
+
+- 子代理占用的文件对父会话与兄弟子代理一样按普通占用拒绝——父会话要改同一个文件，只能等它释放或请求转交（`edit_lock_try_steal`）。
+- 子代理正常结束时释放自己的锁；被停止或出错的会话保留锁，留给人工处理。
+- 停止父会话不会停止已经在跑的子代理，也不撤销子代理的编辑权：父会话收回的只是它自己的那部分。
+
 ## 测试
 
 - 单元测试：`test/` 覆盖参数校验、链解析（含死链报错）、变体选择、ESCALATE 重派、批量默认值；五个布局模块各有直测套件——`settings-overlay.test.js`（三层 append/去重语义与平台注入）、`target-resolver.test.js`（解析脊柱与「每次解析恰好一次覆盖层」）、`supervision-tools.test.js`（schema 形状与 depth 门）、`supervision-mount.test.js`（notifyParent 策略与 feed 路由，真实短定时器）、`audit-readers.test.js`（临时目录 JSONL 夹具），spawn 道轴由 `spawn-adapter.test.js`（装配形状/两种拆除语义/调用次序/禁用边角）钉住；守卫采用「一个深核心 + 两个薄壳适配器」结构——`src/delegate/robash-guard-core.js` 收编全部跨壳共享策略（canonical 白名单 `DEFAULT_TABLES`、git 门控、`GIT_CONFIG_*` 拒绝、递归预算、重定向 sink 策略、`gateExecutable` 判定尾段、按壳键控的 `DANGEROUS_FLAGS` 与共享理由模板 `reasons`），`robash-guard.js`/`robash-guard-pwsh.js` 只保留壳词法（scanner/tokenizer/别名展开）并各导出同一签名 `check(command, lists)`；`test/robash-guard.test.js` 与 `test/robash-guard-pwsh.test.js` 的语料（放行/拒绝/注入绕过/自定义列表）作为行为冻结证据逐字存活；`test/robash-whitelist-parity.test.js` 缩为「`whitelist-defaults.json` ↔ `DEFAULT_TABLES`」单组比对 + 行内不得出现白名单键的既有不变式；`test/group-coordinator.test.js` 覆盖协调器全分支（组登记/禁插入/终态解析/催促/退避/耗尽/打断分类/resume/terminate/group-settled 信号渲染/失败批次释放组名/各投递失败降级）与挂载层（组派发、两阶段解析、回滚与组名复用、只读成员守卫、延迟 followup 投递）；**volatile 热更新**由 `test/delegate.test.js` 的四条 `hot reload:` 用例（提交后新委派的守卫行为与服务面立即改变、提交后新委派 fail-closed、提交不回溯收改已派发代理、dispose 退订）与两条挂载层用例（提交抵达**已建立**协调器、提交改变下一次受监督派发的只读面）覆盖；`test/group-coordinator.test.js` 另有 `setSupervision` 三条用例（收紧上限、重调退避而不动登记状态、忽略三个调参键之外的键）。
