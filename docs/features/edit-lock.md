@@ -2,9 +2,9 @@
 
 > **实验特性，默认关闭**：`orrery-harness/edit-lock` 已加入 `orrery` 预设（排在 hashline-edit／lsp 之前），只有在 Orrery 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时没有服务、工具或监听器，行为与此前完全相同。
 >
-> **版本**：特性分支 `dev/edit-lock` 单独维护版本号，当前为 `edit-lock-v0.1.0`（2026-10-02），见 [CHANGELOG.md](../../CHANGELOG.md)。该版本已完成人工验收（隔离组合、双进程、状态面板与命令入口）；尚未合并回主分支，主分支版本线不受影响。
+> **版本**：特性分支 `dev/edit-lock` 单独维护版本号，已发布 `edit-lock-v0.1.0`（2026-10-02），UX 改版（回合末收尾、有期限保留、面板重做）在 Unreleased，见 [CHANGELOG.md](../../CHANGELOG.md)。该版本已完成人工验收（隔离组合、双进程、状态面板与命令入口）；尚未合并回主分支，主分支版本线不受影响。
 >
-> **已知限制**：单文件锁保持到 owner 主动释放或同意转交（回合结束自动处理见「后续版本」）；shell 与外部编辑器的写入不在保护范围；不防恶意同用户进程；删除 `.orrery/` 会丢失锁历史与未决发布围栏；跨文件批量失败不做回滚；端点不做认证。
+> **已知限制**：锁在回合结束时由助手释放或有期限地保留（异常锁除外）；shell 与外部编辑器的写入不在保护范围；不防恶意同用户进程；删除 `.orrery/` 会丢失锁历史与未决发布围栏；跨文件批量失败不做回滚；端点不做认证。
 
 ## 概述
 
@@ -12,7 +12,7 @@
 
 范围与上线硬门槛由本地 OpenSpec 变更材料定义（`openspec/changes/edit-lock-arbitration/`，过程材料不入库）：提案、设计决策 D1–D6、`edit-lock` 能力规格与任务清单均已就绪；实现按切片推进并已全部落地，人工验收见「测试」一节。受影响的既有能力为 [hashline-edit.md](hashline-edit.md)、[lsp-integration.md](lsp-integration.md) 与 [todo-continuation.md](todo-continuation.md)；委派与续推调度、共享 runtime 消息、设置与客户端 UI 同在影响面内。
 
-### 当前发布链路（未启用）
+### 发布链路
 
 **组合插件 `orrery-harness/edit-lock`**。预设中该行位于 `delegation` 组，组的 `isolate` 声明 `orreryEditLock: true`：预设注册表拒绝把服务发布到根 realm 的预设，因此提供者与全部消费者（todo-driver、hashline-edit、lsp）必须同组同 realm（`test/preset-realms.test.js` 守卫）。启用条件：行配置或设置 `editLock.enabled` 为 true（挂载时读取，改动需重启）。
 
@@ -29,7 +29,7 @@
 - 受控人工解锁：`/edit-lock locks` 列出全部归属与 generation，`/edit-lock unlock <path|resourceId> <generation>` 只在期望 generation 仍为当前值时释放。它排在 manager FIFO 中，等待此前在途提交结算；存在未决发布时被事务围栏拒绝；不存在无条件强制解锁。已准备的旧 owner 写入随后因 generation 失效在派发前结算为 not-published。解锁不改变任何会话的中断闩锁，也不验证内容。D6 的「撤销旧 epoch」由 generation 围栏实现，不额外中断 owner 会话。
 - 跨进程（同一 `authorityDirectory` 的合作 Harness）：先抢到预约的进程成为唯一 publisher，并在用户私有临时目录下按 authority 规范路径哈希开一个 Unix socket 端点；预约冲突（`EEXIST`）的进程**不再整体拒绝**，而是成为客户端，从不自己落盘。每个客户端 agent 一条会话通道，首帧 `open {sessionId}` 后身份固定；工具、`/edit-lock` 命令、协商通知与临时答复工具都经该通道转发，发布仍由 publisher 持有的原始 `ctx.fs` 执行。通道 EOF（含客户端崩溃）由 publisher 持久撤权；重连的同会话总以中断态开始，需 `/edit-lock resume`。客户端只重试「建立通道」（等待旧通道 EOF 结算），从不重试调用；中断调用的结果按契约为 UNKNOWN。端点不做认证：可达同一用户临时目录的进程都在合作信任边界内，不防恶意同用户进程。publisher 退出后客户端不自立为写者，受控写入 fail closed，直到人工确认旧 publisher 静止并重启。
 - 非用户异常的仅清理恢复（D4）：回合以 `turn/end` reason `error` 结束且会话持有锁时，这些锁标为 abnormal（不释放），会话进入 `recovering`：业务写入、新获取与 try_steal 全部拒绝，只能 `edit_lock_release`、`edit_lock_reply` 或 `edit_lock_pause`。驱动按 15／30／60 秒退避注入仅清理回合，至多 3 次或累计 5 分钟（以先到者为准）；暂停单次 ≤15 分钟、累计 ≤30 分钟（用户已确认），到期只重新检查，不释放、不自续。次数、恢复耗时与暂停时长都持久计入 authority 镜像的 `recovery`，重启不退还。预算耗尽或无剩余异常锁时停止并提示人工；恢复正常编辑只能经 `/edit-lock resume`，abnormal 锁保持 abnormal，须释放或人工解锁。用户 Stop（`aborted`）立即结束自动恢复且不唤醒会话。
-- GUI 入口：功能开启后，会话输入栏右侧（LSP 开关旁）出现「编辑锁」按钮，圆点颜色表示本会话状态（绿 active／黄 中断或待确认／红 异常恢复中／灰 未知）。点开面板显示 `/edit-lock status` 结果（每个锁的文件、状态、异常原因、generation，以及恢复次数、耗时与暂停额度），并提供刷新、全部锁、停止编辑、恢复四个按钮；每个按钮都是一次显式 `/edit-lock` 命令执行，会作为命令节点留在对话中，不轮询。查看不授予写权限；逐文件确认与人工解锁仍通过命令输入。命令不存在（功能关闭）时按钮不渲染、也不加载其 chunk。
+- GUI 入口：见上文「用户可见行为·状态入口」。面板数据来自只读端点 `POST /api/orrery-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图，按会话解析 agent，找不到时返回 `unavailable`），不再从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。
 - `edit_lock_status` 每行同时给出 `generation`：纯靠 status 判断「锁是否已到手」时，generation 变化是所有权真正易手的可靠信号（通知里也带 generation）。
 - 转交请求可达性：请求送达持有者时，若持有者空闲（`idle`）则用 followup 唤醒它，使它在一个回合内就能答复——只 inject 的话通知会一直躺着，等持有者下次收到用户消息时才被读到，请求早已过期（验收实测）。已中断的持有者永不唤醒，其请求自然过期。结果通知（转交成功、过期、被拒）只 inject，不唤醒请求方。协商时限由 60 秒放宽到 120 秒，给唤醒回合留出时间。
 - 答复工具的生命周期：`edit_lock_reply` 在首次收到请求时注册，且只在**回合边界**（`agent/turn-stopping`）于无待答请求时注销；回合中途注销会让「已过期但仍被调用」的答复报成 `unknown tool` 而不是真实原因。
@@ -84,27 +84,55 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ## 用户可见行为
 
-**当前：零变化。** 本特性未挂载，因此：
+启用后（设置页「编辑锁（实验）」并重启），同一项目里的会话轮流编辑文件，而不是相互覆盖：
 
-- 没有新增工具（`acquire` / `release` / `try_steal` 与结构化答复工具均未实现、未注册）。
-- 预设新增 `edit-lock` 行与设置键 `editLockEnabled`，默认关闭；关闭时该行在 apply 第一步返回，不提供服务、不注册工具或监听器。
-- 编辑行为不变：`hash_edit`、stock `write` / `edit`、`lsp_rename` 的锚点校验、版本护栏、沙箱策略与 diff 输出与未引入本特性时相同。
-- 未启用本特性的会话，续推与取消规则完全照旧（[todo-continuation.md](todo-continuation.md) 的现有语义不变）。
+- **编辑即占用**。助手改一个文件时自动占用它；其他会话改这个文件会被拒绝，可以请求对方转交（`edit_lock_try_steal`）。
+- **回合结束要收尾**。回合正常结束（`turn/end` 为 `completed`）而助手仍占着文件时，会被续推一次，要求它对每个文件二选一：改完了就释放（`edit_lock_release`），还要用就申请**有期限的保留**（`edit_lock_hold`）。提醒次数用尽仍未处理的，按设置自动释放（默认）或转为需要你处理。出错（`error`）走仅清理恢复，你按下停止（`aborted`）则不续推，二者都不进入此路径。
+- **保留有上限**。单次保留与一批文件的累计保留都有上限（默认 30 分钟／2 小时），用尽后只能释放；延长一个仍在生效的保留只计新增的分钟数，且「从现在起的窗口」不得超过单次上限。没有永久保留——唯一能一直占着的是异常锁（出错或停止留下的锁），由你或助手处理。
+- **保留中（holding）的含义**。会话已收尾但仍保留文件：其他会话照常被拒、转交照常协商；本会话自己仍可编辑这些文件，并且**一开始新回合，全部保留立刻解除**，回到普通占用。保留到期时会话空闲则自动释放；到期时恰在回合中，则在该回合结束时释放。
+- **停止即收回**。你按停止（或面板「收回编辑权」）后，助手不能再编辑，直到你点「继续编辑」；继续时本会话保留下来的文件一并确认，不再逐个确认。
+- **状态入口**。输入栏右侧「编辑锁」按钮的圆点表示本会话状态：灰＝未占用文件，绿＝正在编辑／文件为本会话保留，黄＝编辑已停止或等你确认继续，红＝需要你处理。打开面板：
+  - 只在需要时给**一个主动作**：已停止→「继续编辑」；等你确认→「继续编辑这些文件」；保留中→「立即释放全部文件」；正常编辑与空闲不给主动作。
+  - 文件按短名列出，每行至多一个动作：自己的文件「释放」（待确认的为「继续」）；其他会话停住或出错留下的文件「解锁」（按当前 generation 解锁）；其他会话正在编辑的文件不给动作。
+  - 「收回编辑权」是危险动作，需要第二次点击确认。
+  - 会话 id、epoch、generation、绝对路径都收在「技术细节」里。
+  - 面板读取的是只读的结构化视图，不轮询、不写入对话；每个动作都是一次显式 `/edit-lock` 命令，留在对话中作为记录。
+- 编辑工具的锚点校验、版本护栏、沙箱策略与 diff 输出不变；shell 与外部编辑器的写入不在保护范围内。
 
-**计划中（未实现，验收以 spec 为准）：**
+### 命令
 
-- 受控写入在归属缺失、已转交、执行授权过期或处于待确认状态时**拒绝落盘**，目标文件字节保持不变。
-- `lsp_rename` 在写入前原子获取全部目标文件的归属；任一冲突则零写入、零新增锁。
-- 会话中断状态落到会话级（见下）。**启用本特性后，零锁会话的续推行为会被改变**——这是设计明确写下的行为变化；未启用时仍沿用原规则。
-- UI 提供状态图标与详情面板（文件、owner、状态、异常原因、最后操作、恢复尝试、暂停余额、部分写入状态）。查看与保留不授予写权限；恢复与受控解锁走可信人类入口，且不存在无条件强制解锁。
+| 命令 | 作用 |
+|---|---|
+| `/edit-lock status` | 本会话状态 |
+| `/edit-lock locks` | 本项目所有被占用的文件 |
+| `/edit-lock hold [minutes]` | 保留本会话的文件（默认取设置值） |
+| `/edit-lock release <path>` | 释放本会话的一个文件 |
+| `/edit-lock stop` | 收回本会话编辑权 |
+| `/edit-lock resume` | 继续编辑，并一并确认保留下来的文件 |
+| `/edit-lock confirm <path>` \| `--all` | 确认待确认的文件（`--all` 只对符合条件的文件逐个执行原有确认，不放宽任何检查） |
+| `/edit-lock unlock <path> <generation>` | 按当前 generation 解锁他人留下的文件 |
 
 ## 配置
 
 | 设置键 | 默认 | 说明 |
 |---|---|---|
 | `editLockEnabled`（设置页「编辑」组「编辑锁（实验）」） | `false` | 打开后重启 DeepSeek Harness 生效 |
+| `editLockHoldDefaultMinutes` | `30` | 助手申请保留而未给时长时使用 |
+| `editLockHoldSingleMaxMinutes` | `30` | 单次保留上限（从现在起的窗口） |
+| `editLockHoldCumulativeMaxMinutes` | `120` | 一批文件的累计保留上限，须不小于单次上限 |
+| `editLockNudgeAttempts` | `2` | 回合结束后最多提醒几次；`0` 直接按兜底处置 |
+| `editLockNudgeFallback` | `release` | 提醒用尽后的处置：`release` 释放给其他会话，`abnormal` 转为需要你处理 |
 
-恢复与暂停参数为固定产品值：3 次／5 分钟、退避 15/30/60 秒、单次暂停 15 分钟、累计暂停 30 分钟、协商时限 60 秒。开发组合可在行配置写 `root` 与 `authorityDirectory` 固定单一域；该行须排在 hashline-edit 与 lsp 之前。设计材料里出现的参数（协商时限、单次/累计暂停预算、恢复重试预算）都是待实施参数——其中「有限累计暂停预算」尚未获用户确认，未确认前自动暂停保持禁用。
+保留相关设置由 `editLockLimits` 统一解析：未设置取默认；设置了但不可用（非正数、累计小于单次、非整数提醒次数、未知处置）则启动时明确报错，不做静默钳制。恢复与暂停参数为固定产品值：3 次／5 分钟、退避 15/30/60 秒、单次暂停 15 分钟、累计暂停 30 分钟、协商时限 120 秒。开发组合可在行配置写 `root` 与 `authorityDirectory` 固定单一域；该行须排在 hashline-edit 与 lsp 之前。
+
+### 保留与回合末处理（设计）
+
+- 保留是**会话级预算**，不是锁状态：镜像（version 3）新增 `holds` 表，每个已知会话一行 `{holding, holdUntil, holdCumulativeMs}`；被保留的锁仍是普通 `active`。version 2 镜像直接拒绝，不做迁移。
+- 内核先用 `holdCandidate` 计算新行，manager 在一次持久事务里安装，存储失败不会让内存领先于镜像。累计额度在一批内只增不减；最后一个锁释放即批次结束，该行归零（存储只在会话不再持有任何锁时接受归零）。
+- 「新回合」按 `agent/pre-step` 携带的 turn 身份判定一次，而不是每一步都判定——否则保留会在申请后的下一步就被清掉。
+- 到期以**读时结算**为准，定时器只负责及时：定时器丢失（休眠、挂起）只会推迟释放，不会改变判断；到期释放走普通释放路径（当前 generation），与在途发布共用 manager 顺序。
+- 停止或异常的会话：保留立即失效，其锁按异常锁处理。重启恢复归属但不恢复正在运行的保留，已用额度不退还。
+- 回合末提醒计数只存在内存：重启后会话以中断态开始、走另一条路径，计数丢失不会造成循环。
 
 ## 设计细节
 
@@ -171,6 +199,8 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **OpenSpec 任务保持未勾选**：`openspec/changes/edit-lock-arbitration/tasks.md` 第 1 组起全部未完成；任务 2.1 下有两条、任务 2.2 下有两条，任务 2.5 与 2.6 各有一条阶段进度注记（均不勾选、也不代表对应任务完成——存储与 operation history 只是 2.2/2.5/2.6 的 partial foundation：没有受控创建通道的串行发布、没有 manager/kernel restore、没有运行时围栏执行与授权，ID_REUSE 只是历史绑定比对而非重放通道）；本文档不把它们标为完成，也不作为启用依据。
 
 ## 测试
+
+- **UX 改版**：`test/edit-lock-retention.test.js`（17 项：保留语义、他人照常被拒、本会话可继续编辑、新回合解除、读时结算幂等、延长只计新增分钟、批次结束归零、停止使保留失效、重启不恢复运行中的保留）、`test/edit-lock-settle.test.js`（12 项：仅 `completed` 进入、提醒上限、两种兜底、保留期内不打扰、新回合重置计数）、`test/edit-lock-view.test.js`（7 项：状态优先级、行动作、技术标识不进主视图）、`test/client-edit-lock-panel.test.js`（11 项：不解析命令文本、按状态的主动作、行内动作、收回二次确认、技术细节折叠）、`test/settings-fields.test.js`（`editLockLimits` 默认与报错），组合测试补充 view 端点与人工 `release` 命令。真实回合集成场景 `editlock` 11/11：回合带锁结束 → 收到收尾续推 → 申请保留 → 状态显示保留 → 释放。该场景实际抓出并修复了三个缺陷：保留在下一步被清除（`pre-step` 按步触发）、批次结束归零被存储当作退款拒绝、读取未注入的 `ctx.setTimeout` 抛错中断保留。
 
 - **初始 manager 事务**：6 项真实 store 测试通过，覆盖目录 sync 前授权不可见、取消同步减权与持久 ack、取消期间 acquire 保留 interrupted 归属但拒绝返回令牌、入队前凭据快照、竞争冲突不毒化、取消不影响另一会话、历史 store 拒绝初始化，以及 uncertain IO 失败后的排队/后续操作全拒绝。全量 1074/1074、0 fail、0 skip；常规 check 与包含 manager/store/state 的本机 direct strict 检查通过。本切片未做独立子代理评审（遵守本轮亲自实施约束），不代表创建发布或宿主验收通过。
 
