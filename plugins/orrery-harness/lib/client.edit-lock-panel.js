@@ -83,7 +83,9 @@ window.__ModuleLoader__.load({
 		}
 		/** The one primary action of a state, or null when nothing is needed. */
 		function primaryOf(state, view) {
-			if (state === "stopped") return { verb: "resume", label: "editLockResume" };
+			// Continue editing is one human action: restore authority, then confirm the
+			// retained files (each through the ordinary per-file check).
+			if (state === "stopped") return { verbs: ["resume", "confirm --all"], label: "editLockResume" };
 			if (state === "confirm") return { verb: "confirm --all", label: "editLockConfirmAll" };
 			if (state === "holding" && view.ownCount > 0) return { verbs: view.files.filter((file) => file.mine && file.action === "release").map(rowCommand), label: "editLockReleaseAll" };
 			return null;

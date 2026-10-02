@@ -88,7 +88,7 @@ describe('client.edit-lock-panel chunk', () => {
     expect(runs).toEqual(['release /w/a.txt'])
   })
 
-  it('stopped offers exactly one primary action: continue editing', async () => {
+  it('stopped offers exactly one primary action: continue editing, which also confirms the retained files', async () => {
     const { runs, render } = await mounted([viewOf('stopped', [own('a.txt', 'user-interrupted')])])
     find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
     const tree = render()
@@ -96,7 +96,7 @@ describe('client.edit-lock-panel chunk', () => {
     // A stopped session has nothing left to revoke.
     expect(byAction(tree, 'arm-stop')).toBe(undefined)
     byAction(tree, 'primary').onClick(); await flush(); await flush()
-    expect(runs).toEqual(['resume'])
+    expect(runs).toEqual(['resume', 'confirm --all'])
   })
 
   it('waiting files are confirmed in one action', async () => {

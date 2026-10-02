@@ -85,10 +85,9 @@ async function runCommand(domain, agent, raw, commandId, limits) {
   if (verb === 'resume') {
     const status = await domain.resume(agent, `command:${commandId}`)
     const pending = status.locks.filter(/** @param {any} lock */ lock => lock.status === 'pending-confirmation')
-    // Resuming is the human saying "go on with these files", so the retained files
-    // are confirmed in the same explicit action instead of one command per path.
-    const confirmed = await confirmAll(domain, agent, pending)
-    return `Edit authority resumed with a new execution epoch.${confirmed.length ? ` Confirmed ${confirmed.length} retained file(s).` : ''}\n${describe(await domain.status(agent))}`
+    // Resume restores authority only; retained files still need an explicit
+    // confirmation (the panel's Continue editing runs resume then confirm --all).
+    return `Edit authority resumed with a new execution epoch.${pending.length ? ` ${pending.length} retained file(s) wait for confirmation: /edit-lock confirm --all, or /edit-lock confirm <path> for one.` : ''}\n${describe(status)}`
   }
   if (verb === 'hold') {
     const minutes = rest.length > 1 ? Number(rest.at(-1)) : limits.holdDefaultMinutes
@@ -592,7 +591,7 @@ const apply = (ctx, config = {}) => {
   const commands = ctx.get?.('commands')
   const offCommand = commands?.register({
     name: 'edit-lock',
-    description: 'Edit Lock: status, locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue, confirms retained files), confirm <path> | --all, unlock <path> <generation>.',
+    description: 'Edit Lock: status, locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue), confirm <path> | --all, unlock <path> <generation>.',
     input: { hint: 'status | locks | hold [minutes] | release <path> | stop | resume | confirm <path> | unlock <path> <generation>' },
     handler: async (/** @type {any} */ invocation) => {
       const agent = invocation?.agent
