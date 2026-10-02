@@ -377,7 +377,20 @@ const apply = (ctx, config = {}) => {
   /** Retention policy is resolved once per read from the settings section, so a
    * committed change takes effect without a restart and the kernel stays free of
    * configuration. @returns {any} */
-  const limits = () => editLockLimits(ctx.get?.('orrerySettings')?.get?.('editLock'))
+  const strictLimits = () => editLockLimits(ctx.get?.('orrerySettings')?.get?.('editLock'))
+  /** An incoherent saved combination (each field is validated on its own, so e.g.
+   * a single cap below the default can be saved) must never switch off settling,
+   * status, release, stop or unlock. Those read the built-in defaults instead and
+   * warn; only a retention request is refused, with the named reason, because
+   * that is the one decision the bad setting is about. */
+  let warnedLimits = ''
+  const limits = () => {
+    try { return strictLimits() } catch (error) {
+      const message = String(/** @type {any} */ (error)?.message ?? error)
+      if (warnedLimits !== message) { warnedLimits = message; ctx.logger?.warn?.(`edit lock settings ignored, using defaults: ${message}`) }
+      return editLockLimits(undefined)
+    }
+  }
   /** Turn-end settling: a finished turn that left locks behind is continued once,
    * asking for each file to be released or kept explicitly (design D2/D3). Only
    * `completed` enters here; the error and stop paths keep their own handling. */
@@ -432,7 +445,7 @@ const apply = (ctx, config = {}) => {
      * Retention only extends ownership; it grants nothing new (spec: Explicit
      * bounded retention). @param {any} exec @param {number} ms */
     async hold(exec, ms) {
-      const policy = limits()
+      const policy = strictLimits()
       if (ms === undefined) ms = Math.round(policy.holdDefaultMinutes * 60_000)
       const result = await (await domainOf(exec.agent)).hold(exec.agent, ms, {
         singleMaxMs: policy.holdSingleMaxMinutes * 60_000,
@@ -614,7 +627,10 @@ const apply = (ctx, config = {}) => {
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
         const domain = await domainOf(agent)
-        const text = await runCommand(domain, agent, String(invocation.rawInput ?? ''), String(invocation.commandId), limits())
+        const raw = String(invocation.rawInput ?? '')
+        // Only the hold verb depends on the retention settings being coherent.
+        const policy = /^\s*hold\b/.test(raw) ? strictLimits() : limits()
+        const text = await runCommand(domain, agent, raw, String(invocation.commandId), policy)
         return { kind: 'success', text: `${text}\nDomain: ${registry.rootOf(agent)} (${domain.mode})` }
       } catch (error) {
         return { kind: 'error', text: `edit-lock: ${/** @type {any} */ (error)?.message ?? error}` }

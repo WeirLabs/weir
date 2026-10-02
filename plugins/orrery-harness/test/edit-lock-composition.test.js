@@ -468,3 +468,26 @@ test('/edit-lock hold uses the minutes the user typed', async () => {
   assert.match(refused.text, /limited to 30 minutes/)
   dispose()
 })
+
+test('an incoherent saved retention setting refuses only hold; status, release and settling keep working', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const get = host.ctx.get
+  // Single cap lowered below the default: each field is valid on its own.
+  const section = { holdSingleMaxMinutes: 20 }
+  host.ctx.get = (name) => (name === 'orrerySettings' ? { get: () => section } : get(name))
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  const agent = host.agent('s')
+  await host.emit('agent/created', { agent })
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  const status = await host.command().handler({ agent, rawInput: ' status', commandId: 'c1' })
+  assert.equal(status.kind, 'success', status.text)
+  const held = await host.command().handler({ agent, rawInput: ' hold', commandId: 'c2' })
+  assert.equal(held.kind, 'error')
+  assert.match(held.text, /editLockHoldDefaultMinutes must not exceed editLockHoldSingleMaxMinutes/)
+  await assert.rejects(service.hold({ agent }), /must not exceed/)
+  const released = await host.command().handler({ agent, rawInput: ` release ${join(root, 'a.txt')}`, commandId: 'c3' })
+  assert.equal(released.kind, 'success', released.text)
+  dispose()
+})

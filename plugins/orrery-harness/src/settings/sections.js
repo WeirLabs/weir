@@ -74,9 +74,11 @@ export const EDIT_LOCK_DEFAULTS = Object.freeze({
 })
 
 /** Overlay one Edit Lock section onto the defaults. A key the user never set
- * falls back to its default; a key that is present but unusable fails activation
- * loud with the flat settings key named, because silently clamping a retention
- * cap would change how long other sessions stay blocked from those files.
+ * falls back to its default; a key that is present but unusable (alone or in
+ * combination) throws with the flat settings key named, because silently clamping
+ * a retention cap would change how long other sessions stay blocked from those
+ * files. The Edit Lock composition refuses retention requests with that error and
+ * runs every other path (settling, status, release, stop, unlock) on defaults.
  * @param {any} section */
 export function editLockLimits(section) {
   const value = section && typeof section === 'object' ? section : {}
