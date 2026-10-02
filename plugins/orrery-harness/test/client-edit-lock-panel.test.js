@@ -35,43 +35,134 @@ describe('client.edit-lock-panel chunk', () => {
     return undefined
   }
 
-  it('stays hidden without the command, then runs status and actions through /edit-lock', async () => {
-    const { definition, exports, reactStub } = await load()
-    expect(definition.chunk).toBe('client.edit-lock-panel.js')
+  /** A view in the shape src/edit-lock/view.js produces. */
+  const viewOf = (state, files = [], extra = {}) => ({
+    state, files, ownCount: files.filter((file) => file.mine).length,
+    pendingCount: files.filter((file) => file.status === 'pending-confirmation').length,
+    hold: null, recovery: null, technical: { sessionId: 's1', executionEpoch: 2, root: '/w', mode: 'publisher', at: 0 }, ...extra,
+  })
+  const own = (name, status = 'active', action = 'release') => ({ name, mine: true, status, reason: null, action, detail: { path: `/w/${name}`, owner: 's1', generation: 3 } })
+
+  /** Mount the panel with the command present and a scripted sequence of views. */
+  async function mounted(views) {
+    const { exports, reactStub } = await load()
     const runs = []
-    let catalog = []
+    let index = 0
     const props = {
       sessionId: 's1', t: (key) => key,
-      commandsList: async () => catalog,
-      runEditLock: async (verb) => { runs.push(verb); return { kind: 'success', text: `Edit Lock session s1: ${verb === 'stop' ? 'stopped' : 'active'}, epoch 1\n- /w/a [active] generation 1` } },
+      commandsList: async () => [{ name: 'edit-lock' }],
+      fetchView: async () => views[Math.min(index++, views.length - 1)],
+      runEditLock: async (verb) => { runs.push(verb); return { kind: 'success', text: 'ok' } },
     }
+    const render = () => { reactStub.begin(); return exports.EditLockPanel(props) }
+    render(); await flush(); await flush()
+    return { exports, runs, render, props }
+  }
+  const byAction = (tree, key) => find(tree, (node) => node['data-orrery-edit-lock-action'] === key)
+
+  it('stays hidden without the command and never parses command text', async () => {
+    const { exports, reactStub } = await load()
+    expect(exports.stateOf).toBeTruthy()
+    const props = { sessionId: 's1', t: (key) => key, commandsList: async () => [], fetchView: async () => { throw new Error('must not read') }, runEditLock: async () => ({ kind: 'success' }) }
     reactStub.begin(); expect(exports.EditLockPanel(props)).toBe(null)
     await flush(); reactStub.begin(); expect(exports.EditLockPanel(props)).toBe(null)
-
-    catalog = [{ name: 'edit-lock' }]
-    const { exports: fresh, reactStub: freshStub } = await load()
-    freshStub.begin(); fresh.EditLockPanel(props); await flush()
-    freshStub.begin()
-    let tree = fresh.EditLockPanel(props)
-    const button = find(tree, (node) => node['data-orrery-edit-lock'] === '')
-    expect(button['aria-expanded']).toBe(false)
-    button.onClick(); await flush()
-    expect(runs).toEqual(['status'])
-    freshStub.begin(); tree = fresh.EditLockPanel(props)
-    expect(find(tree, (node) => node['data-orrery-edit-lock-panel'] === '')).toBeTruthy()
-    expect(find(tree, (node) => node['data-orrery-edit-lock-state'] !== undefined)['data-orrery-edit-lock-state']).toBe('active')
-    find(tree, (node) => node['data-orrery-edit-lock-action'] === 'stop').onClick(); await flush()
-    expect(runs).toEqual(['status', 'stop'])
-    freshStub.begin(); tree = fresh.EditLockPanel(props)
-    expect(find(tree, (node) => node['data-orrery-edit-lock-state'] !== undefined)['data-orrery-edit-lock-state']).toBe('interrupted')
+    // State comes from the structured view only: text never decides the colour.
+    expect(exports.stateOf({ state: 'holding' })).toBe('holding')
+    expect(exports.stateOf('Edit Lock session s1: stopped')).toBe('unavailable')
+    expect(exports.stateOf({ state: 'made-up' })).toBe('unavailable')
   })
 
-  it('maps reported states to the dot colour classes', async () => {
-    const { exports } = await load()
-    expect(exports.stateOf('Edit Lock session s: recovering, epoch 2\n- /a [abnormal: provider-error] generation 1')).toBe('abnormal')
-    expect(exports.stateOf('Edit Lock session s: active, epoch 2\n- /a [pending-confirmation] generation 1')).toBe('interrupted')
-    expect(exports.stateOf('Edit Lock session s: active, epoch 2\n- no locks held')).toBe('active')
-    expect(exports.stateOf(null)).toBe('unknown')
+  it('reads the view once on mount so the dot is right before opening, without running any command', async () => {
+    const { runs, render } = await mounted([viewOf('editing', [own('a.txt')])])
+    const tree = render()
+    expect(find(tree, (node) => node['data-orrery-edit-lock-state'] !== undefined)['data-orrery-edit-lock-state']).toBe('editing')
+    expect(runs).toEqual([])
+  })
+
+  it('a healthy session offers no primary action; own files offer release', async () => {
+    const { runs, render } = await mounted([viewOf('editing', [own('a.txt')])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(byAction(tree, 'primary')).toBe(undefined)
+    byAction(tree, 'release:/w/a.txt').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['release /w/a.txt'])
+  })
+
+  it('stopped offers exactly one primary action: continue editing', async () => {
+    const { runs, render } = await mounted([viewOf('stopped', [own('a.txt', 'user-interrupted')])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(byAction(tree, 'primary').children).toBe('editLockResume')
+    // A stopped session has nothing left to revoke.
+    expect(byAction(tree, 'arm-stop')).toBe(undefined)
+    byAction(tree, 'primary').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['resume'])
+  })
+
+  it('waiting files are confirmed in one action', async () => {
+    const files = [own('a.txt', 'pending-confirmation', 'confirm'), own('b.txt', 'pending-confirmation', 'confirm')]
+    const { runs, render } = await mounted([viewOf('confirm', files)])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    byAction(render(), 'primary').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['confirm --all'])
+  })
+
+  it('a kept batch shows its expiry and can be released in one action', async () => {
+    const files = [own('a.txt'), own('b.txt')]
+    const { runs, render } = await mounted([viewOf('holding', files, { hold: { until: Date.UTC(2026, 0, 1, 9, 30), remainingMinutes: 20, usedMinutes: 30 } })])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, (node) => node['data-orrery-edit-lock-summary'] === '').children).toContain('editLockHoldUntil')
+    byAction(tree, 'primary').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['release /w/a.txt', 'release /w/b.txt'])
+  })
+
+  it('another session\'s stuck file can be unlocked by its exact generation; an active one cannot', async () => {
+    const stuck = { name: 'x.txt', mine: false, status: 'abnormal', reason: 'provider-error', action: 'unlock', detail: { path: '/w/x.txt', owner: 's2', generation: 7 } }
+    const busy = { name: 'y.txt', mine: false, status: 'active', reason: null, action: null, detail: { path: '/w/y.txt', owner: 's3', generation: 2 } }
+    const { runs, render } = await mounted([viewOf('idle', [stuck, busy])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(byAction(tree, 'unlock:/w/y.txt')).toBe(undefined)
+    byAction(tree, 'unlock:/w/x.txt').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['unlock /w/x.txt 7'])
+  })
+
+  it('revoking needs a second, explicit confirmation', async () => {
+    const { runs, render } = await mounted([viewOf('editing', [own('a.txt')])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    expect(byAction(render(), 'stop')).toBe(undefined)
+    byAction(render(), 'arm-stop').onClick()
+    expect(runs).toEqual([])
+    byAction(render(), 'stop').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['stop'])
+  })
+
+  it('technical identifiers stay behind the details toggle', async () => {
+    const { render } = await mounted([viewOf('editing', [own('a.txt')])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    expect(find(render(), (node) => node['data-orrery-edit-lock-details'] === '')).toBe(undefined)
+    expect(JSON.stringify(render())).not.toContain('generation 3')
+    byAction(render(), 'details').onClick()
+    expect(find(render(), (node) => node['data-orrery-edit-lock-details'] === '').children).toContain('generation 3')
+  })
+
+  it('a failed action is shown and the view is read again', async () => {
+    const { exports, reactStub } = await load()
+    let reads = 0
+    const props = {
+      sessionId: 's1', t: (key) => key,
+      commandsList: async () => [{ name: 'edit-lock' }],
+      fetchView: async () => { reads++; return viewOf('editing', [own('a.txt')]) },
+      runEditLock: async () => ({ kind: 'error', text: 'edit-lock: lock not owned by this session' }),
+    }
+    const render = () => { reactStub.begin(); return exports.EditLockPanel(props) }
+    render(); await flush(); await flush()
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const before = reads
+    byAction(render(), 'release:/w/a.txt').onClick(); await flush(); await flush()
+    expect(find(render(), (node) => node['data-orrery-edit-lock-error'] === '').children).toContain('not owned')
+    expect(reads).toBeGreaterThan(before)
   })
 
   it('paints an opaque popover with theme-defined tokens only', () => {

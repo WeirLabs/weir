@@ -7,11 +7,30 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
+		const jsx = react_jsx_runtime.jsx;
+		const jsxs = react_jsx_runtime.jsxs;
 		// ---- Per-session Edit Lock entry (conversation composer bar) ----
 		// Visible only while the `edit-lock` command exists (feature enabled).
-		// Every refresh/action is an explicit human command, so nothing polls:
-		// a command run is a durable flow node in the conversation, which also
-		// serves as the audit trail of the action. Viewing grants nothing.
+		// Everything the panel SHOWS comes from a structured, read-only view; the
+		// panel never parses command text. Everything it DOES is one explicit
+		// /edit-lock command, so each action stays on the conversation record.
+		// Nothing polls: the view is read when the entry mounts, when the panel
+		// opens, and after each action.
+		const STATES = ["unavailable", "stopped", "attention", "confirm", "holding", "editing", "idle"];
+		/** Status-dot colour per state; only theme-defined tokens. */
+		const dotColor = {
+			idle: "var(--dsw-alias-label-tertiary)",
+			editing: "var(--dsw-alias-state-business-primary)",
+			holding: "var(--dsw-alias-state-business-primary)",
+			confirm: "var(--dsw-alias-state-warn-tertiary)",
+			stopped: "var(--dsw-alias-state-warn-tertiary)",
+			attention: "var(--dsw-alias-state-error-primary)",
+			unavailable: "var(--dsw-alias-label-tertiary)"
+		};
+		/** Normalise a view from the host; an unknown state renders as unavailable. */
+		function stateOf(view) {
+			return view && STATES.includes(view.state) ? view.state : "unavailable";
+		}
 		const buttonStyle = {
 			display: "inline-flex",
 			alignItems: "center",
@@ -25,14 +44,16 @@ window.__ModuleLoader__.load({
 			lineHeight: "16px",
 			color: "var(--dsw-alias-label-secondary)"
 		};
-		// Popover surface: the theme's documented overlay token (defined for
-		// light and dark). Every colour below is a token the host theme defines.
+		const primaryStyle = { ...buttonStyle, color: "var(--dsw-alias-label-primary)", borderColor: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
+		const dangerStyle = { ...buttonStyle, color: "var(--dsw-alias-state-error-primary)", borderColor: "var(--dsw-alias-state-error-primary)" };
+		const linkStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
+		// Popover surface: the theme's documented overlay token (light and dark).
 		const panelStyle = {
 			position: "absolute",
 			bottom: "calc(100% + 6px)",
 			right: 0,
 			zIndex: 20,
-			width: "min(520px, 80vw)",
+			width: "min(440px, 80vw)",
 			maxHeight: "50vh",
 			overflow: "auto",
 			background: "var(--dsw-alias-bg-overlay)",
@@ -41,32 +62,46 @@ window.__ModuleLoader__.load({
 			boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
 			padding: "10px 12px",
 			color: "var(--dsw-alias-label-primary)",
-			fontSize: "12px"
+			fontSize: "12px",
+			lineHeight: "18px"
 		};
-		const preStyle = { whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)", margin: "8px 0", lineHeight: "18px" };
-		const rowStyle = { display: "flex", gap: "6px", flexWrap: "wrap" };
-		const errorStyle = { color: "var(--dsw-alias-state-error-primary)" };
-		/** Lock state colour from the status text, for the dot only. */
-		function stateOf(text) {
-			if (typeof text !== "string") return "unknown";
-			if (/\[abnormal/.test(text) || /: recovering/.test(text)) return "abnormal";
-			if (/: stopped|interrupted|pending-confirmation/.test(text)) return "interrupted";
-			return "active";
+		const mutedStyle = { color: "var(--dsw-alias-label-secondary)" };
+		const errorStyle = { color: "var(--dsw-alias-state-error-primary)", marginTop: "6px" };
+		const rowStyle = { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0", borderTop: "1px solid var(--dsw-alias-border-l2)" };
+		const nameStyle = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" };
+		const dot = (state) => jsx("span", { "aria-hidden": true, style: { display: "inline-block", width: "7px", height: "7px", borderRadius: "50%", background: dotColor[state], flex: "none" } });
+		/** Clock time for a reservation expiry, in the user's locale. */
+		function clock(at) {
+			try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
 		}
-		const dotColor = {
-			active: "var(--dsw-alias-state-business-primary)",
-			interrupted: "var(--dsw-alias-state-warn-tertiary)",
-			abnormal: "var(--dsw-alias-state-error-primary)",
-			unknown: "var(--dsw-alias-label-tertiary)"
-		};
+		/** The command a row action runs. Paths are the canonical ones from the view. */
+		function rowCommand(file) {
+			if (file.action === "release") return `release ${file.detail.path}`;
+			if (file.action === "confirm") return `confirm ${file.detail.path}`;
+			if (file.action === "unlock") return `unlock ${file.detail.path} ${file.detail.generation}`;
+			return null;
+		}
+		/** The one primary action of a state, or null when nothing is needed. */
+		function primaryOf(state, view) {
+			if (state === "stopped") return { verb: "resume", label: "editLockResume" };
+			if (state === "confirm") return { verb: "confirm --all", label: "editLockConfirmAll" };
+			if (state === "holding" && view.ownCount > 0) return { verbs: view.files.filter((file) => file.mine && file.action === "release").map(rowCommand), label: "editLockReleaseAll" };
+			return null;
+		}
 		function EditLockPanel(props) {
 			const t = props.t;
 			const sessionId = props.sessionId;
 			const [available, setAvailable] = react.useState(null);
 			const [open, setOpen] = react.useState(false);
-			const [text, setText] = react.useState(null);
+			const [view, setView] = react.useState(null);
 			const [error, setError] = react.useState(null);
 			const [pending, setPending] = react.useState(false);
+			const [armedRevoke, setArmedRevoke] = react.useState(false);
+			const [details, setDetails] = react.useState(false);
+			const refresh = () => Promise.resolve(props.fetchView?.()).then(
+				(next) => { if (next) setView(next); },
+				(reason) => setError(reason instanceof Error ? reason.message : String(reason))
+			);
 			react.useEffect(() => {
 				if (!sessionId) {
 					setAvailable(false);
@@ -74,76 +109,122 @@ window.__ModuleLoader__.load({
 				}
 				let alive = true;
 				Promise.resolve(props.commandsList(sessionId)).then(
-					(list) => { if (alive) setAvailable(Array.isArray(list) && list.some((entry) => entry?.name === "edit-lock")); },
+					(list) => {
+						if (!alive) return;
+						const present = Array.isArray(list) && list.some((entry) => entry?.name === "edit-lock");
+						setAvailable(present);
+						// One read so the dot is right before the panel is ever opened.
+						if (present) refresh();
+					},
 					() => { if (alive) setAvailable(false); }
 				);
 				return () => { alive = false; };
 			}, [sessionId]);
 			if (available !== true) return null;
-			const run = (verb) => {
+			const state = stateOf(view);
+			/** Run commands in order, stop at the first failure, then re-read the view. */
+			const run = (verbs) => {
 				if (pending) return;
 				setPending(true);
 				setError(null);
-				Promise.resolve(props.runEditLock(verb)).then(
-					(outcome) => {
-						setPending(false);
-						if (outcome.kind === "success") setText(outcome.text ?? "");
-						else setError(outcome.text);
-					},
+				setArmedRevoke(false);
+				const list = [].concat(verbs).filter(Boolean);
+				(async () => {
+					for (const verb of list) {
+						const outcome = await Promise.resolve(props.runEditLock(verb));
+						if (outcome?.kind !== "success") throw new Error(outcome?.text ?? "edit-lock failed");
+					}
+				})().then(
+					() => refresh().finally(() => setPending(false)),
 					(reason) => {
-						setPending(false);
 						setError(reason instanceof Error ? reason.message : String(reason));
+						refresh().finally(() => setPending(false));
 					}
 				);
 			};
 			const toggle = () => {
 				const next = !open;
 				setOpen(next);
-				if (next) run("status");
+				setArmedRevoke(false);
+				if (next) refresh();
 			};
-			const state = stateOf(text);
-			const action = (verb, label) => react_jsx_runtime.jsx("button", {
-				type: "button", style: buttonStyle, disabled: pending, onClick: () => run(verb),
-				"data-orrery-edit-lock-action": verb, children: label
-			}, verb);
-			return react_jsx_runtime.jsxs("span", {
+			const action = (key, label, onClick, style = buttonStyle) => jsx("button", {
+				type: "button", style, disabled: pending, onClick,
+				"data-orrery-edit-lock-action": key, children: label
+			}, key);
+			const summary = (() => {
+				if (!view) return t("editLockLoading");
+				const base = t(`editLockState_${state}`);
+				if (state === "holding" && view.hold) return `${base} ${t("editLockHoldUntil").replace("{time}", clock(view.hold.until))}`;
+				if (state === "confirm") return `${base} (${view.pendingCount})`;
+				return base;
+			})();
+			const primary = view ? primaryOf(state, view) : null;
+			const files = view?.files ?? [];
+			const canRevoke = state !== "stopped" && state !== "unavailable";
+			const children = [
+				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+					dot(state),
+					jsx("span", { style: { flex: 1, fontWeight: 600 }, "data-orrery-edit-lock-summary": "", children: summary }),
+					jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => refresh(), "data-orrery-edit-lock-action": "refresh", title: t("editLockRefresh"), children: "\u21bb" })
+				] }, "head"),
+				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, children: t("editLockRecovery").replace("{n}", String(view.recovery.attempts)) }, "recovery") : null,
+				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,
+				files.length ? jsx("div", { style: { marginTop: "8px" }, "data-orrery-edit-lock-files": "", children: files.map((file) => jsxs("div", {
+					style: rowStyle,
+					"data-orrery-edit-lock-file": file.detail.path,
+					children: [
+						jsx("span", { style: nameStyle, title: file.detail.path, children: file.name }),
+						jsx("span", { style: mutedStyle, children: file.mine ? t(`editLockStatus_${file.status}`) : t("editLockOwnerOther") }),
+						rowCommand(file) ? action(`${file.action}:${file.detail.path}`, t(`editLockRow_${file.action}`), () => run(rowCommand(file))) : null
+					]
+				}, file.detail.path)) }, "files") : null,
+				error ? jsx("div", { style: errorStyle, "data-orrery-edit-lock-error": "", children: error }, "error") : null,
+				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "10px" }, children: [
+					canRevoke ? (armedRevoke
+						? action("stop", t("editLockRevokeConfirm"), () => run("stop"), dangerStyle)
+						: jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => setArmedRevoke(true), "data-orrery-edit-lock-action": "arm-stop", children: t("editLockStop") })) : null,
+					jsx("span", { style: { flex: 1 } }),
+					view?.technical ? jsx("button", { type: "button", style: linkStyle, onClick: () => setDetails(!details), "data-orrery-edit-lock-action": "details", children: t("editLockDetails") }) : null
+				] }, "foot"),
+				details && view?.technical ? jsx("pre", {
+					style: { ...mutedStyle, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "6px 0 0", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" },
+					"data-orrery-edit-lock-details": "",
+					children: [
+						`session ${view.technical.sessionId} \u00b7 epoch ${view.technical.executionEpoch ?? "-"}`,
+						`root ${view.technical.root ?? "-"} (${view.technical.mode ?? "-"})`,
+						...files.map((file) => `${file.detail.path} \u00b7 ${file.detail.owner} \u00b7 generation ${file.detail.generation}${file.reason ? ` \u00b7 ${file.reason}` : ""}`)
+					].join("\n")
+				}, "details") : null
+			];
+			return jsxs("span", {
 				style: { position: "relative", display: "inline-flex" },
 				children: [
-					react_jsx_runtime.jsxs("button", {
+					jsxs("button", {
 						type: "button",
 						style: buttonStyle,
 						onClick: toggle,
 						"aria-expanded": open,
 						"data-orrery-edit-lock": "",
 						"data-orrery-edit-lock-state": state,
-						title: t("editLockTitle"),
-						children: [
-							react_jsx_runtime.jsx("span", { "aria-hidden": true, style: { width: "7px", height: "7px", borderRadius: "50%", background: dotColor[state] } }),
-							react_jsx_runtime.jsx("span", { children: t("editLockLabel") })
-						]
+						title: view ? summary : t("editLockTitle"),
+						children: [dot(state), jsx("span", { children: t("editLockLabel") })]
 					}),
-					open ? react_jsx_runtime.jsxs("div", {
+					open ? jsx("div", {
 						role: "dialog",
+						"aria-label": t("editLockPanelTitle"),
 						style: panelStyle,
 						"data-orrery-edit-lock-panel": "",
-						children: [
-							react_jsx_runtime.jsx("div", { style: { fontWeight: 600 }, children: t("editLockPanelTitle") }),
-							react_jsx_runtime.jsx("div", { style: { color: "var(--dsw-alias-label-secondary)", marginTop: "4px" }, children: t("editLockPanelHint") }),
-							error ? react_jsx_runtime.jsx("div", { style: { ...errorStyle, marginTop: "8px" }, children: error }) : null,
-							react_jsx_runtime.jsx("pre", { style: preStyle, children: text ?? (pending ? t("editLockLoading") : "") }),
-							react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
-								action("status", t("editLockRefresh")),
-								action("locks", t("editLockAll")),
-								action("stop", t("editLockStop")),
-								action("resume", t("editLockResume"))
-							] })
-						]
+						onKeyDown: (event) => { if (event?.key === "Escape") setOpen(false); },
+						children
 					}) : null
 				]
 			});
 		}
 		exports.EditLockPanel = EditLockPanel;
 		exports.stateOf = stateOf;
+		exports.primaryOf = primaryOf;
+		exports.rowCommand = rowCommand;
 		return module.exports;
 	}
 });

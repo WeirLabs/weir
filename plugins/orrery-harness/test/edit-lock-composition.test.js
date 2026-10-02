@@ -364,3 +364,50 @@ test('stopped session is told why; status and release keep working; clean dispos
   assert.equal(runtime.control.status().locks.find(lock => lock.owner === 'remote').status, 'user-interrupted')
   await lifecycle.close()
 })
+
+test('the panel view is read-only and structured; the panel acts only through /edit-lock commands', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  /** @type {any} */
+  let endpoint
+  const agents = new Map()
+  host.ctx.inject = (names, callback) => {
+    if (names.includes('connection')) callback({ connection: { fetch: { register(definition) { endpoint = definition; return () => { endpoint = undefined } } } } })
+  }
+  const get = host.ctx.get
+  host.ctx.get = (name) => (name === 'agents' ? agents : get(name))
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  const agent = host.agent('s')
+  agents.set('s', agent)
+  await host.emit('agent/created', { agent })
+  const read = async (body = { sessionId: 's' }) => (await endpoint.fetch({ json: async () => body })).json()
+
+  assert.equal(endpoint.path, '/api/orrery-edit-lock/view')
+  assert.equal((await read({})).ok, false)
+  assert.equal((await read({ sessionId: 'nobody' })).value.state, 'unavailable')
+  assert.equal((await read()).value.state, 'idle')
+
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  let view = (await read()).value
+  assert.equal(view.state, 'editing')
+  assert.deepEqual(view.files.map((file) => [file.name, file.mine, file.action]), [['a.txt', true, 'release']])
+  assert.equal(view.technical.sessionId, 's')
+
+  // Reading never changes ownership.
+  await read(); await read()
+  assert.equal((await read()).value.files.length, 1)
+
+  // A reservation is visible as its own state.
+  await service.hold({ agent }, 10 * 60_000)
+  view = (await read()).value
+  assert.equal(view.state, 'holding')
+  assert.equal(view.hold.remainingMinutes, 10)
+
+  // The panel's row action is an ordinary, recorded command.
+  const released = await host.command().handler({ agent, rawInput: `release ${join(root, 'a.txt')}`, commandId: 'c1' })
+  assert.equal(released.kind, 'success', released.text)
+  assert.equal((await read()).value.state, 'idle')
+  dispose()
+  assert.equal(endpoint, undefined)
+})

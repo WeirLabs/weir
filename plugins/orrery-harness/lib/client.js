@@ -143,12 +143,31 @@ window.__ModuleLoader__.load({
 			editLockLabel: "Edit Lock",
 			editLockTitle: "Files this session is editing",
 			editLockPanelTitle: "Edit Lock",
-			editLockPanelHint: "Who may change which file right now. Looking here changes nothing.",
 			editLockLoading: "Loading…",
 			editLockRefresh: "Refresh",
-			editLockAll: "All files",
 			editLockStop: "Revoke editing",
+			editLockRevokeConfirm: "Revoke now — the assistant stops editing until you continue",
 			editLockResume: "Continue editing",
+			editLockConfirmAll: "Continue with these files",
+			editLockReleaseAll: "Release all files now",
+			editLockDetails: "Technical details",
+			editLockOwnerOther: "Another session",
+			editLockHoldUntil: "until {time}",
+			editLockRecovery: "The last turn failed; cleaning up (attempt {n}).",
+			editLockState_idle: "Not editing any file",
+			editLockState_editing: "Editing",
+			editLockState_holding: "Files kept for this session",
+			editLockState_confirm: "Waiting for you to continue",
+			editLockState_stopped: "Editing stopped",
+			editLockState_attention: "Needs your attention",
+			editLockState_unavailable: "Edit Lock is starting",
+			editLockStatus_active: "editing",
+			"editLockStatus_user-interrupted": "stopped",
+			"editLockStatus_pending-confirmation": "waiting",
+			editLockStatus_abnormal: "needs attention",
+			editLockRow_release: "Release",
+			editLockRow_confirm: "Continue",
+			editLockRow_unlock: "Unlock",
 			editLockEnabledHint: "Lets sessions take turns editing the same files instead of overwriting each other. Applies after restarting DeepSeek Harness.",
 			editLockHoldDefaultMinutes: "Edit Lock: how long files stay reserved after a turn ends when the assistant gives no period",
 			editLockHoldSingleMaxMinutes: "Edit Lock: most minutes one reservation may last",
@@ -359,12 +378,31 @@ window.__ModuleLoader__.load({
 			editLockLabel: "编辑锁",
 			editLockTitle: "本会话正在编辑的文件",
 			editLockPanelTitle: "编辑锁",
-			editLockPanelHint: "现在谁能改哪个文件。查看不会改变任何状态。",
 			editLockLoading: "加载中…",
 			editLockRefresh: "刷新",
-			editLockAll: "全部文件",
 			editLockStop: "收回编辑权",
+			editLockRevokeConfirm: "确认收回——助手将停止编辑，直到你点继续",
 			editLockResume: "继续编辑",
+			editLockConfirmAll: "继续编辑这些文件",
+			editLockReleaseAll: "立即释放全部文件",
+			editLockDetails: "技术细节",
+			editLockOwnerOther: "其他会话",
+			editLockHoldUntil: "保留至 {time}",
+			editLockRecovery: "上一回合出错，正在清理（第 {n} 次）。",
+			editLockState_idle: "未占用任何文件",
+			editLockState_editing: "正在编辑",
+			editLockState_holding: "文件为本会话保留",
+			editLockState_confirm: "等你确认继续",
+			editLockState_stopped: "编辑已停止",
+			editLockState_attention: "需要你处理",
+			editLockState_unavailable: "编辑锁启动中",
+			editLockStatus_active: "编辑中",
+			"editLockStatus_user-interrupted": "已停止",
+			"editLockStatus_pending-confirmation": "待确认",
+			editLockStatus_abnormal: "需处理",
+			editLockRow_release: "释放",
+			editLockRow_confirm: "继续",
+			editLockRow_unlock: "解锁",
 			editLockEnabledHint: "让多个会话轮流编辑同一批文件，而不是相互覆盖。重启 DeepSeek Harness 后生效。",
 			editLockHoldDefaultMinutes: "编辑锁：回合结束后保留文件多久（助手未指定时）",
 			editLockHoldSingleMaxMinutes: "编辑锁：单次申请最多保留多少分钟",
@@ -656,6 +694,18 @@ window.__ModuleLoader__.load({
 						commandsList: (sid) => {
 							if (!ctx.remote.commands?.list) return Promise.resolve([]);
 							return ctx.remote.commands.list(sid).then((result) => (result.ok ? result.value : []));
+						},
+						// Structured view: read-only, never written to the conversation.
+						fetchView: async () => {
+							const response = await fetch("api/orrery-edit-lock/view", {
+								method: "POST",
+								credentials: "include",
+								headers: { "content-type": "application/json" },
+								body: JSON.stringify({ sessionId })
+							});
+							const payload = await response.json();
+							if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
+							return payload.value;
 						}
 					};
 				}

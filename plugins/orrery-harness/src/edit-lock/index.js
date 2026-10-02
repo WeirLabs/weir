@@ -24,6 +24,7 @@ import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit } from './domains.j
 import { createRecoveryDriver } from './recovery.js'
 import { createSettlementDriver } from './settle.js'
 import { editLockLimits } from '../settings/sections.js'
+import { buildView, unavailableView } from './view.js'
 
 const name = 'orrery-edit-lock'
 const inject = ['tools', 'fs', 'agents']
@@ -113,6 +114,17 @@ async function runCommand(domain, agent, raw, commandId, limits) {
     const status = await domain.confirm(agent, observation.resourceId)
     return `Confirmed ${observation.resourceId}.\n${describe(status)}`
   }
+  if (verb === 'release') {
+    // Human release of one of this session's own files. It only removes
+    // authority, so it stays available while stopped or recovering.
+    const path = rest.join(' ')
+    if (!path) throw new Error('Usage: /edit-lock release <path>')
+    const cwd = agent?.session?.header?.cwd
+    if (typeof cwd !== 'string') throw new Error('session cwd unavailable')
+    const own = (await domain.status(agent)).locks.find((/** @type {any} */ lock) => lock.resourceId === path)
+    const result = await domain.service.release({ agent }, { filePath: own ? own.resourceId : path, cwd })
+    return `Released ${result.resourceId}.\n${describe(await domain.status(agent))}`
+  }
   if (verb === 'locks') {
     const locks = await domain.locks(agent)
     return locks.length ? locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.owner} [${lock.status}${lock.reason ? `: ${lock.reason}` : ''}] generation ${lock.generation}`).join('\n') : 'No Edit Lock ownership is held.'
@@ -133,7 +145,7 @@ async function runCommand(domain, agent, raw, commandId, limits) {
     const result = await domain.unlock(agent, resourceId, generation)
     return `Unlocked ${result.resourceId} (generation ${result.generation}, owner ${result.owner}). Content was not validated.`
   }
-  throw new Error('Usage: /edit-lock [status|locks|hold [minutes]|stop|resume|confirm <path>|confirm --all|unlock <path> <generation>]')
+  throw new Error('Usage: /edit-lock [status|locks|hold [minutes]|release <path>|stop|resume|confirm <path>|confirm --all|unlock <path> <generation>]')
 }
 
 /** Ordinary owner tools. Ownership derives from exec.agent, never arguments.
@@ -544,11 +556,44 @@ const apply = (ctx, config = {}) => {
     if (domain) void Promise.resolve(domain.dispose(agent)).catch(() => {})
   })
 
+  // Structured status for the panel (design D6). Reading the view grants nothing
+  // and writes nothing to the conversation; every action still goes through an
+  // explicit /edit-lock command so it stays on the record. `connection` is a
+  // host-plane service, so the isolated realm does not hide it.
+  /** @type {() => void} */
+  let offView = () => {}
+  ctx.inject?.(['connection'], (/** @type {any} */ scope) => {
+    const connection = scope.connection
+    if (!connection?.fetch?.register) return
+    const dispose = connection.fetch.register({
+      path: '/api/orrery-edit-lock/view',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (/** @type {any} */ request) => {
+        const reply = (/** @type {any} */ payload, status = 200) => new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } })
+        let body
+        try { body = await request.json() } catch { body = null }
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+        if (!sessionId) return reply({ ok: false, error: { code: 'orrery-edit-lock/invalid', message: 'body needs { sessionId }' } }, 400)
+        const agent = ctx.get?.('agents')?.get?.(sessionId)
+        const domain = agent && settled.get(agent)
+        if (!domain) return reply({ ok: true, value: unavailableView() })
+        try {
+          const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
+          return reply({ ok: true, value: buildView({ status, locks, cwd: agent?.session?.header?.cwd, root: registry.rootOf(agent), mode: domain.mode, now: Date.now() }) })
+        } catch (error) {
+          return reply({ ok: false, error: { code: 'orrery-edit-lock/internal', message: /** @type {any} */ (error)?.message ?? String(error) } }, 500)
+        }
+      },
+    })
+    offView = () => dispose?.()
+    return offView
+  })
   const commands = ctx.get?.('commands')
   const offCommand = commands?.register({
     name: 'edit-lock',
-    description: 'Edit Lock: status, locks, hold [minutes], stop (durable revoke), resume (explicit Continue, confirms retained files), confirm <path> | --all, unlock <path> <generation>.',
-    input: { hint: 'status | locks | hold [minutes] | stop | resume | confirm <path> | unlock <path> <generation>' },
+    description: 'Edit Lock: status, locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue, confirms retained files), confirm <path> | --all, unlock <path> <generation>.',
+    input: { hint: 'status | locks | hold [minutes] | release <path> | stop | resume | confirm <path> | unlock <path> <generation>' },
     handler: async (/** @type {any} */ invocation) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
@@ -566,6 +611,7 @@ const apply = (ctx, config = {}) => {
     closed = true
     recovery.close()
     settle.close()
+    offView()
     offCommand?.()
     for (const off of offTools) off?.()
     // Stops every session durably, drains publication, then releases each
