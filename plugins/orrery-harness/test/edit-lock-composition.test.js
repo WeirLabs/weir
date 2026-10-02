@@ -491,3 +491,31 @@ test('an incoherent saved retention setting refuses only hold; status, release a
   assert.equal(released.kind, 'success', released.text)
   dispose()
 })
+
+test('with conflicting retention settings the saved abnormal disposition still applies after the notices', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const get = host.ctx.get
+  const section = { holdSingleMaxMinutes: 20, nudgeAttempts: 1, nudgeFallback: 'abnormal' }
+  host.ctx.get = (name) => (name === 'orrerySettings' ? { get: () => section } : name === 'agents' ? { get: () => agent } : get(name))
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  const followups = []
+  const agent = host.agent('s')
+  agent.followup = (message) => followups.push(JSON.stringify(message.content))
+  agent.inject = () => {}
+  await host.emit('agent/created', { agent })
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  const turnEnd = async () => {
+    for (const fn of host.listeners.get('session/event') ?? []) fn({ id: 's' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+  }
+  await turnEnd()
+  assert.equal(followups.length, 1)
+  assert.match(followups[0], /Retention is unavailable because its settings conflict/)
+  await turnEnd()
+  const status = await host.command().handler({ agent, rawInput: ' status', commandId: 'c1' })
+  assert.match(status.text, /abnormal/)
+  assert.doesNotMatch(status.text, /no locks held/)
+  dispose()
+})

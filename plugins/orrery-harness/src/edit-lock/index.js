@@ -388,7 +388,13 @@ const apply = (ctx, config = {}) => {
     try { return strictLimits() } catch (error) {
       const message = String(/** @type {any} */ (error)?.message ?? error)
       if (warnedLimits !== message) { warnedLimits = message; ctx.logger?.warn?.(`edit lock settings ignored, using defaults: ${message}`) }
-      return editLockLimits(undefined)
+      // Fall back for the retention fields only. The notice count and the
+      // disposition keep their saved values: a bad cap must never turn a team's
+      // "flag for a human" choice into a silent release.
+      const section = /** @type {any} */ (ctx.get?.('orrerySettings')?.get?.('editLock')) ?? {}
+      let nudge
+      try { nudge = editLockLimits({ nudgeAttempts: section.nudgeAttempts, nudgeFallback: section.nudgeFallback }) } catch { nudge = editLockLimits(undefined) }
+      return { ...editLockLimits(undefined), nudgeAttempts: nudge.nudgeAttempts, nudgeFallback: nudge.nudgeFallback, holdUnavailable: true }
     }
   }
   /** Turn-end settling: a finished turn that left locks behind is continued once,

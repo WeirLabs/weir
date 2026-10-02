@@ -14,12 +14,14 @@
  * the caller, so this module holds no configuration and no clock.
  */
 
-/** @param {{reason?: {kind?: string}}[]} locks @param {number} attempt @param {number} maxAttempts @param {{defaultMinutes: number, singleMaxMinutes: number, cumulativeMaxMinutes: number, remainingMinutes: number}} budget */
+/** @param {{reason?: {kind?: string}}[]} locks @param {number} attempt @param {number} maxAttempts @param {{defaultMinutes: number, singleMaxMinutes: number, cumulativeMaxMinutes: number, remainingMinutes: number, unavailable?: boolean}} budget */
 export function settlementPrompt(locks, attempt, maxAttempts, budget) {
   const lines = locks.map(lock => `- ${lock.resourceId}`)
   // With the batch budget gone there is only one honest instruction left, so the
   // hold option is not mentioned at all rather than offered and then refused.
-  const option = budget.remainingMinutes <= 0
+  const option = budget.unavailable
+    ? 'Retention is unavailable because its settings conflict, so no reservation can be made: release each file (edit_lock_release).'
+    : budget.remainingMinutes <= 0
     ? `This batch has used its whole retention budget (${budget.cumulativeMaxMinutes} minutes), so no new reservation is available: release each file (edit_lock_release).`
     : `For each file, either release it because you are done with it (edit_lock_release), or ask to keep ownership for a bounded time (edit_lock_hold, at most ${budget.singleMaxMinutes} minutes per request and ${budget.remainingMinutes} minutes left in this batch).`
   return [
@@ -108,6 +110,7 @@ export function createSettlementDriver(options) {
       singleMaxMinutes: limits.holdSingleMaxMinutes,
       cumulativeMaxMinutes: limits.holdCumulativeMaxMinutes,
       remainingMinutes,
+      unavailable: limits.holdUnavailable === true,
     }))
   }
 
