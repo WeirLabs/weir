@@ -161,7 +161,7 @@ test('recovery rejects noncanonical, duplicate, corrupt, incompatible and unsafe
     original + '\n', original.replace('"checksum":', '"extra":1,"checksum":'),
     original.replace('"revision":0', '"revision":0,"revision":0'),
     original.replace('"revision":0', '"revision":1'), original.slice(0, -4),
-    encode({ ...payload, version: 2 }), encode({ ...payload, version: 99 }), encode({ ...payload, domainId: 'other' }),
+    encode({ ...payload, version: 1 }), encode({ ...payload, version: 99 }), encode({ ...payload, domainId: 'other' }),
     encode({ ...payload, state: { ...emptyState(), version: 1 } }),
     encode({ ...payload, revision: -1 }), encode({ ...payload, state: { ...emptyState(), receipts: [] } }),
   ]) {
@@ -361,4 +361,32 @@ test('retention allowance never shrinks inside a batch and returns to zero only 
   await store.record({ expectedRevision: 1, nextState: refunded })
   assert.equal(store.snapshot().state.holds[0].holdCumulativeMs, 0)
   await store.close()
+})
+
+test('a version 2 image recovers losslessly as version 3 with an empty retention row per session', async t => {
+  const { writeFile } = await import('node:fs/promises')
+  const directory = await fixture(t)
+  const { holds: _holds, ...v3 } = authorityImage()
+  const v2 = { ...v3, version: 2 }
+  await writeFile(join(directory, 'snapshot.json'), encode({ version: 2, domainId: 'd', revision: 7, state: v2 }))
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  const recovered = store.snapshot()
+  assert.equal(recovered.revision, 7)
+  assert.equal(recovered.state.version, 3)
+  assert.deepEqual(recovered.state.holds, [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }])
+  assert.deepEqual(recovered.state.locks, v2.locks)
+  assert.deepEqual(recovered.state.recovery, v2.recovery)
+  // The next record writes version 3 to disk.
+  await store.record({ expectedRevision: 7, nextState: recovered.state })
+  await store.close()
+  const reopened = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  assert.equal(reopened.snapshot().state.version, 3)
+  await reopened.close()
+})
+
+test('a version 2 image that already claims a holds table, or fails its checksum, is refused', async t => {
+  const { writeFile } = await import('node:fs/promises')
+  const directory = await fixture(t)
+  await writeFile(join(directory, 'snapshot.json'), encode({ version: 2, domainId: 'd', revision: 1, state: { ...authorityImage(), version: 2 } }))
+  await assert.rejects(openEditLockStore({ directory, domainId: 'd', mode: 'recover' }), /v2 image/)
 })

@@ -74,7 +74,7 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
  * agent gets its own session channel; a closed channel is never silently
  * replaced mid-call. Outcomes of interrupted calls are UNKNOWN by contract.
  * @param {string} endpoint
- * @param {{onNotice: (agent: object, event: any) => void}} hooks */
+ * @param {{onNotice: (agent: object, event: any) => void, unreachableHint?: string}} hooks */
 export function createRemoteEditLockDomain(endpoint, hooks) {
   /** @typedef {{client: ReturnType<typeof createEditLockPeerClient>, state: string, closed: boolean, ready: Promise<void>}} Channel */
   /** @type {WeakMap<object, Channel>} */
@@ -118,7 +118,7 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
     })()
     try { await channel.ready } catch (error) {
       channel.client.close()
-      throw new Error(`edit lock publisher unreachable at ${endpoint}: ${/** @type {any} */ (error)?.message ?? error}`)
+      throw new Error(`edit lock publisher unreachable at ${endpoint}: ${/** @type {any} */ (error)?.message ?? error}${hooks.unreachableHint ? `. ${hooks.unreachableHint}` : ''}`)
     }
     return channel
   }

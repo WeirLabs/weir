@@ -25,3 +25,20 @@ test('exclusive reservation rejects another process and survives owner exit', ()
   // Process exit does not prove all old publication outcomes are resolved.
   assert.throws(() => reservePublisher(directory), /EEXIST/)
 })
+
+test('a runtime that fails to open releases its own reservation, so the same process can retry as publisher', async () => {
+  const { openReservedEditLockRuntime } = await import('../src/edit-lock/reserved-runtime.js')
+  const { writeFileSync, existsSync, mkdirSync } = await import('node:fs')
+  const { reservationPathFor } = await import('../src/edit-lock/reservation.js')
+  const base = mkdtempSync(join(tmpdir(), 'orrery-reservation-open-'))
+  const directory = join(base, 'authority')
+  mkdirSync(directory)
+  // An unreadable authority image: recover must fail after the reservation is taken.
+  writeFileSync(join(directory, 'snapshot.json'), 'not json')
+  const open = () => openReservedEditLockRuntime({ directory, root: base, domainId: base, mode: 'recover', fs: {} })
+  await assert.rejects(open())
+  assert.equal(existsSync(reservationPathFor(directory)), false)
+  // The incident: a second attempt used to hit its own stale reservation (EEXIST)
+  // and fall back to a client of a publisher that never existed.
+  await assert.rejects(open(), (error) => !/EEXIST/.test(String(error?.message)))
+})

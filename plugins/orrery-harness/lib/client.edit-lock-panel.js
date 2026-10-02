@@ -156,6 +156,7 @@ window.__ModuleLoader__.load({
 			}, key);
 			const summary = (() => {
 				if (!view) return t("editLockLoading");
+				if (state === "unavailable" && view.reason) return t("editLockState_failed");
 				const base = t(`editLockState_${state}`);
 				if (state === "holding" && view.hold) return `${base} ${t("editLockHoldUntil").replace("{time}", clock(view.hold.until))}`;
 				if (state === "confirm") return `${base} (${view.pendingCount})`;
@@ -170,6 +171,7 @@ window.__ModuleLoader__.load({
 					jsx("span", { style: { flex: 1, fontWeight: 600 }, "data-orrery-edit-lock-summary": "", children: summary }),
 					jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => refresh(), "data-orrery-edit-lock-action": "refresh", title: t("editLockRefresh"), children: "\u21bb" })
 				] }, "head"),
+				view?.reason ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-orrery-edit-lock-reason": "", children: view.reason }, "reason") : null,
 				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, children: t("editLockRecovery").replace("{n}", String(view.recovery.attempts)) }, "recovery") : null,
 				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,
 				files.length ? jsx("div", { style: { marginTop: "8px" }, "data-orrery-edit-lock-files": "", children: files.map((file) => jsxs("div", {

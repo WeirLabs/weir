@@ -147,6 +147,14 @@ describe('client.edit-lock-panel chunk', () => {
     expect(find(render(), (node) => node['data-orrery-edit-lock-details'] === '').children).toContain('generation 3')
   })
 
+  it('an unavailable session with a reason says editing is refused and shows why', async () => {
+    const { render } = await mounted([{ state: 'unavailable', reason: 'edit lock publisher unreachable', files: [], ownCount: 0, pendingCount: 0, hold: null, recovery: null, technical: null }])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, (node) => node['data-orrery-edit-lock-summary'] === '').children).toBe('editLockState_failed')
+    expect(find(tree, (node) => node['data-orrery-edit-lock-reason'] === '').children).toContain('unreachable')
+  })
+
   it('a failed action is shown and the view is read again', async () => {
     const { exports, reactStub } = await load()
     let reads = 0

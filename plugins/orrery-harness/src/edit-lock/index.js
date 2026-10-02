@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { openReservedEditLockRuntime } from './reserved-runtime.js'
+import { reservationPathFor } from './reservation.js'
 import { createEditLockLifecycle } from './lifecycle.js'
 import { installEditLockWriteScope } from './tool-scope.js'
 import { createResourceIdentity } from './resource-identity.js'
@@ -290,6 +291,8 @@ const apply = (ctx, config = {}) => {
   /** Remote channel agents on the publisher side → their notice sink.
    * @type {WeakMap<object, (event: unknown) => void>} */
   const sinks = new WeakMap()
+  /** Why registration failed for an agent, for the panel. @type {WeakMap<object, string>} */
+  const startFailures = new WeakMap()
   /** Settled domain per bound agent, for synchronous gates. @type {WeakMap<object, any>} */
   const settled = new WeakMap()
   /** `wake` is used only for an ownership request addressed to an idle holder:
@@ -319,6 +322,9 @@ const apply = (ctx, config = {}) => {
       // Another cooperating host publishes: become its client, never a writer.
       return remoteDomain(createRemoteEditLockDomain(endpointFor(directory), {
         onNotice: deliverEvent,
+        // The only way to reach here without a live publisher is a reservation left
+        // by a host that crashed or was killed. Say so, and say what clears it.
+        unreachableHint: `Another DeepSeek Harness reserved this project but is not answering. If no other Harness window is open on it, quit DeepSeek Harness, remove ${reservationPathFor(directory)}, and start it again.`,
       }))
     }
     const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
@@ -486,7 +492,12 @@ const apply = (ctx, config = {}) => {
       const domain = await domainOf(agent)
       await domain.start(agent)
       settled.set(agent, domain)
-    } catch (error) { ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`) }
+    } catch (error) {
+      // Kept so the panel can say WHY editing is unavailable instead of
+      // showing "starting" forever.
+      startFailures.set(agent, String(/** @type {any} */ (error)?.message ?? error))
+      ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
   })
 
   // Stock Stop aborts the active turn signal synchronously: close admission at
@@ -576,7 +587,7 @@ const apply = (ctx, config = {}) => {
         if (!sessionId) return reply({ ok: false, error: { code: 'orrery-edit-lock/invalid', message: 'body needs { sessionId }' } }, 400)
         const agent = ctx.get?.('agents')?.get?.(sessionId)
         const domain = agent && settled.get(agent)
-        if (!domain) return reply({ ok: true, value: unavailableView() })
+        if (!domain) return reply({ ok: true, value: unavailableView(agent ? startFailures.get(agent) ?? null : null) })
         try {
           const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
           return reply({ ok: true, value: buildView({ status, locks, cwd: agent?.session?.header?.cwd, root: registry.rootOf(agent), mode: domain.mode, now: Date.now() }) })

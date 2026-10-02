@@ -66,3 +66,8 @@ it('an unresolvable session renders as an action-free unavailable view', () => {
   expect(result.files).toEqual([])
   expect(result.technical).toBe(null)
 })
+
+it('an unavailable view carries the registration failure so the panel does not say "starting" forever', () => {
+  expect(unavailableView('edit lock publisher unreachable').reason).toBe('edit lock publisher unreachable')
+  expect(unavailableView().reason).toBe(null)
+})

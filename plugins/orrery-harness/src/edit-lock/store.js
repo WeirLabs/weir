@@ -108,10 +108,13 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       shape(envelope, ['payload', 'checksum'])
       const payload = envelope.payload
       shape(payload, ['version', 'domainId', 'revision', 'state'])
-      valid(payload.version === 3 && payload.domainId === domainId, 'snapshot version/domain')
+      valid((payload.version === 3 || payload.version === 2) && payload.domainId === domainId, 'snapshot version/domain')
       valid(integer(payload.revision), 'snapshot revision')
       valid(typeof envelope.checksum === 'string' && envelope.checksum === createHash('sha256').update(canonical(payload)).digest('hex'), 'snapshot checksum')
-      const state = /** @type {AuthorityImage} */ (payload.state)
+      // Version 2 predates retention. The upgrade is lossless: every known session
+      // gets an empty retention row, nothing else changes, and the checksum above
+      // was verified against the original bytes. The next record writes version 3.
+      const state = /** @type {AuthorityImage} */ (payload.version === 2 ? upgradeFromV2(payload.state) : payload.state)
       validateImage(state)
       current = { revision: payload.revision, state }
     } finally { await file.close() }
@@ -235,6 +238,15 @@ function shape(value, keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     valid(descriptor && 'value' in descriptor && descriptor.enumerable, 'data property')
   }
+}
+/** Lossless v2 -> v3 upgrade: add one empty retention row per known session.
+ * @param {any} state @returns {AuthorityImage} */
+function upgradeFromV2(state) {
+  valid(state && typeof state === 'object' && !Array.isArray(state) && !Object.hasOwn(state, 'holds') && state.version === 2, 'v2 image')
+  valid(Array.isArray(state.sessions), 'v2 sessions')
+  const holds = state.sessions.map((/** @type {any} */ session) => ({ sessionId: session?.sessionId, holding: false, holdUntil: null, holdCumulativeMs: 0 }))
+  const { version: _v, operations, ...rest } = state
+  return /** @type {AuthorityImage} */ ({ ...rest, version: 3, holds, operations })
 }
 /** @param {AuthorityImage} state */
 function validateImage(state) {
