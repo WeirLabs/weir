@@ -192,6 +192,10 @@ function describe(status) {
   const lines = [`Edit Lock session ${status.sessionId}: ${status.state}${status.interrupted ? ' (interrupted)' : ''}, epoch ${status.executionEpoch ?? '-'}`]
   for (const lock of status.locks) lines.push(`- ${lock.resourceId} [${lock.status}${lock.reason ? `: ${lock.reason}` : ''}] generation ${lock.generation}`)
   if (status.locks.length === 0) lines.push('- no locks held')
+  const recovery = status.recovery
+  if (recovery && (recovery.attempts || recovery.elapsedMs || recovery.pauseMs)) {
+    lines.push(`Recovery: ${recovery.attempts}/3 attempts, ${Math.round(recovery.elapsedMs / 1000)}s of 300s, pause ${Math.round(recovery.pauseMs / 60_000)}/30 min used`)
+  }
   return lines.join('\n')
 }
 

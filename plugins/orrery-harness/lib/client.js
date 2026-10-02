@@ -140,6 +140,15 @@ window.__ModuleLoader__.load({
 			hashlineHideStockEdit: "Anchor editing only",
 			hashlineHideStockEditHint: "Hide the stock edit tool, leaving hash_edit as the only editor (true/false).",
 			editLockEnabled: "Edit Lock (experimental)",
+			editLockLabel: "Edit Lock",
+			editLockTitle: "Edit Lock status and controls for this session",
+			editLockPanelTitle: "Edit Lock",
+			editLockPanelHint: "Viewing grants no write permission. Stop durably revokes this session's editing; Resume restores it with a new epoch, and retained files then need /edit-lock confirm <path>. Unlock another owner's file with /edit-lock unlock <path> <generation>.",
+			editLockLoading: "Loading…",
+			editLockRefresh: "Refresh",
+			editLockAll: "All locks",
+			editLockStop: "Stop editing",
+			editLockResume: "Resume",
 			editLockEnabledHint: "Cross-session file ownership for this work directory: edits need a lock, Stop durably revokes, /edit-lock resume restores. Applies after restarting DeepSeek Harness.",
 			robashEnabled: "Read-only bash guard",
 			robashEnabledHint: "Guarded read-only bash for curated agents, master switch (true/false).",
@@ -337,6 +346,15 @@ window.__ModuleLoader__.load({
 			hashlineHideStockEdit: "仅锚点编辑",
 			hashlineHideStockEditHint: "隐藏 stock edit，hash_edit 成为唯一编辑器（true/false）。",
 			editLockEnabled: "编辑锁（实验）",
+			editLockLabel: "编辑锁",
+			editLockTitle: "本会话的编辑锁状态与操作",
+			editLockPanelTitle: "编辑锁",
+			editLockPanelHint: "查看不授予写权限。停止会持久收回本会话的编辑权；恢复会以新 epoch 恢复，保留的文件还需 /edit-lock confirm <path> 逐个确认。解锁他人文件用 /edit-lock unlock <path> <generation>。",
+			editLockLoading: "加载中…",
+			editLockRefresh: "刷新",
+			editLockAll: "全部锁",
+			editLockStop: "停止编辑",
+			editLockResume: "恢复",
 			editLockEnabledHint: "按工作目录仲裁跨会话的文件归属：编辑需持锁，Stop 持久收回编辑权，/edit-lock resume 恢复。重启 DeepSeek Harness 后生效。",
 			robashEnabled: "只读 bash 守卫",
 			robashEnabledHint: "精选只读代理的受守卫 bash 总开关（true/false）。",
@@ -511,6 +529,13 @@ window.__ModuleLoader__.load({
 			if (!arrival?.chunks) return null;
 			return react_jsx_runtime.jsx(arrival.chunks.LspToggle, { ...props, settingsBus });
 		}
+		const loadEditLockChunk = lazyChunks(() => require.async("./client.edit-lock-panel.js"));
+		/** Composer-bar Edit Lock entry: nothing until its chunk arrives. */
+		function EditLockWrapper(props) {
+			const arrival = useChunkArrival(loadEditLockChunk, typeof props.sessionId === "string" && props.sessionId !== "");
+			if (!arrival?.chunks) return null;
+			return react_jsx_runtime.jsx(arrival.chunks.EditLockPanel, props);
+		}
 		/** Snapshot-store facade with a stable identity: the host caches slot
 		 * inject faces on first render, so the settings card's hooks source must
 		 * exist before the settings-page chunk arrives; attach() re-points the
@@ -590,6 +615,31 @@ window.__ModuleLoader__.load({
 				key: "hash_edit",
 				locale: NS
 			}, HashEditToolView)), "ui-orrery-settings: hash_edit toolview");
+			// Edit Lock entry: renders only while the `edit-lock` command exists
+			// (feature enabled). Each action is an explicit human /edit-lock run.
+			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
+				name: "conversation.input.right",
+				id: "orrery-edit-lock",
+				order: 101,
+				locale: NS,
+				inject: (sessionId) => {
+					if (!sessionId) return {};
+					return {
+						sessionId,
+						runEditLock: async (verb) => {
+							if (!ctx.remote.commands?.execute) return { kind: "error", text: "unknown command: /edit-lock" };
+							const result = await ctx.remote.commands.execute(sessionId, `/edit-lock ${verb}`, []);
+							if (!result.ok) return { kind: "error", text: `${result.error.message} (${result.error.code})` };
+							if (result.value === undefined) return { kind: "error", text: "unknown command: /edit-lock" };
+							return result.value.result;
+						},
+						commandsList: (sid) => {
+							if (!ctx.remote.commands?.list) return Promise.resolve([]);
+							return ctx.remote.commands.list(sid).then((result) => (result.ok ? result.value : []));
+						}
+					};
+				}
+			}, EditLockWrapper)), "ui-orrery-settings: edit lock entry");
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.
