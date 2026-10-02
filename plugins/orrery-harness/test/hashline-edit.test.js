@@ -272,6 +272,45 @@ describe('hash_edit tool', () => {
     return { tool, files, exec, handlers, registered, writes, injected }
   }
 
+  it('uses the captured lock publisher and never falls back after its rejection', async () => {
+    const calls = []
+    const services = { orreryEditLock: { publish: async (exec, request) => {
+      calls.push({ exec, request })
+      throw new Error('lock conflict')
+    } } }
+    const { tool, exec, writes } = harness('alpha', { services })
+    delete services.orreryEditLock
+    let failure
+    try { await tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'beta' }] }, exec) }
+    catch (error) { failure = error }
+    expect(failure.message).toBe('lock conflict')
+    expect(writes.length).toBe(0)
+    expect(calls.length).toBe(1)
+    expect(calls[0].exec).toBe(exec)
+    expect(calls[0].request.content).toBe('beta')
+    expect(calls[0].request.expected.version).toBe('v1')
+  })
+  it('accepts a deferred lock provider and refuses direct writes after its removal', async () => {
+    const calls = []
+    const claimed = []
+    const { tool, exec, writes, injected } = harness('alpha')
+    const entry = injected.find((item) => item.deps[0] === 'orreryEditLock')
+    const dispose = entry.cb({ orreryEditLock: {
+      claim: (definition) => claimed.push(definition),
+      publish: async (_exec, request) => { calls.push(request); return { version: 'v2' } },
+    } })
+    expect(claimed[0]).toBe(tool)
+    const edit = { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'beta' }] }
+    await tool.execute(edit, exec)
+    expect(calls.length).toBe(1)
+    expect(writes.length).toBe(0)
+    dispose()
+    let failure
+    try { await tool.execute(edit, exec) } catch (error) { failure = error }
+    expect(failure.message).toContain('removed')
+    expect(writes.length).toBe(0)
+    expect(calls.length).toBe(1)
+  })
   it('applies a valid edit and returns a diff', async () => {
     const { tool, files, exec } = harness('alpha\nbeta\ngamma')
     const anchor = anchorFor(2, 'beta')
@@ -322,8 +361,7 @@ describe('hash_edit tool', () => {
 
   it('passes the session-resolved sandbox policy to writeText (S23)', async () => {
     const { tool, files, exec, injected, writes } = harness('alpha\nbeta\ngamma')
-    expect(injected).toHaveLength(1)
-    expect(injected[0].deps).toEqual(['sandboxPolicy'])
+    expect(injected.map((entry) => entry.deps)).toEqual([['sandboxPolicy'], ['orreryEditLock']])
     const fakePolicy = { mode: 'workspace-write', workspaceRoot: '/ws', sessionId: 's1' }
     let resolvedReq = null
     injected[0].cb({ sandboxPolicy: { resolve: (req) => {

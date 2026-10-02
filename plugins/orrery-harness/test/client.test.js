@@ -237,7 +237,7 @@ describe('orrery settings client half', () => {
     // drive the whileServed registration: the composer toggle and the hash_edit
     // toolview registered at apply, then three page-chain slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'settings.section', 'settings.orrery.item', 'plugins.item'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'settings.section', 'settings.orrery.item', 'plugins.item'])
 
     // the per-session LSP toggle in the conversation composer bar slot
     slotInjects[0].fn()
@@ -255,10 +255,20 @@ describe('orrery settings client half', () => {
     expect(toolviewDef.locale).toBe('settings.orrery')
     expect(typeof toolviewComponent).toBe('function')
 
-    // the top-level settings section registration
+    // the Edit Lock composer entry (rendered only while /edit-lock exists)
     slotInjects[2].fn()
     expect(slotRegistrations).toHaveLength(3)
-    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[2]
+    expect(slotRegistrations[2].definition.name).toBe('conversation.input.right')
+    expect(slotRegistrations[2].definition.id).toBe('orrery-edit-lock')
+    expect(slotRegistrations[2].definition.inject()).toEqual({})
+    const lockVerbs = slotRegistrations[2].definition.inject('s1')
+    expect(lockVerbs.sessionId).toBe('s1')
+    expect(typeof lockVerbs.runEditLock).toBe('function')
+
+    // the top-level settings section registration
+    slotInjects[3].fn()
+    expect(slotRegistrations).toHaveLength(4)
+    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[3]
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
     expect(sectionDef.order).toBe(40)
@@ -268,15 +278,15 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[3].fn()
-    expect(slotRegistrations).toHaveLength(4)
-    expect(slotRegistrations[3].definition.name).toBe('settings.orrery.item')
-    expect(slotRegistrations[3].definition.id).toBe('orrery-config')
-
-    // the Plugins-page entry
     slotInjects[4].fn()
     expect(slotRegistrations).toHaveLength(5)
-    const { definition, component } = slotRegistrations[4]
+    expect(slotRegistrations[4].definition.name).toBe('settings.orrery.item')
+    expect(slotRegistrations[4].definition.id).toBe('orrery-config')
+
+    // the Plugins-page entry
+    slotInjects[5].fn()
+    expect(slotRegistrations).toHaveLength(6)
+    const { definition, component } = slotRegistrations[5]
     expect(definition.name).toBe('plugins.item')
     expect(definition.id).toBe('orrery-settings')
     expect(definition.order).toBe(30)
@@ -304,7 +314,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[4].fn()
+    slotInjects[5].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     const injected = definition.inject()
 
@@ -372,7 +382,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[4].fn()
+    slotInjects[5].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
 
     const settle = async (props) => {
@@ -403,7 +413,7 @@ describe('orrery settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')

@@ -111,7 +111,7 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
 
   it('renders the GROUPS field table through the prop-injected editors', async () => {
     const { definition, exports, editors } = await loadPage()
@@ -141,14 +141,14 @@ describe('client.settings-page chunk', () => {
     })
 
     expect(rendered.__type).toBeTruthy()
-    // 7 group headers + 6 choice rows + 1 model picker + 16 value-field rows
+    // 7 group headers + 7 choice rows + 1 model picker + 21 value-field rows
     // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
     // + 1 disabled-categories editor row
-    expect(rendered.children).toHaveLength(39)
+    expect(rendered.children).toHaveLength(45)
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(7)
-    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(6)
+    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(7)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(16)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(21)
     // the LSP manager row opens the service management panel
     const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
     expect(managerRow).toBeTruthy()

@@ -36,6 +36,15 @@ const FIELDS = [
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (advisory)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (forced compaction)' },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)' },
+  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (experimental, default off; applies after restart)' },
+  // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
+  // session reads one expiry instead of N countdowns. These keys are policy, not
+  // mechanism: the kernel never sees them, the lifecycle resolves them per call.
+  { key: 'editLockHoldDefaultMinutes', section: 'editLock', field: 'holdDefaultMinutes', type: 'number', description: 'Edit Lock: retention minutes used when a session asks to keep its locks without giving a period (default 30)' },
+  { key: 'editLockHoldSingleMaxMinutes', section: 'editLock', field: 'holdSingleMaxMinutes', type: 'number', description: 'Edit Lock: most minutes one retention request may ask for (default 30)' },
+  { key: 'editLockHoldCumulativeMaxMinutes', section: 'editLock', field: 'holdCumulativeMaxMinutes', type: 'number', description: 'Edit Lock: cumulative retention minutes one batch of locks may use; asks beyond it are refused and only release remains (default 120)' },
+  { key: 'editLockNudgeAttempts', section: 'editLock', field: 'nudgeAttempts', type: 'number', description: 'Edit Lock: how many times a finished turn is continued to ask for still-held locks to be released or retained (default 2)' },
+  { key: 'editLockNudgeFallback', section: 'editLock', field: 'nudgeFallback', type: { union: ['release', 'abnormal'] }, description: 'Edit Lock: disposition of locks still held after those notices are used up; release frees the files for other sessions, abnormal keeps them for the user (default release)' },
   { key: 'robashEnabled', section: 'robash', field: 'enabled', type: 'boolean', description: 'Guarded read-only bash for curated agents (master switch)' },
   { key: 'robashAllow', section: 'robash', field: 'allow', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default bash allow list (empty adds nothing; the defaults are always in effect)' },
   { key: 'robashGitAllow', section: 'robash', field: 'gitAllow', type: 'string', list: true, description: 'JSON array of git subcommands to APPEND to the product-default git allow list (empty adds nothing; the defaults are always in effect)' },
@@ -53,6 +62,60 @@ const FIELDS = [
 
 export { FIELDS }
 
+/** Resolved Edit Lock retention policy. The keys are declared above; this is the
+ * ONE place that turns them into the values the lifecycle consumes, so defaults
+ * and validation cannot drift apart. */
+export const EDIT_LOCK_DEFAULTS = Object.freeze({
+  holdDefaultMinutes: 30,
+  holdSingleMaxMinutes: 30,
+  holdCumulativeMaxMinutes: 120,
+  nudgeAttempts: 2,
+  nudgeFallback: 'release',
+})
+
+/** Overlay one Edit Lock section onto the defaults. A key the user never set
+ * falls back to its default; a key that is present but unusable (alone or in
+ * combination) throws with the flat settings key named, because silently clamping
+ * a retention cap would change how long other sessions stay blocked from those
+ * files. The Edit Lock composition refuses retention requests with that error and
+ * runs every other path (settling, status, release, stop, unlock) on defaults.
+ * @param {any} section */
+export function editLockLimits(section) {
+  const value = section && typeof section === 'object' ? section : {}
+  /** @type {{holdDefaultMinutes: number, holdSingleMaxMinutes: number, holdCumulativeMaxMinutes: number, nudgeAttempts: number, nudgeFallback: 'release'|'abnormal'}} */
+  const limits = { ...EDIT_LOCK_DEFAULTS }
+  /** @param {'holdDefaultMinutes'|'holdSingleMaxMinutes'|'holdCumulativeMaxMinutes'} key @param {string} name */
+  const take = (key, name) => {
+    const input = value[key]
+    if (input === undefined) return
+    if (typeof input !== 'number' || !Number.isFinite(input) || input <= 0) {
+      throw new Error(`orrery-settings: ${name} must be a positive number`)
+    }
+    limits[key] = input
+  }
+  take('holdDefaultMinutes', 'editLockHoldDefaultMinutes')
+  take('holdSingleMaxMinutes', 'editLockHoldSingleMaxMinutes')
+  take('holdCumulativeMaxMinutes', 'editLockHoldCumulativeMaxMinutes')
+  if (limits.holdDefaultMinutes > limits.holdSingleMaxMinutes) {
+    throw new Error('orrery-settings: editLockHoldDefaultMinutes must not exceed editLockHoldSingleMaxMinutes')
+  }
+  if (limits.holdCumulativeMaxMinutes < limits.holdSingleMaxMinutes) {
+    throw new Error('orrery-settings: editLockHoldCumulativeMaxMinutes must be at least editLockHoldSingleMaxMinutes')
+  }
+  if (value.nudgeAttempts !== undefined) {
+    if (!Number.isSafeInteger(value.nudgeAttempts) || value.nudgeAttempts < 0) {
+      throw new Error('orrery-settings: editLockNudgeAttempts must be a non-negative integer')
+    }
+    limits.nudgeAttempts = value.nudgeAttempts
+  }
+  if (value.nudgeFallback !== undefined) {
+    if (value.nudgeFallback !== 'release' && value.nudgeFallback !== 'abnormal') {
+      throw new Error('orrery-settings: editLockNudgeFallback must be "release" or "abnormal"')
+    }
+    limits.nudgeFallback = value.nudgeFallback
+  }
+  return Object.freeze(limits)
+}
 const zs = /** @type {any} */ (z)
 
 function fieldSchema(type) {

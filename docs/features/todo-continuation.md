@@ -36,6 +36,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 
 ## 边界与失败语义
 
+- **Edit Lock 联动（仅当开发组合启用 [edit-lock](edit-lock.md) 时）**：会话被 Stop 持久中断后，steer 续推与 provider 错误重试都不触发，直到可信 `/edit-lock resume`；普通用户消息不恢复编辑续推。未启用 Edit Lock 时行为不变。
 - todo 全完成时不续推（不会无事生非）。
 - disarm 状态（用户打断/逃生舱/计数耗尽）下任何路径都不会续推，只有真实的新用户消息（`source.kind === 'user'`）重新武装。
 - **保证**：用户打断后零自动续推；连续续推永不超上限。

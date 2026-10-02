@@ -58,6 +58,9 @@ function apply(ctx, config = {}) {
     }
   }
 
+  // Edit Lock (when enabled) owns session interruption: only its trusted
+  // resume re-arms editing work, never an ordinary user message or retry.
+  const editLockBlocks = (agent) => ctx.get?.('orreryEditLock')?.blocksContinuation?.(agent) === true
   /** Delayed followup continuation for the provider-error path. */
   function scheduleRetry(session, delayMs) {
     const fire = () => {
@@ -67,6 +70,7 @@ function apply(ctx, config = {}) {
       const remaining = remainingTodos(session)
       if (remaining.length === 0) return
       if (!stateOf(session.id).armed) return
+      if (editLockBlocks(agent)) return
       injectOrWarn(ctx, `todo-driver: could not queue continuation for "${session.id}"`, () => {
         agent.followup(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
       })
@@ -87,6 +91,7 @@ function apply(ctx, config = {}) {
       error: providerErrorPending.get(agent.id),
     })
     if (decision.kind !== 'continue') return
+    if (editLockBlocks(agent)) return
     injectOrWarn(ctx, `todo-driver: could not steer continuation for "${agent.id}"`, () => {
       agent.steer(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
     })

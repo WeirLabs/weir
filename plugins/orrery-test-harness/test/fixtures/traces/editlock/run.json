@@ -1,0 +1,7 @@
+{
+  "scenario": "editlock",
+  "code": 0,
+  "stdout": "editlock done\n",
+  "stderr": "",
+  "sessionId": null
+}

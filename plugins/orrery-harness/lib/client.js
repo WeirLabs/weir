@@ -139,6 +139,48 @@ window.__ModuleLoader__.load({
 			guardHardThresholdHint: "Hard pressure threshold (forced compaction).",
 			hashlineHideStockEdit: "Anchor editing only",
 			hashlineHideStockEditHint: "Hide the stock edit tool, leaving hash_edit as the only editor (true/false).",
+			editLockEnabled: "Edit Lock (experimental)",
+			editLockLabel: "Edit Lock",
+			editLockTitle: "Files this session is editing",
+			editLockPanelTitle: "Edit Lock",
+			editLockLoading: "Loading…",
+			editLockRefresh: "Refresh",
+			editLockStop: "Revoke editing",
+			editLockRevokeConfirm: "Revoke now — the assistant stops editing until you continue",
+			editLockResume: "Continue editing",
+			editLockConfirmAll: "Continue with these files",
+			editLockReleaseAll: "Release all files now",
+			editLockDetails: "Technical details",
+			editLockOwnerOther: "Another session",
+			editLockHoldUntil: "until {time}",
+			editLockRecovery: "The last turn failed; cleaning up (attempt {n}).",
+			editLockState_idle: "Not editing any file",
+			editLockState_editing: "Editing",
+			editLockState_holding: "Files kept for this session",
+			editLockState_confirm: "Waiting for you to continue",
+			editLockState_stopped: "Editing stopped",
+			editLockState_attention: "Needs your attention",
+			editLockState_unavailable: "Edit Lock is starting",
+			editLockState_failed: "Edit Lock is unavailable; edits are refused",
+			editLockStatus_active: "editing",
+			"editLockStatus_user-interrupted": "stopped",
+			"editLockStatus_pending-confirmation": "waiting",
+			editLockStatus_abnormal: "needs attention",
+			editLockRow_release: "Release",
+			editLockRow_confirm: "Continue",
+			editLockRow_unlock: "Unlock",
+			editLockRow_unlockConfirm: "Unlock now — the other session loses this file",
+			editLockEnabledHint: "Lets sessions take turns editing the same files instead of overwriting each other. Applies after restarting DeepSeek Harness.",
+			editLockHoldDefaultMinutes: "Edit Lock: how long files stay reserved after a turn ends when the assistant gives no period",
+			editLockHoldSingleMaxMinutes: "Edit Lock: most minutes one reservation may last",
+			editLockHoldCumulativeMaxMinutes: "Edit Lock: total minutes one batch of files may stay reserved after a turn ends",
+			editLockNudgeAttempts: "Edit Lock: how many times a finished turn is continued to settle left-over files",
+			editLockNudgeFallback: "Edit Lock: what happens when those reminders run out (release / abnormal)",
+			editLockHoldDefaultMinutesHint: "Minutes a file stays reserved after a turn ends when the assistant gives no period (default 30).",
+			editLockHoldSingleMaxMinutesHint: "Upper bound for one reservation request, in minutes (default 30).",
+			editLockHoldCumulativeMaxMinutesHint: "Total minutes one batch of files may stay reserved after turns end; once it is used up only releasing remains (default 120).",
+			editLockNudgeAttemptsHint: "How many times a finished turn is continued to ask for left-over files to be released or reserved (default 2).",
+			editLockNudgeFallbackHint: "release frees those files for other sessions; abnormal keeps them for you to sort out (default release).",
 			robashEnabled: "Read-only bash guard",
 			robashEnabledHint: "Guarded read-only bash for curated agents, master switch (true/false).",
 			robashAllow: "Allow list additions",
@@ -334,6 +376,48 @@ window.__ModuleLoader__.load({
 			guardHardThresholdHint: "上下文压力硬阈值（强制压缩）。",
 			hashlineHideStockEdit: "仅锚点编辑",
 			hashlineHideStockEditHint: "隐藏 stock edit，hash_edit 成为唯一编辑器（true/false）。",
+			editLockEnabled: "编辑锁（实验）",
+			editLockLabel: "编辑锁",
+			editLockTitle: "本会话正在编辑的文件",
+			editLockPanelTitle: "编辑锁",
+			editLockLoading: "加载中…",
+			editLockRefresh: "刷新",
+			editLockStop: "收回编辑权",
+			editLockRevokeConfirm: "确认收回——助手将停止编辑，直到你点继续",
+			editLockResume: "继续编辑",
+			editLockConfirmAll: "继续编辑这些文件",
+			editLockReleaseAll: "立即释放全部文件",
+			editLockDetails: "技术细节",
+			editLockOwnerOther: "其他会话",
+			editLockHoldUntil: "保留至 {time}",
+			editLockRecovery: "上一回合出错，正在清理（第 {n} 次）。",
+			editLockState_idle: "未占用任何文件",
+			editLockState_editing: "正在编辑",
+			editLockState_holding: "文件为本会话保留",
+			editLockState_confirm: "等你确认继续",
+			editLockState_stopped: "编辑已停止",
+			editLockState_attention: "需要你处理",
+			editLockState_unavailable: "编辑锁启动中",
+			editLockState_failed: "编辑锁不可用，编辑会被拒绝",
+			editLockStatus_active: "编辑中",
+			"editLockStatus_user-interrupted": "已停止",
+			"editLockStatus_pending-confirmation": "待确认",
+			editLockStatus_abnormal: "需处理",
+			editLockRow_release: "释放",
+			editLockRow_confirm: "继续",
+			editLockRow_unlock: "解锁",
+			editLockRow_unlockConfirm: "确认解锁——对方会失去这个文件",
+			editLockEnabledHint: "让多个会话轮流编辑同一批文件，而不是相互覆盖。重启 DeepSeek Harness 后生效。",
+			editLockHoldDefaultMinutes: "编辑锁：回合结束后保留文件多久（助手未指定时）",
+			editLockHoldSingleMaxMinutes: "编辑锁：单次申请最多保留多少分钟",
+			editLockHoldCumulativeMaxMinutes: "编辑锁：一批文件回合结束后累计最多保留多少分钟",
+			editLockNudgeAttempts: "编辑锁：回合结束后最多提醒几次去处理未释放的文件",
+			editLockNudgeFallback: "编辑锁：提醒用完后的处置（release 自动释放 / abnormal 转为人工处理）",
+			editLockHoldDefaultMinutesHint: "助手未指定时，文件在回合结束后继续保留的分钟数（默认 30）。",
+			editLockHoldSingleMaxMinutesHint: "单次保留申请的上限分钟数（默认 30）。",
+			editLockHoldCumulativeMaxMinutesHint: "一批文件在回合结束后累计最多保留的分钟数；用尽后只能释放（默认 120）。",
+			editLockNudgeAttemptsHint: "回合结束后最多提醒几次，去处理未释放的文件（默认 2）。",
+			editLockNudgeFallbackHint: "release 把文件让给其他会话；abnormal 保留下来等你处理（默认 release）。",
 			robashEnabled: "只读 bash 守卫",
 			robashEnabledHint: "精选只读代理的受守卫 bash 总开关（true/false）。",
 			robashAllow: "允许列表",
@@ -507,6 +591,13 @@ window.__ModuleLoader__.load({
 			if (!arrival?.chunks) return null;
 			return react_jsx_runtime.jsx(arrival.chunks.LspToggle, { ...props, settingsBus });
 		}
+		const loadEditLockChunk = lazyChunks(() => require.async("./client.edit-lock-panel.js"));
+		/** Composer-bar Edit Lock entry: nothing until its chunk arrives. */
+		function EditLockWrapper(props) {
+			const arrival = useChunkArrival(loadEditLockChunk, typeof props.sessionId === "string" && props.sessionId !== "");
+			if (!arrival?.chunks) return null;
+			return react_jsx_runtime.jsx(arrival.chunks.EditLockPanel, props);
+		}
 		/** Snapshot-store facade with a stable identity: the host caches slot
 		 * inject faces on first render, so the settings card's hooks source must
 		 * exist before the settings-page chunk arrives; attach() re-points the
@@ -586,6 +677,43 @@ window.__ModuleLoader__.load({
 				key: "hash_edit",
 				locale: NS
 			}, HashEditToolView)), "ui-orrery-settings: hash_edit toolview");
+			// Edit Lock entry: renders only while the `edit-lock` command exists
+			// (feature enabled). Each action is an explicit human /edit-lock run.
+			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
+				name: "conversation.input.right",
+				id: "orrery-edit-lock",
+				order: 101,
+				locale: NS,
+				inject: (sessionId) => {
+					if (!sessionId) return {};
+					return {
+						sessionId,
+						runEditLock: async (verb) => {
+							if (!ctx.remote.commands?.execute) return { kind: "error", text: "unknown command: /edit-lock" };
+							const result = await ctx.remote.commands.execute(sessionId, `/edit-lock ${verb}`, []);
+							if (!result.ok) return { kind: "error", text: `${result.error.message} (${result.error.code})` };
+							if (result.value === undefined) return { kind: "error", text: "unknown command: /edit-lock" };
+							return result.value.result;
+						},
+						commandsList: (sid) => {
+							if (!ctx.remote.commands?.list) return Promise.resolve([]);
+							return ctx.remote.commands.list(sid).then((result) => (result.ok ? result.value : []));
+						},
+						// Structured view: read-only, never written to the conversation.
+						fetchView: async () => {
+							const response = await fetch("api/orrery-edit-lock/view", {
+								method: "POST",
+								credentials: "include",
+								headers: { "content-type": "application/json" },
+								body: JSON.stringify({ sessionId })
+							});
+							const payload = await response.json();
+							if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
+							return payload.value;
+						}
+					};
+				}
+			}, EditLockWrapper)), "ui-orrery-settings: edit lock entry");
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.

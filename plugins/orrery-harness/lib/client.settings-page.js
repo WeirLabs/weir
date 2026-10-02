@@ -61,7 +61,13 @@ window.__ModuleLoader__.load({
 				{ field: "guardHardThreshold", kind: "number" }
 			] },
 			{ id: "editing", fields: [
-				{ field: "hashlineHideStockEdit", kind: "boolean" }
+				{ field: "hashlineHideStockEdit", kind: "boolean" },
+				{ field: "editLockEnabled", kind: "boolean" },
+				{ field: "editLockHoldDefaultMinutes", kind: "number" },
+				{ field: "editLockHoldSingleMaxMinutes", kind: "number" },
+				{ field: "editLockHoldCumulativeMaxMinutes", kind: "number" },
+				{ field: "editLockNudgeAttempts", kind: "number" },
+				{ field: "editLockNudgeFallback", kind: "text" }
 			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },
