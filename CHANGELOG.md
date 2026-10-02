@@ -5,52 +5,28 @@
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [edit-lock-v0.1.0] - 2026-10-02
+
+编辑锁特性分支（`dev/edit-lock`）的特性版本。这一版把此前逐层实现、彼此不可启用的内部切片收口成一个可实际使用的编辑锁：功能默认关闭，打开设置并重启后生效。特性尚未合并回主分支，主分支的版本线不受影响。
 
 ### Added
 
-- **编辑锁状态入口（实验）**：功能开启后，会话输入栏出现「编辑锁」按钮，用颜色显示本会话是否可编辑、已中断或在异常恢复中；面板列出持有的文件与恢复额度，可一键刷新、查看全部锁、停止编辑或恢复。
-- **编辑锁（实验，默认关闭）**：设置页「编辑」组新增「编辑锁（实验）」开关，打开并重启后生效。锁按会话所在 git 仓库根（否则工作目录）自动分域，状态保存在 `.orrery/edit-lock/` 并经 `.git/info/exclude` 排除，不改动受版本控制文件；会话出错时持有的锁转为异常，只允许释放、答复与有限暂停（单次 15 分钟、累计 30 分钟），自动清理至多 3 次或 5 分钟后交给人工，额度跨重启保留。真实 headless 集成场景通过。
-- **Edit Lock 跨进程客户端（开发中，默认关闭）**：共用同一 authority 目录的第二个 Harness 不再被整体拒绝，而是经本机 socket 成为唯一 publisher 的客户端：工具、`/edit-lock` 命令与协商都由 publisher 仲裁并发布，断连即持久撤权，重连需显式 resume。双进程真实 Agent 实测通过；端点仅面向可信合作进程，不做认证。
-- **Edit Lock 受控人工解锁（开发中，默认关闭）**：`/edit-lock locks` 查看全部归属，`/edit-lock unlock <path> <generation>` 仅在 generation 仍为当前值时释放，并在 manager 顺序中等待在途提交，未决发布时拒绝；无强制解锁，旧 owner 晚到写入不会派发。
-- **Edit Lock 归属工具与协商（开发中，默认关闭）**：启用组合后提供 `edit_lock_acquire`／`edit_lock_release`／`edit_lock_status` 与不等待的 `edit_lock_try_steal`；持有者仅在有待答请求时获得 `edit_lock_reply`，只有当前持有者执行的及时答复才会在一个持久事务里转交，沉默、过期、旧 generation 与已中断持有者一律保留归属。安装版真实回合隔离组合 22/22 通过。
-- **Edit Lock 组合插件（开发中，默认关闭，未加入预设）**：新增 `orrery-harness/edit-lock`，启用后为一个工作目录提供唯一锁服务：隐藏 stock write/edit、受控 write 与 `hash_edit` 经锁发布，未受管的写工具一律拒绝；Stop 持久中断会话，只有 `/edit-lock resume` 与逐文件 `/edit-lock confirm` 恢复编辑，todo 续推随之暂停。安装版真实回合隔离组合 16/16 通过；释放/协商工具、UI 与正式 GUI 验收尚未完成。
-- **Edit Lock 远端工具接线原语（开发中，未挂载）**：远端服务绑定真实 agent 且无本地发布回退；write 作用域覆盖经安装版 Agent factory／ToolRuntime 检查，卸载不恢复 stock 写工具。正式预设组合尚未接入。
-- **Edit Lock IPC 原语（开发中，未部署）**：固定 host 认证身份，限制消息帧与积压，断连触发撤权；客户端取消保守返回 UNKNOWN。隔离双进程到安装版 FS 发布及 EOF 持久撤权验证通过，正式 Agent 认证接线与 GUI 验收仍未完成。
-- **Edit Lock 跨进程预约（开发中，未挂载）**：共用 authority 目录的合作进程通过原子目录预约拒绝重复 publisher，runtime 排空关闭后才释放；进程退出保留预约，不按 PID 或超时自动接管。跨进程竞争检查通过，尚不代表 IPC 或正式部署完成。
-- **Edit Lock 生命周期控制器（开发中，未挂载）**：显式停止同步封闭入口并等待持久撤权，覆盖注册中的停止竞态；重复注册不恢复中断权限，工具服务不暴露注册接口。正式宿主 Stop／恢复及跨进程接入仍待完成。
-- **Edit Lock 受控 write 定义（开发中，未注册）**：保留原观察版本和单次有效沙箱策略，通过可信宿主发布，缺少明确 guard 时拒绝；隔离安装版 FS 创建实接通过。尚未替换正式 stock write。
-- **Edit Lock 编辑入口接线（开发中，未启用）**：新增基于真实 agent 对象注册的可信宿主桥；`hash_edit` 可将完整合成内容、原版本 guard 与有效策略交给挂载时捕获的锁服务，拒绝后不回退直接写入。正式服务尚未挂载，不改变默认编辑行为。
-- **Edit Lock LSP 批量接线（开发中，未启用）**：`lsp_rename` 可通过锁服务全目标原子获取、逐文件版本发布，成功仅清理临时锁，失败区分已写／未写／不确定目标；缺失目标与重复规范路径拒绝，历史批次不自动重放。已通过隔离安装版 FS 批量入口实接，尚非真实 GUI rename 验收。
-- **Edit Lock 串行发布与可信调用适配（开发中，未挂载）**：内部 manager 接通持久 prepare/commit、一次发布和取消后的归属保留；新增原始 FS 五参数 publisher、opaque call adapter 与生命周期包装。真实 store 创建/取消/幂等回归通过；尚未通过真实宿主、跨进程与 GUI 门槛，不启用正式编辑接管。
-- **Edit Lock 请求绑定前置（开发中，未挂载）**：新增严格 canonical JSON 与实际 UTF-8 payload 摘要，绑定原始参数、路径、策略及目标，拒绝有损数据和 getter；`hash_edit` 不进入创建通道。仅计算历史绑定，不授予发布权限。专项 4/4、全量 1089/1089 通过。
-- **Edit Lock 目标绑定校验（开发中，未挂载）**：摘要构建复用持久历史的目标 schema，拒绝越界 suffix、错误 guard 和无效 generation；opaque version 不改写。专项 5/5、全量 1090/1090 通过。
-- **Edit Lock manager 启动恢复（开发中，未挂载）**：保守历史转换与新 incarnation 同镜像持久后才返回 manager；未决发布不重放、保留原围栏，暂拒绝整个工作域的变更。真实重开/同步屏障及 IO 故障覆盖，专项 14/14、全量 1085/1085。独占与旧 publisher 静止仍由可信调用方保证，尚无产品恢复入口。
-- **Edit Lock 保守恢复内核（开发中，未挂载）**：仅新内核接受新 incarnation 的历史候选，历史会话和锁全部撤销写权限，异常原因与墓碑保留，旧 receipt 不恢复；候选只可检查、安装或丢弃，不能直接修改授权。尚未接入 manager 启动恢复。专项 21/21、全量 1082/1082 通过。
-- **Edit Lock manager 恢复凭据（开发中，未挂载）**：可信 receipt 签发与 resume 经持久确认后安装，保留逐锁确认状态；持久等待中取消不交付旧凭据，撤权使用队列位置的已安装 epoch，避免恢复竞态使取消落空。凭据不可复制/复用、不跨重启；尚未接入宿主人类意图认证。专项 11/11、全量 1079/1079 通过。
-- **Edit Lock 首次注册取消封门（开发中，未挂载）**：新增可信生命周期 `cancelSession`，首次会话持久确认期间取消不返回旧 execution；早于注册的取消保留拒绝闩锁，后续注册不写入 active 状态。不接入宿主 Stop，不代表 GUI 撤权已完成。
-- **Edit Lock 初始 manager 事务（开发中，未挂载）**：新 store 的会话注册、规范资源 acquire 与取消经真实持久确认后安装；取消同步仅减权，在途 acquire 不返回旧授权，持久/安装失败拒绝整个 manager 的后续操作。新增真实目录同步屏障与 IO 故障测试。不提供创建发布、恢复或宿主入口，功能仍不可启用。
-- **Edit Lock 内核暂存事务（开发中，未挂载）**：私有 begin/checkpoint/install/discard 复用同一授权规则，候选不改变 live 状态；一次性、revision 绑定安装拒绝跨内核与过期候选。暂存恢复消费 receipt 不可回滚，暂存签发仅安装后激活；不提供 JSON restore，尚未接入 manager 持久 ack 与取消封门。
-- **Edit Lock 创建成功归属结算（开发中，未挂载）**：内核私有 `settleCreated` 保留取消后迟到成功的 interrupted 归属，不重臂旧 epoch，也不收编既有锁；未知/非法来源拒绝，generation 墓碑延续。尚未接入实际创建、manager 事务或 UI。
-- **Edit Lock 内核历史导出（开发中，未挂载）**：私有 `checkpoint()` 保留 released-generation 与 issued-request 墓碑，返回 detached 数据且不序列化执行 receipt；为后续持久事务提供完整历史，不新增恢复或运行时授权入口。
-- **Edit Lock 发布前取消内部入口（开发中，未挂载）**：持久 publishing 意图新增仅存活 attempt 可用的未调用结算例外，以私有一次性证据保证实际调用与取消互斥；已调用、恢复历史、过期 revision 与普通 raw record 不得使用此例外。结算仍需持久确认，IO 失败毒化 handle。不接入 manager、宿主编辑或 UI，不构成运行权限。此前历史层「publishing 不得回退」仅为此私有证据入口收窄，unknown 仍不可改写。
-- **Edit Lock 权限状态内核（开发中，未挂载）**：新增内部纯内存状态模块，分离归属与执行授权，建模会话中断闩锁和逐文件恢复确认。不接入编辑工具、设置或 UI，用户现有行为不变；持久化、实际提交和运行时接入另行验收。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
-- **Edit Lock 规范资源身份（开发中，未挂载）**：新增内部只读模块 `src/edit-lock/resource-identity.js`（`createResourceIdentity().resolve/revalidate`），同步观察真实文件系统的规范身份：既有普通单链接文件给出 native canonical `resourceId`，缺失目标只给出「规范祖先 + 逐字未解析后缀」且**不带任何 resource key**；观察按构造冻结、只对本 factory 私有，重校验只接受本实例发出的原对象，内容与兄弟文件变化不影响，文件替换、symlink 替换/改向、祖先替换与新增硬链接一律拒绝（`topology changed` / `not editable`）。不折叠词法 `..`、不做大小写/Unicode 归一；不做原子快照、无法证明不存在 inode reuse/ABA；不写文件、不发放所有权或发布权。选项 C 的缺失目标创建协议仍是设计（未实现）。不接入工具、设置或 UI，用户现有行为不变。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
-- **Edit Lock 历史快照存储（开发中，未挂载）**：新增内部模块 `src/edit-lock/store.js`（`openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot` / `record` / `close`），把权威状态写成**单文件历史镜像**：封闭 version-2 schema（managerIncarnation / sessions / 含 release 墓碑的 generations / locks / issuedRequests / recovery / operations；镜像 version 随下一条 operation history 切片由 1 升为 2，v1 镜像恢复被拒绝），规范 JSON（object key 按 UTF-16 排序、无空白、数组保序）加 SHA-256 校验，**串行本地 revision CAS**（`expectedRevision` 不符即 conflict，溢出拒绝且不写入），写序为「独占 sibling temp → 全量写 → file sync → 关文件 → rename → 目录 open/sync/close」之后才确认。任何持久化 IO 失败**毒化整个 handle**：排队中与后续 `record` 连同 `snapshot()` 一律拒绝（过期内存不得冒充回滚后的状态），错误码 `EDIT_LOCK_STORE_PERSISTENCE` 并区分 rename 尚未尝试（`not-renamed`）与已尝试（`uncertain`）；参数/CAS/transition/溢出错误不毒化。恢复只读 `snapshot.json`，拒绝 symlink/特殊文件/目录，非法或缺失一律失败，**不初始化、不修复、不提升遗留 temp**。它只保存**历史事实**：不安装授权、不签发或恢复 receipt、没有目标文件发布、没有 commit-boundary 围栏执行、没有 kernel restore、没有单实例选举或重启围栏（持久 operation history 记录身份/绑定/阶段/结果/围栏，但同样不是授权，也不提供发布或恢复入口，见下一条）；checksum 只检测意外损坏，**不是**认证、不防回滚；不承诺掉电/硬件缓存持久性，仅面向 POSIX 本地文件系统。**调用方必须在模块之外证明目录独占生命周期与旧 publisher 静默并持续到 `close()`**——模块自身不提供 singleton election。此前特性文档里「无持久化保证」的笼统说法随之修正：磁盘上已有历史镜像，但**运行授权仍无持久化**。不接入工具、设置、UI 或挂载行，用户现有行为不变。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
-- **Edit Lock 持久 operation history（开发中，未挂载）**：新增内部模块 `src/edit-lock/operation-history.js`，把操作**历史**放进同一份历史镜像——`operations[]` 与既有权威状态同处**同一个原子 snapshot**（envelope、canonical 编码、写序与串行 revision CAS 全部不变），镜像 version 由 1 升为 2；**没有**独立的第二本内存账本，也不提供 manager/kernel restore、运行时授权或发布入口。每条历史冻结 `(sessionId, operationId)` 键、不可变 origin、binding（tool、原始 filePath、绝对 cwd、request/args/payload 三个 SHA-256 摘要、目标与冻结策略）与阶段（prepared / publishing / created / updated / unknown / not-published）：同一键换 binding 即 `ID_REUSE`；历史不可删除、不可重绑、origin 不可重写；不能跳过 publishing，publishing/unknown 一律不得改写为 not-published；成功归属是 transition-local（created 不收编既有锁），未结算 update 保留原 owner/generation，晚到成功保留 interrupted/abnormal，取消与 unknown settlement 都不重臂 epoch。围栏（resource / 观察到的祖先子树 / 保守祖先 / containment-unproved 域断言）与 closeout（append-only 的 `abandoned-unknown` / `not-published-evidence` 断言）都只是**历史断言**：无 TTL、不清围栏、不改原 unknown outcome、不允许重放，也没有 `publisherDead`/`humanApproved` 伪认证或运行时 clearFence 接口。`recover` 拒绝 version 1 与未知版本镜像，不迁移、不写回。**存入的摘要字符串不等于认证**：必须由未来可信 publisher 自行计算。不接入工具、设置或 UI，用户现有行为不变。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+- **编辑锁（实验，默认关闭）**：设置页「编辑」组新增「编辑锁（实验）」开关，打开并重启后生效。锁按会话所在 git 仓库根（不在仓库内则取工作目录本身）自动分域，权威状态保存在 `.orrery/edit-lock/` 并经 `.git/info/exclude` 排除，不改动任何受版本控制的文件。启用后同一工作目录内所有会话的写入都要先持有目标文件：隐藏原生 write/edit，`hash_edit`、`lsp_rename` 与受控 write 一律经锁发布，未经服务接管的写工具直接拒绝。人工入口为 `/edit-lock`（`status`／`locks`／`stop`／`resume`／`confirm <path>`／`unlock <path> <generation>`）。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+- **编辑锁状态入口**：功能开启后，会话输入栏出现「编辑锁」按钮，用颜色显示本会话可否编辑、已中断或在异常恢复中；面板列出持有的文件与恢复额度，可刷新、查看全部锁、停止编辑或恢复。
+- **归属工具与转交协商**：提供 `edit_lock_acquire`／`edit_lock_release`／`edit_lock_status` 与不等待的 `edit_lock_try_steal`；持有者仅在有待答请求时获得 `edit_lock_reply`，只有当前持有者的及时答复才会在一个持久事务里转交，沉默、过期、旧 generation 与已中断持有者一律保留归属。请求送达空闲持有者时会唤醒它在一个回合内答复（协商时限 120 秒），而不是等它下次收到用户消息时请求早已过期。答复工具只在回合边界注销。
+- **停止即持久收回编辑权**：Stop 会撤权并封门，此后写入、获取与转交统一提示「editing in this session was stopped … until a human runs /edit-lock resume」，不再显示含糊的认证错误；`edit_lock_status` 与 `edit_lock_release` 在停止状态下仍可用。恢复编辑只能经 `/edit-lock resume`，普通消息与 todo 续推都不会隐式恢复。
+- **受控人工解锁**：`/edit-lock locks` 查看全部归属，`/edit-lock unlock <path> <generation>` 仅在 generation 仍为当前值时释放，并在 manager 顺序中等待在途提交，存在未决发布时拒绝。无强制解锁；旧 owner 的晚到写入因 generation 失效在派发前结算为未发布。
+- **跨进程客户端**：共用同一 authority 目录的第二个 Harness 不再被整体拒绝，而是经本机 socket 成为唯一 publisher 的客户端——工具、`/edit-lock` 命令与协商都由 publisher 仲裁并发布，断连即持久撤权，重连的同会话以中断态开始并需显式 resume。端点仅面向可信合作进程，不做认证。
+- **仅清理的自动恢复**：回合以供应商错误结束时，会话持有的锁转为异常且不释放，会话进入仅清理状态——业务写入、新获取与转交请求全部拒绝，只能释放、答复或暂停。驱动按 15／30／60 秒退避重试至多 3 次或 5 分钟；暂停单次 ≤15 分钟、累计 ≤30 分钟，额度持久保留、重启不退还，到期只重新检查。用户 Stop 立即结束自动恢复且不唤醒会话。
 
 ### Fixed
 
-- **编辑锁状态缺少 generation**：`edit_lock_status` 现在每行都报告 generation，便于在只轮询状态时判断所有权是否真正易手。
-- **编辑锁：空闲会话收不到转交请求**：请求现在会唤醒空闲的持有者，使它在一个回合内答复，而不是等它下次收到用户消息时才看到（那时请求已过期）；协商时限放宽到 120 秒。答复工具只在回合边界注销，避免出现 `unknown tool "edit_lock_reply"`。
+- **开启编辑锁后 Orrery 会话无法新建或继续**：编辑锁服务未放入隔离 realm，预设注册表以「Preset services require isolate realms: orreryEditLock」拒绝挂载整个预设。现在该服务与其全部使用方同组隔离，测试装置镜像同一结构，并新增预设组合静态检查防止复发。
+- **编辑锁面板背景透明**：面板引用了主题中不存在的背景变量，弹出层没有底色。现改用主题的弹出层背景，其余几处不存在的颜色变量一并换成主题实际定义的变量，深浅色都适用。
+- **编辑锁：停止后的报错难以理解**：见上「停止即持久收回编辑权」。
+- **编辑锁：空闲会话收不到转交请求**：见上「归属工具与转交协商」。
 - **编辑锁：子代理结束后锁永久残留**：正常完成的子代理所持有的锁现在随其结束自动释放，不再一直挡住其他会话；被停止或异常的会话仍保留锁，留给人工处理。
-- **编辑锁：停止后的报错难以理解**：会话被停止后，编辑类工具会明确提示「编辑已停止，需要 /edit-lock resume」，而不是通用的认证错误；查看与释放锁在停止状态下仍可使用。
-- **编辑锁面板背景透明**：面板引用了主题中不存在的背景变量，弹出层没有底色。现改用主题的弹出层背景，并把其余几处不存在的颜色变量一并换成主题实际定义的变量，深浅色都适用。
-- **开启编辑锁后 Orrery 会话无法新建或继续**：编辑锁服务未放入隔离 realm，预设注册表以「Preset services require isolate realms: orreryEditLock」拒绝挂载整个预设。现在该服务与其全部使用方同组隔离；测试装置镜像同一结构，并新增预设组合静态检查防止复发。
-- **Edit Lock 不透明文件版本兼容（开发中，未挂载）**：更新前置条件与成功结果的 `FsVersion` 按不透明字符串原样保存，不再错误应用资源 ID 的非空／禁 NUL 规则；仍拒绝非字符串，不解析、不转换版本值。新增真实快照写入与恢复回归，覆盖空串及含 NUL 的令牌。
-- **Edit Lock 资源身份模块的指数级遍历（开发中切片缺陷，未发布；独立复核发现后修复）**：`traceLink` 对相对 symlink target 拼接原始 parent spelling，递归重走已观察的父路径——`self -> .` 重复 4/8/12/16 次时 lstat 调用达 159/2559/40959/655359、readlink 达 15/255/4095/65535，即每多 4 个组件调用数约乘 16（`2^n` 量级）。现从已见证的**物理**父路径逐组件推进：先 lstat 记 inode，是 symlink 才递归记录 target/hop，之后才用 native realpath 推进游标；不预先归一整个 target、不省略嵌套 link、不新增缓存或深度上限。修复后同装置读数为 lstat 17/25/33/41、readlink 4/8/12/16。新增产品回归测试在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），断言每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并同时断言观察仍是同一个真实文件（无 wall-clock 断言、无 mock 文件系统）。修复只消除已观察父拼写的重放，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
-- **Edit Lock 持久 operation history 允许把同一份新增归属重复归给两个创建（开发中切片缺陷，未发布；独立复核发现后修复）**：事务校验逐条检查成功 outcome 的 before/after 归属，却没有**事务级**去重——两个 operation ID 各自经正常 prepared/publishing 记录后，一次 raw `record` 就能把同一份 resource/generation 同时归给两者（复现脚本里第二次真实 `wx` 创建确实抛 `EEXIST`，即历史账本已承认两次不可能的创建）。修复为在一次 before/after 转换内只统计 publishing → created 的 resource 集合：同一新增 ownership 不得归给两个 operation；既有终局历史不计入本次归因，不同资源的批量成功与 release 后新 generation 重建仍然合法。红绿：新用例先在 `record` 的预期拒绝处失败（期望 `/created resource attribution/`），修复后拒绝且内存 revision/state、快照字节与目标字节全部保持不变；另加正向控制（两个不同资源同时成功，并在他人 generation 2 重建后保留旧成功）防过度收紧。
-- **Edit Lock 持久 operation history 恢复时接受不可能的终局成功引用（开发中切片缺陷，未发布；独立复核发现后修复）**：成功 outcome 的结构校验没有核对 lifetime 引用——测试重算 canonical checksum 后，`generations` 表缺少该资源（"missing tombstone"）或结果 generation 高于保留 generation（"future outcome generation"）的 created/updated 历史都被当作合法镜像接受（create/update × 两种损坏四个组合全过，且失败点根本不在摘要真实性上）。修复为对每个 created/updated outcome 要求保留的 lifetime generation 存在且 ≥ 结果 generation，**恢复与 raw record 路径同时生效**；检查刻意**不要求当前 owner/锁**——合法 release、他人重获与更高 generation 都必须可恢复（测试先验证这条正向路径，再验证 checksum-valid 损坏被拒且磁盘字节未被改写）。
+- **编辑锁状态缺少 generation**：`edit_lock_status` 现在每行都报告 generation，便于在只轮询状态时判断所有权是否真正易手。
 
 ## [0.6.0] - 2026-10-01
 
