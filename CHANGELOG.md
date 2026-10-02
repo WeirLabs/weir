@@ -41,6 +41,7 @@
 
 ### Fixed
 
+- **开启编辑锁后 Orrery 会话无法新建或继续**：编辑锁服务未放入隔离 realm，预设注册表以「Preset services require isolate realms: orreryEditLock」拒绝挂载整个预设。现在该服务与其全部使用方同组隔离；测试装置镜像同一结构，并新增预设组合静态检查防止复发。
 - **Edit Lock 不透明文件版本兼容（开发中，未挂载）**：更新前置条件与成功结果的 `FsVersion` 按不透明字符串原样保存，不再错误应用资源 ID 的非空／禁 NUL 规则；仍拒绝非字符串，不解析、不转换版本值。新增真实快照写入与恢复回归，覆盖空串及含 NUL 的令牌。
 - **Edit Lock 资源身份模块的指数级遍历（开发中切片缺陷，未发布；独立复核发现后修复）**：`traceLink` 对相对 symlink target 拼接原始 parent spelling，递归重走已观察的父路径——`self -> .` 重复 4/8/12/16 次时 lstat 调用达 159/2559/40959/655359、readlink 达 15/255/4095/65535，即每多 4 个组件调用数约乘 16（`2^n` 量级）。现从已见证的**物理**父路径逐组件推进：先 lstat 记 inode，是 symlink 才递归记录 target/hop，之后才用 native realpath 推进游标；不预先归一整个 target、不省略嵌套 link、不新增缓存或深度上限。修复后同装置读数为 lstat 17/25/33/41、readlink 4/8/12/16。新增产品回归测试在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），断言每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并同时断言观察仍是同一个真实文件（无 wall-clock 断言、无 mock 文件系统）。修复只消除已观察父拼写的重放，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 - **Edit Lock 持久 operation history 允许把同一份新增归属重复归给两个创建（开发中切片缺陷，未发布；独立复核发现后修复）**：事务校验逐条检查成功 outcome 的 before/after 归属，却没有**事务级**去重——两个 operation ID 各自经正常 prepared/publishing 记录后，一次 raw `record` 就能把同一份 resource/generation 同时归给两者（复现脚本里第二次真实 `wx` 创建确实抛 `EEXIST`，即历史账本已承认两次不可能的创建）。修复为在一次 before/after 转换内只统计 publishing → created 的 resource 集合：同一新增 ownership 不得归给两个 operation；既有终局历史不计入本次归因，不同资源的批量成功与 release 后新 generation 重建仍然合法。红绿：新用例先在 `record` 的预期拒绝处失败（期望 `/created resource attribution/`），修复后拒绝且内存 revision/state、快照字节与目标字节全部保持不变；另加正向控制（两个不同资源同时成功，并在他人 generation 2 重建后保留旧成功）防过度收紧。

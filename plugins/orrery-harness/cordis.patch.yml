@@ -144,6 +144,10 @@
             group: true
             isolate:
               workflowEngine: true
+              # 编辑锁服务：提供者 edit-lock 与消费者 todo-driver / hashline-edit /
+              # lsp 同在本组。预设服务必须 isolate，否则预设加载以
+              # "Preset services require isolate realms" 失败。
+              orreryEditLock: true
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
