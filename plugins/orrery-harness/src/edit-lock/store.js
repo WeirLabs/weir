@@ -24,7 +24,13 @@ import { validateOperations, validateOperationTransitions } from './operation-hi
  * @typedef {{ resourceId: string, owner: string, generation: number, status: 'active'|'user-interrupted'|'pending-confirmation'|'abnormal', reason?: string }} Lock
  * @typedef {{ sessionId: string, requestId: string }} IssuedRequest
  * @typedef {{ sessionId: string, attempts: number, elapsedMs: number, pauseMs: number }} Recovery
- * @typedef {{ version: 2, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
+ * Retention (design D1) is a session-level budget: one lock batch shares one
+ * cumulative allowance, and `holdUntil` is an absolute epoch-ms instant. A held
+ * lock keeps its ordinary status, so `holds` is a separate table, never a lock
+ * status. Version 3 adds it; version 2 images are refused rather than migrated
+ * (the feature is experimental and has no released users).
+ * @typedef {{ sessionId: string, holding: boolean, holdUntil: number|null, holdCumulativeMs: number }} HoldState
+ * @typedef {{ version: 3, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
  * @typedef {{ revision: number, state: AuthorityImage }} Snapshot
  */
 
@@ -46,7 +52,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
   let current
   /** @param {Snapshot} snapshot */
   async function persist(snapshot) {
-    const payload = { version: 2, domainId, ...snapshot }
+    const payload = { version: 3, domainId, ...snapshot }
     const body = canonical(payload)
     const bytes = canonical({ payload, checksum: createHash('sha256').update(body).digest('hex') })
     const temporary = join(resolve(directory), `.snapshot-${randomUUID()}.tmp`)
@@ -86,7 +92,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
     }
   }
   if (mode === 'create') {
-    current = { revision: 0, state: { version: 2, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [], operations: [] } }
+    current = { revision: 0, state: { version: 3, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [], holds: [], operations: [] } }
     await persist(current)
   } else {
     valid((await lstat(target)).isFile(), 'snapshot must be regular file')
@@ -102,7 +108,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       shape(envelope, ['payload', 'checksum'])
       const payload = envelope.payload
       shape(payload, ['version', 'domainId', 'revision', 'state'])
-      valid(payload.version === 2 && payload.domainId === domainId, 'snapshot version/domain')
+      valid(payload.version === 3 && payload.domainId === domainId, 'snapshot version/domain')
       valid(integer(payload.revision), 'snapshot revision')
       valid(typeof envelope.checksum === 'string' && envelope.checksum === createHash('sha256').update(canonical(payload)).digest('hex'), 'snapshot checksum')
       const state = /** @type {AuthorityImage} */ (payload.state)
@@ -232,10 +238,10 @@ function shape(value, keys) {
 }
 /** @param {AuthorityImage} state */
 function validateImage(state) {
-  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'operations'])
-  valid(state.version === 2, 'image version')
+  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'holds', 'operations'])
+  valid(state.version === 3, 'image version')
   valid(state.managerIncarnation === null || id(state.managerIncarnation), 'incarnation')
-  for (const collection of [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery]) {
+  for (const collection of [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.holds]) {
     valid(Array.isArray(collection) && Object.getPrototypeOf(collection) === Array.prototype, 'collection')
     valid(Reflect.ownKeys(collection).length === collection.length + 1, 'dense collection keys')
     for (let i = 0; i < collection.length; i++) {
@@ -243,19 +249,38 @@ function validateImage(state) {
       valid(descriptor && 'value' in descriptor && descriptor.enumerable, 'collection data property')
     }
   }
-  valid(state.managerIncarnation !== null || [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.operations].every(list => list.length === 0), 'null incarnation with history')
+  valid(state.managerIncarnation !== null || [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.holds, state.operations].every(list => list.length === 0), 'null incarnation with history')
   const sessions = new Map(state.sessions.map(session => {
     shape(session, ['sessionId', 'executionEpoch', 'interrupted'])
     valid(id(session.sessionId) && integer(session.executionEpoch, 1) && typeof session.interrupted === 'boolean', 'session')
     return [session.sessionId, session]
   }))
   valid(sessions.size === state.sessions.length, 'duplicate session')
+  // Retention is a session-level budget (design D1): one row per session, only for
+  // sessions the image knows, and the cumulative allowance is a lifetime charge
+  // that is never refunded.
+  const holds = new Map()
+  for (const held of state.holds) {
+    shape(held, ['sessionId', 'holding', 'holdUntil', 'holdCumulativeMs'])
+    valid(sessions.has(held.sessionId) && !holds.has(held.sessionId), 'hold reference')
+    valid(typeof held.holding === 'boolean' && integer(held.holdCumulativeMs), 'hold flags')
+    valid(held.holdUntil === null || integer(held.holdUntil, 1), 'hold expiry')
+    valid(held.holding ? held.holdUntil !== null : held.holdUntil === null, 'hold expiry coherence')
+    holds.set(held.sessionId, held)
+  }
+  for (const session of state.sessions) valid(holds.has(session.sessionId), 'missing hold row')
   const generations = new Map(state.generations.map(entry => {
     shape(entry, ['resourceId', 'generation'])
     valid(id(entry.resourceId) && integer(entry.generation, 1), 'generation')
     return [entry.resourceId, entry.generation]
   }))
   valid(generations.size === state.generations.length, 'duplicate generation')
+  // A session whose last lock is gone has no batch left: the row stays (one row per
+  // session) but must be back at zero, so a stale allowance cannot survive a batch.
+  for (const held of state.holds) {
+    if (state.locks.some(lock => lock.owner === held.sessionId)) continue
+    valid(!held.holding && held.holdUntil === null && held.holdCumulativeMs === 0, 'hold without a lock')
+  }
   const resources = new Set()
   for (const lock of state.locks) {
     shape(lock, lock.status === 'abnormal' ? ['resourceId', 'owner', 'generation', 'status', 'reason'] : ['resourceId', 'owner', 'generation', 'status'])
@@ -313,5 +338,18 @@ function validateTransition(before, after) {
   for (const old of before.recovery) {
     const next = recoveries.get(old.sessionId)
     valid(next && next.attempts >= old.attempts && next.elapsedMs >= old.elapsedMs && next.pauseMs >= old.pauseMs, 'recovery history')
+  }
+  // Retention history: the cumulative allowance only ever grows inside a batch.
+  // A row may appear or disappear (a batch starts with the first lock and ends
+  // with the last), but an existing row never loses allowance, and starting a
+  // fresh batch is only legitimate when the session held no lock at all.
+  const previousHolds = new Map(before.holds.map(held => [held.sessionId, held]))
+  for (const held of after.holds) {
+    const old = previousHolds.get(held.sessionId)
+    if (old) {
+      valid(held.holdCumulativeMs >= old.holdCumulativeMs, 'retention history')
+    } else {
+      valid(held.holdCumulativeMs === 0 || !before.locks.some(lock => lock.owner === held.sessionId), 'retention batch restart')
+    }
   }
 }

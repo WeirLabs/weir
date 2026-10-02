@@ -186,6 +186,7 @@ it('checkpoints detached lifetime tombstones without serializing execution recei
     managerIncarnation: 'manager-1',
     sessions: [{ sessionId: 'alice', executionEpoch: 1, interrupted: false }],
     locks: [], generations: [{ resourceId: 'file:a', generation: 1 }],
+    holds: [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }],
     issuedRequests: [{ sessionId: 'alice', requestId: 'continue-1' }],
   })
   checkpoint.generations[0].generation = 99

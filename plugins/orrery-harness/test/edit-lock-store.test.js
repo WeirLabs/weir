@@ -18,17 +18,19 @@ async function fixture(t) {
 }
 
 const emptyState = () => ({
-  version: 2, managerIncarnation: null, sessions: [], generations: [],
-  locks: [], issuedRequests: [], recovery: [], operations: [],
+  version: 3, managerIncarnation: null, sessions: [], generations: [],
+  locks: [], issuedRequests: [], recovery: [], holds: [], operations: [],
 })
 
 const authorityImage = () => ({
-  version: 2, managerIncarnation: 'historical-manager-1', operations: [],
+  version: 3, managerIncarnation: 'historical-manager-1', operations: [],
   sessions: [{ sessionId: 'alice', executionEpoch: 2, interrupted: true }],
   generations: [{ resourceId: 'file:a', generation: 1 }],
   locks: [{ resourceId: 'file:a', owner: 'alice', generation: 1, status: 'user-interrupted' }],
   issuedRequests: [{ sessionId: 'alice', requestId: 'continue-1' }],
   recovery: [{ sessionId: 'alice', attempts: 1, elapsedMs: 100, pauseMs: 20 }],
+  // One retention row per known session, even before any batch exists.
+  holds: [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }],
 })
 
 test('creates, records and recovers detached historical Edit Lock facts', async t => {
@@ -87,7 +89,7 @@ test('retains monotonic epochs, generation history, request tombstones and charg
   for (const mutate of [
     s => { s.sessions[0].executionEpoch = 1 },
     s => { s.sessions[0].interrupted = false; s.locks[0].status = 'pending-confirmation' },
-    s => { s.sessions = []; s.locks = []; s.issuedRequests = []; s.recovery = [] },
+    s => { s.sessions = []; s.locks = []; s.issuedRequests = []; s.recovery = []; s.holds = [] },
     s => { s.locks = []; s.generations = [] }, s => { s.issuedRequests = [] },
     s => { s.recovery = [] }, s => { s.recovery[0].attempts = 0 },
     s => { s.recovery[0].elapsedMs = 99 }, s => { s.recovery[0].pauseMs = 19 },
@@ -96,6 +98,8 @@ test('retains monotonic epochs, generation history, request tombstones and charg
     await assert.rejects(store.record({ expectedRevision: 1, nextState: state }), /invalid/)
   }
   const released = authorityImage(); released.locks = []
+  // The batch ends with its last lock: the row stays and returns to zero.
+  released.holds = [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }]
   await store.record({ expectedRevision: 1, nextState: released })
   await assert.rejects(store.record({ expectedRevision: 2, nextState: authorityImage() }), /generation/)
   const reacquired = authorityImage()
@@ -103,12 +107,14 @@ test('retains monotonic epochs, generation history, request tombstones and charg
   await store.record({ expectedRevision: 2, nextState: reacquired })
   const replacement = structuredClone(reacquired)
   replacement.sessions.push({ sessionId: 'bob', executionEpoch: 1, interrupted: true })
+  replacement.holds.push({ sessionId: 'bob', holding: false, holdUntil: null, holdCumulativeMs: 0 })
   replacement.locks[0].owner = 'bob'
   await assert.rejects(store.record({ expectedRevision: 3, nextState: replacement }), /generation/)
   replacement.generations[0].generation = replacement.locks[0].generation = 3
   await store.record({ expectedRevision: 3, nextState: replacement })
   const rewind = structuredClone(replacement)
   rewind.locks = []; rewind.generations[0].generation = 2
+  rewind.holds = rewind.holds.map(held => ({ sessionId: held.sessionId, holding: false, holdUntil: null, holdCumulativeMs: 0 }))
   await assert.rejects(store.record({ expectedRevision: 4, nextState: rewind }), /generation/)
   await store.close()
 })
@@ -155,7 +161,7 @@ test('recovery rejects noncanonical, duplicate, corrupt, incompatible and unsafe
     original + '\n', original.replace('"checksum":', '"extra":1,"checksum":'),
     original.replace('"revision":0', '"revision":0,"revision":0'),
     original.replace('"revision":0', '"revision":1'), original.slice(0, -4),
-    encode({ ...payload, version: 1 }), encode({ ...payload, version: 99 }), encode({ ...payload, domainId: 'other' }),
+    encode({ ...payload, version: 2 }), encode({ ...payload, version: 99 }), encode({ ...payload, domainId: 'other' }),
     encode({ ...payload, state: { ...emptyState(), version: 1 } }),
     encode({ ...payload, revision: -1 }), encode({ ...payload, state: { ...emptyState(), receipts: [] } }),
   ]) {
@@ -279,6 +285,8 @@ test('retained abnormal reasons cannot be silently cleared within one ownership 
   await store.record({ expectedRevision: 0, nextState: abnormal })
   await assert.rejects(store.record({ expectedRevision: 1, nextState: authorityImage() }), /abnormal/)
   const released = authorityImage(); released.locks = []
+  // The batch ends with its last lock: the row stays and returns to zero.
+  released.holds = [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }]
   await store.record({ expectedRevision: 1, nextState: released })
   await store.close()
   const recovered = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
@@ -291,7 +299,7 @@ test('retained abnormal reasons cannot be silently cleared within one ownership 
 test('revision exhaustion rejects without writing or poisoning the recovered image', async t => {
   const { writeFile, readFile } = await import('node:fs/promises')
   const directory = await fixture(t)
-  const bytes = encode({ version: 2, domainId: 'd', revision: Number.MAX_SAFE_INTEGER, state: emptyState() })
+  const bytes = encode({ version: 3, domainId: 'd', revision: Number.MAX_SAFE_INTEGER, state: emptyState() })
   await writeFile(join(directory, 'snapshot.json'), bytes)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   await assert.rejects(store.record({ expectedRevision: Number.MAX_SAFE_INTEGER, nextState: emptyState() }), /overflow/)

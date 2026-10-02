@@ -398,6 +398,51 @@ function managerCore(store, kernel) {
       const captured = { ...token }
       return transact(draft => draft.operations.release(captured))
     },
+    /** Give up every active lock of one session: the disposition used when a
+     * finished turn's locks were never sorted out. Retention is a policy decision
+     * that lives above this layer, so the caller supplies the cap. Refusal is
+     * always safe. @param {string} sessionId @param {number} now */
+    releaseActive(sessionId, now) {
+      return transact(draft => {
+        const status = operations.status()
+        const session = status.sessions.find(item => item.sessionId === sessionId)
+        if (!session) throw new Error('unknown session')
+        const released = []
+        for (const lock of status.locks) {
+          if (lock.owner !== sessionId || lock.status !== 'active') continue
+          draft.operations.release({ managerIncarnation, sessionId, executionEpoch: session.executionEpoch, resourceId: lock.resourceId, generation: lock.generation })
+          released.push(lock.resourceId)
+        }
+        return released
+      })
+    },
+    /** Charge and record an explicit retention request (design D2). The caller
+     * resolves the configured caps and supplies the instant, so this layer holds
+     * no policy and no clock. Ownership is untouched: retention only extends it.
+     * @param {string} sessionId @param {number} ms
+     * @param {{now: number, singleMaxMs: number, cumulativeMaxMs: number}} caps
+     * @returns {Promise<import('./state.js').HoldState>} */
+    hold(sessionId, ms, caps) {
+      // Compute first, persist second: the candidate is a pure value, so a store
+      // failure leaves the live kernel exactly where it was.
+      const candidate = kernel.operations.holdCandidate(sessionId, ms, caps)
+      return transact(draft => draft.operations.hold(candidate), true)
+    },
+    /** Retention state of one session, settled against the caller's instant so a
+     * missed timer cannot leave stale ownership. Pure read; never mutates.
+     * @param {string} sessionId @param {number} now */
+    settlement(sessionId, now) {
+      healthy()
+      return operations.settleHold(sessionId, now)
+    },
+    /** The holder started a new turn: every lock it holds leaves the holding state
+     * at once (design D4). Never releases. @param {string} sessionId @param {number} now */
+    endHold(sessionId, now) {
+      healthy()
+      const held = operations.settleHold(sessionId, now)
+      if (!held.held) return held
+      return transact(draft => draft.operations.endHold(sessionId), true).then(() => operations.settleHold(sessionId, now))
+    },
     /** Consented transfer: release the holder's exact generation and acquire
      * for the requester in ONE durable transaction. Either side cancelled,
      * stale or interrupted rejects the whole transfer and ownership stays.

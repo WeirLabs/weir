@@ -97,6 +97,8 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
   function statusOf(agent) {
     const entry = entryFor(agent)
     const { session, status } = sessionStatus(entry.sessionId)
+    // Retention settlement is read-time as well as timer-driven (design D5), so a
+    // missed timer can never leave stale ownership behind a status read.
     return {
       sessionId: entry.sessionId,
       state: entry.state,
@@ -104,6 +106,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       executionEpoch: session?.executionEpoch ?? null,
       locks: status.locks.filter(/** @param {any} lock */ lock => lock.owner === entry.sessionId),
       recovery: runtime.control.recoveryUsage(entry.sessionId),
+      retention: runtime.control.settlement(entry.sessionId, Date.now()),
     }
   }
   return Object.freeze({
@@ -249,6 +252,40 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       if (abnormal && entry.state === 'active') entry.state = 'recovering'
       return marked
     },
+    /** Explicit bounded retention of every lock the session currently holds. The
+     * caller resolves the configured caps; ownership is untouched, so this only
+     * extends it. Never available while stopped or recovering: those locks are
+     * handled as abnormal locks, and a retention period must not hide them.
+     * @param {object} agent @param {number} ms
+     * @param {{singleMaxMs: number, cumulativeMaxMs: number}} caps */
+    async hold(agent, ms, caps) {
+      const entry = entryFor(agent)
+      denyStopped(entry)
+      if (entry.state === 'recovering') throw new Error('cleanup-only recovery: no retention request is available while abnormal locks are pending')
+      const held = await runtime.control.hold(entry.sessionId, ms, { ...caps, now: Date.now() })
+      return { ...held, lockCount: statusOf(agent).locks.length }
+    },
+    /** The holder started a new turn: every lock it holds leaves the holding state
+     * at once (spec: Holding state semantics). Safe while stopped; a stopped
+     * session has no retention period anyway. @param {object} agent */
+    async turnStarted(agent) {
+      const entry = entries.get(agent)
+      if (!entry) return null
+      return runtime.control.endHold(entry.sessionId, Date.now())
+    },
+    /** Read-time settlement plus its release half (design D5). Releases the
+     * session's active locks only when the period has genuinely run out, so it is
+     * idempotent and safe from a status read or a timer.
+     * @param {object} agent @returns {Promise<{released: string[]}>} */
+    async settleExpired(agent) {
+      const entry = entries.get(agent)
+      if (!entry) return { released: [] }
+      if (!runtime.control.settlement(entry.sessionId, Date.now()).expired) return { released: [] }
+      const released = await runtime.control.releaseActive(entry.sessionId, Date.now())
+      return { released }
+    },
+    /** Retention state of one session, settled. @param {object} agent */
+    retention(agent) { return runtime.control.settlement(entryFor(agent).sessionId, Date.now()) },
     /** @param {object} agent */
     recoveryUsage(agent) { return runtime.control.recoveryUsage(entryFor(agent).sessionId) },
     /** @param {object} agent @param {{attempts?: number, elapsedMs?: number, pauseMs?: number}} delta */

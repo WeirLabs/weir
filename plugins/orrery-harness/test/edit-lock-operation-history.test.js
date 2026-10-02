@@ -31,10 +31,20 @@ const prepared = () => ({
   binding: binding(), phase: 'prepared', fence: null, outcome: null, closeouts: [],
 })
 const image = () => ({
-  version: 2, managerIncarnation: 'manager-1',
+  version: 3, managerIncarnation: 'manager-1',
   sessions: [{ sessionId: 'alice', executionEpoch: 1, interrupted: false }],
-  generations: [], locks: [], issuedRequests: [], recovery: [], operations: [],
+  generations: [], locks: [], issuedRequests: [], recovery: [],
+  // One retention row per known session, even before any batch exists.
+  holds: [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }],
+  operations: [],
 })
+/** A session and its retention row are created together: the image keeps exactly
+ * one row per known session. */
+function addSession(state, sessionId, executionEpoch = 1, interrupted = false) {
+  state.sessions.push({ sessionId, executionEpoch, interrupted })
+  state.holds.push({ sessionId, holding: false, holdUntil: null, holdCumulativeMs: 0 })
+  return state
+}
 async function record(store, state) {
   return store.record({ expectedRevision: store.snapshot().revision, nextState: state })
 }
@@ -146,17 +156,17 @@ test('opaque filesystem version strings survive guarded update history and recov
     await recovered.close()
   }
 })
-test('v2 operations live in the same atomic snapshot and prepared creates own nothing', async t => {
+test('v3 operations and retention live in the same atomic snapshot and prepared creates own nothing', async t => {
   const directory = await fixture(t)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
-  assert.equal(store.snapshot().state.version, 2)
+  assert.equal(store.snapshot().state.version, 3)
   assert.deepEqual(store.snapshot().state.operations, [])
   const state = image()
   state.operations.push(prepared(), { ...prepared(), operationId: 'op-2' })
   await record(store, state)
   await store.close()
   const disk = JSON.parse(await readFile(join(directory, 'snapshot.json'), 'utf8'))
-  assert.equal(disk.payload.version, 2)
+  assert.equal(disk.payload.version, 3)
   assert.equal(disk.payload.state.operations.length, 2)
   const reopened = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   assert.deepEqual(reopened.snapshot().state, state)
@@ -320,7 +330,7 @@ test('unresolved update ownership cannot be released, transferred or re-generate
     for (const alter of [
       s => { s.locks = [] },
       s => { s.generations[0].generation = 2; s.locks[0].generation = 2 },
-      s => { s.sessions.push({ sessionId: 'bob', executionEpoch: 1, interrupted: false }); s.locks[0].owner = 'bob'; s.locks[0].generation = 2; s.generations[0].generation = 2 },
+      s => { addSession(s, 'bob'); s.locks[0].owner = 'bob'; s.locks[0].generation = 2; s.generations[0].generation = 2 },
     ]) {
       const invalid = structuredClone(state); alter(invalid)
       await assert.rejects(record(store, invalid), /retained/)
@@ -687,7 +697,7 @@ test('distinct created resources can settle together and old successes survive r
   const history = structuredClone(state.operations)
   state.locks = []
   await record(store, state)
-  state.sessions.push({ sessionId: 'bob', executionEpoch: 1, interrupted: false })
+  addSession(state, 'bob')
   const recreated = { ...prepared(), sessionId: 'bob', operationId: 'recreated', binding: structuredClone(history[0].binding) }
   state.operations.push(recreated)
   await record(store, state)
@@ -731,7 +741,7 @@ for (const channel of ['create', 'update']) {
       assert.deepEqual(released.snapshot().state.operations, history)
       assert.deepEqual(released.snapshot().state.locks, [])
       // A later owner/generation must not invalidate historical success.
-      state.sessions.push({ sessionId: 'bob', executionEpoch: 1, interrupted: false })
+      addSession(state, 'bob')
       state.generations[0].generation = 2
       state.locks.push({ resourceId: history[0].outcome.resourceId, generation: 2, owner: 'bob', status: 'active' })
       await record(released, state)
