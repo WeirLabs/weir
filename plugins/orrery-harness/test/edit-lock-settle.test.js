@@ -85,7 +85,7 @@ it('flags the locks for a human when the fallback is configured to abnormal', as
   expect(calls.followup).toHaveLength(1)
   expect(calls.released).toBe(0)
   expect(calls.abnormal).toEqual(['unsettled-after-notices'])
-  expect(calls.notices.join(' ')).toMatch(/flagged for you to sort out/)
+  expect(calls.notices.join(' ')).toMatch(/flagged for the user to sort out/)
 })
 
 it('a notice budget of zero goes straight to the disposition', async () => {

@@ -70,7 +70,7 @@ export function createSettlementDriver(options) {
     if (limits.nudgeFallback === 'abnormal') {
       // The team asked for human handling: keep the locks, never silently free them.
       const marked = await domain.classifyAbnormal(agent, 'unsettled-after-notices')
-      options.notify(agent, `Edit Lock: ${marked.length} file(s) stayed locked and are now flagged for you to sort out. Open the Edit Lock panel to release them, or run /edit-lock resume.`)
+      options.notify(agent, `Edit Lock: ${marked.length} file(s) stayed locked and are now flagged for the user to sort out in the Edit Lock panel.`)
     } else {
       const { released } = await domain.releaseHeld(agent)
       options.notify(agent, released.length

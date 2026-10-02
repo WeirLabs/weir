@@ -328,7 +328,7 @@ test('recovery driver schedules bounded cleanup turns and hands over on exhausti
   await driver.onTurnEnd(agent, { kind: 'completed' })
   await fire()
   assert.equal(followups.length, 3)
-  assert.match(notices.at(-1), /budget exhausted/)
+  assert.match(notices.at(-1), /automatic cleanup stopped/)
   assert.equal(driver.state(agent), null)
 })
 

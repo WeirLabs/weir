@@ -27,7 +27,7 @@ export function cleanupPrompt(locks, attempt) {
     `Edit Lock cleanup-only recovery (attempt ${attempt} of ${RECOVERY_LIMITS.attempts}). The previous turn failed while this session held file ownership, so these locks are now abnormal:`,
     ...lines,
     'Business edits and new ownership are denied in this state. You may only: release a lock you no longer need (edit_lock_release), answer a pending ownership request (edit_lock_reply), or request a bounded pause while an external problem clears (edit_lock_pause). Do not attempt other file changes.',
-    'When cleanup is done, stop. A human resumes normal editing with /edit-lock resume.',
+    'When cleanup is done, stop. The user resumes normal editing from the Edit Lock panel.',
   ].join('\n')
 }
 
@@ -76,14 +76,14 @@ export function createRecoveryDriver(options) {
       if (status.state !== 'recovering') { cancel(agent, recovery); return }
       if (!status.locks.some(/** @param {any} lock */ lock => lock.status === 'abnormal')) {
         cancel(agent, recovery)
-        options.notify(agent, 'Edit Lock cleanup complete: no abnormal locks remain. Editing stays paused until a human runs /edit-lock resume.')
+        options.notify(agent, 'Edit Lock cleanup complete: no abnormal locks remain. Editing stays paused until the user chooses Continue editing.')
         return
       }
       const usage = await domain.recoveryUsage(agent)
       if (!recoveryBudgetLeft(usage, now() - recovery.since)) {
         await chargeElapsed(domain, agent, recovery)
         cancel(agent, recovery)
-        options.notify(agent, `Edit Lock automatic recovery budget exhausted (${RECOVERY_LIMITS.attempts} attempts or ${RECOVERY_LIMITS.elapsedMs / 60_000} minutes). The abnormal locks are retained for a human: /edit-lock locks, then /edit-lock unlock or /edit-lock resume.`)
+        options.notify(agent, `Edit Lock automatic cleanup stopped after ${RECOVERY_LIMITS.attempts} attempts or ${RECOVERY_LIMITS.elapsedMs / 60_000} minutes. The remaining files stay locked for the user to release or unlock from the Edit Lock panel.`)
         return
       }
       const charged = await chargeElapsed(domain, agent, recovery, { attempts: 1 })

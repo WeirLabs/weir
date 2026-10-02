@@ -22,7 +22,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
    * deliberate Stop look like a broken registration. @param {Entry | undefined} entry */
   function denyStopped(entry) {
     if (entry?.state === 'stopped' || entry?.state === 'resuming') {
-      throw new Error('Edit Lock: editing in this session was stopped (Stop or /edit-lock stop). Edits and new ownership stay denied until a human runs /edit-lock resume; edit_lock_release and edit_lock_status still work.')
+      throw new Error('Edit Lock: editing in this session was stopped by the user. Edits and new ownership stay denied until the user chooses Continue editing (Edit Lock panel or /edit-lock resume); edit_lock_release and edit_lock_status still work. Do not retry the edit.')
     }
     if (entry?.state === 'starting') throw new Error('Edit Lock: this session is still registering; retry shortly.')
   }
