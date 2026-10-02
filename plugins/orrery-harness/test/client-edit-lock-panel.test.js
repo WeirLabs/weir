@@ -179,7 +179,7 @@ describe('client.edit-lock-panel chunk', () => {
     expect(source).toContain('background: "var(--dsw-alias-bg-overlay)"')
     // Tokens verified against dsh-client-ui-theme 0.2.0-rc.2 definitions.
     const DEFINED = new Set(['--dsw-alias-bg-overlay', '--dsw-alias-border-l2', '--dsw-alias-label-primary', '--dsw-alias-label-secondary',
-      '--dsw-alias-label-tertiary', '--dsw-alias-state-business-primary', '--dsw-alias-state-error-primary', '--dsw-alias-state-warn-tertiary',
+      '--dsw-alias-label-tertiary', '--dsw-alias-state-business-primary', '--dsw-alias-state-error-primary', '--dsw-alias-state-warn-primary',
       '--dsw-font-markdown-code-block-font-family', '--dsw-radius-md', '--dsw-radius-sm'])
     for (const match of source.matchAll(/var\((--dsw-[a-z0-9-]+)/g)) expect(DEFINED.has(match[1]), `undefined theme token ${match[1]}`).toBe(true)
   })

@@ -22,8 +22,8 @@ window.__ModuleLoader__.load({
 			idle: "var(--dsw-alias-label-tertiary)",
 			editing: "var(--dsw-alias-state-business-primary)",
 			holding: "var(--dsw-alias-state-business-primary)",
-			confirm: "var(--dsw-alias-state-warn-tertiary)",
-			stopped: "var(--dsw-alias-state-warn-tertiary)",
+			confirm: "var(--dsw-alias-state-warn-primary)",
+			stopped: "var(--dsw-alias-state-warn-primary)",
 			attention: "var(--dsw-alias-state-error-primary)",
 			unavailable: "var(--dsw-alias-label-tertiary)"
 		};
