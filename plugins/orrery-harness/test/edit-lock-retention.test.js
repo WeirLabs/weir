@@ -87,9 +87,11 @@ it('the cumulative allowance spans a batch and is never refunded by ending a hol
   operations.endHold('alice')
   operations.hold(operations.holdCandidate('alice', 30 * MINUTE, caps({ now: 2_000_000 })))
   expect(operations.holdState('alice').holdCumulativeMs).toBe(60 * MINUTE)
+  operations.endHold('alice')
   const candidate = operations.holdCandidate('alice', 30 * MINUTE, caps({ now: 3_000_000 }))
   expect(candidate.holdCumulativeMs).toBe(90 * MINUTE)
   operations.hold(candidate)
+  operations.endHold('alice')
   // 90 of 120 minutes are spent, so one more equal request would exceed the
   // budget and is refused rather than clamped (the allowance is never refunded).
   expect(operations.holdCandidate('alice', 30 * MINUTE, caps({ now: 4_000_000 })).holdCumulativeMs).toBe(120 * MINUTE)
@@ -123,9 +125,14 @@ it('a retention request needs an instant and a lock to retain', () => {
 it('an extension continues from the current expiry and cannot shorten it', () => {
   const { operations, authority } = held()
   operations.hold(operations.holdCandidate('alice', 30 * MINUTE, caps()))
-  const extension = operations.holdCandidate('alice', 10 * MINUTE, caps({ now: 1_000_000 + 5 * MINUTE }))
+  // 25 minutes in, 5 remain: extending by 10 makes a 15-minute window from now, and
+  // only those 10 added minutes are charged — asking again never re-buys the period.
+  const extension = operations.holdCandidate('alice', 10 * MINUTE, caps({ now: 1_000_000 + 25 * MINUTE }))
   expect(extension.holdUntil).toBe(1_000_000 + 40 * MINUTE)
+  expect(extension.holdCumulativeMs).toBe(40 * MINUTE)
   operations.hold(extension)
+  // A window from now beyond the single cap is refused even as an extension.
+  expect(() => operations.holdCandidate('alice', 30 * MINUTE, caps({ now: 1_000_000 + 26 * MINUTE }))).toThrow(/limited to 30 minutes/)
   // A candidate that would shorten a running period is refused outright.
   expect(() => operations.hold({ sessionId: 'alice', holding: true, holdUntil: 1_000_000 + MINUTE, holdCumulativeMs: 50 * MINUTE }))
     .toThrow(/shortens/)

@@ -345,3 +345,20 @@ test('SIGKILL at real persistence barriers leaves only complete old/new committe
     })
   }
 })
+
+test('retention allowance never shrinks inside a batch and returns to zero only when the batch ends', async t => {
+  const directory = await fixture(t)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
+  const held = authorityImage()
+  held.holds = [{ sessionId: 'alice', holding: true, holdUntil: 2_000_000, holdCumulativeMs: 600_000 }]
+  await store.record({ expectedRevision: 0, nextState: held })
+  // Still holding a lock: the allowance may not be refunded.
+  const refunded = structuredClone(held)
+  refunded.holds[0] = { sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }
+  await assert.rejects(store.record({ expectedRevision: 1, nextState: refunded }), /retention history/)
+  // Last lock released: the batch is over and the row returns to zero.
+  refunded.locks = []
+  await store.record({ expectedRevision: 1, nextState: refunded })
+  assert.equal(store.snapshot().state.holds[0].holdCumulativeMs, 0)
+  await store.close()
+})

@@ -347,7 +347,10 @@ function validateTransition(before, after) {
   for (const held of after.holds) {
     const old = previousHolds.get(held.sessionId)
     if (old) {
-      valid(held.holdCumulativeMs >= old.holdCumulativeMs, 'retention history')
+      // The allowance never shrinks inside a batch; it returns to zero only when the
+      // batch has ended, i.e. the session holds no lock any more.
+      const batchEnded = !after.locks.some(lock => lock.owner === held.sessionId)
+      valid(held.holdCumulativeMs >= old.holdCumulativeMs || (batchEnded && held.holdCumulativeMs === 0), 'retention history')
     } else {
       valid(held.holdCumulativeMs === 0 || !before.locks.some(lock => lock.owner === held.sessionId), 'retention batch restart')
     }

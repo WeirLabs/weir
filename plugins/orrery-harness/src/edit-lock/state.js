@@ -117,17 +117,24 @@ export function createEditLockState(managerIncarnation) {
       if (ms > caps.singleMaxMs) throw new Error(`a single retention is limited to ${Math.round(caps.singleMaxMs / 60_000)} minutes`)
       if (![...locks.values()].some(lock => lock.owner === sessionId)) throw new Error('this session holds no lock to retain')
       const held = holds.get(sessionId) ?? { sessionId, holding: false, holdUntil: null, holdCumulativeMs: 0 }
-      if (held.holdCumulativeMs + ms > caps.cumulativeMaxMs) {
-        throw new Error(`cumulative retention budget exhausted (${Math.floor((caps.cumulativeMaxMs - held.holdCumulativeMs) / 60_000)} minutes left)`)
-      }
-      // Extending an unexpired retention continues from its current expiry; the
-      // charged allowance is spent either way.
+      // A reservation still running is EXTENDED by `ms`, never re-bought.
       const now = Number.isFinite(caps.now) ? /** @type {number} */ (caps.now) : null
       // A persisted retention must always carry an expiry: without an instant the
-      // row could never be settled on read. @param {HoldCaps} caps guarantees it.
+      // row could never be settled on read, so the caller must supply one.
       if (now === null) throw new Error('a retention request requires a finite instant')
-      const base = held.holding && held.holdUntil !== null && held.holdUntil > now ? held.holdUntil : now
-      return Object.freeze({ sessionId, holding: true, holdUntil: base + ms, holdCumulativeMs: held.holdCumulativeMs + ms })
+      const running = held.holding && held.holdUntil !== null && held.holdUntil > now
+      // Charged: only the added minutes. Bounded: the whole window from now, so
+      // repeated asks can neither re-buy paid time nor stack past the single cap.
+      const charged = ms
+      const windowMs = running ? /** @type {number} */ (held.holdUntil) + ms - now : ms
+      if (windowMs > caps.singleMaxMs) {
+        throw new Error(`a single retention is limited to ${Math.round(caps.singleMaxMs / 60_000)} minutes`)
+      }
+      if (held.holdCumulativeMs + charged > caps.cumulativeMaxMs) {
+        throw new Error(`cumulative retention budget exhausted (${Math.floor((caps.cumulativeMaxMs - held.holdCumulativeMs) / 60_000)} minutes left)`)
+      }
+      const base = running ? /** @type {number} */ (held.holdUntil) : now
+      return Object.freeze({ sessionId, holding: true, holdUntil: base + ms, holdCumulativeMs: held.holdCumulativeMs + charged })
     },
     /** Install a candidate from `holdCandidate`. One-shot and validated, so a
      * tampered, replayed or stale row cannot be installed: allowance never

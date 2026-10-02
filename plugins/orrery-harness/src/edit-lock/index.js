@@ -206,13 +206,20 @@ function registerLockTools(ctx, service) {
     }),
     ctx.tools.register({
       name: 'edit_lock_status',
-      description: 'List Edit Lock ownership in this work directory: file, owner session, status. Read-only; grants nothing.',
+      description: 'List Edit Lock ownership in this work directory: file, owner session, status and reservation. Read-only; grants nothing.',
       parameters: { type: 'object', properties: {}, required: [] },
       output: text('message'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
         const locks = await service.locks(exec)
         const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status} generation=${lock.generation}${lock.reason ? ` reason=${lock.reason}` : ''}`)
-        return { locks, message: lines.length ? lines.join('\n') : 'No Edit Lock ownership is held.' }
+        // The reservation is part of what the holder needs to know: without it the
+        // answer looks identical before and after a successful keep, which invites
+        // asking again instead of carrying on with the work.
+        const retention = await service.retention(exec)
+        if (retention?.held && retention.remainingMs > 0) {
+          lines.push(`Reserved for ${Math.ceil(retention.remainingMs / 60_000)} more minute(s); ${Math.round(retention.holdCumulativeMs / 60_000)} minute(s) used in this batch.`)
+        }
+        return { locks, retention, message: lines.length ? lines.join('\n') : 'No Edit Lock ownership is held.' }
       },
     }),
   ]
@@ -377,7 +384,10 @@ const apply = (ctx, config = {}) => {
     state.timer = undefined
     const retention = domain.retention?.(agent)
     if (!retention?.held || !(retention.remainingMs > 0)) return
-    const setTimer = ctx.setTimeout ?? globalThis.setTimeout
+    // Read the host timer through a guarded probe, not a bare member access: an
+    // unavailable cordis service throws on access rather than returning undefined,
+    // which would abort a hold request that is otherwise perfectly valid.
+    const setTimer = safeSetTimer(ctx) ?? globalThis.setTimeout
     state.timer = setTimer(() => {
       state.timer = undefined
       void Promise.resolve(domain.settleExpired(agent)).then(result => {
@@ -415,10 +425,13 @@ const apply = (ctx, config = {}) => {
       armExpiry(exec.agent, settled.get(exec.agent))
       return result
     },
-    /** Retention state for this session, settled against now. @param {any} exec */
-    retention(exec) {
-      const domain = settled.get(exec.agent)
-      return domain ? domain.retention(exec.agent) : null
+    /** Retention state for this session, settled against now. Resolved through the
+     * domain registry — the same path the lock list takes — rather than through the
+     * per-agent binding, so a read-only observation works from any tool context.
+     * @param {any} exec */
+    async retention(exec) {
+      const domain = await domainOf(exec.agent)
+      return domain.retention(exec.agent)
     },
     /** Mount-time handshake from a managed editor. @param {object} definition */
     claim(definition) {
@@ -467,15 +480,22 @@ const apply = (ctx, config = {}) => {
 
   // Stock Stop aborts the active turn signal synchronously: close admission at
   // that instant. Idle Stop has no signal; /edit-lock stop is the awaitable path.
+  /** Turn identity seen last per agent, so a new turn is detected exactly once.
+   * @type {WeakMap<object, unknown>} */
+  const lastTurn = new WeakMap()
   /** @type {WeakSet<AbortSignal>} */
   const watched = new WeakSet()
   ctx.on('agent/pre-step', (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
-    const { agent, signal } = event ?? {}
+    const { agent, signal, turn } = event ?? {}
     const domain = agent && settled.get(agent)
-    // The holder is working again: every lock it holds leaves the holding state at
-    // once, without waiting for the reservation to run out (design D4), and the
-    // notice budget for this batch restarts.
-    if (domain) {
+    // `pre-step` fires once per STEP, not per turn, so "a new turn started" has to
+    // be detected on turn identity. Doing it on every step would clear the
+    // reservation a holder just asked for, one step later.
+    if (domain && turn && lastTurn.get(agent) !== turn) {
+      lastTurn.set(agent, turn)
+      // The holder is working again: every lock it holds leaves the holding state at
+      // once, without waiting for the reservation to run out (design D4), and the
+      // notice budget for this batch restarts.
       settle.turnStarted(agent)
       void Promise.resolve(domain.turnStarted(agent)).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock turn start failed: ${error?.message ?? error}`))
     }
@@ -558,6 +578,16 @@ const apply = (ctx, config = {}) => {
   }
 }
 
+/** The host timer is an optional service: accessing an unavailable cordis service
+ * throws rather than yielding undefined, so it is probed explicitly. Returning
+ * undefined lets the caller fall back to the platform timer.
+ * @param {any} ctx */
+function safeSetTimer(ctx) {
+  try {
+    const timer = ctx?.setTimeout
+    return typeof timer === 'function' ? timer.bind(ctx) : undefined
+  } catch { return undefined }
+}
 /** Any abort latches (denial is always safe) except disposal, which
  * agent/disposed revokes and forgets. @param {AbortSignal} signal */
 function abortedByUser(signal) {
