@@ -75,6 +75,7 @@ test('owner tools acquire, release and confirm by acquisition without stealing',
   await assert.rejects(tools.acquire({ agent: alice }, { filePath: 'missing.txt', cwd: root }), /existing regular file/)
   await assert.rejects(tools.acquire({ agent: alice }, { filePath: '../outside', cwd: root }), /./)
   assert.equal((await tools.locks({ agent: bob }))[0].mine, false)
+  assert.equal((await tools.locks({ agent: alice }))[0].generation, 1)
   await lifecycle.stop(alice)
   // Stopped: acquisition is refused with the reason, observation still works.
   await assert.rejects(tools.acquire({ agent: alice }, request), /was stopped/)

@@ -163,7 +163,7 @@ function registerLockTools(ctx, service) {
       output: text('message'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
         const locks = await service.locks(exec)
-        const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status}${lock.reason ? ` reason=${lock.reason}` : ''}`)
+        const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status} generation=${lock.generation}${lock.reason ? ` reason=${lock.reason}` : ''}`)
         return { locks, message: lines.length ? lines.join('\n') : 'No Edit Lock ownership is held.' }
       },
     }),
