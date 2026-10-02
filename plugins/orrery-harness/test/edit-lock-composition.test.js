@@ -411,3 +411,21 @@ test('the panel view is read-only and structured; the panel acts only through /e
   dispose()
   assert.equal(endpoint, undefined)
 })
+
+test('a refused edit names the owner and the next step instead of a bare "resource owned"', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
+  const alice = { id: 'alice' }, bob = { id: 'bob' }
+  await lifecycle.start(alice); await lifecycle.start(bob)
+  const file = { filePath: 'a.txt', cwd: root }
+  await lifecycle.service.acquire({ agent: alice }, file)
+  await assert.rejects(lifecycle.service.acquire({ agent: bob }, file), (error) => {
+    assert.match(error.message, /^resource owned: this file is being edited by session alice\./)
+    assert.match(error.message, /edit_lock_try_steal/)
+    return true
+  })
+  // The decision itself is unchanged: alice still owns the file.
+  assert.equal(lifecycle.status(alice).locks.length, 1)
+  await lifecycle.close()
+})

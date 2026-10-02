@@ -85,7 +85,8 @@ window.__ModuleLoader__.load({
 		function primaryOf(state, view) {
 			// Continue editing is one human action: restore authority, then confirm the
 			// retained files (each through the ordinary per-file check).
-			if (state === "stopped") return { verbs: ["resume", "confirm --all"], label: "editLockResume" };
+			// confirm --all only when something waits, so no empty "Confirmed 0 of 0" is recorded.
+			if (state === "stopped") return { verbs: view.files.some((file) => file.mine && file.status === "user-interrupted") ? ["resume", "confirm --all"] : ["resume"], label: "editLockResume" };
 			if (state === "confirm") return { verb: "confirm --all", label: "editLockConfirmAll" };
 			if (state === "holding" && view.ownCount > 0) return { verbs: view.files.filter((file) => file.mine && file.action === "release").map(rowCommand), label: "editLockReleaseAll" };
 			return null;

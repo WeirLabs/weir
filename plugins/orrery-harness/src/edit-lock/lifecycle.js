@@ -41,6 +41,22 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     denyStopped(entry)
     if (entry?.state === 'recovering') throw new Error('cleanup-only recovery: business edits and new ownership are denied; release locks, answer requests or pause, then wait for a human /edit-lock resume')
   }
+  /** A bare "resource owned" left the model without a next step. Name the owner
+   * and the two things that can be done; keep the original words so callers and
+   * logs that match on them still do. Never changes the decision.
+   * @param {() => Promise<any>} attempt @param {{filePath?: string, cwd?: string}} request */
+  async function explainOwned(attempt, request) {
+    try { return await attempt() } catch (error) {
+      if (!/^resource owned$/.test(String(/** @type {any} */ (error)?.message))) throw error
+      let owner = 'another session'
+      try {
+        const resourceId = runtime.requests.resource(String(request?.filePath), String(request?.cwd))
+        const lock = runtime.control.status().locks.find(/** @param {any} item */ item => item.resourceId === resourceId)
+        if (lock) owner = `session ${lock.owner}${lock.status === 'active' ? '' : ` (${lock.status})`}`
+      } catch { /* the plain explanation still applies */ }
+      throw new Error(`resource owned: this file is being edited by ${owner}. Ask for it with edit_lock_try_steal, or work on other files; do not retry the same edit.`, { cause: error })
+    }
+  }
   let closed = false
   /** @type {Promise<void> | undefined} */
   let shutdown
@@ -113,11 +129,11 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     // Only this narrowed service belongs in the tool context.
     service: Object.freeze({
       /** @param {any} exec @param {any} request */
-      async publish(exec, request) { business(exec); return host.publish(exec, request) },
+      async publish(exec, request) { business(exec); return explainOwned(() => host.publish(exec, request), request) },
       /** @param {any} exec @param {any} request */
       async publishBatch(exec, request) { business(exec); return host.publishBatch(exec, request) },
       /** @param {any} exec @param {any} request */
-      async acquire(exec, request) { business(exec); return host.acquire(exec, request) },
+      async acquire(exec, request) { business(exec); return explainOwned(() => host.acquire(exec, request), request) },
       /** Release stays available while stopped or recovering: it only removes authority.
        * @param {any} exec @param {{filePath: string, cwd: string}} request */
       async release(exec, request) {

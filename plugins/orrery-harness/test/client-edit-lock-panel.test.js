@@ -99,6 +99,13 @@ describe('client.edit-lock-panel chunk', () => {
     expect(runs).toEqual(['resume', 'confirm --all'])
   })
 
+  it('continuing a stopped session without retained files records no empty confirmation', async () => {
+    const { runs, render } = await mounted([viewOf('stopped', [])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    byAction(render(), 'primary').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['resume'])
+  })
+
   it('waiting files are confirmed in one action', async () => {
     const files = [own('a.txt', 'pending-confirmation', 'confirm'), own('b.txt', 'pending-confirmation', 'confirm')]
     const { runs, render } = await mounted([viewOf('confirm', files)])
