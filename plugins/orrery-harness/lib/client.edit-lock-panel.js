@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
 			lineHeight: "16px",
 			color: "var(--dsw-alias-label-secondary)"
 		};
+		// Popover surface: the theme's documented overlay token (defined for
+		// light and dark). Every colour below is a token the host theme defines.
 		const panelStyle = {
 			position: "absolute",
 			bottom: "calc(100% + 6px)",
@@ -33,7 +35,7 @@ window.__ModuleLoader__.load({
 			width: "min(520px, 80vw)",
 			maxHeight: "50vh",
 			overflow: "auto",
-			background: "var(--dsw-alias-bg-l1, var(--dsw-alias-bg-primary))",
+			background: "var(--dsw-alias-bg-overlay)",
 			border: "1px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-md, 8px)",
 			boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
@@ -41,9 +43,9 @@ window.__ModuleLoader__.load({
 			color: "var(--dsw-alias-label-primary)",
 			fontSize: "12px"
 		};
-		const preStyle = { whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "var(--dsw-font-mono, ui-monospace, monospace)", margin: "8px 0", lineHeight: "18px" };
+		const preStyle = { whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)", margin: "8px 0", lineHeight: "18px" };
 		const rowStyle = { display: "flex", gap: "6px", flexWrap: "wrap" };
-		const errorStyle = { color: "var(--dsw-alias-state-business-danger, #d64545)" };
+		const errorStyle = { color: "var(--dsw-alias-state-error-primary)" };
 		/** Lock state colour from the status text, for the dot only. */
 		function stateOf(text) {
 			if (typeof text !== "string") return "unknown";
@@ -53,9 +55,9 @@ window.__ModuleLoader__.load({
 		}
 		const dotColor = {
 			active: "var(--dsw-alias-state-business-primary)",
-			interrupted: "var(--dsw-alias-state-business-warning, #d9a400)",
-			abnormal: "var(--dsw-alias-state-business-danger, #d64545)",
-			unknown: "var(--dsw-alias-label-disabled, #999)"
+			interrupted: "var(--dsw-alias-state-warn-tertiary)",
+			abnormal: "var(--dsw-alias-state-error-primary)",
+			unknown: "var(--dsw-alias-label-tertiary)"
 		};
 		function EditLockPanel(props) {
 			const t = props.t;

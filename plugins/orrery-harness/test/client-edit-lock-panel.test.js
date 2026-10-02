@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
+import { readFileSync } from 'node:fs'
 
 /** client.edit-lock-panel.js: gated on the `edit-lock` command, every action is
  * an explicit /edit-lock run, and the dot colour follows the reported state. */
@@ -71,5 +72,16 @@ describe('client.edit-lock-panel chunk', () => {
     expect(exports.stateOf('Edit Lock session s: active, epoch 2\n- /a [pending-confirmation] generation 1')).toBe('interrupted')
     expect(exports.stateOf('Edit Lock session s: active, epoch 2\n- no locks held')).toBe('active')
     expect(exports.stateOf(null)).toBe('unknown')
+  })
+
+  it('paints an opaque popover with theme-defined tokens only', () => {
+    const source = readFileSync(new URL('../lib/client.edit-lock-panel.js', import.meta.url), 'utf8')
+    // The theme's documented popover surface; an undefined token renders transparent.
+    expect(source).toContain('background: "var(--dsw-alias-bg-overlay)"')
+    // Tokens verified against dsh-client-ui-theme 0.2.0-rc.2 definitions.
+    const DEFINED = new Set(['--dsw-alias-bg-overlay', '--dsw-alias-border-l2', '--dsw-alias-label-primary', '--dsw-alias-label-secondary',
+      '--dsw-alias-label-tertiary', '--dsw-alias-state-business-primary', '--dsw-alias-state-error-primary', '--dsw-alias-state-warn-tertiary',
+      '--dsw-font-markdown-code-block-font-family', '--dsw-radius-md', '--dsw-radius-sm'])
+    for (const match of source.matchAll(/var\((--dsw-[a-z0-9-]+)/g)) expect(DEFINED.has(match[1]), `undefined theme token ${match[1]}`).toBe(true)
   })
 })
