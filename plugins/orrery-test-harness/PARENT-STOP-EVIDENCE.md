@@ -1,6 +1,8 @@
 # Parent stop / child publication 复现证据
 
-## 结论
+## 修复前结论（历史证据）
+
+以下 27/27 为提交 `332039d` 的修复前复现，不是当前 Stop 契约的验收。原 trace 可从该提交读取；当前 fixtures 已用修复后安装版运行刷新。
 
 真实已安装 Electron CLI 中，仅 parent user stop 就能复现 `unknown`，不需要注入 I/O 错误。限定条件是子代理已进入 `writeText`、临时文件已写入，但尚未执行最终 abort 检查。该检查抛出取消异常，manager 的 `attempt.invoke()` catch 将它持久化为 `unknown`；目标文件实际不存在。
 
@@ -46,3 +48,14 @@ node --test --test-name-pattern='editlock-stop|scenario registry|trace record ke
 - 直接 Node 启动提取的 CLI 不可用；最终全部真实证据来自已安装 app 的自包含 CLI launcher。
 
 本次是原因判别测试提交，不是产品修复或离线恢复功能。未执行全量安装宿主集成场景；独立 reviewer 需由父 orchestrator 执行（此 worker 不能继续委派）。
+
+## 修复后验收
+
+在 lane `settle-accepted-publication-on-p-006` 使用已安装 Electron CLI 和隔离开发 profile 执行四场景：predispatch、staged、publication、update，结果 **51/51 PASS，exit 0**。命令同上，IT_ROOT 改为本 lane 的 `plugins/orrery-test-harness/.stop-contract-final`，场景列表增加 `editlock-stop-update`。
+
+- staged CREATE 现在正常 created；UPDATE 先创建目标和无关文件，由 child 真实 read 取得原版本，再 write。精确目录及临时文件名的 inspectTemp gate 调用 parent.cancel；父子均 running，两个原始 signal 从 false 变 true。
+- captured backend 恰调用一次，private commit signal 未 abort，实际字节为 published；UPDATE 历史为 updated，child ownership 为 user-interrupted；父子 turn/end 分别 aborted/user 与 aborted/parent。
+- 冷启动 continuation 的退出码也断言成功；其无版本覆盖现有文件被 version guard 拒绝。此处不把 cold continuation 当作同 runtime 隔离证明。
+- publisher 回归 5/5：另一个在同 runtime 已 active、由 host registry 认证的 session 在真实拒绝留下 unknown 后能更新无关既有文件；还覆盖 intent 持久化期间取消零调用、停止后后续拒绝、历史不重放、close 等待。
+- checkJs 通过。全产品单测首次仅既有 client entry mtime guard 失败；按授权对 lib/client.js 作内容不变的 mtime restamp 后重跑。装置单测新增四场景 replay 均通过，既有 rehydrate phase1 audit／worktree ledger 缺失仍失败，未伪造补齐。
+- 首次 UPDATE 探针误用 exec.args 导致未触发 Stop，主动终止后按真实边界改为 child 身份加精确 staged 目标匹配；最终四场景均已重新运行，不采用失败运行作验收。

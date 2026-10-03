@@ -107,7 +107,9 @@ export function createPublisher({ manager, fs, root, excluded = [], assertExclus
       }
       const ready = await manager.prepare(execution, { ...data, target: descriptor }, {
         validate,
-        publish: () => writeText(target, data.content, data.expected, signal, data.effectivePolicy),
+        // Admission still observes the turn signal. Once invoked, join the host
+        // commit independently: Stop revokes future work, not this dispatched write.
+        publish: () => writeText(target, data.content, data.expected, new AbortController().signal, data.effectivePolicy),
         identify: () => {
           const current = identity.resolve(data.filePath, { cwd: data.cwd })
           if (current.kind !== 'file') throw new Error('published resource missing')
