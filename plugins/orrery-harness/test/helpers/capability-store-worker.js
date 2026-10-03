@@ -50,6 +50,29 @@ if (role === 'commit') {
   const store = openCapabilityStore({ root, platform: 'darwin', fs, leaseMs })
   await store.commit(unit, expected, () => ({ writer: 'crash', point }))
   line('DONE')
+} else if (role === 'publish-crash') {
+  let switched = false
+  /** @param {string} op @param {string[]} args */
+  const reached = (op, args) => {
+    if (op === 'rename' && args[1].endsWith('/active.json')) switched = true
+    switch (point) {
+      case 'after-generation-file': return op === 'createExclusive' && args[0].includes('/generations/')
+      case 'after-generation-fsync': return op === 'fsyncDir' && args[0].endsWith('/generations')
+      case 'after-write-temp': return op === 'createExclusive' && args[0].endsWith('.tmp')
+      case 'after-rename': return op === 'rename' && args[1].endsWith('/active.json')
+      case 'after-dir-fsync': return op === 'fsyncDir' && switched
+      default: throw new Error(`unknown publish crash point ${point}`)
+    }
+  }
+  const fs = instrumentFs(createNodeFs(), async (op, args, phase) => {
+    if (phase !== 'after' || !reached(op, args)) return
+    setInterval(() => {}, 1000)
+    line(`AT ${point}`)
+    await new Promise(() => {})
+  })
+  const store = openCapabilityStore({ root, platform: 'darwin', fs, leaseMs })
+  await store.publishPointer('global', { expectedRevision: expected, generationId: id, files: { 'SKILL.md': `body ${id}`, 'b.txt': `b ${id}` }, provenance: { writer: id } })
+  line('DONE')
 } else if (role === 'reclaim') {
   const lockFile = `${dir}/selection.lock`
   /** @type {string[]} */

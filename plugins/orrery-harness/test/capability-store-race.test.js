@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { createNodeFs, instrumentFs } from '../src/capabilities/store/fs-adapter.js'
 import { createLiveness } from '../src/capabilities/store/liveness.js'
 import { createLockProtocol } from '../src/capabilities/store/lock.js'
+import { digestOf } from '../src/capabilities/store/record.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 
 const WORKER = fileURLToPath(new URL('./helpers/capability-store-worker.js', import.meta.url))
@@ -149,6 +150,43 @@ for (const point of ['after-lock-create', 'after-write-temp', 'after-fsync', 'af
     assert.equal(next.status, 'committed')
     assert.equal(next.revision, survived.revision + 1)
     assert.deepEqual(await readdir(unitDir(root)), ['selection.json'])
+  })
+}
+
+for (const point of ['after-generation-file', 'after-generation-fsync', 'after-write-temp', 'after-rename', 'after-dir-fsync']) {
+  test(`SIGKILL publishing ${point}: another process sees the whole old or whole new generation`, async t => {
+    const root = await fixture(t)
+    const dir = join(root, 'distribution', 'global')
+    const scope = { kind: 'distribution', scope: 'global' }
+    const files = id => ({ 'SKILL.md': `body ${id}`, 'b.txt': `b ${id}` })
+    const store = openCapabilityStore({ root, platform: 'darwin' })
+    assert.equal((await store.publishPointer('global', { expectedRevision: 0, generationId: 'g1', files: files('g1') })).status, 'committed')
+    const landed = point === 'after-rename' || point === 'after-dir-fsync'
+    const expectedId = landed ? 'g2' : 'g1'
+    const observe = async () => {
+      const active = await store.read(scope)
+      assert.equal(active.kind, 'ok')
+      assert.deepEqual(
+        { revision: active.revision, generationId: active.payload.generationId, provenance: active.payload.provenance },
+        { revision: landed ? 2 : 1, generationId: expectedId, provenance: landed ? { writer: 'g2' } : null })
+      const visible = Object.fromEntries(await Promise.all(Object.keys(active.payload.manifest)
+        .map(async name => [name, await readFile(join(dir, 'generations', expectedId, name), 'utf8')])))
+      assert.deepEqual(visible, files(expectedId))
+      assert.deepEqual(active.payload.manifest, Object.fromEntries(Object.entries(visible).map(([name, text]) => [name, digestOf(text)])))
+      return active
+    }
+
+    const crash = worker(t, { role: 'publish-crash', root, expected: 1, id: 'g2', point, leaseMs: 200 })
+    await crash.line(text => text === `AT ${point}`)
+    await observe()
+    crash.child.kill('SIGKILL')
+    assert.equal((await crash.exited).signal, 'SIGKILL')
+    const survived = await observe()
+
+    const next = await store.publishPointer('global', { expectedRevision: survived.revision, generationId: 'g3', files: files('g3') })
+    assert.equal(next.status, 'committed')
+    assert.equal((await store.read(scope)).payload.generationId, 'g3')
+    assert.deepEqual((await readdir(dir)).sort(), ['active.json', 'generations'])
   })
 }
 
