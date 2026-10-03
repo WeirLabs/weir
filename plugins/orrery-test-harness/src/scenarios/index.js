@@ -16,8 +16,9 @@ import rehydrate from './rehydrate.js'
 import lsp from './lsp.js'
 import targets from './targets.js'
 import editlock from './editlock.js'
+import worktree from './worktree.js'
 
-const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock]
+const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree]
 
 /**
  * Find a scenario entry by id.

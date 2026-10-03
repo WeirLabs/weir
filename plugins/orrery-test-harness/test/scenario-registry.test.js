@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
 
-const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets', 'editlock']
+const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets', 'editlock', 'worktree']
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -45,10 +45,14 @@ describe('scenario registry', () => {
     assert.equal(byId('no-such-scenario'), undefined)
   })
 
-  it('rehydrate carries the two-phase run override; no other scenario does', () => {
-    assert.equal(typeof byId('rehydrate').run, 'function')
+  // Scenarios whose preconditions need driver-side work: rehydrate boots twice
+  // with one session id; worktree initializes a git repository in the workspace.
+  const RUN_OVERRIDE = ['rehydrate', 'worktree']
+
+  it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {
-      if (scenario.id !== 'rehydrate') assert.equal(scenario.run, undefined, `${scenario.id} unexpectedly overrides run`)
+      if (RUN_OVERRIDE.includes(scenario.id)) assert.equal(typeof scenario.run, 'function', `${scenario.id} must override run`)
+      else assert.equal(scenario.run, undefined, `${scenario.id} unexpectedly overrides run`)
     }
   })
 })

@@ -11,7 +11,7 @@
 import { execFileSync, execFile } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeRunView } from './src/run-view.js'
 import { SCENARIOS, byId } from './src/scenarios/index.js'
@@ -162,6 +162,19 @@ function recordRun(run) {
     for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt']) {
       const source = join(WS, file)
       if (existsSync(source)) copyFileSync(source, join(dir, 'ws', file))
+    }
+    // Worktree scenario facts the assertion reads back on replay (only that
+    // scenario owns these paths; other scenarios' fixtures stay byte-identical).
+    // git never tracks a path inside a `.git` directory, so the exclude file
+    // is stored flattened as `git-info-exclude`.
+    const extras = run.scenario === 'worktree'
+      ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')], [join('.git', 'info', 'exclude'), 'git-info-exclude']]
+      : []
+    for (const [relative, stored] of extras) {
+      const source = join(WS, relative)
+      if (!existsSync(source)) continue
+      mkdirSync(dirname(join(dir, 'ws', stored)), { recursive: true })
+      copyFileSync(source, join(dir, 'ws', stored))
     }
     const auditLog = join(WS, '.orrery', 'audit.jsonl')
     if (existsSync(auditLog)) {

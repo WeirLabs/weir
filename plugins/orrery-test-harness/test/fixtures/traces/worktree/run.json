@@ -1,0 +1,7 @@
+{
+  "scenario": "worktree",
+  "code": 0,
+  "stdout": "parent saw the lane check: no-commits\n",
+  "stderr": "",
+  "sessionId": null
+}
