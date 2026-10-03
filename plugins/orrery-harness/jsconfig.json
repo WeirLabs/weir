@@ -41,5 +41,9 @@
     "src/hashline-edit/planned-fragments.js",
     "src/hashline-edit/sandbox.js",
     "src/lsp/uri.js",
+    "src/worktree/errors.js",
+    "src/worktree/state.js",
+    "src/worktree/rules.js",
+    "src/worktree/reconcile.js",
   ]
 }

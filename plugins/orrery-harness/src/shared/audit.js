@@ -21,6 +21,7 @@ export const AUDIT_TYPES = Object.freeze({
   continuationBlocked: 'continuation-blocked',
   continuationStop: 'continuation-stop',
   supervision: 'supervision',
+  worktree: 'worktree',
 })
 
 /**
@@ -32,6 +33,9 @@ export const AUDIT_TYPES = Object.freeze({
  */
 export const AUDIT_SUBTYPES = Object.freeze({
   supervision: Object.freeze(['spawn', 'seal', 'settle', 'group-settled', 'resume', 'terminate', 'group-released']),
+  // Lane transitions (git-worktree-lanes): one kind per state-machine event
+  // family, plus reconciliation reports.
+  worktree: Object.freeze(['open', 'setup', 'bind', 'checked', 'check', 'invalidate', 'ask', 'decline', 'conflict', 'land', 'cleanup', 'abandon', 'reconcile']),
 })
 
 /**
@@ -45,8 +49,11 @@ export function createAudit(ctx) {
    * @param {object} session - the session this record belongs to
    * @param {string} type - event type WITHOUT the 'orrery/' prefix
    * @param {unknown} [data] - JSON-serializable payload
+   * @param {{ root?: string }} [options] - `root` anchors the JSONL mirror at a
+   *   directory other than the session cwd (worktree lanes audit at the main
+   *   repository root so one file holds every lane's history)
    */
-  return function audit(session, type, data) {
+  return function audit(session, type, data, options = {}) {
     const fullType = `orrery/${type}`
     const record = {
       time: Date.now(),
@@ -60,7 +67,7 @@ export function createAudit(ctx) {
       // in-process observation must never break a turn
     }
     try {
-      const cwd = session?.header?.cwd
+      const cwd = options.root ?? session?.header?.cwd
       if (typeof cwd !== 'string' || cwd.length === 0) return
       const file = join(cwd, '.orrery', 'audit.jsonl')
       mkdirSync(dirname(file), { recursive: true })

@@ -30,6 +30,22 @@ describe('shared audit channel', () => {
     }
   })
 
+  it('anchors the JSONL mirror at an explicit root instead of the session cwd', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orrery-audit-root-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'orrery-audit-cwd-'))
+    try {
+      const audit = createAudit({ emit: () => {} })
+      audit({ id: 's9', header: { cwd } }, 'worktree/open', { lane: 'a-001' }, { root })
+      const record = JSON.parse(readFileSync(join(root, '.orrery', 'audit.jsonl'), 'utf8').trim())
+      expect(record.type).toBe('orrery/worktree/open')
+      expect(record.data).toEqual({ lane: 'a-001' })
+      expect(() => readFileSync(join(cwd, '.orrery', 'audit.jsonl'))).toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('stays silent when the session has no cwd', () => {
     const emitted = []
     const audit = createAudit({ emit: (type, record) => emitted.push({ type, record }) })
