@@ -785,8 +785,15 @@ window.__ModuleLoader__.load({
 			require.async("./client.worktree-view.js"),
 			require.async("./client.worktree-model.js")
 		]));
+		/** The views name keys without the namespace prefix ("abandon",
+		 * "state_landable"); the dictionaries hold them prefixed
+		 * ("worktreeAbandon", "worktreeState_landable"). Hyphens in state names
+		 * map to underscores. */
+		const worktreeKey = (key) => `worktree${key.charAt(0).toUpperCase()}${key.slice(1)}`.replace(/-/g, "_");
+		const worktreeT = (t) => (typeof t === "function" ? (key, ...rest) => t(worktreeKey(String(key)), ...rest) : t);
 		const worktreeFace = (props, view, model) => ({
 			...props,
+			t: worktreeT(props.t),
 			view,
 			model,
 			WORKTREE_PROJECTION_KEY: model.WORKTREE_PROJECTION_KEY,
@@ -821,7 +828,7 @@ window.__ModuleLoader__.load({
 		/** Right-sidebar lanes panel (U3) and its tab body. */
 		function WorktreePanelWrapper(props) {
 			const arrival = useChunkArrival(loadWorktreeChunks);
-			if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("worktreeLoading") });
+			if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: typeof props.t === "function" ? props.t("worktreeLoading") : "" });
 			const [view, model] = arrival.chunks;
 			return react_jsx_runtime.jsx(view.LanesPanel, worktreeFace(props, view, model));
 		}
@@ -830,7 +837,7 @@ window.__ModuleLoader__.load({
 			const arrival = useChunkArrival(loadWorktreeChunks);
 			if (!arrival?.chunks) return null;
 			const [view, model] = arrival.chunks;
-			return react_jsx_runtime.jsx(view.WorktreeToolRow, { ...props, model });
+			return react_jsx_runtime.jsx(view.WorktreeToolRow, { ...props, t: worktreeT(props.t), model });
 		}
 		/** Snapshot-store facade with a stable identity: the host caches slot
 		 * inject faces on first render, so the settings card's hooks source must

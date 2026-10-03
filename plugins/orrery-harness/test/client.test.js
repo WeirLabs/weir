@@ -562,6 +562,10 @@ describe('orrery settings client half', () => {
     expect(markerRendered.__type).toBe(worktreeViewChunk.WorktreeRowMarker)
     expect(markerRendered.model).toBe(worktreeModelChunk)
     expect(markerRendered.WORKTREE_PROJECTION_KEY).toBe('orreryWorktree')
+    // the views' short keys resolve to the prefixed dictionary entries
+    expect(markerRendered.t('abandon')).toBe('worktreeAbandon')
+    expect(markerRendered.t('state_setup-failed')).toBe('worktreeState_setup_failed')
+    expect(markerRendered.t('tool_worktree_land')).toBe('worktreeTool_worktree_land')
 
     // the lane tool view carries the model and narrows through it
     reactStub.begin()
@@ -571,6 +575,7 @@ describe('orrery settings client half', () => {
     const toolRendered = laneTool.component({ phase: 'result', block: { meta: null }, t: (key) => key })
     expect(toolRendered.__type).toBe(worktreeViewChunk.WorktreeToolRow)
     expect(toolRendered.model).toBe(worktreeModelChunk)
+    expect(toolRendered.t('mergeCommit')).toBe('worktreeMergeCommit')
     expect(asyncCalls).toContain('./client.worktree-view.js')
     expect(asyncCalls).toContain('./client.worktree-model.js')
   })
