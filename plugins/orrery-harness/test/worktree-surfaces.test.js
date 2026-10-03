@@ -347,6 +347,29 @@ describe('Worktree mode guard on main agents', () => {
     return { guard: guards[0], count: guards.length, main, child }
   }
 
+  it('covers a main agent that existed before the plugin mounted, through the scope guard and the existing roots', () => {
+    const mode = { on: true }
+    const scopeGuards = []
+    const existingGuards = []
+    const existing = { id: 'early', session: { header: { delegationDepth: 0 } }, ctx: { tools: { guard: (fn) => { existingGuards.push(fn); return () => {} } } } }
+    const ctx = {
+      on: () => () => {},
+      tools: { guard: (fn) => { scopeGuards.push(fn); return () => {} } },
+      get: (name) => (name === 'agents' ? { roots: () => [existing] } : undefined),
+    }
+    attachWorktreeModeGuard(ctx, { lanes: () => ({ modeOf: () => mode.on }), robash: () => ({ enabled: true, lists: { bash: DEFAULT_ROBASH, pwsh: DEFAULT_ROBASH_PWSH } }) })
+    expect(scopeGuards).toHaveLength(1)
+    expect(existingGuards).toHaveLength(1)
+    const call = { name: 'bash', agent: existing, arguments: { command: 'git branch -D x' } }
+    expect(scopeGuards[0](call)).toContain('read-only')
+    expect(existingGuards[0](call)).toContain('read-only')
+    expect(scopeGuards[0]({ name: 'bash', agent: existing, arguments: { command: 'git branch' } })).toBeUndefined()
+    const child = { id: 'c', session: { header: { delegationDepth: 1 } } }
+    expect(scopeGuards[0]({ name: 'write', agent: child, arguments: { file_path: '/r/a' } })).toBeUndefined()
+    mode.on = false
+    expect(scopeGuards[0](call)).toBeUndefined()
+  })
+
   it('guards only main agents and only while the mode is on', () => {
     const mode = { on: false }
     const { guard, count, main, child } = harness(mode)
