@@ -168,6 +168,19 @@ test('a dead expired lock is reclaimed; unknown owners and unreadable locks are 
   assert.equal((await store.read(unit)).revision, 1)
 })
 
+test('an expired lease with a live owner is not reclaimed', async t => {
+  const root = await fixture(t)
+  const store = openCapabilityStore({ root, platform: 'darwin', deadlineMs: 30 })
+  await mkdir(unitDir(root), { recursive: true })
+  // leaseUntil: 0 (expired) but the owner identity is THIS live process.
+  const own = JSON.parse(deadLock())
+  own.startIdentity = await createLiveness().identity()
+  await writeFile(join(unitDir(root), 'selection.lock'), JSON.stringify(own))
+  assert.deepEqual(await store.commit(unit, 0, () => ({ v: 1 })), { status: 'locked', reason: 'locked' })
+  assert.equal(JSON.parse(await readFile(join(unitDir(root), 'selection.lock'), 'utf8')).ownerToken, own.ownerToken)
+  assert.equal((await store.read(unit)).kind, 'absent')
+})
+
 test('an interrupted reclamation needs manual recovery, which re-checks what was shown', async t => {
   const root = await fixture(t)
   const store = openCapabilityStore({ root, platform: 'darwin', deadlineMs: 30 })
