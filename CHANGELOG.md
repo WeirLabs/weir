@@ -17,6 +17,10 @@
 
 - **Worktree 车道（安装说明）**：本版新增模块导出 `orrery-harness/worktree`、预设中的 `worktree` 行与设置页「Worktree 车道」组，**需重启 DeepSeek Harness 后生效**；本机 git 需为 2.38 或更新（冲突预检依赖 `git merge-tree --write-tree`），更低版本下车道功能整体报 `GIT_TOO_OLD`，不降级运行。
 
+### Fixed
+
+- **编辑锁：单个未决发布不再一律阻塞整个项目**：既有文件发布结果为 unknown 后，精确资源围栏外的可信规范既有文件仍可获取、确认与更新；批量和会话级操作在落盘前检查全部受影响归属，不能释放或重臂未决 update 必需的锁。domain 围栏仍拒绝正常操作；v3 无历史祖先连续性证据，subtree 围栏与新的创建意图仍保守拒绝。历史不改写、不重放，未新增人工结清入口。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+
 ## [0.7.0] - 2026-10-03
 
 ### Added

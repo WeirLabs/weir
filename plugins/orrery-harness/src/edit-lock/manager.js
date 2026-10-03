@@ -2,6 +2,7 @@ import { createEditLockState } from './state.js'
 import { bindRequest } from './request-binding.js'
 import { lookupOperation } from './operation-history.js'
 import { canonicalRequestData } from './request-data.js'
+import { admitMutation, publicationCandidate } from './admission.js'
 
 /**
  * Unmounted trusted manager core. Caller exclusively owns the store lifecycle;
@@ -65,17 +66,18 @@ function managerCore(store, kernel) {
       throw new Error('execution is not active')
     }
   }
+  /** @param {string} sessionId @returns {import('./admission.js').Candidate} */
+  function sessionResources(sessionId) {
+    return { kind: 'resources', resourceIds: operations.status().locks.filter(lock => lock.owner === sessionId).map(lock => lock.resourceId) }
+  }
   /** @param {(draft: ReturnType<typeof authority.begin>) => any} transition
-   * @param {boolean} [revocation] Only subtractive cancellation may cross an unresolved fence.
+   * @param {import('./admission.js').Candidate | (() => import('./admission.js').Candidate)} candidate
+   * @param {import('./admission.js').Mode} [mode]
    * @param {(state: any) => object} [patch] Extra durable fields (recovery budgets only). */
-  function transact(transition, revocation = false, patch = undefined) {
+  function transact(transition, candidate, mode = 'normal', patch = undefined) {
     const pending = tail.then(async () => {
       healthy()
-      // Until canonical overlap admission is wired, unresolved publication
-      // conservatively closes the entire recovered manager to mutations.
-      if (!revocation && confirmed.state.operations.some(operation => ['publishing', 'unknown'].includes(operation.phase))) {
-        throw new Error('unresolved publication fence')
-      }
+      admitMutation(confirmed.state.operations, typeof candidate === 'function' ? candidate() : candidate, mode)
       const draft = authority.begin()
       let result
       try { result = transition(draft) } catch (error) {
@@ -124,7 +126,7 @@ function managerCore(store, kernel) {
         const previous = lookupOperation(confirmed.state, { sessionId: captured.sessionId, operationId: data.operationId, binding })
         if (previous) return { kind: 'history', operation: previous }
         checkExecution(captured)
-        if (confirmed.state.operations.some(o => ['publishing', 'unknown'].includes(o.phase))) throw new Error('unresolved publication fence')
+        admitMutation(confirmed.state.operations, publicationCandidate(binding.target))
         if (binding.target.kind === 'update') operations.checkWrite({ ...captured,
           resourceId: binding.target.resourceId, generation: binding.target.generation })
         hooks.validate()
@@ -186,7 +188,7 @@ function managerCore(store, kernel) {
           hooks.validate()
         }
         try {
-          if (confirmed.state.operations.some(o => ['publishing', 'unknown'].includes(o.phase))) throw new Error('unresolved publication fence')
+          admitMutation(confirmed.state.operations, publicationCandidate(binding.target))
           validate()
         } catch (error) {
           await save({ ...original, phase: 'not-published', outcome: { kind: 'not-published',
@@ -253,7 +255,7 @@ function managerCore(store, kernel) {
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
         return draft.authority.issueExecutionReceipt(captured, requestId)
-      }).then(async receipt => {
+      }, { kind: 'none' }).then(async receipt => {
         const cancellation = cancelled.get(captured.sessionId)
         if (cancellation) {
           await cancellation
@@ -271,7 +273,7 @@ function managerCore(store, kernel) {
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
         return draft.operations.resume(captured, requestId, receipt)
-      }).then(async resumed => {
+      }, () => sessionResources(captured.sessionId)).then(async resumed => {
         const cancellation = cancelled.get(captured.sessionId)
         if (cancellation) {
           await cancellation
@@ -288,7 +290,7 @@ function managerCore(store, kernel) {
       return transact(draft => {
         if (cancelled.has(sessionId)) throw new Error('session cancelled')
         return draft.authority.openSession(sessionId)
-      }).then(async execution => {
+      }, { kind: 'none' }).then(async execution => {
         const cancellation = cancelled.get(sessionId)
         if (cancellation) {
           await cancellation
@@ -311,7 +313,7 @@ function managerCore(store, kernel) {
         if (!session) throw new Error('unknown session')
         if (session.interrupted) return { sessionId, executionEpoch: session.executionEpoch, managerIncarnation }
         return draft.authority.cancel({ sessionId, executionEpoch: session.executionEpoch, managerIncarnation })
-      }, true)
+      }, { kind: 'none' }, 'revocation')
       cancelled.set(sessionId, pending)
       void pending.then(() => cancelled.delete(sessionId), () => {})
       return pending
@@ -323,7 +325,7 @@ function managerCore(store, kernel) {
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
         return draft.operations.acquire(captured, resourceId)
-      }).then(async token => {
+      }, { kind: 'resources', resourceIds: [resourceId] }).then(async token => {
         const cancellation = cancelled.get(captured.sessionId)
         if (cancellation) {
           await cancellation
@@ -346,7 +348,7 @@ function managerCore(store, kernel) {
           throw new Error('resource has no pending confirmation for this session')
         }
         return draft.operations.acquire(captured, resourceId)
-      }).then(async token => {
+      }, { kind: 'resources', resourceIds: [resourceId] }).then(async token => {
         const cancellation = cancelled.get(captured.sessionId)
         if (cancellation) {
           await cancellation
@@ -367,7 +369,7 @@ function managerCore(store, kernel) {
           draft.operations.checkWrite(token)
         }
         for (const token of captured) draft.operations.release(token)
-      })
+      }, { kind: 'resources', resourceIds: captured.map(token => token.resourceId) }, 'release')
     },
     /** Atomic acquisition of existing canonical resources for a trusted batch editor.
      * Pre-existing ownership is retained and explicitly excluded from cleanup.
@@ -384,7 +386,7 @@ function managerCore(store, kernel) {
         const tokens = ids.map(resourceId => draft.operations.acquire(captured, resourceId))
         for (const token of tokens) draft.operations.checkWrite(token)
         return { tokens, temporary: tokens.filter(token => !before.some(lock => lock.resourceId === token.resourceId)) }
-      }).then(async result => {
+      }, { kind: 'resources', resourceIds: ids }).then(async result => {
         const cancellation = cancelled.get(captured.sessionId)
         if (cancellation) { await cancellation; throw new Error('session cancelled during batch acquisition') }
         healthy()
@@ -396,7 +398,7 @@ function managerCore(store, kernel) {
      * @param {import('./state.js').Ownership} token */
     release(token) {
       const captured = { ...token }
-      return transact(draft => draft.operations.release(captured))
+      return transact(draft => draft.operations.release(captured), { kind: 'resources', resourceIds: [captured.resourceId] }, 'release')
     },
     /** Give up every active lock of one session: the disposition used when a
      * finished turn's locks were never sorted out. Retention is a policy decision
@@ -415,7 +417,8 @@ function managerCore(store, kernel) {
           released.push(lock.resourceId)
         }
         return released
-      })
+      }, () => ({ kind: 'resources', resourceIds: operations.status().locks
+        .filter(lock => lock.owner === sessionId && lock.status === 'active').map(lock => lock.resourceId) }), 'release')
     },
     /** Charge and record an explicit retention request (design D2). The caller
      * resolves the configured caps and supplies the instant, so this layer holds
@@ -428,7 +431,7 @@ function managerCore(store, kernel) {
       // position: computed earlier on the live kernel it could be based on a hold
       // that a queued turn start is about to end, and would revive it. The draft
       // is only installed after persistence, so a store failure changes nothing.
-      return transact(draft => draft.operations.hold(draft.operations.holdCandidate(sessionId, ms, caps)))
+      return transact(draft => draft.operations.hold(draft.operations.holdCandidate(sessionId, ms, caps)), () => sessionResources(sessionId))
     },
     /** Retention state of one session, settled against the caller's instant so a
      * missed timer cannot leave stale ownership. Pure read; never mutates.
@@ -443,7 +446,7 @@ function managerCore(store, kernel) {
       healthy()
       const held = operations.settleHold(sessionId, now)
       if (!held.held) return held
-      return transact(draft => draft.operations.endHold(sessionId), true).then(() => operations.settleHold(sessionId, now))
+      return transact(draft => draft.operations.endHold(sessionId), { kind: 'none' }, 'revocation').then(() => operations.settleHold(sessionId, now))
     },
     /** Consented transfer: release the holder's exact generation and acquire
      * for the requester in ONE durable transaction. Either side cancelled,
@@ -455,7 +458,7 @@ function managerCore(store, kernel) {
         if (cancelled.has(from.sessionId) || cancelled.has(to.sessionId)) throw new Error('session cancelled')
         draft.operations.release(from)
         return draft.operations.acquire(to, from.resourceId)
-      }).then(async token => {
+      }, { kind: 'resources', resourceIds: [from.resourceId] }).then(async token => {
         const cancellation = cancelled.get(to.sessionId)
         if (cancellation) { await cancellation; throw new Error('session cancelled during transfer') }
         healthy()
@@ -463,8 +466,8 @@ function managerCore(store, kernel) {
       })
     },
     /** Controlled human unlock. Runs at its FIFO position, so every earlier
-     * commit has settled; refuses while any publication is unresolved (the
-     * transaction fence) and unless the expected generation is current. A
+     * commit has settled; refuses removal of unresolved publication ownership
+     * or a generation other than the expected current generation. A
      * prepared old-owner write then fails its generation check. There is no
      * unconditional variant. @param {string} resourceId @param {number} generation */
     adminUnlock(resourceId, generation) {
@@ -477,7 +480,7 @@ function managerCore(store, kernel) {
         if (!session) throw new Error('owner session unknown')
         draft.operations.release({ managerIncarnation, sessionId: lock.owner, executionEpoch: session.executionEpoch, resourceId, generation })
         return { resourceId, generation, owner: lock.owner }
-      })
+      }, { kind: 'resources', resourceIds: [resourceId] }, 'release')
     },
     /** Trusted classifier only (durable turn/end error). Marks every retained,
      * not yet abnormal lock of the session abnormal; never releases. Subtractive,
@@ -495,7 +498,7 @@ function managerCore(store, kernel) {
           marked.push(lock.resourceId)
         }
         return marked
-      }, true)
+      }, { kind: 'none' }, 'revocation')
     },
     /** Monotonic durable recovery budget charge; restart never refunds it.
      * @param {string} sessionId @param {{attempts?: number, elapsedMs?: number, pauseMs?: number}} delta */
@@ -507,7 +510,7 @@ function managerCore(store, kernel) {
       let charged
       return transact(() => {
         if (!operations.status().sessions.some(item => item.sessionId === sessionId)) throw new Error('unknown session')
-      }, true, state => {
+      }, { kind: 'none' }, 'revocation', state => {
         const recovery = state.recovery.map(/** @param {any} item */ item => ({ ...item }))
         let entry = recovery.find(/** @param {any} item */ item => item.sessionId === sessionId)
         if (!entry) { entry = { sessionId, attempts: 0, elapsedMs: 0, pauseMs: 0 }; recovery.push(entry) }
@@ -549,7 +552,7 @@ function managerCore(store, kernel) {
         if (!current) throw new Error('unknown session')
         if (current.interrupted) return { ...execution, executionEpoch: current.executionEpoch }
         return draft.authority.cancel({ ...execution, executionEpoch: current.executionEpoch })
-      }, true)
+      }, { kind: 'none' }, 'revocation')
       cancelled.set(execution.sessionId, pending)
       // Keep denial on failure; poisoned state must never expose rollback authority.
       void pending.then(() => cancelled.delete(execution.sessionId), () => {})

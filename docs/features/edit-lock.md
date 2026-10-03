@@ -146,7 +146,17 @@
 
 ### 管理器事务与发布
 
-`prepare` 持久绑定原请求并返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到的取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。全新 store 的初始 manager 只接受 revision 0、无 incarnation 的镜像；启动恢复（`recoverEditLockManager`）把历史 prepared → not-published、publishing → unknown，原 fence、terminal/unknown 历史与预算不改写，以新 incarnation 保守重装，并让所有已知会话以中断态开始（旧 receipt 不导入，重复注册不能绕过中断）。存在 publishing/unknown 操作时，恢复出的 manager 对其余 mutation 保守关闭（只有仅减权的取消可以穿过未决围栏），只留 status 诊断，不提供清围栏或重放。创建成功的结算（`settleCreated`）只收编本次经原生创建并解析出规范身份的节点，拒绝收编任何既有锁。
+`prepare` 持久绑定原请求并返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到的取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。全新 store 的初始 manager 只接受 revision 0、无 incarnation 的镜像；启动恢复（`recoverEditLockManager`）把历史 prepared → not-published、publishing → unknown，原 fence、terminal/unknown 历史与预算不改写，以新 incarnation 保守重装，并让所有已知会话以中断态开始（旧 receipt 不导入，重复注册不能绕过中断）。创建成功的结算（`settleCreated`）只收编本次经原生创建并解析出规范身份的节点，拒绝收编任何既有锁。
+
+**未决发布隔离（第一阶段，仍为 v3）**：`src/edit-lock/admission.js` 在 manager FIFO 的实际准入点统一检查全部 publishing/unknown 围栏；一般事务在创建 draft、消费 receipt 或持久化之前拒绝，拒绝本身不会毒化 manager。`prepare` 与 `commit` 各检查一次：准备后出现的冲突会在 dispatch 前结算为 not-published，不调用 publisher。
+
+- **resource 围栏**：在既有可信规范资源身份契约下，精确相同资源拒绝；不同的规范既有资源可继续获取、确认、更新、转交。因此子会话一个既有文件发布结果未知，不再自动阻断父会话对另一个既有文件的工作。缺失、非规范或不透明身份不能作为不重叠证明。
+- **subtree 围栏仍保守关闭资源操作**：v3 只保存祖先路径，没有可持久验证的历史拓扑连续性证据。即使路径看似在另一子树、只是前缀相近或重新解析后不同，也不能证明不相交；本阶段拒绝这些资源操作，不用 `startsWith`／词法包含冒充证明。同理，存在未决围栏时，新的 create 意图不能仅凭祖先路径获得准入。这是本阶段的可用性限制，尚未实现完整 subtree 非重叠放行。
+- **domain 围栏**：正常 mutation 全部拒绝，包括没有显式文件参数的新会话注册、receipt 签发及空批次；不能用新 sessionId 绕过。
+- **无显式目标不等于无资源影响**：resume、hold 与会话级释放在执行点枚举受影响 ownership；批量获取/释放检查全部成员，不能先处理无冲突项再失败。resume 遇到被围栏保护的锁时整体拒绝，不消费 receipt、不把锁改为 pending-confirmation。transfer 按实际转交资源检查。
+- **仅减权入口仍可运行**：取消、标记异常、结束保留与增加恢复预算不解除围栏。release／releaseMany／releaseActive／人工 unlock 可移除无关 ownership，但未决 update 必需的原 owner/generation 必须保留；混合批次整体拒绝。release 不代表确认发布结果，也不结清 unknown。
+
+本阶段不改历史 outcome/fence、不增加 closeout 或人工结清入口、不自动重放、不引入 TTL；持久化失败仍毒化整个 manager。精确资源比较依赖可信 ingress 提供 native canonical 单链接文件身份，以及既有独占生命周期／外部拓扑变更协调前提；路径形状检查自身不是文件系统证明。
 
 publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标、完整内容、原版本策略、signal、effectivePolicy）；adapter 用进程内不可伪造 call 绑定可信 execution/cwd/policy/callId，单次消费，不向工具参数暴露凭据。历史 prepared/unknown/not-published 不作为工具成功返回。受控 `write` 复用现有单次沙箱策略解析，保留 `fs/write-intent` 返回的 createIfAbsent／replaceIfVersion，缺少明确 guard 时拒绝，不用新 stat 覆盖旧观察版本；成功后发送标准 `fs/observed` 并返回内容差异；没有本地写入 fallback。宿主桥 `createEditLockHost` 以真实 agent 对象的 WeakMap 绑定已持久注册／恢复的 execution，逐次用宿主 registry 检查对象身份（模型参数不能注册身份）；detach 先删除调用授权，再请求 durable cancel。`hash_edit` 与 `lsp_rename` 同样捕获挂载时的服务：发布完整合成内容、原始参数、版本 guard、实际有效 policy 与 exec，服务拒绝或关闭不能回退原生直写；没有服务时保持既有行为，因此正式启用必须在编辑工具挂载前安装服务并整体覆盖 write/LSP，不能热插入局部接管。
 
@@ -170,7 +180,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **答复工具的生命周期**：`edit_lock_reply` 在首次收到请求时注册，且只在**回合边界**（`agent/turn-stopping`）于无待答请求时注销；回合中途注销会让「已过期但仍被调用」的答复报成 `unknown tool` 而不是真实原因。
 - **仅清理恢复**（`recovery.js`）：回合以 `turn/end` reason `error` 结束且会话持有锁时，这些锁标为 abnormal（不释放），会话进入 `recovering`：业务写入、新获取与 try_steal 全部拒绝，只能 `edit_lock_release`、`edit_lock_reply` 或 `edit_lock_pause`。驱动按 15／30／60 秒退避注入仅清理回合，至多 3 次或累计 5 分钟（以先到者为准）；暂停单次 ≤15 分钟、累计 ≤30 分钟，到期只重新检查，不释放、不自续。次数、恢复耗时与暂停时长都持久计入 authority 镜像的 `recovery`，重启不退还。预算耗尽或无剩余异常锁时停止并提示人工；恢复正常编辑只能经 `/edit-lock resume`，abnormal 锁保持 abnormal，须释放或人工解锁。用户 Stop（`aborted`）立即结束自动恢复且不唤醒会话。
 - **停止后的提示与清理**：会话被 Stop 或 `/edit-lock stop` 停止后，写入、获取、转交与答复统一返回「editing in this session was stopped … until a human runs /edit-lock resume」；`edit_lock_status` 与 `edit_lock_release` 在停止、恢复中状态仍可用（只读或只减权）。agent 结束（`agent/disposed`）时，仍处于 active 的 agent（例如正常完成的子代理）永远不会再写，先在一个事务里释放它的 active 锁，再撤权遗忘；已停止、异常或存在未决发布时保留，留给人工。跨进程连接断开可能是崩溃，只撤权不释放；客户端正常结束会先发送 `dispose` 再断开。
-- **受控人工解锁**：`/edit-lock unlock <path|resourceId> <generation>` 只在期望 generation 仍为当前值时释放。它排在 manager FIFO 中，等待此前在途提交结算；存在未决发布时被事务围栏拒绝；不存在无条件强制解锁。已准备的旧 owner 写入随后因 generation 失效在派发前结算为 not-published。解锁不改变任何会话的中断闩锁，也不验证内容。
+- **受控人工解锁**：`/edit-lock unlock <path|resourceId> <generation>` 只在期望 generation 仍为当前值时释放。它排在 manager FIFO 中，等待此前在途提交结算；未决 update 必需的归属被事务围栏保护，无关锁可释放；不存在无条件强制解锁。已准备的旧 owner 写入随后因 generation 失效在派发前结算为 not-published。解锁不改变任何会话的中断闩锁，不验证内容，也不清除 unknown。
 - **操作身份**按每次实际执行生成（`callId@uuid`）：部分供应商跨回合复用 tool-call id（如 `call_0`），不能直接作幂等键。
 
 ### 信任模型
@@ -180,7 +190,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 ## 边界与失败语义
 
 - **未开启即无行为**：设置关闭时没有插件服务、没有锁工具、没有 UI 元素，装载与否不改变任何现有会话；开启后受控 editor 的定义必须由本特性接管，否则 fail closed。
-- **权威状态持久且可重启恢复，但恢复出的 active 状态不构成当前授权**：恢复重新装载历史并把所有已知会话置为中断态；存在 publishing/unknown 时其余 mutation 保守拒绝（仅减权取消可过），只留 status 诊断，没有清围栏、重放或自动结清入口。
+- **权威状态持久且可重启恢复，但恢复出的 active 状态不构成当前授权**：恢复重新装载历史并把所有已知会话置为中断态；publishing/unknown 按上述准入规则隔离，resource 围栏外的已证明无关工作可继续，subtree 连续性未证明及 domain 围栏仍保守拒绝。没有清围栏、重放或自动结清入口。
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**不判定缺失名称的等价性**——不预创建占位文件、不猜测别名；store 只写自己的 `snapshot.json`，release 也不等于验证通过。
 - **停止本会话不会停止它的子代理**：每个会话有各自的锁状态；子代理持有的文件对父会话与其他兄弟同样按普通占用拒绝，正常结束（`agent/disposed`）时释放自己的锁。父会话被 Stop 只撤销它自己的编辑权。
 - **shell 与外部写入不在保护范围**：`printf > file`、`echo x >> file` 这类 shell 命令与任何外部编辑器的写入完全绕过锁，不受占用判断影响；不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外），也不承诺分布式多机共识。
@@ -189,6 +199,10 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）；跨文件批量失败只区分 written / not-written / uncertain，不宣称回滚。
 
 ## 测试
+
+### 未决发布隔离的有界回归
+
+`test/edit-lock-quarantine.test.js` 使用临时 store 和可控 publisher，覆盖：已调用后抛错留下 unknown，父会话无关既有文件仍可获取并发布；相同资源、未证明的 subtree／缺失目标及 domain 拒绝；批量与会话级操作不部分改写归属；历史同参不重放；恢复后围栏不变；撤权与持久化失败仍封闭权限。实现前新增用例中 9 个失败于旧全局围栏，另 1 个保守拒绝用例已通过。本轮证据限后端单测与 checkJs，不代表本机 GUI、跨进程运行时或人工结清验收；下表是此前发布记录。
 
 ### 发布门槛（最终树）
 
