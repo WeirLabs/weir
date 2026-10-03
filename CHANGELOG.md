@@ -23,6 +23,10 @@
 
 - **会话能力管理器（基础设施，暂无用户可见变化）**：新增 Orrery 自管的带锁持久化侧文件存储（位于 DSH home 下的 `orrery/profiles/<profile>/capabilities`），承载后续会话 Skill/MCP 选择与其回执：每单元独立文件与修订号、原子提交（temp + fsync + rename）、跨进程锁文件（崩溃安全获取、陈旧锁须证明 owner 已不存活才回收）、幂等回执与内容代次指针原子切换；不支持的平台显式报 unsupported 且零写入。本步不改动任何现有行为。详见 [会话能力管理器特性文档](docs/features/session-capability-manager.md)。
 
+### Fixed
+
+- **编辑锁：单个未决发布不再一律阻塞整个项目**：既有文件发布结果为 unknown 后，精确资源围栏外的可信规范既有文件仍可获取、确认与更新；批量和会话级操作在落盘前检查全部受影响归属，不能释放或重臂未决 update 必需的锁。domain 围栏仍拒绝正常操作；v3 无历史祖先连续性证据，subtree 围栏与新的创建意图仍保守拒绝。历史不改写、不重放，未新增人工结清入口。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+
 ## [0.7.0] - 2026-10-03
 
 ### Added
