@@ -97,6 +97,14 @@ describe('orrery settings client half', () => {
     const lspToggleChunk = { LspToggle: (props) => ({ __toggle: props }) }
     const hashEditViewChunk = { HashEditRow: (props) => ({ __row: props }) }
     const hashEditModelChunk = { HASH_EDIT_TOOL: 'hash_edit', marker: 'hash-edit-model' }
+    const worktreeViewChunk = {
+      WorktreeRowMarker: (props) => ({ __worktreeMarker: props }),
+      WorktreeStatusPill: (props) => ({ __worktreePill: props }),
+      WorktreeModeSwitch: (props) => ({ __worktreeMode: props }),
+      LanesPanel: (props) => ({ __worktreePanel: props }),
+      WorktreeToolRow: (props) => ({ __worktreeTool: props }),
+    }
+    const worktreeModelChunk = { WORKTREE_PROJECTION_KEY: 'orreryWorktree', marker: 'worktree-model' }
     const chunkModules = {
       './client.settings-page.js': settingsPageChunk,
       './client.chain-editor.js': chainEditorChunk,
@@ -109,6 +117,8 @@ describe('orrery settings client half', () => {
       './client.lsp-toggle.js': lspToggleChunk,
       './client.hash-edit-view.js': hashEditViewChunk,
       './client.hash-edit-model.js': hashEditModelChunk,
+      './client.worktree-view.js': worktreeViewChunk,
+      './client.worktree-model.js': worktreeModelChunk,
     }
     let asyncFailure = null
     requireStub.async = (spec) => {
@@ -131,6 +141,8 @@ describe('orrery settings client half', () => {
       lspToggleChunk,
       hashEditViewChunk,
       hashEditModelChunk,
+      worktreeViewChunk,
+      worktreeModelChunk,
       setAsyncFailure: (error) => {
         asyncFailure = error
       },
@@ -237,7 +249,13 @@ describe('orrery settings client half', () => {
     // drive the whileServed registration: the composer toggle and the hash_edit
     // toolview registered at apply, then three page-chain slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'settings.section', 'settings.orrery.item', 'plugins.item'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual([
+      'conversation.input.right', 'tool.call.toolview', 'conversation.input.right',
+      // worktree surfaces (U1/U2/U4/U6) register at apply, right after Edit Lock
+      'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right',
+      'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
+      'settings.section', 'settings.orrery.item', 'plugins.item',
+    ])
 
     // the per-session LSP toggle in the conversation composer bar slot
     slotInjects[0].fn()
@@ -257,18 +275,32 @@ describe('orrery settings client half', () => {
 
     // the Edit Lock composer entry (rendered only while /edit-lock exists)
     slotInjects[2].fn()
-    expect(slotRegistrations).toHaveLength(3)
-    expect(slotRegistrations[2].definition.name).toBe('conversation.input.right')
-    expect(slotRegistrations[2].definition.id).toBe('orrery-edit-lock')
-    expect(slotRegistrations[2].definition.inject()).toEqual({})
-    const lockVerbs = slotRegistrations[2].definition.inject('s1')
+    const lockEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-edit-lock')
+    expect(lockEntry.definition.name).toBe('conversation.input.right')
+    expect(lockEntry.definition.inject()).toEqual({})
+    const lockVerbs = lockEntry.definition.inject('s1')
     expect(lockVerbs.sessionId).toBe('s1')
     expect(typeof lockVerbs.runEditLock).toBe('function')
 
+    // the worktree surfaces: session row marker, header pill, composer mode
+    // switch, and one keyed tool view per lane tool
+    for (const index of [3, 4, 5, 6, 7, 8, 9, 10]) slotInjects[index].fn()
+    const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
+    expect(marker.definition.name).toBe('sidebar.session.row.leading')
+    expect(marker.definition.inject('s1')).toEqual({ sessionId: 's1' })
+    const pill = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-pill')
+    expect(pill.definition.name).toBe('conversation.session.header.utilities')
+    const modeSwitch = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-mode')
+    expect(modeSwitch.definition.name).toBe('conversation.input.right')
+    expect(typeof modeSwitch.definition.inject('s1').runCommand).toBe('function')
+    const laneToolViews = slotRegistrations.filter((registration) => registration.definition.name === 'tool.call.toolview' && registration.definition.key !== 'hash_edit')
+    expect(laneToolViews.map((registration) => registration.definition.key).sort()).toEqual([
+      'worktree_abandon', 'worktree_check', 'worktree_cleanup', 'worktree_land', 'worktree_open',
+    ])
+
     // the top-level settings section registration
-    slotInjects[3].fn()
-    expect(slotRegistrations).toHaveLength(4)
-    const { definition: sectionDef, component: sectionComponent } = slotRegistrations[3]
+    slotInjects[11].fn()
+    const { definition: sectionDef, component: sectionComponent } = slotRegistrations.find((registration) => registration.definition.name === 'settings.section')
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
     expect(sectionDef.order).toBe(40)
@@ -278,15 +310,13 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[4].fn()
-    expect(slotRegistrations).toHaveLength(5)
-    expect(slotRegistrations[4].definition.name).toBe('settings.orrery.item')
-    expect(slotRegistrations[4].definition.id).toBe('orrery-config')
+    slotInjects[12].fn()
+    const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
+    expect(itemEntry.definition.id).toBe('orrery-config')
 
     // the Plugins-page entry
-    slotInjects[5].fn()
-    expect(slotRegistrations).toHaveLength(6)
-    const { definition, component } = slotRegistrations[5]
+    slotInjects[13].fn()
+    const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     expect(definition.name).toBe('plugins.item')
     expect(definition.id).toBe('orrery-settings')
     expect(definition.order).toBe(30)
@@ -314,7 +344,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[5].fn()
+    slotInjects[13].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     const injected = definition.inject()
 
@@ -360,7 +390,7 @@ describe('orrery settings client half', () => {
 
     // settingsBus 贯通: the composer toggle wrapper receives the same bus object
     slotInjects[0].fn()
-    const composer = slotRegistrations.find((registration) => registration.definition.name === 'conversation.input.right')
+    const composer = slotRegistrations.find((registration) => registration.definition.id === 'orrery-lsp-toggle')
     const composerSettle = async (props) => {
       reactStub.reset()
       reactStub.begin()
@@ -382,7 +412,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[5].fn()
+    slotInjects[13].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
 
     const settle = async (props) => {
@@ -413,7 +443,7 @@ describe('orrery settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')
@@ -479,7 +509,7 @@ describe('orrery settings client half', () => {
     const { ctx, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     slotInjects[1].fn()
-    const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'tool.call.toolview')
+    const { definition, component } = slotRegistrations.find((registration) => registration.definition.key === 'hash_edit')
     // registration carries the literal key — no chunk pull just to register
     expect(definition.key).toBe('hash_edit')
     expect(asyncCalls).toEqual([])
@@ -509,6 +539,40 @@ describe('orrery settings client half', () => {
     expect(settled.model).toBe(hashEditModelChunk)
     expect(settled.phase).toBe('result')
     expect(settled.block).toBe(block)
+  })
+
+  it('worktree surfaces: gated arrival, one model chunk, and no host call before arrival', async () => {
+    const { surface, reactStub, asyncCalls, worktreeViewChunk, worktreeModelChunk } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations } = makeCtx()
+    surface.apply(ctx)
+    // registration costs no chunk pull (the keyed tool views register literally)
+    expect(asyncCalls).toEqual([])
+    slotInjects[3].fn()
+    const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
+    // the lane tool views are registered by their own injects (indices 6..10)
+    for (const index of [6, 7, 8, 9, 10]) slotInjects[index].fn()
+    const laneTool = slotRegistrations.find((registration) => registration.definition.key === 'worktree_land')
+
+    // session row marker: renders nothing until the chunks arrive, then the view
+    reactStub.begin()
+    expect(marker.component({ sessionId: 's1', t: (key) => key })).toBe(null)
+    await flush()
+    reactStub.begin()
+    const markerRendered = marker.component({ sessionId: 's1', t: (key) => key })
+    expect(markerRendered.__type).toBe(worktreeViewChunk.WorktreeRowMarker)
+    expect(markerRendered.model).toBe(worktreeModelChunk)
+    expect(markerRendered.WORKTREE_PROJECTION_KEY).toBe('orreryWorktree')
+
+    // the lane tool view carries the model and narrows through it
+    reactStub.begin()
+    laneTool.component({ phase: 'result', block: { meta: null }, t: (key) => key })
+    await flush()
+    reactStub.begin()
+    const toolRendered = laneTool.component({ phase: 'result', block: { meta: null }, t: (key) => key })
+    expect(toolRendered.__type).toBe(worktreeViewChunk.WorktreeToolRow)
+    expect(toolRendered.model).toBe(worktreeModelChunk)
+    expect(asyncCalls).toContain('./client.worktree-view.js')
+    expect(asyncCalls).toContain('./client.worktree-model.js')
   })
 
   it('keeps every client chunk older than the entry (the rev-restamp red line)', () => {

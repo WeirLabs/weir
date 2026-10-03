@@ -256,6 +256,86 @@ window.__ModuleLoader__.load({
 			lspFamily_cpp: "C/C++",
 			lspToggleLabel: "LSP",
 			lspToggleTitle: "Toggle LSP semantic tools for this session",
+			worktreePillMode: "Worktree",
+			worktreePillLanes: "Worktree",
+			worktreePillCount: "{n} lane(s)",
+			worktreePillAwaiting: "{n} awaiting approval",
+			worktreePillTitle: "Worktree lanes — open the panel",
+			worktreePillBaseMoved: "The main worktree left the lane base branch; check it out to land",
+			worktreeModeLabel: "Worktree",
+			worktreeModeTitle: "Worktree mode: the assistant stops editing files directly and works in isolated lanes",
+			worktreeLoading: "Loading lanes…",
+			worktreeLoadFailed: "The lane view could not be read.",
+			worktreeUnavailable: "Worktree lanes are unavailable for this session.",
+			worktreeDisabled: "Worktree lanes are switched off in Settings.",
+			worktreeEmpty: "No active lanes. The assistant opens one with worktree_open.",
+			worktreeRefresh: "Refresh",
+			worktreeConfigure: "Verification…",
+			worktreeShowHistory: "History ({n})",
+			worktreeHideHistory: "Hide history",
+			worktreeModeOn: "Worktree mode is on",
+			worktreeVerificationOn: "verification: {n} command(s)",
+			worktreeVerificationOff: "verification not enabled",
+			worktreeExcludeOk: "locally ignored",
+			worktreeExcludeMissing: "lane folder is not ignored yet",
+			worktreeUnmanaged: "{n} worktree(s) under the lane folder are not managed by Orrery",
+			worktreeStaleData: "Showing the last data read; the refresh failed.",
+			worktreeAheadBehind: "{ahead} ahead · {behind} behind",
+			worktreeBaseMoved: "base moved",
+			worktreeNextLabel: "next: {next}",
+			worktreeViewDiff: "Changes",
+			worktreeHideDiff: "Hide changes",
+			worktreeDiffUnavailable: "changes unavailable",
+			worktreeRecheck: "Re-check",
+			worktreeRetrySetup: "Retry setup",
+			worktreeSkipSetup: "Skip setup",
+			worktreeLand: "Merge…",
+			worktreeLandConfirm: "Confirm merge",
+			worktreeAbandon: "Abandon…",
+			worktreeAbandonConfirm: "Confirm abandon",
+			worktreeCleanupWorktree: "Remove worktree",
+			worktreeCleanupAll: "Remove worktree and branch",
+			worktreeCopyPath: "Copy path",
+			worktreeActionUnavailable: "not available now",
+			worktreeConflicts: "conflicts",
+			worktreeMergeCommit: "merge commit",
+			worktreeCleanup: "cleanup",
+			worktreeConfigName: "name",
+			worktreeConfigRun: "command",
+			worktreeConfigSetup: "setup command (optional)",
+			worktreeConfigAdd: "Add command",
+			worktreeConfigRemove: "Remove",
+			worktreeConfigSave: "Save",
+			worktreeCancel: "Cancel",
+			worktreeConfigHint: "Saved to this repository only (.orrery/worktrees/.config.json, never committed). Commands run in a lane when it is checked.",
+			worktreeInitParseFailed: "The repository configuration could not be read.",
+			worktreeFlatInput: "Input",
+			worktreeFlatOutput: "Output",
+			worktreeTabLabel: "Worktrees",
+			worktreeGuideTitle: "Worktree lanes",
+			worktreeGuideDescription: "Lanes for this session: state, checks, merge, cleanup.",
+			worktreeState_preparing: "preparing",
+			worktreeState_setup_failed: "setup failed",
+			worktreeState_ready: "ready",
+			worktreeState_working: "working",
+			worktreeState_dirty: "uncommitted changes",
+			worktreeState_no_commits: "no commits",
+			worktreeState_branch_moved: "branch moved",
+			worktreeState_checking: "checking",
+			worktreeState_check_failed: "check failed",
+			worktreeState_landable: "ready to merge",
+			worktreeState_conflicted: "conflicts",
+			worktreeState_awaiting_approval: "awaiting approval",
+			worktreeState_declined: "merge declined",
+			worktreeState_landed: "merged",
+			worktreeState_kept: "kept",
+			worktreeState_cleaned: "cleaned up",
+			worktreeState_abandoned: "abandoned",
+			worktreeTool_worktree_open: "Open worktree lane",
+			worktreeTool_worktree_check: "Check worktree lane",
+			worktreeTool_worktree_land: "Merge worktree lane",
+			worktreeTool_worktree_cleanup: "Worktree cleanup",
+			worktreeTool_worktree_abandon: "Abandon worktree lane",
 			hashEditTitle: "Edit file",
 			hashEditPreparing: "Preparing edit",
 			hashEditPlanned: "Planned edit — the applied diff appears when the call settles.",
@@ -502,6 +582,86 @@ window.__ModuleLoader__.load({
 			lspFamily_cpp: "C/C++",
 			lspToggleLabel: "LSP",
 			lspToggleTitle: "为本会话启用/禁用 LSP 语义工具",
+			worktreePillMode: "Worktree",
+			worktreePillLanes: "Worktree",
+			worktreePillCount: "{n} 条车道",
+			worktreePillAwaiting: "{n} 待批准",
+			worktreePillTitle: "Worktree 车道——打开面板",
+			worktreePillBaseMoved: "主工作区已离开车道基线分支，切回后才能合并",
+			worktreeModeLabel: "Worktree",
+			worktreeModeTitle: "Worktree 模式：助手不再直接改文件，所有改动走隔离车道",
+			worktreeLoading: "正在加载车道…",
+			worktreeLoadFailed: "车道视图读取失败。",
+			worktreeUnavailable: "本会话无法使用 Worktree 车道。",
+			worktreeDisabled: "Worktree 车道已在设置中关闭。",
+			worktreeEmpty: "没有活跃车道。助手会用 worktree_open 开一条。",
+			worktreeRefresh: "刷新",
+			worktreeConfigure: "验证配置…",
+			worktreeShowHistory: "历史（{n}）",
+			worktreeHideHistory: "收起历史",
+			worktreeModeOn: "Worktree 模式已开启",
+			worktreeVerificationOn: "验证：{n} 条命令",
+			worktreeVerificationOff: "未启用验证",
+			worktreeExcludeOk: "已本地忽略",
+			worktreeExcludeMissing: "车道目录尚未忽略",
+			worktreeUnmanaged: "车道目录下有 {n} 个不由 Orrery 管理的 worktree",
+			worktreeStaleData: "显示的是上次读取的数据；刷新失败。",
+			worktreeAheadBehind: "领先 {ahead} · 落后 {behind}",
+			worktreeBaseMoved: "基线已移动",
+			worktreeNextLabel: "下一步：{next}",
+			worktreeViewDiff: "改动",
+			worktreeHideDiff: "收起改动",
+			worktreeDiffUnavailable: "改动不可用",
+			worktreeRecheck: "重新检查",
+			worktreeRetrySetup: "重试安装",
+			worktreeSkipSetup: "跳过安装",
+			worktreeLand: "合并…",
+			worktreeLandConfirm: "确认合并",
+			worktreeAbandon: "放弃…",
+			worktreeAbandonConfirm: "确认放弃",
+			worktreeCleanupWorktree: "清理 worktree",
+			worktreeCleanupAll: "清理 worktree 与分支",
+			worktreeCopyPath: "复制路径",
+			worktreeActionUnavailable: "当前不可用",
+			worktreeConflicts: "冲突",
+			worktreeMergeCommit: "合并提交",
+			worktreeCleanup: "收尾",
+			worktreeConfigName: "名称",
+			worktreeConfigRun: "命令",
+			worktreeConfigSetup: "setup 命令（可选）",
+			worktreeConfigAdd: "添加命令",
+			worktreeConfigRemove: "删除",
+			worktreeConfigSave: "保存",
+			worktreeCancel: "取消",
+			worktreeConfigHint: "只写入本仓库（.orrery/worktrees/.config.json，不入库）。车道检查时在该车道内执行这些命令。",
+			worktreeInitParseFailed: "仓库配置读取失败。",
+			worktreeFlatInput: "输入",
+			worktreeFlatOutput: "输出",
+			worktreeTabLabel: "Worktrees",
+			worktreeGuideTitle: "Worktree 车道",
+			worktreeGuideDescription: "本会话的车道：状态、检查、合并与收尾。",
+			worktreeState_preparing: "准备中",
+			worktreeState_setup_failed: "安装失败",
+			worktreeState_ready: "就绪",
+			worktreeState_working: "工作中",
+			worktreeState_dirty: "有未提交改动",
+			worktreeState_no_commits: "没有提交",
+			worktreeState_branch_moved: "分支被切换",
+			worktreeState_checking: "检查中",
+			worktreeState_check_failed: "检查失败",
+			worktreeState_landable: "可合并",
+			worktreeState_conflicted: "有冲突",
+			worktreeState_awaiting_approval: "等待批准",
+			worktreeState_declined: "已拒绝合并",
+			worktreeState_landed: "已合并",
+			worktreeState_kept: "已保留",
+			worktreeState_cleaned: "已清理",
+			worktreeState_abandoned: "已放弃",
+			worktreeTool_worktree_open: "开启 worktree 车道",
+			worktreeTool_worktree_check: "检查 worktree 车道",
+			worktreeTool_worktree_land: "合并 worktree 车道",
+			worktreeTool_worktree_cleanup: "worktree 收尾",
+			worktreeTool_worktree_abandon: "放弃 worktree 车道",
 			hashEditTitle: "编辑文件",
 			hashEditPreparing: "准备编辑",
 			hashEditPlanned: "计划编辑——调用完成后此处显示实际应用的 diff。",
@@ -616,6 +776,62 @@ window.__ModuleLoader__.load({
 			if (!arrival?.chunks) return null;
 			return react_jsx_runtime.jsx(arrival.chunks.EditLockPanel, props);
 		}
+		// ---- Worktree lanes surfaces ----
+		// One model chunk plus one view chunk carry every lane surface; the
+		// composition root binds them to the ctx closures below. A session needs
+		// no sessionId for the row marker and tool views (the slot's own scope
+		// supplies the session), so those wrappers pull the chunks with no gate.
+		const loadWorktreeChunks = lazyChunks(() => Promise.all([
+			require.async("./client.worktree-view.js"),
+			require.async("./client.worktree-model.js")
+		]));
+		const worktreeFace = (props, view, model) => ({
+			...props,
+			view,
+			model,
+			WORKTREE_PROJECTION_KEY: model.WORKTREE_PROJECTION_KEY,
+			narrowView: model.narrowView,
+			groupLanes: model.groupLanes,
+			summaryOf: model.summaryOf,
+			needsPolling: model.needsPolling,
+			diffLines: model.diffLines,
+			ago: model.ago
+		});
+		/** Session-list marker (U1). */
+		function WorktreeRowWrapper(props) {
+			const arrival = useChunkArrival(loadWorktreeChunks);
+			if (!arrival?.chunks) return null;
+			const [view, model] = arrival.chunks;
+			return react_jsx_runtime.jsx(view.WorktreeRowMarker, worktreeFace(props, null, model));
+		}
+		/** Session-header status pill (U2). */
+		function WorktreePillWrapper(props) {
+			const arrival = useChunkArrival(loadWorktreeChunks, typeof props.sessionId === "string" && props.sessionId !== "");
+			if (!arrival?.chunks) return null;
+			const [view, model] = arrival.chunks;
+			return react_jsx_runtime.jsx(view.WorktreeStatusPill, worktreeFace(props, null, model));
+		}
+		/** Composer mode switch (U4). */
+		function WorktreeModeWrapper(props) {
+			const arrival = useChunkArrival(loadWorktreeChunks, typeof props.sessionId === "string" && props.sessionId !== "");
+			if (!arrival?.chunks) return null;
+			const [view, model] = arrival.chunks;
+			return react_jsx_runtime.jsx(view.WorktreeModeSwitch, worktreeFace(props, null, model));
+		}
+		/** Right-sidebar lanes panel (U3) and its tab body. */
+		function WorktreePanelWrapper(props) {
+			const arrival = useChunkArrival(loadWorktreeChunks);
+			if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("worktreeLoading") });
+			const [view, model] = arrival.chunks;
+			return react_jsx_runtime.jsx(view.LanesPanel, worktreeFace(props, view, model));
+		}
+		/** Conversation tool cards (U6). */
+		function WorktreeToolViewWrapper(props) {
+			const arrival = useChunkArrival(loadWorktreeChunks);
+			if (!arrival?.chunks) return null;
+			const [view, model] = arrival.chunks;
+			return react_jsx_runtime.jsx(view.WorktreeToolRow, { ...props, model });
+		}
 		/** Snapshot-store facade with a stable identity: the host caches slot
 		 * inject faces on first render, so the settings card's hooks source must
 		 * exist before the settings-page chunk arrives; attach() re-points the
@@ -648,6 +864,9 @@ window.__ModuleLoader__.load({
 		// inject closures below read it, and same-package sync require is
 		// impossible (the chunk owns the canonical export).
 		const LSP_PROJECTION_KEY = "orreryLsp";
+		// sidebarRight / sidebarRightTabs are OPTIONAL (a shell without the
+		// right sidebar keeps every other worktree surface): they are reached
+		// through ctx.inject([...]) below, not through this list.
 		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
@@ -732,6 +951,119 @@ window.__ModuleLoader__.load({
 					};
 				}
 			}, EditLockWrapper)), "ui-orrery-settings: edit lock entry");
+			// ---- Worktree lane surfaces ----
+			// Each surface registers in its own effect so one failure cannot take
+			// down the others (same discipline as the hash_edit view). Reads go to
+			// the read-only view endpoint (never into the conversation log);
+			// mutations are /worktree commands, so every human action is recorded.
+			const worktreeView = async (sessionId) => {
+				const response = await fetch("api/orrery-worktree/view", {
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ sessionId })
+				});
+				const payload = await response.json();
+				if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
+				return payload.value;
+			};
+			const worktreeDiff = async (sessionId, lane) => {
+				const response = await fetch("api/orrery-worktree/diff", {
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ sessionId, lane })
+				});
+				const payload = await response.json();
+				if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
+				return payload.value?.diff ?? "";
+			};
+			const worktreeRun = async (sessionId, line) => {
+				if (!ctx.remote.commands?.execute) return { kind: "error", text: "unknown command: /worktree" };
+				const result = await ctx.remote.commands.execute(sessionId, `/worktree ${line}`, []);
+				if (!result.ok) return { kind: "error", text: `${result.error.message} (${result.error.code})` };
+				if (result.value === undefined) return { kind: "error", text: "unknown command: /worktree" };
+				return result.value.result;
+			};
+			const worktreeCommandsList = (sid) => {
+				if (!ctx.remote.commands?.list) return Promise.resolve([]);
+				return ctx.remote.commands.list(sid).then((result) => (result.ok ? result.value : []));
+			};
+			// U1: session list row marker. Root-scoped list slot whose entries
+			// receive the sessionId through their own props.
+			ctx.effect(() => ctx.slots.inject("sidebar.session.row.leading", () => ctx.slots.register({
+				name: "sidebar.session.row.leading",
+				id: "orrery-worktree-marker",
+				order: 30,
+				locale: NS,
+				inject: (sessionId) => (sessionId ? { sessionId } : {})
+			}, WorktreeRowWrapper)), "ui-orrery-settings: worktree session marker");
+			// U2: session header pill (click opens the panel).
+			ctx.effect(() => ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
+				name: "conversation.session.header.utilities",
+				id: "orrery-worktree-pill",
+				order: 10,
+				locale: NS,
+				inject: (sessionId) => (sessionId ? {
+					sessionId,
+					fetchView: () => worktreeView(sessionId),
+					commandsList: () => worktreeCommandsList(sessionId),
+					openPanel: () => {
+						try { ctx.get("sidebarRight")?.openTab?.("orrery-worktrees"); } catch { /* no sidebar in this shell */ }
+					}
+				} : {})
+			}, WorktreePillWrapper)), "ui-orrery-settings: worktree header pill");
+			// U4: composer mode switch, right of the input next to the LSP switch.
+			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
+				name: "conversation.input.right",
+				id: "orrery-worktree-mode",
+				order: 102,
+				locale: NS,
+				inject: (sessionId) => (sessionId ? {
+					sessionId,
+					commandsList: () => worktreeCommandsList(sessionId),
+					runCommand: (line) => worktreeRun(sessionId, line)
+				} : {})
+			}, WorktreeModeWrapper)), "ui-orrery-settings: worktree mode switch");
+			// U6: one keyed tool view per lane tool, all backed by the same chunk.
+			for (const toolName of ["worktree_open", "worktree_check", "worktree_land", "worktree_cleanup", "worktree_abandon"]) {
+				ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({
+					name: "tool.call.toolview",
+					key: toolName,
+					locale: NS
+				}, WorktreeToolViewWrapper)), `ui-orrery-settings: ${toolName} toolview`);
+			}
+			// U3: the lanes panel as a right-sidebar page tab. Registered only
+			// where the sidebar right package is mounted (optional inject), so a
+			// composition without it keeps every other surface.
+			ctx.inject?.(["sidebarRightTabs"], (sidebarScope) => {
+				const tabId = "orrery-worktrees";
+				const kind = "orrery-worktrees";
+				sidebarScope.effect(() => sidebarScope.sidebarRightTabs.register({
+					id: tabId,
+					kind,
+					priority: "extension",
+					title: () => sidebarScope.locale.bind(NS)("worktreeTabLabel"),
+					guide: [{
+						id: "worktree",
+						order: 30,
+						title: () => sidebarScope.locale.bind(NS)("worktreeGuideTitle"),
+						description: () => sidebarScope.locale.bind(NS)("worktreeGuideDescription")
+					}]
+				}), "ui-orrery-settings: worktree tab type");
+				sidebarScope.effect(() => sidebarScope.slots.register({
+					name: "sidebar.right.pane.tab",
+					key: tabId,
+					locale: NS,
+					inject: (sessionId) => (sessionId ? {
+						sessionId,
+						fetchView: () => worktreeView(sessionId),
+						fetchDiff: (lane) => worktreeDiff(sessionId, lane),
+						runWorktree: (line) => worktreeRun(sessionId, line),
+						commandsList: () => worktreeCommandsList(sessionId)
+					} : {})
+				}, WorktreePanelWrapper), "ui-orrery-settings: worktree panel body");
+			});
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.
