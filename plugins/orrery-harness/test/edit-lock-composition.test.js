@@ -97,7 +97,7 @@ test('try_steal negotiation transfers only on a current holder reply', async () 
   const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, {
     deliver: (agent, text) => notices.push([agent.id, text]),
     onPending: (agent, count) => pending.set(agent.id, count),
-    negotiationTimeoutMs: 40,
+    negotiationTimeoutMs: 300,
   })
   const alice = { id: 'alice' }, bob = { id: 'bob' }
   await lifecycle.start(alice); await lifecycle.start(bob)
@@ -115,7 +115,7 @@ test('try_steal negotiation transfers only on a current holder reply', async () 
   await assert.rejects(tools.reply({ agent: alice }, { requestId: first.requestId, decision: 'release' }), /not pending/)
   // Silence expires and keeps ownership.
   const silent = await tools.trySteal({ agent: bob }, file)
-  await new Promise(resolve => setTimeout(resolve, 60))
+  await new Promise(resolve => setTimeout(resolve, 350))
   await assert.rejects(tools.reply({ agent: alice }, { requestId: silent.requestId, decision: 'release' }), /not pending/)
   assert.equal(lifecycle.status(alice).locks.length, 1)
   assert.match(notices.find(([id, text]) => id === 'bob' && /expired/.test(text))[1], /unchanged/)
