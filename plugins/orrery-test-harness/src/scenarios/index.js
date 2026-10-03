@@ -18,8 +18,11 @@ import targets from './targets.js'
 import editlock from './editlock.js'
 import worktree from './worktree.js'
 import capstore from './capstore.js'
+import stopPredispatch from './editlock-stop-predispatch.js'
+import stopStaged from './editlock-stop-staged.js'
+import stopPublication from './editlock-stop-publication.js'
 
-const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore]
+const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication]
 
 /**
  * Find a scenario entry by id.

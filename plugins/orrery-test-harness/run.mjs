@@ -170,7 +170,12 @@ function recordRun(run) {
     // is stored flattened as `git-info-exclude`.
     const extras = run.scenario === 'worktree'
       ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')], [join('.git', 'info', 'exclude'), 'git-info-exclude']]
-      : []
+      : run.scenario.startsWith('editlock-stop-')
+        ? (() => {
+          const boundary = run.scenario.slice('editlock-stop-'.length)
+          return [join('.orrery', `edit-lock-${boundary}`, 'snapshot.json'), join(`stop-${boundary}`, 'stop-target.txt'), `unrelated-${boundary}.txt`].map(path => [path, path])
+        })()
+        : []
     for (const [relative, stored] of extras) {
       const source = join(WS, relative)
       if (!existsSync(source)) continue

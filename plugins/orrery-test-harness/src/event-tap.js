@@ -9,9 +9,10 @@ import { textOf } from './message-text.js'
 // Single-sourced audit vocabulary (design D4): relative cross-package import,
 // proven resolvable under the link-installed headless profile by every IT run.
 import { AUDIT_TYPES, AUDIT_SUBTYPES } from '../../orrery-harness/src/shared/audit.js'
+import { installStopProbe } from './edit-lock-stop-probe.js'
 
 const name = 'orrery-it-event-tap'
-const inject = []
+const inject = ['fs']
 
 // Mirrors the driver's root so the mock and the tap can never disagree on a
 // platform; the driver always passes ORRERY_IT_TRACE explicitly.
@@ -43,6 +44,7 @@ function tap(record) {
 
 
 function apply(ctx) {
+  installStopProbe(ctx, tap)
   // Cordis audit channel (cold-safe; session logs stay clean).
   for (const type of AUDIT_SUBSCRIPTIONS) {
     ctx.on(`orrery/${type}`, (record) => {

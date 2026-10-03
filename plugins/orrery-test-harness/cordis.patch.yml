@@ -88,6 +88,8 @@
           name: 'orrery-harness/edit-lock'
           config:
             enabled: !!js process.env.ORRERY_IT_EDIT_LOCK === '1'
+            root: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws' : undefined"
+            authorityDirectory: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-' + process.env.ORRERY_IT_STOP_BOUNDARY : undefined"
         - id: orrery-it-hashline-edit
           name: 'orrery-harness/hashline-edit'
           config:
