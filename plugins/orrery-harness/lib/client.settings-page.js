@@ -92,6 +92,20 @@ window.__ModuleLoader__.load({
 			] }
 		];
 		const FIELDS = GROUPS.flatMap((group) => group.fields);
+		/** Product defaults of the boolean switches (mirrors the bundle's
+		 * orrery-settings row). A profile-level row replaces that row's config
+		 * wholesale, so a key the profile never saved arrives unset; the switch
+		 * then shows the value the modules actually use, not "off". */
+		const BOOLEAN_DEFAULTS = {
+			todoEnabled: true,
+			guardEnabled: true,
+			hashlineHideStockEdit: true,
+			editLockEnabled: false,
+			worktreeEnabled: true,
+			worktreeAutoSetup: true,
+			robashEnabled: true,
+			lspEnabled: false
+		};
 		function booleanSpec(field) {
 			return {
 				field,
@@ -192,7 +206,7 @@ window.__ModuleLoader__.load({
 				] }),
 				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
-						checked: field.text === "true",
+						checked: field.text === "true" || (field.text === "" && BOOLEAN_DEFAULTS[descriptor.field] === true),
 						onChange: (checked) => props.onChange(String(checked)),
 						disabled,
 						label: t(descriptor.field)
@@ -426,6 +440,7 @@ window.__ModuleLoader__.load({
 			children: renderSlot(ITEM_SLOT)
 		});
 		exports.GROUPS = GROUPS;
+		exports.BOOLEAN_DEFAULTS = BOOLEAN_DEFAULTS;
 		exports.CURATED_AGENT_NAMES = CURATED_AGENT_NAMES;
 		exports.CATEGORY_NAMES = CATEGORY_NAMES;
 		exports.FIELDS = FIELDS;

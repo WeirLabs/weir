@@ -100,3 +100,21 @@ describe('editLockLimits default/single coherence', () => {
     expect(editLockLimits({ holdDefaultMinutes: 45, holdSingleMaxMinutes: 60, holdCumulativeMaxMinutes: 120 }).holdDefaultMinutes).toBe(45)
   })
 })
+
+describe('settings page boolean defaults', () => {
+  it('every switch default the page assumes equals the bundle row product default', async () => {
+    const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    const rowStart = patch.indexOf('- id: orrery-settings')
+    const row = patch.slice(rowStart, patch.indexOf('- id:', rowStart + 1))
+    const page = readFileSync(new URL('../lib/client.settings-page.js', import.meta.url), 'utf8')
+    const block = page.slice(page.indexOf('const BOOLEAN_DEFAULTS = {'), page.indexOf('};', page.indexOf('const BOOLEAN_DEFAULTS = {')))
+    const entries = [...block.matchAll(/(\w+): (true|false)/g)].map((match) => [match[1], match[2]])
+    expect(entries.length).toBeGreaterThan(0)
+    for (const [key, value] of entries) {
+      const declared = new RegExp(`^ {8}${key}: (true|false)$`, 'm').exec(row)?.[1]
+      expect(declared, `${key} must be a boolean product default in the patch row`).toBe(value)
+    }
+    expect(entries.map(([key]) => key)).toContain('worktreeEnabled')
+    expect(entries.map(([key]) => key)).toContain('worktreeAutoSetup')
+  })
+})
