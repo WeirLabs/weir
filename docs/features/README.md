@@ -26,3 +26,5 @@
 | 集成测试装置 | [integration-test-harness.md](integration-test-harness.md) | `plugins/orrery-test-harness`（开发专用） |
 | Edit Lock 编辑锁仲裁 | [edit-lock.md](edit-lock.md) | `orrery-harness/edit-lock`（实验，默认关闭，设置 `editLockEnabled`） |
 | Worktree 车道 | [git-worktree.md](git-worktree.md) | `orrery-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
+| Worktree 车道 | [git-worktree.md](git-worktree.md) | `orrery-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
+| 系统通知 | [notify.md](notify.md) | `orrery-harness/notify`（profile 级，设置 `notify*`） |
