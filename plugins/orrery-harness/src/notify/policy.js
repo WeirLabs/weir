@@ -21,6 +21,8 @@ export const DEFAULTS = Object.freeze({
   minTurnSeconds: 15,
   /** Play the platform's notification sound where the platform supports it. */
   sound: true,
+  /** DSH window in the foreground: 'skip' stays quiet (default), 'always' notifies anyway. */
+  foreground: 'skip',
   /** A finished turn is held this long; the agent running again cancels it. */
   settleMs: 1500,
   /** Same session + same kind inside this window collapses into one notification. */

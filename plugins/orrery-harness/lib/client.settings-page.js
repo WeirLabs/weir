@@ -95,7 +95,8 @@ window.__ModuleLoader__.load({
 				{ field: "notifyOnComplete", kind: "boolean" },
 				{ field: "notifyOnAttention", kind: "boolean" },
 				{ field: "notifyMinTurnSeconds", kind: "number" },
-				{ field: "notifySound", kind: "boolean" }
+				{ field: "notifySound", kind: "boolean" },
+				{ field: "notifyForeground", kind: "enum", values: ["skip", "always"] }
 			] }
 		];
 		const FIELDS = GROUPS.flatMap((group) => group.fields);
@@ -422,6 +423,10 @@ window.__ModuleLoader__.load({
 						serversText: state.fields.lspServers?.text ?? "",
 						edit: (field, text) => props.edit(field, text)
 					}));
+				}
+				// macOS-only permission entry: it renders nothing until the host confirms its platform.
+				if (group.id === "notify") {
+					rows.push(react_jsx_runtime.jsx(props.editors.NotifyPermissionsField, { t, key: "notify-permissions" }));
 				}
 				return [
 					react_jsx_runtime.jsx("h3", { style: groupIndex === 0 ? firstGroupTitleStyle : groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),

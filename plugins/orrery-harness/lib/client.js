@@ -228,6 +228,51 @@ window.__ModuleLoader__.load({
 			notifyMinTurnSecondsHint: "A finished turn is only reported when it ran at least this long; 0 reports every turn.",
 			notifySound: "Notification sound",
 			notifySoundHint: "Play the platform notification sound where supported (true/false).",
+			notifyForeground: "When the window is in front",
+			notifyForegroundHint: "Whether to notify while the DeepSeek Harness window is in the foreground. Skip stays quiet (you are already looking at it); Always notifies anyway.",
+			notifyForegroundOptionSkip: "Don't notify",
+			notifyForegroundOptionAlways: "Always notify",
+			notifyPermissions: "Notification permission",
+			notifyPermissionsHint: "Check whether macOS lets these notifications through, and walk through allowing them.",
+			notifyPermissionsOpen: "Manage",
+			notifyPermTitle: "Notification permission",
+			notifyPermDescription: "Notifications are shown by DeepSeek Harness itself, so macOS has to let DeepSeek Harness notify you.",
+			notifyPermClose: "Close",
+			notifyPermChecking: "Checking…",
+			notifyPermRecheck: "Check again",
+			notifyPermBestEffort: "This check reads macOS settings that Apple does not document, so treat it as a hint. Seeing the test notification is the real proof.",
+			notifyPermFocusNote: "Focus / Do Not Disturb can still hold notifications back, and it cannot be checked from here.",
+			notifyPermSendTest: "Send a test notification",
+			notifyPermSending: "Sending…",
+			notifyPermOpenSettings: "Open notification settings",
+			notifyPermOpening: "Opening…",
+			notifyPermOpenHint: "In the list, find “DeepSeek Harness”, turn on “Allow notifications”, and pick the Banners or Alerts style.",
+			notifyPermWaiting: "Waiting for you to allow notifications… checking every 2 seconds.",
+			notifyPermConfirm: "Did you see the test notification?",
+			notifyPermSeenYes: "Yes, I saw it",
+			notifyPermSeenNo: "No",
+			notifyPermSeen: "All set — notifications will reach you.",
+			notifyPermNotSeen: "Check that Focus / Do Not Disturb is off, that DeepSeek Harness's style is Banners or Alerts, and — if the window is in front — that \"When the window is in front\" is set to Always notify. Then try again.",
+			notifyPermRetry: "Start over",
+			notifyPermSendAgain: "Send another test",
+			notifyPermError: "Something went wrong:",
+			notifyPermManualPath: "You can do this by hand: System Settings → Notifications → DeepSeek Harness.",
+			notifyPermDetails: "Technical details",
+			notifyPermFailed: "The permission panel failed; check the runtime log.",
+			"notifyPermState_granted": "Allowed",
+			"notifyPermState_denied": "Not allowed",
+			"notifyPermState_unknown": "Can't tell",
+			"notifyPermReason_alerts-allowed": "Alerts are allowed for DeepSeek Harness.",
+			"notifyPermReason_not-allowed": "Notifications are turned off for DeepSeek Harness.",
+			"notifyPermReason_no-record": "macOS has no record of DeepSeek Harness yet. Send a test notification so it shows up in the list.",
+			"notifyPermReason_default": "macOS has no explicit setting for DeepSeek Harness (it uses the system default), so this can't be told from here.",
+			"notifyPermReason_unreadable": "The notification settings could not be read.",
+			notifyWebUnsupported: "This page has no web Notification support, so DeepSeek Harness cannot notify directly.",
+			notifyWebPermission: "Web notification permission",
+			notifyWebDeniedHint: "This page was blocked from showing notifications and cannot ask again. Open System Settings → Notifications → DeepSeek Harness and turn notifications on.",
+			"notifyWebPerm_granted": "Allowed",
+			"notifyWebPerm_denied": "Blocked",
+			"notifyWebPerm_default": "Not asked yet",
 			lspManager: "Manage LSP services",
 			lspManagerHint: "Check which language servers are installed and install the missing ones from the community catalog.",
 			lspManagerLoading: "Loading…",
@@ -573,6 +618,51 @@ window.__ModuleLoader__.load({
 			notifyMinTurnSecondsHint: "一轮任务至少运行这么久才会通知完成；0 表示每轮都通知。",
 			notifySound: "通知提示音",
 			notifySoundHint: "在支持的平台上播放系统通知提示音（true/false）。",
+			notifyForeground: "窗口在前台时",
+			notifyForegroundHint: "DeepSeek Harness 窗口在前台时是否通知。「不通知」表示你正看着窗口、不打扰；「始终通知」则前台也通知。",
+			notifyForegroundOptionSkip: "不通知",
+			notifyForegroundOptionAlways: "始终通知",
+			notifyPermissions: "通知权限",
+			notifyPermissionsHint: "检测 macOS 是否放行这些通知，并引导你完成授权。",
+			notifyPermissionsOpen: "管理",
+			notifyPermTitle: "通知权限",
+			notifyPermDescription: "通知由 DeepSeek Harness 自己弹出，所以需要在 macOS 里允许 DeepSeek Harness 发送通知。",
+			notifyPermClose: "关闭",
+			notifyPermChecking: "检测中…",
+			notifyPermRecheck: "重新检测",
+			notifyPermBestEffort: "该检测读取的是苹果未公开文档化的系统设置，仅供参考；亲眼看到测试通知才是最终证明。",
+			notifyPermFocusNote: "专注模式 / 勿扰仍可能拦截通知，且无法在这里检测。",
+			notifyPermSendTest: "发送测试通知",
+			notifyPermSending: "发送中…",
+			notifyPermOpenSettings: "打开系统通知设置",
+			notifyPermOpening: "打开中…",
+			notifyPermOpenHint: "在列表中找到「DeepSeek Harness」，打开「允许通知」，并选择「横幅」或「提醒」样式。",
+			notifyPermWaiting: "正在等你允许通知…每 2 秒自动检测一次。",
+			notifyPermConfirm: "你看到测试通知了吗？",
+			notifyPermSeenYes: "看到了",
+			notifyPermSeenNo: "没看到",
+			notifyPermSeen: "设置完成，通知会送达你。",
+			notifyPermNotSeen: "请确认专注模式 / 勿扰已关闭，「DeepSeek Harness」的样式是「横幅」或「提醒」，并且（若窗口在前台）「窗口在前台时」已设为「始终通知」，然后重试。",
+			notifyPermRetry: "重新开始",
+			notifyPermSendAgain: "再发一条测试",
+			notifyPermError: "出错了：",
+			notifyPermManualPath: "也可以手动操作：系统设置 → 通知 → DeepSeek Harness。",
+			notifyPermDetails: "技术细节",
+			notifyPermFailed: "权限面板出错，请查看运行日志。",
+			"notifyPermState_granted": "已允许",
+			"notifyPermState_denied": "未允许",
+			"notifyPermState_unknown": "无法判定",
+			"notifyPermReason_alerts-allowed": "已允许「DeepSeek Harness」弹出提醒。",
+			"notifyPermReason_not-allowed": "「DeepSeek Harness」的通知已被关闭。",
+			"notifyPermReason_no-record": "macOS 里还没有「DeepSeek Harness」的记录。先发一条测试通知，让它出现在列表里。",
+			"notifyPermReason_default": "macOS 里没有「DeepSeek Harness」的明确设置（沿用系统默认），无法在这里判定。",
+			"notifyPermReason_unreadable": "无法读取通知设置。",
+			notifyWebUnsupported: "当前页面没有网页通知能力，DeepSeek Harness 无法直接通知。",
+			notifyWebPermission: "网页通知权限",
+			notifyWebDeniedHint: "本页面被禁止显示通知，且无法再次询问。请打开「系统设置 → 通知 → DeepSeek Harness」并开启通知。",
+			"notifyWebPerm_granted": "已允许",
+			"notifyWebPerm_denied": "已禁止",
+			"notifyWebPerm_default": "尚未询问",
 			lspManager: "管理 LSP 服务",
 			lspManagerHint: "查看各语言服务器安装状态，一键安装缺失的社区服务器。",
 			lspManagerLoading: "加载中…",
@@ -799,6 +889,7 @@ window.__ModuleLoader__.load({
 			return react_jsx_runtime.jsx(HashEditFallbackBody, props);
 		}
 		const loadLspToggleChunk = lazyChunks(() => require.async("./client.lsp-toggle.js"));
+		const loadNotifyWebChunk = lazyChunks(() => require.async("./client.notify-web.js"));
 		/** Composer-bar wrapper: renders nothing until the toggle chunk arrives
 		 * (and nothing at all when the slot injected no session id — the
 		 * capability gate's absence case, which must not pull the chunk). */
@@ -916,6 +1007,22 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-orrery-settings: dictionaries");
+			// Web notification delivery: the page half of "notify as DeepSeek Harness".
+			// It long-polls the host for notes the host decided to send and shows
+			// them as web notifications. Started here (not from the settings page) so
+			// notifications work whether or not settings is open; a failed chunk load
+			// just means the host falls back to the system command.
+			ctx.effect(() => {
+				let delivery = null;
+				let live = true;
+				loadNotifyWebChunk().then((chunk) => {
+					if (live) delivery = chunk.startWebDelivery(globalThis);
+				}, () => {});
+				return () => {
+					live = false;
+					delivery?.stop();
+				};
+			}, "ui-orrery-settings: web notification delivery");
 			// Per-session LSP toggle in the conversation composer bar (next to
 			// the model selector; visible in blank and active sessions alike —
 			// the session-header utilities slot only renders once the session
@@ -1151,8 +1258,9 @@ window.__ModuleLoader__.load({
 							require.async("./client.lsp-panel.js"),
 							require.async("./client.chain-model.js"),
 							require.async("./client.robash-model.js"),
-							require.async("./client.lsp-model.js")
-						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel]) => {
+							require.async("./client.lsp-model.js"),
+							require.async("./client.notify-permissions.js")
+						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel, notifyPermissions]) => {
 							if (serving) {
 								controller = new settingsPage.OrreryCardController(scope, { settingsBus, getSession: () => ctx.remote.session });
 								deferredStore.attach(controller.store);
@@ -1164,7 +1272,8 @@ window.__ModuleLoader__.load({
 								ChainEditorField: (editorProps) => react_jsx_runtime.jsx(chainEditor.ChainEditorField, { ...editorProps, model: chainModel }),
 								RobashListEditorField: (editorProps) => react_jsx_runtime.jsx(robashEditor.RobashListEditorField, { ...editorProps, model: robashModel }),
 								DisabledCategoriesEditorField: (editorProps) => react_jsx_runtime.jsx(disabledCategoriesEditor.DisabledCategoriesEditorField, editorProps),
-								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel })
+								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel }),
+								NotifyPermissionsField: (editorProps) => react_jsx_runtime.jsx(notifyPermissions.NotifyPermissionsField, editorProps)
 							};
 							return { settingsPage, editors };
 						}, (error) => {

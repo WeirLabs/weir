@@ -430,3 +430,107 @@ describe('notify plugin wiring', () => {
     dispose()
   })
 })
+
+describe('notify routing through the web channel', () => {
+  /** The wire() harness again, but with a recording channel instead of the system notifier. */
+  function routed({ settings, sessions = {} } = {}) {
+    const handlers = {}
+    const channelSent = []
+    const systemSent = []
+    let time = 1_000_000
+    const ctx = {
+      on: (name, handler) => { handlers[name] = handler; return () => delete handlers[name] },
+      get: (service) => {
+        if (service === 'orrerySettings' && settings) return { get: (key) => settings[key] }
+        if (service === 'sessions') return { get: (id) => sessions[id] }
+        return undefined
+      },
+      logger: { warn: () => {} },
+    }
+    wire(ctx, {}, {
+      notifier: { send: (note, options) => { systemSent.push({ note, options }); return true } },
+      channel: { send: (note) => { channelSent.push(note); return 'queued' } },
+      now: () => time,
+      setTimer: () => 1,
+      clearTimer: () => {},
+    })
+    return {
+      channelSent, systemSent,
+      advance: (ms) => { time += ms },
+      emit: (session, type, data = {}) => handlers['session/event'](session, { type, data, time }),
+    }
+  }
+  const sessionA = { id: 'a', header: { cwd: '/work/a' } }
+  const sessionB = { id: 'b', header: { cwd: '/work/b' } }
+
+  it('sends through the channel with a tag, re-alert and the foreground policy, not directly', () => {
+    const r = routed()
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    expect(r.systemSent).toHaveLength(0)
+    expect(r.channelSent).toHaveLength(1)
+    const note = r.channelSent[0]
+    expect(note.title).toBe('Approval needed')
+    expect(note.tag).toBe('orrery:a:approval')
+    expect(note.renotify).toBe(true)
+    expect(note.sound).toBe(true)
+    expect(note.foreground).toBe('skip')
+  })
+
+  it('uses the same tag for the same session and type, and different tags otherwise', () => {
+    const r = routed()
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    r.advance(10_000)
+    r.emit(sessionA, 'approval/asked', { toolName: 'write' })
+    r.emit(sessionB, 'approval/asked', { toolName: 'bash' })
+    r.emit(sessionA, 'tool/call', { name: 'exit_plan_mode', arguments: '{}' })
+    const tags = r.channelSent.map((note) => note.tag)
+    expect(tags[0]).toBe(tags[1])
+    expect(tags[2]).not.toBe(tags[0])
+    expect(tags[3]).not.toBe(tags[0])
+    expect(new Set(tags).size).toBe(3)
+  })
+
+  it('tags a delegated child under its top-level session, so it merges with the parent', () => {
+    const r = routed({ sessions: { a: sessionA } })
+    const child = { id: 'kid', header: { origin: 'subagent', parentSession: 'a' } }
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    r.advance(10_000)
+    r.emit(child, 'approval/asked', { toolName: 'bash' })
+    expect(r.channelSent[0].tag).toBe(r.channelSent[1].tag)
+  })
+
+  it('passes the foreground setting through, live, and falls back to skip on a bad value', () => {
+    const settings = { notify: { foreground: 'always' } }
+    const r = routed({ settings })
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    expect(r.channelSent[0].foreground).toBe('always')
+    settings.notify = { foreground: 'sometimes' }
+    r.advance(10_000)
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    expect(r.channelSent[1].foreground).toBe('skip')
+  })
+
+  it('still honours the master switch before reaching the channel', () => {
+    const r = routed({ settings: { notify: { enabled: false } } })
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    expect(r.channelSent).toHaveLength(0)
+    expect(r.systemSent).toHaveLength(0)
+  })
+
+  it('keeps the host-side merge window, so a burst queues one note', () => {
+    const r = routed()
+    r.emit(sessionA, 'approval/asked', { toolName: 'bash' })
+    r.emit(sessionA, 'approval/asked', { toolName: 'write' })
+    expect(r.channelSent).toHaveLength(1)
+  })
+
+  it('without a channel it behaves as before: the system notifier directly', () => {
+    const handlers = {}
+    const systemSent = []
+    wire({ on: (name, handler) => { handlers[name] = handler; return () => {} }, get: () => undefined, logger: { warn: () => {} } }, {}, {
+      notifier: { send: (note) => { systemSent.push(note); return true } },
+    })
+    handlers['session/event']({ id: 'a', header: {} }, { type: 'approval/asked', data: { toolName: 'bash' }, time: Date.now() })
+    expect(systemSent).toHaveLength(1)
+  })
+})

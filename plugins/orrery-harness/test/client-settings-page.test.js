@@ -88,6 +88,7 @@ describe('client.settings-page chunk', () => {
       RobashListEditorField: (props) => ({ __robashEditor: props }),
       DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }),
       LspManagerField: (props) => ({ __lspPanel: props }),
+      NotifyPermissionsField: (props) => ({ __notifyPermissions: props }),
     }
     return { definition, exports, editors, specsSeen, reactStub }
   }
@@ -96,7 +97,7 @@ describe('client.settings-page chunk', () => {
   // driving lib/client.js's apply with a minimal fake ctx (slot/config
   // effects are inert stubs; only locale.register is observed).
   async function loadDictionaries() {
-    const { exports: entry } = await loadClientChunk('lib/client.js', () => ({}))
+    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
     const registrations = []
     entry.apply({
       locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push({ ns, dicts }) },
@@ -111,7 +112,7 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
   it('renders the GROUPS field table through the prop-injected editors', async () => {
     const { definition, exports, editors } = await loadPage()
@@ -141,12 +142,16 @@ describe('client.settings-page chunk', () => {
     })
 
     expect(rendered.__type).toBeTruthy()
-    // 9 group headers + 13 choice rows + 1 model picker + 24 value-field rows
+    // 9 group headers + 14 choice rows + 1 model picker + 24 value-field rows
     // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
-    // + 1 disabled-categories editor row
-    expect(rendered.children).toHaveLength(56)
+    // + 1 disabled-categories editor row + 1 notification-permission row
+    expect(rendered.children).toHaveLength(58)
+    // the permission entry sits at the end of the notify group
+    const permissionRow = rendered.children.find((child) => child.key === 'notify-permissions')
+    expect(permissionRow.__type).toBe(editors.NotifyPermissionsField)
+    expect(typeof permissionRow.t).toBe('function')
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(9)
-    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(13)
+    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(14)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
     expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(24)
     // the LSP manager row opens the service management panel
