@@ -2,7 +2,7 @@
 // projection, the tool and command adapters, the spawn-adapter lane guard,
 // the delegate binding, and the Worktree mode guard.
 import { describe, expect, it } from './helpers.js'
-import { decideLaneCall, decideModeCall, laneGitViolation, tokenize } from '../src/worktree/guard.js'
+import { decideLaneCall, decideModeCall, isLaneQuery, laneGitViolation, maskLaneQueries, tokenize } from '../src/worktree/guard.js'
 import { foldWorktreeState, initialWorktreeState, worktreeView } from '../src/worktree/projection.js'
 import { createWorktreeTools, renderResult } from '../src/worktree/tools.js'
 import { createWorktreeCommand } from '../src/worktree/command.js'
@@ -12,7 +12,7 @@ import { worktreeSettings } from '../src/worktree/index.js'
 import { oneShotLane, spawnGuardedChild, supervisedLane } from '../src/delegate/spawn-adapter.js'
 import { createDelegateTool } from '../src/delegate/tool.js'
 import { attachWorktreeModeGuard } from '../src/delegate/worktree-mode.js'
-import { DEFAULT_ROBASH } from '../src/delegate/robash-guard.js'
+import { DEFAULT_ROBASH, checkBashCommand } from '../src/delegate/robash-guard.js'
 import { DEFAULT_ROBASH_PWSH } from '../src/delegate/robash-guard-pwsh.js'
 
 const LANE = '/r/.orrery/worktrees/a-001'
@@ -56,6 +56,24 @@ describe('lane guard decisions', () => {
   it('refuses unbounded writers for lane writers only', () => {
     expect(decideLaneCall({ name: 'lsp_rename', arguments: { file_path: `${LANE}/a.ts` } }, spec())).toContain('disabled for lane workers')
     expect(decideLaneCall({ name: 'lsp_rename', arguments: {} }, spec({ readOnly: true }))).toBeUndefined()
+  })
+
+  it('Worktree mode lets the main agent inspect branches and lanes, nothing more', () => {
+    for (const command of ['git branch', 'git branch -a', 'git branch -vv', 'git branch --show-current', 'git branch --list orrery/*', 'git branch --merged main', 'git worktree list', 'git worktree list --porcelain']) {
+      expect(isLaneQuery(tokenize(command)), command).toBe(true)
+    }
+    for (const command of ['git branch new', 'git branch -D x', 'git branch -m a b', 'git branch -f x', 'git worktree add y', 'git worktree remove y', 'git -C /x branch', 'git status']) {
+      expect(isLaneQuery(tokenize(command)), command).toBe(false)
+    }
+    expect(maskLaneQueries('git branch && git worktree list; ls -la')).toBe('true && true ; ls -la')
+    expect(maskLaneQueries('git branch -D x && ls')).toBe('git branch -D x && ls')
+    expect(maskLaneQueries('echo $(git branch)')).toBe('echo $(git branch)')
+    const real = (command) => checkBashCommand(command, DEFAULT_ROBASH)
+    const call = (command) => decideModeCall({ name: 'bash', arguments: { command } }, real)
+    expect(call('git branch && git worktree list && git log --oneline -3')).toBeUndefined()
+    expect(call('git branch -D orrery/x')).toContain('read-only')
+    expect(call('git worktree add z && git branch')).toContain('read-only')
+    expect(call("git branch --list 'orrery/*'")).toBeUndefined()
   })
 
   it('Worktree mode refuses main-agent writes and mutating shell commands', () => {

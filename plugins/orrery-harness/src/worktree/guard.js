@@ -167,6 +167,70 @@ export function attachLaneGuard(agent, spec) {
  * @param {(command: string, shell: string) => string | undefined} checkReadOnlyShell - the read-only shell guard
  * @returns {string | undefined}
  */
+/** `git branch` flags that only list (no rename / delete / create). */
+const BRANCH_LIST_FLAGS = new Set(['-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current', '--no-color', '--color=never', '-l', '--list', '--no-abbrev'])
+const BRANCH_LIST_VALUE_FLAGS = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--sort', '--format'])
+
+/**
+ * Whether one command segment is a pure lane-inspection query the read-only
+ * whitelist does not know: `git branch` in a listing form, or
+ * `git worktree list`. Anything else (including global git flags) is not.
+ * @param {string[]} words
+ */
+export function isLaneQuery(words) {
+  if (words.length < 2 || (words[0] !== 'git' && !/[\\/]git(?:\.exe)?$/.test(words[0]))) return false
+  const [, sub, ...rest] = words
+  if (sub === 'worktree') return rest[0] === 'list' && rest.slice(1).every((arg) => arg === '--porcelain' || arg === '-v' || arg === '--verbose' || arg === '-z')
+  if (sub !== 'branch') return false
+  const listing = rest.includes('--list') || rest.includes('-l')
+  for (let index = 0; index < rest.length; index++) {
+    const arg = rest[index]
+    const flag = arg.split('=')[0]
+    if (BRANCH_LIST_FLAGS.has(arg)) continue
+    if (BRANCH_LIST_VALUE_FLAGS.has(flag)) {
+      if (!arg.includes('=')) index++
+      continue
+    }
+    // A positional argument creates a branch unless it is a --list pattern.
+    if (!arg.startsWith('-') && listing) continue
+    return false
+  }
+  return true
+}
+
+const SAFE_WORD = /^[A-Za-z0-9_./:=@%+,-]+$/
+/** @param {string} word */
+const quote = (word) => (SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`)
+
+/**
+ * Replace every pure lane-query segment with `true` so the read-only checker
+ * judges the rest of the command unchanged. Commands with substitutions or
+ * redirections are returned untouched (the checker decides them as before).
+ * @param {string} command
+ */
+export function maskLaneQueries(command) {
+  if (/[`<>]|\$\(/.test(command)) return command
+  const tokens = tokenize(command)
+  /** @type {string[]} */
+  const out = []
+  /** @type {string[]} */
+  let segment = []
+  const flush = () => {
+    if (segment.length) out.push(...(isLaneQuery(segment) ? ['true'] : segment.map(quote)))
+    segment = []
+  }
+  for (const token of tokens) {
+    if (SEPARATORS.has(token)) {
+      flush()
+      out.push(token)
+    } else {
+      segment.push(token)
+    }
+  }
+  flush()
+  return out.join(' ')
+}
+
 export function decideModeCall(execution, checkReadOnlyShell) {
   if (PATH_WRITE_TOOLS.includes(execution.name) || UNBOUNDED_WRITE_TOOLS.includes(execution.name)) {
     return 'Worktree mode is on: the main agent does not edit files. Open a lane with worktree_open and delegate the change with delegate(worktree=<lane>)'
@@ -174,7 +238,10 @@ export function decideModeCall(execution, checkReadOnlyShell) {
   if (SHELL_TOOLS.includes(execution.name)) {
     const command = execution.arguments?.command
     if (typeof command !== 'string') return 'Worktree mode is on: shell calls need a command string'
-    const refusal = checkReadOnlyShell(command, execution.name)
+    // Lane inspection (`git branch`, `git worktree list`) is a read the shared
+    // read-only whitelist does not list; Worktree mode allows exactly those
+    // listing forms without widening the whitelist for read-only children.
+    const refusal = checkReadOnlyShell(execution.name === 'bash' ? maskLaneQueries(command) : command, execution.name)
     return refusal ? `Worktree mode is on: the main agent's shell is read-only (${refusal}). Delegate changes to a lane` : undefined
   }
   return undefined
