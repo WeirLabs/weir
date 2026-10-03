@@ -26,7 +26,7 @@
 - **回合结束要收尾**。回合正常结束（`turn/end` 为 `completed`）而助手仍占着文件时，会被续推一次，要求它对每个文件二选一：改完了就释放（`edit_lock_release`），还要用就申请**有期限的保留**（`edit_lock_hold`）。提醒次数用尽仍未处理的，按设置自动释放（默认）或转为需要你处理。出错（`error`）走仅清理恢复，你按下停止（`aborted`）则不续推，二者都不进入此路径。
 - **保留有上限**。单次保留与一批文件的累计保留都有上限（默认 30 分钟／2 小时），用尽后只能释放；延长一个仍在生效的保留只计新增的分钟数，且「从现在起的窗口」不得超过单次上限。没有永久保留——唯一能一直占着的是异常锁（出错或停止留下的锁），由你或助手处理。
 - **保留中（holding）的含义**。会话已收尾但仍保留文件：其他会话照常被拒、转交照常协商；本会话自己仍可编辑这些文件，并且**一开始新回合，全部保留立刻解除**，回到普通占用。保留到期时会话空闲则自动释放；到期时恰在回合中，则在该回合结束时释放。
-- **停止即收回**。你按停止（或面板「收回编辑权」）后，助手不能再编辑，直到你点「继续编辑」；面板的「继续编辑」是一个动作：恢复编辑权并一并确认本会话保留下来的文件（依次执行 `resume` 与 `confirm --all`，每个文件仍走原有确认检查）。
+- **停止即收回后续编辑权**。你按停止（或面板「收回编辑权」）后，助手不能发起新的编辑，直到你点「继续编辑」；已经调用文件系统的那一次提交会等待完成，仍可能落盘，但不会恢复会话权限。面板的「继续编辑」依次执行 `resume` 与 `confirm --all`，每个文件仍走原有确认检查。
 - **状态入口**。输入栏右侧「编辑锁」按钮的圆点表示本会话状态：灰＝未占用文件，蓝（主题强调色）＝正在编辑／文件为本会话保留，琥珀黄＝编辑已停止或等你确认继续，红＝需要你处理。打开面板：
   - 只在需要时给**一个主动作**：已停止→「继续编辑」；等你确认→「继续编辑这些文件」；保留中→「立即释放全部文件」；正常编辑与空闲不给主动作。
   - 文件按短名列出，每行至多一个动作：自己的文件「释放」（待确认的为「继续」）；其他会话停住或出错留下的文件「解锁」（按当前 generation 解锁，需第二次点击确认）；其他会话正在编辑的文件不给动作。
@@ -148,6 +148,8 @@
 
 `prepare` 持久绑定原请求并返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到的取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。全新 store 的初始 manager 只接受 revision 0、无 incarnation 的镜像；启动恢复（`recoverEditLockManager`）把历史 prepared → not-published、publishing → unknown，原 fence、terminal/unknown 历史与预算不改写，以新 incarnation 保守重装，并让所有已知会话以中断态开始（旧 receipt 不导入，重复注册不能绕过中断）。创建成功的结算（`settleCreated`）只收编本次经原生创建并解析出规范身份的节点，拒绝收编任何既有锁。
 
+**Stop 的提交边界**：原始 turn signal 持续用于准入、撤权监听与 dispatch 前检查，包括 publishing intent 持久化后的第二次检查；此时取消保证零 backend 调用。只有真正执行捕获的 `writeText` 时才创建私有 `AbortController().signal`，不传播 turn abort。目标、完整内容、原始版本 guard 与 effectivePolicy 保持不变。已经 invoked 的提交由 manager/runtime 完整 await，不使用超时或 `Promise.race`；成功记 created/updated，但 ownership 与会话仍为 interrupted，后续写入仍拒绝。真实 backend 拒绝仍为 unknown 并保留围栏，历史回放永不重新调用 backend。这不保证任意第三方 adapter 没有 detached writer，也不结清旧 unknown。
+
 **未决发布隔离（第一阶段，仍为 v3）**：`src/edit-lock/admission.js` 在 manager FIFO 的实际准入点统一检查全部 publishing/unknown 围栏；一般事务在创建 draft、消费 receipt 或持久化之前拒绝，拒绝本身不会毒化 manager。`prepare` 与 `commit` 各检查一次：准备后出现的冲突会在 dispatch 前结算为 not-published，不调用 publisher。
 
 - **resource 围栏**：在既有可信规范资源身份契约下，精确相同资源拒绝；不同的规范既有资源可继续获取、确认、更新、转交。因此子会话一个既有文件发布结果未知，不再自动阻断父会话对另一个既有文件的工作。缺失、非规范或不透明身份不能作为不重叠证明。
@@ -198,13 +200,17 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **未开启即无行为**：设置关闭时没有插件服务、没有锁工具、没有 UI 元素，装载与否不改变任何现有会话；开启后受控 editor 的定义必须由本特性接管，否则 fail closed。
 - **权威状态持久且可重启恢复，但恢复出的 active 状态不构成当前授权**：恢复重新装载历史并把所有已知会话置为中断态；publishing/unknown 按上述准入规则隔离，resource 围栏外的已证明无关工作可继续，subtree 连续性未证明及 domain 围栏仍保守拒绝。没有清围栏、重放或自动结清入口。
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**不判定缺失名称的等价性**——不预创建占位文件、不猜测别名；store 只写自己的 `snapshot.json`，release 也不等于验证通过。
-- **停止本会话不会停止它的子代理**：每个会话有各自的锁状态；子代理持有的文件对父会话与其他兄弟同样按普通占用拒绝，正常结束（`agent/disposed`）时释放自己的锁。父会话被 Stop 只撤销它自己的编辑权。
+- **宿主父子 Stop 与编辑锁命令不同**：每个会话有各自的锁状态；宿主对 active 父会话的用户 Stop 会传播取消给子代理（父 turn 为 aborted/user、子 turn 为 aborted/parent），双方已调用的文件提交仍按上述边界等待结算。`/edit-lock stop` 只撤销所选会话的编辑权限，不宣称取消整个委派树。
 - **shell 与外部写入不在保护范围**：`printf > file`、`echo x >> file` 这类 shell 命令与任何外部编辑器的写入完全绕过锁，不受占用判断影响；不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外），也不承诺分布式多机共识。
 - **保留设置冲突只影响保留**：保留了互相矛盾的保留设置（例如单次上限低于默认时长）时，只有保留申请按设置键名报错；回合末收尾、状态、释放、停止和解锁继续工作，保留相关字段改用内置默认值，提醒次数与兜底处置仍按保存值生效。一个设置错误不会让文件无法释放。
 - **未承诺的时点保证**：观察是一串同步 filesystem 调用，**不是原子快照**；外部 shell/IDE 在调用之间改变盘面不在保证内，dev/ino 连续性无法证明不存在 inode reuse 或「改后复原」（ABA）。调用方必须先自行协调变更顺序（manager 生命周期/发布协调）。
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）；跨文件批量失败只区分 written / not-written / uncertain，不宣称回滚。
 
 ## 测试
+
+### Stop 提交回归
+
+`test/edit-lock-publisher-stop.test.js` 覆盖 preabort、publishing intent 持久化期间取消的零 dispatch、invoked 后正常更新及中断归属、旧版本拒绝与 unknown 围栏、历史不重放、runtime close 等待，以及同一存活 runtime 中另一个经 host registry 认证的 active session 更新无关既有文件。安装版 `editlock-stop-update` 使用真实 read 获得版本，在精确目标的 `inspectTemp` 暂停点执行 parent.cancel；断言原始父子 signal 都 abort、backend 仅调用一次、字节更新、updated 历史及 interrupted 归属。cold continuation 另作观测，不冒充同 runtime 隔离证明。
 
 ### 未决发布隔离的有界回归
 
