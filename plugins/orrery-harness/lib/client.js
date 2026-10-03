@@ -336,6 +336,14 @@ window.__ModuleLoader__.load({
 			worktreeTool_worktree_land: "Merge worktree lane",
 			worktreeTool_worktree_cleanup: "Worktree cleanup",
 			worktreeTool_worktree_abandon: "Abandon worktree lane",
+			worktreeNext_delegate: "assign a worker to this lane",
+			worktreeNext_worktree_check: "check the lane",
+			worktreeNext_worktree_land: "merge the lane (asks you to approve)",
+			worktreeNext_worktree_cleanup: "choose the cleanup",
+			worktreeWait_lane_ready: "waiting for dependency setup",
+			worktreeWait_child_settle: "waiting for the lane worker",
+			worktreeWait_check_complete: "waiting for verification",
+			worktreeWait_user: "waiting for your decision",
 			hashEditTitle: "Edit file",
 			hashEditPreparing: "Preparing edit",
 			hashEditPlanned: "Planned edit — the applied diff appears when the call settles.",
@@ -662,6 +670,14 @@ window.__ModuleLoader__.load({
 			worktreeTool_worktree_land: "合并 worktree 车道",
 			worktreeTool_worktree_cleanup: "worktree 收尾",
 			worktreeTool_worktree_abandon: "放弃 worktree 车道",
+			worktreeNext_delegate: "派子代理到该车道工作",
+			worktreeNext_worktree_check: "检查车道",
+			worktreeNext_worktree_land: "合并车道（需你批准）",
+			worktreeNext_worktree_cleanup: "选择收尾方式",
+			worktreeWait_lane_ready: "等待依赖安装完成",
+			worktreeWait_child_settle: "等待车道子代理完成",
+			worktreeWait_check_complete: "等待验证完成",
+			worktreeWait_user: "等待你的决定",
 			hashEditTitle: "编辑文件",
 			hashEditPreparing: "准备编辑",
 			hashEditPlanned: "计划编辑——调用完成后此处显示实际应用的 diff。",
@@ -963,12 +979,21 @@ window.__ModuleLoader__.load({
 			// down the others (same discipline as the hash_edit view). Reads go to
 			// the read-only view endpoint (never into the conversation log);
 			// mutations are /worktree commands, so every human action is recorded.
+			// The GUI language rides along so the host writes its decision cards
+			// (merge / cleanup / abandon) in the language the user reads.
+			const activeLocale = () => {
+				try {
+					return ctx.locale?.getSnapshot?.()?.active;
+				} catch {
+					return undefined;
+				}
+			};
 			const worktreeView = async (sessionId) => {
 				const response = await fetch("api/orrery-worktree/view", {
 					method: "POST",
 					credentials: "include",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ sessionId })
+					body: JSON.stringify({ sessionId, locale: activeLocale() })
 				});
 				const payload = await response.json();
 				if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);

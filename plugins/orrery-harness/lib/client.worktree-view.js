@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
 		const linkStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
 		const dangerButton = { ...chipStyle, color: "var(--dsw-alias-state-error-primary)", borderColor: "var(--dsw-alias-state-error-primary)" };
 		const primaryButton = { ...chipStyle, color: "var(--dsw-alias-label-primary)", borderColor: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
-		const muted = { color: "var(--dsw-alias-label-secondary)" };
+		const muted = { color: "var(--dsw-alias-label-secondary)", overflowWrap: "anywhere", minWidth: 0 };
 		const panelStyle = {
 			position: "absolute", bottom: "calc(100% + 6px)", right: 0, zIndex: 20, width: "min(460px, 82vw)",
 			maxHeight: "56vh", overflow: "auto", background: "var(--dsw-alias-bg-overlay)",
@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
 			boxShadow: "0 6px 24px rgba(0,0,0,0.18)", padding: "10px 12px",
 			color: "var(--dsw-alias-label-primary)", fontSize: "12px", lineHeight: "18px"
 		};
-		const mono = { fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" };
+		const mono = { fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)", overflowWrap: "anywhere", wordBreak: "break-word" };
 		const errorStyle = { color: "var(--dsw-alias-state-error-primary)", marginTop: "6px", wordBreak: "break-word" };
 		const dot = (color) => jsx("span", { "aria-hidden": true, style: { display: "inline-block", width: "7px", height: "7px", borderRadius: "50%", background: color, flex: "none" } });
 		const badge = (label, color) => jsx("span", {
@@ -42,6 +42,13 @@ window.__ModuleLoader__.load({
 		const btn = (key, label, onClick, style, disabled, title) => jsx("button", {
 			type: "button", style, disabled: disabled === true, onClick, title, "data-orrery-worktree-action": key, children: label
 		}, key);
+		/** A lane `next` in the GUI language: the tool or the wait reason. */
+		function localNext(next, t) {
+			if (!next || typeof next !== "object") return "";
+			if (typeof next.tool === "string") return t(`next_${next.tool}`);
+			if (typeof next.waitFor === "string") return t(`wait_${next.waitFor.replace(/-/g, "_")}`);
+			return "";
+		}
 		/** One read of the host view; never throws. */
 		const read = (fetchView) => Promise.resolve().then(() => fetchView?.()).then(
 			(value) => ({ view: value ?? null, error: null }),
@@ -196,7 +203,7 @@ window.__ModuleLoader__.load({
 				lane.check?.enabled && lane.check.results.length ? jsx("div", { style: { marginTop: "4px" }, "data-orrery-worktree-checks": "", children: lane.check.results.map((entry) => jsxs("div", { style: { ...mono, ...muted }, children: [
 					`${entry.exit === 0 ? "ok" : `exit ${entry.exit}`} · ${entry.name}${entry.ms ? ` (${Math.round(entry.ms / 1000)}s)` : ""}`
 				] }, entry.name)) }, "checks") : null,
-				lane.next ? jsx("div", { style: { marginTop: "4px", ...muted }, "data-orrery-worktree-next": "", children: t("nextLabel").replace("{next}", model.nextText(lane.next) ?? "") }, "next") : null,
+				lane.next ? jsx("div", { style: { marginTop: "4px", ...muted }, "data-orrery-worktree-next": "", children: t("nextLabel").replace("{next}", localNext(lane.next, t)) }, "next") : null,
 				jsxs("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }, children: [
 					btn("diff", diff === null ? t("viewDiff") : t("hideDiff"), loadDiff, linkStyle, false, null),
 					action("check").enabled ? btn("check", t("recheck"), () => run("check"), chipStyle, busy, null) : null,
@@ -225,7 +232,7 @@ window.__ModuleLoader__.load({
 			return jsx("div", {
 				"data-orrery-worktree-lane": lane.id,
 				"data-orrery-worktree-state": lane.state,
-				style: { borderTop: "1px solid var(--dsw-alias-border-l2)", padding: "8px 0" },
+				style: { borderTop: "1px solid var(--dsw-alias-border-l2)", padding: "8px 0", minWidth: 0, maxWidth: "100%", overflow: "hidden" },
 				children
 			}, lane.id);
 		}
@@ -330,7 +337,7 @@ window.__ModuleLoader__.load({
 			}
 			if (error) children.push(jsx("div", { style: errorStyle, "data-orrery-worktree-error": "", children: error }, "error"));
 			if (state.error && view) children.push(jsx("div", { style: errorStyle, children: t("staleData") }, "stale"));
-			return jsx("div", { "data-orrery-worktree-panel": "", style: { padding: "8px 2px" }, children }, NS_LABEL);
+			return jsx("div", { "data-orrery-worktree-panel": "", style: { padding: "8px 2px", minWidth: 0, maxWidth: "100%", overflowX: "hidden" }, children }, NS_LABEL);
 		}
 		/** U6 — conversation tool cards for the five lane tools. */
 		function WorktreeToolRow(props) {
@@ -341,17 +348,17 @@ window.__ModuleLoader__.load({
 			if (!meta) return jsx(WorktreeFlatFallback, props);
 			const title = t(`tool_${meta.tool}`);
 			const state = meta.state;
+			// Every visible line is built from structured meta in the GUI
+			// language; the host's English summary (written for the model) is
+			// only the hover title.
 			const lines = [];
-			if (meta.from && meta.from !== state) lines.push(`${t(`state_${meta.from}`)} → ${t(`state_${state}`)}`);
-			else lines.push(t(`state_${state}`));
-			if (meta.summary) lines.push(meta.summary);
+			lines.push(meta.from && meta.from !== state ? `${t(`state_${meta.from}`)} → ${t(`state_${state}`)}` : t(`state_${state}`));
 			if (meta.conflicts.length) lines.push(`${t("conflicts")}: ${meta.conflicts.join(", ")}`);
-			if (meta.check.length) lines.push(meta.check.map((entry) => `${entry.exit === 0 ? "ok" : `exit ${entry.exit}`} · ${entry.name}`).join(" · "));
-			if (meta.merge?.commit) lines.push(`${t("mergeCommit")}: ${String(meta.merge.commit).slice(0, 10)}`);
-			if (meta.cleanup?.summary) lines.push(`${t("cleanup")}: ${meta.cleanup.summary}`);
+			if (meta.check.length) lines.push(meta.check.map((entry) => `${entry.exit === 0 ? "✓" : `✗ ${entry.exit}`} ${entry.name}`).join(" · "));
+			if (meta.merge?.commit) lines.push(`${t("mergeCommit")}: ${String(meta.merge.commit).slice(0, 10)}${meta.merge.stat ? ` · +${meta.merge.stat.added} −${meta.merge.stat.removed}` : ""}`);
+			if (meta.cleanup?.state) lines.push(`${t("cleanup")}: ${t(`state_${meta.cleanup.state}`)}`);
 			if (meta.cleanup?.error) lines.push(`${t("cleanup")}: ${meta.cleanup.error}`);
-			const next = model.nextText(meta.next);
-			if (next) lines.push(`${t("nextLabel").replace("{next}", next)}`);
+			if (meta.next) lines.push(t("nextLabel").replace("{next}", localNext(meta.next, t)));
 			const diff = open ? model.diffLines(meta.diff) : [];
 			return jsxs("div", {
 				"data-tool": meta.tool,
@@ -368,7 +375,7 @@ window.__ModuleLoader__.load({
 							dot(model.colorOf(state)),
 							jsx("span", { style: { fontSize: "13px", fontWeight: 500 }, children: title }),
 							meta.lane ? jsx("button", {
-								type: "button", style: linkStyle, title: meta.lane,
+								type: "button", style: { ...linkStyle, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: meta.lane,
 								onClick: (event) => { event.stopPropagation(); if (typeof props.openFile === "function" && meta.lane) props.openFile(meta.lane); },
 								children: meta.lane
 							}) : null,
@@ -376,7 +383,7 @@ window.__ModuleLoader__.load({
 							jsx("span", { style: { ...muted, ...mono }, children: t(`state_${state}`) })
 						]
 					}),
-					jsx("div", { style: { ...muted, padding: "0 4px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word" }, children: lines.filter(Boolean).join("\n") }),
+					jsx("div", { title: meta.summary || undefined, style: { ...muted, padding: "0 4px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word" }, children: lines.filter(Boolean).join("\n") }),
 					open && diff.length ? jsx("pre", {
 						"data-orrery-worktree-tool-diff": "",
 						style: { margin: "0 4px 8px", padding: "8px 10px", maxHeight: "320px", overflow: "auto", background: "var(--dsw-alias-interactive-bg-solid)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", ...mono },

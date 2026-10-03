@@ -13,10 +13,8 @@ import { branchFor, laneIdFor, normalizeRoot, parseRepoConfig, scopesOverlap, se
 import { reconcile } from './reconcile.js'
 import { createLedger } from './ledger.js'
 import { ensureExclude, hasExclude } from './exclude.js'
-import {
-  ABANDON_CANCEL, CLEANUP_OPTIONS, MERGE_OPTION, NOT_NOW_OPTION, renderAbandonDetail, renderBoard, renderChildContract,
-  renderCleanupDetail, renderMergeDetail, renderNotice,
-} from './prompts.js'
+import { renderBoard, renderChildContract, renderNotice } from './prompts.js'
+import { cardCopy, cardLocale } from './cards.js'
 
 export const CONFIG_FILE = '.config.json'
 const SETUP_TIMEOUT_MS = 600_000
@@ -66,6 +64,7 @@ export function pathKey(path, platform = process.platform) {
  * @property {(sessionId: string, text: string) => void} notify
  * @property {(type: string, data: any, root: string, sessionId?: string | null) => void} audit
  * @property {(session: any) => boolean} modeOf
+ * @property {(sessionId: string | undefined) => string | undefined} [localeOf] - the GUI language last reported for a session
  * @property {() => number} [now]
  * @property {number} [pid] - this process id (tests)
  * @property {{ warn?: (message: string) => void }} [logger]
@@ -626,16 +625,17 @@ export function createLaneService(deps) {
       await apply(repo, laneId, { type: 'ask', patch: { asking: { pid, at: now() } } })
       asking.add(laneId)
       const commits = await git.commits(repo.mainRoot, lane.base.branch, lane.branch)
-      const mergeLabel = MERGE_OPTION(lane.base.branch)
+      const copy = cardCopy(cardLocale(deps.localeOf?.(session?.id)))
+      const mergeLabel = copy.mergeOption(lane.base.branch)
       /** @type {any} */
       let answer
       try {
         answer = await deps.ask(agent, [{
           id: 'merge',
-          header: 'Worktree merge',
-          question: `Merge lane "${lane.title}" into ${lane.base.branch}?`,
-          detail: renderMergeDetail({ lane, commits, stat, verification: lane.check }),
-          options: [{ label: mergeLabel, description: `--no-ff merge of ${lane.branch}` }, { label: NOT_NOW_OPTION, description: 'Keep the lane as it is' }],
+          header: copy.mergeHeader,
+          question: copy.mergeQuestion(lane.title, lane.base.branch),
+          detail: copy.mergeDetail({ lane, commits, stat, verification: lane.check }),
+          options: [{ label: mergeLabel, description: copy.mergeOptionDescription(lane.branch) }, { label: copy.notNow, description: copy.notNowDescription }],
         }], options.signal)
       } catch (error) {
         const lane2 = await declined(`approval not given (${/** @type {any} */ (error)?.code ?? /** @type {any} */ (error)?.message ?? 'cancelled'})`)
@@ -675,25 +675,26 @@ export function createLaneService(deps) {
     const repo = await repoFor(cwdOf(agent.session))
     const lane = laneOf(repo, laneId)
     if (lane.state !== 'landed') return null
+    const copy = cardCopy(cardLocale(deps.localeOf?.(agent.session?.id)))
     /** @type {any} */
     let answer
     try {
       answer = await deps.ask(agent, [{
         id: 'cleanup',
-        header: 'Worktree cleanup',
-        question: `Lane "${lane.title}" is merged. What should happen to its worktree?`,
-        detail: renderCleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }),
+        header: copy.cleanupHeader,
+        question: copy.cleanupQuestion(lane.title),
+        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot),
         options: [
-          { label: CLEANUP_OPTIONS.keep, description: 'Leave the worktree and branch in place' },
-          { label: CLEANUP_OPTIONS.worktree, description: 'Remove the worktree, keep the branch' },
-          { label: CLEANUP_OPTIONS.all, description: 'Remove the worktree and delete the merged branch' },
+          { label: copy.choices.keep, description: copy.cleanupDescriptions.keep },
+          { label: copy.choices.worktree, description: copy.cleanupDescriptions.worktree },
+          { label: copy.choices.all, description: copy.cleanupDescriptions.all },
         ],
       }], signal)
     } catch {
       return null
     }
     const choice = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'cleanup')?.selected?.[0]
-    const mode = Object.entries(CLEANUP_OPTIONS).find(([, label]) => label === choice)?.[0]
+    const mode = Object.entries(copy.choices).find(([, label]) => label === choice)?.[0]
     if (!mode) return null
     return cleanup(agent.session, laneId, /** @type {'keep' | 'worktree' | 'all'} */ (mode), { by: 'user' })
   }
@@ -755,6 +756,7 @@ export function createLaneService(deps) {
     if (!isActive(lane)) throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is already ${lane.state}`, { lane: laneId })
     const unmerged = (await git.branchExists(repo.mainRoot, lane.branch)) ? await git.unmergedCount(repo.mainRoot, lane.base.branch, lane.branch) : 0
     let mode = options.mode
+    const copy = cardCopy(cardLocale(deps.localeOf?.(agent?.session?.id)))
     if (!mode) {
       if (!deps.ask) throw new WorktreeError(WORKTREE_CODES.MAIN_AGENT_ONLY, 'abandoning needs the user\'s confirmation and no answerer is available')
       /** @type {any} */
@@ -762,21 +764,21 @@ export function createLaneService(deps) {
       try {
         answer = await deps.ask(agent, [{
           id: 'abandon',
-          header: 'Abandon lane',
-          question: `Abandon lane "${lane.title}"?`,
-          detail: renderAbandonDetail(lane, unmerged),
+          header: copy.abandonHeader,
+          question: copy.abandonQuestion(lane.title),
+          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot),
           options: [
-            { label: CLEANUP_OPTIONS.keep, description: 'Abandon, but leave the worktree and branch' },
-            { label: CLEANUP_OPTIONS.worktree, description: 'Abandon and remove the worktree, keep the branch' },
-            { label: CLEANUP_OPTIONS.all, description: unmerged > 0 ? `Abandon and delete everything, including ${unmerged} unmerged commit(s)` : 'Abandon and delete the worktree and branch' },
-            { label: ABANDON_CANCEL, description: 'Keep the lane active' },
+            { label: copy.choices.keep, description: copy.abandonDescriptions.keep },
+            { label: copy.choices.worktree, description: copy.abandonDescriptions.worktree },
+            { label: copy.choices.all, description: copy.abandonDescriptions.all(unmerged) },
+            { label: copy.cancel, description: copy.abandonDescriptions.cancel },
           ],
         }], options.signal)
       } catch {
         return result(lane, 'not abandoned: the confirmation card was dismissed')
       }
       const choice = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'abandon')?.selected?.[0]
-      mode = /** @type {any} */ (Object.entries(CLEANUP_OPTIONS).find(([, label]) => label === choice)?.[0])
+      mode = /** @type {any} */ (Object.entries(copy.choices).find(([, label]) => label === choice)?.[0])
       if (!mode) return result(lane, 'not abandoned: the user cancelled')
     }
     if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first`, { lane: laneId })

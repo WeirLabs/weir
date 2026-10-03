@@ -49,6 +49,8 @@ function apply(ctx, config = {}) {
   const settings = ctx.get?.('orrerySettings')
   const settingsNow = () => worktreeSettings(config, settings?.get?.('worktree'))
   const projections = ctx.get?.('sessionProjections')
+  /** GUI language last reported by the browser per session (decision-card copy). @type {Map<string, string>} */
+  const locales = new Map()
   /** Optional executors, captured when (and if) they mount. @type {{ shell?: any, sandboxPolicy?: any }} */
   const shellRef = {}
   ctx.inject?.(['shell'], (/** @type {any} */ scope) => {
@@ -76,6 +78,7 @@ function apply(ctx, config = {}) {
     notify: (sessionId, text) => deliver(ctx, audit, sessionId, text),
     audit: (kind, data, root, sessionId) => audit({ id: sessionId ?? null, header: { cwd: root } }, `${AUDIT_TYPES.worktree}/${kind}`, data, { root }),
     modeOf: (session) => projections?.stateOf?.(session, WORKTREE_PROJECTION_KEY)?.mode === true,
+    localeOf: (sessionId) => (sessionId ? locales.get(sessionId) : undefined) ?? locales.get('*'),
     logger: ctx.logger,
   })
   // Service API for the delegate plugin (same realm; see the row comment).
@@ -150,6 +153,11 @@ function apply(ctx, config = {}) {
         body = null
       }
       const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+      if (typeof body?.locale === 'string' && /^[a-z]{2}(?:-[A-Za-z0-9-]+)?$/.test(body.locale)) {
+        if (sessionId) locales.set(sessionId, body.locale)
+        // The latest GUI language also covers sessions the panel never polled.
+        locales.set('*', body.locale)
+      }
       return { body, session: sessionId ? ctx.get?.('agents')?.get?.(sessionId)?.session : undefined, sessionId }
     }
     const offView = fetchRegistry.register({

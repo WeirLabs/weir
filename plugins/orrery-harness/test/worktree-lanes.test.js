@@ -15,7 +15,7 @@ function nodeShellRun({ command, cwd, timeoutMs }) {
   })
 }
 
-function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false } = {}) {
+function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale } = {}) {
   const fixture = makeRepo()
   const notices = []
   const audits = []
@@ -28,6 +28,7 @@ function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false
     notify: (sessionId, text) => notices.push({ sessionId, text }),
     audit: (type, data, root) => audits.push({ type, data, root }),
     modeOf: () => mode,
+    localeOf: () => locale,
   })
   const session = { id: 'main-1', header: { cwd: fixture.repo } }
   const agent = { session }
@@ -417,6 +418,27 @@ describe('worktree lane service: landing', () => {
       const view = await h.service.view(h.session)
       expect(view.lanes[0].state).toBe('declined')
       expect(view.lanes[0].reason).toContain('approval card was closed')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('writes the cards in the GUI language and still recognizes the answers', async () => {
+    const pickFirst = (questions) => ({ answers: [{ id: questions[0].id, selected: [questions[0].options[0].label] }] })
+    const h = harness({ ask: pickFirst, locale: 'zh' })
+    try {
+      const lane = await workedLane(h, 'Add feature')
+      const landed = await h.service.land(h.agent, lane)
+      expect(landed.state).toBe('landed')
+      const card = h.asked[0][0]
+      expect(card.header).toBe('Worktree 合并')
+      expect(card.options.map((option) => option.label)).toEqual(['合并到 main（--no-ff）', '暂不合并'])
+      expect(card.detail).toContain('验证：本仓库未启用')
+      const cleaned = await h.service.askCleanup(h.agent, lane)
+      expect(cleaned.state).toBe('kept')
+      expect(h.asked[1][0].options.map((option) => option.label)).toEqual(['保留 worktree', '清理 worktree', '清理 worktree 和分支'])
+      expect(h.asked[1][0].detail).toContain('.orrery/worktrees/')
+      expect(h.asked[1][0].detail).not.toContain(h.repo)
     } finally {
       h.cleanup()
     }
