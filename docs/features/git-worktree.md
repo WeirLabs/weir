@@ -10,7 +10,7 @@
 
 ## 用户可见行为
 
-- **开车道**：主代理调用 `worktree_open({ title, scope? })`。首次使用时宿主向 `.git/info/exclude` 追加一行 `/.orrery/worktrees/`（带 Orrery 标记注释，不改 `.gitignore`、不影响远端），然后建分支与 worktree；仓库有 lockfile 时在后台安装依赖（车道处于 `preparing`，完成后通知主代理）。
+- **开车道**：主代理调用 `worktree_open({ title, scope? })`。首次使用时宿主向 `.git/info/exclude` 追加 `/.orrery/`（带 Orrery 标记注释，不改 `.gitignore`、不影响远端）。`.orrery/` 是 Orrery 的运行时目录（车道、账本、审计日志、Edit Lock 数据、笔记），从不需要版本控制，因此整体本地忽略；车道根若配置在 `.orrery/` 之外，再追加该根目录一条，然后建分支与 worktree；仓库有 lockfile 时在后台安装依赖（车道处于 `preparing`，完成后通知主代理）。
 - **派工**：`delegate({ ..., worktree: <lane> })` 把子代理绑定到车道。子代理提示词末尾自动附上车道契约（车道绝对路径、`workdir` 规则、写范围、"结束前提交"），子代理标签显示为 `<类别> · lane:<id>`。同一车道同时只允许一个写入子代理（`LANE_BUSY`）；只读精选代理可以绑定车道做调查，不改变车道状态。
 - **自动检查**：绑定车道的写入子代理结束时（前台、后台 job、受监督成员三条路径都覆盖），宿主自动检查车道：有未提交改动 → `dirty`；HEAD 不在车道分支 → `branch-moved`；相对 base 没有新提交 → `no-commits`；都通过 → `landable`（启用验证时先跑验证）。结论以一条紧凑通知送达主代理，正文就是下一步，例如 `[worktree] lane fix-login-001 landable@3fa2c1 → next: worktree_land({"lane":"fix-login-001"})`。前台与后台委派把这条结论直接附在委派结果里。
 - **可选验证**：仓库本地配置 `.orrery/worktrees/.config.json` 声明了 `check` 时，宿主在车道里按顺序执行这些命令（首个失败即停、每条有超时、日志落盘），验证命令改动了已跟踪文件也算失败；未声明 `check` 是正常状态，不提醒、不报警。

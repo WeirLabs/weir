@@ -98,7 +98,7 @@ function assert(view) {
   const exclude = excludeFile ? readFileSync(excludeFile, 'utf8') : ''
   view.check('worktree_open created the lane in the ledger', Boolean(lane), JSON.stringify(ledger))
   view.check('the lane exists on its own branch', lane?.branch === `orrery/${LANE}` && typeof lane?.path === 'string', JSON.stringify(lane))
-  view.check('the lane root is ignored locally through info/exclude', exclude.includes('/.orrery/worktrees/'), exclude)
+  view.check('the lane root is ignored locally through info/exclude', exclude.split(/\r?\n/).includes('/.orrery/'), exclude)
   view.check('the bound child received the lane contract', view.requests.some((r) => r.childSawLaneContract))
   view.check('the lane guard refused a shell call without the lane workdir', view.requests.some((r) => r.childGuardRefusal))
   view.check('the host check settled the lane as no-commits', lane?.state === 'no-commits', lane?.state)

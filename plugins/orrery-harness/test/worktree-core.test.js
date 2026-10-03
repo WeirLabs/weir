@@ -1,10 +1,10 @@
 import { describe, expect, it } from './helpers.js'
-import { existsSync, readFileSync, writeFileSync, utimesSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { WORKTREE_CODES, WorktreeError } from '../src/worktree/errors.js'
 import { DISPATCHABLE, FINISHED, STATES, TRANSITIONS, isActive, nextFor, transition } from '../src/worktree/state.js'
 import {
-  branchFor, excludeRuleFor, gitAtLeast, globToRegExp, inScope, laneIdFor, normalizeRoot, parseGitVersion, parseMergeTree,
+  branchFor, excludeRuleFor, excludeRulesFor, gitAtLeast, globToRegExp, inScope, laneIdFor, normalizeRoot, parseGitVersion, parseMergeTree,
   parseRepoConfig, parseStatus, parseWorktreeList, scopesOverlap, setupCommandFor, slugify, staticPrefix, suggestChecks,
 } from '../src/worktree/rules.js'
 import { reconcile } from '../src/worktree/reconcile.js'
@@ -108,6 +108,8 @@ describe('worktree rules', () => {
       expect(() => normalizeRoot(bad)).toThrow(/ROOT_OUTSIDE_REPO/)
     }
     expect(excludeRuleFor('.orrery/worktrees')).toBe('/.orrery/worktrees/')
+    expect(excludeRulesFor('.orrery/worktrees')).toEqual(['/.orrery/'])
+    expect(excludeRulesFor('lanes')).toEqual(['/.orrery/', '/lanes/'])
   })
 
   it('derives setup from lockfiles', () => {
@@ -285,15 +287,18 @@ describe('worktree ledger', () => {
 })
 
 describe('worktree local exclude (real git)', () => {
-  it('appends one marked rule to the common exclude, idempotently, without touching .gitignore', () => {
+  it('ignores the whole .orrery scratch directory in the common exclude, idempotently, without touching .gitignore', () => {
     const { repo, cleanup } = makeRepo()
     try {
       const commonDir = join(repo, '.git')
       expect(ensureExclude(commonDir, '.orrery/worktrees')).toEqual({ file: join(commonDir, 'info', 'exclude'), written: true })
       expect(ensureExclude(commonDir, '.orrery/worktrees').written).toBe(false)
       const text = readFileSync(join(commonDir, 'info', 'exclude'), 'utf8')
-      expect(text.split('/.orrery/worktrees/').length - 1).toBe(1)
-      expect(text).toContain('# orrery-harness: git-worktree lanes (local only)')
+      expect(text.split('\n').filter((line) => line === '/.orrery/')).toHaveLength(1)
+      expect(text).toContain('# orrery-harness: runtime scratch and worktree lanes (local only)')
+      // audit / Edit Lock scratch written at the repository root is ignored too
+      mkdirSync(join(repo, '.orrery'), { recursive: true })
+      writeFileSync(join(repo, '.orrery', 'audit.jsonl'), '{}\n')
       expect(hasExclude(commonDir, '.orrery/worktrees')).toBe(true)
       sh(repo, 'worktree', 'add', '-q', '-b', 'orrery/t-001', '.orrery/worktrees/t-001')
       expect(sh(repo, 'status', '--porcelain')).toBe('')
@@ -317,6 +322,23 @@ describe('worktree git wrapper', () => {
     expect(calls.some((call) => call.includes('--force'))).toBe(false)
     expect(calls).toContain('git branch -d orrery/x')
     expect(calls).toContain('git branch -D orrery/y')
+  })
+
+  it('adds the lane-root rule only when the root lies outside .orrery, and keeps a legacy rule', () => {
+    const { repo, cleanup } = makeRepo()
+    try {
+      const commonDir = join(repo, '.git')
+      mkdirSync(join(commonDir, 'info'), { recursive: true })
+      writeFileSync(join(commonDir, 'info', 'exclude'), '# orrery-harness: git-worktree lanes (local only)\n/.orrery/worktrees/\n')
+      expect(ensureExclude(commonDir, '.orrery/worktrees').written).toBe(true)
+      expect(ensureExclude(commonDir, 'lanes').written).toBe(true)
+      const lines = readFileSync(join(commonDir, 'info', 'exclude'), 'utf8').split('\n')
+      expect(lines.filter((line) => line === '/.orrery/')).toHaveLength(1)
+      expect(lines.filter((line) => line === '/lanes/')).toHaveLength(1)
+      expect(hasExclude(commonDir, 'lanes')).toBe(true)
+    } finally {
+      cleanup()
+    }
   })
 
   it('reports a blocked removal as REMOVE_BLOCKED', async () => {

@@ -69,7 +69,7 @@ describe('worktree lane service: open', () => {
       expect(opened.next).toEqual({ tool: 'delegate', args: { worktree: 'fix-login-redirect-001' }, hint: 'delegate the lane work with worktree set to this lane' })
       expect(existsSync(join(opened.path, 'a.txt'))).toBe(true)
       expect(sh(h.repo, 'status', '--porcelain')).toBe('')
-      expect(readFileSync(join(h.repo, '.git', 'info', 'exclude'), 'utf8')).toContain('/.orrery/worktrees/')
+      expect(readFileSync(join(h.repo, '.git', 'info', 'exclude'), 'utf8')).toContain('/.orrery/\n')
       expect(h.audits.map((entry) => entry.type)).toContain('open')
       expect(h.audits.every((entry) => entry.root === h.repo)).toBe(true)
     } finally {

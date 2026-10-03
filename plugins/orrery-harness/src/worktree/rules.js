@@ -7,7 +7,7 @@ import { WORKTREE_CODES, WorktreeError } from './errors.js'
 export const DEFAULT_ROOT = '.orrery/worktrees'
 export const BRANCH_PREFIX = 'orrery/'
 export const MIN_GIT = Object.freeze([2, 38, 0])
-export const EXCLUDE_MARKER = '# orrery-harness: git-worktree lanes (local only)'
+export const EXCLUDE_MARKER = '# orrery-harness: runtime scratch and worktree lanes (local only)'
 
 /**
  * ASCII slug of a lane title: lowercase, diacritics folded, every other run
@@ -67,9 +67,22 @@ export function normalizeRoot(root) {
   return parts.join('/')
 }
 
+/** Orrery's per-repository runtime scratch (audit, Edit Lock, lanes, notes). */
+export const ORRERY_DIR_RULE = '/.orrery/'
+
 /** The local exclude rule for a normalized root. @param {string} root */
 export function excludeRuleFor(root) {
   return `/${root}/`
+}
+
+/**
+ * Every local exclude rule a repository needs: Orrery's whole scratch
+ * directory (never version-controlled), plus the lane root when it is
+ * configured outside that directory.
+ * @param {string} root - normalized lane root
+ */
+export function excludeRulesFor(root) {
+  return root === '.orrery' || root.startsWith('.orrery/') ? [ORRERY_DIR_RULE] : [ORRERY_DIR_RULE, excludeRuleFor(root)]
 }
 
 /**
