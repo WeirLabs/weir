@@ -18,7 +18,10 @@ import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECT
 import { WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
 
 const name = 'orrery-worktree'
-const inject = ['tools', 'systemPrompt']
+// subprocess is a host-plane service every composition mounts; it is a hard
+// dependency (ctx.get cannot see it from a preset row — S20). shell and
+// sandboxPolicy are optional and captured through ctx.inject below.
+const inject = ['tools', 'systemPrompt', 'subprocess']
 
 export const WORKTREE_SERVICE = 'orreryWorktreeLanes'
 export const LANES_SECTION_ORDER_OFFSET = 20
@@ -46,10 +49,24 @@ function apply(ctx, config = {}) {
   const settings = ctx.get?.('orrerySettings')
   const settingsNow = () => worktreeSettings(config, settings?.get?.('worktree'))
   const projections = ctx.get?.('sessionProjections')
+  /** Optional executors, captured when (and if) they mount. @type {{ shell?: any, sandboxPolicy?: any }} */
+  const shellRef = {}
+  ctx.inject?.(['shell'], (/** @type {any} */ scope) => {
+    shellRef.shell = scope.shell
+    return () => { shellRef.shell = undefined }
+  })
+  ctx.inject?.(['sandboxPolicy'], (/** @type {any} */ scope) => {
+    shellRef.sandboxPolicy = scope.sandboxPolicy
+    return () => { shellRef.sandboxPolicy = undefined }
+  })
 
   const service = createLaneService({
-    git: createGit(createGitRunner(ctx.get?.('subprocess') ?? missingSubprocess())),
-    shellRun: createShellRunner(ctx.get?.('shell'), ctx.get?.('sandboxPolicy')),
+    git: createGit(createGitRunner(ctx.subprocess ?? ctx.get?.('subprocess') ?? missingSubprocess())),
+    shellRun: (request) => {
+      const run = createShellRunner(shellRef.shell ?? ctx.get?.('shell'), shellRef.sandboxPolicy ?? ctx.get?.('sandboxPolicy'))
+      if (!run) return Promise.reject(new Error('no shell executor is available in this composition'))
+      return run(request)
+    },
     settings: settingsNow,
     ask: (agent, questions, signal) => {
       const userQuestions = ctx.get?.('userQuestions')

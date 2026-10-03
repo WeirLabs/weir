@@ -7,7 +7,39 @@
 // - shellRunner: user-configured setup / verification commands (shell
 //   strings) through ctx.shell with the calling session's per-call sandbox
 //   policy — the same boundary the bash tool enforces (S23 / S26 S-G).
-import { childEnvironment, resolveExecutable } from '../lsp/child-process.js'
+import { existsSync, statSync } from 'node:fs'
+import { childEnvironment, extraBinDirectories, resolveExecutable } from '../lsp/child-process.js'
+
+/** Vendor git install locations, probed when PATH resolution fails. */
+function wellKnownGit(platform = process.platform) {
+  const candidates = platform === 'win32'
+    ? ['C:\\Program Files\\Git\\cmd\\git.exe', 'C:\\Program Files (x86)\\Git\\cmd\\git.exe']
+    : ['/usr/bin/git', '/usr/local/bin/git', '/opt/homebrew/bin/git']
+  return candidates.filter((path) => {
+    try {
+      return statSync(path).isFile()
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * Resolve git: the service resolver, then vendored locations, then the LSP
+ * module's directory scan. The desktop host runs with a minimal PATH (S21),
+ * and headless CLI runs pass a scrubbed environment to children, so neither
+ * alone is enough.
+ */
+export async function resolveGit(subprocess, env = process.env) {
+  const fromService = await resolveExecutable(subprocess, 'git')
+  if (fromService) return fromService
+  for (const path of wellKnownGit()) return path
+  for (const dir of extraBinDirectories(env)) {
+    const candidate = `${dir}/git${process.platform === 'win32' ? '.exe' : ''}`
+    if (existsSync(candidate)) return candidate
+  }
+  return undefined
+}
 
 const DEFAULT_GIT_TIMEOUT_MS = 120_000
 
@@ -19,7 +51,7 @@ export function createGitRunner(subprocess) {
   /** @type {Promise<string | undefined> | null} */
   let gitPath = null
   return async (argv, { cwd, timeoutMs = DEFAULT_GIT_TIMEOUT_MS }) => {
-    gitPath ??= resolveExecutable(subprocess, 'git')
+    gitPath ??= resolveGit(subprocess)
     const executable = await gitPath
     if (!executable) return { code: 127, stdout: '', stderr: 'git executable not found' }
     const [, ...args] = argv

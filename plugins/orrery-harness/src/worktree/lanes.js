@@ -126,11 +126,13 @@ export function createLaneService(deps) {
 
   /** @param {string} cwd @param {string} root */
   async function resolveRepo(cwd, root) {
-    versionProbe ??= git.version()
+    versionProbe ??= git.version(cwd)
     const version = await versionProbe
     if (!git.supported(version)) {
       versionProbe = null
-      throw new WorktreeError(WORKTREE_CODES.GIT_TOO_OLD, `git ${version ? version.join('.') : '(not found)'} is too old; worktree lanes need git 2.38 or newer`)
+      throw new WorktreeError(WORKTREE_CODES.GIT_TOO_OLD, version
+        ? `git ${version.join('.')} is too old; worktree lanes need git 2.38 or newer`
+        : `git could not be run (${git.lastVersionError ?? 'unknown error'}); worktree lanes need git 2.38 or newer`)
     }
     const info = await git.repoOf(cwd)
     if (!info) throw new WorktreeError(WORKTREE_CODES.NOT_A_REPO, `${cwd} is not inside a git repository`)

@@ -331,7 +331,7 @@ describe('worktree git wrapper', () => {
     const { repo, cleanup } = makeRepo()
     try {
       const git = createGit(nodeGitRun)
-      const version = await git.version()
+      const version = await git.version(repo)
       expect(git.supported(version)).toBe(true)
       const info = await git.repoOf(repo)
       expect(info.mainRoot).toBe(repo)

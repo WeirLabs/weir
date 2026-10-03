@@ -24,9 +24,13 @@ export function createGit(run) {
   const out = (/** @type {{ stdout: string }} */ result) => result.stdout.trim()
 
   return {
+    /** @type {string | null} why the last version probe failed */
+    lastVersionError: /** @type {string | null} */ (null),
     raw: git,
-    async version() {
-      const result = await run(['git', '--version'], { cwd: '.' })
+    /** @param {string} cwd - an absolute, existing directory (the subprocess service refuses relative cwds) */
+    async version(cwd) {
+      const result = await run(['git', '--version'], { cwd })
+      this.lastVersionError = result.code === 0 ? null : `exit ${result.code}: ${(result.stderr || result.stdout).trim().slice(0, 300)}`
       return result.code === 0 ? parseGitVersion(result.stdout) : null
     },
     /** @param {number[] | null} version */
