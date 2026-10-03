@@ -1,0 +1,131 @@
+// pkgmgr: derived setup resolution — system first, DSH bundled runtime
+// second, explicit diagnostics when neither offers the tool, and every path
+// quoted (spaces in DSH home, executable dirs). Plus a gated REAL execution
+// check against this machine's bundled runtime when it exists.
+import { describe, expect, it } from './helpers.js'
+import { execFileSync } from 'node:child_process'
+import { existsSync, statSync } from 'node:fs'
+import { BUNDLED_REL, quoteSh, resolveDerivedSetup, setupMissingReason } from '../src/worktree/pkgmgr.js'
+import { createSetupResolver } from '../src/worktree/runner.js'
+
+const NO_SYSTEM = () => undefined
+const NO_DIRS = () => []
+
+/** Fake DSH home with one bundled runtime. */
+function fakeHome(root, { pnpm = true, npm = false, node = true } = {}) {
+  const files = new Set()
+  if (node) files.add(`${root}/dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.node}`)
+  if (pnpm) files.add(`${root}/dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.pnpm}`)
+  if (npm) files.add(`${root}/dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.npm}`)
+  return {
+    dshHome: root,
+    listDirs: (dir) => (dir === `${root}/dsh-runtimes` ? ['dsh-primary-runtime'] : []),
+    isFile: (path) => files.has(path),
+  }
+}
+
+describe('quoteSh', () => {
+  it('passes safe words through and quotes everything else', () => {
+    expect(quoteSh('/usr/bin/node')).toBe('/usr/bin/node')
+    expect(quoteSh('/Users/A B/.dsh/node')).toBe(`'/Users/A B/.dsh/node'`)
+    expect(quoteSh(`it's`)).toBe(`'it'\\''s'`)
+  })
+})
+
+describe('resolveDerivedSetup', () => {
+  it('prefers the system tool and injects its directory into PATH', () => {
+    const resolution = resolveDerivedSetup('pnpm', { foundOnPath: () => '/opt/homebrew/bin/pnpm', listDirs: NO_DIRS, isFile: () => false, dshHome: undefined })
+    expect(resolution.ok).toBe(true)
+    expect(resolution.source).toBe('system')
+    expect(resolution.display).toBe('pnpm install --frozen-lockfile')
+    expect(resolution.command).toBe(`export PATH=/opt/homebrew/bin:"$PATH"; exec /opt/homebrew/bin/pnpm install --frozen-lockfile`)
+  })
+
+  it('falls back to the bundled runtime, running pnpm.mjs through the bundled node', () => {
+    const home = fakeHome('/ds h')
+    const resolution = resolveDerivedSetup('pnpm', { foundOnPath: NO_SYSTEM, ...home })
+    expect(resolution.ok).toBe(true)
+    expect(resolution.source).toBe('bundled')
+    const node = '/ds h/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
+    const pm = '/ds h/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs'
+    expect(resolution.command).toBe(`export PATH='/ds h/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin':"$PATH"; exec '${node}' '${pm}' install --frozen-lockfile`)
+    expect(resolution.display).toBe(`node ${pm} install --frozen-lockfile`)
+  })
+
+  it('bundled npm only exists when the bundled node directory contains npm', () => {
+    const withNpm = resolveDerivedSetup('npm', { foundOnPath: NO_SYSTEM, ...fakeHome('/d', { npm: true, pnpm: false }) })
+    expect(withNpm.ok).toBe(true)
+    expect(withNpm.command).toContain('dependencies/node/bin/npm')
+    expect(withNpm.command).toContain(' ci')
+    const withoutNpm = resolveDerivedSetup('npm', { foundOnPath: NO_SYSTEM, ...fakeHome('/d', { npm: false }) })
+    expect(withoutNpm.ok).toBe(false)
+  })
+
+  it('yarn and bun have no bundled offer', () => {
+    for (const manager of ['yarn', 'bun']) {
+      expect(resolveDerivedSetup(manager, { foundOnPath: NO_SYSTEM, ...fakeHome('/d') }).ok).toBe(false)
+    }
+  })
+
+  it('reports nothing found when both layers miss, with an actionable reason', () => {
+    const resolution = resolveDerivedSetup('pnpm', { foundOnPath: NO_SYSTEM, listDirs: NO_DIRS, isFile: () => false, dshHome: '/empty' })
+    expect(resolution).toEqual({ ok: false, manager: 'pnpm' })
+    const reason = setupMissingReason('pnpm')
+    expect(reason).toContain('setup needs pnpm')
+    expect(reason).toContain('.orrery/worktrees/.config.json')
+    expect(reason).toContain('/worktree setup <lane> --skip')
+  })
+
+  it('uses <home>/.dsh when dshHome is unset and tolerates a missing runtimes dir', () => {
+    const seen = []
+    const resolution = resolveDerivedSetup('pnpm', {
+      foundOnPath: NO_SYSTEM,
+      dshHome: undefined,
+      home: '/u',
+      listDirs: (dir) => {
+        seen.push(dir)
+        return []
+      },
+      isFile: () => false,
+    })
+    expect(resolution.ok).toBe(false)
+    expect(seen).toEqual(['/u/.dsh/dsh-runtimes'])
+  })
+
+  it('keeps frozen-lockfile semantics for every manager', () => {
+    for (const manager of ['pnpm', 'yarn', 'bun']) {
+      const resolution = resolveDerivedSetup(manager, { foundOnPath: () => `/sys/${manager}`, listDirs: NO_DIRS, isFile: () => false })
+      expect(resolution.command).toContain('install --frozen-lockfile')
+    }
+    expect(resolveDerivedSetup('npm', { foundOnPath: () => '/sys/npm', listDirs: NO_DIRS, isFile: () => false }).command).toContain(' ci')
+  })
+})
+
+describe('createSetupResolver against the real host', () => {
+  const dshHome = process.env.DSH_HOME ?? `${process.env.HOME}/.dsh`
+  const node = `${dshHome}/dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.node}`
+  const pnpm = `${dshHome}/dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.pnpm}`
+  const bundled = existsSync(node) && existsSync(pnpm)
+
+  it('resolves pnpm to a working invocation (system or bundled)', async () => {
+    const resolve = createSetupResolver({ subprocess: undefined, env: { DSH_HOME: dshHome } })
+    const resolution = await resolve('pnpm')
+    expect(resolution.ok, JSON.stringify(resolution)).toBe(true)
+    if (resolution.source === 'bundled') {
+      expect(resolution.command).toContain(pnpm)
+    }
+  })
+
+  it('the bundled invocation form actually runs (node + pnpm.mjs, PATH injected) — REAL execution', (t) => {
+    if (!bundled) {
+      t.skip('no DSH bundled runtime on this machine')
+      return
+    }
+    const out = execFileSync('bash', ['-c', `export PATH="${dshHome}/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin":"$PATH"; exec "${node}" "${pnpm}" --version`], { encoding: 'utf8' })
+    expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/)
+    // The injected PATH is what lets pnpm spawn node for lifecycle scripts.
+    const which = execFileSync('bash', ['-c', `export PATH="${dshHome}/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin":"$PATH"; command -v node`], { encoding: 'utf8' }).trim()
+    expect(statSync(which).isFile()).toBe(true)
+    expect(which).toBe(node)
+  })
+})

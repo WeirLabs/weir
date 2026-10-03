@@ -55,7 +55,15 @@
 }
 ```
 
-`setup` 与 `check` 都可选。未声明 `setup` 时按 lockfile 推导（`pnpm-lock.yaml` / `bun.lock` / `yarn.lock` / `package-lock.json`）。命令只来自这个**本地、不入库**的文件，绝不从入库文件读取（避免"克隆陌生仓库即执行命令"）；`/worktree init` 探测到的建议必须经你确认才写入。
+`setup` 与 `check` 都可选。未声明 `setup` 时按 lockfile 推导包管理器（`pnpm-lock.yaml` → pnpm、`bun.lock` → bun、`yarn.lock` → yarn、`package-lock.json` → npm）。命令只来自这个**本地、不入库**的文件，绝不从入库文件读取（避免"克隆陌生仓库即执行命令"）；`/worktree init` 探测到的建议必须经你确认才写入。
+
+**推导命令的可执行方式**（仅针对推导；你显式配置的 `setup` 永远原样执行、绝不改写）：DSH 桌面宿主的 PATH 是最小化的（S21），裸 `pnpm` 很可能不存在，因此宿主在运行前解析调用方式——
+1. **系统环境优先**：先在 PATH 与常见安装位置找该包管理器，尊重你自行安装的版本；
+2. **DSH 捆绑运行时回退**：在 `<DSH_HOME>/dsh-runtimes/*/dependencies/` 中查找（pnpm 以捆绑 Node 的绝对路径执行 `pnpm.mjs`；npm 仅当捆绑 Node 目录内存在 `npm` 时；yarn/bun 无捆绑提供）；
+3. **Node 注入**：执行时把解析到的 Node/bin 目录注入命令内 PATH 前缀，保证安装期生命周期脚本能找到 node；
+4. **明确诊断**：两层都找不到时，车道进入 `setup-failed`，原因里直接给出三条出路（自行安装该工具 / 在仓库本地配置 `setup` / `/worktree setup <lane> --skip`），而不是只报 exit 127。
+
+`--frozen-lockfile` 语义与 `--skip` 行为不变。
 
 ## 设计细节
 

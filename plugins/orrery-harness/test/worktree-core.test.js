@@ -5,7 +5,7 @@ import { WORKTREE_CODES, WorktreeError } from '../src/worktree/errors.js'
 import { DISPATCHABLE, FINISHED, STATES, TRANSITIONS, isActive, nextFor, transition } from '../src/worktree/state.js'
 import {
   branchFor, excludeRuleFor, excludeRulesFor, gitAtLeast, globToRegExp, inScope, laneIdFor, normalizeRoot, parseGitVersion, parseMergeTree,
-  parseRepoConfig, parseStatus, parseWorktreeList, scopesOverlap, setupCommandFor, slugify, staticPrefix, suggestChecks,
+  parseRepoConfig, parseStatus, parseWorktreeList, scopesOverlap, setupCommandFor, setupManagerFor, slugify, staticPrefix, suggestChecks,
 } from '../src/worktree/rules.js'
 import { reconcile } from '../src/worktree/reconcile.js'
 import { createLedger, emptyLedger, validateLedger } from '../src/worktree/ledger.js'
@@ -112,12 +112,15 @@ describe('worktree rules', () => {
     expect(excludeRulesFor('lanes')).toEqual(['/.orrery/', '/lanes/'])
   })
 
-  it('derives setup from lockfiles', () => {
-    expect(setupCommandFor(['pnpm-lock.yaml', 'package.json'])).toBe('pnpm install --frozen-lockfile')
+  it('derives the package manager from lockfiles (resolution lives in pkgmgr)', () => {
+    expect(setupManagerFor(['pnpm-lock.yaml', 'package.json'])).toBe('pnpm')
+    expect(setupManagerFor(['package-lock.json'])).toBe('npm')
+    expect(setupManagerFor(['yarn.lock'])).toBe('yarn')
+    expect(setupManagerFor(['bun.lock'])).toBe('bun')
+    expect(setupManagerFor(['README.md'])).toBeNull()
+    expect(setupCommandFor(['pnpm-lock.yaml'])).toBe('pnpm install --frozen-lockfile')
     expect(setupCommandFor(['package-lock.json'])).toBe('npm ci')
-    expect(setupCommandFor(['yarn.lock'])).toBe('yarn install --frozen-lockfile')
-    expect(setupCommandFor(['bun.lock'])).toBe('bun install --frozen-lockfile')
-    expect(setupCommandFor(['README.md'])).toBeNull()
+    expect(setupCommandFor(['bun.lockb'])).toBe('bun install --frozen-lockfile')
   })
 
   it('suggests (never decides) verification commands', () => {

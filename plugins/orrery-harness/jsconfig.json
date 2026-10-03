@@ -51,5 +51,6 @@
     "src/worktree/prompts.js",
     "src/worktree/projection.js",
     "src/worktree/cards.js",
+    "src/worktree/pkgmgr.js",
   ]
 }

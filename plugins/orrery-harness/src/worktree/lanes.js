@@ -9,7 +9,8 @@ import { dirname, isAbsolute, join, resolve as resolvePath, sep } from 'node:pat
 import { randomUUID } from 'node:crypto'
 import { WORKTREE_CODES, WorktreeError } from './errors.js'
 import { CHECKABLE, DISPATCHABLE, LANDABLE_FROM, TRANSIENT, isActive, nextFor, transition } from './state.js'
-import { branchFor, laneIdFor, normalizeRoot, parseRepoConfig, scopesOverlap, setupCommandFor, suggestChecks } from './rules.js'
+import { MANAGER_INSTALL, branchFor, laneIdFor, normalizeRoot, parseRepoConfig, scopesOverlap, setupManagerFor, suggestChecks } from './rules.js'
+import { setupMissingReason } from './pkgmgr.js'
 import { reconcile } from './reconcile.js'
 import { createLedger } from './ledger.js'
 import { ensureExclude, hasExclude } from './exclude.js'
@@ -64,6 +65,7 @@ export function pathKey(path, platform = process.platform) {
  * @property {(sessionId: string, text: string) => void} notify
  * @property {(type: string, data: any, root: string, sessionId?: string | null) => void} audit
  * @property {(session: any) => boolean} modeOf
+ * @property {(manager: string) => Promise<{ ok: true, source: string, command: string, display: string } | { ok: false, manager: string }>} [resolveSetup] - resolves a DERIVED setup's manager into an executable invocation; absent = legacy bare command
  * @property {(sessionId: string | undefined) => string | undefined} [localeOf] - the GUI language last reported for a session
  * @property {() => number} [now]
  * @property {number} [pid] - this process id (tests)
@@ -275,6 +277,24 @@ export function createLaneService(deps) {
   // ─── open / setup ─────────────────────────────────────────────────────
 
   /**
+   * The invocation for a DERIVED setup: resolved through deps.resolveSetup
+   * when available (system tool first, DSH bundled runtime second), else the
+   * legacy bare command. A user-configured setup never reaches this helper.
+   * @param {string} manager
+   * @returns {Promise<{ command: string, display: string } | { error: string }>}
+   */
+  async function deriveSetup(manager) {
+    if (deps.resolveSetup) {
+      const resolution = await deps.resolveSetup(manager)
+      if (!resolution.ok) return { error: setupMissingReason(manager) }
+      return { command: resolution.command, display: resolution.display }
+    }
+    const display = `${manager} ${MANAGER_INSTALL[manager].join(' ')}`
+    return { command: display, display }
+  }
+
+
+  /**
    * @param {any} session - the owning (main) session
    * @param {{ title: string, scope?: string[] }} args
    */
@@ -332,10 +352,21 @@ export function createLaneService(deps) {
     }
     deps.audit('open', { lane: lane.id, title: lane.title, branch: lane.branch, base: lane.base, scope }, repo.mainRoot, lane.ownerSession)
     let command = null
+    let display = null
     let configError = null
     if (settingsNow.autoSetup) {
       try {
-        command = readConfig(repo).setup ?? setupCommandFor(readdirSync(lane.path))
+        const configured = readConfig(repo).setup ?? null
+        if (configured) {
+          command = display = configured
+        } else {
+          const manager = setupManagerFor(readdirSync(lane.path))
+          if (manager) {
+            const derived = await deriveSetup(manager)
+            if ('error' in derived) configError = derived.error.replaceAll('<lane>', lane.id)
+            else ({ command, display } = derived)
+          }
+        }
       } catch (error) {
         configError = /** @type {any} */ (error)?.message ?? String(error)
       }
@@ -348,13 +379,13 @@ export function createLaneService(deps) {
       const ready = await apply(repo, lane.id, { type: 'setup-ok', patch: { setup: { status: settingsNow.autoSetup ? 'none' : 'disabled' } } })
       return result(ready, `lane opened at ${ready.path} on ${ready.branch} (base ${base})`)
     }
-    const preparing = await patchLane(repo, lane.id, () => ({ setup: { status: 'running', command } }))
-    void runSetup(repo, lane.id, command, session)
-    return result(preparing, `lane opened at ${preparing.path}; running setup: ${command}`)
+    const preparing = await patchLane(repo, lane.id, () => ({ setup: { status: 'running', command, display: display ?? command } }))
+    void runSetup(repo, lane.id, command, session, display ?? command)
+    return result(preparing, `lane opened at ${preparing.path}; running setup: ${display ?? command}`)
   }
 
-  /** @param {any} repo @param {string} laneId @param {string} command @param {any} session */
-  async function runSetup(repo, laneId, command, session) {
+  /** @param {any} repo @param {string} laneId @param {string} command @param {any} session @param {string} [display] */
+  async function runSetup(repo, laneId, command, session, display = command) {
     const log = logFile(repo, laneId, '0-setup')
     /** @type {{ ok: boolean, reason?: string }} */
     let outcome
@@ -363,7 +394,7 @@ export function createLaneService(deps) {
     } else {
       try {
         const run = await deps.shellRun({ command, cwd: laneOf(repo, laneId).path, timeoutMs: SETUP_TIMEOUT_MS, session })
-        writeFileSync(log, run.output)
+        writeFileSync(log, `$ ${display}\n\n${run.output}`)
         outcome = run.code === 0
           ? { ok: true }
           : { ok: false, reason: run.denied ? `sandbox denied the setup (exit ${run.code}); switch the session permission and retry with /worktree setup ${laneId}, or skip with /worktree setup ${laneId} --skip` : run.timedOut ? 'setup timed out' : `setup exited ${run.code}` }
@@ -373,9 +404,9 @@ export function createLaneService(deps) {
     }
     try {
       const lane = await apply(repo, laneId, outcome.ok
-        ? { type: 'setup-ok', patch: { setup: { status: 'ok', command, log } } }
-        : { type: 'setup-fail', reason: outcome.reason, patch: { setup: { status: 'failed', command, log } } })
-      notifyOwner(lane, outcome.ok ? `setup finished: ${command}` : `${outcome.reason}; log ${log}`)
+        ? { type: 'setup-ok', patch: { setup: { status: 'ok', command: display, log } } }
+        : { type: 'setup-fail', reason: outcome.reason, patch: { setup: { status: 'failed', command: display, log } } })
+      notifyOwner(lane, outcome.ok ? `setup finished: ${display}` : `${outcome.reason}; log ${log}`)
     } catch {
       // the lane moved on (abandoned) while setup ran: nothing to report
     }
@@ -389,9 +420,22 @@ export function createLaneService(deps) {
       return result(lane, 'setup skipped by the user')
     }
     const current = laneOf(repo, laneId)
-    let command = current.setup?.command ?? null
+    let command = null
+    let display = current.setup?.display ?? current.setup?.command ?? null
     try {
-      command = readConfig(repo).setup ?? command ?? setupCommandFor(readdirSync(current.path))
+      command = readConfig(repo).setup ?? current.setup?.command ?? null
+      if (command) display = readConfig(repo).setup ?? display
+      else {
+        const manager = setupManagerFor(readdirSync(current.path))
+        if (manager) {
+          const derived = await deriveSetup(manager)
+          if ('error' in derived) {
+            const failed = await apply(repo, laneId, { type: 'setup-fail', reason: derived.error.replaceAll('<lane>', laneId), patch: { setup: { status: 'failed' } } })
+            return result(failed, `setup could not start: ${failed.reason}`)
+          }
+          ({ command, display } = derived)
+        }
+      }
     } catch (error) {
       throw new Error(/** @type {any} */ (error)?.message ?? String(error))
     }
@@ -399,9 +443,9 @@ export function createLaneService(deps) {
       const lane = await apply(repo, laneId, { type: 'setup-ok', by: 'user', patch: { setup: { status: 'none' } } })
       return result(lane, 'no setup command applies; lane is ready')
     }
-    const lane = await apply(repo, laneId, { type: 'setup-retry', by: 'user', patch: { setup: { status: 'running', command } } })
-    void runSetup(repo, laneId, command, session)
-    return result(lane, `setup restarted: ${command}`)
+    const lane = await apply(repo, laneId, { type: 'setup-retry', by: 'user', patch: { setup: { status: 'running', command, display: display ?? command } } })
+    void runSetup(repo, laneId, command, session, display ?? command)
+    return result(lane, `setup restarted: ${display ?? command}`)
   }
 
   // ─── binding ──────────────────────────────────────────────────────────
@@ -940,7 +984,16 @@ export function createLaneService(deps) {
     } catch {
       packageJson = undefined
     }
-    return { file: join(repo.rootPath, CONFIG_FILE), current, error, suggested: { setup: setupCommandFor(files), check: suggestChecks({ packageJson, fileNames: files }) } }
+    // The setup suggestion must be an invocation that works on THIS host
+    // (bundled-runtime resolution), not a bare manager name — the user may
+    // accept it verbatim into the config.
+    let setup = null
+    const manager = setupManagerFor(files)
+    if (manager) {
+      const derived = await deriveSetup(manager)
+      setup = 'error' in derived ? `${manager} ${MANAGER_INSTALL[manager].join(' ')}` : derived.command
+    }
+    return { file: join(repo.rootPath, CONFIG_FILE), current, error, suggested: { setup, check: suggestChecks({ packageJson, fileNames: files }) } }
   }
 
   /** Write the repository config after the user confirmed it. @param {any} session @param {any} value */

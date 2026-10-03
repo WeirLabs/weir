@@ -7,8 +7,10 @@
 // - shellRunner: user-configured setup / verification commands (shell
 //   strings) through ctx.shell with the calling session's per-call sandbox
 //   policy — the same boundary the bash tool enforces (S23 / S26 S-G).
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { childEnvironment, extraBinDirectories, resolveExecutable } from '../lsp/child-process.js'
+import { resolveDerivedSetup } from './pkgmgr.js'
 
 /** Vendor git install locations, probed when PATH resolution fails. */
 function wellKnownGit(platform = process.platform) {
@@ -92,6 +94,39 @@ export function createGitRunner(subprocess) {
     } finally {
       clearTimeout(timer)
     }
+  }
+}
+
+/**
+ * Resolve DERIVED setup commands against the real host: system package
+ * manager first (the LSP module's extended resolver — S21), then the DSH
+ * bundled runtime under the deployment's DSH home. Pure decision in
+ * pkgmgr.js; this is only the seam wiring.
+ * @param {{ subprocess: any, env?: Record<string, string | undefined>, home?: string }} options
+ * @returns {(manager: string) => Promise<ReturnType<typeof resolveDerivedSetup>>}
+ */
+export function createSetupResolver({ subprocess, env = process.env, home = homedir() }) {
+  return async (manager) => {
+    const found = await resolveExecutable(subprocess, manager).catch(() => undefined)
+    return resolveDerivedSetup(manager, {
+      foundOnPath: () => found,
+      listDirs: (dir) => {
+        try {
+          return readdirSync(dir)
+        } catch {
+          return []
+        }
+      },
+      isFile: (path) => {
+        try {
+          return statSync(path).isFile()
+        } catch {
+          return false
+        }
+      },
+      dshHome: env.DSH_HOME,
+      home,
+    })
   }
 }
 

@@ -85,17 +85,39 @@ export function excludeRulesFor(root) {
   return root === '.orrery' || root.startsWith('.orrery/') ? [ORRERY_DIR_RULE] : [ORRERY_DIR_RULE, excludeRuleFor(root)]
 }
 
+/** Install arguments per package manager (frozen-lockfile semantics kept). */
+export const MANAGER_INSTALL = Object.freeze({
+  pnpm: ['install', '--frozen-lockfile'],
+  bun: ['install', '--frozen-lockfile'],
+  yarn: ['install', '--frozen-lockfile'],
+  npm: ['ci'],
+})
+
 /**
- * Lockfile-derived setup command, or null when the repository has none.
+ * Lockfile-derived package MANAGER, or null when the repository has none.
+ * Only the manager is decided here: how it is invoked (system tool, DSH
+ * bundled runtime, or nothing available) is resolved separately so a bare
+ * `pnpm` is never assumed to exist on PATH (AGENTS.md §2, S21).
  * @param {Iterable<string>} fileNames - names present at the lane root
+ * @returns {'pnpm' | 'bun' | 'yarn' | 'npm' | null}
+ */
+export function setupManagerFor(fileNames) {
+  const files = new Set(fileNames)
+  if (files.has('pnpm-lock.yaml')) return 'pnpm'
+  if (files.has('bun.lock') || files.has('bun.lockb')) return 'bun'
+  if (files.has('yarn.lock')) return 'yarn'
+  if (files.has('package-lock.json')) return 'npm'
+  return null
+}
+
+/**
+ * Lockfile-derived setup command as a plain string (bare manager name). Used
+ * only where no resolver is available; the resolved form lives in pkgmgr.js.
+ * @param {Iterable<string>} fileNames
  */
 export function setupCommandFor(fileNames) {
-  const files = new Set(fileNames)
-  if (files.has('pnpm-lock.yaml')) return 'pnpm install --frozen-lockfile'
-  if (files.has('bun.lock') || files.has('bun.lockb')) return 'bun install --frozen-lockfile'
-  if (files.has('yarn.lock')) return 'yarn install --frozen-lockfile'
-  if (files.has('package-lock.json')) return 'npm ci'
-  return null
+  const manager = setupManagerFor(fileNames)
+  return manager ? `${manager} ${MANAGER_INSTALL[manager].join(' ')}` : null
 }
 
 /**
