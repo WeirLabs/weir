@@ -16,6 +16,7 @@
     "./worktree": "./src/worktree/index.js",
     "./settings": "./src/settings/index.js",
     "./lsp": "./src/lsp/index.js",
+    "./notify": "./src/notify/index.js",
     "./client": "./lib/client.js",
     "./index.js": "./lib/index.js",
     ".": "./lib/index.js"

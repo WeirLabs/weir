@@ -89,6 +89,13 @@ window.__ModuleLoader__.load({
 				{ field: "lspRequestTimeoutMs", kind: "number" },
 				{ field: "lspDiagnosticsWaitMs", kind: "number" },
 				{ field: "lspServers", kind: "text" }
+			] },
+			{ id: "notify", fields: [
+				{ field: "notifyEnabled", kind: "boolean" },
+				{ field: "notifyOnComplete", kind: "boolean" },
+				{ field: "notifyOnAttention", kind: "boolean" },
+				{ field: "notifyMinTurnSeconds", kind: "number" },
+				{ field: "notifySound", kind: "boolean" }
 			] }
 		];
 		const FIELDS = GROUPS.flatMap((group) => group.fields);

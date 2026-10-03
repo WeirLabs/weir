@@ -42,6 +42,16 @@
         # live in the bundle's `whitelist-defaults.json`, which the plugin reads
         # itself at runtime; the settings keys of the same names ADD to them.
         lspEnabled: false
+        notifyEnabled: true
+        notifyOnComplete: true
+        notifyOnAttention: true
+        notifyMinTurnSeconds: 15
+        notifySound: true
+    # System notifications (profile level, so every session is covered, not only
+    # Orrery-preset ones): approval / question / plan-review / failure / long-turn
+    # completion. Pure observer of session events; settings overlay is read live.
+    - id: orrery-notify
+      name: 'orrery-harness/notify'
     # Browser half of the same package: the Orrery settings page registered
     # into the Settings Plugins page (./client export, dsh.client manifest).
     - id: ui-orrery-settings

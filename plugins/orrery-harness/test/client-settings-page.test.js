@@ -111,7 +111,7 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound']
 
   it('renders the GROUPS field table through the prop-injected editors', async () => {
     const { definition, exports, editors } = await loadPage()
@@ -141,14 +141,14 @@ describe('client.settings-page chunk', () => {
     })
 
     expect(rendered.__type).toBeTruthy()
-    // 8 group headers + 9 choice rows + 1 model picker + 23 value-field rows
+    // 9 group headers + 13 choice rows + 1 model picker + 24 value-field rows
     // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
     // + 1 disabled-categories editor row
-    expect(rendered.children).toHaveLength(50)
-    expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(8)
-    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(9)
+    expect(rendered.children).toHaveLength(56)
+    expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(9)
+    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(13)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(23)
+    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(24)
     // the LSP manager row opens the service management panel
     const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
     expect(managerRow).toBeTruthy()

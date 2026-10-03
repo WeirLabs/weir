@@ -62,6 +62,11 @@ const FIELDS = [
   { key: 'worktreeMaxActive', section: 'worktree', field: 'maxActive', type: 'number', description: 'Maximum number of active lanes per repository' },
   { key: 'worktreeAutoSetup', section: 'worktree', field: 'autoSetup', type: 'boolean', description: 'Install dependencies in a new lane automatically (configured setup, else lockfile-derived)' },
   { key: 'lspServers', section: 'lsp', field: 'servers', type: 'string', description: 'JSON map of custom language servers: family → { command, args?, manifests?, installHint?, install? }' },
+  { key: 'notifyEnabled', section: 'notify', field: 'enabled', type: 'boolean', description: 'System notifications master switch: tell the user when a session needs them or a turn finishes' },
+  { key: 'notifyOnComplete', section: 'notify', field: 'onComplete', type: 'boolean', description: 'Notify when a turn finishes (only turns longer than notifyMinTurnSeconds)' },
+  { key: 'notifyOnAttention', section: 'notify', field: 'onAttention', type: 'boolean', description: 'Notify when a session needs the user: approval, question, plan review, a failed or stopped turn' },
+  { key: 'notifyMinTurnSeconds', section: 'notify', field: 'minTurnSeconds', type: 'number', description: 'A finished turn is only reported when it ran at least this many seconds (0 reports every turn)' },
+  { key: 'notifySound', section: 'notify', field: 'sound', type: 'boolean', description: 'Play the platform notification sound where supported' },
 ]
 
 export { FIELDS }
