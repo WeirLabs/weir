@@ -12,6 +12,7 @@
 // read-only child running unguarded.
 import { SUPERVISION_CONTRACT } from './group-coordinator.js'
 import { attachReadOnlyBashGuard } from './robash-guard.js'
+import { attachLaneGuard } from '../worktree/guard.js'
 
 /**
  * @typedef {object} SpawnAssignment
@@ -20,6 +21,7 @@ import { attachReadOnlyBashGuard } from './robash-guard.js'
  * @property {object} parent - parent agent handle
  * @property {object} signal - abort signal for the spawn
  * @property {string} [label] - child label; defaults to target.label
+ * @property {import('../worktree/guard.js').LaneGuardSpec} [laneGuard] - worktree lane guard for a lane-bound child
  */
 
 /**
@@ -67,19 +69,32 @@ export async function spawnGuardedChild(assignment, lane, deps) {
   // snapshot skips BOTH lanes silently (resolveTarget already withheld the
   // shell tool in that snapshot, so there is no shell surface left to guard).
   lane.beforeGuardAttach?.(started, target)
-  if (!target.readOnly) return started
+  if (!target.readOnly && !assignment.laneGuard) return started
   const handle = lane.guardHandleFor(started, deps)
-  // deps.robash is a live resolver (the settings overlay can change between
-  // delegations), so resolve it once here: the enabled check and the lists
-  // handed to the guard must describe the same committed snapshot.
-  const robash = deps.robash?.()
-  if (!robash?.enabled) return started
-  // robash.lists carries both list sets ({ bash, pwsh }); the guard
-  // dispatches on execution.name.
-  try {
-    attachReadOnlyBashGuard(handle, robash.lists)
-  } catch (error) {
-    lane.onGuardFailure(error, started)
+  if (target.readOnly) {
+    // deps.robash is a live resolver (the settings overlay can change between
+    // delegations), so resolve it once here: the enabled check and the lists
+    // handed to the guard must describe the same committed snapshot.
+    const robash = deps.robash?.()
+    // robash.lists carries both list sets ({ bash, pwsh }); the guard
+    // dispatches on execution.name.
+    if (robash?.enabled) {
+      try {
+        attachReadOnlyBashGuard(handle, robash.lists)
+      } catch (error) {
+        lane.onGuardFailure(error, started)
+      }
+    }
+  }
+  // A lane-bound child additionally gets the lane guard (workdir, write
+  // paths/scope, branch-moving git) — same fail-closed teardown: a bound
+  // child never runs without it.
+  if (assignment.laneGuard) {
+    try {
+      attachLaneGuard(handle, assignment.laneGuard)
+    } catch (error) {
+      lane.onGuardFailure(error, started)
+    }
   }
   return started
 }

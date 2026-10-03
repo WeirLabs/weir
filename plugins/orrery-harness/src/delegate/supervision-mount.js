@@ -18,9 +18,10 @@ import { contentText } from '../shared/content-text.js'
  * @param {any} deps.audit - createAudit(ctx) sink: (session, type, payload) => void
  * @param {any} deps.settings - orrerySettings service handle (absent = no commit push)
  * @param {() => object} deps.supervisionNow - overlay getter for supervision tuning
+ * @param {(childId: string, parent: object) => void} [deps.onChildSettled] - a member reached a terminal fact (worktree lane settlement)
  * @returns {{ coordinatorFor: (parent: object) => Promise<object>, dispose: () => void }}
  */
-export function mountSupervision({ ctx, audit, settings, supervisionNow }) {
+export function mountSupervision({ ctx, audit, settings, supervisionNow, onChildSettled }) {
   // Supervised group coordinators, one per parent session.
   /** @type {Map<string, { coordinator: object, parent: object }>} */
   const coordinators = new Map()
@@ -44,6 +45,11 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow }) {
           },
           onFact: (fact) => {
             audit(parent.session, `${AUDIT_TYPES.supervision}/${fact.kind}`, fact)
+            // A settled or terminated member frees its worktree lane (the host
+            // checks the lane). Deferred: never run lane work inside the fact.
+            if ((fact.kind === 'settle' || fact.kind === 'terminate') && onChildSettled) {
+              void Promise.resolve().then(() => onChildSettled(fact.childId, parent))
+            }
           },
           notifyParent: (text) => {
             // Reliable parent-facing delivery: timer-deferred, mirroring the

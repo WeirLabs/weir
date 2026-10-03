@@ -11,6 +11,7 @@ import { mountSupervision } from './supervision-mount.js'
 import { createAudit } from '../shared/audit.js'
 import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { createDelegateTool } from './tool.js'
+import { attachWorktreeModeGuard } from './worktree-mode.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
@@ -43,7 +44,18 @@ function apply(ctx, config = {}) {
     platform: process.platform,
     fallbackTables: FALLBACK_TABLES,
   })
-  const mount = mountSupervision({ ctx, audit, settings, supervisionNow: overlay.supervisionNow })
+  // Worktree lanes (optional preset service, same realm): read live so a
+  // gate flip or a late mount is seen by the next delegation.
+  const lanes = () => ctx.get?.('orreryWorktreeLanes')
+  const mount = mountSupervision({
+    ctx,
+    audit,
+    settings,
+    supervisionNow: overlay.supervisionNow,
+    onChildSettled: (childId, parent) => {
+      void lanes()?.childSettled(childId, parent?.session)?.catch?.((error) => ctx.logger?.warn?.(`orrery-delegate: lane settlement failed: ${error?.message ?? error}`))
+    },
+  })
   const { coordinatorFor } = mount
 
   const agents = { ...CURATED_AGENTS, ...(config.agents ?? {}) }
@@ -83,8 +95,14 @@ function apply(ctx, config = {}) {
       // the guard reflects whatever the settings committed at that moment.
       robash: overlay.robashNow,
       coordinatorFor,
+      lanes,
     }),
   )
+
+  // Worktree mode on main agents: writes refused, shell read-only (the same
+  // whitelist as read-only children), evaluated per call from the session's
+  // projected mode.
+  const offModeGuard = attachWorktreeModeGuard(ctx, { lanes, robash: overlay.robashNow })
 
   // Main-agent supervision tools (delegation depth 0 only).
   ctx.tools.register(createResumeTool({ coordinatorFor }))
@@ -109,7 +127,10 @@ function apply(ctx, config = {}) {
     return skill.content
   }
 
-  return mount.dispose
+  return () => {
+    offModeGuard()
+    mount.dispose()
+  }
 }
 
 export { name, inject, apply }
