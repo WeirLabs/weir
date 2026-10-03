@@ -158,6 +158,12 @@
 
 本阶段不改历史 outcome/fence、不增加 closeout 或人工结清入口、不自动重放、不引入 TTL；持久化失败仍毒化整个 manager。精确资源比较依赖可信 ingress 提供 native canonical 单链接文件身份，以及既有独占生命周期／外部拓扑变更协调前提；路径形状检查自身不是文件系统证明。
 
+**历史静止性边界的 characterization（不是安全保证或完整修复）**：`edit-lock-historical-quiescence.test.js` 用隔离临时 authority 与 gated promise 构造任意 adapter：`writeText` 拒绝，但保留一个尚未写入的 detached writer。manager 将操作记录为 unknown，`drain()` 与 reserved runtime 的 `close()` 仍可完成并释放预约；随后 recover 可以打开新 authority，旧 writer 才落盘，历史 unknown 不变。该测试故意违反 recovery 要求的旧 publisher quiescence 前提，证明 generic handoff 的返回值／队列排空／预约移除本身不足以建立该前提；不证明安装版宿主 adapter 必然这样执行，也不提供宿主静止性证明。测试只在实际 writer 已 drain 后清理 fixture，不修改真实 snapshot。
+
+本轮仅保存边界证据：不增加 attestation-based unlock，不以人工声明、进程退出或 promise rejection 结清 unknown，不改 v3、不实现 v4／closeout。宿主能否提供覆盖所有历史 writer 的可信静止性证明仍需独立验证。
+
+队列回归在不等待前驱的情况下提交 acquisition／unknown commit，再提交 hold 或 resume，验证 ownership candidate 在 FIFO 执行点枚举；releaseActive 另验证 queued abnormal transition 后不沿用调用时的 active 集合。将 `transact` 的 candidate 求值移到调用时的内存 mutation 会使三项测试失败。endHold 的 live resource-unknown 用例断言 revision 真正递增且 ownership／history 不变；历史 domain 用例因 recovery 已重置 holding，只断言 no-op，不声称覆盖 domain-fenced endHold 的实际持久化分支。
+
 publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标、完整内容、原版本策略、signal、effectivePolicy）；adapter 用进程内不可伪造 call 绑定可信 execution/cwd/policy/callId，单次消费，不向工具参数暴露凭据。历史 prepared/unknown/not-published 不作为工具成功返回。受控 `write` 复用现有单次沙箱策略解析，保留 `fs/write-intent` 返回的 createIfAbsent／replaceIfVersion，缺少明确 guard 时拒绝，不用新 stat 覆盖旧观察版本；成功后发送标准 `fs/observed` 并返回内容差异；没有本地写入 fallback。宿主桥 `createEditLockHost` 以真实 agent 对象的 WeakMap 绑定已持久注册／恢复的 execution，逐次用宿主 registry 检查对象身份（模型参数不能注册身份）；detach 先删除调用授权，再请求 durable cancel。`hash_edit` 与 `lsp_rename` 同样捕获挂载时的服务：发布完整合成内容、原始参数、版本 guard、实际有效 policy 与 exec，服务拒绝或关闭不能回退原生直写；没有服务时保持既有行为，因此正式启用必须在编辑工具挂载前安装服务并整体覆盖 write/LSP，不能热插入局部接管。
 
 生命周期控制器 `createEditLockLifecycle` 提供显式 start／stop／close，工具只拿到 publish／publishBatch，不暴露注册权。stop 同步关闭 registry 准入并等待 durable cancel；重复 start 不恢复中断会话，close 先撤权再关闭 runtime。远端工具服务封装绑定真实 agent 对象并逐次检查 registry，不持有本地写入能力；工具作用域安装原语隐藏继承的 stock write/edit，再注册 managed write 并核对 lookup，卸载只移除 managed write、保持原工具禁用。

@@ -112,6 +112,66 @@ it('resume inspects retained ownership and does not consume a receipt or poison 
   })
 })
 
+for (const action of ['hold', 'resume']) it(`evaluates queued ${action} ownership at FIFO execution rather than call time`, async () => {
+  await fixture(async ({ store, manager, child, parent }) => {
+    const receipt = await manager.issueExecutionReceipt(parent, 'queued-resume')
+    const input = { ...request('queued-unknown'), target: { kind: 'create', ancestor: '/w', suffix: 'new.txt', policy: { kind: 'createIfAbsent' } } }
+    const ready = await manager.prepare(child, input, hooks('/w/new.txt', async () => { throw new Error('queued invoked failure') }))
+    assert.deepEqual(manager.status().locks, [])
+    // No await: parent owns nothing at call time, but owns a resource when the
+    // session-wide request reaches the subtree fence at its FIFO position.
+    const acquired = manager.acquire(parent, '/w/parent.txt')
+    const failed = assert.rejects(manager.commit(ready.submission), /queued invoked failure/)
+    const denied = assert.rejects(action === 'hold'
+      ? manager.hold('parent', 10, { now: 100, singleMaxMs: 100, cumulativeMaxMs: 100 })
+      : manager.resume(parent, 'queued-resume', receipt), /fence/)
+    await Promise.all([acquired, failed, denied])
+    assert.equal(manager.status().locks[0].owner, 'parent')
+    assert.equal(manager.status().sessions.find(row => row.sessionId === 'parent').executionEpoch, 1)
+    assert.equal(manager.settlement('parent', 101).held, false)
+    const snapshot = store.snapshot()
+    await assert.rejects(manager.resume(parent, 'queued-resume', receipt), /fence/)
+    assert.deepEqual(store.snapshot(), snapshot)
+  })
+})
+
+it('evaluates queued releaseActive candidates after ownership becomes abnormal', async () => {
+  await fixture(async ({ store, manager, child }) => {
+    await manager.acquire(child, '/w/child.txt')
+    const stopped = await manager.cancel(child)
+    const receipt = await manager.issueExecutionReceipt(stopped, 'continue')
+    const resumed = await manager.resume(stopped, 'continue', receipt)
+    await manager.confirm(resumed, '/w/child.txt')
+    const ready = await manager.prepare(resumed, request('queued-update'), hooks('/w/child.txt', async () => { throw new Error('queued invoked failure') }))
+    // At call time the lock is active. At execution it is abnormal, so the
+    // strictly active cleanup must neither reject on stale scope nor remove it.
+    const failed = assert.rejects(manager.commit(ready.submission), /queued invoked failure/)
+    const marked = manager.markAbnormal('child', 'queued failure')
+    const released = manager.releaseActive('child', 100)
+    await Promise.all([failed, marked])
+    assert.deepEqual(await released, [])
+    assert.equal(store.snapshot().state.locks[0].owner, 'child')
+    assert.equal(store.snapshot().state.locks[0].status, 'abnormal')
+    assert.equal(manager.history('child', 'queued-update').phase, 'unknown')
+  })
+})
+
+it('endHold persists actual revocation across a live unknown fence without releasing ownership', async () => {
+  await fixture(async ({ store, manager, child }) => {
+    await manager.acquire(child, '/w/child.txt')
+    await manager.hold('child', 10, { now: 100, singleMaxMs: 100, cumulativeMaxMs: 100 })
+    await unknown(manager, child)
+    assert.equal(manager.settlement('child', 101).held, true)
+    const before = store.snapshot()
+    assert.equal((await manager.endHold('child', 101)).held, false)
+    const after = store.snapshot()
+    assert.equal(after.revision, before.revision + 1)
+    assert.deepEqual(after.state.locks, before.state.locks)
+    assert.deepEqual(after.state.operations, before.state.operations)
+    assert.equal(after.state.holds.find(row => row.sessionId === 'child').holding, false)
+  })
+})
+
 it('rechecks prepared commits at FIFO admission and records denial as never dispatched', async () => {
   await fixture(async ({ manager, child, parent }) => {
     await manager.acquire(child, '/w/child.txt')
@@ -185,7 +245,12 @@ it('domain quarantine rejects normal targetless mutations but permits strictly s
     await recovered.cancelSession('child')
     await recovered.markAbnormal('parent', 'stopped')
     await recovered.chargeRecovery('child', { attempts: 1 })
+    // Recovery already cleared holding: this is explicitly a no-op, not evidence
+    // that the domain-fenced endHold transaction was exercised.
+    assert.equal(recovered.settlement('parent', 200).held, false)
+    const beforeEndHold = store.snapshot()
     await recovered.endHold('parent', 200)
+    assert.deepEqual(store.snapshot(), beforeEndHold)
     await recovered.release({ ...safe, ...stopped })
     assert.equal(recovered.status().locks.length, 0)
     assert.equal(recovered.history('child', 'domain').phase, 'unknown')
