@@ -48,3 +48,14 @@ describe('preset realm composition for the Edit Lock service', () => {
     expect(at(PROVIDER) < at('orrery-harness/lsp')).toBe(true)
   })
 })
+
+describe('preset realm composition for the worktree lanes service', () => {
+  it('worktree (provider) and delegate (consumer) share the group that isolates orreryWorktreeLanes', () => {
+    const group = enclosingGroup('orrery-harness/worktree')
+    expect(group, 'worktree row must be inside a cordis:group').toBeTruthy()
+    expect(group.id).toBe('delegation')
+    expect(/isolate:[\s\S]*?\n\s+orreryWorktreeLanes: true/.test(group.text), 'delegation must isolate orreryWorktreeLanes').toBe(true)
+    expect(enclosingGroup('orrery-harness/delegate')?.id).toBe(group.id)
+    expect(PATCH.indexOf("name: 'orrery-harness/worktree'") < PATCH.indexOf("name: 'orrery-harness/delegate'")).toBe(true)
+  })
+})

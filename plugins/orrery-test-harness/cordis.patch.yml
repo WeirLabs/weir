@@ -38,6 +38,11 @@
         # Exercise the semantic classifier headlessly; the sidecar route comes
         # from the settings row above (orrerySettings overlay proof).
         classifier: 'llm'
+    # Worktree lanes: host state machine + lane tools + /worktree command.
+    # Provider (worktree) and consumer (delegate) sit at the same host level
+    # here, mirroring the preset where both share the delegation group.
+    - id: orrery-it-worktree
+      name: 'orrery-harness/worktree'
     - id: orrery-it-delegate
       name: 'orrery-harness/delegate'
       config:
