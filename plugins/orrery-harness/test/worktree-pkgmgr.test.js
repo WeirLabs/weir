@@ -33,12 +33,26 @@ describe('quoteSh', () => {
 })
 
 describe('resolveDerivedSetup', () => {
-  it('prefers the system tool and injects its directory into PATH', () => {
-    const resolution = resolveDerivedSetup('pnpm', { foundOnPath: () => '/opt/homebrew/bin/pnpm', listDirs: NO_DIRS, isFile: () => false, dshHome: undefined })
+  it("prefers the system tool and injects the resolved NODE directory first, then the manager's", () => {
+    const resolution = resolveDerivedSetup('pnpm', {
+      foundOnPath: (name) => (name === 'node' ? '/opt/homebrew/bin/node' : '/Users/me/.npm-global/bin/pnpm'),
+      listDirs: NO_DIRS, isFile: () => false, dshHome: undefined,
+    })
     expect(resolution.ok).toBe(true)
     expect(resolution.source).toBe('system')
     expect(resolution.display).toBe('pnpm install --frozen-lockfile')
-    expect(resolution.command).toBe(`export PATH=/opt/homebrew/bin:"$PATH"; exec /opt/homebrew/bin/pnpm install --frozen-lockfile`)
+    expect(resolution.command).toBe(`export PATH=/opt/homebrew/bin:/Users/me/.npm-global/bin:"$PATH"; exec /Users/me/.npm-global/bin/pnpm install --frozen-lockfile`)
+  })
+
+  it('a system manager whose node is not on PATH falls through to the bundled offer', () => {
+    const home = fakeHome('/d')
+    const resolution = resolveDerivedSetup('pnpm', {
+      foundOnPath: (name) => (name === 'node' ? undefined : '/Users/me/.npm-global/bin/pnpm'),
+      ...home,
+    })
+    expect(resolution.ok).toBe(true)
+    expect(resolution.source).toBe('bundled')
+    expect(resolution.command).toContain('/d/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node')
   })
 
   it('falls back to the bundled runtime, running pnpm.mjs through the bundled node', () => {
@@ -94,10 +108,11 @@ describe('resolveDerivedSetup', () => {
 
   it('keeps frozen-lockfile semantics for every manager', () => {
     for (const manager of ['pnpm', 'yarn', 'bun']) {
-      const resolution = resolveDerivedSetup(manager, { foundOnPath: () => `/sys/${manager}`, listDirs: NO_DIRS, isFile: () => false })
+      const resolution = resolveDerivedSetup(manager, { foundOnPath: () => `/sys/${manager === 'node' ? undefined : manager}`, listDirs: NO_DIRS, isFile: () => false })
       expect(resolution.command).toContain('install --frozen-lockfile')
     }
-    expect(resolveDerivedSetup('npm', { foundOnPath: () => '/sys/npm', listDirs: NO_DIRS, isFile: () => false }).command).toContain(' ci')
+    const nodeAndNpm = (name) => `/sys/${name}`
+    expect(resolveDerivedSetup('npm', { foundOnPath: nodeAndNpm, listDirs: NO_DIRS, isFile: () => false }).command).toContain(' ci')
   })
 })
 

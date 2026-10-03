@@ -85,13 +85,7 @@ export function excludeRulesFor(root) {
   return root === '.orrery' || root.startsWith('.orrery/') ? [ORRERY_DIR_RULE] : [ORRERY_DIR_RULE, excludeRuleFor(root)]
 }
 
-/** Install arguments per package manager (frozen-lockfile semantics kept). */
-export const MANAGER_INSTALL = Object.freeze({
-  pnpm: ['install', '--frozen-lockfile'],
-  bun: ['install', '--frozen-lockfile'],
-  yarn: ['install', '--frozen-lockfile'],
-  npm: ['ci'],
-})
+import { bareSetupCommand } from './pkgmgr.js'
 
 /**
  * Lockfile-derived package MANAGER, or null when the repository has none.
@@ -117,7 +111,7 @@ export function setupManagerFor(fileNames) {
  */
 export function setupCommandFor(fileNames) {
   const manager = setupManagerFor(fileNames)
-  return manager ? `${manager} ${MANAGER_INSTALL[manager].join(' ')}` : null
+  return manager ? bareSetupCommand(manager) : null
 }
 
 /**

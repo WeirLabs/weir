@@ -10,7 +10,18 @@
 // scripts can spawn node, and `exec`s the manager so its exit code passes
 // straight through. User-CONFIGURED setup strings never enter this module.
 // Pure module (no ctx, no node: imports) — every fact arrives through seams.
-import { MANAGER_INSTALL } from './rules.js'
+/** Install arguments per package manager (frozen-lockfile semantics kept). */
+export const MANAGER_INSTALL = Object.freeze({
+  pnpm: ['install', '--frozen-lockfile'],
+  bun: ['install', '--frozen-lockfile'],
+  yarn: ['install', '--frozen-lockfile'],
+  npm: ['ci'],
+})
+
+/** The legacy bare command form (`pnpm install --frozen-lockfile`). @param {string} manager */
+export function bareSetupCommand(manager) {
+  return `${manager} ${MANAGER_INSTALL[manager].join(' ')}`
+}
 
 /** Files of the bundled runtime layout, relative to one runtime root. */
 export const BUNDLED_REL = Object.freeze({
@@ -39,7 +50,7 @@ function dirOf(path) {
 
 /**
  * @typedef {object} SetupSeams
- * @property {(name: string) => string | undefined} foundOnPath - absolute path of the system executable, if any
+ * @property {(name: string) => string | undefined} foundOnPath - absolute path of the named system executable, if any (called for the manager AND for 'node')
  * @property {(dir: string) => string[]} listDirs - directory entries ([] when absent/unreadable)
  * @property {(path: string) => boolean} isFile
  * @property {string | undefined} dshHome - the deployment's DSH home
@@ -57,12 +68,20 @@ export function resolveDerivedSetup(manager, seams) {
   if (!args) return { ok: false, manager }
   const system = seams.foundOnPath(manager)
   if (system) {
-    return {
-      ok: true,
-      source: 'system',
-      display: `${manager} ${args.join(' ')}`,
-      command: wrap(dirOf(system), [system, ...args]),
+    const node = seams.foundOnPath('node')
+    if (node) {
+      return {
+        ok: true,
+        source: 'system',
+        display: bareSetupCommand(manager),
+        // Node's directory first: the manager's shim and every install
+        // lifecycle script resolve node through PATH, and the manager's own
+        // directory (e.g. ~/.npm-global/bin) need not contain one.
+        command: wrap([dirOf(node), dirOf(system)], [system, ...args]),
+      }
     }
+    // A manager whose interpreter is not on PATH cannot run either — fall
+    // through to the bundled offer, which guarantees a node.
   }
   const offer = BUNDLED_OFFER[/** @type {'pnpm' | 'npm'} */ (manager)]
   const home = seams.dshHome ?? (seams.home ? `${seams.home}/.dsh` : undefined)
@@ -83,7 +102,7 @@ export function resolveDerivedSetup(manager, seams) {
         ok: true,
         source: 'bundled',
         display: argv.map((part) => (part === node ? 'node' : part)).join(' '),
-        command: wrap(`${root}/dependencies/node/bin`, argv),
+        command: wrap([`${root}/dependencies/node/bin`], argv),
       }
     }
   }
@@ -99,7 +118,8 @@ export function setupMissingReason(manager) {
   return `setup needs ${manager}, but it was found neither on PATH nor in the DSH bundled runtime. Install ${manager} yourself, set "setup" in .orrery/worktrees/.config.json, or skip with /worktree setup <lane> --skip`
 }
 
-/** @param {string} binDir @param {string[]} argv */
-function wrap(binDir, argv) {
-  return `export PATH=${quoteSh(binDir)}:"$PATH"; exec ${argv.map(quoteSh).join(' ')}`
+/** @param {string[]} binDirs @param {string[]} argv */
+function wrap(binDirs, argv) {
+  const path = binDirs.map(quoteSh).join(':')
+  return `export PATH=${path}:"$PATH"; exec ${argv.map(quoteSh).join(' ')}`
 }
