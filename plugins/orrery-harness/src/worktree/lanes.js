@@ -203,7 +203,11 @@ export function createLaneService(deps) {
 
   /** @param {any} lane */
   function result(lane, summary, extra = {}) {
-    return { lane: lane.id, state: lane.state, summary, path: lane.path, branch: lane.branch, next: nextFor(lane), ...extra }
+    return {
+      lane: lane.id, state: lane.state, summary, path: lane.path, branch: lane.branch, next: nextFor(lane),
+      ...(lane.check?.enabled && Array.isArray(lane.check.results) && lane.check.results.length ? { check: { results: lane.check.results.map((/** @type {any} */ entry) => ({ name: entry.name, exit: entry.exit, ms: entry.ms })) } } : {}),
+      ...extra,
+    }
   }
 
   /** @param {any} repo */

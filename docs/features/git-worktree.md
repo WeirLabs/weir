@@ -69,6 +69,22 @@
 - **会话投影** `orreryWorktree`：只折叠已有事件——`/worktree on|off` 的 `command/run` 与配对的成功 `command/done`（失败的切换不翻转标记）、`worktree_open` 成功结果的 `tool/result.meta`——冷读安全。
 - **面板数据**：只读端点 `POST /api/orrery-worktree/view`、`POST /api/orrery-worktree/diff`（`connection.fetch.register`，与 Edit Lock 面板同款），不进会话日志；所有变更动作走 `/worktree` 命令留痕（S26 S-B）。
 
+## 界面（Web GUI）
+
+| 位置 | 内容 |
+|---|---|
+| 会话列表行 `sidebar.session.row.leading` | 分支图形标记 + 活跃车道数；会话繁忙时该位置由状态点占用，此时由会话头胶囊补足标识 |
+| 会话头 `conversation.session.header.utilities` | 状态胶囊：「Worktree · N 条车道 · M 待批准」；基线移动时转为警示色并说明原因；点击打开车道面板 |
+| 右侧栏页签 `orrery-worktrees` | 车道看板：仓库信息条（基线分支、车道目录、git 版本、验证状态、本地忽略是否就位），逐车道卡片（状态徽标、标题、分支→基线、领先/落后、diffstat、验证逐条结果、下一步、最近转移时间），改动 diff 展开区，只显示当前状态下合法的操作（非法按钮隐藏并给出原因） |
+| 输入框 `conversation.input.right` | Worktree 模式开关胶囊（`/worktree on|off`），不可用时置灰 |
+| 决策卡片 | 合并批准、收尾三选一、放弃确认（见上） |
+| 工具卡片 `tool.call.toolview` | 五个车道工具各有专属视图：状态转移、检查逐条结果、合并提交与内嵌 diff；无持久化 meta 的旧调用回退为平铺输入/输出 |
+| 设置页「Worktree 车道」组 | `worktree*` 四个设置键；仓库本地 setup/验证配置的编辑入口在车道看板的信息条中（「验证配置…」，读自 `/worktree init`，写回 `/worktree init write <json>`） |
+
+- **数据通道**：会话标记读 `orreryWorktree` 投影；车道详情读只读端点 `POST /api/orrery-worktree/view`（diff 读 `/api/orrery-worktree/diff`），不进会话日志；所有变更动作走 `/worktree` 命令。刷新时机：挂载、投影变化、手动刷新、以及存在过渡态车道时每 5 秒一次。
+- **状态覆盖**：加载中、能力关闭、不可用（附原因）、空车道、历史折叠、托管之外的 worktree 提示、读取失败保留上次数据并标注、配置读取失败、配置编辑内联错误。
+- **隔离**：每个界面注册在各自的 `ctx.effect` 中；视图代码经 `require.async` 到达（到达前渲染占位/平铺体）；右侧栏页签通过可选 `ctx.inject(["sidebarRightTabs"])` 注册，没有该包的组合其余界面照常工作。文案中英双语，仅使用主题 token。
+
 ## 边界与失败语义
 
 - 前置条件不满足时 `worktree_open` 不创建任何东西：`NOT_A_REPO`、`GIT_TOO_OLD`（需要 git ≥ 2.38，`merge-tree --write-tree` 的门槛；低于它整个能力不可用而不是降级跳过预检）、`DETACHED_HEAD`、`MAX_ACTIVE`、`SCOPE_OVERLAP`、`BRANCH_EXISTS`、`ROOT_OUTSIDE_REPO`、`WORKTREE_DISABLED`。
