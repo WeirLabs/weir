@@ -13,6 +13,7 @@
     "./context-guard": "./src/context-guard/index.js",
     "./hashline-edit": "./src/hashline-edit/index.js",
     "./edit-lock": "./src/edit-lock/index.js",
+    "./worktree": "./src/worktree/index.js",
     "./settings": "./src/settings/index.js",
     "./lsp": "./src/lsp/index.js",
     "./client": "./lib/client.js",

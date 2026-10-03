@@ -26,6 +26,12 @@
         guardSoftThreshold: 0.72
         guardHardThreshold: 0.88
         hashlineHideStockEdit: true
+        # Worktree lanes (git-worktree-lanes): capability switch, lane root,
+        # active-lane cap, automatic dependency setup.
+        worktreeEnabled: true
+        worktreeRoot: .orrery/worktrees
+        worktreeMaxActive: 4
+        worktreeAutoSetup: true
         editLockEnabled: false
         robashEnabled: true
         # The five whitelist tables are NOT declared here on purpose. A patch
@@ -148,6 +154,9 @@
               # lsp 同在本组。预设服务必须 isolate，否则预设加载以
               # "Preset services require isolate realms" 失败。
               orreryEditLock: true
+              # Worktree lanes service: provider (worktree) and consumer
+              # (delegate) share this realm (S24 / S26 S-A).
+              orreryWorktreeLanes: true
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
@@ -181,6 +190,10 @@
               # F1 意图门：关键词意图 → 上下文注入 / 推理提档
               - id: intent-gate
                 name: 'orrery-harness/intent-gate'
+              # Worktree 车道：宿主状态机 + 车道工具 + /worktree 命令 + 面板端点；
+              # 提供 orreryWorktreeLanes 服务（delegate 消费：绑定、车道守卫、结算）
+              - id: worktree
+                name: 'orrery-harness/worktree'
               # F3 分类委派：类别路由 + 精选只读代理 + 后台 job 道
               - id: delegate
                 name: 'orrery-harness/delegate'

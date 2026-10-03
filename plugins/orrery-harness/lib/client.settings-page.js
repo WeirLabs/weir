@@ -69,6 +69,12 @@ window.__ModuleLoader__.load({
 				{ field: "editLockNudgeAttempts", kind: "number" },
 				{ field: "editLockNudgeFallback", kind: "text" }
 			] },
+			{ id: "worktree", fields: [
+				{ field: "worktreeEnabled", kind: "boolean" },
+				{ field: "worktreeAutoSetup", kind: "boolean" },
+				{ field: "worktreeMaxActive", kind: "number" },
+				{ field: "worktreeRoot", kind: "text" }
+			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },
 				{ field: "robashAllow", kind: "text" },

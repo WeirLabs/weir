@@ -57,6 +57,10 @@ const FIELDS = [
   { key: 'lspIdleMs', section: 'lsp', field: 'idleMs', type: 'number', description: 'LSP server idle shutdown threshold (ms)' },
   { key: 'lspRequestTimeoutMs', section: 'lsp', field: 'requestTimeoutMs', type: 'number', description: 'LSP request timeout (ms)' },
   { key: 'lspDiagnosticsWaitMs', section: 'lsp', field: 'diagnosticsWaitMs', type: 'number', description: 'LSP diagnostics publish wait window (ms)' },
+  { key: 'worktreeEnabled', section: 'worktree', field: 'enabled', type: 'boolean', description: 'Worktree lanes capability switch: lane tools, /worktree, Worktree mode, and the lanes panel' },
+  { key: 'worktreeRoot', section: 'worktree', field: 'root', type: 'string', description: 'Repository-relative directory that holds lanes (locally ignored through .git/info/exclude)' },
+  { key: 'worktreeMaxActive', section: 'worktree', field: 'maxActive', type: 'number', description: 'Maximum number of active lanes per repository' },
+  { key: 'worktreeAutoSetup', section: 'worktree', field: 'autoSetup', type: 'boolean', description: 'Install dependencies in a new lane automatically (configured setup, else lockfile-derived)' },
   { key: 'lspServers', section: 'lsp', field: 'servers', type: 'string', description: 'JSON map of custom language servers: family → { command, args?, manifests?, installHint?, install? }' },
 ]
 
