@@ -28,3 +28,4 @@
 | Worktree 车道 | [git-worktree.md](git-worktree.md) | `orrery-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
 | Worktree 车道 | [git-worktree.md](git-worktree.md) | `orrery-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
 | 系统通知 | [notify.md](notify.md) | `orrery-harness/notify`（profile 级，设置 `notify*`） |
+| 会话能力管理器 | [session-capability-manager.md](session-capability-manager.md) | `orrery-harness/capabilities`（实施中，已落地持久化存储层） |
