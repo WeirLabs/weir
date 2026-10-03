@@ -47,6 +47,7 @@
         notifyOnAttention: true
         notifyMinTurnSeconds: 15
         notifySound: true
+        notifyForeground: skip
     # System notifications (profile level, so every session is covered, not only
     # Orrery-preset ones): approval / question / plan-review / failure / long-turn
     # completion. Pure observer of session events; settings overlay is read live.

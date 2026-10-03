@@ -13,12 +13,18 @@ import { overlayConfig } from '../shared/runtime-messages.js'
 import { attentionOfToolCall, classifyTurnEnd, createCoalescer, DEFAULTS, isChildSession } from './policy.js'
 import { compose } from './messages.js'
 import { createNotifier } from './notifier.js'
+import { RENOTIFY, tagFor } from './tags.js'
+import { createWebChannel } from './web-channel.js'
+import { wireNotifyPermissions } from './permissions-admin.js'
+import { TEST_NOTE } from './permissions.js'
 
 const name = 'orrery-notify'
 const inject = []
 
 /** The `notify` settings section: every key that is a switch must stay a real boolean. */
 const SWITCHES = ['enabled', 'onComplete', 'onAttention', 'sound']
+/** Allowed values of the foreground policy. */
+const FOREGROUND_VALUES = ['skip', 'always']
 /** Events older than this are replay, not news (a resumed session re-feeds history). */
 const STALE_EVENT_MS = 60_000
 /** Longest parent chain walked to find the session the user actually sees. */
@@ -40,6 +46,7 @@ function resolveOptions(ctx, config) {
     const value = merged[key]
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) merged[key] = /** @type {Record<string, any>} */ (DEFAULTS)[key]
   }
+  if (!FOREGROUND_VALUES.includes(merged.foreground)) merged.foreground = DEFAULTS.foreground
   return /** @type {typeof DEFAULTS} */ (merged)
 }
 
@@ -51,18 +58,19 @@ function resolveOptions(ctx, config) {
  * @param {object} config
  * @param {object} deps
  * @param {{ send(note: { title: string, body: string, urgent: boolean }, options: { sound: boolean }): boolean }} deps.notifier
+ * @param {{ send(note: any): unknown } | undefined} [deps.channel] - web delivery channel; absent = system command only
  * @param {() => number} [deps.now]
  * @param {(fn: () => void, ms: number) => unknown} [deps.setTimer]
  * @param {(handle: any) => void} [deps.clearTimer]
  * @returns {() => void} disposer
  */
-export function wire(ctx, config, { notifier, now = Date.now, setTimer, clearTimer }) {
+export function wire(ctx, config, { notifier, channel, now = Date.now, setTimer, clearTimer }) {
   const startTimer =
     setTimer ??
     ((/** @type {() => void} */ fn, /** @type {number} */ ms) => {
       const handle = globalThis.setTimeout(fn, ms)
       // A pending notification must never keep the host process alive.
-      /** @type {any} */ (handle)?.unref?.()
+      ;/** @type {any} */ (handle)?.unref?.()
       return handle
     })
   const stopTimer = clearTimer ?? ((/** @type {any} */ handle) => globalThis.clearTimeout(handle))
@@ -120,7 +128,13 @@ export function wire(ctx, config, { notifier, now = Date.now, setTimer, clearTim
     const root = rootOf(session)
     if (!coalescer.accept(`${root?.id ?? session?.id}:${spec.type}`)) return
     try {
-      notifier.send(compose(spec, labelOf(root)), { sound: options.sound })
+      const note = compose(spec, labelOf(root))
+      if (channel) {
+        // Page first (DSH's own name); the channel falls back to the system command itself.
+        channel.send({ ...note, tag: tagFor(root?.id ?? session?.id, spec.type), renotify: RENOTIFY, sound: options.sound, foreground: options.foreground })
+      } else {
+        notifier.send(note, { sound: options.sound })
+      }
     } catch (/** @type {any} */ error) {
       ctx.logger?.warn?.(`notify: delivery failed: ${error?.message ?? error}`)
     }
@@ -212,7 +226,23 @@ export function wire(ctx, config, { notifier, now = Date.now, setTimer, clearTim
 function apply(ctx, config = {}) {
   const notifier = createNotifier({ logger: ctx.logger })
   if (!notifier.supported) ctx.logger?.warn?.(`notify: system notifications are not supported on platform "${process.platform}"`)
-  return wire(ctx, config, { notifier })
+  // The page delivers (as DeepSeek Harness); the system command is the fallback.
+  const channel = createWebChannel({ fallback: (note, options) => notifier.send(note, options), logger: ctx.logger })
+  const offWire = wire(ctx, config, { notifier, channel })
+  // Page endpoints (pull/ack) and the macOS permission panel's endpoints. They
+  // register from this row, whose `./notify` subpath already exists, so no new
+  // package subpath is needed (S19); services come through ctx.inject (S20).
+  const offEndpoints = wireNotifyPermissions(ctx, {
+    channel,
+    // The permission panel's test goes through the real path, and shows even
+    // with the window in front (the user is looking at the settings page).
+    sendTest: () => channel.send({ ...TEST_NOTE, tag: tagFor('test', 'test'), renotify: RENOTIFY, sound: true, foreground: 'always' }),
+  })
+  return () => {
+    offWire()
+    offEndpoints()
+    channel.close()
+  }
 }
 
 export { name, inject, apply }

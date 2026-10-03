@@ -67,6 +67,7 @@ const FIELDS = [
   { key: 'notifyOnAttention', section: 'notify', field: 'onAttention', type: 'boolean', description: 'Notify when a session needs the user: approval, question, plan review, a failed or stopped turn' },
   { key: 'notifyMinTurnSeconds', section: 'notify', field: 'minTurnSeconds', type: 'number', description: 'A finished turn is only reported when it ran at least this many seconds (0 reports every turn)' },
   { key: 'notifySound', section: 'notify', field: 'sound', type: 'boolean', description: 'Play the platform notification sound where supported' },
+  { key: 'notifyForeground', section: 'notify', field: 'foreground', type: { union: ['skip', 'always'] }, description: 'DeepSeek Harness window in the foreground: skip stays quiet (default), always notifies anyway' },
 ]
 
 export { FIELDS }

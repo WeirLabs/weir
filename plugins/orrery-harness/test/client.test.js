@@ -67,6 +67,8 @@ describe('orrery settings client half', () => {
     }
     // sentinel chunk modules behind require.async
     const asyncCalls = []
+    const notifyWebStarts = []
+    const notifyWebStops = []
     const controllerConstructed = []
     const sentinelSnapshot = { marker: 'snapshot' }
     const settingsPageChunk = {
@@ -94,6 +96,8 @@ describe('orrery settings client half', () => {
     const chainModelChunk = { marker: 'chain-model' }
     const robashModelChunk = { marker: 'robash-model' }
     const lspModelChunk = { marker: 'lsp-model' }
+    const notifyPermissionsChunk = { NotifyPermissionsField: (props) => ({ __notifyPermissions: props }) }
+    const notifyWebChunk = { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => notifyWebStops.push(1) } } }
     const lspToggleChunk = { LspToggle: (props) => ({ __toggle: props }) }
     const hashEditViewChunk = { HashEditRow: (props) => ({ __row: props }) }
     const hashEditModelChunk = { HASH_EDIT_TOOL: 'hash_edit', marker: 'hash-edit-model' }
@@ -114,6 +118,8 @@ describe('orrery settings client half', () => {
       './client.chain-model.js': chainModelChunk,
       './client.robash-model.js': robashModelChunk,
       './client.lsp-model.js': lspModelChunk,
+      './client.notify-permissions.js': notifyPermissionsChunk,
+      './client.notify-web.js': notifyWebChunk,
       './client.lsp-toggle.js': lspToggleChunk,
       './client.hash-edit-view.js': hashEditViewChunk,
       './client.hash-edit-model.js': hashEditModelChunk,
@@ -132,6 +138,8 @@ describe('orrery settings client half', () => {
       surface: loaded[0].factory(requireStub),
       reactStub,
       asyncCalls,
+      notifyWebStarts,
+      notifyWebStops,
       controllerConstructed,
       sentinelSnapshot,
       settingsPageChunk,
@@ -207,6 +215,8 @@ describe('orrery settings client half', () => {
   }
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+  // apply starts web notification delivery, which requests its own chunk.
+  const NOTIFY_WEB_SPEC = './client.notify-web.js'
   const SETTINGS_CHUNK_SPECS = [
     './client.settings-page.js',
     './client.chain-editor.js',
@@ -216,6 +226,7 @@ describe('orrery settings client half', () => {
     './client.chain-model.js',
     './client.robash-model.js',
     './client.lsp-model.js',
+    './client.notify-permissions.js',
   ]
 
   it('loads, exposes the plugin surface, and registers the page chain', async () => {
@@ -361,7 +372,8 @@ describe('orrery settings client half', () => {
     // loading state: one parallel 7-chunk Promise.all, dictionary copy
     const { first, settled } = await settle(formProps)
     expect(first.children).toBe('loading')
-    expect(asyncCalls).toEqual(SETTINGS_CHUNK_SPECS)
+    // apply also starts web notification delivery, which pulls its own chunk first
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual(SETTINGS_CHUNK_SPECS)
 
     // arrived: the settings-page chunk's OrreryCard with bound editors
     expect(settled.__type).toBe(settingsPageChunk.OrreryCard)
@@ -491,7 +503,7 @@ describe('orrery settings client half', () => {
     }
     const { first, settled } = await settle(baseProps)
     expect(first).toBe(null)
-    expect(asyncCalls).toEqual(['./client.lsp-toggle.js'])
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual(['./client.lsp-toggle.js'])
     expect(settled.__type).toBe(lspToggleChunk.LspToggle)
     expect(settled.sessionId).toBe('sess-1')
     expect(typeof settled.settingsBus?.subscribe).toBe('function')
@@ -512,7 +524,7 @@ describe('orrery settings client half', () => {
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.key === 'hash_edit')
     // registration carries the literal key — no chunk pull just to register
     expect(definition.key).toBe('hash_edit')
-    expect(asyncCalls).toEqual([])
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual([])
 
     const block = {
       call: { name: 'hash_edit', argsRaw: '{"file_path":"/ws/a.js","edits":[]}' },
@@ -523,7 +535,7 @@ describe('orrery settings client half', () => {
     // pre-arrival: the generic flattened input/output body
     reactStub.begin()
     const first = component(props)
-    expect(asyncCalls).toEqual(['./client.hash-edit-view.js', './client.hash-edit-model.js'])
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual(['./client.hash-edit-view.js', './client.hash-edit-model.js'])
     const body = first.__type(props)
     expect(body['data-tool']).toBe('hash_edit')
     expect(body.children[0].children[0].children).toBe('hashEditInput')
@@ -546,7 +558,7 @@ describe('orrery settings client half', () => {
     const { ctx, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     // registration costs no chunk pull (the keyed tool views register literally)
-    expect(asyncCalls).toEqual([])
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual([])
     slotInjects[3].fn()
     const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
     // the lane tool views are registered by their own injects (indices 6..10)
@@ -580,6 +592,62 @@ describe('orrery settings client half', () => {
     expect(asyncCalls).toContain('./client.worktree-model.js')
   })
 
+  it('starts web notification delivery at apply, independent of the settings page, and stops it on dispose', async () => {
+    const { surface, notifyWebStarts, notifyWebStops } = await loadEntry()
+    const { ctx, effects } = makeCtx()
+    // run the effects with a disposer-capturing ctx.effect
+    const disposers = []
+    ctx.effect = (fn) => {
+      effects.push(fn)
+      const dispose = fn()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return () => {}
+    }
+    surface.apply(ctx)
+    await flush()
+    // started once, on the real global environment (fetch/Notification/document come from the page)
+    expect(notifyWebStarts).toHaveLength(1)
+    expect(notifyWebStarts[0]).toBe(globalThis)
+    expect(notifyWebStops).toHaveLength(0)
+    for (const dispose of disposers) dispose()
+    expect(notifyWebStops).toHaveLength(1)
+  })
+
+  it('does not start delivery if the effect is disposed before the chunk arrives', async () => {
+    const { surface, notifyWebStarts, notifyWebStops } = await loadEntry()
+    const { ctx } = makeCtx()
+    const disposers = []
+    ctx.effect = (fn) => {
+      const dispose = fn()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return () => {}
+    }
+    surface.apply(ctx)
+    // dispose synchronously, before the lazy chunk promise resolves
+    for (const dispose of disposers) dispose()
+    await flush()
+    expect(notifyWebStarts).toHaveLength(0)
+    expect(notifyWebStops).toHaveLength(0)
+  })
+
+  it('a failed delivery chunk load is harmless: apply completes, nothing starts, nothing throws', async () => {
+    const { surface, setAsyncFailure, notifyWebStarts } = await loadEntry()
+    const { ctx, localeRegistrations, whileServedCalls } = makeCtx()
+    setAsyncFailure(new Error('stale revision'))
+    // the unhandled-rejection guard: a rejected lazy chunk must be swallowed by apply
+    let unhandled = null
+    const onUnhandled = (error) => { unhandled = error }
+    process.once('unhandledRejection', onUnhandled)
+    surface.apply(ctx)
+    await flush()
+    await flush()
+    process.off('unhandledRejection', onUnhandled)
+    expect(unhandled).toBeNull()
+    expect(notifyWebStarts).toHaveLength(0)
+    // everything else still registered
+    expect(localeRegistrations).toHaveLength(1)
+    expect(whileServedCalls).toHaveLength(1)
+  })
   it('keeps every client chunk older than the entry (the rev-restamp red line)', () => {
     // docs/features/client-module-chunking.md: a chunk URL carries the ENTRY
     // file's rev (derived from lib/client.js's mtime/ctime/size), so a chunk
