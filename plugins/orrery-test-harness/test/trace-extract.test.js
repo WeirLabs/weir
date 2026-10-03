@@ -3,7 +3,7 @@
 //  2. planRequest calls extract exactly once per request (DI counting) and
 //     every consumer (decide + observe + record) shares that one pass;
 //  3. the union of per-scenario trace-record keys equals the pre-registry
-//     46-key superset exactly — no field was renamed or orphaned in the
+//     47-key superset exactly — no field was renamed or orphaned in the
 //     migration into per-scenario observe();
 //  4. the strict-provider schema gate throws its verbatim error before any
 //     scenario logic runs.
@@ -74,6 +74,8 @@ const PRE_MIGRATION_KEYS = [
   'emittedNames',
   'lastUser',
   'lastTool',
+  // capstore scenario observation (capability-store probe tools advertised)
+  'capstoreToolsSeen',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

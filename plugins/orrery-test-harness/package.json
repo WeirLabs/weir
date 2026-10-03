@@ -8,7 +8,8 @@
     "./package.json": "./package.json",
     "./mock-llm": "./src/mock-llm.js",
     "./event-tap": "./src/event-tap.js",
-    "./shell": "./src/shell.js"
+    "./shell": "./src/shell.js",
+    "./capstore-probe": "./src/capstore-probe.js"
   },
   "dsh": {
     "bundle": {

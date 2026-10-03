@@ -159,7 +159,8 @@ function recordRun(run) {
     mkdirSync(join(dir, 'ws'), { recursive: true })
     if (existsSync(run.trace)) copyFileSync(run.trace, join(dir, 'trace.jsonl'))
     if (run.trace2 && existsSync(run.trace2)) copyFileSync(run.trace2, join(dir, 'trace2.jsonl'))
-    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt']) {
+    // capstore-*.json: the capability-store probe reports (capstore scenario).
+    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json']) {
       const source = join(WS, file)
       if (existsSync(source)) copyFileSync(source, join(dir, 'ws', file))
     }

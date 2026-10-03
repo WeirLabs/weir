@@ -30,6 +30,13 @@
         intentGateModel: mock-1
     - id: orrery-it-event-tap
       name: 'orrery-test-harness/event-tap'
+    # Capability-store probe, host level: the baseline the isolated row below
+    # is compared against (capstore scenario only).
+    - id: orrery-it-capstore-probe-host
+      name: 'orrery-test-harness/capstore-probe'
+      config:
+        label: host
+        enabled: !!js process.env.ORRERY_IT_CAPSTORE === '1'
     - id: orrery-it-core
       name: 'orrery-harness/core'
     - id: orrery-it-intent-gate
@@ -68,6 +75,13 @@
       config:
         - id: orrery-it-todo-driver
           name: 'orrery-harness/todo-driver'
+        # Capability-store probe inside an isolated realm: proves the host
+        # profileContext reaches Orrery rows mounted under a cordis:group.
+        - id: orrery-it-capstore-probe-realm
+          name: 'orrery-test-harness/capstore-probe'
+          config:
+            label: realm
+            enabled: !!js process.env.ORRERY_IT_CAPSTORE === '1'
         # Edit Lock row in preset order (before hashline-edit). Enabled only for
         # the editlock scenario so every other scenario keeps today's behavior.
         - id: orrery-it-edit-lock
