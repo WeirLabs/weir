@@ -9,7 +9,7 @@ import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
 import { createGit } from './git.js'
-import { createGitRunner, createShellRunner } from './runner.js'
+import { createGitRunner, createSetupResolver, createShellRunner } from './runner.js'
 import { createLaneService } from './lanes.js'
 import { createWorktreeTools } from './tools.js'
 import { createWorktreeCommand } from './command.js'
@@ -64,6 +64,7 @@ function apply(ctx, config = {}) {
 
   const service = createLaneService({
     git: createGit(createGitRunner(ctx.subprocess ?? ctx.get?.('subprocess') ?? missingSubprocess())),
+    resolveSetup: createSetupResolver({ subprocess: ctx.subprocess ?? ctx.get?.('subprocess') ?? missingSubprocess() }),
     shellRun: (request) => {
       const run = createShellRunner(shellRef.shell ?? ctx.get?.('shell'), shellRef.sandboxPolicy ?? ctx.get?.('sandboxPolicy'))
       if (!run) return Promise.reject(new Error('no shell executor is available in this composition'))

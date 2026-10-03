@@ -247,6 +247,7 @@ window.__ModuleLoader__.load({
 			const [history, setHistory] = react.useState(false);
 			const [init, setInit] = react.useState(null);
 			const [setup, setSetup] = react.useState("");
+			const [setupWarning, setSetupWarning] = react.useState(null);
 			const [rows, setRows] = react.useState([]);
 			const view = state.view;
 			const groups = model.groupLanes(view?.lanes ?? []);
@@ -282,6 +283,7 @@ window.__ModuleLoader__.load({
 						if (!parsed) { setError(t("initParseFailed")); return; }
 						setInit(parsed);
 						setSetup(parsed.current?.setup ?? parsed.suggested.setup ?? "");
+						setSetupWarning(parsed.suggested.setupWarning ?? null);
 						setRows((parsed.current?.check?.length ? parsed.current.check : parsed.suggested.check ?? []).map((entry) => ({ name: String(entry.name ?? ""), run: String(entry.run ?? "") })));
 					},
 					(reason) => setError(reason instanceof Error ? reason.message : String(reason))
@@ -319,6 +321,7 @@ window.__ModuleLoader__.load({
 				if (init) {
 					children.push(jsxs("div", { "data-orrery-worktree-config": "", style: { marginTop: "8px", borderTop: "1px solid var(--dsw-alias-border-l2)", paddingTop: "8px" }, children: [
 						jsx("div", { style: muted, children: init.file ?? "" }),
+						setupWarning ? jsx("div", { "data-orrery-worktree-setup-warning": "", style: { color: "var(--dsw-alias-state-warn-primary)", marginTop: "4px", overflowWrap: "anywhere" }, children: setupWarning }) : null,
 						init.error ? jsx("div", { style: errorStyle, children: init.error }) : null,
 						jsx("input", { "data-orrery-worktree-config-setup": "", value: setup, placeholder: t("configSetup"), onChange: (event) => setSetup(event.target.value), style: { width: "100%", marginTop: "6px" } }),
 						rows.map(rowEditor),

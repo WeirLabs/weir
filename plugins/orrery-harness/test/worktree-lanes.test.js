@@ -15,7 +15,7 @@ function nodeShellRun({ command, cwd, timeoutMs }) {
   })
 }
 
-function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale } = {}) {
+function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup } = {}) {
   const fixture = makeRepo()
   const notices = []
   const audits = []
@@ -29,6 +29,7 @@ function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false
     audit: (type, data, root) => audits.push({ type, data, root }),
     modeOf: () => mode,
     localeOf: () => locale,
+    ...(resolveSetup !== undefined ? { resolveSetup } : {}),
   })
   const session = { id: 'main-1', header: { cwd: fixture.repo } }
   const agent = { session }
@@ -141,6 +142,151 @@ describe('worktree lane service: open', () => {
       await h.service.prepareBind(h.session, opened.lane, { readOnly: false }).then(() => expect(1).toBe(0), (error) => expect(error.code).toBe('LANE_NOT_DISPATCHABLE'))
       const skipped = await h.service.setup(h.session, opened.lane, { skip: true })
       expect(skipped.state).toBe('ready')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('derived setup runs through the resolver: bundled node + pnpm.mjs + PATH injection, frozen lockfile intact', async () => {
+    const calls = []
+    const bundledNode = '/ds h/dsh-runtimes/rt/dependencies/node/bin/node'
+    const bundledPnpm = '/ds h/dsh-runtimes/rt/dependencies/pnpm/bin/pnpm.mjs'
+    const h = harness({
+      resolveSetup: async (manager) => {
+        calls.push(manager)
+        return {
+          ok: true, source: 'bundled', display: `node ${bundledPnpm} install --frozen-lockfile`,
+          command: `export PATH='${bundledNode.slice(0, bundledNode.lastIndexOf('/'))}':"$PATH"; exec '${bundledNode}' '${bundledPnpm}' install --frozen-lockfile`,
+        }
+      },
+      shell: async ({ command }) => ({ code: 0, output: `ran: ${command}`, denied: false, timedOut: false }),
+    })
+    try {
+      writeFileSync(join(h.repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+      sh(h.repo, 'add', '.')
+      sh(h.repo, 'commit', '-qm', 'lock')
+      const opened = await h.service.open(h.session, { title: 'bundled' })
+      expect(calls).toEqual(['pnpm'])
+      expect(opened.summary).toContain('node /ds h/')
+      const ready = await until(async () => {
+        const lane = await laneOf(h, opened.lane)
+        return lane.state === 'ready' ? lane : null
+      })
+      const log = readFileSync(ready.setup.log, 'utf8')
+      expect(log).toContain(`exec '${bundledNode}' '${bundledPnpm}' install --frozen-lockfile`)
+      expect(log).toContain('export PATH=')
+      expect(log).toContain('--frozen-lockfile')
+      // Provenance, not the executable string, is what the ledger keeps.
+      expect(ready.setup.provenance).toEqual({ kind: 'derived', manager: 'pnpm' })
+      expect(ready.setup.display).toBe(`node ${bundledPnpm} install --frozen-lockfile`)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a configured setup string is executed verbatim, never rewritten', async () => {
+    let resolved = 0
+    const h = harness({
+      resolveSetup: async () => { resolved++; return { ok: true, source: 'system', command: 'SHOULD_NOT_BE_USED', display: 'x' } },
+      shell: async ({ command }) => ({ code: 0, output: command, denied: false, timedOut: false }),
+    })
+    try {
+      mkdirSync(join(h.repo, '.orrery', 'worktrees'), { recursive: true })
+      writeFileSync(join(h.repo, '.orrery', 'worktrees', '.config.json'), JSON.stringify({ setup: 'echo my-custom-setup' }))
+      writeFileSync(join(h.repo, 'pnpm-lock.yaml'), 'x\n')
+      sh(h.repo, 'add', '.')
+      sh(h.repo, 'commit', '-qm', 'lock')
+      await h.service.open(h.session, { title: 'configured' })
+      const ready = await until(async () => {
+        const lanes = (await h.service.repoFor(h.repo)).ledger.read().lanes
+        return lanes[0]?.state === 'ready' ? lanes[0] : null
+      })
+      expect(resolved).toBe(0)
+      expect(readFileSync(ready.setup.log, 'utf8')).toContain('echo my-custom-setup')
+      expect(readFileSync(ready.setup.log, 'utf8')).not.toContain('SHOULD_NOT_BE_USED')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a manager that resolves nowhere fails with the three remedies, before any shell call', async () => {
+    let shellCalls = 0
+    const h = harness({
+      resolveSetup: async () => ({ ok: false, manager: 'pnpm' }),
+      shell: async () => { shellCalls++; return { code: 0, output: '', denied: false, timedOut: false } },
+    })
+    try {
+      writeFileSync(join(h.repo, 'pnpm-lock.yaml'), 'x\n')
+      sh(h.repo, 'add', '.')
+      sh(h.repo, 'commit', '-qm', 'lock')
+      const opened = await h.service.open(h.session, { title: 'missing tool' })
+      expect(opened.state).toBe('setup-failed')
+      expect(shellCalls).toBe(0)
+      expect(opened.summary).toContain('setup needs pnpm')
+      expect(opened.summary).toContain('/worktree setup <lane> --skip'.replace('<lane>', opened.lane))
+      expect(opened.summary).toContain('.config.json')
+      // Retrying while the tool is still missing keeps the legal state and
+      // refreshes the diagnosis — no transition error, still no shell call.
+      const retried = await h.service.setup(h.session, opened.lane)
+      expect(shellCalls).toBe(0)
+      expect(retried.state).toBe('setup-failed')
+      expect(retried.summary).toContain('setup needs pnpm')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a retry after a real setup failure re-resolves instead of replaying the display string', async () => {
+    const runs = []
+    let attempts = 0
+    const h = harness({
+      resolveSetup: async (manager) => ({
+        ok: true, source: 'bundled', display: `node /bundled/pnpm.mjs install --frozen-lockfile`,
+        command: `export PATH='/bundled node/bin':"$PATH"; exec '/bundled node/bin/node' /bundled/pnpm.mjs install --frozen-lockfile`,
+      }),
+      shell: async ({ command }) => {
+        attempts++
+        runs.push(command)
+        return { code: attempts === 1 ? 1 : 0, output: attempts === 1 ? 'lockfile out of date' : 'ok', denied: false, timedOut: false }
+      },
+    })
+    try {
+      writeFileSync(join(h.repo, 'pnpm-lock.yaml'), 'x\n')
+      sh(h.repo, 'add', '.')
+      sh(h.repo, 'commit', '-qm', 'lock')
+      const opened = await h.service.open(h.session, { title: 'retry' })
+      await until(async () => {
+        const lane = await laneOf(h, opened.lane)
+        return lane.state === 'setup-failed' ? lane : null
+      })
+      await h.service.setup(h.session, opened.lane)
+      await until(async () => {
+        const lane = await laneOf(h, opened.lane)
+        return lane.state === 'ready' ? lane : null
+      })
+      expect(attempts).toBe(2)
+      // BOTH attempts executed the resolved invocation — never the display.
+      for (const command of runs) {
+        expect(command).toContain(`exec '/bundled node/bin/node'`)
+        expect(command).not.toBe('node /bundled/pnpm.mjs install --frozen-lockfile')
+      }
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('without a resolver the legacy bare command still runs', async () => {
+    const h = harness({ shell: async ({ command }) => ({ code: 0, output: command, denied: false, timedOut: false }) })
+    try {
+      writeFileSync(join(h.repo, 'pnpm-lock.yaml'), 'x\n')
+      sh(h.repo, 'add', '.')
+      sh(h.repo, 'commit', '-qm', 'lock')
+      await h.service.open(h.session, { title: 'legacy' })
+      const ready = await until(async () => {
+        const lanes = (await h.service.repoFor(h.repo)).ledger.read().lanes
+        return lanes[0]?.state === 'ready' ? lanes[0] : null
+      })
+      expect(readFileSync(ready.setup.log, 'utf8')).toContain('pnpm install --frozen-lockfile')
     } finally {
       h.cleanup()
     }

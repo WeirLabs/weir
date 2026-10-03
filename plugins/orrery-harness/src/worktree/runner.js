@@ -7,8 +7,10 @@
 // - shellRunner: user-configured setup / verification commands (shell
 //   strings) through ctx.shell with the calling session's per-call sandbox
 //   policy — the same boundary the bash tool enforces (S23 / S26 S-G).
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { childEnvironment, extraBinDirectories, resolveExecutable } from '../lsp/child-process.js'
+import { resolveDerivedSetup } from './pkgmgr.js'
 
 /** Vendor git install locations, probed when PATH resolution fails. */
 function wellKnownGit(platform = process.platform) {
@@ -92,6 +94,43 @@ export function createGitRunner(subprocess) {
     } finally {
       clearTimeout(timer)
     }
+  }
+}
+
+/**
+ * Resolve DERIVED setup commands against the real host: system package
+ * manager first (the LSP module's extended resolver — S21), then the DSH
+ * bundled runtime under the deployment's DSH home. Pure decision in
+ * pkgmgr.js; this is only the seam wiring.
+ * @param {{ subprocess: any, env?: Record<string, string | undefined>, home?: string, findExecutable?: (name: string) => Promise<string | undefined> }} options - `findExecutable` exists so tests can pin the lookup without fighting the host's real PATH scan
+ * @returns {(manager: string) => Promise<ReturnType<typeof resolveDerivedSetup>>}
+ */
+export function createSetupResolver({ subprocess, env = process.env, home = homedir(), findExecutable }) {
+  const find = findExecutable ?? ((name) => resolveExecutable(subprocess, name).catch(() => undefined))
+  return async (manager) => {
+    // Manager and node are resolved INDEPENDENTLY: the core asks the seam
+    // for 'node' too, and feeding it the manager's path would inject the
+    // manager's directory where a node directory belongs (B2 review).
+    const [foundManager, foundNode] = await Promise.all([find(manager), find('node')])
+    return resolveDerivedSetup(manager, {
+      foundOnPath: (name) => (name === 'node' ? foundNode : name === manager ? foundManager : undefined),
+      listDirs: (dir) => {
+        try {
+          return readdirSync(dir)
+        } catch {
+          return []
+        }
+      },
+      isFile: (path) => {
+        try {
+          return statSync(path).isFile()
+        } catch {
+          return false
+        }
+      },
+      dshHome: env.DSH_HOME,
+      home,
+    })
   }
 }
 

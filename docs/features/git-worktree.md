@@ -55,11 +55,19 @@
 }
 ```
 
-`setup` 与 `check` 都可选。未声明 `setup` 时按 lockfile 推导（`pnpm-lock.yaml` / `bun.lock` / `yarn.lock` / `package-lock.json`）。命令只来自这个**本地、不入库**的文件，绝不从入库文件读取（避免"克隆陌生仓库即执行命令"）；`/worktree init` 探测到的建议必须经你确认才写入。
+`setup` 与 `check` 都可选。未声明 `setup` 时按 lockfile 推导包管理器（`pnpm-lock.yaml` → pnpm、`bun.lock` → bun、`yarn.lock` → yarn、`package-lock.json` → npm）。命令只来自这个**本地、不入库**的文件，绝不从入库文件读取（避免"克隆陌生仓库即执行命令"）；`/worktree init` 探测到的建议必须经你确认才写入。
+
+**推导命令的可执行方式**（仅针对推导；你显式配置的 `setup` 永远原样执行、绝不改写）：DSH 桌面宿主的 PATH 是最小化的（S21），裸 `pnpm` 很可能不存在，因此宿主在运行前解析调用方式——
+1. **系统环境优先**：先在 PATH 与常见安装位置找该包管理器，尊重你自行安装的版本；
+2. **DSH 捆绑运行时回退**：在 `<DSH_HOME>/dsh-runtimes/*/dependencies/` 中查找（pnpm 以捆绑 Node 的绝对路径执行 `pnpm.mjs`；npm 仅当捆绑 Node 目录内存在 `npm` 时；yarn/bun 无捆绑提供）；
+3. **Node 注入**：执行时把解析到的 Node/bin 目录注入命令内 PATH 前缀，保证安装期生命周期脚本能找到 node；
+4. **明确诊断**：两层都找不到时，车道进入 `setup-failed`，原因里直接给出三条出路（自行安装该工具 / 在仓库本地配置 `setup` / `/worktree setup <lane> --skip`），而不是只报 exit 127。
+
+`--frozen-lockfile` 语义与 `--skip` 行为不变。
 
 ## 设计细节
 
-- **模块划分**（`plugins/orrery-harness/src/worktree/`）：`state.js` 纯函数状态机（转移表、`nextFor`）；`rules.js` 规则推导（id/分支/根目录校验、lockfile、验证建议、scope glob、git 输出解析）；`reconcile.js` 账本↔git 对账决策；`ledger.js` 账本 IO（`O_EXCL` 锁 + 陈旧锁抢占 + 临时文件 rename；损坏时备份并以 `LEDGER_CORRUPT` 失败关闭，绝不静默重建）；`git.js` 唯一调用 git 的模块（argv 形态、无 shell、从不 `--force`，`branch -D` 只在放弃流程的显式选择下）；`runner.js` 两个执行器（git 走 `ctx.subprocess` + S21 扩展解析；setup/验证走 `ctx.shell` 并携带会话 per-call 沙箱策略）；`lanes.js` 车道服务（所有变更的唯一入口）；`guard.js` 车道守卫与 Worktree 模式判定；`tools.js` / `command.js` / `projection.js` / `prompts.js` 表面适配；`index.js` 组合根。
+- **模块划分**（`plugins/orrery-harness/src/worktree/`）：`state.js` 纯函数状态机（转移表、`nextFor`）；`rules.js` 规则推导（id/分支/根目录校验、lockfile、验证建议、scope glob、git 输出解析）；`reconcile.js` 账本↔git 对账决策；`ledger.js` 账本 IO（`O_EXCL` 锁 + 陈旧锁抢占 + 临时文件 rename；损坏时备份并以 `LEDGER_CORRUPT` 失败关闭，绝不静默重建）；`git.js` 唯一调用 git 的模块（argv 形态、无 shell、从不 `--force`，`branch -D` 只在放弃流程的显式选择下）；`pkgmgr.js` 推导 setup 的可执行方式解析（系统优先、DSH 捆绑运行时回退、Node 目录注入、缺失诊断；所有命令字符串构造的唯一来源）；`runner.js` 三个执行器（git、shell、setup 解析器缝）（git 走 `ctx.subprocess` + S21 扩展解析；setup/验证走 `ctx.shell` 并携带会话 per-call 沙箱策略）；`lanes.js` 车道服务（所有变更的唯一入口）；`guard.js` 车道守卫与 Worktree 模式判定；`tools.js` / `command.js` / `projection.js` / `prompts.js` 表面适配；`index.js` 组合根。
 - **状态机**：17 个状态（`preparing`、`setup-failed`、`ready`、`working`、`dirty`、`no-commits`、`branch-moved`、`checking`、`check-failed`、`landable`、`conflicted`、`awaiting-approval`、`declined`、`landed`、`kept`、`cleaned`、`abandoned`）。`landable` 记录 `HEAD^{tree}`；每次工具调用与面板刷新都会比对，车道内容一变即退回 `working`（与是否启用验证无关），保证你批准的就是实际要合并的那份内容。主仓离开 base 分支时，活跃车道叠加 `base-moved` 标记，`worktree_land` 拒绝，切回后自动解除。
 - **车道守卫**：`delegate(worktree)` 在 `spawn-adapter.js` 现有只读守卫的挂载点之后追加车道守卫（`tools.guard` 只能拒绝，拒绝文本给出正确的绝对路径）：shell 必须带车道内的 `workdir`；写类工具（`write`/`edit`/`hash_edit`/`str_replace_editor`）的 `file_path` 必须在车道内、且在 `scope` 内；`lsp_rename` 对写入者一律拒绝（会改写引用文件，无法事前界定）；命令位置上的 `git checkout`/`switch`/`worktree`/`push`/`update-ref`/`symbolic-ref`、带重命名/删除标志的 `branch`、指向非 HEAD 相对引用的 `reset`、以及 `-C`/`--git-dir`/`--work-tree` 被拒。允许在车道里合并或变基 base 以解决冲突。挂载失败沿用 `onGuardFailure`：一次性子代理被拆除，受监督成员进入组回滚——绑定车道的子代理绝不会无守卫运行。
 - **服务与 realm**：worktree 模块 provide 预设服务 `orreryWorktreeLanes`（`prepareBind`、`childSettled`、`modeOf`、`resolveArgPath`），按 S24 在 `delegation` 组 `isolate` 中列出，消费者 `delegate` 同组；`userQuestions`、`commands`、`connection`、`subprocess`、`shell` 等均为 host 层服务（S26 S-A）。
@@ -96,5 +104,5 @@
 
 ## 测试
 
-- 单元测试：`test/worktree-core.test.js`（状态机全转移与非法转移、规则推导、对账、账本原子写/并发/陈旧锁/损坏、exclude 幂等、git 封装从不 force、真仓库 add/precheck/merge/remove 与冲突不动主仓）；`test/worktree-lanes.test.js`（真 git 仓库上的服务：开车道与各前置拒绝、后台 setup 成功/失败/沙箱拒绝/关闭、单写入者绑定与回滚、结算到 `dirty`/`no-commits`/`landable`、新提交使结论失效、验证顺序执行/首败即停/改写即败/`VERIFICATION_DISABLED`、批准合并与模板消息、四种不合并路径、冲突不询问、`BASE_MOVED`/`MAIN_STAGED`/`MAIN_DIRTY_OVERLAP`、卡片期间主仓变化不合并、孤儿卡片转 `declined`、用户命令合并免卡片、收尾三模式与 scratch 同步、删除受阻不强删、放弃的未合并提交提示与取消、手删车道转 missing、未托管 worktree 不动、视图与合法操作、损坏账本显式重建、验证建议只建议不写入）；`test/worktree-surfaces.test.js`（车道守卫判定表含命令位置与包装命令、Worktree 模式判定、投影折叠与引用稳定、工具 schema/meta/主代理限定/错误渲染、命令映射、spawn-adapter 车道守卫挂载与两条通道的失败拆除、delegate 绑定/标签/契约/结算/回滚/`WORKTREE_REQUIRED`/`WORKTREE_DISABLED`、主代理模式守卫只作用于主代理自身调用）；`test/audit.test.js`（审计根目录锚定）；`test/settings-fields.test.js` 与 `test/client-settings-page.test.js`（四个设置键的 FIELDS ↔ patch 行 ↔ 设置页对齐）。
+- 单元测试：`test/worktree-core.test.js`（状态机全转移与非法转移、规则推导、对账、账本原子写/并发/陈旧锁/损坏、exclude 幂等、git 封装从不 force、真仓库 add/precheck/merge/remove 与冲突不动主仓）；`test/worktree-pkgmgr.test.js`（推导 setup 解析：系统命中与 Node 目录注入、系统有管理器但无 Node 时落到捆绑、捆绑 pnpm 经捆绑 node 执行 pnpm.mjs、npm 仅在捆绑 bin 含 npm 时、yarn/bun 无捆绑、双缺诊断、含空格路径引号、frozen-lockfile 语义，以及对本机捆绑运行时的真实执行校验）；`test/worktree-lanes.test.js`（真 git 仓库上的服务：开车道与各前置拒绝、后台 setup 成功/失败/沙箱拒绝/关闭、单写入者绑定与回滚、结算到 `dirty`/`no-commits`/`landable`、新提交使结论失效、验证顺序执行/首败即停/改写即败/`VERIFICATION_DISABLED`、批准合并与模板消息、四种不合并路径、冲突不询问、`BASE_MOVED`/`MAIN_STAGED`/`MAIN_DIRTY_OVERLAP`、卡片期间主仓变化不合并、孤儿卡片转 `declined`、用户命令合并免卡片、收尾三模式与 scratch 同步、删除受阻不强删、放弃的未合并提交提示与取消、手删车道转 missing、未托管 worktree 不动、视图与合法操作、损坏账本显式重建、验证建议只建议不写入）；`test/worktree-surfaces.test.js`（车道守卫判定表含命令位置与包装命令、Worktree 模式判定、投影折叠与引用稳定、工具 schema/meta/主代理限定/错误渲染、命令映射、spawn-adapter 车道守卫挂载与两条通道的失败拆除、delegate 绑定/标签/契约/结算/回滚/`WORKTREE_REQUIRED`/`WORKTREE_DISABLED`、主代理模式守卫只作用于主代理自身调用）；`test/audit.test.js`（审计根目录锚定）；`test/settings-fields.test.js` 与 `test/client-settings-page.test.js`（四个设置键的 FIELDS ↔ patch 行 ↔ 设置页对齐）。
 - 集成测试：见 `plugins/orrery-test-harness` 的 `worktree` 场景（端到端：开车道 → 委派 → 自动检查 → 批准合并 → 收尾，以及 Worktree 模式写入被拒）。
