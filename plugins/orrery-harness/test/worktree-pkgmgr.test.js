@@ -4,7 +4,9 @@
 // check against this machine's bundled runtime when it exists.
 import { describe, expect, it } from './helpers.js'
 import { execFileSync } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { BUNDLED_REL, quoteSh, resolveDerivedSetup, setupMissingReason } from '../src/worktree/pkgmgr.js'
 import { createSetupResolver } from '../src/worktree/runner.js'
 
@@ -113,6 +115,58 @@ describe('resolveDerivedSetup', () => {
     }
     const nodeAndNpm = (name) => `/sys/${name}`
     expect(resolveDerivedSetup('npm', { foundOnPath: nodeAndNpm, listDirs: NO_DIRS, isFile: () => false }).command).toContain(' ci')
+  })
+})
+
+describe('createSetupResolver adapter', () => {
+  const find = (paths) => async (name) => paths[name]
+
+  it('injects the node directory AND the manager directory when they differ', async () => {
+    const resolve = createSetupResolver({
+      subprocess: undefined,
+      findExecutable: find({ pnpm: '/Users/me/.npm-global/bin/pnpm', node: '/opt/homebrew/bin/node' }),
+      env: {},
+      home: '/no-bundled-here',
+    })
+    const resolution = await resolve('pnpm')
+    expect(resolution.ok).toBe(true)
+    expect(resolution.source).toBe('system')
+    expect(resolution.command).toBe(`export PATH=/opt/homebrew/bin:/Users/me/.npm-global/bin:"$PATH"; exec /Users/me/.npm-global/bin/pnpm install --frozen-lockfile`)
+  })
+
+  it('falls through to the bundled offer when the manager resolves but node does not', async () => {
+    // The adapter wires REAL filesystem seams, so the bundled runtime must
+    // exist on disk: a manager found while node is not must fall through.
+    const home = mkdtempSync(join(tmpdir(), 'orrery-dsh-'))
+    try {
+      mkdirSync(join(home, 'dsh-runtimes/dsh-primary-runtime/dependencies/node/bin'), { recursive: true })
+      mkdirSync(join(home, 'dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin'), { recursive: true })
+      writeFileSync(join(home, `dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.node}`), '')
+      writeFileSync(join(home, `dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.pnpm}`), '')
+      const resolve = createSetupResolver({
+        subprocess: undefined,
+        findExecutable: find({ pnpm: '/Users/me/.npm-global/bin/pnpm', node: undefined }),
+        env: { DSH_HOME: home },
+      })
+      const resolution = await resolve('pnpm')
+      expect(resolution.ok).toBe(true)
+      expect(resolution.source).toBe('bundled')
+      expect(resolution.command).toContain(`${home}/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node`)
+      expect(resolution.command).toContain('--frozen-lockfile')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('does not feed the manager back when the core asks for a third tool', async () => {
+    const seen = []
+    const resolve = createSetupResolver({
+      subprocess: undefined,
+      findExecutable: async (name) => { seen.push(name); return `/sys/${name}` },
+      env: {},
+    })
+    await resolve('yarn')
+    expect(seen).toEqual(['yarn', 'node'])
   })
 })
 

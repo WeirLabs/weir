@@ -102,14 +102,18 @@ export function createGitRunner(subprocess) {
  * manager first (the LSP module's extended resolver — S21), then the DSH
  * bundled runtime under the deployment's DSH home. Pure decision in
  * pkgmgr.js; this is only the seam wiring.
- * @param {{ subprocess: any, env?: Record<string, string | undefined>, home?: string }} options
+ * @param {{ subprocess: any, env?: Record<string, string | undefined>, home?: string, findExecutable?: (name: string) => Promise<string | undefined> }} options - `findExecutable` exists so tests can pin the lookup without fighting the host's real PATH scan
  * @returns {(manager: string) => Promise<ReturnType<typeof resolveDerivedSetup>>}
  */
-export function createSetupResolver({ subprocess, env = process.env, home = homedir() }) {
+export function createSetupResolver({ subprocess, env = process.env, home = homedir(), findExecutable }) {
+  const find = findExecutable ?? ((name) => resolveExecutable(subprocess, name).catch(() => undefined))
   return async (manager) => {
-    const found = await resolveExecutable(subprocess, manager).catch(() => undefined)
+    // Manager and node are resolved INDEPENDENTLY: the core asks the seam
+    // for 'node' too, and feeding it the manager's path would inject the
+    // manager's directory where a node directory belongs (B2 review).
+    const [foundManager, foundNode] = await Promise.all([find(manager), find('node')])
     return resolveDerivedSetup(manager, {
-      foundOnPath: () => found,
+      foundOnPath: (name) => (name === 'node' ? foundNode : name === manager ? foundManager : undefined),
       listDirs: (dir) => {
         try {
           return readdirSync(dir)
