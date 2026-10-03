@@ -67,6 +67,7 @@ export function pathKey(path, platform = process.platform) {
  * @property {(type: string, data: any, root: string, sessionId?: string | null) => void} audit
  * @property {(session: any) => boolean} modeOf
  * @property {() => number} [now]
+ * @property {number} [pid] - this process id (tests)
  * @property {{ warn?: (message: string) => void }} [logger]
  */
 
@@ -80,6 +81,21 @@ export function createLaneService(deps) {
   const resolved = new Map()
   /** @type {Promise<number[] | null> | null} */
   let versionProbe = null
+  /** Lanes whose approval card is open in THIS process. @type {Set<string>} */
+  const asking = new Set()
+  const pid = deps.pid ?? process.pid
+  /** Whether an approval card recorded in the ledger is still open somewhere. @param {any} lane */
+  const askAlive = (lane) => {
+    const owner = lane.asking?.pid
+    if (owner === pid) return asking.has(lane.id)
+    if (typeof owner !== 'number') return false
+    try {
+      process.kill(owner, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   const cwdOf = (/** @type {any} */ session) => {
     const cwd = session?.header?.cwd
@@ -229,6 +245,13 @@ export function createLaneService(deps) {
     const outcome = reconcile({ lanes: ledger.lanes, worktrees, rootPath: repo.rootPath, mainBranch, trees, normalize: (path) => pathKey(path) })
     for (const event of outcome.events) {
       await apply(repo, event.id, { type: event.type, reason: event.reason }).catch(() => {})
+    }
+    // An approval card dies with the tool call that raised it (restart,
+    // crash): such a lane is declined, never left waiting forever.
+    for (const lane of ledger.lanes) {
+      if (lane.state === 'awaiting-approval' && !askAlive(lane)) {
+        await apply(repo, lane.id, { type: 'decline', reason: 'the approval card was closed before an answer (the tool call ended)' }).catch(() => {})
+      }
     }
     const flagsChanged = ledger.lanes.some((/** @type {any} */ lane) => outcome.baseMoved.has(lane.id) && Boolean(lane.baseMoved) !== outcome.baseMoved.get(lane.id))
     if (flagsChanged) {
@@ -594,7 +617,8 @@ export function createLaneService(deps) {
         const lane2 = await declined('no user-question answerer is available')
         return result(lane2, 'not merged: nobody could be asked for approval')
       }
-      await apply(repo, laneId, { type: 'ask' })
+      await apply(repo, laneId, { type: 'ask', patch: { asking: { pid, at: now() } } })
+      asking.add(laneId)
       const commits = await git.commits(repo.mainRoot, lane.base.branch, lane.branch)
       const mergeLabel = MERGE_OPTION(lane.base.branch)
       /** @type {any} */
@@ -610,6 +634,8 @@ export function createLaneService(deps) {
       } catch (error) {
         const lane2 = await declined(`approval not given (${/** @type {any} */ (error)?.code ?? /** @type {any} */ (error)?.message ?? 'cancelled'})`)
         return result(lane2, 'not merged: the approval card was dismissed or unavailable')
+      } finally {
+        asking.delete(laneId)
       }
       const reply = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'merge')
       const approved = reply?.selected?.length === 1 && reply.selected[0] === mergeLabel && !reply.custom

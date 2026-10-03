@@ -403,6 +403,25 @@ describe('worktree lane service: landing', () => {
     }
   })
 
+  it('declines a lane whose approval card died with its process', async () => {
+    const h = harness({ ask: approve })
+    try {
+      const lane = await workedLane(h)
+      const repo = await h.service.repoFor(h.repo)
+      await repo.ledger.update((ledger) => {
+        const record = ledger.lanes.find((entry) => entry.id === lane)
+        record.state = 'awaiting-approval'
+        record.asking = { pid: 999999999, at: 1 }
+        return { ledger }
+      })
+      const view = await h.service.view(h.session)
+      expect(view.lanes[0].state).toBe('declined')
+      expect(view.lanes[0].reason).toContain('approval card was closed')
+    } finally {
+      h.cleanup()
+    }
+  })
+
   it('a user-issued land needs no card', async () => {
     const h = harness({ ask: () => { throw new Error('must not ask') } })
     try {

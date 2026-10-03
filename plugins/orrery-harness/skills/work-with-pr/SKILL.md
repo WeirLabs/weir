@@ -31,7 +31,9 @@ Phase 4: Merge         → Auto-merge by default; wait until actually merged, th
 
 ## Phase 0: Setup
 
-Create a fresh isolated worktree for each PR before implementation starts. The user's main working directory is read-only context — it may have uncommitted work, and a branch checkout would destroy it. Isolation also makes parallelism cheap: one worktree per PR, so several build at once without colliding.
+Create a fresh isolated worktree lane for each PR before implementation starts. The user's main working directory is read-only context — it may have uncommitted work, and a branch checkout would destroy it. Isolation also makes parallelism cheap: one lane per PR, so several build at once without colliding.
+
+Lanes are host-owned (see the "Worktree lanes" prompt section): `worktree_open` creates the branch and worktree, `delegate(worktree=<lane>)` binds the implementer to it, the host checks the lane when the implementer settles, and every result names the next step. Do not hand-run `git worktree add` when the lane tools are available.
 
 <setup>
 
@@ -39,7 +41,7 @@ Create a fresh isolated worktree for each PR before implementation starts. The u
 
 Before creating anything, decompose the task into the smallest atomic PRs that each compile, pass, and deliver one reviewable slice. Prefer more small PRs over one large one — a 200-line PR gets a real review; a 2000-line PR gets a rubber stamp. Sequence by dependency: independent slices branch off the base and run in parallel; dependent slices stack, each branched off the previous.
 
-Building more than one independent PR concurrently is the recommended default, not an exotic option: dispatch one background `delegate` child per PR (category `quick` or `general-high` by slice size), each owning its own worktree, branch, and the full Phase 0→4 lifecycle. Write scopes stay disjoint by construction — one worktree per PR. A lifecycle-owning child works directly in its worktree and never fans out further (children cannot delegate).
+Building more than one independent PR concurrently is the recommended default, not an exotic option: open one lane per PR and dispatch one background `delegate` child per lane (category `quick` or `general-high` by slice size, `worktree=<lane>`). Write scopes stay disjoint by construction — one lane per PR; pass `scope` to `worktree_open` when two lanes must provably not touch the same paths. Lane workers implement and commit; pushing, PR creation, and merging stay with you (the lane guard refuses `git push` inside a lane).
 
 When the work is large enough to need the `deep-work` skill's up-front plan, this decomposition is not optional polish: the plan MUST encode the atomic PRs, their dependency order, and which run in parallel as first-class structure.
 
@@ -69,19 +71,17 @@ git fetch origin "$BASE_BRANCH"
 git branch "$BRANCH_NAME" "origin/$BASE_BRANCH"
 ```
 
-### 4. Create worktree
+### 4. Open the lane
 
-Place worktrees as siblings to the repo — not inside it. This avoids git nested repo issues and keeps the working tree clean.
-
-```bash
-WORKTREE_PATH="../${REPO_NAME}-wt/${BRANCH_NAME}"
-mkdir -p "$(dirname "$WORKTREE_PATH")"
-git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
 ```
+worktree_open({ title: "<short PR summary>", scope: ["<paths this PR may write>"] })
+```
+
+The host derives the lane id, creates branch `orrery/<lane-id>` from the current base, places the worktree at `.orrery/worktrees/<lane-id>` (ignored locally through `.git/info/exclude`, so nothing tracked changes), and installs dependencies from the lockfile in the background. The result's `next` tells you when the lane is ready. Use `orrery/<lane-id>` as `$BRANCH_NAME` from here on (step 3's branch name is only needed when the lane tools are unavailable — then fall back to a manual `git worktree add` inside the repository, never beside it, because the sandbox only allows writes inside the workspace).
 
 ### 5. Set working context
 
-All subsequent work happens inside the worktree. Install dependencies if the repo requires it (detect the package manager from its lockfile: `bun.lock` → `bun install`, `pnpm-lock.yaml` → `pnpm install`, `package-lock.json` → `npm ci`).
+All implementation happens inside the lane: delegate with `worktree=<lane-id>`. The bound worker's shell calls must pass the lane as `workdir` and its writes must stay inside the lane — the host enforces both.
 
 </setup>
 
@@ -304,30 +304,14 @@ Then wait for the merge as a background job — never block a model round-trip o
 #   check merge state once: gh pr view "$PR_NUMBER" --json state -q .state
 ```
 
-If the user opted out of merging, skip the merge but STILL run the cleanup below: the worktree is removed either way.
+If the user opted out of merging, skip the merge but STILL close the lane below: the user's cleanup choice decides what is removed.
 
-### Sync scratch state back to the main repo
+### Clean up the lane
 
-Before removing the worktree, copy `.orrery/` scratch state back. When `.orrery/` is gitignored, files written there during worktree execution (notepads, research notes, QA evidence) are not committed or merged — they would be lost on worktree removal.
+Cleanup is the user's decision, made on a card the host raises. The host copies the lane's `.orrery/` scratch (notepads, research notes, QA evidence) into the main repository's `.orrery/lanes/<lane-id>/` before it removes anything, and it never forces a removal.
 
-```bash
-# Sync .orrery state from worktree to main repo (preserves notepads and evidence)
-if [ -d "$WORKTREE_PATH/.orrery" ]; then
-  mkdir -p "$ORIGINAL_DIR/.orrery"
-  cp -r "$WORKTREE_PATH/.orrery/"* "$ORIGINAL_DIR/.orrery/" 2>/dev/null || true
-fi
-```
-
-### Clean up the worktree
-
-The worktree served its purpose — remove it to avoid disk bloat:
-
-```bash
-cd "$ORIGINAL_DIR"  # Return to original working directory
-git worktree remove "$WORKTREE_PATH"
-# Prune any stale worktree references
-git worktree prune
-```
+- **Merged locally** (no hosted PR): `worktree_land({ lane })` raises the merge approval card and, after the merge, the cleanup card (keep / remove worktree / remove worktree and branch).
+- **Merged through the hosted PR**: the lane itself was never merged locally, so close it with `worktree_abandon({ lane })` — the card lets the user remove the worktree (the branch is already merged upstream; `git fetch` first so the unmerged-commit count is accurate).
 
 ### Report completion
 

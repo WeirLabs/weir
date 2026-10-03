@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Worktree 车道**：主代理用 `worktree_open` 在仓库内开出隔离的 git worktree 车道（分支 `orrery/<id>`，目录 `.orrery/worktrees/<id>`，经 `.git/info/exclude` 本地忽略、不改任何入库文件），`delegate` 新增 `worktree` 参数把子代理绑定到车道（宿主守卫子代理的工作目录、写入路径与分支）。子代理结束后宿主自动检查车道（未提交改动、分支被切换、没有新提交；仓库在本地配置了验证命令时再跑验证），并把下一步直接告诉主代理。合并只能由你在卡片上批准（先做无副作用的冲突预检与主仓检查，`--no-ff` 合并），合并后由你选择保留 worktree、清理 worktree 或连分支一起清理；放弃车道同样由你确认。新增会话级 Worktree 模式（`/worktree on`）：开启后主代理不再直接改文件、写类委派必须走车道。`/worktree` 命令族让你不经模型直接查看与操作车道。设置页新增「Worktree 车道」组（总开关、车道目录、活跃上限、自动安装依赖）。需要 git ≥ 2.38；新增模块导出，**需重启应用后生效**。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+
 ## [0.7.0] - 2026-10-03
 
 ### Added
