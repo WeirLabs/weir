@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
 					file: str(value.file),
 					error: str(value.error),
 					current: current ? { setup: str(current.setup), check: Array.isArray(current.check) ? current.check.filter(isObject) : [] } : null,
-					suggested: { setup: str(suggested.setup), check: Array.isArray(suggested.check) ? suggested.check.filter(isObject) : [] }
+					suggested: { setup: str(suggested.setup), setupWarning: str(suggested.setupWarning), check: Array.isArray(suggested.check) ? suggested.check.filter(isObject) : [] }
 				};
 			} catch {
 				return null;
