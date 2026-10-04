@@ -8,12 +8,9 @@ import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimi
 // 代价是新增字段要改三处，本测试让"忘了改"变成响亮失败。
 // 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
 const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
-// 本变更批次内的拆期键：FIELDS 行已入库，设置页行（GROUPS + 词典 + patch
-// 默认）由主会话在同一变更的后续批次补齐（openspec
-// edit-lock-auto-resume-on-message task 1.1；lib/ 与 cordis.patch.yml 不在
-// 本 lane scope）。补齐页面后必须把键从这里移除，让 parity 恢复全量对拍——
-// 下方的反向断言（键今天必须仍不在页面里）保证移除义务响亮可见。
-const PENDING_PAGE_SYNC = new Set(['editLockAutoResume'])
+// 拆期键机制（FIELDS 已入库、设置页后续批次补齐时）暂存于此，补齐后移除
+// 让 parity 恢复全量对拍；反向断言保证移除义务响亮可见。当前无拆期键。
+const PENDING_PAGE_SYNC = new Set()
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])

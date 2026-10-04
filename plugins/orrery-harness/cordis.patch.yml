@@ -33,6 +33,10 @@
         worktreeMaxActive: 4
         worktreeAutoSetup: true
         editLockEnabled: false
+        # Message-driven auto-resume (edit-lock-auto-resume-on-message): a genuine
+        # user message resumes a stopped session and confirms its retained files.
+        # Read live per message, so toggling applies without a restart.
+        editLockAutoResume: true
         robashEnabled: true
         # The five whitelist tables are NOT declared here on purpose. A patch
         # row's `config` is replaced WHOLE rather than deep-merged, so a default

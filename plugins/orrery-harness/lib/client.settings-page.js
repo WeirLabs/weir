@@ -69,6 +69,7 @@ window.__ModuleLoader__.load({
 			{ id: "editing", fields: [
 				{ field: "hashlineHideStockEdit", kind: "boolean" },
 				{ field: "editLockEnabled", kind: "boolean" },
+				{ field: "editLockAutoResume", kind: "boolean" },
 				{ field: "editLockHoldDefaultMinutes", kind: "number" },
 				{ field: "editLockHoldSingleMaxMinutes", kind: "number" },
 				{ field: "editLockHoldCumulativeMaxMinutes", kind: "number" },
