@@ -12,7 +12,7 @@
 import { isAbsolute, relative, sep } from 'node:path'
 
 /** Session states the panel renders, in precedence order. */
-export const VIEW_STATES = Object.freeze(['unavailable', 'stopped', 'attention', 'confirm', 'holding', 'editing', 'idle'])
+export const VIEW_STATES = Object.freeze(['revoked', 'unavailable', 'stopped', 'attention', 'confirm', 'holding', 'editing', 'idle'])
 
 /** Short, stable name for a file: relative to the work directory when inside it.
  * @param {string} path @param {string | undefined} cwd */
@@ -40,7 +40,7 @@ function rowAction(lock, mine) {
 
 /**
  * @param {{
- *   status: { sessionId: string, state: string, interrupted: boolean|null, executionEpoch: number|null, locks: any[], recovery?: any, retention?: any },
+ *   status: { sessionId: string, state: string, interrupted: boolean|null, revoked?: boolean|null, executionEpoch: number|null, locks: any[], recovery?: any, retention?: any },
  *   locks: any[],
  *   cwd?: string,
  *   root?: string,
@@ -55,7 +55,10 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
   const held = Boolean(retention?.held && retention.remainingMs > 0)
   /** @type {typeof VIEW_STATES[number]} */
   let state
-  if (status.state === 'stopped' || status.state === 'resuming') state = 'stopped'
+  // Revoked wins over everything: administrative revocation is terminal and
+  // no action (resume, confirm, release) can ever apply to this session again.
+  if (status.revoked === true) state = 'revoked'
+  else if (status.state === 'stopped' || status.state === 'resuming') state = 'stopped'
   else if (status.state === 'recovering' || own.some(lock => lock.status === 'abnormal')) state = 'attention'
   else if (own.some(lock => lock.status === 'pending-confirmation')) state = 'confirm'
   else if (held) state = 'holding'

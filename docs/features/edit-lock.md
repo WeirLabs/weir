@@ -81,6 +81,12 @@
 
 **测试证据**：新增 `edit-lock-admin-recovery.test.js` 使用真实 store/manager/publisher 异常制造 22 把保留锁，验证备份、原历史不变、旧 token/owner/ID 非重放、新 owner 再获取并发布，以及备份/文件 fsync/rename/目录 fsync 故障、丢失确认幂等、预约竞争、ledger 防篡改和服务端 root allowlist。安装版宿主认证来源已核对；不把 mock connection 单测当作 GUI/HTTP 认证端到端测试，真实运行时和 GUI 验收由集成阶段完成。
 
+### 撤权后的会话呈现
+
+被 ADMIN OVERRIDE 撤权的会话是**终态**：结构化状态视图为其报告独立的 `revoked` 状态（优先级高于 stopped/attention），面板显示「编辑权已被永久撤销」与一句原因说明，不提供「继续编辑」、确认、收回等任何动作——这些动作对终态会话不可能成功。普通 stopped 会话的「继续编辑」不受影响。
+
+撤权判定只读 `adminRecoveries` 持久账本，重启后仍然成立，无迁移。`resume`、执行 receipt 签发、注册、获取等一切可信入口在**任何持久化之前**拒绝被撤权 owner：一次被拒绝的「继续编辑」不会给 authority 增加 revision 或残留 receipt。在同一工作区恢复编辑的唯一方式是开新会话——新 owner 走正常 acquire/publish，与被撤权会话的历史互不相干。
+
 ### 命令
 
 | 命令 | 作用 |

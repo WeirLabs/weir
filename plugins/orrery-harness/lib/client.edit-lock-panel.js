@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
 		// /edit-lock command, so each action stays on the conversation record.
 		// Nothing polls: the view is read when the entry mounts, when the panel
 		// opens, and after each action.
-		const STATES = ["unavailable", "stopped", "attention", "confirm", "holding", "editing", "idle"];
+		const STATES = ["revoked", "unavailable", "stopped", "attention", "confirm", "holding", "editing", "idle"];
 		/** Status-dot colour per state; only theme-defined tokens. */
 		const dotColor = {
 			idle: "var(--dsw-alias-label-tertiary)",
@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
 			confirm: "var(--dsw-alias-state-warn-primary)",
 			stopped: "var(--dsw-alias-state-warn-primary)",
 			attention: "var(--dsw-alias-state-error-primary)",
+			revoked: "var(--dsw-alias-label-tertiary)",
 			unavailable: "var(--dsw-alias-label-tertiary)"
 		};
 		/** Normalise a view from the host; an unknown state renders as unavailable. */
@@ -169,7 +170,7 @@ window.__ModuleLoader__.load({
 			})();
 			const primary = view ? primaryOf(state, view) : null;
 			const files = view?.files ?? [];
-			const canRevoke = state !== "stopped" && state !== "unavailable";
+			const canRevoke = state !== "stopped" && state !== "unavailable" && state !== "revoked";
 			const children = [
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
 					dot(state),
@@ -177,6 +178,7 @@ window.__ModuleLoader__.load({
 					jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => refresh(), "data-orrery-edit-lock-action": "refresh", title: t("editLockRefresh"), children: "\u21bb" })
 				] }, "head"),
 				view?.reason ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-orrery-edit-lock-reason": "", children: view.reason }, "reason") : null,
+				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-orrery-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
 				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, children: t("editLockRecovery").replace("{n}", String(view.recovery.attempts)) }, "recovery") : null,
 				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,
 				files.length ? jsx("div", { style: { marginTop: "8px" }, "data-orrery-edit-lock-files": "", children: files.map((file) => jsxs("div", {
