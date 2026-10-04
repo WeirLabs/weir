@@ -98,35 +98,39 @@ export function cardCopy(locale) {
      * @param {{ lane: any, commits: Array<{ sha: string, subject: string }>, stat: { files: number, added: number, removed: number }, verification: any }} input
      */
     mergeDetail({ lane, commits, stat, verification }) {
+      // GFM list items: a single \n is a soft break and would collapse every
+      // fact into one paragraph, so each fact is its own `- ` line.
       return [
-        `**${copy.lane}** \`${lane.id}\` — ${lane.title}`,
-        `**${copy.branch}** \`${lane.branch}\` → \`${lane.base.branch}\``,
-        `**${copy.changes}** ${stat.files} ${copy.files}, +${stat.added} −${stat.removed}`,
-        `**${copy.precheck}** ${copy.clean}`,
+        `- **${copy.lane}** \`${lane.id}\` — ${lane.title}`,
+        `- **${copy.branch}** \`${lane.branch}\` → \`${lane.base.branch}\``,
+        `- **${copy.changes}** ${stat.files} ${copy.files}, +${stat.added} −${stat.removed}`,
+        `- **${copy.precheck}** ${copy.clean}`,
         verification?.enabled
-          ? `**${copy.verification}** ${verification.results.map((/** @type {any} */ result) => `${result.name} ${result.exit === 0 ? '✓' : `✗ (exit ${result.exit})`}`).join(', ')}`
-          : copy.verificationOff,
+          ? `- **${copy.verification}** ${verification.results.map((/** @type {any} */ result) => `${result.name} ${result.exit === 0 ? '✓' : `✗ (exit ${result.exit})`}`).join(', ')}`
+          : `- ${copy.verificationOff}`,
         '',
         `**${copy.commits}** (${commits.length}${commits.length >= 20 ? '+' : ''})`,
-        ...commits.map((commit) => `- \`${commit.sha}\` ${commit.subject}`),
+        ...commits.map((commit) => `  - \`${commit.sha}\` ${commit.subject}`),
         '',
-        copy.fullDiff,
+        `*${copy.fullDiff}*`,
       ].join('\n')
     },
     /** @param {any} lane @param {{ files: number, added: number, removed: number }} stat @param {string} [root] */
     cleanupDetail(lane, stat, root) {
       return [
-        `${copy.merged(lane.branch, lane.base.branch)} (${stat.files} ${copy.files}, +${stat.added} −${stat.removed}).`,
-        `${copy.worktree}: \`${displayPath(lane.path, root)}\``,
-        copy.scratch,
+        `- ${copy.merged(lane.branch, lane.base.branch)} (${stat.files} ${copy.files}, +${stat.added} −${stat.removed}).`,
+        `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
+        `- ${copy.scratch}`,
       ].join('\n')
     },
     /** @param {any} lane @param {number} unmerged @param {string} [root] */
     abandonDetail(lane, unmerged, root) {
       return [
-        copy.abandonLine(lane.id, lane.title, lane.state),
+        `- ${copy.abandonLine(lane.id, lane.title, lane.state)}`,
+        `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
+        '',
+        // The unmerged-commit warning stays its own paragraph for emphasis.
         unmerged > 0 ? copy.unmergedLost(unmerged, lane.branch) : copy.noUnmerged(lane.branch),
-        `${copy.worktree}: \`${displayPath(lane.path, root)}\``,
       ].join('\n')
     },
   }
