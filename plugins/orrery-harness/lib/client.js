@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"9ba830c380e9b9bda39a1412dd895b4d754f80df5f6d24c864b5864b6dbbc5b5","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"f3381a620f0cdc7216fd5e9e749f75207426e57848fac853fe365f7b75a3f381","client.worktree-model.js":"2523a0803282d3ad594c5b2670ef51cf0b79933bd8ca9fc6bce45a3cce00a2fe","client.worktree-view.js":"8560a9c5dcfd6b6c5a7873a7e719087a8a9e4643be14a7e71c46a011d3aa161e"}
+// Orrery client chunks: {"client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"9ba830c380e9b9bda39a1412dd895b4d754f80df5f6d24c864b5864b6dbbc5b5","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"c529c2845aa88a9800cd12eedce1b767f85158c1641dfd80aca2179d5ed67bcd","client.worktree-model.js":"2523a0803282d3ad594c5b2670ef51cf0b79933bd8ca9fc6bce45a3cce00a2fe","client.worktree-view.js":"8560a9c5dcfd6b6c5a7873a7e719087a8a9e4643be14a7e71c46a011d3aa161e"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -42,6 +42,9 @@ window.__ModuleLoader__.load({
 			overridden: "Overridden",
 			reset: "Reset to default",
 			invalidValue: "Enter a value this field accepts, or leave blank to use the default.",
+			restartReminderTitle: "Restart to apply",
+			restartReminderBody: "These settings changed and take effect after restarting DeepSeek Harness. Everything else you saved is already live.",
+			restartReminderDismiss: "Dismiss",
 			catalogLoading: "Loading providers…",
 			pickerModel: "Model",
 			pickerEffort: "Reasoning",
@@ -475,6 +478,9 @@ window.__ModuleLoader__.load({
 			overridden: "已覆盖",
 			reset: "恢复默认",
 			invalidValue: "请输入该字段接受的值，或留空以使用默认值。",
+			restartReminderTitle: "重启后生效",
+			restartReminderBody: "以下设置已更改，重启 DeepSeek Harness 后才会生效；本次保存的其它改动已即时生效。",
+			restartReminderDismiss: "知道了",
 			catalogLoading: "正在加载 provider…",
 			pickerModel: "模型",
 			pickerEffort: "推理",
@@ -1332,6 +1338,7 @@ window.__ModuleLoader__.load({
 					resetField: (field) => controller?.inject().resetField(field),
 					save: (...args) => controller?.inject().save(...args),
 					discard: () => controller?.inject().discard(),
+					dismissRestartReminder: () => controller?.inject().dismissRestartReminder(),
 					getSession: () => ctx.remote.session
 				};
 				let arrival = null;

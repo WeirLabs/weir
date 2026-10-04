@@ -2,6 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 import { CURATED_AGENTS } from '../src/delegate/agents.js'
 import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
+import { RESTART_KEYS } from '../src/settings/sections.js'
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
@@ -66,8 +67,18 @@ describe('client.settings-page chunk', () => {
         field(name) {
           return { text: '', overridden: false, invalid: false, name }
         }
+        plan() {
+          return this.planItems ?? []
+        }
+        async save() {
+          this.saveCalls = (this.saveCalls ?? 0) + 1
+          return this.saveResult
+        }
+        publish() {
+          this.publishCount = (this.publishCount ?? 0) + 1
+        }
         shell() {
-          return { available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false }
+          return this.shellState ?? { available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false }
         }
         actions() {
           return { edit: () => {}, resetField: () => {}, save: async () => {}, discard: () => {} }
@@ -230,6 +241,46 @@ describe('client.settings-page chunk', () => {
     expect(enumRendered.children[1].children[1].children[0].children).toBe('overridden')
   })
 
+  it('renders the restart reminder banner above the groups when the state carries one', async () => {
+    const { exports, editors } = await loadPage()
+    const { OrreryCard } = exports
+
+    const dismissals = []
+    const rendered = OrreryCard({
+      view: 'form',
+      t: (key) => key,
+      useOrrerySettingsCard: (selector) => selector({
+        writable: true,
+        fields: Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }])),
+        restartReminder: ['todoEnabled', 'editLockEnabled'],
+      }),
+      edit: () => {},
+      resetField: () => {},
+      save: () => {},
+      discard: () => {},
+      dismissRestartReminder: () => dismissals.push('dismiss'),
+      getSession: () => {},
+      editors,
+    })
+
+    // the banner leads the form children (59 group rows + 1 banner)
+    expect(rendered.children).toHaveLength(60)
+    const banner = rendered.children[0]
+    expect(banner.key).toBe('restart-reminder')
+    // header: translated title + dismiss button wired to the injected action
+    const header = banner.children[0]
+    expect(header.children[0].children).toBe('restartReminderTitle')
+    const dismissButton = header.children[1]
+    expect(dismissButton.children).toBe('restartReminderDismiss')
+    dismissButton.onClick()
+    expect(dismissals).toEqual(['dismiss'])
+    // body text + one accent tag per affected field, labeled via t(field)
+    expect(banner.children[1].children).toBe('restartReminderBody')
+    const tags = banner.children[2].children
+    expect(tags.map((tag) => tag.children)).toEqual(['todoEnabled', 'editLockEnabled'])
+    expect(tags.every((tag) => tag.tone === 'accent')).toBe(true)
+  })
+
   it('renders the section as the nested item slot', async () => {
     const { exports } = await loadPage()
     const { OrrerySection } = exports
@@ -265,6 +316,7 @@ describe('client.settings-page chunk', () => {
     expect(typeof face.resetField).toBe('function')
     expect(typeof face.save).toBe('function')
     expect(typeof face.discard).toBe('function')
+    expect(typeof face.dismissRestartReminder).toBe('function')
     expect(sessionCalls).toBe(0)
     expect(face.getSession()).toBe(session)
     expect(sessionCalls).toBe(1)
@@ -276,6 +328,93 @@ describe('client.settings-page chunk', () => {
     expect(notifications).toEqual(['bump'])
 
     controller.dispose()
+  })
+
+  // Save-flow controller tests: the stub SettingsFormModel is driven through
+  // planItems / saveResult / shellState / save overrides; publish() is a
+  // counter (the real model re-notifies bound stores from it).
+  async function makeController() {
+    const { exports } = await loadPage()
+    const notifications = []
+    const settingsBus = { subscribe: () => () => {}, notify: () => notifications.push('bump') }
+    const controller = new exports.OrreryCardController({ ns: 'orrery-settings' }, { settingsBus, getSession: () => ({}) })
+    return { controller, notifications, face: controller.inject() }
+  }
+
+  it('save flow: a landed save touching restart-required keys raises the reminder in registry order', async () => {
+    const { controller, notifications, face } = await makeController()
+    controller.form.planItems = [
+      { field: 'editLockEnabled', op: { op: 'set', path: ['editLockEnabled'], value: true } },
+      { field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } },
+      { field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } },
+    ]
+    await face.save()
+    expect(notifications).toEqual(['bump'])
+    // registry order (todoEnabled precedes editLockEnabled), not plan order
+    expect(controller.restartReminder).toEqual(['todoEnabled', 'editLockEnabled'])
+    expect(controller.projection().restartReminder).toEqual(['todoEnabled', 'editLockEnabled'])
+    expect(controller.form.publishCount).toBe(1)
+  })
+
+  it('save flow: a landed save touching only live keys raises no reminder', async () => {
+    const { controller, notifications, face } = await makeController()
+    controller.form.planItems = [{ field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } }]
+    await face.save()
+    expect(controller.restartReminder).toBe(null)
+    expect(notifications).toEqual(['bump'])
+    expect(controller.form.publishCount).toBe(1)
+  })
+
+  it('save flow: a failed save raises no reminder but still bumps the bus after the settle', async () => {
+    const { controller, notifications, face } = await makeController()
+    controller.form.planItems = [{ field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } }]
+    controller.form.shellState = { available: true, writable: true, dirty: true, invalid: false, saving: false, failed: true }
+    await face.save()
+    expect(controller.restartReminder).toBe(null)
+    expect(notifications).toEqual(['bump'])
+    expect(controller.form.publishCount).toBe(1)
+  })
+
+  it('save flow: a live-only save keeps an already-shown reminder, and a later restart save replaces it', async () => {
+    const { controller, face } = await makeController()
+    controller.form.planItems = [{ field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } }]
+    await face.save()
+    expect(controller.restartReminder).toEqual(['todoEnabled'])
+    controller.form.planItems = [{ field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } }]
+    await face.save()
+    expect(controller.restartReminder).toEqual(['todoEnabled'])
+    controller.form.planItems = [{ field: 'guardHardThreshold', op: { op: 'set', path: ['guardHardThreshold'], value: 0.9 } }]
+    await face.save()
+    expect(controller.restartReminder).toEqual(['guardHardThreshold'])
+    expect(controller.form.publishCount).toBe(3)
+  })
+
+  it('save flow: dismiss clears the reminder and re-publishes', async () => {
+    const { controller, face } = await makeController()
+    controller.form.planItems = [{ field: 'guardEnabled', op: { op: 'set', path: ['guardEnabled'], value: false } }]
+    await face.save()
+    expect(controller.restartReminder).toEqual(['guardEnabled'])
+    face.dismissRestartReminder()
+    expect(controller.restartReminder).toBe(null)
+    expect(controller.projection().restartReminder).toBe(null)
+    expect(controller.form.publishCount).toBe(2)
+  })
+
+  it('save flow: the settings bus bumps only after the save promise settles (no save-start fire)', async () => {
+    const { controller, notifications, face } = await makeController()
+    controller.form.planItems = [{ field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } }]
+    let settle
+    controller.form.save = () => new Promise((resolve) => { settle = resolve })
+    const pending = face.save()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // save still in flight: neither the bus bump nor the reminder may fire early
+    expect(notifications).toEqual([])
+    expect(controller.restartReminder).toBe(null)
+    settle()
+    await pending
+    expect(notifications).toEqual(['bump'])
+    expect(controller.restartReminder).toEqual(['todoEnabled'])
+    expect(controller.form.publishCount).toBe(1)
   })
   it('pins the curated agent lane names to the server registry (rename drift guard)', async () => {
     const { exports } = await loadPage()
@@ -292,6 +431,15 @@ describe('client.settings-page chunk', () => {
     // registry change on either side turns this red instead of drifting the
     // disabled-categories editor rows.
     expect(exports.CATEGORY_NAMES).toEqual(Object.keys(DEFAULT_CATEGORIES))
+  })
+
+  it('pins the restart-required field list to the server schema (drift guard)', async () => {
+    const { exports } = await loadPage()
+    // The client keeps the restart-required keys in ONE exported constant;
+    // the server schema (RESTART_KEYS, derived from the FIELDS restart
+    // markers in src/settings/sections.js) is the authority. A change on
+    // either side turns this red instead of drifting the restart reminder.
+    expect(exports.RESTART_FIELDS).toEqual([...RESTART_KEYS])
   })
 
   it('resolves a label and a hint for every GROUPS field in both dictionaries — never the raw key', async () => {
@@ -321,6 +469,10 @@ describe('client.settings-page chunk', () => {
       for (const key of laneKeys) {
         expectResolved(dict, key)
         expectResolved(dict, `${key}_desc`)
+      }
+      // the restart reminder banner's own keys resolve too
+      for (const key of ['restartReminderTitle', 'restartReminderBody', 'restartReminderDismiss']) {
+        expectResolved(dict, key)
       }
       // the disabled-categories editor's own panel keys resolve too
       for (const key of ['disabledCategoriesCount', 'disabledCategoriesPanelHint', 'disabledCategoriesInvalid']) {
