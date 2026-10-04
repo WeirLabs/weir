@@ -198,6 +198,30 @@
 
 **发布前取消内部入口**：存储的 `beginPublication(input, key, mutation)` 仅允许当前 handle 新登记的 prepared 操作持久化 publishing 后取得一次性 attempt；attempt 的 `invoke()` 与 `finishWithoutDispatch(reason)` 同步互斥，后者永久关闭调用机会，以 handle 私有 WeakMap 证据执行仅本次 publishing → not-published 转换并移除未使用围栏。证据绑定完整 operation（含 origin/binding/fence）与持久 revision，不序列化、不对外返回；调用一旦发生，即使同步抛错也不再提供未发布证明。
 
+### 原生拒绝认证的已验证阻塞（尚未实现）
+
+`FS_STALE_VERSION` 不能直接授权 publishing → not-published。针对安装版 fs/local/sandbox `0.2.0-rc.2`、Cordis `4.0.4`、Node `24.21.0` 的隔离探针验证了以下区别：
+
+- stock local 的版本 guard 在 staging 前运行；sandbox 先校验有效策略再委托 local。真正旧版本拒绝没有调用 staging hook，文件字节不变。
+- 同一个 stock `writeText` 在提交后仍动态读取 `this.versionAfterWrite`。调用开始后临时覆盖该方法，让它恢复原属性后抛出此前捕获的真实 stale error，仍可得到“字节已改变、原错误对象被抛出”。实例与原型的前后属性描述符、空 `internals` hooks、模块磁盘 hash 都保持相同；local 与 sandbox 均复现。
+- 已提交后抛 stale／EIO 的 wrapper 经现有 publisher 仍保留 unknown、fence 与归属，原样抛出错误；历史请求不重放，五参数、版本 guard、私有 signal 与有效策略保持原契约。这里 EIO 是提交后的注入错误，不声称模拟了操作系统 stat 故障。
+
+因此，提供者身份／版本／源码 pin 是必要的归因材料，但前后快照不是**调用期间依赖不变**的证明；这个反例无需改变模块源码。不接受错误码、错误类、真实错误对象或“调用前后看起来相同”作为认证。冻结共享宿主对象会改变其他消费者可观察到的行为；改 receiver／复制实现会改变原服务调用语义，均未作为静默修复采用。Inspector 的函数位置与已求值源码可帮助归因，但仅这些观测也不消除此时间窗口。
+
+下一步必须先建立提供者内部、绑定本次调用且不可伪造的 pre-staging 分支回执，或经明确契约允许的完整稳定执行依赖约束，再接 store 私有结算。当前没有新增默认启用认证 adapter，也没有开放 version-conflict 结算；stock stale 仍保守 unknown。此证据不证明所有 adapter 技术路线不可能，只明确否定边界快照路线。历史 unknown 不能借本次新审计改判，现有围栏未解除。面向人的“导出 → 独占／静止证明 → 精确批准 → 结清 → 重启核验”维护入口与可见阻塞原因仍是未交付的 UX／控制面缺口。
+
+可复现测试：[audit-publication-rejection.mjs](../../plugins/orrery-test-harness/test/audit-publication-rejection.mjs)。它显式加载所指定安装目录的真实 provider，经独立 Cordis context 注册，不安装到正式 profile；所有目标与权威镜像写入隔离根，保留产物供检查。不在 portable 单测 glob 内，以免缺少宿主时静默跳过：
+
+```sh
+ORRERY_AUDIT_HOST_ROOT=/absolute/path/to/dsh \
+ORRERY_AUDIT_ROOT=/absolute/path/to/isolated-output \
+node --test plugins/orrery-test-harness/test/audit-publication-rejection.mjs
+```
+
+实测 8/8 通过；local 模块磁盘 SHA256 为 `63fbb41d2c33e07111884b798be507e68c2752acab8249c821c20ade436e894f`。这只是回归证据提交，不是 prospective settlement 功能交付，也不是历史会话修复。
+
+本次证据提交的门禁状态：checkJs 通过，既有 publication／publisher-stop 定向测试 8/8 通过；完整产品单测为 1516/1521（5 项失败：client chunk mtime、lane 内 TMPDIR 导致 socket 路径过长及 3 项仓库发现假设），装置单测为 109/111（rehydrate／worktree 的 recorded-trace replay 失败）。未改这些既有测试／源码来制造全绿。运行产生的隔离文件均留在 lane 内；未运行完整 headless profile 集成，不能将 provider 探针等同于该验收门禁。本提交未达到功能合入 DoD。
+
 ### 管理器事务与发布
 
 `prepare` 持久绑定原请求并返回私有 submission；`commit` 在同一 FIFO 中持久 publishing 后仅调用一次捕获的发布函数。创建成功的规范身份、归属与结果同镜像提交；发布期间取消保留 interrupted 锁，确认落盘期间新到的取消追加撤权镜像后才应答。原生调用后的异常保留 unknown/fence，不从异常推断未发布。历史同参返回记录，异参同 ID 拒绝，不自动重放。全新 store 的初始 manager 只接受 revision 0、无 incarnation 的镜像；启动恢复（`recoverEditLockManager`）把历史 prepared → not-published、publishing → unknown，原 fence、terminal/unknown 历史与预算不改写，以新 incarnation 保守重装，并让所有已知会话以中断态开始（旧 receipt 不导入，重复注册不能绕过中断）。创建成功的结算（`settleCreated`）只收编本次经原生创建并解析出规范身份的节点，拒绝收编任何既有锁。
