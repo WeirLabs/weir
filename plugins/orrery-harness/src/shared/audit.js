@@ -23,8 +23,10 @@ export const AUDIT_TYPES = Object.freeze({
   supervision: 'supervision',
   worktree: 'worktree',
   editLockMaintenance: 'edit-lock-maintenance',
+  // Session capability manager (tasks 4.2+): one record per durable Apply
+  // acceptance or receipt-query recovery; never commit evidence by itself.
+  capabilityApply: 'capability-apply',
 })
-
 /**
  * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
  * AUDIT_TYPES entry. cordis event dispatch is an exact-name lookup (no

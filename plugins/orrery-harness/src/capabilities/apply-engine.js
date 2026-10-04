@@ -22,9 +22,12 @@ import { isSegment } from './store/paths.js'
 import { skillIdentityKey } from './skill-identity.js'
 import { validateSkillSelection } from './skill-selection-provider.js'
 import { normalizeEnabledSets } from './selection-draft.js'
+import { AUDIT_TYPES } from '../shared/audit.js'
 
-/** Audit event type (without the 'orrery/' prefix) emitted after acceptance. */
-export const APPLY_AUDIT_TYPE = 'capability-apply'
+/** Audit event type (without the 'orrery/' prefix) emitted after acceptance.
+ * Registered in src/shared/audit.js (AUDIT_TYPES); emit sites never invent
+ * string literals and never touch session.append (cold-read red line). */
+export const APPLY_AUDIT_TYPE = AUDIT_TYPES.capabilityApply
 
 /**
  * @typedef {import('./skill-selection-provider.js')} SelectionProviderModule
@@ -32,10 +35,23 @@ export const APPLY_AUDIT_TYPE = 'capability-apply'
  * @typedef {{ server: string, state: 'draining'|'settled', inFlight: number }} DrainStatus
  * A step-tagged rejection keeps the old authority and the user's draft.
  * @typedef {{ status: 'applied', revision: number, receipt: unknown, effective: unknown, unresolvedWarnings: UnresolvedRef[], draining?: DrainStatus[], warnings?: string[] }
- *   | { status: 'duplicate', revision: number, receipt: unknown, effective: unknown }
+ *   | { status: 'duplicate', revision: number, receipt: unknown, effective: unknown, warnings?: string[] }
  *   | { status: 'rejected', reason: string, step: number, conflicts?: unknown[], missing?: string[], current?: unknown, receipt?: unknown }
  *   | { status: 'write-failed', step: 5 }
  *   | { status: 'indeterminate', step: 5 }} ApplyResult
+ *
+ * Receipt query outcome (tasks 4.4). `recovery` reports how a pending
+ * indeterminate write of the SAME session was settled by this query:
+ * - 'published': the pending receipt was found in a clean record — the write
+ *   had landed, so the prepared authority was published and the fence released;
+ * - 'not-committed': a digest-verified record WITHOUT the pending receipt
+ *   proves the write never landed — drain gates reopen, the fence releases;
+ * - 'blocked': the record cannot vouch either way — blocking is maintained.
+ * The query never claims a cancellation succeeded and never fabricates a
+ * rollback: 'not-committed' describes proven absence, not a revert.
+ * @typedef {{ status: 'found', revision: number, receipt: unknown, applied: { skills: unknown[], mcpServers: string[] }, recovery?: 'published'|'not-committed'|'blocked' }
+ *   | { status: 'not-found', revision: number|null, recovery?: 'published'|'not-committed'|'blocked' }
+ *   | { status: 'rejected', reason: string }} ReceiptQueryResult
  */
 
 const message = error => error instanceof Error ? error.message : String(error)
@@ -162,6 +178,7 @@ export function digestApplyRequest(normalized) {
  *   verifyContent?: (candidate: unknown) => Promise<void> | void,
  *   audit?: (session: { id?: string }, type: string, data?: unknown) => void,
  *   notify?: (response: unknown) => unknown,
+ *   warn?: (message: string) => void,
  *   trace?: (event: string, data?: unknown) => void,
  * }} options
  */
@@ -172,12 +189,20 @@ export function createApplyEngine(options) {
     drain = createDrainCoordinator(),
     conditions = () => [],
     verifyContent,
-    audit, notify, trace = () => {},
+    audit, notify, warn = () => {}, trace = () => {},
   } = options
   /** In-memory authority snapshots per session (D6 seam; group 6 loads them at mount). */
   const snapshots = new Map()
   /** Per-session in-process serialization; cross-process exclusion is the store lock. */
   const queues = new Map()
+  /**
+   * Sessions whose last write ended indeterminate: the fence lease stays held
+   * and the prepared (never published) transaction is kept so a receipt query
+   * can settle it from durable evidence — publish on proof, reopen on proven
+   * absence, keep blocking while the record cannot vouch either way.
+   * @type {Map<string, { lease: { release(): void }, requestId: string, prepared: { handles: unknown[], identities: unknown[], view: unknown }, payload: unknown, drainHandle: { abort(): void } | null, viewOptions: unknown }>}
+   */
+  const blocked = new Map()
 
   /** @template T @param {string} sessionId @param {() => Promise<T>} task @returns {Promise<T>} */
   function serialize(sessionId, task) {
@@ -189,11 +214,11 @@ export function createApplyEngine(options) {
     return run
   }
 
-  /** Best-effort follow-up scheduled after the response; failures never roll back policy. */
+  /** Best-effort follow-up scheduled after the response; failures warn and are swallowed, never rolling back policy. */
   function followup(sessionId, response) {
     queueMicrotask(() => {
-      try { audit?.({ id: sessionId }, APPLY_AUDIT_TYPE, { requestId: response.receipt?.requestId ?? null, revision: response.revision ?? null }) } catch {}
-      try { Promise.resolve(notify?.(response)).catch(() => {}) } catch {}
+      try { audit?.({ id: sessionId }, APPLY_AUDIT_TYPE, { requestId: response.receipt?.requestId ?? null, revision: response.revision ?? null }) } catch (error) { warn(`apply audit failed: ${message(error)}`) }
+      try { Promise.resolve(notify?.(response)).catch(error => warn(`apply notify failed: ${message(error)}`)) } catch (error) { warn(`apply notify failed: ${message(error)}`) }
     })
   }
 
@@ -353,11 +378,22 @@ export function createApplyEngine(options) {
       // The write outcome is UNKNOWN: stay blocked (fence held, gates closed)
       // and let a receipt query confirm the authority; never roll back on a guess.
       trace('indeterminate', { sessionId })
+      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, drainHandle, viewOptions })
       return { status: 'indeterminate', step: 5 }
     }
     trace('commit', { sessionId, status: result.status })
 
     if (result.status === 'committed') {
+      // Re-check the fence before publishing: the lease must still be ours.
+      // The revision was already re-checked by the store CAS (expectedRevision).
+      if (!fence.isHeld(sessionId)) {
+        // The write LANDED but an atomic publication can no longer be
+        // guaranteed: stay blocked and let a receipt query publish the
+        // authority from durable evidence.
+        trace('indeterminate', { sessionId, reason: 'fence-lost-before-publish' })
+        blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, drainHandle, viewOptions })
+        return { status: 'indeterminate', step: 5 }
+      }
       // Synchronous publication segment: no await between the snapshot swap,
       // the provider invalidation and the fence release. invalidate() must
       // complete before the fence release and before the step-6 response, so
@@ -398,6 +434,7 @@ export function createApplyEngine(options) {
     const KNOWN_UNCOMMITTED = new Set(['duplicate', 'request-conflict', 'revision-conflict', 'locked', 'unreadable', 'unsupported', 'write-failed'])
     if (!KNOWN_UNCOMMITTED.has(result.status)) {
       trace('indeterminate', { sessionId, status: result.status })
+      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, drainHandle, viewOptions })
       return { status: 'indeterminate', step: 5 }
     }
     drainHandle?.abort()
@@ -406,10 +443,20 @@ export function createApplyEngine(options) {
 
     switch (result.status) {
       case 'duplicate': {
-        // The same accepted request: return the original receipt, never a second commit.
+        // The same accepted request: return the original receipt, never a
+        // second commit. The fence was released above, so this async read can
+        // observe a NEWER record than the receipt's revision: re-check and
+        // publish only what the settled record still evidences, at the
+        // revision the read actually observed — never a mix of the receipt's
+        // revision with a later record's sets.
         const settled = await store.read(unit).catch(() => null)
-        const effective = settled?.kind === 'ok' ? safeSets(settled.payload) : { skills: [], mcpServers: [] }
-        return { status: 'duplicate', revision: result.revision, receipt: result.receipt, effective }
+        const receipt = /** @type {{ requestId: string, requestDigest: string }} */ (result.receipt)
+        const evidenced = settled?.kind === 'ok'
+          && settled.receipts.some(entry => entry.requestId === receipt.requestId && entry.requestDigest === receipt.requestDigest)
+        if (evidenced && settled?.kind === 'ok') {
+          return { status: 'duplicate', revision: settled.revision, receipt: result.receipt, effective: safeSets(settled.payload) }
+        }
+        return { status: 'duplicate', revision: result.revision, receipt: result.receipt, effective: { skills: [], mcpServers: [] }, warnings: ['settlement-unverified'] }
       }
       case 'request-conflict':
         return { status: 'rejected', reason: 'request-conflict', step: 5, receipt: result.receipt }
@@ -443,10 +490,25 @@ export function createApplyEngine(options) {
   }
 
   /**
-   * Receipt query (tasks 4.4 seam): after a lost response or an indeterminate
-   * write, the client queries the original requestId instead of claiming a
-   * cancellation or a rollback that never happened.
+   * Receipt query (tasks 4.4): after a lost response or an indeterminate
+   * write, the client enters "result pending confirmation" and queries the
+   * original requestId instead of claiming a cancellation or a rollback that
+   * never happened. Receipts are retained for the session lifecycle, so the
+   * accepted revision is always retrievable.
+   *
+   * Recovery of a pending indeterminate write of the SAME session (4.2/4.3):
+   * the query is serialized behind any in-flight Apply, then settles the
+   * pending transaction from durable evidence only —
+   * - pending receipt FOUND in a clean record: the write had landed; run the
+   *   publication segment the lost response never ran (snapshot swap,
+   *   provider invalidation, fence release) and report recovery 'published';
+   * - a digest-verified record WITHOUT the pending receipt: durable proof the
+   *   write never landed; reopen the drain gates, release the fence and
+   *   report recovery 'not-committed' (proven absence, NOT a rollback);
+   * - an unreadable record vouches neither way: keep blocking and report
+   *   recovery 'blocked' — never a guessed rollback, never unrestricted.
    * @param {unknown} authSession @param {string} requestId
+   * @returns {Promise<ReceiptQueryResult>}
    */
   async function queryReceipt(authSession, requestId) {
     if (typeof requestId !== 'string' || !requestId.length) return { status: 'rejected', reason: 'invalid-request:requestId' }
@@ -459,13 +521,61 @@ export function createApplyEngine(options) {
     if (located === null || typeof located !== 'object' || !isSegment(located.sessionId)) {
       return { status: 'rejected', reason: 'unauthenticated:session-unavailable' }
     }
-    const record = await store.read({ kind: 'selection', sessionId: located.sessionId })
+    const sessionId = located.sessionId
+    return serialize(sessionId, () => settleReceipt(sessionId, requestId))
+  }
+
+  /** @param {string} sessionId @param {string} requestId @returns {Promise<ReceiptQueryResult>} */
+  async function settleReceipt(sessionId, requestId) {
+    const unit = { kind: 'selection', sessionId }
+    const record = await store.read(unit)
     if (record.kind === 'unsupported') return { status: 'rejected', reason: `unsupported:${record.reason}` }
-    if (record.kind !== 'ok') return { status: 'not-found', revision: record.kind === 'absent' ? 0 : null }
+
+    const pending = blocked.get(sessionId) ?? null
+    /** @type {'published'|'not-committed'|'blocked'|undefined} */
+    let recovery
+    if (pending) {
+      const confirmed = record.kind === 'ok' ? record.receipts.find(entry => entry.requestId === pending.requestId) ?? null : null
+      if (confirmed) {
+        // The indeterminate write LANDED: publish the prepared authority and
+        // invalidate the provider BEFORE releasing the fence — the same
+        // ordering the synchronous publication segment guarantees.
+        trace('recovery-publish', { sessionId, revision: confirmed.revision })
+        snapshots.set(sessionId, { revision: confirmed.revision, selection: structuredClone(pending.payload), handles: pending.prepared.handles, view: pending.prepared.view })
+        try {
+          provider.acceptSelection(pending.prepared.identities, pending.viewOptions)
+        } catch (error) {
+          warn(`receipt-recovery invalidate failed: ${message(error)}`)
+        } finally {
+          pending.lease.release()
+          blocked.delete(sessionId)
+        }
+        recovery = 'published'
+        queueMicrotask(() => {
+          try { audit?.({ id: sessionId }, APPLY_AUDIT_TYPE, { requestId: confirmed.requestId, revision: confirmed.revision, recovery }) } catch (error) { warn(`apply audit failed: ${message(error)}`) }
+        })
+      } else if (record.kind === 'ok' || record.kind === 'absent') {
+        // A clean, digest-verified record without the pending receipt is
+        // durable proof the write never landed: reopen the gates and release
+        // the fence. Nothing is rolled back — nothing was committed.
+        trace('recovery-not-committed', { sessionId })
+        pending.drainHandle?.abort()
+        pending.lease.release()
+        blocked.delete(sessionId)
+        recovery = 'not-committed'
+      } else {
+        // corrupt/torn/unknown-schema: maintain blocking until a later query
+        // can read the record again.
+        trace('recovery-blocked', { sessionId, kind: record.kind })
+        recovery = 'blocked'
+      }
+    }
+
+    if (record.kind !== 'ok') return { status: 'not-found', revision: record.kind === 'absent' ? 0 : null, ...(recovery ? { recovery } : {}) }
     const receipt = record.receipts.find(entry => entry.requestId === requestId)
     return receipt
-      ? { status: 'found', revision: record.revision, receipt, applied: safeSets(record.payload) }
-      : { status: 'not-found', revision: record.revision }
+      ? { status: 'found', revision: record.revision, receipt, applied: safeSets(record.payload), ...(recovery ? { recovery } : {}) }
+      : { status: 'not-found', revision: record.revision, ...(recovery ? { recovery } : {}) }
   }
 
   return {
