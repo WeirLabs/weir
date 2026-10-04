@@ -13,13 +13,33 @@ import { createWhitelistDefaultsCache, DEFAULT_WHITELIST_PATH } from '../shared/
 import { configValue } from './volatile.js'
 import { computeSections } from './sections.js'
 import { wireLspAdmin } from '../lsp/admin.js'
+import { createEditLockEvidence, wireEditLockMaintenance } from '../edit-lock/maintenance.js'
+import { managementRootFor } from '../edit-lock/domains.js'
+import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
+
+// Host lifetime, not settings-row lifetime: remounting settings must not forget
+// still-live preset rows. Weak keys isolate hosts and release stopped hosts.
+const evidenceByHost = new WeakMap()
 
 export { Config } from './sections.js'
 
 const name = 'orrery-settings'
 const inject = []
 
-function apply(ctx, config = {}) {
+// Explicit resolver seam keeps root-discovery tests away from ancestor authorities.
+export function maintenanceRoots(agents, resolveRoot = managementRootFor) {
+  const roots = new Set()
+  for (const agent of agents?.roots?.() ?? []) {
+    const cwd = agent.session?.header?.cwd
+    if (typeof cwd !== 'string') continue
+    try { roots.add(resolveRoot(cwd)) } catch { /* unavailable root */ }
+  }
+  return [...roots]
+}
+/** @param {{ resolveRoot?: typeof managementRootFor }} [dependencies] */
+export function createSettingsPlugin({ resolveRoot = managementRootFor } = {}) {
+// Arrow apply: cordis must retain the returned endpoint disposer, not construct it.
+return (ctx, config = {}) => {
   // The whitelist defaults cache: the defaults file is read once per process,
   // and an explicit reload entry (robashDefaultsReload) clears it. Nothing here
   // runs on the guard's per-command decision path.
@@ -34,10 +54,21 @@ function apply(ctx, config = {}) {
   // Compute eagerly: malformed categoryChains/lspServers/robash lists fail
   // activation loud.
   compute()
+  const host = ctx.root ?? ctx
+  let editLockEvidence = evidenceByHost.get(host)
+  if (!editLockEvidence) {
+    editLockEvidence = createEditLockEvidence()
+    evidenceByHost.set(host, editLockEvidence)
+  }
+  const candidateRoots = () => maintenanceRoots(ctx.get?.('agents'), resolveRoot)
+  const savedEnabled = () => compute().editLock?.enabled === true
+  const audit = createAudit(ctx)
+  let lastEnabled = savedEnabled()
 
   const listeners = new Set()
   // Host-plane service: preset modules read their override section on demand.
   ctx.reflect.provide('orrerySettings', {
+    editLockEvidence,
     get(key) {
       return compute()[key]
     },
@@ -65,6 +96,17 @@ function apply(ctx, config = {}) {
   observeReloadEntry()
   ctx.on('loader/volatile-update', () => {
     observeReloadEntry()
+    const enabled = savedEnabled()
+    if (enabled !== lastEnabled) {
+      lastEnabled = enabled
+      // Profile intent has no session log. Mirror only when a server-derived
+      // workspace exists; no cwd fallback to the developer's current directory.
+      const data = { kind: enabled ? 'enable-requested' : 'disable-requested', scope: 'profile', appliesAfterRestart: true }
+      let roots = []
+      try { roots = candidateRoots() } catch { /* emit remains available */ }
+      if (roots.length) for (const root of roots) audit(null, AUDIT_TYPES.editLockMaintenance, data, { root })
+      else audit(null, AUDIT_TYPES.editLockMaintenance, data)
+    }
     for (const callback of listeners) callback()
   })
 
@@ -83,7 +125,10 @@ function apply(ctx, config = {}) {
   // built-in catalog.
   const offLspAdmin = wireLspAdmin(ctx, () => compute().lsp?.servers)
 
-  return () => offLspAdmin()
+  const offMaintenance = wireEditLockMaintenance(ctx, { savedEnabled, evidence: editLockEvidence, candidateRoots })
+  return () => { offMaintenance(); offLspAdmin(); listeners.clear() }
 }
+}
+const apply = createSettingsPlugin()
 
 export { name, inject, apply }

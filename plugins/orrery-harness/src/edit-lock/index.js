@@ -21,7 +21,7 @@ import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
 import { localDomain, remoteDomain } from './domain.js'
-import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit } from './domains.js'
+import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor } from './domains.js'
 import { createRecoveryDriver } from './recovery.js'
 import { createSettlementDriver } from './settle.js'
 import { editLockLimits } from '../settings/sections.js'
@@ -271,12 +271,22 @@ function describe(status) {
   return lines.join('\n')
 }
 
+/** Composition dependencies, not persisted settings. Defaults are the host paths.
+ * @param {{ resolveRoot?: typeof managementRootFor, endpoint?: typeof endpointFor, exclude?: typeof excludeFromGit }} [dependencies] */
+export function createEditLockPlugin({ resolveRoot = managementRootFor, endpoint = endpointFor, exclude = excludeFromGit } = {}) {
 /** Arrow on purpose: cordis constructs prototype-bearing callbacks with `new`
  * and then drops their returned disposer, which would leak the reservation.
  * @param {any} ctx @param {unknown} config */
-const apply = (ctx, config = {}) => {
-  const options = editLockOptions(config, ctx.get?.('orrerySettings')?.get?.('editLock'))
-  if (!options) return
+return (ctx, config = {}) => {
+  const settings = ctx.get?.('orrerySettings')
+  const options = editLockOptions(config, settings?.get?.('editLock'))
+  // A generation-owned reporter; a later mount cannot overwrite this row.
+  const evidence = settings?.editLockEvidence?.recordMount?.({
+    enabled: Boolean(options), pinned: Object.hasOwn(config ?? {}, 'enabled'),
+    fixed: options?.fixed != null, phase: options ? 'installing' : 'installed',
+  })
+  if (!options) return evidence ? () => evidence.dispose() : undefined
+  try {
   /** @type {any} */
   let sandboxPolicyRef = null
   ctx.inject?.(['sandboxPolicy'], (/** @type {any} */ scope) => { sandboxPolicyRef = scope.sandboxPolicy })
@@ -311,36 +321,47 @@ const apply = (ctx, config = {}) => {
 
   /** @param {string} root @param {string} directory */
   async function openDomain(root, directory) {
-    if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode: 0o700 })
-    let runtime
     try {
-      // The store mode is read only after the reservation is held.
-      runtime = await openReservedEditLockRuntime({ root, directory, domainId: root, mode: () => storeMode(directory), fs })
+      if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode: 0o700 })
+      let runtime
+      try {
+        // The store mode is read only after the reservation is held.
+        runtime = await openReservedEditLockRuntime({ root, directory, domainId: root, mode: () => storeMode(directory), fs })
+      } catch (error) {
+        if (/** @type {any} */ (error)?.code !== 'EEXIST') throw error
+        // Another cooperating host publishes: become its client, never a writer.
+        const domain = remoteDomain(createRemoteEditLockDomain(endpoint(directory), {
+          onNotice: deliverEvent,
+          // The only way to reach here without a live publisher is a reservation left
+          // by a host that crashed or was killed. Say so, and say what clears it.
+          unreachableHint: `Another DeepSeek Harness reserved this project but is not answering. If no other Harness window is open on it, quit DeepSeek Harness, remove ${reservationPathFor(directory)}, and start it again.`,
+        }))
+        try { evidence?.recordDomain?.(root, { mode: domain.mode }) } catch { /* reporting only */ }
+        return domain
+      }
+      const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
+        deliver: (agent, text, wake) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text, wake: wake === true }); else deliverLocal(agent, text, wake) },
+        onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
+      })
+      let server
+      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks) }
+      catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
+      const domain = localDomain(lifecycle, server)
+      try { evidence?.recordDomain?.(root, { mode: domain.mode }) } catch { /* reporting only */ }
+      return domain
     } catch (error) {
-      if (/** @type {any} */ (error)?.code !== 'EEXIST') throw error
-      // Another cooperating host publishes: become its client, never a writer.
-      return remoteDomain(createRemoteEditLockDomain(endpointFor(directory), {
-        onNotice: deliverEvent,
-        // The only way to reach here without a live publisher is a reservation left
-        // by a host that crashed or was killed. Say so, and say what clears it.
-        unreachableHint: `Another DeepSeek Harness reserved this project but is not answering. If no other Harness window is open on it, quit DeepSeek Harness, remove ${reservationPathFor(directory)}, and start it again.`,
-      }))
+      // A domain that never opened is maintenance-visible as initialization
+      // blocked; the manager behavior is unchanged.
+      try { evidence?.recordDomain?.(root, { error: String(/** @type {any} */ (error)?.message ?? error) }) } catch { /* reporting only */ }
+      throw error
     }
-    const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
-      deliver: (agent, text, wake) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text, wake: wake === true }); else deliverLocal(agent, text, wake) },
-      onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
-    })
-    let endpoint
-    try { endpoint = await serveEditLockEndpoint(lifecycle, endpointFor(directory), sinks) }
-    catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
-    return localDomain(lifecycle, endpoint)
   }
   const registry = createDomainRegistry(root => {
     const fixed = options.fixed
     if (fixed) return openDomain(fixed.root, fixed.directory)
-    try { excludeFromGit(root) } catch (error) { ctx.logger?.warn?.(`edit lock: could not update .git/info/exclude: ${/** @type {any} */ (error)?.message ?? error}`) }
+    try { exclude(root) } catch (error) { ctx.logger?.warn?.(`edit lock: could not update .git/info/exclude: ${/** @type {any} */ (error)?.message ?? error}`) }
     return openDomain(root, join(root, AUTHORITY_DIR))
-  })
+  }, resolveRoot)
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
 
@@ -514,6 +535,7 @@ const apply = (ctx, config = {}) => {
       // Kept so the panel can say WHY editing is unavailable instead of
       // showing "starting" forever.
       startFailures.set(agent, String(/** @type {any} */ (error)?.message ?? error))
+      try { evidence?.recordSessionFailure?.(sessionOf(agent), String(/** @type {any} */ (error)?.message ?? error)) } catch { /* reporting only */ }
       ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`)
     }
   })
@@ -644,22 +666,34 @@ const apply = (ctx, config = {}) => {
     },
   })
 
-  return () => {
+  evidence?.installed()
+  return async () => {
+    if (closed) return
     closed = true
-    recovery.close()
-    settle.close()
-    offView()
-    offCommand?.()
-    for (const off of offTools) off?.()
-    // Stops every session durably, drains publication, then releases each
-    // cross-process reservation. Failure retains it for operator recovery.
-    for (const domain of registry.all()) {
-      void domain.then(value => value.close()).catch((/** @type {any} */ error) => {
-        ctx.logger?.warn?.(`edit lock shutdown incomplete; reservation retained: ${error?.message ?? error}`)
-      })
+    evidence?.disposing()
+    try {
+      recovery.close()
+      settle.close()
+      offView()
+      offCommand?.()
+      for (const off of offTools) off?.()
+      // Retain uncertain evidence until every generation-owned domain is drained.
+      const results = await Promise.allSettled(registry.all().map(async domain => (await domain).close()))
+      const failure = results.find(result => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
+      evidence?.dispose()
+    } catch (error) {
+      evidence?.failed(error)
+      ctx.logger?.warn?.(`edit lock shutdown incomplete; reservation retained: ${error?.message ?? error}`)
     }
   }
+  } catch (error) {
+    evidence?.failed(error)
+    throw error
+  }
 }
+}
+const apply = createEditLockPlugin()
 
 /** The host timer is an optional service: accessing an unavailable cordis service
  * throws rather than yielding undefined, so it is probed explicitly. Returning

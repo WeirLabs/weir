@@ -126,7 +126,7 @@ export function editLockLimits(section) {
   }
   return Object.freeze(limits)
 }
-const zs = /** @type {any} */ (z)
+const zs = z
 
 function fieldSchema(type) {
   if (typeof type === 'object' && type !== null && Array.isArray(type.union)) return zs.union(type.union)

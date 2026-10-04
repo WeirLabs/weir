@@ -1,10 +1,10 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **实验特性，默认关闭**：`orrery-harness/edit-lock` 已加入 `orrery` 预设（排在 hashline-edit／lsp 之前），只有在 Orrery 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时没有服务、工具或监听器，行为与此前完全相同。
+> **实验特性，默认关闭**：`orrery-harness/edit-lock` 已加入 `orrery` 预设（排在 hashline-edit／lsp 之前），只有在 Orrery 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时不安装编辑保护服务、工具或监听器。设置页只读维护面板独立保留。
 >
 > **版本**：特性分支 `dev/edit-lock` 单独维护版本号，已发布 `edit-lock-v0.1.0`（2026-10-02）与 `edit-lock-v0.2.0`（2026-10-03，UX 改版：回合末收尾、有期限保留、面板重做），见 [CHANGELOG.md](../../CHANGELOG.md)。两个版本都已完成人工验收（单会话与跨会话、状态面板与命令入口），并以实验特性形态随主分支 `0.7.0` 合入。
 >
-> **已知限制**：锁在回合结束时由助手释放或有期限地保留（异常锁除外）；shell 与外部编辑器的写入不在保护范围；不防恶意同用户进程；删除 `.orrery/` 会丢失锁历史与未决发布围栏；跨文件批量失败不做回滚；端点不做认证。
+> **已知限制**：锁在回合结束时由助手释放或有期限地保留（异常锁除外）；shell 与外部编辑器的写入不在保护范围；不防恶意同用户进程；删除 `.orrery/` 会丢失锁历史与未决发布围栏；跨文件批量失败不做回滚；本机 publisher 通道不做认证（区别于经宿主浏览器认证的维护 HTTP 端点）。
 
 ## 概述
 
@@ -35,6 +35,13 @@
   - 面板读取的是只读的结构化视图，不轮询、不写入对话；每个动作都是一次显式 `/edit-lock` 命令，留在对话中作为记录。
 - **模型可调用的工具**：`edit_lock_acquire`（显式占用既有文件；resume 后对 pending-confirmation 文件逐个调用即确认）、`edit_lock_release`、`edit_lock_hold`、`edit_lock_try_steal`（立即返回 pending requestId，从不等待持有者）、`edit_lock_pause`（只在仅清理恢复期间可用，单次 ≤15 分钟、累计 ≤30 分钟）与只读的 `edit_lock_status`。持有者有待答请求时才会临时多出 `edit_lock_reply`（`release`／`keep`），并在回合边界注销。
 - 编辑工具的锚点校验、版本护栏、沙箱策略与 diff 输出不变；shell 与外部编辑器的写入不在保护范围内。
+- **设置页维护控件（不依赖管理器是否运行）**。设置页「编辑」组在编辑锁设置下方多出「编辑锁维护」面板，任何时候都能打开——即使编辑锁已停用、管理器没挂上或已中毒：
+  - **区分「已保存」与「实际挂载」**：面板给出 `强制执行中`（保存开，全部已安装行均启用）、`已请求停用——需要重启`（保存关，运行行仍启用）、`强制执行已停用`（保存关，全部已安装行均停用）、`已请求启用——需要重启`（保存开，运行行仍停用）及 `未知`。无挂载证据、多行决定不一致、安装/卸载未完成或失败一律未知；不把「没有证据」当成停用。开关对整个 profile 生效。
+  - **初始化受阻可见**：管理器已挂载但某个域打开失败、或某个会话注册失败时，面板列出「初始化受阻」及原因，而不是只见开关。
+  - **只读权威检查**：对每个服务端自己推导出的管理域，面板可只读检查其权威镜像——版本、revision、会话/锁/操作计数、**未决操作及其围栏范围**（单个文件／目录子树／整个工作目录）、保留的异常锁。检查不打开 runtime、不取预约、不写恢复，一个字节都不改。
+  - **常驻警示**：面板明确「关闭强制执行**不会**清除未决操作、围栏或历史，重新打开后同一批文件可能再次被阻塞」，以及「普通解锁只释放一把锁且不校验内容，不是历史恢复，永远不会结清未知发布」。
+  - **损坏可见、绝不自修**：权威镜像未通过完整性校验时，面板原样展示拒绝原因（`snapshot.json` 不是常规文件、目录有内容但无已提交快照、校验和/版本/域不匹配等），文件原样保留——不存在自动修复。
+  - **不推断已消失的历史**：权威目录当前不存在或为空，只表示当前磁盘事实，不能证明此前从未初始化。维护内容作为错误边界的后代渲染；成功响应中若包含畸形数据，面板显示失败提示，关闭按钮仍可用。
 
 ### 命令
 
@@ -82,6 +89,14 @@
 - 可信人类入口 `/edit-lock`：`status`、`locks`、`hold [minutes]`、`release <path>`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`／`--all`、`unlock <path> <generation>`。普通消息、状态查询都不恢复权限；todo 续推在会话非 active 时不触发。
 - 面板数据来自只读端点 `POST /api/orrery-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图，按会话解析 agent，找不到时返回 `unavailable`），不从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
+
+### 独立维护边界
+
+- profile 设置行提供维护端点与证据入口，不依赖 `orreryEditLock` 或恢复器。每次 preset 挂载持有独立代次；旧 disposer 只删除自己的证据，排空失败保留失败状态。证据按宿主根 context 存在 WeakMap 中，同一模块的设置行重挂载不遗忘仍活跃的行；模块整体替换/进程重启不继承内存证据。
+- `POST /api/orrery-edit-lock/maintenance/{status,inspect}` 通过 `connection.fetch.register` 注册；安装版宿主先执行 Host/Origin fence 与浏览器会话认证。根只由存活 agent 的 cwd 经 `managementRootFor` 及挂载记录推导；客户端必须原样选择返回的根，成员检查先于对客户端路径的任何文件操作。
+- inspector 拒绝根以下及祖先中的符号链接，快照使用 `O_NOFOLLOW | O_NONBLOCK`、文件描述符身份与读前后路径/metadata 核对，最多读取 16 MiB；平台不提供 `O_NOFOLLOW` 则拒绝。只复用 store 的镜像验证器，不打开 runtime/预约、不恢复、不修复，检查前后权威字节不变。
+- **不是恶意并发目录改名的原子隔离证明**：Node 无便携 `openat`，上述身份核对能拒绝观察到的路径替换，但不能排除恶意同用户进程的 ABA 命名空间竞态。不要把此维护入口暴露为不可信文件系统的读取代理。
+- 开关提交仅记录 enable/disable 意图，走共享 `createAudit`（事件及有服务端工作目录时的 JSONL 镜像），不写自定义 session 事件。只读检查不写审计；无工作目录时只 emit，不退回开发进程 cwd。共享审计镜像沿用既有 best-effort 文件系统语义，不宣称具有 inspector 的路径保护。
 
 ### 模块与职责
 
@@ -236,6 +251,18 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **内核与身份**：`test/edit-lock-state.test.js`、`test/edit-lock-resource-identity.test.js`（真实 `mkdtemp`/`write`/`mkdir`/`symlink`/`link`/`rename`，真实 `/dev/null` 作特殊节点；平台 dispatch 在独立子进程中替换 `process.platform` 检查，不伪造文件系统成功）。后者含一条复杂度回归：在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），要求每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并断言观察仍是同一个真实文件——它钉死的是「指数级父路径重放」这一已修复缺陷，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 - **存储与历史**：`test/edit-lock-store.test.js`（真实 syscall 层的故障注入与 SIGKILL 子进程恢复，覆盖 create/record/recover 的 detached 语义、封闭 schema 与历史单调性、canonical/checksum/domain/version 拒绝、每个持久化边界的毒化与 `commitStatus`、每 handle 队列 CAS 与 close drain）、`test/edit-lock-operation-history.test.js`（阶段图、`ID_REUSE`、transition-local 归属、围栏与 closeout）；两者都用真实 fs 与真实 file/dir sync。SIGKILL 是真实子进程在 barrier 处被杀后重新 recover，**不是**掉电、内核崩溃、扇区撕裂或硬件缓存持久性证明。
 - **管理与组合**：`test/edit-lock-manager.test.js`（持久后安装、取消 overlay 与持久 ack、pending 注册的取消、竞争冲突不毒化、未决围栏）、`test/edit-lock-composition.test.js`（服务与工具面、受控 write 与 hash_edit 链路、view 端点、人工 `release` 命令）、`test/edit-lock-lifecycle.test.js`、`test/edit-lock-host.test.js`、`test/edit-lock-write.test.js`、`test/edit-lock-tool-scope.test.js`、`test/edit-lock-publication.test.js`、`test/edit-lock-reservation.test.js`、`test/edit-lock-peer*.test.js`、`test/edit-lock-remote-service.test.js`、`test/edit-lock-request-*.test.js`、`test/edit-lock-call-context.test.js`。
+- **独立维护**：`test/edit-lock-maintenance.test.js` 覆盖四态/未知、损坏拒绝、字节不变、服务端根、设置审计与生命周期；`test/edit-lock-maintenance-safety.test.js` 覆盖父目录/authority/快照符号链接、多挂载顺序、旧回调、安装失败、设置重挂载及超限快照；客户端维护/设置用例验证警示与后代错误隔离（包括成功但畸形的响应）。fixture 注入受 ceiling 限制的根发现/Git 排除适配器及 lane 内短 socket 地址，不改变生产默认路径。Git ceiling 与文件系统祖先扫描分别约束，不能互相替代。
+- **静态与客户端构建**：checkJs 包含 maintenance、snapshot、settings adapter 及维护客户端；宿主边界使用本地声明。`pnpm --filter orrery-harness run build` 校验全部手写 ModuleLoader chunk 的语法，以精确字节 SHA-256 生成入口 manifest 并最后写入口；测试校验清单与 chunk 集合/摘要一致，不接受仅 touch 时间戳作为构建。
+
+### 独立维护批次验收（2026-10-04）
+
+本节仅对应独立维护面板与相关测试隔离批次，不替代上文历史发布记录，也不表示父级 OpenSpec 全部完成：**本批次没有交付历史恢复、provider receipt 或默认发布 adapter**，未修改父级 OpenSpec tasks。
+
+- **最终静态与单测**：`pnpm --filter orrery-harness run build` 验证 17 个客户端 chunk 并生成精确字节 manifest；checkJs 0 错误；产品单测 **1556/1556**，装置单测 **118/118**，均 0 fail、0 skip、exit 0。运行前清除继承的 `GIT_*`，以 lane 内 `.orrery/maintenance-qa/final-tmp` 为 `TMPDIR` 和 Git ceiling，禁用全局/系统 Git 配置；根发现与 socket 使用上述 fixture 适配器。日志为本地 `.orrery/maintenance-qa/final-{build,check,product,harness}.log`，不入库。
+- **安装版全量集成**：协调者在新建可丢弃隔离根执行，**165/165，exit 0**（只读核验 `/tmp/oq-fpE0BU/integration.log`）；未使用 driver 默认根。此后仅更正证据文档，未改变 runtime 代码，既有集成证据继续适用于本批次。
+- **真实 GUI**：隔离安装版 GUI 共 **16/16 PASS**，19 张截图；覆盖停用、保存启用后等待重启、刷新/重开、检查、loading、注入 unknown、网络失败/重试，以及畸形成功响应的后代错误隔离。QA 无产品代码改动。报告与截图保存在本地 `.orrery/maintenance-qa/qa-report.md` 与 `shots/`，不入库。
+- **明确未覆盖**：blocked 行及自然安装失败/缺失挂载证据的服务端状态仅有单测；unknown 的浏览器呈现使用注入载荷，不冒充自然失败。恶意同用户进程的路径 ABA 不在威胁模型内；本轮不声称默认发布 adapter 或历史恢复验收。
+- **独立评审**：协调者报告最终 advisor 无阻塞发现；这不是父级更大恢复计划的完成声明。
 
 ### 真实回合与人工验收
 

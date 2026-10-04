@@ -10,12 +10,8 @@
     "noEmit": true,
     "types": []
   },
-  // Curation rule: this list holds PURE modules only — no ctx adapters, no node:
-  // builtin consumers (types: [] strips Node globals). Plugin index.js files,
-  // settings/index.js, lsp lifecycle, audit, whitelist-defaults,
-  // group-coordinator and rehydrate stay out, and so does anything importing
-  // the vendored schemastery/cosmokit (tsc follows imports into Node-global
-  // territory under types: []). New pure modules MUST be added here when created.
+  // Pure modules plus the maintenance adapter and its client. Host and Node
+  // contracts live in types/ so checkJs also covers the integration boundaries.
   "include": [
     "src/core/doctrine.js",
     "src/intent-gate/matcher.js",
@@ -34,6 +30,12 @@
     "src/context-guard/pressure.js",
     "src/context-guard/compaction-outcome.js",
     "src/edit-lock/state.js",
+    "src/edit-lock/inspect.js",
+    "src/edit-lock/maintenance.js",
+    "src/edit-lock/snapshot.js",
+    "src/settings/index.js",
+    "lib/client.edit-lock-maintenance.js",
+    "types/**/*.d.ts",
     "src/hashline-edit/xxhash32.js",
     "src/hashline-edit/anchors.js",
     "src/hashline-edit/apply-ops.js",
