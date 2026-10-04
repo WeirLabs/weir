@@ -40,6 +40,8 @@
 
 ### Fixed
 
+- **Orrery 预设新建会话失败（`agent-preset/invalid: row 9 names no plugin`）**：预设组合中 `orrery-skill-selection` 行的 `name` 用了 `!!js` 表达式定位私有入口，而运行时对 `name` 字段从不对表达式求值（只有 `disabled` 与 config 值求值），预设注册校验直接拒绝，导致所有新建 Orrery 会话失败。改为正式导出 `./skill-selection`（`orrery-harness/skill-selection`）并以字符串引用；新增回归测试拒绝任何 `name: !!js` 写法。集成测试装置本就走字符串导出行，故此缺陷此前未被任何测试触达。
+
 - **集成测试装置 worktree 场景的 git 容器化（2026-10-05 "fixture" 污染事故）**：装置的 worktree 集成场景用裸 `git rev-parse --git-dir` 探测工作区仓库，而默认 IT 根已迁入会话仓库内（`<repo>/.orrery/it-root`），探测经父目录穿透命中外层仓库——场景的 `git add -A && git commit -m fixture` 于是直接把主工作区里其他会话的未暂存改动卷进 main 上的混合提交（4f1a90e/d2949bc/6ab3f26/7a357b4），并曾短暂回退他人修复。新增 `src/git-repo.js` 容器化护栏：工作区一律获得自己的 `.git`（嵌套安全，IT 根本地 exclude），任何仓库变更前 `assertContained()` 要求工作区自身即 toplevel 否则拒绝；附回归测试。端到端验证：默认根下 worktree 场景 8/8 通过且主仓库逐字节不变。
 
 - **意图语义分类器路由覆盖失效（rc.2 回归）**：rc.2 的 cordis 在 apply 批次结束后才激活 `reflect.provide` 的服务提供方，意图门在 apply 期对 `orrerySettings` 的快照必然为空，llm 模式的分类器路由覆盖静默失效（报 `no classifier route` 并按未命中降级）。改为每次分类时惰性解析覆盖（`resolveRouteOverride`），晚到的设置覆盖同样生效；模式/超时/jev 键仍是重启生效的 apply 期快照，不变。详见 [意图门特性文档](docs/features/intent-gate.md)。

@@ -15,10 +15,18 @@ for (const [label, text] of [['preset', patch], ['fixture', fixture]]) {
   })
   test(`${label}: selection provider and stock skill tool are retained`, () => {
     assert.match(text, /- id: orrery-skill-selection/)
-    assert.match(text, label === 'preset' ? /src\/capabilities\/skill-selection-plugin.js/ : /orrery-test-harness\/skill-selection/)
+    assert.match(text, label === 'preset' ? /name: 'orrery-harness\/skill-selection'/ : /orrery-test-harness\/skill-selection/)
     assert.match(text, /name: '@deepseek-ai\/dsh-tool-skill'/)
   })
 }
+// Regression guard: neither the preset registry (`entryListProblem`) nor the
+// loader ever evaluates a `!!js` expression in a row's `name` — only `disabled`
+// and config values are evaluated. A `!!js` name fails preset validation with
+// 'names no plugin', breaking every new session of the preset.
+test('preset patch has no !!js expression in any name field', () => {
+  assert.doesNotMatch(patch, /name:\s*!!js/)
+  assert.doesNotMatch(fixture, /name:\s*!!js/)
+})
 test('fixture uses the exact product selection provider entry', () => {
   const bridge = readFileSync(new URL('../../orrery-test-harness/src/skill-selection.js', import.meta.url), 'utf8')
   assert.match(bridge, /export \{ name, inject, apply \} from '..\/..\/orrery-harness\/src\/capabilities\/skill-selection-plugin.js'/)

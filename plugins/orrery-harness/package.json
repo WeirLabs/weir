@@ -15,6 +15,7 @@
     "./edit-lock": "./src/edit-lock/index.js",
     "./worktree": "./src/worktree/index.js",
     "./settings": "./src/settings/index.js",
+    "./skill-selection": "./src/capabilities/skill-selection-plugin.js",
     "./lsp": "./src/lsp/index.js",
     "./notify": "./src/notify/index.js",
     "./client": "./lib/client.js",

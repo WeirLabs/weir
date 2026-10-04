@@ -111,9 +111,8 @@
               # F5 拉取式后台：结算通知已内建为紧凑 + 边界注入 + 拉取式读取；
               # 这里仅限制连续唤醒次数，防止通知唤醒风暴。
               maxConsecutiveWakes: 8
-          # Resolve the private entry without expanding the package export surface.
           - id: orrery-skill-selection
-            name: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('orrery-harness/package.json')), 'src/capabilities/skill-selection-plugin.js')
+            name: 'orrery-harness/skill-selection'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
