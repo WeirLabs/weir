@@ -44,17 +44,40 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **组合要求**：宿主层 `skill-filesystem` 与 `tool-skill` 由 Orrery patch 行显式 `disabled: true`（宿主行不禁用时，宿主 fs 会把工作区 Skill 注入全局层、宿主 tool-skill 会删除预设模型目录）；预设自有的 `skill-filesystem` 行及其 `customSkillDirs` 已移除（其候选会漏进同一预设层）。宿主内置 Skill provider（如 office）不经 `skill-filesystem`，其条目由 [skill-office-adapter.js](<../../plugins/orrery-harness/src/capabilities/skill-office-adapter.js>) 纳入 Orrery 枚举与选择，未选项以同名候选遮蔽为不可模型调用、不可用户调用（`!m!u`），加载返回显式不可用错误。
 - **内置 Skill 迁移**：bundle 的 `skills` 目录由 provider 枚举并标注为 **Orrery 内置**（不沿用宿主 `source:"bundled"` 与 bundled 根 rank 600）；首次运行迁移检查核对 10 个内置 Skill 均被发现、名称／来源标签／rank 与原 `customSkillDirs`（custom／rank 300）语义等价，不等价时 fail closed 并显示原因。`skills/` 目录字节不变。
 
+### Apply 事务
+
+选择编辑先进入**草稿**（[selection-draft.js](<../../plugins/orrery-harness/src/capabilities/selection-draft.js>)）：以 `baseSelectionRevision` 为基线维护规范化启用集合、unresolved requested refs 与局部筛选/布局；Apply 仅在规范化 enabled set 有实质变化时可用（还原、排序、搜索、元数据、安装、更新与身份不变的 content refresh 都不算变更）；显式空集不等于缺失；草稿是纯管理器侧状态，模型与工具读不到。
+
+确认后走**六步事务**（[apply-engine.js](<../../plugins/orrery-harness/src/capabilities/apply-engine.js>)）：
+
+1. 服务端从 authenticated session 定位 workspace/preset 并读取最新 accepted revision——不信任客户端传入的 cwd、scope root 或 server config；
+2. 校验 requestId 与 payload digest（request digest 覆盖 expectedRevision）、expected revision、完整清单状态、精确身份与冲突（同名单多选直接拒绝，不任意取胜）、一致性条件（未满足显示 unsupported）；
+3. 准备纯快照、过滤视图与已验证 content handle——不发布权限、不启动外部安装、不注入通知，准备失败保留旧 authority 与用户草稿；
+4. 进入 admission fence，冻结尚未 handed-off 的能力调用与 prompt publication（MCP 排空接口已预留，实现见后续 MCP 组）；
+5. 经自管存储在锁内 CAS 原子写入新 selection 与 receipt，随后在**同一个非异步段**内依次切换内存快照 → 调用 provider `control.invalidate()` → 解除 fence——`invalidate()` 先于解除 fence、先于发送响应，客户端收到响应后的第一次重取绝不会命中旧缓存；写入明确失败则解除 fence 并恢复旧快照，写入结果不确定则维持阻断，按原 request ID 查询 receipt 结算（`published`／`not-committed`／`blocked`——不宣称取消成功、不伪造回滚）；
+6. 发送响应：accepted revision、effective sets、unresolved warnings 与发送时刻的排空状态快照，**不等待**排空完成。
+
+配套纪律与机制：
+
+- **审计**：`capability-apply` 类型注册于共享 [audit.js](<../../plugins/orrery-harness/src/shared/audit.js>)（cordis emit + `.orrery/audit.jsonl` 双写），发射失败 warn/swallow 且不改变 policy；`command/run`／`command/done`／审计日志都不是提交证据；新增代码静态保证不触碰 `session.append` 与自定义 session 事件（冷读红线）。
+- **幂等与丢失响应**：receipts 随会话生命周期保留，清理不允许旧请求重放成第二次变更；已接受请求重放返回原 receipt，异参 ID 复用拒绝；durable acceptance 后响应丢失时按原 request ID 查询取回 accepted revision（「结果待确认」语义）。
+- **content refresh 协调**（[content-refresh.js](<../../plugins/orrery-harness/src/capabilities/content-refresh.js>)）：refresh 用独立存储单元与 receipt/revision，但与 selection 共用同一会话级提交协调者，提交前重查 selection revision——被移除的 Skill 在 refresh 期间不会继续发布。
+- **Skill 侧会话阻断**（[skill-admission.js](<../../plugins/orrery-harness/src/capabilities/skill-admission.js>)）：未选中 Skill 的 `skill` 调用返回显式 unavailable 且不加载正文；slash 提交由服务端在当前选择上再验证；正文异步读取结束、返回内容之前复核选择快照（已读取 ≠ 已授权）；接受移除后，未 handed-off 的正文加载与子代理 prompt 发布被拒。
+
 ## 边界与失败语义
 
 - 存储单元损坏、版本未知或撕裂（digest 不符）：fail closed，返回 `unreadable`，保留原文件等待人工处置，绝不自动覆盖或删除。
 - 锁被存活 owner 持有、owner 身份无法确认（外主机）、锁文件不可读：提交返回 `locked` 及具体原因，不写任何字节。
 - 回收被中断（`.recover` 残留）：单元保持锁定并显示手动恢复入口，不自动清除他人残留。
 - 不支持的平台或 `profileContext` 缺失：所有单元 unsupported，零写入。
+- Apply 冲突与并发：同 expected revision 的并发 Apply 恰一胜，败者得到 `revision-conflict`、receipt 不被确认，旧 authority 与草稿保留。
 
 ## 测试
 
 - 单元测试：`plugins/orrery-harness/test/capability-store.test.js`（16 例：路径解析与隔离、单元布局、fail-closed 解码、CAS 与幂等回执、锁获取／回收／手动恢复、平台桩零写入、代次指针原子切换）。
 - 多进程与故障注入：`plugins/orrery-harness/test/capability-store-race.test.js`（真实子进程：两进程同 revision 恰一胜、两回收者竞争已死锁恰一个新 owner 且活锁零移除、SIGKILL 发布点循环只见完整旧/新记录）。
+- 单元测试（Apply 事务）：`selection-draft.test.js`（dirty 语义）、`apply-engine.test.js`（六步 + 顺序断言 + 故障注入）、`apply-fence-recovery.test.js`（fence 恢复 / 幂等 / 静态红线）、`content-refresh.test.js`（refresh×Apply 并发、移除后 refresh）、`skill-admission.test.js`（三条阻断路径 + 发布前拒绝）。
+- 集成测试：`plugins/orrery-test-harness` 的 `apply-transaction` 场景——Apply 后收敛、并发冲突恰一胜、响应丢失按原 request ID 取回、移除后旧引用显式 unavailable。
 - 集成测试：`plugins/orrery-test-harness` 的 `capstore` 场景——探针分别在宿主层与 isolated `cordis:group` 内读取 `profileContext` 并经真实 store 往返一条选择记录，证明预设 realm 结构内存储根可解析（任务 2.1）。
 - 单元测试（库存与身份）：`skill-identity.test.js`、`skill-inventory.test.js`（含宿主 0.2.0-rc.2 解析器生成的兼容性 fixture 逐文件比对，宿主漂移即红；生成器 `test/helpers/generate-host-reference.js`）、`skill-selection-provider.test.js`（精确加载、冲突呈现、挂载不抛出、invalidate 反例与重入闸门）、`skill-office-adapter.test.js`、`skill-composition.test.js`（patch 静态检查）。
 - 集成测试：`plugins/orrery-test-harness` 的 `skill-composition` 场景族（OFF／LEAK／HOST／office 四组合）：只有 OFF 形态下未选 Skill 不出现在模型目录、`skill` 加载、预设内消费者与 slash 列表；未选 office Skill 被同名遮蔽；预设不进入 `broken`。
