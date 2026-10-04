@@ -27,7 +27,9 @@ const COPY = {
     mergeHeader: 'Worktree merge',
     mergeQuestion: (/** @type {string} */ title, /** @type {string} */ base) => `Merge lane "${title}" into ${base}?`,
     mergeOption: (/** @type {string} */ base) => `Merge into ${base} (--no-ff)`,
-    mergeOptionDescription: (/** @type {string} */ branch) => `--no-ff merge of ${branch}`,
+    // Short on purpose: the branch is already in the card detail; long option
+    // descriptions overflow the option row.
+    mergeOptionDescription: () => 'Create a merge commit (--no-ff)',
     notNow: 'Not now',
     notNowDescription: 'Keep the lane as it is',
     cleanupHeader: 'Worktree cleanup',
@@ -58,7 +60,8 @@ const COPY = {
     mergeHeader: 'Worktree 合并',
     mergeQuestion: (/** @type {string} */ title, /** @type {string} */ base) => `将车道「${title}」合并到 ${base}？`,
     mergeOption: (/** @type {string} */ base) => `合并到 ${base}（--no-ff）`,
-    mergeOptionDescription: (/** @type {string} */ branch) => `以 --no-ff 合并 ${branch}`,
+    // 从简：分支已在卡片 detail 里，长描述会撑出选项行。
+    mergeOptionDescription: () => '创建合并提交（--no-ff）',
     notNow: '暂不合并',
     notNowDescription: '保持车道现状',
     cleanupHeader: 'Worktree 收尾',
@@ -101,7 +104,7 @@ export function cardCopy(locale) {
       // GFM list items: a single \n is a soft break and would collapse every
       // fact into one paragraph, so each fact is its own `- ` line.
       return [
-        `- **${copy.lane}** \`${lane.id}\` — ${lane.title}`,
+        `- **${copy.lane}** \`${lane.id}\``,
         `- **${copy.branch}** \`${lane.branch}\` → \`${lane.base.branch}\``,
         `- **${copy.changes}** ${stat.files} ${copy.files}, +${stat.added} −${stat.removed}`,
         `- **${copy.precheck}** ${copy.clean}`,
