@@ -1,8 +1,8 @@
-import { test, expect } from '../../test/helpers.js'
+import { test, expect } from './helpers.js'
 import { createHash } from 'node:crypto'
-import { createSkillIdentity } from '../../src/capabilities/skill-identity.js'
-import { createSkillSelectionProvider, validateSkillSelection } from '../../src/capabilities/skill-selection-provider.js'
-import { createSkillSelectionPlugin, skillSelectionFor } from '../../src/capabilities/skill-selection-plugin.js'
+import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
+import { createSkillSelectionProvider, validateSkillSelection } from '../src/capabilities/skill-selection-provider.js'
+import { createSkillSelectionPlugin, skillSelectionFor } from '../src/capabilities/skill-selection-plugin.js'
 
 const text = body => `---\nname: example\ndescription: Example skill\n---\n${body}`
 function candidate(scope) {
