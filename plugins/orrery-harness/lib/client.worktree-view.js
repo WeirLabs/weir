@@ -183,8 +183,18 @@ window.__ModuleLoader__.load({
 			return "";
 		}
 		/** One read of the host view; never throws. */
-		const read = (fetchView) => Promise.resolve().then(() => fetchView?.()).then(
-			(value) => ({ view: value ?? null, error: null }),
+		const read = (fetchView, narrow) => Promise.resolve().then(() => fetchView?.()).then(
+			(value) => {
+				if (value === null || value === undefined) return { view: null, error: null };
+				// Narrow at the boundary: degraded endpoint shapes and malformed
+				// payloads never reach the components as a truthy non-view.
+				if (typeof narrow === "function") {
+					const narrowed = narrow(value);
+					if (narrowed === null) return { view: null, error: "malformed view payload" };
+					return { view: narrowed, error: null };
+				}
+				return { view: value, error: null };
+			},
 			(reason) => ({ view: null, error: reason instanceof Error ? reason.message : String(reason) })
 		);
 		const useOwnedLanes = (props) => {
@@ -196,17 +206,17 @@ window.__ModuleLoader__.load({
 		function useLaneView(props, enabled, intervalMs) {
 			const [state, setState] = react.useState({ view: null, error: null });
 			const [tick, setTick] = react.useState(0);
-			const refresh = () => read(props.fetchView).then((next) => setState(next));
+			const refresh = () => read(props.fetchView, props.narrowView).then((next) => setState(next));
 			react.useEffect(() => {
 				if (!enabled) return undefined;
 				let alive = true;
-				read(props.fetchView).then((next) => { if (alive) setState(next); });
+				read(props.fetchView, props.narrowView).then((next) => { if (alive) setState(next); });
 				return () => { alive = false; };
 			}, [enabled, tick]);
 			const polling = enabled && props.needsPolling?.(state.view);
 			react.useEffect(() => {
 				if (!polling) return undefined;
-				const timer = setInterval(() => { read(props.fetchView).then((next) => setState(next)); }, intervalMs ?? 5000);
+				const timer = setInterval(() => { read(props.fetchView, props.narrowView).then((next) => setState(next)); }, intervalMs ?? 5000);
 				return () => clearInterval(timer);
 			}, [polling, intervalMs]);
 			return { state, refresh, reload: () => setTick((value) => value + 1) };

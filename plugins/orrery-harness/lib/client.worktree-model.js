@@ -118,20 +118,25 @@ window.__ModuleLoader__.load({
 		}
 		/** Counts for the session marker and header pill (owned lanes only when known). */
 		function summaryOf(view, ownedOnly = true) {
-			if (!view) return { active: 0, awaiting: 0, attention: 0, baseMoved: false, mode: false };
-			const lanes = ownedOnly && view.owned.length ? view.lanes.filter((lane) => view.owned.includes(lane.id)) : view.lanes;
+			if (!isObject(view)) return { active: 0, awaiting: 0, attention: 0, baseMoved: false, mode: false };
+			// Degraded endpoint shapes (WORKTREE_DISABLED / SESSION_NOT_LIVE) and
+			// malformed payloads may lack these arrays — never read .length/.some
+			// on an unchecked field.
+			const all = Array.isArray(view.lanes) ? view.lanes.filter(isObject) : [];
+			const owned = Array.isArray(view.owned) ? view.owned : [];
+			const lanes = ownedOnly && owned.length ? all.filter((lane) => owned.includes(lane.id)) : all;
 			const active = lanes.filter((lane) => !FINISHED.includes(lane.state));
 			return {
 				active: active.length,
 				awaiting: active.filter((lane) => lane.state === "awaiting-approval").length,
 				attention: active.filter((lane) => toneOf(lane.state) === "attention").length,
 				baseMoved: active.some((lane) => lane.baseMoved),
-				mode: view.mode
+				mode: view.mode === true
 			};
 		}
 		/** Whether the panel should keep polling (a host-side transition is due). */
 		function needsPolling(view) {
-			return Boolean(view?.lanes.some((lane) => lane.transient));
+			return Boolean(isObject(view) && Array.isArray(view.lanes) && view.lanes.some((lane) => isObject(lane) && lane.transient === true));
 		}
 		/** The /worktree command line one panel action runs (null = not a command). */
 		function commandFor(action, lane, option) {
