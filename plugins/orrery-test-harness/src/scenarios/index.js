@@ -11,6 +11,7 @@ import semantic from './semantic.js'
 import grouped from './grouped.js'
 import escalate from './escalate.js'
 import background from './background.js'
+import jobsAwareTodo from './jobs-aware-todo.js'
 import terminate from './terminate.js'
 import rehydrate from './rehydrate.js'
 import lsp from './lsp.js'
@@ -23,7 +24,7 @@ import stopStaged from './editlock-stop-staged.js'
 import stopPublication from './editlock-stop-publication.js'
 import stopUpdate from './editlock-stop-update.js'
 
-const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate]
+const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo]
 
 /**
  * Find a scenario entry by id.
