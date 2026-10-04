@@ -603,20 +603,24 @@ return (ctx, config = {}) => {
     return next()
   })
 
+  // Message-driven auto-resume, phase 1 (D1): a genuine user message to the
+  // session arms the flag synchronously; runtime-injected (producer-tagged)
+  // messages never do. The arming hook is the inbox intake, NOT the durable
+  // user/message session event: that append only lands mid-turn in this
+  // runtime — past the new-turn pre-step the resume must precede (integration
+  // evidence: editlock-auto-resume). The setting is read per message, so a
+  // committed change applies without a restart (D5). The payload carries the
+  // agent, so no registry lookup is needed. Flag-set is synchronous-safe here
+  // (no followup, no session.append — AGENTS §3.4).
+  ctx.on('agent/inbox/inserted', (/** @type {any} */ { agent, message }) => {
+    if (!agent || !isGenuineUserMessage(message)) return
+    if (ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume === false) return
+    pendingAutoResume.set(agent, true)
+  })
   // Classification and settling read only the durable turn/end reason
   // (AGENTS §3.5): `error` classifies the locks abnormal, `completed` settles the
   // locks the turn left behind, and `aborted` only latches. Nothing is inferred.
   ctx.on('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
-    // Message-driven auto-resume, phase 1 (D1): a genuine user message arms
-    // the flag synchronously; runtime-injected messages never do. The setting
-    // is read per message so a committed change applies without a restart (D5).
-    if (event?.type === 'user/message') {
-      if (isGenuineUserMessage(event) && ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume !== false) {
-        const agent = ctx.get?.('agents')?.get?.(session?.id)
-        if (agent) pendingAutoResume.set(agent, true)
-      }
-      return
-    }
     if (event?.type !== 'turn/end') return
     const agent = ctx.get?.('agents')?.get?.(session?.id)
     const domain = agent && settled.get(agent)

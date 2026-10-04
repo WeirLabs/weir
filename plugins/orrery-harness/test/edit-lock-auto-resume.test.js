@@ -70,8 +70,10 @@ function fakeHost(root) {
     ctx, provided, agent, emit, warns,
     command: () => command,
     setEditLockSection(section) { editLockSection = section },
-    userMessage: (id) => emit('session/event', { id }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'continue' }] } }),
-    injectedMessage: (id) => emit('session/event', { id }, { type: 'user/message', data: { source: { kind: 'orrery-todo-driver' }, content: [{ type: 'text', text: 'injected' }] } }),
+    // The arming hook is the inbox intake (the durable user/message event only
+    // lands mid-turn in the real runtime): the payload carries { agent, message }.
+    userMessage: (agent) => emit('agent/inbox/inserted', { agent, message: { id: 'm-u', role: 'user', content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } } }),
+    injectedMessage: (agent) => emit('agent/inbox/inserted', { agent, message: { id: 'm-i', role: 'user', content: [{ type: 'text', text: 'injected' }], source: { kind: 'orrery-todo-driver' } } }),
     preStep: (agent, turn, signal) => emit('agent/pre-step', { agent, turn, signal }),
   }
 }
@@ -106,8 +108,8 @@ test('stopped session + genuine user message: the next turn resumes and confirms
   // Two genuine messages: the boolean flag is consumed once (D6). The cancel
   // itself moved the epoch 1 → 2, so exactly one resume lands at 3; a second
   // attempt would have thrown and warned.
-  await host.userMessage('s')
-  await host.userMessage('s')
+  await host.userMessage(agent)
+  await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
   assert.equal(service.blocksContinuation(agent), false)
@@ -132,7 +134,7 @@ test('runtime-injected message (producer-tagged source) never triggers auto-resu
   await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
   await stopByUser(host, agent)
 
-  await host.injectedMessage('s')
+  await host.injectedMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
   assert.equal(service.blocksContinuation(agent), true)
@@ -150,7 +152,7 @@ test('editLock.autoResume === false keeps the manual path (setting read live, pe
   await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
   await stopByUser(host, agent)
 
-  await host.userMessage('s')
+  await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
   assert.equal(service.blocksContinuation(agent), true)
@@ -171,7 +173,7 @@ test('zero-lock stopped session auto-resumes too (the latch is session-level)', 
   assert.equal(service.blocksContinuation(agent), true)
   assert.equal((await service.locks({ agent })).length, 0)
 
-  await host.userMessage('s')
+  await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
   assert.equal(service.blocksContinuation(agent), false)
@@ -190,7 +192,7 @@ test('race with the manual Continue is idempotent in both directions; no crash, 
 
   // Manual wins: the flag is consumed by the next pre-step, blocks() is already
   // false, no second resume is attempted.
-  await host.userMessage('s')
+  await host.userMessage(agent)
   assert.equal((await host.command().handler({ agent, rawInput: 'resume', commandId: 'c1' })).kind, 'success')
   assert.equal((await host.command().handler({ agent, rawInput: 'confirm --all', commandId: 'c2' })).kind, 'success')
   await host.preStep(agent, {}, new AbortController().signal)
@@ -199,7 +201,7 @@ test('race with the manual Continue is idempotent in both directions; no crash, 
 
   // Auto wins: the manual resume afterwards loses with 'agent is not interrupted'.
   await stopByUser(host, agent)
-  await host.userMessage('s')
+  await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
   assert.equal(service.blocksContinuation(agent), false)
   const lost = await host.command().handler({ agent, rawInput: 'resume', commandId: 'c3' })
@@ -239,7 +241,7 @@ test('a revoked session stays terminal: auto-resume fails warn-only and edits st
   t.after(() => dispose())
   assert.equal(service.blocksContinuation(agent), true)
 
-  await host.userMessage('s')
+  await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
   assert.equal(service.blocksContinuation(agent), true)
