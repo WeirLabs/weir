@@ -1,6 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
-import { EDIT_LOCK_DEFAULTS, FIELDS, editLockLimits } from '../src/settings/sections.js'
+import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, editLockLimits } from '../src/settings/sections.js'
 
 // Drift防线：settings 键的三处表示（sections.js 的 FIELDS / cordis.patch.yml
 // 行 config 的产品默认镜像 / 设置页 GROUPS 字段集）由本对拍测试守卫——
@@ -116,5 +116,30 @@ describe('settings page boolean defaults', () => {
     }
     expect(entries.map(([key]) => key)).toContain('worktreeEnabled')
     expect(entries.map(([key]) => key)).toContain('worktreeAutoSetup')
+  })
+})
+
+describe('RESTART_KEYS (restart-required settings declaration)', () => {
+  // 重启生效键的唯一声明住 FIELDS 的 restart 标记；本清单是全量对拍——
+  // 增删重启键必须显式改这里，漂移即红。消费侧快照语义见
+  // docs/features/category-delegation.md 的插件快照注记。
+  const EXPECTED = [
+    'intentGateClassifier', 'intentGateProvider', 'intentGateModel', 'intentGateReasoningEffort',
+    'intentGateTimeoutMs', 'jevEndpoint', 'jevModel', 'jevApiKeyEnv',
+    'todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
+    'guardEnabled', 'guardSoftThreshold', 'guardHardThreshold',
+    'hashlineHideStockEdit', 'editLockEnabled',
+  ]
+
+  it('contains exactly the restart-required keys in declaration order', () => {
+    expect([...RESTART_KEYS]).toEqual(EXPECTED)
+  })
+
+  it('is derived from the FIELDS restart markers (declared once, no second list)', () => {
+    expect(RESTART_KEYS).toEqual(FIELDS.filter(({ restart }) => restart).map(({ key }) => key))
+  })
+
+  it('is frozen so consumers cannot widen or reorder it in place', () => {
+    expect(Object.isFrozen(RESTART_KEYS)).toBe(true)
   })
 })

@@ -11,32 +11,35 @@ import { flattenConfig } from './volatile.js'
  * The single declaration of every flat settings key.
  * type: 'string' | 'number' | 'boolean' | { union: string[] }.
  * list: true marks the five robash whitelist tables (append semantics).
+ * restart: true marks keys whose consuming module snapshots them once at
+ * apply, so a volatile settings commit only takes effect after an app
+ * restart (see RESTART_KEYS below).
  */
 const FIELDS = [
-  { key: 'intentGateClassifier', section: 'intentGate', field: 'classifier', type: { union: ['regex', 'llm', 'jev'] }, description: 'Intent classifier front-end' },
-  { key: 'intentGateProvider', section: 'intentGate', field: 'classifierProvider', type: 'string', description: 'Sidecar route override (llm mode)' },
-  { key: 'intentGateModel', section: 'intentGate', field: 'classifierModel', type: 'string', description: 'Sidecar model override (llm mode)' },
-  { key: 'intentGateReasoningEffort', section: 'intentGate', field: 'classifierReasoningEffort', type: 'string', description: 'Sidecar reasoning-effort override (llm mode)' },
-  { key: 'intentGateTimeoutMs', section: 'intentGate', field: 'classifierTimeoutMs', type: 'number', description: 'Classifier timeout (fail-open)' },
-  { key: 'jevEndpoint', section: 'intentGate', field: 'jevEndpoint', type: 'string', description: 'Jev decisions endpoint (experimental)' },
-  { key: 'jevModel', section: 'intentGate', field: 'jevModel', type: 'string', description: 'Jev model name (experimental)' },
-  { key: 'jevApiKeyEnv', section: 'intentGate', field: 'jevApiKeyEnv', type: 'string', description: 'Env var name holding the Jev API key' },
+  { key: 'intentGateClassifier', section: 'intentGate', field: 'classifier', type: { union: ['regex', 'llm', 'jev'] }, description: 'Intent classifier front-end', restart: true },
+  { key: 'intentGateProvider', section: 'intentGate', field: 'classifierProvider', type: 'string', description: 'Sidecar route override (llm mode)', restart: true },
+  { key: 'intentGateModel', section: 'intentGate', field: 'classifierModel', type: 'string', description: 'Sidecar model override (llm mode)', restart: true },
+  { key: 'intentGateReasoningEffort', section: 'intentGate', field: 'classifierReasoningEffort', type: 'string', description: 'Sidecar reasoning-effort override (llm mode)', restart: true },
+  { key: 'intentGateTimeoutMs', section: 'intentGate', field: 'classifierTimeoutMs', type: 'number', description: 'Classifier timeout (fail-open)', restart: true },
+  { key: 'jevEndpoint', section: 'intentGate', field: 'jevEndpoint', type: 'string', description: 'Jev decisions endpoint (experimental)', restart: true },
+  { key: 'jevModel', section: 'intentGate', field: 'jevModel', type: 'string', description: 'Jev model name (experimental)', restart: true },
+  { key: 'jevApiKeyEnv', section: 'intentGate', field: 'jevApiKeyEnv', type: 'string', description: 'Env var name holding the Jev API key', restart: true },
   { key: 'delegateCategoryChains', section: 'delegate', field: 'categoryChains', type: 'string', description: 'JSON map of category → ordered [{provider, model, reasoningEffort?}] rungs; replaces the category chain wholesale' },
   { key: 'delegateAgentChains', section: 'delegate', field: 'agentChains', type: 'string', description: 'JSON map of curated agent → ordered [{provider, model, reasoningEffort?}] rungs; replaces that agent\'s chain wholesale (an agent with an empty chain inherits the caller route)' },
   { key: 'delegateDisabledCategories', section: 'delegate', field: 'disabledCategories', type: 'string', description: 'JSON array of category names to disable; disabled categories are hidden from the model and cannot be delegated to' },
   { key: 'supervisionMaxRetries', section: 'delegate', field: 'supervisionMaxRetries', type: 'number', description: 'Supervised continuation retry cap' },
   { key: 'supervisionInitialBackoffMs', section: 'delegate', field: 'supervisionInitialBackoffMs', type: 'number', description: 'Supervised retry initial backoff (ms)' },
   { key: 'supervisionMaxBackoffMs', section: 'delegate', field: 'supervisionMaxBackoffMs', type: 'number', description: 'Supervised retry backoff cap (ms)' },
-  { key: 'todoEnabled', section: 'todoDriver', field: 'enabled', type: 'boolean', description: 'Todo continuation driver switch' },
-  { key: 'todoMaxConsecutive', section: 'todoDriver', field: 'maxConsecutive', type: 'number', description: 'Auto-continuation cap without user input' },
-  { key: 'todoErrorRetryMax', section: 'todoDriver', field: 'errorRetryMax', type: 'number', description: 'Provider-error retry cap' },
-  { key: 'todoErrorBackoffBaseMs', section: 'todoDriver', field: 'errorBackoffBaseMs', type: 'number', description: 'Provider-error retry initial backoff (ms)' },
-  { key: 'todoErrorBackoffCapMs', section: 'todoDriver', field: 'errorBackoffCapMs', type: 'number', description: 'Provider-error retry backoff cap (ms)' },
-  { key: 'guardEnabled', section: 'contextGuard', field: 'enabled', type: 'boolean', description: 'Context pressure guard switch' },
-  { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (advisory)' },
-  { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (forced compaction)' },
-  { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)' },
-  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (experimental, default off; applies after restart)' },
+  { key: 'todoEnabled', section: 'todoDriver', field: 'enabled', type: 'boolean', description: 'Todo continuation driver switch', restart: true },
+  { key: 'todoMaxConsecutive', section: 'todoDriver', field: 'maxConsecutive', type: 'number', description: 'Auto-continuation cap without user input', restart: true },
+  { key: 'todoErrorRetryMax', section: 'todoDriver', field: 'errorRetryMax', type: 'number', description: 'Provider-error retry cap', restart: true },
+  { key: 'todoErrorBackoffBaseMs', section: 'todoDriver', field: 'errorBackoffBaseMs', type: 'number', description: 'Provider-error retry initial backoff (ms)', restart: true },
+  { key: 'todoErrorBackoffCapMs', section: 'todoDriver', field: 'errorBackoffCapMs', type: 'number', description: 'Provider-error retry backoff cap (ms)', restart: true },
+  { key: 'guardEnabled', section: 'contextGuard', field: 'enabled', type: 'boolean', description: 'Context pressure guard switch', restart: true },
+  { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (advisory)', restart: true },
+  { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (forced compaction)', restart: true },
+  { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)', restart: true },
+  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (experimental, default off; applies after restart)', restart: true },
   // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
   // session reads one expiry instead of N countdowns. These keys are policy, not
   // mechanism: the kernel never sees them, the lifecycle resolves them per call.
@@ -69,6 +72,12 @@ const FIELDS = [
   { key: 'notifySound', section: 'notify', field: 'sound', type: 'boolean', description: 'Play the platform notification sound where supported' },
   { key: 'notifyForeground', section: 'notify', field: 'foreground', type: { union: ['skip', 'always'] }, description: 'DeepSeek Harness window in the foreground: skip stays quiet (default), always notifies anyway' },
 ]
+
+/** Flat settings keys that only take effect after an app restart: their
+ * consuming modules snapshot them once at apply, so a volatile settings
+ * commit does not re-read them. Derived from FIELDS (declared once); the
+ * settings page keeps a client-side copy pinned to this list by test. */
+export const RESTART_KEYS = Object.freeze(FIELDS.filter(({ restart }) => restart).map(({ key }) => key))
 
 export { FIELDS }
 
