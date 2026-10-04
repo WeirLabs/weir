@@ -365,6 +365,17 @@ describe('client.settings-page chunk', () => {
     expect(controller.form.publishCount).toBe(1)
   })
 
+  it('save flow: an invalid draft refuses the save and raises no reminder', async () => {
+    const { controller, notifications, face } = await makeController()
+    // a plan item without op/run is an unparseable draft: the form refuses
+    // the save, and a refused save must not name the field in the reminder
+    controller.form.planItems = [{ field: 'todoEnabled' }]
+    await face.save()
+    expect(controller.restartReminder).toBe(null)
+    expect(notifications).toEqual(['bump'])
+    expect(controller.form.publishCount).toBe(1)
+  })
+
   it('save flow: a failed save raises no reminder but still bumps the bus after the settle', async () => {
     const { controller, notifications, face } = await makeController()
     controller.form.planItems = [{ field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } }]

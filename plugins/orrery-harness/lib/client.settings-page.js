@@ -203,12 +203,18 @@ window.__ModuleLoader__.load({
 					// restart-required keys raises the reminder (registry
 					// order) before the bound stores re-project.
 					save: async () => {
-						const touched = this.form.plan().map((item) => item.field);
+						const plan = this.form.plan();
+						const touched = plan.map((item) => item.field);
+						// The save only runs when the plan is executable (every
+						// item carries its write): the form refuses an empty or
+						// invalid plan, and a refused save must not raise the
+						// reminder.
+						const executable = plan.length > 0 && plan.every((item) => item.op !== undefined || item.run !== undefined);
 						try {
 							await this.form.save();
 						} finally {
 							this.deps.settingsBus.notify();
-							if (!this.form.shell().failed) {
+							if (executable && !this.form.shell().failed) {
 								const restartTouched = RESTART_FIELDS.filter((field) => touched.includes(field));
 								if (restartTouched.length > 0) this.restartReminder = restartTouched;
 							}
