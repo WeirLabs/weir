@@ -89,7 +89,7 @@ CHANGELOG.md                # 更新日志（入库）
 |---|---|---|---|
 | 静态检查 | `pnpm --filter orrery-harness run check` | tsc checkJs 零错误 | 改 `src/**` 后 |
 | 单元测试 | `pnpm --filter orrery-harness test` | 全部通过（node:test + 自研 expect 门面） | 改 `src/**`、`test/**` 后；每次提交前 |
-| 集成测试 | `pnpm --filter orrery-test-harness run test:integration` | 全部通过（写入 `ORRERY_IT_ROOT`，默认 POSIX `/Users/young/.orrery-it`、win32 `D:\\.orrery-it`） | 改预设组合、工具表面、续推/压缩/委派行为后；打版前必跑 |
+| 集成测试 | `pnpm --filter orrery-test-harness run test:integration` | 全部通过（写入 `ORRERY_IT_ROOT`，默认 `<仓库根>/.orrery/it-root`，lane 内自动解析为 lane 内路径；headless launcher 失效时用 `ORRERY_IT_DSH_EXEC` 走安装版 CLI） | 改预设组合、工具表面、续推/压缩/委派行为后；打版前必跑 |
 | 装置单测 | `pnpm --filter orrery-test-harness test` | 全部通过（`src/shell.js` 的平台 shell 契约） | 改 `plugins/orrery-test-harness/**` 后 |
 
 纪律：

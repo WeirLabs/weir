@@ -72,6 +72,7 @@
 
 ### Changed
 
+- **集成测试默认根工作区相对化**：未设 `ORRERY_IT_ROOT` 时写入根从机器绝对路径（旧：POSIX `/Users/young/.orrery-it`、win32 `D:\.orrery-it`）改为 `<仓库根>/.orrery/it-root`（从装置自身路径推导，worktree lane 内自动解析为 lane 内路径，lane worker 可在沙箱内直接跑集成测试）；显式 `ORRERY_IT_ROOT` 语义不变。本地脚本如依赖旧默认路径请改为显式设置。单元测试同步拆分：单进程 liveness 用例改注入替身，进程必需用例（跨进程竞态、SIGKILL 恢复、真实 `ps` 探测）移入能力门控文件，spawn 受限环境显式 skip。
 - **车道开启拒绝可行动化**：`worktree_open` 被 `MAX_ACTIVE` 拒绝时逐条列出活跃车道及状态并点名可 `worktree_land` 的车道；被 `SCOPE_OVERLAP` 拒绝时给出双方重叠 glob 明细与收窄/等待建议。错误码与拒绝条件不变。绑定 worker 的车道契约新增三条英文声明：不调用 goal 类工具（委派子代理无权）、阻塞与结论写入最终 report（不 `send_message` 父代理）、一切命令含测试以车道根为 `workdir` 运行。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
 - **编辑锁面板重做**：状态来自只读的结构化视图，不再从命令文本推断；圆点颜色按状态区分（未占用／编辑中或保留中／已停止或待确认／需要处理）。只在需要时给一个主动作，文件按短名列出且每行至多一个动作，「收回编辑权」需二次确认，会话 id、epoch、generation 与绝对路径收进「技术细节」。读取视图不写入对话，每个动作仍是一次显式命令。
 - **继续编辑一并确认**：面板的「继续编辑」依次执行 `/edit-lock resume` 与 `/edit-lock confirm --all`，一次点击恢复编辑并确认全部保留文件；命令行仍可逐个确认。
