@@ -36,7 +36,7 @@
 - 两个挂载点：`agent/pre-step` 瀑布——对新鲜用户提示词做关键词匹配并追加注入消息；`agent/request` 瀑布——`think` 类意图改写当次请求的 `reasoningEffort`。
 - 匹配前剔除代码围栏与引用区域，避免误触发。
 - 武装纪律（arming）：每意图每会话全量注入至多一次，重复命中降级为短提醒；新用户消息不影响已武装状态。
-- 分类器三模式（`src/intent-gate/classifier.js`）：regex 模式不建分类器（零成本短路）；llm 模式经 `ctx.llm.stream` sidecar（system 列意图枚举、maxTokens 16、temperature 0、路由默认会话路由可覆盖、收集 text chunk 取首个表中 id）；jev 模式经 HTTPS POST 决策适配器（密钥经环境变量名间接引用）。统一超时（AbortController）+ 会话级缓存（含负结果）+ fail-open。语义前端只在正则完全未命中时介入（短路），`think` 意图语义命中与关键词命中同效提档。
+- 分类器三模式（`src/intent-gate/classifier.js`）：regex 模式不建分类器（零成本短路）；llm 模式经 `ctx.llm.stream` sidecar（system 列意图枚举、maxTokens 16、temperature 0、路由默认会话路由可覆盖、收集 text chunk 取首个表中 id）；jev 模式经 HTTPS POST 决策适配器（密钥经环境变量名间接引用）。统一超时（AbortController）+ 会话级缓存（含负结果）+ fail-open。语义前端只在正则完全未命中时介入（短路），`think` 意图语义命中与关键词命中同效提档。路由覆盖**每次分类时惰性解析**（`resolveRouteOverride`）：rc.2 cordis 在 apply 批次结束后才激活 `reflect.provide` 的服务提供方，apply 期 `ctx.get('orrerySettings')` 永远缺席，快照必然为空——惰性解析让晚到的覆盖同样生效。
 
 ## 边界与失败语义
 
@@ -47,5 +47,5 @@
 
 ## 测试
 
-- 单元测试：`test/` 覆盖匹配（含代码区豁免）、武装/提醒降级、推理提档、配置热更、非用户 source 豁免（监督结算通知/自身通知/无 source 消息）与越过注入扫描真实提示词；`test/intent-classifier.test.js` 覆盖三模式分派、正则短路、语义命中、unknown-answer 拒绝、超时/故障 fail-open、缓存、jev 适配、挂载层注入与审计。
+- 单元测试：`test/` 覆盖匹配（含代码区豁免）、武装/提醒降级、推理提档、配置热更、非用户 source 豁免（监督结算通知/自身通知/无 source 消息）与越过注入扫描真实提示词；`test/intent-classifier.test.js` 覆盖三模式分派、正则短路、语义命中、unknown-answer 拒绝、超时/故障 fail-open、缓存、jev 适配、挂载层注入与审计，以及路由覆盖的惰性解析（覆盖晚到仍生效）；`test/intent-gate.test.js` 另有 apply 后服务才可见时覆盖仍到达分类器的插件级用例（rc.2 激活时序回归）。
 - 集成测试：`deepwork` 场景——关键词命中注入指令且 `orrery/intent-hit` 审计经 cordis 通道入 trace；`semantic` 场景——无关键词提示词经 llm 模式语义命中注入且 `orrery/intent-classify` 审计在场。
