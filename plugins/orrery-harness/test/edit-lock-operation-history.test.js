@@ -31,7 +31,7 @@ const prepared = () => ({
   binding: binding(), phase: 'prepared', fence: null, outcome: null, closeouts: [],
 })
 const image = () => ({
-  version: 3, managerIncarnation: 'manager-1',
+  version: 4, managerIncarnation: 'manager-1',
   sessions: [{ sessionId: 'alice', executionEpoch: 1, interrupted: false }],
   generations: [], locks: [], issuedRequests: [], recovery: [],
   // One retention row per known session, even before any batch exists.
@@ -156,17 +156,64 @@ test('opaque filesystem version strings survive guarded update history and recov
     await recovered.close()
   }
 })
-test('v3 operations and retention live in the same atomic snapshot and prepared creates own nothing', async t => {
+
+test('v3 history upgrades losslessly, stays fenced, and writes only v4', async t => {
+  const directory = await fixture(t)
+  const { admitMutation } = await import('../src/edit-lock/admission.js')
+  const state = image()
+  state.version = 3
+  const op = prepared()
+  op.phase = 'unknown'; op.outcome = { kind: 'unknown' }
+  op.fence = { kind: 'subtree', ancestor: '/workspace', basis: 'observed-ancestor' }
+  op.closeouts = [{ kind: 'abandoned-unknown', assertionId: 'legacy-assertion' }]
+  state.operations.push(op)
+  const payload = { version: 3, domainId: 'd', revision: 19, state }
+  const bytes = canonical({ payload, checksum: createHash('sha256').update(canonical(payload)).digest('hex') })
+  const file = join(directory, 'snapshot.json')
+  await writeFile(file, bytes)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  assert.deepEqual(store.snapshot(), { revision: 19, state: { ...state, version: 4 } })
+  assert.equal(await readFile(file, 'utf8'), bytes, 'opening alone does not rewrite history')
+  assert.throws(() => admitMutation(store.snapshot().state.operations, { kind: 'resource', resourceId: '/workspace/new' }), /unresolved publication fence/)
+  await record(store, store.snapshot().state)
+  await store.close()
+  const disk = JSON.parse(await readFile(file, 'utf8'))
+  assert.equal(disk.payload.version, 4)
+  assert.deepEqual(disk.payload.state.operations, state.operations)
+  const reopened = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  assert.deepEqual(reopened.snapshot().state.operations, state.operations)
+  await reopened.close()
+})
+
+test('legacy envelopes cannot smuggle bound closeouts and future versions fail closed', async t => {
+  const directory = await fixture(t)
+  const state = image()
+  const op = prepared()
+  op.phase = 'unknown'; op.outcome = { kind: 'unknown' }
+  op.fence = { kind: 'subtree', ancestor: '/workspace', basis: 'observed-ancestor' }
+  op.closeouts = [{ kind: 'abandoned-unknown', assertionId: 'forged', binding: {} }]
+  state.operations.push(op)
+  for (const version of [2, 3, 5]) {
+    const legacy = { ...state, version }
+    if (version === 2) delete legacy.holds
+    const payload = { version, domainId: 'd', revision: 1, state: legacy }
+    const bytes = canonical({ payload, checksum: createHash('sha256').update(canonical(payload)).digest('hex') })
+    await writeFile(join(directory, 'snapshot.json'), bytes)
+    await assert.rejects(openEditLockStore({ directory, domainId: 'd', mode: 'recover' }), version === 5 ? /supported: 2, 3, 4/ : /schema keys/)
+    assert.equal(await readFile(join(directory, 'snapshot.json'), 'utf8'), bytes)
+  }
+})
+test('v4 operations and retention live in the same atomic snapshot and prepared creates own nothing', async t => {
   const directory = await fixture(t)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'create' })
-  assert.equal(store.snapshot().state.version, 3)
+  assert.equal(store.snapshot().state.version, 4)
   assert.deepEqual(store.snapshot().state.operations, [])
   const state = image()
   state.operations.push(prepared(), { ...prepared(), operationId: 'op-2' })
   await record(store, state)
   await store.close()
   const disk = JSON.parse(await readFile(join(directory, 'snapshot.json'), 'utf8'))
-  assert.equal(disk.payload.version, 3)
+  assert.equal(disk.payload.version, 4)
   assert.equal(disk.payload.state.operations.length, 2)
   const reopened = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   assert.deepEqual(reopened.snapshot().state, state)
