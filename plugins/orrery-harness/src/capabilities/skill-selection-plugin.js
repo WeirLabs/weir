@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
+import { assertBuiltinSkillMigration } from './skill-builtin-migration.js'
 import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
 
 const mounted = new WeakMap()
@@ -40,9 +41,12 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             agentsHome: config.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'),
             customSkillDirs: config.customSkillDirs ?? [],
             bundledSkillDir: config.bundledSkillDir ?? process.env.DSH_BUNDLED_SKILL_DIR,
-            orreryBuiltinDir: fileURLToPath(new URL('../../skills/', import.meta.url)),
+            orreryBuiltinDir: config.orreryBuiltinDir ?? fileURLToPath(new URL('../../skills/', import.meta.url)),
           })
-          return discoverSkillInventory({ roots, machineId: config.machineId, previous })
+          const snapshot = await discoverSkillInventory({ roots, machineId: config.machineId, previous })
+          // First-run migration check (D-H 6): a non-equivalent builtin
+          // discovery fails the enumeration closed with a visible reason.
+          return assertBuiltinSkillMigration(snapshot)
         })
         const office = dependencies.office ?? createOfficeAdapter(ctx.skills, config.machineId)
         inventory = async (options, previous) => {
