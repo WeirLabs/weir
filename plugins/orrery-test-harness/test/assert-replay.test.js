@@ -45,6 +45,35 @@ describe('assert replay over recorded green-run traces', () => {
     }
   })
 
+
+  it('rehydrate audit and both phases belong to the same recorded session', () => {
+    const { dir, run } = loadRun('rehydrate')
+    const view = makeRunView(run, { ws: join(dir, 'ws'), check: () => {} })
+    const audit = readFileSync(join(dir, 'ws', '.orrery', 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const facts = audit.filter(row => row.session === run.sessionId)
+    const spawned = facts.filter(row => row.type === 'orrery/supervision/spawn').map(row => row.data.childId)
+    assert.equal(spawned.length, 2)
+    for (const childId of spawned) assert.ok(view.created.some(row => row.session === childId))
+    const resumed = facts.find(row => row.type === 'orrery/supervision/resume')
+    assert.ok(spawned.includes(resumed?.data.childId))
+    assert.ok(view.records2.some(row => row.kind === 'agent-created' && row.session === resumed.data.childId))
+    assert.ok(view.records2.some(row => row.kind === 'agent-created' && row.session === run.sessionId))
+  })
+
+  it('worktree ledger and audit agree with the recorded open and check events', () => {
+    const { dir, run } = loadRun('worktree')
+    const view = makeRunView(run, { ws: join(dir, 'ws'), check: () => {} })
+    const ledger = JSON.parse(readFileSync(join(dir, 'ws', '.orrery', 'worktrees', 'lanes.json'), 'utf8'))
+    const [lane] = ledger.lanes
+    const opened = view.events.find(row => row.type === 'orrery/worktree/open')
+    assert.equal(lane.ownerSession, opened.session)
+    assert.equal(lane.id, opened.data.lane)
+    assert.deepEqual(lane.base, opened.data.base)
+    const audit = readFileSync(join(dir, 'ws', '.orrery', 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.ok(audit.some(row => row.session === lane.ownerSession && row.type === opened.type && JSON.stringify(row.data) === JSON.stringify(opened.data)))
+    assert.equal(lane.history.at(-1).to, 'no-commits')
+  })
+
   for (const scenario of SCENARIOS) {
     it(`${scenario.id}: recorded checks replay to the original green conclusion`, () => {
       const { dir, run } = loadRun(scenario.id)

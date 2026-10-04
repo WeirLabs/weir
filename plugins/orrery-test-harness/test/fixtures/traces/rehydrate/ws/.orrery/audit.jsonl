@@ -1,0 +1,45 @@
+{"time":1791096233589,"session":"session-b7fd6125-cb31-4e0f-a705-22a8a25b7c77","type":"orrery/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791096234210,"session":"session-db627e7f-5d93-40f6-be89-505f43242348","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096234302,"session":"6a399275-201f-4ee4-8580-c7efee1cf6ac","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096234849,"session":"session-f0b5e228-4528-455a-ad7c-82787d75ca6f","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096235466,"session":"session-331c8c8b-d544-4bd0-993a-7567720fd41d","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096236066,"session":"session-4e8a688c-49fa-49e0-9861-e1f5f6b473a2","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096236140,"session":"c16a2f65-467a-44f7-a676-c173b90b085d","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096237752,"session":"session-62fd6bdb-c4f3-4047-8e95-a32d81d46fe7","type":"orrery/intent-classify","data":{"mode":"llm","hit":"deep-work"}}
+{"time":1791096237752,"session":"session-62fd6bdb-c4f3-4047-8e95-a32d81d46fe7","type":"orrery/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791096238311,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096238389,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision/spawn","data":{"kind":"spawn","childId":"02cd56ad-92a7-4b29-a9f7-fafc339281a8","name":"quick: GROUPED_CHILD_A","group":"probe-group"}}
+{"time":1791096238389,"session":"02cd56ad-92a7-4b29-a9f7-fafc339281a8","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096238414,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision/spawn","data":{"kind":"spawn","childId":"c41e3a67-cb4f-4104-b7d7-3d0f5ea52851","name":"quick: GROUPED_CHILD_B","group":"probe-group"}}
+{"time":1791096238414,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["02cd56ad-92a7-4b29-a9f7-fafc339281a8","c41e3a67-cb4f-4104-b7d7-3d0f5ea52851"]}}
+{"time":1791096238417,"session":"c41e3a67-cb4f-4104-b7d7-3d0f5ea52851","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096238430,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision","data":{"note":"child quick: GROUPED_CHILD_A: retry in 50ms"}}
+{"time":1791096238459,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision/settle","data":{"kind":"settle","childId":"c41e3a67-cb4f-4104-b7d7-3d0f5ea52851","status":"completed","report":"beta finished first try"}}
+{"time":1791096238516,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision/settle","data":{"kind":"settle","childId":"02cd56ad-92a7-4b29-a9f7-fafc339281a8","status":"completed","report":"alpha finished after one retry"}}
+{"time":1791096238517,"session":"session-aca75045-6e74-4c6e-9355-d465522afe73","type":"orrery/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
+{"time":1791096240016,"session":"session-0e1a943e-5efa-4d90-bbf9-cbed84a9aec2","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096240093,"session":"e023e15a-9540-4acd-a8c4-725634c3ca6c","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096240139,"session":"15c4e0ee-738c-4564-abdd-f9afecdb3b63","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096240686,"session":"session-e6bf9d09-fe4e-4ab5-96d2-543b2c176685","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096240772,"session":"a409c6bc-c345-4eee-b47a-51b934794963","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096242389,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096242468,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/supervision/spawn","data":{"kind":"spawn","childId":"60346a1f-808c-4df6-a82e-63e8df45e559","name":"alpha","group":"probe-group"}}
+{"time":1791096242468,"session":"60346a1f-808c-4df6-a82e-63e8df45e559","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096242490,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/supervision/spawn","data":{"kind":"spawn","childId":"61d285b2-80d6-4a9c-930a-c19195bb0a93","name":"beta","group":"probe-group"}}
+{"time":1791096242490,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["60346a1f-808c-4df6-a82e-63e8df45e559","61d285b2-80d6-4a9c-930a-c19195bb0a93"]}}
+{"time":1791096242493,"session":"61d285b2-80d6-4a9c-930a-c19195bb0a93","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096242528,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/supervision/settle","data":{"kind":"settle","childId":"61d285b2-80d6-4a9c-930a-c19195bb0a93","status":"completed","report":"beta finished for termination count"}}
+{"time":1791096243554,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/supervision/terminate","data":{"kind":"terminate","childId":"60346a1f-808c-4df6-a82e-63e8df45e559","reason":"Terminated by the main agent."}}
+{"time":1791096243554,"session":"session-3768b30f-1f09-4028-a971-e5b19dee12e8","type":"orrery/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
+{"time":1791096245153,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096245225,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/spawn","data":{"kind":"spawn","childId":"5126f22e-05a6-4325-9108-d54014e2e59b","name":"alpha","group":"probe-group"}}
+{"time":1791096245225,"session":"5126f22e-05a6-4325-9108-d54014e2e59b","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096245246,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/spawn","data":{"kind":"spawn","childId":"3fba744a-caed-4ab9-a91a-494765bb3a35","name":"beta","group":"probe-group"}}
+{"time":1791096245246,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["5126f22e-05a6-4325-9108-d54014e2e59b","3fba744a-caed-4ab9-a91a-494765bb3a35"]}}
+{"time":1791096245249,"session":"3fba744a-caed-4ab9-a91a-494765bb3a35","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096245282,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/settle","data":{"kind":"settle","childId":"3fba744a-caed-4ab9-a91a-494765bb3a35","status":"blocked","report":"rehydrate child stuck on missing payload"}}
+{"time":1791096245300,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/settle","data":{"kind":"settle","childId":"5126f22e-05a6-4325-9108-d54014e2e59b","status":"completed","report":"alpha rehydrate done"}}
+{"time":1791096246851,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791096246902,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/resume","data":{"kind":"resume","childId":"3fba744a-caed-4ab9-a91a-494765bb3a35"}}
+{"time":1791096246940,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/settle","data":{"kind":"settle","childId":"3fba744a-caed-4ab9-a91a-494765bb3a35","status":"completed","report":"beta resumed after restart"}}
+{"time":1791096246940,"session":"session-8ea597be-5ab2-4741-b86c-a46d7bdff36b","type":"orrery/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}

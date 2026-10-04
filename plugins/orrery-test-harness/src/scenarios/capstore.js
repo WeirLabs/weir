@@ -14,9 +14,10 @@ const prompt = 'capstore-probe'
 const HOME = join(IT_ROOT, 'home')
 
 function decide(options) {
-  const last = (options.messages ?? []).at(-1)
-  if (last?.role !== 'tool') return toolCallChunks('capstore_probe_host', {})
+  // Runtime-context injections can follow a tool result. Advance from the
+  // last tool result rather than repeating a commit based on the final role.
   const toolText = lastOfRole(options, 'tool')
+  if (!toolText) return toolCallChunks('capstore_probe_host', {})
   if (toolText.includes('CAPSTORE_PROBE host')) return toolCallChunks('capstore_probe_realm', {})
   return textChunks('capstore done')
 }
