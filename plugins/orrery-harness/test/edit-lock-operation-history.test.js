@@ -174,7 +174,9 @@ test('v3 history upgrades losslessly, stays fenced, and writes only v4', async t
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   assert.deepEqual(store.snapshot(), { revision: 19, state: { ...state, version: 4 } })
   assert.equal(await readFile(file, 'utf8'), bytes, 'opening alone does not rewrite history')
-  assert.throws(() => admitMutation(store.snapshot().state.operations, { kind: 'resource', resourceId: '/workspace/new' }), /unresolved publication fence/)
+  const candidate = { kind: /** @type {const} */ ('resources'), resourceIds: ['/workspace/new'] }
+  assert.doesNotThrow(() => admitMutation([], candidate), 'candidate is valid without unresolved history')
+  assert.throws(() => admitMutation(store.snapshot().state.operations, candidate), /unresolved publication fence: scope-continuity-unproved/)
   await record(store, store.snapshot().state)
   await store.close()
   const disk = JSON.parse(await readFile(file, 'utf8'))
