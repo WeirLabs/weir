@@ -1,0 +1,26 @@
+{
+  "label": "realm",
+  "present": true,
+  "name": "orrery-it",
+  "home": "/Users/young/.orrery-it/home",
+  "located": {
+    "supported": true,
+    "root": "/Users/young/.orrery-it/home/orrery/profiles/orrery-it/capabilities"
+  },
+  "sessionId": "session-6d6c8da5-5efd-4ee3-8b0b-eb0c7decfc9e",
+  "commit": "committed",
+  "read": {
+    "kind": "ok",
+    "revision": 2,
+    "payload": {
+      "probes": [
+        "host",
+        "realm"
+      ]
+    }
+  },
+  "recordPath": "/Users/young/.orrery-it/home/orrery/profiles/orrery-it/capabilities/sessions/session-6d6c8da5-5efd-4ee3-8b0b-eb0c7decfc9e/selection.json",
+  "dirFiles": [
+    "selection.json"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "scenario": "jobs-aware-todo",
+  "code": 0,
+  "stdout": "Waiting for the background job settlement notice.\n",
+  "stderr": "",
+  "sessionId": null
+}
