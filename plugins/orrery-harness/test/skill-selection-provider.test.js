@@ -49,7 +49,8 @@ test('mount performs no policy reads and unreadable policy fails closed without 
   const ctx = { skills: { registerProvider(create) { registered = create({ invalidate() {} }) } }, on() {} }
   createSkillSelectionPlugin({ readSelection: async () => { reads++; throw new Error('policy denied') }, inventory: async () => { throw new Error('must not scan') } })(ctx)
   expect(reads).toBe(0)
-  expect((await registered.list()).candidates).toEqual([])
+  expect((await registered.list()).candidates.every(item => !item.invocation.modelInvocable && !item.invocation.userInvocable)).toBe(true)
+  expect((await registered.list()).candidates).toHaveLength(3)
   expect(skillSelectionFor(ctx).status().error).toBe('policy denied')
 })
 

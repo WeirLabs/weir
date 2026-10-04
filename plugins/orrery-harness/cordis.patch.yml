@@ -1,6 +1,11 @@
 # Agent preset orrery: one `@deepseek-ai/dsh-agent-preset` declaration inserted
 # by this bundle's patch. The preset is edited through bundle updates; the Web
 # editor is read-only for preset rows.
+# Presets own discovery and the skill tool in every host composition.
+- id: skill-filesystem
+  disabled: true
+- id: tool-skill
+  disabled: true
 - insert:
     # Profile-level settings row: one-stop Orrery configuration page in the
     # Settings app (auto-generated from the declared schema) plus the
@@ -102,11 +107,6 @@
               # F5 拉取式后台：结算通知已内建为紧凑 + 边界注入 + 拉取式读取；
               # 这里仅限制连续唤醒次数，防止通知唤醒风暴。
               maxConsecutiveWakes: 8
-          - id: skill-filesystem
-            name: '@deepseek-ai/dsh-skill-filesystem'
-            config:
-              customSkillDirs:
-                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('orrery-harness/package.json')), 'skills')
           # Resolve the private entry without expanding the package export surface.
           - id: orrery-skill-selection
             name: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('orrery-harness/package.json')), 'src/capabilities/skill-selection-plugin.js')
