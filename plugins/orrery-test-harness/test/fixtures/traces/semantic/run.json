@@ -1,5 +1,6 @@
 {
   "scenario": "semantic",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "semantic mode armed, task done\n",
   "stderr": "",
