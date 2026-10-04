@@ -56,10 +56,12 @@ export function checkBuiltinSkillMigration(snapshot) {
   const names = candidates.map(candidate => candidate.name).sort()
   const missing = ORRERY_BUILTIN_SKILLS.filter(name => !names.includes(name))
   const unexpected = names.filter(name => !ORRERY_BUILTIN_SKILLS.includes(name))
-  if (missing.length || unexpected.length) {
+  const duplicates = ORRERY_BUILTIN_SKILLS.filter(name => names.indexOf(name) !== names.lastIndexOf(name))
+  if (missing.length || unexpected.length || duplicates.length) {
     const parts = []
     if (missing.length) parts.push(`missing skills: ${missing.join(', ')}`)
     if (unexpected.length) parts.push(`unexpected skills: ${unexpected.join(', ')}`)
+    if (duplicates.length) parts.push(`duplicate skills: ${duplicates.join(', ')}`)
     return { ok: false, reason: `${MIGRATION_FAILURE}: ${parts.join('; ')}` }
   }
   const mislabeled = candidates.filter(candidate => candidate.source !== ORRERY_BUILTIN_SOURCE || candidate.rank !== ORRERY_BUILTIN_RANK)

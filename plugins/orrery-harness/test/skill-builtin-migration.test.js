@@ -76,6 +76,14 @@ test('an unexpected extra skill or an unparsed entry fails the check', async t =
   expect(broken.reason).toContain('unparsed builtin entries: debugging')
 })
 
+test('a duplicated builtin name fails the check and names it', () => {
+  const root = { path: '/builtin', source: ORRERY_BUILTIN_SOURCE, scope: ORRERY_BUILTIN_SCOPE, rank: ORRERY_BUILTIN_RANK }
+  const candidates = [...ORRERY_BUILTIN_SKILLS, 'research'].map(name => ({ status: 'parsed', name, source: ORRERY_BUILTIN_SOURCE, rank: ORRERY_BUILTIN_RANK, root }))
+  const verdict = checkBuiltinSkillMigration({ roots: [{ root, complete: true }], candidates })
+  expect(verdict.ok).toBe(false)
+  expect(verdict.reason).toContain('duplicate skills: research')
+})
+
 test('divergent labels and an unreadable root fail with the divergence in the reason', () => {
   const root = { path: '/builtin', source: ORRERY_BUILTIN_SOURCE, scope: ORRERY_BUILTIN_SCOPE, rank: ORRERY_BUILTIN_RANK }
   const candidate = (name, source, rank) => ({ status: 'parsed', name, source, rank, root })
