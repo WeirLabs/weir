@@ -313,10 +313,28 @@ export function createLaneService(deps) {
     const lane = await repo.ledger.update((/** @type {any} */ ledger) => {
       const active = ledger.lanes.filter(isActive)
       if (active.length >= settingsNow.maxActive) {
-        throw new WorktreeError(WORKTREE_CODES.MAX_ACTIVE, `${active.length} lanes are active (limit ${settingsNow.maxActive}); land, clean up, or abandon one first`, { next: { waitFor: 'user', hint: 'land, clean up, or abandon an active lane' } })
+        const lanes = active.map((/** @type {any} */ lane) => ({
+          id: lane.id, state: lane.state,
+          hint: lane.state === 'landable'
+            ? `call worktree_land({ lane: "${lane.id}" })`
+            : `wait for lane ${lane.id} or call worktree_abandon({ lane: "${lane.id}" })`,
+        }))
+        const hint = (lanes.find((lane) => lane.state === 'landable') ?? lanes[0]).hint
+        throw new WorktreeError(WORKTREE_CODES.MAX_ACTIVE, `${active.length} lanes are active (limit ${settingsNow.maxActive}):\n${lanes.map((lane) => `${lane.id} · ${lane.state} · ${lane.hint}`).join('\n')}`, {
+          data: { lanes }, next: { waitFor: 'user', hint },
+        })
       }
       const clash = active.find((/** @type {any} */ other) => scopesOverlap(scope, other.scope ?? []))
-      if (clash) throw new WorktreeError(WORKTREE_CODES.SCOPE_OVERLAP, `scope ${scope.join(', ')} overlaps lane ${clash.id} (${clash.scope.join(', ')})`, { lane: clash.id })
+      if (clash) {
+        const overlapping = {
+          scope: scope.filter((glob) => scopesOverlap([glob], clash.scope)),
+          laneScope: clash.scope.filter((glob) => scopesOverlap(scope, [glob])),
+        }
+        const hint = `narrow the new scope to avoid ${overlapping.laneScope.join(', ')} or wait for lane ${clash.id} to land before opening it`
+        throw new WorktreeError(WORKTREE_CODES.SCOPE_OVERLAP, `scope ${overlapping.scope.join(', ')} overlaps lane ${clash.id} (${overlapping.laneScope.join(', ')}); ${hint}`, {
+          lane: clash.id, data: { overlapping }, next: { waitFor: 'user', hint },
+        })
+      }
       const seq = ledger.seq + 1
       const id = laneIdFor(args.title, seq)
       const record = {
