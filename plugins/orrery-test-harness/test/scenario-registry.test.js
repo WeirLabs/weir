@@ -14,6 +14,7 @@ EXPECTED_ORDER.push('editlock-stop-predispatch', 'editlock-stop-staged', 'editlo
 EXPECTED_ORDER.push('jobs-aware-todo')
 EXPECTED_ORDER.push('editlock-auto-resume', 'editlock-auto-resume-off')
 EXPECTED_ORDER.push('skill-composition-off', 'skill-composition-leak', 'skill-composition-host', 'skill-composition-office', 'skill-composition-migration')
+EXPECTED_ORDER.push('apply-transaction')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

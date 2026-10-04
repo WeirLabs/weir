@@ -9,6 +9,7 @@
     "./mock-llm": "./src/mock-llm.js",
     "./event-tap": "./src/event-tap.js",
     "./shell": "./src/shell.js",
+    "./apply-transaction-probe": "./src/apply-transaction-probe.js",
     "./capstore-probe": "./src/capstore-probe.js",
     "./skill-composition-probe": "./src/skill-composition-probe.js",
     "./skill-selection": "./src/skill-selection.js"

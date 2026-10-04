@@ -76,6 +76,7 @@ const PRE_MIGRATION_KEYS = [
   'lastTool',
   // capstore scenario observation (capability-store probe tools advertised)
   'capstoreToolsSeen',
+  'applyTxProbeSeen',
   // jobs-aware todo continuation observations
   'jobsAwareParent',
   'jobsAwareChild',
