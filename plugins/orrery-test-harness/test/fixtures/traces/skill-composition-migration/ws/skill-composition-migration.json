@@ -1,0 +1,22 @@
+{
+  "mode": "MIGRATION",
+  "roster": {
+    "id": "orrery-it-selection"
+  },
+  "created": "orrery-it-selection",
+  "migration": {
+    "inventoryError": "Orrery builtin skill migration check failed: missing skills: debugging",
+    "live": {
+      "all": [
+        "office-docx",
+        "office-pptx",
+        "office-xlsx"
+      ],
+      "model": []
+    },
+    "status": {
+      "error": "Orrery builtin skill migration check failed: missing skills: debugging",
+      "conflicts": []
+    }
+  }
+}

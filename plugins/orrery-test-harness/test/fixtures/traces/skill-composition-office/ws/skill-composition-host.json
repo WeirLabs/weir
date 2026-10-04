@@ -8,263 +8,370 @@
     {
       "name": "selected-fixture",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "custom"
     },
     {
       "name": "unselected-fixture",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "custom"
     },
     {
       "name": "debugging",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "deep-work",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "git-master",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "programming",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "refactor",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "remove-ai-slops",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "remove-deadcode",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "research",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "review-work",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "work-with-pr",
       "provider": "filesystem",
-      "source": "custom"
+      "source": "custom",
+      "rank": 300,
+      "scope": "orrery-builtin"
     },
     {
       "name": "ask-matt",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "claude-handoff",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "code-review",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "codebase-design",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "diagnosing-bugs",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "domain-modeling",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "find-skills",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "game-design-psychology",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "git-guardrails-claude-code",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "grill-me",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "grill-with-docs",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "grilling",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "handoff",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "implement",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "implement-spec",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "improve-codebase-architecture",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "loop-me",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "migrate-to-shoehorn",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": null
     },
     {
       "name": "prototype",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "research",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "resolving-merge-conflicts",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "retro",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "scaffold-exercises",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "setup-matt-pocock-skills",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "setup-pre-commit",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "setup-ts-deep-modules",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "tdd",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "teach",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "to-questionnaire",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "to-spec",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "to-tickets",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "triage",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "wait-what",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "wayfinder",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "wizard",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "writing-beats",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "writing-for-agents",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "writing-fragments",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     },
     {
       "name": "writing-shape",
       "provider": "filesystem",
-      "source": "user-agents"
+      "source": "user-agents",
+      "rank": 500,
+      "scope": "user"
     }
   ],
+  "builtinMigration": {
+    "ok": true
+  },
   "empty": {
     "all": [
       {
@@ -1413,7 +1520,7 @@
       "provider": "orrery-selected",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/ws/skill-roots/selected-fixture"
+        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/ws/skill-roots/selected-fixture"
       },
       "content": "CONTENT_selected-fixture"
     },
@@ -1422,7 +1529,7 @@
       "provider": "filesystem",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/ws/skill-roots/unselected-fixture"
+        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/ws/skill-roots/unselected-fixture"
       },
       "content": "CONTENT_unselected-fixture"
     }

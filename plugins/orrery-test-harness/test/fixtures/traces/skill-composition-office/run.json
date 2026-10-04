@@ -1,8 +1,8 @@
 {
   "scenario": "skill-composition-office",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/home",
   "code": 0,
   "stdout": "composition verified\n",
-  "stderr": "(node:39500) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.\n(Use `DeepSeek Harness --trace-deprecation ...` to show where the warning was created)\n",
+  "stderr": "",
   "sessionId": null
 }

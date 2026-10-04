@@ -1,5 +1,5 @@
 {
-  "scenario": "skill-composition-host",
+  "scenario": "skill-composition-migration",
   "home": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/home",
   "code": 0,
   "stdout": "composition verified\n",

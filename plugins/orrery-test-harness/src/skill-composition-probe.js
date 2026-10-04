@@ -1,9 +1,11 @@
 // Dev-only live registry probe. Reports are recorded independently of truncated tool output.
-import { mkdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import * as selectionPlugin from '../../orrery-harness/src/capabilities/skill-selection-plugin.js'
+import { createSkillIdentity } from '../../orrery-harness/src/capabilities/skill-identity.js'
+import { checkBuiltinSkillMigration } from '../../orrery-harness/src/capabilities/skill-builtin-migration.js'
 import { IT_ROOT } from './mock-kit.js'
 
 const mounted = new Map()
@@ -11,7 +13,7 @@ export const inject = ['tools', 'skills', 'agents']
 export const name = 'orrery-it-skill-composition'
 export function apply(ctx, config = {}) {
   if (config.selection) {
-    selectionPlugin.apply(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(IT_ROOT, 'ws', 'skill-roots')] })
+    selectionPlugin.apply(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(IT_ROOT, 'ws', 'skill-roots')], orreryBuiltinDir: config.orreryBuiltinDir })
     mounted.set(config.selection, selectionPlugin.skillSelectionFor(ctx))
     return
   }
@@ -33,8 +35,19 @@ export function apply(ctx, config = {}) {
       const report = { mode }
       let handle, unregister, lease
       try {
+        // MIGRATION: the builtin root is a corrupted copy (one skill dropped),
+        // so the first-run migration check must fail closed with a visible
+        // reason while the preset itself stays mountable.
+        let selectionConfig = { selection: preset }
+        if (mode === 'MIGRATION') {
+          const corrupted = join(IT_ROOT, 'ws', 'builtin-corrupted')
+          await rm(corrupted, { recursive: true, force: true })
+          await cp(fileURLToPath(new URL('../../orrery-harness/skills/', import.meta.url)), corrupted, { recursive: true })
+          await rm(join(corrupted, 'debugging'), { recursive: true })
+          selectionConfig = { selection: preset, orreryBuiltinDir: corrupted }
+        }
         const plugins = [
-          { id: 'orrery-skill-selection', name: fileURLToPath(import.meta.url), config: { selection: preset } },
+          { id: 'orrery-skill-selection', name: fileURLToPath(import.meta.url), config: selectionConfig },
           { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
         ]
         if (mode === 'LEAK') plugins.push({ id: 'skill-filesystem', name: '@deepseek-ai/dsh-skill-filesystem', config: { customSkillDirs: [root] } })
@@ -46,8 +59,21 @@ export function apply(ctx, config = {}) {
         report.created = registry.composedPreset(agent.ctx)
         const lookup = { cwd: agent.session.header.cwd, scope: agent }
         const selection = mounted.get(preset)
+        if (mode === 'MIGRATION') {
+          report.migration = {}
+          try { await selection.inventory(lookup) }
+          catch (error) { report.migration.inventoryError = error.message }
+          // Force provider enumeration with a valid fixture selection: the
+          // corrupted builtin root must fail the whole provider closed.
+          const fixtureIdentity = createSkillIdentity({ scope: 'custom', root: await realpath(root), name: 'selected-fixture', opaqueId: 'orrery-it-probe' })
+          selection.provider.acceptSelection([fixtureIdentity], lookup)
+          const skills = await ctx.skills.list(lookup)
+          report.migration.live = { all: skills.map(s => s.name), model: skills.filter(s => s.invocation.modelInvocable).map(s => s.name) }
+          report.migration.status = selection.provider.status(lookup)
+        } else {
         const inventory = await selection.inventory(lookup)
-        report.inventory = inventory.candidates.map(c => ({ name: c.name, provider: c.provider, source: c.source }))
+        report.inventory = inventory.candidates.map(c => ({ name: c.name, provider: c.provider, source: c.source, rank: c.rank, scope: c.identity?.scope ?? null }))
+        report.builtinMigration = checkBuiltinSkillMigration(inventory)
         const chosen = office ? 'office-docx' : 'selected-fixture'
         const rejected = office ? 'office-pptx' : 'unselected-fixture'
         const identity = inventory.candidates.find(c => c.name === chosen)?.identity
@@ -77,6 +103,7 @@ export function apply(ctx, config = {}) {
         report.cold = await observe({ cwd: lookup.cwd, scope: lease.key })
         selection.provider.acceptSelection([], lookup)
         report.revoked = await observe(lookup)
+        }
       } catch (error) { report.error = error.stack ?? String(error) }
       finally {
         await lease?.[Symbol.asyncDispose]()
