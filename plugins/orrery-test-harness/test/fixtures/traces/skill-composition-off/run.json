@@ -1,0 +1,8 @@
+{
+  "scenario": "skill-composition-off",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/home",
+  "code": 0,
+  "stdout": "composition verified\n",
+  "stderr": "",
+  "sessionId": null
+}
