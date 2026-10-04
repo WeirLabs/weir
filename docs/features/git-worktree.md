@@ -96,6 +96,9 @@
 ## 边界与失败语义
 
 - 前置条件不满足时 `worktree_open` 不创建任何东西：`NOT_A_REPO`、`GIT_TOO_OLD`（需要 git ≥ 2.38，`merge-tree --write-tree` 的门槛；低于它整个能力不可用而不是降级跳过预检）、`DETACHED_HEAD`、`MAX_ACTIVE`、`SCOPE_OVERLAP`、`BRANCH_EXISTS`、`ROOT_OUTSIDE_REPO`、`WORKTREE_DISABLED`。
+- `worktree_open` 的两类容量/范围拒绝保持原错误码与判定条件，结构化错误仍为 `{ code, message, lane?, next?, data? }`：
+  - `MAX_ACTIVE`：`message` 逐条列出活跃车道的 `id · state · 建议`；`data.lanes` 为 `{ id, state, hint }[]`。`next` 为 `{ waitFor: 'user', hint }`，优先点名一条 `landable` 车道并建议 `worktree_land`；没有可合并车道时点名一条活跃车道，建议等待或 `worktree_abandon`。每条非 `landable` 车道的 `hint` 也提供等待/放弃方向。
+  - `SCOPE_OVERLAP`：`lane` 为冲突车道 id，`data.overlapping` 为 `{ scope: string[], laneScope: string[] }`，分别只列新范围与已有车道范围中参与重叠的 glob（沿用保守重叠判定，不列不相关 glob）。`message` 与 `next.hint` 建议收窄新范围以避开冲突 glob，或等待该车道落地再开；`next.waitFor` 为 `user`。
 - `worktree_land` 的拒绝：`NOT_LANDABLE`、`STALE_LANDABLE`、`BASE_MOVED`、`MAIN_STAGED`、`MAIN_DIRTY_OVERLAP`；冲突不弹卡片，车道转 `conflicted` 并列出冲突路径；`git merge` 意外失败时执行 `merge --abort`，主仓保持原状。
 - setup 被沙箱拒绝（如包管理器要写全局缓存）时车道进入 `setup-failed`，原因写明 "sandbox denied" 与 `/worktree setup <lane>` / `--skip`；不在插件里另造提权流程。无 shell 执行器的组合（win32 无 bash 行）报 `SHELL_UNAVAILABLE`。
 - 对账：账本里有、git 里没有的车道转 `abandoned`（原因 `missing`）；车道根下 git 里有、账本里没有的 worktree 只报告，绝不删除。
@@ -105,4 +108,5 @@
 ## 测试
 
 - 单元测试：`test/worktree-core.test.js`（状态机全转移与非法转移、规则推导、对账、账本原子写/并发/陈旧锁/损坏、exclude 幂等、git 封装从不 force、真仓库 add/precheck/merge/remove 与冲突不动主仓）；`test/worktree-pkgmgr.test.js`（推导 setup 解析：系统命中与 Node 目录注入、系统有管理器但无 Node 时落到捆绑、捆绑 pnpm 经捆绑 node 执行 pnpm.mjs、npm 仅在捆绑 bin 含 npm 时、yarn/bun 无捆绑、双缺诊断、含空格路径引号、frozen-lockfile 语义，以及对本机捆绑运行时的真实执行校验）；`test/worktree-lanes.test.js`（真 git 仓库上的服务：开车道与各前置拒绝、后台 setup 成功/失败/沙箱拒绝/关闭、单写入者绑定与回滚、结算到 `dirty`/`no-commits`/`landable`、新提交使结论失效、验证顺序执行/首败即停/改写即败/`VERIFICATION_DISABLED`、批准合并与模板消息、四种不合并路径、冲突不询问、`BASE_MOVED`/`MAIN_STAGED`/`MAIN_DIRTY_OVERLAP`、卡片期间主仓变化不合并、孤儿卡片转 `declined`、用户命令合并免卡片、收尾三模式与 scratch 同步、删除受阻不强删、放弃的未合并提交提示与取消、手删车道转 missing、未托管 worktree 不动、视图与合法操作、损坏账本显式重建、验证建议只建议不写入）；`test/worktree-surfaces.test.js`（车道守卫判定表含命令位置与包装命令、Worktree 模式判定、投影折叠与引用稳定、工具 schema/meta/主代理限定/错误渲染、命令映射、spawn-adapter 车道守卫挂载与两条通道的失败拆除、delegate 绑定/标签/契约/结算/回滚/`WORKTREE_REQUIRED`/`WORKTREE_DISABLED`、主代理模式守卫只作用于主代理自身调用）；`test/audit.test.js`（审计根目录锚定）；`test/settings-fields.test.js` 与 `test/client-settings-page.test.js`（四个设置键的 FIELDS ↔ patch 行 ↔ 设置页对齐）。
+- 契约指引回归：`src/worktree/contract-guidance.test.js`（受 lane 写范围约束就近放置；显式运行 `node --test plugins/orrery-harness/src/worktree/contract-guidance.test.js`）：两类开启拒绝的结构化载荷、全部活跃车道及无 `landable` 回退、拒绝不改变账本或创建 worktree、写入契约三句指引与只读契约逐字不变。
 - 集成测试：见 `plugins/orrery-test-harness` 的 `worktree` 场景（端到端：开车道 → 委派 → 自动检查 → 批准合并 → 收尾，以及 Worktree 模式写入被拒）。
