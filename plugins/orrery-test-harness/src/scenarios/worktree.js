@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { IT_ROOT, lastOfRole, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { assertContained, ensureWorkspaceRepo } from '../git-repo.js'
 
 const id = 'worktree'
 const prompt = 'worktree-probe'
@@ -55,19 +56,10 @@ function observe(obs) {
  */
 async function run(ctx) {
   const git = (...args) => execFileSync('git', args, { cwd: WS, stdio: 'ignore' })
-  const isRepo = () => {
-    try {
-      execFileSync('git', ['rev-parse', '--git-dir'], { cwd: WS, stdio: 'ignore' })
-      return true
-    } catch {
-      return false
-    }
-  }
-  if (!isRepo()) {
-    git('init', '-q', '-b', 'main')
-    git('config', 'user.email', 'it@example.com')
-    git('config', 'user.name', 'IT')
-  }
+  // WS must be its own repository root: the default IT root lives inside the
+  // session repository, and a plain rev-parse probe resolves the ENCLOSING repo
+  // through parent-directory traversal (2026-10-05 "fixture" pollution).
+  ensureWorkspaceRepo(WS)
   // A workspace reused from an earlier run keeps that run's lanes: prune the
   // worktrees and start from an empty ledger so the lane ids are deterministic.
   try {
@@ -79,6 +71,8 @@ async function run(ctx) {
     // no lanes yet
   }
   rmSync(join(WS, '.orrery', 'worktrees'), { recursive: true, force: true })
+  // Belt and braces: never stage/commit anywhere but the WS repo itself.
+  assertContained(WS)
   git('add', '-A')
   git('commit', '-qm', 'fixture', '--allow-empty')
   const trace = join(ctx.IT_ROOT, `trace-${id}.jsonl`)
