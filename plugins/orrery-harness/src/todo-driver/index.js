@@ -50,6 +50,16 @@ function apply(ctx, config = {}) {
     return []
   }
 
+  // Host-plane jobs are scoped to their owning session, not descendant agents.
+  function jobsRunningOf(session) {
+    try {
+      return ctx.get('jobs')?.list(session.id).some((job) => job.status === 'running' || job.status === 'stopping') ?? false
+    } catch (error) {
+      ctx.logger?.warn?.(`todo-driver: could not list jobs for "${session.id}": ${error?.message ?? error}`)
+      return false
+    }
+  }
+
   function cancelTimer(sessionId) {
     const handle = timers.get(sessionId)
     if (handle !== undefined) {
@@ -70,6 +80,7 @@ function apply(ctx, config = {}) {
       const remaining = remainingTodos(session)
       if (remaining.length === 0) return
       if (!stateOf(session.id).armed) return
+      if (jobsRunningOf(agent.session)) return
       if (editLockBlocks(agent)) return
       injectOrWarn(ctx, `todo-driver: could not queue continuation for "${session.id}"`, () => {
         agent.followup(userTextMessage(renderContinuation(remaining), 'orrery-todo-driver'))
@@ -87,6 +98,7 @@ function apply(ctx, config = {}) {
     const remaining = remainingTodos(agent.session)
     const decision = state.decideAtTurnStopping({
       todosRemain: remaining.length > 0,
+      jobsRunning: jobsRunningOf(agent.session),
       signal,
       error: providerErrorPending.get(agent.id),
     })

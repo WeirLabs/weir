@@ -76,6 +76,10 @@ const PRE_MIGRATION_KEYS = [
   'lastTool',
   // capstore scenario observation (capability-store probe tools advertised)
   'capstoreToolsSeen',
+  // jobs-aware todo continuation observations
+  'jobsAwareParent',
+  'jobsAwareChild',
+  'settlementSeen',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']
