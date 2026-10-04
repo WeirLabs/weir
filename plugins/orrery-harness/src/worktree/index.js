@@ -168,8 +168,10 @@ function apply(ctx, config = {}) {
       fetch: async (/** @type {any} */ request) => {
         const { session, sessionId } = await sessionOf(request)
         if (!sessionId) return reply({ ok: false, error: { code: 'orrery-worktree/invalid', message: 'body needs { sessionId }' } }, 400)
-        if (!settingsNow().enabled) return reply({ ok: true, value: { available: false, enabled: false, mode: false, error: { code: 'WORKTREE_DISABLED', message: 'worktree lanes are disabled' } } })
-        if (!session) return reply({ ok: true, value: { available: false, enabled: true, mode: false, error: { code: 'SESSION_NOT_LIVE', message: 'open the session to load its lanes' } } })
+        // Degraded shapes carry the same array fields as the full view so the
+        // panel's narrowing and summaries never see a lanes-less object.
+        if (!settingsNow().enabled) return reply({ ok: true, value: { available: false, enabled: false, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'WORKTREE_DISABLED', message: 'worktree lanes are disabled' } } })
+        if (!session) return reply({ ok: true, value: { available: false, enabled: true, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'SESSION_NOT_LIVE', message: 'open the session to load its lanes' } } })
         return reply({ ok: true, value: { enabled: true, ...(await service.view(session)) } })
       },
     })
