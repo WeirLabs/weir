@@ -148,7 +148,7 @@ export function createContinuationState(options = {}) {
     /**
      * Decide at the turn-stopping boundary (the sanctioned continuation point:
      * a listener steers and the machine runs another step).
-     * @param {{ todosRemain: boolean, signal?: { aborted?: boolean, reason?: any },
+     * @param {{ todosRemain: boolean, jobsRunning?: boolean, signal?: { aborted?: boolean, reason?: any },
      *   error?: any }} input
      * @returns {{ kind: 'continue' } | { kind: 'none' }}
      */
@@ -167,6 +167,8 @@ export function createContinuationState(options = {}) {
       // A pre-classified non-provider error does not suppress the steer — the
       // adapter's side channel only ever holds provider errors.
       if (!input.todosRemain) return { kind: 'none' }
+      // Job settlement owns the wake-up; waiting must not spend or reset the cap.
+      if (input.jobsRunning) return { kind: 'none' }
       if (state.consecutive >= opts.maxConsecutive) return { kind: 'none' }
       state.consecutive += 1
       return { kind: 'continue' }

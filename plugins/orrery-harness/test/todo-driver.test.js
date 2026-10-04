@@ -108,6 +108,26 @@ describe('decideAtTurnStopping', () => {
     expect(state.consecutive).toBe(1)
   })
 
+  it('makes waiting for jobs invisible to the cap and resumes at the old count', () => {
+    const state = createContinuationState({ maxConsecutive: 2 })
+    expect(state.decideAtTurnStopping({ todosRemain: true, jobsRunning: true }).kind).toBe('none')
+    expect(state.consecutive).toBe(0)
+    expect(state.decideAtTurnStopping({ todosRemain: true, jobsRunning: false }).kind).toBe('continue')
+    for (let i = 0; i < 3; i++) {
+      expect(state.decideAtTurnStopping({ todosRemain: true, jobsRunning: true }).kind).toBe('none')
+      expect(state.consecutive).toBe(1)
+    }
+    expect(state.decideAtTurnStopping({ todosRemain: true, jobsRunning: false }).kind).toBe('continue')
+    expect(state.consecutive).toBe(2)
+    expect(state.decideAtTurnStopping({ todosRemain: true, jobsRunning: false }).kind).toBe('none')
+  })
+
+  it('still disarms user interrupts while jobs are running', () => {
+    const state = createContinuationState()
+    expect(state.decideAtTurnStopping({ todosRemain: true, jobsRunning: true, signal: abortedSignal('user') }).kind).toBe('none')
+    expect(state.armed).toBe(false)
+    expect(state.consecutive).toBe(0)
+  })
   it('stays quiet when no todos remain', () => {
     const state = createContinuationState()
     expect(state.decideAtTurnStopping({ todosRemain: false, signal: notAbortedSignal() }).kind).toBe('none')
@@ -316,6 +336,75 @@ describe('todo-driver plugin', () => {
     handlers['agent/turn-stopping']({ agent, turn: 2, signal: notAbortedSignal() })
     expect(steers).toHaveLength(1)
   })
+
+  for (const status of ['running', 'stopping']) {
+    it(`suppresses ${status} jobs owned by session.id without spending the cap`, () => {
+      const { ctx, handlers, agent, steers } = setup()
+      agent.id = 'different-agent-id'
+      const owners = []
+      let jobs = [{ status }]
+      ctx.get = (name) => name === 'jobs' ? { list: (owner) => { owners.push(owner); return jobs } } : undefined
+      for (let i = 0; i < 10; i++) handlers['agent/turn-stopping']({ agent })
+      expect(steers).toHaveLength(0)
+      expect(owners.every((owner) => owner === 's1')).toBe(true)
+      jobs = [{ status: 'completed' }, { status: 'failed' }, { status: 'killed' }]
+      for (let i = 0; i < 9; i++) handlers['agent/turn-stopping']({ agent })
+      expect(steers).toHaveLength(8)
+    })
+  }
+
+  it('fails open with a warning when the jobs lookup throws', () => {
+    const { ctx, handlers, agent, steers } = setup()
+    const warnings = []
+    ctx.logger.warn = (message) => warnings.push(message)
+    ctx.get = (name) => name === 'jobs' ? { list: () => { throw new Error('registry unavailable') } } : undefined
+    handlers['agent/turn-stopping']({ agent })
+    expect(steers).toHaveLength(1)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('registry unavailable')
+  })
+
+  for (const status of ['running', 'stopping']) {
+    it(`rechecks ${status} jobs at retry fire without rescheduling or changing the error streak`, () => {
+      const { ctx, handlers, session, followups, dispose } = setup()
+      const timers = []
+      let jobs = []
+      ctx.get = (name) => name === 'jobs' ? { list: () => jobs } : undefined
+      ctx.setTimeout = (fire, delay) => { timers.push({ fire, delay }); return timers.length }
+      const fail = () => handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'error', error: { status: 503 } } } })
+      fail()
+      expect(timers[0].delay).toBe(30_000)
+      jobs = [{ status }]
+      timers[0].fire()
+      expect(followups).toHaveLength(0)
+      expect(timers).toHaveLength(1)
+      // The next durable error advances from streak 1 to 2, proving fire
+      // neither incremented nor reset the existing streak.
+      fail()
+      expect(timers[1].delay).toBe(60_000)
+      jobs = []
+      timers[1].fire()
+      expect(followups).toHaveLength(1)
+      expect(timers).toHaveLength(2)
+      dispose()
+    })
+  }
+
+  for (const mode of ['absent', 'throws']) {
+    it(`fails open at retry fire when jobs service ${mode}`, () => {
+      const { ctx, handlers, session, followups, dispose } = setup()
+      let fire
+      const warnings = []
+      ctx.logger.warn = (message) => warnings.push(message)
+      ctx.setTimeout = (callback) => { fire = callback; return 1 }
+      ctx.get = (name) => name === 'jobs' && mode === 'throws' ? { list: () => { throw new Error('jobs failure') } } : undefined
+      handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'error', error: { status: 503 } } } })
+      fire()
+      expect(followups).toHaveLength(1)
+      expect(warnings).toHaveLength(mode === 'throws' ? 1 : 0)
+      dispose()
+    })
+  }
 
   // Plugin-level behavior assertion: the driver's own injected continuation
   // never rearms it. The full injection-source exemption matrix lives in
