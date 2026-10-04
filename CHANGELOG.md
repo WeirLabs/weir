@@ -41,6 +41,7 @@
 - **意图语义分类器路由覆盖失效（rc.2 回归）**：rc.2 的 cordis 在 apply 批次结束后才激活 `reflect.provide` 的服务提供方，意图门在 apply 期对 `orrerySettings` 的快照必然为空，llm 模式的分类器路由覆盖静默失效（报 `no classifier route` 并按未命中降级）。改为每次分类时惰性解析覆盖（`resolveRouteOverride`），晚到的设置覆盖同样生效；模式/超时/jev 键仍是重启生效的 apply 期快照，不变。详见 [意图门特性文档](docs/features/intent-gate.md)。
 
 - **Worktree 决策卡排版塌缩**：合并/收尾/放弃卡片的 detail 此前用单个换行连接事实行，被 GFM 软换行折叠成一段（车道/分支/改动/预检/验证全部挤在一行）；现改为列表结构，每条事实独立成行，提交列表为缩进子列表，完整 diff 指引为斜体行。信息项与选项集合不变。
+- **Worktree 合并卡文案收紧**：合并选项的描述不再重复完整分支名（长描述会撑出选项行，分支已在卡片 detail 中），detail 的车道项不再重复车道标题（标题已在卡片问题行）。
 - **todo 续推感知后台任务**：会话持有 `running` / `stopping` 后台 job 时不再反复注入续推消息或消耗连续续推额度，改由结算通知唤醒；供应商错误延迟重试在触发时同样重查并跳过，不重排、不改变失败计数。jobs 服务缺席或查询失败时维持原有行为。详见 [todo 续推](docs/features/todo-continuation.md)。
 - **编辑锁被撤权会话不再提供“继续编辑”**：管理员恢复（ADMIN OVERRIDE）永久撤权的会话此前在面板上仍渲染为普通“已停止”并给出“继续编辑”按钮，点击必然以原始内核错误 `owner revoked by administrative recovery` 失败，且每次失败前还会持久签发一张无用 receipt。现在权威状态标注每会话 `revoked` 标志，面板以独立的终态「编辑权已被永久撤销」呈现（无任何恢复动作，附原因说明），`resume` 与 receipt 签发在任何持久化之前拒绝。详见 [撤权后的会话呈现](docs/features/edit-lock.md#撤权后的会话呈现)。
 
