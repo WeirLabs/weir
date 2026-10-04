@@ -1,18 +1,14 @@
-// Edit Lock maintenance plane: profile-wide switch status and read-only
-// authority inspection, served from the SETTINGS row (wired like
-// src/lsp/admin.js, S19/S20) so the controls stay reachable when the edit-lock
-// manager is disabled, unavailable or poisoned. This module never opens a
-// runtime, never takes a reservation, registers no tools, and writes nothing:
-// the only mutation in the whole feature is the ordinary settings save of
-// `editLockEnabled` (existing persistence, applies after restart). Inspection
-// reads the committed snapshot bytes and validates them with the exact checks
-// a real recover runs (./snapshot.js); corruption is reported, never repaired.
+// Settings-plane maintenance remains reachable while enforcement is disabled.
+// Inspection is read-only; explicit offline ADMIN OVERRIDE uses its own durable
+// ledger and publisher reservation. No model tools or automatic repair.
 import { lstatSync, readdirSync, realpathSync, openSync, closeSync, fstatSync, readSync, constants } from 'node:fs'
 import { join, resolve, parse, relative, sep } from 'node:path'
 import { AUTHORITY_DIR } from './domains.js'
 import { reservationPathFor } from './reservation.js'
 import { parseSnapshot } from './snapshot.js'
 import { maintenanceState, summarizeAuthorityImage } from './inspect.js'
+import { recoverAuthority } from './admin-recovery.js'
+import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 
 const STATUS_PATH = '/api/orrery-edit-lock/maintenance/status'
 const INSPECT_PATH = '/api/orrery-edit-lock/maintenance/inspect'
@@ -240,12 +236,12 @@ export function maintenanceStatus(deps) {
 /**
  * @typedef {{ path: string, methods: string[], requestBody: 'buffered', fetch: (request: { json(): Promise<unknown> }) => Promise<Response> }} MaintenanceRoute
  * @typedef {{ fetch: { register(route: MaintenanceRoute): () => void } }} MaintenanceConnection
- * @typedef {{ connection?: MaintenanceConnection, get?: (name: 'connection') => MaintenanceConnection | undefined }} MaintenanceScope
+ * @typedef {{ connection?: MaintenanceConnection, get?: (name: 'connection') => MaintenanceConnection | undefined, emit?: (type: string, record: object) => unknown }} MaintenanceScope
  */
 /**
- * Register the read-only maintenance endpoints on an injected scope carrying
- * `connection` (S20). Both handlers are total: a status or inspection error
- * becomes a structured payload, never an exception into the settings row.
+ * Register inspection and explicit administrator recovery on the authenticated
+ * settings-plane connection (S20). Handler errors become structured payloads;
+ * recovery errors never expose filesystem paths or claim rollback.
  * @param {MaintenanceScope} scope @param {{ savedEnabled: () => boolean, evidence: ReturnType<typeof createEditLockEvidence>, candidateRoots: () => string[] }} deps
  * @returns {() => void} disposer
  */
@@ -283,6 +279,31 @@ export function registerEditLockMaintenanceEndpoints(scope, deps) {
         return reply({ ok: true, value: inspectAuthority(requested) })
       } catch (error) {
         return failure(errorMessage(error), 500)
+      }
+    },
+  }))
+  // Host Connection authenticates browser cookies and checks Host/Origin before
+  // dispatching exact /api routes. Never register this through a raw web server.
+  const audit = createAudit({ emit: (type, record) => scope.emit?.(type, record) })
+  disposers.push(connection.fetch.register({
+    path: '/api/orrery-edit-lock/maintenance/recover',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: async request => {
+      let body
+      try { body = await request.json() } catch { return failure('Invalid recovery JSON') }
+      const root = body !== null && typeof body === 'object' && 'root' in body && typeof body.root === 'string' ? body.root : ''
+      try {
+        const evidenceRoots = deps.evidence.snapshot().domains.map(row => row.root)
+        if (!trustedRoots(deps.candidateRoots, evidenceRoots).has(root)) return failure('not an Edit Lock domain root this server derived', 403, 'orrery-edit-lock/untrusted-root')
+        const value = await recoverAuthority(body)
+        audit(null, AUDIT_TYPES.editLockMaintenance, { kind: 'admin-override', recoveryId: value.record.recoveryId, revision: value.revision, idempotent: value.idempotent }, { root })
+        return reply({ ok: true, value })
+      } catch (error) {
+        // Do not return raw filesystem paths, credentials, causes or old content.
+        const e = /** @type {{code?: string, commitStatus?: string}} */ (error)
+        const code = e.code?.startsWith('orrery-edit-lock/') ? e.code : 'orrery-edit-lock/recovery-refused'
+        return reply({ ok: false, error: { code, message: 'Recovery not acknowledged. Inspect authority and retry the same recovery ID after resolving the cause.', commitStatus: e.commitStatus ?? 'not-acknowledged' } }, 409)
       }
     },
   }))
