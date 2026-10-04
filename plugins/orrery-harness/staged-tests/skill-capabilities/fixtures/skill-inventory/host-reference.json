@@ -1,0 +1,242 @@
+{
+  "hostPackage": "@deepseek-ai/dsh-skill-filesystem",
+  "version": "0.2.0-rc.2",
+  "roots": [
+    {
+      "path": "$ROOT/project/.dsh/skills",
+      "source": "project-dsh",
+      "rank": 100,
+      "projectRoot": "$ROOT/project"
+    },
+    {
+      "path": "$ROOT/project/.agents/skills",
+      "source": "project-agents",
+      "rank": 200,
+      "projectRoot": "$ROOT/project"
+    },
+    {
+      "path": "$ROOT/custom",
+      "source": "custom",
+      "rank": 300
+    },
+    {
+      "path": "$ROOT/dsh/skills",
+      "source": "user-dsh",
+      "rank": 400,
+      "skipSystem": true
+    },
+    {
+      "path": "$ROOT/agents/skills",
+      "source": "user-agents",
+      "rank": 500
+    },
+    {
+      "path": "$ROOT/bundled",
+      "source": "bundled",
+      "rank": 600,
+      "trustedHost": true
+    }
+  ],
+  "files": {
+    "basic.md": {
+      "name": "example",
+      "description": "Plain description",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "block.md": {
+      "name": "block",
+      "description": "strict deviation\n",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-00.md": {
+      "name": "boolean-00",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-01.md": {
+      "name": "boolean-01",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "boolean-02.md": {
+      "name": "boolean-02",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-03.md": {
+      "name": "boolean-03",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "boolean-04.md": {
+      "name": "boolean-04",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-05.md": {
+      "name": "boolean-05",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "boolean-06.md": {
+      "name": "boolean-06",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-07.md": {
+      "name": "boolean-07",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "boolean-08.md": {
+      "name": "boolean-08",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-09.md": {
+      "name": "boolean-09",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "boolean-10.md": {
+      "name": "boolean-10",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "boolean-11.md": {
+      "name": "boolean-11",
+      "description": "Boolean coercion",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "comments.md": {
+      "name": "comments",
+      "description": "word#hash",
+      "invocation": {
+        "modelInvocable": false,
+        "userInvocable": false
+      },
+      "content": "Body text."
+    },
+    "crlf.md": {
+      "name": "crlf",
+      "description": "Windows",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "content": "Body"
+    },
+    "duplicate.md": null,
+    "invalid-bool.md": null,
+    "invalid-name.md": null,
+    "legacy-disable.md": null,
+    "legacy-model.md": null,
+    "legacy-user.md": null,
+    "metadata-scalar.md": {
+      "name": "metadata-scalar",
+      "description": "strict deviation",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "missing-description.md": null,
+    "missing.md": null,
+    "nested.md": {
+      "name": "nested",
+      "description": "strict deviation",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "metadata": {
+        "deep": {
+          "value": "nested"
+        }
+      },
+      "content": "Body text."
+    },
+    "quoted.md": {
+      "name": "quoted",
+      "description": "A # hash: and \"quote\"",
+      "whenToUse": "It's time",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "metadata": {
+        "owner": "someone",
+        "level": 2,
+        "enabled": true
+      },
+      "content": "Body text."
+    },
+    "sequence.md": {
+      "name": "sequence",
+      "description": "strict deviation",
+      "invocation": {
+        "modelInvocable": true,
+        "userInvocable": true
+      },
+      "content": "Body text."
+    },
+    "unclosed.md": null
+  }
+}
