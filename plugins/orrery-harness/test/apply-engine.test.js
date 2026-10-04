@@ -483,3 +483,23 @@ test('an explicitly emptied selection is a durable state distinct from an absent
   assert.deepEqual(record.payload.skills, [])
   assert.deepEqual(record.payload.mcpServers, [])
 })
+
+test('the shared commit coordinator serializes tasks per session and isolates failures', async t => {
+  const { engine } = await fixture(t)
+  const order = []
+  const first = engine.coordinate(SESSION, async () => {
+    await new Promise(resolve => setImmediate(resolve))
+    order.push('first')
+    throw new Error('boom')
+  })
+  const second = engine.coordinate(SESSION, async () => {
+    order.push('second')
+    return 'ok'
+  })
+  await assert.rejects(first, /boom/)
+  assert.equal(await second, 'ok')
+  assert.deepEqual(order, ['first', 'second'])
+  // A failed task never poisons the queue: the session coordinates further work.
+  const third = await engine.coordinate(SESSION, async () => 'resumed')
+  assert.equal(third, 'resumed')
+})
