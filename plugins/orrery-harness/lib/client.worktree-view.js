@@ -378,7 +378,11 @@ window.__ModuleLoader__.load({
 					setupFailed ? btn("setup", t("retrySetup"), () => run("setup"), landable ? secondaryStyle : primaryStyle, busy) : null,
 					setupFailed ? btn("setup-skip", t("skipSetup"), () => run("setup", "skip"), ghostStyle, busy) : null,
 					action("check").enabled ? btn("check", t("recheck"), () => run("check"), secondaryStyle, busy) : null,
-					action("clean").enabled ? removeOptions.map(([option, optionLabel]) => btn(`clean-${option}`, optionLabel, () => run("clean", option), secondaryStyle, busy)) : null,
+					action("clean").enabled ? removeOptions.map(([option, optionLabel]) => option === "all"
+						? (armed === "clean-all"
+							? btn("clean-all-confirm", t("cleanupAllConfirm"), () => run("clean", "all"), dangerSolidStyle, busy)
+							: btn("clean-all", optionLabel, () => setArmed("clean-all"), dangerStyle, busy))
+						: btn(`clean-${option}`, optionLabel, () => run("clean", option), secondaryStyle, busy)) : null,
 					action("abandon").enabled ? (armed === "abandon"
 						? btn("abandon-confirm", t("abandonConfirm"), () => run("abandon"), dangerSolidStyle, busy)
 						: btn("abandon", t("abandon"), () => setArmed("abandon"), dangerStyle, busy, action("abandon").reason ?? null)) : null,

@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"610af8c390da5422497f5808ca6c877a344649c79ec3473a376b293054c5fd6f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"805cde8e6f9a399dd2ead2d23e8504ab566fe7d6db2432848a4694c4562deb7b","client.worktree-model.js":"2523a0803282d3ad594c5b2670ef51cf0b79933bd8ca9fc6bce45a3cce00a2fe","client.worktree-view.js":"c2f97a2c08b516473304fa71c1d37c8d813afd5c370120b857e00232059a1fc1"}
+// Orrery client chunks: {"client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"610af8c390da5422497f5808ca6c877a344649c79ec3473a376b293054c5fd6f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"805cde8e6f9a399dd2ead2d23e8504ab566fe7d6db2432848a4694c4562deb7b","client.worktree-model.js":"2523a0803282d3ad594c5b2670ef51cf0b79933bd8ca9fc6bce45a3cce00a2fe","client.worktree-view.js":"5de77d5c59047fa866fc9ca2d8f18d77b24e9b3a7d43f9402c6b9b4dfea04daf"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -406,6 +406,7 @@ window.__ModuleLoader__.load({
 			worktreeAbandonConfirm: "Confirm abandon",
 			worktreeCleanupWorktree: "Remove worktree",
 			worktreeCleanupAll: "Remove worktree and branch",
+			worktreeCleanupAllConfirm: "Confirm remove branch",
 			worktreeCopyPath: "Copy path",
 			worktreeActionUnavailable: "not available now",
 			worktreeConflicts: "conflicts",
@@ -851,6 +852,7 @@ window.__ModuleLoader__.load({
 			worktreeAbandonConfirm: "确认放弃",
 			worktreeCleanupWorktree: "清理 worktree",
 			worktreeCleanupAll: "清理 worktree 与分支",
+			worktreeCleanupAllConfirm: "确认删除分支",
 			worktreeCopyPath: "复制路径",
 			worktreeActionUnavailable: "当前不可用",
 			worktreeConflicts: "冲突",
