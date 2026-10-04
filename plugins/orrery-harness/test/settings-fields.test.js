@@ -1,6 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
-import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, editLockLimits } from '../src/settings/sections.js'
+import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimits } from '../src/settings/sections.js'
 
 // Drift防线：settings 键的三处表示（sections.js 的 FIELDS / cordis.patch.yml
 // 行 config 的产品默认镜像 / 设置页 GROUPS 字段集）由本对拍测试守卫——
@@ -8,6 +8,12 @@ import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, editLockLimits } from '../src
 // 代价是新增字段要改三处，本测试让"忘了改"变成响亮失败。
 // 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
 const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
+// 本变更批次内的拆期键：FIELDS 行已入库，设置页行（GROUPS + 词典 + patch
+// 默认）由主会话在同一变更的后续批次补齐（openspec
+// edit-lock-auto-resume-on-message task 1.1；lib/ 与 cordis.patch.yml 不在
+// 本 lane scope）。补齐页面后必须把键从这里移除，让 parity 恢复全量对拍——
+// 下方的反向断言（键今天必须仍不在页面里）保证移除义务响亮可见。
+const PENDING_PAGE_SYNC = new Set(['editLockAutoResume'])
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])
@@ -45,8 +51,16 @@ describe('settings field-key parity (FIELDS ↔ patch row ↔ settings page)', (
 
   it('the settings page shows exactly FIELDS minus the config-face-only keys', () => {
     const page = settingsPageFields()
-    const expected = new Set([...fieldKeys].filter((key) => !CONFIG_FACE_ONLY.has(key)))
+    const expected = new Set([...fieldKeys].filter((key) => !CONFIG_FACE_ONLY.has(key) && !PENDING_PAGE_SYNC.has(key)))
     expect([...page].sort()).toEqual([...expected].sort())
+  })
+
+  it('a pending-page-sync key is a declared field not yet rendered by the page', () => {
+    const page = settingsPageFields()
+    for (const key of PENDING_PAGE_SYNC) {
+      expect(fieldKeys.has(key), `${key} must stay declared in FIELDS`).toBe(true)
+      expect(page.has(key), `${key} reached the settings page: remove it from PENDING_PAGE_SYNC`).toBe(false)
+    }
   })
 })
 
@@ -141,5 +155,28 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
 
   it('is frozen so consumers cannot widen or reorder it in place', () => {
     expect(Object.isFrozen(RESTART_KEYS)).toBe(true)
+  })
+})
+
+describe('editLockAutoResume (message-driven auto-resume switch)', () => {
+  // D5: the row is declared once in FIELDS; the runtime judges the section per
+  // message as `autoResume !== false`, so a missing key (old profile, or the
+  // patch default not yet declared by the main session) means ON.
+  it('declares the editLock.autoResume field row, live (no restart marker)', () => {
+    const row = FIELDS.find(({ key }) => key === 'editLockAutoResume')
+    expect(row).toEqual({
+      key: 'editLockAutoResume', section: 'editLock', field: 'autoResume', type: 'boolean',
+      description: 'Edit Lock: a genuine user message automatically resumes a stopped session and confirms its retained files (default on)',
+    })
+    expect(RESTART_KEYS.includes('editLockAutoResume')).toBe(false)
+  })
+
+  it('the autoResume !== false judgment defaults on; only an explicit false gates off', () => {
+    // The same section shape the orrerySettings service publishes, judged with
+    // the runtime's exact predicate (src/edit-lock/index.js user/message branch).
+    const gate = (config) => computeSections(config).editLock?.autoResume !== false
+    expect(gate({})).toBe(true)
+    expect(gate({ editLockAutoResume: true })).toBe(true)
+    expect(gate({ editLockAutoResume: false })).toBe(false)
   })
 })

@@ -28,6 +28,9 @@
       config:
         intentGateProvider: mock
         intentGateModel: mock-1
+        # Message-driven auto-resume counter-case: the live gate is switched off
+        # only when the scenario asks for it (default stays ON everywhere else).
+        editLockAutoResume: !!js "process.env.ORRERY_IT_AUTO_RESUME === 'off' ? false : undefined"
     - id: orrery-it-event-tap
       name: 'orrery-test-harness/event-tap'
     # Capability-store probe, host level: the baseline the isolated row below
@@ -88,8 +91,10 @@
           name: 'orrery-harness/edit-lock'
           config:
             enabled: !!js process.env.ORRERY_IT_EDIT_LOCK === '1'
-            root: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws' : undefined"
-            authorityDirectory: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-' + process.env.ORRERY_IT_STOP_BOUNDARY : undefined"
+            # A fixed authority is pinned for the stop-boundary family and for
+            # the auto-resume family (a second boot must reopen the same one).
+            root: !!js "(process.env.ORRERY_IT_STOP_BOUNDARY || process.env.ORRERY_IT_AUTO_RESUME) ? process.env.ORRERY_IT_ROOT + '/ws' : undefined"
+            authorityDirectory: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-' + process.env.ORRERY_IT_STOP_BOUNDARY : (process.env.ORRERY_IT_AUTO_RESUME ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-auto-resume' + (process.env.ORRERY_IT_AUTO_RESUME === 'off' ? '-off' : '') : undefined)"
         - id: orrery-it-hashline-edit
           name: 'orrery-harness/hashline-edit'
           config:

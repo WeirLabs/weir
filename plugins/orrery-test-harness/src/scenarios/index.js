@@ -23,8 +23,10 @@ import stopPredispatch from './editlock-stop-predispatch.js'
 import stopStaged from './editlock-stop-staged.js'
 import stopPublication from './editlock-stop-publication.js'
 import stopUpdate from './editlock-stop-update.js'
+import autoResume from './editlock-auto-resume.js'
+import autoResumeOff from './editlock-auto-resume-off.js'
 
-const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo]
+const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 
 /**
  * Find a scenario entry by id.

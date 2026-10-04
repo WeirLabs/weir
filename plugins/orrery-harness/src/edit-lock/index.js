@@ -19,6 +19,7 @@ import { createEditLockLifecycle } from './lifecycle.js'
 import { installEditLockWriteScope } from './tool-scope.js'
 import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
+import { isGenuineUserMessage } from '../shared/runtime-messages.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
 import { localDomain, remoteDomain } from './domain.js'
 import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor } from './domains.js'
@@ -73,6 +74,24 @@ async function confirmAll(domain, agent, pending) {
     } catch { /* not confirmable any more; the next status shows why */ }
   }
   return confirmed
+}
+
+/** Message-driven auto-resume procedure (design D2/D3/D4): the trusted resume
+ * runs with a fresh server-minted requestId (never a commandId), then the
+ * ordinary per-file confirmation replays over the retained locks — exactly the
+ * panel's Continue editing sequence, so it never widens authority. A zero-lock
+ * session confirms the empty set. Any failure (a revoked session, a lost race
+ * with the manual Continue) only warns; edits stay denied and the panel keeps
+ * showing the state. @param {any} domain @param {any} agent
+ * @param {(message: string) => void} [warn] */
+async function autoResume(domain, agent, warn) {
+  try {
+    const status = await domain.resume(agent, `auto:user-message:${crypto.randomUUID()}`)
+    const pending = status.locks.filter(/** @param {any} lock */ lock => lock.status === 'pending-confirmation')
+    await confirmAll(domain, agent, pending)
+  } catch (error) {
+    warn?.(`edit lock auto-resume failed: ${/** @type {any} */ (error)?.message ?? error}`)
+  }
 }
 
 /** @param {any} domain @param {any} agent @param {string} raw @param {string} commandId @param {{holdDefaultMinutes: number, holdSingleMaxMinutes: number, holdCumulativeMaxMinutes: number}} limits */
@@ -546,9 +565,13 @@ return (ctx, config = {}) => {
   /** Turn identity seen last per agent, so a new turn is detected exactly once.
    * @type {WeakMap<object, unknown>} */
   const lastTurn = new WeakMap()
+  /** A genuine user message asked for the stopped session's automatic resume.
+   * Boolean, consumed once by the next turn's first pre-step (message-driven
+   * auto-resume D1/D6); WeakMap keys die with their agent. @type {WeakMap<object, boolean>} */
+  const pendingAutoResume = new WeakMap()
   /** @type {WeakSet<AbortSignal>} */
   const watched = new WeakSet()
-  ctx.on('agent/pre-step', (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
+  ctx.on('agent/pre-step', async (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
     const { agent, signal, turn } = event ?? {}
     const domain = agent && settled.get(agent)
     // `pre-step` fires once per STEP, not per turn, so "a new turn started" has to
@@ -556,6 +579,15 @@ return (ctx, config = {}) => {
     // reservation a holder just asked for, one step later.
     if (domain && turn && lastTurn.get(agent) !== turn) {
       lastTurn.set(agent, turn)
+      // A genuine user message arrived while this session was stopped: resume
+      // it and confirm its retained files BEFORE the turn's first step, so the
+      // edits the turn is about to request are admitted (message-driven
+      // auto-resume D1). A failure only warns and the turn proceeds denied —
+      // the panel keeps showing the stopped state (D6).
+      if (pendingAutoResume.get(agent) === true) {
+        pendingAutoResume.delete(agent)
+        if (domain.blocks(agent)) await autoResume(domain, agent, message => ctx.logger?.warn?.(message))
+      }
       // The holder is working again: every lock it holds leaves the holding state at
       // once, without waiting for the reservation to run out (design D4), and the
       // notice budget for this batch restarts.
@@ -569,6 +601,21 @@ return (ctx, config = {}) => {
       else signal.addEventListener('abort', latch, { once: true })
     }
     return next()
+  })
+
+  // Message-driven auto-resume, phase 1 (D1): a genuine user message to the
+  // session arms the flag synchronously; runtime-injected (producer-tagged)
+  // messages never do. The arming hook is the inbox intake, NOT the durable
+  // user/message session event: that append only lands mid-turn in this
+  // runtime — past the new-turn pre-step the resume must precede (integration
+  // evidence: editlock-auto-resume). The setting is read per message, so a
+  // committed change applies without a restart (D5). The payload carries the
+  // agent, so no registry lookup is needed. Flag-set is synchronous-safe here
+  // (no followup, no session.append — AGENTS §3.4).
+  ctx.on('agent/inbox/inserted', (/** @type {any} */ { agent, message }) => {
+    if (!agent || !isGenuineUserMessage(message)) return
+    if (ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume === false) return
+    pendingAutoResume.set(agent, true)
   })
 
   // Classification and settling read only the durable turn/end reason
