@@ -29,7 +29,9 @@ CHANGELOG.md                # 更新日志（入库）
 - **捆绑 Node/pnpm 不在 PATH**：用 Harness 会话的 `load_workspace_dependencies` 工具取绝对路径；兜底路径 `~/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/{node/bin/node,pnpm/bin/pnpm.mjs}`。调用 pnpm 的方式：`node <pnpm.mjs 绝对路径> <args>`。
 - **OpenSpec CLI**：`node_modules/.bin/openspec`（需先把捆绑 node 的 bin 目录加进 PATH）。
 - **bundle 改动重应用**：`plugin_manager` 的 `set_bundle` 先禁用再启用（重复 `install_bundle` 会被 `ambiguous-install` 幂等拒绝）。
-- **易失参考**：`/tmp/dsh-src`（DSH 编译产物提取）、`/tmp/oh-my-openagent`（OmO 参考仓库）随时可能丢失，丢失按交接文档方法重建，不得依赖其长期存在。
+- **易失参考**：`/tmp/dsh-src`（DSH 编译产物提取）、`/tmp/oh-my-openagent`（OmO 参考仓库）随时可能丢失，不得依赖其长期存在；dsh-src 重建见下条。
+- **dsh-src 重建**（上条易失参考的具体方法）：`npm_config_cache=/tmp/npm-cache npx --yes @electron/asar extract "/Applications/DeepSeek Harness.app/Contents/Resources/app.asar" /tmp/dsh-src`；重建后必须核对版本——提取物 `/tmp/dsh-src/dsh/package.json` 的 version 与安装版 `defaults read "/Applications/DeepSeek Harness.app/Contents/Info.plist" CFBundleShortVersionString` 一致方可作为当前运行时参考，否则只是历史快照。
+- **会话日志解码**：日志位于 `~/.dsh/sessions/<workspace-slug>/<session-id>/session.v4.jsonl.zstd`，是 append-only **多帧** zstd（Node `zlib.zstdDecompressSync` 只解首帧）。解码用入库脚本：`node scripts/dump-session.mjs <日志路径> <输出.jsonl>`（输出帧数统计，`decoded=0` 意味着 DSH 改了日志格式）。
 
 ## 3. 开发纪律
 
@@ -116,6 +118,9 @@ CHANGELOG.md                # 更新日志（入库）
 pnpm --filter orrery-harness run check     # 静态检查
 pnpm --filter orrery-harness test          # 单元测试
 pnpm --filter orrery-test-harness run test:integration   # 集成测试
+
+# 长跑测试：逐套件分开跑，输出落盘再 tail（勿把串行测试链塞进单个后台 job）
+#   node --test --test-reporter=spec "test/**/*.test.js" > /tmp/unit.log 2>&1 && tail -5 /tmp/unit.log
 
 # bundle 重应用（Harness 会话内）
 #   plugin_manager: set_bundle(orrery-harness, off) → set_bundle(orrery-harness, on)
