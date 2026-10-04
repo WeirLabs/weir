@@ -89,6 +89,7 @@ describe('client.settings-page chunk', () => {
       DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }),
       LspManagerField: (props) => ({ __lspPanel: props }),
       NotifyPermissionsField: (props) => ({ __notifyPermissions: props }),
+      EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }),
     }
     return { definition, exports, editors, specsSeen, reactStub }
   }
@@ -145,7 +146,8 @@ describe('client.settings-page chunk', () => {
     // 9 group headers + 14 choice rows + 1 model picker + 24 value-field rows
     // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
     // + 1 disabled-categories editor row + 1 notification-permission row
-    expect(rendered.children).toHaveLength(58)
+    // + 1 edit-lock-maintenance row
+    expect(rendered.children).toHaveLength(59)
     // the permission entry sits at the end of the notify group
     const permissionRow = rendered.children.find((child) => child.key === 'notify-permissions')
     expect(permissionRow.__type).toBe(editors.NotifyPermissionsField)
@@ -154,6 +156,11 @@ describe('client.settings-page chunk', () => {
     expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(14)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
     expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(24)
+    // the Edit Lock maintenance row opens the profile-wide maintenance panel
+    const maintenanceRow = rendered.children.find((child) => child.key === 'edit-lock-maintenance')
+    expect(maintenanceRow).toBeTruthy()
+    expect(maintenanceRow.__type).toBe(editors.EditLockMaintenanceField)
+    expect(typeof maintenanceRow.t).toBe('function')
     // the LSP manager row opens the service management panel
     const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
     expect(managerRow).toBeTruthy()

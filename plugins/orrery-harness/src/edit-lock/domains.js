@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve, relative, sep } from 'node:path'
 
 /** Authority location inside a management root. */
 export const AUTHORITY_DIR = join('.orrery', 'edit-lock')
@@ -16,13 +16,21 @@ function git(cwd, args) {
 /** Management root for a session working directory: the git top level when
  * inside a repository, else the directory itself; an enclosing directory that
  * already hosts an Edit Lock authority wins so nested sessions share one domain.
- * @param {string} cwd */
-export function managementRootFor(cwd) {
+ * Optional discovery ceiling and Git adapter are for isolated embeddings;
+ * omitted dependencies retain the normal ancestor-authority discovery.
+ * @param {string} cwd
+ * @param {{ ceiling?: string, runGit?: typeof git }} [dependencies] */
+export function managementRootFor(cwd, { ceiling, runGit = git } = {}) {
   if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('edit lock: absolute session cwd required')
   const start = realpathSync.native(cwd)
-  const top = git(start, ['rev-parse', '--show-toplevel'])
+  const limit = ceiling === undefined ? undefined : realpathSync.native(ceiling)
+  const within = path => { const rel = relative(limit ?? path, path); return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)) }
+  if (!within(start)) throw new Error('edit lock: cwd outside discovery ceiling')
+  const top = runGit(start, ['rev-parse', '--show-toplevel'])
   let root = top ? realpathSync.native(top) : start
+  if (!within(root)) throw new Error('edit lock: git root outside discovery ceiling')
   for (let candidate = dirname(root); candidate !== dirname(candidate); candidate = dirname(candidate)) {
+    if (root === limit || !within(candidate)) break
     if (existsSync(join(candidate, AUTHORITY_DIR))) { root = candidate; break }
   }
   return root
@@ -30,9 +38,10 @@ export function managementRootFor(cwd) {
 
 /** Keep authority state out of version control without touching tracked files:
  * append to the repository's own info/exclude (worktree aware). Best effort.
- * @param {string} root */
-export function excludeFromGit(root) {
-  const relativePath = git(root, ['rev-parse', '--git-path', 'info/exclude'])
+ * @param {string} root
+ * @param {typeof git} [runGit] */
+export function excludeFromGit(root, runGit = git) {
+  const relativePath = runGit(root, ['rev-parse', '--git-path', 'info/exclude'])
   if (!relativePath) return false
   const file = resolve(root, relativePath)
   mkdirSync(dirname(file), { recursive: true })
@@ -46,8 +55,9 @@ export function excludeFromGit(root) {
 
 /** Per-root lazy domain registry; a failed open is retried on next demand.
  * @template T
- * @param {(root: string) => Promise<T>} open */
-export function createDomainRegistry(open) {
+ * @param {(root: string) => Promise<T>} open
+ * @param {(cwd: string) => string} [resolveRoot] */
+export function createDomainRegistry(open, resolveRoot = managementRootFor) {
   /** @type {Map<string, Promise<T>>} */
   const domains = new Map()
   /** @type {WeakMap<object, string>} */
@@ -56,7 +66,7 @@ export function createDomainRegistry(open) {
     /** Bind once at agent creation; the session cwd never re-binds later.
      * @param {object} agent @param {string} cwd */
     bind(agent, cwd) {
-      const root = managementRootFor(cwd)
+      const root = resolveRoot(cwd)
       roots.set(agent, root)
       return root
     },

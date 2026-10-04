@@ -22,6 +22,7 @@ export const AUDIT_TYPES = Object.freeze({
   continuationStop: 'continuation-stop',
   supervision: 'supervision',
   worktree: 'worktree',
+  editLockMaintenance: 'edit-lock-maintenance',
 })
 
 /**
@@ -39,14 +40,14 @@ export const AUDIT_SUBTYPES = Object.freeze({
 })
 
 /**
- * @param {object} ctx - plugin context (used for ctx.emit)
- * @returns {(session: object, type: string, data?: unknown) => void} audit emitter bound to ctx
+ * @param {{ emit: (type: string, record: object) => unknown }} ctx - plugin context
+ * @returns {(session: { id?: string, header?: { cwd?: string } } | null, type: string, data?: unknown, options?: { root?: string }) => void} audit emitter bound to ctx
  */
 export function createAudit(ctx) {
   /**
    * Emit one audit record. Never throws: audit is log-only and must never
    * break a turn.
-   * @param {object} session - the session this record belongs to
+   * @param {{ id?: string, header?: { cwd?: string } } | null} session - optional session
    * @param {string} type - event type WITHOUT the 'orrery/' prefix
    * @param {unknown} [data] - JSON-serializable payload
    * @param {{ root?: string }} [options] - `root` anchors the JSONL mirror at a

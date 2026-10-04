@@ -24,6 +24,7 @@
 
 import { readFileSync } from 'node:fs'
 import { DEFAULT_TABLES } from '../delegate/robash-guard-core.js'
+/** @typedef {{ readFile?: (path: string | URL) => string, logger?: { warn?: (message: string) => void } }} ReaderOptions */
 
 /** The five table names, in the order they are published. */
 export const WHITELIST_KEYS = Object.freeze([
@@ -66,7 +67,7 @@ function isStringArray(value) {
  * well-formed string arrays, so the guard can never be relaxed by a missing or
  * corrupt data file, and plugin activation never fails because of one.
  *
- * @param options - `{ readFile?, logger? }` reader seam and fallback reporter
+ * @param {ReaderOptions} [options] - reader seam and fallback reporter
  * @returns `{ tables, path, source }` where `source[table]` is `'file'` or
  *   `'fallback'` per table, and `path` is the file that was attempted
  */
@@ -79,15 +80,15 @@ export function readWhitelistDefaults({ readFile = defaultReadFile, logger } = {
  * point the defaults at their own copy (a takeover: whatever that file leaves
  * out is not in effect for them).
  *
- * @param filePath - file path or `URL` to read
- * @param options - `{ readFile?, logger? }`
+ * @param {string | URL} filePath - file path or URL to read
+ * @param {ReaderOptions} [options]
  */
 export function readWhitelistDefaultsAt(filePath, { readFile = defaultReadFile, logger } = {}) {
   let parsed
   try {
     parsed = JSON.parse(readFile(filePath))
   } catch (error) {
-    reportFallback(logger, filePath, `could not be read or parsed (${error?.message ?? error})`)
+    reportFallback(logger, filePath, `could not be read or parsed (${error instanceof Error ? error.message : String(error)})`)
     return { tables: allFallback(), path: filePath, source: allSource('fallback') }
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -139,15 +140,19 @@ function reportFallback(logger, filePath, detail) {
  * A cache around the reader. The settings service owns one instance, so the
  * file is read once per process; an explicit reload re-reads it. Nothing here
  * runs on the guard's per-command path.
+ * @param {ReaderOptions} [options]
  */
 export function createWhitelistDefaultsCache({ readFile = defaultReadFile, logger } = {}) {
+  /** @type {ReturnType<typeof readWhitelistDefaultsAt> | null} */
   let cached = null
+  /** @type {string | null} */
   let cachedPath = null
 
   return {
     /**
      * The tables for `filePath` (the shipped defaults when omitted), re-reading
      * only when the path changed or the cache was cleared.
+     * @param {string | URL} [filePath]
      */
     tables(filePath = DEFAULT_WHITELIST_PATH) {
       const key = String(filePath)

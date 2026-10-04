@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "seq": 1,
+  "lanes": [
+    {
+      "id": "it-lane-001",
+      "title": "IT lane",
+      "path": "/Users/young/orrery-qa-ZAaBsO/ws/.orrery/worktrees/it-lane-001",
+      "branch": "orrery/it-lane-001",
+      "base": {
+        "branch": "main",
+        "commit": "74134464ba148efcafca2bfa13f865f1511dc059"
+      },
+      "scope": [],
+      "state": "no-commits",
+      "ownerSession": "session-ea95f575-5e79-4a2c-98d6-f93abacfa6db",
+      "boundChild": null,
+      "baseMoved": false,
+      "landableTree": null,
+      "setup": {
+        "status": "none"
+      },
+      "check": null,
+      "land": null,
+      "cleanup": null,
+      "reason": "no commits ahead of main",
+      "createdAt": 1791096253922,
+      "updatedAt": 1791096259998,
+      "history": [
+        {
+          "from": "preparing",
+          "to": "ready",
+          "event": "setup-ok",
+          "at": 1791096253958,
+          "by": "host"
+        },
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791096253977,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791096259998,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        }
+      ]
+    }
+  ]
+}

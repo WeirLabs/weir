@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
-import { readdirSync, statSync } from 'node:fs'
+import { readdirSync, statSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 
 /**
  * Entry composition-root test for the browser half (lib/client.js, authored
@@ -97,6 +98,7 @@ describe('orrery settings client half', () => {
     const robashModelChunk = { marker: 'robash-model' }
     const lspModelChunk = { marker: 'lsp-model' }
     const notifyPermissionsChunk = { NotifyPermissionsField: (props) => ({ __notifyPermissions: props }) }
+    const editLockMaintenanceChunk = { EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }) }
     const notifyWebChunk = { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => notifyWebStops.push(1) } } }
     const lspToggleChunk = { LspToggle: (props) => ({ __toggle: props }) }
     const hashEditViewChunk = { HashEditRow: (props) => ({ __row: props }) }
@@ -119,6 +121,7 @@ describe('orrery settings client half', () => {
       './client.robash-model.js': robashModelChunk,
       './client.lsp-model.js': lspModelChunk,
       './client.notify-permissions.js': notifyPermissionsChunk,
+      './client.edit-lock-maintenance.js': editLockMaintenanceChunk,
       './client.notify-web.js': notifyWebChunk,
       './client.lsp-toggle.js': lspToggleChunk,
       './client.hash-edit-view.js': hashEditViewChunk,
@@ -227,6 +230,7 @@ describe('orrery settings client half', () => {
     './client.robash-model.js',
     './client.lsp-model.js',
     './client.notify-permissions.js',
+    './client.edit-lock-maintenance.js',
   ]
 
   it('loads, exposes the plugin surface, and registers the page chain', async () => {
@@ -350,7 +354,7 @@ describe('orrery settings client half', () => {
     expect(sessionAccesses()).toBe(0)
   })
 
-  it('fans out the 8 settings chunks, constructs the controller on arrival, and renders loading/arrived states', async () => {
+  it('fans out the 9 settings chunks, constructs the controller on arrival, and renders loading/arrived states', async () => {
     const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
@@ -382,6 +386,7 @@ describe('orrery settings client half', () => {
     expect(typeof settled.editors.RobashListEditorField).toBe('function')
     expect(typeof settled.editors.DisabledCategoriesEditorField).toBe('function')
     expect(typeof settled.editors.LspManagerField).toBe('function')
+    expect(typeof settled.editors.EditLockMaintenanceField).toBe('function')
     // editors arrive pre-bound with their model chunks (stable identity)
     const boundChain = settled.editors.ChainEditorField({ text: 'x' })
     expect(boundChain.__type).toBe(chainEditorChunk.ChainEditorField)
@@ -648,19 +653,20 @@ describe('orrery settings client half', () => {
     expect(localeRegistrations).toHaveLength(1)
     expect(whileServedCalls).toHaveLength(1)
   })
-  it('keeps every client chunk older than the entry (the rev-restamp red line)', () => {
-    // docs/features/client-module-chunking.md: a chunk URL carries the ENTRY
-    // file's rev (derived from lib/client.js's mtime/ctime/size), so a chunk
-    // edit without re-touching lib/client.js leaves the browser requesting
-    // the chunks at a stale rev — a precise 404. Pin the discipline: no
-    // lib/client.*.js chunk may be newer than lib/client.js.
+  it('build binds the entry to every chunk digest and publishes the entry last', () => {
+    // Host chunk URLs carry the entry revision. Both content binding and write
+    // ordering matter: a timestamp-only restamp is not a client build.
     const libDir = new URL('../lib/', import.meta.url)
     const entryMtimeMs = statSync(new URL('client.js', libDir)).mtimeMs
     const chunks = readdirSync(libDir).filter((name) => /^client\..+\.js$/.test(name))
     expect(chunks.length).toBeGreaterThan(0)
+    const firstLine = readFileSync(new URL('client.js', libDir), 'utf8').split('\n')[0]
+    const manifest = JSON.parse(firstLine.replace('// Orrery client chunks: ', ''))
+    expect(Object.keys(manifest).sort()).toEqual([...chunks].sort())
     for (const name of chunks) {
       const chunkMtimeMs = statSync(new URL(name, libDir)).mtimeMs
-      expect(chunkMtimeMs <= entryMtimeMs, `${name} is newer than lib/client.js — touch the entry to restamp the chunk rev`).toBe(true)
+      expect(chunkMtimeMs <= entryMtimeMs, `${name} is newer than the entry — run pnpm build`).toBe(true)
+      expect(manifest[name]).toBe(createHash('sha256').update(readFileSync(new URL(name, libDir))).digest('hex'))
     }
   })
 })

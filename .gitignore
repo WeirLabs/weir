@@ -11,6 +11,16 @@ docs/*
 
 # Harness runtime scratch (notepads, research notes written by orrery sessions)
 .orrery/
+# Authentic replay evidence only; other runtime state remains ignored.
+!plugins/orrery-test-harness/test/fixtures/traces/rehydrate/ws/.orrery/
+plugins/orrery-test-harness/test/fixtures/traces/rehydrate/ws/.orrery/*
+!plugins/orrery-test-harness/test/fixtures/traces/rehydrate/ws/.orrery/audit.jsonl
+!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/
+plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/*
+!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/audit.jsonl
+!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/worktrees/
+plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/worktrees/*
+!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/worktrees/lanes.json
 
 # Handoff and install runbooks (local process material, distributed with the tree)
 handoff-*.md

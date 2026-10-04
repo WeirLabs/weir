@@ -195,3 +195,23 @@ describe('kit shellCall', () => {
     assert.ok(JSON.parse(blocks[0].arguments).command.includes('MARKER'))
   })
 })
+
+
+describe('capstore brain', () => {
+  it('starts with the host probe', () => {
+    assert.equal(blockEnds(run('capstore', userOptions('capstore-probe')))[0].name, 'capstore_probe_host')
+  })
+
+  for (const injected of [false, true]) {
+    for (const label of ['host', 'realm']) {
+      it(`advances after ${label} result${injected ? ' followed by runtime context' : ''}`, () => {
+        const options = userOptions('capstore-probe')
+        options.messages.push({ role: 'tool', content: [{ type: 'text', text: `CAPSTORE_PROBE ${label} committed` }] })
+        if (injected) options.messages.push({ role: 'user', content: [{ type: 'text', text: 'Current runtime context. Worktree lanes: it-lane-001 · no-commits' }] })
+        const [block] = blockEnds(run('capstore', options))
+        if (label === 'host') assert.equal(block.name, 'capstore_probe_realm')
+        else assert.equal(block.text, 'capstore done')
+      })
+    }
+  }
+})

@@ -416,6 +416,14 @@ window.__ModuleLoader__.load({
 						key: descriptor.field
 					});
 				});
+				// Edit Lock maintenance: profile-wide switch status and read-only
+				// authority diagnostics (read-only; the switch stays a plain field).
+				if (group.id === "editing") {
+					rows.push(react_jsx_runtime.jsx(props.editors.EditLockMaintenanceField, {
+						t,
+						key: "edit-lock-maintenance"
+					}));
+				}
 				if (group.id === "lsp") {
 					rows.push(react_jsx_runtime.jsx(props.editors.LspManagerField, {
 						t,

@@ -6,10 +6,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
-import { apply, storeMode } from '../src/edit-lock/index.js'
-import { managementRootFor, excludeFromGit } from '../src/edit-lock/domains.js'
+import { createEditLockPlugin, storeMode } from '../src/edit-lock/index.js'
+import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtureExclude as excludeFromGit } from './helpers/edit-lock-fixtures.js'
+const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
 import { createRecoveryDriver } from '../src/edit-lock/recovery.js'
-import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from '../src/edit-lock/remote.js'
+import { createRemoteEditLockDomain, serveEditLockEndpoint } from '../src/edit-lock/remote.js'
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 

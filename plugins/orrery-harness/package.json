@@ -35,6 +35,7 @@
     }
   },
   "scripts": {
+    "build": "node scripts/build-client.js",
     "check": "tsc --noEmit -p jsconfig.json",
     "test": "node --test \"test/**/*.test.js\""
   }
