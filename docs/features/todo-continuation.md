@@ -39,7 +39,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 
 ## 边界与失败语义
 
-- **Edit Lock 联动（仅当开发组合启用 [edit-lock](edit-lock.md) 时）**：会话被 Stop 持久中断后，steer 续推与 provider 错误重试都不触发，直到可信 `/edit-lock resume`；普通用户消息不恢复编辑续推。未启用 Edit Lock 时行为不变。
+- **Edit Lock 联动（仅当开发组合启用 [edit-lock](edit-lock.md) 时）**：会话被 Stop 持久中断后，steer 续推与 provider 错误重试都不触发，直到可信恢复：`/edit-lock resume`，或 `editLockAutoResume` 开启（默认）时一条真实用户消息——后者等价于 Continue，重新武装编辑续推；开关关闭时普通用户消息不恢复编辑续推。未启用 Edit Lock 时行为不变。
 - todo 全完成时不续推（不会无事生非）。
 - 长命 job（如 dev server）整个运行期间都会抑制 todo 自动续推，这是预期行为。用户仍可发消息唤醒会话并 rearm / 重置计数，但新消息不会绕过 jobs 抑制；用户打断与 `stop_continuation` 的语义不变。
 - jobs 服务缺席时退化为既有续推行为；查询抛错同样 fail-open，并通过 `logger.warn` 记录，不引入熔断状态。

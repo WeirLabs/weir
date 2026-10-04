@@ -26,7 +26,7 @@
 - **回合结束要收尾**。回合正常结束（`turn/end` 为 `completed`）而助手仍占着文件时，会被续推一次，要求它对每个文件二选一：改完了就释放（`edit_lock_release`），还要用就申请**有期限的保留**（`edit_lock_hold`）。提醒次数用尽仍未处理的，按设置自动释放（默认）或转为需要你处理。出错（`error`）走仅清理恢复，你按下停止（`aborted`）则不续推，二者都不进入此路径。
 - **保留有上限**。单次保留与一批文件的累计保留都有上限（默认 30 分钟／2 小时），用尽后只能释放；延长一个仍在生效的保留只计新增的分钟数，且「从现在起的窗口」不得超过单次上限。没有永久保留——唯一能一直占着的是异常锁（出错或停止留下的锁），由你或助手处理。
 - **保留中（holding）的含义**。会话已收尾但仍保留文件：其他会话照常被拒、转交照常协商；本会话自己仍可编辑这些文件，并且**一开始新回合，全部保留立刻解除**，回到普通占用。保留到期时会话空闲则自动释放；到期时恰在回合中，则在该回合结束时释放。
-- **停止即收回后续编辑权**。你按停止（或面板「收回编辑权」）后，助手不能发起新的编辑，直到你点「继续编辑」；已经调用文件系统的那一次提交会等待完成，仍可能落盘，但不会恢复会话权限。面板的「继续编辑」依次执行 `resume` 与 `confirm --all`，每个文件仍走原有确认检查。
+- **停止即收回后续编辑权**。你按停止（或面板「收回编辑权」）后，助手不能发起新的编辑，直到编辑权被恢复；已经调用文件系统的那一次提交会等待完成，仍可能落盘，但不会恢复会话权限。**默认开启「消息驱动的自动恢复」**：停止后你发送的下一条消息即被视作「继续编辑」，自动依次执行 `resume` 与 `confirm --all`（每个文件仍走原有确认检查），新回合可直接编辑；运行时注入的消息（续推、收尾提醒、恢复提示、后台通知）不触发，管理员撤销的会话永远是终态。设置页「编辑」组可关闭该开关，关闭后回到手动「继续编辑」。面板的「继续编辑」按钮与 `/edit-lock resume` 命令依然可用。
 - **状态入口**。输入栏右侧「编辑锁」按钮的圆点表示本会话状态：灰＝未占用文件，蓝（主题强调色）＝正在编辑／文件为本会话保留，琥珀黄＝编辑已停止或等你确认继续，红＝需要你处理。打开面板：
   - 只在需要时给**一个主动作**：已停止→「继续编辑」；等你确认→「继续编辑这些文件」；保留中→「立即释放全部文件」；正常编辑与空闲不给主动作。
   - 文件按短名列出，每行至多一个动作：自己的文件「释放」（待确认的为「继续」）；其他会话停住或出错留下的文件「解锁」（按当前 generation 解锁，需第二次点击确认）；其他会话正在编辑的文件不给动作。
@@ -110,6 +110,7 @@
 | `editLockHoldCumulativeMaxMinutes` | `120` | 一批文件的累计保留上限，须不小于单次上限 |
 | `editLockNudgeAttempts` | `2` | 回合结束后最多提醒几次；`0` 直接按兜底处置 |
 | `editLockNudgeFallback` | `release` | 提醒用尽后的处置：`release` 释放给其他会话，`abnormal` 转为需要你处理 |
+| `editLockAutoResume` | `true` | 停止后下一条真实用户消息自动恢复编辑并确认保留文件；即时生效，关闭后只能手动「继续编辑」 |
 
 保留相关设置由 `editLockLimits` 统一解析：未设置取默认；设置了但不可用（非正数、默认大于单次、累计小于单次、非整数提醒次数、未知处置）时，保留申请按设置键名明确报错、不做静默钳制；回合末收尾、状态、释放、停止、解锁则对保留字段改用内置默认值继续工作（`editLockNudgeAttempts` 与 `editLockNudgeFallback` 仍按保存值生效，收尾提醒改为只要求释放）并记录警告，避免一个设置错误让文件无法释放。恢复与暂停参数为固定产品值：3 次／5 分钟、退避 15/30/60 秒、单次暂停 15 分钟、累计暂停 30 分钟、协商时限 120 秒。开发组合可在行配置写 `root` 与 `authorityDirectory` 固定单一域；该行须排在 hashline-edit 与 lsp 之前。
 
@@ -130,7 +131,8 @@
 - `tools/pre-execute` 守卫：`write`、`edit`、`hash_edit`、`lsp_rename`、`str_replace_editor` 中凡执行函数未经服务 `claim` 的定义一律拒绝。组合顺序错误、晚装服务或未知编辑器因此 fail closed。
 - `agent/created`（发布前 await）安装写作用域：隐藏继承 stock write/edit，注册受控 write；随后注册会话。管理器已知的会话（重启恢复、同会话重建 agent）一律以中断态开始，不隐式重臂。
 - active 回合内 stock Stop 同步触发 turn signal，立即封闭准入并持久撤权；idle Stop 没有 signal，使用 `/edit-lock stop` 获得可等待的持久撤权确认。`agent/disposed` 同样撤权。
-- 可信人类入口 `/edit-lock`：`status`、`locks`、`hold [minutes]`、`release <path>`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`／`--all`、`unlock <path> <generation>`。普通消息、状态查询都不恢复权限；todo 续推在会话非 active 时不触发。
+- **消息驱动的自动恢复**（两阶段）：`agent/inbox/inserted`（回合前进站口，载荷携带 `{ agent, message }`）对真实用户消息（`isGenuineUserMessage`）置一次性旗标，开关按消息实时读取（`autoResume !== false`）；下一回合首个 `agent/pre-step` 在新回合检测处消费旗标，若会话非 active 则**在 `next()` 之前 await** 可信 resume（服务端铸造 `auto:user-message:<uuid>` 一次性 requestId）加 `confirmAll` 重放，保证该回合的编辑请求不再被拒。失败（revoked、与手动 Continue 竞争落败）仅告警放行。置旗点刻意不是持久的 `user/message` 会话事件：该事件在本运行时要到回合中途才落盘，晚于必须先行恢复的 pre-step（集成证据 `editlock-auto-resume`）。
+- 可信人类入口 `/edit-lock`：`status`、`locks`、`hold [minutes]`、`release <path>`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`／`--all`、`unlock <path> <generation>`。状态查询、后台通知与运行时注入消息都不恢复权限；`editLockAutoResume` 开启（默认）时，一条真实用户消息（`source.kind === 'user'`）等价于一次可信 Continue；todo 续推在会话非 active 时不触发。
 - 面板数据来自只读端点 `POST /api/orrery-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图，按会话解析 agent，找不到时返回 `unavailable`），不从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
 
@@ -163,7 +165,7 @@
 
 ### 状态内核与授权
 
-内核区分资源 owner、generation、会话 epoch 与 manager incarnation，所有权限判断都基于这四组身份：当前凭据只在**入口**校验，撤权队列执行时使用该会话最新已安装的 epoch，避免前置的 resume 安装导致撤权因 stale epoch 落空。会话闩锁保留在会话层：启用本特性的会话即使在**首次 acquire 之前**就被停止，或**最后一个锁已被释放/受控解锁**，也必须收到可信显式执行请求（Continue）才重新武装编辑续推；状态查询、后台通知、release 与解锁都不清除它。`edit_lock_status` 每行给出 `generation`——只靠 status 判断「锁是否已到手」时，generation 变化是所有权真正易手的可靠信号（通知里也带 generation）。
+内核区分资源 owner、generation、会话 epoch 与 manager incarnation，所有权限判断都基于这四组身份：当前凭据只在**入口**校验，撤权队列执行时使用该会话最新已安装的 epoch，避免前置的 resume 安装导致撤权因 stale epoch 落空。会话闩锁保留在会话层：启用本特性的会话即使在**首次 acquire 之前**就被停止，或**最后一个锁已被释放/受控解锁**，也必须收到可信执行请求才重新武装编辑续推——显式的 Continue（面板／`/edit-lock resume`），或在 `editLockAutoResume` 开启（默认）时一条真实用户消息（自动 resume + confirm-all 等价序列）；状态查询、后台通知、运行时注入消息、release 与解锁都不清除它。`edit_lock_status` 每行给出 `generation`——只靠 status 判断「锁是否已到手」时，generation 变化是所有权真正易手的可靠信号（通知里也带 generation）。
 
 内核的持久化经候选草稿完成：`checkpoint()` 导出 detached generations 与 issuedRequests 墓碑，`begin()` 在分离的内核上复用同一 transition，`install(draft)` 一次性安装本内核当前 revision 的候选、`discard(draft)` 关闭候选；任何 live mutation（包括被拒绝的）都保守地使旧 draft 过期。issuance 先持久 requestId 墓碑、安装后才返回进程内 receipt；resume 先消费一次性 receipt、持久后安装新 epoch，保留锁仅进入 pending-confirmation，不自动重臂。复制/伪造 receipt 与重复 requestId 拒绝，receipt 不序列化、不跨重启恢复，未知会话与其他 incarnation 的引用一律拒绝。
 
@@ -272,6 +274,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **答复工具的生命周期**：`edit_lock_reply` 在首次收到请求时注册，且只在**回合边界**（`agent/turn-stopping`）于无待答请求时注销；回合中途注销会让「已过期但仍被调用」的答复报成 `unknown tool` 而不是真实原因。
 - **仅清理恢复**（`recovery.js`）：回合以 `turn/end` reason `error` 结束且会话持有锁时，这些锁标为 abnormal（不释放），会话进入 `recovering`：业务写入、新获取与 try_steal 全部拒绝，只能 `edit_lock_release`、`edit_lock_reply` 或 `edit_lock_pause`。驱动按 15／30／60 秒退避注入仅清理回合，至多 3 次或累计 5 分钟（以先到者为准）；暂停单次 ≤15 分钟、累计 ≤30 分钟，到期只重新检查，不释放、不自续。次数、恢复耗时与暂停时长都持久计入 authority 镜像的 `recovery`，重启不退还。预算耗尽或无剩余异常锁时停止并提示人工；恢复正常编辑只能经 `/edit-lock resume`，abnormal 锁保持 abnormal，须释放或人工解锁。用户 Stop（`aborted`）立即结束自动恢复且不唤醒会话。
 - **停止后的提示与清理**：会话被 Stop 或 `/edit-lock stop` 停止后，写入、获取、转交与答复统一返回「editing in this session was stopped … until a human runs /edit-lock resume」；`edit_lock_status` 与 `edit_lock_release` 在停止、恢复中状态仍可用（只读或只减权）。agent 结束（`agent/disposed`）时，仍处于 active 的 agent（例如正常完成的子代理）永远不会再写，先在一个事务里释放它的 active 锁，再撤权遗忘；已停止、异常或存在未决发布时保留，留给人工。跨进程连接断开可能是崩溃，只撤权不释放；客户端正常结束会先发送 `dispose` 再断开。
+- **停止后的自动恢复边界**：`editLockAutoResume` 开启时，停止后的下一条真实用户消息在新回合首 step 前完成 resume + confirm-all（见「运行时接线」）；零锁的停止会话同样恢复（闩锁在会话层）。自动恢复不改变 abnormal 锁、不改变他人归属，revoked 会话直接跳过。
 - **受控人工解锁**：`/edit-lock unlock <path|resourceId> <generation>` 只在期望 generation 仍为当前值时释放。它排在 manager FIFO 中，等待此前在途提交结算；未决 update 必需的归属被事务围栏保护，无关锁可释放；不存在无条件强制解锁。已准备的旧 owner 写入随后因 generation 失效在派发前结算为 not-published。解锁不改变任何会话的中断闩锁，不验证内容，也不清除 unknown。
 - **操作身份**按每次实际执行生成（`callId@uuid`）：部分供应商跨回合复用 tool-call id（如 `call_0`），不能直接作幂等键。
 
@@ -319,6 +322,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **内核与身份**：`test/edit-lock-state.test.js`、`test/edit-lock-resource-identity.test.js`（真实 `mkdtemp`/`write`/`mkdir`/`symlink`/`link`/`rename`，真实 `/dev/null` 作特殊节点；平台 dispatch 在独立子进程中替换 `process.platform` 检查，不伪造文件系统成功）。后者含一条复杂度回归：在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），要求每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并断言观察仍是同一个真实文件——它钉死的是「指数级父路径重放」这一已修复缺陷，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 - **存储与历史**：`test/edit-lock-store.test.js`（真实 syscall 层的故障注入与 SIGKILL 子进程恢复，覆盖 create/record/recover 的 detached 语义、封闭 schema 与历史单调性、canonical/checksum/domain/version 拒绝、每个持久化边界的毒化与 `commitStatus`、每 handle 队列 CAS 与 close drain）、`test/edit-lock-operation-history.test.js`（阶段图、`ID_REUSE`、transition-local 归属、围栏与 closeout）；两者都用真实 fs 与真实 file/dir sync。SIGKILL 是真实子进程在 barrier 处被杀后重新 recover，**不是**掉电、内核崩溃、扇区撕裂或硬件缓存持久性证明。
 - **管理与组合**：`test/edit-lock-manager.test.js`（持久后安装、取消 overlay 与持久 ack、pending 注册的取消、竞争冲突不毒化、未决围栏）、`test/edit-lock-composition.test.js`（服务与工具面、受控 write 与 hash_edit 链路、view 端点、人工 `release` 命令）、`test/edit-lock-lifecycle.test.js`、`test/edit-lock-host.test.js`、`test/edit-lock-write.test.js`、`test/edit-lock-tool-scope.test.js`、`test/edit-lock-publication.test.js`、`test/edit-lock-reservation.test.js`、`test/edit-lock-peer*.test.js`、`test/edit-lock-remote-service.test.js`、`test/edit-lock-request-*.test.js`、`test/edit-lock-call-context.test.js`。
+- **消息驱动的自动恢复**：`test/edit-lock-auto-resume.test.js`（真实用户消息置旗并在下一回合 resume + confirm-all、注入消息不置旗、开关关闭不恢复、revoked 终态跳过、零锁会话恢复、与手动 Continue 竞争幂等）；集成场景 `editlock-auto-resume`（停止后仅发消息即恢复 read → write → release，快照携带 `auto:user-message:<uuid>` requestId）与 `editlock-auto-resume-off`（开关关闭时同一写入被拒、会话保持 stopped），两者各用私有 authority 目录与目标文件。
 - **独立维护**：`test/edit-lock-maintenance.test.js` 覆盖四态/未知、损坏拒绝、字节不变、服务端根、设置审计与生命周期；`test/edit-lock-maintenance-safety.test.js` 覆盖父目录/authority/快照符号链接、多挂载顺序、旧回调、安装失败、设置重挂载及超限快照；客户端维护/设置用例验证警示与后代错误隔离（包括成功但畸形的响应）。fixture 注入受 ceiling 限制的根发现/Git 排除适配器及 lane 内短 socket 地址，不改变生产默认路径。Git ceiling 与文件系统祖先扫描分别约束，不能互相替代。
 - **静态与客户端构建**：checkJs 包含 maintenance、snapshot、settings adapter 及维护客户端；宿主边界使用本地声明。`pnpm --filter orrery-harness run build` 校验全部手写 ModuleLoader chunk 的语法，以精确字节 SHA-256 生成入口 manifest 并最后写入口；测试校验清单与 chunk 集合/摘要一致，不接受仅 touch 时间戳作为构建。
 
