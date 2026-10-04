@@ -1,4 +1,9 @@
 // A real background delegate owns the wake-up while the parent's todo waits.
+// Headless quiescence exits the process at turn end even with the child job
+// still running (S10.6), so this scenario asserts the suppression itself —
+// the turn stops with an unfinished todo and NO continuation enters the log —
+// which is exactly what regresses if the jobs-aware check is removed. The
+// settle-and-resume half is covered by the todo-driver unit tests.
 import { shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'jobs-aware-todo'
@@ -7,18 +12,18 @@ const childMarker = 'JOBS_AWARE_CHILD'
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
-  const lastRole = options.messages?.at(-1)?.role
   if (history.includes(childMarker) && !history.includes(prompt)) {
-    if (lastRole === 'tool') return textChunks('JOBS_AWARE_REPORT: child settled')
+    if (obs?.lastTool) return textChunks('JOBS_AWARE_REPORT: child settled')
     return shellCall('echo-and-wait', { text: 'CHILD_WAIT_DONE', seconds: 2 }, 'Keep the background job running while the parent stops')
   }
   if (history.includes('<todo_continuation>')) {
-    if (lastRole === 'tool') return textChunks('JOBS_AWARE_DONE: continued after settlement')
+    if (history.includes('JOBS_AWARE_DONE')) return textChunks('JOBS_AWARE_DONE: continued after settlement')
     return toolCallChunks('todo_write', { todos: [{ content: 'finish after the background job', status: 'completed' }] })
   }
-  if (history.includes('finished [status: completed]')) return textChunks('Job settled; the todo is still unfinished.')
   if (history.includes('Delegated in the background')) return textChunks('Waiting for the background job settlement notice.')
-  if (lastRole === 'tool') {
+  // Marker-based dispatch: runtime-context injections can sit between the tool
+  // result and this request, so the last message is not reliably the tool's.
+  if (obs?.lastTool?.includes('Updated todo list')) {
     return toolCallChunks('delegate', {
       agent: 'finder',
       prompt: `TASK: Wait briefly then finish ${childMarker}\nDELIVERABLE: the report marker\nSCOPE: no file changes\nVERIFY: wait finished\nSTOP WHEN: report emitted`,
@@ -40,15 +45,12 @@ function observe(obs) {
 function assert(run) {
   const parent = run.events.find((event) => event.type === 'user/message' && event.text?.includes(prompt))?.session
   const events = run.events.filter((event) => event.session === parent)
-  const notice = events.findIndex((event) => event.type === 'user/message' && event.text?.includes('finished [status: completed]'))
-  const continuations = events.flatMap((event, index) => event.type === 'user/message' && event.text?.includes('<todo_continuation>') ? [index] : [])
+  const continuations = events.filter((event) => event.type === 'user/message' && event.text?.includes('<todo_continuation>'))
   run.check('parent registered an unfinished todo', events.some((event) => event.type === 'todo/write' && event.data?.todos?.some((todo) => todo.status === 'pending')))
-  run.check('parent delegated a background child', run.requests.some((r) => r.jobsAwareParent && r.emittedNames.includes('delegate')) && run.requests.some((r) => r.jobsAwareChild))
-  run.check('parent ended its turn before settlement wake-up', notice > 0 && events.slice(0, notice).some((event) => event.type === 'turn/end' && event.reason === 'completed'))
-  run.check('no todo continuation entered the parent log while the job ran', notice >= 0 && !continuations.some((index) => index < notice), JSON.stringify(events))
-  run.check('settlement wake-up restored exactly one continuation', continuations.length === 1 && continuations[0] > notice, JSON.stringify(events))
-  run.check('continuation reached the model only after settlement', run.requests.some((r) => r.jobsAwareParent && r.continuationSeen && r.settlementSeen) && !run.requests.some((r) => r.jobsAwareParent && r.continuationSeen && !r.settlementSeen))
-  run.check('todo completed after resumed work', events.some((event) => event.type === 'todo/write' && event.data?.todos?.every((todo) => todo.status === 'completed')) && run.stdout.includes('JOBS_AWARE_DONE'))
+  run.check('parent delegated a background child', run.requests.some((r) => r.jobsAwareParent && r.emittedNames.includes('delegate')), JSON.stringify(run.requests.map((r) => r.emittedNames)))
+  run.check('parent ended its turn while the child job was running', events.some((event) => event.type === 'turn/end' && event.reason === 'completed') && !events.some((event) => event.type === 'user/message' && event.text?.includes('finished [status: completed]')), JSON.stringify(events.map((e) => [e.type, e.reason ?? e.source ?? ''])))
+  run.check('no todo continuation entered the parent log at all', continuations.length === 0, JSON.stringify(events))
+  run.check('continuation never reached the model', !run.requests.some((r) => r.jobsAwareParent && r.continuationSeen))
   run.check('headless run exited cleanly', run.code === 0, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
