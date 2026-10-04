@@ -50,6 +50,8 @@ Orrery 自带十项开箱即用的工作技能，意图命中时自动加载，�
 | `work-with-pr` | PR 全生命周期：独立 worktree 实现、证据绑定的手工验证、可读性优先的 PR 描述 |
 | `remove-deadcode` | 死代码清理：安全验证 + 原子提交，删掉无人使用的代码 |
 
+> 自「会话能力管理器」选择 provider 落地起：Orrery 会话只显示**已启用（已选）**的技能——未选中的第三方技能不再自动出现在目录、`skill` 加载与 `/` 菜单中；尚未产生选择记录的会话看到空目录与状态提示（技能选择编辑界面随后续版本交付）。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ## 了解更多
 
 - 特性细节（行为、配置、设计、失败语义）：[docs/features/](docs/features/README.md)

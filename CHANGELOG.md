@@ -9,6 +9,8 @@
 
 ### Added
 
+- **会话能力管理器：Skill 侧「库存、身份与选择 provider」（破坏性可见性变化）**：Orrery 会话起只看到**已选** Skill——未选中的第三方 Skill 不再自动出现在模型目录、`skill` 加载与 slash 列表。Skill 选择由预设内唯一选择 provider 承载（官方形状：宿主注册表 + stock `tool-skill`；宿主层 `skill-filesystem`/`tool-skill` 由 patch 行显式禁用），自有原始枚举保留同名遮蔽候选与失败现场（unparsed／last-good），按身份精确加载（同名未选不替代、同名单多选须显式解冲突），挂载绝不抛出、读取失败 fail closed 为空选择＋可见错误状态；内置十项 Skill 改标 Orrery 内置并经首次运行迁移检查（等价性不满足即 fail closed）。选择记录尚不存在的会话看到空目录与状态提示；选择编辑（Apply）与管理器界面随后续任务组交付。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 - **`scripts/dump-session.mjs`（开发工具）**：DSH 会话日志（append-only 多帧 zstd）一键解码为纯 JSONL，用法 `node scripts/dump-session.mjs <日志路径> <输出.jsonl>`，输出帧数统计；AGENTS.md §2 同步补充日志位置/格式警示与 `/tmp/dsh-src` 的具体重建命令及版本核对方法。
 - **编辑锁：消息驱动的自动恢复（默认开启）**：会话被停止（黄色状态）后，你发送的下一条消息会自动执行「继续编辑」的完整动作——恢复会话并确认全部保留文件，新回合可直接编辑，无需再手动打开面板。运行时注入的消息（续推、收尾提醒、恢复提示、后台通知）不会触发，被管理员撤销的会话仍是终态。**行为语义变更**：原先的「普通用户消息不恢复编辑权限」不变量被推翻；设置页「编辑」组新增开关可关闭，即时生效。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 - **设置页重启提醒**：保存落地且触达了只在重启后生效的选项（意图分类、续推、上下文压力、锚点编辑与编辑锁开关等 18 个键）时，弹出居中警告弹窗，按声明顺序点名本次受影响的选项（跟随界面语言）；其余改动仍即时生效。只改即时生效选项、保存失败或无净改动时不提醒；把选项改回原值不算触达。重启生效键在 settings schema 的 `FIELDS` 声明处单一标记并派生 `RESTART_KEYS`，设置页客户端清单由测试对拍防漂移。详见 [设置页特性文档](docs/features/settings-page.md)。

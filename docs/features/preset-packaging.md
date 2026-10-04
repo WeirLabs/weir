@@ -28,7 +28,7 @@ bundle 另在 profile 层插入 `orrery-harness/settings` 行：以 schemastery 
 
 - bundle 为 `private: true` 的 npm 风格包，清单经 `dsh.bundle.patch` 指向 Cordis patch 文件；**不声明任何 `@deepseek-ai/*` 运行时依赖**——这些在运行时由安装环境解析（link 安装下静态 import 不可解析，插件代码一律走 `ctx`）。
 - 预设组合包含：标准工具面（fs/搜索/bash 或 pwsh/jobs/todo/web/ask-user/present/skills）、goal 组、计划模式组、压缩组、委派组（原生 subagent/workflow + 七个自有模块行：`core`、`intent-gate`、`delegate`、`todo-driver`、`bg-notify`、`context-guard`、`hashline-edit`）。
-- 技能经 `skill-filesystem` 的 `customSkillDirs` 从 bundle 自身安装位置解析挂载。自带目录：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含分语言 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`。结构纪律：frontmatter `name`==目录名、`description` 一行、正文英文（`test/skills.test.js` 机器强制）。
+- 技能经预设内**选择 provider**（`orrery-skill-selection` 行，`src/capabilities/skill-selection-plugin.js`）挂载：bundle 自带目录由 provider 枚举并标注为 Orrery 内置（原 `skill-filesystem` 行及其 `customSkillDirs` 已移除；宿主层 `skill-filesystem`/`tool-skill` 由 patch 行显式 `disabled: true`），预设保留 stock `tool-skill` 作为 catalog 与 loader。自带目录：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含分语言 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`。结构纪律：frontmatter `name`==目录名、`description` 一行、正文英文（`test/skills.test.js` 机器强制）。详见 [会话能力管理器](session-capability-manager.md)「库存、身份与选择 provider」。
 - 服务隔离纪律：被 `isolate` 的服务（如压缩组），其消费者插件行必须与提供者同组，否则预设加载永久等待（历史事故，已修复并镜像进集成测试）。
 - 重复安装同一路径被幂等拒绝；改动经"禁用→启用"循环重应用。
 
