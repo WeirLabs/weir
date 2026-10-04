@@ -617,6 +617,7 @@ return (ctx, config = {}) => {
     if (ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume === false) return
     pendingAutoResume.set(agent, true)
   })
+
   // Classification and settling read only the durable turn/end reason
   // (AGENTS §3.5): `error` classifies the locks abnormal, `completed` settles the
   // locks the turn left behind, and `aborted` only latches. Nothing is inferred.
