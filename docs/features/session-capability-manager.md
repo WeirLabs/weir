@@ -64,6 +64,16 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **content refresh 协调**（[content-refresh.js](<../../plugins/orrery-harness/src/capabilities/content-refresh.js>)）：refresh 用独立存储单元与 receipt/revision，但与 selection 共用同一会话级提交协调者，提交前重查 selection revision——被移除的 Skill 在 refresh 期间不会继续发布。
 - **Skill 侧会话阻断**（[skill-admission.js](<../../plugins/orrery-harness/src/capabilities/skill-admission.js>)）：未选中 Skill 的 `skill` 调用返回显式 unavailable 且不加载正文；slash 提交由服务端在当前选择上再验证；正文异步读取结束、返回内容之前复核选择快照（已读取 ≠ 已授权）；接受移除后，未 handed-off 的正文加载与子代理 prompt 发布被拒。
 
+### 目录与菜单收敛
+
+冷会话（页面打开历史会话、尚无运行 agent）与实时会话看到同一份选择视图，但收敛路径不同：
+
+- **无会话调用失败关闭**：宿主对无运行 agent 的调用只给 provider `{cwd, scope=预设常驻 key}`，provider 看不到会话 ID——此时**只能返回空列表**，绝不按目录或预设默认值猜测（同目录多会话选择不同时 cwd 键必然给错）。常驻 key 是预期的冷条件而非策略失败，因此不产生错误状态；office denial 阴影条目保留（它们是遮蔽宿主内置项的防线，不是可选择 Skill）。
+- **打开即恢复、先空后收敛**：宿主打开历史会话会自动恢复（follow→promote），预设内 `agent/created` 监听器（agent 已 `enter` 之后）对**根会话**重发 `agent-preset/selected`（[preset-invalidation.js](<../../plugins/orrery-harness/src/capabilities/preset-invalidation.js>)：两参数必须是合法 JSON 字符串、取会话**实际**预设 id、全程 try/catch、子代理不发射）；Apply 被接受后同样重发一次。客户端收到帧后丢弃缓存重取，因此**冷会话打开瞬间菜单可能先为空，约一次恢复后收敛**——先空后收敛是允许形态，列出未选 Skill 不是。
+- **已接受的语义拉伸**：该宿主事件原义是「会话提交了不同预设」，`dsh-client-ui-commands` 收到后也会重取命令列表（每次发射全客户端广播，故严格限定根会话 + Apply 两处）。若宿主将来提供专用修订事件，应切换过去（记入宿主后续依赖）。
+- **恢复失败保持为空**：另一进程占用会话日志（writer-held）等恢复失败时，菜单保持为空且状态面给出稳定 `reason` 与可操作 `hint`（[selection-status.js](<../../plugins/orrery-harness/src/capabilities/selection-status.js>)），绝不回退为非空列表；`acceptSelection` 或显式 `clearFailure` 解除。
+- **浏览器侧行为**（缓存丢弃、打开中菜单即时刷新、草稿 chip 短暂空白等）以服务端 + 模拟客户端缓存证据为准，真实 GUI 观察待 1.5 验证。
+
 ## 边界与失败语义
 
 - 存储单元损坏、版本未知或撕裂（digest 不符）：fail closed，返回 `unreadable`，保留原文件等待人工处置，绝不自动覆盖或删除。
