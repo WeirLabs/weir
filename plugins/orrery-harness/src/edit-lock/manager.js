@@ -264,6 +264,7 @@ function managerCore(store, kernel) {
       const captured = { ...execution }
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        checkNotRevoked(captured.sessionId)
         return draft.authority.issueExecutionReceipt(captured, requestId)
       }, { kind: 'none' }).then(async receipt => {
         const cancellation = cancelled.get(captured.sessionId)
@@ -580,6 +581,7 @@ function managerCore(store, kernel) {
       const snapshot = operations.status()
       for (const session of snapshot.sessions) {
         if (cancelled.has(session.sessionId)) session.interrupted = true
+        session.revoked = revokedOwner(confirmed.state, session.sessionId)
       }
       for (const lock of snapshot.locks) {
         if (cancelled.has(lock.owner) && lock.status !== 'abnormal') lock.status = 'user-interrupted'

@@ -256,6 +256,7 @@ function replyToolDefinition(service) {
 /** @param {any} status */
 function describe(status) {
   const lines = [`Edit Lock session ${status.sessionId}: ${status.state}${status.interrupted ? ' (interrupted)' : ''}, epoch ${status.executionEpoch ?? '-'}`]
+  if (status.revoked) lines.push('Editing authority was permanently revoked by an administrative recovery; resume is impossible. Start a new conversation to edit this workspace.')
   for (const lock of status.locks) lines.push(`- ${lock.resourceId} [${lock.status}${lock.reason ? `: ${lock.reason}` : ''}] generation ${lock.generation}`)
   if (status.locks.length === 0) lines.push('- no locks held')
   const recovery = status.recovery

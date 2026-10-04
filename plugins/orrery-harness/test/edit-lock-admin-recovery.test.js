@@ -66,6 +66,12 @@ it('audited override releases the real 22-lock blocked owner without resolving o
   assert.equal(inspected.snapshot.unresolved[0].admissionBlocked, false)
   assert.equal(inspected.snapshot.unresolved[0].phase, 'unknown')
   const manager = await recoverEditLockManager({ store, managerIncarnation: 'fresh' })
+  const statusAfter = manager.status()
+  assert.equal(statusAfter.sessions.find(s => s.sessionId === 'blocked-owner').revoked, true)
+  assert.equal(statusAfter.sessions.find(s => s.sessionId === 'unrelated-owner').revoked, false)
+  const revisionBeforeReceipt = store.snapshot().revision
+  await assert.rejects(manager.issueExecutionReceipt(f.execution, 'late-resume-request'), /revoked/)
+  assert.equal(store.snapshot().revision, revisionBeforeReceipt)
   const fresh = await manager.openSession('fresh-owner')
   const token = await manager.acquire(fresh, f.target)
   assert.equal(token.generation, 2)

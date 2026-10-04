@@ -183,6 +183,17 @@ describe('client.edit-lock-panel chunk', () => {
     expect(reads).toBeGreaterThan(before)
   })
 
+  it('an administratively revoked session is terminal: no resume, no stop, with an explanation', async () => {
+    const { runs, render } = await mounted([viewOf('revoked', [])])
+    find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, (node) => node['data-orrery-edit-lock-summary'] === '').children).toBe('editLockState_revoked')
+    expect(byAction(tree, 'primary')).toBe(undefined)
+    expect(byAction(tree, 'arm-stop')).toBe(undefined)
+    expect(find(tree, (node) => node['data-orrery-edit-lock-revoked'] !== undefined).children).toBe('editLockRevokedHint')
+    expect(runs).toEqual([])
+  })
+
   it('paints an opaque popover with theme-defined tokens only', () => {
     const source = readFileSync(new URL('../lib/client.edit-lock-panel.js', import.meta.url), 'utf8')
     // The theme's documented popover surface; an undefined token renders transparent.

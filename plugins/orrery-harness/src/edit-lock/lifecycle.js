@@ -119,6 +119,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       sessionId: entry.sessionId,
       state: entry.state,
       interrupted: session?.interrupted ?? null,
+      revoked: session?.revoked ?? null,
       executionEpoch: session?.executionEpoch ?? null,
       locks: status.locks.filter(/** @param {any} lock */ lock => lock.owner === entry.sessionId),
       recovery: runtime.control.recoveryUsage(entry.sessionId),
@@ -234,6 +235,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       const attempt = ++entry.attempt
       try {
         const { status, session } = sessionStatus(entry.sessionId)
+        if (session?.revoked) throw new Error('Edit Lock: editing authority in this session was permanently revoked by an administrative recovery and cannot be resumed. Start a new conversation to edit this workspace again.')
         if (!session?.interrupted) throw new Error('session is not durably interrupted')
         const execution = {managerIncarnation: status.managerIncarnation, sessionId: entry.sessionId, executionEpoch: session.executionEpoch}
         const receipt = await runtime.control.issueExecutionReceipt(execution, requestId)

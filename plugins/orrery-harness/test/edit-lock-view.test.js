@@ -22,7 +22,11 @@ it('derives one state per session, in precedence order', () => {
   expect(view(base({ state: 'recovering', locks: [lock('/w/a', 's1', 'abnormal', { reason: 'provider-error' })] })).state).toBe('attention')
   // Stopped wins over everything: the session cannot act until a human continues.
   expect(view(base({ state: 'stopped', locks: [lock('/w/a', 's1', 'abnormal', { reason: 'x' })] })).state).toBe('stopped')
-  for (const state of ['idle', 'editing', 'holding', 'confirm', 'attention', 'stopped', 'unavailable']) expect(VIEW_STATES.includes(state)).toBe(true)
+  // Revoked wins even over stopped: administrative revocation is terminal.
+  expect(view(base({ state: 'stopped', revoked: true, locks: [lock('/w/a', 's1', 'user-interrupted')] })).state).toBe('revoked')
+  // Without the flag nothing changes.
+  expect(view(base({ state: 'stopped', revoked: null })).state).toBe('stopped')
+  for (const state of ['revoked', 'idle', 'editing', 'holding', 'confirm', 'attention', 'stopped', 'unavailable']) expect(VIEW_STATES.includes(state)).toBe(true)
 })
 
 it('an expired reservation is ordinary editing, not holding', () => {
