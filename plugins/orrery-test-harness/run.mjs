@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeRunView } from './src/run-view.js'
 import { SCENARIOS, byId } from './src/scenarios/index.js'
+import { defaultItRoot } from './src/it-root.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const WS_ROOT = join(HERE, '..', '..')
@@ -39,13 +40,9 @@ const DSH_BIN =
   (IS_WINDOWS
     ? join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     : '/tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js')
-// Relocated off /tmp: writableRoots(workspace-write) always contains /tmp and tmpdir(),
-// so a sandbox-mirroring regression (S23) can only reproduce a denial when the
-// test workspace lives OUTSIDE every unconditional writable root.
-// ORRERY_IT_ROOT overrides the write root; a POSIX dev box keeps /Users/young.
-// On Windows the ACLs, not the POSIX writable-root list, define the sandbox,
-// so the root is an absolute path on a drive outside the session workspace.
-const IT_ROOT = process.env.ORRERY_IT_ROOT ?? (IS_WINDOWS ? 'D:\\.orrery-it' : '/Users/young/.orrery-it')
+// Keep the default inside this repository/worktree, outside system temp roots
+// so sandbox-mirroring regressions remain observable. Explicit overrides win.
+const IT_ROOT = process.env.ORRERY_IT_ROOT ?? defaultItRoot()
 const HOME = join(IT_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
 const WS = join(IT_ROOT, 'ws')
@@ -189,7 +186,7 @@ function recordRun(run) {
     }
     writeFileSync(
       join(dir, 'run.json'),
-      JSON.stringify({ scenario: run.scenario, code: run.code, stdout: run.stdout, stderr: run.stderr, sessionId: run.sessionId ?? null }, null, 2) + '\n',
+      JSON.stringify({ scenario: run.scenario, home: HOME, code: run.code, stdout: run.stdout, stderr: run.stderr, sessionId: run.sessionId ?? null }, null, 2) + '\n',
     )
   } catch (error) {
     console.log(`[record:${run.scenario}] ${String(error?.message ?? error)}`)

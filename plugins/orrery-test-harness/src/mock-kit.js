@@ -11,12 +11,10 @@
 import { join } from 'node:path'
 import { shellCommand, shellToolName } from './shell.js'
 import { textOf } from './message-text.js'
+import { defaultItRoot } from './it-root.js'
 
-// The driver (run.mjs) owns the authoritative root; this default only matters
-// when a module is mounted without its driver. Derived here exactly once so
-// mock, event-tap and scenario modules can never disagree on a platform.
-const IT_ROOT =
-  process.env.ORRERY_IT_ROOT ?? (process.platform === 'win32' ? 'D:\\.orrery-it' : '/Users/young/.orrery-it')
+// Also works when mounted without the driver; all consumers share the default.
+const IT_ROOT = process.env.ORRERY_IT_ROOT ?? defaultItRoot()
 
 const SHELL = shellToolName()
 
