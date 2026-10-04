@@ -107,6 +107,9 @@
             config:
               customSkillDirs:
                 - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('orrery-harness/package.json')), 'skills')
+          # Resolve the private entry without expanding the package export surface.
+          - id: orrery-skill-selection
+            name: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('orrery-harness/package.json')), 'src/capabilities/skill-selection-plugin.js')
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
