@@ -26,6 +26,17 @@ describe('worktree decision-card copy', () => {
     expect(cardCopy('en').mergeOption('main')).toBe('Merge into main (--no-ff)')
   })
 
+  it('keeps the option row short: no branch in the description, no title in the lane fact', () => {
+    const lane = { id: 'a-001', title: 'Fix login', branch: 'orrery/a-001', base: { branch: 'main' } }
+    for (const locale of ['en', 'zh']) {
+      const copy = cardCopy(locale)
+      expect(copy.mergeOptionDescription('orrery/a-001')).not.toContain('orrery/a-001')
+      const detail = copy.mergeDetail({ lane, commits: [], stat: { files: 0, added: 0, removed: 0 }, verification: { enabled: false } })
+      expect(detail.split('\n')[0]).toBe(`- **${locale === 'zh' ? '车道' : 'Lane'}** \`a-001\``)
+      expect(detail).not.toContain('Fix login')
+    }
+  })
+
   it('renders merge detail as GFM blocks that survive soft-break collapsing', () => {
     const lane = { id: 'a-001', title: 'Fix login', branch: 'orrery/a-001', base: { branch: 'main' } }
     const verification = { enabled: true, results: [{ name: 'test', exit: 0 }, { name: 'lint', exit: 2 }] }
