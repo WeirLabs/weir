@@ -240,10 +240,7 @@ window.__ModuleLoader__.load({
 		const firstGroupTitleStyle = { ...groupTitleStyle, borderTop: "none", paddingTop: "0" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
-		const reminderStyle = { display: "flex", flexDirection: "column", gap: "8px", padding: "10px 12px", margin: "0 0 6px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)" };
-		const reminderHeaderStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" };
 		const reminderTagsStyle = { display: "flex", flexWrap: "wrap", gap: "6px" };
-		const reminderDismissStyle = { ...resetStyle, flexShrink: 0 };
 		function ChoiceField(props) {
 			const { descriptor, field, t, disabled } = props;
 			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
@@ -481,19 +478,22 @@ window.__ModuleLoader__.load({
 				].filter(Boolean);
 			});
 			// Restart reminder: a landed save that touched restart-required
-			// keys raises a dismissible banner above the groups, naming the
-			// affected options by their translated labels. Absent state (or
-			// after dismiss) renders nothing, keeping the rows unchanged.
+			// keys raises a centered warning Modal (portal-mounted over a page
+			// mask, so it cannot be missed on a long page), naming the affected
+			// options by their translated labels. Absent state (or after
+			// dismiss) renders nothing, keeping the rows unchanged.
 			const reminder = Array.isArray(state.restartReminder) && state.restartReminder.length > 0 ? state.restartReminder : null;
 			if (reminder) {
-				children.unshift(react_jsx_runtime.jsxs("div", { style: reminderStyle, children: [
-					react_jsx_runtime.jsxs("div", { style: reminderHeaderStyle, children: [
-						react_jsx_runtime.jsx("span", { style: labelStyle, children: t("restartReminderTitle") }),
-						react_jsx_runtime.jsx("button", { type: "button", style: reminderDismissStyle, onClick: () => props.dismissRestartReminder(), children: t("restartReminderDismiss") })
-					] }),
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: t("restartReminderBody") }),
-					react_jsx_runtime.jsx("div", { style: reminderTagsStyle, children: reminder.map((field) => react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t(field), key: field })) })
-				], key: "restart-reminder" }));
+				children.push(react_jsx_runtime.jsx(primitives.Modal, {
+					open: true,
+					onClose: () => props.dismissRestartReminder(),
+					title: t("restartReminderTitle"),
+					closeLabel: t("restartReminderDismiss"),
+					description: t("restartReminderBody"),
+					children: react_jsx_runtime.jsx("div", { style: reminderTagsStyle, children: reminder.map((field) => react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t(field), key: field })) }),
+					footer: react_jsx_runtime.jsx(primitives.Button, { variant: "primary", onClick: () => props.dismissRestartReminder(), children: t("restartReminderAcknowledge") }),
+					key: "restart-reminder"
+				}));
 			}
 			return react_jsx_runtime.jsxs(primitives.SettingsForm, {
 				labels: formLabels(t),

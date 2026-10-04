@@ -51,6 +51,8 @@ describe('client.settings-page chunk', () => {
       Switch: (props) => ({ __switch: props }),
       SegmentedControl: (props) => ({ __segmented: props }),
       Tag: (props) => ({ __tag: props }),
+      Modal: (props) => ({ __modal: props }),
+      Button: (props) => ({ __button: props }),
       SettingsForm: (props) => ({ __form: props }),
       SettingsFormModel: class {
         constructor(scope, specs) {
@@ -241,7 +243,7 @@ describe('client.settings-page chunk', () => {
     expect(enumRendered.children[1].children[1].children[0].children).toBe('overridden')
   })
 
-  it('renders the restart reminder banner above the groups when the state carries one', async () => {
+  it('renders the restart reminder as a centered modal when the state carries one', async () => {
     const { exports, editors } = await loadPage()
     const { OrreryCard } = exports
 
@@ -263,22 +265,26 @@ describe('client.settings-page chunk', () => {
       editors,
     })
 
-    // the banner leads the form children (59 group rows + 1 banner)
+    // the modal trails the form children (59 group rows + 1 modal)
     expect(rendered.children).toHaveLength(60)
-    const banner = rendered.children[0]
-    expect(banner.key).toBe('restart-reminder')
-    // header: translated title + dismiss button wired to the injected action
-    const header = banner.children[0]
-    expect(header.children[0].children).toBe('restartReminderTitle')
-    const dismissButton = header.children[1]
-    expect(dismissButton.children).toBe('restartReminderDismiss')
-    dismissButton.onClick()
+    const modal = rendered.children[59]
+    expect(modal.key).toBe('restart-reminder')
+    expect(modal.open).toBe(true)
+    expect(modal.title).toBe('restartReminderTitle')
+    expect(modal.description).toBe('restartReminderBody')
+    expect(modal.closeLabel).toBe('restartReminderDismiss')
+    // closing via the mask or Escape dismisses through the injected action
+    modal.onClose()
     expect(dismissals).toEqual(['dismiss'])
-    // body text + one accent tag per affected field, labeled via t(field)
-    expect(banner.children[1].children).toBe('restartReminderBody')
-    const tags = banner.children[2].children
+    // body: one accent tag per affected field, labeled via t(field)
+    const tags = modal.children.children
     expect(tags.map((tag) => tag.children)).toEqual(['todoEnabled', 'editLockEnabled'])
     expect(tags.every((tag) => tag.tone === 'accent')).toBe(true)
+    // footer: a primary acknowledge button that dismisses too
+    expect(modal.footer.variant).toBe('primary')
+    expect(modal.footer.children).toBe('restartReminderAcknowledge')
+    modal.footer.onClick()
+    expect(dismissals).toEqual(['dismiss', 'dismiss'])
   })
 
   it('renders the section as the nested item slot', async () => {
