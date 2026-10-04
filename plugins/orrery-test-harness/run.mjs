@@ -160,8 +160,9 @@ function recordRun(run) {
     mkdirSync(join(dir, 'ws'), { recursive: true })
     if (existsSync(run.trace)) copyFileSync(run.trace, join(dir, 'trace.jsonl'))
     if (run.trace2 && existsSync(run.trace2)) copyFileSync(run.trace2, join(dir, 'trace2.jsonl'))
-    // capstore-*.json: the capability-store probe reports (capstore scenario).
-    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
+    // capstore-*.json: the capability-store probe reports (capstore scenario);
+    // apply-transaction.json: the Apply-transaction probe report (task 4.7).
+    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
       const source = join(WS, file)
       if (existsSync(source)) copyFileSync(source, join(dir, 'ws', file))
     }

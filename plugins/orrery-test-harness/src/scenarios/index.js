@@ -26,9 +26,11 @@ import stopUpdate from './editlock-stop-update.js'
 import autoResume from './editlock-auto-resume.js'
 import autoResumeOff from './editlock-auto-resume-off.js'
 import skillComposition from './skill-composition.js'
+import applyTransaction from './apply-transaction.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
+SCENARIOS.push(applyTransaction)
 
 /**
  * Find a scenario entry by id.

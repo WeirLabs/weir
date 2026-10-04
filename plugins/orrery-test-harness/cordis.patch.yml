@@ -26,7 +26,7 @@
       name: 'orrery-test-harness/mock-llm'
     - id: orrery-skill-selection
       name: 'orrery-test-harness/skill-selection'
-      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
+      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX)"
     - id: orrery-it-tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
       disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
@@ -37,6 +37,12 @@
         default: orrery-it-selection
     - id: orrery-it-skill-composition-probe
       name: 'orrery-test-harness/skill-composition-probe'
+    # Apply-transaction probe (task 4.7): drives the group-4 Apply engine,
+    # admission fence and receipt recovery in-session (apply-transaction only).
+    - id: orrery-it-apply-transaction-probe
+      name: 'orrery-test-harness/apply-transaction-probe'
+      config:
+        enabled: !!js process.env.ORRERY_IT_APPLY_TX === '1'
     - id: orrery-it-office
       name: '@deepseek-ai/dsh-skill-office'
       disabled: !!js "process.env.ORRERY_IT_SKILL_COMPOSITION !== 'OFFICE'"
