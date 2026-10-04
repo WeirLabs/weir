@@ -37,15 +37,15 @@ function reportOf(ws, label) {
   }
 }
 
-function assert(run) {
+function assert(run, { home = HOME } = {}) {
   run.check('both probe tools advertised', run.requests.some((r) => r.capstoreToolsSeen))
   const host = reportOf(run.ws, 'host')
   const realm = reportOf(run.ws, 'realm')
   for (const [label, report] of [['host', host], ['realm', realm]]) {
-    run.check(`${label}: profileContext visible`, report?.present === true && report.name === 'orrery-it' && report.home === HOME, JSON.stringify(report))
+    run.check(`${label}: profileContext visible`, report?.present === true && report.name === 'orrery-it' && report.home === home, JSON.stringify(report))
     run.check(
       `${label}: store root resolved under DSH_HOME`,
-      report?.located?.supported === true && report.located.root === join(HOME, 'orrery', 'profiles', 'orrery-it', 'capabilities'),
+      report?.located?.supported === true && report.located.root === join(home, 'orrery', 'profiles', 'orrery-it', 'capabilities'),
       JSON.stringify(report?.located),
     )
     run.check(`${label}: selection record committed and read back`, report?.commit === 'committed' && report.read?.kind === 'ok', JSON.stringify(report && { commit: report.commit, read: report.read }))

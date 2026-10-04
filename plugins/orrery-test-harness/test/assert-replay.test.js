@@ -25,6 +25,7 @@ function loadRun(scenarioId) {
   const meta = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'))
   return {
     dir,
+    home: meta.home,
     run: {
       scenario: scenarioId,
       trace: join(dir, 'trace.jsonl'),
@@ -76,10 +77,10 @@ describe('assert replay over recorded green-run traces', () => {
 
   for (const scenario of SCENARIOS) {
     it(`${scenario.id}: recorded checks replay to the original green conclusion`, () => {
-      const { dir, run } = loadRun(scenario.id)
+      const { dir, run, home } = loadRun(scenario.id)
       const checks = []
       const view = makeRunView(run, { ws: join(dir, 'ws'), check: (label, ok, detail) => checks.push({ label, ok, detail }) })
-      scenario.assert(view)
+      scenario.assert(view, { home })
       assert.ok(checks.length > 0, `${scenario.id}: assert recorded no checks`)
       const failed = checks.filter((entry) => !entry.ok)
       assert.deepEqual(

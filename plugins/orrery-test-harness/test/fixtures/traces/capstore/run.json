@@ -1,5 +1,6 @@
 {
   "scenario": "capstore",
+  "home": "/Users/young/.orrery-it/home",
   "code": 0,
   "stdout": "capstore done\n",
   "stderr": "",

@@ -26,7 +26,7 @@
 - 场景清单的权威来源是 `src/scenarios/index.js` 的有序 `SCENARIOS`：`deepwork`、`delegate`、`hashline`、`pressure`、`robash`、`semantic`、`grouped`、`escalate`、`background`、`terminate`、`rehydrate`、`lsp`。新增场景 = 新增一个场景模块并在索引登记一处（registry conformance 测试钉住齐备性）；**未知场景 id 是响亮失败**：`node run.mjs no-such-scenario` 在 setup 前退出码 1 并点名该 id。
 - `pnpm --filter orrery-test-harness test` 跑装置自身的单元测试（shell 契约 / registry / brains / replay / audit-types / trace-extract / jsonl / message-text 各套件）。
 - `pnpm --filter orrery-test-harness run record` 重录断言回放夹具（一次绿跑后把 `trace-<scenario>.jsonl` 拷入 `test/fixtures/traces/`，入库）。
-- 每次运行会把测试根目录整体删除重建；不在仓库内留任何产物（写入位置见下）。
+- 每次运行会把测试根目录整体删除重建；默认产物位于当前仓库或 lane 的 `.orrery/it-root/`（已忽略、不入库）。lane 清理时该 scratch 随 `.orrery/` 归档到主仓库的 `.orrery/lanes/<lane-id>/`。
 
 ## 配置
 
@@ -34,7 +34,7 @@
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `ORRERY_IT_ROOT` | POSIX：`/Users/young/.orrery-it`；win32：`D:\.orrery-it` | 测试写根（profile/home/ws/trace 全在其下） |
+| `ORRERY_IT_ROOT` | `<仓库或 lane 根>/.orrery/it-root` | 从装置自身安装位置推导，与 cwd 无关；显式环境变量原样覆盖。profile/home/ws/trace 全在其下 |
 | `ORRERY_IT_NODE` | 捆绑运行时绝对路径（按平台推导） | 启动 profile 的解释器 |
 | `ORRERY_IT_PNPM` | 捆绑 pnpm 绝对路径（按平台推导） | 生成 profile 后做 `link:` 安装 |
 | `ORRERY_IT_DSH` | POSIX：`/tmp/dsh-src/...`；win32：`%APPDATA%\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | 被启动的 `dsh` CLI 入口 |
@@ -50,7 +50,7 @@
 
 装置必须在 macOS 与 Windows 上给出**同一套断言语义**。为此三条纪律：
 
-1. **路径一律「环境变量覆盖 → 平台默认」**。`run.mjs`、`src/mock-llm.js`、`src/event-tap.js` 都遵守这条；POSIX 默认值逐字保留，macOS 开发机行为不变。`cordis.patch.yml` 是例外也是更彻底的做法：它的 `workspaceRoot` 与 LSP mock 服务器路径由 `ORRERY_IT_ROOT` 注入、解释器用 `!!js process.execPath`（即启动本 profile 的解释器），因此该文件**不含任何平台默认值**，也就不会漂移。
+1. **路径一律「环境变量覆盖 → 默认值」**。测试写根由 `src/it-root.js` 的 `defaultItRoot()` 从 `import.meta.url` 推导（包目录上两级 + `.orrery/it-root`），`run.mjs`、`src/mock-kit.js`、`src/event-tap.js` 共用；主仓库与 lane 各自解析到自己的根，不依赖调用目录。依赖旧位置的本地脚本须显式设置 `ORRERY_IT_ROOT`。工具链路径仍按平台提供默认值。`cordis.patch.yml` 的 `workspaceRoot` 与 LSP mock 路径由 `ORRERY_IT_ROOT` 注入、解释器用 `!!js process.execPath`，不另复制默认值。
 2. **shell 命令走具名操作，不写字面命令**。受管代理拿到的只读 shell 按平台选择：win32 → `pwsh`，其余 → `bash`（与产品侧 `readOnlyShellName` 同源约定）。因此 mock 不能硬发 `bash` 命令。`src/shell.js` 导出：
    - `shellToolName(platform)`：平台工具名。
    - `shellCommand(operation, platform, args)`：把具名操作渲染成该平台的命令。
@@ -81,4 +81,5 @@ patch 层把 compaction provider 与 context-guard 消费者放进同一个 `iso
 ## 测试
 
 - 单元测试（`plugins/orrery-test-harness/test/`）：`shell.test.js` —— 钉死平台工具名、五个操作的 POSIX/win32 命令字面量、输入卫生（未知操作/未知平台/非法秒数/可夹带语法的标记与路径一律抛错），以及**三张表键集一致**（每个动词在两侧都有 builder、且都有校验器）；期望值是独立字面量而非重算。`scenario-registry.test.js` —— registry 条目齐备性（id/prompt/decide/assert、id === 文件名、id 集与顺序钉死）。`decide-brains.test.js` —— 进程内直调各场景 `decide`，断言 chunk 序列关键点（不启动 headless profile；mock 的 decide 逻辑首次有单测）。`assert-replay.test.js` —— 录制 trace（`test/fixtures/traces/`，入库）经 `makeRunView` 回放各场景 `assert`，结论与原始运行一致，且 fixture 的 trace key 集与当前 writer 一致性校验（形状漂移即红）。`audit-types.test.js` —— 三路 conformance：tap 订阅集 === `Object.values(AUDIT_TYPES)` + `AUDIT_SUBTYPES` 展开、产品 emit 文件不得携带注册表外字面量、协调器 `onFact` kind 集 === `AUDIT_SUBTYPES.supervision`。`trace-extract.test.js` —— 每请求恰好一次 extract、trace record key 集与迁移前一致。`jsonl.test.js` 与 `message-text.test.js` —— 共享 helper 的容错与双形态语义。
+- 默认根契约：`it-root.test.js` 断言根为包目录上两级下的 `.orrery/it-root`，三处消费者引用同一 helper、默认值一致且显式覆盖不变。产品 capability-store 的单进程测试注入可编程 liveness 替身；独立 process 套件先探测 Node/ps 派生能力，不可用时逐用例显式 skip（附原因），可用时执行真实跨进程竞争、SIGKILL 恢复和 ps 探测。
 - 集成测试：`pnpm --filter orrery-test-harness run test:integration` —— 装置自身就是那一层；12 个场景即验收门。

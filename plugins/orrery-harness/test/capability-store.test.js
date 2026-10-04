@@ -4,10 +4,12 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createNodeFs, instrumentFs } from '../src/capabilities/store/fs-adapter.js'
-import { createLiveness } from '../src/capabilities/store/liveness.js'
+import { createStubLiveness } from './helpers/stub-liveness.js'
 import { resolveStoreRoot, unitLayout } from '../src/capabilities/store/paths.js'
 import { decodeRecord, encodeRecord } from '../src/capabilities/store/record.js'
-import { openCapabilityStore } from '../src/capabilities/store/store.js'
+import { openCapabilityStore as openStore } from '../src/capabilities/store/store.js'
+
+const openCapabilityStore = options => openStore({ liveness: createStubLiveness(), ...options })
 
 async function fixture(t) {
   const base = await realpath(tmpdir())
@@ -174,7 +176,7 @@ test('an expired lease with a live owner is not reclaimed', async t => {
   await mkdir(unitDir(root), { recursive: true })
   // leaseUntil: 0 (expired) but the owner identity is THIS live process.
   const own = JSON.parse(deadLock())
-  own.startIdentity = await createLiveness().identity()
+  own.startIdentity = await createStubLiveness().identity()
   await writeFile(join(unitDir(root), 'selection.lock'), JSON.stringify(own))
   assert.deepEqual(await store.commit(unit, 0, () => ({ v: 1 })), { status: 'locked', reason: 'locked' })
   assert.equal(JSON.parse(await readFile(join(unitDir(root), 'selection.lock'), 'utf8')).ownerToken, own.ownerToken)
@@ -202,7 +204,7 @@ test('manual recovery refuses to clear a lock whose owner is alive', async t => 
   const store = openCapabilityStore({ root, platform: 'darwin' })
   await mkdir(unitDir(root), { recursive: true })
   const own = JSON.parse(deadLock())
-  own.startIdentity = await createLiveness().identity()
+  own.startIdentity = await createStubLiveness().identity()
   await writeFile(join(unitDir(root), 'selection.lock'), JSON.stringify(own))
   assert.equal(await store.clear(unit, 'lock', own.ownerToken), 'owner-alive')
   assert.equal(JSON.parse(await readFile(join(unitDir(root), 'selection.lock'), 'utf8')).ownerToken, own.ownerToken)
