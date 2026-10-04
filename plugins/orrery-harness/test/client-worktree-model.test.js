@@ -78,6 +78,23 @@ describe('worktree view model', () => {
     expect(model.needsPolling(null)).toBe(false)
   })
 
+  it('survives degraded endpoint shapes without throwing', () => {
+    // The view endpoint's degraded replies (WORKTREE_DISABLED, SESSION_NOT_LIVE)
+    // and malformed payloads must never crash a render.
+    const degraded = { available: false, enabled: true, mode: false, error: { code: 'SESSION_NOT_LIVE', message: 'x' } }
+    for (const value of [degraded, { lanes: 'nope', owned: 1 }, 42, 'x', undefined]) {
+      const summary = model.summaryOf(value)
+      expect(summary.active).toBe(0)
+      expect(summary.awaiting).toBe(0)
+      expect(model.needsPolling(value)).toBe(false)
+    }
+    const narrowed = model.narrowView(degraded)
+    expect(narrowed.lanes).toEqual([])
+    expect(narrowed.owned).toEqual([])
+    expect(model.summaryOf(narrowed).mode).toBe(false)
+    expect(model.needsPolling(narrowed)).toBe(false)
+  })
+
   it('builds the exact command line of each panel action and flags the risky ones', () => {
     expect(model.commandFor('check', { id: 'a-001' })).toBe('check a-001')
     expect(model.commandFor('land', { id: 'a-001' })).toBe('land a-001')

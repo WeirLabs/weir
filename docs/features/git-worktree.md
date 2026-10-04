@@ -93,6 +93,7 @@
 - **diff 展示**：行级底色（新增 10% 成功色淡底、删除 10% 错误色淡底、hunk/文件头 interactive-bg-solid）、等宽字体、radius-md 边框容器、最高约 280px 滚动。
 - **数据通道**：会话标记读 `orreryWorktree` 投影；车道详情读只读端点 `POST /api/orrery-worktree/view`（diff 读 `/api/orrery-worktree/diff`），不进会话日志；所有变更动作走 `/worktree` 命令。刷新时机：挂载、投影变化、手动刷新、以及存在过渡态车道时每 5 秒一次。
 - **状态覆盖**：加载中（居中弱化）、能力关闭、不可用（callout 附原因）、空车道（居中大图标 + 标题 + 引导文案）、历史折叠、托管之外的 worktree 提示、读取失败保留上次数据并标注、配置读取失败、配置编辑内联错误（标签在上、输入框主题化）。
+- **降级形态不崩溃**：端点的降级返回（`WORKTREE_DISABLED`、`SESSION_NOT_LIVE`）与完整视图同构（同样携带 `lanes`/`ownedBySession`/`unmanaged`/`repo` 字段）；端点数据在进入组件前经 `narrowView` 收窄（收窄失败按读取失败呈现），`summaryOf`/`needsPolling` 对缺失或非数组字段容错返回中性结果——任何畸形/降级负载都不会在渲染期抛错（曾因渲染期 TypeError 被壳层错误边界吞掉表现为面板空白）。
 - **隔离**：每个界面注册在各自的 `ctx.effect` 中；视图代码经 `require.async` 到达（到达前渲染占位/平铺体）；右侧栏页签通过可选 `ctx.inject(["sidebarRightTabs"])` 注册，没有该包的组合其余界面照常工作。文案中英双语，仅使用主题 token（淡色底用 `color-mix` 并保留描边兜底）。
 
 ## 边界与失败语义
