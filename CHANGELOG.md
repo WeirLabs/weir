@@ -31,8 +31,13 @@
 
 - **会话能力管理器（基础设施，暂无用户可见变化）**：新增 Orrery 自管的带锁持久化侧文件存储（位于 DSH home 下的 `orrery/profiles/<profile>/capabilities`），承载后续会话 Skill/MCP 选择与其回执：每单元独立文件与修订号、原子提交（temp + fsync + rename）、跨进程锁文件（崩溃安全获取、陈旧锁须证明 owner 已不存活才回收）、幂等回执与内容代次指针原子切换；不支持的平台显式报 unsupported 且零写入。本步不改动任何现有行为。详见 [会话能力管理器特性文档](docs/features/session-capability-manager.md)。
 
+### Changed
+
+- **Worktree 车道 UI 全面重设计**：右侧栏车道看板、车道卡片、会话内工具卡片、会话头状态胶囊、列表行标记与输入框模式开关升级为产品化呈现——卡片化布局与清晰的视觉层级（状态徽标 v2 淡底、分支行 ↑↓ 领先/落后 chip、彩色 diffstat、reason/next 色条 callout、逐条 ✓/✗ 验证结果与退出码 chip）；操作分级（至多一个实心主按钮、描边次要、危险二次确认、幽灵链接），「清理 worktree 和分支」与放弃一样需要二次点击；diff 改为行级增绿删红底色；仓库概况改为图标化信息卡，空态居中引导、历史车道分组折叠、配置表单主题化。数据流、命令映射与工具契约不变。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+
 ### Fixed
 
+- **Worktree 决策卡排版塌缩**：合并/收尾/放弃卡片的 detail 此前用单个换行连接事实行，被 GFM 软换行折叠成一段（车道/分支/改动/预检/验证全部挤在一行）；现改为列表结构，每条事实独立成行，提交列表为缩进子列表，完整 diff 指引为斜体行。信息项与选项集合不变。
 - **todo 续推感知后台任务**：会话持有 `running` / `stopping` 后台 job 时不再反复注入续推消息或消耗连续续推额度，改由结算通知唤醒；供应商错误延迟重试在触发时同样重查并跳过，不重排、不改变失败计数。jobs 服务缺席或查询失败时维持原有行为。详见 [todo 续推](docs/features/todo-continuation.md)。
 - **编辑锁被撤权会话不再提供“继续编辑”**：管理员恢复（ADMIN OVERRIDE）永久撤权的会话此前在面板上仍渲染为普通“已停止”并给出“继续编辑”按钮，点击必然以原始内核错误 `owner revoked by administrative recovery` 失败，且每次失败前还会持久签发一张无用 receipt。现在权威状态标注每会话 `revoked` 标志，面板以独立的终态「编辑权已被永久撤销」呈现（无任何恢复动作，附原因说明），`resume` 与 receipt 签发在任何持久化之前拒绝。详见 [撤权后的会话呈现](docs/features/edit-lock.md#撤权后的会话呈现)。
 
