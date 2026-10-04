@@ -68,6 +68,24 @@ describe('createClassifier', () => {
     expect(llm.calls[0].provider).toBe('deepseek')
   })
 
+  it('resolves the route override lazily at classification time', async () => {
+    let current = {}
+    const llm = fakeLlm('deep-work')
+    const audits = []
+    const classify = createClassifier({ mode: 'llm', llm, resolveRouteOverride: () => current })
+    const onAudit = (e) => audits.push(e)
+    // Overlay not visible yet: fail-open, the sidecar is never called.
+    expect(await classify('first prompt without route', INTENTS, { agent: { id: 's1' }, onAudit })).toBeNull()
+    expect(llm.calls).toHaveLength(0)
+    expect(audits[0].fallback).toContain('no classifier route')
+    // Overlay arrives after apply: the next (uncached) prompt uses it.
+    current = OVERRIDE
+    expect(await classify('second prompt with route', INTENTS, { agent: { id: 's1' }, onAudit })).toBe('deep-work')
+    expect(llm.calls[0].provider).toBe('mock')
+    expect(llm.calls[0].model).toBe('mock-1')
+    expect(audits[1]).toEqual({ mode: 'llm', hit: 'deep-work' })
+  })
+
   it('treats none / empty answers as no hit without fallback', async () => {
     const audits = []
     const classify = createClassifier({ mode: 'llm', llm: fakeLlm('none'), routeOverride: OVERRIDE })

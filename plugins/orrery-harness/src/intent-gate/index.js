@@ -36,10 +36,10 @@ function latestUserText(messages) {
 
 function apply(ctx, config = {}) {
   const audit = createAudit(ctx)
+  const rowConfig = config
+  const nestKeys = { jev: { endpoint: 'jevEndpoint', model: 'jevModel', apiKeyEnv: 'jevApiKeyEnv' } }
   // Settings overlay (absent service = no-op): intentGate section wins over row config.
-  config = overlayConfig(ctx, 'intentGate', config, {
-    nestKeys: { jev: { endpoint: 'jevEndpoint', model: 'jevModel', apiKeyEnv: 'jevApiKeyEnv' } },
-  })
+  config = overlayConfig(ctx, 'intentGate', config, { nestKeys })
   const table = compileIntentTable(config.intents ?? DEFAULT_INTENTS)
   const disabled = new Set(Array.isArray(config.disabled) ? config.disabled : [])
   const intents = table.filter((intent) => !disabled.has(intent.id))
@@ -48,10 +48,17 @@ function apply(ctx, config = {}) {
   const classifier = createClassifier({
     mode: config.classifier ?? 'regex',
     llm: ctx.llm,
-    routeOverride: {
-      ...(config.classifierProvider ? { provider: config.classifierProvider } : {}),
-      ...(config.classifierModel ? { model: config.classifierModel } : {}),
-      ...(config.classifierReasoningEffort ? { reasoningEffort: config.classifierReasoningEffort } : {}),
+    // rc.2 cordis activates providers only after the apply batch, so an
+    // apply-time ctx.get can never see the settings service (S-rc2 evidence in
+    // openspec change fix-intent-classifier-route/design.md D1). Resolve the
+    // route override per classification — a late-arriving overlay still works.
+    resolveRouteOverride: () => {
+      const live = overlayConfig(ctx, 'intentGate', rowConfig, { nestKeys })
+      return {
+        ...(live.classifierProvider ? { provider: live.classifierProvider } : {}),
+        ...(live.classifierModel ? { model: live.classifierModel } : {}),
+        ...(live.classifierReasoningEffort ? { reasoningEffort: live.classifierReasoningEffort } : {}),
+      }
     },
     timeoutMs: config.classifierTimeoutMs,
     jev: config.jev,

@@ -122,6 +122,33 @@ describe('intent-gate plugin', () => {
     expect(ctx.emitted.filter((e) => e.type === 'orrery/intent-hit')).toHaveLength(2)
   })
 
+  it('uses an overlay route that becomes visible only after apply (rc.2 activation timing)', async () => {
+    const ctx = fakeCtx()
+    let service
+    ctx.get = (name) => (name === 'orrerySettings' ? service : undefined)
+    const calls = []
+    ctx.llm = {
+      stream: async function* (request) {
+        calls.push(request)
+        yield { type: 'text-delta', index: 0, text: 'deep-work' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    }
+    // The settings service is still invisible at apply (rc.2 cordis activates
+    // providers after the apply batch).
+    apply(ctx, { classifier: 'llm' })
+    service = { get: (section) => (section === 'intentGate' ? { classifierProvider: 'mock', classifierModel: 'mock-1' } : undefined) }
+    const agent = fakeAgent([])
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('把这个任务从头到尾彻底完成，每一步都要拿出证据')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(calls).toHaveLength(1)
+    expect(calls[0].provider).toBe('mock')
+    expect(calls[0].model).toBe('mock-1')
+    expect(result.messages.at(-1).content[0].text).toContain('deep-work')
+  })
+
   it('passes through without keywords', async () => {
     const ctx = fakeCtx()
     apply(ctx, {})

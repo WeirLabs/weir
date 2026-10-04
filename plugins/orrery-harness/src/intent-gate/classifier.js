@@ -12,7 +12,8 @@ export const DEFAULT_CLASSIFIER_TIMEOUT_MS = 1500
  * @param {object} deps
  * @param {'regex' | 'llm' | 'jev'} deps.mode
  * @param {object} deps.llm - ctx.llm (llm front-end)
- * @param {{ provider?: string, model?: string }} [deps.routeOverride] - classifierProvider/classifierModel
+ * @param {{ provider?: string, model?: string, reasoningEffort?: string }} [deps.routeOverride] - static classifierProvider/classifierModel snapshot
+ * @param {() => { provider?: string, model?: string, reasoningEffort?: string }} [deps.resolveRouteOverride] - lazy resolver, evaluated per classification (wins over routeOverride); needed because rc.2 cordis activates providers only after the apply batch, so an apply-time settings read can never see the overlay
  * @param {number} [deps.timeoutMs]
  * @param {{ endpoint?: string, model?: string, apiKeyEnv?: string }} [deps.jev]
  */
@@ -82,7 +83,7 @@ Reply with EXACTLY ONE token: either the id of the single intent the prompt is a
 Intents:`
 
 async function classifyViaLlm(deps, promptText, intents, context) {
-  const override = deps.routeOverride ?? {}
+  const override = (typeof deps.resolveRouteOverride === 'function' ? deps.resolveRouteOverride() : deps.routeOverride) ?? {}
   const route = override.provider && override.model ? override : routeOf(context.agent)
   if (!route?.provider || !route?.model) throw new Error('no classifier route')
 
