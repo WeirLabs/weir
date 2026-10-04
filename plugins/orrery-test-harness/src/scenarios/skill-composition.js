@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { lastOfRole, textChunks, toolCallChunks } from '../mock-kit.js'
+import { ORRERY_BUILTIN_SKILLS } from '../../../orrery-harness/src/capabilities/skill-builtin-migration.js'
 
-export default ['OFF', 'LEAK', 'HOST', 'OFFICE'].map(mode => ({
+export default ['OFF', 'LEAK', 'HOST', 'OFFICE', 'MIGRATION'].map(mode => ({
   id: `skill-composition-${mode.toLowerCase()}`,
   prompt: 'Probe preset skill composition.',
   env: { ORRERY_IT_SKILL_COMPOSITION: mode },
@@ -12,6 +13,19 @@ export default ['OFF', 'LEAK', 'HOST', 'OFFICE'].map(mode => ({
     let report
     try { report = JSON.parse(readFileSync(join(run.ws, `skill-composition-${mode.toLowerCase()}.json`), 'utf8')) } catch {}
     run.check('real preset agents.create succeeds', report?.created === 'orrery-it-selection' && !report?.roster?.broken && !report?.error, JSON.stringify(report))
+    if (mode === 'MIGRATION') {
+      const reason = report?.migration?.inventoryError ?? ''
+      run.check('migration check rejects the corrupted builtin root with a visible reason', reason.includes('Orrery builtin skill migration check failed') && reason.includes('missing skills: debugging'), JSON.stringify(report?.migration))
+      run.check('provider status exposes the migration failure', report?.migration?.status?.error?.includes('Orrery builtin skill migration check failed') === true, JSON.stringify(report?.migration?.status))
+      const served = report?.migration?.live?.all ?? []
+      run.check('fail closed serves neither builtin nor fixture skills', !served.some(name => ORRERY_BUILTIN_SKILLS.includes(name) || name === 'selected-fixture'), JSON.stringify(report?.migration?.live))
+      run.check('no invalid preset diagnostic', !`${run.stdout} ${run.stderr}`.includes('agent-preset/invalid'))
+      run.check('headless exits cleanly', run.code === 0 || run.code === null, `code=${run.code}`)
+      return
+    }
+    run.check('first-run builtin migration check passes on the real bundle', report?.builtinMigration?.ok === true, JSON.stringify(report?.builtinMigration))
+    const labeled = ORRERY_BUILTIN_SKILLS.map(name => report?.inventory?.find(c => c.name === name))
+    run.check('all 10 builtin skills keep the pre-migration name/source/rank labels', labeled.every(c => c && c.scope === 'orrery-builtin' && c.source === 'custom' && c.rank === 300), JSON.stringify(labeled))
     const selected = mode === 'OFFICE' ? 'office-docx' : 'selected-fixture'
     const unselected = mode === 'OFFICE' ? 'office-pptx' : 'unselected-fixture'
     const leaks = mode === 'LEAK' || mode === 'HOST'
