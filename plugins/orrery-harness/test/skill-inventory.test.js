@@ -1,11 +1,11 @@
-import { test, expect } from '../../test/helpers.js'
+import { test, expect } from './helpers.js'
 import * as fs from 'node:fs/promises'
 import { join, dirname, resolve, basename } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { parseSkillText, parseFrontmatter } from '../../src/capabilities/frontmatter.js'
-import { discoverSkillInventory, resolveSkillRoots, findProjectRoot } from '../../src/capabilities/skill-inventory.js'
-import { sameSkillIdentity } from '../../src/capabilities/skill-identity.js'
+import { parseSkillText, parseFrontmatter } from '../src/capabilities/frontmatter.js'
+import { discoverSkillInventory, resolveSkillRoots, findProjectRoot } from '../src/capabilities/skill-inventory.js'
+import { sameSkillIdentity } from '../src/capabilities/skill-identity.js'
 
 const fixtures = fileURLToPath(new URL('./fixtures/skill-inventory/', import.meta.url))
 const reference = JSON.parse(await fs.readFile(join(fixtures, 'host-reference.json'), 'utf8'))

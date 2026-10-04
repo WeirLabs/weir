@@ -1,5 +1,5 @@
-import { test, expect } from '../../test/helpers.js'
-import { createSkillIdentity, sameSkillIdentity, skillIdentityKey, SKILL_SCOPES } from '../../src/capabilities/skill-identity.js'
+import { test, expect } from './helpers.js'
+import { createSkillIdentity, sameSkillIdentity, skillIdentityKey, SKILL_SCOPES } from '../src/capabilities/skill-identity.js'
 
 const input = { scope: 'project', root: '/project/.dsh/skills', name: 'example', provenance: { repository: 'owner/repo', subpath: 'skills/example' } }
 
