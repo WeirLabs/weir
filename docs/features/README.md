@@ -11,6 +11,7 @@
 | 特性 | 文档 | 对应模块 |
 |---|---|---|
 | 预设打包 | [preset-packaging.md](preset-packaging.md) | `cordis.patch.yml`（bundle 清单） |
+| Orrery 设置页 | [settings-page.md](settings-page.md) | `orrery-harness/settings` + 浏览器半区 `lib/client.settings-page.js` |
 | Orchestrator 总指挥 | [orchestrator-persona.md](orchestrator-persona.md) | `orrery-harness/core` |
 | 意图门 | [intent-gate.md](intent-gate.md) | `orrery-harness/intent-gate` |
 | 分类委派 | [category-delegation.md](category-delegation.md) | `orrery-harness/delegate` |

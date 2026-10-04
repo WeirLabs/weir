@@ -48,7 +48,7 @@
 - **读取时解析**——设置服务每次 `get` 都重新计算 section，因此 `delegate` 在**每次消费点**重新解析，而不是在 `apply` 期读一次：委派时解析只读工具面与守卫列表（一次委派内取同一份快照，不会出现「已授予 shell 但守卫已关」），建协调器时解析监督参数。
 - **提交时推送**——协调器是按父会话缓存的长生命周期对象，不会再随新委派重建；因此 `apply` 同时订阅设置服务的变更广播，把新的监督参数推入**已存在**的协调器（与 `src/lsp/index.js` 同一范式）。
 
-注：`intentGate`/`todoDriver`/`contextGuard`/`hashlineEdit` 四个插件仍在 `apply` 期做同类快照，**热更新语义未覆盖它们**，需重启才生效。
+注：`intentGate`/`todoDriver`/`contextGuard`/`hashlineEdit` 四个插件仍在 `apply` 期做同类快照，**热更新语义未覆盖它们**，需重启才生效。设置页保存触达这些键（以及挂载门 `editLockEnabled`）并落地后，会在顶部横幅点名提醒哪些改动需要重启，见 [settings-page.md](settings-page.md)。
 
 ## 设计细节
 
