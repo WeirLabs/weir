@@ -181,6 +181,7 @@ export function digestApplyRequest(normalized) {
  *   verifyContent?: (candidate: unknown) => Promise<void> | void,
  *   audit?: (session: { id?: string }, type: string, data?: unknown) => void,
  *   notify?: (response: unknown) => unknown,
+ *   invalidate?: (sessionId: string, presetId: string) => void,
  *   warn?: (message: string) => void,
  *   trace?: (event: string, data?: unknown) => void,
  * }} options
@@ -192,7 +193,7 @@ export function createApplyEngine(options) {
     drain = createDrainCoordinator(),
     conditions = () => [],
     verifyContent,
-    audit, notify, warn = () => {}, trace = () => {},
+    audit, notify, invalidate, warn = () => {}, trace = () => {},
   } = options
   /** In-memory authority snapshots per session (D6 seam; group 6 loads them at mount). */
   const snapshots = new Map()
@@ -217,11 +218,22 @@ export function createApplyEngine(options) {
     return run
   }
 
-  /** Best-effort follow-up scheduled after the response; failures warn and are swallowed, never rolling back policy. */
-  function followup(sessionId, response) {
+  /**
+   * Best-effort follow-up scheduled after the response; failures warn and are
+   * swallowed, never rolling back policy. The invalidation re-emission (task
+   * 5.2, step 6 "then re-emit the invalidation event") rides the same path:
+   * after an accepted Apply every client re-pulls its command/skill lists.
+   * Both arguments are validated strings — a non-string preset id (session
+   * location did not carry one) skips the emission; the emit itself stays
+   * try/catch guarded so a failed broadcast never changes the Apply result.
+   */
+  function followup(sessionId, response, presetId) {
     queueMicrotask(() => {
       try { audit?.({ id: sessionId }, APPLY_AUDIT_TYPE, { requestId: response.receipt?.requestId ?? null, revision: response.revision ?? null }) } catch (error) { warn(`apply audit failed: ${message(error)}`) }
       try { Promise.resolve(notify?.(response)).catch(error => warn(`apply notify failed: ${message(error)}`)) } catch (error) { warn(`apply notify failed: ${message(error)}`) }
+      try {
+        if (typeof presetId === 'string' && presetId.length) invalidate?.(sessionId, presetId)
+      } catch (error) { warn(`apply invalidate failed: ${message(error)}`) }
     })
   }
 
@@ -427,7 +439,7 @@ export function createApplyEngine(options) {
         ...(warnings.length ? { warnings } : {}),
       }
       trace('response', { sessionId, revision: result.revision })
-      followup(sessionId, response)
+      followup(sessionId, response, located.presetId)
       return response
     }
 
@@ -525,11 +537,11 @@ export function createApplyEngine(options) {
       return { status: 'rejected', reason: 'unauthenticated:session-unavailable' }
     }
     const sessionId = located.sessionId
-    return serialize(sessionId, () => settleReceipt(sessionId, requestId))
+    return serialize(sessionId, () => settleReceipt(sessionId, requestId, located.presetId))
   }
 
-  /** @param {string} sessionId @param {string} requestId @returns {Promise<ReceiptQueryResult>} */
-  async function settleReceipt(sessionId, requestId) {
+  /** @param {string} sessionId @param {string} requestId @param {unknown} presetId @returns {Promise<ReceiptQueryResult>} */
+  async function settleReceipt(sessionId, requestId, presetId) {
     const unit = { kind: 'selection', sessionId }
     const record = await store.read(unit)
     if (record.kind === 'unsupported') return { status: 'rejected', reason: `unsupported:${record.reason}` }
@@ -556,6 +568,11 @@ export function createApplyEngine(options) {
         recovery = 'published'
         queueMicrotask(() => {
           try { audit?.({ id: sessionId }, APPLY_AUDIT_TYPE, { requestId: confirmed.requestId, revision: confirmed.revision, recovery }) } catch (error) { warn(`apply audit failed: ${message(error)}`) }
+          // The lost response never ran the step-6 re-emission; clients hold
+          // equally stale lists, so a recovered publication re-emits too.
+          try {
+            if (typeof presetId === 'string' && presetId.length) invalidate?.(sessionId, presetId)
+          } catch (error) { warn(`apply invalidate failed: ${message(error)}`) }
         })
       } else if (record.kind === 'ok' || record.kind === 'absent') {
         // A clean, digest-verified record without the pending receipt is
