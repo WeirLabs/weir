@@ -9,7 +9,9 @@
     "./mock-llm": "./src/mock-llm.js",
     "./event-tap": "./src/event-tap.js",
     "./shell": "./src/shell.js",
-    "./capstore-probe": "./src/capstore-probe.js"
+    "./capstore-probe": "./src/capstore-probe.js",
+    "./skill-composition-probe": "./src/skill-composition-probe.js",
+    "./skill-selection": "./src/skill-selection.js"
   },
   "dsh": {
     "bundle": {

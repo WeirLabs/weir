@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
+import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
 
 const mounted = new WeakMap()
 /** Manager/Badge access without providing a new preset service or realm. */
@@ -18,6 +19,7 @@ export const skillSelectionFor = ctx => mounted.get(ctx)
 export function createSkillSelectionPlugin(dependencies = {}) {
   return (ctx, config = {}) => {
     let provider
+    let inventory
     let error = null
     try {
       ctx.skills.registerProvider(control => {
@@ -30,7 +32,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)
           return record.payload?.skills
         })
-        const inventory = dependencies.inventory ?? (async (options, previous) => {
+        const filesystem = dependencies.inventory ?? (async (options, previous) => {
           const profile = ctx.get('profileContext')
           const roots = await resolveSkillRoots({
             cwd: options.cwd,
@@ -42,7 +44,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           })
           return discoverSkillInventory({ roots, machineId: config.machineId, previous })
         })
-        provider = createSkillSelectionProvider({ control, readSelection, inventory })
+        const office = dependencies.office ?? createOfficeAdapter(ctx.skills, config.machineId)
+        inventory = async (options, previous) => {
+          const local = await filesystem(options, previous)
+          const bundled = await office(options)
+          return { ...local, complete: local.complete && bundled.complete, candidates: [...local.candidates, ...bundled.candidates] }
+        }
+        provider = createSkillSelectionProvider({ control, readSelection, inventory, denials: officeDenials })
         return provider
       })
       ctx.on('skills/change', () => provider.sourceChanged())
@@ -50,7 +58,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       // Registration errors must not break the preset either (e.g. duplicate row).
       error = cause instanceof Error ? cause.message : String(cause)
     }
-    mounted.set(ctx, { provider, status: options => error ? { error, conflicts: [] } : provider.status(options) })
+    mounted.set(ctx, { provider, inventory, status: options => error ? { error, conflicts: [] } : provider.status(options) })
   }
 }
 

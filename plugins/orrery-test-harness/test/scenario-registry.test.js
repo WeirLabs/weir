@@ -13,6 +13,7 @@ const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash'
 EXPECTED_ORDER.push('editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update')
 EXPECTED_ORDER.push('jobs-aware-todo')
 EXPECTED_ORDER.push('editlock-auto-resume', 'editlock-auto-resume-off')
+EXPECTED_ORDER.push('skill-composition-off', 'skill-composition-leak', 'skill-composition-host', 'skill-composition-office')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -36,7 +37,7 @@ describe('scenario registry', () => {
     const dir = fileURLToPath(new URL('.', import.meta.url))
     const files = readdirSync(join(dir, '..', 'src', 'scenarios'))
       .filter((file) => file.endsWith('.js') && file !== 'index.js')
-      .map((file) => file.slice(0, -3))
+      .flatMap((file) => file === 'skill-composition.js' ? ['skill-composition-off', 'skill-composition-leak', 'skill-composition-host', 'skill-composition-office'] : [file.slice(0, -3)])
       .sort()
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
   })

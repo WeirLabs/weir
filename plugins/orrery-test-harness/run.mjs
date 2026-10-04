@@ -129,6 +129,10 @@ function scenarioEnv(scenarioId, trace, extra = {}) {
 /** The generic one-boot scenario run: prompt + env come from the registry entry. */
 function runScenario(scenario) {
   const trace = join(IT_ROOT, `trace-${scenario.id}.jsonl`)
+  const hostControl = scenario.env?.ORRERY_IT_SKILL_COMPOSITION === 'HOST'
+  writeFileSync(join(PROFILE, 'cordis.patch.yml'), hostControl
+    ? `- id: skill-filesystem\n  disabled: false\n  config:\n    customSkillDirs:\n      - ${JSON.stringify(join(WS, 'skill-roots'))}\n- id: tool-skill\n  disabled: false\n- id: orrery-it-tool-skill\n  disabled: true\n`
+    : '[]\n')
   return spawnHeadless(['orrery-it', scenario.prompt], scenarioEnv(scenario.id, trace, scenario.env)).then((outcome) => ({
     scenario: scenario.id,
     trace,
@@ -157,7 +161,7 @@ function recordRun(run) {
     if (existsSync(run.trace)) copyFileSync(run.trace, join(dir, 'trace.jsonl'))
     if (run.trace2 && existsSync(run.trace2)) copyFileSync(run.trace2, join(dir, 'trace2.jsonl'))
     // capstore-*.json: the capability-store probe reports (capstore scenario).
-    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt']) {
+    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', ...['off', 'leak', 'host', 'office'].map(mode => `skill-composition-${mode}.json`)]) {
       const source = join(WS, file)
       if (existsSync(source)) copyFileSync(source, join(dir, 'ws', file))
     }

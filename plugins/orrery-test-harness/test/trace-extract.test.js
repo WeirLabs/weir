@@ -80,6 +80,7 @@ const PRE_MIGRATION_KEYS = [
   'jobsAwareParent',
   'jobsAwareChild',
   'settlementSeen',
+  'compositionProbeServed',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

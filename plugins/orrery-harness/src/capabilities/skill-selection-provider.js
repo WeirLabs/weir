@@ -32,7 +32,7 @@ export function validateSkillSelection(identities) {
  * acceptSelection is an in-memory publication hook AFTER durable Apply succeeds;
  * it does not write policy. Call validateSkillSelection before committing policy.
  */
-export function createSkillSelectionProvider({ control, readSelection, inventory, fs = { readFile, realpath } }) {
+export function createSkillSelectionProvider({ control, readSelection, inventory, denials = () => [], fs = { readFile, realpath } }) {
   const states = new Map()
   let emitting = false
   let scheduled
@@ -50,7 +50,7 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
   }
   const clear = state => { state.epoch++; state.result = null }
   async function collect(state) {
-    if (disposed) return { candidates: [], complete: false }
+    if (disposed) return { candidates: denials(), complete: false }
     if (state.result) return state.result
     if (state.pending) return state.pending
     const epoch = state.epoch
@@ -61,8 +61,8 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
         if (selection.conflicts.length) throw new Error('Selected skill names conflict; explicit resolution is required')
         if (!selection.identities.length) {
           state.error = null
-          if (epoch !== state.epoch) return { candidates: [], complete: false }
-          state.result = { candidates: [], complete: true }
+          if (epoch !== state.epoch) return { candidates: denials(), complete: false }
+          state.result = { candidates: denials(), complete: true }
           return state.result
         }
         const snapshot = await inventory(state.options, state.snapshot)
@@ -73,14 +73,15 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
         if (!snapshot.complete || matches.length !== selected.size || new Set(matches.map(c => skillIdentityKey(c.identity))).size !== matches.length) {
           throw new Error('Selected skill inventory is missing, ambiguous or incomplete')
         }
-        const candidates = matches.map(candidate => ({ ...candidate, provider: SELECTION_PROVIDER }))
+        const candidates = [...matches.map(candidate => ({ ...candidate, provider: SELECTION_PROVIDER })),
+          ...denials().filter(candidate => !matches.some(match => match.name === candidate.name))]
         state.error = null
-        if (epoch !== state.epoch) return { candidates: [], complete: false }
+        if (epoch !== state.epoch) return { candidates: denials(), complete: false }
         state.result = { candidates, complete: true }
         return state.result
       } catch (error) {
         state.error = message(error)
-        return { candidates: [], complete: false }
+        return { candidates: denials(), complete: false }
       }
     })().finally(() => { state.pending = null })
     return state.pending
@@ -91,15 +92,21 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
     async get(candidate, options = {}) {
       const state = stateOf(options)
       try {
-        const current = (await collect(state)).candidates.find(item => skillIdentityKey(item.identity) === skillIdentityKey(candidate.identity))
-        if (!current) return undefined
+        if (!candidate.identity) return undefined
         const epoch = state.epoch
+        const current = (await collect(state)).candidates.find(item => item.identity && skillIdentityKey(item.identity) === skillIdentityKey(candidate.identity))
+        if (!current || epoch !== state.epoch || disposed) return undefined
+        if (current.load) {
+          const loaded = await current.load(options)
+          if (!loaded || loaded.name !== current.name || epoch !== state.epoch || disposed) return undefined
+          return { ...loaded, provider: SELECTION_PROVIDER }
+        }
         if (await fs.realpath(current.locator.path) !== current.path) throw new Error('Selected skill path changed')
         const raw = await fs.readFile(current.path, 'utf8')
         if (createHash('sha256').update(raw).digest('hex') !== current.digest) throw new Error('Selected skill content changed; refresh required')
         const parsed = parseSkillText(raw)
         if (parsed.name !== current.identity.name || epoch !== state.epoch || disposed) return undefined
-        return { ...parsed, provider: SELECTION_PROVIDER, resourceBase: current.resourceBase }
+        return { ...parsed, provider: SELECTION_PROVIDER, source: current.source, resourceBase: current.resourceBase }
       } catch (error) {
         state.error = message(error)
         clear(state)

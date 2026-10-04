@@ -1,8 +1,12 @@
 # Integration-test composition for the `orrery-it` headless profile:
 # a scripted mock LLM adapter (provider `mock`) plus the orrery modules
-# mounted at host level (this profile has no agent-preset registry; the
-# orrery-harness bundle itself is NOT loaded here — it only supplies module
-# resolution through the profile's node_modules).
+# mounted at host level. Skill composition scenarios additionally create a real
+# preset; the product bundle supplies resolution, not profile activation.
+# Mirror the product's OFF composition; HOST is an explicit negative control.
+- id: skill-filesystem
+  disabled: true
+- id: tool-skill
+  disabled: true
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
   config:
@@ -20,6 +24,25 @@
 - insert:
     - id: orrery-it-mock-llm
       name: 'orrery-test-harness/mock-llm'
+    - id: orrery-skill-selection
+      name: 'orrery-test-harness/skill-selection'
+      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
+    - id: orrery-it-tool-skill
+      name: '@deepseek-ai/dsh-tool-skill'
+      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
+    - id: orrery-it-agent-presets
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      disabled: !!js "!process.env.ORRERY_IT_SKILL_COMPOSITION"
+      config:
+        default: orrery-it-selection
+    - id: orrery-it-skill-composition-probe
+      name: 'orrery-test-harness/skill-composition-probe'
+    - id: orrery-it-office
+      name: '@deepseek-ai/dsh-skill-office'
+      disabled: !!js "process.env.ORRERY_IT_SKILL_COMPOSITION !== 'OFFICE'"
+      config:
+        node: !!js process.env.ORRERY_IT_NODE
+        cli: !!js process.env.ORRERY_IT_OFFICE_CLI
     # Mirror the profile-level settings row: exercises the orrerySettings
     # service path headlessly (it supplies the classifier route — the semantic
     # scenario only passes when the overlay actually delivers these values).
