@@ -11,6 +11,7 @@ import { defaultItRoot } from './it-root.js'
 // proven resolvable under the link-installed headless profile by every IT run.
 import { AUDIT_TYPES, AUDIT_SUBTYPES } from '../../orrery-harness/src/shared/audit.js'
 import { installStopProbe } from './edit-lock-stop-probe.js'
+import { installAutoResumeProbe } from './edit-lock-auto-resume-probe.js'
 
 const name = 'orrery-it-event-tap'
 const inject = ['fs']
@@ -41,6 +42,7 @@ function tap(record) {
 
 function apply(ctx) {
   installStopProbe(ctx, tap)
+  installAutoResumeProbe(ctx, tap)
   // Cordis audit channel (cold-safe; session logs stay clean).
   for (const type of AUDIT_SUBSCRIPTIONS) {
     ctx.on(`orrery/${type}`, (record) => {
