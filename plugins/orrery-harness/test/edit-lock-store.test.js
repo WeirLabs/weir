@@ -18,12 +18,12 @@ async function fixture(t) {
 }
 
 const emptyState = () => ({
-  version: 3, managerIncarnation: null, sessions: [], generations: [],
+  version: 4, managerIncarnation: null, sessions: [], generations: [],
   locks: [], issuedRequests: [], recovery: [], holds: [], operations: [],
 })
 
 const authorityImage = () => ({
-  version: 3, managerIncarnation: 'historical-manager-1', operations: [],
+  version: 4, managerIncarnation: 'historical-manager-1', operations: [],
   sessions: [{ sessionId: 'alice', executionEpoch: 2, interrupted: true }],
   generations: [{ resourceId: 'file:a', generation: 1 }],
   locks: [{ resourceId: 'file:a', owner: 'alice', generation: 1, status: 'user-interrupted' }],
@@ -299,7 +299,7 @@ test('retained abnormal reasons cannot be silently cleared within one ownership 
 test('revision exhaustion rejects without writing or poisoning the recovered image', async t => {
   const { writeFile, readFile } = await import('node:fs/promises')
   const directory = await fixture(t)
-  const bytes = encode({ version: 3, domainId: 'd', revision: Number.MAX_SAFE_INTEGER, state: emptyState() })
+  const bytes = encode({ version: 4, domainId: 'd', revision: Number.MAX_SAFE_INTEGER, state: emptyState() })
   await writeFile(join(directory, 'snapshot.json'), bytes)
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   await assert.rejects(store.record({ expectedRevision: Number.MAX_SAFE_INTEGER, nextState: emptyState() }), /overflow/)
@@ -363,7 +363,7 @@ test('retention allowance never shrinks inside a batch and returns to zero only 
   await store.close()
 })
 
-test('a version 2 image recovers losslessly as version 3 with an empty retention row per session', async t => {
+test('a version 2 image recovers losslessly as version 4 with an empty retention row per session', async t => {
   const { writeFile } = await import('node:fs/promises')
   const directory = await fixture(t)
   const { holds: _holds, ...v3 } = authorityImage()
@@ -372,16 +372,32 @@ test('a version 2 image recovers losslessly as version 3 with an empty retention
   const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
   const recovered = store.snapshot()
   assert.equal(recovered.revision, 7)
-  assert.equal(recovered.state.version, 3)
+  assert.equal(recovered.state.version, 4)
   assert.deepEqual(recovered.state.holds, [{ sessionId: 'alice', holding: false, holdUntil: null, holdCumulativeMs: 0 }])
   assert.deepEqual(recovered.state.locks, v2.locks)
   assert.deepEqual(recovered.state.recovery, v2.recovery)
-  // The next record writes version 3 to disk.
+  // The next record writes version 4 to disk.
   await store.record({ expectedRevision: 7, nextState: recovered.state })
   await store.close()
   const reopened = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
-  assert.equal(reopened.snapshot().state.version, 3)
+  assert.equal(reopened.snapshot().state.version, 4)
   await reopened.close()
+})
+
+test('v3 ownership, budgets and request history upgrade unchanged and envelope versions must agree', async t => {
+  const { writeFile, readFile } = await import('node:fs/promises')
+  const directory = await fixture(t)
+  const state = { ...authorityImage(), version: 3 }
+  state.holds[0] = { sessionId: 'alice', holding: true, holdUntil: 9000, holdCumulativeMs: 500 }
+  const file = join(directory, 'snapshot.json')
+  const bytes = encode({ version: 3, domainId: 'd', revision: 8, state })
+  await writeFile(file, bytes)
+  const store = await openEditLockStore({ directory, domainId: 'd', mode: 'recover' })
+  assert.deepEqual(store.snapshot(), { revision: 8, state: { ...state, version: 4 } })
+  assert.equal(await readFile(file, 'utf8'), bytes)
+  await store.close()
+  await writeFile(file, encode({ version: 3, domainId: 'd', revision: 8, state: { ...state, version: 4 } }))
+  await assert.rejects(openEditLockStore({ directory, domainId: 'd', mode: 'recover' }), /version mismatch/)
 })
 
 test('a version 2 image that already claims a holds table, or fails its checksum, is refused', async t => {

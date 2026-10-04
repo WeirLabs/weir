@@ -89,7 +89,7 @@
 |---|---|
 | `state.js` | 状态内核：纯内存、不接触文件系统，分离资源 owner、generation、会话 epoch 与 manager incarnation，回答「按当前归属与执行授权，这次操作该接受还是拒绝」；保留额度由 `holdCandidate` 在同一内核里计算。 |
 | `resource-identity.js` | 规范资源身份：同步、只读地观察真实文件系统，回答「这个路径此刻对应哪个规范资源身份，与上次观察是否仍是同一拓扑」。 |
-| `store.js` | 历史快照镜像（version 3，含 `holds` 保留表）：规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS；只保存与读回**历史事实**。 |
+| `store.js` | 历史快照镜像（version 4，含 `holds` 保留表）：规范 JSON + SHA-256 校验、写序持久化、串行本地 revision CAS；只保存与读回**历史事实**。 |
 | `manager.js` | 唯一仲裁队列：`openSession`／`acquire`／`cancel`／`cancelSession`／`status`／`hold` 等 mutation 在一条 FIFO 上串行，持久确认后才安装；`prepare`／`commit` 让实际发布在队列里至多发生一次。 |
 | `operation-history.js` | 与快照同一镜像的持久 operation history：操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层。 |
 | `runtime.js`／`reservation.js`／`reserved-runtime.js` | 域打开：先以原子 mkdir 抢占 authority 同级预约目录，再打开 runtime；打开失败即释放预约。 |
@@ -125,7 +125,8 @@
 
 `src/edit-lock/store.js` 提供 `openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot()` / `record({ expectedRevision, nextState })` / `close()`，是**持久化历史，不是授权来源**：
 
-- **封闭历史镜像**（当前 version 3，含 `holds` 保留表）：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）与 operations。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
+- **封闭历史镜像**（当前 version 4，含 `holds` 保留表）：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）与 operations。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
+- **版本迁移与降级**：读取接受 version 2／3／4，校验原始字节后无损迁移到 v4；v2 补空保留行，v3 只改版本。历史 closeout 仍只有 `kind`／`assertionId`，不会被升级成解除围栏的证明；旧版本中夹带 bound record 会被拒绝。单独打开不改磁盘，下次成功写入使用 v4；旧版 reader 必须拒绝 v4，不能忽略字段继续运行。不支持的版本报出实际版本与支持范围。恢复方式是使用较新的 build，或在已建立独占与旧 publisher 静止的前提下恢复升级前备份；不能手改版本号，不能用备份抹掉仍可能发布的操作。
 - **规范编码与完整性**：object key 按 UTF-16 排序、无空白、数组保序的 canonical JSON；`{version,domainId,revision,state}` payload 加 `{payload,checksum}` envelope，checksum 为 SHA-256。读取要求严格 UTF-8、**逐字节**等于重新规范化的结果（每一层的重复键、非规范数字/转义写法、空白与乱序因而全部被拒绝）、精确 schema 与 version/domain/revision/checksum 一致。checksum 只检测意外损坏，**不是**认证，也不防回滚。
 - **写序与确认**：独占 sibling temp（`wx`、0600）→ 全量写入 → file sync → file close → rename → 目录 open（`O_DIRECTORY|O_NOFOLLOW`）→ 目录 sync → 目录 close，之后才确认并更新内存。失败不回滚、不删 temp、不提升遗留 temp；rename 之后的不确定性保守记为 `uncertain`。
 - **串行本地 revision CAS**：每 handle 一条串行队列，`expectedRevision` 与当前 revision 不符即 conflict，溢出拒绝且不写入、不毒化。这是 **handle 内**的 CAS，不是跨进程/跨 handle CAS，也不是单实例选举。
@@ -150,7 +151,7 @@
 
 **Stop 的提交边界**：原始 turn signal 持续用于准入、撤权监听与 dispatch 前检查，包括 publishing intent 持久化后的第二次检查；此时取消保证零 backend 调用。只有真正执行捕获的 `writeText` 时才创建私有 `AbortController().signal`，不传播 turn abort。目标、完整内容、原始版本 guard 与 effectivePolicy 保持不变。已经 invoked 的提交由 manager/runtime 完整 await，不使用超时或 `Promise.race`；成功记 created/updated，但 ownership 与会话仍为 interrupted，后续写入仍拒绝。真实 backend 拒绝仍为 unknown 并保留围栏，历史回放永不重新调用 backend。这不保证任意第三方 adapter 没有 detached writer，也不结清旧 unknown。
 
-**未决发布隔离（第一阶段，仍为 v3）**：`src/edit-lock/admission.js` 在 manager FIFO 的实际准入点统一检查全部 publishing/unknown 围栏；一般事务在创建 draft、消费 receipt 或持久化之前拒绝，拒绝本身不会毒化 manager。`prepare` 与 `commit` 各检查一次：准备后出现的冲突会在 dispatch 前结算为 not-published，不调用 publisher。
+**未决发布隔离**：`src/edit-lock/admission.js` 在 manager FIFO 的实际准入点统一检查全部 publishing/unknown 围栏；一般事务在创建 draft、消费 receipt 或持久化之前拒绝，拒绝本身不会毒化 manager。`prepare` 与 `commit` 各检查一次：准备后出现的冲突会在 dispatch 前结算为 not-published，不调用 publisher。
 
 - **resource 围栏**：在既有可信规范资源身份契约下，精确相同资源拒绝；不同的规范既有资源可继续获取、确认、更新、转交。因此子会话一个既有文件发布结果未知，不再自动阻断父会话对另一个既有文件的工作。缺失、非规范或不透明身份不能作为不重叠证明。
 - **subtree 围栏仍保守关闭资源操作**：v3 只保存祖先路径，没有可持久验证的历史拓扑连续性证据。即使路径看似在另一子树、只是前缀相近或重新解析后不同，也不能证明不相交；本阶段拒绝这些资源操作，不用 `startsWith`／词法包含冒充证明。同理，存在未决围栏时，新的 create 意图不能仅凭祖先路径获得准入。这是本阶段的可用性限制，尚未实现完整 subtree 非重叠放行。
@@ -162,7 +163,7 @@
 
 **历史静止性边界的 characterization（不是安全保证或完整修复）**：`edit-lock-historical-quiescence.test.js` 用隔离临时 authority 与 gated promise 构造任意 adapter：`writeText` 拒绝，但保留一个尚未写入的 detached writer。manager 将操作记录为 unknown，`drain()` 与 reserved runtime 的 `close()` 仍可完成并释放预约；随后 recover 可以打开新 authority，旧 writer 才落盘，历史 unknown 不变。该测试故意违反 recovery 要求的旧 publisher quiescence 前提，证明 generic handoff 的返回值／队列排空／预约移除本身不足以建立该前提；不证明安装版宿主 adapter 必然这样执行，也不提供宿主静止性证明。测试只在实际 writer 已 drain 后清理 fixture，不修改真实 snapshot。
 
-本轮仅保存边界证据：不增加 attestation-based unlock，不以人工声明、进程退出或 promise rejection 结清 unknown，不改 v3、不实现 v4／closeout。宿主能否提供覆盖所有历史 writer 的可信静止性证明仍需独立验证。
+当前 v4 迁移基础不增加 attestation-based unlock，不以人工声明、进程退出或 promise rejection 结清 unknown，也未开放 bound closeout 入口。宿主能否提供覆盖所有历史 writer 的可信静止性证明仍需独立验证。
 
 队列回归在不等待前驱的情况下提交 acquisition／unknown commit，再提交 hold 或 resume，验证 ownership candidate 在 FIFO 执行点枚举；releaseActive 另验证 queued abnormal transition 后不沿用调用时的 active 集合。将 `transact` 的 candidate 求值移到调用时的内存 mutation 会使三项测试失败。endHold 的 live resource-unknown 用例断言 revision 真正递增且 ownership／history 不变；历史 domain 用例因 recovery 已重置 holding，只断言 no-op，不声称覆盖 domain-fenced endHold 的实际持久化分支。
 

@@ -28,9 +28,10 @@ import { validateOperations, validateOperationTransitions } from './operation-hi
  * cumulative allowance, and `holdUntil` is an absolute epoch-ms instant. A held
  * lock keeps its ordinary status, so `holds` is a separate table, never a lock
  * status. Version 3 adds it; a version 2 image is upgraded losslessly on recover
- * (one empty retention row per session) and written back as version 3.
+ * (one empty retention row per session). Version 4 preserves v2/v3 historical
+ * assertions as inert records; the next durable write uses version 4.
  * @typedef {{ sessionId: string, holding: boolean, holdUntil: number|null, holdCumulativeMs: number }} HoldState
- * @typedef {{ version: 3, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
+ * @typedef {{ version: 4, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
  * @typedef {{ revision: number, state: AuthorityImage }} Snapshot
  */
 
@@ -52,7 +53,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
   let current
   /** @param {Snapshot} snapshot */
   async function persist(snapshot) {
-    const payload = { version: 3, domainId, ...snapshot }
+    const payload = { version: 4, domainId, ...snapshot }
     const body = canonical(payload)
     const bytes = canonical({ payload, checksum: createHash('sha256').update(body).digest('hex') })
     const temporary = join(resolve(directory), `.snapshot-${randomUUID()}.tmp`)
@@ -92,7 +93,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
     }
   }
   if (mode === 'create') {
-    current = { revision: 0, state: { version: 3, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [], holds: [], operations: [] } }
+    current = { revision: 0, state: { version: 4, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [], holds: [], operations: [] } }
     await persist(current)
   } else {
     valid((await lstat(target)).isFile(), 'snapshot must be regular file')
@@ -108,13 +109,15 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       shape(envelope, ['payload', 'checksum'])
       const payload = envelope.payload
       shape(payload, ['version', 'domainId', 'revision', 'state'])
-      valid((payload.version === 3 || payload.version === 2) && payload.domainId === domainId, 'snapshot version/domain')
+      valid([2, 3, 4].includes(payload.version), `snapshot version ${payload.version}; supported: 2, 3, 4; recover with a newer build or restore a pre-upgrade snapshot`)
+      valid(payload.domainId === domainId, 'snapshot domain')
+      valid(payload.state?.version === payload.version, 'snapshot/image version mismatch')
       valid(integer(payload.revision), 'snapshot revision')
       valid(typeof envelope.checksum === 'string' && envelope.checksum === createHash('sha256').update(canonical(payload)).digest('hex'), 'snapshot checksum')
-      // Version 2 predates retention. The upgrade is lossless: every known session
-      // gets an empty retention row, nothing else changes, and the checksum above
-      // was verified against the original bytes. The next record writes version 3.
-      const state = /** @type {AuthorityImage} */ (payload.version === 2 ? upgradeFromV2(payload.state) : payload.state)
+      // Verify legacy closeout shapes before upgrading: new semantics must never
+      // be smuggled into an old image. Integrity above is against the original bytes.
+      const legacy = payload.version === 2 ? upgradeFromV2(payload.state) : payload.state
+      const state = /** @type {AuthorityImage} */ (payload.version < 4 ? upgradeFromV3(legacy) : legacy)
       validateImage(state)
       current = { revision: payload.revision, state }
     } finally { await file.close() }
@@ -240,18 +243,28 @@ function shape(value, keys) {
   }
 }
 /** Lossless v2 -> v3 upgrade: add one empty retention row per known session.
- * @param {any} state @returns {AuthorityImage} */
+ * @param {any} state @returns {any} */
 function upgradeFromV2(state) {
   valid(state && typeof state === 'object' && !Array.isArray(state) && !Object.hasOwn(state, 'holds') && state.version === 2, 'v2 image')
   valid(Array.isArray(state.sessions), 'v2 sessions')
   const holds = state.sessions.map((/** @type {any} */ session) => ({ sessionId: session?.sessionId, holding: false, holdUntil: null, holdCumulativeMs: 0 }))
   const { version: _v, operations, ...rest } = state
-  return /** @type {AuthorityImage} */ ({ ...rest, version: 3, holds, operations })
+  return { ...rest, version: 3, holds, operations }
+}
+/** Lossless v3 -> v4: historical assertions remain inert, never upgraded to proof.
+ * @param {any} state @returns {AuthorityImage} */
+function upgradeFromV3(state) {
+  valid(state?.version === 3 && Array.isArray(state.operations), 'v3 image')
+  for (const operation of state.operations) {
+    valid(Array.isArray(operation.closeouts), 'v3 closeouts')
+    for (const closeout of operation.closeouts) shape(closeout, ['kind', 'assertionId'])
+  }
+  return { ...state, version: 4 }
 }
 /** @param {AuthorityImage} state */
 function validateImage(state) {
   shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'holds', 'operations'])
-  valid(state.version === 3, 'image version')
+  valid(state.version === 4, `image version ${state.version}; expected 4`)
   valid(state.managerIncarnation === null || id(state.managerIncarnation), 'incarnation')
   for (const collection of [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.holds]) {
     valid(Array.isArray(collection) && Object.getPrototypeOf(collection) === Array.prototype, 'collection')
