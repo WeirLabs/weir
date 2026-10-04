@@ -2,6 +2,7 @@
 // Runtime modules remain supplied by Node and the host; no shipped dependency.
 declare class Buffer extends Uint8Array {
   static alloc(size: number): Buffer;
+  static byteLength(value: string): number;
   static from(value: string | Uint8Array, encoding?: string): Buffer;
   equals(other: Uint8Array): boolean;
   subarray(start?: number, end?: number): Buffer;
@@ -23,7 +24,7 @@ declare module 'node:crypto' {
   export function randomUUID(): string;
 }
 declare module 'node:fs' {
-  export interface Stats { dev: number; ino: number; mode: number; size: number; mtimeMs: number; ctimeMs: number; isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean }
+  export interface Stats { dev: number; ino: number; mode: number; nlink: number; size: number; mtimeMs: number; ctimeMs: number; isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean }
   export function lstatSync(path: string): Stats;
   export function lstatSync(path: string, options: { bigint: true }): Omit<Stats, 'dev' | 'ino' | 'mode' | 'size' | 'mtimeMs' | 'ctimeMs'> & { readonly dev: bigint; readonly ino: bigint; readonly mode: bigint; readonly size: bigint; readonly mtimeMs: bigint; readonly ctimeMs: bigint };
   export function fstatSync(fd: number): Stats;
@@ -41,7 +42,7 @@ declare module 'node:fs' {
   export const constants: { O_RDONLY: number; O_DIRECTORY: number; O_NOFOLLOW: number; O_NONBLOCK: number };
 }
 declare module 'node:fs/promises' {
-  export interface FileHandle { stat(): Promise<import('node:fs').Stats>; writeFile(bytes: string, encoding: string): Promise<void>; readFile(): Promise<Buffer>; sync(): Promise<void>; close(): Promise<void> }
+  export interface FileHandle { stat(): Promise<import('node:fs').Stats>; writeFile(bytes: string | Uint8Array, encoding?: string): Promise<void>; read(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesRead: number }>; readFile(): Promise<Buffer>; sync(): Promise<void>; close(): Promise<void> }
   export function open(path: string, flags: string | number, mode?: number): Promise<FileHandle>;
   export function rename(from: string, to: string): Promise<void>;
   export function lstat(path: string): Promise<import('node:fs').Stats>;

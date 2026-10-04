@@ -4,11 +4,13 @@ import { constants } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { validateOperationTransitions } from './operation-history.js'
 import { canonical, parseSnapshot, validateImage } from './snapshot.js'
+import { validateAdminTransition } from './admin-ledger.js'
 
 /**
  * Unmounted historical Edit Lock snapshot storage, NOT a kernel restore interface.
  * The caller MUST already hold an externally proven exclusive directory lifecycle
- * and establish old-publisher quiescence, continuously through close(). This module
+ * and establish old-publisher quiescence (or explicit audited administrator risk
+ * acceptance for the scoped historical writer), continuously through close(). This module
  * supplies neither singleton election nor cross-handle CAS, authentication or live fences.
  * Operation history shares this image; it cannot publish files or restore authority.
  * Receipts are process-local capabilities and MUST NOT be persisted.
@@ -32,7 +34,7 @@ import { canonical, parseSnapshot, validateImage } from './snapshot.js'
  * (one empty retention row per session). Version 4 preserves v2/v3 historical
  * assertions as inert records; the next durable write uses version 4.
  * @typedef {{ sessionId: string, holding: boolean, holdUntil: number|null, holdCumulativeMs: number }} HoldState
- * @typedef {{ version: 4, managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
+ * @typedef {{ version: 4|5, adminRecoveries?: any[], managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
  * @typedef {{ revision: number, state: AuthorityImage }} Snapshot
  */
 
@@ -40,11 +42,11 @@ import { canonical, parseSnapshot, validateImage } from './snapshot.js'
  * snapshot() and record() return detached historical data, never live authority.
  * record() captures input before yielding; acknowledgement follows directory sync
  * and close. Revisions are local to this handle, not a singleton mechanism.
- * @param {{ directory: string, domainId: string, mode: 'create'|'recover' }} options
+ * @param {{ directory: string, domainId: string, mode: 'create'|'recover', maxSnapshotBytes?: number }} options
  * @param {{ checkpoint?: (point: string) => void|Promise<void> }} [testing]
  * Test-only syscall barriers surround REAL IO; they never replace filesystem calls.
  */
-export async function openEditLockStore({ directory, domainId, mode }, testing = {}) {
+export async function openEditLockStore({ directory, domainId, mode, maxSnapshotBytes }, testing = {}) {
   valid(id(directory) && id(domainId) && (mode === 'create' || mode === 'recover'), 'store options')
   directory = resolve(directory)
   valid((await lstat(directory)).isDirectory(), 'store directory')
@@ -54,7 +56,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
   let current
   /** @param {Snapshot} snapshot */
   async function persist(snapshot) {
-    const payload = { version: 4, domainId, ...snapshot }
+    const payload = { version: snapshot.state.version, domainId, ...snapshot }
     const body = canonical(payload)
     const bytes = canonical({ payload, checksum: createHash('sha256').update(body).digest('hex') })
     const temporary = join(resolve(directory), `.snapshot-${randomUUID()}.tmp`)
@@ -101,7 +103,21 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
     const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
       valid((await file.stat()).isFile(), 'snapshot must be regular file')
-      const bytes = await file.readFile()
+      let bytes
+      if (maxSnapshotBytes !== undefined) {
+        valid(integer(maxSnapshotBytes, 1), 'snapshot byte limit')
+        const stat = await file.stat()
+        valid(stat.size <= maxSnapshotBytes, 'snapshot byte limit')
+        bytes = Buffer.alloc(stat.size + 1)
+        let count = 0
+        while (count < bytes.length) {
+          const read = await file.read(bytes, count, bytes.length - count, count)
+          if (!read.bytesRead) break
+          count += read.bytesRead
+        }
+        valid(count === stat.size, 'snapshot size changed')
+        bytes = bytes.subarray(0, count)
+      } else bytes = await file.readFile()
       // The byte-level validation (canonical form, version, domain, checksum,
       // lossless upgrades, image invariants) lives in ./snapshot.js, shared
       // verbatim with the read-only maintenance inspector: a snapshot the
@@ -116,6 +132,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
   function healthy() { if (poison) throw new Error('store poisoned; recover under exclusive lifecycle', { cause: poison }) }
   /** Process-local evidence is issued only after permanently closing a live attempt. */
   const undispatched = new WeakMap()
+  const administrativeInputs = new WeakSet()
   const recoveredKeys = new Set(current.state.operations.map(o => canonical([o.sessionId, o.operationId])))
   const api = {
     snapshot() { healthy(); return structuredClone(current) },
@@ -130,6 +147,7 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       const state = structuredClone(nextState)
       validateImage(state)
       const proof = undispatched.get(input)
+      const administrative = administrativeInputs.delete(input)
       undispatched.delete(input)
       const pending = tail.then(async () => {
         healthy()
@@ -145,6 +163,8 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
           previous.operations[index].fence = null
         }
         validateTransition(previous, state)
+        validateAdminTransition(previous, state, administrative)
+        if (administrative) valid(state.adminRecoveries?.at(-1)?.committedRevision === current.revision + 1, 'administrative revision')
         valid(integer(current.revision + 1), 'revision overflow')
         const next = { revision: current.revision + 1, state }
         try { await persist(next) } catch (error) { poison = error; throw error }
@@ -153,6 +173,13 @@ export async function openEditLockStore({ directory, domainId, mode }, testing =
       })
       tail = pending.then(() => {}, () => {})
       return pending
+    },
+    /** Trusted offline maintenance seam. Caller owns the publisher reservation,
+     * validated durable backup and operator authorization; never exposed to tools.
+     * @param {{ expectedRevision: number, nextState: AuthorityImage }} input */
+    recordAdministrativeRecovery(input) {
+      administrativeInputs.add(input)
+      return api.record(input)
     },
     /** Internal manager seam, not a tool API or an authorization check.
      * The caller exclusively owns the original mutation closure and lifecycle.

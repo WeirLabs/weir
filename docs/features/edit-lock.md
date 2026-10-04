@@ -43,6 +43,44 @@
   - **损坏可见、绝不自修**：权威镜像未通过完整性校验时，面板原样展示拒绝原因（`snapshot.json` 不是常规文件、目录有内容但无已提交快照、校验和/版本/域不匹配等），文件原样保留——不存在自动修复。
   - **不推断已消失的历史**：权威目录当前不存在或为空，只表示当前磁盘事实，不能证明此前从未初始化。维护内容作为错误边界的后代渲染；成功响应中若包含畸形数据，面板显示失败提示，关闭按钮仍可用。
 
+### 管理员恢复（ADMIN OVERRIDE）
+
+**定位与边界**：这是恢复可用性，而不是证明历史发布安全。对已中断 owner 的稳定 `unknown` 发布，管理员可主动承担旧写者稍后仍可能改文件的风险，不以旧写者静止证明作为前提；系统不再永久阻塞新 owner。它不修改目标文件、不重新发布、不改写原始结果、不把 `unknown` 伪装成成功或 `not-published`。此版本交付后端 API；维护面板按钮与真实宿主端到端验收另行接入，无新增配置项。
+
+**一次原子变更**：精确备份原镜像并验证 SHA-256、字节数、canonical 格式、版本、域与所有不变量，文件及父目录 fsync 成功后，才提交 v5 镜像。`adminRecoveries` 必填审计行与 owner 的全部锁释放、epoch 递增、永久撤权在同一次 snapshot rename + directory fsync 内落盘。其他 owner、原 operations（包括绑定、outcome、closeout）逐字义保留；旧 operation ID 查历史，不重放，换内容复用 ID 仍拒绝。旧 owner 不能 reopen/resume/acquire，新 owner 仍须正常取得递增 generation 后才能发布。
+
+**HTTP 交接契约**：`POST /api/orrery-edit-lock/maintenance/recover` 只注册到宿主 `connection.fetch`，依赖该 `/api` 通道既有的 Host/Origin 检查与已认证浏览器 cookie；不是模型工具或原始 HTTP server。操作者身份由服务端写为 `authenticated-settings-administrator`，不接受客户端 actor。`root` 必须精确等于 status 列表中服务端推导的 canonical root；检查在对客户端路径进行任何 IO 之前完成。
+
+请求为以下八个字段（拒绝缺失及多余字段）：
+
+```json
+{
+  "root": "<status 返回的根>",
+  "owner": "<待撤销会话 ID>",
+  "expectedRevision": 42,
+  "operationIds": ["<该 owner 的全部未决 operation ID>"],
+  "recoveryId": "<客户端生成并在重试中保留的唯一 ID>",
+  "reason": "<管理员填写的原因>",
+  "acceptLateWriterRisk": true,
+  "confirmation": "ADMIN OVERRIDE <scope 的 SHA-256>"
+}
+```
+
+确认摘要是递归按对象 key 排序、无额外空白的 canonical JSON 的 UTF-8 SHA-256（小写 hex），对象为 `{root, owner, expectedRevision, operationIds: [...operationIds].sort(), risk: 'Detached historic writers may still modify files after this override.'}`。界面必须让管理员看到并明确确认此 scope 与风险，不应静默代填确认。参考后端 `recoveryConfirmation()`；数组排序只用于 scope，不能重复 ID。reason 非空且 ≤2000 字符，recoveryId ≤128，owner ≤512，root ≤4096，operation ID ≤1024，操作数 ≤10000。
+
+成功返回 `{ok:true,value:{revision,idempotent,record}}`，record 含 scope 摘要、时间、actor、reason、风险原文、原/新 revision、backup 文件名/字节数/SHA-256、每个旧操作的摘要、完整 releasedLocks 和 revokedEpoch。检查 API 的 `unresolved` 仍展示 `phase:unknown`，通过 `admissionBlocked:false` 和 `administrativeRecoveryId` 单独表达行政准入处置，另有完整 `adminRecoveries`。不要仅凭 unresolved 计数断言仍被围栏阻塞。
+
+**失败、重试与运行时接入**：
+
+- 恢复独占既有 publisher reservation，与 runtime 打开及其他恢复互斥。已有预约一律拒绝、不偷取；预约不存在也不声称旧写者静止。应先正常停用/排空当前 runtime；遗留预约必须另行处理，API 不负责删除。当前实现只接受 owner 已 interrupted 且所有未决操作均为 unknown；prepared/publishing 先经既有恢复规范化，不能用此入口推断结果。
+- authority 与备份仅接受 ≤16 MiB 的单链接常规文件；拒绝符号链接及祖先路径变动，有限读取并核对 inode/size/mtime/ctime。此机制不防同用户恶意进程，支持 POSIX 本地文件系统，目录须由调用者控制；目录 fsync 不支持时不降级确认。
+- 备份文件采用 `admin-backup-<SHA256([root,recoveryId])>.json`（0600，wx 创建），已有备份必须逐字节匹配。备份失败、冲突、输入/审计校验失败、rename 前失败均不修改旧 authority 或目标文件。备份是证据，**不是存在迟到写者时可以安全回滚的承诺**。
+- rename 后失败可能已提交：HTTP 409 `{ok:false,error:{code,message,commitStatus}}` 只表示未确认，不保证回滚。`commitStatus:uncertain` 时先 inspect，再以完全相同 recoveryId/scope/reason 重试；重试验证已提交 ledger 和原备份，返回 `idempotent:true`，不重复释放或追加。revision 冲突则重新 inspect/明确确认；错误不会返回原始文件系统路径或堆栈。
+- 权威 ledger 是原子强制审计；成功后另经共享审计发送 `orrery/edit-lock-maintenance` 的 `admin-override` 并 best-effort 写入根下 audit JSONL。不调用 `session.append`，镜像审计失败不否定已完成的权威提交。
+- 普通镜像继续使用 v4，首次 override 才升级 v5；v2/v3 仍无损升级。旧构建拒绝 v5；禁止简单删 ledger 或恢复旧备份冒充安全降级。scope/checksum 是完整性绑定，不是防有权限编辑 authority 的恶意管理员签名。
+
+**测试证据**：新增 `edit-lock-admin-recovery.test.js` 使用真实 store/manager/publisher 异常制造 22 把保留锁，验证备份、原历史不变、旧 token/owner/ID 非重放、新 owner 再获取并发布，以及备份/文件 fsync/rename/目录 fsync 故障、丢失确认幂等、预约竞争、ledger 防篡改和服务端 root allowlist。安装版宿主认证来源已核对；不把 mock connection 单测当作 GUI/HTTP 认证端到端测试，真实运行时和 GUI 验收由集成阶段完成。
+
 ### 命令
 
 | 命令 | 作用 |
@@ -140,8 +178,8 @@
 
 `src/edit-lock/store.js` 提供 `openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot()` / `record({ expectedRevision, nextState })` / `close()`，是**持久化历史，不是授权来源**：
 
-- **封闭历史镜像**（当前 version 4，含 `holds` 保留表）：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）与 operations。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
-- **版本迁移与降级**：读取接受 version 2／3／4，校验原始字节后无损迁移到 v4；v2 补空保留行，v3 只改版本。历史 closeout 仍只有 `kind`／`assertionId`，不会被升级成解除围栏的证明；旧版本中夹带 bound record 会被拒绝。单独打开不改磁盘，下次成功写入使用 v4；旧版 reader 必须拒绝 v4，不能忽略字段继续运行。不支持的版本报出实际版本与支持范围。恢复方式是使用较新的 build，或在已建立独占与旧 publisher 静止的前提下恢复升级前备份；不能手改版本号，不能用备份抹掉仍可能发布的操作。
+- **封闭历史镜像**（普通 version 4；管理员恢复后 version 5 增加 `adminRecoveries`）：managerIncarnation、sessions（sessionId/executionEpoch/interrupted）、generations（含 release 墓碑）、locks（resourceId/owner/generation/status，abnormal 必须带 reason）、issuedRequests（去重历史）、recovery（累计 charge）、holds 与 operations。除 schema 校验外还强制历史单调：epoch 与 generation 不得倒退、interrupted 翻转必须前进 epoch、issued request 不可删除、recovery 计数只增、同 generation 的 abnormal 结论不得清除。
+- **版本迁移与降级**：读取接受 version 2／3／4／5，校验原始字节后将 v2/v3 无损迁移到 v4；v2 补空保留行，v3 只改版本。历史 closeout 仍只有 `kind`／`assertionId`，不会被升级成解除围栏的证明；旧版本中夹带 bound record 会被拒绝。单独打开不改磁盘；没有 override 时下次成功写入 v4，已有 ledger 则继续 v5，不能降级丢弃。旧 reader 必须拒绝不支持的版本，不能忽略字段继续运行。不支持的版本报出实际版本与支持范围。恢复方式是使用较新的 build；不能手改版本号，不能用备份抹掉仍可能发布的操作。
 - **规范编码与完整性**：object key 按 UTF-16 排序、无空白、数组保序的 canonical JSON；`{version,domainId,revision,state}` payload 加 `{payload,checksum}` envelope，checksum 为 SHA-256。读取要求严格 UTF-8、**逐字节**等于重新规范化的结果（每一层的重复键、非规范数字/转义写法、空白与乱序因而全部被拒绝）、精确 schema 与 version/domain/revision/checksum 一致。checksum 只检测意外损坏，**不是**认证，也不防回滚。
 - **写序与确认**：独占 sibling temp（`wx`、0600）→ 全量写入 → file sync → file close → rename → 目录 open（`O_DIRECTORY|O_NOFOLLOW`）→ 目录 sync → 目录 close，之后才确认并更新内存。失败不回滚、不删 temp、不提升遗留 temp；rename 之后的不确定性保守记为 `uncertain`。
 - **串行本地 revision CAS**：每 handle 一条串行队列，`expectedRevision` 与当前 revision 不符即 conflict，溢出拒绝且不写入、不毒化。这是 **handle 内**的 CAS，不是跨进程/跨 handle CAS，也不是单实例选举。
@@ -174,11 +212,11 @@
 - **无显式目标不等于无资源影响**：resume、hold 与会话级释放在执行点枚举受影响 ownership；批量获取/释放检查全部成员，不能先处理无冲突项再失败。resume 遇到被围栏保护的锁时整体拒绝，不消费 receipt、不把锁改为 pending-confirmation。transfer 按实际转交资源检查。
 - **仅减权入口仍可运行**：取消、标记异常、结束保留与增加恢复预算不解除围栏。release／releaseMany／releaseActive／人工 unlock 可移除无关 ownership，但未决 update 必需的原 owner/generation 必须保留；混合批次整体拒绝。release 不代表确认发布结果，也不结清 unknown。
 
-本阶段不改历史 outcome/fence、不增加 closeout 或人工结清入口、不自动重放、不引入 TTL；持久化失败仍毒化整个 manager。精确资源比较依赖可信 ingress 提供 native canonical 单链接文件身份，以及既有独占生命周期／外部拓扑变更协调前提；路径形状检查自身不是文件系统证明。
+普通隔离路径不改历史 outcome/fence、不增加 closeout、不自动重放、不引入 TTL；持久化失败仍毒化整个 manager。显式管理员恢复是独立的风险接受入口（见上节），不是普通 unlock 或历史结清。精确资源比较依赖可信 ingress 提供 native canonical 单链接文件身份，以及既有独占生命周期／外部拓扑变更协调前提；路径形状检查自身不是文件系统证明。
 
 **历史静止性边界的 characterization（不是安全保证或完整修复）**：`edit-lock-historical-quiescence.test.js` 用隔离临时 authority 与 gated promise 构造任意 adapter：`writeText` 拒绝，但保留一个尚未写入的 detached writer。manager 将操作记录为 unknown，`drain()` 与 reserved runtime 的 `close()` 仍可完成并释放预约；随后 recover 可以打开新 authority，旧 writer 才落盘，历史 unknown 不变。该测试故意违反 recovery 要求的旧 publisher quiescence 前提，证明 generic handoff 的返回值／队列排空／预约移除本身不足以建立该前提；不证明安装版宿主 adapter 必然这样执行，也不提供宿主静止性证明。测试只在实际 writer 已 drain 后清理 fixture，不修改真实 snapshot。
 
-当前 v4 迁移基础不增加 attestation-based unlock，不以人工声明、进程退出或 promise rejection 结清 unknown，也未开放 bound closeout 入口。宿主能否提供覆盖所有历史 writer 的可信静止性证明仍需独立验证。
+v4 迁移基础仍不以人工声明、进程退出或 promise rejection 结清 unknown，未开放 bound closeout 入口。v5 的 ADMIN OVERRIDE 在保留 unknown 的同时显式接受迟到写者风险、改变后续准入，不声称建立历史静止性；宿主静止性证明不是该自愿恢复的前提。
 
 队列回归在不等待前驱的情况下提交 acquisition／unknown commit，再提交 hold 或 resume，验证 ownership candidate 在 FIFO 执行点枚举；releaseActive 另验证 queued abnormal transition 后不沿用调用时的 active 集合。将 `transact` 的 candidate 求值移到调用时的内存 mutation 会使三项测试失败。endHold 的 live resource-unknown 用例断言 revision 真正递增且 ownership／history 不变；历史 domain 用例因 recovery 已重置 holding，只断言 no-op，不声称覆盖 domain-fenced endHold 的实际持久化分支。
 

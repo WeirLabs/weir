@@ -302,7 +302,7 @@ describe('maintenance endpoints', () => {
     const injection = injections.find(entry => entry.names.join(',') === 'connection')
     assert.ok(injection, 'connection inject requested')
     injection.callback({ connection })
-    assert.equal(routes.size, 2)
+    assert.equal(routes.size, 3)
     off()
     assert.equal(routes.size, 0)
   })

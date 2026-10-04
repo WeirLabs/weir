@@ -1,4 +1,5 @@
 import { isAbsolute, relative } from 'node:path'
+import { dispositionFor } from './admin-ledger.js'
 
 /** Historical assertions only: no authentication, live permission or FS publication.
  * Digests MUST be computed by a future trusted publisher over canonical requests,
@@ -103,7 +104,7 @@ export function validateOperations(state) {
         }
       }
     }
-    if ((op.phase === 'publishing' || op.phase === 'unknown') && op.binding.target.kind === 'update') {
+    if ((op.phase === 'publishing' || op.phase === 'unknown') && op.binding.target.kind === 'update' && !dispositionFor(state, op)) {
       const target = op.binding.target
       const lock = state.locks.find(l => l.resourceId === target.resourceId)
       valid(lock && lock.owner === op.sessionId && lock.generation === target.generation, 'retained unresolved ownership')

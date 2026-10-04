@@ -6,6 +6,7 @@
 // recover would accept — corruption is reported, never repaired.
 import { createHash } from 'node:crypto'
 import { validateOperations } from './operation-history.js'
+import { validateAdminLedger } from './admin-ledger.js'
 
 /**
  * @typedef {import('./store.js').AuthorityImage} AuthorityImage
@@ -66,8 +67,8 @@ export function upgradeFromV3(state) {
 
 /** @param {AuthorityImage} state */
 export function validateImage(state) {
-  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'holds', 'operations'])
-  valid(state.version === 4, `image version ${state.version}; expected 4`)
+  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'holds', 'operations', ...(state.version === 5 ? ['adminRecoveries'] : [])])
+  valid(state.version === 4 || state.version === 5, `image version ${state.version}; expected 4 or 5`)
   valid(state.managerIncarnation === null || id(state.managerIncarnation), 'incarnation')
   for (const collection of [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.holds]) {
     valid(Array.isArray(collection) && Object.getPrototypeOf(collection) === Array.prototype, 'collection')
@@ -135,6 +136,7 @@ export function validateImage(state) {
     valid(integer(recovery.attempts) && integer(recovery.elapsedMs) && integer(recovery.pauseMs), 'recovery counters')
     recoveries.add(recovery.sessionId)
   }
+  validateAdminLedger(state)
   validateOperations(state)
 }
 
@@ -156,7 +158,7 @@ export function parseSnapshot(bytes, domainId) {
   shape(envelope, ['payload', 'checksum'])
   const payload = envelope.payload
   shape(payload, ['version', 'domainId', 'revision', 'state'])
-  valid(typeof payload.version === 'number' && [2, 3, 4].includes(payload.version), `snapshot version ${payload.version}; supported: 2, 3, 4; recover with a newer build or restore a pre-upgrade snapshot`)
+  valid(typeof payload.version === 'number' && [2, 3, 4, 5].includes(payload.version), `snapshot version ${payload.version}; supported: 2, 3, 4, 5; recover with a newer build or restore a pre-upgrade snapshot`)
   valid(payload.domainId === domainId, 'snapshot domain')
   valid(payload.state !== null && typeof payload.state === 'object' && 'version' in payload.state && payload.state.version === payload.version, 'snapshot/image version mismatch')
   valid(integer(payload.revision), 'snapshot revision')
@@ -166,5 +168,6 @@ export function parseSnapshot(bytes, domainId) {
   const legacy = payload.version === 2 ? upgradeFromV2(payload.state) : payload.state
   const state = /** @type {AuthorityImage} */ (payload.version < 4 ? upgradeFromV3(legacy) : legacy)
   validateImage(state)
+  for (const row of state.adminRecoveries ?? []) valid(row.root === domainId && row.committedRevision <= payload.revision, 'administrative domain/revision')
   return { revision: payload.revision, state }
 }

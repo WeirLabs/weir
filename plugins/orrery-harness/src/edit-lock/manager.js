@@ -2,7 +2,8 @@ import { createEditLockState } from './state.js'
 import { bindRequest } from './request-binding.js'
 import { lookupOperation } from './operation-history.js'
 import { canonicalRequestData } from './request-data.js'
-import { admitMutation, publicationCandidate } from './admission.js'
+import { admitMutation as admitHistory, publicationCandidate } from './admission.js'
+import { dispositionFor, revokedOwner } from './admin-ledger.js'
 
 /**
  * Unmounted trusted manager core. Caller exclusively owns the store lifecycle;
@@ -44,6 +45,14 @@ function managerCore(store, kernel) {
   const { operations, authority } = kernel
   const managerIncarnation = operations.status().managerIncarnation
   let confirmed = store.snapshot()
+  // Only validated administrative dispositions lift a historical fence. The
+  // immutable history still participates in operation-ID lookup before admission.
+  function admitMutation(history, candidate, mode = 'normal') {
+    return admitHistory(history.filter(op => !dispositionFor(confirmed.state, op)), candidate, mode)
+  }
+  function checkNotRevoked(sessionId) {
+    if (revokedOwner(confirmed.state, sessionId)) throw new Error('owner revoked by administrative recovery')
+  }
   let tail = Promise.resolve()
   /** @type {unknown} */
   let poison
@@ -60,6 +69,7 @@ function managerCore(store, kernel) {
   /** @param {import('./state.js').Execution} execution */
   function checkExecution(execution) {
     healthy()
+    checkNotRevoked(execution.sessionId)
     const session = operations.status().sessions.find(s => s.sessionId === execution.sessionId)
     if (!session || execution.managerIncarnation !== managerIncarnation ||
         execution.executionEpoch !== session.executionEpoch || session.interrupted || cancelled.has(execution.sessionId)) {
@@ -272,6 +282,7 @@ function managerCore(store, kernel) {
       const captured = { ...execution }
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        checkNotRevoked(captured.sessionId)
         return draft.operations.resume(captured, requestId, receipt)
       }, () => sessionResources(captured.sessionId)).then(async resumed => {
         const cancellation = cancelled.get(captured.sessionId)
@@ -289,6 +300,7 @@ function managerCore(store, kernel) {
     openSession(sessionId) {
       return transact(draft => {
         if (cancelled.has(sessionId)) throw new Error('session cancelled')
+        checkNotRevoked(sessionId)
         return draft.authority.openSession(sessionId)
       }, { kind: 'none' }).then(async execution => {
         const cancellation = cancelled.get(sessionId)
@@ -324,6 +336,7 @@ function managerCore(store, kernel) {
       const captured = { ...execution }
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
+        checkNotRevoked(captured.sessionId)
         return draft.operations.acquire(captured, resourceId)
       }, { kind: 'resources', resourceIds: [resourceId] }).then(async token => {
         const cancellation = cancelled.get(captured.sessionId)

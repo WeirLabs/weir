@@ -51,7 +51,10 @@ export function summarizeAuthorityImage(snapshot) {
   const operations = Array.isArray(state?.operations) ? state.operations : []
   const unresolved = operations
     .filter(op => op?.phase === 'publishing' || op?.phase === 'unknown')
-    .map(unresolvedRow)
+    .map(op => {
+      const disposition = state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
+      return { ...unresolvedRow(op), admissionBlocked: !disposition, administrativeRecoveryId: disposition?.recoveryId ?? null }
+    })
   const retainedLocks = (Array.isArray(state?.locks) ? state.locks : [])
     .filter(lock => lock?.status !== 'active')
     .map(lock => ({ resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation, status: lock.status, reason: lock.reason ?? null }))
@@ -67,6 +70,7 @@ export function summarizeAuthorityImage(snapshot) {
       retainedLocks: retainedLocks.length,
     },
     unresolved,
+    adminRecoveries: structuredClone(state?.adminRecoveries ?? []),
     retainedLocks,
     sessions: (Array.isArray(state?.sessions) ? state.sessions : []).map(session => ({
       sessionId: session.sessionId,
