@@ -17,6 +17,9 @@
 // Audit and notification are scheduled best-effort after the response; their
 // failure never rolls back accepted policy. Commands and audit logs are not
 // commit evidence: durable acceptance is only the store record.
+// Tasks 4.5 run content-refresh transactions through the SAME per-session
+// serialization point (coordinate); tasks 4.6 gate capability calls on the
+// fence and the authority snapshot exposed here.
 import { digestOf } from './store/record.js'
 import { isSegment } from './store/paths.js'
 import { skillIdentityKey } from './skill-identity.js'
@@ -581,6 +584,17 @@ export function createApplyEngine(options) {
   return {
     apply,
     queryReceipt,
+    /**
+     * Shared in-process commit coordinator (tasks 4.5): a content refresh runs
+     * its whole transaction — selection re-check and durable commit — through
+     * the SAME per-session serialization point as selection Applies, so the
+     * two never interleave in-process. Cross-process exclusion stays the
+     * store lock.
+     * @template T
+     * @param {string} sessionId @param {() => Promise<T>} task
+     * @returns {Promise<T>}
+     */
+    coordinate: (sessionId, task) => serialize(sessionId, task),
     /** Synchronous in-memory authority snapshot for a session (null until loaded). */
     authority(sessionId) {
       const snapshot = snapshots.get(sessionId)
