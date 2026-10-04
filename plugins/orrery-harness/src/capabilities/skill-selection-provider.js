@@ -2,6 +2,7 @@ import { readFile, realpath } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { createSkillIdentity, skillIdentityKey } from './skill-identity.js'
 import { parseSkillText } from './frontmatter.js'
+import { classifySelectionFailure } from './selection-status.js'
 
 export const SELECTION_PROVIDER = 'orrery-selected'
 const message = error => error instanceof Error ? error.message : String(error)
@@ -31,6 +32,15 @@ export function validateSkillSelection(identities) {
  * the raw Orrery inventory. No host merged catalog is used as an inventory.
  * acceptSelection is an in-memory publication hook AFTER durable Apply succeeds;
  * it does not write policy. Call validateSkillSelection before committing policy.
+ *
+ * Status face (tasks 5.1/5.3): status(options) reports
+ * { error, reason, hint, conflicts }. A collect failure classifies into a
+ * stable machine reason plus an actionable hint; an externally reported
+ * resume failure (noteFailure — e.g. another process holding the session log)
+ * pins the state: the menu stays EMPTY (denial shadows only, never a guessed
+ * non-empty list) until the note is cleared by clearFailure or by an accepted
+ * Apply (acceptSelection), and status keeps showing the reason and hint even
+ * when there is no collect error.
  */
 export function createSkillSelectionProvider({ control, readSelection, inventory, denials = () => [], fs = { readFile, realpath } }) {
   const states = new Map()
@@ -40,7 +50,7 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
   const keyOf = options => JSON.stringify([options.scope?.session?.id ?? null, options.cwd ?? null])
   const stateOf = options => {
     const key = keyOf(options)
-    if (!states.has(key)) states.set(key, { options, selected: null, snapshot: null, result: null, pending: null, epoch: 0, error: null, conflicts: [] })
+    if (!states.has(key)) states.set(key, { options, selected: null, snapshot: null, result: null, pending: null, epoch: 0, error: null, failure: null, note: null, conflicts: [] })
     return states.get(key)
   }
   const invalidate = () => {
@@ -51,6 +61,9 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
   const clear = state => { state.epoch++; state.result = null }
   async function collect(state) {
     if (disposed) return { candidates: denials(), complete: false }
+    // A pinned resume failure keeps the menu empty (task 5.3): never fall
+    // back to a non-empty list while the note stands.
+    if (state.note) return { candidates: denials(), complete: false }
     if (state.result) return state.result
     if (state.pending) return state.pending
     const epoch = state.epoch
@@ -61,6 +74,7 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
         if (selection.conflicts.length) throw new Error('Selected skill names conflict; explicit resolution is required')
         if (!selection.identities.length) {
           state.error = null
+          state.failure = null
           if (epoch !== state.epoch) return { candidates: denials(), complete: false }
           state.result = { candidates: denials(), complete: true }
           return state.result
@@ -76,11 +90,13 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
         const candidates = [...matches.map(candidate => ({ ...candidate, provider: SELECTION_PROVIDER })),
           ...denials().filter(candidate => !matches.some(match => match.name === candidate.name))]
         state.error = null
+        state.failure = null
         if (epoch !== state.epoch) return { candidates: denials(), complete: false }
         state.result = { candidates, complete: true }
         return state.result
       } catch (error) {
         state.error = message(error)
+        state.failure = classifySelectionFailure(error)
         return { candidates: denials(), complete: false }
       }
     })().finally(() => { state.pending = null })
@@ -109,6 +125,7 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
         return { ...parsed, provider: SELECTION_PROVIDER, source: current.source, resourceBase: current.resourceBase }
       } catch (error) {
         state.error = message(error)
+        state.failure = classifySelectionFailure(error)
         clear(state)
         invalidate()
         return undefined
@@ -116,7 +133,13 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
     },
     status(options = {}) {
       const state = stateOf(options)
-      return structuredClone({ error: state.error, conflicts: state.conflicts })
+      const failure = state.error ? state.failure ?? classifySelectionFailure(state.error) : state.note
+      return structuredClone({
+        error: state.error ?? state.note?.error ?? null,
+        reason: failure?.reason ?? null,
+        hint: failure?.hint ?? null,
+        conflicts: state.conflicts,
+      })
     },
     acceptSelection(identities, options = {}) {
       const state = stateOf(options)
@@ -124,9 +147,34 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
       state.conflicts = selection.conflicts
       if (selection.conflicts.length) return { accepted: false, conflicts: structuredClone(selection.conflicts) }
       state.selected = selection.identities
+      // An accepted Apply proves the session live and working: any pinned
+      // resume-failure note is obsolete.
+      state.note = null
       clear(state)
       invalidate()
       return { accepted: true, conflicts: [] }
+    },
+    /**
+     * Pin an externally observed availability failure (task 5.3) — e.g. the
+     * host reporting that another process holds the session log writer. While
+     * pinned, list() stays fail-closed empty and status() carries the reason
+     * and an actionable hint. Never a guessed non-empty list.
+     * @param {unknown} options @param {unknown} failure - Error, { code, message } or string
+     */
+    noteFailure(options = {}, failure) {
+      const state = stateOf(options)
+      const classified = classifySelectionFailure(failure)
+      state.note = { error: failure instanceof Error ? failure.message : typeof failure === 'string' ? failure : String(failure?.message ?? failure ?? 'resume failed'), ...classified }
+      clear(state)
+      invalidate()
+    },
+    /** Lift a pinned failure note (recovery hook; the 5.5 integration wires it). */
+    clearFailure(options = {}) {
+      const state = stateOf(options)
+      if (!state.note) return
+      state.note = null
+      clear(state)
+      invalidate()
     },
     // The host emits skills/change without a source. Ignore our synchronous echo
     // and coalesce each burst; enumerate lazily on the next list boundary.
