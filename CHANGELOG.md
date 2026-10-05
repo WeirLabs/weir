@@ -41,6 +41,8 @@
 
 - **Worktree 车道（安装说明）**：本版新增模块导出 `orrery-harness/worktree`、预设中的 `worktree` 行与设置页「Worktree 车道」组，**需重启 DeepSeek Harness 后生效**；本机 git 需为 2.38 或更新（冲突预检依赖 `git merge-tree --write-tree`），更低版本下车道功能整体报 `GIT_TOO_OLD`，不降级运行。
 
+- **Worktree 车道状态订阅（`worktree_watch`）**：主代理可订阅同一仓库内任意车道的结论态（如 `landable`、`landed`、`abandoned`；过渡态不可订阅），车道到达目标状态时自动通知并续推**订阅者会话**——跨会话可用，不再只能干等属主通知或反复 `worktree_check`。订阅一次性：命中一次即自动解除；超时（默认 6 小时，设置页「Worktree 车道」组统一配置，模型不可指定）到期解除并收到一条过期通知，不会无声消失。订阅随车道账本持久化，重启后未过期继续有效；重复订阅同一车道自动替换旧订阅。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+
 - **会话能力管理器（基础设施，暂无用户可见变化）**：新增 Orrery 自管的带锁持久化侧文件存储（位于 DSH home 下的 `orrery/profiles/<profile>/capabilities`），承载后续会话 Skill/MCP 选择与其回执：每单元独立文件与修订号、原子提交（temp + fsync + rename）、跨进程锁文件（崩溃安全获取、陈旧锁须证明 owner 已不存活才回收）、幂等回执与内容代次指针原子切换；不支持的平台显式报 unsupported 且零写入。本步不改动任何现有行为。详见 [会话能力管理器特性文档](docs/features/session-capability-manager.md)。
 
 ### Changed
