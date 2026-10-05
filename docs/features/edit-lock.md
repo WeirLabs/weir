@@ -33,6 +33,7 @@
   - 「收回编辑权」是危险动作，需要第二次点击确认。
   - 会话 id、epoch、generation、绝对路径都收在「技术细节」里。
   - 面板读取的是只读的结构化视图，不轮询、不写入对话；每个动作都是一次显式 `/edit-lock` 命令，留在对话中作为记录。
+  - 收起方式：再点一次「编辑锁」按钮、在面板内按 Escape，或点击面板外的任意位置（document 级 `pointerdown`，落在本入口之外即收起，同时重置「收回编辑权」「解锁」的二次确认待击状态）。
 - **模型可调用的工具**：`edit_lock_acquire`（显式占用既有文件；resume 后对 pending-confirmation 文件逐个调用即确认）、`edit_lock_release`、`edit_lock_hold`、`edit_lock_try_steal`（立即返回 pending requestId，从不等待持有者）、`edit_lock_pause`（只在仅清理恢复期间可用，单次 ≤15 分钟、累计 ≤30 分钟）与只读的 `edit_lock_status`。持有者有待答请求时才会临时多出 `edit_lock_reply`（`release`／`keep`），并在回合边界注销。
 - 编辑工具的锚点校验、版本护栏、沙箱策略与 diff 输出不变；shell 与外部编辑器的写入不在保护范围内。
 - **设置页维护控件（不依赖管理器是否运行）**。设置页「编辑」组在编辑锁设置下方多出「编辑锁维护」面板，任何时候都能打开——即使编辑锁已停用、管理器没挂上或已中毒：
@@ -318,7 +319,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### 单元测试要点
 
-- **保留与收尾**：`test/edit-lock-retention.test.js`（17 项：保留语义、他人照常被拒、本会话可继续编辑、新回合解除、读时结算幂等、延长只计新增分钟、批次结束归零、停止使保留失效、重启不恢复运行中的保留）、`test/edit-lock-settle.test.js`（13 项：仅 `completed` 进入、提醒上限、两种兜底、提醒自身回合不重置计数、保留期内不打扰）、`test/edit-lock-view.test.js`（8 项：状态优先级、行动作、技术标识不进主视图）、`test/client-edit-lock-panel.test.js`（13 项：不解析命令文本、按状态的主动作、行内动作、收回二次确认、解锁二次确认、技术细节折叠）、`test/settings-fields.test.js`（`editLockLimits` 默认与报错）。
+- **保留与收尾**：`test/edit-lock-retention.test.js`（17 项：保留语义、他人照常被拒、本会话可继续编辑、新回合解除、读时结算幂等、延长只计新增分钟、批次结束归零、停止使保留失效、重启不恢复运行中的保留）、`test/edit-lock-settle.test.js`（13 项：仅 `completed` 进入、提醒上限、两种兜底、提醒自身回合不重置计数、保留期内不打扰）、`test/edit-lock-view.test.js`（8 项：状态优先级、行动作、技术标识不进主视图）、`test/client-edit-lock-panel.test.js`（15 项：不解析命令文本、按状态的主动作、行内动作、收回二次确认、解锁二次确认、技术细节折叠、外部点击收起与重开）、`test/settings-fields.test.js`（`editLockLimits` 默认与报错）。
 - **内核与身份**：`test/edit-lock-state.test.js`、`test/edit-lock-resource-identity.test.js`（真实 `mkdtemp`/`write`/`mkdir`/`symlink`/`link`/`rename`，真实 `/dev/null` 作特殊节点；平台 dispatch 在独立子进程中替换 `process.platform` 检查，不伪造文件系统成功）。后者含一条复杂度回归：在隔离子进程给 Node 内建加 passthrough 计数（每次仍调用真实 fs），要求每多 4 个组件 lstat/readlink 各自至多 3 倍增长，并断言观察仍是同一个真实文件——它钉死的是「指数级父路径重放」这一已修复缺陷，**不**声称整个 resolver 对所有路径/内核 I/O 都是线性。
 - **存储与历史**：`test/edit-lock-store.test.js`（真实 syscall 层的故障注入与 SIGKILL 子进程恢复，覆盖 create/record/recover 的 detached 语义、封闭 schema 与历史单调性、canonical/checksum/domain/version 拒绝、每个持久化边界的毒化与 `commitStatus`、每 handle 队列 CAS 与 close drain）、`test/edit-lock-operation-history.test.js`（阶段图、`ID_REUSE`、transition-local 归属、围栏与 closeout）；两者都用真实 fs 与真实 file/dir sync。SIGKILL 是真实子进程在 barrier 处被杀后重新 recover，**不是**掉电、内核崩溃、扇区撕裂或硬件缓存持久性证明。
 - **管理与组合**：`test/edit-lock-manager.test.js`（持久后安装、取消 overlay 与持久 ack、pending 注册的取消、竞争冲突不毒化、未决围栏）、`test/edit-lock-composition.test.js`（服务与工具面、受控 write 与 hash_edit 链路、view 端点、人工 `release` 命令）、`test/edit-lock-lifecycle.test.js`、`test/edit-lock-host.test.js`、`test/edit-lock-write.test.js`、`test/edit-lock-tool-scope.test.js`、`test/edit-lock-publication.test.js`、`test/edit-lock-reservation.test.js`、`test/edit-lock-peer*.test.js`、`test/edit-lock-remote-service.test.js`、`test/edit-lock-request-*.test.js`、`test/edit-lock-call-context.test.js`。

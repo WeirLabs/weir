@@ -42,6 +42,8 @@
 
 ### Fixed
 
+- **编辑锁状态面板点击外部不收起**：输入栏「编辑锁」弹出的细节面板此前只能靠再次点击按钮或在面板内按 Escape 关闭，点击面板外区域没有反应。现在面板打开时监听 document 级 `pointerdown`，落在本入口（按钮＋面板）之外的点击即收起面板，同时重置「收回编辑权」「解锁」的二次确认待击状态；收起时注销监听器，不产生泄漏。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
+
 - **Orrery 预设新建会话失败（`agent-preset/invalid: row 9 names no plugin`）**：预设组合中 `orrery-skill-selection` 行的 `name` 用了 `!!js` 表达式定位私有入口，而运行时对 `name` 字段从不对表达式求值（只有 `disabled` 与 config 值求值），预设注册校验直接拒绝，导致所有新建 Orrery 会话失败。改为正式导出 `./skill-selection`（`orrery-harness/skill-selection`）并以字符串引用；新增回归测试拒绝任何 `name: !!js` 写法。集成测试装置本就走字符串导出行，故此缺陷此前未被任何测试触达。
 
 - **集成测试装置 worktree 场景的 git 容器化（2026-10-05 "fixture" 污染事故）**：装置的 worktree 集成场景用裸 `git rev-parse --git-dir` 探测工作区仓库，而默认 IT 根已迁入会话仓库内（`<repo>/.orrery/it-root`），探测经父目录穿透命中外层仓库——场景的 `git add -A && git commit -m fixture` 于是直接把主工作区里其他会话的未暂存改动卷进 main 上的混合提交（4f1a90e/d2949bc/6ab3f26/7a357b4），并曾短暂回退他人修复。新增 `src/git-repo.js` 容器化护栏：工作区一律获得自己的 `.git`（嵌套安全，IT 根本地 exclude），任何仓库变更前 `assertContained()` 要求工作区自身即 toplevel 否则拒绝；附回归测试。端到端验证：默认根下 worktree 场景 8/8 通过且主仓库逐字节不变。
