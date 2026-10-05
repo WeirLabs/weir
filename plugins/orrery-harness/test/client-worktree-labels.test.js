@@ -8,7 +8,7 @@ const view = readFileSync(new URL('../lib/client.worktree-view.js', import.meta.
 const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 const prefixed = (key) => `worktree${key.charAt(0).toUpperCase()}${key.slice(1)}`.replace(/-/g, '_')
 const STATES = ['preparing', 'setup-failed', 'ready', 'working', 'dirty', 'no-commits', 'branch-moved', 'checking', 'check-failed', 'landable', 'conflicted', 'awaiting-approval', 'declined', 'landed', 'kept', 'cleaned', 'abandoned']
-const TOOLS = ['worktree_open', 'worktree_check', 'worktree_land', 'worktree_cleanup', 'worktree_abandon']
+const TOOLS = ['worktree_open', 'worktree_check', 'worktree_land', 'worktree_cleanup', 'worktree_abandon', 'worktree_watch']
 const NEXT_TOOLS = ['delegate', 'worktree_check', 'worktree_land', 'worktree_cleanup']
 const WAITS = ['lane-ready', 'child-settle', 'check-complete', 'user']
 

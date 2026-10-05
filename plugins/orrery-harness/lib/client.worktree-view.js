@@ -88,6 +88,10 @@ window.__ModuleLoader__.load({
 			],
 			history: [["path", { d: "M2.8 8a5.2 5.2 0 1 1 1.5 3.7" }], ["path", { d: "M2.8 5.4V8h2.6" }], ["path", { d: "M8 5.6V8l1.8 1.2" }]],
 			arrowRight: [["path", { d: "M3 8h9.6M9.2 4.2L13 8l-3.8 3.8" }]],
+			eye: [
+				["ellipse", { cx: 8, cy: 8, rx: 6.2, ry: 4.4 }],
+				["circle", { cx: 8, cy: 8, r: 1.9 }],
+			],
 		};
 		/** @param {{ name: string, size?: number }} props */
 		function Icon(props) {
@@ -314,6 +318,14 @@ window.__ModuleLoader__.load({
 					jsx(Badge, { label: t(`state_${lane.state}`), color: model.colorOf(lane.state) }, "badge"),
 					jsx("span", { style: { ...text.title, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: lane.title, children: lane.title }, "title"),
 					lane.baseMoved ? jsx(Badge, { label: t("baseMoved"), color: WARN }, "moved") : null,
+					lane.watchCount > 0 ? jsxs("span", {
+						style: { ...text.foot, flex: "none", display: "inline-flex", alignItems: "center", gap: "3px" },
+						title: lane.watchStates.map((s) => t(`state_${s}`)).join(", "),
+						children: [
+							jsx(Icon, { name: "eye", size: 11 }, "icon"),
+							jsx("span", { children: t("watching").replace("{n}", String(lane.watchCount)) }, "count"),
+						],
+					}, "watching") : null,
 					lane.updatedAt ? jsxs("span", { style: { ...text.foot, flex: "none", display: "inline-flex", alignItems: "center", gap: "3px" }, children: [
 						jsx(Icon, { name: "clock", size: 11 }, "icon"),
 						jsx("span", { children: props.ago(lane.updatedAt) }, "ago"),
@@ -590,8 +602,8 @@ window.__ModuleLoader__.load({
 			if (state.error && view) children.push(jsxs("div", { style: { ...text.foot, marginTop: "8px", display: "flex", alignItems: "center", gap: "4px", color: WARN }, children: [jsx(Icon, { name: "warn", size: 11 }, "icon"), jsx("span", { children: t("staleData") }, "label")] }, "stale"));
 			return jsx("div", { "data-orrery-worktree-panel": "", style: { padding: "8px 2px", minWidth: 0, maxWidth: "100%", overflowX: "hidden" }, children }, NS_LABEL);
 		}
-		/** U6 — conversation tool cards for the five lane tools. */
-		const TOOL_ICON = { worktree_open: "branch", worktree_check: "check", worktree_land: "arrowRight", worktree_cleanup: "x", worktree_abandon: "warn" };
+		/** U6 — conversation tool cards for the six lane tools. */
+		const TOOL_ICON = { worktree_open: "branch", worktree_check: "check", worktree_land: "arrowRight", worktree_cleanup: "x", worktree_abandon: "warn", worktree_watch: "eye" };
 		function WorktreeToolRow(props) {
 			const model = props.model;
 			const meta = model.narrowToolMeta(props.block?.meta);
@@ -609,6 +621,22 @@ window.__ModuleLoader__.load({
 					jsx("span", { style: { color: "var(--dsw-alias-label-tertiary)", display: "inline-flex" }, children: jsx(Icon, { name: "arrowRight", size: 11 }) }, "arrow"),
 					jsx(Badge, { label: t(`state_${state}`), color: model.colorOf(state) }, "to"),
 				] }, "states"));
+			}
+			if (meta.watch) {
+				bodyRows.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
+					jsx("span", { style: text.foot, children: t("watchStates") }, "label"),
+					...meta.watch.states.map((s) => jsx(Badge, { label: t(`state_${s}`), color: model.colorOf(s) }, s)),
+				] }, "watch"));
+				if (Number.isFinite(meta.watch.expiresAt)) {
+					const at = new Date(meta.watch.expiresAt);
+					bodyRows.push(jsx("div", { style: text.foot, title: at.toISOString(), children: t("watchExpires").replace("{time}", at.toLocaleString()) }, "watch-expires"));
+				}
+			}
+			if (meta.hit) {
+				bodyRows.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
+					jsx("span", { style: text.foot, children: t("watchHit") }, "label"),
+					jsx(Badge, { label: t(`state_${meta.hit}`), color: model.colorOf(meta.hit) }, "state"),
+				] }, "watch-hit"));
 			}
 			if (meta.conflicts.length) {
 				bodyRows.push(jsxs("div", { style: calloutStyle(ERROR), children: [

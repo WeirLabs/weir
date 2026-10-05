@@ -128,6 +128,32 @@ describe('worktree view model', () => {
     expect(model.narrowToolMeta({ worktree: { tool: 'worktree_open', lane: 'a', state: 'ready' } }).diff).toBe(null)
   })
 
+  it('narrows worktree_watch meta: subscription, immediate hit, malformed payloads', () => {
+    const watched = model.narrowToolMeta({ worktree: { tool: 'worktree_watch', lane: 'a-001', state: 'working', summary: 'watching', watch: { lane: 'a-001', states: ['landable', 7, 'conflicted'], expiresAt: 1234 } } })
+    expect(watched.tool).toBe('worktree_watch')
+    expect(watched.watch).toEqual({ states: ['landable', 'conflicted'], expiresAt: 1234 })
+    expect(watched.hit).toBe(null)
+    const hit = model.narrowToolMeta({ worktree: { tool: 'worktree_watch', lane: 'a-001', state: 'landable', summary: 'hit', hit: 'landable' } })
+    expect(hit.hit).toBe('landable')
+    expect(hit.watch).toBe(null)
+    const noArrayStates = model.narrowToolMeta({ worktree: { tool: 'worktree_watch', lane: 'a-001', state: 'working', watch: { states: 'landable', expiresAt: 1 } } })
+    expect(noArrayStates.watch).toBe(null)
+    const stringExpiry = model.narrowToolMeta({ worktree: { tool: 'worktree_watch', lane: 'a-001', state: 'working', watch: { states: ['landable'], expiresAt: 'soon' } } })
+    expect(stringExpiry.watch).toBe(null)
+    expect(model.narrowToolMeta({ worktree: { tool: 'worktree_watch', lane: 'a-001', state: 'working', watch: 'landable' } }).watch).toBe(null)
+    const noExpiry = model.narrowToolMeta({ worktree: { tool: 'worktree_watch', lane: 'a-001', state: 'working', watch: { states: ['landable'] } } })
+    expect(noExpiry.watch).toEqual({ states: ['landable'], expiresAt: null })
+  })
+
+  it('narrows per-lane watch facts with safe defaults', () => {
+    const narrowed = model.narrowLane(lane({ watchCount: 2, watchStates: ['landable', 9] }))
+    expect(narrowed.watchCount).toBe(2)
+    expect(narrowed.watchStates).toEqual(['landable'])
+    const fallback = model.narrowLane(lane({ watchCount: 'x' }))
+    expect(fallback.watchCount).toBe(0)
+    expect(fallback.watchStates).toEqual([])
+  })
+
   it('classifies diff lines and bounds the rendering', () => {
     const lines = model.diffLines('diff --git a b\nindex 1\n--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n context')
     expect(lines.map((line) => line.kind)).toEqual(['meta', 'meta', 'meta', 'meta', 'hunk', 'remove', 'add', 'context'])
@@ -150,7 +176,7 @@ describe('worktree view model', () => {
 
   it('exposes the projection key the host registers', () => {
     expect(model.WORKTREE_PROJECTION_KEY).toBe('orreryWorktree')
-    expect(model.WORKTREE_TOOLS).toEqual(['worktree_open', 'worktree_check', 'worktree_land', 'worktree_cleanup', 'worktree_abandon'])
+    expect(model.WORKTREE_TOOLS).toEqual(['worktree_open', 'worktree_check', 'worktree_land', 'worktree_cleanup', 'worktree_abandon', 'worktree_watch'])
     expect(model.ago(0, 90_000)).toBe('2m')
     expect(model.ago(0, 45_000)).toBe('45s')
   })

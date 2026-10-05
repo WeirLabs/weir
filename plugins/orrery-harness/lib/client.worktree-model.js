@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
 		// switch, tool views). Zero dependencies; every wire value is narrowed
 		// defensively so a malformed view or replayed tool meta never throws.
 		const WORKTREE_PROJECTION_KEY = "orreryWorktree";
-		const TOOLS = ["worktree_open", "worktree_check", "worktree_land", "worktree_cleanup", "worktree_abandon"];
+		const TOOLS = ["worktree_open", "worktree_check", "worktree_land", "worktree_cleanup", "worktree_abandon", "worktree_watch"];
 		const FINISHED = ["landed", "kept", "cleaned", "abandoned"];
 		const TRANSIENT = ["preparing", "working", "checking", "awaiting-approval"];
 		/** State → tone group (badge colour family). */
@@ -69,6 +69,8 @@ window.__ModuleLoader__.load({
 				check,
 				landableTree: str(raw.landableTree),
 				baseMoved: raw.baseMoved === true,
+				watchCount: num(raw.watchCount) ?? 0,
+				watchStates: Array.isArray(raw.watchStates) ? raw.watchStates.filter((entry) => typeof entry === "string") : [],
 				boundChild: str(raw.boundChild),
 				ownerSession: str(raw.ownerSession),
 				exists: raw.exists !== false,
@@ -161,6 +163,12 @@ window.__ModuleLoader__.load({
 			if (str(next.tool)) return `${next.tool}${str(next.hint) ? ` — ${next.hint}` : ""}`;
 			return null;
 		}
+		/** Narrow a persisted worktree_watch subscription; wrong field types void it. */
+		function narrowWatch(value) {
+			if (!isObject(value) || !Array.isArray(value.states)) return null;
+			if (value.expiresAt !== undefined && value.expiresAt !== null && num(value.expiresAt) === null) return null;
+			return { states: value.states.filter((entry) => typeof entry === "string"), expiresAt: num(value.expiresAt) };
+		}
 		/** Narrow persisted tool meta (tool/result.meta.worktree). */
 		function narrowToolMeta(meta) {
 			const raw = isObject(meta) ? meta.worktree : null;
@@ -176,7 +184,9 @@ window.__ModuleLoader__.load({
 				conflicts: Array.isArray(raw.conflicts) ? raw.conflicts.filter((entry) => typeof entry === "string") : [],
 				check: (Array.isArray(raw.check) ? raw.check : isObject(raw.check) && Array.isArray(raw.check.results) ? raw.check.results : []).filter(isObject).map((entry) => ({ name: str(entry.name) ?? "?", exit: num(entry.exit), ms: num(entry.ms) })),
 				diff: str(raw.diff),
-				cleanup: isObject(raw.cleanup) ? { state: str(raw.cleanup.state), summary: str(raw.cleanup.summary), error: str(raw.cleanup.error) } : null
+				cleanup: isObject(raw.cleanup) ? { state: str(raw.cleanup.state), summary: str(raw.cleanup.summary), error: str(raw.cleanup.error) } : null,
+				watch: narrowWatch(raw.watch),
+				hit: str(raw.hit)
 			};
 		}
 		/** Classify unified-diff lines for colouring. */
