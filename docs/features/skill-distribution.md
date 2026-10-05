@@ -1,6 +1,6 @@
 # Skill 分发：来源清单、隔离执行与 pinned 基线
 
-> 第三方 Skill 的来源清单与 provenance 可查询、同名不静默替代、内置 Skill 受 bundle 保护，受管安装/更新只在一个 pinned 版本的隔离执行器里运行。
+> 第三方 Skill 的来源清单与 provenance 可查询、同名不静默替代、内置 Skill 受 bundle 保护，受管安装/更新只在一个 pinned 版本的隔离执行器里运行；发布走不可变代次与原子切换，检查是只读的，更新必须经显式确认，会话内容以 pin 为准并可显式刷新。
 
 ## 概述
 
@@ -24,6 +24,15 @@
 - **同名规则**（[same-name-policy.js](../../plugins/orrery-harness/src/capabilities/same-name-policy.js)）：`sameNameListing` 输出 scope/provenance/precedence 的说明性列表；`refSatisfiedBy` 只按身份满足引用；`installTargetFor` 默认 cancel，replace 需确认、coexist 必须给出可区分目标名。
 - **pinned 基线**（[isolated-exec.js](../../plugins/orrery-harness/src/capabilities/isolated-exec.js)）：`EXECUTOR_PIN = vercel-labs/skills@1.7.0 (3694740352eeef5cdd689af694c485f1ff62eec3)`，不新增 bundle npm 依赖；`pinVerdict` 对精确匹配放行，否则报告偏差并拒绝受管安装/更新。
 - **隔离执行层**：`installArgv` 产出非交互 argv 数组（`--agent universal`、`--skill`、`--no-interactive`，无裸 `-y`，路径/ref 含空格逐字传递）；`isolatedEnv` 提供独立 staging HOME/XDG/cwd、telemetry 关闭、隔离 git config、禁用 hooks/外部 diff/filter；`spawnOptionsFor` 固定 `shell:false`、5 分钟超时、4 MiB 输出上限；`runDiagnostics` 总是报告 revision 并 redact 凭据形态文本。
+
+## 发布、检查与更新（11.1–11.6）
+
+- **目标与引用校验**（[publisher.js](../../plugins/orrery-harness/src/capabilities/publisher.js)）：解析后的目标路径必须留在选定 scope root 内（符号链接逃逸即拒绝并点名）；绝对路径、遍历路径、含凭据的引用一律拒绝；install-lock schema 不识别即停（不迁移、不改写、不降级、不删除）。staging 输出只映射到 DSH 识别的 global（`$DSH_AGENTS_HOME/skills`）／workspace（`.agents/skills`）根，**bundled 路径永不是发布目标**，workspace 根由宿主会话 workspace resolver 决定。
+- **不可变代次发布**：staging 先落在目标文件系统；发布按 scope/identity 串行；active manifest 指针 + provenance + 操作回执在同一原子发布中切换（第 2 组的 distribution 指针）；切换前重查 active generation 与本地改动（CAS）——读者只见完整旧代次或完整新代次；平台不支持原子切换时报 **unsupported**，绝不先删后拷。
+- **定期检查（只读）**（[update-lifecycle.js](../../plugins/orrery-harness/src/capabilities/update-lifecycle.js)）：24h 节奏、过期启动只补一次、「Check now」即时触发或并入同一 in-flight check（同一时刻最多一个）；失败按 48h／96h backoff 至 7d 上限；offline／unknown／private-source 与 up-to-date 分开报告；**检查绝不对真实安装目录运行 check/update/upgrade**（字节不变）。
+- **手动更新**：只在用户显式确认（点名 source 与 ref）后运行；staging 后逐条核验后置条件（requested source/ref 已满足、期望身份在期望位置、content identity 已记录、lock schema 可识别），全部满足才原子替换 last-good；工具报成功但后置条件不满足一律记为失败，取消/失败丢弃 staging。
+- **自动更新**：默认 OFF；opt-in 是针对 source/scope 的显式授权，不由预设加载、检查或一次手动更新隐含获得；执行前五门全过（工具基线、目标布局、lock schema、provenance 未变、无本地改动），任一失败即暂停该条目并报告、不循环重试；运行中的会话不因发布自动采用新内容。
+- **会话内容 pin 与 GC**（[content-pin.js](../../plugins/orrery-harness/src/capabilities/content-pin.js)）：首次接受内容时 durable 记录正文、相对引用 assets、resourceBase 与 manifest；非 managed 来源先复制并做一致快照验证（中途变化即拒绝）；更新发布后已有会话继续使用已 pin 内容并报 update-available，采用新内容需独立于 Apply 的显式 refresh（content revision CAS）；原安装目录移除后完整 pin 仍可继续用；本地内容与上次 managed digest 不一致时暂停发布，overwrite 报「本地修改被丢弃」、leave unchanged 报「已跳过」；引用计数非零（live/durable 会话、子代理/fork、未结算 receipt）的 generation 不 GC，异常恢复保守保留。
 
 ## 边界与失败语义
 
