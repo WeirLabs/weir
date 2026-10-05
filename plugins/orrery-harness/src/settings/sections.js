@@ -65,6 +65,7 @@ const FIELDS = [
   { key: 'worktreeRoot', section: 'worktree', field: 'root', type: 'string', description: 'Repository-relative directory that holds lanes (locally ignored through .git/info/exclude)' },
   { key: 'worktreeMaxActive', section: 'worktree', field: 'maxActive', type: 'number', description: 'Maximum number of active lanes per repository' },
   { key: 'worktreeAutoSetup', section: 'worktree', field: 'autoSetup', type: 'boolean', description: 'Install dependencies in a new lane automatically (configured setup, else lockfile-derived)' },
+  { key: 'worktreeWatchTimeoutMinutes', section: 'worktree', field: 'watchTimeoutMinutes', type: 'number', description: 'Minutes a lane-state watch (worktree_watch) lives before expiring with one notice (default 360 = 6 hours, minimum 1); frozen per watch at subscribe time' },
   { key: 'lspServers', section: 'lsp', field: 'servers', type: 'string', description: 'JSON map of custom language servers: family → { command, args?, manifests?, installHint?, install? }' },
   { key: 'notifyEnabled', section: 'notify', field: 'enabled', type: 'boolean', description: 'System notifications master switch: tell the user when a session needs them or a turn finishes' },
   { key: 'notifyOnComplete', section: 'notify', field: 'onComplete', type: 'boolean', description: 'Notify when a turn finishes (only turns longer than notifyMinTurnSeconds)' },

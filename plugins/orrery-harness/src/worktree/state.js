@@ -39,6 +39,13 @@ export const CHECKABLE = Object.freeze(['ready', 'working', 'dirty', 'no-commits
 /** States whose UI refresh should poll (a host-side transition is expected). */
 export const TRANSIENT = Object.freeze(['preparing', 'working', 'checking', 'awaiting-approval'])
 
+/** States a lane watch (worktree_watch) may target: every conclusion state,
+ * i.e. STATES minus the transient ones the host is actively driving. Watching
+ * a transient state would mean subscribing to a transition the host is already
+ * performing, which is noise, not information. Shared by the tool's argument
+ * validation and the spec, so the set has exactly one source. */
+export const WATCHABLE = Object.freeze(STATES.filter((state) => !TRANSIENT.includes(state)))
+
 const NOT_FINISHED = STATES.filter((state) => !FINISHED.includes(state))
 
 /**

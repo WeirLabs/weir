@@ -9,12 +9,13 @@ import { dirname, isAbsolute, join, resolve as resolvePath, sep } from 'node:pat
 import { randomUUID } from 'node:crypto'
 import { WORKTREE_CODES, WorktreeError } from './errors.js'
 import { CHECKABLE, DISPATCHABLE, LANDABLE_FROM, TRANSIENT, isActive, nextFor, transition } from './state.js'
+import { collectWatchHits, createWatch, normalizeWatchStates, pruneExpiredWatches, removeWatchForExpiry, upsertWatch, watchFacts, watchTimeoutMinutesOf } from './watches.js'
 import { branchFor, laneIdFor, normalizeRoot, parseRepoConfig, scopesOverlap, setupManagerFor, suggestChecks } from './rules.js'
 import { bareSetupCommand, setupMissingReason } from './pkgmgr.js'
 import { reconcile } from './reconcile.js'
 import { createLedger } from './ledger.js'
 import { ensureExclude, hasExclude } from './exclude.js'
-import { renderBoard, renderChildContract, renderNotice } from './prompts.js'
+import { renderBoard, renderChildContract, renderNotice, renderWatchExpired, renderWatchHit } from './prompts.js'
 import { cardCopy, cardLocale } from './cards.js'
 
 export const CONFIG_FILE = '.config.json'
@@ -68,6 +69,8 @@ export function pathKey(path, platform = process.platform) {
  * @property {(manager: string) => Promise<{ ok: true, source: string, command: string, display: string } | { ok: false, manager: string }>} [resolveSetup] - resolves a DERIVED setup's manager into an executable invocation; absent = legacy bare command
  * @property {(sessionId: string | undefined) => string | undefined} [localeOf] - the GUI language last reported for a session
  * @property {() => number} [now]
+ * @property {(handler: () => void, delayMs: number) => any} [setTimer] - watch-expiry scheduler (tests); defaults to an unref'd setTimeout
+ * @property {(handle: any) => void} [clearTimer]
  * @property {number} [pid] - this process id (tests)
  * @property {{ warn?: (message: string) => void }} [logger]
  */
@@ -96,6 +99,77 @@ export function createLaneService(deps) {
     } catch {
       return false
     }
+  }
+
+  // ─── watch-expiry timers (this instance only; the ledger owns the truth) ─
+
+  /** Watch-expiry timers armed by THIS service instance, watch id → handle.
+   * The lock arbitrates between instances: whichever instance removes the
+   * record under the ledger lock delivers that watch's single expiry notice. */
+  const watchTimers = new Map()
+  const setTimer = deps.setTimer ?? ((/** @type {() => void} */ handler, /** @type {number} */ delayMs) => {
+    const timer = setTimeout(handler, delayMs)
+    timer.unref?.()
+    return timer
+  })
+  const clearTimer = deps.clearTimer ?? clearTimeout
+
+  /** @param {string} watchId */
+  function disarmWatch(watchId) {
+    const handle = watchTimers.get(watchId)
+    if (handle !== undefined) {
+      clearTimer(handle)
+      watchTimers.delete(watchId)
+    }
+  }
+
+  /** @param {any} repo @param {any} entry */
+  function armWatch(repo, entry) {
+    if (watchTimers.has(entry.id)) return
+    const delay = entry.expiresAt - now()
+    if (delay <= 0) return
+    watchTimers.set(entry.id, setTimer(() => {
+      watchTimers.delete(entry.id)
+      void expireWatch(repo, entry.id).catch((error) => deps.logger?.warn?.(`worktree: watch expiry failed: ${/** @type {any} */ (error)?.message ?? error}`))
+    }, delay))
+  }
+
+  /**
+   * An expiry timer fired: remove the watch under the ledger lock; only the
+   * instance that actually removes the record delivers the expiry notice
+   * (the watch's single delivery), so two instances can never double-deliver.
+   * @param {any} repo @param {string} watchId
+   */
+  async function expireWatch(repo, watchId) {
+    const removed = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const watch = removeWatchForExpiry(ledger, watchId, now())
+      return watch ? { ledger, result: watch } : {}
+    })
+    if (!removed) return
+    deps.audit('watch', { lane: removed.laneId, sessionId: removed.sessionId, states: removed.states, outcome: 'expired' }, repo.mainRoot, removed.sessionId)
+    try {
+      deps.notify(removed.sessionId, renderWatchExpired(removed))
+    } catch (error) {
+      deps.logger?.warn?.(`worktree: watch-expiry notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
+  }
+
+  /**
+   * Ledger lazy-cleanup + per-instance timer arming (design D4). Runs on every
+   * refresh — which is also the host-load path: watches whose deadline passed
+   * while the host was down are pruned silently + audited (never delivered,
+   * never hit-tested); every live watch gets this instance's expiry timer.
+   * @param {any} repo
+   */
+  async function syncWatches(repo) {
+    const pruned = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const expired = pruneExpiredWatches(ledger, now())
+      return expired.length > 0 ? { ledger, result: expired } : {}
+    })
+    for (const watch of pruned ?? []) {
+      deps.audit('watch', { lane: watch.laneId, sessionId: watch.sessionId, states: watch.states, outcome: 'pruned' }, repo.mainRoot, watch.sessionId)
+    }
+    for (const entry of repo.ledger.read().watches) armWatch(repo, entry)
   }
 
   const cwdOf = (/** @type {any} */ session) => {
@@ -171,16 +245,29 @@ export function createLaneService(deps) {
    * @param {any} repo @param {string} laneId @param {any} event @param {(lane: any, ledger: any) => void} [check]
    */
   async function apply(repo, laneId, event, check) {
+    /** Watches this transition consumed (removed in the same atomic write). @type {any[]} */
+    let hits = []
     const lane = await repo.ledger.update((/** @type {any} */ ledger) => {
       const index = ledger.lanes.findIndex((/** @type {any} */ entry) => entry.id === laneId)
       if (index === -1) throw new WorktreeError(WORKTREE_CODES.UNKNOWN_LANE, `no lane "${laneId}"`)
       check?.(ledger.lanes[index], ledger)
       const next = transition(ledger.lanes[index], { at: now(), ...event })
       ledger.lanes[index] = next
+      // One-shot watches: a hit is removed in the SAME atomic write as the
+      // state transition, so it can never be collected twice (design D3).
+      hits = collectWatchHits(ledger, next)
       return { ledger, result: next }
     })
     const kind = AUDIT_KIND[/** @type {keyof typeof AUDIT_KIND} */ (event.type)]
     if (kind) deps.audit(kind, { lane: lane.id, from: lane.history.at(-1)?.from, to: lane.state, event: event.type, reason: event.reason ?? null, by: event.by ?? 'host' }, repo.mainRoot, lane.ownerSession)
+    for (const hit of hits) {
+      disarmWatch(hit.id)
+      try {
+        deps.notify(hit.sessionId, renderWatchHit(lane))
+      } catch (error) {
+        deps.logger?.warn?.(`worktree: watch-hit notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+      }
+    }
     return lane
   }
 
@@ -241,6 +328,10 @@ export function createLaneService(deps) {
 
   /** @param {any} repo */
   async function refresh(repo) {
+    // Watch maintenance first (design D4): prune watches that expired while
+    // the host was down (silent + audited) and arm this instance's timers;
+    // the reconcile transitions below then hit only live watches.
+    await syncWatches(repo)
     const worktrees = await git.worktreeList(repo.mainRoot)
     const ledger = repo.ledger.read()
     const mainBranch = await git.currentBranch(repo.mainRoot)
@@ -883,6 +974,57 @@ export function createLaneService(deps) {
     return result(final, `abandoned; removed ${lane.path}${branchNote}`)
   }
 
+  // ─── watches (lane state subscriptions) ────────────────────────────────
+
+  /**
+   * worktree_watch: subscribe the calling session to conclusion states of one
+   * lane in this repository (including lanes another session opened). One-shot:
+   * the first target state hit — or the expiry — delivers exactly one notice
+   * to the SUBSCRIBER and removes the watch. Re-subscribing the same lane
+   * replaces the old watch. A lane already in a target state hits immediately
+   * (delivered once, never stored). The lifetime comes from the
+   * worktreeWatchTimeoutMinutes setting, frozen into `expiresAt` at subscribe
+   * time; the model cannot override it (no timeout parameter).
+   * @param {any} session - the subscribing (main) session
+   * @param {{ lane: string, states: string[] }} args
+   */
+  async function watch(session, args) {
+    const states = normalizeWatchStates(args?.states)
+    const laneId = typeof args?.lane === 'string' ? args.lane : ''
+    const sessionId = session?.id
+    if (typeof sessionId !== 'string' || !sessionId) throw new Error('worktree_watch: the subscribing session has no id')
+    const repo = await repoFor(cwdOf(session))
+    // Reconcile first so the immediate-hit test below reads the lane's true
+    // state (and so expired watches are pruned before this one is stored).
+    await refresh(repo)
+    const timeoutMinutes = watchTimeoutMinutesOf(config())
+    const entry = createWatch({ id: randomUUID(), laneId, sessionId, states, now: now(), timeoutMinutes })
+    // Check-vs-insert is atomic inside the ledger lock: a lane that reaches a
+    // target state concurrently either hits BEFORE (immediate path) or AFTER
+    // (the transition's own hit scan) this subscribe — never both, never none.
+    const outcome = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const current = ledger.lanes.find((/** @type {any} */ record) => record.id === laneId)
+      if (!current) throw new WorktreeError(WORKTREE_CODES.UNKNOWN_LANE, `no lane "${laneId}" in ${repo.rootPath}`)
+      if (states.includes(current.state)) return { result: { lane: current, immediate: true, replaced: null } }
+      const replaced = upsertWatch(ledger, entry)
+      return { ledger, result: { lane: current, immediate: false, replaced } }
+    })
+    const { lane, immediate, replaced } = /** @type {any} */ (outcome)
+    if (replaced) disarmWatch(replaced.id)
+    if (immediate) {
+      deps.audit('watch', { lane: lane.id, sessionId, states, outcome: 'hit-immediate' }, repo.mainRoot, sessionId)
+      try {
+        deps.notify(sessionId, renderWatchHit(lane))
+      } catch (error) {
+        deps.logger?.warn?.(`worktree: watch-hit notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+      }
+      return result(lane, `already ${lane.state}; the watch fired immediately and was not stored`, { hit: lane.state })
+    }
+    armWatch(repo, entry)
+    deps.audit('watch', { lane: lane.id, sessionId, states, expiresAt: entry.expiresAt, replaced: replaced?.id ?? null, outcome: 'subscribed' }, repo.mainRoot, sessionId)
+    return result(lane, `watching for ${states.join(', ')} until ${new Date(entry.expiresAt).toISOString()}`, { watch: { lane: lane.id, states: entry.states, expiresAt: entry.expiresAt } })
+  }
+
   // ─── views ────────────────────────────────────────────────────────────
 
   /** Legal actions per lane for the panel (disabled ones carry the reason). @param {any} lane */
@@ -942,6 +1084,7 @@ export function createLaneService(deps) {
           stat,
           next: nextFor(lane),
           transient: TRANSIENT.includes(lane.state),
+          ...watchFacts(ledger.watches, lane.id),
           actions: actionsFor(lane),
         })
       }
@@ -982,7 +1125,8 @@ export function createLaneService(deps) {
     const mode = safeMode(session)
     if (!repo) return mode ? renderBoard({ lanes: [], mode }) : ''
     try {
-      return renderBoard({ lanes: repo.ledger.read().lanes, mode })
+      const ledger = repo.ledger.read()
+      return renderBoard({ lanes: ledger.lanes, watches: ledger.watches, mode })
     } catch {
       return ''
     }
@@ -1082,7 +1226,7 @@ export function createLaneService(deps) {
   }
 
   return {
-    repoFor, refresh, open, setup, prepareBind, childSettled, check, land, askCleanup, cleanup, abandon,
+    repoFor, refresh, open, setup, prepareBind, childSettled, check, land, askCleanup, cleanup, abandon, watch,
     view, diffOf, board, summaryOf, initSuggestions, writeConfig, reconcile: reconcileCommand, resolveArgPath, actionsFor,
   }
 }
