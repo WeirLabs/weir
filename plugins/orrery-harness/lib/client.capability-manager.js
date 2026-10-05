@@ -140,8 +140,13 @@ window.__ModuleLoader__.load({
 			// Echo-guard like the Badge: an unregistered dictionary entry must
 			// surface the in-code fallback, never the raw key.
 			const t = (key, fallback) => {
-				const value = typeof props.t === "function" ? props.t(key, fallback) : undefined;
-				return value && value !== key ? value : fallback;
+				// The host locale's second parameter is an interpolation VARS object,
+				// never a fallback string — passing the fallback there crashes
+				// translate whenever the registered template carries {placeholders}
+				// (the 2026-10-05 badge slot crash). Dictionary templates keep their
+				// placeholders for the call site's own .replace interpolation.
+				const value = typeof props.t === "function" ? props.t(key) : undefined;
+				return typeof value === "string" && value !== key ? value : fallback;
 			};
 			const [tab, setTab] = react.useState("skills");
 			const [query, setQuery] = react.useState("");
