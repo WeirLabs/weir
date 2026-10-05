@@ -20,6 +20,7 @@ EXPECTED_ORDER.push('lifecycle-inheritance')
 EXPECTED_ORDER.push('delegate-preflight')
 EXPECTED_ORDER.push('mcp-gateway')
 EXPECTED_ORDER.push('preset-defaults')
+EXPECTED_ORDER.push('capability-presets-surface')
 EXPECTED_ORDER.push('worktree-watch')
 EXPECTED_ORDER.push('notify-worktree')
 EXPECTED_ORDER.push('child-prompt')
@@ -60,7 +61,7 @@ describe('scenario registry', () => {
 
   // Scenarios whose preconditions need driver-side work: rehydrate boots twice
   // with one session id; worktree initializes a git repository in the workspace.
-  const RUN_OVERRIDE = ['rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'worktree-watch', 'notify-worktree']
+  const RUN_OVERRIDE = ['rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'worktree-watch', 'notify-worktree']
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

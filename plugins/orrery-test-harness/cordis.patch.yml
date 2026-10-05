@@ -26,7 +26,7 @@
       name: 'orrery-test-harness/mock-llm'
     - id: orrery-skill-selection
       name: 'orrery-test-harness/skill-selection'
-      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX || process.env.ORRERY_IT_COLD_SESSION || process.env.ORRERY_IT_LIFECYCLE || process.env.ORRERY_IT_MCP || process.env.ORRERY_IT_PRESET)"
+      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX || process.env.ORRERY_IT_COLD_SESSION || process.env.ORRERY_IT_LIFECYCLE || process.env.ORRERY_IT_MCP || process.env.ORRERY_IT_PRESET || process.env.ORRERY_IT_PRESET_SURFACE)"
     - id: orrery-it-tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
       disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
@@ -68,6 +68,10 @@
       name: 'orrery-test-harness/preset-probe'
       config:
         enabled: !!js process.env.ORRERY_IT_PRESET === '1'
+    - id: orrery-it-preset-surface-probe
+      name: 'orrery-test-harness/preset-surface-probe'
+      config:
+        enabled: !!js process.env.ORRERY_IT_PRESET_SURFACE === '1'
     - id: orrery-it-host-gamma
       name: '@deepseek-ai/dsh-mcp-client'
       disabled: !!js process.env.ORRERY_IT_MCP !== '1'

@@ -32,6 +32,7 @@ import lifecycleInheritance from './lifecycle-inheritance.js'
 import delegatePreflight from './delegate-preflight.js'
 import mcpGateway from './mcp-gateway.js'
 import presetDefaults from './preset-defaults.js'
+import capabilityPresetsSurface from './capability-presets-surface.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import childPrompt from './child-prompt.js'
@@ -44,6 +45,7 @@ SCENARIOS.push(lifecycleInheritance)
 SCENARIOS.push(delegatePreflight)
 SCENARIOS.push(mcpGateway)
 SCENARIOS.push(presetDefaults)
+SCENARIOS.push(capabilityPresetsSurface)
 SCENARIOS.push(worktreeWatch)
 SCENARIOS.push(notifyWorktree)
 SCENARIOS.push(childPrompt)

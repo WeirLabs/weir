@@ -17,6 +17,7 @@
     "./lifecycle-probe": "./src/lifecycle-probe.js",
     "./mcp-probe": "./src/mcp-probe.js",
     "./preset-probe": "./src/preset-probe.js",
+    "./preset-surface-probe": "./src/preset-surface-probe.js",
     "./user-questions-stub": "./src/user-questions-stub.js"
   },
   "dsh": {
