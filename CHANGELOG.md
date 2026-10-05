@@ -9,6 +9,8 @@
 
 ### Added
 
+- **Orrery 创造模式（新预设变体）**：预设选择器新增「Orrery 创造模式」——完整的 Orrery 工作方式（意图门、分类委派、todo 续推、自动压缩、锚点编辑等全部保留）融合 DSH 创造模式的能力：只读运行时检查工具（`cordis_inspect_list`/`cordis_inspect_query`）、持久化插件管理工具，以及四项 Cordis 插件/预设开发技能（`agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`，首次会话即默认启用）。用于开发、调试和实验 DSH 本身；「Orrery」预设与进行中会话完全不受影响。详见 [预设打包](docs/features/preset-packaging.md)。
+
 - **会话能力管理器：Skill 侧「库存、身份与选择 provider」（破坏性可见性变化）**：Orrery 会话起只看到**已选** Skill——未选中的第三方 Skill 不再自动出现在模型目录、`skill` 加载与 slash 列表。Skill 选择由预设内唯一选择 provider 承载（官方形状：宿主注册表 + stock `tool-skill`；宿主层 `skill-filesystem`/`tool-skill` 由 patch 行显式禁用），自有原始枚举保留同名遮蔽候选与失败现场（unparsed／last-good），按身份精确加载（同名未选不替代、同名单多选须显式解冲突），挂载绝不抛出、读取失败 fail closed 为空选择＋可见错误状态；内置十项 Skill 改标 Orrery 内置并经首次运行迁移检查（等价性不满足即 fail closed）。选择记录尚不存在的会话看到空目录与状态提示；选择编辑（Apply）与管理器界面随后续任务组交付。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **会话能力管理器：Apply 事务引擎（服务端机制）**：选择编辑的草稿模型（仅规范化启用集合的实质变化才可 Apply，显式空集 ≠ 缺失）与六步 Apply 事务（会话定位 → 校验 → 准备 → admission fence → 原子写入＋同段快照切换/invalidate/解栏 → 响应）。`invalidate()` 先于响应，客户端重取必见新选择；并发 Apply 恰一胜；写入结果不确定时维持阻断、按原 request ID 查询 receipt 结算，不宣称取消、不伪造回滚；receipts 幂等防重放；content refresh 与选择共用提交协调者且提交前重查 revision；未选中 Skill 的调用/正文加载被会话级阻断（显式 unavailable，已读取 ≠ 已授权）。管理器编辑界面随后续任务组交付。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **会话能力管理器：冷会话与菜单收敛**：冷会话（打开历史会话、尚无运行 agent）的技能目录失败关闭为空列表，绝不按目录或预设默认值猜测；页面自动恢复后由预设重发失效事件驱动客户端丢弃缓存重取（先空后收敛，约一次恢复）；Apply 被接受后同样重发。恢复失败（如另一进程占用会话日志）时菜单保持为空并显示稳定原因与可操作提示，不回退为非空列表。浏览器侧即时刷新行为待真实 GUI 验证。详见 [会话能力管理器](docs/features/session-capability-manager.md)。

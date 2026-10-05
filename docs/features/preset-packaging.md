@@ -4,15 +4,26 @@
 
 ## 概述
 
-Orrery 的全部能力以一个 bundle 包（`plugins/orrery-harness/`，包名 `orrery-harness`）交付。bundle 声明一个 id 为 `orrery`、显示名为 "Orrery" 的 agent 预设，排在内置预设之后。用户安装后在 GUI 预设选择器中即可选用；不选用的会话不受任何影响。
+Orrery 的全部能力以一个 bundle 包（`plugins/orrery-harness/`，包名 `orrery-harness`）交付。bundle 声明两个 agent 预设：`orrery`（显示名 "Orrery"）及其创造模式变体 `orrery-creative`（显示名 "Orrery 创造模式"），排在内置预设之后。用户安装后在 GUI 预设选择器中即可选用；不选用的会话不受任何影响。
 
 ## 用户可见行为
 
 - 安装 bundle 后，Web GUI 预设选择器出现 "Orrery"，可用它创建新会话。
+- 选择器同时出现 "Orrery 创造模式"（`orrery-creative`）：完整 Orrery 工作方式 + DSH 创造模式的调试/实验能力（见下节）。
 - 使用其他预设（如 standard）的会话完全感知不到 Orrery：没有它的工具，也没有它的提示词段落。
 - Orrery 会话自带技能目录（10 项），经 `skill` 工具加载。
 - bundle 代码或组合更新后，新创建的 agent 使用新版本；进行中的 agent 保持原组合直到结束。
 - Orrery 不会抢占默认预设，除非用户显式把它设为默认。
+
+### Orrery 创造模式（orrery-creative）
+
+以 `orrery` 组合为基底，融合 DSH 内置创造模式（`cordis` 预设）的全部三个增量，用于开发、调试和实验 DSH 本身：
+
+1. **运行时检查工具**：`tool-cordis` 行提供只读的 `cordis_inspect_list` / `cordis_inspect_query`——列出并查询 Host/Client 的 Inspect Provider（服务方法、事件模式、Config schema、工具 schema、Slot 树等），写插件前先看真相。
+2. **持久化插件管理**：`tool-plugin-manager` 行以与创造模式完全相同的启用表达式（`disabled: !!js "!ctx.get('profileContext')"`）启用，`plugin_manager` 工具可安装/启停 bundle 与插件。
+3. **Cordis 开发技能**：预设内 `orrery-skill-selection` 行声明 `customSkillDirs`，以 `!!js` 表达式（与创造模式同款解析式 + try/catch 兜底）在运行时解析 `@deepseek-ai/dsh-agent-preset` 包内 `skills/` 目录，把 `agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference` 四项技能纳入目录（scope `custom`）；同行声明 `baselineScopes: ['orrery-builtin', 'custom']`，无选择记录的新会话**首次即默认启用**这四项技能（`baselineScopes` 默认 `['orrery-builtin']`，`orrery` 预设不声明、行为不变）。解析失败时表达式回退为不存在路径，枚举为空根，profile 加载绝不受累。
+
+人格与 `orrery` 相同（Orchestrator persona 原文）；技能正文与工具描述承载创造模式的操作细节，与 DSH 自身策略一致。
 
 ## 配置
 
@@ -32,6 +43,7 @@ bundle 另在 profile 层插入 `orrery-harness/settings` 行：以 schemastery 
 - 服务隔离纪律：被 `isolate` 的服务（如压缩组），其消费者插件行必须与提供者同组，否则预设加载永久等待（历史事故，已修复并镜像进集成测试）。
 - **预设库与用户预设的组合关系**：cordis patch 声明的是 Orrery 预设自身的静态组合（本节）；**用户预设**（团队能力集合）由会话能力管理器的预设库承载——`global`／`workspace` 两个 namespace 存在 Orrery 自管存储里（稳定 ID 与显示名分离、同域重名显式决策、CAS 冲突显式化），可移植导出文档只含无凭据引用（详见 [会话能力管理器](session-capability-manager.md)「预设与默认值」）。用户预设的加载绝不改变宿主组合，只作用于会话选择。
 - 重复安装同一路径被幂等拒绝；改动经"禁用→启用"循环重应用。
+- **双预设同步纪律**：`orrery-creative` 的 `config.plugins` 是 `orrery` 组合的全量副本加三个有文档的增量（tool-cordis 行、plugin-manager 启用表达式、skill-selection 的 customSkillDirs + baselineScopes）。**修改 `orrery` 预设组合时必须同步修改 `orrery-creative`**；`test/preset-creative.test.js` 钉住顶层行序列（除 tool-cordis 插入外逐一相同）与各组 isolate 表的一致性。
 
 ## 边界与失败语义
 
@@ -41,5 +53,5 @@ bundle 另在 profile 层插入 `orrery-harness/settings` 行：以 schemastery 
 
 ## 测试
 
-- 单元测试：无直接对应（组合层）。
+- 单元测试：`test/preset-creative.test.js`（双预设行序列与 isolate 表同步、三个创造增量的文本扫描）；`test/skill-baseline-scopes.test.js`（`baselineSkillIdentities` 纯函数）；`test/skill-composition.test.js`（post-migration 不变量，creative 行例外显式化）。
 - 集成测试：`plugins/orrery-test-harness` 以镜像的预设组合（含隔离结构）跑全部场景，隔离回归在开发会话工具目录核查中佐证。
