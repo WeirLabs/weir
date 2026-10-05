@@ -54,6 +54,7 @@
 
 - **Worktree 模式开关从输入框迁入车道面板**：输入框下方的「Worktree」按钮让人误以为必须打开它才能使用车道——实际上车道能力始终可用，该按钮只是一个可选纪律模式。按钮已从输入框移除；模式切换改为车道面板工具条的常驻控件（关闭时描边 chip、开启时实心徽标，不可用时置灰并附原因），tooltip 与 `/worktree on` 回执现在都明确"车道无需开启本模式；开启后助手不再直接改文件，所有改动走隔离车道"。`/worktree on|off` 命令与模式守卫行为不变。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
 - **Worktree 车道 UI 全面重设计**：右侧栏车道看板、车道卡片、会话内工具卡片、会话头状态胶囊、列表行标记与输入框模式开关升级为产品化呈现——卡片化布局与清晰的视觉层级（状态徽标 v2 淡底、分支行 ↑↓ 领先/落后 chip、彩色 diffstat、reason/next 色条 callout、逐条 ✓/✗ 验证结果与退出码 chip）；操作分级（至多一个实心主按钮、描边次要、危险二次确认、幽灵链接），「清理 worktree 和分支」与放弃一样需要二次点击；diff 改为行级增绿删红底色；仓库概况改为图标化信息卡，空态居中引导、历史车道分组折叠、配置表单主题化。数据流、命令映射与工具契约不变。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+- **委派子代理提示词与工具面收敛（干净上下文）**：此前类别 worker 与精选只读 agent 会完整继承主编排 Agent 的系统提示词（Orchestration Doctrine 全文、Delegation targets、Worktree 车道编排规则，约 12K 字符）与 48 个工具的完整目录（含其无权也无意义使用的 `delegate`/`workflow`/`subagent`/车道管控/编辑锁/goal/plan 工具）——子代理并不承担编排职责，这些信息既是上下文浪费又自相矛盾。现在：编排者专属的三个提示词段落（`orchestrator:doctrine`、`orchestrator:delegate-targets`、`orchestrator:worktree-lanes` 及 live 车道看板）在子代理装配时渲染为空（主 Agent 逐字节不变）；每个子代理的工具目录统一扣除 27 个编排者专属工具（只读精选 agent 的 allow 名单语义不变）；每个子代理的 persona 统一追加一段协作契约（最终消息即交付给主 Agent 的自包含报告、不可再委派、不可向用户提问、受阻即报）。新增 `child-prompt` 集成场景钉死子代理首请求表面。详见 [委派特性文档](docs/features/category-delegation.md)「子代提示词构成」。
 
 ### Fixed
 
