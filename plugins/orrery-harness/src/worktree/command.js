@@ -46,7 +46,7 @@ export function createWorktreeCommand(service, deps) {
           case 'on': {
             const refusal = await deps.modeAvailable(session)
             if (refusal) return { kind: 'error', text: `Worktree mode unavailable: ${refusal}` }
-            return ok('Worktree mode ON for this session: the main agent no longer edits files; changes go through lanes.')
+            return ok('Worktree mode ON for this session: the main agent no longer edits files; changes go through lanes. Lanes work without this mode; it is optional discipline.')
           }
           case 'off':
             return ok('Worktree mode OFF for this session. Existing lanes keep their state.')
