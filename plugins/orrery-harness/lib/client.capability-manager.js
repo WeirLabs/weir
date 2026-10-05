@@ -59,6 +59,10 @@ window.__ModuleLoader__.load({
 			// draft's CAS revision and a fresh request ID.
 			const [draft, setDraft] = react.useState(null);
 			const [commit, setCommit] = react.useState(null);
+			// Managed MCP add form (8.1/8.2): the hook lives with the others —
+			// a hook after an early return crashes with React #310.
+			const [addForm, setAddForm] = react.useState({ open: false, identity: "", label: "", command: "", args: "", error: null, busy: false });
+
 			const refreshAll = () => {
 				if (typeof props.fetchListing === "function") {
 					props.fetchListing(props.sessionId).then((data) => setListing(data ?? { error: true })).catch(() => setListing({ error: true }));
@@ -109,20 +113,8 @@ window.__ModuleLoader__.load({
 				if (draft) setDraft({ ...draft, skills: [...draft.applied.skills], mcpServers: [...draft.applied.mcpServers], dirty: false });
 				setCommit(null);
 			};
-			const conditionState = model.managerConditionState(conditions?.conditions ?? conditions);
-			if (listing === null) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.loading", "Loading capabilities…") });
-			if (listing.error === true) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.error", "Capabilities unavailable for this session.") });
-			if (listing.error) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unavailable", "Capabilities are unavailable in this session.") });
-			if (conditionState === "unsupported") {
-				return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unsupported", "Unsupported: consistency conditions are not met on this host.") });
-			}
-			const partition = model.partitionManagerListing(listing);
-			const needle = query.trim().toLowerCase();
-			const skills = needle ? partition.skills.filter((skill) => skill.name.toLowerCase().includes(needle)) : partition.skills;
-			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
 			// Managed MCP add form (8.1/8.2): registers a stdio server and mounts
 			// it immediately via /capabilities mcp-add.
-			const [addForm, setAddForm] = react.useState({ open: false, identity: "", label: "", command: "", args: "", error: null, busy: false });
 			const submitAdd = () => {
 				if (typeof props.mcpAdd !== "function" || addForm.busy) return;
 				setAddForm({ ...addForm, busy: true, error: null });
@@ -141,6 +133,17 @@ window.__ModuleLoader__.load({
 				}).catch((cause) => setAddForm({ ...addForm, busy: false, error: String(cause) }));
 			};
 			const inputStyle = { flex: 1, fontSize: "12px" };
+			const conditionState = model.managerConditionState(conditions?.conditions ?? conditions);
+			if (listing === null) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.loading", "Loading capabilities…") });
+			if (listing.error === true) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.error", "Capabilities unavailable for this session.") });
+			if (listing.error) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unavailable", "Capabilities are unavailable in this session.") });
+			if (conditionState === "unsupported") {
+				return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unsupported", "Unsupported: consistency conditions are not met on this host.") });
+			}
+			const partition = model.partitionManagerListing(listing);
+			const needle = query.trim().toLowerCase();
+			const skills = needle ? partition.skills.filter((skill) => skill.name.toLowerCase().includes(needle)) : partition.skills;
+			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
 			const addBlock = tab === "mcp" ? react_jsx_runtime.jsxs("div", { style: { marginBottom: "6px" }, children: [
 				!addForm.open
 					? react_jsx_runtime.jsx("button", { type: "button", onClick: () => setAddForm({ ...addForm, open: true }), children: t("capability.mcp.add", "+ Add managed MCP server") })
