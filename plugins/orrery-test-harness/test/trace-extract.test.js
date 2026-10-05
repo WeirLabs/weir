@@ -83,6 +83,10 @@ const PRE_MIGRATION_KEYS = [
   'sawEscalated',
   'sawFork',
   'sawResumeCandidate',
+  'preflightRejection',
+  'sawPassMarker',
+  'skillBodyPrepended',
+  'maxDepthOne',
   // jobs-aware todo continuation observations
   'jobsAwareParent',
   'jobsAwareChild',

@@ -1,0 +1,8 @@
+{
+  "scenario": "delegate-preflight",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "parent observed preflight gates\n",
+  "stderr": "",
+  "sessionId": null
+}

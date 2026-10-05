@@ -17,6 +17,7 @@ EXPECTED_ORDER.push('skill-composition-off', 'skill-composition-leak', 'skill-co
 EXPECTED_ORDER.push('apply-transaction')
 EXPECTED_ORDER.push('cold-session')
 EXPECTED_ORDER.push('lifecycle-inheritance')
+EXPECTED_ORDER.push('delegate-preflight')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

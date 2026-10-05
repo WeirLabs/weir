@@ -14,7 +14,7 @@ import { resolveInitialSelection } from './initial-selection.js'
 
 const mounted = new WeakMap()
 /** Manager/Badge access without providing a new preset service or realm. */
-export const skillSelectionFor = ctx => mounted.get(ctx)
+export const skillSelectionFor = ctx => ctx?.get?.('orrerySkillSelection') ?? mounted.get(ctx)
 
 /**
  * Read-only selection adapter. Selection payload: { skills: SkillIdentity[] }.
@@ -186,7 +186,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       // Registration errors must not break the preset either (e.g. duplicate row).
       error = cause instanceof Error ? cause.message : String(cause)
     }
-    mounted.set(ctx, {
+    const face = {
       provider,
       inventory,
       lifecycle,
@@ -196,7 +196,12 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       initialReport: sessionId => initialReports.get(sessionId) ?? null,
       noteFailure: (options, failure) => provider?.noteFailure(options, failure),
       clearFailure: options => provider?.clearFailure(options),
-    })
+    }
+    mounted.set(ctx, face)
+    // Realm-visible lookup (task 7.1): other preset rows (delegate,
+    // intent-gate) hold their own child ctx and cannot hit the WeakMap —
+    // they resolve the face through the host-plane reflect service.
+    try { ctx.reflect?.provide?.('orrerySkillSelection', face) } catch { /* an older row already provides it */ }
   }
 }
 
