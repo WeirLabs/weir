@@ -124,6 +124,9 @@ export function createCapabilityReadService(dependencies = {}) {
  */
 export function capabilityReadContribution() {
   return {
+    // The registry's validatePackage requires both (missing = silently dead registration): it validates the package name and keys the package record by face.
+    package: 'orrery-harness',
+    face: 'host',
     schemas: [],
     model: { services: [], events: [], objects: [] },
     invocations: CAPABILITY_READ_METHODS.map(method => ({
