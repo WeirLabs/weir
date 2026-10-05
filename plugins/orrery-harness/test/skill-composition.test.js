@@ -8,10 +8,15 @@ for (const [label, text] of [['preset', patch], ['fixture', fixture]]) {
   test(`${label}: OFF composition disables both host rows by id`, () => {
     for (const id of ['skill-filesystem', 'tool-skill']) assert.match(text, new RegExp(`^- id: ${id}\\n  disabled: true$`, 'm'))
   })
-  test(`${label}: no mounted filesystem provider or customSkillDirs`, () => {
+  test(`${label}: no mounted filesystem provider or stray customSkillDirs`, () => {
     assert.doesNotMatch(text, /^ +[-] id: skill-filesystem$/m)
-    assert.doesNotMatch(text, /customSkillDirs:/)
     assert.doesNotMatch(text, /name: ['"]@deepseek-ai\/dsh-skill-filesystem/)
+    // Post-migration invariant: no customSkillDirs anywhere — EXCEPT inside
+    // the preset-orrery-creative row, whose own orrery-skill-selection row
+    // takes the key as the selection plugin's sanctioned config input (the
+    // fused Cordis development skills). Strip that trailing row, then ban.
+    const stripped = label === 'preset' ? text.split('\n    - id: preset-orrery-creative')[0] : text
+    assert.doesNotMatch(stripped, /customSkillDirs:/)
   })
   test(`${label}: selection provider and stock skill tool are retained`, () => {
     assert.match(text, /- id: orrery-skill-selection/)

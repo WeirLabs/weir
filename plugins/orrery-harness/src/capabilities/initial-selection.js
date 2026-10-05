@@ -24,6 +24,21 @@
  * @returns {{ source: 'workspace-default' | 'builtin-baseline',
  *   selection: { skills: unknown[], mcpServers: string[] }, missing: unknown[] }}
  */
+/**
+ * Parsed inventory candidates admitted to the initial skill baseline: those
+ * whose identity scope is listed in `scopes`. The default keeps the
+ * historical builtin-only baseline; the `orrery-creative` preset row widens
+ * it with 'custom' so its fused development skills are enabled from the
+ * first session. Unparsed candidates never qualify.
+ * @param {unknown[]} candidates @param {string[]} [scopes]
+ */
+export function baselineSkillIdentities(candidates, scopes = ['orrery-builtin']) {
+  const admitted = new Set(scopes)
+  return (Array.isArray(candidates) ? candidates : [])
+    .filter(candidate => candidate?.status === 'parsed' && admitted.has(/** @type {any} */ (candidate).identity?.scope))
+    .map(candidate => /** @type {any} */ (candidate).identity)
+}
+
 export function resolveInitialSelection({ defaultsRecord, builtinIdentities = [], enabledMcpIdentities = [] }) {
   // A cleared marker is an explicit removal (9.4): it behaves as ABSENT —
   // clearing is never an explicit empty set, which stays a savable choice.

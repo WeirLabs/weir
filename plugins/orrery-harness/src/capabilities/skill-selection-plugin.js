@@ -11,7 +11,7 @@ import { createPresetInvalidation } from './preset-invalidation.js'
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
-import { resolveInitialSelection } from './initial-selection.js'
+import { resolveInitialSelection, baselineSkillIdentities } from './initial-selection.js'
 import { workspaceKeyOf } from './preset-library.js'
 import { createApplyEngine } from './apply-engine.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
@@ -142,9 +142,9 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           let enabledMcpIdentities = []
           if (defaultsRecord.kind === 'absent') {
             const snapshot = await inventory(options)
-            builtinIdentities = (snapshot?.candidates ?? [])
-              .filter(candidate => candidate?.status === 'parsed' && candidate.identity?.scope === 'orrery-builtin')
-              .map(candidate => candidate.identity)
+            // Baseline scopes are row-configurable (default builtin-only);
+            // the orrery-creative preset adds 'custom' for its fused skills.
+            builtinIdentities = baselineSkillIdentities(snapshot?.candidates, config.baselineScopes)
             try {
               const registry = await store.read({ kind: 'mcp-registry' })
               const payload = registry.kind === 'ok' ? registry.payload ?? {} : {}
