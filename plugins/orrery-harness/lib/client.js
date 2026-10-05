@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"fcdc68d91197599179f864c9d10391f654df3a084f6ecfec1143635cb60470b5","client.capability-manager.js":"52a2ac2cfcc1033b541d81d1cd50d388759f1f177282ef1bede66432dfee28e9","client.capability-model.js":"26346654eff7bb2ed2af343f1af0bf94c6d9fa546adaecaac5e3f02586685a18","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"cc66d75faae3fdfe5204c006d80a40e6fc3716209fe4e7859cfd3dbdf9003d7f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d8290643a42ce11cbc3559745809a8a17797505f0ae8081a707cf10cb2e8d86b","client.worktree-model.js":"a8f5ab9332d6f0eee992d22f08b3db371afe0ceddb8b86d363b8403808e3f514","client.worktree-view.js":"d0f52dd91e8773ee8c4a212f03f054e43b5729f22707946fa4788dd6f171aaab"}
+// Orrery client chunks: {"client.capability-badge.js":"fcdc68d91197599179f864c9d10391f654df3a084f6ecfec1143635cb60470b5","client.capability-manager.js":"52a2ac2cfcc1033b541d81d1cd50d388759f1f177282ef1bede66432dfee28e9","client.capability-model.js":"26346654eff7bb2ed2af343f1af0bf94c6d9fa546adaecaac5e3f02586685a18","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"cc66d75faae3fdfe5204c006d80a40e6fc3716209fe4e7859cfd3dbdf9003d7f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d8290643a42ce11cbc3559745809a8a17797505f0ae8081a707cf10cb2e8d86b","client.worktree-model.js":"a8f5ab9332d6f0eee992d22f08b3db371afe0ceddb8b86d363b8403808e3f514","client.worktree-view.js":"eba22564e89aa867b63a902afd76d1224a8ce10e2b89c2b4531af731baf8ca33"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -373,7 +373,8 @@ window.__ModuleLoader__.load({
 			worktreePillTitle: "Worktree lanes — open the panel",
 			worktreePillBaseMoved: "The main worktree left the lane base branch; check it out to land",
 			worktreeModeLabel: "Worktree",
-			worktreeModeTitle: "Worktree mode: the assistant stops editing files directly and works in isolated lanes",
+			worktreeModeTitle: "Optional discipline: lanes work without this mode. Turned on, the assistant stops editing files directly and every change goes through isolated lanes.",
+			worktreeModeUnavailable: "Worktree mode unavailable:",
 			worktreeLoading: "Loading lanes…",
 			worktreeLoadFailed: "The lane view could not be read.",
 			worktreeUnavailable: "Worktree lanes are unavailable for this session.",
@@ -385,7 +386,6 @@ window.__ModuleLoader__.load({
 			worktreeConfigure: "Verification…",
 			worktreeShowHistory: "History ({n})",
 			worktreeHideHistory: "Hide history",
-			worktreeModeOn: "Worktree mode is on",
 			worktreeVerificationOn: "verification: {n} command(s)",
 			worktreeVerificationOff: "verification not enabled",
 			worktreeExcludeOk: "locally ignored",
@@ -823,7 +823,8 @@ window.__ModuleLoader__.load({
 			worktreePillTitle: "Worktree 车道——打开面板",
 			worktreePillBaseMoved: "主工作区已离开车道基线分支，切回后才能合并",
 			worktreeModeLabel: "Worktree",
-			worktreeModeTitle: "Worktree 模式：助手不再直接改文件，所有改动走隔离车道",
+			worktreeModeTitle: "可选纪律：车道随时可用，无需开启。开启后助手不再直接改文件，所有改动走隔离车道。",
+			worktreeModeUnavailable: "Worktree 模式不可用：",
 			worktreeLoading: "正在加载车道…",
 			worktreeLoadFailed: "车道视图读取失败。",
 			worktreeUnavailable: "本会话无法使用 Worktree 车道。",
@@ -835,7 +836,6 @@ window.__ModuleLoader__.load({
 			worktreeConfigure: "验证配置…",
 			worktreeShowHistory: "历史（{n}）",
 			worktreeHideHistory: "收起历史",
-			worktreeModeOn: "Worktree 模式已开启",
 			worktreeVerificationOn: "验证：{n} 条命令",
 			worktreeVerificationOff: "未启用验证",
 			worktreeExcludeOk: "已本地忽略",
@@ -1068,13 +1068,6 @@ window.__ModuleLoader__.load({
 			const [view, model] = arrival.chunks;
 			return react_jsx_runtime.jsx(view.WorktreeStatusPill, worktreeFace(props, null, model));
 		}
-		/** Composer mode switch (U4). */
-		function WorktreeModeWrapper(props) {
-			const arrival = useChunkArrival(loadWorktreeChunks, typeof props.sessionId === "string" && props.sessionId !== "");
-			if (!arrival?.chunks) return null;
-			const [view, model] = arrival.chunks;
-			return react_jsx_runtime.jsx(view.WorktreeModeSwitch, worktreeFace(props, null, model));
-		}
 		/** Right-sidebar lanes panel (U3) and its tab body. */
 		function WorktreePanelWrapper(props) {
 			const arrival = useChunkArrival(loadWorktreeChunks);
@@ -1295,18 +1288,6 @@ window.__ModuleLoader__.load({
 					}
 				} : {})
 			}, WorktreePillWrapper)), "ui-orrery-settings: worktree header pill");
-			// U4: composer mode switch, right of the input next to the LSP switch.
-			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
-				name: "conversation.input.right",
-				id: "orrery-worktree-mode",
-				order: 102,
-				locale: NS,
-				inject: (sessionId) => (sessionId ? {
-					sessionId,
-					commandsList: () => worktreeCommandsList(sessionId),
-					runCommand: (line) => worktreeRun(sessionId, line)
-				} : {})
-			}, WorktreeModeWrapper)), "ui-orrery-settings: worktree mode switch");
 			// U6: one keyed tool view per lane tool, all backed by the same chunk.
 			for (const toolName of ["worktree_open", "worktree_check", "worktree_land", "worktree_cleanup", "worktree_abandon"]) {
 				ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({

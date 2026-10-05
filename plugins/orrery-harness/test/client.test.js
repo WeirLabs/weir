@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { readdirSync, statSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { loadClientChunk } from './helpers/load-client-chunk.js'
 
 /**
  * Entry composition-root test for the browser half (lib/client.js, authored
@@ -19,18 +20,12 @@ describe('orrery settings client half', () => {
   // Entry composition scaffold: hook-state-preserving react stub, jsx marker
   // factory, sentinel chunk modules behind require.async, and a fake cordis
   // ctx whose remote.session getter counts dereferences (S17 laziness pin).
-  async function loadEntry() {
-    const loaded = []
-    globalThis.window = {
-      __ModuleLoader__: {
-        load: (definition) => loaded.push(definition),
-      },
-    }
-    await import(`../lib/client.js?composition=${Math.random()}`)
-
+  // Hook-state-preserving react stub shared by the entry scaffold and the
+  // real-chunk panel tests below.
+  function makeReactStub() {
     const reactState = []
     let hookCursor = 0
-    const reactStub = {
+    return {
       reset() {
         reactState.length = 0
       },
@@ -57,6 +52,17 @@ describe('orrery settings client half', () => {
         }
       },
     }
+  }
+  async function loadEntry() {
+    const loaded = []
+    globalThis.window = {
+      __ModuleLoader__: {
+        load: (definition) => loaded.push(definition),
+      },
+    }
+    await import(`../lib/client.js?composition=${Math.random()}`)
+
+    const reactStub = makeReactStub()
     // baseline requires: the entry's sync require face (react/jsx-runtime plus
     // the pre-split regions still in the file until the final slim-down)
     const requireStub = (name) => {
@@ -106,7 +112,6 @@ describe('orrery settings client half', () => {
     const worktreeViewChunk = {
       WorktreeRowMarker: (props) => ({ __worktreeMarker: props }),
       WorktreeStatusPill: (props) => ({ __worktreePill: props }),
-      WorktreeModeSwitch: (props) => ({ __worktreeMode: props }),
       LanesPanel: (props) => ({ __worktreePanel: props }),
       WorktreeToolRow: (props) => ({ __worktreeTool: props }),
     }
@@ -266,8 +271,8 @@ describe('orrery settings client half', () => {
     whileServedCalls[0].register(new Set(['orrery-settings']))
     expect(slotInjects.map((inject) => inject.name)).toEqual([
       'conversation.input.right', 'tool.call.toolview', 'conversation.input.right',
-      // worktree surfaces (U1/U2/U4/U6) register at apply, right after Edit Lock
-      'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right',
+      // worktree surfaces (U1/U2/U6) register at apply, right after Edit Lock
+      'sidebar.session.row.leading', 'conversation.session.header.utilities',
       'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
       // the session capability Badge (12.1): order 95, apply-level registration
       'conversation.input.right',
@@ -299,24 +304,21 @@ describe('orrery settings client half', () => {
     expect(lockVerbs.sessionId).toBe('s1')
     expect(typeof lockVerbs.runEditLock).toBe('function')
 
-    // the worktree surfaces: session row marker, header pill, composer mode
-    // switch, and one keyed tool view per lane tool
-    for (const index of [3, 4, 5, 6, 7, 8, 9, 10]) slotInjects[index].fn()
+    // the worktree surfaces: session row marker, header pill, and one keyed
+    // tool view per lane tool
+    for (const index of [3, 4, 5, 6, 7, 8, 9]) slotInjects[index].fn()
     const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
     expect(marker.definition.name).toBe('sidebar.session.row.leading')
     expect(marker.definition.inject('s1')).toEqual({ sessionId: 's1' })
     const pill = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-pill')
     expect(pill.definition.name).toBe('conversation.session.header.utilities')
-    const modeSwitch = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-mode')
-    expect(modeSwitch.definition.name).toBe('conversation.input.right')
-    expect(typeof modeSwitch.definition.inject('s1').runCommand).toBe('function')
     const laneToolViews = slotRegistrations.filter((registration) => registration.definition.name === 'tool.call.toolview' && registration.definition.key !== 'hash_edit')
     expect(laneToolViews.map((registration) => registration.definition.key).sort()).toEqual([
       'worktree_abandon', 'worktree_check', 'worktree_cleanup', 'worktree_land', 'worktree_open',
     ])
 
     // the top-level settings section registration
-    slotInjects[12].fn()
+    slotInjects[11].fn()
     const { definition: sectionDef, component: sectionComponent } = slotRegistrations.find((registration) => registration.definition.name === 'settings.section')
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
@@ -327,16 +329,16 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[13].fn()
+    slotInjects[12].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
     expect(itemEntry.definition.id).toBe('orrery-config')
 
     // the Plugins-page entry
-    slotInjects[14].fn()
+    slotInjects[13].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     expect(definition.name).toBe('plugins.item')
     // the session capability Badge slot registration (12.1)
-    slotInjects[11].fn()
+    slotInjects[10].fn()
     const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
     expect(badgeEntry.definition.name).toBe('conversation.input.right')
     expect(badgeEntry.definition.order).toBe(95)
@@ -371,7 +373,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[14].fn()
+    slotInjects[13].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     const injected = definition.inject()
 
@@ -441,7 +443,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[14].fn()
+    slotInjects[13].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
 
     const settle = async (props) => {
@@ -472,7 +474,7 @@ describe('orrery settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')
@@ -578,8 +580,8 @@ describe('orrery settings client half', () => {
     expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual([])
     slotInjects[3].fn()
     const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
-    // the lane tool views are registered by their own injects (indices 6..10)
-    for (const index of [6, 7, 8, 9, 10]) slotInjects[index].fn()
+    // the lane tool views are registered by their own injects (indices 5..9)
+    for (const index of [5, 6, 7, 8, 9]) slotInjects[index].fn()
     const laneTool = slotRegistrations.find((registration) => registration.definition.key === 'worktree_land')
 
     // session row marker: renders nothing until the chunks arrive, then the view
@@ -607,6 +609,101 @@ describe('orrery settings client half', () => {
     expect(toolRendered.t('mergeCommit')).toBe('worktreeMergeCommit')
     expect(asyncCalls).toContain('./client.worktree-view.js')
     expect(asyncCalls).toContain('./client.worktree-model.js')
+  })
+
+  it('lanes panel toolbar hosts the persistent Worktree mode toggle', async () => {
+    // The composer mode switch is gone; mode toggling lives in the lanes
+    // panel toolbar as a persistent toggle (off = outlined chip, on = solid
+    // business badge), driven through the panel's runWorktree channel.
+    const reactStub = makeReactStub()
+    const jsxRuntime = { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+    const requireStub = (name) => {
+      if (name === 'react') return reactStub
+      if (name === 'react/jsx-runtime') return jsxRuntime
+      throw new Error(`unexpected require ${name}`)
+    }
+    const { exports: viewChunk } = await loadClientChunk('lib/client.worktree-view.js', requireStub)
+    const { exports: modelChunk } = await loadClientChunk('lib/client.worktree-model.js')
+
+    const findNode = (node, pred) => {
+      if (node === null || node === undefined || typeof node !== 'object') return undefined
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          const hit = findNode(child, pred)
+          if (hit !== undefined) return hit
+        }
+        return undefined
+      }
+      if (pred(node)) return node
+      return findNode(node.children, pred)
+    }
+    // The toggle element carries the chunk-internal component as __type (the
+    // jsx stub records, never renders); invoke it like the hash_edit body.
+    const isToggle = (node) => typeof node.__type === 'function' && typeof node.onToggle === 'function'
+    const renderToggle = (tree) => {
+      const element = findNode(tree, isToggle)
+      return element?.__type(element)
+    }
+
+    const settle = async (props) => {
+      reactStub.reset()
+      reactStub.begin()
+      viewChunk.LanesPanel(props)
+      await flush()
+      reactStub.begin()
+      return viewChunk.LanesPanel(props)
+    }
+    const panelProps = (viewPayload, runs) => ({
+      available: true,
+      t: (key) => key,
+      model: modelChunk,
+      narrowView: modelChunk.narrowView,
+      needsPolling: () => false,
+      fetchView: async () => viewPayload,
+      fetchDiff: async () => '',
+      runWorktree: async (line) => { runs.push(line); return { kind: 'success', text: 'ok' } },
+      ago: () => 'now',
+      intervalMs: 60000,
+    })
+    const baseView = { available: true, mode: false, lanes: [], ownedBySession: [], unmanaged: [] }
+
+    // off state: outlined chip with the mode tooltip; a click issues
+    // /worktree on through the panel command channel
+    const offRuns = []
+    const offTree = await settle(panelProps({ ...baseView, mode: false }, offRuns))
+    const offToggle = renderToggle(offTree)
+    expect(offToggle['data-orrery-worktree-mode']).toBe('off')
+    expect(offToggle['aria-pressed']).toBe(false)
+    expect(offToggle.disabled).toBe(false)
+    expect(offToggle.title).toBe('modeTitle')
+    expect(offToggle.style.borderColor).toBe('var(--dsw-alias-border-l2)')
+    offToggle.onClick()
+    expect(offRuns).toEqual(['on'])
+    await flush()
+
+    // on state: solid business badge style; the retired static mode badge
+    // no longer renders
+    const onRuns = []
+    const onTree = await settle(panelProps({ ...baseView, mode: true }, onRuns))
+    const onToggle = renderToggle(onTree)
+    expect(onToggle['data-orrery-worktree-mode']).toBe('on')
+    expect(onToggle['aria-pressed']).toBe(true)
+    expect(onToggle.style.background).toBe('var(--dsw-alias-state-business-primary)')
+    expect(JSON.stringify(onTree)).not.toContain('modeOn')
+    onToggle.onClick()
+    expect(onRuns).toEqual(['off'])
+    await flush()
+
+    // unavailable: the toggle persists, disabled, its tooltip naming the reason
+    const disabledTree = await settle(panelProps({ ...baseView, available: false, enabled: false }, []))
+    const disabledToggle = renderToggle(disabledTree)
+    expect(disabledToggle.disabled).toBe(true)
+    expect(disabledToggle.title).toContain('modeUnavailable')
+    expect(disabledToggle.title).toContain('disabled')
+    const errorTree = await settle(panelProps({ ...baseView, available: false, error: { code: 'NOT_A_REPO', message: 'not inside a git repository' } }, []))
+    const errorToggle = renderToggle(errorTree)
+    expect(errorToggle.disabled).toBe(true)
+    expect(errorToggle.title).toContain('not inside a git repository')
   })
 
   it('starts web notification delivery at apply, independent of the settings page, and stops it on dispose', async () => {
