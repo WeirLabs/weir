@@ -124,6 +124,9 @@ async function run(ctx) {
   writeSkill(join(ctx.IT_ROOT, 'ws', 'skill-roots'), 'fixture-a', 'A')
   const trace = join(ctx.IT_ROOT, `trace-${id}.jsonl`)
   const boot = await ctx.spawnHeadless(['orrery-it', prompt], ctx.scenarioEnv(id, trace, { ORRERY_IT_PRESET_SURFACE: '1', DSH_AGENTS_HOME: join(ctx.IT_ROOT, 'agents-home') }))
+  // The .git marker is this scenario's project-root pin ONLY — leaving it
+  // behind breaks the following scenarios' workspace-repo containment check.
+  rmSync(join(ctx.IT_ROOT, 'ws', '.git'), { recursive: true, force: true })
   return { scenario: id, trace, code: boot.code, stdout: boot.stdout, stderr: boot.stderr }
 }
 
