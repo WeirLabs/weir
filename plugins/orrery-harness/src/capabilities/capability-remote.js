@@ -148,6 +148,12 @@ export function capabilityReadContribution() {
  * Any setup failure (no typert service, a throwing registration) logs a
  * warning and stays inert: the client degrades to its explicit unavailable
  * state and the host composition is never broken.
+ *
+ * The declared `typert` dependency is what keeps this row from mounting too
+ * early in any composition: apply() reads the service through ctx.get and the
+ * gateway dispatch resolves through it as well, so the loader must order this
+ * row after the typert provider — including a composition where a user-layer
+ * patch injects typert after the bundle rows (S27).
  */
 export function apply(ctx) {
   const warn = text => ctx.logger?.warn?.(text)
@@ -180,4 +186,4 @@ export function apply(ctx) {
 }
 
 export const name = 'orrery-capability-remote'
-export const inject = []
+export const inject = ['typert']
