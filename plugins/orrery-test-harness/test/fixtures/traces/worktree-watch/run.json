@@ -1,0 +1,8 @@
+{
+  "scenario": "worktree-watch",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/worktree-lane-subscription-045/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "WATCH_PROBE_DONE\n",
+  "stderr": "",
+  "sessionId": null
+}
