@@ -1,0 +1,8 @@
+{
+  "scenario": "lifecycle-inheritance",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "parent observed lifecycle report\n",
+  "stderr": "",
+  "sessionId": null
+}

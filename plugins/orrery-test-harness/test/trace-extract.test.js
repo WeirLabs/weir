@@ -77,6 +77,12 @@ const PRE_MIGRATION_KEYS = [
   // capstore scenario observation (capability-store probe tools advertised)
   'capstoreToolsSeen',
   'applyTxProbeSeen',
+  'catalogLeak',
+  'sawOneshot',
+  'sawGroupSettled',
+  'sawEscalated',
+  'sawFork',
+  'sawResumeCandidate',
   // jobs-aware todo continuation observations
   'jobsAwareParent',
   'jobsAwareChild',
