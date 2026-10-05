@@ -30,6 +30,26 @@ window.__ModuleLoader__.load({
 			borderRadius: "50%",
 			background: "var(--dsw-alias-state-warn-primary, #c80)"
 		};
+		// 12.2's "an error must not take down neighboring composer controls":
+		// a crashing panel surfaces an inline error and leaves the Badge alive.
+		class CapabilityPanelBoundary extends react.Component {
+			constructor(props) {
+				super(props);
+				this.state = { error: null };
+			}
+			static getDerivedStateFromError(error) {
+				return { error };
+			}
+			render() {
+				if (this.state.error !== null) {
+					return react_jsx_runtime.jsx("div", {
+						style: { position: "absolute", bottom: "calc(100% + 8px)", left: 0, padding: "8px", fontSize: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", background: "var(--dsw-alias-background-elevated, #fff)", color: "var(--dsw-alias-state-warn-primary, #c80)" },
+						children: `Capabilities panel error: ${String(this.state.error?.message ?? this.state.error)}`
+					});
+				}
+				return this.props.children;
+			}
+		}
 		function CapabilityBadge(props) {
 			const model = props.model;
 			const sessionId = props.sessionId;
@@ -113,7 +133,7 @@ window.__ModuleLoader__.load({
 						]
 					}),
 					panelOpen && typeof props.ManagerPanel === "function"
-						? react_jsx_runtime.jsx(props.ManagerPanel, {
+						? react_jsx_runtime.jsx(CapabilityPanelBoundary, { children: react_jsx_runtime.jsx(props.ManagerPanel, {
 							sessionId, model, onClose: () => setPanelOpen(false),
 							// The composition-root verbs and translator travel with the
 							// panel — without them fetchListing is absent and the panel
@@ -123,7 +143,7 @@ window.__ModuleLoader__.load({
 							// After a successful Apply the Badge's own receipt is stale —
 							// the panel pings this callback so the counts re-pull (12.2).
 							onApplied: refresh, t: props.t
-						})
+						}) })
 						: null
 				]
 			});

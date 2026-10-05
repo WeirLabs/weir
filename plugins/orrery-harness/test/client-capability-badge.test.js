@@ -32,6 +32,10 @@ describe('client.capability-badge chunk', () => {
         return undefined
       },
       useCallback(fn) { return fn },
+      Component: class {
+        constructor(props) { this.props = props; this.state = {} }
+        render() { return this.props?.children }
+      },
       useRef(initial) {
         const at = hookCursor++
         if (!(at in reactState)) reactState[at] = { current: initial }
@@ -103,8 +107,12 @@ describe('client.capability-badge chunk', () => {
     const openedButton = opened.children[0]
     expect(openedButton['aria-expanded']).toBe(true)
     expect(openedButton.children.every((child) => !child || child.__type !== ManagerPanel)).toBe(true)
-    const panel = opened.children.find((child) => child && child.__type === ManagerPanel)
+    // The panel renders inside the error boundary (12.2: a panel error must
+    // not take down neighboring composer controls).
+    const boundary = opened.children.find((child) => child && child.__type !== ManagerPanel && child !== openedButton && child.children)
+    const panel = boundary?.children
     expect(panel).toBeTruthy()
+    expect(panel.__type).toBe(ManagerPanel)
     expect(panel.sessionId).toBe('sess-1')
     // After a successful Apply the panel pings onApplied so the Badge re-pulls
     // its receipt (counts follow the Apply immediately).
@@ -150,13 +158,13 @@ describe('client.capability-badge chunk', () => {
       onPointerDown({ target: { closest: (selector) => selector === '[data-orrery-capability-root]' ? {} : null } })
       reactStub.begin()
       const afterInside = CapabilityBadge(props)
-      expect(afterInside.children.some((child) => child && child.__type === ManagerPanel)).toBe(true)
+      expect(afterInside.children.some((child) => child && child.children && child.children.__type === ManagerPanel)).toBe(true)
 
       // A click outside dismisses the panel.
       onPointerDown({ target: { closest: () => null } })
       reactStub.begin()
       const afterOutside = CapabilityBadge(props)
-      expect(afterOutside.children.every((child) => !child || child.__type !== ManagerPanel)).toBe(true)
+      expect(afterOutside.children.every((child) => !child || !(child.children && child.children.__type === ManagerPanel))).toBe(true)
       expect(afterOutside.children[0]['aria-expanded']).toBe(false)
     } finally {
       delete globalThis.document
