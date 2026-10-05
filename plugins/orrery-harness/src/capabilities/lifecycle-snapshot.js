@@ -53,6 +53,7 @@ import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, rena
 import { isSegment, resolveStoreRoot, unitLayout } from './store/paths.js'
 import { decodeRecord, encodeRecord } from './store/record.js'
 import { LOCK_SCHEMA_VERSION, parseOwnerDoc } from './store/lock.js'
+import { skillIdentityKey } from './skill-identity.js'
 import { SUPPORTED_PLATFORMS } from './store/store.js'
 
 /** origin marker of a captured inherited snapshot payload. */
@@ -268,11 +269,48 @@ export function createLifecycleSnapshots(options = {}) {
   }
 
   /**
+   * Creation-time inheritance (6.3). The base is the parent's accepted set
+   * VERBATIM at creation, or the child's own previous snapshot on an explicit
+   * resume/escalation — intersected with the CURRENT parent accepted set,
+   * then narrowed by the delegation constraints (read-only/tool/depth).
+   * Intersection only: a resumed subagent never regains a capability the
+   * parent removed, never receives one the parent added later, constraints
+   * never widen, and a live subagent's snapshot is simply never recomputed
+   * (messaging a live child produces no agent/created, so no recapture).
+   * @param {unknown[]} parentSkills @param {unknown[] | null} previousChildSkills
+   * @param {{ allowSkills?: unknown[] }} [constraints]
+   * @returns {unknown[]}
+   */
+  function deriveInheritedSkills(parentSkills, previousChildSkills, constraints = {}) {
+    const parent = Array.isArray(parentSkills) ? parentSkills : []
+    const base = previousChildSkills == null ? parent.slice() : intersectIdentities(previousChildSkills, parent)
+    if (!Array.isArray(constraints.allowSkills)) return base
+    return intersectIdentities(base, constraints.allowSkills)
+  }
+
+  /** @param {unknown[]} skills @param {unknown[]} allowed @returns {unknown[]} */
+  function intersectIdentities(skills, allowed) {
+    const keys = new Set()
+    for (const identity of Array.isArray(allowed) ? allowed : []) {
+      try { keys.add(skillIdentityKey(identity)) } catch { /* unidentifiable entries cannot authorize */ }
+    }
+    return (Array.isArray(skills) ? skills : []).filter(identity => {
+      try { return keys.has(skillIdentityKey(identity)) } catch { return false }
+    })
+  }
+
+  /** String-set counterpart for managed MCP identities. @param {unknown} values @param {unknown} allowed @returns {string[]} */
+  function intersectStrings(values, allowed) {
+    const keep = new Set(Array.isArray(allowed) ? allowed : [])
+    return (Array.isArray(values) ? values : []).filter(value => typeof value === 'string' && keep.has(value))
+  }
+
+  /**
    * Durably capture a subagent's inherited snapshot (6.2), synchronously.
-   * The inherited sets are the parent's accepted selection VERBATIM at
-   * capture time — the creation-time intersection with read-only/tool/depth
-   * constraints and the explicit-resume ∩ semantics are task 6.3 and refine
-   * THIS seam, never bypass it. A parent without any accepted record yields
+   * The inherited sets follow creation-time inheritance (6.3): verbatim
+   * parent at creation, child-previous ∩ current-parent on an explicit
+   * resume/escalation, narrowed by delegation constraints — never widened.
+   * A parent without any accepted record yields
    * an empty inherited set (the no-policy initialization priority of task
    * 6.5 is a root-session concern layered above this mechanism).
    *
@@ -281,9 +319,10 @@ export function createLifecycleSnapshots(options = {}) {
    * snapshot, which a later explicit resume settles through the subagent
    * fail-closed rule.
    * @param {string} childSessionId @param {string} parentSessionId
+   * @param {{ allowSkills?: unknown[], allowMcpServers?: string[] }} [constraints] delegation constraints (6.3): intersection only, never a widening
    * @returns {ReadySnapshot}
    */
-  function captureInherited(childSessionId, parentSessionId) {
+  function captureInherited(childSessionId, parentSessionId, constraints = {}) {
     if (!isSegment(childSessionId)) throw new TypeError(`invalid inherited snapshot session: ${JSON.stringify(childSessionId)}`)
     if (childSessionId === parentSessionId) throw new Error(`inherited snapshot capture refused: session "${childSessionId}" cannot inherit from itself`)
     const parent = snapshotFor(parentSessionId)
@@ -312,9 +351,24 @@ export function createLifecycleSnapshots(options = {}) {
       }
       const revision = current.revision + 1
       const capturedAt = now()
+      // 6.3: an existing record means an explicit resume/escalation — the
+      // child's previous snapshot intersected with the CURRENT parent set
+      // (removed capabilities never return, added ones never arrive). A fresh
+      // capture starts from the parent verbatim. Constraints narrow further.
+      const previousSkills = current.kind === 'ok'
+        ? (Array.isArray(/** @type {Record<string, unknown>} */ (current.payload)?.skills) ? /** @type {unknown[]} */ (/** @type {Record<string, unknown>} */ (current.payload).skills) : [])
+        : null
+      const parentSkills = parent ? parent.skills : []
+      const skills = deriveInheritedSkills(parentSkills, previousSkills, constraints)
+      const parentMcp = parent ? parent.mcpServers : []
+      const previousMcp = current.kind === 'ok' && Array.isArray(/** @type {Record<string, unknown>} */ (current.payload)?.mcpServers)
+        ? /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (current.payload).mcpServers)
+        : null
+      let mcpServers = previousMcp == null ? parentMcp.slice() : intersectStrings(previousMcp, parentMcp)
+      if (Array.isArray(constraints.allowMcpServers)) mcpServers = intersectStrings(mcpServers, constraints.allowMcpServers)
       const payload = {
-        skills: structuredClone(parent ? parent.skills : []),
-        mcpServers: (parent ? parent.mcpServers : []).slice(),
+        skills: structuredClone(skills),
+        mcpServers,
         origin: INHERITED_ORIGIN,
         parent: { sessionId: parentSessionId, revision: parent ? parent.revision : null },
         capturedAt,

@@ -25,6 +25,18 @@ export function classifySelectionFailure(input) {
       hint: 'Another process holds this session log. Close the session in that process (or continue it there), then resume it here.',
     }
   }
+  if (text.includes('Workspace default selection is')) {
+    return {
+      reason: 'workspace-default-unavailable',
+      hint: 'The saved workspace default selection cannot be used. Inspect or clear it in the Orrery capabilities store; the session stays empty rather than guessing.',
+    }
+  }
+  if (text.includes('policy is unreadable')) {
+    return {
+      reason: 'policy-unreadable:unreadable',
+      hint: 'The persisted selection record exists but cannot be read (permissions or a filesystem error). Restore read access to the Orrery capabilities store, then retry.',
+    }
+  }
   if (text.includes('policy is corrupt')) {
     return {
       reason: 'policy-unreadable:corrupt',
