@@ -86,6 +86,7 @@
 
 - **编辑锁：单个未决发布不再一律阻塞整个项目**：既有文件发布结果为 unknown 后，精确资源围栏外的可信规范既有文件仍可获取、确认与更新；批量和会话级操作在落盘前检查全部受影响归属，不能释放或重臂未决 update 必需的锁。domain 围栏仍拒绝正常操作；v3 无历史祖先连续性证据，subtree 围栏与新的创建意图仍保守拒绝。历史不改写、不重放，未新增人工结清入口。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
 
+- **能力 Badge 恒显「0 skills · 0 MCP」、管理器面板永久「Loading capabilities…」**：Badge 回执把选择 provider 返回的候选按 `candidate.selected` 过滤，但该 provider 的契约是「返回的候选即生效选择」，从不携带 `selected` 字段——过滤后恒为空，真实选择（如内置基线 10 项）被完全隐藏；现由 provider 在选中匹配上显式盖章 `selected: true`（Office 占位 denial 不盖章），回执与列表行直接读取。面板则因 Badge 渲染管理器时只传了 `{ sessionId, model, onClose }`、`fetchListing`/`fetchConditions`/`t` 未下传，拉取守卫恒为假、`/capabilities list` 从未发出（不是服务端挂起），现已随面板一并下传。附 provider／命令回执／Badge chunk 三层回归测试。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 
 ### Fixed
 

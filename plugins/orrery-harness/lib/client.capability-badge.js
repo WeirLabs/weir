@@ -89,7 +89,13 @@ window.__ModuleLoader__.load({
 					hasWarning ? react_jsx_runtime.jsx("span", { style: warnDotStyle }) : null,
 					label,
 					panelOpen && typeof props.ManagerPanel === "function"
-						? react_jsx_runtime.jsx(props.ManagerPanel, { sessionId, model, onClose: () => setPanelOpen(false) })
+						? react_jsx_runtime.jsx(props.ManagerPanel, {
+							sessionId, model, onClose: () => setPanelOpen(false),
+							// The composition-root verbs and translator travel with the
+							// panel — without them fetchListing is absent and the panel
+							// would sit on the perpetual loading surface (12.2).
+							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions, t: props.t
+						})
 						: null
 				]
 			});

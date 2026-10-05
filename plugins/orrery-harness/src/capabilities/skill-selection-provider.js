@@ -87,7 +87,11 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
         if (!snapshot.complete || matches.length !== selected.size || new Set(matches.map(c => skillIdentityKey(c.identity))).size !== matches.length) {
           throw new Error('Selected skill inventory is missing, ambiguous or incomplete')
         }
-        const candidates = [...matches.map(candidate => ({ ...candidate, provider: SELECTION_PROVIDER })),
+        // The candidates this provider returns ARE the session's effective
+        // selection (denial placeholders aside) — stamp the flag explicitly so
+        // the /capabilities receipt and manager rows can tell a selected match
+        // from an office denial placeholder (which never carries it).
+        const candidates = [...matches.map(candidate => ({ ...candidate, provider: SELECTION_PROVIDER, selected: true })),
           ...denials().filter(candidate => !matches.some(match => match.name === candidate.name))]
         state.error = null
         state.failure = null

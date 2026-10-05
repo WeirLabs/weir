@@ -28,6 +28,9 @@ test('loads only the selected user identity despite a higher-ranked unselected p
   const { provider } = setup()
   const listed = await provider.list()
   expect(listed.candidates.map(c => c.identity)).toEqual([user.identity])
+  // The provider's candidates ARE the effective selection: selected matches
+  // carry the explicit stamp the /capabilities receipt and manager rows read.
+  expect(listed.candidates[0].selected).toBe(true)
   expect((await provider.get(listed.candidates[0])).content).toBe('user')
   expect(await provider.get(project)).toBeUndefined()
 })
@@ -50,6 +53,8 @@ test('mount performs no policy reads and unreadable policy fails closed without 
   createSkillSelectionPlugin({ readSelection: async () => { reads++; throw new Error('policy denied') }, inventory: async () => { throw new Error('must not scan') } })(ctx)
   expect(reads).toBe(0)
   expect((await registered.list()).candidates.every(item => !item.invocation.modelInvocable && !item.invocation.userInvocable)).toBe(true)
+  // Denial placeholders never carry the selected stamp.
+  expect((await registered.list()).candidates.every(item => item.selected !== true)).toBe(true)
   expect((await registered.list()).candidates).toHaveLength(3)
   expect(skillSelectionFor(ctx).status().error).toBe('policy denied')
 })

@@ -13,7 +13,13 @@ test('/capabilities receipt and list unwrap provider.list candidates', async () 
   let registeredCommands = []
   let provider
   const ctx = {
-    skills: { registerProvider(create) { provider = create({ invalidate() {} }) }, async list(options) { return (await provider.list(options)).candidates } },
+    skills: {
+      registerProvider(create) { provider = create({ invalidate() {} }) },
+      async list(options) { return (await provider.list(options)).candidates },
+      // The Office adapter reads the host provider registry; an empty
+      // dsh-office provider keeps the inventory complete without candidates.
+      layers: { global: { providers: new Map([['dsh-office', { provider: { async list() { return { candidates: [], complete: true } } } }]]) } },
+    },
     on() {},
     effect(fn) { fn(); return () => {} },
     logger: { warn() {} },
@@ -35,9 +41,20 @@ test('/capabilities receipt and list unwrap provider.list candidates', async () 
   expect(receiptPayload.status).toBe('applied')
   expect(Array.isArray(receiptPayload.effective.skills)).toBe(true)
   expect(Array.isArray(receiptPayload.effective.mcpServers)).toBe(true)
+  // Regression (2026-10-05 GUI badge "0 skills · 0 MCP"): the provider's
+  // candidates ARE the effective selection — a fresh root session resolves
+  // the builtin baseline (6.5), so the receipt must name those skills, not
+  // filter them away on a `selected` flag the contract never carried.
+  expect(receiptPayload.warnings).toEqual([])
+  expect(receiptPayload.effective.skills).toHaveLength(10)
+  expect(receiptPayload.effective.skills).toContain('debugging')
   const listing = await command.handler({ agent, rawInput: 'list' })
   expect(listing.kind).toBe('success')
   const listingPayload = JSON.parse(listing.text)
   expect(Array.isArray(listingPayload.skills)).toBe(true)
   expect(Array.isArray(listingPayload.mcpServers)).toBe(true)
+  // Manager rows: the 10 baseline skills are selected; the 3 Office denial
+  // placeholders list as unselected.
+  expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(10)
+  expect(listingPayload.skills.filter(row => row.selected !== true)).toHaveLength(3)
 })
