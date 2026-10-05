@@ -16,7 +16,8 @@
     "./cold-session-probe": "./src/cold-session-probe.js",
     "./lifecycle-probe": "./src/lifecycle-probe.js",
     "./mcp-probe": "./src/mcp-probe.js",
-    "./preset-probe": "./src/preset-probe.js"
+    "./preset-probe": "./src/preset-probe.js",
+    "./user-questions-stub": "./src/user-questions-stub.js"
   },
   "dsh": {
     "bundle": {

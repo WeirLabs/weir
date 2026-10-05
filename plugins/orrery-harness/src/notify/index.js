@@ -213,8 +213,24 @@ export function wire(ctx, config, { notifier, channel, now = Date.now, setTimer,
     turnStart.delete(session.id)
   })
 
+  // Worktree decision cards bypass the tool layer: the lane service calls the
+  // userQuestions service directly, so no whitelisted tool/call event ever
+  // fires for them. The worktree plugin side-emits this cordis event instead
+  // (merge-approval and abandon-confirmation cards only; the cleanup card is
+  // deliberately silent — it follows the approval the user just answered).
+  const offWorktreeQuestion = ctx.on('worktree/question', (/** @type {any} */ session, /** @type {any} */ payload) => {
+    try {
+      if (!resolveOptions(ctx, config).onAttention) return
+      deliver(session, { type: 'question', ...(typeof payload?.question === 'string' && payload.question.trim() ? { question: payload.question.trim() } : {}) })
+    } catch (/** @type {any} */ error) {
+      // Same discipline as the session/event listener: never throw into the
+      // event dispatch.
+      ctx.logger?.warn?.(`notify: worktree question handling failed: ${error?.message ?? error}`)
+    }
+  })
+
   return () => {
-    for (const off of [offEvent, offStatus, offDisposed]) if (typeof off === 'function') off()
+    for (const off of [offEvent, offStatus, offDisposed, offWorktreeQuestion]) if (typeof off === 'function') off()
     for (const handle of pending.values()) stopTimer(handle)
     pending.clear()
     turnStart.clear()

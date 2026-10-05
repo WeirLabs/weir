@@ -107,6 +107,8 @@ const PRE_MIGRATION_KEYS = [
   'compositionProbeServed',
   // cold-session scenario observation (task 5.5: convergence probe advertised)
   'coldProbeSeen',
+  // notify-worktree scenario observation (merge result reached the parent)
+  'notifyMergeSeen',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

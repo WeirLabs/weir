@@ -76,11 +76,7 @@ function apply(ctx, config = {}) {
       return run(request)
     },
     settings: settingsNow,
-    ask: (agent, questions, signal) => {
-      const userQuestions = ctx.get?.('userQuestions')
-      if (!userQuestions?.ask) return Promise.reject(Object.assign(new Error('no user-questions service'), { code: 'NO_PROVIDER' }))
-      return userQuestions.ask({ questions, agent, ...(signal ? { signal } : {}) })
-    },
+    ask: createAsk(ctx),
     notify: (sessionId, text) => deliver(ctx, audit, sessionId, text),
     audit: (kind, data, root, sessionId) => audit({ id: sessionId ?? null, header: { cwd: root } }, `${AUDIT_TYPES.worktree}/${kind}`, data, { root }),
     modeOf: (session) => projections?.stateOf?.(session, WORKTREE_PROJECTION_KEY)?.mode === true,
@@ -207,6 +203,37 @@ function apply(ctx, config = {}) {
     offEndpoints()
     surface?.dispose()
     surface = null
+  }
+}
+
+/** Decision cards whose arrival raises a system notification (consumed by
+ * orrery-notify's `worktree/question` listener). THE whitelist decision point:
+ * a card id not listed here — including any future one — defaults to NOT
+ * notifying. `cleanup` is deliberately absent: it always immediately follows
+ * the merge approval the user just answered, or a user-typed /worktree land. */
+const NOTIFY_CARD_IDS = new Set(['merge', 'abandon'])
+
+/**
+ * The lane service's ask funnel: resolve the userQuestions service, side-emit
+ * the notification event for whitelisted decision cards, then ask. Split from
+ * `apply` so unit tests can drive it with a mock ctx.
+ * @param {any} ctx
+ */
+export function createAsk(ctx) {
+  /** @param {any} agent @param {any[]} questions @param {AbortSignal} [signal] */
+  return (agent, questions, signal) => {
+    const userQuestions = ctx.get?.('userQuestions')
+    if (!userQuestions?.ask) return Promise.reject(Object.assign(new Error('no user-questions service'), { code: 'NO_PROVIDER' }))
+    if (NOTIFY_CARD_IDS.has(questions?.[0]?.id)) {
+      // Pure notification: the event lives on the cordis bus only (never the
+      // session log), and a listener failure must never break the ask.
+      try {
+        ctx.emit('worktree/question', agent?.session, { question: questions[0].question })
+      } catch (/** @type {any} */ error) {
+        ctx.logger?.warn?.(`worktree: question notify emit failed: ${error?.message ?? error}`)
+      }
+    }
+    return userQuestions.ask({ questions, agent, ...(signal ? { signal } : {}) })
   }
 }
 

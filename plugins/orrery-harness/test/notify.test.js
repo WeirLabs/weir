@@ -357,6 +357,39 @@ describe('notify plugin wiring', () => {
     expect(h.sent).toHaveLength(2)
   })
 
+  it('delivers a worktree decision-card question immediately with the trimmed text', () => {
+    const h = harness()
+    h.handlers['worktree/question'](root, { question: '  Merge lane "Fix login" into main?  ' })
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0].note).toEqual({ title: 'Question for you', body: 'project-x — Merge lane "Fix login" into main?', urgent: true })
+  })
+
+  it('degrades to a bare question when the worktree payload carries no usable text', () => {
+    const h = harness()
+    h.handlers['worktree/question'](root, null)
+    h.handlers['worktree/question'](root, { question: '   ' })
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0].note).toEqual({ title: 'Question for you', body: 'project-x — waiting for your answer', urgent: true })
+  })
+
+  it('drops the worktree question when onAttention is off', () => {
+    const h = harness({ settings: { notify: { onAttention: false } } })
+    h.handlers['worktree/question'](root, { question: 'Abandon lane "Fix login"?' })
+    expect(h.sent).toHaveLength(0)
+  })
+
+  it('a throwing notifier never escapes the worktree question listener', () => {
+    const handlers = {}
+    const warnings = []
+    wire(
+      { on: (name, handler) => { handlers[name] = handler }, get: () => undefined, logger: { warn: (message) => warnings.push(message) } },
+      {},
+      { notifier: { send: () => { throw new Error('boom') } } },
+    )
+    handlers['worktree/question']({ id: 's' }, { question: 'q' })
+    expect(warnings.some((message) => message.includes('boom'))).toBe(true)
+  })
+
   it('a delegated child cannot raise a question notification', () => {
     const h = harness()
     const child = { id: 'kid', header: { origin: 'subagent', parentSession: 'root' } }
@@ -422,10 +455,10 @@ describe('notify plugin wiring', () => {
     expect(warnings.some((message) => message.includes('boom'))).toBe(true)
   })
 
-  it('apply returns a disposer and registers the three listeners', () => {
+  it('apply returns a disposer and registers the four listeners', () => {
     const handlers = {}
     const dispose = apply({ on: (name, handler) => { handlers[name] = handler }, get: () => undefined, logger: { warn: () => {} } }, {})
-    expect(Object.keys(handlers).sort()).toEqual(['agent/status', 'session/disposed', 'session/event'])
+    expect(Object.keys(handlers).sort()).toEqual(['agent/status', 'session/disposed', 'session/event', 'worktree/question'])
     expect(typeof dispose).toBe('function')
     dispose()
   })
