@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { readdirSync, statSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { loadClientChunk } from './helpers/load-client-chunk.js'
 
 /**
  * Entry composition-root test for the browser half (lib/client.js, authored
@@ -19,18 +20,12 @@ describe('orrery settings client half', () => {
   // Entry composition scaffold: hook-state-preserving react stub, jsx marker
   // factory, sentinel chunk modules behind require.async, and a fake cordis
   // ctx whose remote.session getter counts dereferences (S17 laziness pin).
-  async function loadEntry() {
-    const loaded = []
-    globalThis.window = {
-      __ModuleLoader__: {
-        load: (definition) => loaded.push(definition),
-      },
-    }
-    await import(`../lib/client.js?composition=${Math.random()}`)
-
+  // Hook-state-preserving react stub shared by the entry scaffold and the
+  // real-chunk panel tests below.
+  function makeReactStub() {
     const reactState = []
     let hookCursor = 0
-    const reactStub = {
+    return {
       reset() {
         reactState.length = 0
       },
@@ -57,6 +52,17 @@ describe('orrery settings client half', () => {
         }
       },
     }
+  }
+  async function loadEntry() {
+    const loaded = []
+    globalThis.window = {
+      __ModuleLoader__: {
+        load: (definition) => loaded.push(definition),
+      },
+    }
+    await import(`../lib/client.js?composition=${Math.random()}`)
+
+    const reactStub = makeReactStub()
     // baseline requires: the entry's sync require face (react/jsx-runtime plus
     // the pre-split regions still in the file until the final slim-down)
     const requireStub = (name) => {
@@ -603,6 +609,101 @@ describe('orrery settings client half', () => {
     expect(toolRendered.t('mergeCommit')).toBe('worktreeMergeCommit')
     expect(asyncCalls).toContain('./client.worktree-view.js')
     expect(asyncCalls).toContain('./client.worktree-model.js')
+  })
+
+  it('lanes panel toolbar hosts the persistent Worktree mode toggle', async () => {
+    // The composer mode switch is gone; mode toggling lives in the lanes
+    // panel toolbar as a persistent toggle (off = outlined chip, on = solid
+    // business badge), driven through the panel's runWorktree channel.
+    const reactStub = makeReactStub()
+    const jsxRuntime = { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+    const requireStub = (name) => {
+      if (name === 'react') return reactStub
+      if (name === 'react/jsx-runtime') return jsxRuntime
+      throw new Error(`unexpected require ${name}`)
+    }
+    const { exports: viewChunk } = await loadClientChunk('lib/client.worktree-view.js', requireStub)
+    const { exports: modelChunk } = await loadClientChunk('lib/client.worktree-model.js')
+
+    const findNode = (node, pred) => {
+      if (node === null || node === undefined || typeof node !== 'object') return undefined
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          const hit = findNode(child, pred)
+          if (hit !== undefined) return hit
+        }
+        return undefined
+      }
+      if (pred(node)) return node
+      return findNode(node.children, pred)
+    }
+    // The toggle element carries the chunk-internal component as __type (the
+    // jsx stub records, never renders); invoke it like the hash_edit body.
+    const isToggle = (node) => typeof node.__type === 'function' && typeof node.onToggle === 'function'
+    const renderToggle = (tree) => {
+      const element = findNode(tree, isToggle)
+      return element?.__type(element)
+    }
+
+    const settle = async (props) => {
+      reactStub.reset()
+      reactStub.begin()
+      viewChunk.LanesPanel(props)
+      await flush()
+      reactStub.begin()
+      return viewChunk.LanesPanel(props)
+    }
+    const panelProps = (viewPayload, runs) => ({
+      available: true,
+      t: (key) => key,
+      model: modelChunk,
+      narrowView: modelChunk.narrowView,
+      needsPolling: () => false,
+      fetchView: async () => viewPayload,
+      fetchDiff: async () => '',
+      runWorktree: async (line) => { runs.push(line); return { kind: 'success', text: 'ok' } },
+      ago: () => 'now',
+      intervalMs: 60000,
+    })
+    const baseView = { available: true, mode: false, lanes: [], ownedBySession: [], unmanaged: [] }
+
+    // off state: outlined chip with the mode tooltip; a click issues
+    // /worktree on through the panel command channel
+    const offRuns = []
+    const offTree = await settle(panelProps({ ...baseView, mode: false }, offRuns))
+    const offToggle = renderToggle(offTree)
+    expect(offToggle['data-orrery-worktree-mode']).toBe('off')
+    expect(offToggle['aria-pressed']).toBe(false)
+    expect(offToggle.disabled).toBe(false)
+    expect(offToggle.title).toBe('modeTitle')
+    expect(offToggle.style.borderColor).toBe('var(--dsw-alias-border-l2)')
+    offToggle.onClick()
+    expect(offRuns).toEqual(['on'])
+    await flush()
+
+    // on state: solid business badge style; the retired static mode badge
+    // no longer renders
+    const onRuns = []
+    const onTree = await settle(panelProps({ ...baseView, mode: true }, onRuns))
+    const onToggle = renderToggle(onTree)
+    expect(onToggle['data-orrery-worktree-mode']).toBe('on')
+    expect(onToggle['aria-pressed']).toBe(true)
+    expect(onToggle.style.background).toBe('var(--dsw-alias-state-business-primary)')
+    expect(JSON.stringify(onTree)).not.toContain('modeOn')
+    onToggle.onClick()
+    expect(onRuns).toEqual(['off'])
+    await flush()
+
+    // unavailable: the toggle persists, disabled, its tooltip naming the reason
+    const disabledTree = await settle(panelProps({ ...baseView, available: false, enabled: false }, []))
+    const disabledToggle = renderToggle(disabledTree)
+    expect(disabledToggle.disabled).toBe(true)
+    expect(disabledToggle.title).toContain('modeUnavailable')
+    expect(disabledToggle.title).toContain('disabled')
+    const errorTree = await settle(panelProps({ ...baseView, available: false, error: { code: 'NOT_A_REPO', message: 'not inside a git repository' } }, []))
+    const errorToggle = renderToggle(errorTree)
+    expect(errorToggle.disabled).toBe(true)
+    expect(errorToggle.title).toContain('not inside a git repository')
   })
 
   it('starts web notification delivery at apply, independent of the settings page, and stops it on dispose', async () => {

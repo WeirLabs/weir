@@ -377,6 +377,27 @@ window.__ModuleLoader__.load({
 				children,
 			}, lane.id);
 		}
+		/** Panel toolbar mode toggle (persistent): solid business badge when on,
+		 * outlined chip when off — the retired composer switch's semantics. The
+		 * panel owns the click channel, the busy state, and the disabled reason. */
+		function WorktreeModeToggle(props) {
+			const on = props.mode === true;
+			const disabled = props.disabled === true;
+			const style = on
+				? { ...buttonBase, background: BUSINESS, border: "none", color: "var(--dsw-alias-bg-base)", fontWeight: 600 }
+				: { ...buttonBase, borderColor: "var(--dsw-alias-border-l2)" };
+			return jsxs("button", {
+				type: "button",
+				style: disabled ? { ...style, ...disabledStyle } : style,
+				onClick: props.onToggle, disabled,
+				"aria-pressed": on, title: props.title,
+				"data-orrery-worktree-mode": on ? "on" : "off",
+				children: [
+					jsx(Dot, { color: on ? "var(--dsw-alias-bg-base)" : "var(--dsw-alias-label-tertiary)" }, "dot"),
+					jsx("span", { children: props.t("modeLabel") }, "label"),
+				],
+			});
+		}
 		/** U3 — lanes panel (right sidebar tab body). */
 		function LanesPanel(props) {
 			const t = props.t;
@@ -392,11 +413,10 @@ window.__ModuleLoader__.load({
 			const [rows, setRows] = react.useState([]);
 			const view = state.view;
 			const groups = model.groupLanes(view?.lanes ?? []);
-			const run = (lane, key, option) => {
+			const runLine = (line) => {
 				if (busy) return Promise.resolve();
 				setBusy(true);
 				setError(null);
-				const line = model.commandFor(key, lane, option);
 				return Promise.resolve(props.runWorktree(line)).then(
 					(outcome) => {
 						setBusy(false);
@@ -406,6 +426,11 @@ window.__ModuleLoader__.load({
 					(reason) => { setBusy(false); setError(reason instanceof Error ? reason.message : String(reason)); }
 				);
 			};
+			const run = (lane, key, option) => runLine(model.commandFor(key, lane, option));
+			// The toolbar mode toggle runs /worktree on|off through the same
+			// command channel (busy guard, error surface, reload) as every
+			// other panel action.
+			const toggleMode = () => runLine(view?.mode === true ? "off" : "on");
 			const copyPath = (path) => {
 				try {
 					const clipboard = globalThis.navigator?.clipboard;
@@ -444,6 +469,16 @@ window.__ModuleLoader__.load({
 				jsx("button", { type: "button", style: { ...ghostStyle, color: ERROR }, title: t("configRemove"), "aria-label": t("configRemove"), onClick: () => setRows((current) => current.filter((entry, at) => at !== index)), children: jsx(Icon, { name: "x", size: 12 }) }, "remove"),
 			] }, index);
 			const laneCards = (lanes) => lanes.map((lane) => jsx(LaneCard, { lane, model, t, busy, run, fetchDiff: props.fetchDiff, diffLines: props.diffLines, ago: props.ago, copyPath }, lane.id));
+			// Persistent toolbar mode toggle: rendered whenever a view exists;
+			// disabled with the reason when lanes are unavailable.
+			const unavailableReason = view?.available === false ? (view.enabled === false ? t("disabled") : (view.error?.message ?? t("unavailable"))) : null;
+			const modeToggle = view ? jsx(WorktreeModeToggle, {
+				mode: view.mode === true,
+				disabled: view.available === false || busy,
+				title: view.available === false ? `${t("modeUnavailable")} ${unavailableReason}` : t("modeTitle"),
+				onToggle: toggleMode,
+				t,
+			}, "mode") : null;
 			const children = [];
 			if (!view) {
 				children.push(jsx("div", {
@@ -456,6 +491,10 @@ window.__ModuleLoader__.load({
 					style: calloutStyle(view.enabled === false ? "var(--dsw-alias-label-tertiary)" : ERROR),
 					children: view.enabled === false ? t("disabled") : (view.error?.message ?? t("unavailable")),
 				}, "unavailable"));
+				children.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px", marginTop: "8px" }, children: [
+					jsx("span", { style: { flex: 1 } }, "spacer"),
+					modeToggle,
+				] }, "toolbar"));
 			} else {
 				const verification = view.repo?.verification;
 				// Repo info card: base branch chip, git version, verification and exclude status.
@@ -489,13 +528,13 @@ window.__ModuleLoader__.load({
 					jsx("div", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }, children: verifyRow }, "repo-verify"),
 					view.repo?.root ? jsx("div", { style: { ...text.foot, ...mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: view.repo.root, children: view.repo.root }, "repo-root") : null,
 				] }, "repo"));
-				// Toolbar: refresh, verification configure, history toggle, spacer, mode badge.
+				// Toolbar: refresh, verification configure, history toggle, spacer, mode toggle.
 				children.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px", marginTop: "8px" }, children: [
 					jsx("button", { type: "button", style: { ...ghostStyle, padding: "3px 5px" }, onClick: reload, title: t("refresh"), "aria-label": t("refresh"), "data-orrery-worktree-action": "refresh", children: jsx(Icon, { name: "refresh", size: 13 }) }, "refresh"),
 					btn("configure", t("configure"), openConfig, ghostStyle, false, t("configure"), "sliders"),
 					groups.history.length ? btn("history", history ? t("hideHistory") : t("showHistory").replace("{n}", String(groups.history.length)), () => setHistory(!history), ghostStyle, false, null, "history") : null,
 					jsx("span", { style: { flex: 1 } }, "spacer"),
-					view.mode ? jsx(Badge, { label: t("modeOn"), color: BUSINESS }, "mode") : null,
+					modeToggle,
 				] }, "toolbar"));
 				if (init) {
 					children.push(jsxs("div", { "data-orrery-worktree-config": "", style: { ...cardStyle, marginTop: "8px" }, children: [
