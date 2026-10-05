@@ -50,11 +50,11 @@ Orrery 自带十项开箱即用的工作技能，意图命中时自动加载，�
 | `work-with-pr` | PR 全生命周期：独立 worktree 实现、证据绑定的手工验证、可读性优先的 PR 描述 |
 | `remove-deadcode` | 死代码清理：安全验证 + 原子提交，删掉无人使用的代码 |
 
-> 自「会话能力管理器」选择 provider 落地起：Orrery 会话只显示**已启用（已选）**的技能——未选中的第三方技能不再自动出现在目录、`skill` 加载与 `/` 菜单中；尚未产生选择记录的会话看到空目录与状态提示（技能选择编辑界面随后续版本交付）。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+> 自「会话能力管理器」选择 provider 落地起：Orrery 会话只显示**已启用（已选）**的技能——未选中的第三方技能不再自动出现在目录、`skill` 加载与 `/` 菜单中；尚未产生选择记录的会话看到空目录与状态提示，选择由 Capabilities 面板显式编辑产生。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 > MCP 同理：经 Orrery 配置的 MCP server 由 Orrery 统一挂载并可按会话启停（被拒调用不会到达 server）；宿主里直接配置的 server 显示为「未托管」，不会被自动接管。详见 [会话能力管理器](docs/features/session-capability-manager.md)「MCP 会话级关闭」。
-> 团队能力集合（预设库）可保存/导入/导出并限定到本工作区；导入只认无凭据引用且不会自动启用。还可以把选择保存为「工作区新会话默认值」——只影响之后的新会话。详见 [会话能力管理器](docs/features/session-capability-manager.md)「预设与默认值」。
+> 团队能力集合（预设库）可保存/导入/导出并限定到本工作区，入口就在 Capabilities 面板的「预设」视图；导出按来源打包（远程技能记链接、本地与工作区技能随包带走），导入先给你看装进哪里、有无同名冲突，确认后才落盘且不会自动启用。还可以把选择保存为「工作区新会话默认值」——只影响之后的新会话。详见 [会话能力管理器](docs/features/session-capability-manager.md)「预设与默认值」。
 > 已安装的第三方技能可以定期「检查更新」（只读、改动需你确认才发布；自动更新默认关闭），已接受的内容在来源更新后仍按会话原样可用，换用新内容需显式刷新。详见 [Skill 分发](docs/features/skill-distribution.md)。
-> 会话输入栏的能力 Badge 直接显示本会话正在用哪些技能与 MCP server，点开即可管理；移除某项后模型会收到明确通知。详见 [会话能力管理器](docs/features/session-capability-manager.md)「管理界面与通知」。
+> 会话输入栏的能力 Badge 直接显示本会话正在用哪些技能与 MCP server，点击打开右侧栏 **Capabilities 面板**（技能按来源分组勾选、MCP 管理、预设与默认值），无右侧栏时回退为原弹层；移除某项后模型会收到明确通知。详见 [会话能力管理器](docs/features/session-capability-manager.md)「管理界面与通知」。
 > 打开历史会话时，技能菜单可能**先短暂为空**（冷会话不猜测、先空后收敛），页面完成一次自动恢复后即显示该会话的已选集合；若恢复失败（如另一进程占用会话），菜单保持为空并显示原因与处理提示。
 
 ## 了解更多

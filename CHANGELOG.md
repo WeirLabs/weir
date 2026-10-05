@@ -50,6 +50,9 @@
 
 - **会话能力管理器（基础设施，暂无用户可见变化）**：新增 Orrery 自管的带锁持久化侧文件存储（位于 DSH home 下的 `orrery/profiles/<profile>/capabilities`），承载后续会话 Skill/MCP 选择与其回执：每单元独立文件与修订号、原子提交（temp + fsync + rename）、跨进程锁文件（崩溃安全获取、陈旧锁须证明 owner 已不存活才回收）、幂等回执与内容代次指针原子切换；不支持的平台显式报 unsupported 且零写入。本步不改动任何现有行为。详见 [会话能力管理器特性文档](docs/features/session-capability-manager.md)。
 
+- **会话能力管理器：Capabilities 面板与预设入口（UX 重做）**：能力管理器从输入框上方的 320px 弹层升级为**右侧栏 Capabilities 面板**（与 Worktree 面板同模式）——Skills 视图按来源分组（Orrery 内置/user/project/custom）、真实复选框、技能描述次行、冲突/缺失标记与搜索；MCP 视图保留「Orrery 管理/未托管」分组并重做添加表单（逐字段校验）；底栏 Apply/Discard 带净增减摘要（+n/−m）。输入框 Badge 保留为会话级状态与入口（回执计数、警告点、帧订阅收敛不变），点击打开面板；无右侧栏的 shell 自动回退为原弹层（同一视图组件树，零分叉）。**预设功能补交付**：新增「预设与默认值」视图——预设列表（全局/工作区分节）、保存当前草稿或已应用选择为预设、载入预设进草稿（未解析项明确报告）、重命名/替换/删除（显式确认）、工作区默认值的保存/查看/清除；对应 `/capabilities` 命令新增 `presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear` 九个动词，命令行路径同样可用。详见 [会话能力管理器](docs/features/session-capability-manager.md)「管理界面与通知」。
+- **会话能力管理器：预设打包导出与两阶段导入**：预设导出升级为 **version-2 打包文档**——按 Skill 来源分别处理：远程仓库来源只记录链接（portable ref）；安装在工作区与本地全局的 Skill 直接把文件打包随文档旅行；Orrery 内置按名称引用。导入永远先出摘要（每个 Skill 装进哪个根目录、几个文件、有没有同名冲突），你确认并选择冲突处理方式（默认取消，替换/共存需显式选择）后才落盘：工作区 Skill 装进当前工作区、本地 Skill 装进本机用户技能目录；任一文件写失败自动回滚，装入的技能不会自动启用（仍需勾选 + Apply）。全程零网络、零 server 启动，导入审计记录安装结果与冲突决策。详见 [会话能力管理器](docs/features/session-capability-manager.md)「预设与默认值」。
+
 ### Changed
 
 - **Worktree 模式开关从输入框迁入车道面板**：输入框下方的「Worktree」按钮让人误以为必须打开它才能使用车道——实际上车道能力始终可用，该按钮只是一个可选纪律模式。按钮已从输入框移除；模式切换改为车道面板工具条的常驻控件（关闭时描边 chip、开启时实心徽标，不可用时置灰并附原因），tooltip 与 `/worktree on` 回执现在都明确"车道无需开启本模式；开启后助手不再直接改文件，所有改动走隔离车道"。`/worktree on|off` 命令与模式守卫行为不变。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。

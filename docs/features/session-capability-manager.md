@@ -6,7 +6,7 @@
 
 本特性把 Orrery 会话的 Skill 与 MCP 配置收敛为一份**显式的已选集合**：编辑先进入草稿，确认（Apply）后才生效并持久化；持久化由 Orrery 自管的带锁侧文件承担，不依赖宿主 storage 的跨进程保证。Skill 侧保持官方形状（宿主注册表 + stock `tool-skill`），MCP 侧由 Orrery 作为唯一挂载入口（managed/unmanaged 区分）。
 
-当前实施进度：**持久化存储层（带锁侧文件）与 Skill 侧「库存、身份与选择 provider」已落地**（含组合迁移与内置 Skill 迁移检查）；Apply 事务、管理器界面等随 OpenSpec 变更 `session-capability-manager` 的任务组逐组交付，本文同步补全。
+当前实施进度：**全部任务组已交付**。存储层、选择 provider、Apply 事务、生命周期、MCP 会话级关闭、预设库与工作区默认值、管理界面（右侧栏 Capabilities 面板 + Badge 入口）与打包导出/两阶段导入均已落地（最后两者经 OpenSpec 变更 `capability-manager-ux`）。
 
 ## 用户可见行为
 
@@ -92,8 +92,10 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 **可移植文档与导入安全**（[portable-refs.js](<../../plugins/orrery-harness/src/capabilities/portable-refs.js>)）：Skill ref 白名单 = source kind + 无凭据 canonical repository + requested ref + subpath + logical name／target scope + 可选已解析 commit／digest；MCP ref 只含 Orrery 管理的逻辑 binding identity + 显示 label——URL、凭据、命令、参数、headers、环境值一律拒收。导入校验原子化（object-rooted schema：version、文档 ≤ 1 MiB、条目 ≤ 1000、字段 ≤ 4 KiB，未知字段与未知版本整体拒绝、零写入）。导入只**绑定**本机已配置的 identity：不创建、不启动、不接受连接内容。
 
 **unresolved 语义**（9.3）：未解析的 ref 保留在 requested metadata 里，绝不进入 enabled 草稿；安装后仍需用户单独勾选并 Apply；同名项不替代；加载或导入不触发网络、安装或启动。
+修订（`capability-manager-ux` 用户裁决）：**version-2 打包文档的导入动作本身**是显式安装行为（见下段）；v1 文档与预设**载入**仍零网络、零安装、零启动。
 
 **工作区默认值**（[defaults-transaction.js](<../../plugins/orrery-harness/src/capabilities/defaults-transaction.js>)）：「保存为工作区新会话默认值」是独立事务——确认面点名记录的精确能力与 scope、逐项警告无法解析项；记录的是 draft resolved sets + unresolved refs 的**拷贝快照**（保存后草稿独立演化）；不需要先 Apply、也绝不改变当前会话；显式空集是可保存的真实选择，而**清除 = 不存在**（新会话回到内置基线）；绑定工作区稳定身份（canonical 根路径摘要，工作区改名不影响绑定）；保存／清除经 CAS，并发保存显式冲突。
+**打包导出与两阶段导入**（[preset-package.js](<../../plugins/orrery-harness/src/capabilities/preset-package.js>) + [preset-package-install.js](<../../plugins/orrery-harness/src/capabilities/preset-package-install.js>)）：`preset-export` 默认产出 **version-2 打包文档**（`format:'document'` 为 v1 检视/备份格式）。导出按 Skill 来源三分：**远程来源**（有 portable provenance）只写合规 portable ref（链接，不带内容）；**工作区安装**（project scope）与**本地全局**（user/custom 且 `portable:false`）打包 UTF-8 文件集随文档旅行（entry path 相对、逐段 segment、禁 `..`/绝对路径；包 ≤ 8 MiB、单文件 ≤ 512 KiB、每 Skill ≤ 256 文件，未知字段/版本原子拒收零写入）；**Orrery 内置**按名称引用（任何装了 bundle 的机器可解析，缺失列入 warnings）。导入两阶段：`dryRun:true` 只回摘要（每个 Skill 的目标根/文件数/冲突、unresolved refs）零写入；确认调用携带 `onCollision`（默认 cancel——同名未决策零写入，replace/coexist 需显式，coexist 派生 `<name>-2` 并改写 frontmatter 名称）执行安装：project 包装入**当前工作区** project Skill 根、user 包装入目标机 user Skill 根，逐文件临时名→rename，任一失败回滚已写文件且不建档，安装与冲突决策经 `capability-preset-import` 审计类型落审计。安装是**导入动作本身的显式主效应**：零网络、零 server 启动；远程 ref 保持 unresolved（安装仍走 skill-distribution 的独立动作）；装入的 Skill 不自动勾选（仍须草稿选择 + Apply）。
 
 ### MCP 会话级关闭
 
@@ -119,7 +121,7 @@ Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery �
 
 ### 管理界面与通知
 
-**会话 Badge 与管理器**（客户端 `lib/client.capability-*.js`，服务器 `/capabilities` 命令）：Badge 挂在 `conversation.input.right`（order 95，紧邻 LSP order 100），显示的已应用 Skills/MCP 计数一律以**服务端回执**为准（draft 绝不乐观显示）；空白会话凭明确 session ID 打开。管理器面板按需 lazy：Skills/MCP 两个视图、来源标签（Orrery 内置/user/project/custom）、冲突与缺失标记、搜索；MCP 视图按 **Orrery 管理** 与 **unmanaged** 分组（8.8）；未满足的一致性条件显示显式 **unsupported** 而非隐藏控件，与 loading/unknown 区分；恢复失败显示原因。草稿交互（12.3）：面板可直接勾选/取消（行即复选框，键盘 Space/Enter 可操作），底部 Apply 提交走 `/capabilities apply <json>`——名字在服务器侧按**全量库存**映射为身份（不在有效选择里的候选同样可勾选），未知名显式报错；关闭 dirty draft 提供 discard/keep editing；提交中复用同一 request ID；失败保留草稿；revision conflict 显示当前状态让用户重选（不静默 rebase）；无 diff 但有缺失警告时提供 install/configure 而不虚构 Apply；结果待确认可查询。命令结果契约注意：`dsh-commands` 的 normalizeResult 只保留 `{kind, text, sourceEventSeq}`，结构化载荷一律以 JSON 文本传输。
+**会话 Badge 与 Capabilities 面板**（客户端 `lib/client.capability-*.js`，服务器 `/capabilities` 命令）：Badge 挂在 `conversation.input.right`（order 95，紧邻 LSP order 100），显示的已应用 Skills/MCP 计数一律以**服务端回执**为准（draft 绝不乐观显示），带内联图标与不可用警告点；空白会话凭明确 session ID 打开。**管理器落点是右侧栏 Capabilities 面板**（`sidebarRightTabs` tab `orrery-capabilities` + `sidebar.right.pane.tab`，priority `extension`，与 Worktree 面板同模式）：点击 Badge 经 `sidebarRight.openTab` 打开对应会话的面板；shell 无右侧栏时 Badge 回退为输入框弹层——**面板与弹层共享同一视图组件树**（`shell` prop 只换外壳），降级路径零分叉。面板三个视图：Skills（按 scope 分组 Orrery 内置/user/project/custom、真实复选框、名称+描述次行、冲突/缺失标记、搜索）、MCP（managed/unmanaged 分组、逐字段校验的添加表单）、**预设与默认值**（global/workspace 分节列表、保存草稿/已应用为预设、载入预设进草稿并报告 unresolved、重命名/替换/删除显式确认、导出 v2 包下载 `.json`、导入永远先 dry-run 出摘要（目标根/文件数/冲突列表）经显式确认与冲突决策后执行、工作区默认值保存/查看/清除）。底栏 Apply/Discard 带 dirty 净增减摘要（+n/−m），commit 相位语义不变。服务器面：`/capabilities receipt|list|conditions|apply|mcp-add|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear`——命令是 UI 唯一数据源，UI 不直连 store；未满足的一致性条件显示显式 **unsupported** 而非隐藏控件，与 loading/unknown 区分；恢复失败显示原因。草稿交互（12.3）：行即复选框（键盘 Space/Enter 可操作），Apply 提交走 `/capabilities apply <json>`——名字在服务器侧按**全量库存**映射为身份（不在有效选择里的候选同样可勾选），未知名显式报错；关闭 dirty draft 提供 discard/keep editing；提交中复用同一 request ID；失败保留草稿；revision conflict 显示当前状态让用户重选（不静默 rebase）；无 diff 但有缺失警告时提供 install/configure 而不虚构 Apply；结果待确认可查询。命令结果契约注意：`dsh-commands` 的 normalizeResult 只保留 `{kind, text, sourceEventSeq}`，结构化载荷一律以 JSON 文本传输。
 
 **给模型的移除通知**（12.4，[selection-notify.js](<../../plugins/orrery-harness/src/capabilities/selection-notify.js>)）：Apply 被接受后净增减跨多次应用合并，在**下一次安全请求**时以完整 UserMessage（共享 helper）随该请求注入——绝不自行触发回合、不在 `session/event` 内同步 followup；来源标记为 `orrery-selection-notify`（非 `user`），intent gate 与 continuation/intent 分类器按构造排除（共享 `isGenuineUserMessage` 只认 `source.kind === 'user'`）；英文 advisory 模板明确「已 handed off 的调用仍可能完成、历史中任何回合或调用不被撤回或抹除」；注入失败只 audit/warn，绝不影响已接受的提交。
 
