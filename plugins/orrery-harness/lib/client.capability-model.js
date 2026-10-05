@@ -343,6 +343,9 @@ window.__ModuleLoader__.load({
 				if (typeof ref.name === "string" && ref.name !== "") return ref.name;
 				if (typeof ref.ref === "string" && ref.ref !== "") return ref.ref;
 				if (typeof ref.hint === "string" && ref.hint !== "") return ref.hint;
+				// Wrapped refs ({kind, ref:{...}} — the shape import binding and
+				// the v2 dry-run produce): label by the carried name.
+				if (ref.ref && typeof ref.ref === "object" && typeof ref.ref.name === "string" && ref.ref.name !== "") return ref.ref.name;
 				try {
 					return JSON.stringify(ref);
 				} catch {
@@ -350,6 +353,113 @@ window.__ModuleLoader__.load({
 				}
 			}
 			return "unresolved";
+		}
+
+		// ---- Version-2 package export/import (D6 two-phase) ----
+
+		/** Version dispatch, mirroring the server gate exactly: a document whose
+		 * version is 2 takes the two-phase import (dry-run summary, then an
+		 * explicit confirm); anything else keeps the v1 single-step path whose
+		 * own server-side gate rejects unknown versions atomically. */
+		function packageVersionOf(document) {
+			if (document !== null && typeof document === "object" && !Array.isArray(document) && document.version === 2) return 2;
+			return null;
+		}
+
+		/** Phase one of the package import: categorize the dry-run response into
+		 * the summary surface — one install row per bundled Skill (scope, name,
+		 * file count, resolved target root, collision flag), the collision
+		 * subset, and the unresolved refs. The dry-run wrote NOTHING; a rejection
+		 * here is still the atomic zero-write gate. */
+		function importDryRunOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status === "rejected") return { kind: "rejected", reason: String(response.reason ?? "rejected") };
+			if (response.status === "no-workspace") return { kind: "no-workspace" };
+			if (response.status !== "dry-run") return { kind: "error", status: response.status ?? "unknown" };
+			const scopeOf = (value) => (typeof value === "string" && value !== "" ? value : "project");
+			const install = (Array.isArray(response.install) ? response.install : []).map((row) => ({
+				targetScope: scopeOf(row?.targetScope),
+				name: typeof row?.name === "string" && row.name !== "" ? row.name : "unknown",
+				fileCount: Number.isSafeInteger(row?.fileCount) && row.fileCount >= 0 ? row.fileCount : 0,
+				targetRoot: typeof row?.targetRoot === "string" ? row.targetRoot : null,
+				collision: row?.collision === true,
+			}));
+			const collisions = (Array.isArray(response.collisions) ? response.collisions : []).map((row) => ({
+				targetScope: scopeOf(row?.targetScope),
+				name: typeof row?.name === "string" && row.name !== "" ? row.name : "unknown",
+			}));
+			return {
+				kind: "summary",
+				install,
+				collisions,
+				unresolved: Array.isArray(response.unresolved) ? [...response.unresolved] : [],
+				// The explicit collision list is authoritative; the per-row flags
+				// cover the same signal, so either one arms the decision control.
+				hasCollisions: collisions.length > 0 || install.some((row) => row.collision),
+			};
+		}
+
+		/** Confirm gating: a summary must be on screen, and when collisions exist
+		 * the decision control must hold an explicit choice — cancel is the
+		 * default and is itself a valid explicit decision. */
+		function importConfirmReadyOf(summary, decision) {
+			if (!summary || summary.kind !== "summary") return false;
+			if (!summary.hasCollisions) return true;
+			return decision === "cancel" || decision === "replace" || decision === "coexist";
+		}
+
+		/** Phase two of the package import: categorize the confirmed response —
+		 * the created preset with its installed rows and collision decisions, a
+		 * name collision needing its own decision, an install failure with the
+		 * rollback count (no preset record was created), or a missing target
+		 * root. */
+		function importConfirmOutcomeOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status === "created") {
+				const scopeOf = (value) => (typeof value === "string" && value !== "" ? value : "project");
+				return {
+					kind: "created",
+					presetId: response.presetId ?? null,
+					bound: Number.isSafeInteger(response.bound?.mcpServers) ? response.bound.mcpServers : 0,
+					unresolved: Number.isSafeInteger(response.bound?.unresolvedRefs)
+						? response.bound.unresolvedRefs
+						: (Array.isArray(response.unresolved) ? response.unresolved.length : 0),
+					installed: (Array.isArray(response.installed) ? response.installed : []).map((row) => ({
+						targetScope: scopeOf(row?.targetScope),
+						// The server's final on-disk name (a coexist rename lands here);
+						// fall back to the requested name.
+						name: typeof row?.target === "string" && row.target !== "" ? row.target : (typeof row?.name === "string" && row.name !== "" ? row.name : "unknown"),
+						fileCount: Number.isSafeInteger(row?.fileCount) && row.fileCount >= 0 ? row.fileCount : 0,
+						status: typeof row?.status === "string" && row.status !== "" ? row.status : "installed",
+					})),
+					collisions: (Array.isArray(response.collisions) ? response.collisions : []).map((row) => ({
+						targetScope: scopeOf(row?.targetScope),
+						name: typeof row?.name === "string" && row.name !== "" ? row.name : "unknown",
+						decision: typeof row?.decision === "string" && row.decision !== "" ? row.decision : "cancel",
+					})),
+				};
+			}
+			if (response.status === "install-failed") {
+				return { kind: "install-failed", reason: String(response.reason ?? "install-failed"), rolledBack: Number.isSafeInteger(response.rolledBack) && response.rolledBack >= 0 ? response.rolledBack : 0 };
+			}
+			if (response.status === "no-target-root") return { kind: "no-target-root", targetScope: String(response.targetScope ?? "unknown") };
+			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null };
+			if (response.status === "no-workspace") return { kind: "no-workspace" };
+			if (response.status === "rejected") return { kind: "rejected", reason: String(response.reason ?? "rejected") };
+			return { kind: "error", status: response.status ?? "unknown" };
+		}
+
+		/** Download filename for the exported package JSON: derived from the
+		 * preset's display name, reduced to a portable slug; a name with no
+		 * ASCII content falls back to the preset id, then to "preset". */
+		function exportFileNameOf(name, presetId) {
+			const slug = (value) => String(value ?? "")
+				.trim().toLowerCase()
+				.replace(/[^a-z0-9_-]+/g, "-")
+				.replace(/^-+|-+$/g, "")
+				.slice(0, 64);
+			const base = slug(name) || slug(presetId) || "preset";
+			return `${base}.json`;
 		}
 
 		exports.badgeStateOf = badgeStateOf;
@@ -376,6 +486,11 @@ window.__ModuleLoader__.load({
 		exports.defaultStateOf = defaultStateOf;
 		exports.defaultWriteOutcomeOf = defaultWriteOutcomeOf;
 		exports.unresolvedLabelOf = unresolvedLabelOf;
+		exports.packageVersionOf = packageVersionOf;
+		exports.importDryRunOf = importDryRunOf;
+		exports.importConfirmReadyOf = importConfirmReadyOf;
+		exports.importConfirmOutcomeOf = importConfirmOutcomeOf;
+		exports.exportFileNameOf = exportFileNameOf;
 		return module.exports;
 	}
 });
