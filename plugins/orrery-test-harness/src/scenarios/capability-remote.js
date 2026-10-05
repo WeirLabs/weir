@@ -69,9 +69,12 @@ function decodeLog(file) {
   return { frames: offsets.length, decoded: parts.length, text: parts.join('') }
 }
 
-/** The durable command lifecycle events of every session log under home. */
-function commandEventReport(home) {
-  const logs = sessionLogs(join(home, 'sessions'))
+/** The durable command lifecycle events of the given session logs. */
+function commandEventReport(home, exclude = new Set()) {
+  // Only logs created by THIS scenario's boot count: the suite shares one IT
+  // home across scenarios, and other sessions legitimately hold their own
+  // command lifecycle events.
+  const logs = sessionLogs(join(home, 'sessions')).filter(file => !exclude.has(file))
   const events = []
   let frames = 0
   let decoded = 0
@@ -96,6 +99,7 @@ function commandEventReport(home) {
 }
 
 async function run(ctx) {
+  const before = new Set(sessionLogs(join(ctx.IT_ROOT, 'home', 'sessions')))
   const trace = join(ctx.IT_ROOT, `trace-${id}.jsonl`)
   const boot = await ctx.spawnHeadless(['orrery-it', prompt], ctx.scenarioEnv(id, trace, {
     ORRERY_IT_CAPABILITY_REMOTE: '1',
@@ -103,7 +107,7 @@ async function run(ctx) {
   }))
   // The authoritative silence evidence: decode the durable session log AFTER
   // the boot and count command lifecycle events.
-  const report = commandEventReport(join(ctx.IT_ROOT, 'home'))
+  const report = commandEventReport(join(ctx.IT_ROOT, 'home'), before)
   writeFileSync(join(ctx.IT_ROOT, 'ws', 'capability-remote-log.json'), JSON.stringify(report, null, 2) + '\n')
   return { scenario: id, trace, code: boot.code, stdout: boot.stdout, stderr: boot.stderr }
 }
