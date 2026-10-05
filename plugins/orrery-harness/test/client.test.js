@@ -273,7 +273,7 @@ describe('orrery settings client half', () => {
       'conversation.input.right', 'tool.call.toolview', 'conversation.input.right',
       // worktree surfaces (U1/U2/U6) register at apply, right after Edit Lock
       'sidebar.session.row.leading', 'conversation.session.header.utilities',
-      'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
+      'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
       // the session capability Badge (12.1): order 95, apply-level registration
       'conversation.input.right',
       'settings.section', 'settings.orrery.item', 'plugins.item',
@@ -306,7 +306,7 @@ describe('orrery settings client half', () => {
 
     // the worktree surfaces: session row marker, header pill, and one keyed
     // tool view per lane tool
-    for (const index of [3, 4, 5, 6, 7, 8, 9]) slotInjects[index].fn()
+    for (const index of [3, 4, 5, 6, 7, 8, 9, 10]) slotInjects[index].fn()
     const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
     expect(marker.definition.name).toBe('sidebar.session.row.leading')
     expect(marker.definition.inject('s1')).toEqual({ sessionId: 's1' })
@@ -314,11 +314,11 @@ describe('orrery settings client half', () => {
     expect(pill.definition.name).toBe('conversation.session.header.utilities')
     const laneToolViews = slotRegistrations.filter((registration) => registration.definition.name === 'tool.call.toolview' && registration.definition.key !== 'hash_edit')
     expect(laneToolViews.map((registration) => registration.definition.key).sort()).toEqual([
-      'worktree_abandon', 'worktree_check', 'worktree_cleanup', 'worktree_land', 'worktree_open',
+      'worktree_abandon', 'worktree_check', 'worktree_cleanup', 'worktree_land', 'worktree_open', 'worktree_watch',
     ])
 
     // the top-level settings section registration
-    slotInjects[11].fn()
+    slotInjects[12].fn()
     const { definition: sectionDef, component: sectionComponent } = slotRegistrations.find((registration) => registration.definition.name === 'settings.section')
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
@@ -329,16 +329,16 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[12].fn()
+    slotInjects[13].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
     expect(itemEntry.definition.id).toBe('orrery-config')
 
     // the Plugins-page entry
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     expect(definition.name).toBe('plugins.item')
     // the session capability Badge slot registration (12.1)
-    slotInjects[10].fn()
+    slotInjects[11].fn()
     const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
     expect(badgeEntry.definition.name).toBe('conversation.input.right')
     expect(badgeEntry.definition.order).toBe(95)
@@ -373,7 +373,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     const injected = definition.inject()
 
@@ -443,7 +443,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
 
     const settle = async (props) => {
@@ -474,7 +474,7 @@ describe('orrery settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')
@@ -580,8 +580,8 @@ describe('orrery settings client half', () => {
     expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual([])
     slotInjects[3].fn()
     const marker = slotRegistrations.find((registration) => registration.definition.id === 'orrery-worktree-marker')
-    // the lane tool views are registered by their own injects (indices 5..9)
-    for (const index of [5, 6, 7, 8, 9]) slotInjects[index].fn()
+    // the lane tool views are registered by their own injects (indices 5..10)
+    for (const index of [5, 6, 7, 8, 9, 10]) slotInjects[index].fn()
     const laneTool = slotRegistrations.find((registration) => registration.definition.key === 'worktree_land')
 
     // session row marker: renders nothing until the chunks arrive, then the view
@@ -811,7 +811,7 @@ describe('orrery settings client half', () => {
 
     // with the tab mounted, the Badge's inject gains openPanel (D4) and it
     // opens exactly this tab
-    slotInjects[10].fn()
+    slotInjects[11].fn()
     const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
     const badgeVerbs = badgeEntry.definition.inject('s0')
     expect(typeof badgeVerbs.openPanel).toBe('function')
