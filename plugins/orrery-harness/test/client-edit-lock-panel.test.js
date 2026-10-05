@@ -15,7 +15,15 @@ describe('client.edit-lock-panel chunk', () => {
         if (!(at in state)) state[at] = [initial, (next) => { state[at][0] = next }]
         return state[at]
       },
-      useEffect(fn) { const at = cursor++; if (!(at in state)) state[at] = { cleanup: fn() } },
+      useEffect(fn, deps) {
+        const at = cursor++
+        const key = JSON.stringify(deps ?? null)
+        const prev = state[at]
+        if (!prev || prev.key !== key) {
+          if (prev?.cleanup) prev.cleanup()
+          state[at] = { key, cleanup: fn() }
+        }
+      },
     }
     const jsx = (type, props) => ({ __type: type, ...(props ?? {}) })
     const requireStub = (name) => {
@@ -192,6 +200,33 @@ describe('client.edit-lock-panel chunk', () => {
     expect(byAction(tree, 'arm-stop')).toBe(undefined)
     expect(find(tree, (node) => node['data-orrery-edit-lock-revoked'] !== undefined).children).toBe('editLockRevokedHint')
     expect(runs).toEqual([])
+  })
+
+  it('closes on an outside pointerdown, stays open for inside ones, and re-opens cleanly', async () => {
+    const listeners = []
+    globalThis.document = {
+      addEventListener: (type, fn) => listeners.push([type, fn]),
+      removeEventListener: (type, fn) => { const at = listeners.findIndex((entry) => entry[0] === type && entry[1] === fn); if (at >= 0) listeners.splice(at, 1) },
+    }
+    try {
+      const { render } = await mounted([viewOf('editing', [own('a.txt')])])
+      const panelOf = (tree) => find(tree, (node) => node['data-orrery-edit-lock-panel'] === '')
+      const pointerdown = (closest) => { for (const [type, fn] of [...listeners]) if (type === 'pointerdown') fn({ target: { closest } }) }
+      expect(listeners.length).toBe(0)
+      find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+      expect(panelOf(render())).toBeTruthy()
+      expect(listeners.some(([type]) => type === 'pointerdown')).toBe(true)
+      // A pointerdown inside this entry (button or panel) must not dismiss it.
+      pointerdown(() => ({}))
+      expect(panelOf(render())).toBeTruthy()
+      // A pointerdown anywhere outside dismisses the panel and unregisters the listener.
+      pointerdown(() => null)
+      expect(panelOf(render())).toBe(undefined)
+      expect(listeners.filter(([type]) => type === 'pointerdown').length).toBe(0)
+      // Toggling the button again re-opens (and re-registers) normally.
+      find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+      expect(panelOf(render())).toBeTruthy()
+    } finally { delete globalThis.document }
   })
 
   it('paints an opaque popover with theme-defined tokens only', () => {
