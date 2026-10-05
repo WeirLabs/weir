@@ -250,14 +250,17 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 const candidates = Array.isArray(result?.candidates) ? result.candidates : []
                 const selected = candidates.filter(candidate => candidate.selected)
                 const snapshot = lifecycle?.snapshotFor?.(agent.id)
-                return { kind: 'success', text: 'capability receipt', value: {
+                // The commands registry normalizes results to {kind, text}
+                // (CITED dsh-commands normalizeResult): structured payloads
+                // travel as JSON text.
+                return { kind: 'success', text: JSON.stringify({
                   status: 'applied',
                   effective: {
                     skills: selected.map(candidate => candidate.name),
                     mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [],
                   },
                   warnings: (status?.error ?? null) ? [String(status.reason ?? 'selection-unavailable')] : [],
-                } }
+                }) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities receipt failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
@@ -268,7 +271,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 const candidates = Array.isArray(listingResult?.candidates) ? listingResult.candidates : []
                 const manager = ctx.get?.('orreryMcpManager')
                 const listing = manager?.list?.() ?? { managed: [], unmanaged: [] }
-                return { kind: 'success', text: 'capability listing', value: {
+                return { kind: 'success', text: JSON.stringify({
                   skills: candidates.map(candidate => ({
                     name: candidate.name,
                     description: candidate.description ?? '',
@@ -281,14 +284,14 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                     ...(listing.managed ?? []).map(server => ({ identity: server.identity, state: server.state })),
                     ...(listing.unmanaged ?? []).map(server => ({ serverName: server.serverName, state: 'unmanaged' })),
                   ],
-                } }
+                }) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
             if (verb === 'conditions') {
               // The 1.12 consistency conditions; empty = supported.
-              return { kind: 'success', text: 'capability conditions', value: { conditions: [] } }
+              return { kind: 'success', text: JSON.stringify({ conditions: [] }) }
             }
             return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions' }
           },

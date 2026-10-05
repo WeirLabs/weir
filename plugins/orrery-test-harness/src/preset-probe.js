@@ -29,7 +29,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['presetCreate', 'presetLoad', 'importDoc', 'saveDefault', 'readDefault', 'enabledView', 'report'] },
+        op: { type: 'string', enum: ['presetCreate', 'presetLoad', 'importDoc', 'saveDefault', 'readDefault', 'enabledView', 'capabilities', 'report'] },
         document: { type: 'object' },
         snapshot: { type: 'object' },
         presetId: { type: 'string' },
@@ -40,7 +40,7 @@ function apply(ctx, config = {}) {
     },
     output: {
       schema: { type: 'object' },
-      render: (args, value) => [{ type: 'text', text: `PRESET_PROBE ${value.completed ? `done ${args?._marker ?? value.op}${value.import?.status ? `:${value.import.status}` : ''}${value.load?.kind ? `:${value.load.kind}` : ''}` : `error:${String(value.error ?? 'unknown').slice(0, 200)}`}` }],
+      render: (args, value) => [{ type: 'text', text: `PRESET_PROBE ${value.completed ? `done ${args?._marker ?? value.op}${value.import?.status ? `:${value.import.status}` : ''}${value.load?.kind ? `:${value.load.kind}` : ''}${value.envelope ? `:envelope=${JSON.stringify(value.envelope).slice(0, 240)}` : ''}` : `error:${String(value.error ?? 'unknown').slice(0, 200)}`}` }],
     },
     async execute(args, exec) {
       const report = { completed: false, op: args?.op ?? null }
@@ -108,6 +108,18 @@ function apply(ctx, config = {}) {
         }
         if (args.op === 'readDefault') {
           report.default = await defaults.read(workspaceKey)
+          report.completed = true
+          return report
+        }
+        if (args.op === 'capabilities') {
+          // Envelope probe: what does commands.execute actually return for
+          // /capabilities receipt in a real composition? (client unwrapping
+          // contract verification)
+          const commands = ctx.get('commands')
+          if (!commands) throw new Error('commands service unavailable from the probe ctx')
+          const settled = await commands.execute(exec.agent, '/capabilities receipt', [], new AbortController().signal)
+          // JSON-safe echo: keep the shape, drop anything non-serializable.
+          report.envelope = JSON.parse(JSON.stringify(settled, (key, value) => (typeof value === 'function' || typeof value === 'symbol' || value === undefined ? '[non-json]' : value)))
           report.completed = true
           return report
         }

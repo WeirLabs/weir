@@ -68,6 +68,7 @@ window.__ModuleLoader__.load({
 			}, [props.sessionId]);
 			const conditionState = model.managerConditionState(conditions?.conditions ?? conditions);
 			if (listing === null) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.loading", "Loading capabilities…") });
+			if (listing.error === true) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.error", "Capabilities unavailable for this session.") });
 			if (listing.error) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unavailable", "Capabilities are unavailable in this session.") });
 			if (conditionState === "unsupported") {
 				return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unsupported", "Unsupported: consistency conditions are not met on this host.") });

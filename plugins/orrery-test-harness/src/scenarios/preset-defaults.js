@@ -65,6 +65,9 @@ function decide(options, obs) {
   if (!history.includes('done enabledView')) {
     return toolCallChunks('preset_probe', { op: 'enabledView' })
   }
+  if (!history.includes('done capabilities')) {
+    return toolCallChunks('preset_probe', { op: 'capabilities' })
+  }
   if (!history.includes('done saveDefault')) {
     return toolCallChunks('preset_probe', { op: 'saveDefault', snapshot: { skills: ['fixture-a'], mcpServers: [], unresolvedRefs: [] } })
   }
