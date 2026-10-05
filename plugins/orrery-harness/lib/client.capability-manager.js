@@ -97,7 +97,12 @@ window.__ModuleLoader__.load({
 				}).then((response) => {
 					const outcome = model.commitOutcomeOf(response);
 					setCommit(outcome);
-					if (outcome.phase === "applied") refreshAll();
+					if (outcome.phase === "applied") {
+						refreshAll();
+						// The Badge holds its own receipt state — tell it to re-pull
+						// so the composer counts follow the Apply immediately.
+						if (typeof props.onApplied === "function") props.onApplied();
+					}
 				}).catch(() => setCommit({ phase: "failed", error: "apply request failed", draftKept: true }));
 			};
 			const discardDraft = () => {

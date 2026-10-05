@@ -44,17 +44,21 @@ window.__ModuleLoader__.load({
 			const [settled, setSettled] = react.useState(false);
 			const [panelOpen, setPanelOpen] = react.useState(false);
 			const [convergence, setConvergence] = react.useState(null);
+			const aliveRef = react.useRef(false);
+			const refresh = react.useCallback(() => {
+				if (!sessionId || typeof props.fetchReceipt !== "function") return Promise.resolve();
+				return props.fetchReceipt(sessionId).then((receipt) => {
+					if (aliveRef.current) { setState(model.badgeStateOf(receipt, null)); setSettled(true); }
+				}).catch(() => { if (aliveRef.current) setSettled(true); });
+			}, [sessionId]);
 			react.useEffect(() => {
 				if (!sessionId || typeof props.fetchReceipt !== "function") {
 					setState(null);
 					setSettled(false);
 					return undefined;
 				}
-				let alive = true;
+				aliveRef.current = true;
 				setSettled(false);
-				const refresh = () => props.fetchReceipt(sessionId).then((receipt) => {
-					if (alive) { setState(model.badgeStateOf(receipt, null)); setSettled(true); }
-				}).catch(() => { if (alive) setSettled(true); });
 				refresh();
 				// 12.5: a same-session frame refreshes this window's Badge; a
 				// missing subscription degrades to an explicit refresh hint.
@@ -63,11 +67,11 @@ window.__ModuleLoader__.load({
 					const stop = props.subscribeFrames((frame) => {
 						if (model.frameRefreshesSession(frame, sessionId)) refresh();
 					});
-					return () => { alive = false; if (typeof stop === "function") stop(); };
+					return () => { aliveRef.current = false; if (typeof stop === "function") stop(); };
 				}
 				setConvergence(model.convergenceHintOf({ subscribed: false }));
-				return () => { alive = false; };
-			}, [sessionId]);
+				return () => { aliveRef.current = false; };
+			}, [sessionId, refresh]);
 			// Close on outside click (edit-lock panel pattern): any pointerdown
 			// outside this entry's wrapper dismisses the panel. Clicks INSIDE
 			// never reach the toggle because the panel is the button's sibling,
@@ -115,7 +119,10 @@ window.__ModuleLoader__.load({
 							// panel — without them fetchListing is absent and the panel
 							// would sit on the perpetual loading surface (12.2).
 							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions,
-							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection, t: props.t
+							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection,
+							// After a successful Apply the Badge's own receipt is stale —
+							// the panel pings this callback so the counts re-pull (12.2).
+							onApplied: refresh, t: props.t
 						})
 						: null
 				]

@@ -31,6 +31,12 @@ describe('client.capability-badge chunk', () => {
         else reactState[at] = { cleanup: fn() }
         return undefined
       },
+      useCallback(fn) { return fn },
+      useRef(initial) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = { current: initial }
+        return reactState[at]
+      },
     }
     const requireStub = (name) => {
       if (name === 'react') return reactStub
@@ -100,6 +106,11 @@ describe('client.capability-badge chunk', () => {
     const panel = opened.children.find((child) => child && child.__type === ManagerPanel)
     expect(panel).toBeTruthy()
     expect(panel.sessionId).toBe('sess-1')
+    // After a successful Apply the panel pings onApplied so the Badge re-pulls
+    // its receipt (counts follow the Apply immediately).
+    expect(typeof panel.onApplied).toBe('function')
+    expect(panel.applySelection).toBe(props.applySelection)
+    expect(panel.fetchReceipt).toBe(props.fetchReceipt)
     expect(panel.model).toBe(model)
     expect(typeof panel.onClose).toBe('function')
     expect(panel.fetchListing).toBe(props.fetchListing)
