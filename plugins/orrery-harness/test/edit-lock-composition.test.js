@@ -214,6 +214,57 @@ test('enabled composition guards unclaimed editors, latches stop and resumes onl
   assert.equal(host.command(), undefined)
 })
 
+test('a main agent created before the plugin mounts is bound at mount; a repeated setup never double-binds', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const agent = host.agent('main')
+  const child = host.agent('child')
+  child.session.header.delegationDepth = 1
+  const warnings = []
+  host.ctx.logger = { warn: message => warnings.push(String(message)) }
+  const get = host.ctx.get
+  host.ctx.get = name => (name === 'agents' ? { roots: () => [agent, child] } : get(name))
+  // The agent exists BEFORE the plugin mounts: its agent/created event is
+  // already past, so only the mount-time catch-up can bind it.
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+
+  // The write scope and the root binding land synchronously at mount.
+  assert.equal(agent.visible.has('edit'), false)
+  // The domain start is the async tail of the same setup; wait for it.
+  for (let i = 0; i < 200 && service.blocksContinuation(agent); i++) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(service.blocksContinuation(agent), false)
+  assert.equal((await host.emit('tools/pre-execute', { name: 'write', agent })).kind, 'allow')
+  assert.equal((await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })).generation, 1)
+
+  // Sub-agents are never catch-up bound: they are always created after mount.
+  assert.equal(service.blocksContinuation(child), true)
+  await assert.rejects(service.describe(child), /no Edit Lock domain/)
+
+  // A repeated setup (the creation event replayed after the catch-up) is a
+  // no-op: no second tool scope, no second registration, no recorded failure.
+  const managedWrite = agent.visible.get('write')
+  await host.emit('agent/created', { agent })
+  assert.equal(agent.visible.get('write'), managedWrite)
+  assert.equal(service.blocksContinuation(agent), false)
+  assert.equal(warnings.filter(message => /registration failed/.test(message)).length, 0)
+  dispose()
+})
+
+test('mount without an agents registry tolerates its absence; agents created later still bind', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const get = host.ctx.get
+  host.ctx.get = name => (name === 'agents' ? { roots() { throw new Error('registry unavailable') } } : get(name))
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  const agent = host.agent('s')
+  await host.emit('agent/created', { agent })
+  assert.equal(service.blocksContinuation(agent), false)
+  assert.equal((await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })).generation, 1)
+  dispose()
+})
+
 test('remote channel opens a session, EOF revokes it, and reconnect starts interrupted', async () => {
   const { base, root, directory } = await fixture()
   const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
