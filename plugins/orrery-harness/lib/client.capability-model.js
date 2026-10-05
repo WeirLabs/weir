@@ -31,11 +31,19 @@ window.__ModuleLoader__.load({
 		/** The manager's two-view partition with source labels (12.2). */
 		const SOURCE_LABELS = { "orrery-builtin": "Orrery builtin", user: "user", project: "project", custom: "custom" };
 		function skillRowOf(candidate) {
+			const status = candidate?.status ?? "unknown";
 			return {
 				name: candidate?.name ?? "unknown",
 				description: candidate?.description ?? "",
+				// scopeKey feeds the scope-grouped sections (D3); source stays the
+				// display label (12.2).
+				scopeKey: candidate?.scope ?? "unknown",
 				source: SOURCE_LABELS[candidate?.scope] ?? candidate?.scope ?? "unknown",
-				status: candidate?.status ?? "unknown",
+				status,
+				// A candidate the inventory could not parse is the row-level
+				// missing/unavailable mark; selected-but-absent names surface via
+				// the commit flow's missing phase (12.3), never as hidden rows.
+				missing: status !== "parsed" && status !== "unknown",
 				selected: Boolean(candidate?.selected),
 				conflict: candidate?.conflict === true,
 			};
@@ -138,6 +146,212 @@ window.__ModuleLoader__.load({
 			return { phase: "failed", error: String(response.reason ?? response.status ?? "unknown"), draftKept: true };
 		}
 
+		// ---- Manager redesign (D3): grouping, search, diff summary, validation ----
+
+		/** Scope-grouped skill sections in a fixed order; empty groups drop out. */
+		const SCOPE_GROUP_ORDER = ["orrery-builtin", "user", "project", "custom"];
+		function groupSkillRows(rows) {
+			const byKey = new Map();
+			for (const row of Array.isArray(rows) ? rows : []) {
+				const key = SCOPE_GROUP_ORDER.includes(row?.scopeKey) ? row.scopeKey : "other";
+				if (!byKey.has(key)) byKey.set(key, []);
+				byKey.get(key).push(row);
+			}
+			return [...SCOPE_GROUP_ORDER, "other"]
+				.filter((key) => byKey.has(key))
+				.map((key) => ({ key, label: key === "other" ? "other" : (SOURCE_LABELS[key] ?? key), rows: byKey.get(key) }));
+		}
+
+		/** Search stays a pure filter over name + description (12.2/D3). */
+		function filterSkillRows(rows, query) {
+			const list = Array.isArray(rows) ? rows : [];
+			const needle = String(query ?? "").trim().toLowerCase();
+			if (needle === "") return list;
+			return list.filter((row) => row.name.toLowerCase().includes(needle) || String(row.description ?? "").toLowerCase().includes(needle));
+		}
+
+		/** Net add/remove counts of the dirty draft against the applied sets (D3 footer). */
+		function draftDiffOf(draft) {
+			const empty = { skillsAdded: 0, skillsRemoved: 0, mcpAdded: 0, mcpRemoved: 0, any: false };
+			if (!draft || !Array.isArray(draft.skills) || !Array.isArray(draft.mcpServers) || !draft.applied) return empty;
+			const count = (current, base) => {
+				const baseSet = new Set(Array.isArray(base) ? base : []);
+				const currentSet = new Set(current);
+				let added = 0;
+				let removed = 0;
+				for (const name of currentSet) if (!baseSet.has(name)) added += 1;
+				for (const name of baseSet) if (!currentSet.has(name)) removed += 1;
+				return { added, removed };
+			};
+			const skills = count(draft.skills, draft.applied.skills);
+			const mcp = count(draft.mcpServers, draft.applied.mcpServers);
+			return {
+				skillsAdded: skills.added,
+				skillsRemoved: skills.removed,
+				mcpAdded: mcp.added,
+				mcpRemoved: mcp.removed,
+				any: skills.added + skills.removed + mcp.added + mcp.removed > 0,
+			};
+		}
+
+		// Verbatim copy of the store path segment rule
+		// (src/capabilities/store/paths.js SEGMENT): same-package sync require is
+		// impossible in the ModuleLoader, so the add-form's identity check
+		// mirrors it here.
+		const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+		/** Per-field managed-MCP add-form errors; an empty object means valid. */
+		function mcpAddErrorsOf(fields) {
+			const errors = {};
+			const identity = String(fields?.identity ?? "").trim();
+			if (identity === "") errors.identity = "required";
+			else if (!SEGMENT.test(identity)) errors.identity = "invalid";
+			if (String(fields?.command ?? "").trim() === "") errors.command = "required";
+			return errors;
+		}
+
+		// ---- Presets & workspace default (D3 model half) ----
+
+		/** Stage a loaded preset document into the local draft (stagePreset
+		 * semantics): only the resolved sets enter the draft; unresolved refs are
+		 * carried for reporting; the CAS base (revision/applied) is kept; preset
+		 * metadata never produces an Apply by itself — dirty is recomputed
+		 * against the applied sets. */
+		function draftFromPreset(document, current) {
+			const selection = document?.selection ?? {};
+			const clean = (value) => (Array.isArray(value) ? value.map(String) : []).sort();
+			const skills = clean(selection.skills);
+			const mcpServers = clean(selection.mcpServers);
+			const unresolvedRefs = Array.isArray(selection.unresolvedRefs) ? [...selection.unresolvedRefs] : [];
+			const applied = current?.applied && Array.isArray(current.applied.skills) && Array.isArray(current.applied.mcpServers)
+				? current.applied
+				: { skills: [], mcpServers: [] };
+			const same = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
+			return {
+				skills,
+				mcpServers,
+				applied,
+				revision: Number.isSafeInteger(current?.revision) ? current.revision : 0,
+				unresolvedRefs,
+				dirty: !same(skills, [...applied.skills].sort()) || !same(mcpServers, [...applied.mcpServers].sort()),
+			};
+		}
+
+		/** One preset row summary: identity plus entry counts (never the document). */
+		function presetRowOf(preset) {
+			const counts = preset?.counts ?? {};
+			const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
+			const presetId = typeof preset?.presetId === "string" ? preset.presetId : "unknown";
+			return {
+				scope: preset?.scope === "workspace" ? "workspace" : "global",
+				presetId,
+				name: typeof preset?.name === "string" && preset.name !== "" ? preset.name : presetId,
+				revision: Number.isSafeInteger(preset?.revision) ? preset.revision : 0,
+				counts: {
+					skills: count(counts.skills),
+					mcpServers: count(counts.mcpServers),
+					unresolvedRefs: count(counts.unresolvedRefs),
+				},
+			};
+		}
+
+		/** Preset listing grouped by namespace, sorted by display name. */
+		function groupPresets(payload) {
+			const rows = (Array.isArray(payload?.presets) ? payload.presets : []).map(presetRowOf);
+			const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.presetId < b.presetId ? -1 : a.presetId > b.presetId ? 1 : 0);
+			return {
+				workspaceKey: typeof payload?.workspaceKey === "string" ? payload.workspaceKey : null,
+				global: rows.filter((row) => row.scope === "global").sort(byName),
+				workspace: rows.filter((row) => row.scope === "workspace").sort(byName),
+			};
+		}
+
+		/** preset-save / preset-delete outcome categorization (explicit statuses,
+		 * never silent overwrites). */
+		function presetWriteOutcomeOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status === "created" || response.status === "edited") return { kind: response.status, presetId: response.presetId ?? null, revision: response.revision ?? null };
+			if (response.status === "deleted") return { kind: "deleted", revision: response.revision ?? null };
+			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null };
+			if (response.status === "revision-conflict") return { kind: "revision-conflict" };
+			if (response.status === "exists") return { kind: "exists", presetId: response.presetId ?? null };
+			if (response.status === "no-workspace") return { kind: "no-workspace" };
+			return { kind: "error", status: response.status ?? "unknown" };
+		}
+
+		/** preset-import feedback: created-with-binding counts, a name collision
+		 * needing a decision, a validation rejection with its reason, or a plain
+		 * failure. */
+		function importFeedbackOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status === "created") {
+				return {
+					kind: "created",
+					presetId: response.presetId ?? null,
+					bound: Number.isSafeInteger(response.bound?.mcpServers) ? response.bound.mcpServers : 0,
+					unresolved: Number.isSafeInteger(response.bound?.unresolvedRefs) ? response.bound.unresolvedRefs : 0,
+				};
+			}
+			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null };
+			if (response.status === "rejected") return { kind: "rejected", reason: String(response.reason ?? "rejected") };
+			if (response.status === "no-workspace") return { kind: "no-workspace" };
+			return { kind: "error", status: response.status ?? "unknown" };
+		}
+
+		/** preset-export viewer text: pretty-printed document JSON, or an error. */
+		function presetExportTextOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status !== "ok" || !response.document || typeof response.document !== "object") return { kind: "error", status: response.status ?? "unknown" };
+			try {
+				return { kind: "ok", text: JSON.stringify(response.document, null, 2) };
+			} catch {
+				return { kind: "error", status: "unserializable" };
+			}
+		}
+
+		/** Workspace-default inspection: none (absent or cleared — clearing is
+		 * never an empty set), an explicit empty set, or n entries. */
+		function defaultStateOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status === "no-workspace" || response.status === "unsupported") return { kind: "unsupported" };
+			if (response.status === "absent") return { kind: "none", cleared: false, workspaceKey: response.workspaceKey ?? null };
+			if (response.status !== "ok") return { kind: "error", status: response.status ?? "unknown" };
+			const revision = Number.isSafeInteger(response.revision) ? response.revision : 0;
+			if (response.cleared === true) return { kind: "none", cleared: true, revision, workspaceKey: response.workspaceKey ?? null };
+			const snapshot = response.snapshot && typeof response.snapshot === "object" ? response.snapshot : {};
+			const count = (value) => (Array.isArray(value) ? value.length : 0);
+			const skills = count(snapshot.skills);
+			const mcpServers = count(snapshot.mcpServers);
+			const unresolvedRefs = count(snapshot.unresolvedRefs);
+			if (skills + mcpServers === 0) return { kind: "empty", revision, unresolvedRefs, workspaceKey: response.workspaceKey ?? null };
+			return { kind: "entries", revision, skills, mcpServers, unresolvedRefs, workspaceKey: response.workspaceKey ?? null };
+		}
+
+		/** default-save / default-clear outcome categorization. */
+		function defaultWriteOutcomeOf(response) {
+			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (response.status === "saved" || response.status === "cleared") return { kind: response.status, revision: response.revision ?? null };
+			if (response.status === "revision-conflict") return { kind: "revision-conflict" };
+			if (response.status === "no-workspace") return { kind: "no-workspace" };
+			return { kind: "error", status: response.status ?? "unknown" };
+		}
+
+		/** Display label for one unresolved ref (portable refs are objects; a
+		 * plain string ref renders as itself). */
+		function unresolvedLabelOf(ref) {
+			if (typeof ref === "string") return ref;
+			if (ref && typeof ref === "object") {
+				if (typeof ref.name === "string" && ref.name !== "") return ref.name;
+				if (typeof ref.ref === "string" && ref.ref !== "") return ref.ref;
+				if (typeof ref.hint === "string" && ref.hint !== "") return ref.hint;
+				try {
+					return JSON.stringify(ref);
+				} catch {
+					return "unresolved";
+				}
+			}
+			return "unresolved";
+		}
+
 		exports.badgeStateOf = badgeStateOf;
 		exports.skillRowOf = skillRowOf;
 		exports.partitionManagerListing = partitionManagerListing;
@@ -149,6 +363,19 @@ window.__ModuleLoader__.load({
 		exports.draftToggle = draftToggle;
 		exports.commitOutcomeOf = commitOutcomeOf;
 		exports.convergenceHintOf = convergenceHintOf;
+		exports.groupSkillRows = groupSkillRows;
+		exports.filterSkillRows = filterSkillRows;
+		exports.draftDiffOf = draftDiffOf;
+		exports.mcpAddErrorsOf = mcpAddErrorsOf;
+		exports.draftFromPreset = draftFromPreset;
+		exports.presetRowOf = presetRowOf;
+		exports.groupPresets = groupPresets;
+		exports.presetWriteOutcomeOf = presetWriteOutcomeOf;
+		exports.importFeedbackOf = importFeedbackOf;
+		exports.presetExportTextOf = presetExportTextOf;
+		exports.defaultStateOf = defaultStateOf;
+		exports.defaultWriteOutcomeOf = defaultWriteOutcomeOf;
+		exports.unresolvedLabelOf = unresolvedLabelOf;
 		return module.exports;
 	}
 });
