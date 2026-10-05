@@ -113,6 +113,10 @@
               maxConsecutiveWakes: 8
           - id: orrery-skill-selection
             name: 'orrery-harness/skill-selection'
+          # Orrery-managed MCP: runtime per-server isolated mounts with the
+          # proxy facade, admission gate and adopt flow (task 8.2+).
+          - id: orrery-mcp-manager
+            name: 'orrery-harness/mcp-manager'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal

@@ -31,7 +31,9 @@ export function partitionMcpRows(rows, mounted, registryServers) {
       const identity = row.id.slice(MCP_GROUP_PREFIX.length)
       const registry = registryServers[identity]
       managed.push({ identity, groupId: row.id, label: registry?.label ?? identity, generation: mounted.get(identity)?.generation ?? registry?.generation ?? null, state: mounted.has(identity) ? 'mounted' : 'registered' })
-    } else if (row?.name === '@deepseek-ai/dsh-mcp-client') {
+    } else if (row?.name === '@deepseek-ai/dsh-mcp-client' && !(typeof row.id === 'string' && row.id.startsWith(MCP_GROUP_PREFIX))) {
+      // Stock client rows OUTSIDE our groups: host-configured, ACP-mounted
+      // or other presets' servers — listed, never closable (8.8).
       unmanaged.push({ serverName: row.config?.serverName ?? row.id ?? 'unknown', state: 'unmanaged' })
     }
   }
@@ -59,12 +61,45 @@ export function createMcpManager(dependencies = {}) {
     const lifecycle = dependencies.lifecycle ?? selection?.lifecycle ?? { snapshotFor: () => null }
     const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle })
     const drain = dependencies.drain ?? createMcpDrain({ timeoutMs: config.drainTimeoutMs ?? 30_000 })
-    const listEntryIds = dependencies.listEntryIds ?? (() => [])
-    const listRows = dependencies.listRows ?? (() => [])
+    // The loader store is the flat id → entry map of every activated row
+    // (CITED 1.14 manager usage); options carry each row's name/config.
+    // Loader extends EntryTree (CITED): entries() walks static rows AND
+    // nested subtrees; the store holds runtime-created entries only.
+    const defaultListRows = () => [...(loader?.entries?.() ?? [])].map(entry => ({
+      id: entry?.options?.id ?? null,
+      name: entry?.options?.name ?? null,
+      config: entry?.options?.config ?? {},
+    }))
+    const listEntryIds = dependencies.listEntryIds ?? (() => defaultListRows().map(row => row.id).filter(Boolean))
+    const listRows = dependencies.listRows ?? defaultListRows
     const onError = (reason, cause) => ctx.logger?.warn?.(`${reason}${cause ? `: ${message(cause)}` : ''}`)
 
     const loader = dependencies.loader ?? ctx.get?.('loader')
+    // Readiness by the child client's fiber after loader.await() (1.14
+    // must-fix): a group child resolves as '<group>-client' in the tree.
+    const defaultFiberOf = async groupId => {
+      // Readiness the 1.14 way: resolve the client entry, then AWAIT its own
+      // fiber lifecycle — a group child whose connection never comes up or
+      // whose activation errored surfaces HERE, not as a blind success.
+      for (const candidate of [`${groupId}:${groupId}-client`, `${groupId}-client`]) {
+        let entry = null
+        try {
+          entry = loader?.resolve?.(candidate)
+        } catch { /* try the next shape */ }
+        if (entry?.fiber) {
+          try {
+            if (typeof entry.fiber.await === 'function') await entry.fiber.await()
+            return { state: 'running' }
+          } catch (cause) {
+            startErrors.push({ identity: null, reason: `fiber-await-failed:${groupId}:${message(cause)}` })
+            return null
+          }
+        }
+      }
+      return null
+    }
     const mount = dependencies.mount ?? createMcpMount({ loader, onError })
+    const fiberOf = dependencies.fiberOf ?? defaultFiberOf
     /** publicName → identity, fed by facade registrations (creation-time schema hiding + managed listing). */
     const publicNames = new Map()
 
@@ -96,7 +131,14 @@ export function createMcpManager(dependencies = {}) {
         onError,
       })
       try {
-        await mount.mount({ identity, generation, client: entry.client ?? entry.transport, fiberOf: dependencies.fiberOf })
+        await mount.mount({ identity, generation, client: entry.client ?? entry.transport, fiberOf })
+        // A fiber is not health: the stock client may carry an activation
+        // error (bad import, failed connect). Surface it like the 1.14
+        // entryState check instead of reporting a blind success.
+        const clientEntry = loader?.store?.[`${groupId}-client`]
+        if (clientEntry?.error) {
+          throw new Error(`mcp client entry error for "${identity}": ${message(clientEntry.error)}`)
+        }
       } catch (cause) {
         release()
         throw cause
@@ -106,9 +148,12 @@ export function createMcpManager(dependencies = {}) {
 
     /** Startup: sweep residue, then mount every registered server. */
     async function start() {
-      await mount.sweepResidue(listEntryIds())
+      const swept = await mount.sweepResidue(listEntryIds())
       const current = await registry.read()
-      if (current.kind !== 'ok') return { mounted: 0, skipped: current.kind }
+      if (current.kind !== 'ok') {
+        startErrors.push({ identity: null, reason: `registry-${current.kind}`, swept: swept.length })
+        return { mounted: 0, skipped: current.kind }
+      }
       const ambiguity = detectMcpNameAmbiguity(Object.values(current.servers))
       if (ambiguity.kind === 'conflict') {
         onError(`mcp-name-ambiguity: ${ambiguity.conflicts.map(c => c.reason).join('; ')}`)
@@ -120,6 +165,7 @@ export function createMcpManager(dependencies = {}) {
           await mountOne(entry.identity, entry)
           mountedCount += 1
         } catch (cause) {
+          startErrors.push({ identity: entry.identity, reason: message(cause) })
           onError(`mcp-mount-failed:${entry.identity}`, cause)
         }
       }
@@ -163,8 +209,11 @@ export function createMcpManager(dependencies = {}) {
     }
     ctx.on?.('agent/created', payload => { agentCreated(payload) })
 
+    /** Visible startup/mount errors (manager UI + probes). */
+    const startErrors = []
     const face = {
       start,
+      startErrors,
       adopt,
       gate: gateFace,
       drain,
@@ -175,17 +224,25 @@ export function createMcpManager(dependencies = {}) {
     }
     try { ctx.reflect?.provide?.('orreryMcpManager', face) } catch { /* older row */ }
 
-    return {
-      dispose() {
-        // Fail closed on the dispose/reload window (8.5): managed calls are
-        // refused because the gate has no initialized authority anymore.
-        try { ctx.reflect?.provide?.('orreryMcpGate', { admit: async () => false, enabledFor: () => false, drain }) } catch { /* best effort */ }
-      },
+    // Startup mounting is fire-and-forget (like the 6.1 preload): a slow or
+    // failed start only costs one visible error per server, never a broken
+    // preset row.
+    void Promise.resolve()
+      .then(() => face.start())
+      .catch(cause => {
+        startErrors.push({ identity: null, reason: `start-failed:${message(cause)}` })
+        onError('mcp-manager-start-failed', cause)
+      })
+
+    // Fail closed on the dispose/reload window (8.5): managed calls are
+    // refused because the gate has no initialized authority anymore.
+    return () => {
+      try { ctx.reflect?.provide?.('orreryMcpGate', { admit: async () => false, enabledFor: () => false, drain }) } catch { /* best effort */ }
     }
   }
 }
 
 export const name = 'orrery-mcp-manager'
-export const inject = ['loader']
+export const inject = ['loader', 'tools', 'systemPrompt', 'mcpResources']
 export const apply = createMcpManager()
 export const __message = message // test seam

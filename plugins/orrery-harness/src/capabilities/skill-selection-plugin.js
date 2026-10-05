@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,8 +14,16 @@ import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection } from './initial-selection.js'
 
 const mounted = new WeakMap()
+/**
+ * Process-local face slot: exactly one selection plugin mounts per
+ * composition (per process), and every consumer row is the same bundle
+ * module instance — the same pattern as the MCP facade realm bridge. This
+ * deliberately avoids a realm-visible service: an agent-scoped ctx.get of a
+ * preset-provided service crosses realms and breaks agents.create (S11).
+ */
+let processFace = null
 /** Manager/Badge access without providing a new preset service or realm. */
-export const skillSelectionFor = ctx => ctx?.get?.('orrerySkillSelection') ?? mounted.get(ctx)
+export const skillSelectionFor = ctx => mounted.get(ctx) ?? processFace
 
 /**
  * Read-only selection adapter. Selection payload: { skills: SkillIdentity[] }.
@@ -76,6 +85,15 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)
           return record.payload?.skills
         })
+        // The persisted installation-local opaque namespace the inventory
+        // requires: explicit config wins; otherwise derived from the host-
+        // supplied profile identity (the same sanctioned source as the store
+        // root), never from skill content or a guessed default.
+        const machineId = config.machineId ?? (() => {
+          const profile = ctx.get('profileContext')
+          if (typeof profile?.home !== 'string' || typeof profile?.name !== 'string') return undefined
+          return createHash('sha256').update(`${profile.home}\0${profile.name}`).digest('hex').slice(0, 24)
+        })()
         const filesystem = dependencies.inventory ?? (async (options, previous) => {
           const profile = ctx.get('profileContext')
           const roots = await resolveSkillRoots({
@@ -86,12 +104,12 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             bundledSkillDir: config.bundledSkillDir ?? process.env.DSH_BUNDLED_SKILL_DIR,
             orreryBuiltinDir: config.orreryBuiltinDir ?? fileURLToPath(new URL('../../skills/', import.meta.url)),
           })
-          const snapshot = await discoverSkillInventory({ roots, machineId: config.machineId, previous })
+          const snapshot = await discoverSkillInventory({ roots, machineId, previous })
           // First-run migration check (D-H 6): a non-equivalent builtin
           // discovery fails the enumeration closed with a visible reason.
           return assertBuiltinSkillMigration(snapshot)
         })
-        const office = dependencies.office ?? createOfficeAdapter(ctx.skills, config.machineId)
+        const office = dependencies.office ?? createOfficeAdapter(ctx.skills, machineId)
         inventory = async (options, previous) => {
           const local = await filesystem(options, previous)
           const bundled = await office(options)
@@ -198,10 +216,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       clearFailure: options => provider?.clearFailure(options),
     }
     mounted.set(ctx, face)
-    // Realm-visible lookup (task 7.1): other preset rows (delegate,
-    // intent-gate) hold their own child ctx and cannot hit the WeakMap —
-    // they resolve the face through the host-plane reflect service.
-    try { ctx.reflect?.provide?.('orrerySkillSelection', face) } catch { /* an older row already provides it */ }
+    processFace = face
   }
 }
 

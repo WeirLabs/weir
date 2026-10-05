@@ -3,7 +3,7 @@
   "version": "0.7.0",
   "private": true,
   "type": "module",
-  "description": "Orrery — orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
+  "description": "Orrery \u2014 orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
   "exports": {
     "./package.json": "./package.json",
     "./core": "./src/core/index.js",
@@ -20,7 +20,9 @@
     "./notify": "./src/notify/index.js",
     "./client": "./lib/client.js",
     "./index.js": "./lib/index.js",
-    ".": "./lib/index.js"
+    ".": "./lib/index.js",
+    "./mcp-manager": "./src/capabilities/mcp-manager.js",
+    "./mcp-facade-plugin": "./src/capabilities/mcp-facade-plugin.js"
   },
   "dsh": {
     "bundle": {

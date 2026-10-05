@@ -63,7 +63,7 @@ export function mcpGroupOptions({ identity, generation, client }) {
     group: true,
     isolate: { tools: true, systemPrompt: true, mcpResources: true },
     config: [
-      { id: `${group}-facade`, name: 'orrery-harness/mcp-facade-plugin', config: { identity, generation } },
+      { id: `${group}-facade`, name: 'orrery-harness/mcp-facade-plugin', config: { identity, generation, group } },
       { id: `${group}-client`, name: '@deepseek-ai/dsh-mcp-client', config: client },
     ],
   }
@@ -107,7 +107,7 @@ export function createMcpMount({ loader, onError = () => {} }) {
     const options = mcpGroupOptions({ identity, generation, client })
     await loader.create(options)
     await loader.await()
-    const fiber = typeof fiberOf === 'function' ? fiberOf(options.id) : { state: 'running' }
+    const fiber = typeof fiberOf === 'function' ? await fiberOf(options.id) : { state: 'running' }
     if (fiber === null) {
       const reason = `mcp-mount-error: client entry has no fiber after loader.await()`
       onError(reason)

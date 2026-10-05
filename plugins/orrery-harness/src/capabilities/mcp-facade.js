@@ -73,8 +73,27 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
   }
 
   const mcpResources = {
-    register(provider) {
-      return /** @type {{ register(p: unknown): unknown }} */ (host.mcpResources).register(wrapper.wrapResourceProvider(provider))
+    /**
+     * Host contract (CITED stock client registerServerContext):
+     * mcpResources.register(server, provider) — the server argument is
+     * preserved verbatim and the provider's request path is gated by THIS
+     * facade's admission verdict (8.4①: resource operations are gated at
+     * dispatch by the target server; shared resource tool schemas stay
+     * visible, only execution is gated).
+     */
+    register(server, provider) {
+      const request = provider?.request
+      const gated = typeof request === 'function'
+        ? { ...provider, async request(args, exec) {
+            const admitted = await admit(exec?.agent)
+            if (!admitted) {
+              const error = new Error(`MCP server "${identity}" resources are not enabled for this agent`)
+              throw Object.assign(error, { code: 'mcp-admission-refused' })
+            }
+            return request(args, exec)
+          } }
+        : provider
+      return /** @type {{ register(s: unknown, p: unknown): unknown }} */ (host.mcpResources).register(server, gated)
     },
   }
 

@@ -45,13 +45,25 @@ export function createMcpGate({ registry, lifecycle, sessionMcpServers }) {
     return Boolean(entry && entry.generation === generation)
   }
 
-  /** Instruction-section filtering (8.4): is the server in the session's accepted set? */
+  /**
+   * Instruction-section filtering (8.4): is the server in the session's
+   * accepted set? At a subagent's creation the inherited capture is what the
+   * child gets — the parent's accepted set VERBATIM at that moment — so when
+   * the child's own snapshot is not visible yet (the creation-time
+   * schema-hiding listener races the capture listener), the parent's
+   * snapshot stands in. Call admission (admit) never uses this fallback: a
+   * snapshot-less child is refused, never granted the parent's set.
+   */
   function enabledFor(agent, identity) {
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string' || sessionId.length === 0) return false
-    const snapshot = lifecycle.snapshotFor(sessionId)
+    let snapshot = lifecycle.snapshotFor(sessionId)
+    if (snapshot?.state !== 'ready') {
+      const parentId = agent?.session?.header?.parentSession
+      if (typeof parentId === 'string' && parentId.length > 0) snapshot = lifecycle.snapshotFor(parentId)
+    }
     if (snapshot?.state !== 'ready') return false
-    const accepted = acceptedOf(sessionId)
+    const accepted = snapshot.mcpServers
     return Array.isArray(accepted) && accepted.includes(identity)
   }
 

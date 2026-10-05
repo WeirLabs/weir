@@ -27,7 +27,7 @@ test('group options isolate the three services and reference the stock client by
   expect(options.isolate).toEqual({ tools: true, systemPrompt: true, mcpResources: true })
   expect(options.config[1].name).toBe('@deepseek-ai/dsh-mcp-client')
   expect(options.config[0].name).toBe('orrery-harness/mcp-facade-plugin')
-  expect(options.config[0].config).toEqual({ identity: 'docs', generation: 3 })
+  expect(options.config[0].config).toEqual({ identity: 'docs', generation: 3, group: 'orrery-mcp-docs' })
   assert.throws(() => mcpGroupOptions({ identity: '../x', generation: 1, client: {} }), TypeError)
 })
 
