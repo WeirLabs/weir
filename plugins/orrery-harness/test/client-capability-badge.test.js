@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 
@@ -168,6 +169,21 @@ describe('client.capability-badge chunk', () => {
       expect(afterOutside.children[0]['aria-expanded']).toBe(false)
     } finally {
       delete globalThis.document
+    }
+  })
+})
+
+describe('capability chunks locale contract (2026-10-05 badge slot crash)', () => {
+  // The host locale's second t() parameter is an interpolation VARS object,
+  // never a fallback string: translate() does placeholder lookups with the
+  // `in` operator on it and a string there crashes the slot entry whenever
+  // the registered template carries {placeholders}. All capability chunks
+  // must call props.t(key) single-arg and keep fallbacks in code.
+  it('no capability chunk passes the fallback string as the t() second argument', () => {
+    for (const name of ['client.capability-badge.js', 'client.capability-manager.js', 'client.capability-presets.js']) {
+      const source = readFileSync(new URL(`../lib/${name}`, import.meta.url), 'utf8')
+      expect(source.includes('props.t(key, fallback)')).toBe(false)
+      expect(source.includes('props.t(key)')).toBe(true)
     }
   })
 })
