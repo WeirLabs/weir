@@ -48,6 +48,8 @@
 
 - **Worktree 车道状态订阅（`worktree_watch`）**：主代理可订阅同一仓库内任意车道的结论态（如 `landable`、`landed`、`abandoned`；过渡态不可订阅），车道到达目标状态时自动通知并续推**订阅者会话**——跨会话可用，不再只能干等属主通知或反复 `worktree_check`。订阅一次性：命中一次即自动解除；超时（默认 6 小时，设置页「Worktree 车道」组统一配置，模型不可指定）到期解除并收到一条过期通知，不会无声消失。订阅随车道账本持久化，重启后未过期继续有效；重复订阅同一车道自动替换旧订阅。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
 
+- **Worktree 车道：`worktree_watch` 的 GUI 呈现对齐**：车道状态订阅的调用现在在会话里渲染为与其余五个车道工具一致的结构化卡片（眼睛图标 + 本地化工具名 + 车道链接 + 状态徽章）——订阅成功时列出每个被订阅结论态的徽章与过期时刻（悬停看 ISO 原文），立即命中时显示命中态徽章，不再退化为裸 JSON 视图；车道面板的车道卡头部新增弱化的「N watching」标记（悬停列出被订阅状态）。此前缺元数据的旧日志仍走通用扁平回退，不受影响。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+
 - **会话能力管理器（基础设施，暂无用户可见变化）**：新增 Orrery 自管的带锁持久化侧文件存储（位于 DSH home 下的 `orrery/profiles/<profile>/capabilities`），承载后续会话 Skill/MCP 选择与其回执：每单元独立文件与修订号、原子提交（temp + fsync + rename）、跨进程锁文件（崩溃安全获取、陈旧锁须证明 owner 已不存活才回收）、幂等回执与内容代次指针原子切换；不支持的平台显式报 unsupported 且零写入。本步不改动任何现有行为。详见 [会话能力管理器特性文档](docs/features/session-capability-manager.md)。
 
 - **会话能力管理器：Capabilities 面板与预设入口（UX 重做）**：能力管理器从输入框上方的 320px 弹层升级为**右侧栏 Capabilities 面板**（与 Worktree 面板同模式）——Skills 视图按来源分组（Orrery 内置/user/project/custom）、真实复选框、技能描述次行、冲突/缺失标记与搜索；MCP 视图保留「Orrery 管理/未托管」分组并重做添加表单（逐字段校验）；底栏 Apply/Discard 带净增减摘要（+n/−m）。输入框 Badge 保留为会话级状态与入口（回执计数、警告点、帧订阅收敛不变），点击打开面板；无右侧栏的 shell 自动回退为原弹层（同一视图组件树，零分叉）。**预设功能补交付**：新增「预设与默认值」视图——预设列表（全局/工作区分节）、保存当前草稿或已应用选择为预设、载入预设进草稿（未解析项明确报告）、重命名/替换/删除（显式确认）、工作区默认值的保存/查看/清除；对应 `/capabilities` 命令新增 `presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear` 九个动词，命令行路径同样可用。详见 [会话能力管理器](docs/features/session-capability-manager.md)「管理界面与通知」。
