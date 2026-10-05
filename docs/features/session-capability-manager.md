@@ -85,6 +85,24 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **fail closed 双规则**（6.4，每种情形恰好一条规则）：①根会话／已存在会话的选择记录不可读／损坏／未知版本 → 监听器**不抛出**，会话照常创建／恢复，视图为空 + 分类 reason/hint（`policy-unreadable:*`），原文件绝不改写；恢复 = 人工修复记录 + 新 Apply。②子代理的父快照不可读或无法捕获 → 监听器抛出拒创建，父会话继续并经委派结果得知原因。插件 dispose／reload 窗口保守拒绝（denials-only）。
 - **初始化优先级**（6.5，[initial-selection.js](<../../plugins/orrery-harness/src/capabilities/initial-selection.js>)）：新根会话无 accepted 记录时——保存的工作区默认（含显式空集）逐字胜出并报告缺失项（默认不可解码则 fail closed `workspace-default-unavailable`）；无默认时内置 Skill 基线 + 组合中已启用的 managed MCP；历史内容不构成授权，本路径零持久化；闸门只对 `orrery` 预设生效（组合保证）。
 
+### MCP 会话级关闭
+
+Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery 配置的 server 由 Orrery 在运行时逐个挂载（每个 server 一个隔离 `cordis:group`：代理 facade + stock `dsh-mcp-client`，经宿主支持的 loader API 创建/销毁，崩溃残留行启动时清理），会话选择决定每个 agent 能用哪些。
+
+**保证等级（如实措辞）：**
+
+| 对象 | 保证 |
+|---|---|
+| Orrery 管理的 server | **网关级强制**：工具调用在**包装后定义的 `execute` 最开头**按「注册表 configured identity + registration generation + 会话已接受集合 + lifecycle 快照」准入（被拒调用零 RPC 到达 server，G3b 语义）；三个资源操作按目标 server 在派发时门控；`mcp:<server>` 指令段每次 prompt 组装时按 agent 过滤；Apply 移除后「关闸 → 等待在途 → 超时只报告仍在途」，不承诺强制取消，外部副作用不可撤销 |
+| 工具 schema | **按 agent 在创建时隐藏**（`tools.restrict` 创建时快照）：只对 Apply 之后创建的 agent 成立；live Apply 后既有 agent 的旧 schema 可能仍可见，但每次派发都在任何 server 活动前被拒——不声称 schema 已从该 agent 的请求中消失 |
+| 宿主直接配置／ACP／其他预设挂载的 server | **不提供任何保证**：一律显示为 **unmanaged**，管理器不提供关闭开关、不声称已关闭、不计入关闭统计 |
+
+**软化条款（如实记录）**：准入基于 Orrery 注册层派生的 configured identity 与 registration generation（重连以同 identity 的新 generation 续接，同名不同 identity 不继承授权），范围限于 Orrery 管理的 server；宿主发布的权威身份/generation 与 SDK 最终准入是未授权的后续依赖。`tools/pre-execute` 只作额外早拒，唯一防线是包装定义的最后一刻校验。
+
+**组合期歧义**：一个 configured name 是另一个的 `__` 前缀、或同一公开名被两个 server 声明时 fail closed 拒挂其一（不猜测）；facade 遇到未知宿主方法时该 server fail closed 并可见报错。崩溃残留 `orrery-mcp-*` 行启动时识别并清理。
+
+**纳入 Orrery 管理（adopt）**：现有宿主配置不被自动接管；用户确认后才在注册表创建 identity——宿主原条目仍持有先到先得 `serverName` 保留时显示为**冲突**（提示用户自行停用宿主条目，之后由 managed client 接管），绝不显示为成功。便携式 MCP ref 只指向 Orrery 管理的逻辑 binding。
+
 ### 消费者
 
 所有 Skill 可用性消费者共享同一份预设层视图（[consumer-view.js](<../../plugins/orrery-harness/src/capabilities/consumer-view.js>)）：选择 provider 的每会话候选（已选 + 可用 + 调用权限旗标）就是唯一事实来源，消费者只按用途（`model`／`user`）与旗标取交集，不各自保留授权副本、不叠加过滤层。
