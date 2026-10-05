@@ -7,7 +7,7 @@ import { foldWorktreeState, initialWorktreeState, worktreeView } from '../src/wo
 import { createWorktreeTools, renderResult } from '../src/worktree/tools.js'
 import { createWorktreeCommand } from '../src/worktree/command.js'
 import { WorktreeError } from '../src/worktree/errors.js'
-import { renderBoard, renderChildContract, renderNotice } from '../src/worktree/prompts.js'
+import { renderBoard, renderChildContract, renderNotice, renderWatchHit } from '../src/worktree/prompts.js'
 import { worktreeSettings } from '../src/worktree/index.js'
 import { oneShotLane, spawnGuardedChild, supervisedLane } from '../src/delegate/spawn-adapter.js'
 import { createDelegateTool } from '../src/delegate/tool.js'
@@ -124,13 +124,14 @@ describe('worktree tools and command', () => {
     cleanup: async () => ({ ...lane, state: 'kept' }),
     abandon: async () => ({ ...lane, state: 'abandoned' }),
     view: async () => ({ available: true, mode: false, lanes: [] }),
+    watch: async (_session, args) => ({ ...lane, state: 'working', summary: `watching for ${args.states.join(', ')}`, watch: { lane: args.lane, states: args.states, expiresAt: 1234 } }),
     ...overrides,
   })
   const exec = (depth = 0) => ({ agent: { session: { id: 's', header: { cwd: '/r', delegationDepth: depth } } }, signal: new AbortController().signal })
 
   it('declares object-rooted schemas and persists worktree meta', () => {
     const tools = createWorktreeTools(fakeService())
-    expect(tools.map((tool) => tool.name)).toEqual(['worktree_open', 'worktree_check', 'worktree_land', 'worktree_cleanup', 'worktree_abandon'])
+    expect(tools.map((tool) => tool.name)).toEqual(['worktree_open', 'worktree_check', 'worktree_land', 'worktree_cleanup', 'worktree_abandon', 'worktree_watch'])
     for (const tool of tools) {
       expect(tool.parameters.type).toBe('object')
       expect(typeof tool.output.presentationMeta).toBe('function')
@@ -148,6 +149,32 @@ describe('worktree tools and command', () => {
     expect(value.cleanup).toEqual({ state: 'cleaned', summary: 'removed' })
     expect(value.next).toBeNull()
     await land.execute({ lane: 'a-001' }, exec(1)).then(() => expect(1).toBe(0), (error) => expect(error.message).toContain('MAIN_AGENT_ONLY'))
+  })
+
+  it('worktree_watch: object-rooted schema without any timeout field, watch meta, main-agent only', async () => {
+    const tools = createWorktreeTools(fakeService())
+    const watch = tools.find((tool) => tool.name === 'worktree_watch')
+    expect(watch.parameters.type).toBe('object')
+    expect(watch.parameters.required).toEqual(['lane', 'states'])
+    // The model can never set or override the timeout (settings-own lifetime).
+    expect(Object.keys(watch.parameters.properties)).toEqual(['lane', 'states'])
+    expect(watch.parameters.properties.states.type).toBe('array')
+    const value = await watch.execute({ lane: 'a-001', states: ['landable'] }, exec())
+    expect(value.watch).toEqual({ lane: 'a-001', states: ['landable'], expiresAt: 1234 })
+    expect(watch.output.presentationMeta({}, value).worktree).toEqual({
+      tool: 'worktree_watch', lane: 'a-001', state: 'working', summary: 'watching for landable', next: lane.next,
+      watch: { lane: 'a-001', states: ['landable'], expiresAt: 1234 },
+    })
+    await watch.execute({ lane: 'a-001', states: ['landable'] }, exec(1)).then(() => expect(1).toBe(0), (error) => expect(error.message).toContain('MAIN_AGENT_ONLY'))
+    // an UNWATCHABLE_STATE refusal surfaces the code and the watchable states
+    const refusing = createWorktreeTools(fakeService({ watch: async () => { throw new WorktreeError('UNWATCHABLE_STATE', 'cannot watch "working"', { data: { watchable: ['landable'] } }) } }))
+    await refusing.find((tool) => tool.name === 'worktree_watch').execute({ lane: 'a-001', states: ['working'] }, exec()).then(
+      () => expect(1).toBe(0),
+      (error) => {
+        expect(error.message).toContain('UNWATCHABLE_STATE')
+        expect(error.message).toContain('landable')
+      },
+    )
   })
 
   it('renders lane errors with their code and next step', async () => {
@@ -187,11 +214,25 @@ describe('worktree text and settings', () => {
     expect(renderChildContract(record, { readOnly: false })).toContain('Commit your finished work on orrery/a-001')
     expect(renderChildContract(record, { readOnly: false })).toContain('src/**')
     expect(renderNotice(record)).toBe('[worktree] lane a-001 landable@abcdef1 → next: worktree_land({"lane":"a-001"})')
+    // watch facts: the board appends `· N watching` only when watches exist
+    expect(renderBoard({ lanes: [record], mode: false, watches: [] })).toContain('a-001 · landable · next:')
+    expect(renderBoard({ lanes: [record], mode: false, watches: [] })).not.toContain('watching')
+    const watched = renderBoard({ lanes: [record], mode: false, watches: [
+      { id: 'w1', laneId: 'a-001', sessionId: 's1', states: ['landable'], createdAt: 1, expiresAt: 2 },
+      { id: 'w2', laneId: 'a-001', sessionId: 's2', states: ['abandoned'], createdAt: 1, expiresAt: 2 },
+      { id: 'w3', laneId: 'b-002', sessionId: 's3', states: ['landable'], createdAt: 1, expiresAt: 2 },
+    ] })
+    expect(watched).toContain('a-001 · landable · 2 watching · next:')
+    expect(renderWatchHit(record)).toBe('[worktree] watch hit: lane a-001 reached landable → next: worktree_land({"lane":"a-001"})')
   })
 
   it('layers settings over row config over defaults', () => {
-    expect(worktreeSettings({}, undefined)).toEqual({ enabled: true, root: '.orrery/worktrees', maxActive: 4, autoSetup: true })
-    expect(worktreeSettings({ maxActive: 2 }, { autoSetup: false })).toEqual({ enabled: true, root: '.orrery/worktrees', maxActive: 2, autoSetup: false })
+    expect(worktreeSettings({}, undefined)).toEqual({ enabled: true, root: '.orrery/worktrees', maxActive: 4, autoSetup: true, watchTimeoutMinutes: 360 })
+    expect(worktreeSettings({ maxActive: 2 }, { autoSetup: false })).toEqual({ enabled: true, root: '.orrery/worktrees', maxActive: 2, autoSetup: false, watchTimeoutMinutes: 360 })
+    expect(worktreeSettings({}, { watchTimeoutMinutes: 90 }).watchTimeoutMinutes).toBe(90)
+    expect(worktreeSettings({ watchTimeoutMinutes: 45 }, { watchTimeoutMinutes: undefined }).watchTimeoutMinutes).toBe(45)
+    expect(worktreeSettings({}, { watchTimeoutMinutes: 0 }).watchTimeoutMinutes).toBe(360)
+    expect(worktreeSettings({}, { watchTimeoutMinutes: 90.9 }).watchTimeoutMinutes).toBe(90)
     expect(worktreeSettings({}, { maxActive: 0, enabled: false }).maxActive).toBe(4)
   })
 })

@@ -15,7 +15,23 @@ function nodeShellRun({ command, cwd, timeoutMs }) {
   })
 }
 
-function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup } = {}) {
+function fakeClock(start = 1_760_000_000_000) {
+  return {
+    value: start,
+    timers: new Map(),
+    seq: 0,
+    set(handler, delayMs) { const id = ++this.seq; this.timers.set(id, { handler, at: this.value + delayMs }); return id },
+    clear(id) { this.timers.delete(id) },
+    /** Fire every timer due at `value` (all of them when `all`). Handlers run their async work detached. */
+    fire(all = false) {
+      for (const [id, timer] of [...this.timers]) {
+        if (all || timer.at <= this.value) { this.timers.delete(id); timer.handler() }
+      }
+    },
+  }
+}
+
+function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup, clock } = {}) {
   const fixture = makeRepo()
   const notices = []
   const audits = []
@@ -30,10 +46,30 @@ function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false
     modeOf: () => mode,
     localeOf: () => locale,
     ...(resolveSetup !== undefined ? { resolveSetup } : {}),
+    ...(clock ? { now: () => clock.value, setTimer: (handler, delayMs) => clock.set(handler, delayMs), clearTimer: (id) => clock.clear(id) } : {}),
   })
   const session = { id: 'main-1', header: { cwd: fixture.repo } }
   const agent = { session }
   return { ...fixture, service, session, agent, notices, audits, asked }
+}
+
+/** A second lane-service instance over the SAME fixture repository (the
+ * multi-instance race: two host processes sharing one ledger). */
+function secondInstance(h, { clock, pid } = {}) {
+  const notices = []
+  const audits = []
+  const service = createLaneService({
+    git: createGit(nodeGitRun),
+    shellRun: null,
+    settings: () => ({ enabled: true, root: '.orrery/worktrees', maxActive: 4, autoSetup: true }),
+    ask: null,
+    notify: (sessionId, text) => notices.push({ sessionId, text }),
+    audit: (type, data, root) => audits.push({ type, data, root }),
+    modeOf: () => false,
+    ...(clock ? { now: () => clock.value, setTimer: (handler, delayMs) => clock.set(handler, delayMs), clearTimer: (id) => clock.clear(id) } : {}),
+    ...(pid ? { pid } : {}),
+  })
+  return { service, notices, audits }
 }
 
 async function until(predicate, timeoutMs = 10_000) {
@@ -746,6 +782,227 @@ describe('worktree lane service: reconciliation and views', () => {
       const written = await h.service.writeConfig(h.session, { check: suggestions.suggested.check })
       expect(JSON.parse(readFileSync(written.file, 'utf8')).check[0].run).toBe('npm run test')
       expect(sh(h.repo, 'status', '--porcelain')).toBe('?? package.json')
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+describe('worktree lane service: watches', () => {
+  const hitNotices = (h) => h.notices.filter((entry) => entry.text.includes('[worktree] watch hit'))
+  const expiredNotices = (list) => list.filter((entry) => entry.text.includes('[worktree] watch expired'))
+  const watchesOf = async (h, lane) => (await h.service.repoFor(h.repo)).ledger.read().watches.filter((entry) => entry.laneId === lane)
+
+  it('subscribes, hits exactly once on the first target state, and never notifies again', async () => {
+    const clock = fakeClock()
+    const h = harness({ clock })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Watch target' })
+      const bound = await h.service.prepareBind(h.session, opened.lane, { readOnly: false })
+      await bound.commit('child-1')
+      const subscribed = await h.service.watch(h.session, { lane: opened.lane, states: ['no-commits', 'landable'] })
+      expect(subscribed.state).toBe('working')
+      expect(subscribed.watch.lane).toBe(opened.lane)
+      expect(subscribed.watch.states).toEqual(['no-commits', 'landable'])
+      // expiresAt is frozen at subscribe time from the default 360-minute timeout.
+      expect(subscribed.watch.expiresAt).toBe(clock.value + 360 * 60_000)
+      expect(subscribed.summary).toContain('watching for no-commits, landable')
+      expect(await watchesOf(h, opened.lane)).toHaveLength(1)
+      expect(clock.timers.size).toBe(1)
+
+      // The settle lands on no-commits: the watch hits and is consumed.
+      await h.service.childSettled('child-1', h.session)
+      expect(hitNotices(h)).toHaveLength(1)
+      expect(hitNotices(h)[0].sessionId).toBe('main-1')
+      expect(hitNotices(h)[0].text).toContain(`lane ${opened.lane} reached no-commits`)
+      expect(hitNotices(h)[0].text).toContain('next:')
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+      expect(clock.timers.size).toBe(0)
+
+      // A later transition into ANOTHER target state (landable) notifies nobody.
+      const bound2 = await h.service.prepareBind(h.session, opened.lane, { readOnly: false })
+      await bound2.commit('child-2')
+      writeFileSync(join(opened.path, 'feature.txt'), 'feature\n')
+      sh(opened.path, 'add', '.')
+      sh(opened.path, 'commit', '-qm', 'work')
+      await h.service.childSettled('child-2', h.session)
+      expect((await laneOf(h, opened.lane)).state).toBe('landable')
+      expect(hitNotices(h)).toHaveLength(1)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('delivers the hit to the SUBSCRIBING session, not the lane owner', async () => {
+    const h = harness()
+    try {
+      const opened = await h.service.open(h.session, { title: 'Cross session' })
+      const bound = await h.service.prepareBind(h.session, opened.lane, { readOnly: false })
+      await bound.commit('child-1')
+      const subscriber = { id: 'sub-2', header: { cwd: h.repo } }
+      await h.service.watch(subscriber, { lane: opened.lane, states: ['no-commits'] })
+      await h.service.childSettled('child-1', h.session)
+      expect(hitNotices(h)).toHaveLength(1)
+      expect(hitNotices(h)[0].sessionId).toBe('sub-2')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('hits immediately when the lane already sits in a target state, storing nothing', async () => {
+    const h = harness()
+    try {
+      const opened = await h.service.open(h.session, { title: 'Already ready' })
+      const result = await h.service.watch(h.session, { lane: opened.lane, states: ['ready', 'landable'] })
+      expect(result.hit).toBe('ready')
+      expect(result.watch).toBeUndefined()
+      expect(result.summary).toContain('already ready')
+      expect(hitNotices(h)).toHaveLength(1)
+      expect(hitNotices(h)[0].sessionId).toBe('main-1')
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+      expect(h.audits.find((entry) => entry.type === 'watch')?.data.outcome).toBe('hit-immediate')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('refuses empty and transient target states with UNWATCHABLE_STATE and creates nothing', async () => {
+    const h = harness()
+    try {
+      const opened = await h.service.open(h.session, { title: 'No transient' })
+      await h.service.watch(h.session, { lane: opened.lane, states: ['working'] }).then(
+        () => expect('accepted').toBe('refused'),
+        (error) => {
+          expect(error.code).toBe('UNWATCHABLE_STATE')
+          expect(error.data.watchable).toContain('landable')
+          expect(error.data.watchable).not.toContain('working')
+        },
+      )
+      await h.service.watch(h.session, { lane: opened.lane, states: [] }).then(
+        () => expect('accepted').toBe('refused'),
+        (error) => expect(error.code).toBe('UNWATCHABLE_STATE'),
+      )
+      await h.service.watch(h.session, { lane: 'nope', states: ['landable'] }).then(
+        () => expect('accepted').toBe('refused'),
+        (error) => expect(error.code).toBe('UNKNOWN_LANE'),
+      )
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a repeated subscribe replaces the old watch (states and deadline follow the new one)', async () => {
+    const clock = fakeClock()
+    const h = harness({ clock })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Replace me' })
+      const first = await h.service.watch(h.session, { lane: opened.lane, states: ['landable'] })
+      clock.value += 60_000
+      const second = await h.service.watch(h.session, { lane: opened.lane, states: ['abandoned'] })
+      const watches = await watchesOf(h, opened.lane)
+      expect(watches).toHaveLength(1)
+      expect(watches[0].states).toEqual(['abandoned'])
+      expect(watches[0].expiresAt).toBe(second.watch.expiresAt)
+      expect(watches[0].expiresAt).toBeGreaterThan(first.watch.expiresAt)
+      // the old timer was disarmed; exactly one timer survives
+      expect(clock.timers.size).toBe(1)
+      const subscribeAudits = h.audits.filter((entry) => entry.type === 'watch' && entry.data.outcome === 'subscribed')
+      expect(subscribeAudits).toHaveLength(2)
+      expect(subscribeAudits[0].data.replaced).toBe(null)
+      expect(typeof subscribeAudits[1].data.replaced).toBe('string')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('expires with exactly one notice (the watch single delivery) and audits the removal', async () => {
+    const clock = fakeClock()
+    const h = harness({ clock })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Slow lane' })
+      const subscribed = await h.service.watch(h.session, { lane: opened.lane, states: ['landable'] })
+      clock.value = subscribed.watch.expiresAt
+      clock.fire()
+      await until(() => expiredNotices(h.notices).length === 1)
+      const notice = expiredNotices(h.notices)[0]
+      expect(notice.sessionId).toBe('main-1')
+      expect(notice.text).toContain(`lane ${opened.lane}`)
+      expect(notice.text).toContain('landable')
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+      const audit = h.audits.find((entry) => entry.type === 'watch' && entry.data.outcome === 'expired')
+      expect(audit?.data.lane).toBe(opened.lane)
+      // nothing else arrives afterwards
+      clock.fire(true)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(expiredNotices(h.notices)).toHaveLength(1)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('two service instances racing one expiry deliver exactly once', async () => {
+    const clock = fakeClock()
+    const h = harness({ clock })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Raced expiry' })
+      const subscribed = await h.service.watch(h.session, { lane: opened.lane, states: ['landable'] })
+      // A second host instance sharing this repository learns the watch and
+      // arms its own timer for it.
+      const other = secondInstance(h, { clock, pid: 4242 })
+      await other.service.refresh(await other.service.repoFor(h.repo))
+      expect(clock.timers.size).toBe(2)
+      clock.value = subscribed.watch.expiresAt
+      clock.fire(true)
+      await until(() => expiredNotices(h.notices).length + expiredNotices(other.notices).length >= 1)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(expiredNotices(h.notices).length + expiredNotices(other.notices).length).toBe(1)
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('prunes watches expired during downtime silently + audited on the next load (no delivery, no hit)', async () => {
+    const clock = fakeClock()
+    const h = harness({ clock })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Downtime' })
+      const subscribed = await h.service.watch(h.session, { lane: opened.lane, states: ['landable'] })
+      // The host goes down before the immediate-hit-less watch matures; its
+      // timers never fire. The deadline passes during the downtime.
+      clock.value = subscribed.watch.expiresAt + 1
+      // A fresh instance (fresh timer registry) loads the repository.
+      const revived = secondInstance(h, { clock })
+      await revived.service.refresh(await revived.service.repoFor(h.repo))
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+      expect(expiredNotices(revived.notices)).toHaveLength(0)
+      expect(hitNotices(h)).toHaveLength(0)
+      const pruned = revived.audits.filter((entry) => entry.type === 'watch' && entry.data.outcome === 'pruned')
+      expect(pruned).toHaveLength(1)
+      expect(pruned[0].data.lane).toBe(opened.lane)
+      // the pruned watch does not hit on later transitions either
+      const lane = await laneOf(h, opened.lane)
+      expect(lane.state).toBe('ready')
+      expect(await watchesOf(h, opened.lane)).toHaveLength(0)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('exposes the watch count on the board and in the view', async () => {
+    const h = harness()
+    try {
+      const opened = await h.service.open(h.session, { title: 'Counted' })
+      expect(h.service.board(h.session)).not.toContain('watching')
+      await h.service.watch(h.session, { lane: opened.lane, states: ['landable', 'abandoned'] })
+      const subscriber = { id: 'sub-2', header: { cwd: h.repo } }
+      await h.service.watch(subscriber, { lane: opened.lane, states: ['landed'] })
+      expect(h.service.board(h.session)).toContain(`${opened.lane} · ready · 2 watching`)
+      const view = await h.service.view(h.session)
+      const entry = view.lanes.find((lane) => lane.id === opened.lane)
+      expect(entry.watchCount).toBe(2)
+      expect(entry.watchStates).toEqual(['landable', 'abandoned', 'landed'])
     } finally {
       h.cleanup()
     }

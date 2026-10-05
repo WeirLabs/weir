@@ -4,6 +4,7 @@
 // discipline); instance content (titles, commit subjects) passes through
 // verbatim. Pure module.
 import { nextFor } from './state.js'
+import { watchFacts } from './watches.js'
 
 export const LANES_SECTION_NAME = 'orchestrator:worktree-lanes'
 export const LANES_CONTEXT_NAME = 'orrery:worktree-board'
@@ -16,6 +17,7 @@ Lanes are isolated git worktrees the host owns (state, checks, merge). You suppl
 - delegate({ ..., worktree: <lane> }) binds the worker to the lane. Write the brief as usual; the host adds the lane contract.
 - When a bound worker settles, the host checks the lane itself and notifies you with the next step. Do not re-check by hand.
 - worktree_land({ lane }) asks the user to approve the merge. Only the user approves; never claim a lane is merged before the result says so.
+- worktree_watch({ lane, states }) subscribes YOU to conclusion states of any lane in this repository — including lanes another session opened. You get exactly one notification when the lane reaches a watched state (or when the watch times out); do not poll worktree_check while a watch is pending.
 - Every worktree result and notice carries "next". Do exactly that next step; when it is waitFor, end your turn.
 - Cleanup and abandoning are the user's decision (worktree_cleanup / worktree_abandon ask them).`
 
@@ -28,15 +30,19 @@ export function renderNext(next) {
 
 /**
  * Runtime-context board: one line per lane of this session's repository.
- * @param {{ lanes: any[], mode: boolean }} input
+ * Lanes with active watches append `· N watching` (watches come from the
+ * ledger's top-level array; absent/empty means no suffix, byte-identical to
+ * the pre-watch board).
+ * @param {{ lanes: any[], mode: boolean, watches?: any[] }} input
  */
-export function renderBoard({ lanes, mode }) {
+export function renderBoard({ lanes, mode, watches }) {
   const active = lanes.filter((lane) => !['kept', 'cleaned', 'abandoned'].includes(lane.state))
   if (active.length === 0 && !mode) return ''
   const lines = [`Worktree lanes${mode ? ' (Worktree mode ON: the main agent does not edit files; writing delegations need worktree=<lane>)' : ''}:`]
   if (active.length === 0) lines.push('- (no active lanes)')
   for (const lane of active) {
-    lines.push(`- ${lane.id} · ${lane.state}${lane.baseMoved ? ' · base-moved' : ''} · next: ${renderNext(nextFor(lane))}`)
+    const facts = watchFacts(watches, lane.id)
+    lines.push(`- ${lane.id} · ${lane.state}${lane.baseMoved ? ' · base-moved' : ''}${facts.watchCount > 0 ? ` · ${facts.watchCount} watching` : ''} · next: ${renderNext(nextFor(lane))}`)
   }
   return lines.join('\n')
 }
@@ -74,4 +80,22 @@ You work in lane ${lane.id}: an isolated git worktree at ${lane.path} on branch 
 export function renderNotice(lane, detail) {
   const tree = lane.state === 'landable' && lane.landableTree ? `@${lane.landableTree.slice(0, 7)}` : ''
   return `[worktree] lane ${lane.id} ${lane.state}${tree}${detail ? ` (${detail})` : ''} → next: ${renderNext(nextFor(lane))}`
+}
+
+/**
+ * Watch-hit notification for the SUBSCRIBING session (cross-session capable):
+ * the lane reached one of the watched states; the watch is consumed.
+ * @param {any} lane - the lane AFTER the hitting transition
+ */
+export function renderWatchHit(lane) {
+  return `[worktree] watch hit: lane ${lane.id} reached ${lane.state} → next: ${renderNext(nextFor(lane))}`
+}
+
+/**
+ * Watch-expiry notification: the watch's single delivery when no target state
+ * was reached in time; the watch is removed.
+ * @param {any} watch - the expired watch record
+ */
+export function renderWatchExpired(watch) {
+  return `[worktree] watch expired: lane ${watch.laneId} did not reach ${watch.states.join(', ')} within the watch timeout; the subscription is removed`
 }

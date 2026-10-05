@@ -36,6 +36,8 @@ export function createWorktreeTools(service) {
       ...(value.check ? { check: value.check } : {}),
       ...(typeof value.diff === 'string' && value.diff ? { diff: value.diff } : {}),
       ...(value.cleanup ? { cleanup: value.cleanup } : {}),
+      ...(value.watch ? { watch: value.watch } : {}),
+      ...(value.hit ? { hit: value.hit } : {}),
     },
   })
   const laneParam = { lane: { type: 'string', description: 'Lane id (e.g. fix-login-001).' } }
@@ -109,6 +111,23 @@ export function createWorktreeTools(service) {
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         mainOnly(exec, 'worktree_abandon')
         return service.abandon(exec.agent, args.lane, { signal: exec.signal }).catch(rethrow)
+      },
+    },
+    {
+      name: 'worktree_watch',
+      description: 'Subscribe this session to conclusion states of any lane in this repository — including lanes another session opened (the notification goes to YOU, not the lane owner). When the lane reaches one of the states you get exactly one notification and the watch is removed (one-shot); if no state is reached in time, one expiry notice arrives instead. Re-subscribing the same lane replaces the old watch. Transient states (preparing/working/checking/awaiting-approval) are refused with UNWATCHABLE_STATE.',
+      parameters: {
+        type: 'object',
+        properties: {
+          ...laneParam,
+          states: { type: 'array', items: { type: 'string' }, description: 'Conclusion states to watch (e.g. ["landable", "abandoned"]). The lifetime comes from the worktreeWatchTimeoutMinutes setting (default 6 hours) — there is deliberately no timeout parameter.' },
+        },
+        required: ['lane', 'states'],
+      },
+      output: { schema: { type: 'object' }, render, presentationMeta: meta('worktree_watch') },
+      async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+        mainOnly(exec, 'worktree_watch')
+        return service.watch(exec.agent.session, args).catch(rethrow)
       },
     },
   ]

@@ -15,9 +15,9 @@ export const SCHEMA_VERSION = 1
 const STALE_LOCK_MS = 30_000
 const LOCK_WAIT_MS = 10_000
 
-/** @returns {{ schemaVersion: number, seq: number, lanes: any[] }} */
+/** @returns {{ schemaVersion: number, seq: number, lanes: any[], watches: any[] }} */
 export function emptyLedger() {
-  return { schemaVersion: SCHEMA_VERSION, seq: 0, lanes: [] }
+  return { schemaVersion: SCHEMA_VERSION, seq: 0, lanes: [], watches: [] }
 }
 
 /**
@@ -37,6 +37,17 @@ export function validateLedger(value) {
     if (!STATES.includes(lane.state)) return `lane ${lane.id} has unknown state ${JSON.stringify(lane.state)}`
     if (typeof lane.path !== 'string' || typeof lane.branch !== 'string') return `lane ${lane.id} lacks path/branch`
   }
+  if (value.watches !== undefined) {
+    if (!Array.isArray(value.watches)) return 'watches must be an array'
+    for (const [index, watch] of value.watches.entries()) {
+      if (!watch || typeof watch !== 'object') return `watches[${index}] is not an object`
+      if (typeof watch.id !== 'string' || !watch.id) return `watches[${index}] has no id`
+      if (typeof watch.laneId !== 'string' || !watch.laneId) return `watches[${index}] has no laneId`
+      if (typeof watch.sessionId !== 'string' || !watch.sessionId) return `watches[${index}] has no sessionId`
+      if (!Array.isArray(watch.states) || watch.states.length === 0 || watch.states.some((state) => typeof state !== 'string')) return `watches[${index}] has an invalid states list`
+      if (!Number.isFinite(watch.createdAt) || !Number.isFinite(watch.expiresAt)) return `watches[${index}] lacks createdAt/expiresAt`
+    }
+  }
   return null
 }
 
@@ -51,7 +62,7 @@ export function createLedger(directory, options = {}) {
   const file = join(directory, LEDGER_FILE)
   const lockFile = join(directory, LOCK_FILE)
 
-  /** @returns {{ schemaVersion: number, seq: number, lanes: any[] }} */
+  /** @returns {{ schemaVersion: number, seq: number, lanes: any[], watches: any[] }} */
   function read() {
     if (!existsSync(file)) return emptyLedger()
     const text = readFileSync(file, 'utf8')
@@ -69,6 +80,9 @@ export function createLedger(directory, options = {}) {
         next: { waitFor: 'user', hint: 'the user rebuilds the ledger from git with /worktree reconcile --rebuild' },
       })
     }
+    // A ledger written before watches existed reads as holding none; the
+    // field rides along on the next write (unknown top-level fields round-trip).
+    parsed.watches ??= []
     return parsed
   }
 
@@ -114,7 +128,7 @@ export function createLedger(directory, options = {}) {
     }
   }
 
-  /** @param {{ schemaVersion: number, seq: number, lanes: any[] }} value */
+  /** @param {{ schemaVersion: number, seq: number, lanes: any[], watches: any[] }} value */
   function write(value) {
     const problem = validateLedger(value)
     if (problem) throw new Error(`refusing to write an invalid ledger: ${problem}`)
@@ -132,7 +146,7 @@ export function createLedger(directory, options = {}) {
      * returns the new ledger (or undefined to keep it); a throw aborts the
      * update and leaves the file byte-identical.
      * @template T
-     * @param {(ledger: { schemaVersion: number, seq: number, lanes: any[] }) => ({ ledger?: any, result?: T } | void)} mutate
+     * @param {(ledger: { schemaVersion: number, seq: number, lanes: any[], watches: any[] }) => ({ ledger?: any, result?: T } | void)} mutate
      * @returns {Promise<T | undefined>}
      */
     async update(mutate) {

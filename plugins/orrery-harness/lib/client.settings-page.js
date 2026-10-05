@@ -80,7 +80,8 @@ window.__ModuleLoader__.load({
 				{ field: "worktreeEnabled", kind: "boolean" },
 				{ field: "worktreeAutoSetup", kind: "boolean" },
 				{ field: "worktreeMaxActive", kind: "number" },
-				{ field: "worktreeRoot", kind: "text" }
+				{ field: "worktreeRoot", kind: "text" },
+				{ field: "worktreeWatchTimeoutMinutes", kind: "number" }
 			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },

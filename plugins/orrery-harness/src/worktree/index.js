@@ -15,6 +15,7 @@ import { createWorktreeTools } from './tools.js'
 import { createWorktreeCommand } from './command.js'
 import { DEFAULT_ROOT } from './rules.js'
 import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECTION_TEXT } from './prompts.js'
+import { DEFAULT_WATCH_TIMEOUT_MINUTES } from './watches.js'
 import { WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
 
 const name = 'orrery-worktree'
@@ -25,7 +26,7 @@ const inject = ['tools', 'systemPrompt', 'subprocess']
 
 export const WORKTREE_SERVICE = 'orreryWorktreeLanes'
 export const LANES_SECTION_ORDER_OFFSET = 20
-export const DEFAULTS = Object.freeze({ enabled: true, root: DEFAULT_ROOT, maxActive: 4, autoSetup: true })
+export const DEFAULTS = Object.freeze({ enabled: true, root: DEFAULT_ROOT, maxActive: 4, autoSetup: true, watchTimeoutMinutes: DEFAULT_WATCH_TIMEOUT_MINUTES })
 
 /**
  * Effective settings: module defaults ← row config ← orrerySettings section,
@@ -35,11 +36,15 @@ export const DEFAULTS = Object.freeze({ enabled: true, root: DEFAULT_ROOT, maxAc
 export function worktreeSettings(config, section) {
   const pick = (/** @type {keyof typeof DEFAULTS} */ key) => section?.[key] ?? config?.[key] ?? DEFAULTS[key]
   const maxActive = Number(pick('maxActive'))
+  const watchTimeoutMinutes = Number(pick('watchTimeoutMinutes'))
   return {
     enabled: pick('enabled') !== false,
     root: String(pick('root')),
     maxActive: Number.isFinite(maxActive) && maxActive >= 1 ? Math.floor(maxActive) : DEFAULTS.maxActive,
     autoSetup: pick('autoSetup') !== false,
+    // Frozen into each watch's expiresAt at subscribe time; an online edit
+    // applies to the NEXT watch, never retroactively (design D7).
+    watchTimeoutMinutes: Number.isFinite(watchTimeoutMinutes) && watchTimeoutMinutes >= 1 ? Math.floor(watchTimeoutMinutes) : DEFAULTS.watchTimeoutMinutes,
   }
 }
 

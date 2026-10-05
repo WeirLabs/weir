@@ -38,7 +38,7 @@ export const AUDIT_SUBTYPES = Object.freeze({
   supervision: Object.freeze(['spawn', 'seal', 'settle', 'group-settled', 'resume', 'terminate', 'group-released']),
   // Lane transitions (git-worktree-lanes): one kind per state-machine event
   // family, plus reconciliation reports.
-  worktree: Object.freeze(['open', 'setup', 'bind', 'checked', 'check', 'invalidate', 'ask', 'decline', 'conflict', 'land', 'cleanup', 'abandon', 'reconcile']),
+  worktree: Object.freeze(['open', 'setup', 'bind', 'checked', 'check', 'invalidate', 'ask', 'decline', 'conflict', 'land', 'cleanup', 'abandon', 'reconcile', 'watch']),
 })
 
 /**

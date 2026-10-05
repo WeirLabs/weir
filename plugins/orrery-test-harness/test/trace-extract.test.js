@@ -53,6 +53,8 @@ const PRE_MIGRATION_KEYS = [
   'worktreeChild',
   'childSawLaneContract',
   'childGuardRefusal',
+  // worktree-watch scenario observation (one-shot hit count in the transcript)
+  'watchHits',
   'rehydrateResumedReportSeen',
   'rehydrateChildASeen',
   'lspToggledOn',

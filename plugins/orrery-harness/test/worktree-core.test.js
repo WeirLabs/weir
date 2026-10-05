@@ -222,6 +222,45 @@ describe('worktree ledger', () => {
     }
   })
 
+  it('reads a pre-watch ledger (no watches field) as empty and round-trips the field', async () => {
+    const { root, cleanup } = makeRepo()
+    try {
+      const ledger = createLedger(join(root, 'lanes'))
+      await ledger.update(() => ({})) // create the lane-root directory
+      // A ledger written by an older plugin version has no top-level watches.
+      writeFileSync(ledger.file, JSON.stringify({ schemaVersion: 1, seq: 1, lanes: [lane('ready')] }) + '\n')
+      const read = ledger.read()
+      expect(read.watches).toEqual([])
+      // The next write carries the (still empty) array along — no schemaVersion bump.
+      await ledger.update((value) => ({ ledger: { ...value, seq: 2 } }))
+      expect(JSON.parse(readFileSync(ledger.file, 'utf8')).watches).toEqual([])
+      expect(read.schemaVersion).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('validates watch entry shape: malformed entries are corruption, not repair', async () => {
+    const { root, cleanup } = makeRepo()
+    try {
+      const valid = { id: 'w1', laneId: 'a-001', sessionId: 's1', states: ['landable'], createdAt: 1, expiresAt: 2 }
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [valid] })).toBe(null)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: { not: 'array' } })).toMatch(/watches must be an array/)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ ...valid, id: '' }] })).toMatch(/no id/)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ ...valid, laneId: 7 }] })).toMatch(/no laneId/)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ ...valid, sessionId: null }] })).toMatch(/no sessionId/)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ ...valid, states: [] }] })).toMatch(/invalid states/)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ ...valid, states: ['landable', 3] }] })).toMatch(/invalid states/)
+      expect(validateLedger({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ ...valid, expiresAt: 'soon' }] })).toMatch(/createdAt\/expiresAt/)
+      const ledger = createLedger(join(root, 'lanes'))
+      await ledger.update(() => ({}))
+      writeFileSync(ledger.file, JSON.stringify({ schemaVersion: 1, seq: 0, lanes: [], watches: [{ bogus: true }] }) + '\n')
+      expect(() => ledger.read()).toThrow(/LEDGER_CORRUPT/)
+    } finally {
+      cleanup()
+    }
+  })
+
   it('a throwing mutation leaves the file byte-identical and releases the lock', async () => {
     const { root, cleanup } = makeRepo()
     try {

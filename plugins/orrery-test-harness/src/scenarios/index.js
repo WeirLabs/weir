@@ -32,6 +32,7 @@ import lifecycleInheritance from './lifecycle-inheritance.js'
 import delegatePreflight from './delegate-preflight.js'
 import mcpGateway from './mcp-gateway.js'
 import presetDefaults from './preset-defaults.js'
+import worktreeWatch from './worktree-watch.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
@@ -41,6 +42,7 @@ SCENARIOS.push(lifecycleInheritance)
 SCENARIOS.push(delegatePreflight)
 SCENARIOS.push(mcpGateway)
 SCENARIOS.push(presetDefaults)
+SCENARIOS.push(worktreeWatch)
 
 /**
  * Find a scenario entry by id.
