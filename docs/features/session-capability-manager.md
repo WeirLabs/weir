@@ -113,6 +113,8 @@ Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery �
 
 **组合期歧义**：一个 configured name 是另一个的 `__` 前缀、或同一公开名被两个 server 声明时 fail closed 拒挂其一（不猜测）；facade 遇到未知宿主方法时该 server fail closed 并可见报错。崩溃残留 `orrery-mcp-*` 行启动时识别并清理。
 
+**新增受管 server**：面板 MCP 页签的「+ Add managed MCP server」表单或 `/capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>`——写入注册表（owner 为 global/installation、generation 1）后立即经 manager 挂载；注册只使它**可管理**，各会话仍需在选择里勾选才启用。
+
 **纳入 Orrery 管理（adopt）**：现有宿主配置不被自动接管；用户确认后才在注册表创建 identity——宿主原条目仍持有先到先得 `serverName` 保留时显示为**冲突**（提示用户自行停用宿主条目，之后由 managed client 接管），绝不显示为成功。便携式 MCP ref 只指向 Orrery 管理的逻辑 binding。
 
 ### 管理界面与通知

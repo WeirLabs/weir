@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({
 							// panel — without them fetchListing is absent and the panel
 							// would sit on the perpetual loading surface (12.2).
 							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions,
-							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection,
+							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection, mcpAdd: props.mcpAdd,
 							// After a successful Apply the Badge's own receipt is stale —
 							// the panel pings this callback so the counts re-pull (12.2).
 							onApplied: refresh, t: props.t

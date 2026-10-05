@@ -120,6 +120,42 @@ window.__ModuleLoader__.load({
 			const needle = query.trim().toLowerCase();
 			const skills = needle ? partition.skills.filter((skill) => skill.name.toLowerCase().includes(needle)) : partition.skills;
 			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
+			// Managed MCP add form (8.1/8.2): registers a stdio server and mounts
+			// it immediately via /capabilities mcp-add.
+			const [addForm, setAddForm] = react.useState({ open: false, identity: "", label: "", command: "", args: "", error: null, busy: false });
+			const submitAdd = () => {
+				if (typeof props.mcpAdd !== "function" || addForm.busy) return;
+				setAddForm({ ...addForm, busy: true, error: null });
+				props.mcpAdd(props.sessionId, {
+					identity: addForm.identity.trim(),
+					label: addForm.label.trim() || addForm.identity.trim(),
+					command: addForm.command.trim(),
+					args: addForm.args.trim() ? addForm.args.trim().split(/\s+/) : [],
+				}).then((result) => {
+					if (result && result.status === "registered") {
+						setAddForm({ open: false, identity: "", label: "", command: "", args: "", error: null, busy: false });
+						refreshAll();
+					} else {
+						setAddForm({ ...addForm, busy: false, error: (result && result.status) || "add failed" });
+					}
+				}).catch((cause) => setAddForm({ ...addForm, busy: false, error: String(cause) }));
+			};
+			const inputStyle = { flex: 1, fontSize: "12px" };
+			const addBlock = tab === "mcp" ? react_jsx_runtime.jsxs("div", { style: { marginBottom: "6px" }, children: [
+				!addForm.open
+					? react_jsx_runtime.jsx("button", { type: "button", onClick: () => setAddForm({ ...addForm, open: true }), children: t("capability.mcp.add", "+ Add managed MCP server") })
+					: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "6px" }, children: [
+						react_jsx_runtime.jsx("input", { style: inputStyle, placeholder: t("capability.mcp.identity", "identity (e.g. my-docs)"), value: addForm.identity, onChange: (event) => setAddForm({ ...addForm, identity: event.target.value }) }),
+						react_jsx_runtime.jsx("input", { style: inputStyle, placeholder: t("capability.mcp.label", "label (display name)"), value: addForm.label, onChange: (event) => setAddForm({ ...addForm, label: event.target.value }) }),
+						react_jsx_runtime.jsx("input", { style: inputStyle, placeholder: t("capability.mcp.command", "command (e.g. npx)"), value: addForm.command, onChange: (event) => setAddForm({ ...addForm, command: event.target.value }) }),
+						react_jsx_runtime.jsx("input", { style: inputStyle, placeholder: t("capability.mcp.args", "args, space-separated (optional)"), value: addForm.args, onChange: (event) => setAddForm({ ...addForm, args: event.target.value }) }),
+						react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "6px" }, children: [
+							react_jsx_runtime.jsx("button", { type: "button", disabled: addForm.busy || !addForm.identity.trim() || !addForm.command.trim(), onClick: submitAdd, children: addForm.busy ? t("capability.mcp.adding", "Adding…") : t("capability.mcp.addConfirm", "Add") }),
+							react_jsx_runtime.jsx("button", { type: "button", onClick: () => setAddForm({ ...addForm, open: false, error: null }), children: t("capability.mcp.cancel", "Cancel") }),
+							addForm.error ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warn-primary, #c80)" }, children: String(addForm.error) }) : null
+						] })
+					] })
+			] }) : null;
 			const body = tab === "skills"
 				? skills.map((skill) => react_jsx_runtime.jsxs("div", {
 					style: { ...rowStyle, cursor: draft ? "pointer" : "default" },
@@ -159,6 +195,7 @@ window.__ModuleLoader__.load({
 					react_jsx_runtime.jsx("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: t("capability.search", "Search"), style: { flex: 1 } }),
 					react_jsx_runtime.jsx("button", { type: "button", onClick: props.onClose, children: "×" })
 				] }),
+				addBlock,
 				body,
 				draft !== null ? react_jsx_runtime.jsxs("div", { style: { borderTop: "1px solid var(--dsw-alias-border-l2)", marginTop: "8px", paddingTop: "6px", display: "flex", gap: "6px", alignItems: "center" }, children: [
 					react_jsx_runtime.jsx("button", {

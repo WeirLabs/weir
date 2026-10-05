@@ -16,6 +16,7 @@ import { resolveInitialSelection, baselineSkillIdentities } from './initial-sele
 import { workspaceKeyOf } from './preset-library.js'
 import { createApplyEngine } from './apply-engine.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
+import { createMcpRegistry } from './mcp-registry.js'
 import { userTextMessage } from '../shared/user-message.js'
 
 const mounted = new WeakMap()
@@ -344,6 +345,47 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 return { kind: 'success', text: JSON.stringify(response) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities apply failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('mcp-add ')) {
+              // Register a new managed MCP server and mount it immediately
+              // (8.1 registry + manager start). Payload:
+              // {identity, label, command, args?: [], env?: {}, serverName?}
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('mcp-add '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>' }
+              }
+              try {
+                if (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0) {
+                  return { kind: 'error', text: 'mcp-add needs identity, label and command strings' }
+                }
+                const store = openCapabilityStore({ profileContext: ctx.get?.('profileContext') })
+                const registry = createMcpRegistry({ store })
+                const current = await registry.read()
+                const expectedRevision = current.kind === 'ok' ? current.revision : 0
+                const entry = {
+                  identity: spec.identity,
+                  label: spec.label,
+                  owner: { kind: 'global', key: 'installation' },
+                  transport: { kind: 'stdio', ref: `cmd:${spec.command}` },
+                  client: {
+                    transport: 'stdio',
+                    serverName: typeof spec.serverName === 'string' && spec.serverName.length ? spec.serverName : spec.identity,
+                    command: spec.command,
+                    args: Array.isArray(spec.args) ? spec.args.map(String) : [],
+                    env: spec.env && typeof spec.env === 'object' && !Array.isArray(spec.env) ? spec.env : {},
+                    reconnect: { enabled: true },
+                  },
+                }
+                const committed = await registry.register(entry, expectedRevision)
+                if (committed.status !== 'committed') return { kind: 'error', text: JSON.stringify({ status: committed.status }) }
+                const manager = ctx.get?.('orreryMcpManager')
+                if (manager?.start) await manager.start()
+                return { kind: 'success', text: JSON.stringify({ status: 'registered', identity: entry.identity, generation: 1, mounted: Boolean(manager?.start) }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities mcp-add failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
             if (verb === 'conditions') {

@@ -161,3 +161,48 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
   expect(byName.picked?.selected).toBe(true)
   expect(byName.unpicked?.selected).toBe(false)
 })
+
+test('/capabilities mcp-add registers a stdio server into the Orrery registry', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'orrery-cmd-mcp-'))
+  let registeredCommands = []
+  let provider
+  const ctx = {
+    skills: {
+      registerProvider(create) { provider = create({ invalidate() {} }) },
+      async list(options) { return (await provider.list(options)).candidates },
+      layers: { global: { providers: new Map() } },
+    },
+    on() {},
+    effect(fn) { fn(); return () => {} },
+    logger: { warn() {} },
+    get(name) {
+      if (name === 'profileContext') return { home: root, name: 'it' }
+      if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      return undefined
+    },
+  }
+  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [] })
+  const command = registeredCommands.find(entry => entry.name === 'capabilities')
+  const agent = { id: 'sess-mcp', session: { id: 'sess-mcp', header: { cwd: root } } }
+  const added = await command.handler({ agent, rawInput: `mcp-add ${JSON.stringify({ identity: 'my-docs', label: 'My Docs', command: 'npx', args: ['-y', '@org/docs-mcp'] })}` })
+  expect(added.kind).toBe('success')
+  const result = JSON.parse(added.text)
+  expect(result.status).toBe('registered')
+  expect(result.identity).toBe('my-docs')
+  expect(result.generation).toBe(1)
+  // The entry is durably in the registry with the client config verbatim.
+  const { openCapabilityStore } = await import('../src/capabilities/store/store.js')
+  const { createMcpRegistry } = await import('../src/capabilities/mcp-registry.js')
+  const registry = createMcpRegistry({ store: openCapabilityStore({ profileContext: { home: root, name: 'it' } }) })
+  const record = await registry.read()
+  expect(record.kind).toBe('ok')
+  const entry = record.servers['my-docs']
+  expect(entry.label).toBe('My Docs')
+  expect(entry.client.command).toBe('npx')
+  expect(entry.client.args).toEqual(['-y', '@org/docs-mcp'])
+  expect(entry.client.serverName).toBe('my-docs')
+  expect(entry.owner).toEqual({ kind: 'global', key: 'installation' })
+  // Malformed payloads are visible errors, never partial writes.
+  const bad = await command.handler({ agent, rawInput: 'mcp-add {"identity":"x"}' })
+  expect(bad.kind).toBe('error')
+})
