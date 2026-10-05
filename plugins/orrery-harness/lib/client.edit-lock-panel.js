@@ -127,6 +127,19 @@ window.__ModuleLoader__.load({
 				);
 				return () => { alive = false; };
 			}, [sessionId]);
+			// Close on outside click: any pointerdown outside this entry's wrapper
+			// dismisses the panel (Escape on the panel still works as well).
+			react.useEffect(() => {
+				if (!open || typeof document === "undefined") return undefined;
+				const onPointerDown = (event) => {
+					if (event?.target?.closest?.("[data-orrery-edit-lock-root]")) return;
+					setOpen(false);
+					setArmedRevoke(false);
+					setArmedUnlock(null);
+				};
+				document.addEventListener("pointerdown", onPointerDown);
+				return () => { document.removeEventListener("pointerdown", onPointerDown); };
+			}, [open]);
 			if (available !== true) return null;
 			const state = stateOf(view);
 			/** Run commands in order, stop at the first failure, then re-read the view. */
@@ -213,6 +226,7 @@ window.__ModuleLoader__.load({
 			];
 			return jsxs("span", {
 				style: { position: "relative", display: "inline-flex" },
+				"data-orrery-edit-lock-root": "",
 				children: [
 					jsxs("button", {
 						type: "button",
