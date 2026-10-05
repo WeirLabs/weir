@@ -82,6 +82,8 @@ const PRE_MIGRATION_KEYS = [
   'jobsAwareChild',
   'settlementSeen',
   'compositionProbeServed',
+  // cold-session scenario observation (task 5.5: convergence probe advertised)
+  'coldProbeSeen',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

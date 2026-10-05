@@ -26,13 +26,13 @@
       name: 'orrery-test-harness/mock-llm'
     - id: orrery-skill-selection
       name: 'orrery-test-harness/skill-selection'
-      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX)"
+      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX || process.env.ORRERY_IT_COLD_SESSION)"
     - id: orrery-it-tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
       disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
     - id: orrery-it-agent-presets
       name: '@deepseek-ai/dsh-agent-preset-registry'
-      disabled: !!js "!process.env.ORRERY_IT_SKILL_COMPOSITION"
+      disabled: !!js "!(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_COLD_SESSION)"
       config:
         default: orrery-it-selection
     - id: orrery-it-skill-composition-probe
@@ -43,6 +43,14 @@
       name: 'orrery-test-harness/apply-transaction-probe'
       config:
         enabled: !!js process.env.ORRERY_IT_APPLY_TX === '1'
+    # Cold-session convergence probe (task 5.5): seeds a real preset session
+    # with an accepted selection + real invalidation frames, then replays the
+    # cold-open race and the writer-held status face in a cold process
+    # (cold-session scenario only).
+    - id: orrery-it-cold-session-probe
+      name: 'orrery-test-harness/cold-session-probe'
+      config:
+        enabled: !!js process.env.ORRERY_IT_COLD_SESSION === '1'
     - id: orrery-it-office
       name: '@deepseek-ai/dsh-skill-office'
       disabled: !!js "process.env.ORRERY_IT_SKILL_COMPOSITION !== 'OFFICE'"

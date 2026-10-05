@@ -165,9 +165,11 @@ test('5.2: the mounted plugin wires agent/created to ctx.emit for root sessions 
     emit(...args) { sent.push(args) },
   }
   createSkillSelectionPlugin({ readSelection: async () => [], inventory: async () => ({ complete: true, candidates: [] }), office: async () => ({ complete: true, candidates: [] }) })(ctx)
-  handlers.get('agent/created')({ agent: { id: 'sess-root', session } })
+  // The host dispatches agent/created SERIALLY with bail-on-value semantics:
+  // the listener must return undefined so later rows still receive the event.
+  expect(handlers.get('agent/created')({ agent: { id: 'sess-root', session } })).toBeUndefined()
   expect(sent).toEqual([[PRESET_SELECTED_EVENT, 'sess-root', 'orrery']])
-  handlers.get('agent/created')({ agent: { id: 'sess-child', session: { id: 'sess-child', header: { delegationDepth: 2 } } } })
+  expect(handlers.get('agent/created')({ agent: { id: 'sess-child', session: { id: 'sess-child', header: { delegationDepth: 2 } } } })).toBeUndefined()
   expect(sent).toHaveLength(1)
 })
 

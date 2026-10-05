@@ -79,7 +79,14 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         projections: () => ctx.get?.('sessionProjections'),
         warn: text => ctx.logger?.warn?.(text),
       })
-      ctx.on('agent/created', payload => invalidation.agentCreated(payload))
+      // The host dispatches agent/created SERIALLY with bail-on-value
+      // semantics (cordis isBailed: any non-null/false/undefined result stops
+      // the dispatch). agentCreated returns a boolean for its own callers, so
+      // the listener must swallow it — a truthy return would silently cut off
+      // every agent/created listener registered after this row, exactly for
+      // the root preset sessions this change re-emits for (found by the
+      // cold-session integration scenario, task 5.5).
+      ctx.on('agent/created', payload => { invalidation.agentCreated(payload) })
     } catch (cause) {
       // Registration errors must not break the preset either (e.g. duplicate row).
       error = cause instanceof Error ? cause.message : String(cause)

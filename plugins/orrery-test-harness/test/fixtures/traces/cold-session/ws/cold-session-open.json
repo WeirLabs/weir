@@ -1,0 +1,114 @@
+{
+  "scenario": "cold-session",
+  "mode": "open",
+  "timings": [
+    {
+      "timing": "prefetch-at-open",
+      "steps": [
+        {
+          "step": "prefetch",
+          "scope": "standing",
+          "names": []
+        },
+        {
+          "step": "refetch-on-frame",
+          "scope": "session",
+          "frame": {
+            "type": "emit",
+            "event": "agent-preset/selected",
+            "args": [
+              "5aed135a-2002-4e44-9a9f-68436e658c11",
+              "orrery-it-cold"
+            ],
+            "via": [
+              "at Object.apply (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:921:20)",
+              "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
+              "at Array.map (<anonymous>)",
+              "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
+              "at emit (file:///Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:78:32)",
+              "at emitPresetSelected (file:///Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
+              "at Object.agentCreated (file:///Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/plugins/orrery-harness/src/capabilities/preset-invalidation.js:76:16)"
+            ]
+          },
+          "names": [
+            "cold-fixture-a"
+          ]
+        }
+      ],
+      "converged": [
+        "cold-fixture-a"
+      ]
+    },
+    {
+      "timing": "wait-for-event",
+      "steps": [
+        {
+          "step": "fetch-on-frame",
+          "scope": "session",
+          "frame": {
+            "type": "emit",
+            "event": "agent-preset/selected",
+            "args": [
+              "5aed135a-2002-4e44-9a9f-68436e658c11",
+              "orrery-it-cold"
+            ],
+            "via": [
+              "at Object.apply (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:921:20)",
+              "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
+              "at Array.map (<anonymous>)",
+              "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
+              "at emit (file:///Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:78:32)",
+              "at emitPresetSelected (file:///Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
+              "at Object.agentCreated (file:///Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/plugins/orrery-harness/src/capabilities/preset-invalidation.js:76:16)"
+            ]
+          },
+          "names": [
+            "cold-fixture-a"
+          ]
+        }
+      ],
+      "converged": [
+        "cold-fixture-a"
+      ]
+    }
+  ],
+  "convergenceStatus": {
+    "error": null,
+    "reason": null,
+    "hint": null,
+    "conflicts": []
+  },
+  "held": {
+    "failure": {
+      "code": "session/writer-held",
+      "message": "dsh: session \"26192b74-3aac-4d1f-913a-57a2ec2deea1\" is already owned by an active write handle"
+    },
+    "statusUnderNote": {
+      "error": "dsh: session \"26192b74-3aac-4d1f-913a-57a2ec2deea1\" is already owned by an active write handle",
+      "reason": "session-writer-held",
+      "hint": "Another process holds this session log. Close the session in that process (or continue it there), then resume it here.",
+      "conflicts": []
+    },
+    "standingUnderNote": [],
+    "sessionUnderNote": [],
+    "rawRecord": {
+      "kind": "ok",
+      "revision": 1,
+      "receipts": [
+        "cold-seed-held-1"
+      ],
+      "skillNames": [
+        "cold-fixture-a"
+      ]
+    },
+    "sessionAfterClear": [
+      "cold-fixture-a"
+    ],
+    "statusAfterClear": {
+      "error": null,
+      "reason": null,
+      "hint": null,
+      "conflicts": []
+    }
+  }
+}
