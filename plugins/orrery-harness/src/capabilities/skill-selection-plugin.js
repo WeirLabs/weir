@@ -7,6 +7,8 @@ import { createSkillSelectionProvider } from './skill-selection-provider.js'
 import { assertBuiltinSkillMigration } from './skill-builtin-migration.js'
 import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
 import { createPresetInvalidation } from './preset-invalidation.js'
+import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
+import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
 
 const mounted = new WeakMap()
@@ -32,6 +34,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     let provider
     let inventory
     let error = null
+    let lifecycle = null
     try {
       ctx.skills.registerProvider(control => {
         const readSelection = dependencies.readSelection ?? (async options => {
@@ -87,6 +90,31 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       // the root preset sessions this change re-emits for (found by the
       // cold-session integration scenario, task 5.5).
       ctx.on('agent/created', payload => { invalidation.agentCreated(payload) })
+      // Tasks 6.1/6.2 (design D6): lifecycle readiness listener — a SEPARATE
+      // agent/created row with a single responsibility (the 5.2 re-emission
+      // row above stays untouched). It synchronously readies the session's
+      // in-memory snapshot and, for subagents, durably captures the inherited
+      // snapshot with blocking synchronous I/O. It NEVER yields the event
+      // loop (G4b EXECUTED: yielding, not slowness, is the failure shape) and
+      // returns undefined on every success path; on the subagent fail-closed
+      // paths it THROWS — an intentional bail that rejects that subagent's
+      // creation while the parent session continues (6.4 rule), never a
+      // silent unrestricted pass.
+      lifecycle = dependencies.lifecycle ?? createLifecycleSnapshots({
+        profileContext: ctx.get?.('profileContext'),
+        warn: text => ctx.logger?.warn?.(text),
+      })
+      const readiness = lifecycle
+      ctx.on('agent/created', payload => { readiness.agentCreated(payload) })
+      // Task 6.1: preload known sessions' accepted selections into memory at
+      // plugin apply. Fire-and-forget: a memory miss is served by the
+      // listener's blocking synchronous disk read, so a slow or failed
+      // preload only costs one disk read per agent creation.
+      void Promise.resolve(preloadLifecycleSnapshots({
+        lifecycle,
+        profileContext: ctx.get?.('profileContext'),
+        warn: text => ctx.logger?.warn?.(text),
+      })).catch(cause => ctx.logger?.warn?.(`lifecycle snapshot preload failed: ${cause instanceof Error ? cause.message : String(cause)}`))
     } catch (cause) {
       // Registration errors must not break the preset either (e.g. duplicate row).
       error = cause instanceof Error ? cause.message : String(cause)
@@ -94,6 +122,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     mounted.set(ctx, {
       provider,
       inventory,
+      lifecycle,
       status: options => error
         ? { error, ...classifySelectionFailure(error), conflicts: [] }
         : provider.status(options),

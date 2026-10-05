@@ -157,19 +157,20 @@ test('5.2: the mounted plugin wires agent/created to ctx.emit for root sessions 
   const session = { id: 'sess-root', header: { delegationDepth: 0 } }
   const ctx = {
     skills: { registerProvider(create) { create({ invalidate() {} }) } },
-    on(event, listener) { handlers.set(event, listener) },
+    on(event, listener) { handlers.set(event, [...(handlers.get(event) ?? []), listener]) },
     get(name) {
       if (name === 'sessionProjections') return { stateOf: () => 'orrery' }
       return undefined
     },
     emit(...args) { sent.push(args) },
   }
-  createSkillSelectionPlugin({ readSelection: async () => [], inventory: async () => ({ complete: true, candidates: [] }), office: async () => ({ complete: true, candidates: [] }) })(ctx)
+  createSkillSelectionPlugin({ readSelection: async () => [], inventory: async () => ({ complete: true, candidates: [] }), office: async () => ({ complete: true, candidates: [] }), lifecycle: { agentCreated: () => undefined } })(ctx)
   // The host dispatches agent/created SERIALLY with bail-on-value semantics:
-  // the listener must return undefined so later rows still receive the event.
-  expect(handlers.get('agent/created')({ agent: { id: 'sess-root', session } })).toBeUndefined()
+  // every listener must return undefined so later rows still receive the event.
+  const dispatch = payload => { for (const listener of handlers.get('agent/created')) expect(listener(payload)).toBeUndefined() }
+  dispatch({ agent: { id: 'sess-root', session } })
   expect(sent).toEqual([[PRESET_SELECTED_EVENT, 'sess-root', 'orrery']])
-  expect(handlers.get('agent/created')({ agent: { id: 'sess-child', session: { id: 'sess-child', header: { delegationDepth: 2 } } } })).toBeUndefined()
+  dispatch({ agent: { id: 'sess-child', session: { id: 'sess-child', header: { delegationDepth: 2 } } } })
   expect(sent).toHaveLength(1)
 })
 

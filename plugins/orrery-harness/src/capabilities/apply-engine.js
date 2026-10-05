@@ -182,6 +182,7 @@ export function digestApplyRequest(normalized) {
  *   audit?: (session: { id?: string }, type: string, data?: unknown) => void,
  *   notify?: (response: unknown) => unknown,
  *   invalidate?: (sessionId: string, presetId: string) => void,
+ *   publishSnapshot?: (sessionId: string, snapshot: { revision: number, skills: unknown[], mcpServers: string[] }) => void,
  *   warn?: (message: string) => void,
  *   trace?: (event: string, data?: unknown) => void,
  * }} options
@@ -193,7 +194,7 @@ export function createApplyEngine(options) {
     drain = createDrainCoordinator(),
     conditions = () => [],
     verifyContent,
-    audit, notify, invalidate, warn = () => {}, trace = () => {},
+    audit, notify, invalidate, publishSnapshot, warn = () => {}, trace = () => {},
   } = options
   /** In-memory authority snapshots per session (D6 seam; group 6 loads them at mount). */
   const snapshots = new Map()
@@ -417,6 +418,17 @@ export function createApplyEngine(options) {
       const warnings = []
       trace('snapshot-swap', { sessionId, revision: result.revision })
       snapshots.set(sessionId, { revision: result.revision, selection: structuredClone(payload), handles: prepared.handles, view: prepared.view })
+      // Task 6.1: load the accepted selection into the shared lifecycle
+      // memory snapshot inside the SAME non-async segment, so the
+      // agent/created listener's synchronous read never observes a durable
+      // acceptance this process has not published. A publication failure
+      // degrades to the listener's blocking synchronous disk read of the
+      // just-committed record — reported, never fatal.
+      try {
+        publishSnapshot?.(sessionId, { revision: result.revision, skills: structuredClone(payload.skills), mcpServers: [...payload.mcpServers] })
+      } catch {
+        warnings.push('snapshot-publication-degraded')
+      }
       try {
         trace('invalidate', { sessionId })
         const accepted = provider.acceptSelection(prepared.identities, viewOptions)
@@ -557,6 +569,14 @@ export function createApplyEngine(options) {
         // ordering the synchronous publication segment guarantees.
         trace('recovery-publish', { sessionId, revision: confirmed.revision })
         snapshots.set(sessionId, { revision: confirmed.revision, selection: structuredClone(pending.payload), handles: pending.prepared.handles, view: pending.prepared.view })
+        // Task 6.1: the recovered publication loads the lifecycle memory
+        // snapshot too — the lost response never ran the segment.
+        try {
+          const sets = safeSets(pending.payload)
+          publishSnapshot?.(sessionId, { revision: confirmed.revision, skills: structuredClone(sets.skills), mcpServers: sets.mcpServers })
+        } catch (error) {
+          warn(`snapshot publication failed: ${message(error)}`)
+        }
         try {
           provider.acceptSelection(pending.prepared.identities, pending.viewOptions)
         } catch (error) {
