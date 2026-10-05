@@ -59,3 +59,19 @@ describe('preset realm composition for the worktree lanes service', () => {
     expect(PATCH.indexOf("name: 'orrery-harness/worktree'") < PATCH.indexOf("name: 'orrery-harness/delegate'")).toBe(true)
   })
 })
+
+describe('preset realm composition for the MCP manager services', () => {
+  it('mcp-manager (provider) and skill-selection (consumer) share one group isolating both services', () => {
+    const group = enclosingGroup('orrery-harness/mcp-manager')
+    expect(group, 'mcp-manager row must be inside a cordis:group').toBeTruthy()
+    expect(group.text).toContain('name: cordis:group')
+    for (const service of ['orreryMcpGate', 'orreryMcpManager']) {
+      expect(new RegExp(`isolate:[\\s\\S]*?\\n\\s+${service}: true`).test(group.text), `group ${group.id} must isolate ${service}`).toBe(true)
+    }
+    expect(enclosingGroup('orrery-harness/skill-selection')?.id, 'skill-selection must share the MCP services realm').toBe(group.id)
+  })
+
+  it('skill-selection precedes mcp-manager (the manager reads its process face at mount)', () => {
+    expect(PATCH.indexOf("name: 'orrery-harness/skill-selection'") < PATCH.indexOf("name: 'orrery-harness/mcp-manager'")).toBe(true)
+  })
+})

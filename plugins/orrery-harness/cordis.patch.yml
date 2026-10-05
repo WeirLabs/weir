@@ -112,12 +112,25 @@
               # F5 拉取式后台：结算通知已内建为紧凑 + 边界注入 + 拉取式读取；
               # 这里仅限制连续唤醒次数，防止通知唤醒风暴。
               maxConsecutiveWakes: 8
-          - id: orrery-skill-selection
-            name: 'orrery-harness/skill-selection'
-          # Orrery-managed MCP: runtime per-server isolated mounts with the
-          # proxy facade, admission gate and adopt flow (task 8.2+).
-          - id: orrery-mcp-manager
-            name: 'orrery-harness/mcp-manager'
+          # Orrery capabilities: skill selection + managed MCP. The manager
+          # publishes orreryMcpGate / orreryMcpManager via reflect; preset
+          # services must sit in an isolate realm or the registry rejects the
+          # whole preset ("Preset services require isolate realms"). The
+          # consumer (skill-selection reads orreryMcpManager for /capabilities
+          # list) shares the group (S11).
+          - id: capabilities
+            name: cordis:group
+            group: true
+            isolate:
+              orreryMcpGate: true
+              orreryMcpManager: true
+            config:
+              - id: orrery-skill-selection
+                name: 'orrery-harness/skill-selection'
+              # Orrery-managed MCP: runtime per-server isolated mounts with the
+              # proxy facade, admission gate and adopt flow (task 8.2+).
+              - id: orrery-mcp-manager
+                name: 'orrery-harness/mcp-manager'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal

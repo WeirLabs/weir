@@ -57,8 +57,14 @@ export function createMcpManager(dependencies = {}) {
     const profileContext = ctx.get?.('profileContext')
     const store = dependencies.store ?? openCapabilityStore({ profileContext })
     const registry = dependencies.registry ?? createMcpRegistry({ store })
-    const selection = skillSelectionFor(ctx)
-    const lifecycle = dependencies.lifecycle ?? selection?.lifecycle ?? { snapshotFor: () => null }
+    // The selection face is resolved LAZILY on every gate verdict: mount
+    // order inside one apply batch is not contractual (sibling rows import
+    // concurrently), so a face captured here can be a permanently-null
+    // fallback that refuses every managed call. Late arrival must converge
+    // exactly like the intent-gate route override (rc.2 lesson).
+    const lifecycle = dependencies.lifecycle ?? {
+      snapshotFor: sessionId => skillSelectionFor(ctx)?.lifecycle?.snapshotFor(sessionId) ?? null,
+    }
     const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle })
     const drain = dependencies.drain ?? createMcpDrain({ timeoutMs: config.drainTimeoutMs ?? 30_000 })
     // The loader store is the flat id → entry map of every activated row

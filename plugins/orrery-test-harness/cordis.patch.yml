@@ -47,12 +47,23 @@
       name: 'orrery-test-harness/lifecycle-probe'
       config:
         enabled: !!js process.env.ORRERY_IT_LIFECYCLE === '1'
-    - id: orrery-mcp-manager
-      name: 'orrery-harness/mcp-manager'
-    - id: orrery-it-mcp-probe
-      name: 'orrery-test-harness/mcp-probe'
+    # Mirror the product preset's capabilities group (S11): the manager
+    # publishes orreryMcpGate/orreryMcpManager, so provider and consumer
+    # (probe) share one isolated realm. A realm mistake now fails the mcp
+    # scenarios headlessly instead of only the real preset at session create.
+    - id: orrery-it-mcp
+      name: cordis:group
+      group: true
+      isolate:
+        orreryMcpGate: true
+        orreryMcpManager: true
       config:
-        enabled: !!js process.env.ORRERY_IT_MCP === '1'
+        - id: orrery-mcp-manager
+          name: 'orrery-harness/mcp-manager'
+        - id: orrery-it-mcp-probe
+          name: 'orrery-test-harness/mcp-probe'
+          config:
+            enabled: !!js process.env.ORRERY_IT_MCP === '1'
     - id: orrery-it-preset-probe
       name: 'orrery-test-harness/preset-probe'
       config:

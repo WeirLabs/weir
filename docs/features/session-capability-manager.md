@@ -99,6 +99,8 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 
 Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery 配置的 server 由 Orrery 在运行时逐个挂载（每个 server 一个隔离 `cordis:group`：代理 facade + stock `dsh-mcp-client`，经宿主支持的 loader API 创建/销毁，崩溃残留行启动时清理），会话选择决定每个 agent 能用哪些。
 
+**预设行 realm 布局**：manager 行经 reflect 发布 `orreryMcpGate` / `orreryMcpManager` 两个服务，而预设注册审计拒绝任何进入根 realm 的预设服务（`Preset services require isolate realms`），因此 `orrery-mcp-manager`（提供者）与 `orrery-skill-selection`（消费者，`/capabilities list` 读取 manager 列表）同置于预设的 `capabilities` cordis 组、由该组 isolate 这两个服务（S11 同 realm 纪律，`preset-realms` 单测对拍守卫）；facade 侧经模块级 realm bridge 取闸门面，不跨 realm 读服务。
+
 **保证等级（如实措辞）：**
 
 | 对象 | 保证 |
