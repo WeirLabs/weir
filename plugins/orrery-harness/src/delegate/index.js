@@ -6,6 +6,8 @@ import { CURATED_AGENTS } from './agents.js'
 import { createSettingsOverlay } from './settings-overlay.js'
 import { createTargetResolver } from './target-resolver.js'
 import { createStatusTool } from './status-tool.js'
+import { createSkillConsumerView } from '../capabilities/consumer-view.js'
+import { skillSelectionFor } from '../capabilities/skill-selection-plugin.js'
 import { createResumeTool, createTerminateTool } from './supervision-tools.js'
 import { mountSupervision } from './supervision-mount.js'
 import { createAudit } from '../shared/audit.js'
@@ -88,6 +90,7 @@ function apply(ctx, config = {}) {
     createDelegateTool({
       resolveTarget: targetResolver.resolveTarget,
       loadSkill,
+    preflightLoadSkills,
       subagents: ctx.subagents,
       agents: ctx.get('agents'),
       jobs: ctx.get('jobs'),
@@ -125,6 +128,23 @@ function apply(ctx, config = {}) {
     const skill = await ctx.skills.get(skillName)
     if (!skill) throw new Error(`delegate: unknown_skill "${skillName}" in load_skills`)
     return skill.content
+  }
+
+  // Task 7.1/7.2: the delegate side of the unified consumer view. load_skills
+  // are preflighted as ONE batch against the preset-layer selection view
+  // (parent session, model purpose) — any failure rejects the entire batch
+  // with zero spawns, before any group record or child exists.
+  const selection = skillSelectionFor(ctx)
+  const consumerView = selection?.provider ? createSkillConsumerView({ provider: selection.provider }) : null
+  async function preflightLoadSkills(items, exec) {
+    const names = [...new Set(items.flatMap(item => item.load_skills ?? []))]
+    if (names.length === 0 || !consumerView) return
+    const options = { cwd: exec.agent?.session?.header?.cwd, scope: { session: { id: exec.agent?.id } } }
+    const verdicts = await consumerView.conclusions(options, names, 'model')
+    const failures = [...verdicts.values()].filter(verdict => !verdict.invocable)
+    if (failures.length > 0) {
+      throw new Error(`delegate: load_skills preflight rejected the whole batch (zero spawned): ${failures.map(failure => `"${failure.name}" ${failure.reason}`).join(', ')}`)
+    }
   }
 
   return () => {

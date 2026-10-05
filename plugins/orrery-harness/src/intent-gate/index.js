@@ -15,6 +15,8 @@ import {
   renderSkillPointer,
   stripQuotedRegions,
 } from './matcher.js'
+import { createSkillConsumerView } from '../capabilities/consumer-view.js'
+import { skillSelectionFor } from '../capabilities/skill-selection-plugin.js'
 
 const name = 'orrery-intent-gate'
 const inject = ['llm']
@@ -97,6 +99,18 @@ function apply(ctx, config = {}) {
       armed.set(sessionId, ledger)
     }
 
+    // Task 7.3: skill pointers and reminders share the unified consumer
+    // view — a pointer is injected only while the skill is selected,
+    // available and model-invocable in THIS session. A suppressed first hit
+    // stays unarmed (the ledger below never sees it), so a later hit once
+    // the skill is available still injects the full initial pointer; nothing
+    // is injected in its place and nothing already injected is withdrawn.
+    const selection = skillSelectionFor(ctx)
+    const skillView = selection?.provider ? createSkillConsumerView({ provider: selection.provider }) : null
+    const eligibility = skillView
+      ? skill => skillView.conclusion({ cwd: agent.session?.header?.cwd, scope: { session: { id: sessionId } } }, skill, 'model')
+      : null
+
     const injections = []
     for (const intent of hits) {
       if (intent.injection.kind === 'effort') {
@@ -108,6 +122,13 @@ function apply(ctx, config = {}) {
         turns.add(turn)
         record(ctx, agent, intent, true)
         continue
+      }
+      if (intent.injection.kind === 'skill-pointer' && eligibility) {
+        const verdict = await eligibility(intent.injection.skill)
+        if (!verdict?.invocable) {
+          record(ctx, agent, intent, false, { suppressed: verdict?.reason ?? 'not-selected' })
+          continue
+        }
       }
       const first = !ledger.has(intent.id)
       if (first && intent.oncePerSession) ledger.add(intent.id)
@@ -134,8 +155,8 @@ function apply(ctx, config = {}) {
 
   // Cold-safe durable audit of intent hits (never session.append — see
   // src/shared/audit.js for the hard contract).
-  function record(_ctx, agent, intent, first) {
-    audit(agent.session, AUDIT_TYPES.intentHit, { intent: intent.id, first })
+  function record(_ctx, agent, intent, first, extra) {
+    audit(agent.session, AUDIT_TYPES.intentHit, { intent: intent.id, first, ...(extra?.suppressed ? { suppressed: extra.suppressed } : {}) })
   }
 
   // Dispose: clear the in-memory ledgers (symmetric with todo-driver /

@@ -95,6 +95,11 @@ export function createDelegateTool(deps) {
         throw new Error('delegate: delegation depth limit reached — category workers and curated agents cannot delegate')
       }
 
+      // Batch preflight (task 7.2): one snapshot revision for the whole
+      // batch, ANY load_skills failure rejects everything with zero spawns —
+      // a supervision group name is never sealed by a rejected batch.
+      await deps.preflightLoadSkills?.(items, exec)
+
       // Supervised group lane: all items of this call form one supervised group.
       if (typeof args.group === 'string' && args.group.length > 0) {
         if (background) throw new Error('delegate: group and run_in_background cannot be combined (supervised groups are continuable children)')
