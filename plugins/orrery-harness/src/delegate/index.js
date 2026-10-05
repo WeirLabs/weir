@@ -19,9 +19,8 @@ import { isDelegatedChild } from '../shared/child-scope.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
   DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
-  DELEGATE_TARGETS_TEMPLATE,
   DELEGATE_TARGETS_VARIABLE_NAME,
-  renderDelegateTargets,
+  renderDelegateTargetsSection,
 } from './targets.js'
 
 const name = 'orrery-delegate'
@@ -71,16 +70,22 @@ function apply(ctx, config = {}) {
   // therefore changes what the model sees without re-registering the section
   // and without restarting the app — the same volatile contract the rest of
   // the overlay follows.
+  // Static bare variable reference (same pattern as the doctrine section):
+  // a function-valued section text proved fragile in this runtime, so the
+  // child suppression rides the variable provider DSH calls at EVERY prompt
+  // assembly (design D1). A settings commit therefore changes what the model
+  // sees without re-registering the section and without restarting the app —
+  // the same volatile contract the rest of the overlay follows. Main agents
+  // render intro + live list byte-identically; a delegated child renders ''.
   ctx.systemPrompt.section({
     name: DELEGATE_TARGETS_SECTION_NAME,
     order: DOCTRINE_SECTION_ORDER + DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
-    // Lazy text like the doctrine section: the guidance is
-    // orchestrator-facing, so a delegated child renders ''. The variable
-    // provider below stays as-is (a child never reaches the interpolation).
-    text: (context) => (isDelegatedChild(context) ? '' : DELEGATE_TARGETS_TEMPLATE),
+    text: `{{${DELEGATE_TARGETS_VARIABLE_NAME}}}`,
   })
-  ctx.systemPrompt.variable(DELEGATE_TARGETS_VARIABLE_NAME, () =>
-    renderDelegateTargets({ categories: overlay.categoriesNow(), agents: overlay.agentsNow() }),
+  ctx.systemPrompt.variable(DELEGATE_TARGETS_VARIABLE_NAME, (context) =>
+    isDelegatedChild(context)
+      ? ''
+      : renderDelegateTargetsSection({ categories: overlay.categoriesNow(), agents: overlay.agentsNow() }),
   )
   const targetResolver = createTargetResolver({
     agents,

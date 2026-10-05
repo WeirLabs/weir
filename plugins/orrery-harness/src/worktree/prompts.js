@@ -10,6 +10,9 @@ export const LANES_SECTION_NAME = 'orchestrator:worktree-lanes'
 export const LANES_CONTEXT_NAME = 'orrery:worktree-board'
 export const LANES_CONTEXT_ORDER = 130
 
+/** Interpolation variable carrying the lanes section body; the provider suppresses it for delegated children. */
+export const LANES_VARIABLE_NAME = 'orrery_worktree_lanes'
+
 export const LANES_SECTION_TEXT = `# Worktree lanes
 
 Lanes are isolated git worktrees the host owns (state, checks, merge). You supply intent; the host decides every step.

@@ -7,6 +7,7 @@ import {
   DELEGATE_TARGETS_TEMPLATE,
   DELEGATE_TARGETS_VARIABLE_NAME,
   renderDelegateTargets,
+  renderDelegateTargetsSection,
 } from '../src/delegate/targets.js'
 import { DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 
@@ -45,6 +46,22 @@ describe('DELEGATE_TARGETS_TEMPLATE', () => {
     expect(DELEGATE_TARGETS_TEMPLATE).toContain('no default')
     expect(DELEGATE_TARGETS_TEMPLATE).toContain('must always be named explicitly')
     expect(DELEGATE_TARGETS_TEMPLATE).toContain('read-only research specialists')
+  })
+})
+
+describe('renderDelegateTargetsSection', () => {
+  it('composes the intro and the live list exactly like the interpolated template', () => {
+    const body = renderDelegateTargetsSection({ categories: CATEGORIES, agents: AGENTS })
+    expect(body).toBe(DELEGATE_TARGETS_TEMPLATE.replace(`{{${DELEGATE_TARGETS_VARIABLE_NAME}}}`, renderDelegateTargets({ categories: CATEGORIES, agents: AGENTS })))
+    expect(body).toContain('## Delegation targets')
+    expect(body).toContain('- quick —')
+    expect(body).toContain('- finder —')
+  })
+
+  it('degrades both registries to explicit sentences when empty', () => {
+    const body = renderDelegateTargetsSection({ categories: {}, agents: {} })
+    expect(body).toContain('No categories are currently enabled.')
+    expect(body).toContain('No curated agents are currently enabled.')
   })
 })
 

@@ -1,7 +1,7 @@
 // Orrery core: registers the Orchestrator doctrine prompt section for agents
 // composed under the orrery preset. Plain ESM, ctx-only (no @deepseek-ai
 // imports — they do not resolve from a linked bundle).
-import { DOCTRINE, DOCTRINE_SECTION_NAME, DOCTRINE_SECTION_ORDER } from './doctrine.js'
+import { DOCTRINE, DOCTRINE_SECTION_NAME, DOCTRINE_SECTION_ORDER, DOCTRINE_VARIABLE_NAME } from './doctrine.js'
 import { isDelegatedChild } from '../shared/child-scope.js'
 
 const name = 'orrery-core'
@@ -12,15 +12,28 @@ const inject = ['systemPrompt']
  * @returns {() => void} the section registration disposer.
  */
 function apply(ctx) {
-  return ctx.systemPrompt.section({
+  // The section text is a STATIC bare variable reference; the suppression
+  // for delegated children rides the variable provider, which DSH evaluates
+  // at every prompt assembly — a function-valued section text proved fragile
+  // in this runtime (it broke the supervised continuation path in the
+  // grouped/background/rehydrate integration scenarios), while variable
+  // providers and function context texts already run per assembly in
+  // production. Main agents render DOCTRINE byte-identically; a delegated
+  // child renders '' (its collaboration contract rides the persona instead —
+  // WORKER_CONTRACT in src/shared/child-scope.js); isDelegatedChild fails
+  // open to main agents.
+  const disposeSection = ctx.systemPrompt.section({
     name: DOCTRINE_SECTION_NAME,
     order: DOCTRINE_SECTION_ORDER,
-    // Lazy text: the doctrine is orchestrator-facing, so a delegated child
-    // renders '' (its collaboration contract rides the persona instead —
-    // WORKER_CONTRACT in src/shared/child-scope.js). Main agents render
-    // DOCTRINE byte-identically; isDelegatedChild fails open to them.
-    text: (context) => (isDelegatedChild(context) ? '' : DOCTRINE),
+    text: `{{${DOCTRINE_VARIABLE_NAME}}}`,
   })
+  const disposeVariable = ctx.systemPrompt.variable(DOCTRINE_VARIABLE_NAME, (context) =>
+    isDelegatedChild(context) ? '' : DOCTRINE,
+  )
+  return () => {
+    disposeSection()
+    disposeVariable()
+  }
 }
 
 export { name, inject, apply }

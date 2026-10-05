@@ -15,7 +15,6 @@ import { DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
   DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
-  DELEGATE_TARGETS_TEMPLATE,
   DELEGATE_TARGETS_VARIABLE_NAME,
 } from '../src/delegate/targets.js'
 /** Mutable settings service with an onChange broadcast (mirrors lsp.test.js).
@@ -326,22 +325,27 @@ describe('delegate plugin apply', () => {
     expect(sections).toHaveLength(1)
     expect(sections[0].name).toBe(DELEGATE_TARGETS_SECTION_NAME)
     expect(sections[0].order).toBe(DOCTRINE_SECTION_ORDER + DELEGATE_TARGETS_SECTION_ORDER_OFFSET)
-    // Lazy text: a function evaluated at every assembly — '' for a delegated
-    // child, the template (byte-identical) for main-shaped contexts.
-    expect(typeof sections[0].text).toBe('function')
-    expect(sections[0].text(undefined)).toBe(DELEGATE_TARGETS_TEMPLATE)
-    expect(sections[0].text({ agent: { session: { header: {} } } })).toBe(DELEGATE_TARGETS_TEMPLATE)
-    expect(sections[0].text({ agent: { session: { header: { delegationDepth: 1 } } } })).toBe('')
+    // Static bare variable reference: the suppression rides the variable
+    // provider (a function-valued section text proved fragile in this
+    // runtime). Main-shaped contexts render the intro + live list
+    // byte-identically; a delegated child renders ''.
+    expect(sections[0].text).toBe(`{{${DELEGATE_TARGETS_VARIABLE_NAME}}}`)
 
     const render = variables.get(DELEGATE_TARGETS_VARIABLE_NAME)
     expect(typeof render).toBe('function')
-    const rendered = render()
+    const main = { agent: { session: { header: {} } } }
+    const child = { agent: { session: { header: { delegationDepth: 1 } } } }
+    const rendered = render(main)
     expect(typeof rendered).toBe('string')
+    expect(rendered).toContain('## Delegation targets')
     expect(rendered).toContain('quick')
     expect(rendered).toContain('finder')
+    expect(render(undefined)).toBe(rendered)
+    expect(render(child)).toBe('')
 
     settings.delegate = { disabledCategories: ['quick'] }
-    expect(render()).not.toContain('quick')
+    expect(render(main)).not.toContain('quick')
+    expect(render(main)).toContain('## Delegation targets')
   })
 
   it('routes a curated agent through its configured chain, not the caller route', async () => {

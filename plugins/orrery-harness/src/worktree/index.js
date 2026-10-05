@@ -15,7 +15,7 @@ import { createLaneService } from './lanes.js'
 import { createWorktreeTools } from './tools.js'
 import { createWorktreeCommand } from './command.js'
 import { DEFAULT_ROOT } from './rules.js'
-import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECTION_TEXT } from './prompts.js'
+import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECTION_TEXT, LANES_VARIABLE_NAME } from './prompts.js'
 import { DEFAULT_WATCH_TIMEOUT_MINUTES } from './watches.js'
 import { WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
 
@@ -115,8 +115,13 @@ function apply(ctx, config = {}) {
     // The lanes section and the live board are orchestrator-facing: a
     // delegated child renders '' for both (a lane-bound child already receives
     // the lane contract in its delegation prompt, so it loses nothing). Main
-    // agents render both byte-identically; isDelegatedChild fails open to them.
-    disposers.push(ctx.systemPrompt.section({ name: LANES_SECTION_NAME, order: DOCTRINE_SECTION_ORDER + LANES_SECTION_ORDER_OFFSET, text: (/** @type {any} */ context) => (isDelegatedChild(context) ? '' : LANES_SECTION_TEXT) }))
+    // agents render both byte-identically; isDelegatedChild fails open to
+    // them. The section's suppression rides a variable provider (static bare
+    // reference text — a function-valued section text proved fragile in this
+    // runtime); the live board keeps the context-text function this
+    // registration always used, now guarded.
+    disposers.push(ctx.systemPrompt.section({ name: LANES_SECTION_NAME, order: DOCTRINE_SECTION_ORDER + LANES_SECTION_ORDER_OFFSET, text: `{{${LANES_VARIABLE_NAME}}}` }))
+    disposers.push(ctx.systemPrompt.variable(LANES_VARIABLE_NAME, (/** @type {any} */ context) => (isDelegatedChild(context) ? '' : LANES_SECTION_TEXT)))
     if (ctx.systemPrompt.context) {
       disposers.push(ctx.systemPrompt.context({ name: LANES_CONTEXT_NAME, order: LANES_CONTEXT_ORDER, text: (/** @type {any} */ context) => (isDelegatedChild(context) ? '' : service.board(context?.agent?.session)) }))
     }
