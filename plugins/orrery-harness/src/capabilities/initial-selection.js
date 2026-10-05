@@ -25,7 +25,11 @@
  *   selection: { skills: unknown[], mcpServers: string[] }, missing: unknown[] }}
  */
 export function resolveInitialSelection({ defaultsRecord, builtinIdentities = [], enabledMcpIdentities = [] }) {
-  if (defaultsRecord && defaultsRecord.kind !== 'absent') {
+  // A cleared marker is an explicit removal (9.4): it behaves as ABSENT —
+  // clearing is never an explicit empty set, which stays a savable choice.
+  const cleared = defaultsRecord && defaultsRecord.kind === 'ok'
+    && /** @type {Record<string, unknown>} */ (defaultsRecord.payload ?? {}).cleared === true
+  if (defaultsRecord && defaultsRecord.kind !== 'absent' && !cleared) {
     // A saved default that cannot be read fails closed exactly like a
     // selection record — it is never silently treated as missing.
     if (defaultsRecord.kind !== 'ok') throw new Error(`Workspace default selection is ${defaultsRecord.kind}`)

@@ -12,6 +12,7 @@ import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection } from './initial-selection.js'
+import { workspaceKeyOf } from './preset-library.js'
 
 const mounted = new WeakMap()
 /**
@@ -90,7 +91,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         // supplied profile identity (the same sanctioned source as the store
         // root), never from skill content or a guessed default.
         const machineId = config.machineId ?? (() => {
-          const profile = ctx.get('profileContext')
+          const profile = ctx.get?.('profileContext')
           if (typeof profile?.home !== 'string' || typeof profile?.name !== 'string') return undefined
           return createHash('sha256').update(`${profile.home}\0${profile.name}`).digest('hex').slice(0, 24)
         })()
@@ -125,7 +126,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
          */
         const initialSelection = dependencies.initialSelection ?? (async options => {
           const store = openCapabilityStore({ profileContext: ctx.get('profileContext') })
-          const workspaceKey = options.scope?.session?.workspaceKey ?? null
+          const workspaceKey = workspaceKeyOf(options)
           let defaultsRecord = /** @type {any} */ ({ kind: 'absent', revision: 0 })
           if (typeof workspaceKey === 'string' && workspaceKey.length) {
             try {

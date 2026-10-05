@@ -1,0 +1,8 @@
+{
+  "scenario": "preset-defaults",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "boot1 preset defaults done\n",
+  "stderr": "",
+  "sessionId": null
+}
