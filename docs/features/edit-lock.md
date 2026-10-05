@@ -131,6 +131,7 @@
 - 挂载时捕获原始 `ctx.fs`，以跨进程预约打开唯一 runtime，并提供 `orreryEditLock` 服务。cordis 的兄弟行服务在其 apply 之后才可见，因此 `hash_edit` 同时接受挂载时与延迟 inject 的服务；一旦受管，服务移除只会拒绝，不回退直写。
 - `tools/pre-execute` 守卫：`write`、`edit`、`hash_edit`、`lsp_rename`、`str_replace_editor` 中凡执行函数未经服务 `claim` 的定义一律拒绝。组合顺序错误、晚装服务或未知编辑器因此 fail closed。
 - `agent/created`（发布前 await）安装写作用域：隐藏继承 stock write/edit，注册受控 write；随后注册会话。管理器已知的会话（重启恢复、同会话重建 agent）一律以中断态开始，不隐式重臂。
+- **迟挂载补课绑定**：重启后首个会话的 preset 是为该会话自身挂载的，其主 agent 的 `agent/created` 事件已经过去（与 worktree-mode 守卫相同的挂载顺序隐患）。挂载时经 `ctx.get?.('agents')?.roots?.()` 枚举现存主 agent（无 agents 注册表的组合容忍缺席），对每个尚未绑定管理根的根 agent 运行与创建路径完全相同的 `setupAgent`——幂等，`registry.rootOf` 已绑定即跳过，绝不重复安装写作用域、重复绑定或重复 `domain.start`；子代理总在挂载之后创建，无需补课。
 - active 回合内 stock Stop 同步触发 turn signal，立即封闭准入并持久撤权；idle Stop 没有 signal，使用 `/edit-lock stop` 获得可等待的持久撤权确认。`agent/disposed` 同样撤权。
 - **消息驱动的自动恢复**（两阶段）：`agent/inbox/inserted`（回合前进站口，载荷携带 `{ agent, message }`）对真实用户消息（`isGenuineUserMessage`）置一次性旗标，开关按消息实时读取（`autoResume !== false`）；下一回合首个 `agent/pre-step` 在新回合检测处消费旗标，若会话非 active 则**在 `next()` 之前 await** 可信 resume（服务端铸造 `auto:user-message:<uuid>` 一次性 requestId）加 `confirmAll` 重放，保证该回合的编辑请求不再被拒。失败（revoked、与手动 Continue 竞争落败）仅告警放行。置旗点刻意不是持久的 `user/message` 会话事件：该事件在本运行时要到回合中途才落盘，晚于必须先行恢复的 pre-step（集成证据 `editlock-auto-resume`）。
 - 可信人类入口 `/edit-lock`：`status`、`locks`、`hold [minutes]`、`release <path>`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`／`--all`、`unlock <path> <generation>`。状态查询、后台通知与运行时注入消息都不恢复权限；`editLockAutoResume` 开启（默认）时，一条真实用户消息（`source.kind === 'user'`）等价于一次可信 Continue；todo 续推在会话非 active 时不触发。
@@ -286,6 +287,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 ## 边界与失败语义
 
 - **未开启即无行为**：设置关闭时没有插件服务、没有锁工具、没有 UI 元素，装载与否不改变任何现有会话；开启后受控 editor 的定义必须由本特性接管，否则 fail closed。
+- **迟挂载的补课绑定与创建路径同一失败语义**：挂载时补课中的作用域安装失败同样经 `restrict` 拒绝受控工具并告警；domain start 失败同样记入 `startFailures` 与挂载证据，面板呈现与创建时失败一致的原因，而不是永远显示「starting」。
 - **权威状态持久且可重启恢复，但恢复出的 active 状态不构成当前授权**：恢复重新装载历史并把所有已知会话置为中断态；publishing/unknown 按上述准入规则隔离，resource 围栏外的已证明无关工作可继续，subtree 连续性未证明及 domain 围栏仍保守拒绝。没有清围栏、重放或自动结清入口。
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**不判定缺失名称的等价性**——不预创建占位文件、不猜测别名；store 只写自己的 `snapshot.json`，release 也不等于验证通过。
 - **宿主父子 Stop 与编辑锁命令不同**：每个会话有各自的锁状态；宿主对 active 父会话的用户 Stop 会传播取消给子代理（父 turn 为 aborted/user、子 turn 为 aborted/parent），双方已调用的文件提交仍按上述边界等待结算。`/edit-lock stop` 只撤销所选会话的编辑权限，不宣称取消整个委派树。
