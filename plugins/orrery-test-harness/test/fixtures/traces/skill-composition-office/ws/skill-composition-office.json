@@ -396,6 +396,27 @@
   "empty": {
     "all": [
       {
+        "name": "debugging",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "deep-work",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "git-master",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
         "name": "office-docx",
         "invocation": {
           "modelInvocable": false,
@@ -415,10 +436,81 @@
           "modelInvocable": false,
           "userInvocable": false
         }
+      },
+      {
+        "name": "programming",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "refactor",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "remove-ai-slops",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "remove-deadcode",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "research",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "review-work",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "work-with-pr",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
       }
     ],
-    "model": [],
-    "slash": []
+    "model": [
+      "debugging",
+      "deep-work",
+      "git-master",
+      "programming",
+      "refactor",
+      "remove-ai-slops",
+      "remove-deadcode",
+      "research",
+      "review-work",
+      "work-with-pr"
+    ],
+    "slash": [
+      "debugging",
+      "deep-work",
+      "git-master",
+      "programming",
+      "refactor",
+      "remove-ai-slops",
+      "remove-deadcode",
+      "research",
+      "review-work",
+      "work-with-pr"
+    ]
   },
   "live": {
     "all": [

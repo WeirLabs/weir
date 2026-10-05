@@ -1,5 +1,6 @@
 {
   "scenario": "jobs-aware-todo",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "Waiting for the background job settlement notice.\n",
   "stderr": "",

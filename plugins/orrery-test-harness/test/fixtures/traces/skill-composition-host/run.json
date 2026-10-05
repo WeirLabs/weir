@@ -1,6 +1,6 @@
 {
   "scenario": "skill-composition-host",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "composition verified\n",
   "stderr": "",

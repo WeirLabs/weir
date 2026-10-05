@@ -5,15 +5,15 @@
     {
       "id": "it-lane-001",
       "title": "IT lane",
-      "path": "/Users/young/orrery-qa-ZAaBsO/ws/.orrery/worktrees/it-lane-001",
+      "path": "/Users/young/Documents/Orrery/.orrery/it-root/ws/.orrery/worktrees/it-lane-001",
       "branch": "orrery/it-lane-001",
       "base": {
         "branch": "main",
-        "commit": "74134464ba148efcafca2bfa13f865f1511dc059"
+        "commit": "c2f6a3e7c290b04bdeb2de714fd4ea7c71ece860"
       },
       "scope": [],
       "state": "no-commits",
-      "ownerSession": "session-ea95f575-5e79-4a2c-98d6-f93abacfa6db",
+      "ownerSession": "session-85cee4b0-dfdf-45cb-9407-d2a8f9d68f3d",
       "boundChild": null,
       "baseMoved": false,
       "landableTree": null,
@@ -24,32 +24,33 @@
       "land": null,
       "cleanup": null,
       "reason": "no commits ahead of main",
-      "createdAt": 1791096253922,
-      "updatedAt": 1791096259998,
+      "createdAt": 1791234406355,
+      "updatedAt": 1791234412473,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791096253958,
+          "at": 1791234406396,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791096253977,
+          "at": 1791234406423,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791096259998,
+          "at": 1791234412473,
           "by": "host",
           "reason": "no commits ahead of main"
         }
       ]
     }
-  ]
+  ],
+  "watches": []
 }

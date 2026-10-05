@@ -403,6 +403,20 @@
         }
       },
       {
+        "name": "debugging",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "deep-work",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
         "name": "diagnosing-bugs",
         "invocation": {
           "modelInvocable": true,
@@ -432,6 +446,13 @@
       },
       {
         "name": "git-guardrails-claude-code",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "git-master",
         "invocation": {
           "modelInvocable": true,
           "userInvocable": true
@@ -529,7 +550,35 @@
         }
       },
       {
+        "name": "programming",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
         "name": "prototype",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "refactor",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "remove-ai-slops",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "remove-deadcode",
         "invocation": {
           "modelInvocable": true,
           "userInvocable": true
@@ -553,6 +602,13 @@
         "name": "retro",
         "invocation": {
           "modelInvocable": false,
+          "userInvocable": true
+        }
+      },
+      {
+        "name": "review-work",
+        "invocation": {
+          "modelInvocable": true,
           "userInvocable": true
         }
       },
@@ -662,6 +718,13 @@
         }
       },
       {
+        "name": "work-with-pr",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
         "name": "writing-beats",
         "invocation": {
           "modelInvocable": false,
@@ -693,23 +756,32 @@
     "model": [
       "code-review",
       "codebase-design",
+      "debugging",
+      "deep-work",
       "diagnosing-bugs",
       "domain-modeling",
       "find-skills",
       "game-design-psychology",
       "git-guardrails-claude-code",
+      "git-master",
       "grilling",
       "migrate-to-shoehorn",
       "pr",
+      "programming",
       "prototype",
+      "refactor",
+      "remove-ai-slops",
+      "remove-deadcode",
       "research",
       "resolving-merge-conflicts",
+      "review-work",
       "scaffold-exercises",
       "selected-fixture",
       "setup-pre-commit",
       "tdd",
       "unselected-fixture",
       "wizard",
+      "work-with-pr",
       "writing-for-agents"
     ],
     "slash": [
@@ -717,11 +789,14 @@
       "claude-handoff",
       "code-review",
       "codebase-design",
+      "debugging",
+      "deep-work",
       "diagnosing-bugs",
       "domain-modeling",
       "find-skills",
       "game-design-psychology",
       "git-guardrails-claude-code",
+      "git-master",
       "grill-me",
       "grill-with-docs",
       "grilling",
@@ -732,10 +807,15 @@
       "loop-me",
       "migrate-to-shoehorn",
       "pr",
+      "programming",
       "prototype",
+      "refactor",
+      "remove-ai-slops",
+      "remove-deadcode",
       "research",
       "resolving-merge-conflicts",
       "retro",
+      "review-work",
       "scaffold-exercises",
       "selected-fixture",
       "setup-matt-pocock-skills",
@@ -751,6 +831,7 @@
       "wait-what",
       "wayfinder",
       "wizard",
+      "work-with-pr",
       "writing-beats",
       "writing-for-agents",
       "writing-fragments",
@@ -1180,7 +1261,7 @@
       "provider": "orrery-selected",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/ws/skill-roots/selected-fixture"
+        "path": "/Users/young/Documents/Orrery/.orrery/it-root/ws/skill-roots/selected-fixture"
       },
       "content": "CONTENT_selected-fixture"
     },
@@ -1189,7 +1270,7 @@
       "provider": "filesystem",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/builtin-skill-migration-36-032/.orrery/it-root/ws/skill-roots/unselected-fixture"
+        "path": "/Users/young/Documents/Orrery/.orrery/it-root/ws/skill-roots/unselected-fixture"
       },
       "content": "CONTENT_unselected-fixture"
     }

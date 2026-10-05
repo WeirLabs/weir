@@ -2,12 +2,12 @@
   "label": "host",
   "present": true,
   "name": "orrery-it",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "located": {
     "supported": true,
-    "root": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/home/orrery/profiles/orrery-it/capabilities"
+    "root": "/Users/young/Documents/Orrery/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities"
   },
-  "sessionId": "session-46ac467e-0ef3-4843-9c3b-43aa559b7b8f",
+  "sessionId": "session-0c268573-2a34-42b8-b256-43ed5007d7b2",
   "commit": "committed",
   "read": {
     "kind": "ok",
@@ -18,7 +18,7 @@
       ]
     }
   },
-  "recordPath": "/Users/young/Documents/Orrery/.orrery/worktrees/skill-composition-migration-35-026/plugins/orrery-test-harness/.it-migration/home/orrery/profiles/orrery-it/capabilities/sessions/session-46ac467e-0ef3-4843-9c3b-43aa559b7b8f/selection.json",
+  "recordPath": "/Users/young/Documents/Orrery/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities/sessions/session-0c268573-2a34-42b8-b256-43ed5007d7b2/selection.json",
   "dirFiles": [
     "selection.json"
   ]

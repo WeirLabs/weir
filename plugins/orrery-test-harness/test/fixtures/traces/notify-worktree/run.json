@@ -1,6 +1,6 @@
 {
   "scenario": "notify-worktree",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/notify-worktree-asks-048/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "NOTIFY_PROBE_DONE\n",
   "stderr": "",

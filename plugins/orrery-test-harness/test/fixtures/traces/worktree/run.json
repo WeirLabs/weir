@@ -1,5 +1,6 @@
 {
   "scenario": "worktree",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "parent saw the lane check: no-commits\n",
   "stderr": "",

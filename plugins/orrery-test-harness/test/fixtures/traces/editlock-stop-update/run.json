@@ -1,5 +1,6 @@
 {
   "scenario": "editlock-stop-update",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 1,
   "stdout": "\n",
   "stderr": "",

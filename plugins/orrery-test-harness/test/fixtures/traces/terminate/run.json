@@ -1,5 +1,6 @@
 {
   "scenario": "terminate",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "parent observed the settle signal after termination\n",
   "stderr": "",

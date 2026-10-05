@@ -1,8 +1,8 @@
 {
   "scenario": "editlock-auto-resume",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-auto-resume-on-message-021/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "auto-resume editing restored\n",
   "stderr": "\n",
-  "sessionId": "session-c5e3fb11-ba1d-4b49-825b-de3910016072"
+  "sessionId": "session-52951188-b042-419c-b921-0b2f0edaf53e"
 }

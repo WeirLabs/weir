@@ -1,5 +1,6 @@
 {
   "scenario": "hashline",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "hashline escalation denial observed\n",
   "stderr": "",

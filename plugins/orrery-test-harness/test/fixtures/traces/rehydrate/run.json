@@ -1,7 +1,8 @@
 {
   "scenario": "rehydrate",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "parent observed post-restart group-settled signal\n",
   "stderr": "",
-  "sessionId": "session-8ea597be-5ab2-4741-b86c-a46d7bdff36b"
+  "sessionId": "session-ad7965bb-a8d3-43a1-9262-8e3a3e770b07"
 }
