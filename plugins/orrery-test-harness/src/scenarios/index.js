@@ -36,6 +36,8 @@ import capabilityPresetsSurface from './capability-presets-surface.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import childPrompt from './child-prompt.js'
+import staleSweep from './editlock-stale-sweep.js'
+import staleSweepOff from './editlock-stale-sweep-off.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
@@ -49,6 +51,8 @@ SCENARIOS.push(capabilityPresetsSurface)
 SCENARIOS.push(worktreeWatch)
 SCENARIOS.push(notifyWorktree)
 SCENARIOS.push(childPrompt)
+SCENARIOS.push(staleSweep)
+SCENARIOS.push(staleSweepOff)
 
 /**
  * Find a scenario entry by id.
