@@ -290,6 +290,11 @@
               suffix: Your working directory is {{cwd}}.
           - id: orrery-core
             name: 'orrery-harness/core'
+          # Creative-only: how to use the fused tooling (inspection order,
+          # plugin-management discipline, development skills, composition
+          # rules). The `orrery` preset does not mount this section.
+          - id: creative-guide
+            name: 'orrery-harness/creative-guide'
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:

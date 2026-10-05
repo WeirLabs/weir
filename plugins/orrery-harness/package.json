@@ -7,6 +7,7 @@
   "exports": {
     "./package.json": "./package.json",
     "./core": "./src/core/index.js",
+    "./creative-guide": "./src/creative-guide/index.js",
     "./intent-gate": "./src/intent-gate/index.js",
     "./delegate": "./src/delegate/index.js",
     "./todo-driver": "./src/todo-driver/index.js",

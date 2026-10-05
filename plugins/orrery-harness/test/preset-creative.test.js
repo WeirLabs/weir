@@ -3,12 +3,13 @@ import { readFileSync } from 'node:fs'
 
 // Creative-preset guard (orrery-creative-preset change): the bundle patch
 // declares a second preset `orrery-creative` ("Orrery 创造模式") that mirrors
-// the full `orrery` composition and adds exactly three creative-mode deltas
-// (tool-cordis, plugin-manager enabled under a profile context, Cordis
-// development skills via customSkillDirs + baselineScopes). Text scan like
-// preset-realms.test.js (the patch has !!js tags); it pins the fused rows
-// AND the row-level sync between the two presets so future edits to the
-// `orrery` composition cannot silently drift from its creative copy.
+// the full `orrery` composition and adds exactly four creative deltas
+// (creative-guide prompt section, tool-cordis, plugin-manager enabled under a
+// profile context, Cordis development skills via customSkillDirs +
+// baselineScopes). Text scan like preset-realms.test.js (the patch has !!js
+// tags); it pins the fused rows AND the row-level sync between the two
+// presets so future edits to the `orrery` composition cannot silently drift
+// from its creative copy.
 
 const PATCH = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 
@@ -75,10 +76,16 @@ describe('orrery-creative preset declaration', () => {
     expect(orrery).not.toContain('customSkillDirs')
   })
 
-  it('the two presets share the same row sequence except the tool-cordis insertion', () => {
+  it('the two presets share the same row sequence except the creative-only insertions', () => {
     const shared = topLevelRowIds(orrery)
-    const mirrored = topLevelRowIds(creative).filter((id) => id !== 'tool-cordis')
+    const mirrored = topLevelRowIds(creative).filter((id) => id !== 'tool-cordis' && id !== 'creative-guide')
     expect(mirrored).toEqual(shared)
+  })
+
+  it('the creative-guide section row is creative-only', () => {
+    expect(creative).toContain('- id: creative-guide')
+    expect(creative).toContain("name: 'orrery-harness/creative-guide'")
+    expect(orrery).not.toContain('creative-guide')
   })
 
   it('the shared groups keep identical isolate tables', () => {
