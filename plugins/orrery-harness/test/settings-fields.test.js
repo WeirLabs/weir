@@ -9,8 +9,10 @@ import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimi
 // 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
 const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
 // 拆期键机制（FIELDS 已入库、设置页后续批次补齐时）暂存于此，补齐后移除
-// 让 parity 恢复全量对拍；反向断言保证移除义务响亮可见。当前无拆期键。
-const PENDING_PAGE_SYNC = new Set()
+// 让 parity 恢复全量对拍；反向断言保证移除义务响亮可见。
+// 当前拆期键：editLockStaleSweep（设置页 client chunk 与 locale 在本车道写面之外，
+// 页面行由后续批次补齐；schema/服务层已生效）。
+const PENDING_PAGE_SYNC = new Set(['editLockStaleSweep'])
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])
@@ -175,5 +177,26 @@ describe('editLockAutoResume (message-driven auto-resume switch)', () => {
     expect(gate({})).toBe(true)
     expect(gate({ editLockAutoResume: true })).toBe(true)
     expect(gate({ editLockAutoResume: false })).toBe(false)
+  })
+})
+
+describe('editLockStaleSweep (message-triggered stale-lock sweep switch)', () => {
+  // Same declaration style as editLockAutoResume: the row lives once in
+  // FIELDS; the runtime judges the section per message as
+  // `staleSweep !== false`, so a missing key means ON.
+  it('declares the editLock.staleSweep field row, live (no restart marker)', () => {
+    const row = FIELDS.find(({ key }) => key === 'editLockStaleSweep')
+    expect(row).toEqual({
+      key: 'editLockStaleSweep', section: 'editLock', field: 'staleSweep', type: 'boolean',
+      description: 'Edit Lock: a genuine user message silently releases locks whose target file no longer exists (default on; read per message, applies immediately)',
+    })
+    expect(RESTART_KEYS.includes('editLockStaleSweep')).toBe(false)
+  })
+
+  it('the staleSweep !== false judgment defaults on; only an explicit false gates off', () => {
+    const gate = (config) => computeSections(config).editLock?.staleSweep !== false
+    expect(gate({})).toBe(true)
+    expect(gate({ editLockStaleSweep: true })).toBe(true)
+    expect(gate({ editLockStaleSweep: false })).toBe(false)
   })
 })
