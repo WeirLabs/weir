@@ -17,11 +17,14 @@ import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
 import { createDefaultsTransaction } from './defaults-transaction.js'
 import { bindImportedSelection, validatePortableDocument } from './portable-refs.js'
 import { enumeratePresetUnits } from './store/enumerate.js'
+import { bindPackageSelection, packPresetPackage, planPackageInstall, validatePresetPackage } from './preset-package.js'
+import { installBundledSkills } from './preset-package-install.js'
 import { isSegment } from './store/paths.js'
 import { createApplyEngine } from './apply-engine.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { userTextMessage } from '../shared/user-message.js'
+import { createAudit } from '../shared/audit.js'
 
 const mounted = new WeakMap()
 /**
@@ -234,6 +237,25 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       })
       return sharedEngine
     }
+    // D6 two-phase package import (tasks 6.2/6.3): the install target roots
+    // resolve through the SAME skill-inventory root resolution the inventory
+    // uses — project scope installs into the current workspace's project
+    // Skill root, user scope into the user Skill root. Never guessed.
+    const skillRootsFor = async options => {
+      const profile = ctx.get?.('profileContext')
+      return resolveSkillRoots({
+        cwd: options.cwd,
+        dshHome: config.dshHome ?? profile?.home,
+        agentsHome: config.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'),
+        customSkillDirs: config.customSkillDirs ?? [],
+        bundledSkillDir: config.bundledSkillDir ?? process.env.DSH_BUNDLED_SKILL_DIR,
+        orreryBuiltinDir: config.orreryBuiltinDir ?? fileURLToPath(new URL('../../skills/', import.meta.url)),
+      })
+    }
+    // The shared cold-safe audit channel (cordis emit + .orrery/audit.jsonl
+    // mirror; never session.append). The package-import install outcome and
+    // its collision decisions are audited through it (task 6.3).
+    const audit = createAudit(ctx)
     // Group 12 client surface: a /capabilities command serving the Badge and
     // manager (receipt / listing / conditions). Values travel as command
     // results — no projection state and no custom session-log event types.
@@ -310,6 +332,124 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             const presetScopeError = spec => (spec?.scope !== 'global' && spec?.scope !== 'workspace')
               ? { kind: 'error', text: `capabilities: scope must be "global" | "workspace", got ${JSON.stringify(spec?.scope ?? null)}` }
               : null
+            /**
+             * D6 version-2 package import (tasks 6.2/6.3). Phase one
+             * (dryRun:true) is a read-only summary — the exact install
+             * targets, file counts, unresolved refs and collisions, ZERO
+             * writes. Phase two (confirmed, onCollision default 'cancel')
+             * installs the bundled Skills into the resolved roots and then
+             * commits the preset record by CAS. A poison package is rejected
+             * atomically: nothing is written, no preset is created, the
+             * reason is named. Installed Skills stay UNSELECTED in every
+             * established set — selection remains a later draft + Apply.
+             */
+            const importPresetPackage = async spec => {
+              const verdict = validatePresetPackage(spec.document)
+              if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
+              if (spec.dryRun !== undefined && typeof spec.dryRun !== 'boolean') {
+                return { kind: 'error', text: 'capabilities preset-import: dryRun must be a boolean' }
+              }
+              const onCollision = spec.onCollision ?? 'cancel'
+              if (onCollision !== 'cancel' && onCollision !== 'replace' && onCollision !== 'coexist') {
+                return { kind: 'error', text: 'capabilities preset-import: onCollision must be "cancel" | "replace" | "coexist"' }
+              }
+              const workspaceKey = sessionWorkspaceKey()
+              if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
+              const pkg = /** @type {any} */ (spec.document)
+              const store = capabilityStore()
+              // Local binding context: the managed MCP identities this
+              // machine configured, the builtin names it actually has, and
+              // the D6 install roots (project = this workspace, user = user
+              // root) via the existing skill-inventory root resolution.
+              const registry = createMcpRegistry({ store })
+              const record = await registry.read()
+              const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
+              const bound = bindPackageSelection(pkg, { localMcpIdentities })
+              const inventoryResult = await inventory(options)
+              const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+              const builtinNames = new Set()
+              for (const candidate of candidates) {
+                const identity = /** @type {Record<string, any>} */ (candidate)?.identity
+                if (identity?.scope === 'orrery-builtin' && typeof identity.name === 'string') builtinNames.add(identity.name)
+              }
+              const missingBuiltin = pkg.builtin.filter(name => !builtinNames.has(name))
+              const roots = await skillRootsFor(options)
+              const targetRoots = {
+                project: roots.find(root => root.source === 'project-dsh')?.path ?? null,
+                user: roots.find(root => root.source === 'user-dsh')?.path ?? null,
+              }
+              const plan = await planPackageInstall(pkg, { roots: targetRoots })
+              const carried = [
+                ...bound.unresolvedRefs,
+                ...missingBuiltin.map(name => ({ kind: 'skill', ref: { name, source: 'builtin' } })),
+              ]
+              if (spec.dryRun === true) {
+                return { kind: 'success', text: JSON.stringify({ status: 'dry-run', install: plan.install, unresolved: carried, collisions: plan.collisions }) }
+              }
+              // Confirmed: the install is this import's explicit main effect.
+              const neededScopes = [...new Set(pkg.bundled.map(entry => entry.targetScope))]
+              const missingRoot = neededScopes.find(scope => targetRoots[scope] === null)
+              if (missingRoot !== undefined) {
+                return { kind: 'error', text: JSON.stringify({ status: 'no-target-root', targetScope: missingRoot }) }
+              }
+              const install = await installBundledSkills(pkg.bundled, { roots: targetRoots, onCollision }, {
+                audit: data => audit(agent.session, 'capability-preset-import', data),
+              })
+              if (!install.ok) {
+                // installBundledSkills already rolled back what it wrote.
+                return { kind: 'error', text: JSON.stringify({ status: 'install-failed', reason: install.reason, rolledBack: install.rolledBack }) }
+              }
+              // Resolve what is now local (installed bundled Skills, present
+              // builtin names) against a FRESH inventory: the preset record
+              // names real identities; everything else stays unresolved.
+              const afterResult = await inventory(options)
+              const afterCandidates = Array.isArray(afterResult?.candidates) ? afterResult.candidates : []
+              const resolveLocal = (scope, name) => {
+                const matches = []
+                for (const candidate of afterCandidates) {
+                  const identity = /** @type {Record<string, any>} */ (candidate)?.identity
+                  if (identity?.scope === scope && identity.name === name) matches.push(identity)
+                }
+                // An ambiguous name stays unresolved rather than guessing.
+                return matches.length === 1 ? matches[0] : null
+              }
+              const resolvedSkills = []
+              const unresolvedRefs = [...carried]
+              for (const entry of install.installed) {
+                const identity = resolveLocal(entry.targetScope === 'project' ? 'project' : 'user', entry.target)
+                if (identity) resolvedSkills.push(identity)
+                else unresolvedRefs.push({ kind: 'skill', ref: { name: entry.target, targetScope: entry.targetScope, source: 'bundled' } })
+              }
+              for (const entry of install.collisions) {
+                unresolvedRefs.push({ kind: 'skill', ref: { name: entry.name, targetScope: entry.targetScope, source: 'bundled', collision: entry.decision } })
+              }
+              for (const name of pkg.builtin) {
+                if (missingBuiltin.includes(name)) continue
+                const identity = resolveLocal('orrery-builtin', name)
+                if (identity) resolvedSkills.push(identity)
+                else unresolvedRefs.push({ kind: 'skill', ref: { name, source: 'builtin' } })
+              }
+              const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
+              const presetId = spec.presetId ?? presetSlugOf(name)
+              if (!isSegment(presetId)) return { kind: 'error', text: `capabilities preset-import: invalid presetId ${JSON.stringify(presetId)}` }
+              const names = await presetNamesOf(store, spec.scope, workspaceKey)
+              if (names.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: names.kind, reason: names.reason }) }
+              const library = createPresetLibrary({ store })
+              const document = { name, selection: { skills: resolvedSkills, mcpServers: bound.mcpServers, unresolvedRefs } }
+              const result = await library.create({
+                scope: spec.scope, presetId, workspaceKey, document,
+                onNameConflict: spec.onNameConflict ?? 'cancel',
+                allDisplayNames: async () => names.names,
+              })
+              return { kind: 'success', text: JSON.stringify({
+                ...result,
+                presetId,
+                bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: unresolvedRefs.length },
+                installed: install.installed,
+                collisions: install.collisions,
+                unresolved: unresolvedRefs,
+              }) }
+            }
             if (verb === 'receipt') {
               try {
                 const status = provider.status(options)
@@ -594,21 +734,51 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               }
             }
             if (verb.startsWith('preset-export ')) {
+              // format:'document' is the v1 portable document (verbatim via
+              // library.exportPreset — inspect/backup); the default 'package'
+              // is the D6 version-2 package: remote Skills as portable refs,
+              // workspace/local Skills as bundled content, builtin Skills by
+              // name, managed MCP as {identity,label}.
               let spec
               try {
                 spec = JSON.parse(rawInput.slice('preset-export '.length))
               } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-export <json {scope,presetId}>' }
+                return { kind: 'error', text: 'Usage: /capabilities preset-export <json {scope,presetId,format?:"package"|"document"}>' }
               }
               try {
                 const scopeError = presetScopeError(spec)
                 if (scopeError) return scopeError
                 if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-export: presetId must be a valid store segment' }
+                const format = spec.format ?? 'package'
+                if (format !== 'package' && format !== 'document') {
+                  return { kind: 'error', text: 'capabilities preset-export: format must be "package" | "document"' }
+                }
                 const workspaceKey = sessionWorkspaceKey()
                 if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
                 const library = createPresetLibrary({ store: capabilityStore() })
-                const exported = await library.exportPreset(spec.scope, spec.presetId, workspaceKey)
-                return { kind: 'success', text: JSON.stringify(exported) }
+                if (format === 'document') {
+                  const exported = await library.exportPreset(spec.scope, spec.presetId, workspaceKey)
+                  return { kind: 'success', text: JSON.stringify(exported) }
+                }
+                const loaded = await library.load(spec.scope, spec.presetId, workspaceKey)
+                if (loaded.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: loaded.kind }) }
+                // Pack against the live inventory (Skill file content comes
+                // from the matched candidates' locators) and the managed
+                // registry (MCP labels).
+                const inventoryResult = await inventory(options)
+                const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+                const registry = createMcpRegistry({ store: capabilityStore() })
+                const record = await registry.read()
+                /** @type {Record<string, string>} */
+                const labels = {}
+                if (record.kind === 'ok') for (const entry of Object.values(record.servers)) labels[entry.identity] = entry.label
+                const source = /** @type {Record<string, unknown>} */ (loaded.document ?? {})
+                const packed = await packPresetPackage({ name: source.name, selection: source.selection }, {
+                  candidates,
+                  mcpLabels: identity => labels[identity],
+                })
+                if (!packed.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: packed.reason }) }
+                return { kind: 'success', text: JSON.stringify({ status: 'ok', format: 'package', document: packed.package }) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities preset-export failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
@@ -623,11 +793,19 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               try {
                 spec = JSON.parse(rawInput.slice('preset-import '.length))
               } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-import <json {document,scope,presetId,name?,onNameConflict?}>' }
+                return { kind: 'error', text: 'Usage: /capabilities preset-import <json {document,scope,presetId?,name?,onNameConflict?,dryRun?,onCollision?}>' }
               }
               try {
                 const scopeError = presetScopeError(spec)
                 if (scopeError) return scopeError
+                // Version dispatch (D6): a version-2 package takes the
+                // two-phase path (dryRun summary → confirmed install + CAS
+                // preset create). Everything else keeps the v1 portable
+                // path, whose own gate rejects unknown versions atomically.
+                if (spec.document !== null && typeof spec.document === 'object' && !Array.isArray(spec.document)
+                  && /** @type {Record<string, unknown>} */ (spec.document).version === 2) {
+                  return await importPresetPackage(spec)
+                }
                 const verdict = validatePortableDocument(spec.document)
                 if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
                 const workspaceKey = sessionWorkspaceKey()
