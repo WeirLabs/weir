@@ -105,3 +105,36 @@ test('6.5 mounted: an unreadable default fails closed with a classified reason',
   expect(status.reason ?? status.note?.reason ?? status.error ? true : false).toBe(true)
   expect((await provider.list(options('sess-3', 'ws-2'))).candidates.every(item => !item.invocation.modelInvocable)).toBe(true)
 })
+
+test('6.5+6.2 mounted: a captured inherited snapshot drives a subagent without an accepted record', async () => {
+  const dir = home()
+  const store = openCapabilityStore({ root: rootOf(dir), platform: 'darwin' })
+  await store.commit({ kind: 'inherited', sessionId: 'child-1' }, 0, () => ({ skills: [alpha], mcpServers: [], origin: 'inherited' }))
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(alpha), candidateOf(builtinA)] })
+  const options = { cwd: '/ws', scope: { session: { id: 'child-1', header: { delegationDepth: 1, parentSession: 'p' } } } }
+  const list = await provider.list(options)
+  const enabled = list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)
+  expect(enabled).toEqual(['alpha'])
+})
+
+test('6.4 mounted: a snapshot-less subagent is refused, never granted the root baseline', async () => {
+  const dir = home()
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA)] })
+  const options = { cwd: '/ws', scope: { session: { id: 'child-2', header: { delegationDepth: 1, parentSession: 'p' } } } }
+  await provider.list(options)
+  const status = provider.status(options)
+  expect(status.reason ?? status.note?.reason).toBe('inherited-snapshot-unavailable')
+  expect((await provider.list(options)).candidates.every(item => !item.invocation.modelInvocable)).toBe(true)
+})
+
+test('6.4 mounted: an undecodable inherited snapshot fails closed, never overwritten', async () => {
+  const dir = home()
+  mkdirSync(join(rootOf(dir), 'sessions', 'child-3'), { recursive: true })
+  writeFileSync(join(rootOf(dir), 'sessions', 'child-3', 'inherited.json'), '{')
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA)] })
+  const options = { cwd: '/ws', scope: { session: { id: 'child-3', header: { delegationDepth: 1, parentSession: 'p' } } } }
+  await provider.list(options)
+  const status = provider.status(options)
+  expect(status.reason ?? status.note?.reason).toBe('inherited-snapshot-unavailable')
+  expect((await provider.list(options)).candidates.every(item => !item.invocation.modelInvocable)).toBe(true)
+})

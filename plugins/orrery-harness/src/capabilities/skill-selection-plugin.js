@@ -54,7 +54,25 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             // distinct classified failure, never silently treated as absent.
             throw new Error('Skill selection policy is unreadable', { cause })
           }
-          if (record.kind === 'absent') return initialSelection(options)
+          if (record.kind === 'absent') {
+            // Subagent inheritance (6.2/6.3): a captured inherited snapshot is
+            // the child's accepted selection. A snapshot-LESS subagent (crash
+            // between the host's session publication and our capture, or a
+            // hand-built session) is REFUSED — never granted the root
+            // baseline (6.4 subagent rule; explicit resume recaptures).
+            const header = options.scope?.session?.header ?? {}
+            const isSubagent = (header.delegationDepth ?? 0) > 0 || typeof header.parentSession === 'string'
+            let inherited
+            try {
+              inherited = await store.read({ kind: 'inherited', sessionId })
+            } catch (cause) {
+              throw new Error('Skill selection policy is unreadable', { cause })
+            }
+            if (inherited.kind === 'ok') return inherited.payload?.skills
+            if (inherited.kind !== 'absent') throw new Error(`Inherited skill snapshot is ${inherited.kind}`)
+            if (isSubagent) throw new Error('Inherited skill snapshot is absent')
+            return initialSelection(options)
+          }
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)
           return record.payload?.skills
         })

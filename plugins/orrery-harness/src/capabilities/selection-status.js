@@ -25,6 +25,12 @@ export function classifySelectionFailure(input) {
       hint: 'Another process holds this session log. Close the session in that process (or continue it there), then resume it here.',
     }
   }
+  if (text.includes('Inherited skill snapshot is')) {
+    return {
+      reason: 'inherited-snapshot-unavailable',
+      hint: 'This subagent has no readable inherited skill snapshot. Respawn it from the parent session so the snapshot is recaptured at creation.',
+    }
+  }
   if (text.includes('Workspace default selection is')) {
     return {
       reason: 'workspace-default-unavailable',
