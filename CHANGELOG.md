@@ -52,6 +52,8 @@
 
 ### Fixed
 
+- **Orrery 预设重启后加载失败（`Preset services require isolate realms: orreryMcpGate,orreryMcpManager`）**：MCP manager 预设行通过 reflect 发布 `orreryMcpGate`/`orreryMcpManager` 两个服务，但该行直接挂在预设根 realm，预设注册审计拒绝任何泄漏到根 realm 的预设服务，导致重启后所有新建 Orrery 会话失败；会话能力 Badge 随之停留在加载态并显示原始文案键 `capability.loading`，管理器面板空转。现将 `orrery-skill-selection`（消费者）与 `orrery-mcp-manager`（提供者）收进同一个 isolate 这两个服务的 `capabilities` cordis 组（S11 同 realm 纪律），`preset-realms` 单测新增该组的结构守卫，集成测试装置的 MCP 行同步镜像为该隔离结构（realm 错误从此在 headless 场景即失败）；manager 对选择面 lifecycle 的解析改为每次裁决时惰性进行——同批挂载顺序不是契约，挂载期快照可能永久落空为拒绝一切托管调用（与意图门 rc.2 教训同类）；Badge/管理器面板对未注册文案键回退到内置英文文案、列表拉取失败落定显式不可用态而非永久加载。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+- **bundle 重载时宿主崩溃（编辑锁迟挂载越预设绑定 + restrict 致命抛出）**：编辑锁开启状态下重载 bundle（或任何触发预设树 reload 的操作）时，迟挂载 catch-up 经进程级 `agents.roots()` 枚举到**其他预设**的存活主代理并尝试绑定——绑定失败后的兜底 `tools.restrict({ deny: [...] })` 包含对方工具目录不认识的名称（`hash_edit`/`lsp_rename`/`str_replace_editor`），restrict 抛出并在 reload 期间升级为宿主致命错误（`dsh desktop host exited with 1`）。现 catch-up 以 `agentPresets.serviceFor` 的服务实例同一性判定只绑定属于本挂载的代理（无预设注册表的组合维持原行为），兜底拒绝只点名该代理实际拥有的工具且自身绝不再抛出。附两条回归测试。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 - **重启后首个会话的主代理永久失去编辑能力（编辑锁迟挂载缺口）**：Edit Lock 域绑定此前只发生在 `agent/created`，而重启后首个 Orrery 会话的主代理先于预设插件创建（事件已错过），该会话主代理因此永远没有 Edit Lock 域、一切文件写入被守卫拒绝，只能靠子代理绕行。现在插件挂载时会枚举存量主代理并执行与创建时完全相同的绑定路径（幂等，重复挂载不双重绑定；挂载时启动失败与创建时同等记录）；子代理本就晚于挂载创建，不受影响。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 - **编辑锁状态面板点击外部不收起**：输入栏「编辑锁」弹出的细节面板此前只能靠再次点击按钮或在面板内按 Escape 关闭，点击面板外区域没有反应。现在面板打开时监听 document 级 `pointerdown`，落在本入口（按钮＋面板）之外的点击即收起面板，同时重置「收回编辑权」「解锁」的二次确认待击状态；收起时注销监听器，不产生泄漏。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 
