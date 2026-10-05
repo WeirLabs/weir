@@ -10,6 +10,7 @@ import { createPresetInvalidation } from './preset-invalidation.js'
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
+import { resolveInitialSelection } from './initial-selection.js'
 
 const mounted = new WeakMap()
 /** Manager/Badge access without providing a new preset service or realm. */
@@ -34,6 +35,8 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     let provider
     let inventory
     let error = null
+    /** Task 6.5 initialization reports per session (manager surface). */
+    let initialReports = new Map()
     let lifecycle = null
     try {
       ctx.skills.registerProvider(control => {
@@ -43,8 +46,15 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           // condition, not a policy failure (no error state is raised).
           if (!sessionId) return []
           const store = openCapabilityStore({ profileContext: ctx.get('profileContext') })
-          const record = await store.read({ kind: 'selection', sessionId })
-          if (record.kind === 'absent') return []
+          let record
+          try {
+            record = await store.read({ kind: 'selection', sessionId })
+          } catch (cause) {
+            // 6.4 root rule: an unreadable record (permissions/fs error) is a
+            // distinct classified failure, never silently treated as absent.
+            throw new Error('Skill selection policy is unreadable', { cause })
+          }
+          if (record.kind === 'absent') return initialSelection(options)
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)
           return record.payload?.skills
         })
@@ -69,6 +79,45 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           const bundled = await office(options)
           return { ...local, complete: local.complete && bundled.complete, candidates: [...local.candidates, ...bundled.candidates] }
         }
+        initialReports = new Map()
+        /**
+         * Task 6.5 initialization priority for a root session without an
+         * accepted record: a saved workspace default wins (explicit empty
+         * included, unresolved refs reported); otherwise the builtin-Skills
+         * baseline plus the managed MCP identities the composition enables.
+         * Nothing is inferred from historical content, nothing is persisted.
+         */
+        const initialSelection = dependencies.initialSelection ?? (async options => {
+          const store = openCapabilityStore({ profileContext: ctx.get('profileContext') })
+          const workspaceKey = options.scope?.session?.workspaceKey ?? null
+          let defaultsRecord = /** @type {any} */ ({ kind: 'absent', revision: 0 })
+          if (typeof workspaceKey === 'string' && workspaceKey.length) {
+            try {
+              defaultsRecord = await store.read({ kind: 'defaults', workspaceKey })
+            } catch (cause) {
+              throw new Error('Workspace default selection is unreadable', { cause })
+            }
+          }
+          let builtinIdentities = []
+          let enabledMcpIdentities = []
+          if (defaultsRecord.kind === 'absent') {
+            const snapshot = await inventory(options)
+            builtinIdentities = (snapshot?.candidates ?? [])
+              .filter(candidate => candidate?.status === 'parsed' && candidate.identity?.scope === 'orrery-builtin')
+              .map(candidate => candidate.identity)
+            try {
+              const registry = await store.read({ kind: 'mcp-registry' })
+              const payload = registry.kind === 'ok' ? registry.payload ?? {} : {}
+              enabledMcpIdentities = Array.isArray(/** @type {Record<string, unknown>} */ (payload).enabled) ? /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (payload).enabled) : []
+            } catch { /* an unreadable registry enables no managed identity by default */ }
+          }
+          const resolved = resolveInitialSelection({ defaultsRecord, builtinIdentities, enabledMcpIdentities })
+          const sessionId = options.scope?.session?.id
+          if (typeof sessionId === 'string' && sessionId.length) {
+            initialReports.set(sessionId, { source: resolved.source, missing: resolved.missing, mcpServers: resolved.selection.mcpServers })
+          }
+          return resolved.selection.skills
+        })
         provider = createSkillSelectionProvider({ control, readSelection, inventory, denials: officeDenials })
         return provider
       })
@@ -126,6 +175,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       status: options => error
         ? { error, ...classifySelectionFailure(error), conflicts: [] }
         : provider.status(options),
+      initialReport: sessionId => initialReports.get(sessionId) ?? null,
       noteFailure: (options, failure) => provider?.noteFailure(options, failure),
       clearFailure: options => provider?.clearFailure(options),
     })
