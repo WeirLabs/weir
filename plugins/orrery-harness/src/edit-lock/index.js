@@ -548,7 +548,14 @@ return (ctx, config = {}) => {
       installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef)
       registry.bind(agent, options.fixed?.root ?? agent?.session?.header?.cwd)
     } catch (error) {
-      agent?.ctx?.tools?.restrict?.({ deny: [...GUARDED_TOOLS] })
+      // The denial itself must never escape: restrict() throws on names the
+      // agent's composition does not know, and an escape from this setup path
+      // is fiber-fatal during a reload (2026-10-05 host crash). Deny only the
+      // guarded tools the agent actually has.
+      try {
+        const known = GUARDED_TOOLS.filter(name => ctx.tools?.get?.(name, agent) !== undefined)
+        if (known.length > 0) agent?.ctx?.tools?.restrict?.({ deny: [...known] })
+      } catch { /* the denial is best-effort; the warn below is the visible record */ }
       ctx.logger?.warn?.(`edit lock scope failed; edit tools denied: ${/** @type {any} */ (error)?.message ?? error}`)
       return
     }
@@ -573,9 +580,25 @@ return (ctx, config = {}) => {
   // through the identical setup; sub-agents are always created after mount and
   // need no catch-up. Failures are recorded and surfaced exactly like
   // creation-time ones, because it is the same code path.
+  //
+  // Cross-preset fence: the creation listener only ever hears agents whose
+  // event bubbles through THIS preset mount, but agents.roots() is a
+  // process-wide registry — a foreign agent bound here would get its edit
+  // tools denied (and a denial against a foreign tool catalog used to escape
+  // as a host-fatal error). Identity-compare the orreryEditLock instance the
+  // agent's own retained preset mount resolves: only an agent of THIS mount
+  // sees this exact service object. Without a preset registry (host-level
+  // compositions, e.g. the integration harness) every root is eligible.
+  const presets = /** @type {any} */ (ctx.get?.('agentPresets'))
+  const ownAgent = typeof presets?.serviceFor === 'function'
+    ? (/** @type {any} */ agent) => {
+      try { return presets.serviceFor(agent, 'orreryEditLock') === service } catch { return false }
+    }
+    : () => true
   try {
     for (const agent of ctx.get?.('agents')?.roots?.() ?? []) {
       if ((agent?.session?.header?.delegationDepth ?? 0) !== 0) continue
+      if (!ownAgent(agent)) continue
       void setupAgent(agent)
     }
   } catch {

@@ -265,6 +265,63 @@ test('mount without an agents registry tolerates its absence; agents created lat
   dispose()
 })
 
+test('the mount-time catch-up never binds agents of another preset (2026-10-05 host crash)', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const own = host.agent('own')
+  const foreign = host.agent('foreign')
+  const warnings = []
+  host.ctx.logger = { warn: message => warnings.push(String(message)) }
+  // A preset registry that resolves orreryEditLock only for the agent of
+  // THIS mount — exactly like agentPresets.serviceFor identity comparison.
+  host.provided.set('agentPresets', {
+    serviceFor: (agent, name) => (agent === own && name === 'orreryEditLock' ? host.provided.get('orreryEditLock') : undefined),
+  })
+  const get = host.ctx.get
+  host.ctx.get = name => (name === 'agents' ? { roots: () => [foreign, own] } : get(name))
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  for (let i = 0; i < 200 && service.blocksContinuation(own); i++) await new Promise(resolve => setTimeout(resolve, 10))
+  // The own agent bound; the foreign agent is untouched — its stock writers
+  // stay visible, no domain, no denial, no warning.
+  assert.equal(service.blocksContinuation(own), false)
+  assert.equal(foreign.visible.has('edit'), true)
+  assert.equal(foreign.visible.has('write'), true)
+  assert.equal(service.blocksContinuation(foreign), true)
+  await assert.rejects(service.describe(foreign), /no Edit Lock domain/)
+  assert.equal(warnings.length, 0)
+  dispose()
+})
+
+test('a failed scope setup denies only the tools the agent has, and the denial never escapes', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const warnings = []
+  host.ctx.logger = { warn: message => warnings.push(String(message)) }
+  const broken = host.agent('broken')
+  // An own-scope stock edit the write-scope install cannot exclusively
+  // replace, plus a real-registry restrict that throws on unknown names.
+  broken.visible.set('edit', { name: 'edit', execute() {} })
+  const denials = []
+  broken.ctx.tools.restrict = ({ deny }) => {
+    const unknown = deny.filter(name => !broken.visible.has(name))
+    if (unknown.length > 0) throw new Error(`tools.restrict() names unknown global tools ${unknown.map(name => `"${name}"`).join(', ')}`)
+    denials.push(deny)
+  }
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  await host.emit('agent/created', { agent: broken })
+  // Neither the setup failure nor the denial propagated; every denial named
+  // only guarded tools the agent still had at that moment (never hash_edit,
+  // lsp_rename or str_replace_editor, which a foreign catalog would reject).
+  assert.equal(denials.length > 0, true)
+  for (const deny of denials) {
+    assert.equal(deny.length > 0, true)
+    for (const name of deny) assert.equal(['write', 'edit'].includes(name), true, `unexpected denied tool ${name}`)
+  }
+  assert.equal(warnings.filter(message => /edit lock scope failed/.test(message)).length, 1)
+  dispose()
+})
+
 test('remote channel opens a session, EOF revokes it, and reconnect starts interrupted', async () => {
   const { base, root, directory } = await fixture()
   const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
