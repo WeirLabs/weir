@@ -27,8 +27,9 @@
 | 集成测试装置 | [integration-test-harness.md](integration-test-harness.md) | `plugins/orrery-test-harness`（开发专用） |
 | Edit Lock 编辑锁仲裁 | [edit-lock.md](edit-lock.md) | `orrery-harness/edit-lock`（实验，默认关闭，设置 `editLockEnabled`） |
 | Worktree 车道 | [git-worktree.md](git-worktree.md) | `orrery-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
-| Worktree 车道 | [git-worktree.md](git-worktree.md) | `orrery-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
 | 系统通知 | [notify.md](notify.md) | `orrery-harness/notify`（profile 级，设置 `notify*`） |
 | 会话能力管理器 | [session-capability-manager.md](session-capability-manager.md) | `orrery-harness/capabilities`（实施中，已落地持久化存储层） |
+| 会话黑板 | [blackboard.md](blackboard.md) | `orrery-harness/blackboard`（设计中，设置 `blackboard*`） |
 - [Skill 分发：来源清单、隔离执行与 pinned 基线](skill-distribution.md)：第三方 Skill 来源可查询、同名显式决策、受管安装只在 pinned 隔离执行器里运行。
 - [会话能力管理器](session-capability-manager.md)：会话级能力选择、Apply 事务、MCP 会话级关闭、预设库与默认值、管理界面与通知。
+- [会话黑板](blackboard.md)：会话内 Agent 协作的知识交换所——发现即写、仲裁写入、类型枚举、用量可计量，晋升评估由用户一键发起并逐项裁决。
