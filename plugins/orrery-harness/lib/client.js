@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"ebc0713ea8a0af7a2ebbc6cd4010507d7ff5f018f3ec68601f0ee87cdb2b063c","client.capability-manager.js":"9f49dc4a95239fa31e5582ceaa5a0493cb149a90e5631a2524e4ba594c368f61","client.capability-model.js":"f9b7da2ed1706efa56f431ea692fdba4de3f3a94a4209d87fc4beced4c6eb6d1","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"cc66d75faae3fdfe5204c006d80a40e6fc3716209fe4e7859cfd3dbdf9003d7f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d8290643a42ce11cbc3559745809a8a17797505f0ae8081a707cf10cb2e8d86b","client.worktree-model.js":"a8f5ab9332d6f0eee992d22f08b3db371afe0ceddb8b86d363b8403808e3f514","client.worktree-view.js":"eba22564e89aa867b63a902afd76d1224a8ce10e2b89c2b4531af731baf8ca33"}
+// Orrery client chunks: {"client.capability-badge.js":"33459a9d46b12d09bfc7498a8f5a24ec42801521e7acf918834125663a5ea731","client.capability-manager.js":"37d7d3fae21594ca457c9fe4f2d0015c2be94163682622fbcb1079b6fd701b51","client.capability-model.js":"58be87b7d8903e99dcd62ccbf2df50d995ef05d1ab7964622dc640d0f319c976","client.capability-presets.js":"2ef03937c81340b7026ede0f1129ada5f4b7b9299114f2fdd7cf68b02ed5d44a","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"cc66d75faae3fdfe5204c006d80a40e6fc3716209fe4e7859cfd3dbdf9003d7f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d8290643a42ce11cbc3559745809a8a17797505f0ae8081a707cf10cb2e8d86b","client.worktree-model.js":"a8f5ab9332d6f0eee992d22f08b3db371afe0ceddb8b86d363b8403808e3f514","client.worktree-view.js":"eba22564e89aa867b63a902afd76d1224a8ce10e2b89c2b4531af731baf8ca33"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -477,7 +477,127 @@ window.__ModuleLoader__.load({
 			hashEditCollapse: "Collapse",
 			hashEditCollapseAria: "Collapse diff",
 			hashEditExpand: "Show {count} more",
-			hashEditExpandAria: "Expand {count} more rows"
+			hashEditExpandAria: "Expand {count} more rows",
+			// Session capability Badge + manager (12.x, D3/D4): the chunks carry
+			// the same strings as in-code fallbacks; these rows translate them.
+			capabilityTabLabel: "Capabilities",
+			capabilityGuideTitle: "Capabilities",
+			capabilityGuideDescription: "Skills, MCP servers, and presets for this session.",
+			"capability.badge": "{skills} skills · {mcp} MCP",
+			"capability.unavailable.short": "Capabilities n/a",
+			"capability.loading": "Loading capabilities…",
+			"capability.error": "Capabilities unavailable for this session.",
+			"capability.unavailable": "Capabilities are unavailable in this session.",
+			"capability.unsupported": "Unsupported: consistency conditions are not met on this host.",
+			"capability.tab.skills": "Skills",
+			"capability.tab.mcp": "MCP",
+			"capability.tab.presets": "Presets",
+			"capability.search": "Search",
+			"capability.close": "Close",
+			"capability.conflict": "conflict",
+			"capability.missing": "missing",
+			"capability.noSkills": "No skills match.",
+			"capability.mcp.groupManaged": "Orrery managed",
+			"capability.mcp.groupUnmanaged": "Unmanaged",
+			"capability.mcp.none": "No MCP servers configured.",
+			"capability.mcp.unmanagedHint": "Configured outside Orrery; the selection cannot govern it.",
+			"capability.mcp.stateMounted": "mounted",
+			"capability.mcp.stateRegistered": "registered",
+			"capability.unmanaged": "unmanaged",
+			"capability.mcp.add": "+ Add managed MCP server",
+			"capability.mcp.identity": "identity (e.g. my-docs)",
+			"capability.mcp.label": "label (display name, optional)",
+			"capability.mcp.command": "command (e.g. npx)",
+			"capability.mcp.args": "args, space-separated (optional)",
+			"capability.mcp.adding": "Adding…",
+			"capability.mcp.addConfirm": "Add",
+			"capability.mcp.cancel": "Cancel",
+			"capability.mcp.errorRequired": "Required.",
+			"capability.mcp.errorIdentityInvalid": "Letters, digits, \"-\" and \"_\" only; start with a letter or digit.",
+			"capability.diff.addSkills": "+{n} skills",
+			"capability.diff.removeSkills": "−{n} skills",
+			"capability.diff.addMcp": "+{n} MCP",
+			"capability.diff.removeMcp": "−{n} MCP",
+			"capability.apply": "Apply",
+			"capability.applying": "Applying…",
+			"capability.discard": "Discard",
+			"capability.applied": "Applied",
+			"capability.failed": "Failed — draft kept",
+			"capability.conflictState": "Changed elsewhere — review current state",
+			"capability.missingAction": "Missing items need install/configure",
+			"capability.pending": "Result pending — query the receipt",
+			"capability.presets.unavailable": "Presets are unavailable on this host.",
+			"capability.presets.errorName": "Enter a name.",
+			"capability.presets.saved": "Preset saved.",
+			"capability.presets.revisionConflict": "Changed elsewhere — the list was refreshed.",
+			"capability.presets.noWorkspace": "This session has no workspace.",
+			"capability.presets.saveFailed": "The preset could not be saved.",
+			"capability.presets.loaded": "Staged into the draft — Apply to activate.",
+			"capability.presets.loadedUnresolved": "Staged into the draft — {n} unresolved ref(s) reported.",
+			"capability.presets.loadFailed": "Load failed — the preset may be gone.",
+			"capability.presets.deleted": "Preset deleted.",
+			"capability.presets.deleteFailed": "Delete failed.",
+			"capability.presets.exportFailed": "Export failed.",
+			"capability.presets.imported": "Imported: {bound} MCP binding(s), {unresolved} unresolved ref(s).",
+			"capability.presets.counts": "{skills} skills · {mcp} MCP",
+			"capability.presets.countsUnresolved": " · {n} unresolved",
+			"capability.presets.loading": "Loading…",
+			"capability.presets.load": "Load",
+			"capability.presets.export": "Export",
+			"capability.presets.delete": "Delete",
+			"capability.presets.deleteConfirm": "Delete preset \"{name}\"? This cannot be undone.",
+			"capability.presets.deleteConfirmButton": "Delete preset",
+			"capability.presets.deleting": "Deleting…",
+			"capability.presets.cancel": "Cancel",
+			"capability.presets.exportLabel": "Preset JSON",
+			"capability.presets.copy": "Copy to clipboard",
+			"capability.presets.copied": "Copied",
+			"capability.presets.close": "Close",
+			"capability.presets.saveOpen": "Save as preset…",
+			"capability.presets.importOpen": "Import…",
+			"capability.presets.name": "Preset name",
+			"capability.presets.namespace": "Namespace",
+			"capability.presets.scopeWorkspace": "workspace",
+			"capability.presets.scopeGlobal": "global",
+			"capability.presets.source": "From",
+			"capability.presets.fromDraft": "current draft",
+			"capability.presets.fromApplied": "applied selection",
+			"capability.presets.nameConflict": "A preset named \"{name}\" already exists in this namespace.",
+			"capability.presets.rename": "Rename…",
+			"capability.presets.renameHint": "Edit the name, then save again.",
+			"capability.presets.replace": "Replace it",
+			"capability.presets.saving": "Saving…",
+			"capability.presets.save": "Save preset",
+			"capability.presets.importPlaceholder": "Paste a portable preset document (JSON)…",
+			"capability.presets.importing": "Importing…",
+			"capability.presets.importSubmit": "Import",
+			"capability.presets.importInvalidJson": "Not valid JSON — nothing was written.",
+			"capability.presets.importRejected": "Rejected: {reason} — nothing was written.",
+			"capability.presets.importNameConflict": "A preset with this name already exists here.",
+			"capability.presets.importFailed": "Import failed — nothing was written.",
+			"capability.presets.groupWorkspace": "Workspace presets",
+			"capability.presets.groupWorkspaceNone": "Workspace presets (no workspace)",
+			"capability.presets.groupGlobal": "Global presets",
+			"capability.presets.emptyWorkspace": "No workspace presets yet.",
+			"capability.presets.emptyGlobal": "No global presets yet.",
+			"capability.presets.defaultTitle": "Workspace default for new sessions",
+			"capability.presets.defaultUnavailable": "The workspace default is unavailable.",
+			"capability.presets.defaultNone": "No default is set — new sessions use the builtin baseline.",
+			"capability.presets.defaultEmpty": "An explicit empty default is set: new sessions start with 0 skills · 0 MCP.",
+			"capability.presets.defaultEntries": "Default: {counts}",
+			"capability.presets.defaultUnresolved": "…with {n} unresolved ref(s) reported on resolve.",
+			"capability.presets.defaultSaveOpen": "Save as default…",
+			"capability.presets.defaultClearOpen": "Clear default…",
+			"capability.presets.defaultSaveConfirm": "Save {counts} as this workspace's default? New sessions in this workspace will start from it; the current session does not change.",
+			"capability.presets.defaultSaveConfirmButton": "Save default",
+			"capability.presets.defaultSaved": "Workspace default saved.",
+			"capability.presets.defaultSaveFailed": "The default could not be saved.",
+			"capability.presets.defaultClearConfirm": "Clear the workspace default? New sessions return to the builtin baseline; open sessions do not change.",
+			"capability.presets.defaultClearConfirmButton": "Clear default",
+			"capability.presets.defaultCleared": "Workspace default cleared — new sessions use the builtin baseline.",
+			"capability.presets.defaultClearFailed": "The default could not be cleared.",
+			"capability.presets.clearing": "Clearing…",
+			"capability.presets.needsReceipt": "Unavailable until the session receipt loads."
 		};
 		const zh = {
 			title: "Orrery",
@@ -927,7 +1047,125 @@ window.__ModuleLoader__.load({
 			hashEditCollapse: "收起",
 			hashEditCollapseAria: "收起 diff",
 			hashEditExpand: "展开剩余 {count} 行",
-			hashEditExpandAria: "展开剩余 {count} 行"
+			hashEditExpandAria: "展开剩余 {count} 行",
+			capabilityTabLabel: "能力",
+			capabilityGuideTitle: "能力",
+			capabilityGuideDescription: "此会话的技能、MCP server 与预设。",
+			"capability.badge": "{skills} 个技能 · {mcp} 个 MCP",
+			"capability.unavailable.short": "能力不可用",
+			"capability.loading": "正在加载能力…",
+			"capability.error": "此会话的能力不可用。",
+			"capability.unavailable": "能力在此会话中不可用。",
+			"capability.unsupported": "不支持：此宿主未满足一致性条件。",
+			"capability.tab.skills": "技能",
+			"capability.tab.mcp": "MCP",
+			"capability.tab.presets": "预设",
+			"capability.search": "搜索",
+			"capability.close": "关闭",
+			"capability.conflict": "冲突",
+			"capability.missing": "缺失",
+			"capability.noSkills": "没有匹配的技能。",
+			"capability.mcp.groupManaged": "Orrery 管理",
+			"capability.mcp.groupUnmanaged": "未纳入管理",
+			"capability.mcp.none": "未配置 MCP server。",
+			"capability.mcp.unmanagedHint": "在 Orrery 之外配置，会话选择无法管理它。",
+			"capability.mcp.stateMounted": "已挂载",
+			"capability.mcp.stateRegistered": "已注册",
+			"capability.unmanaged": "未管理",
+			"capability.mcp.add": "+ 添加受管 MCP server",
+			"capability.mcp.identity": "identity（如 my-docs）",
+			"capability.mcp.label": "标签（显示名，可选）",
+			"capability.mcp.command": "命令（如 npx）",
+			"capability.mcp.args": "参数，空格分隔（可选）",
+			"capability.mcp.adding": "正在添加…",
+			"capability.mcp.addConfirm": "添加",
+			"capability.mcp.cancel": "取消",
+			"capability.mcp.errorRequired": "必填。",
+			"capability.mcp.errorIdentityInvalid": "仅限字母、数字、\"-\"、\"_\"，且以字母或数字开头。",
+			"capability.diff.addSkills": "+{n} 个技能",
+			"capability.diff.removeSkills": "−{n} 个技能",
+			"capability.diff.addMcp": "+{n} 个 MCP",
+			"capability.diff.removeMcp": "−{n} 个 MCP",
+			"capability.apply": "应用",
+			"capability.applying": "正在应用…",
+			"capability.discard": "放弃",
+			"capability.applied": "已应用",
+			"capability.failed": "失败——草稿已保留",
+			"capability.conflictState": "已在别处变更——请核对当前状态",
+			"capability.missingAction": "缺失项需要安装/配置",
+			"capability.pending": "结果待确认——请查询回执",
+			"capability.presets.unavailable": "预设在此宿主上不可用。",
+			"capability.presets.errorName": "请输入名称。",
+			"capability.presets.saved": "预设已保存。",
+			"capability.presets.revisionConflict": "已在别处变更——列表已刷新。",
+			"capability.presets.noWorkspace": "此会话没有工作区。",
+			"capability.presets.saveFailed": "预设保存失败。",
+			"capability.presets.loaded": "已装入草稿——应用后生效。",
+			"capability.presets.loadedUnresolved": "已装入草稿——报告 {n} 个未解析引用。",
+			"capability.presets.loadFailed": "载入失败——预设可能已不存在。",
+			"capability.presets.deleted": "预设已删除。",
+			"capability.presets.deleteFailed": "删除失败。",
+			"capability.presets.exportFailed": "导出失败。",
+			"capability.presets.imported": "已导入：{bound} 个 MCP 绑定，{unresolved} 个未解析引用。",
+			"capability.presets.counts": "{skills} 个技能 · {mcp} 个 MCP",
+			"capability.presets.countsUnresolved": " · {n} 个未解析",
+			"capability.presets.loading": "正在载入…",
+			"capability.presets.load": "载入",
+			"capability.presets.export": "导出",
+			"capability.presets.delete": "删除",
+			"capability.presets.deleteConfirm": "删除预设“{name}”？此操作不可撤销。",
+			"capability.presets.deleteConfirmButton": "删除预设",
+			"capability.presets.deleting": "正在删除…",
+			"capability.presets.cancel": "取消",
+			"capability.presets.exportLabel": "预设 JSON",
+			"capability.presets.copy": "复制到剪贴板",
+			"capability.presets.copied": "已复制",
+			"capability.presets.close": "关闭",
+			"capability.presets.saveOpen": "存为预设…",
+			"capability.presets.importOpen": "导入…",
+			"capability.presets.name": "预设名称",
+			"capability.presets.namespace": "命名空间",
+			"capability.presets.scopeWorkspace": "工作区",
+			"capability.presets.scopeGlobal": "全局",
+			"capability.presets.source": "来源",
+			"capability.presets.fromDraft": "当前草稿",
+			"capability.presets.fromApplied": "已应用的选择",
+			"capability.presets.nameConflict": "此命名空间中已存在名为“{name}”的预设。",
+			"capability.presets.rename": "改名…",
+			"capability.presets.renameHint": "修改名称后重新保存。",
+			"capability.presets.replace": "替换它",
+			"capability.presets.saving": "正在保存…",
+			"capability.presets.save": "保存预设",
+			"capability.presets.importPlaceholder": "粘贴便携式预设文档（JSON）…",
+			"capability.presets.importing": "正在导入…",
+			"capability.presets.importSubmit": "导入",
+			"capability.presets.importInvalidJson": "不是有效的 JSON——未写入任何内容。",
+			"capability.presets.importRejected": "已拒绝：{reason}——未写入任何内容。",
+			"capability.presets.importNameConflict": "此处已存在同名预设。",
+			"capability.presets.importFailed": "导入失败——未写入任何内容。",
+			"capability.presets.groupWorkspace": "工作区预设",
+			"capability.presets.groupWorkspaceNone": "工作区预设（无工作区）",
+			"capability.presets.groupGlobal": "全局预设",
+			"capability.presets.emptyWorkspace": "暂无工作区预设。",
+			"capability.presets.emptyGlobal": "暂无全局预设。",
+			"capability.presets.defaultTitle": "新会话的工作区默认值",
+			"capability.presets.defaultUnavailable": "工作区默认值不可用。",
+			"capability.presets.defaultNone": "未设置默认值——新会话使用内置基线。",
+			"capability.presets.defaultEmpty": "已设置显式空默认：新会话以 0 个技能 · 0 个 MCP 开始。",
+			"capability.presets.defaultEntries": "默认值：{counts}",
+			"capability.presets.defaultUnresolved": "……解析时报告 {n} 个未解析引用。",
+			"capability.presets.defaultSaveOpen": "存为默认值…",
+			"capability.presets.defaultClearOpen": "清除默认值…",
+			"capability.presets.defaultSaveConfirm": "将 {counts} 存为此工作区的默认值？此工作区的新会话将从它开始；当前会话不变。",
+			"capability.presets.defaultSaveConfirmButton": "保存默认值",
+			"capability.presets.defaultSaved": "工作区默认值已保存。",
+			"capability.presets.defaultSaveFailed": "默认值保存失败。",
+			"capability.presets.defaultClearConfirm": "清除工作区默认值？新会话回到内置基线；已打开的会话不变。",
+			"capability.presets.defaultClearConfirmButton": "清除默认值",
+			"capability.presets.defaultCleared": "工作区默认值已清除——新会话使用内置基线。",
+			"capability.presets.defaultClearFailed": "默认值清除失败。",
+			"capability.presets.clearing": "正在清除…",
+			"capability.presets.needsReceipt": "会话回执载入前不可用。"
 		};
 		const NS = "settings.orrery";
 		const SECTION_ID = "orrery-settings";
@@ -1335,19 +1573,64 @@ window.__ModuleLoader__.load({
 			// payloads ride as JSON text. Unwrap the remote envelope ({ok, value}
 			// with value being either the settled {commandId, result} or the
 			// normalized result itself) and parse.
-			const capabilityPayload = async (sid, line) => {
+			const capabilityPayload = async (sid, line, parseErrorText = false) => {
 				if (!ctx.remote.commands?.execute) return null;
 				try {
 					const result = await ctx.remote.commands.execute(sid, line, []);
 					if (!result.ok) return null;
 					let settled = result.value;
 					if (settled && typeof settled === "object" && settled.result && typeof settled.result === "object") settled = settled.result;
-					if (settled?.kind !== "success" || typeof settled.text !== "string") return null;
+					if (settled?.kind !== "success" || typeof settled.text !== "string") {
+						// Preset/default verbs (D2): a domain failure also travels as a
+						// JSON status object in a kind:error text ({status:'no-workspace'},
+						// {status:'rejected', reason}) — the preset surface opts into
+						// parsing it so it can categorize instead of collapsing to a
+						// bare null.
+						if (parseErrorText && settled?.kind === "error" && typeof settled.text === "string") {
+							try { return JSON.parse(settled.text); } catch { return null; }
+						}
+						return null;
+					}
 					return JSON.parse(settled.text);
 				} catch {
 					return { error: true };
 				}
 			};
+			// The presets & workspace-default view is its own chunk, pulled only
+			// when the Presets view is first selected (D3) — the composition root
+			// owns every require.async specifier (no chunk-to-chunk waterfall).
+			const loadCapabilityPresetsChunk = lazyChunks(() => require.async("./client.capability-presets.js"));
+			// One verb face shared by the composer Badge slot and the right-sidebar
+			// capabilities panel (D1): both mounts drive the same view tree with
+			// the same data source (the /capabilities command surface).
+			const capabilityVerbs = (sessionId) => ({
+				sessionId,
+				fetchReceipt: (sid) => capabilityPayload(sid, "/capabilities receipt"),
+				// Lazy like every other verb (S17): inject() never dereferences remote.session.
+				subscribeFrames: (callback) => (ctx.remote.session?.subscribe
+					? ctx.remote.session.subscribe("agent-preset/selected", callback)
+					: undefined),
+				// The panel distinguishes loading (promise pending) from failure
+				// (explicit error surface) — a null payload maps to the error state.
+				applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`),
+				mcpAdd: (sid, spec) => capabilityPayload(sid, `/capabilities mcp-add ${JSON.stringify(spec)}`),
+				fetchListing: (sid) => capabilityPayload(sid, "/capabilities list").then((value) => value ?? { error: true }),
+				fetchConditions: (sid) => capabilityPayload(sid, "/capabilities conditions").then((value) => value ?? { error: true }),
+				loadPresets: () => loadCapabilityPresetsChunk(),
+				fetchPresets: (sid) => capabilityPayload(sid, "/capabilities presets", true),
+				presetSave: (sid, spec) => capabilityPayload(sid, `/capabilities preset-save ${JSON.stringify(spec)}`, true),
+				presetLoad: (sid, spec) => capabilityPayload(sid, `/capabilities preset-load ${JSON.stringify(spec)}`, true),
+				presetDelete: (sid, spec) => capabilityPayload(sid, `/capabilities preset-delete ${JSON.stringify(spec)}`, true),
+				presetExport: (sid, spec) => capabilityPayload(sid, `/capabilities preset-export ${JSON.stringify(spec)}`, true),
+				presetImport: (sid, spec) => capabilityPayload(sid, `/capabilities preset-import ${JSON.stringify(spec)}`, true),
+				defaultGet: (sid) => capabilityPayload(sid, "/capabilities default-get", true),
+				defaultSave: (sid, spec) => capabilityPayload(sid, `/capabilities default-save ${JSON.stringify(spec)}`, true),
+				defaultClear: (sid, spec) => capabilityPayload(sid, `/capabilities default-clear ${JSON.stringify(spec ?? {})}`, true)
+			});
+			// True once the right-sidebar package mounted the capabilities tab
+			// (the optional inject below ran); the Badge's openPanel verb exists
+			// only then — without it the Badge falls back to its composer popover.
+			let capabilitySidebarTab = false;
 			const CapabilityBadgeWrapper = (props) => {
 				const [impl, setImpl] = react.useState(null);
 				react.useEffect(() => {
@@ -1368,21 +1651,57 @@ window.__ModuleLoader__.load({
 				inject: (sessionId) => {
 					if (!sessionId) return {};
 					return {
-						sessionId,
-						fetchReceipt: (sid) => capabilityPayload(sid, "/capabilities receipt"),
-						// Lazy like every other verb (S17): inject() never dereferences remote.session.
-						subscribeFrames: (callback) => (ctx.remote.session?.subscribe
-							? ctx.remote.session.subscribe("agent-preset/selected", callback)
-							: undefined),
-						// The panel distinguishes loading (promise pending) from failure
-						// (explicit error surface) — a null payload maps to the error state.
-						applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`),
-						mcpAdd: (sid, spec) => capabilityPayload(sid, `/capabilities mcp-add ${JSON.stringify(spec)}`),
-						fetchListing: (sid) => capabilityPayload(sid, "/capabilities list").then((value) => value ?? { error: true }),
-						fetchConditions: (sid) => capabilityPayload(sid, "/capabilities conditions").then((value) => value ?? { error: true })
+						...capabilityVerbs(sessionId),
+						// D4: with a mounted sidebar tab, activation opens the dedicated
+						// capabilities panel; the lookup stays call-time like the
+						// worktree pill's (the shell service may come and go).
+						...(capabilitySidebarTab ? {
+							openPanel: () => {
+								try { ctx.get("sidebarRight")?.openTab?.("orrery-capabilities"); } catch { /* no sidebar in this shell */ }
+							}
+						} : {})
 					};
 				}
 			}, CapabilityBadgeWrapper)), "ui-orrery-settings: capability badge");
+			// U-cap: the capabilities panel as a right-sidebar tab (D1). Same
+			// optional-inject pattern as the worktree panel: a shell without the
+			// sidebar right package skips the whole block, capabilitySidebarTab
+			// stays false, and the Badge keeps its popover fallback with the same
+			// view tree.
+			const loadCapabilityPanelChunks = lazyChunks(() => Promise.all([
+				require.async("./client.capability-model.js"),
+				require.async("./client.capability-manager.js")
+			]));
+			function CapabilityPanelWrapper(props) {
+				const arrival = useChunkArrival(loadCapabilityPanelChunks, typeof props.sessionId === "string" && props.sessionId !== "");
+				if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: typeof props.t === "function" ? props.t("capability.loading") : "" });
+				const [model, panel] = arrival.chunks;
+				// The same view tree the composer popover renders — the sidebar is
+				// just the outer frame (D1). No onClose: the pane chrome owns closing.
+				return react_jsx_runtime.jsx(panel.CapabilityManagerPanel, { ...props, model, shell: "sidebar" });
+			}
+			ctx.inject?.(["sidebarRightTabs"], (sidebarScope) => {
+				capabilitySidebarTab = true;
+				const tabId = "orrery-capabilities";
+				sidebarScope.effect(() => sidebarScope.sidebarRightTabs.register({
+					id: tabId,
+					kind: "orrery-capabilities",
+					priority: "extension",
+					title: () => sidebarScope.locale.bind(NS)("capabilityTabLabel"),
+					guide: [{
+						id: "capabilities",
+						order: 40,
+						title: () => sidebarScope.locale.bind(NS)("capabilityGuideTitle"),
+						description: () => sidebarScope.locale.bind(NS)("capabilityGuideDescription")
+					}]
+				}), "ui-orrery-settings: capability tab type");
+				sidebarScope.effect(() => sidebarScope.slots.register({
+					name: "sidebar.right.pane.tab",
+					key: tabId,
+					locale: NS,
+					inject: (sessionId) => (sessionId ? capabilityVerbs(sessionId) : {})
+				}, CapabilityPanelWrapper), "ui-orrery-settings: capability panel body");
+			});
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form; plus a Plugins-page entry for discoverability.

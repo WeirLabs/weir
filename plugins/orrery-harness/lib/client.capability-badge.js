@@ -106,16 +106,48 @@ window.__ModuleLoader__.load({
 				return () => { document.removeEventListener("pointerdown", onPointerDown); };
 			}, [panelOpen]);
 			if (!sessionId) return null;
-			const label = state && state.known
-				? t("capability.badge", `${state.applied.skills} skills · ${state.applied.mcpServers} MCP`)
+			// D4: the accessible label keeps the full counts (aria + tooltip);
+			// the visible text is the compact "skills · MCP" pair next to an
+			// inline blocks icon. The {skills}/{mcp} placeholders interpolate
+			// through the same .replace pattern the other chunks use.
+			const known = Boolean(state && state.known);
+			const label = known
+				? t("capability.badge", "{skills} skills · {mcp} MCP").replace("{skills}", String(state.applied.skills)).replace("{mcp}", String(state.applied.mcpServers))
 				: settled
 					// The receipt fetch settled without a receipt: this session's
 					// composition has no capability command (a non-Orrery preset)
 					// or it failed — an explicit n/a, never a perpetual spinner.
 					? t("capability.unavailable.short", "Capabilities n/a")
 					: t("capability.loading", "Capabilities…");
+			const compactLabel = known ? `${state.applied.skills} · ${state.applied.mcpServers}` : label;
 			const hasWarning = Boolean(state && state.unavailable && state.unavailable.length > 0);
-			const title = hasWarning ? state.unavailable.join("; ") : (convergence ?? undefined);
+			const title = hasWarning ? state.unavailable.join("; ") : (convergence ?? (known ? label : undefined));
+			// D4: with the composition root's openPanel verb (a shell with a right
+			// sidebar) activation opens the dedicated panel and closes any open
+			// popover; without it the existing popover path runs unchanged.
+			const openPanel = typeof props.openPanel === "function" ? props.openPanel : null;
+			const onActivate = () => {
+				if (openPanel) {
+					setPanelOpen(false);
+					openPanel(sessionId);
+					return;
+				}
+				setPanelOpen(!panelOpen);
+			};
+			const blocksIcon = react_jsx_runtime.jsxs("svg", {
+				width: "12",
+				height: "12",
+				viewBox: "0 0 12 12",
+				"aria-hidden": "true",
+				focusable: "false",
+				style: { flex: "none", display: "block" },
+				children: [
+					react_jsx_runtime.jsx("rect", { x: "0.75", y: "0.75", width: "4.5", height: "4.5", rx: "1", fill: "currentColor" }),
+					react_jsx_runtime.jsx("rect", { x: "6.75", y: "0.75", width: "4.5", height: "4.5", rx: "1", fill: "currentColor", opacity: "0.55" }),
+					react_jsx_runtime.jsx("rect", { x: "0.75", y: "6.75", width: "4.5", height: "4.5", rx: "1", fill: "currentColor", opacity: "0.55" }),
+					react_jsx_runtime.jsx("rect", { x: "6.75", y: "6.75", width: "4.5", height: "4.5", rx: "1", fill: "currentColor" })
+				]
+			});
 			return react_jsx_runtime.jsxs("span", {
 				style: { position: "relative", display: "inline-flex" },
 				"data-orrery-capability-root": "",
@@ -125,11 +157,14 @@ window.__ModuleLoader__.load({
 						style: badgeStyle,
 						title,
 						"aria-label": label,
-						"aria-expanded": panelOpen,
-						onClick: () => setPanelOpen(!panelOpen),
+						// aria-expanded follows the actual destination: only the
+						// popover path expands a popup this button owns (D4).
+						"aria-expanded": openPanel ? undefined : panelOpen,
+						onClick: onActivate,
 						children: [
 							hasWarning ? react_jsx_runtime.jsx("span", { style: warnDotStyle }) : null,
-							label
+							blocksIcon,
+							compactLabel
 						]
 					}),
 					panelOpen && typeof props.ManagerPanel === "function"
@@ -140,6 +175,14 @@ window.__ModuleLoader__.load({
 							// would sit on the perpetual loading surface (12.2).
 							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions,
 							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection, mcpAdd: props.mcpAdd,
+							// The preset/workspace-default verbs and the presets-chunk
+							// loader travel the same prop bridge (D3); an old composition
+							// root leaves them undefined and the view degrades to its
+							// explicit unsupported state.
+							loadPresets: props.loadPresets,
+							fetchPresets: props.fetchPresets, presetSave: props.presetSave, presetLoad: props.presetLoad,
+							presetDelete: props.presetDelete, presetExport: props.presetExport, presetImport: props.presetImport,
+							defaultGet: props.defaultGet, defaultSave: props.defaultSave, defaultClear: props.defaultClear,
 							// After a successful Apply the Badge's own receipt is stale —
 							// the panel pings this callback so the counts re-pull (12.2).
 							onApplied: refresh, t: props.t
