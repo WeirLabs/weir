@@ -1644,16 +1644,31 @@ window.__ModuleLoader__.load({
 					return { error: true };
 				}
 			};
+			// Read channel (silent-capability-reads): the Badge/panel READ verbs
+			// travel over the plugin-owned typert remote (orreryCapabilities
+			// namespace) — zero session-log writes, no transcript cards. There is
+			// deliberately NO command-channel fallback: a fallback would
+			// resurrect the command/run + command/done log noise. A missing
+			// remote or a failed call maps to the existing degraded semantics
+			// (receipt → null → "Capabilities n/a"; listing/conditions →
+			// { error: true }).
+			const capabilityRead = async (method, sid, fallback) => {
+				let remote = null;
+				try { remote = ctx.remote?.orreryCapabilities ?? null; } catch { remote = null; }
+				if (typeof remote?.[method] !== "function") return fallback;
+				try { return await remote[method](sid); } catch { return fallback; }
+			};
 			// The presets & workspace-default view is its own chunk, pulled only
 			// when the Presets view is first selected (D3) — the composition root
 			// owns every require.async specifier (no chunk-to-chunk waterfall).
 			const loadCapabilityPresetsChunk = lazyChunks(() => require.async("./client.capability-presets.js"));
 			// One verb face shared by the composer Badge slot and the right-sidebar
 			// capabilities panel (D1): both mounts drive the same view tree with
-			// the same data source (the /capabilities command surface).
+			// the same data sources (reads via the orreryCapabilities remote,
+			// mutations and preset verbs via the /capabilities command surface).
 			const capabilityVerbs = (sessionId) => ({
 				sessionId,
-				fetchReceipt: (sid) => capabilityPayload(sid, "/capabilities receipt"),
+				fetchReceipt: (sid) => capabilityRead("receipt", sid, null),
 				// Lazy like every other verb (S17): inject() never dereferences remote.session.
 				subscribeFrames: (callback) => (ctx.remote.session?.subscribe
 					? ctx.remote.session.subscribe("agent-preset/selected", callback)
@@ -1662,8 +1677,8 @@ window.__ModuleLoader__.load({
 				// (explicit error surface) — a null payload maps to the error state.
 				applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`),
 				mcpAdd: (sid, spec) => capabilityPayload(sid, `/capabilities mcp-add ${JSON.stringify(spec)}`),
-				fetchListing: (sid) => capabilityPayload(sid, "/capabilities list").then((value) => value ?? { error: true }),
-				fetchConditions: (sid) => capabilityPayload(sid, "/capabilities conditions").then((value) => value ?? { error: true }),
+				fetchListing: (sid) => capabilityRead("list", sid, { error: true }),
+				fetchConditions: (sid) => capabilityRead("conditions", sid, { error: true }),
 				loadPresets: () => loadCapabilityPresetsChunk(),
 				fetchPresets: (sid) => capabilityPayload(sid, "/capabilities presets", true),
 				presetSave: (sid, spec) => capabilityPayload(sid, `/capabilities preset-save ${JSON.stringify(spec)}`, true),

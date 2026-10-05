@@ -840,6 +840,50 @@ describe('orrery settings client half', () => {
     expect('openPanel' in badgeVerbs).toBe(false)
   })
 
+  it('capability read verbs travel over the orreryCapabilities remote, never the command channel', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
+    // The plugin-owned read remote (silent-capability-reads): a generic
+    // namespace face the gateway projects as ctx.remote.orreryCapabilities.
+    const receiptPayload = { status: 'applied', revision: 1, effective: { skills: ['debugging'], mcpServers: [] }, warnings: [] }
+    const calls = []
+    ctx.remote.orreryCapabilities = {
+      receipt: async (sid) => { calls.push(['receipt', sid]); return receiptPayload },
+      list: async (sid) => { calls.push(['list', sid]); return { skills: [], mcpServers: [] } },
+      conditions: async (sid) => { calls.push(['conditions', sid]); return { conditions: [] } },
+    }
+    surface.apply(ctx)
+    slotInjects[11].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    const verbs = badgeEntry.definition.inject('s7')
+
+    expect(await verbs.fetchReceipt('s7')).toEqual(receiptPayload)
+    expect(await verbs.fetchListing('s7')).toEqual({ skills: [], mcpServers: [] })
+    expect(await verbs.fetchConditions('s7')).toEqual({ conditions: [] })
+    expect(calls).toEqual([['receipt', 's7'], ['list', 's7'], ['conditions', 's7']])
+    // Reads produced ZERO command executions (no session-log events).
+    expect(executed).toEqual([])
+
+    // Degraded: the remote is not offered (non-Orrery composition) — the
+    // Badge settles its unavailable state, the panel its error surface.
+    delete ctx.remote.orreryCapabilities
+    expect(await verbs.fetchReceipt('s7')).toBe(null)
+    expect(await verbs.fetchListing('s7')).toEqual({ error: true })
+    expect(await verbs.fetchConditions('s7')).toEqual({ error: true })
+
+    // Degraded: a failing remote maps identically, still with no fallback to
+    // the command channel.
+    ctx.remote.orreryCapabilities = {
+      receipt: async () => { throw new Error('gateway/down') },
+      list: async () => { throw new Error('gateway/down') },
+      conditions: async () => { throw new Error('gateway/down') },
+    }
+    expect(await verbs.fetchReceipt('s7')).toBe(null)
+    expect(await verbs.fetchListing('s7')).toEqual({ error: true })
+    expect(await verbs.fetchConditions('s7')).toEqual({ error: true })
+    expect(executed).toEqual([])
+  })
+
   it('build binds the entry to every chunk digest and publishes the entry last', () => {
     // Host chunk URLs carry the entry revision. Both content binding and write
     // ordering matter: a timestamp-only restamp is not a client build.
