@@ -1,0 +1,8 @@
+{
+  "scenario": "mcp-gateway",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "parent observed mcp gateway\n",
+  "stderr": "",
+  "sessionId": null
+}

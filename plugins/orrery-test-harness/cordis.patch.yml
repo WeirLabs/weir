@@ -26,7 +26,7 @@
       name: 'orrery-test-harness/mock-llm'
     - id: orrery-skill-selection
       name: 'orrery-test-harness/skill-selection'
-      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX || process.env.ORRERY_IT_COLD_SESSION || process.env.ORRERY_IT_LIFECYCLE)"
+      disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION || process.env.ORRERY_IT_APPLY_TX || process.env.ORRERY_IT_COLD_SESSION || process.env.ORRERY_IT_LIFECYCLE || process.env.ORRERY_IT_MCP)"
     - id: orrery-it-tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
       disabled: !!js "Boolean(process.env.ORRERY_IT_SKILL_COMPOSITION)"
@@ -47,6 +47,22 @@
       name: 'orrery-test-harness/lifecycle-probe'
       config:
         enabled: !!js process.env.ORRERY_IT_LIFECYCLE === '1'
+    - id: orrery-mcp-manager
+      name: 'orrery-harness/mcp-manager'
+    - id: orrery-it-mcp-probe
+      name: 'orrery-test-harness/mcp-probe'
+      config:
+        enabled: !!js process.env.ORRERY_IT_MCP === '1'
+    - id: orrery-it-host-gamma
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js process.env.ORRERY_IT_MCP !== '1'
+      config:
+        transport: 'stdio'
+        serverName: 'gamma'
+        command: !!js process.execPath
+        args: !!js "[process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('orrery-test-harness/package.json')), 'src/mock-mcp-server.mjs'), 'gamma']"
+        env: { ORRERY_IT_MCP_LOG: !!js "process.env.ORRERY_IT_ROOT + '/ws/mcp-server-log.jsonl'", ORRERY_IT_MCP_ORIGIN: 'host' }
+
     # Cold-session convergence probe (task 5.5): seeds a real preset session
     # with an accepted selection + real invalidation frames, then replays the
     # cold-open race and the writer-held status face in a cold process

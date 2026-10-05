@@ -14,7 +14,8 @@
     "./skill-composition-probe": "./src/skill-composition-probe.js",
     "./skill-selection": "./src/skill-selection.js",
     "./cold-session-probe": "./src/cold-session-probe.js",
-    "./lifecycle-probe": "./src/lifecycle-probe.js"
+    "./lifecycle-probe": "./src/lifecycle-probe.js",
+    "./mcp-probe": "./src/mcp-probe.js"
   },
   "dsh": {
     "bundle": {
