@@ -74,6 +74,17 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **恢复失败保持为空**：另一进程占用会话日志（writer-held）等恢复失败时，菜单保持为空且状态面给出稳定 `reason` 与可操作 `hint`（[selection-status.js](<../../plugins/orrery-harness/src/capabilities/selection-status.js>)），绝不回退为非空列表；`acceptSelection` 或显式 `clearFailure` 解除。
 - **浏览器侧行为**（缓存丢弃、打开中菜单即时刷新、草稿 chip 短暂空白等）以服务端 + 模拟客户端缓存证据为准，真实 GUI 观察待 1.5 验证。
 
+### 初始化与继承
+
+会话生命周期的每个入口都在首次 prompt assembly 之前就位一份已接受选择的快照：
+
+- **同步内存快照**（[lifecycle-snapshot.js](<../../plugins/orrery-harness/src/capabilities/lifecycle-snapshot.js>)）：插件 apply 时预载已知会话的已接受记录（[lifecycle-preload.js](<../../plugins/orrery-harness/src/capabilities/lifecycle-preload.js>)，内存优先），`agent/created` 监听器只做**同步读取**——内存未命中时恰好一次阻塞式同步磁盘读，绝不使用 Promise 接口的宿主 storage；模块全文零 `await`（静态测试钉死），成功路径恒返 `undefined`（cordis 串行 bail-on-value 教训）。G4b 实证失败形态是**让出**事件循环而非耗时（`sleep100` 失败、`busy100` 通过）。Apply 被接受后经 engine `publishSnapshot` 钩子在同一非异步段更新内存。
+- **子代理快照 durable 捕获**：子代理的 `agent/created` 内用阻塞式同步 I/O（`writeFileSync` + `fsyncSync`，经第 2 组单元布局 `sessions/<id>/inherited.json` 与锁约定）捕获父已接受快照。捕获**并非**与宿主会话发布原子——如实陈述：崩溃窗口留下的无快照子代理在显式 resume 时按子代理 fail-closed 规则拒绝。
+- **创建时继承**（6.3）：创建取父快照逐字（叠加委派约束 `allowSkills`/`allowMcpServers`，只缩不扩）；显式 resume／escalation 取「子原快照 ∩ 当前父快照」——被移除的能力不恢复、父新增的能力不下发；向仍存活子代理发消息（无 `agent/created`）不重新捕获，存活子代理的快照不被父的后续编辑改动。
+- **读取路径**：子代理会话无 accepted 记录时从其 inherited 快照解析（`readSelection` 回退）；无快照的子代理被显式拒绝（`inherited-snapshot-unavailable`），绝不授予根基线。
+- **fail closed 双规则**（6.4，每种情形恰好一条规则）：①根会话／已存在会话的选择记录不可读／损坏／未知版本 → 监听器**不抛出**，会话照常创建／恢复，视图为空 + 分类 reason/hint（`policy-unreadable:*`），原文件绝不改写；恢复 = 人工修复记录 + 新 Apply。②子代理的父快照不可读或无法捕获 → 监听器抛出拒创建，父会话继续并经委派结果得知原因。插件 dispose／reload 窗口保守拒绝（denials-only）。
+- **初始化优先级**（6.5，[initial-selection.js](<../../plugins/orrery-harness/src/capabilities/initial-selection.js>)）：新根会话无 accepted 记录时——保存的工作区默认（含显式空集）逐字胜出并报告缺失项（默认不可解码则 fail closed `workspace-default-unavailable`）；无默认时内置 Skill 基线 + 组合中已启用的 managed MCP；历史内容不构成授权，本路径零持久化；闸门只对 `orrery` 预设生效（组合保证）。
+
 ## 边界与失败语义
 
 - 存储单元损坏、版本未知或撕裂（digest 不符）：fail closed，返回 `unreadable`，保留原文件等待人工处置，绝不自动覆盖或删除。
