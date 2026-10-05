@@ -165,8 +165,8 @@
             enabled: !!js process.env.ORRERY_IT_EDIT_LOCK === '1'
             # A fixed authority is pinned for the stop-boundary family and for
             # the auto-resume family (a second boot must reopen the same one).
-            root: !!js "(process.env.ORRERY_IT_STOP_BOUNDARY || process.env.ORRERY_IT_AUTO_RESUME) ? process.env.ORRERY_IT_ROOT + '/ws' : undefined"
-            authorityDirectory: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-' + process.env.ORRERY_IT_STOP_BOUNDARY : (process.env.ORRERY_IT_AUTO_RESUME ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-auto-resume' + (process.env.ORRERY_IT_AUTO_RESUME === 'off' ? '-off' : '') : undefined)"
+            root: !!js "(process.env.ORRERY_IT_STOP_BOUNDARY || process.env.ORRERY_IT_AUTO_RESUME || process.env.ORRERY_IT_EDIT_LOCK === '1') ? process.env.ORRERY_IT_ROOT + '/ws' : undefined"
+            authorityDirectory: !!js "process.env.ORRERY_IT_STOP_BOUNDARY ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-' + process.env.ORRERY_IT_STOP_BOUNDARY : (process.env.ORRERY_IT_AUTO_RESUME ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock-auto-resume' + (process.env.ORRERY_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.ORRERY_IT_EDIT_LOCK === '1' ? process.env.ORRERY_IT_ROOT + '/ws/.orrery/edit-lock' : undefined))"
         - id: orrery-it-hashline-edit
           name: 'orrery-harness/hashline-edit'
           config:

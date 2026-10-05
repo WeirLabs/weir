@@ -1,5 +1,6 @@
 {
   "scenario": "editlock",
+  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
   "code": 0,
   "stdout": "editlock done\n",
   "stderr": "",
