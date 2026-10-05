@@ -496,6 +496,49 @@ function managerCore(store, kernel) {
         return { resourceId, generation, owner: lock.owner }
       }, { kind: 'resources', resourceIds: [resourceId] }, 'release')
     },
+    /** Trusted maintenance ingress for the stale-lock sweep: conditionally
+     * release rows a publisher-side scan observed with a missing target. Every
+     * row runs in its OWN FIFO transaction that re-verifies the full
+     * observation at the execution point — owner, generation, owner execution
+     * epoch and lock status — and re-probes through the caller's isMissing
+     * that the resource is still missing; only then an ordinary release.
+     * Scope is every observed row regardless of owner state (active, holding,
+     * pending-confirmation, user-interrupted, abnormal): the row predicate,
+     * not the owner class, provides the safety. Any mismatch, an already-gone
+     * row, or the ordinary unresolved-publication fence admission refusal is
+     * a SKIP — a discarded draft, never a persisted no-op, never an error —
+     * and every other row is still processed. The missing-target probe is
+     * injected: this layer performs no filesystem IO.
+     * @param {{resourceId: string, owner: string, generation: number, executionEpoch: number, status: string}[]} observed
+     * @param {(resourceId: string) => boolean} isMissing
+     * @returns {Promise<{released: {resourceId: string, owner: string, generation: number}[], skipped: {row: object, reason: string}[]}>} */
+    async releaseStale(observed, isMissing) {
+      healthy()
+      if (typeof isMissing !== 'function') throw new Error('stale release requires a missing-target probe')
+      const released = []
+      const skipped = []
+      for (const input of Array.isArray(observed) ? observed : []) {
+        const row = { resourceId: input?.resourceId, owner: input?.owner, generation: input?.generation, executionEpoch: input?.executionEpoch, status: input?.status }
+        try {
+          released.push(await transact(draft => {
+            const status = operations.status()
+            const lock = status.locks.find(item => item.resourceId === row.resourceId)
+            if (!lock) throw new Error('stale row already released')
+            const session = status.sessions.find(item => item.sessionId === lock.owner)
+            if (!session || lock.owner !== row.owner || lock.generation !== row.generation ||
+                lock.status !== row.status || session.executionEpoch !== row.executionEpoch) {
+              throw new Error('stale row changed before execution')
+            }
+            if (!isMissing(row.resourceId)) throw new Error('stale row target exists again')
+            draft.operations.release({ managerIncarnation, sessionId: lock.owner, executionEpoch: session.executionEpoch, resourceId: lock.resourceId, generation: lock.generation })
+            return { resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation }
+          }, { kind: 'resources', resourceIds: [row.resourceId] }, 'release'))
+        } catch (error) {
+          skipped.push({ row, reason: String(/** @type {any} */ (error)?.message ?? error) })
+        }
+      }
+      return { released, skipped }
+    },
     /** Trusted classifier only (durable turn/end error). Marks every retained,
      * not yet abnormal lock of the session abnormal; never releases. Subtractive,
      * so it may cross an unresolved publication fence.

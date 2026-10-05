@@ -25,6 +25,9 @@ export function localDomain(lifecycle, endpoint) {
     locks: async _agent => lifecycle.locks(),
     /** @param {object} _agent @param {string} resourceId @param {number} generation */
     unlock: (_agent, resourceId, generation) => lifecycle.unlock(resourceId, generation),
+    /** Detached stale-lock sweep trigger; the scan runs publisher-side.
+     * @param {object} _agent @param {string | null} [triggerSessionId] */
+    sweepStale: (_agent, triggerSessionId) => lifecycle.sweepStale(triggerSessionId ?? null),
     /** @param {object} agent @param {string} reason */
     classifyAbnormal: (agent, reason) => lifecycle.classifyAbnormal(agent, reason),
     /** @param {object} agent */
@@ -92,6 +95,10 @@ export function remoteDomain(remote) {
     locks: agent => remote.call(agent, 'allLocks'),
     /** @param {object} agent @param {string} resourceId @param {number} generation */
     unlock: (agent, resourceId, generation) => remote.call(agent, 'unlock', { resourceId, generation }),
+    /** The publisher performs the scan (it shares the filesystem); a client
+     * process only triggers it through the channel. @param {object} agent
+     * @param {string | null} [triggerSessionId] */
+    sweepStale: (agent, triggerSessionId) => remote.call(agent, 'staleSweep', { trigger: triggerSessionId ?? agent?.id ?? null }),
     /** @param {object} agent @param {string} reason */
     classifyAbnormal: async (agent, reason) => {
       const marked = await remote.call(agent, 'classifyAbnormal', { reason })

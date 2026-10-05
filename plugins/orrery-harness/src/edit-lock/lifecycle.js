@@ -1,13 +1,14 @@
 import { createEditLockHost } from './host.js'
 import { createNegotiation } from './negotiation.js'
 import { RECOVERY_LIMITS } from './recovery.js'
+import { isMissingTarget } from './stale-sweep.js'
 
 /** Host-owned lifecycle controller. The authenticated transport must await stop;
  * stock GUI cancel acceptance alone does not constitute this acknowledgement.
  * Resume and confirm are trusted human ingress only; never expose them as tools.
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
  * @param {(agent: object) => string | undefined} sessionForAgent
- * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number}} [options] */
+ * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void}} [options] */
 export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
   /** @typedef {{sessionId:string, state:'starting'|'active'|'recovering'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
@@ -331,6 +332,40 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       if (usage.pauseMs + ms > RECOVERY_LIMITS.cumulativePauseMs) throw new Error(`cumulative pause budget exhausted (${Math.floor((RECOVERY_LIMITS.cumulativePauseMs - usage.pauseMs) / 60_000)} minutes left)`)
       await runtime.control.chargeRecovery(entry.sessionId, { pauseMs: ms })
       return { pausedMs: ms, cumulativePauseMs: usage.pauseMs + ms }
+    },
+    /** Trusted maintenance ingress for the stale-lock sweep (message-triggered;
+     * local composition and the peer channel both land here). The publisher
+     * shares the filesystem with the authority, so the scan ALWAYS runs on this
+     * side — a client process only triggers it. A lock row is a candidate ONLY
+     * when lstat of its stored canonical resource id fails with ENOENT; the
+     * manager's releaseStale re-verifies the full observed row (owner,
+     * generation, owner execution epoch, lock status) and re-probes the target
+     * at the FIFO execution point, so an owner that resumed, confirmed,
+     * re-generated or sits under an unresolved fence between scan and
+     * execution is a skip, never an error. Silent by contract: each durable
+     * release is reported through options.onStaleRelease (shared audit);
+     * skips and failures surface only in the returned counts for the caller's
+     * bounded logging. Never writes to any conversation.
+     * @param {string | null} [triggerSessionId] session whose genuine user
+     * message armed the sweep (audit metadata only)
+     * @returns {Promise<{released: any[], skipped: any[]}>} */
+    async sweepStale(triggerSessionId = null) {
+      if (closed) throw new Error('edit lifecycle closed')
+      const status = runtime.control.status()
+      const sessions = new Map(status.sessions.map(/** @param {any} item */ item => [item.sessionId, item]))
+      /** @type {{resourceId: string, owner: string, generation: number, executionEpoch: number, status: string}[]} */
+      const observed = []
+      for (const lock of status.locks) {
+        const session = sessions.get(lock.owner)
+        if (!session || !isMissingTarget(lock.resourceId)) continue
+        observed.push({ resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation, executionEpoch: session.executionEpoch, status: lock.status })
+      }
+      if (observed.length === 0) return { released: [], skipped: [] }
+      const result = await runtime.control.releaseStale(observed, isMissingTarget)
+      for (const row of result.released) {
+        try { options.onStaleRelease?.(row, triggerSessionId) } catch { /* audit is log-only and never breaks the sweep */ }
+      }
+      return result
     },
     /** Trusted human unlock by exact generation; never exposed as a tool.
      * Session interruption and pending confirmations are untouched.
