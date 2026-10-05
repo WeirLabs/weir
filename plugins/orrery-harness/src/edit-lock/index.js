@@ -537,8 +537,13 @@ return (ctx, config = {}) => {
     return Promise.resolve({ kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` })
   })
 
-  ctx.on('agent/created', async (/** @type {any} */ { agent }) => {
+  /** Per-agent Edit Lock setup, shared by the creation listener and the
+   * late-mount catch-up below so the two paths can never diverge. Idempotent:
+   * an agent whose root is already bound is left untouched — no second tool
+   * scope, no second bind, no second domain.start. @param {any} agent */
+  async function setupAgent(agent) {
     if (closed) return
+    if (registry.rootOf(agent)) return
     try {
       installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef)
       registry.bind(agent, options.fixed?.root ?? agent?.session?.header?.cwd)
@@ -558,7 +563,24 @@ return (ctx, config = {}) => {
       try { evidence?.recordSessionFailure?.(sessionOf(agent), String(/** @type {any} */ (error)?.message ?? error)) } catch { /* reporting only */ }
       ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`)
     }
-  })
+  }
+  ctx.on('agent/created', (/** @type {any} */ { agent }) => setupAgent(agent))
+
+  // Late-mount catch-up (the same mount-order hazard the worktree-mode guard
+  // documents): after an application restart the preset mounts FOR the first
+  // session's main agent, so that agent's agent/created event is already past
+  // and the listener above never sees it. Bind every existing root agent now,
+  // through the identical setup; sub-agents are always created after mount and
+  // need no catch-up. Failures are recorded and surfaced exactly like
+  // creation-time ones, because it is the same code path.
+  try {
+    for (const agent of ctx.get?.('agents')?.roots?.() ?? []) {
+      if ((agent?.session?.header?.delegationDepth ?? 0) !== 0) continue
+      void setupAgent(agent)
+    }
+  } catch {
+    // No agent registry in this composition: only the creation path binds.
+  }
 
   // Stock Stop aborts the active turn signal synchronously: close admission at
   // that instant. Idle Stop has no signal; /edit-lock stop is the awaitable path.
