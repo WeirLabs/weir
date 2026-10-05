@@ -75,3 +75,16 @@ describe('preset realm composition for the MCP manager services', () => {
     expect(PATCH.indexOf("name: 'orrery-harness/skill-selection'") < PATCH.indexOf("name: 'orrery-harness/mcp-manager'")).toBe(true)
   })
 })
+
+describe('host-layer composition for the capability read remote', () => {
+  it('the remote row sits in the top-level insert list, sibling of orrery-notify and before every preset row', () => {
+    // The typert gateway resolves the service from the host root, so a
+    // preset-realm row could never be dispatched (S27, silent-capability-
+    // reads). This pins the row's host-layer placement.
+    const row = PATCH.indexOf("name: 'orrery-harness/capability-remote'")
+    expect(row >= 0, 'cordis.patch.yml must mount orrery-harness/capability-remote').toBe(true)
+    expect(row > PATCH.indexOf('- id: orrery-notify')).toBe(true)
+    expect(row < PATCH.indexOf('- id: preset-orrery')).toBe(true)
+    expect(row < PATCH.indexOf('- id: preset-orrery-creative')).toBe(true)
+  })
+})

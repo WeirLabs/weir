@@ -17,6 +17,7 @@
     "./worktree": "./src/worktree/index.js",
     "./settings": "./src/settings/index.js",
     "./skill-selection": "./src/capabilities/skill-selection-plugin.js",
+    "./capability-remote": "./src/capabilities/capability-remote.js",
     "./lsp": "./src/lsp/index.js",
     "./notify": "./src/notify/index.js",
     "./client": "./lib/client.js",

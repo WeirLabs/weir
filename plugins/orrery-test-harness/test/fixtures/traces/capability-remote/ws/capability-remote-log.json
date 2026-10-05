@@ -1,0 +1,19 @@
+{
+  "logs": 1,
+  "frames": 22,
+  "decoded": 22,
+  "events": [
+    {
+      "type": "command/run",
+      "name": "capabilities",
+      "args": " receipt",
+      "kind": null
+    },
+    {
+      "type": "command/done",
+      "name": null,
+      "args": null,
+      "kind": "success"
+    }
+  ]
+}

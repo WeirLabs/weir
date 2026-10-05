@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
-import { skillIdentityKey } from './skill-identity.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
 import { assertBuiltinSkillMigration } from './skill-builtin-migration.js'
 import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
@@ -23,6 +22,8 @@ import { isSegment } from './store/paths.js'
 import { createApplyEngine } from './apply-engine.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
+import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
+import { feedCapabilityReadBridge } from './capability-remote.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 
@@ -60,6 +61,8 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     /** Task 6.5 initialization reports per session (manager surface). */
     let initialReports = new Map()
     let lifecycle = null
+    /** Capability read remote (2.2): sessionId → header.cwd cache for the host-layer read service. */
+    const sessionCwds = new Map()
     try {
       ctx.skills.registerProvider(control => {
         const readSelection = dependencies.readSelection ?? (async options => {
@@ -204,6 +207,15 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       })
       const readiness = lifecycle
       ctx.on('agent/created', payload => { readiness.agentCreated(payload) })
+      // Capability read remote (silent-capability-reads 2.2): the per-session
+      // cwd cache the host-layer read service resolves options from — the
+      // same observation point the /capabilities handler uses
+      // (agent.session?.header?.cwd). Returns undefined on every path so the
+      // serial agent/created dispatch is never bailed.
+      ctx.on('agent/created', payload => {
+        const id = payload?.agent?.id
+        if (typeof id === 'string' && id.length) sessionCwds.set(id, payload?.agent?.session?.header?.cwd)
+      })
       // Task 6.1: preload known sessions' accepted selections into memory at
       // plugin apply. Fire-and-forget: a memory miss is served by the
       // listener's blocking synchronous disk read, so a slow or failed
@@ -452,64 +464,32 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (verb === 'receipt') {
               try {
-                const status = provider.status(options)
-                // provider.list returns { candidates, complete } — never a bare array.
-                const result = await provider.list(options)
-                const candidates = Array.isArray(result?.candidates) ? result.candidates : []
-                const selected = candidates.filter(candidate => candidate.selected)
-                const snapshot = lifecycle?.snapshotFor?.(agent.id)
+                // Shared builder (silent-capability-reads 2.1): the read
+                // remote serializes the same payload from the same code.
+                const payload = await buildReceiptPayload({
+                  provider,
+                  lifecycle,
+                  store: openCapabilityStore({ profileContext: ctx.get?.('profileContext') }),
+                }, options)
                 // The commands registry normalizes results to {kind, text}
                 // (CITED dsh-commands normalizeResult): structured payloads
                 // travel as JSON text.
-                const record = await openCapabilityStore({ profileContext: ctx.get?.('profileContext') }).read({ kind: 'selection', scope: 'session', sessionId: agent.id })
-                return { kind: 'success', text: JSON.stringify({
-                  status: 'applied',
-                  revision: record.kind === 'ok' ? record.revision : 0,
-                  effective: {
-                    skills: selected.map(candidate => candidate.name),
-                    mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [],
-                  },
-                  warnings: (status?.error ?? null) ? [String(status.reason ?? 'selection-unavailable')] : [],
-                }) }
+                return { kind: 'success', text: JSON.stringify(payload) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities receipt failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
             if (verb === 'list') {
               try {
-                // The FULL inventory joined with the session's EFFECTIVE
-                // selection (provider.list stamps it — including the
-                // initial-selection baseline for record-less sessions): every
-                // discovered candidate (user-global, workspace, custom —
-                // selected or not) lists with its selection mark.
-                const inventoryResult = await inventory(options)
-                const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
-                const effectiveResult = await provider.list(options)
-                const selectedKeys = new Set()
-                for (const candidate of Array.isArray(effectiveResult?.candidates) ? effectiveResult.candidates : []) {
-                  if (!candidate.selected || !candidate.identity) continue
-                  try { selectedKeys.add(skillIdentityKey(candidate.identity)) } catch { /* an unstamped shape carries no mark */ }
-                }
-                const manager = ctx.get?.('orreryMcpManager')
-                const listing = manager?.list?.() ?? { managed: [], unmanaged: [] }
-                return { kind: 'success', text: JSON.stringify({
-                  skills: candidates.map(candidate => {
-                    let key = null
-                    try { key = candidate.identity ? skillIdentityKey(candidate.identity) : null } catch { key = null }
-                    return {
-                      name: candidate.name,
-                      description: candidate.description ?? '',
-                      scope: candidate.source?.scope ?? candidate.scope ?? 'unknown',
-                      status: candidate.status ?? 'unknown',
-                      selected: key !== null && selectedKeys.has(key),
-                      conflict: Boolean(candidate.conflict),
-                    }
-                  }),
-                  mcpServers: [
-                    ...(listing.managed ?? []).map(server => ({ identity: server.identity, state: server.state })),
-                    ...(listing.unmanaged ?? []).map(server => ({ serverName: server.serverName, state: 'unmanaged' })),
-                  ],
-                }) }
+                // Shared builder (silent-capability-reads 2.1): the FULL
+                // inventory joined with the session's EFFECTIVE selection,
+                // plus the MCP manager listing (read at call time).
+                const payload = await buildListPayload({
+                  inventory: (inventoryOptions, previous) => inventory(inventoryOptions, previous),
+                  provider,
+                  mcpManager: ctx.get?.('orreryMcpManager'),
+                }, options)
+                return { kind: 'success', text: JSON.stringify(payload) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
@@ -925,7 +905,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (verb === 'conditions') {
               // The 1.12 consistency conditions; empty = supported.
-              return { kind: 'success', text: JSON.stringify({ conditions: [] }) }
+              return { kind: 'success', text: JSON.stringify(buildConditionsPayload()) }
             }
             return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear' }
           },
@@ -967,6 +947,25 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     }
     mounted.set(ctx, face)
     processFace = face
+    // Capability read remote (silent-capability-reads 2.2): feed the
+    // module-level bridge the host-layer read service resolves its faces
+    // from AT CALL TIME (preset-realm services are invisible to the host-root
+    // typert gateway, S27 — same module-instance pattern as the MCP facade
+    // realm bridge). ctx.effect unregisters the feed with this plugin's own
+    // lifecycle; a feed failure leaves the bridge absent, which the service
+    // surfaces as an explicit typed error, never a guessed payload.
+    try {
+      ctx.effect(() => feedCapabilityReadBridge({
+        provider,
+        inventory: (options, previous) => inventory(options, previous),
+        lifecycle,
+        mcpManager: () => ctx.get?.('orreryMcpManager'),
+        profileContext: () => ctx.get?.('profileContext'),
+        sessionCwd: sessionId => (sessionCwds.has(sessionId) ? { found: true, cwd: sessionCwds.get(sessionId) } : { found: false, cwd: undefined }),
+      }), 'orrery-capability-read-bridge')
+    } catch (cause) {
+      ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
   }
 }
 

@@ -33,6 +33,7 @@ import delegatePreflight from './delegate-preflight.js'
 import mcpGateway from './mcp-gateway.js'
 import presetDefaults from './preset-defaults.js'
 import capabilityPresetsSurface from './capability-presets-surface.js'
+import capabilityRemote from './capability-remote.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import childPrompt from './child-prompt.js'
@@ -53,6 +54,7 @@ SCENARIOS.push(notifyWorktree)
 SCENARIOS.push(childPrompt)
 SCENARIOS.push(staleSweep)
 SCENARIOS.push(staleSweepOff)
+SCENARIOS.push(capabilityRemote)
 
 /**
  * Find a scenario entry by id.

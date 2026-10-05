@@ -63,6 +63,14 @@
     # completion. Pure observer of session events; settings overlay is read live.
     - id: orrery-notify
       name: 'orrery-harness/notify'
+    # Capability read channel (silent-capability-reads): the plugin-owned
+    # typert remote serving the Badge/manager READ verbs (receipt / list /
+    # conditions) so reads never touch the session log. Host layer by
+    # necessity: the typert gateway resolves the service from the host root
+    # (S27); the preset-layer skill-selection feeds its faces through the
+    # module-level bridge. Inert with a warning when typert is absent.
+    - id: orrery-capability-remote
+      name: 'orrery-harness/capability-remote'
     # Browser half of the same package: the Orrery settings page registered
     # into the Settings Plugins page (./client export, dsh.client manifest).
     - id: ui-orrery-settings

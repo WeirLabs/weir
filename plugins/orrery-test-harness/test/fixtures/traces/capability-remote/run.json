@@ -1,0 +1,8 @@
+{
+  "scenario": "capability-remote",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/silent-capability-reads-058/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "capability remote done\n",
+  "stderr": "",
+  "sessionId": null
+}
