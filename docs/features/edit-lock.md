@@ -27,6 +27,7 @@
 - **保留有上限**。单次保留与一批文件的累计保留都有上限（默认 30 分钟／2 小时），用尽后只能释放；延长一个仍在生效的保留只计新增的分钟数，且「从现在起的窗口」不得超过单次上限。没有永久保留——唯一能一直占着的是异常锁（出错或停止留下的锁），由你或助手处理。
 - **保留中（holding）的含义**。会话已收尾但仍保留文件：其他会话照常被拒、转交照常协商；本会话自己仍可编辑这些文件，并且**一开始新回合，全部保留立刻解除**，回到普通占用。保留到期时会话空闲则自动释放；到期时恰在回合中，则在该回合结束时释放。
 - **停止即收回后续编辑权**。你按停止（或面板「收回编辑权」）后，助手不能发起新的编辑，直到编辑权被恢复；已经调用文件系统的那一次提交会等待完成，仍可能落盘，但不会恢复会话权限。**默认开启「消息驱动的自动恢复」**：停止后你发送的下一条消息即被视作「继续编辑」，自动依次执行 `resume` 与 `confirm --all`（每个文件仍走原有确认检查），新回合可直接编辑；运行时注入的消息（续推、收尾提醒、恢复提示、后台通知）不触发，管理员撤销的会话永远是终态。设置页「编辑」组可关闭该开关，关闭后回到手动「继续编辑」。面板的「继续编辑」按钮与 `/edit-lock resume` 命令依然可用。
+- **失效锁静默清扫（默认开启）**。锁的目标文件被 shell／外部编辑器删除或移走后（这些写入不在保护范围内），锁行仍会留在权威镜像里；持有会话已消亡时，以往只能逐把 `/edit-lock unlock <resourceId> <generation>` 人工清理。现在：任意会话收到一条**真实用户消息**时，会为该管理域调度一次静默清扫——在后台执行，不阻塞回合、不写对话、不通知——把「目标路径已不存在」的锁按普通释放移除（保留 generation 墓碑）。只有 `lstat` 返回 `ENOENT` 才算目标缺失（dangling symlink 不算）；释放前在仲裁点逐字段复核归属没有变化，未决发布围栏保护的归属绝不移除。每次成功释放写一条共享审计（`orrery/edit-lock-maintenance` 的 `stale-sweep`，含管理根、触发会话、owner、resourceId、generation），镜像在 `<管理根>/.orrery/audit.jsonl`。运行时注入的消息不触发；同一管理域 60 秒内至多清扫一次，成本不随会话数增长。设置页「编辑」组的 `editLockStaleSweep` 可关闭，即时生效。
 - **状态入口**。输入栏右侧「编辑锁」按钮的圆点表示本会话状态：灰＝未占用文件，蓝（主题强调色）＝正在编辑／文件为本会话保留，琥珀黄＝编辑已停止或等你确认继续，红＝需要你处理。打开面板：
   - 只在需要时给**一个主动作**：已停止→「继续编辑」；等你确认→「继续编辑这些文件」；保留中→「立即释放全部文件」；正常编辑与空闲不给主动作。
   - 文件按短名列出，每行至多一个动作：自己的文件「释放」（待确认的为「继续」）；其他会话停住或出错留下的文件「解锁」（按当前 generation 解锁，需第二次点击确认）；其他会话正在编辑的文件不给动作。
@@ -111,6 +112,7 @@
 | `editLockHoldCumulativeMaxMinutes` | `120` | 一批文件的累计保留上限，须不小于单次上限 |
 | `editLockNudgeAttempts` | `2` | 回合结束后最多提醒几次；`0` 直接按兜底处置 |
 | `editLockNudgeFallback` | `release` | 提醒用尽后的处置：`release` 释放给其他会话，`abnormal` 转为需要你处理 |
+| `editLockStaleSweep` | `true` | 真实用户消息触发管理域失效锁（目标文件已不存在）静默清扫；按消息即时读取，关闭后失效锁仍走 `/edit-lock unlock` 人工路径（设置页行随后续批次补齐） |
 | `editLockAutoResume` | `true` | 停止后下一条真实用户消息自动恢复编辑并确认保留文件；即时生效，关闭后只能手动「继续编辑」 |
 
 保留相关设置由 `editLockLimits` 统一解析：未设置取默认；设置了但不可用（非正数、默认大于单次、累计小于单次、非整数提醒次数、未知处置）时，保留申请按设置键名明确报错、不做静默钳制；回合末收尾、状态、释放、停止、解锁则对保留字段改用内置默认值继续工作（`editLockNudgeAttempts` 与 `editLockNudgeFallback` 仍按保存值生效，收尾提醒改为只要求释放）并记录警告，避免一个设置错误让文件无法释放。恢复与暂停参数为固定产品值：3 次／5 分钟、退避 15/30/60 秒、单次暂停 15 分钟、累计暂停 30 分钟、协商时限 120 秒。开发组合可在行配置写 `root` 与 `authorityDirectory` 固定单一域；该行须排在 hashline-edit 与 lsp 之前。
@@ -138,6 +140,14 @@
 - 面板数据来自只读端点 `POST /api/orrery-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图，按会话解析 agent，找不到时返回 `unavailable`），不从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
 
+### 消息触发的失效锁清扫（设计）
+
+- **触发与调度**：`agent/inbox/inserted` + `isGenuineUserMessage`（与消息驱动自动恢复同一挂点，运行时注入消息天然排除）为**该会话的管理域根**调度一次清扫。调度按域根聚合在 `src/edit-lock/stale-sweep.js` 的 `createStaleSweepScheduler`：单飞 + 60 秒冷却（自完成时刻起），零延时定时器 **detached 派发——回合绝不等待**（不同于必须先于首 step 的 auto-resume）。`editLock.staleSweep` 按消息即时读取（`!== false` 即开）。插件卸载 `sweeps.close()` 取消全部未派发工作；agent dispose（`disposedAgents` WeakSet 标记）取消其 arming 的未派发工作；已提交的权威事务永不打断、永不 reinterpret。
+- **失效判定**（`isMissingTarget`，publisher 侧执行——它与权威共享文件系统，客户端进程只负责触发）：对域内每一锁行 `lstatSync(resourceId)`，**仅 `ENOENT`** 计为候选；lstat 成功（含 dangling symlink）与 `EACCES`/`ENOTDIR`/symlink 环等其他错误一律跳过。不追踪被移动的文件、不把别名解析成替代身份、不为缺失路径构造资源键。
+- **仲裁点条件释放**：manager 新增可信维护入口 `releaseStale(observed, isMissing)`。每行各走一条 FIFO 事务，在**执行点**逐字段复核观察行——owner、generation、owner executionEpoch、锁状态——并**再次 lstat** 确认目标仍缺失；全部满足才走普通 `operations.release`。任一不满足、行已消失、或既有未决发布围栏准入拒绝（与 `adminUnlock` 同一条 release-mode 准入，未决 update 必需的归属永不移除）都是**跳过而非错误**：丢弃 draft、不产生 revision、不影响其余行。范围是域内全部锁行，不限 owner 状态（active、holding、pending-confirmation、user-interrupted、abnormal 一视同仁）——谓词钉死「观察时刻的行状态」，观察之后归属发生任何变化即自动跳过。`isMissing` 探针注入，manager 层不做文件系统 IO。
+- **静默但可审计**：不写对话、不通知、不 `session.append`（§3.6 红线）。每次持久化成功的释放由 **publisher 侧**经 `createEditLockLifecycle` 的 `onStaleRelease` 钩子发共享审计 `orrery/edit-lock-maintenance`，`data.kind: 'stale-sweep'`，携带 `root`（管理根）、`trigger`（触发会话）、`owner`、`resourceId`、`generation`；JSONL 镜像经 `createAudit` 的显式 `root` 锚定 `<管理根>/.orrery/audit.jsonl`。跳过与失败只有有界 `ctx.logger` 警告。权威镜像中体现为普通 release（generation 墓碑保留；owner 最后一把锁消失时 holds 行按既有内核语义归零），不新增历史表，不改围栏、操作历史或恢复计数。
+- **跨进程接线**：`lifecycle.sweepStale(triggerSessionId)` 同时暴露到 peer 通道（`PEER_KINDS` 新增 `staleSweep`）；客户端域 `sweepStale` 转发通道调用，publisher 侧 peer 以**通道自身会话**（`agent.id`）为触发会话执行扫描——扫描永远发生在 publisher，客户端只是触发。IPC 应答丢失不会重复释放：重放的同一观察行在执行点已不复存在，按「行已消失」跳过（幂等）。
+
 ### 独立维护边界
 
 - profile 设置行提供维护端点与证据入口，不依赖 `orreryEditLock` 或恢复器。每次 preset 挂载持有独立代次；旧 disposer 只删除自己的证据，排空失败保留失败状态。证据按宿主根 context 存在 WeakMap 中，同一模块的设置行重挂载不遗忘仍活跃的行；模块整体替换/进程重启不继承内存证据。
@@ -164,6 +174,7 @@
 | `settle.js` | 回合末收尾：仅 `completed` 回合进入，提醒次数与兜底处置由调用方作为策略传入。 |
 | `view.js` | 面板结构化视图：纯函数（无 IO、无时钟，`now` 由调用方给），面板的颜色与动作只由这个形状决定。 |
 | `domains.js`／`domain.js` | 管理域解析，以及发布者与客户端两种组合的统一接口（`service` 是唯一到达工具的通道）。 |
+| `stale-sweep.js` | 失效锁清扫：ENOENT-only 缺失目标判定 + 按管理域根聚合的 detached 调度器（单飞 + 60 秒冷却，时钟/定时器/任务注入）。 |
 
 ### 状态内核与授权
 
@@ -292,6 +303,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**不判定缺失名称的等价性**——不预创建占位文件、不猜测别名；store 只写自己的 `snapshot.json`，release 也不等于验证通过。
 - **宿主父子 Stop 与编辑锁命令不同**：每个会话有各自的锁状态；宿主对 active 父会话的用户 Stop 会传播取消给子代理（父 turn 为 aborted/user、子 turn 为 aborted/parent），双方已调用的文件提交仍按上述边界等待结算。`/edit-lock stop` 只撤销所选会话的编辑权限，不宣称取消整个委派树。
 - **shell 与外部写入不在保护范围**：`printf > file`、`echo x >> file` 这类 shell 命令与任何外部编辑器的写入完全绕过锁，不受占用判断影响；不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外），也不承诺分布式多机共识。
+- **失效锁清扫的保守边界**：清扫只认 `lstat` 的 `ENOENT`——目标被移动不会被追踪（新位置的文件与原锁无关，原锁留在原地等保留到期、转交或人工解锁）；dangling symlink、`EACCES`/`ENOTDIR` 等错误一律跳过而非当作缺失。清扫是**尽力而为的维护**，不是释放保证：观察与执行之间归属发生任何变化（resume、confirm、generation 前进、撤权）、目标在执行点重新出现、或未决发布围栏保护，该行一律跳过且不报错；清扫失败只留有界日志，残留锁永远可以 `/edit-lock unlock <resourceId> <generation>` 人工清理。清扫不结清 unknown 发布围栏（仍需 ADMIN OVERRIDE），不改恢复、保留与回合末收尾语义，也不清理 `.orrery/` 之外的任何文件。
 - **保留设置冲突只影响保留**：保留了互相矛盾的保留设置（例如单次上限低于默认时长）时，只有保留申请按设置键名报错；回合末收尾、状态、释放、停止和解锁继续工作，保留相关字段改用内置默认值，提醒次数与兜底处置仍按保存值生效。一个设置错误不会让文件无法释放。
 - **未承诺的时点保证**：观察是一串同步 filesystem 调用，**不是原子快照**；外部 shell/IDE 在调用之间改变盘面不在保证内，dev/ino 连续性无法证明不存在 inode reuse 或「改后复原」（ABA）。调用方必须先自行协调变更顺序（manager 生命周期/发布协调）。
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）；跨文件批量失败只区分 written / not-written / uncertain，不宣称回滚。
@@ -326,6 +338,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **存储与历史**：`test/edit-lock-store.test.js`（真实 syscall 层的故障注入与 SIGKILL 子进程恢复，覆盖 create/record/recover 的 detached 语义、封闭 schema 与历史单调性、canonical/checksum/domain/version 拒绝、每个持久化边界的毒化与 `commitStatus`、每 handle 队列 CAS 与 close drain）、`test/edit-lock-operation-history.test.js`（阶段图、`ID_REUSE`、transition-local 归属、围栏与 closeout）；两者都用真实 fs 与真实 file/dir sync。SIGKILL 是真实子进程在 barrier 处被杀后重新 recover，**不是**掉电、内核崩溃、扇区撕裂或硬件缓存持久性证明。
 - **管理与组合**：`test/edit-lock-manager.test.js`（持久后安装、取消 overlay 与持久 ack、pending 注册的取消、竞争冲突不毒化、未决围栏）、`test/edit-lock-composition.test.js`（服务与工具面、受控 write 与 hash_edit 链路、view 端点、人工 `release` 命令）、`test/edit-lock-lifecycle.test.js`、`test/edit-lock-host.test.js`、`test/edit-lock-write.test.js`、`test/edit-lock-tool-scope.test.js`、`test/edit-lock-publication.test.js`、`test/edit-lock-reservation.test.js`、`test/edit-lock-peer*.test.js`、`test/edit-lock-remote-service.test.js`、`test/edit-lock-request-*.test.js`、`test/edit-lock-call-context.test.js`。
 - **消息驱动的自动恢复**：`test/edit-lock-auto-resume.test.js`（真实用户消息置旗并在下一回合 resume + confirm-all、注入消息不置旗、开关关闭不恢复、revoked 终态跳过、零锁会话恢复、与手动 Continue 竞争幂等）；集成场景 `editlock-auto-resume`（停止后仅发消息即恢复 read → write → release，快照携带 `auto:user-message:<uuid>` requestId）与 `editlock-auto-resume-off`（开关关闭时同一写入被拒、会话保持 stopped），两者各用私有 authority 目录与目标文件。
+- **失效锁静默清扫**：`test/edit-lock-stale-sweep.test.js`（18 项，四镜：`isMissingTarget` 真实 fs 判定——既有文件/dangling symlink/ENOTDIR 一律跳过、仅 ENOENT 为候选；`createStaleSweepScheduler` 注入时钟/定时器的单飞+60s 冷却+dispose 取消+失败告警仍冷却；`manager.releaseStale` 真实 store——resume/confirm 后同 generation 按 epoch/status 谓词跳过且 revision 不变、release 后重获取 generation 递增跳过、执行点目标重建跳过、retention holding 锁缺失目标释放且 owner 最后一把锁消失后 holds 行归零、未决 update 围栏内归属按既有 release-mode 准入拒放而无关失效锁照放、同一观察行重放幂等跳过；组合层——真实用户消息触发 dead session 缺失目标锁的静默释放+publisher 审计 cordis/JSONL 双写+对话零注入、注入消息不触发、开关关闭不调度、冷却窗内第二条消息不调度、agent dispose 与插件卸载取消未派发；跨进程——客户端域转发 `staleSweep` 通道调用、publisher peer 以通道会话为触发转发 lifecycle）。headless 集成场景 `editlock-stale-sweep`（消亡会话残留缺失目标锁，另一会话的真实用户消息后锁被静默释放、generation 墓碑保留、对话无注入、`stale-sweep` 审计 cordis 与 `<根>/.orrery/audit.jsonl` 双落盘）与 `editlock-stale-sweep-off`（开关关闭时同一消息不清扫、无审计、锁保留），各用私有 authority 目录与目标文件，replay fixture 已入库。
 - **独立维护**：`test/edit-lock-maintenance.test.js` 覆盖四态/未知、损坏拒绝、字节不变、服务端根、设置审计与生命周期；`test/edit-lock-maintenance-safety.test.js` 覆盖父目录/authority/快照符号链接、多挂载顺序、旧回调、安装失败、设置重挂载及超限快照；客户端维护/设置用例验证警示与后代错误隔离（包括成功但畸形的响应）。fixture 注入受 ceiling 限制的根发现/Git 排除适配器及 lane 内短 socket 地址，不改变生产默认路径。Git ceiling 与文件系统祖先扫描分别约束，不能互相替代。
 - **静态与客户端构建**：checkJs 包含 maintenance、snapshot、settings adapter 及维护客户端；宿主边界使用本地声明。`pnpm --filter orrery-harness run build` 校验全部手写 ModuleLoader chunk 的语法，以精确字节 SHA-256 生成入口 manifest 并最后写入口；测试校验清单与 chunk 集合/摘要一致，不接受仅 touch 时间戳作为构建。
 

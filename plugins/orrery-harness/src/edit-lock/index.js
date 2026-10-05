@@ -20,6 +20,8 @@ import { installEditLockWriteScope } from './tool-scope.js'
 import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { isGenuineUserMessage } from '../shared/runtime-messages.js'
+import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
+import { createStaleSweepScheduler } from './stale-sweep.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
 import { localDomain, remoteDomain } from './domain.js'
 import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor } from './domains.js'
@@ -312,6 +314,16 @@ return (ctx, config = {}) => {
   ctx.inject?.(['sandboxPolicy'], (/** @type {any} */ scope) => { sandboxPolicyRef = scope.sandboxPolicy })
   // Capture the original host filesystem once; the manager is its only writer.
   const fs = ctx.fs
+  const audit = createAudit(ctx)
+  /** Detached stale-lock sweeps, coalesced per management-domain ROOT with a
+   * single in-flight sweep and a 60s cooldown (see stale-sweep.js). */
+  const sweeps = createStaleSweepScheduler({
+    warn: message => ctx.logger?.warn?.(message),
+    setTimer: fn => (safeSetTimer(ctx) ?? globalThis.setTimeout)(fn, 0),
+  })
+  /** Agents disposed in this mount; their undispatched sweep work cancels.
+   * @type {WeakSet<object>} */
+  const disposedAgents = new WeakSet()
   // The tool registry may hand back a normalized copy of a definition; the
   // claimed execute function is what actually runs, so it is the identity.
   /** @type {WeakSet<Function>} */
@@ -362,6 +374,12 @@ return (ctx, config = {}) => {
       const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
         deliver: (agent, text, wake) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text, wake: wake === true }); else deliverLocal(agent, text, wake) },
         onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
+        // Stale-lock sweep audit: publisher-side, after each durable release;
+        // the JSONL mirror anchors at the management root. Never a session
+        // event, never a conversation write (AGENTS §3.6).
+        onStaleRelease: (row, triggerSessionId) => audit(null, AUDIT_TYPES.editLockMaintenance, {
+          kind: 'stale-sweep', root, trigger: triggerSessionId ?? null, owner: row.owner, resourceId: row.resourceId, generation: row.generation,
+        }, { root }),
       })
       let server
       try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks) }
@@ -659,6 +677,22 @@ return (ctx, config = {}) => {
   // (no followup, no session.append — AGENTS §3.4).
   ctx.on('agent/inbox/inserted', (/** @type {any} */ { agent, message }) => {
     if (!agent || !isGenuineUserMessage(message)) return
+    // Stale-lock sweep: the SAME genuine-message hook as auto-resume, but the
+    // sweep runs DETACHED — the turn never waits for it (unlike auto-resume,
+    // which must precede the first step). Coalesced per management-domain root
+    // (not per session) with a single in-flight sweep and a 60s cooldown; the
+    // setting is read per message so a committed change applies at once
+    // (default ON). Runtime-injected messages never reach this branch.
+    if (ctx.get?.('orrerySettings')?.get?.('editLock')?.staleSweep !== false) {
+      const root = registry.rootOf(agent)
+      if (root) sweeps.trigger(root, () => {
+        // An agent disposed (or the plugin unmounted) before dispatch cancels
+        // its undispatched work; an already-submitted authority transaction
+        // is never cancelled or reinterpreted.
+        if (closed || disposedAgents.has(agent) || registry.rootOf(agent) !== root) return undefined
+        return registry.forRoot(root).then(domain => domain.sweepStale(agent, sessionOf(agent)))
+      })
+    }
     if (ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume === false) return
     pendingAutoResume.set(agent, true)
   })
@@ -694,6 +728,9 @@ return (ctx, config = {}) => {
   ctx.on('agent/turn-stopping', (/** @type {any} */ { agent }) => { retireReplyTool(agent) })
 
   ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
+    // Undispatched sweep work armed by this agent cancels here (an in-flight
+    // authority transaction is never cancelled or reinterpreted).
+    disposedAgents.add(agent)
     replyTools.get(agent)?.dispose()
     replyTools.delete(agent)
     const timer = expiry.get(agent)?.timer
@@ -765,6 +802,9 @@ return (ctx, config = {}) => {
     closed = true
     evidence?.disposing()
     try {
+      // Cancel undispatched sweeps first; an already-running sweep's authority
+      // transactions drain with the domains below, never cancelled.
+      sweeps.close()
       recovery.close()
       settle.close()
       offView()

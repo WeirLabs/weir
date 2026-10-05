@@ -4,7 +4,7 @@ import { canonicalRequestData } from './request-data.js'
  * host process is the trusted ingress for the latter (same trust base). */
 export const PEER_KINDS = Object.freeze(['publish', 'batch', 'acquire', 'release', 'locks', 'trySteal', 'reply', 'pending',
   'status', 'stop', 'resume', 'confirm', 'unlock', 'allLocks', 'classifyAbnormal', 'recoveryUsage', 'chargeRecovery', 'pause',
-  'hold', 'turnStarted', 'releaseHeld', 'settleExpired', 'retention', 'dispose'])
+  'hold', 'turnStarted', 'releaseHeld', 'settleExpired', 'retention', 'dispose', 'staleSweep'])
 
 /** Bind an already authenticated, host-owned channel to ONE registered agent.
  * No identity or lifecycle capability is accepted in a wire message. The caller
@@ -68,6 +68,9 @@ export function createEditLockPeer(lifecycle, agent) {
           case 'settleExpired': return await lifecycle.settleExpired(agent, false, request?.idle === true)
           case 'retention': return lifecycle.retention(agent)
           case 'dispose': { closed = true; await lifecycle.dispose(agent); return { disposed: true } }
+          // The triggering session is the channel's own session: the publisher
+          // performs the scan itself (it shares the filesystem).
+          case 'staleSweep': return await lifecycle.sweepStale(agent.id)
           default: throw new Error('invalid edit peer message')
         }
       } finally { pending.delete(message.callId) }
