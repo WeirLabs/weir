@@ -1,0 +1,8 @@
+{
+  "scenario": "cold-session",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/cold-session-convergence-55-040/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "cold session probe done\n",
+  "stderr": "",
+  "sessionId": null
+}
