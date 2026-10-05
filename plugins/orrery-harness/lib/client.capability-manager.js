@@ -21,13 +21,15 @@ window.__ModuleLoader__.load({
 			minWidth: "320px",
 			maxHeight: "380px",
 			overflow: "auto",
-			background: "var(--dsw-alias-background-elevated, #fff)",
+			// Only tokens the shell actually defines: bg-overlay is the popover
+			// surface (a hard #fff fallback goes invisible under a dark theme).
+			background: "var(--dsw-alias-bg-overlay, #fff)",
 			border: "1px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-md)",
 			boxShadow: "var(--dsw-shadow-l2, 0 4px 16px rgba(0,0,0,.12))",
 			padding: "10px",
 			fontSize: "12px",
-			color: "var(--dsw-alias-label-primary)"
+			color: "var(--dsw-alias-label-primary, inherit)"
 		};
 		const rowStyle = { display: "flex", alignItems: "center", gap: "6px", padding: "3px 0" };
 		const tagStyle = {
@@ -35,7 +37,7 @@ window.__ModuleLoader__.load({
 			border: "1px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-sm)",
 			padding: "0 4px",
-			color: "var(--dsw-alias-label-tertiary, #888)"
+			color: "var(--dsw-alias-label-secondary, #888)"
 		};
 		function row(label, tag, extra) {
 			return react_jsx_runtime.jsxs("div", { style: rowStyle, children: [react_jsx_runtime.jsx("span", { children: label }), tag ? react_jsx_runtime.jsx("span", { style: tagStyle, children: tag }) : null, extra ?? null] });
@@ -77,7 +79,7 @@ window.__ModuleLoader__.load({
 				? skills.map((skill) => row(
 					(skill.selected ? "☑ " : "☐ ") + skill.name,
 					skill.source,
-					skill.conflict ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warning, #c80)" }, children: t("capability.conflict", "conflict") }) : null))
+					skill.conflict ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warn-primary, #c80)" }, children: t("capability.conflict", "conflict") }) : null))
 				: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: [
 					partition.mcpManaged.map((server) => row(server.identity ?? server.serverName ?? "unknown", t("capability.managed", "managed"))),
 					partition.mcpUnmanaged.map((server) => row(server.serverName ?? "unknown", t("capability.unmanaged", "unmanaged")))

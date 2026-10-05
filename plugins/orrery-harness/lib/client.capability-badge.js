@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
 			width: "7px",
 			height: "7px",
 			borderRadius: "50%",
-			background: "var(--dsw-alias-state-warning, #c80)"
+			background: "var(--dsw-alias-state-warn-primary, #c80)"
 		};
 		function CapabilityBadge(props) {
 			const model = props.model;
@@ -41,17 +41,20 @@ window.__ModuleLoader__.load({
 				return value && value !== key ? value : fallback;
 			};
 			const [state, setState] = react.useState(null);
+			const [settled, setSettled] = react.useState(false);
 			const [panelOpen, setPanelOpen] = react.useState(false);
 			const [convergence, setConvergence] = react.useState(null);
 			react.useEffect(() => {
 				if (!sessionId || typeof props.fetchReceipt !== "function") {
 					setState(null);
+					setSettled(false);
 					return undefined;
 				}
 				let alive = true;
+				setSettled(false);
 				const refresh = () => props.fetchReceipt(sessionId).then((receipt) => {
-					if (alive) setState(model.badgeStateOf(receipt, null));
-				}).catch(() => {});
+					if (alive) { setState(model.badgeStateOf(receipt, null)); setSettled(true); }
+				}).catch(() => { if (alive) setSettled(true); });
 				refresh();
 				// 12.5: a same-session frame refreshes this window's Badge; a
 				// missing subscription degrades to an explicit refresh hint.
@@ -68,7 +71,12 @@ window.__ModuleLoader__.load({
 			if (!sessionId) return null;
 			const label = state && state.known
 				? t("capability.badge", `${state.applied.skills} skills · ${state.applied.mcpServers} MCP`)
-				: t("capability.loading", "Capabilities…");
+				: settled
+					// The receipt fetch settled without a receipt: this session's
+					// composition has no capability command (a non-Orrery preset)
+					// or it failed — an explicit n/a, never a perpetual spinner.
+					? t("capability.unavailable.short", "Capabilities n/a")
+					: t("capability.loading", "Capabilities…");
 			const hasWarning = Boolean(state && state.unavailable && state.unavailable.length > 0);
 			const title = hasWarning ? state.unavailable.join("; ") : (convergence ?? undefined);
 			return react_jsx_runtime.jsxs("button", {
