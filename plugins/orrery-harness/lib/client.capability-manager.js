@@ -39,12 +39,14 @@ window.__ModuleLoader__.load({
 			fontSize: "12px",
 			color: "var(--dsw-alias-label-primary, inherit)"
 		};
-		// Sidebar frame: the pane owns scrolling and theming; the tree fills its
-		// width without an overlay border/shadow.
+		// Sidebar frame: a full-height flex column — the pane does NOT scroll
+		// arbitrary cell content, so the frame pins its own height and the view
+		// region between header and footer scrolls (see the render shell branch).
 		const sidebarFrameStyle = {
 			display: "flex",
 			flexDirection: "column",
 			gap: "2px",
+			height: "100%",
 			minHeight: 0,
 			boxSizing: "border-box",
 			padding: "10px",
@@ -96,6 +98,7 @@ window.__ModuleLoader__.load({
 			marginTop: "8px",
 			paddingTop: "6px",
 			display: "flex",
+			flex: "none",
 			gap: "6px",
 			alignItems: "center",
 			flexWrap: "wrap"
@@ -414,8 +417,14 @@ window.__ModuleLoader__.load({
 						? react_jsx_runtime.jsx("button", { type: "button", onClick: props.onClose, "aria-label": t("capability.close", "Close"), children: "×" })
 						: null
 				] }),
-				addBlock,
-				body,
+				// The sidebar shell pins the view region between header and the Apply
+				// footer as the scroll container (minHeight:0 lets the flex child
+				// shrink below its content height). The popover shell keeps the
+				// EXACT historical children shape — the pinned manager test indexes
+				// root children[1] as addBlock.
+				...(props.shell === "sidebar"
+					? [react_jsx_runtime.jsxs("div", { style: { flex: "1 1 auto", minHeight: 0, overflowY: "auto" }, children: [addBlock, body] })]
+					: [addBlock, body]),
 				draft !== null ? react_jsx_runtime.jsxs("div", { style: footerStyle, children: [
 					diffText ? react_jsx_runtime.jsx("span", { style: diffSummaryStyle, "data-orrery-capability-diff": "", children: diffText }) : null,
 					react_jsx_runtime.jsx("button", {
