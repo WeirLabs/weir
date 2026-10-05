@@ -68,6 +68,19 @@ window.__ModuleLoader__.load({
 				setConvergence(model.convergenceHintOf({ subscribed: false }));
 				return () => { alive = false; };
 			}, [sessionId]);
+			// Close on outside click (edit-lock panel pattern): any pointerdown
+			// outside this entry's wrapper dismisses the panel. Clicks INSIDE
+			// never reach the toggle because the panel is the button's sibling,
+			// not its child (nested they bubbled to onClick and closed it).
+			react.useEffect(() => {
+				if (!panelOpen || typeof document === "undefined") return undefined;
+				const onPointerDown = (event) => {
+					if (event?.target?.closest?.("[data-orrery-capability-root]")) return;
+					setPanelOpen(false);
+				};
+				document.addEventListener("pointerdown", onPointerDown);
+				return () => { document.removeEventListener("pointerdown", onPointerDown); };
+			}, [panelOpen]);
 			if (!sessionId) return null;
 			const label = state && state.known
 				? t("capability.badge", `${state.applied.skills} skills · ${state.applied.mcpServers} MCP`)
@@ -79,15 +92,22 @@ window.__ModuleLoader__.load({
 					: t("capability.loading", "Capabilities…");
 			const hasWarning = Boolean(state && state.unavailable && state.unavailable.length > 0);
 			const title = hasWarning ? state.unavailable.join("; ") : (convergence ?? undefined);
-			return react_jsx_runtime.jsxs("button", {
-				type: "button",
-				style: badgeStyle,
-				title,
-				"aria-label": label,
-				onClick: () => setPanelOpen(!panelOpen),
+			return react_jsx_runtime.jsxs("span", {
+				style: { position: "relative", display: "inline-flex" },
+				"data-orrery-capability-root": "",
 				children: [
-					hasWarning ? react_jsx_runtime.jsx("span", { style: warnDotStyle }) : null,
-					label,
+					react_jsx_runtime.jsxs("button", {
+						type: "button",
+						style: badgeStyle,
+						title,
+						"aria-label": label,
+						"aria-expanded": panelOpen,
+						onClick: () => setPanelOpen(!panelOpen),
+						children: [
+							hasWarning ? react_jsx_runtime.jsx("span", { style: warnDotStyle }) : null,
+							label
+						]
+					}),
 					panelOpen && typeof props.ManagerPanel === "function"
 						? react_jsx_runtime.jsx(props.ManagerPanel, {
 							sessionId, model, onClose: () => setPanelOpen(false),

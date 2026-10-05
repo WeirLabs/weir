@@ -88,6 +88,8 @@
 
 - **能力 Badge 恒显「0 skills · 0 MCP」、管理器面板永久「Loading capabilities…」**：Badge 回执把选择 provider 返回的候选按 `candidate.selected` 过滤，但该 provider 的契约是「返回的候选即生效选择」，从不携带 `selected` 字段——过滤后恒为空，真实选择（如内置基线 10 项）被完全隐藏；现由 provider 在选中匹配上显式盖章 `selected: true`（Office 占位 denial 不盖章），回执与列表行直接读取。面板则因 Badge 渲染管理器时只传了 `{ sessionId, model, onClose }`、`fetchListing`/`fetchConditions`/`t` 未下传，拉取守卫恒为假、`/capabilities list` 从未发出（不是服务端挂起），现已随面板一并下传。附 provider／命令回执／Badge chunk 三层回归测试。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 
+- **能力管理器面板点击行为反转**：此前面板渲染为 Badge 切换按钮的**子节点**——点击面板内任意位置都会冒泡到按钮的 onClick 把面板关掉（且交互内容嵌套在 button 内本就不合法），而点击面板外部没有任何收起监听。现面板与按钮同为带 `data-orrery-capability-root` 标记的相对定位包裹层的子节点（编辑锁面板同款结构），内部点击不再触达切换；面板打开期间注册 document 级 pointerdown 监听，落点在该包裹层之外即收起。附 chunk 级回归测试（结构与关闭语义）。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ### Fixed
 
 - **Worktree 自动依赖安装在桌面宿主上不再因 `pnpm: command not found` 失败**：lockfile 推导的 setup 命令运行前会先解析调用方式——系统环境优先，其次回退到 DSH 捆绑运行时（pnpm 以捆绑 Node 的绝对路径执行 `pnpm.mjs`），并把解析到的 Node 目录注入 PATH 供安装脚本使用；两层都找不到时给出含三条出路的明确诊断，而不是裸 exit 127。你显式配置的 setup 命令行为不变（始终原样执行）。
