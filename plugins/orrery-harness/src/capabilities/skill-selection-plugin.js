@@ -24,7 +24,7 @@ import { createApplyEngine } from './apply-engine.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { userTextMessage } from '../shared/user-message.js'
-import { createAudit } from '../shared/audit.js'
+import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 
 const mounted = new WeakMap()
 /**
@@ -393,7 +393,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 return { kind: 'error', text: JSON.stringify({ status: 'no-target-root', targetScope: missingRoot }) }
               }
               const install = await installBundledSkills(pkg.bundled, { roots: targetRoots, onCollision }, {
-                audit: data => audit(agent.session, 'capability-preset-import', data),
+                audit: data => audit(agent.session, AUDIT_TYPES.capabilityPresetImport, data),
               })
               if (!install.ok) {
                 // installBundledSkills already rolled back what it wrote.

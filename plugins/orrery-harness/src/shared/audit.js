@@ -26,6 +26,9 @@ export const AUDIT_TYPES = Object.freeze({
   // Session capability manager (tasks 4.2+): one record per durable Apply
   // acceptance or receipt-query recovery; never commit evidence by itself.
   capabilityApply: 'capability-apply',
+  // capability-manager-ux (D6): one record per confirmed v2 package import
+  // (install outcome + collision decisions); never commit evidence by itself.
+  capabilityPresetImport: 'capability-preset-import',
 })
 /**
  * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
