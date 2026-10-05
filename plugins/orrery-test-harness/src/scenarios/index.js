@@ -34,6 +34,7 @@ import mcpGateway from './mcp-gateway.js'
 import presetDefaults from './preset-defaults.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
+import childPrompt from './child-prompt.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
@@ -45,6 +46,7 @@ SCENARIOS.push(mcpGateway)
 SCENARIOS.push(presetDefaults)
 SCENARIOS.push(worktreeWatch)
 SCENARIOS.push(notifyWorktree)
+SCENARIOS.push(childPrompt)
 
 /**
  * Find a scenario entry by id.

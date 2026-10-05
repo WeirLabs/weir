@@ -109,6 +109,13 @@ const PRE_MIGRATION_KEYS = [
   'coldProbeSeen',
   // notify-worktree scenario observation (merge result reached the parent)
   'notifyMergeSeen',
+  // child-prompt scenario observations (delegated child's first request is
+  // free of orchestrator-facing prompt sections and tools)
+  'isChildRequest',
+  'sawDoctrine',
+  'sawTargets',
+  'sawLanes',
+  'sawWorkerContract',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']
