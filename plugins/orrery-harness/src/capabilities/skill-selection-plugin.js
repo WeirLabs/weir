@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
+import { skillIdentityKey } from './skill-identity.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
 import { assertBuiltinSkillMigration } from './skill-builtin-migration.js'
 import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
@@ -272,19 +273,34 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (verb === 'list') {
               try {
-                const listingResult = await provider.list(options)
-                const candidates = Array.isArray(listingResult?.candidates) ? listingResult.candidates : []
+                // The FULL inventory joined with the session's EFFECTIVE
+                // selection (provider.list stamps it — including the
+                // initial-selection baseline for record-less sessions): every
+                // discovered candidate (user-global, workspace, custom —
+                // selected or not) lists with its selection mark.
+                const inventoryResult = await inventory(options)
+                const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+                const effectiveResult = await provider.list(options)
+                const selectedKeys = new Set()
+                for (const candidate of Array.isArray(effectiveResult?.candidates) ? effectiveResult.candidates : []) {
+                  if (!candidate.selected || !candidate.identity) continue
+                  try { selectedKeys.add(skillIdentityKey(candidate.identity)) } catch { /* an unstamped shape carries no mark */ }
+                }
                 const manager = ctx.get?.('orreryMcpManager')
                 const listing = manager?.list?.() ?? { managed: [], unmanaged: [] }
                 return { kind: 'success', text: JSON.stringify({
-                  skills: candidates.map(candidate => ({
-                    name: candidate.name,
-                    description: candidate.description ?? '',
-                    scope: candidate.source?.scope ?? candidate.scope ?? 'unknown',
-                    status: candidate.status ?? 'unknown',
-                    selected: Boolean(candidate.selected),
-                    conflict: Boolean(candidate.conflict),
-                  })),
+                  skills: candidates.map(candidate => {
+                    let key = null
+                    try { key = candidate.identity ? skillIdentityKey(candidate.identity) : null } catch { key = null }
+                    return {
+                      name: candidate.name,
+                      description: candidate.description ?? '',
+                      scope: candidate.source?.scope ?? candidate.scope ?? 'unknown',
+                      status: candidate.status ?? 'unknown',
+                      selected: key !== null && selectedKeys.has(key),
+                      conflict: Boolean(candidate.conflict),
+                    }
+                  }),
                   mcpServers: [
                     ...(listing.managed ?? []).map(server => ({ identity: server.identity, state: server.state })),
                     ...(listing.unmanaged ?? []).map(server => ({ serverName: server.serverName, state: 'unmanaged' })),

@@ -9,16 +9,34 @@ import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 
 test('/capabilities receipt and list unwrap provider.list candidates', async () => {
+  // Hermetic roots: the plugin resolves agentsHome from DSH_AGENTS_HOME.
+  const previousAgentsHome = process.env.DSH_AGENTS_HOME
+  process.env.DSH_AGENTS_HOME = mkdtempSync(join(tmpdir(), 'orrery-cmd-agents-'))
+  try {
   const root = mkdtempSync(join(tmpdir(), 'orrery-cmd-'))
   let registeredCommands = []
   let provider
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  const officeRoot = join(root, 'office')
+  const officeCandidates = []
+  for (const name of ['office-docx', 'office-pptx', 'office-xlsx']) {
+    mkdirSync(join(officeRoot, name), { recursive: true })
+    const locator = join(officeRoot, name, 'SKILL.md')
+    writeFileSync(locator, `---\nname: ${name}\ndescription: office fixture\n---\n${name}\n`)
+    officeCandidates.push({ name, provider: 'dsh-office', source: 'bundled', locator, description: 'office fixture' })
+  }
+  const officeProvider = {
+    async list() { return officeCandidates },
+    get() { return 'OFFICE_CONTENT' },
+  }
   const ctx = {
     skills: {
       registerProvider(create) { provider = create({ invalidate() {} }) },
       async list(options) { return (await provider.list(options)).candidates },
-      // The Office adapter reads the host provider registry; an empty
-      // dsh-office provider keeps the inventory complete without candidates.
-      layers: { global: { providers: new Map([['dsh-office', { provider: { async list() { return { candidates: [], complete: true } } } }]]) } },
+      // The Office adapter reads the host provider registry; the stub yields
+      // the three office candidates (parsed, unselected) like the real
+      // composition.
+      layers: { global: { providers: new Map([['dsh-office', { provider: officeProvider }]]) } },
     },
     on() {},
     effect(fn) { fn(); return () => {} },
@@ -57,6 +75,10 @@ test('/capabilities receipt and list unwrap provider.list candidates', async () 
   // placeholders list as unselected.
   expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(10)
   expect(listingPayload.skills.filter(row => row.selected !== true)).toHaveLength(3)
+  } finally {
+    if (previousAgentsHome === undefined) delete process.env.DSH_AGENTS_HOME
+    else process.env.DSH_AGENTS_HOME = previousAgentsHome
+  }
 })
 
 test('/capabilities apply commits through the shared engine and the receipt reflects it', async () => {
@@ -101,4 +123,41 @@ test('/capabilities apply commits through the shared engine and the receipt refl
   const missing = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-2', expectedRevision: 1, skills: ['ghost'], mcpServers: [] })}` })
   expect(missing.kind).toBe('error')
   expect(JSON.parse(missing.text).missing).toEqual(['ghost'])
+})
+
+test('/capabilities list shows the FULL inventory with selection marks (user-global/workspace skills visible)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'orrery-cmd-list-'))
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  for (const name of ['picked', 'unpicked']) {
+    mkdirSync(join(root, 'skills', name), { recursive: true })
+    writeFileSync(join(root, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: list fixture ${name}\n---\n${name}\n`)
+  }
+  let registeredCommands = []
+  let provider
+  const ctx = {
+    skills: {
+      registerProvider(create) { provider = create({ invalidate() {} }) },
+      async list(options) { return (await provider.list(options)).candidates },
+      layers: { global: { providers: new Map() } },
+    },
+    on() {},
+    effect(fn) { fn(); return () => {} },
+    logger: { warn() {} },
+    get(name) {
+      if (name === 'profileContext') return { home: root, name: 'it' }
+      if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      return undefined
+    },
+  }
+  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
+  const command = registeredCommands.find(entry => entry.name === 'capabilities')
+  const agent = { id: 'sess-list', session: { id: 'sess-list', header: { cwd: root } } }
+  // Apply one of the two; the OTHER must stay visible with selected:false.
+  await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['picked'], mcpServers: [] })}` })
+  const listing = await command.handler({ agent, rawInput: 'list' })
+  expect(listing.kind).toBe('success')
+  const payload = JSON.parse(listing.text)
+  const byName = Object.fromEntries(payload.skills.map(row => [row.name, row]))
+  expect(byName.picked?.selected).toBe(true)
+  expect(byName.unpicked?.selected).toBe(false)
 })
