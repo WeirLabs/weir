@@ -22,6 +22,7 @@ EXPECTED_ORDER.push('mcp-gateway')
 EXPECTED_ORDER.push('preset-defaults')
 EXPECTED_ORDER.push('worktree-watch')
 EXPECTED_ORDER.push('notify-worktree')
+EXPECTED_ORDER.push('child-prompt')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

@@ -13,6 +13,7 @@
 import { SUPERVISION_CONTRACT } from './group-coordinator.js'
 import { attachReadOnlyBashGuard } from './robash-guard.js'
 import { attachLaneGuard } from '../worktree/guard.js'
+import { WORKER_CONTRACT, childToolFilter } from '../shared/child-scope.js'
 
 /**
  * @typedef {object} SpawnAssignment
@@ -39,7 +40,7 @@ import { attachLaneGuard } from '../worktree/guard.js'
  * Spawn one child and attach its read-only guard before returning.
  * @param {SpawnAssignment} assignment
  * @param {SpawnLane} lane
- * @param {object} deps - DelegateDeps subset { subagents, robash, agents }
+ * @param {object} deps - DelegateDeps subset { subagents, robash, agents, restrictableNames? }
  * @returns {Promise<object>} the lane-native started handle (one-shot →
  *   SubagentRun { id, localAgent, result, dispose }; supervised → { childId, messageId })
  */
@@ -48,7 +49,12 @@ export async function spawnGuardedChild(assignment, lane, deps) {
   // Single request-assembly point (D3): the four near-verbatim literals of the
   // pre-refactor lanes converge here; lane hooks absorb the per-lane
   // transforms; maxDepth: 1 (children never delegate further) has this one site.
-  const toolFilter = lane.toolFilterFor(target.toolFilter)
+  // The child tool catalog restriction applies AFTER the lane transform:
+  // allow-list filters (curated read-only targets) pass through unchanged;
+  // every other filter gets CHILD_DENY_TOOLS merged in (intersected with the
+  // composition's restrictable names — tools.restrict() rejects unknown deny
+  // names), so no spawned child can see orchestrator-only tools.
+  const toolFilter = childToolFilter(lane.toolFilterFor(target.toolFilter), deps.restrictableNames?.())
   const request = {
     label: assignment.label ?? target.label,
     prompt: assignment.prompt,
@@ -101,16 +107,18 @@ export async function spawnGuardedChild(assignment, lane, deps) {
 
 /**
  * One-shot lane: subagents.start('spawn', request) with the caller's
- * toolFilter/persona untouched. Serves the foreground, background (inside the
- * job wrapper), and escalation respawn sites — identical spawn semantics, only
- * the assignment fields (parent/signal/label) differ.
+ * toolFilter untouched (the child deny-list merge happens once in
+ * spawnGuardedChild) and the persona extended by WORKER_CONTRACT. Serves the
+ * foreground, background (inside the job wrapper), and escalation respawn
+ * sites — identical spawn semantics, only the assignment fields
+ * (parent/signal/label) differ.
  * @returns {SpawnLane}
  */
 export function oneShotLane() {
   return {
     start: (deps, request) => deps.subagents.start('spawn', request),
     toolFilterFor: (toolFilter) => toolFilter,
-    personaFor: (target) => target.persona,
+    personaFor: (target) => target.persona + WORKER_CONTRACT,
     // S7 SubagentRun shape: the live agent handle rides the started run.
     guardHandleFor: (started) => started.localAgent,
     onGuardFailure(error, started) {
@@ -122,8 +130,9 @@ export function oneShotLane() {
 }
 
 /**
- * Supervised lane: startContinuable with the status contract appended to the
- * persona and send_message denied, plus register-before-guard ordering.
+ * Supervised lane: startContinuable with the worker + status contracts
+ * appended to the persona (SUPERVISION_CONTRACT stays last) and send_message
+ * denied, plus register-before-guard ordering.
  * Teardown deliberately differs from the one-shot lane: continuable handles
  * have no dispose, so a guard failure rethrows as-is and the lane-level
  * rollback in tool.js terminates the member through the coordinator (which
@@ -140,7 +149,7 @@ export function supervisedLane({ coordinator, groupName, members }) {
       return deps.subagents.startContinuable({ provider: 'spawn', label, request: rest, signal })
     },
     toolFilterFor: supervisedToolFilter,
-    personaFor: (target) => target.persona + SUPERVISION_CONTRACT,
+    personaFor: (target) => target.persona + WORKER_CONTRACT + SUPERVISION_CONTRACT,
     beforeGuardAttach(started, target) {
       // Register BEFORE the guard attach: a guard failure must leave the member
       // in the rollback list so it is terminated, never left running unguarded.

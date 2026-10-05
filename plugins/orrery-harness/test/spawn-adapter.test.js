@@ -7,6 +7,7 @@
 import { describe, expect, it } from './helpers.js'
 import { oneShotLane, spawnGuardedChild, supervisedLane, supervisedToolFilter } from '../src/delegate/spawn-adapter.js'
 import { SUPERVISION_CONTRACT } from '../src/delegate/group-coordinator.js'
+import { CHILD_DENY_TOOLS, WORKER_CONTRACT } from '../src/shared/child-scope.js'
 
 const LISTS = {
   bash: { allow: ['ls'], gitAllow: [], deny: [] },
@@ -81,7 +82,7 @@ function fakeCoordinator(log) {
 }
 
 describe('spawn-adapter request assembly', () => {
-  it('omits agentOptions/toolFilter keys when undefined and always sets maxDepth: 1', async () => {
+  it('omits agentOptions when undefined, always sets maxDepth: 1, and denies the orchestrator-only tools', async () => {
     const target = baseTarget()
     const assignment = assignmentOf(target)
     const started = { id: 'c1', localAgent: fakeAgentHandle(), dispose: async () => {} }
@@ -96,12 +97,14 @@ describe('spawn-adapter request assembly', () => {
     expect(request.parent).toBe(assignment.parent)
     expect(request.signal).toBe(assignment.signal)
     expect('agentOptions' in request).toBe(false)
-    expect('toolFilter' in request).toBe(false)
+    // The child tool catalog restriction (CHILD_DENY_TOOLS) applies at this
+    // single assembly point even when the target carries no filter.
+    expect(request.toolFilter).toEqual({ deny: [...CHILD_DENY_TOOLS] })
     expect(request.maxDepth).toBe(1)
-    expect(request.persona).toBe('PERSONA')
+    expect(request.persona).toBe('PERSONA' + WORKER_CONTRACT)
   })
 
-  it('passes agentOptions and toolFilter through when present', async () => {
+  it('passes agentOptions through and leaves allow-list tool filters untouched', async () => {
     const agentOptions = { provider: 'deepseek', model: 'deepseek-chat' }
     const toolFilter = { allow: ['bash'] }
     const target = baseTarget({ agentOptions, toolFilter })
@@ -154,14 +157,16 @@ describe('spawn-adapter lane start shapes', () => {
 })
 
 describe('spawn-adapter supervised transforms', () => {
-  it('always denies send_message and appends the status contract to the persona', async () => {
+  it('always denies send_message and appends worker + status contracts to the persona (supervision last)', async () => {
     const members = []
     const { specs, deps } = supervisedDeps({ agents: { get: () => fakeAgentHandle() } })
     const lane = supervisedLane({ coordinator: fakeCoordinator(), groupName: 'scan', members })
     await spawnGuardedChild(assignmentOf(baseTarget()), lane, deps)
+    // The lane transform denies send_message; the assembly point then merges
+    // the full orchestrator-only deny list on top.
     expect(specs[0].request.toolFilter.deny).toContain('send_message')
-    expect(specs[0].request.persona.endsWith(SUPERVISION_CONTRACT)).toBe(true)
-    expect(specs[0].request.persona.startsWith('PERSONA')).toBe(true)
+    for (const name of CHILD_DENY_TOOLS) expect(specs[0].request.toolFilter.deny).toContain(name)
+    expect(specs[0].request.persona).toBe('PERSONA' + WORKER_CONTRACT + SUPERVISION_CONTRACT)
   })
 
   it('supervisedToolFilter merges deny lists and leaves allow lists unchanged', () => {
@@ -170,6 +175,42 @@ describe('spawn-adapter supervised transforms', () => {
     expect(supervisedToolFilter(allow)).toBe(allow)
     expect(supervisedToolFilter({ deny: ['rm'] })).toEqual({ deny: ['rm', 'send_message'] })
     expect(supervisedToolFilter({ deny: ['send_message'] })).toEqual({ deny: ['send_message'] })
+  })
+})
+
+describe('spawn-adapter child tool catalog restriction', () => {
+  it('merges CHILD_DENY_TOOLS into a deny-only filter after the lane transform', async () => {
+    const target = baseTarget({ toolFilter: { deny: ['rm'] } })
+    const started = { id: 'c1', localAgent: fakeAgentHandle(), dispose: async () => {} }
+    const { calls, deps } = oneShotDeps(started)
+    await spawnGuardedChild(assignmentOf(target), oneShotLane(), deps)
+    expect(calls[0].request.toolFilter.deny).toEqual(['rm', ...CHILD_DENY_TOOLS])
+  })
+
+  it('leaves an allow-list filter byte-identical (allow semantics untouched)', async () => {
+    const toolFilter = { allow: ['bash', 'read'] }
+    const target = baseTarget({ toolFilter })
+    const started = { id: 'c1', localAgent: fakeAgentHandle(), dispose: async () => {} }
+    const { calls, deps } = oneShotDeps(started)
+    await spawnGuardedChild(assignmentOf(target), oneShotLane(), deps)
+    expect(calls[0].request.toolFilter).toBe(toolFilter)
+  })
+
+  it('one-shot lane persona carries the worker contract verbatim', async () => {
+    const started = { id: 'c1', localAgent: fakeAgentHandle(), dispose: async () => {} }
+    const { calls, deps } = oneShotDeps(started)
+    await spawnGuardedChild(assignmentOf(baseTarget()), oneShotLane(), deps)
+    expect(calls[0].request.persona).toBe('PERSONA' + WORKER_CONTRACT)
+  })
+
+  it('intersects the deny list with deps.restrictableNames when provided', async () => {
+    const target = baseTarget()
+    const started = { id: 'c1', localAgent: fakeAgentHandle(), dispose: async () => {} }
+    const { calls, deps } = oneShotDeps(started)
+    // Headless-composition shape: only these orchestrator tools are registered.
+    deps.restrictableNames = () => new Set(['bash', 'delegate', 'workflow'])
+    await spawnGuardedChild(assignmentOf(target), oneShotLane(), deps)
+    expect(calls[0].request.toolFilter).toEqual({ deny: ['delegate', 'workflow'] })
   })
 })
 

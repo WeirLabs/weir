@@ -1,0 +1,8 @@
+{
+  "scenario": "child-prompt",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/clean-child-prompts-051/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "parent observed child result\n",
+  "stderr": "",
+  "sessionId": null
+}

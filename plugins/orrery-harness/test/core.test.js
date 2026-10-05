@@ -1,14 +1,20 @@
 import { describe, expect, it } from '../test/helpers.js'
 import { apply, inject, name } from '../src/core/index.js'
-import { DOCTRINE, DOCTRINE_SECTION_NAME, DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
+import { DOCTRINE, DOCTRINE_SECTION_NAME, DOCTRINE_SECTION_ORDER, DOCTRINE_VARIABLE_NAME } from '../src/core/doctrine.js'
 
 function fakeCtx() {
   const registrations = []
+  const variables = new Map()
   return {
     registrations,
+    variables,
     systemPrompt: {
       section(section) {
         registrations.push(section)
+        return () => {}
+      },
+      variable(name, provider) {
+        variables.set(name, provider)
         return () => {}
       },
     },
@@ -29,7 +35,17 @@ describe('orrery-core', () => {
     expect(section.name).toBe(DOCTRINE_SECTION_NAME)
     expect(section.name).toBe('orchestrator:doctrine')
     expect(section.order).toBe(DOCTRINE_SECTION_ORDER)
-    expect(section.text).toBe(DOCTRINE)
+    // Static bare variable reference: the suppression rides the variable
+    // provider (evaluated at every assembly) — '' for a delegated child,
+    // DOCTRINE (byte-identical) for main-shaped contexts.
+    expect(section.text).toBe(`{{${DOCTRINE_VARIABLE_NAME}}}`)
+    const doctrine = ctx.variables.get(DOCTRINE_VARIABLE_NAME)
+    expect(typeof doctrine).toBe('function')
+    expect(doctrine(undefined)).toBe(DOCTRINE)
+    expect(doctrine({ agent: { session: { header: {} } } })).toBe(DOCTRINE)
+    expect(doctrine({ agent: { session: { header: { delegationDepth: 0 } } } })).toBe(DOCTRINE)
+    expect(doctrine({ agent: { session: { header: { delegationDepth: 1 } } } })).toBe('')
+    expect(doctrine({ agent: { session: { header: { delegationDepth: 2 } } } })).toBe('')
     expect(typeof dispose).toBe('function')
   })
 

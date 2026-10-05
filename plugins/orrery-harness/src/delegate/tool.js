@@ -40,6 +40,7 @@ Children cannot delegate further. Curated agents are read-only and never write f
  * @property {(parentAgent: object) => object} coordinatorFor - supervised group coordinator for one parent agent
  * @property {object | undefined} agents - ctx.agents (live agent lookup by child id)
  * @property {() => any} [lanes] - live getter for the orreryWorktreeLanes service (absent = no lane support)
+ * @property {() => Set<string> | undefined} [restrictableNames] - live resolver for the composition's restrictable tool names (ctx.tools.view); intersects CHILD_DENY_TOOLS at spawn because tools.restrict() rejects unknown deny names
  */
 
 /**
@@ -89,7 +90,11 @@ export function createDelegateTool(deps) {
       const items = normalizeItems(args)
       const background = Boolean(args.run_in_background)
 
-      // Depth guard: workers spawned by a preset child composition must not delegate.
+      // Depth guard: workers spawned by a preset child composition must not
+      // delegate. Defense-in-depth: spawnGuardedChild already strips `delegate`
+      // (and every other orchestrator-only tool) from each child's tool catalog
+      // via CHILD_DENY_TOOLS, so a child never even SEES this tool; this check
+      // stays as the second line for any path that bypasses the spawn adapter.
       const depth = exec.agent?.session?.header?.delegationDepth ?? 0
       if (depth >= 1) {
         throw new Error('delegate: delegation depth limit reached — category workers and curated agents cannot delegate')

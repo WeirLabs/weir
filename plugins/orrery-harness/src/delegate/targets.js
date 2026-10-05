@@ -18,14 +18,36 @@ export const DELEGATE_TARGETS_VARIABLE_NAME = 'orrery_delegate_targets'
  */
 export const DELEGATE_TARGETS_SECTION_ORDER_OFFSET = 10
 
-// The template states the calling contract and embeds exactly ONE variable
-// reference — the live target list below. Any OTHER {{name}} reference would
-// make prompt assembly throw (unregistered variable), so none may be added.
-export const DELEGATE_TARGETS_TEMPLATE = `## Delegation targets
+// The intro states the calling contract; the live target list follows it.
+// The section registers a STATIC bare variable reference and the provider
+// returns intro + list (or '' for a delegated child — see delegate/index.js):
+// a function-valued section text proved fragile in this runtime, while the
+// variable provider already runs at every assembly in production. The
+// provider output is interpolated literally (never re-scanned), so the intro
+// must not add any {{name}} reference — an unregistered one would make
+// prompt assembly throw.
+export const DELEGATE_TARGETS_INTRO = `## Delegation targets
 
-\`delegate\` takes exactly one target per item: either a category or a curated agent. The category lane has no default — a category must always be named explicitly. The curated agent lane is for the read-only research specialists. The currently enabled delegation targets:
+\`delegate\` takes exactly one target per item: either a category or a curated agent. The category lane has no default — a category must always be named explicitly. The curated agent lane is for the read-only research specialists. The currently enabled delegation targets:`
+
+// The legacy full template (intro + variable reference), kept for the
+// registration-shape tests; the runtime section composes the same bytes
+// through the variable provider.
+export const DELEGATE_TARGETS_TEMPLATE = `${DELEGATE_TARGETS_INTRO}
 
 {{${DELEGATE_TARGETS_VARIABLE_NAME}}}`
+
+/**
+ * Render the section body the variable provider returns for a main agent:
+ * the intro plus the live enabled-target list. Delegated children get ''
+ * from the provider instead (decided at the registration site).
+ *
+ * @param {{ categories?: Record<string, DelegateTargetEntry | null | undefined>, agents?: Record<string, DelegateTargetEntry | null | undefined> }} [registries]
+ * @returns {string}
+ */
+export function renderDelegateTargetsSection(registries) {
+  return `${DELEGATE_TARGETS_INTRO}\n\n${renderDelegateTargets(registries)}`
+}
 
 /**
  * @typedef {object} DelegateTargetEntry

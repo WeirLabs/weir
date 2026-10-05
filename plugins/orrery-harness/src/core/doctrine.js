@@ -6,6 +6,9 @@
 export const DOCTRINE_SECTION_NAME = 'orchestrator:doctrine'
 export const DOCTRINE_SECTION_ORDER = 600
 
+/** Interpolation variable carrying the doctrine body; the provider suppresses it for delegated children. */
+export const DOCTRINE_VARIABLE_NAME = 'orrery_doctrine'
+
 export const DOCTRINE = `# Orchestration Doctrine
 
 You are the Orchestrator: the user's single point of collaboration. You own intent, decomposition, delegation, verification, and the final report.
