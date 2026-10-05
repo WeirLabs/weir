@@ -245,13 +245,16 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             if (verb === 'receipt') {
               try {
                 const status = provider.status(options)
-                const candidates = await provider.list(options)
+                // provider.list returns { candidates, complete } — never a bare array.
+                const result = await provider.list(options)
+                const candidates = Array.isArray(result?.candidates) ? result.candidates : []
                 const selected = candidates.filter(candidate => candidate.selected)
+                const snapshot = lifecycle?.snapshotFor?.(agent.id)
                 return { kind: 'success', text: 'capability receipt', value: {
                   status: 'applied',
                   effective: {
                     skills: selected.map(candidate => candidate.name),
-                    mcpServers: status?.effective?.mcpServers ?? [],
+                    mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [],
                   },
                   warnings: (status?.error ?? null) ? [String(status.reason ?? 'selection-unavailable')] : [],
                 } }
@@ -261,7 +264,8 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (verb === 'list') {
               try {
-                const candidates = await provider.list(options)
+                const listingResult = await provider.list(options)
+                const candidates = Array.isArray(listingResult?.candidates) ? listingResult.candidates : []
                 const manager = ctx.get?.('orreryMcpManager')
                 const listing = manager?.list?.() ?? { managed: [], unmanaged: [] }
                 return { kind: 'success', text: 'capability listing', value: {
