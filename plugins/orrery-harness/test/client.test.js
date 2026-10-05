@@ -269,6 +269,8 @@ describe('orrery settings client half', () => {
       // worktree surfaces (U1/U2/U4/U6) register at apply, right after Edit Lock
       'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right',
       'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
+      // the session capability Badge (12.1): order 95, apply-level registration
+      'conversation.input.right',
       'settings.section', 'settings.orrery.item', 'plugins.item',
     ])
 
@@ -314,7 +316,7 @@ describe('orrery settings client half', () => {
     ])
 
     // the top-level settings section registration
-    slotInjects[11].fn()
+    slotInjects[12].fn()
     const { definition: sectionDef, component: sectionComponent } = slotRegistrations.find((registration) => registration.definition.name === 'settings.section')
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('orrery-settings')
@@ -325,14 +327,24 @@ describe('orrery settings client half', () => {
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
     // the item slot registration hosting the form card
-    slotInjects[12].fn()
+    slotInjects[13].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
     expect(itemEntry.definition.id).toBe('orrery-config')
 
     // the Plugins-page entry
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     expect(definition.name).toBe('plugins.item')
+    // the session capability Badge slot registration (12.1)
+    slotInjects[11].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    expect(badgeEntry.definition.name).toBe('conversation.input.right')
+    expect(badgeEntry.definition.order).toBe(95)
+    expect(badgeEntry.definition.inject()).toEqual({})
+    const badgeVerbs = badgeEntry.definition.inject('s0')
+    expect(badgeVerbs.sessionId).toBe('s0')
+    expect(typeof badgeVerbs.fetchReceipt).toBe('function')
+
     expect(definition.id).toBe('orrery-settings')
     expect(definition.order).toBe(30)
     expect(typeof definition.label).toBe('function')
@@ -359,7 +371,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
     const injected = definition.inject()
 
@@ -429,7 +441,7 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
 
     const settle = async (props) => {
@@ -460,7 +472,7 @@ describe('orrery settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'conversation.input.right', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('orrery-lsp-toggle')

@@ -13,6 +13,9 @@ import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection } from './initial-selection.js'
 import { workspaceKeyOf } from './preset-library.js'
+import { createApplyEngine } from './apply-engine.js'
+import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
+import { userTextMessage } from '../shared/user-message.js'
 
 const mounted = new WeakMap()
 /**
@@ -205,6 +208,107 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       // Registration errors must not break the preset either (e.g. duplicate row).
       error = cause instanceof Error ? cause.message : String(cause)
     }
+    // Task 12.4: the shared apply engine and the model-facing removal
+    // notifier. The engine's accepted deltas queue into the notifier; the
+    // next safe request consumes them as a full UserMessage riding WITH that
+    // request (never an autonomous turn; source marked non-'user' so the
+    // intent gate and continuation classifiers exclude it by construction).
+    const notifier = createSelectionNotifier()
+    let sharedEngine = null
+    const engineFor = () => {
+      if (sharedEngine) return sharedEngine
+      sharedEngine = createApplyEngine({
+        store: openCapabilityStore({ profileContext: ctx.get?.('profileContext') }),
+        locateSession: session => session,
+        inventory: (options) => inventory(options),
+        provider,
+        publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
+        onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
+        warn: text => ctx.logger?.warn?.(text),
+      })
+      return sharedEngine
+    }
+    // Group 12 client surface: a /capabilities command serving the Badge and
+    // manager (receipt / listing / conditions). Values travel as command
+    // results — no projection state and no custom session-log event types.
+    try {
+      const commands = ctx.get?.('commands')
+      if (commands) {
+        ctx.effect(() => commands.register({
+          name: 'capabilities',
+          description: 'Session capability surface for the Orrery Badge and manager (receipt | list | conditions).',
+          handler: async (invocation) => {
+            const agent = invocation?.agent
+            if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
+            const verb = String(invocation.rawInput ?? '').trim().toLowerCase()
+            const options = { cwd: agent.session?.header?.cwd, scope: { session: { id: agent.id } } }
+            if (verb === 'receipt') {
+              try {
+                const status = provider.status(options)
+                const candidates = await provider.list(options)
+                const selected = candidates.filter(candidate => candidate.selected)
+                return { kind: 'success', text: 'capability receipt', value: {
+                  status: 'applied',
+                  effective: {
+                    skills: selected.map(candidate => candidate.name),
+                    mcpServers: status?.effective?.mcpServers ?? [],
+                  },
+                  warnings: (status?.error ?? null) ? [String(status.reason ?? 'selection-unavailable')] : [],
+                } }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities receipt failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb === 'list') {
+              try {
+                const candidates = await provider.list(options)
+                const manager = ctx.get?.('orreryMcpManager')
+                const listing = manager?.list?.() ?? { managed: [], unmanaged: [] }
+                return { kind: 'success', text: 'capability listing', value: {
+                  skills: candidates.map(candidate => ({
+                    name: candidate.name,
+                    description: candidate.description ?? '',
+                    scope: candidate.source?.scope ?? candidate.scope ?? 'unknown',
+                    status: candidate.status ?? 'unknown',
+                    selected: Boolean(candidate.selected),
+                    conflict: Boolean(candidate.conflict),
+                  })),
+                  mcpServers: [
+                    ...(listing.managed ?? []).map(server => ({ identity: server.identity, state: server.state })),
+                    ...(listing.unmanaged ?? []).map(server => ({ serverName: server.serverName, state: 'unmanaged' })),
+                  ],
+                } }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb === 'conditions') {
+              // The 1.12 consistency conditions; empty = supported.
+              return { kind: 'success', text: 'capability conditions', value: { conditions: [] } }
+            }
+            return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions' }
+          },
+        }), 'orrery-capabilities-command')
+      }
+    } catch (cause) {
+      ctx.logger?.warn?.(`capabilities command registration failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+    try {
+      ctx.on('agent/pre-step', async ({ agent, messages }, next) => {
+        const pending = notifier.consume(agent?.id)
+        if (pending === null) return next()
+        // Injection failure must never affect the accepted commit: a failed
+        // append warns and the request proceeds without the notice.
+        try {
+          if (Array.isArray(messages)) messages.push(userTextMessage(pending.text, NOTIFY_SOURCE))
+        } catch (cause) {
+          ctx.logger?.warn?.(`selection notification injection failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+        }
+        return next()
+      })
+    } catch (cause) {
+      ctx.logger?.warn?.(`selection notification pre-step registration failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
     const face = {
       provider,
       inventory,
@@ -215,6 +319,10 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       initialReport: sessionId => initialReports.get(sessionId) ?? null,
       noteFailure: (options, failure) => provider?.noteFailure(options, failure),
       clearFailure: options => provider?.clearFailure(options),
+      /** Shared Apply entry (group 12 manager UI commits here). */
+      applySelection: (session, request, options) => engineFor().commit(session, request, options),
+      /** 12.4 diagnostics: whether a removal notice is queued for a session. */
+      hasPendingNotification: sessionId => notifier.has(sessionId),
     }
     mounted.set(ctx, face)
     processFace = face

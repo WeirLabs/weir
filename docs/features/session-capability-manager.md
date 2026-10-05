@@ -113,6 +113,14 @@ Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery �
 
 **纳入 Orrery 管理（adopt）**：现有宿主配置不被自动接管；用户确认后才在注册表创建 identity——宿主原条目仍持有先到先得 `serverName` 保留时显示为**冲突**（提示用户自行停用宿主条目，之后由 managed client 接管），绝不显示为成功。便携式 MCP ref 只指向 Orrery 管理的逻辑 binding。
 
+### 管理界面与通知
+
+**会话 Badge 与管理器**（客户端 `lib/client.capability-*.js`，服务器 `/capabilities` 命令）：Badge 挂在 `conversation.input.right`（order 95，紧邻 LSP order 100），显示的已应用 Skills/MCP 计数一律以**服务端回执**为准（draft 绝不乐观显示）；空白会话凭明确 session ID 打开。管理器面板按需 lazy：Skills/MCP 两个视图、来源标签（Orrery 内置/user/project/custom）、冲突与缺失标记、搜索；MCP 视图按 **Orrery 管理** 与 **unmanaged** 分组（8.8）；未满足的一致性条件显示显式 **unsupported** 而非隐藏控件，与 loading/unknown 区分；恢复失败显示原因。草稿交互（12.3）：关闭 dirty draft 提供 discard/keep editing；提交中复用同一 request ID；失败保留草稿；revision conflict 显示当前状态让用户重选（不静默 rebase）；无 diff 但有缺失警告时提供 install/configure 而不虚构 Apply；结果待确认可查询。
+
+**给模型的移除通知**（12.4，[selection-notify.js](<../../plugins/orrery-harness/src/capabilities/selection-notify.js>)）：Apply 被接受后净增减跨多次应用合并，在**下一次安全请求**时以完整 UserMessage（共享 helper）随该请求注入——绝不自行触发回合、不在 `session/event` 内同步 followup；来源标记为 `orrery-selection-notify`（非 `user`），intent gate 与 continuation/intent 分类器按构造排除（共享 `isGenuineUserMessage` 只认 `source.kind === 'user'`）；英文 advisory 模板明确「已 handed off 的调用仍可能完成、历史中任何回合或调用不被撤回或抹除」；注入失败只 audit/warn，绝不影响已接受的提交。
+
+**收敛语义（D-E）**：服务端精确性立即生效（任何调用以服务端校验为准）；宿主 `/` 菜单经 provider `invalidate()` + 5.2 的重发事件收敛（草稿 chip 可能短暂空白，侧栏预览与 transcript 中的 catalog 不刷新）；同会话第二窗口的 Badge 尝试订阅宿主转发的 `agent-preset/selected` 帧按 session ID 过滤刷新，订阅不可用时显示「refresh to sync」提示而非静默过期（浏览器侧实际效果待 13.3 验证，不在此声称已收敛）。
+
 ### 消费者
 
 所有 Skill 可用性消费者共享同一份预设层视图（[consumer-view.js](<../../plugins/orrery-harness/src/capabilities/consumer-view.js>)）：选择 provider 的每会话候选（已选 + 可用 + 调用权限旗标）就是唯一事实来源，消费者只按用途（`model`／`user`）与旗标取交集，不各自保留授权副本、不叠加过滤层。

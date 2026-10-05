@@ -181,6 +181,7 @@ export function digestApplyRequest(normalized) {
  *   verifyContent?: (candidate: unknown) => Promise<void> | void,
  *   audit?: (session: { id?: string }, type: string, data?: unknown) => void,
  *   notify?: (response: unknown) => unknown,
+ *   onAccepted?: (sessionId: string, delta: { added: string[], removed: string[] }) => void,
  *   invalidate?: (sessionId: string, presetId: string) => void,
  *   publishSnapshot?: (sessionId: string, snapshot: { revision: number, skills: unknown[], mcpServers: string[] }) => void,
  *   warn?: (message: string) => void,
@@ -194,7 +195,7 @@ export function createApplyEngine(options) {
     drain = createDrainCoordinator(),
     conditions = () => [],
     verifyContent,
-    audit, notify, invalidate, publishSnapshot, warn = () => {}, trace = () => {},
+    audit, notify, invalidate, publishSnapshot, onAccepted, warn = () => {}, trace = () => {},
   } = options
   /** In-memory authority snapshots per session (D6 seam; group 6 loads them at mount). */
   const snapshots = new Map()
@@ -417,6 +418,26 @@ export function createApplyEngine(options) {
       /** @type {string[]} */
       const warnings = []
       trace('snapshot-swap', { sessionId, revision: result.revision })
+      // Task 12.4: the net accepted delta is known only HERE (previous
+      // authority snapshot vs the just-committed payload); notify consumers
+      // queue it for the next safe request. A failed hook warns, never
+      // changes the accepted policy.
+      try {
+        const previous = snapshots.get(sessionId)
+        const names = identities => new Set((Array.isArray(identities) ? identities : []).map(identity => String(identity?.name ?? '')).filter(Boolean))
+        const before = names(previous?.selection?.skills)
+        const after = names(payload?.skills)
+        const beforeMcp = new Set(Array.isArray(previous?.selection?.mcpServers) ? previous.selection.mcpServers : [])
+        const afterMcp = new Set(Array.isArray(payload?.mcpServers) ? payload.mcpServers : [])
+        const delta = {
+          added: [...after].filter(name => !before.has(name)).concat([...afterMcp].filter(name => !beforeMcp.has(name))).sort(),
+          removed: [...before].filter(name => !after.has(name)).concat([...beforeMcp].filter(name => !afterMcp.has(name))).sort(),
+        }
+        if (delta.added.length > 0 || delta.removed.length > 0) onAccepted?.(sessionId, delta)
+      } catch (error) {
+        warnings.push('accepted-notification-degraded')
+        warn(`apply onAccepted hook failed: ${message(error)}`)
+      }
       snapshots.set(sessionId, { revision: result.revision, selection: structuredClone(payload), handles: prepared.handles, view: prepared.view })
       // Task 6.1: load the accepted selection into the shared lifecycle
       // memory snapshot inside the SAME non-async segment, so the
