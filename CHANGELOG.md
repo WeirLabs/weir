@@ -10,6 +10,7 @@
 ### Added
 
 - **Orrery 创造模式（新预设变体）**：预设选择器新增「Orrery 创造模式」——完整的 Orrery 工作方式（意图门、分类委派、todo 续推、自动压缩、锚点编辑等全部保留）融合 DSH 创造模式的能力：只读运行时检查工具（`cordis_inspect_list`/`cordis_inspect_query`）、持久化插件管理工具，以及四项 Cordis 插件/预设开发技能（`agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`，首次会话即默认启用）。用于开发、调试和实验 DSH 本身；「Orrery」预设与进行中会话完全不受影响。详见 [预设打包](docs/features/preset-packaging.md)。
+- **Orrery 创造模式：内置使用指引**：创造模式会话的系统提示词新增 `orchestrator:creative-guide` 段（紧随 Orchestrator 协作规则）——运行时检查的正确调用顺序（先 list 后 query、只读语义）、插件管理纪律（先列表再操作、改动经禁用→启用重应用、版本豁免需明示风险）、四项开发技能的加载时机，以及插件组合纪律（ctx-only、object-rooted schema、isolate realm）。仅创造模式会话携带；「Orrery」预设不变。详见 [预设打包](docs/features/preset-packaging.md)。
 
 - **会话能力管理器：Skill 侧「库存、身份与选择 provider」（破坏性可见性变化）**：Orrery 会话起只看到**已选** Skill——未选中的第三方 Skill 不再自动出现在模型目录、`skill` 加载与 slash 列表。Skill 选择由预设内唯一选择 provider 承载（官方形状：宿主注册表 + stock `tool-skill`；宿主层 `skill-filesystem`/`tool-skill` 由 patch 行显式禁用），自有原始枚举保留同名遮蔽候选与失败现场（unparsed／last-good），按身份精确加载（同名未选不替代、同名单多选须显式解冲突），挂载绝不抛出、读取失败 fail closed 为空选择＋可见错误状态；内置十项 Skill 改标 Orrery 内置并经首次运行迁移检查（等价性不满足即 fail closed）。选择记录尚不存在的会话看到空目录与状态提示；选择编辑（Apply）与管理器界面随后续任务组交付。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **会话能力管理器：Apply 事务引擎（服务端机制）**：选择编辑的草稿模型（仅规范化启用集合的实质变化才可 Apply，显式空集 ≠ 缺失）与六步 Apply 事务（会话定位 → 校验 → 准备 → admission fence → 原子写入＋同段快照切换/invalidate/解栏 → 响应）。`invalidate()` 先于响应，客户端重取必见新选择；并发 Apply 恰一胜；写入结果不确定时维持阻断、按原 request ID 查询 receipt 结算，不宣称取消、不伪造回滚；receipts 幂等防重放；content refresh 与选择共用提交协调者且提交前重查 revision；未选中 Skill 的调用/正文加载被会话级阻断（显式 unavailable，已读取 ≠ 已授权）。管理器编辑界面随后续任务组交付。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
@@ -84,6 +85,7 @@
 - **编辑锁：Stop 不再取消已经调用的文件提交**：停止仍立即阻止新发布；已调用的提交独立等待完成，成功保留 created/updated 历史及中断归属，不恢复编辑权。原版本与沙箱策略不变，真实失败仍为 unknown；不结清历史 unknown、不重放。补充真实安装版父 Stop／子 UPDATE 回归，并更正文档中父 Stop 不传播给子代理的旧描述。
 
 - **编辑锁：单个未决发布不再一律阻塞整个项目**：既有文件发布结果为 unknown 后，精确资源围栏外的可信规范既有文件仍可获取、确认与更新；批量和会话级操作在落盘前检查全部受影响归属，不能释放或重臂未决 update 必需的锁。domain 围栏仍拒绝正常操作；v3 无历史祖先连续性证据，subtree 围栏与新的创建意图仍保守拒绝。历史不改写、不重放，未新增人工结清入口。详见 [Edit Lock 特性文档](docs/features/edit-lock.md)。
+
 
 ### Fixed
 

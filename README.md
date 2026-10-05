@@ -26,7 +26,7 @@ Orrery 是 DeepSeek Harness 的一款 agent 预设（preset）。安装后，你
 ## 安装与启用
 
 1. 在 Harness 会话中由 `plugin_manager` 以本仓库 `plugins/orrery-harness` 目录安装 bundle（link 安装，随源码更新）。
-2. 打开 Web GUI 的预设选择器，选择 **Orrery** 创建新会话。想开发、调试或实验 DeepSeek Harness 本身时，改用 **Orrery 创造模式**：它是同一套 Orrery 工作方式，额外带上 DSH 创造模式的能力——只读运行时检查工具、持久化插件管理，以及四项 Cordis 插件/预设开发技能（首次会话即默认启用）。详见 [预设打包](docs/features/preset-packaging.md)。
+2. 打开 Web GUI 的预设选择器，选择 **Orrery** 创建新会话。想开发、调试或实验 DeepSeek Harness 本身时，改用 **Orrery 创造模式**：它是同一套 Orrery 工作方式，额外带上 DSH 创造模式的能力——只读运行时检查工具、持久化插件管理、四项 Cordis 插件/预设开发技能（首次会话即默认启用），并在系统提示词里内置了这套工具的使用指引。详见 [预设打包](docs/features/preset-packaging.md)。
 3. 其他预设（如 standard）完全不受影响——Orrery 的一切只在它自己的会话里生效（唯一例外是系统通知，它挂在 profile 层、覆盖所有会话，可在设置页关闭）。
 
 ## 配置

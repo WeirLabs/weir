@@ -17,11 +17,12 @@ Orrery 的全部能力以一个 bundle 包（`plugins/orrery-harness/`，包名 
 
 ### Orrery 创造模式（orrery-creative）
 
-以 `orrery` 组合为基底，融合 DSH 内置创造模式（`cordis` 预设）的全部三个增量，用于开发、调试和实验 DSH 本身：
+以 `orrery` 组合为基底，融合 DSH 内置创造模式（`cordis` 预设）的全部三个增量并追加使用指引，用于开发、调试和实验 DSH 本身：
 
 1. **运行时检查工具**：`tool-cordis` 行提供只读的 `cordis_inspect_list` / `cordis_inspect_query`——列出并查询 Host/Client 的 Inspect Provider（服务方法、事件模式、Config schema、工具 schema、Slot 树等），写插件前先看真相。
 2. **持久化插件管理**：`tool-plugin-manager` 行以与创造模式完全相同的启用表达式（`disabled: !!js "!ctx.get('profileContext')"`）启用，`plugin_manager` 工具可安装/启停 bundle 与插件。
 3. **Cordis 开发技能**：预设内 `orrery-skill-selection` 行声明 `customSkillDirs`，以 `!!js` 表达式（与创造模式同款解析式 + try/catch 兜底）在运行时解析 `@deepseek-ai/dsh-agent-preset` 包内 `skills/` 目录，把 `agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference` 四项技能纳入目录（scope `custom`）；同行声明 `baselineScopes: ['orrery-builtin', 'custom']`，无选择记录的新会话**首次即默认启用**这四项技能（`baselineScopes` 默认 `['orrery-builtin']`，`orrery` 预设不声明、行为不变）。解析失败时表达式回退为不存在路径，枚举为空根，profile 加载绝不受累。
+4. **使用指引提示词段**：仅创造模式挂载 `orrery-harness/creative-guide` 模块行（紧随 `orrery-core`），注册 `orchestrator:creative-guide` 系统提示词段（order 610，紧随 doctrine 600）——教代理创造工具的正确用法：检查工具先 `cordis_inspect_list` 后 `cordis_inspect_query` 的只读调用顺序、`plugin_manager` 的操作纪律（list 先行、set_bundle 禁用→启用重应用、版本豁免风险）、四项开发技能的加载时机，以及组合纪律（ctx-only、object-rooted schema、isolate realm、`!!js` 求值域）。文本硬编码于 `src/creative-guide/guide.js`（英文模板层，随代码版本化，单测钉住内容标记），与 doctrine 同策略；`orrery` 预设不挂载此段。
 
 人格与 `orrery` 相同（Orchestrator persona 原文）；技能正文与工具描述承载创造模式的操作细节，与 DSH 自身策略一致。
 
