@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"33459a9d46b12d09bfc7498a8f5a24ec42801521e7acf918834125663a5ea731","client.capability-manager.js":"37d7d3fae21594ca457c9fe4f2d0015c2be94163682622fbcb1079b6fd701b51","client.capability-model.js":"58be87b7d8903e99dcd62ccbf2df50d995ef05d1ab7964622dc640d0f319c976","client.capability-presets.js":"2ef03937c81340b7026ede0f1129ada5f4b7b9299114f2fdd7cf68b02ed5d44a","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"cc66d75faae3fdfe5204c006d80a40e6fc3716209fe4e7859cfd3dbdf9003d7f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d8290643a42ce11cbc3559745809a8a17797505f0ae8081a707cf10cb2e8d86b","client.worktree-model.js":"a8f5ab9332d6f0eee992d22f08b3db371afe0ceddb8b86d363b8403808e3f514","client.worktree-view.js":"eba22564e89aa867b63a902afd76d1224a8ce10e2b89c2b4531af731baf8ca33"}
+// Orrery client chunks: {"client.capability-badge.js":"33459a9d46b12d09bfc7498a8f5a24ec42801521e7acf918834125663a5ea731","client.capability-manager.js":"37d7d3fae21594ca457c9fe4f2d0015c2be94163682622fbcb1079b6fd701b51","client.capability-model.js":"c6212ede39b8365d49ad3b5f1c953158665bfe7640a8269a3921de113e6806c1","client.capability-presets.js":"4e95d5b96336528eb410e877a5f4af9ec0b65c6267d7cfd298978ddaf8ffa320","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"a08b4906c2d12da058286f136867090c9d971ba936edeb003bb35d4608a5ae9e","client.edit-lock-panel.js":"cc66d75faae3fdfe5204c006d80a40e6fc3716209fe4e7859cfd3dbdf9003d7f","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d8290643a42ce11cbc3559745809a8a17797505f0ae8081a707cf10cb2e8d86b","client.worktree-model.js":"a8f5ab9332d6f0eee992d22f08b3db371afe0ceddb8b86d363b8403808e3f514","client.worktree-view.js":"eba22564e89aa867b63a902afd76d1224a8ce10e2b89c2b4531af731baf8ca33"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -597,7 +597,26 @@ window.__ModuleLoader__.load({
 			"capability.presets.defaultCleared": "Workspace default cleared — new sessions use the builtin baseline.",
 			"capability.presets.defaultClearFailed": "The default could not be cleared.",
 			"capability.presets.clearing": "Clearing…",
-			"capability.presets.needsReceipt": "Unavailable until the session receipt loads."
+			"capability.presets.needsReceipt": "Unavailable until the session receipt loads.",
+			"capability.presets.exportDownload": "Download .json",
+			"capability.presets.downloaded": "Downloaded",
+			"capability.presets.importedPackage": "Imported: {installed} Skill(s) installed, {bound} MCP binding(s), {unresolved} unresolved ref(s).",
+			"capability.presets.importSummaryTitle": "Import summary — review before anything is written",
+			"capability.presets.importFiles": "{n} file(s)",
+			"capability.presets.importNoInstalls": "This package bundles no Skills to install.",
+			"capability.presets.importUnresolvedTitle": "Unresolved refs — not installed:",
+			"capability.presets.importCollision": "name collision",
+			"capability.presets.importCollisionDecision": "When a bundled Skill name already exists:",
+			"capability.presets.collisionCancel": "skip it (default)",
+			"capability.presets.collisionReplace": "replace it",
+			"capability.presets.collisionCoexist": "keep both, renamed",
+			"capability.presets.importConfirm": "Confirm import",
+			"capability.presets.importResultTitle": "Import result",
+			"capability.presets.importInstalledNote": "Installed Skills stay unselected — pick them in the draft and Apply to activate.",
+			"capability.presets.importInstallFailed": "Installation failed: {reason} — rolled back {n} file(s); no preset was created.",
+			"capability.presets.importNoTargetRoot": "No {scope} Skill root is available on this host — nothing was installed.",
+			"capability.presets.scopeProject": "project",
+			"capability.presets.scopeUser": "user"
 		};
 		const zh = {
 			title: "Orrery",
@@ -1165,7 +1184,26 @@ window.__ModuleLoader__.load({
 			"capability.presets.defaultCleared": "工作区默认值已清除——新会话使用内置基线。",
 			"capability.presets.defaultClearFailed": "默认值清除失败。",
 			"capability.presets.clearing": "正在清除…",
-			"capability.presets.needsReceipt": "会话回执载入前不可用。"
+			"capability.presets.needsReceipt": "会话回执载入前不可用。",
+			"capability.presets.exportDownload": "下载 .json",
+			"capability.presets.downloaded": "已下载",
+			"capability.presets.importedPackage": "已导入：安装 {installed} 个技能，{bound} 个 MCP 绑定，{unresolved} 个未解析引用。",
+			"capability.presets.importSummaryTitle": "导入摘要——写入前请核对",
+			"capability.presets.importFiles": "{n} 个文件",
+			"capability.presets.importNoInstalls": "此包不包含需要安装的技能。",
+			"capability.presets.importUnresolvedTitle": "未解析引用——不会安装：",
+			"capability.presets.importCollision": "名称冲突",
+			"capability.presets.importCollisionDecision": "当打包技能名称已存在时：",
+			"capability.presets.collisionCancel": "跳过它（默认）",
+			"capability.presets.collisionReplace": "替换它",
+			"capability.presets.collisionCoexist": "共存（自动改名）",
+			"capability.presets.importConfirm": "确认导入",
+			"capability.presets.importResultTitle": "导入结果",
+			"capability.presets.importInstalledNote": "已安装的技能保持未勾选——在草稿中勾选并应用后生效。",
+			"capability.presets.importInstallFailed": "安装失败：{reason}——已回滚 {n} 个文件；未创建预设。",
+			"capability.presets.importNoTargetRoot": "此宿主没有可用的 {scope} 技能根目录——未安装任何内容。",
+			"capability.presets.scopeProject": "工作区",
+			"capability.presets.scopeUser": "用户"
 		};
 		const NS = "settings.orrery";
 		const SECTION_ID = "orrery-settings";

@@ -12,11 +12,14 @@ window.__ModuleLoader__.load({
 		// list grouped global/workspace, save form with the rename/replace/
 		// cancel name-conflict decision, load-into-draft staging (Apply stays
 		// the only path that changes the applied set), delete with an inline
-		// confirm row, a read-only export JSON viewer with clipboard copy, an
-		// import box with categorized feedback (bound / unresolved / rejected
-		// reason), and the workspace-default section with count-naming
-		// confirmations. Every categorization comes from the pure model; this
-		// chunk renders and forwards the composition root's verbs.
+		// confirm row, a package export with a .json download plus the read-only
+		// JSON viewer and clipboard copy, a two-phase package import (D6: every
+		// version-2 document dry-runs first; the summary names install targets,
+		// file counts, unresolved refs and collisions; the explicit confirm sends
+		// the collision decision; v1 documents keep the single-step path with
+		// categorized feedback), and the workspace-default section with
+		// count-naming confirmations. Every categorization comes from the pure
+		// model; this chunk renders and forwards the composition root's verbs.
 		const sectionStyle = { marginTop: "10px" };
 		const sectionTitleStyle = {
 			fontSize: "11px",
@@ -68,7 +71,7 @@ window.__ModuleLoader__.load({
 			const [list, setList] = react.useState(null);
 			const [defaultRes, setDefaultRes] = react.useState(null);
 			const [saveForm, setSaveForm] = react.useState({ open: false, name: "", scope: "workspace", from: "draft", busy: false, error: null, conflict: null });
-			const [importBox, setImportBox] = react.useState({ open: false, text: "", scope: "workspace", busy: false, feedback: null, document: null });
+			const [importBox, setImportBox] = react.useState({ open: false, text: "", scope: "workspace", busy: false, feedback: null, document: null, summary: null, decision: "cancel", result: null });
 			const [rowAction, setRowAction] = react.useState(null);
 			const [defaultBox, setDefaultBox] = react.useState({ confirm: null, from: "draft", busy: false, error: null });
 			const [notice, setNotice] = react.useState(null);
@@ -179,18 +182,20 @@ window.__ModuleLoader__.load({
 					setRowAction({ presetId: row.presetId, scope: row.scope, kind: "delete", busy: false, error: t("capability.presets.deleteFailed", "Delete failed.") });
 				});
 			};
-			// ---- Export: read-only JSON viewer + clipboard copy ----
+			// ---- Export: .json download (primary) + read-only viewer/copy ----
 			const openExport = (row) => {
 				if (typeof props.presetExport !== "function" || rowAction?.busy) return;
-				setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: true, error: null, text: null, copied: false });
+				setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: true, error: null, text: null, copied: false, downloaded: false, fileName: null });
+				// The default export format is the version-2 package (D6): the file
+				// the user downloads and shares.
 				props.presetExport(props.sessionId, { scope: row.scope, presetId: row.presetId }).then((response) => {
 					const view = model.presetExportTextOf(response);
 					if (view.kind === "ok") {
-						setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: false, error: null, text: view.text, copied: false });
+						setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: false, error: null, text: view.text, copied: false, downloaded: false, fileName: model.exportFileNameOf(row.name, row.presetId) });
 					} else {
-						setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: false, error: t("capability.presets.exportFailed", "Export failed."), text: null, copied: false });
+						setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: false, error: t("capability.presets.exportFailed", "Export failed."), text: null, copied: false, downloaded: false, fileName: null });
 					}
-				}).catch(() => setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: false, error: t("capability.presets.exportFailed", "Export failed."), text: null, copied: false }));
+				}).catch(() => setRowAction({ presetId: row.presetId, scope: row.scope, kind: "export", busy: false, error: t("capability.presets.exportFailed", "Export failed."), text: null, copied: false, downloaded: false, fileName: null }));
 			};
 			const copyExport = () => {
 				if (!rowAction?.text) return;
@@ -202,7 +207,30 @@ window.__ModuleLoader__.load({
 				}
 				setRowAction({ ...rowAction, copied: true });
 			};
-			// ---- Import: categorized feedback (bound / unresolved / rejected) ----
+			// Blob + anchor download; every host capability is looked up lazily so
+			// a shell without URL.createObjectURL simply no-ops.
+			const downloadExport = () => {
+				if (!rowAction?.text || rowAction.busy) return;
+				try {
+					const BlobCtor = globalThis.Blob;
+					const urlApi = globalThis.URL;
+					const doc = globalThis.document;
+					if (typeof BlobCtor !== "function" || typeof urlApi?.createObjectURL !== "function" || typeof doc?.createElement !== "function") return;
+					const blob = new BlobCtor([rowAction.text], { type: "application/json" });
+					const href = urlApi.createObjectURL(blob);
+					const anchor = doc.createElement("a");
+					anchor.href = href;
+					anchor.download = rowAction.fileName ?? "preset.json";
+					anchor.click();
+					if (typeof urlApi.revokeObjectURL === "function") urlApi.revokeObjectURL(href);
+					setRowAction({ ...rowAction, downloaded: true });
+				} catch {
+					// download unavailable in this shell: the viewer/copy path remains
+				}
+			};
+			// ---- Import: v2 packages take the D6 two-phase flow (dry-run summary
+			// first, ALWAYS, then an explicit confirm with the collision decision);
+			// v1 documents keep the single-step categorized feedback. ----
 			const submitImport = (onNameConflict) => {
 				if (typeof props.presetImport !== "function" || importBox.busy) return;
 				let document = importBox.document;
@@ -210,17 +238,30 @@ window.__ModuleLoader__.load({
 					try {
 						document = JSON.parse(importBox.text);
 					} catch {
-						setImportBox({ ...importBox, feedback: { kind: "invalid-json" }, document: null });
+						setImportBox({ ...importBox, feedback: { kind: "invalid-json" }, document: null, summary: null, result: null });
 						return;
 					}
 				}
 				const spec = { document, scope: importBox.scope };
 				if (onNameConflict) spec.onNameConflict = onNameConflict;
-				setImportBox({ ...importBox, busy: true, feedback: null, document });
+				// D6 phase one: a version-2 package NEVER installs on the first call —
+				// the dry-run summarizes targets/counts/collisions with zero writes.
+				if (model.packageVersionOf(document) === 2) spec.dryRun = true;
+				setImportBox({ ...importBox, busy: true, feedback: null, document, summary: null, result: null });
 				props.presetImport(props.sessionId, spec).then((response) => {
+					if (spec.dryRun === true) {
+						const phase = model.importDryRunOf(response);
+						if (phase.kind === "summary") {
+							setImportBox({ ...importBox, busy: false, feedback: null, document, summary: phase, decision: "cancel", result: null });
+						} else {
+							// A rejected/unsupported dry-run still wrote nothing.
+							setImportBox({ ...importBox, busy: false, feedback: phase, document, summary: null, result: null });
+						}
+						return;
+					}
 					const feedback = model.importFeedbackOf(response);
 					if (feedback.kind === "created") {
-						setImportBox({ open: false, text: "", scope: importBox.scope, busy: false, feedback: null, document: null });
+						setImportBox({ open: false, text: "", scope: importBox.scope, busy: false, feedback: null, document: null, summary: null, decision: "cancel", result: null });
 						setNotice(t("capability.presets.imported", "Imported: {bound} MCP binding(s), {unresolved} unresolved ref(s).")
 							.replace("{bound}", String(feedback.bound))
 							.replace("{unresolved}", String(feedback.unresolved)));
@@ -231,6 +272,39 @@ window.__ModuleLoader__.load({
 					}
 				}).catch(() => setImportBox({ ...importBox, busy: false, feedback: { kind: "error" } }));
 			};
+			// D6 phase two: the explicit confirm — installation is this call's
+			// main effect, carrying the collision decision from the summary.
+			const confirmImport = (onNameConflict) => {
+				if (typeof props.presetImport !== "function" || importBox.busy || !importBox.summary) return;
+				if (!model.importConfirmReadyOf(importBox.summary, importBox.decision)) return;
+				const spec = { document: importBox.document, scope: importBox.scope, onCollision: importBox.decision };
+				if (onNameConflict) spec.onNameConflict = onNameConflict;
+				setImportBox({ ...importBox, busy: true, feedback: null });
+				props.presetImport(props.sessionId, spec).then((response) => {
+					const outcome = model.importConfirmOutcomeOf(response);
+					if (outcome.kind === "created") {
+						setImportBox({ ...importBox, busy: false, feedback: null, summary: null, result: outcome });
+						setNotice(t("capability.presets.importedPackage", "Imported: {installed} Skill(s) installed, {bound} MCP binding(s), {unresolved} unresolved ref(s).")
+							.replace("{installed}", String(outcome.installed.length))
+							.replace("{bound}", String(outcome.bound))
+							.replace("{unresolved}", String(outcome.unresolved)));
+						refreshPresets();
+					} else if (outcome.kind === "name-conflict") {
+						// The summary stays up; the decision row offers replace/cancel.
+						setImportBox({ ...importBox, busy: false, feedback: { kind: "name-conflict", with: outcome.with } });
+					} else if (outcome.kind === "error") {
+						setImportBox({ ...importBox, busy: false, feedback: { kind: "error" } });
+					} else {
+						// install-failed (with the rollback count), no-target-root,
+						// rejected, no-workspace: the result surface names them.
+						setImportBox({ ...importBox, busy: false, feedback: null, summary: null, result: outcome });
+					}
+				}).catch(() => setImportBox({ ...importBox, busy: false, feedback: { kind: "error" } }));
+			};
+			// Cancel after the summary: only the dry-run ran, so nothing was
+			// written; the pasted text stays for editing.
+			const cancelImportSummary = () => setImportBox({ ...importBox, busy: false, feedback: null, document: null, summary: null, decision: "cancel", result: null });
+			const closeImportResult = () => setImportBox({ open: false, text: "", scope: importBox.scope, busy: false, feedback: null, document: null, summary: null, decision: "cancel", result: null });
 			// ---- Workspace default ----
 			const submitDefaultSave = () => {
 				if (typeof props.defaultSave !== "function" || defaultBox.busy) return;
@@ -350,6 +424,9 @@ window.__ModuleLoader__.load({
 										style: buttonRowStyle,
 										children: [
 											rowAction.text
+												? react_jsx_runtime.jsx("button", { type: "button", onClick: downloadExport, children: rowAction.downloaded ? t("capability.presets.downloaded", "Downloaded") : t("capability.presets.exportDownload", "Download .json") })
+												: null,
+											rowAction.text
 												? react_jsx_runtime.jsx("button", { type: "button", onClick: copyExport, children: rowAction.copied ? t("capability.presets.copied", "Copied") : t("capability.presets.copy", "Copy to clipboard") })
 												: null,
 											react_jsx_runtime.jsx("button", { type: "button", onClick: () => setRowAction(null), children: t("capability.presets.close", "Close") }),
@@ -378,6 +455,126 @@ window.__ModuleLoader__.load({
 			const appliedCounts = props.draft ? { skills: props.draft.applied.skills.length, mcpServers: props.draft.applied.mcpServers.length } : null;
 			const defaultFromCounts = defaultBox.from === "draft" ? draftCounts : appliedCounts;
 			const importFeedback = importBox.feedback;
+			// Small dsw-token badge naming a Skill's install target scope
+			// (project = this workspace, user = this machine's user root).
+			const scopeBadge = (scope) => react_jsx_runtime.jsx("span", {
+				style: {
+					fontSize: "10px",
+					padding: "0 4px",
+					border: "1px solid var(--dsw-alias-border-l2)",
+					borderRadius: "var(--dsw-radius-sm)",
+					color: "var(--dsw-alias-label-secondary, #888)",
+					flex: "none"
+				},
+				children: scope === "user" ? t("capability.presets.scopeUser", "user") : t("capability.presets.scopeProject", "project")
+			});
+			const fileCountText = (n) => t("capability.presets.importFiles", "{n} file(s)").replace("{n}", String(n));
+			// D6 phase-one surface: the dry-run summary. Every install target,
+			// file count, collision and unresolved ref is named BEFORE any write;
+			// the confirm carries the collision decision.
+			const importSummaryChildren = (summary) => {
+				const installRow = (row) => react_jsx_runtime.jsxs("div", {
+					style: rowStyle,
+					children: [
+						scopeBadge(row.targetScope),
+						react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
+						react_jsx_runtime.jsx("span", { style: { ...summaryStyle, flex: "none" }, children: fileCountText(row.fileCount) }),
+						row.collision
+							? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: t("capability.presets.importCollision", "name collision") })
+							: (row.targetRoot ? react_jsx_runtime.jsx("span", { style: { ...hintStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: row.targetRoot, children: row.targetRoot }) : null)
+					]
+				}, `install:${row.targetScope}:${row.name}`);
+				return [
+					react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.importSummaryTitle", "Import summary — review before anything is written") }),
+					summary.install.length === 0
+						? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.importNoInstalls", "This package bundles no Skills to install.") })
+						: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: summary.install.map(installRow) }),
+					summary.unresolved.length > 0
+						? react_jsx_runtime.jsxs("div", {
+							children: [
+								react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.importUnresolvedTitle", "Unresolved refs — not installed:") }),
+								...summary.unresolved.map((ref, index) => react_jsx_runtime.jsx("div", { style: hintStyle, children: model.unresolvedLabelOf(ref) }, `unresolved:${index}`))
+							]
+						})
+						: null,
+					summary.hasCollisions
+						? react_jsx_runtime.jsxs("label", {
+							style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap" },
+							children: [
+								t("capability.presets.importCollisionDecision", "When a bundled Skill name already exists:"),
+								react_jsx_runtime.jsxs("select", {
+									value: importBox.decision,
+									"data-orrery-import-decision": "",
+									onChange: (event) => setImportBox({ ...importBox, decision: event.target.value }),
+									children: [
+										react_jsx_runtime.jsx("option", { value: "cancel", children: t("capability.presets.collisionCancel", "skip it (default)") }),
+										react_jsx_runtime.jsx("option", { value: "replace", children: t("capability.presets.collisionReplace", "replace it") }),
+										react_jsx_runtime.jsx("option", { value: "coexist", children: t("capability.presets.collisionCoexist", "keep both, renamed") })
+									]
+								})
+							]
+						})
+						: null,
+					importFeedback && importFeedback.kind === "name-conflict"
+						? react_jsx_runtime.jsxs("div", {
+							style: buttonRowStyle,
+							children: [
+								react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
+								react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => confirmImport("replace"), children: t("capability.presets.replace", "Replace it") }),
+								react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: cancelImportSummary, children: t("capability.presets.cancel", "Cancel") })
+							]
+						})
+						: null,
+					react_jsx_runtime.jsxs("div", {
+						style: buttonRowStyle,
+						children: [
+							react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy || !model.importConfirmReadyOf(summary, importBox.decision), onClick: () => confirmImport(undefined), children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importConfirm", "Confirm import") }),
+							react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: cancelImportSummary, children: t("capability.presets.cancel", "Cancel") })
+						]
+					})
+				];
+			};
+			// D6 phase-two surface: the confirmed outcome — installed rows (which
+			// stay UNSELECTED until a draft pick + Apply), collision decisions,
+			// or the failure with its rollback note.
+			const importResultChildren = (result) => {
+				if (result.kind !== "created") {
+					const text = result.kind === "install-failed"
+						? t("capability.presets.importInstallFailed", "Installation failed: {reason} — rolled back {n} file(s); no preset was created.").replace("{reason}", result.reason).replace("{n}", String(result.rolledBack))
+						: result.kind === "no-target-root"
+							? t("capability.presets.importNoTargetRoot", "No {scope} Skill root is available on this host — nothing was installed.").replace("{scope}", result.targetScope)
+							: result.kind === "rejected"
+								? t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", result.reason)
+								: t("capability.presets.noWorkspace", "This session has no workspace.");
+					return [
+						react_jsx_runtime.jsx("div", { style: warnTextStyle, children: text }),
+						react_jsx_runtime.jsx("div", { style: buttonRowStyle, children: react_jsx_runtime.jsx("button", { type: "button", onClick: closeImportResult, children: t("capability.presets.close", "Close") }) })
+					];
+				}
+				const installedRow = (row) => react_jsx_runtime.jsxs("div", {
+					style: rowStyle,
+					children: [
+						scopeBadge(row.targetScope),
+						react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
+						react_jsx_runtime.jsx("span", { style: summaryStyle, children: `${fileCountText(row.fileCount)} · ${row.status}` })
+					]
+				}, `installed:${row.targetScope}:${row.name}`);
+				const collisionRow = (row) => react_jsx_runtime.jsxs("div", {
+					style: rowStyle,
+					children: [
+						scopeBadge(row.targetScope),
+						react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
+						react_jsx_runtime.jsx("span", { style: warnTextStyle, children: row.decision })
+					]
+				}, `collision:${row.targetScope}:${row.name}`);
+				return [
+					react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.importResultTitle", "Import result") }),
+					result.installed.length > 0 ? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: result.installed.map(installedRow) }) : null,
+					result.collisions.length > 0 ? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: result.collisions.map(collisionRow) }) : null,
+					react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.importInstalledNote", "Installed Skills stay unselected — pick them in the draft and Apply to activate.") }),
+					react_jsx_runtime.jsx("div", { style: buttonRowStyle, children: react_jsx_runtime.jsx("button", { type: "button", onClick: closeImportResult, children: t("capability.presets.close", "Close") }) })
+				];
+			};
 			return react_jsx_runtime.jsxs("div", {
 				children: [
 					react_jsx_runtime.jsxs("div", {
@@ -394,7 +591,7 @@ window.__ModuleLoader__.load({
 								type: "button",
 								style: linkButtonStyle,
 								disabled: typeof props.presetImport !== "function",
-								onClick: () => setImportBox({ ...importBox, open: !importBox.open, feedback: null }),
+								onClick: () => setImportBox({ ...importBox, open: !importBox.open, feedback: null, document: null, summary: null, decision: "cancel", result: null }),
 								children: importBox.open ? t("capability.presets.cancel", "Cancel") : t("capability.presets.importOpen", "Import…")
 							})
 						]
@@ -477,56 +674,65 @@ window.__ModuleLoader__.load({
 					importBox.open
 						? react_jsx_runtime.jsxs("div", {
 							style: boxStyle,
-							children: [
-								react_jsx_runtime.jsx("textarea", {
-									style: textareaStyle,
-									placeholder: t("capability.presets.importPlaceholder", "Paste a portable preset document (JSON)…"),
-									value: importBox.text,
-									onChange: (event) => setImportBox({ ...importBox, text: event.target.value, feedback: null, document: null })
-								}),
-								react_jsx_runtime.jsxs("div", {
-									style: buttonRowStyle,
-									children: [
-										react_jsx_runtime.jsxs("label", {
-											style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center" },
+							...(importBox.result
+								? { "data-orrery-import-result": "" }
+								: importBox.summary
+									? { "data-orrery-import-summary": "" }
+									: {}),
+							children: importBox.result
+								? importResultChildren(importBox.result)
+								: importBox.summary
+									? importSummaryChildren(importBox.summary)
+									: [
+										react_jsx_runtime.jsx("textarea", {
+											style: textareaStyle,
+											placeholder: t("capability.presets.importPlaceholder", "Paste a portable preset document (JSON)…"),
+											value: importBox.text,
+											onChange: (event) => setImportBox({ ...importBox, text: event.target.value, feedback: null, document: null, summary: null, result: null })
+										}),
+										react_jsx_runtime.jsxs("div", {
+											style: buttonRowStyle,
 											children: [
-												t("capability.presets.namespace", "Namespace"),
-												react_jsx_runtime.jsxs("select", {
-													value: importBox.scope,
-													onChange: (event) => setImportBox({ ...importBox, scope: event.target.value }),
+												react_jsx_runtime.jsxs("label", {
+													style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center" },
 													children: [
-														react_jsx_runtime.jsx("option", { value: "workspace", children: t("capability.presets.scopeWorkspace", "workspace") }),
-														react_jsx_runtime.jsx("option", { value: "global", children: t("capability.presets.scopeGlobal", "global") })
+														t("capability.presets.namespace", "Namespace"),
+														react_jsx_runtime.jsxs("select", {
+															value: importBox.scope,
+															onChange: (event) => setImportBox({ ...importBox, scope: event.target.value }),
+															children: [
+																react_jsx_runtime.jsx("option", { value: "workspace", children: t("capability.presets.scopeWorkspace", "workspace") }),
+																react_jsx_runtime.jsx("option", { value: "global", children: t("capability.presets.scopeGlobal", "global") })
+															]
+														})
 													]
-												})
+												}),
+												react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy || importBox.text.trim() === "", onClick: () => submitImport(undefined), children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importSubmit", "Import") })
 											]
 										}),
-										react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy || importBox.text.trim() === "", onClick: () => submitImport(undefined), children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importSubmit", "Import") })
+										importFeedback && importFeedback.kind === "invalid-json"
+											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importInvalidJson", "Not valid JSON — nothing was written.") })
+											: null,
+										importFeedback && importFeedback.kind === "rejected"
+											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", importFeedback.reason) })
+											: null,
+										importFeedback && importFeedback.kind === "name-conflict"
+											? react_jsx_runtime.jsxs("div", {
+												style: buttonRowStyle,
+												children: [
+													react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
+													react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => submitImport("replace"), children: t("capability.presets.replace", "Replace it") }),
+													react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => setImportBox({ ...importBox, feedback: null, document: null }), children: t("capability.presets.cancel", "Cancel") })
+												]
+											})
+											: null,
+										importFeedback && importFeedback.kind === "no-workspace"
+											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
+											: null,
+										importFeedback && importFeedback.kind === "error"
+											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importFailed", "Import failed — nothing was written.") })
+											: null
 									]
-								}),
-								importFeedback && importFeedback.kind === "invalid-json"
-									? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importInvalidJson", "Not valid JSON — nothing was written.") })
-									: null,
-								importFeedback && importFeedback.kind === "rejected"
-									? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", importFeedback.reason) })
-									: null,
-								importFeedback && importFeedback.kind === "name-conflict"
-									? react_jsx_runtime.jsxs("div", {
-										style: buttonRowStyle,
-										children: [
-											react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
-											react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => submitImport("replace"), children: t("capability.presets.replace", "Replace it") }),
-											react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => setImportBox({ ...importBox, feedback: null, document: null }), children: t("capability.presets.cancel", "Cancel") })
-										]
-									})
-									: null,
-								importFeedback && importFeedback.kind === "no-workspace"
-									? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
-									: null,
-								importFeedback && importFeedback.kind === "error"
-									? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importFailed", "Import failed — nothing was written.") })
-									: null
-							]
 						})
 						: null,
 					list === null

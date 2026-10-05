@@ -762,6 +762,84 @@ describe('orrery settings client half', () => {
     expect(localeRegistrations).toHaveLength(1)
     expect(whileServedCalls).toHaveLength(1)
   })
+  it('registers the capabilities panel as a right-sidebar tab when the sidebar package is available', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, sessionAccesses } = makeCtx()
+
+    // A shell WITH the sidebar right package: the optional inject runs and
+    // hands the composition root a sidebar scope (worktree + capabilities).
+    const sidebarTabRegistrations = []
+    const sidebarSlotRegistrations = []
+    const sidebarScope = {
+      effect: (fn) => { fn(); return () => {} },
+      sidebarRightTabs: { register: (definition) => { sidebarTabRegistrations.push(definition); return () => {} } },
+      slots: { register: (definition, component) => { sidebarSlotRegistrations.push({ definition, component }); return () => {} } },
+      locale: { bind: () => (key) => key },
+    }
+    ctx.inject = (names, fn) => {
+      if (Array.isArray(names) && names.includes('sidebarRightTabs')) fn(sidebarScope)
+      return () => {}
+    }
+    const openedTabs = []
+    ctx.get = (name) => (name === 'sidebarRight' ? { openTab: (id) => openedTabs.push(id) } : undefined)
+
+    surface.apply(ctx)
+
+    // the orrery-capabilities tab type registration (D1)
+    const tab = sidebarTabRegistrations.find((registration) => registration.id === 'orrery-capabilities')
+    expect(tab).toBeTruthy()
+    expect(tab.kind).toBe('orrery-capabilities')
+    expect(tab.priority).toBe('extension')
+    expect(tab.title()).toBe('capabilityTabLabel')
+    expect(tab.guide).toHaveLength(1)
+    expect(tab.guide[0].id).toBe('capabilities')
+    expect(tab.guide[0].order).toBe(40)
+    expect(tab.guide[0].title()).toBe('capabilityGuideTitle')
+    expect(tab.guide[0].description()).toBe('capabilityGuideDescription')
+
+    // the pane tab slot: same verb face as the composer Badge, gated on a session
+    const pane = sidebarSlotRegistrations.find((registration) => registration.definition.key === 'orrery-capabilities')
+    expect(pane).toBeTruthy()
+    expect(pane.definition.name).toBe('sidebar.right.pane.tab')
+    expect(pane.definition.locale).toBe('settings.orrery')
+    expect(pane.definition.inject()).toEqual({})
+    const paneVerbs = pane.definition.inject('s9')
+    expect(paneVerbs.sessionId).toBe('s9')
+    for (const verb of ['fetchReceipt', 'subscribeFrames', 'applySelection', 'mcpAdd', 'fetchListing', 'fetchConditions', 'loadPresets', 'fetchPresets', 'presetSave', 'presetLoad', 'presetDelete', 'presetExport', 'presetImport', 'defaultGet', 'defaultSave', 'defaultClear']) {
+      expect(typeof paneVerbs[verb]).toBe('function')
+    }
+
+    // with the tab mounted, the Badge's inject gains openPanel (D4) and it
+    // opens exactly this tab
+    slotInjects[10].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    const badgeVerbs = badgeEntry.definition.inject('s0')
+    expect(typeof badgeVerbs.openPanel).toBe('function')
+    badgeVerbs.openPanel()
+    expect(openedTabs).toEqual(['orrery-capabilities'])
+
+    // S17: even the sidebar registration never dereferences remote.session
+    expect(sessionAccesses()).toBe(0)
+  })
+
+  it('registers ZERO capability sidebar surface when the sidebar package is absent', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations } = makeCtx() // no ctx.inject: the optional block is skipped
+    surface.apply(ctx)
+    for (const inject of slotInjects) inject.fn()
+
+    // no right-sidebar pane tab from any capability surface
+    expect(slotRegistrations.filter((registration) => registration.definition.name === 'sidebar.right.pane.tab')).toEqual([])
+
+    // the Badge keeps its popover fallback: no openPanel verb is injected
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    expect(badgeEntry).toBeTruthy()
+    const badgeVerbs = badgeEntry.definition.inject('s0')
+    expect(badgeVerbs.sessionId).toBe('s0')
+    expect(typeof badgeVerbs.fetchReceipt).toBe('function')
+    expect('openPanel' in badgeVerbs).toBe(false)
+  })
+
   it('build binds the entry to every chunk digest and publishes the entry last', () => {
     // Host chunk URLs carry the entry revision. Both content binding and write
     // ordering matter: a timestamp-only restamp is not a client build.
