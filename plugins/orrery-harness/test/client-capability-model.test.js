@@ -82,3 +82,29 @@ test('12.5 second-window frames refresh only the named session; no subscription 
   expect(model.convergenceHintOf({ subscribed: true })).toBeNull()
   expect(model.convergenceHintOf({ subscribed: false })).toBe('refresh to sync')
 })
+
+test('12.3 the draft seeds from the receipt with the CAS revision and toggles recompute dirty', () => {
+  const draft = model.draftFromReceipt({ revision: 4, effective: { skills: ['a', 'b'], mcpServers: ['docs'] } })
+  expect(draft.revision).toBe(4)
+  expect(draft.dirty).toBe(false)
+  const removed = model.draftToggle(draft, 'skills', 'a')
+  expect(removed.skills).toEqual(['b'])
+  expect(removed.dirty).toBe(true)
+  // Toggling back restores the applied sets and clears dirty.
+  const restored = model.draftToggle(removed, 'skills', 'a')
+  expect(restored.dirty).toBe(false)
+  const added = model.draftToggle(draft, 'mcpServers', 'gamma')
+  expect(added.mcpServers).toEqual(['docs', 'gamma'])
+  expect(added.dirty).toBe(true)
+})
+
+test('12.3 engine responses map onto the commit states', () => {
+  expect(model.commitOutcomeOf({ status: 'applied', revision: 5 })).toEqual({ phase: 'applied', revision: 5 })
+  const conflict = model.commitOutcomeOf({ status: 'revision-conflict', current: { revision: 6 } })
+  expect(conflict.phase).toBe('revision-conflict')
+  expect(conflict.draftKept).toBe(true)
+  expect(model.commitOutcomeOf({ status: 'indeterminate', receipt: { requestId: 'r-9' } })).toEqual({ phase: 'indeterminate', requestId: 'r-9', queryable: true })
+  expect(model.commitOutcomeOf({ status: 'missing', missing: ['x'] })).toEqual({ phase: 'install-or-configure', missing: ['x'] })
+  expect(model.commitOutcomeOf({ status: 'rejected', reason: 'unauthenticated:x' }).phase).toBe('failed')
+  expect(model.commitOutcomeOf(null).draftKept).toBe(true)
+})

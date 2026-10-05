@@ -240,7 +240,10 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           handler: async (invocation) => {
             const agent = invocation?.agent
             if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
-            const verb = String(invocation.rawInput ?? '').trim().toLowerCase()
+            // Verb matching is case-insensitive; the apply payload is JSON and
+            // must keep its original casing (requestId/expectedRevision/...).
+            const rawInput = String(invocation.rawInput ?? '').trim()
+            const verb = rawInput.toLowerCase()
             const options = { cwd: agent.session?.header?.cwd, scope: { session: { id: agent.id } } }
             if (verb === 'receipt') {
               try {
@@ -253,8 +256,10 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 // The commands registry normalizes results to {kind, text}
                 // (CITED dsh-commands normalizeResult): structured payloads
                 // travel as JSON text.
+                const record = await openCapabilityStore({ profileContext: ctx.get?.('profileContext') }).read({ kind: 'selection', scope: 'session', sessionId: agent.id })
                 return { kind: 'success', text: JSON.stringify({
                   status: 'applied',
+                  revision: record.kind === 'ok' ? record.revision : 0,
                   effective: {
                     skills: selected.map(candidate => candidate.name),
                     mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [],
@@ -287,6 +292,42 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 }) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('apply ')) {
+              // The manager editor's commit (12.3): the client sends
+              // {requestId, expectedRevision, skills: [names], mcpServers: [names]}
+              // as JSON text after the verb; names map to identities from the
+              // CURRENT candidates — an unknown name is a visible error, never
+              // silently dropped.
+              let draft
+              try {
+                draft = JSON.parse(rawInput.slice('apply '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities apply <json selection>' }
+              }
+              try {
+                // The full inventory (not the effective selection): an Apply
+                // may name any discovered candidate, selected or not.
+                const inventoryResult = await inventory(options)
+                const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+                const byName = new Map(candidates.map(candidate => [candidate.name, candidate]))
+                const missing = []
+                const identities = []
+                for (const name of draft.skills ?? []) {
+                  const candidate = byName.get(name)
+                  if (candidate?.identity) identities.push(candidate.identity)
+                  else missing.push(String(name))
+                }
+                if (missing.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing }) }
+                const response = await face.applySelection(
+                  { sessionId: agent.id, cwd: agent.session?.header?.cwd, presetId: 'orrery' },
+                  { requestId: draft.requestId, expectedRevision: draft.expectedRevision, selection: { skills: identities, mcpServers: draft.mcpServers ?? [] }, unresolved: [] },
+                  options,
+                )
+                return { kind: 'success', text: JSON.stringify(response) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities apply failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
             if (verb === 'conditions') {
@@ -327,7 +368,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       noteFailure: (options, failure) => provider?.noteFailure(options, failure),
       clearFailure: options => provider?.clearFailure(options),
       /** Shared Apply entry (group 12 manager UI commits here). */
-      applySelection: (session, request, options) => engineFor().commit(session, request, options),
+      applySelection: (session, request, options) => engineFor().apply(session, request, options),
       /** 12.4 diagnostics: whether a removal notice is queued for a session. */
       hasPendingNotification: sessionId => notifier.has(sessionId),
     }

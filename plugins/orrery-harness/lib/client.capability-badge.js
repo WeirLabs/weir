@@ -114,7 +114,8 @@ window.__ModuleLoader__.load({
 							// The composition-root verbs and translator travel with the
 							// panel — without them fetchListing is absent and the panel
 							// would sit on the perpetual loading surface (12.2).
-							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions, t: props.t
+							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions,
+							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection, t: props.t
 						})
 						: null
 				]

@@ -58,3 +58,47 @@ test('/capabilities receipt and list unwrap provider.list candidates', async () 
   expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(10)
   expect(listingPayload.skills.filter(row => row.selected !== true)).toHaveLength(3)
 })
+
+test('/capabilities apply commits through the shared engine and the receipt reflects it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'orrery-cmd-apply-'))
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  mkdirSync(join(root, 'skills', 'alpha'), { recursive: true })
+  writeFileSync(join(root, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: apply fixture\n---\nALPHA\n')
+  let registeredCommands = []
+  let provider
+  const ctx = {
+    skills: {
+      registerProvider(create) { provider = create({ invalidate() {} }) },
+      async list(options) { return (await provider.list(options)).candidates },
+      // The Office adapter reads the layers registry; no dsh-office provider
+      // is composed in these mounts, so get() returns undefined (no candidates).
+      layers: { global: { providers: new Map() } },
+    },
+    on() {},
+    effect(fn) { fn(); return () => {} },
+    logger: { warn() {} },
+    get(name) {
+      if (name === 'profileContext') return { home: root, name: 'it' }
+      if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      return undefined
+    },
+  }
+  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
+  const command = registeredCommands.find(entry => entry.name === 'capabilities')
+  const agent = { id: 'sess-apply', session: { id: 'sess-apply', header: { cwd: root } } }
+
+  const applied = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })}` })
+  expect(applied.kind).toBe('success')
+  const response = JSON.parse(applied.text)
+  expect(response.status).toBe('applied')
+
+  const receipt = await command.handler({ agent, rawInput: 'receipt' })
+  const payload = JSON.parse(receipt.text)
+  expect(payload.effective.skills).toEqual(['alpha'])
+  expect(payload.revision).toBe(1)
+
+  // An unknown name is a visible error, never silently dropped.
+  const missing = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-2', expectedRevision: 1, skills: ['ghost'], mcpServers: [] })}` })
+  expect(missing.kind).toBe('error')
+  expect(JSON.parse(missing.text).missing).toEqual(['ghost'])
+})

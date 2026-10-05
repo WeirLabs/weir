@@ -99,6 +99,45 @@ window.__ModuleLoader__.load({
 			return subscribed ? null : "refresh to sync";
 		}
 
+		// ---- Draft editing (12.3 manager Apply surface) ----
+		/** The edit draft seeded from the server receipt (CAS revision included). */
+		function draftFromReceipt(receipt) {
+			const skills = Array.isArray(receipt?.effective?.skills) ? [...receipt.effective.skills] : [];
+			const mcpServers = Array.isArray(receipt?.effective?.mcpServers) ? [...receipt.effective.mcpServers] : [];
+			return {
+				skills: [...skills].sort(),
+				mcpServers: [...mcpServers].sort(),
+				applied: { skills: [...skills].sort(), mcpServers: [...mcpServers].sort() },
+				revision: Number.isSafeInteger(receipt?.revision) ? receipt.revision : 0,
+				dirty: false,
+			};
+		}
+
+		/** Toggle one name in the draft; dirty is recomputed against the applied sets. */
+		function draftToggle(draft, kind, name) {
+			const list = new Set(draft[kind]);
+			if (list.has(name)) list.delete(name); else list.add(name);
+			const next = { ...draft, [kind]: [...list].sort() };
+			const same = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
+			next.dirty = !same(next.skills, draft.applied.skills) || !same(next.mcpServers, draft.applied.mcpServers);
+			return next;
+		}
+
+		/**
+		 * Map the engine response onto the commit state machine (12.3): applied
+		 * refreshes; revision-conflict shows the current state for re-pick;
+		 * indeterminate stays queryable; missing names surface as
+		 * install/configure; anything else keeps the draft.
+		 */
+		function commitOutcomeOf(response) {
+			if (!response || typeof response !== "object") return { phase: "failed", error: "no response", draftKept: true };
+			if (response.status === "applied") return { phase: "applied", revision: response.revision ?? null };
+			if (response.status === "revision-conflict") return { phase: "revision-conflict", current: response.current ?? null, draftKept: true };
+			if (response.status === "indeterminate") return { phase: "indeterminate", requestId: response.receipt?.requestId ?? null, queryable: true };
+			if (response.status === "missing") return { phase: "install-or-configure", missing: Array.isArray(response.missing) ? response.missing : [] };
+			return { phase: "failed", error: String(response.reason ?? response.status ?? "unknown"), draftKept: true };
+		}
+
 		exports.badgeStateOf = badgeStateOf;
 		exports.skillRowOf = skillRowOf;
 		exports.partitionManagerListing = partitionManagerListing;
@@ -106,6 +145,9 @@ window.__ModuleLoader__.load({
 		exports.commitStateOf = commitStateOf;
 		exports.closeDirtyDraft = closeDirtyDraft;
 		exports.frameRefreshesSession = frameRefreshesSession;
+		exports.draftFromReceipt = draftFromReceipt;
+		exports.draftToggle = draftToggle;
+		exports.commitOutcomeOf = commitOutcomeOf;
 		exports.convergenceHintOf = convergenceHintOf;
 		return module.exports;
 	}

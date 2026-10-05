@@ -54,6 +54,19 @@ window.__ModuleLoader__.load({
 			const [query, setQuery] = react.useState("");
 			const [listing, setListing] = react.useState(null);
 			const [conditions, setConditions] = react.useState(null);
+			// Draft editing (12.3): seeded from the server receipt, toggles
+			// recompute dirty, Apply goes through /capabilities apply with the
+			// draft's CAS revision and a fresh request ID.
+			const [draft, setDraft] = react.useState(null);
+			const [commit, setCommit] = react.useState(null);
+			const refreshAll = () => {
+				if (typeof props.fetchListing === "function") {
+					props.fetchListing(props.sessionId).then((data) => setListing(data ?? { error: true })).catch(() => setListing({ error: true }));
+				}
+				if (typeof props.fetchReceipt === "function") {
+					props.fetchReceipt(props.sessionId).then((receipt) => setDraft(receipt ? model.draftFromReceipt(receipt) : null)).catch(() => {});
+				}
+			};
 			react.useEffect(() => {
 				let alive = true;
 				if (typeof props.fetchListing === "function") {
@@ -64,8 +77,33 @@ window.__ModuleLoader__.load({
 				if (typeof props.fetchConditions === "function") {
 					props.fetchConditions(props.sessionId).then((data) => { if (alive) setConditions(data); }).catch(() => {});
 				}
+				if (typeof props.fetchReceipt === "function") {
+					props.fetchReceipt(props.sessionId).then((receipt) => { if (alive) setDraft(receipt ? model.draftFromReceipt(receipt) : null); }).catch(() => {});
+				}
 				return () => { alive = false; };
 			}, [props.sessionId]);
+			const toggle = (kind, name) => {
+				if (draft && commit?.phase !== "submitting") setDraft(model.draftToggle(draft, kind, name));
+			};
+			const applyDraft = () => {
+				if (!draft || !draft.dirty || typeof props.applySelection !== "function") return;
+				const requestId = crypto.randomUUID();
+				setCommit({ phase: "submitting", requestId });
+				props.applySelection(props.sessionId, {
+					requestId,
+					expectedRevision: draft.revision,
+					skills: draft.skills,
+					mcpServers: draft.mcpServers,
+				}).then((response) => {
+					const outcome = model.commitOutcomeOf(response);
+					setCommit(outcome);
+					if (outcome.phase === "applied") refreshAll();
+				}).catch(() => setCommit({ phase: "failed", error: "apply request failed", draftKept: true }));
+			};
+			const discardDraft = () => {
+				if (draft) setDraft({ ...draft, skills: [...draft.applied.skills], mcpServers: [...draft.applied.mcpServers], dirty: false });
+				setCommit(null);
+			};
 			const conditionState = model.managerConditionState(conditions?.conditions ?? conditions);
 			if (listing === null) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.loading", "Loading capabilities…") });
 			if (listing.error === true) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.error", "Capabilities unavailable for this session.") });
@@ -76,13 +114,37 @@ window.__ModuleLoader__.load({
 			const partition = model.partitionManagerListing(listing);
 			const needle = query.trim().toLowerCase();
 			const skills = needle ? partition.skills.filter((skill) => skill.name.toLowerCase().includes(needle)) : partition.skills;
+			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
 			const body = tab === "skills"
-				? skills.map((skill) => row(
-					(skill.selected ? "☑ " : "☐ ") + skill.name,
-					skill.source,
-					skill.conflict ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warn-primary, #c80)" }, children: t("capability.conflict", "conflict") }) : null))
+				? skills.map((skill) => react_jsx_runtime.jsxs("div", {
+					style: { ...rowStyle, cursor: draft ? "pointer" : "default" },
+					role: draft ? "checkbox" : undefined,
+					"aria-checked": draft ? draftHas("skills", skill.name) : undefined,
+					tabIndex: draft ? 0 : undefined,
+					onClick: () => toggle("skills", skill.name),
+					onKeyDown: (event) => { if (event.key === " " || event.key === "Enter") { event.preventDefault(); toggle("skills", skill.name); } },
+					children: [
+						react_jsx_runtime.jsx("span", { children: (draftHas("skills", skill.name) ? "☑ " : "☐ ") + skill.name }),
+						react_jsx_runtime.jsx("span", { style: tagStyle, children: skill.source }),
+						skill.conflict ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warn-primary, #c80)" }, children: t("capability.conflict", "conflict") }) : null
+					]
+				}, skill.name))
 				: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: [
-					partition.mcpManaged.map((server) => row(server.identity ?? server.serverName ?? "unknown", t("capability.managed", "managed"))),
+					partition.mcpManaged.map((server) => {
+						const name = server.identity ?? server.serverName ?? "unknown";
+						return react_jsx_runtime.jsxs("div", {
+							style: { ...rowStyle, cursor: draft ? "pointer" : "default" },
+							role: draft ? "checkbox" : undefined,
+							"aria-checked": draft ? draftHas("mcpServers", name) : undefined,
+							tabIndex: draft ? 0 : undefined,
+							onClick: () => toggle("mcpServers", name),
+							onKeyDown: (event) => { if (event.key === " " || event.key === "Enter") { event.preventDefault(); toggle("mcpServers", name); } },
+							children: [
+								react_jsx_runtime.jsx("span", { children: (draftHas("mcpServers", name) ? "☑ " : "☐ ") + name }),
+								react_jsx_runtime.jsx("span", { style: tagStyle, children: t("capability.managed", "managed") })
+							]
+						}, name);
+					}),
 					partition.mcpUnmanaged.map((server) => row(server.serverName ?? "unknown", t("capability.unmanaged", "unmanaged")))
 				] });
 			return react_jsx_runtime.jsxs("div", { style: panelStyle, children: [
@@ -92,7 +154,21 @@ window.__ModuleLoader__.load({
 					react_jsx_runtime.jsx("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: t("capability.search", "Search"), style: { flex: 1 } }),
 					react_jsx_runtime.jsx("button", { type: "button", onClick: props.onClose, children: "×" })
 				] }),
-				body
+				body,
+				draft !== null ? react_jsx_runtime.jsxs("div", { style: { borderTop: "1px solid var(--dsw-alias-border-l2)", marginTop: "8px", paddingTop: "6px", display: "flex", gap: "6px", alignItems: "center" }, children: [
+					react_jsx_runtime.jsx("button", {
+						type: "button",
+						disabled: !draft.dirty || commit?.phase === "submitting",
+						onClick: applyDraft,
+						children: commit?.phase === "submitting" ? t("capability.applying", "Applying…") : t("capability.apply", "Apply")
+					}),
+					draft.dirty ? react_jsx_runtime.jsx("button", { type: "button", onClick: discardDraft, children: t("capability.discard", "Discard") }) : null,
+					commit?.phase === "applied" ? react_jsx_runtime.jsx("span", { children: t("capability.applied", "Applied") }) : null,
+					commit?.phase === "failed" ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warn-primary, #c80)" }, title: commit.error, children: t("capability.failed", "Failed — draft kept") }) : null,
+					commit?.phase === "revision-conflict" ? react_jsx_runtime.jsx("span", { style: { color: "var(--dsw-alias-state-warn-primary, #c80)" }, children: t("capability.conflictState", "Changed elsewhere — review current state") }) : null,
+					commit?.phase === "install-or-configure" ? react_jsx_runtime.jsx("span", { title: (commit.missing ?? []).join(", "), children: t("capability.missingAction", "Missing items need install/configure") }) : null,
+					commit?.phase === "indeterminate" ? react_jsx_runtime.jsx("span", { children: t("capability.pending", "Result pending — query the receipt") }) : null
+				] }) : null
 			] });
 		}
 		exports.CapabilityManagerPanel = CapabilityManagerPanel;
