@@ -32,6 +32,7 @@ export function resolveStoreRoot(profileContext) {
 /**
  * @typedef {{ kind: 'selection', sessionId: string }
  *   | { kind: 'content', sessionId: string }
+ *   | { kind: 'inherited', sessionId: string }
  *   | { kind: 'defaults', workspaceKey: string }
  *   | { kind: 'preset', scope: 'global', presetId: string }
  *   | { kind: 'preset', scope: 'workspace', workspaceKey: string, presetId: string }
@@ -53,6 +54,7 @@ export function unitLayout(unit) {
   switch (u.kind) {
     case 'selection':
     case 'content':
+    case 'inherited':
       need(u.sessionId)
       return layout(['sessions', /** @type {string} */ (u.sessionId)], u.kind)
     case 'defaults':
