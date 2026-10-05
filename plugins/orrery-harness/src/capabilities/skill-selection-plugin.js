@@ -13,7 +13,11 @@ import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection, baselineSkillIdentities } from './initial-selection.js'
-import { workspaceKeyOf } from './preset-library.js'
+import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
+import { createDefaultsTransaction } from './defaults-transaction.js'
+import { bindImportedSelection, validatePortableDocument } from './portable-refs.js'
+import { enumeratePresetUnits } from './store/enumerate.js'
+import { isSegment } from './store/paths.js'
 import { createApplyEngine } from './apply-engine.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
@@ -238,7 +242,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       if (commands) {
         ctx.effect(() => commands.register({
           name: 'capabilities',
-          description: 'Session capability surface for the Orrery Badge and manager (receipt | list | conditions).',
+          description: 'Session capability surface for the Orrery Badge and manager (receipt | list | conditions | presets | preset-save | preset-load | preset-delete | preset-export | preset-import | default-get | default-save | default-clear).',
           handler: async (invocation) => {
             const agent = invocation?.agent
             if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
@@ -247,6 +251,65 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             const rawInput = String(invocation.rawInput ?? '').trim()
             const verb = rawInput.toLowerCase()
             const options = { cwd: agent.session?.header?.cwd, scope: { session: { id: agent.id } } }
+            // Preset/workspace-default verbs (capability-manager-ux D2): the
+            // command surface is the UI's only data source. Shared wiring —
+            // every verb opens the same store and resolves the same workspace
+            // binding as the existing verbs; every failure is an explicit
+            // status in the JSON payload, never a throw escaping the handler.
+            const capabilityStore = () => openCapabilityStore({ profileContext: ctx.get?.('profileContext') })
+            const sessionWorkspaceKey = () => workspaceKeyOf(options)
+            const noWorkspace = { kind: 'error', text: JSON.stringify({ status: 'no-workspace' }) }
+            /**
+             * The sets a save records. from:'applied' is server-authoritative:
+             * the sets come from the same provider/lifecycle state the receipt
+             * verb reports — client-sent set fields are never trusted then.
+             */
+            const selectionSetsOf = async spec => {
+              if (spec.from === 'applied') {
+                const result = await provider.list(options)
+                const candidates = Array.isArray(result?.candidates) ? result.candidates : []
+                const skills = []
+                for (const candidate of candidates) {
+                  if (candidate?.selected && candidate.identity) skills.push(candidate.identity)
+                }
+                const snapshot = lifecycle?.snapshotFor?.(agent.id)
+                return { skills, mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [], unresolvedRefs: [] }
+              }
+              return {
+                skills: Array.isArray(spec.skills) ? spec.skills : [],
+                mcpServers: Array.isArray(spec.mcpServers) ? spec.mcpServers : [],
+                unresolvedRefs: Array.isArray(spec.unresolvedRefs) ? spec.unresolvedRefs : [],
+              }
+            }
+            /**
+             * Display names of one preset namespace for the collision check.
+             * The check is part of the write contract, so an unavailable
+             * listing propagates its explicit kind instead of degrading the
+             * save to a blind write.
+             */
+            const presetNamesOf = async (store, scope, workspaceKey) => {
+              const listed = await enumeratePresetUnits(store, { workspaceKey: isSegment(workspaceKey) ? workspaceKey : undefined })
+              if (listed.kind !== 'ok') return listed
+              const names = new Map()
+              for (const preset of listed.presets) {
+                if (preset.scope !== scope) continue
+                const document = preset.document
+                if (document !== null && typeof document === 'object' && !Array.isArray(document)
+                  && typeof /** @type {Record<string, unknown>} */ (document).name === 'string') {
+                  names.set(preset.presetId, /** @type {Record<string, unknown>} */ (document).name)
+                }
+              }
+              return { kind: 'ok', names }
+            }
+            /** Derive a stable, segment-safe preset id from a display name. */
+            const presetSlugOf = name => {
+              const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 96)
+              return isSegment(slug) ? slug : 'preset'
+            }
+            /** Shared scope validation for the preset verbs. */
+            const presetScopeError = spec => (spec?.scope !== 'global' && spec?.scope !== 'workspace')
+              ? { kind: 'error', text: `capabilities: scope must be "global" | "workspace", got ${JSON.stringify(spec?.scope ?? null)}` }
+              : null
             if (verb === 'receipt') {
               try {
                 const status = provider.status(options)
@@ -388,11 +451,305 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 return { kind: 'error', text: `capabilities mcp-add failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
+            if (verb === 'presets') {
+              // List the presets of the global namespace plus this session's
+              // workspace namespace (read-only store scan; fail closed when
+              // the store root is unsupported).
+              try {
+                const store = capabilityStore()
+                const workspaceKey = sessionWorkspaceKey()
+                const listed = await enumeratePresetUnits(store, { workspaceKey: isSegment(workspaceKey) ? workspaceKey : undefined })
+                if (listed.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: listed.kind, reason: listed.reason }) }
+                const countOf = value => (Array.isArray(value) ? value.length : 0)
+                const presets = listed.presets.map(preset => {
+                  const document = /** @type {Record<string, unknown>} */ (preset.document ?? {})
+                  const selection = /** @type {Record<string, unknown>} */ (document.selection ?? {})
+                  return {
+                    scope: preset.scope,
+                    presetId: preset.presetId,
+                    name: typeof document.name === 'string' ? document.name : '',
+                    revision: preset.revision,
+                    counts: {
+                      skills: countOf(selection.skills),
+                      mcpServers: countOf(selection.mcpServers),
+                      unresolvedRefs: countOf(selection.unresolvedRefs),
+                    },
+                  }
+                })
+                return { kind: 'success', text: JSON.stringify({ presets, workspaceKey }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities presets failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('preset-save ')) {
+              // Save the draft or the applied selection as a named preset.
+              // Create vs edit is decided by the presence of expectedRevision;
+              // a display-name collision inside the namespace writes nothing
+              // unless the caller confirmed onNameConflict:'replace'.
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('preset-save '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities preset-save <json {scope,name,presetId?,from:"draft"|"applied",skills?,mcpServers?,unresolvedRefs?,expectedRevision?,onNameConflict?}>' }
+              }
+              try {
+                const scopeError = presetScopeError(spec)
+                if (scopeError) return scopeError
+                if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'capabilities preset-save: from must be "draft" | "applied"' }
+                if (typeof spec.name !== 'string' || spec.name.length === 0) return { kind: 'error', text: 'capabilities preset-save: name must be a non-empty string' }
+                const onNameConflict = spec.onNameConflict ?? 'cancel'
+                if (onNameConflict !== 'rename' && onNameConflict !== 'replace' && onNameConflict !== 'cancel') {
+                  return { kind: 'error', text: 'capabilities preset-save: onNameConflict must be "rename" | "replace" | "cancel"' }
+                }
+                const workspaceKey = sessionWorkspaceKey()
+                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
+                const store = capabilityStore()
+                const names = await presetNamesOf(store, spec.scope, workspaceKey)
+                if (names.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: names.kind, reason: names.reason }) }
+                const sets = await selectionSetsOf(spec)
+                const selection = { skills: sets.skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs }
+                const library = createPresetLibrary({ store })
+                if (spec.expectedRevision !== undefined) {
+                  // Edit path: whole-document replacement under CAS.
+                  if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-save: edit needs a valid presetId' }
+                  if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 0) {
+                    return { kind: 'error', text: 'capabilities preset-save: expectedRevision must be a non-negative integer' }
+                  }
+                  for (const [otherId, otherName] of names.names) {
+                    if (otherId !== spec.presetId && otherName === spec.name && onNameConflict !== 'replace') {
+                      return { kind: 'success', text: JSON.stringify({ status: onNameConflict === 'rename' ? 'rename-required' : 'name-conflict', with: otherId }) }
+                    }
+                  }
+                  const result = await library.edit({
+                    scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
+                    mutate: () => ({ name: spec.name, selection }),
+                  })
+                  return { kind: 'success', text: JSON.stringify({ ...result, presetId: spec.presetId }) }
+                }
+                // Create path: an absent presetId is derived from the display
+                // name and made unique inside the namespace.
+                let presetId = spec.presetId
+                if (presetId === undefined || presetId === null || presetId === '') {
+                  const base = presetSlugOf(spec.name)
+                  presetId = base
+                  for (let suffix = 2; names.names.has(presetId); suffix += 1) presetId = `${base}-${suffix}`
+                }
+                if (!isSegment(presetId)) return { kind: 'error', text: `capabilities preset-save: invalid presetId ${JSON.stringify(presetId)}` }
+                const result = await library.create({
+                  scope: spec.scope, presetId, workspaceKey,
+                  document: { name: spec.name, selection },
+                  onNameConflict,
+                  allDisplayNames: async () => names.names,
+                })
+                return { kind: 'success', text: JSON.stringify({ ...result, presetId }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities preset-save failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('preset-load ')) {
+              // Load one preset document; the client stages its selection into
+              // the local draft (stagePreset semantics) — Apply stays the only
+              // path that changes the session's applied set.
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('preset-load '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities preset-load <json {scope,presetId}>' }
+              }
+              try {
+                const scopeError = presetScopeError(spec)
+                if (scopeError) return scopeError
+                if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-load: presetId must be a valid store segment' }
+                const workspaceKey = sessionWorkspaceKey()
+                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
+                const library = createPresetLibrary({ store: capabilityStore() })
+                const loaded = await library.load(spec.scope, spec.presetId, workspaceKey)
+                if (loaded.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: loaded.kind }) }
+                return { kind: 'success', text: JSON.stringify({ status: 'ok', revision: loaded.revision, document: loaded.document }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities preset-load failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('preset-delete ')) {
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('preset-delete '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities preset-delete <json {scope,presetId,expectedRevision}>' }
+              }
+              try {
+                const scopeError = presetScopeError(spec)
+                if (scopeError) return scopeError
+                if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-delete: presetId must be a valid store segment' }
+                if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 0) {
+                  return { kind: 'error', text: 'capabilities preset-delete: expectedRevision must be a non-negative integer' }
+                }
+                const workspaceKey = sessionWorkspaceKey()
+                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
+                const library = createPresetLibrary({ store: capabilityStore() })
+                const result = await library.remove({ scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision })
+                return { kind: 'success', text: JSON.stringify(result) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities preset-delete failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('preset-export ')) {
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('preset-export '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities preset-export <json {scope,presetId}>' }
+              }
+              try {
+                const scopeError = presetScopeError(spec)
+                if (scopeError) return scopeError
+                if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-export: presetId must be a valid store segment' }
+                const workspaceKey = sessionWorkspaceKey()
+                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
+                const library = createPresetLibrary({ store: capabilityStore() })
+                const exported = await library.exportPreset(spec.scope, spec.presetId, workspaceKey)
+                return { kind: 'success', text: JSON.stringify(exported) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities preset-export failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('preset-import ')) {
+              // Import a portable document: validate atomically first (a
+              // poison document is rejected with zero writes), then bind only
+              // the identities the local MCP registry already configured —
+              // everything else stays an unresolved ref. Nothing is installed,
+              // started or connected here.
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('preset-import '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities preset-import <json {document,scope,presetId,name?,onNameConflict?}>' }
+              }
+              try {
+                const scopeError = presetScopeError(spec)
+                if (scopeError) return scopeError
+                const verdict = validatePortableDocument(spec.document)
+                if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
+                const workspaceKey = sessionWorkspaceKey()
+                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
+                const presetId = spec.presetId ?? spec.document.presetId
+                if (!isSegment(presetId)) return { kind: 'error', text: 'capabilities preset-import: presetId must be a valid store segment' }
+                const name = typeof spec.name === 'string' && spec.name.length ? spec.name : spec.document.name
+                const store = capabilityStore()
+                const names = await presetNamesOf(store, spec.scope, workspaceKey)
+                if (names.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: names.kind, reason: names.reason }) }
+                const registry = createMcpRegistry({ store })
+                const record = await registry.read()
+                const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
+                const selection = /** @type {Record<string, unknown>} */ (spec.document.selection ?? {})
+                const bound = bindImportedSelection(selection, { localMcpIdentities })
+                const document = {
+                  name,
+                  selection: {
+                    skills: [],
+                    mcpServers: bound.mcpServers,
+                    unresolvedRefs: [
+                      ...(Array.isArray(selection.unresolvedRefs) ? selection.unresolvedRefs : []),
+                      ...bound.unresolvedRefs,
+                    ],
+                  },
+                }
+                const library = createPresetLibrary({ store })
+                const result = await library.create({
+                  scope: spec.scope, presetId, workspaceKey, document,
+                  onNameConflict: spec.onNameConflict ?? 'cancel',
+                  allDisplayNames: async () => names.names,
+                })
+                return { kind: 'success', text: JSON.stringify({ ...result, presetId, bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: bound.unresolvedRefs.length } }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities preset-import failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb === 'default-get') {
+              // Inspect this workspace's new-session default. A cleared marker
+              // is reported distinctly — clearing is never an explicit empty
+              // set, which stays a savable choice.
+              try {
+                const workspaceKey = sessionWorkspaceKey()
+                if (!isSegment(workspaceKey)) return noWorkspace
+                const transaction = createDefaultsTransaction({ store: capabilityStore() })
+                const record = await transaction.read(workspaceKey)
+                if (record.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: record.kind, workspaceKey }) }
+                const snapshot = record.snapshot
+                const cleared = snapshot !== null && typeof snapshot === 'object' && !Array.isArray(snapshot)
+                  && /** @type {Record<string, unknown>} */ (snapshot).cleared === true
+                return { kind: 'success', text: JSON.stringify({ status: 'ok', revision: record.revision, cleared, snapshot, workspaceKey }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities default-get failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb.startsWith('default-save ')) {
+              // Save this workspace's new-session default as a COPY snapshot
+              // of the draft or the applied sets. Saving never changes the
+              // current session; an explicit empty set is a real choice.
+              let spec
+              try {
+                spec = JSON.parse(rawInput.slice('default-save '.length))
+              } catch {
+                return { kind: 'error', text: 'Usage: /capabilities default-save <json {from:"draft"|"applied",skills?,mcpServers?,unresolvedRefs?,expectedRevision?}>' }
+              }
+              try {
+                if (spec?.from !== 'draft' && spec?.from !== 'applied') return { kind: 'error', text: 'capabilities default-save: from must be "draft" | "applied"' }
+                const workspaceKey = sessionWorkspaceKey()
+                if (!isSegment(workspaceKey)) return noWorkspace
+                const transaction = createDefaultsTransaction({ store: capabilityStore() })
+                let expectedRevision = spec.expectedRevision
+                if (expectedRevision === undefined) {
+                  const current = await transaction.read(workspaceKey)
+                  if (current.kind !== 'ok' && current.kind !== 'absent') return { kind: 'error', text: JSON.stringify({ status: current.kind }) }
+                  expectedRevision = current.kind === 'ok' ? current.revision : 0
+                }
+                if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+                  return { kind: 'error', text: 'capabilities default-save: expectedRevision must be a non-negative integer' }
+                }
+                const sets = await selectionSetsOf(spec)
+                const result = await transaction.save({ workspaceKey, expectedRevision, snapshot: { skills: sets.skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs } })
+                return { kind: 'success', text: JSON.stringify({ ...result, workspaceKey }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities default-save failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
+            if (verb === 'default-clear' || verb.startsWith('default-clear ')) {
+              // Clear this workspace's default (absent afterwards — NOT an
+              // explicit empty set). The JSON payload is optional.
+              let spec = {}
+              const rest = rawInput.slice('default-clear'.length).trim()
+              if (rest.length > 0) {
+                try {
+                  spec = JSON.parse(rest)
+                } catch {
+                  return { kind: 'error', text: 'Usage: /capabilities default-clear [json {expectedRevision?}]' }
+                }
+              }
+              try {
+                const workspaceKey = sessionWorkspaceKey()
+                if (!isSegment(workspaceKey)) return noWorkspace
+                const transaction = createDefaultsTransaction({ store: capabilityStore() })
+                let expectedRevision = spec.expectedRevision
+                if (expectedRevision === undefined) {
+                  const current = await transaction.read(workspaceKey)
+                  if (current.kind !== 'ok' && current.kind !== 'absent') return { kind: 'error', text: JSON.stringify({ status: current.kind }) }
+                  expectedRevision = current.kind === 'ok' ? current.revision : 0
+                }
+                if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+                  return { kind: 'error', text: 'capabilities default-clear: expectedRevision must be a non-negative integer' }
+                }
+                const result = await transaction.clear({ workspaceKey, expectedRevision })
+                return { kind: 'success', text: JSON.stringify({ ...result, workspaceKey }) }
+              } catch (cause) {
+                return { kind: 'error', text: `capabilities default-clear failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+              }
+            }
             if (verb === 'conditions') {
               // The 1.12 consistency conditions; empty = supported.
               return { kind: 'success', text: JSON.stringify({ conditions: [] }) }
             }
-            return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions' }
+            return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear' }
           },
         }), 'orrery-capabilities-command')
       }
