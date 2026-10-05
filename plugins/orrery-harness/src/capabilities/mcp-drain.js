@@ -62,11 +62,48 @@ export function createMcpDrain({ timeoutMs = 30_000, now = Date.now, sleep = ms 
     return { drained: false, inFlight: state.count, calls: [...state.calls.values()], waitedMs: now() - started }
   }
 
+  /** Reopen the gate: the Apply that closed it did not commit (engine abort seam). */
+  function reopen(agentId, server) {
+    stateOf(agentId, server).closed = false
+  }
+
+  function isClosed(agentId, server) {
+    return stateOf(agentId, server).closed
+  }
+
   /** The Apply-time snapshot the response carries (sent at response time). */
   function snapshot(agentId, server) {
     const state = stateOf(agentId, server)
     return { server, state: state.count === 0 ? 'settled' : 'draining', inFlight: state.count }
   }
 
-  return { enter, exit, close, drain, snapshot }
+  return { enter, exit, close, reopen, isClosed, drain, snapshot }
+}
+
+/**
+ * The apply-engine drain seam (4.2) over this coordinator, keyed at the
+ * engine's session: track/isClosed/status/begin exactly as the engine's
+ * built-in coordinator, but with (agent, server) granularity so a removal
+ * in session A never closes the gate of session B (8.5 A/B isolation).
+ * @param {ReturnType<typeof createMcpDrain>} drain
+ * @param {() => string} sessionIdOf
+ */
+export function createDrainEngineAdapter(drain, sessionIdOf) {
+  return {
+    track(server, call) {
+      const token = drain.enter(sessionIdOf(), server, 'call')
+      if (token === null) return false
+      Promise.resolve(call).catch(() => {}).finally(() => drain.exit(sessionIdOf(), server, token))
+      return true
+    },
+    isClosed: server => drain.isClosed(sessionIdOf(), server),
+    status: server => drain.snapshot(sessionIdOf(), server),
+    begin(removed) {
+      for (const server of removed) drain.close(sessionIdOf(), server)
+      return {
+        snapshot: () => removed.map(server => drain.snapshot(sessionIdOf(), server)),
+        abort: () => removed.forEach(server => drain.reopen(sessionIdOf(), server)),
+      }
+    },
+  }
 }

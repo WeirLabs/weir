@@ -10,9 +10,10 @@
 
 /**
  * @param {{ identity: string, generation: number,
- *   admit: (agent: unknown) => Promise<boolean> }} config
+ *   admit: (agent: unknown) => Promise<boolean>,
+ *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void } }} config
  */
-export function createMcpToolWrapper({ identity, generation, admit }) {
+export function createMcpToolWrapper({ identity, generation, admit, drain }) {
   /**
    * Wrap one tool definition with the last-moment check.
    * @param {{ name?: unknown, execute?: unknown, [key: string]: unknown }} definition
@@ -26,6 +27,9 @@ export function createMcpToolWrapper({ identity, generation, admit }) {
        * The checked execute: admit FIRST, then hand off — the only await
        * between them is the admit read itself, which the caller drives to
        * completion before any SDK activity (no unchecked interleaving).
+       * With a drain attached, the handoff enters the (agent, server)
+       * in-flight count; a gate closed by an accepted removal rejects here,
+       * however the call was generated (8.6).
        */
       async execute(args, exec) {
         const admitted = await admit(exec?.agent)
@@ -33,7 +37,17 @@ export function createMcpToolWrapper({ identity, generation, admit }) {
           const error = new Error(`MCP server "${identity}" is not enabled for this agent (admission refused at generation ${generation})`)
           throw Object.assign(error, { code: 'mcp-admission-refused' })
         }
-        return inner(args, exec)
+        const label = typeof definition.name === 'string' ? definition.name : 'call'
+        const token = drain ? drain.enter(exec?.agent?.id ?? exec?.agent?.session?.id, identity, label) : null
+        if (drain && token === null) {
+          const error = new Error(`MCP server "${identity}" is draining for this agent after an accepted removal (8.6)`)
+          throw Object.assign(error, { code: 'mcp-gate-closed' })
+        }
+        try {
+          return await inner(args, exec)
+        } finally {
+          if (drain) drain.exit(exec?.agent?.id ?? exec?.agent?.session?.id, identity, token)
+        }
       },
     }
   }

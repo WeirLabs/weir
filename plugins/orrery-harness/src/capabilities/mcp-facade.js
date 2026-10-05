@@ -30,8 +30,8 @@ const message = error => (error instanceof Error ? error.message : String(error)
  *   isEnabledFor: (agent: unknown) => boolean,
  *   onError?: (reason: string, cause?: unknown) => void }} config
  */
-export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, onError = () => {} }) {
-  const wrapper = createMcpToolWrapper({ identity, generation, admit })
+export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onError = () => {} }) {
+  const wrapper = createMcpToolWrapper({ identity, generation, admit, drain })
 
   const unknown = (service, method) => {
     const reason = `facade-unknown-method:${service}.${method}`
@@ -44,7 +44,11 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
       // Bind the public name to this configured identity at registration
       // time, then wrap the definition with the last-moment admission check.
       const wrapped = wrapper.wrap(definition)
-      return /** @type {{ register(d: unknown): unknown }} */ (host.tools).register(wrapped)
+      const registration = /** @type {{ register(d: unknown): unknown }} */ (host.tools).register(wrapped)
+      // Report the binding back to the manager (creation-time schema hiding
+      // and the managed listing read this map).
+      if (typeof wrapped?.name === 'string') onRegister?.(wrapped.name)
+      return registration
     },
     get(...args) { return /** @type {{ get(...a: unknown[]): unknown }} */ (host.tools).get(...args) },
     list(...args) { return /** @type {{ list(...a: unknown[]): unknown }} */ (host.tools).list(...args) },
