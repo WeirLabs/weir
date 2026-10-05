@@ -29,7 +29,14 @@ describe('orrery-core', () => {
     expect(section.name).toBe(DOCTRINE_SECTION_NAME)
     expect(section.name).toBe('orchestrator:doctrine')
     expect(section.order).toBe(DOCTRINE_SECTION_ORDER)
-    expect(section.text).toBe(DOCTRINE)
+    // Lazy text: a function evaluated at every assembly — '' for a delegated
+    // child, DOCTRINE (byte-identical) for main-shaped contexts.
+    expect(typeof section.text).toBe('function')
+    expect(section.text(undefined)).toBe(DOCTRINE)
+    expect(section.text({ agent: { session: { header: {} } } })).toBe(DOCTRINE)
+    expect(section.text({ agent: { session: { header: { delegationDepth: 0 } } } })).toBe(DOCTRINE)
+    expect(section.text({ agent: { session: { header: { delegationDepth: 1 } } } })).toBe('')
+    expect(section.text({ agent: { session: { header: { delegationDepth: 2 } } } })).toBe('')
     expect(typeof dispose).toBe('function')
   })
 

@@ -18,7 +18,7 @@
 - **收尾**：合并成功后弹出第二张卡片，由你三选一：保留 worktree / 清理 worktree（保留分支）/ 清理 worktree 和分支。清理前先把车道里的 `.orrery/` scratch 复制到主仓 `.orrery/lanes/<lane-id>/`；删除被阻止时绝不 `--force`，原样报告原因。
 - **放弃**：`worktree_abandon({ lane })` 弹出确认卡片，同时选择清理方式；卡片写明"N 个未合并提交将永久丢失"，只有你选中"清理 worktree 和分支"才会强删分支。
 - **Worktree 模式**：`/worktree on|off` 切换会话级模式。开启后主代理的写类工具一律被拒、shell 只允许只读命令（与只读子代理同一份白名单），写类委派必须带 `worktree`，否则 `WORKTREE_REQUIRED`。关闭只解除守卫，不影响已有车道。模式为可选纪律，车道能力不依赖模式开启。
-- **车道看板**：每次请求组装时，运行时上下文里实时列出本仓库每条活跃车道一行 `id · state · next`，模型无需查询工具；有活跃订阅的车道追加 `· N watching` 计数。
+- **车道看板**：每次请求组装时，运行时上下文里实时列出本仓库每条活跃车道一行 `id · state · next`，模型无需查询工具；有活跃订阅的车道追加 `· N watching` 计数。**看板 context（`orrery:worktree-board`）与 `orchestrator:worktree-lanes` 提示词段落都是仅编排者可见**：委派子代的装配上下文里两者渲染为空（子代判定见 [category-delegation.md](category-delegation.md)「子代提示词构成」）；绑定车道的子代理经其委派提示词末尾的车道契约获得所需的全部车道信息，并无损失。
 - **车道订阅**：主代理调用 `worktree_watch({ lane, states })` 订阅同仓库任意车道（包括别的会话开的车道）的一组**结论态**（过渡态 `preparing`/`working`/`checking`/`awaiting-approval` 不可订阅，报 `UNWATCHABLE_STATE`）。车道进入其中任一状态时，订阅者会话收到恰好一条通知并被续推（跨会话投递给订阅者，不是车道属主）；超时未到达也收到恰好一条过期通知——订阅是一次性的，命中或超时即自动解除，同一会话对同一车道重复订阅时旧订阅被替换。建立订阅时车道已在目标状态的立即命中；订阅随账本持久化，重启后未过期的继续有效。
 - **用户命令**：`/worktree` 命令族让你不经过模型直接操作（见下表），GUI 按钮也都执行这些命令；你发起的 `/worktree land` 本身就是批准，不再弹卡片。
 

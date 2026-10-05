@@ -10,6 +10,7 @@ import { resolveTargetRoute, rungResolves, snapshotProviders } from '../src/dele
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
 import { readWhitelistDefaults } from '../src/shared/whitelist-defaults.js'
+import { CHILD_DENY_TOOLS, WORKER_CONTRACT } from '../src/shared/child-scope.js'
 import { DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
@@ -216,7 +217,10 @@ describe('delegate tool', () => {
     expect(result.results).toHaveLength(1)
     expect(result.results[0].text).toBe('done the thing')
     expect(deps.spawned[0].request.maxDepth).toBe(1)
-    expect(deps.spawned[0].request.persona).toBe('persona')
+    expect(deps.spawned[0].request.persona).toBe('persona' + WORKER_CONTRACT)
+    // Every spawned child loses the orchestrator-only tools (allow-list
+    // targets like finder are untouched; see child-scope.js).
+    expect(deps.spawned[0].request.toolFilter.deny).toEqual([...CHILD_DENY_TOOLS])
   })
 
   it('refuses delegation from a child session', async () => {
@@ -322,7 +326,12 @@ describe('delegate plugin apply', () => {
     expect(sections).toHaveLength(1)
     expect(sections[0].name).toBe(DELEGATE_TARGETS_SECTION_NAME)
     expect(sections[0].order).toBe(DOCTRINE_SECTION_ORDER + DELEGATE_TARGETS_SECTION_ORDER_OFFSET)
-    expect(sections[0].text).toBe(DELEGATE_TARGETS_TEMPLATE)
+    // Lazy text: a function evaluated at every assembly — '' for a delegated
+    // child, the template (byte-identical) for main-shaped contexts.
+    expect(typeof sections[0].text).toBe('function')
+    expect(sections[0].text(undefined)).toBe(DELEGATE_TARGETS_TEMPLATE)
+    expect(sections[0].text({ agent: { session: { header: {} } } })).toBe(DELEGATE_TARGETS_TEMPLATE)
+    expect(sections[0].text({ agent: { session: { header: { delegationDepth: 1 } } } })).toBe('')
 
     const render = variables.get(DELEGATE_TARGETS_VARIABLE_NAME)
     expect(typeof render).toBe('function')

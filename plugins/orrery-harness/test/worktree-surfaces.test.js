@@ -7,8 +7,8 @@ import { foldWorktreeState, initialWorktreeState, worktreeView } from '../src/wo
 import { createWorktreeTools, renderResult } from '../src/worktree/tools.js'
 import { createWorktreeCommand } from '../src/worktree/command.js'
 import { WorktreeError } from '../src/worktree/errors.js'
-import { renderBoard, renderChildContract, renderNotice, renderWatchHit } from '../src/worktree/prompts.js'
-import { worktreeSettings } from '../src/worktree/index.js'
+import { LANES_CONTEXT_NAME, LANES_SECTION_NAME, LANES_SECTION_TEXT, renderBoard, renderChildContract, renderNotice, renderWatchHit } from '../src/worktree/prompts.js'
+import { apply, worktreeSettings } from '../src/worktree/index.js'
 import { oneShotLane, spawnGuardedChild, supervisedLane } from '../src/delegate/spawn-adapter.js'
 import { createDelegateTool } from '../src/delegate/tool.js'
 import { attachWorktreeModeGuard } from '../src/delegate/worktree-mode.js'
@@ -424,5 +424,52 @@ describe('Worktree mode guard on main agents', () => {
     expect(guard({ name: 'bash', agent: main, arguments: { command: 'git checkout -b x' } })).toContain('read-only')
     expect(guard({ name: 'bash', agent: main, arguments: { command: 'git status' } })).toBeUndefined()
     expect(guard({ name: 'write', agent: child, arguments: { file_path: '/r/a' } })).toBeUndefined()
+  })
+})
+
+describe('worktree orchestrator-only prompt surfaces', () => {
+  // The lanes section and the live board are orchestrator-facing: both render
+  // '' when the assembly context is a delegated child (a lane-bound child gets
+  // the lane contract in its delegation prompt instead). Driven through the
+  // real apply() with a minimal ctx double.
+  function fakePluginCtx() {
+    const sections = []
+    const contexts = []
+    const ctx = {
+      logger: { warn() {} },
+      emit() {},
+      systemPrompt: {
+        section: (section) => { sections.push(section); return () => {} },
+        context: (entry) => { contexts.push(entry); return () => {} },
+      },
+      tools: { register: () => () => {} },
+      get: (key) =>
+        key === 'sessionProjections'
+          ? { register: () => () => {}, stateOf: () => ({ mode: true }) }
+          : undefined,
+      inject: () => {},
+    }
+    return { ctx, sections, contexts }
+  }
+
+  it('renders the lanes section and board for main agents, empty for delegated children', () => {
+    const { ctx, sections, contexts } = fakePluginCtx()
+    const dispose = apply(ctx, {})
+    const child = { agent: { session: { header: { delegationDepth: 1 } } } }
+    const main = { agent: { session: { id: 'main-1', header: { cwd: '/nonexistent' } } } }
+
+    expect(sections).toHaveLength(1)
+    expect(sections[0].name).toBe(LANES_SECTION_NAME)
+    expect(sections[0].text(undefined)).toBe(LANES_SECTION_TEXT)
+    expect(sections[0].text(main)).toBe(LANES_SECTION_TEXT)
+    expect(sections[0].text(child)).toBe('')
+
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0].name).toBe(LANES_CONTEXT_NAME)
+    // Main agent: the wrapper calls through to the live board (Worktree mode
+    // ON renders even with no resolved repo). Child: suppressed.
+    expect(contexts[0].text(main)).toContain('Worktree lanes')
+    expect(contexts[0].text(child)).toBe('')
+    dispose()
   })
 })

@@ -8,6 +8,7 @@
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
+import { isDelegatedChild } from '../shared/child-scope.js'
 import { createGit } from './git.js'
 import { createGitRunner, createSetupResolver, createShellRunner } from './runner.js'
 import { createLaneService } from './lanes.js'
@@ -111,9 +112,13 @@ function apply(ctx, config = {}) {
     /** @type {Array<() => void>} */
     const disposers = []
     for (const tool of createWorktreeTools(service)) disposers.push(ctx.tools.register(tool))
-    disposers.push(ctx.systemPrompt.section({ name: LANES_SECTION_NAME, order: DOCTRINE_SECTION_ORDER + LANES_SECTION_ORDER_OFFSET, text: LANES_SECTION_TEXT }))
+    // The lanes section and the live board are orchestrator-facing: a
+    // delegated child renders '' for both (a lane-bound child already receives
+    // the lane contract in its delegation prompt, so it loses nothing). Main
+    // agents render both byte-identically; isDelegatedChild fails open to them.
+    disposers.push(ctx.systemPrompt.section({ name: LANES_SECTION_NAME, order: DOCTRINE_SECTION_ORDER + LANES_SECTION_ORDER_OFFSET, text: (/** @type {any} */ context) => (isDelegatedChild(context) ? '' : LANES_SECTION_TEXT) }))
     if (ctx.systemPrompt.context) {
-      disposers.push(ctx.systemPrompt.context({ name: LANES_CONTEXT_NAME, order: LANES_CONTEXT_ORDER, text: (/** @type {any} */ context) => service.board(context?.agent?.session) }))
+      disposers.push(ctx.systemPrompt.context({ name: LANES_CONTEXT_NAME, order: LANES_CONTEXT_ORDER, text: (/** @type {any} */ context) => (isDelegatedChild(context) ? '' : service.board(context?.agent?.session)) }))
     }
     const commands = ctx.get?.('commands')
     if (commands?.register) {

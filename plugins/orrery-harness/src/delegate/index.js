@@ -15,6 +15,7 @@ import { FALLBACK_TABLES } from '../shared/whitelist-defaults.js'
 import { createDelegateTool } from './tool.js'
 import { attachWorktreeModeGuard } from './worktree-mode.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
+import { isDelegatedChild } from '../shared/child-scope.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
   DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
@@ -73,7 +74,10 @@ function apply(ctx, config = {}) {
   ctx.systemPrompt.section({
     name: DELEGATE_TARGETS_SECTION_NAME,
     order: DOCTRINE_SECTION_ORDER + DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
-    text: DELEGATE_TARGETS_TEMPLATE,
+    // Lazy text like the doctrine section: the guidance is
+    // orchestrator-facing, so a delegated child renders ''. The variable
+    // provider below stays as-is (a child never reaches the interpolation).
+    text: (context) => (isDelegatedChild(context) ? '' : DELEGATE_TARGETS_TEMPLATE),
   })
   ctx.systemPrompt.variable(DELEGATE_TARGETS_VARIABLE_NAME, () =>
     renderDelegateTargets({ categories: overlay.categoriesNow(), agents: overlay.agentsNow() }),
@@ -99,6 +103,10 @@ function apply(ctx, config = {}) {
       robash: overlay.robashNow,
       coordinatorFor,
       lanes,
+      // Live resolver (read per spawn): the composition's restrictable tool
+      // names, so the child deny list names only tools this composition
+      // actually registers (tools.restrict() rejects unknown deny names).
+      restrictableNames: () => ctx.tools.view?.(undefined)?.restrictableNames,
     }),
   )
 
