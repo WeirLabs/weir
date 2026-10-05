@@ -30,6 +30,7 @@ bundle 另在 profile 层插入 `orrery-harness/settings` 行：以 schemastery 
 - 预设组合包含：标准工具面（fs/搜索/bash 或 pwsh/jobs/todo/web/ask-user/present/skills）、goal 组、计划模式组、压缩组、委派组（原生 subagent/workflow + 七个自有模块行：`core`、`intent-gate`、`delegate`、`todo-driver`、`bg-notify`、`context-guard`、`hashline-edit`）。
 - 技能经预设内**选择 provider**（`orrery-skill-selection` 行，`src/capabilities/skill-selection-plugin.js`）挂载：bundle 自带目录由 provider 枚举并标注为 Orrery 内置（原 `skill-filesystem` 行及其 `customSkillDirs` 已移除；宿主层 `skill-filesystem`/`tool-skill` 由 patch 行显式 `disabled: true`），预设保留 stock `tool-skill` 作为 catalog 与 loader。自带目录：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含分语言 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`。结构纪律：frontmatter `name`==目录名、`description` 一行、正文英文（`test/skills.test.js` 机器强制）。详见 [会话能力管理器](session-capability-manager.md)「库存、身份与选择 provider」。
 - 服务隔离纪律：被 `isolate` 的服务（如压缩组），其消费者插件行必须与提供者同组，否则预设加载永久等待（历史事故，已修复并镜像进集成测试）。
+- **预设库与用户预设的组合关系**：cordis patch 声明的是 Orrery 预设自身的静态组合（本节）；**用户预设**（团队能力集合）由会话能力管理器的预设库承载——`global`／`workspace` 两个 namespace 存在 Orrery 自管存储里（稳定 ID 与显示名分离、同域重名显式决策、CAS 冲突显式化），可移植导出文档只含无凭据引用（详见 [会话能力管理器](session-capability-manager.md)「预设与默认值」）。用户预设的加载绝不改变宿主组合，只作用于会话选择。
 - 重复安装同一路径被幂等拒绝；改动经"禁用→启用"循环重应用。
 
 ## 边界与失败语义

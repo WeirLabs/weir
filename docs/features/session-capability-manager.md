@@ -85,6 +85,16 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **fail closed 双规则**（6.4，每种情形恰好一条规则）：①根会话／已存在会话的选择记录不可读／损坏／未知版本 → 监听器**不抛出**，会话照常创建／恢复，视图为空 + 分类 reason/hint（`policy-unreadable:*`），原文件绝不改写；恢复 = 人工修复记录 + 新 Apply。②子代理的父快照不可读或无法捕获 → 监听器抛出拒创建，父会话继续并经委派结果得知原因。插件 dispose／reload 窗口保守拒绝（denials-only）。
 - **初始化优先级**（6.5，[initial-selection.js](<../../plugins/orrery-harness/src/capabilities/initial-selection.js>)）：新根会话无 accepted 记录时——保存的工作区默认（含显式空集）逐字胜出并报告缺失项（默认不可解码则 fail closed `workspace-default-unavailable`）；无默认时内置 Skill 基线 + 组合中已启用的 managed MCP；历史内容不构成授权，本路径零持久化；闸门只对 `orrery` 预设生效（组合保证）。
 
+### 预设与默认值
+
+**预设库**（[preset-library.js](<../../plugins/orrery-harness/src/capabilities/preset-library.js>)）：`global` 与 `workspace` 两个 namespace（第 2 组存储的既有单元）；稳定 preset ID 与显示名分离——同 namespace 内显示名冲突必须显式 rename／replace／cancel（未确认替换即拒绝），跨 namespace 同名互不遮蔽；workspace 预设只在本工作区可见。所有写入与导入经 expected-revision CAS：stale revision 是显式冲突，绝不静默覆盖（两客户端改同一预设时新状态保持、旧请求收到冲突）。
+
+**可移植文档与导入安全**（[portable-refs.js](<../../plugins/orrery-harness/src/capabilities/portable-refs.js>)）：Skill ref 白名单 = source kind + 无凭据 canonical repository + requested ref + subpath + logical name／target scope + 可选已解析 commit／digest；MCP ref 只含 Orrery 管理的逻辑 binding identity + 显示 label——URL、凭据、命令、参数、headers、环境值一律拒收。导入校验原子化（object-rooted schema：version、文档 ≤ 1 MiB、条目 ≤ 1000、字段 ≤ 4 KiB，未知字段与未知版本整体拒绝、零写入）。导入只**绑定**本机已配置的 identity：不创建、不启动、不接受连接内容。
+
+**unresolved 语义**（9.3）：未解析的 ref 保留在 requested metadata 里，绝不进入 enabled 草稿；安装后仍需用户单独勾选并 Apply；同名项不替代；加载或导入不触发网络、安装或启动。
+
+**工作区默认值**（[defaults-transaction.js](<../../plugins/orrery-harness/src/capabilities/defaults-transaction.js>)）：「保存为工作区新会话默认值」是独立事务——确认面点名记录的精确能力与 scope、逐项警告无法解析项；记录的是 draft resolved sets + unresolved refs 的**拷贝快照**（保存后草稿独立演化）；不需要先 Apply、也绝不改变当前会话；显式空集是可保存的真实选择，而**清除 = 不存在**（新会话回到内置基线）；绑定工作区稳定身份（canonical 根路径摘要，工作区改名不影响绑定）；保存／清除经 CAS，并发保存显式冲突。
+
 ### MCP 会话级关闭
 
 Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery 配置的 server 由 Orrery 在运行时逐个挂载（每个 server 一个隔离 `cordis:group`：代理 facade + stock `dsh-mcp-client`，经宿主支持的 loader API 创建/销毁，崩溃残留行启动时清理），会话选择决定每个 agent 能用哪些。
