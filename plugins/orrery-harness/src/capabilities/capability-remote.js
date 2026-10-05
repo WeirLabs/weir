@@ -38,6 +38,11 @@ export const CAPABILITY_READ_METHODS = ['receipt', 'list', 'conditions']
  *   - 'payload-failed'  — an underlying face threw; the cause is chained.
  */
 export class CapabilityReadError extends Error {
+  /**
+   * @param {'bridge-absent' | 'unknown-session' | 'payload-failed'} code
+   * @param {string} message
+   * @param {{ cause?: unknown }} [options]
+   */
   constructor(code, message, options = undefined) {
     super(message, options)
     this.name = 'CapabilityReadError'

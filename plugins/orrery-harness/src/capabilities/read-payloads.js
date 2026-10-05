@@ -61,6 +61,7 @@ export async function buildListPayload(deps, options) {
   const listing = deps.mcpManager?.list?.() ?? { managed: [], unmanaged: [] }
   return {
     skills: candidates.map(candidate => {
+      /** @type {string | null} */
       let key = null
       try { key = candidate.identity ? skillIdentityKey(candidate.identity) : null } catch { key = null }
       return {
