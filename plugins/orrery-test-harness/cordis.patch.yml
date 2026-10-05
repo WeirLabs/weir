@@ -137,6 +137,16 @@
         # keeps every category enabled. The `targets` scenario uses it to prove
         # that a disabled target is neither advertised nor spawnable.
         categories: !!js 'Object.fromEntries((process.env.ORRERY_IT_DISABLED_CATEGORY ?? "").split(",").filter(Boolean).map((name) => [name, { disabled: true }]))'
+    # System notifications + a scripted user-questions answerer: mounted for
+    # the notify-worktree scenario only, so no other run can spawn a real
+    # platform notification command or auto-answer a decision card.
+    - id: orrery-it-notify
+      name: 'orrery-harness/notify'
+      disabled: !!js process.env.ORRERY_IT_NOTIFY_WORKTREE !== '1'
+    - id: orrery-it-user-questions-stub
+      name: 'orrery-test-harness/user-questions-stub'
+      config:
+        enabled: !!js process.env.ORRERY_IT_NOTIFY_WORKTREE === '1'
     # Mirror the preset realm structure for the Edit Lock service: provider
     # (edit-lock) and consumers (todo-driver, hashline-edit, lsp) share one
     # isolated realm, exactly like the preset's delegation group. A consumer

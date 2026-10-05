@@ -55,6 +55,11 @@ function apply(ctx) {
   ctx.on('agent/inbox/inserted', (payload) => {
     tap({ kind: 'inbox-inserted', session: payload?.agent?.id, text: textOf(payload?.message, { limit: 600 }) })
   })
+  // The worktree ask funnel's notification side-emit (notify-worktree
+  // scenario): a pure cordis event, never a session-log entry.
+  ctx.on('worktree/question', (session, payload) => {
+    tap({ kind: 'worktree-question', session: session?.id ?? null, question: typeof payload?.question === 'string' ? payload.question : null })
+  })
   ctx.on('session/event', (session, event) => {
     const type = event?.type
     if (typeof type !== 'string') return

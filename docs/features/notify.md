@@ -13,6 +13,7 @@
 - **需要你处理**（立即通知）：
   - 工具需要审批（`approval/asked`）：「Approval needed — <会话> — wants to use <工具>」。
   - 助手提问（`ask_user_question`）：「Question for you — <会话> — <问题首句>」。
+  - Worktree 车道的合并批准与放弃确认卡片（`worktree/question` 事件）：「Question for you — <会话> — <卡片问题>」。收尾三选一卡片**不通知**——它总是紧跟在你刚答复的合并批准、或你亲手输入的 `/worktree land` 之后。
   - 计划待评审（`exit_plan_mode`）：「Plan ready for review」。
   - 一轮任务失败、被 hook 中止、被阻塞或触达输出上限：「Task failed / Task stopped」。
 - **有结果**：一轮任务正常结束且耗时不少于最短时长（默认 15 秒）：「Task finished — <会话> — finished in 2m 10s」。
@@ -46,6 +47,7 @@
   - `session/event`：`turn/start`（记录起点）、`turn/end`（按 `reason` 分类：`completed` / `error` / `blocked` / `max-tokens` / 非用户的 hook 中止；`aborted{user|parent|disposed}`、`interrupted`、`forked`、未知 kind 一律静默）、`approval/asked`、`tool/call`（工具名为 `ask_user_question` 或 `exit_plan_mode`）。
   - `agent/status`：转为 `running` 时撤销已暂存的完成通知。
   - `session/disposed`：清理该会话的定时器与计时。
+  - `worktree/question`：Worktree 车道的决策卡片不经过工具层（车道服务直接调用 `userQuestions` 服务，见 [git-worktree.md](git-worktree.md)），不会产生白名单内的 `tool/call` 事件；worktree 模块在弹出**合并批准**与**放弃确认**卡片前 side-emit 此 cordis 事件（载荷为会话与卡片问题文本），本模块按 question 类型投递。卡片 id 白名单在 worktree 侧（新 id 默认不通知）；本监听器与 `session/event` 监听器同一纪律：整体 try/catch，异常只记 `warn`。
 - **结算窗口（settle）**：回合结束的通知先暂存 `settleMs`；窗口内 agent 重新进入 running 或新回合开始（后台任务唤醒、todo 续推、goal 轮转）就撤销——只在真正「停下来」时才打扰你。需要你处理的类型（审批/提问/计划）不等待，立即发出。
 - **合并（coalesce）**：同一顶层会话、同一类型在 `coalesceMs` 内只发一条（并行工具调用同时请求审批时不刷屏）。
 - **重放保护**：事件时间早于 60 秒的视为历史重放（会话恢复），不通知。
@@ -109,6 +111,7 @@
 - **窗口关闭后收不到网页通知**：网页通知只在 DSH 窗口运行时有效。没有页面在拉取时自动走系统命令兜底；但兜底在 macOS 上仍归属「脚本编辑器」，**可能因无授权被系统丢弃**，且不受「窗口在前台时」开关影响。这是已知取舍。
 - **专注模式/勿扰会照常拦截**，且无法检测。窗口在前台时系统通常不弹横幅，所以默认前台不通知并不会损失什么；需要前台也提醒就切到「始终通知」。
 - 提问通知在 `ask_user_question` 的 `tool/call` 落盘时发出——即使该提问是限时的、之后被超时放行，通知也已发出（它在提问时刻本就该打扰你）。
+- Worktree 卡片通知在卡片弹出前现场发出——即使卡片之后被取消、超时被关闭或用户不作答，通知也已发出（它在提问时刻本就该打扰你）。该事件是纯 cordis 信号、不经 `session/event` 源，因此不受 60 秒重放保护约束，也永远不会在会话恢复时被重放。
 - goal 轮转没有独立通知：goal 完成或受阻最终都落在回合结束，由上述 `turn/end` 路径覆盖。
 - Windows 与 Linux 路径目前仅有单元测试（命令构造与注入的 `execFile`），**未在真实 Windows/Linux 桌面实机验证**；macOS 路径已在本机实际调用 `osascript` 成功退出。
 - 权限面板的边界：专注模式/勿扰数据在受保护目录（`~/Library/DoNotDisturb/DB/` 读取被系统拒绝），无法检测，面板只做提示；端点或命令失败时面板显示错误并给出手动路径（系统设置 → 通知 → DeepSeek Harness），不影响设置页其余内容与通知本身；面板渲染异常被错误边界限制在面板内。
@@ -122,8 +125,9 @@
   - 文案：清洗/截断（含 code point 边界）、时长格式、各类型模板、无标签与超长正文。
   - 平台命令：文本只走 argv/环境、不入脚本源码、`--` 终止选项、静音与紧急度。
   - 投递：超时与 env 合并、缺命令只告警一次、同步抛错不外溢、不支持平台。
-  - 接线：结算窗口与撤销（`agent/status`、新回合）、最短时长、子会话/用户中止静默、审批合并与归属顶层、提问/计划即时、重放保护、设置覆盖层实时生效与非法值回退、dispose、监听器内异常不外溢。
+  - 接线：结算窗口与撤销（`agent/status`、新回合）、最短时长、子会话/用户中止静默、审批合并与归属顶层、提问/计划即时、`worktree/question` 即时投递与裁剪、无效载荷降级、`onAttention` 关闭即静默、重放保护、设置覆盖层实时生效与非法值回退、dispose（四个监听器全部注销）、监听器内异常不外溢。
+- Worktree 侧：`test/worktree-ask-notify.test.js`（ask 漏斗的 side-emit：`merge`/`abandon` 白名单 emit 携带会话与问题、`cleanup` 与未知 id 及空问题列表静默、缺 `userQuestions` 服务拒 `NO_PROVIDER` 且不 emit、emit 抛错只告警不打断 ask）。
 - 设置：`test/client-settings-page.test.js` 与 `test/settings-fields.test.js` 钉住 `FIELDS` ↔ patch 行 ↔ 设置页字段集对拍。
 - 权限面板：`test/notify-permissions.test.js`（判定矩阵、探测输出解析、固定白名单命令、端点形状/拒绝/幂等 disposer、非 macOS 不执行命令）；`test/client-notify-permissions.test.js`（非 macOS 与探测失败不渲染、打开即检测、三态下的单一主动作、动作负载、轮询间隔/授权后停止/关闭停止/3 分钟上限、错误态含手动路径、错误边界、两份字典与 chunk 源码的键对拍）；`test/client.test.js`、`test/client-settings-page.test.js` 同步 chunk 清单与行数。
 - 投递路由：`test/notify-web-channel.test.js`（同文件含 `tagFor` 用例：同会话同类型相同、不同会话/类型不同、特殊字符安全；通道用例：无页面直接兜底、多拉取者互斥、终态与兜底结果矩阵、确认超时、迟到 ack、取走后断开、dispose）、`test/notify.test.js` 的路由用例（经通道发出带 tag/renotify/foreground、子会话归属顶层、前台设置即时生效与非法值回退）、`test/client-notify-web.test.js`（前台抑制与始终通知、tag 先关后开、权限请求、六种结果码、退避与上限、ack 失败不卡轮询、stop 关闭并中止）、`test/client.test.js`（入口 apply 启动与 dispose 停止、chunk 加载失败无害）。
-- 集成测试：无（本特性是被动观察者，不改变注入/续推/压缩/委派/编辑行为；投递依赖真实桌面通知中心，headless 装置无法断言）。桌面冒烟（重启后触发一次审批/提问/长任务）登记为人工验收项。
+- 集成测试：`plugins/orrery-test-harness` 的 `notify-worktree` 场景（真实 `worktree_land` 在真实 landable 车道上弹出合并批准卡片（`user-questions` 存根自动批准）→ ask 漏斗 side-emit `worktree/question` → 真实挂载的 notify 模块沿投递路径落到平台命令——PATH 上的 stub `osascript`/`notify-send` 落盘供断言；收尾卡片不 emit；win32 的 `powershell.exe` 无法被 PATH-stub，仅断言 emit 缝）。桌面冒烟（重启后触发一次审批/提问/长任务）登记为人工验收项。
