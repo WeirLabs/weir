@@ -42,7 +42,12 @@ window.__ModuleLoader__.load({
 		}
 		function CapabilityManagerPanel(props) {
 			const model = props.model;
-			const t = props.t ?? ((key, fallback) => fallback);
+			// Echo-guard like the Badge: an unregistered dictionary entry must
+			// surface the in-code fallback, never the raw key.
+			const t = (key, fallback) => {
+				const value = typeof props.t === "function" ? props.t(key, fallback) : undefined;
+				return value && value !== key ? value : fallback;
+			};
 			const [tab, setTab] = react.useState("skills");
 			const [query, setQuery] = react.useState("");
 			const [listing, setListing] = react.useState(null);
@@ -50,7 +55,9 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				let alive = true;
 				if (typeof props.fetchListing === "function") {
-					props.fetchListing(props.sessionId).then((data) => { if (alive) setListing(data); }).catch(() => {});
+					// A failed or absent verb settles into an explicit error
+					// state — never a perpetual loading panel (12.2).
+					props.fetchListing(props.sessionId).then((data) => { if (alive) setListing(data ?? { error: true }); }).catch(() => { if (alive) setListing({ error: true }); });
 				}
 				if (typeof props.fetchConditions === "function") {
 					props.fetchConditions(props.sessionId).then((data) => { if (alive) setConditions(data); }).catch(() => {});
@@ -59,6 +66,7 @@ window.__ModuleLoader__.load({
 			}, [props.sessionId]);
 			const conditionState = model.managerConditionState(conditions?.conditions ?? conditions);
 			if (listing === null) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.loading", "Loading capabilities…") });
+			if (listing.error) return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unavailable", "Capabilities are unavailable in this session.") });
 			if (conditionState === "unsupported") {
 				return react_jsx_runtime.jsx("div", { style: panelStyle, children: t("capability.unsupported", "Unsupported: consistency conditions are not met on this host.") });
 			}

@@ -33,7 +33,13 @@ window.__ModuleLoader__.load({
 		function CapabilityBadge(props) {
 			const model = props.model;
 			const sessionId = props.sessionId;
-			const t = props.t;
+			// The slot-bound t echoes the raw key for unregistered entries
+			// (the capability.* keys carry in-code fallbacks instead of
+			// dictionary rows); never render an echoed key.
+			const t = (key, fallback) => {
+				const value = typeof props.t === "function" ? props.t(key, fallback) : undefined;
+				return value && value !== key ? value : fallback;
+			};
 			const [state, setState] = react.useState(null);
 			const [panelOpen, setPanelOpen] = react.useState(false);
 			const [convergence, setConvergence] = react.useState(null);
