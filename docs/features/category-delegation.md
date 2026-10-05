@@ -60,6 +60,7 @@
 - 委托目标指引：delegate 插件注册 prompt section `orchestrator:delegate-targets`（order = doctrine + 10），文本是静态英文模板 + 变量 `{{orrery_delegate_targets}}`；provider 在**每次提示词装配**时读 `categoriesNow()`/`agentsNow()` 求值，故设置提交即改变清单。清单渲染是纯模块 `src/delegate/targets.js`（启用过滤、注册表顺序、空集合兜底）。
 - 可见性三处收口：指引清单过滤 `disabled`；派发路径复用既有 unavailable 错误；`unknown_target` 的 available 名单只列启用目标。
 - 后台道一律走 one-shot job（拉取语义），保证报告全文不自动入上下文。
+- **`load_skills` 批量预检**（会话能力管理器）：所有 Skill 消费者（模型目录、`skill` 工具、slash、委派、意图门）共享预设层选择 provider 的同一份「已选 + 可用 + 调用权限」视图；委派在派发前把整批 `load_skills` 对父会话该视图一次性预检（单一快照 revision），任一未选/不可模型调用即**整批零 spawn**——监督组名在预检失败时根本不被注册，可立即重用；`maxDepth: 1` 与精选只读契约不变。
 - 类别与 `model` 同时提供会被拒绝（类别已含路由，不允许二义）。
 - 多 Agent 协作全部自研，不依赖 DSH 官方 experimental Agent Team 插件。
 - 只读 bash 守卫：派生只读子代理（精选代理或 `readOnly` 类别）后同 tick 内将 `tools.guard` 注册到该子代理自身作用域（`localAgent.ctx`），逐命令校验——管道/序列/命令替换逐段解析（含 `$(...)`/反引号递归）、basename 归一、git 子命令门控（`-c alias.*` 注入显式拒绝）、写重定向仅放行 `/dev/null` 与 fd 复制、heredoc/进程替换/子 shell 分组 fail-closed；守卫挂载失败则销毁子代理并报错（只读代理绝不无守卫运行）。**参数维度的危险 flag 表**（`DANGEROUS_FLAGS`）：白名单只决定「哪个二进制可以跑」，而**参数**可能把一个只读命令变成写盘或任意执行原语，故逐命令声明危险参数——`find` 的 `-delete`/`-exec` 家族、`sort` 的 `-o`/`--output`（含 `-ofile` 粘连与 `--output=` 等号形式）、`rg` 的 `--pre`/`--pre-glob`/`--hostname-bin`（在每个文件上执行任意命令）与 `--sort`/`--sort-files`、`date` 的 `-s`/`--set`/`-f`/`--file`；另有 `positionalWrite` 规则用于**第二个位置参数即输出文件**的命令（`uniq in.txt out.txt`；守卫场景下 stdin 不可用，故单个文件参数是读、第二个必然是写）。新增二进制只需在表里加一行。已知残留边界：`--pre <VALUE>` 的“值形式”（仅当值不含引导符时）未被识别，fail-open。

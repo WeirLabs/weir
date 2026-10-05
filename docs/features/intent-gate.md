@@ -36,11 +36,13 @@
 - 两个挂载点：`agent/pre-step` 瀑布——对新鲜用户提示词做关键词匹配并追加注入消息；`agent/request` 瀑布——`think` 类意图改写当次请求的 `reasoningEffort`。
 - 匹配前剔除代码围栏与引用区域，避免误触发。
 - 武装纪律（arming）：每意图每会话全量注入至多一次，重复命中降级为短提醒；新用户消息不影响已武装状态。
+- **指针资格过滤**（会话能力管理器）：Skill 指针与提醒在注入前按统一消费者视图判定「本会话已选 + 可用 + 可模型调用」；被抑制时**不注入任何替代文本**、首次命中保持 unarmed（后续可用时仍注入完整初始指针）、不撤回历史注入；审计只记录「未注入 + 原因」。非 Skill 意图行为不变。
 - 分类器三模式（`src/intent-gate/classifier.js`）：regex 模式不建分类器（零成本短路）；llm 模式经 `ctx.llm.stream` sidecar（system 列意图枚举、maxTokens 16、temperature 0、路由默认会话路由可覆盖、收集 text chunk 取首个表中 id）；jev 模式经 HTTPS POST 决策适配器（密钥经环境变量名间接引用）。统一超时（AbortController）+ 会话级缓存（含负结果）+ fail-open。语义前端只在正则完全未命中时介入（短路），`think` 意图语义命中与关键词命中同效提档。路由覆盖**每次分类时惰性解析**（`resolveRouteOverride`）：rc.2 cordis 在 apply 批次结束后才激活 `reflect.provide` 的服务提供方，apply 期 `ctx.get('orrerySettings')` 永远缺席，快照必然为空——惰性解析让晚到的覆盖同样生效。
 
 ## 边界与失败语义
 
 - 注入失败不会阻断原始提示词——意图门是纯增量，无命中即零成本通过。
+- 被资格过滤抑制的指针是**显式静默**（审计含原因），与「无命中」区分：它不推进武装台账，也不算注入失败。
 - 配置中的意图表损坏时按防御式读取回落到默认表。
 - 语义分类的任何失败（无路由/超时/流错误/未知回答/jev 未配置）**保证**按未命中处理并记录回落原因，绝不阻断提示词。
 - 只分类真实用户提示词：预步批次中只有 `source.kind === 'user'` 的消息参与匹配（DSH 消息契约，`user-rpc` 的 kind 同为 `user`）；运行时注入消息——监督结算通知（`subagent-settled`）、本门自身通知（`orrery-intent-gate`）、todo/压缩续推（`orrery-todo-driver`/`orrery-context-guard`）等——一律跳过，与语义分类缓存互不干扰。

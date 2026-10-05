@@ -85,6 +85,14 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **fail closed 双规则**（6.4，每种情形恰好一条规则）：①根会话／已存在会话的选择记录不可读／损坏／未知版本 → 监听器**不抛出**，会话照常创建／恢复，视图为空 + 分类 reason/hint（`policy-unreadable:*`），原文件绝不改写；恢复 = 人工修复记录 + 新 Apply。②子代理的父快照不可读或无法捕获 → 监听器抛出拒创建，父会话继续并经委派结果得知原因。插件 dispose／reload 窗口保守拒绝（denials-only）。
 - **初始化优先级**（6.5，[initial-selection.js](<../../plugins/orrery-harness/src/capabilities/initial-selection.js>)）：新根会话无 accepted 记录时——保存的工作区默认（含显式空集）逐字胜出并报告缺失项（默认不可解码则 fail closed `workspace-default-unavailable`）；无默认时内置 Skill 基线 + 组合中已启用的 managed MCP；历史内容不构成授权，本路径零持久化；闸门只对 `orrery` 预设生效（组合保证）。
 
+### 消费者
+
+所有 Skill 可用性消费者共享同一份预设层视图（[consumer-view.js](<../../plugins/orrery-harness/src/capabilities/consumer-view.js>)）：选择 provider 的每会话候选（已选 + 可用 + 调用权限旗标）就是唯一事实来源，消费者只按用途（`model`／`user`）与旗标取交集，不各自保留授权副本、不叠加过滤层。
+
+- **模型目录、`skill` 工具、slash 候选与提交**：stock 消费者已经选择 provider（第 3、4 组）。
+- **委派 `load_skills`**（7.2）：派发前整批一次性预检（单一快照 revision），任一未选或不可模型调用即**整批零 spawn**——监督组名在预检失败时不被注册，可立即重用；`maxDepth: 1` 与精选只读契约不变。选择面经 realm 可见服务 `orrerySkillSelection`（reflect）暴露，兄弟预设行从各自子 ctx 解析同一挂载面。
+- **意图门指针**（7.3）：Skill 指针与提醒在注入前过同一资格判定；被抑制时不注入替代文本、首次命中保持 unarmed（后续可用时仍注入完整初始指针）、不撤回历史注入，审计只记录「未注入 + 原因」；非 Skill 意图行为不变。
+
 ## 边界与失败语义
 
 - 存储单元损坏、版本未知或撕裂（digest 不符）：fail closed，返回 `unreadable`，保留原文件等待人工处置，绝不自动覆盖或删除。
