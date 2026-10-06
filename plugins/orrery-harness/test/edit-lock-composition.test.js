@@ -480,8 +480,13 @@ test('the panel view is read-only and structured; the panel acts only through /e
   /** @type {any} */
   let endpoint
   const agents = new Map()
+  let recovery
   host.ctx.inject = (names, callback) => {
-    if (names.includes('connection')) callback({ connection: { fetch: { register(definition) { endpoint = definition; return () => { endpoint = undefined } } } } })
+    if (names.includes('connection')) callback({ connection: { fetch: { register(definition) {
+      if (definition.path === '/api/orrery-edit-lock/view') endpoint = definition
+      if (definition.path === '/api/orrery-edit-lock/maintenance/recover-online') recovery = definition
+      return () => { if (endpoint === definition) endpoint = undefined; if (recovery === definition) recovery = undefined }
+    } } } })
   }
   const get = host.ctx.get
   host.ctx.get = (name) => (name === 'agents' ? agents : get(name))
@@ -493,6 +498,19 @@ test('the panel view is read-only and structured; the panel acts only through /e
   const read = async (body = { sessionId: 's' }) => (await endpoint.fetch({ json: async () => body })).json()
 
   assert.equal(endpoint.path, '/api/orrery-edit-lock/view')
+  assert.equal(typeof recovery.fetch, 'function')
+  const recoverCall = async (/** @type {any} */ body) => {
+    const response = await recovery.fetch({ json: async () => body })
+    return { status: response.status, payload: await response.json() }
+  }
+  // The online recovery endpoint's allowlist is the server-served root set;
+  // refusals carry no filesystem detail.
+  assert.equal((await recoverCall({ root: join(root, 'not-derived') })).status, 403)
+  const malformed = await recoverCall({ root })
+  assert.equal(malformed.status, 409)
+  assert.equal(malformed.payload.ok, false)
+  assert.equal(malformed.payload.error.code, 'orrery-edit-lock/invalid-recovery')
+  assert.equal(malformed.payload.error.commitStatus, 'not-acknowledged')
   assert.equal((await read({})).ok, false)
   assert.equal((await read({ sessionId: 'nobody' })).value.state, 'unavailable')
   assert.equal((await read()).value.state, 'idle')

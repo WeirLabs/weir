@@ -88,6 +88,10 @@ export function createDomainRegistry(open, resolveRoot = managementRootFor) {
       }
       return domain
     },
+    /** Membership only, never an open: the settings-plane online recovery
+     * endpoint accepts only roots this registry already serves.
+     * @param {string} root */
+    known(root) { return domains.has(root) },
     /** @returns {Promise<T>[]} */
     all() { return [...domains.values()] },
   })

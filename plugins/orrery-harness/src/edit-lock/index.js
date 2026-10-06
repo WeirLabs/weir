@@ -11,7 +11,7 @@
 // Order contract: this row MUST precede hashline-edit and lsp. A mis-ordered
 // or unmanaged editor is not trusted: the pre-execute guard denies every
 // write/edit/hash_edit/lsp_rename definition not claimed through the service.
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { openReservedEditLockRuntime } from './reserved-runtime.js'
 import { reservationPathFor } from './reservation.js'
@@ -403,6 +403,14 @@ return (ctx, config = {}) => {
         // event, never a conversation write (AGENTS §3.6).
         onStaleRelease: (row, triggerSessionId) => audit(null, AUDIT_TYPES.editLockMaintenance, {
           kind: 'stale-sweep', root, trigger: triggerSessionId ?? null, owner: row.owner, resourceId: row.resourceId, generation: row.generation,
+        }, { root }),
+        // Online administrative recovery audit (design D4): publisher-side,
+        // after the durable commit; the trigger session comes from the
+        // channel/local settings plane, never from the request payload.
+        onAdminRecovery: info => audit(null, AUDIT_TYPES.editLockMaintenance, {
+          kind: 'admin-override-online', root, trigger: info.trigger ?? null, owner: info.record.owner,
+          recoveryId: info.record.recoveryId, revision: info.revision, idempotent: info.idempotent,
+          operations: info.record.operations.length,
         }, { root }),
       })
       let server
@@ -810,7 +818,47 @@ return (ctx, config = {}) => {
         }
       },
     })
-    offView = () => dispose?.()
+    // Online administrative recovery (design D4): the maintenance panel's
+    // one-click confirmation. Root membership is exact against the roots this
+    // process actually serves (never an open, never a client path read); the
+    // manager re-verifies every condition at its FIFO position. Refusals
+    // expose no filesystem detail beyond what inspect already shows.
+    const disposeRecovery = connection.fetch.register({
+      path: '/api/orrery-edit-lock/maintenance/recover-online',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (/** @type {any} */ request) => {
+        const reply = (/** @type {any} */ payload, /** @type {number} */ status = 200) => new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } })
+        let body
+        try { body = await request.json() } catch { return reply({ ok: false, error: { code: 'orrery-edit-lock/invalid', message: 'Invalid recovery JSON' } }, 400) }
+        const requested = body !== null && typeof body === 'object' && typeof body.root === 'string' ? body.root : ''
+        let canonicalRoot = ''
+        try { canonicalRoot = requested ? realpathSync.native(requested) : '' } catch { canonicalRoot = '' }
+        if (!canonicalRoot || !registry.known(canonicalRoot)) {
+          return reply({ ok: false, error: { code: 'orrery-edit-lock/untrusted-root', message: 'not an Edit Lock domain root this server derived' } }, 403)
+        }
+        try {
+          const domain = await registry.forRoot(canonicalRoot)
+          // Server-derived trigger: one of THIS process's own agents bound to
+          // the domain. A client-mode domain needs it to carry the channel;
+          // a publisher-local domain uses it for the audit trigger only.
+          const agents = ctx.get?.('agents')?.roots?.() ?? []
+          const triggerAgent = agents.find((/** @type {any} */ agent) => registry.rootOf(agent) === canonicalRoot) ?? null
+          if (domain.mode !== 'publisher' && !triggerAgent) {
+            return reply({ ok: false, error: { code: 'orrery-edit-lock/recovery-unavailable', message: 'no live session in this process can carry the recovery to the publisher', commitStatus: 'not-acknowledged' } }, 409)
+          }
+          const { root: _root, ...input } = body
+          const value = await domain.adminRecover(triggerAgent, input, sessionOf(triggerAgent) ?? null)
+          return reply({ ok: true, value })
+        } catch (error) {
+          const e = /** @type {any} */ (error)
+          const code = typeof e?.code === 'string' && e.code.startsWith('orrery-edit-lock/') ? e.code : 'orrery-edit-lock/recovery-refused'
+          return reply({ ok: false, error: { code, message: 'Recovery not acknowledged. Inspect authority and retry the same recovery ID after resolving the cause.',
+            detail: e?.recoveryRefusal === true ? String(e.message) : undefined, commitStatus: 'not-acknowledged' } }, 409)
+        }
+      },
+    })
+    offView = () => { dispose?.(); disposeRecovery?.() }
     return offView
   })
   const commands = ctx.get?.('commands')

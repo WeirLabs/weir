@@ -42,13 +42,14 @@
   - **区分「已保存」与「实际挂载」**：面板给出 `强制执行中`（保存开，全部已安装行均启用）、`已请求停用——需要重启`（保存关，运行行仍启用）、`强制执行已停用`（保存关，全部已安装行均停用）、`已请求启用——需要重启`（保存开，运行行仍停用）及 `未知`。无挂载证据、多行决定不一致、安装/卸载未完成或失败一律未知；不把「没有证据」当成停用。开关对整个 profile 生效。
   - **初始化受阻可见**：管理器已挂载但某个域打开失败、或某个会话注册失败时，面板列出「初始化受阻」及原因，而不是只见开关。
   - **只读权威检查**：对每个服务端自己推导出的管理域，面板可只读检查其权威镜像——版本、revision、会话/锁/操作计数、**未决操作及其围栏范围**（单个文件／目录子树／整个工作目录）、保留的异常锁。检查不打开 runtime、不取预约、不写恢复，一个字节都不改。
+  - **一键在线结清（publisher 进程活着时）**：只读检查列出未决操作时，若某个已中断 owner 的全部未决操作都是仍在阻塞准入的 `unknown` 且不持有任何 `prepared` 操作，面板给出「在线管理员恢复」卡片——完整 scope（管理根、owner、权威 revision、全部未决操作 ID）、风险原文与确认摘要（面板按离线路径同一算法**自行计算**并展示，与服务端实现对拍锁定）。点一次「在线结清该 owner」即在**运行中的管理器**里结清：不重启、不手打哈希、不停用功能；`unknown` 结论与操作历史原样保留，仅解除准入阻塞、释放该 owner 的锁并撤权。scope 若在加载后发生变化（revision 竞态），管理器拒绝，面板重新加载；恢复进行状态按「域＋owner」区分，一个域的完成不影响其他域同名 owner 的动作。该入口需要编辑锁已启用且该域在本进程打开（本进程是 client 时还需本进程有活会话承载通道）；进程已死走崩溃自愈，runtime 起不来走离线 ADMIN OVERRIDE。
   - **常驻警示**：面板明确「关闭强制执行**不会**清除未决操作、围栏或历史，重新打开后同一批文件可能再次被阻塞」，以及「普通解锁只释放一把锁且不校验内容，不是历史恢复，永远不会结清未知发布」。
   - **损坏可见、绝不自修**：权威镜像未通过完整性校验时，面板原样展示拒绝原因（`snapshot.json` 不是常规文件、目录有内容但无已提交快照、校验和/版本/域不匹配等），文件原样保留——不存在自动修复。
   - **不推断已消失的历史**：权威目录当前不存在或为空，只表示当前磁盘事实，不能证明此前从未初始化。维护内容作为错误边界的后代渲染；成功响应中若包含畸形数据，面板显示失败提示，关闭按钮仍可用。
 
 ### 管理员恢复（ADMIN OVERRIDE）
 
-**定位与边界**：这是恢复可用性，而不是证明历史发布安全。对已中断 owner 的稳定 `unknown` 发布，管理员可主动承担旧写者稍后仍可能改文件的风险，不以旧写者静止证明作为前提；系统不再永久阻塞新 owner。它不修改目标文件、不重新发布、不改写原始结果、不把 `unknown` 伪装成成功或 `not-published`。此版本交付后端 API；维护面板按钮与真实宿主端到端验收另行接入，无新增配置项。
+**定位与边界**：这是恢复可用性，而不是证明历史发布安全。对已中断 owner 的稳定 `unknown` 发布，管理员可主动承担旧写者稍后仍可能改文件的风险，不以旧写者静止证明作为前提；系统不再永久阻塞新 owner。它不修改目标文件、不重新发布、不改写原始结果、不把 `unknown` 伪装成成功或 `not-published`。离线 HTTP API 与维护面板的在线一键入口（见「在线管理员恢复」一节）均已交付，无新增配置项。
 
 **一次原子变更**：精确备份原镜像并验证 SHA-256、字节数、canonical 格式、版本、域与所有不变量，文件及父目录 fsync 成功后，才提交 v5 镜像。`adminRecoveries` 必填审计行与 owner 的全部锁释放、epoch 递增、永久撤权在同一次 snapshot rename + directory fsync 内落盘。其他 owner、原 operations（包括绑定、outcome、closeout）逐字义保留；旧 operation ID 查历史，不重放，换内容复用 ID 仍拒绝。旧 owner 不能 reopen/resume/acquire，新 owner 仍须正常取得递增 generation 后才能发布。
 
@@ -84,6 +85,16 @@
 
 **测试证据**：新增 `edit-lock-admin-recovery.test.js` 使用真实 store/manager/publisher 异常制造 22 把保留锁，验证备份、原历史不变、旧 token/owner/ID 非重放、新 owner 再获取并发布，以及备份/文件 fsync/rename/目录 fsync 故障、丢失确认幂等、预约竞争、ledger 防篡改和服务端 root allowlist。安装版宿主认证来源已核对；不把 mock connection 单测当作 GUI/HTTP 认证端到端测试，真实运行时和 GUI 验收由集成阶段完成。
 
+### 在线管理员恢复（设计 D4）
+
+进程活着时的 `unknown` 不再要求停用＋重启：同一套 scoped 确认作为**运行中管理器的一条 FIFO 可信事务**执行。
+
+- **manager 事务 `adminRecoverOnline`**：在 FIFO 执行点对当前已确认状态复核——owner 已 interrupted、其全部未决操作都是 `unknown`、operationIds 精确匹配（排序比较）、expectedRevision 未动、确认摘要匹配（与离线路径**同一算法**：`{root, owner, expectedRevision, operationIds 排序, risk}` canonical JSON 的 SHA-256，`ADMIN OVERRIDE <hex>`）。随后在**同一次持久事务**里落盘：`adminRecoveries` 台账行（actor 为 `online-administrator`，与离线 `authenticated-settings-administrator`、自动 `automatic-dead-process-recovery` 区分）、该 owner 的锁全部释放、epoch 撤权、准入阻塞解除；`unknown` 结论与操作历史逐字不动。备份沿用 `admin-backup-<SHA256([root,recoveryId])>.json`，内容是**当前**已提交镜像的精确字节（store 在每次持久化后留存 `currentBytes()`），先于提交落盘。相同 recoveryId 的幂等重试返回既有台账行，不重复释放、不追加。确认摘要不符、revision 竞态、owner 未 interrupted、未决非全 unknown、operationIds 不符一律拒绝且不产生 revision、不写备份；备份写失败发生在提交前，管理器不中毒；只有提交本身失败才按既有纪律中毒。
+- **不重启的一致性**：内核折叠（cancel＋逐锁 release）与 `administrativeState(base, record)` 的普通部分逐字节一致，持久化确认后同一事务安装内存内核——面板点击后立刻可编辑，权威镜像与内存从不分叉。
+- **peer 通道**：`PEER_KINDS` 新增 `adminRecover`；publisher 侧执行**同一事务**，触发身份取自通道绑定的 agent（`agent.id`），**永不取自载荷**（载荷根本没有身份字段，多一个字段即被 manager 的精确字段纪律拒绝）。client 进程经自己某个活会话的通道转发；publisher 侧审计 `orrery/edit-lock-maintenance` 的 `admin-override-online`（含 root、trigger、owner、recoveryId、revision、idempotent、操作数），镜像在 `<管理根>/.orrery/audit.jsonl`。
+- **HTTP 交接**：`POST /api/orrery-edit-lock/maintenance/recover-online` 由 edit-lock 插件注册在宿主 `connection.fetch`（同一认证通道）；`root` 必须精确等于**本进程实际服务**的域根（membership only，绝不因请求打开新域）；本进程是 client 时还需有活会话承载通道，否则 409 指引改用离线路径。拒绝只返回 `orrery-edit-lock/*` 错误码与通用文案（已知拒绝附安全 detail），409 `commitStatus:'not-acknowledged'` 与离线路径同语义。特性未启用或该域未在本进程打开时端点不存在，面板按不可用展示并指向离线路径。
+- **面板一键确认**：只读 inspect 响应已含全部 scope 事实（revision、未决操作的 owner/operationId/phase/admissionBlocked、会话 interrupted，以及 `prepared` 操作清单——有 `prepared` 的 owner 在线恢复必被 manager 拒绝，面板依此不提供动作）；chunk 内重新实现 canonical JSON 与纯 JS SHA-256（浏览器无 node:crypto），**客户端计算**并展示摘要，点击即提交——确认动作仍在，消灭的是路径成本。chunk 对拍测试把客户端实现与服务端 `recoveryConfirmation`/`canonical` 逐字节钉死（含中文与 SHA-256 填充边界向量）；资格判定（owner interrupted ∧ 全部未决 unknown ∧ 仍阻塞 ∧ 无 prepared）与 manager 准入条件镜像；恢复进行状态以 `root＋owner` 为键（会话 id 跨域不唯一，一个域的成功不抑制另一域同名 owner 的恢复）。
+- **测试证据**：`edit-lock-online-recovery.test.js`（manager 事务：确认不符/未 interrupted/非全 unknown/ID 不符/revision 竞态/幂等重试/无 root·备份器拒绝/台账 actor/备份先落盘/内核折叠等式＋单进程组合探针：活 publisher 不重启在线结清、围栏解除、审计 trigger）；`edit-lock-online-recovery-peer.test.js`（双进程探针：client 主机经 peer 通道结清活 publisher 的 unknown，trigger 取自通道、幂等重试、创建恢复准入）；`edit-lock-peer.test.js`（通道身份单测）；chunk 测试（资格分组含 prepared 排除、摘要展示、点击提交体、跨根恢复状态隔离、双语键）；`edit-lock-maintenance.test.js`（inspect 暴露 prepared 操作）；资格与跨根两条面板回归均经变异校验（变异即红）。
 ### 撤权后的会话呈现
 
 被 ADMIN OVERRIDE 撤权的会话是**终态**：结构化状态视图为其报告独立的 `revoked` 状态（优先级高于 stopped/attention），面板显示「编辑权已被永久撤销」与一句原因说明，不提供「继续编辑」、确认、收回等任何动作——这些动作对终态会话不可能成功。普通 stopped 会话的「继续编辑」不受影响。
@@ -162,7 +173,7 @@
 - **自动结清判定**（恢复打开时逐 owner）：该 owner 未被撤权、恢复后处于 interrupted，且其**每一个**未决 unknown 操作的 origin incarnation 都登记了进程身份、该身份与当前进程不同（pid＋bootNonce 判定，同进程重挂载永不结清）、且 Liveness 证明该进程已死——三者缺一即保持人工路径。安全论证与人工 ADMIN OVERRIDE 的人脑担保相同：全部写只发生于 publisher 进程内，进程死亡 ⇒ 其生命周期全部 detached writer 死亡 ⇒ 迟到写者风险结构性归零。
 - **一次持久提交**：结清与恢复合并为同一次 snapshot 提交——台账行复用 v5 `adminRecoveries` 结构（actor 记 `automatic-dead-process-recovery`，scope 确认摘要由服务端自算自记，同一提交的多个 owner 共享 expected/committed revision），unknown outcome 与操作历史逐字保留，仅准入阻塞解除，owner 的锁释放、epoch 撤权。备份沿用 `admin-backup-<SHA256([root,recoveryId])>.json`：内容即恢复时读到的前像字节，在提交前落盘（temp+rename＋目录 fsync）。提交后安装的内核按**结清后**的最终镜像重建，内存权威与磁盘一致。
 - **审计与通知**：每次恢复至多一条共享审计（`orrery/edit-lock-maintenance` 的 `automatic-recovery`，含 root、revision、owners、recoveryIds、操作数）与至多一条汇总用户通知（排队给该域第一个完成注册的 agent；已撤权 owner 永远跳过，第二次恢复不会重复结清也不会重复通知）。
-- **不自动结清的情形**：null 身份（含 v4/v5 时代的历史存量与身份缺失恢复的 incarnation）、同进程重挂载、Liveness 判活或判不明、owner 已被撤权。这些仍走离线 ADMIN OVERRIDE 或后续在线路径。
+- **不自动结清的情形**：null 身份（含 v4/v5 时代的历史存量与身份缺失恢复的 incarnation）、同进程重挂载、Liveness 判活或判不明、owner 已被撤权。这些仍走显式路径：进程活着时的维护面板一键在线结清（见「在线管理员恢复」），或 runtime 起不来时的离线 ADMIN OVERRIDE。
 
 ### 独立维护边界
 

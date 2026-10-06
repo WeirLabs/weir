@@ -84,6 +84,7 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
       const openedDirectory = dir
       await io('directory-sync', async () => { await openedDirectory.sync() })
       await io('directory-close', async () => { await openedDirectory.close(); dir = undefined })
+      committedBytes = Buffer.from(bytes, 'utf8')
     } catch (cause) {
       // Never remove/promote a temp or roll back a rename. Once rename was
       // attempted its result is conservatively uncertain, including syscall errors.
@@ -95,6 +96,10 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
       throw error
     }
   }
+  /** The exact committed bytes of the CURRENT snapshot: the pre-image an
+   * online administrative commit (design D4) backs up before writing. Set on
+   * open and after every successful persist. */
+  let committedBytes
   /** The exact committed bytes read at open (recover mode only): the
    * pre-image a composed administrative commit backs up before writing. */
   let recoveredBytes
@@ -127,6 +132,7 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
       // inspector calls valid is exactly one this recover accepts.
       current = parseSnapshot(bytes, domainId)
       recoveredBytes = Buffer.from(bytes)
+      committedBytes = Buffer.from(bytes)
     } finally { await file.close() }
   }
   let tail = Promise.resolve()
@@ -144,6 +150,12 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
      * caller uses them only as the pre-image backup of an administrative
      * commit in this handle's first record. @returns {Buffer|undefined} */
     recoveredBytes() { healthy(); return recoveredBytes ? Buffer.from(recoveredBytes) : undefined },
+    /** Exact bytes of the current committed snapshot, updated after every
+     * successful persist. The online administrative transaction (design D4)
+     * backs these up as the pre-image of its commit; it never uses the
+     * open-time recovered bytes, which may be many revisions behind.
+     * @returns {Buffer|undefined} */
+    currentBytes() { healthy(); return committedBytes ? Buffer.from(committedBytes) : undefined },
     /** @param {{ expectedRevision: number, nextState: AuthorityImage, base?: AuthorityImage }} input */
     async record(input) {
       if (closed) throw new Error('store closed')

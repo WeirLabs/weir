@@ -55,6 +55,13 @@ export function summarizeAuthorityImage(snapshot) {
       const disposition = state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
       return { ...unresolvedRow(op), admissionBlocked: !disposition, administrativeRecoveryId: disposition?.recoveryId ?? null }
     })
+  // Prepared operations never fence anything, but the online administrative
+  // recovery refuses an owner that still has one (manager requires every
+  // unresolved operation to be unknown). The panel needs them visible to keep
+  // impossible one-click actions off the screen. Read-only and additive.
+  const prepared = operations
+    .filter(op => op?.phase === 'prepared')
+    .map(op => ({ target: { tool: op?.binding?.tool ?? null, filePath: op?.binding?.filePath ?? null }, key: { sessionId: op?.sessionId ?? null, operationId: op?.operationId ?? null } }))
   const retainedLocks = (Array.isArray(state?.locks) ? state.locks : [])
     .filter(lock => lock?.status !== 'active')
     .map(lock => ({ resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation, status: lock.status, reason: lock.reason ?? null }))
@@ -70,6 +77,7 @@ export function summarizeAuthorityImage(snapshot) {
       retainedLocks: retainedLocks.length,
     },
     unresolved,
+    prepared,
     adminRecoveries: structuredClone(state?.adminRecoveries ?? []),
     retainedLocks,
     sessions: (Array.isArray(state?.sessions) ? state.sessions : []).map(session => ({

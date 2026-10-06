@@ -25,6 +25,11 @@ export function localDomain(lifecycle, endpoint) {
     locks: async _agent => lifecycle.locks(),
     /** @param {object} _agent @param {string} resourceId @param {number} generation */
     unlock: (_agent, resourceId, generation) => lifecycle.unlock(resourceId, generation),
+    /** Online administrative recovery, executed publisher-side. The trigger
+     * session is audit metadata supplied by the trusted caller, never read
+     * from the request payload.
+     * @param {object} _agent @param {any} input @param {string | null} [trigger] */
+    adminRecover: (_agent, input, trigger) => lifecycle.adminRecoverOnline(input, trigger ?? null),
     /** Detached stale-lock sweep trigger; the scan runs publisher-side.
      * @param {object} _agent @param {string | null} [triggerSessionId] */
     sweepStale: (_agent, triggerSessionId) => lifecycle.sweepStale(triggerSessionId ?? null),
@@ -95,6 +100,11 @@ export function remoteDomain(remote) {
     locks: agent => remote.call(agent, 'allLocks'),
     /** @param {object} agent @param {string} resourceId @param {number} generation */
     unlock: (agent, resourceId, generation) => remote.call(agent, 'unlock', { resourceId, generation }),
+    /** Forward the operator's recovery request through this agent's channel;
+     * the publisher executes the same transaction and takes the trigger
+     * identity from the channel, never from the payload.
+     * @param {object} agent @param {any} input */
+    adminRecover: (agent, input) => remote.call(agent, 'adminRecover', input),
     /** The publisher performs the scan (it shares the filesystem); a client
      * process only triggers it through the channel. @param {object} agent
      * @param {string | null} [triggerSessionId] */

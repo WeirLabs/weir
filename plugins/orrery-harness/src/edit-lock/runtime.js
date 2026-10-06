@@ -53,12 +53,18 @@ export async function openEditLockRuntime(options) {
     const liveness = options.liveness ?? null
     /** @type {{records: any[], revision: number}|null} */
     let automaticRecovery = null
+    // The domain root and backup writer are always supplied: the online
+    // administrative recovery transaction (design D4) needs them even when
+    // no Liveness adapter is present; the automatic settlement (D3) still
+    // requires the full identity chain and stays gated inside the manager.
     const manager = options.mode === 'recover'
       ? await recoverEditLockManager({ store, managerIncarnation: randomUUID(), processIdentity, liveness,
-        root: liveness && processIdentity ? options.domainId : null,
-        writeBackup: liveness && processIdentity ? (file, bytes) => writeAuthorityFile(directory, file, bytes) : null,
+        root: options.domainId,
+        writeBackup: (file, bytes) => writeAuthorityFile(directory, file, bytes),
         onAutomaticRecovery: info => { automaticRecovery = info } })
-      : createEditLockManager({ store, managerIncarnation: randomUUID(), processIdentity })
+      : createEditLockManager({ store, managerIncarnation: randomUUID(), processIdentity,
+        root: options.domainId,
+        writeBackup: (file, bytes) => writeAuthorityFile(directory, file, bytes) })
     const publisher = createPublisher({ manager, fs: options.fs, root, excluded, assertExclusive: options.assertExclusive })
     let closing = false
     /** @type {Promise<void> | undefined} */

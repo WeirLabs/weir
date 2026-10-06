@@ -18,3 +18,16 @@ test('peer fixes agent identity and seals admission on disconnect before acknowl
   finish()
   await closing
 })
+
+test('adminRecover takes the trigger identity from the channel agent, never the payload', async () => {
+  const agent = { id: 'bound-session' }
+  const calls = []
+  const lifecycle = {service:{},adminRecoverOnline: async (request, trigger) => {calls.push({request,trigger}); return {ok:true}}}
+  const peer = createEditLockPeer(lifecycle,agent)
+  // The payload is forwarded verbatim (the manager applies its own exact
+  // field discipline); the trigger identity is the channel's bound agent.
+  assert.deepEqual(await peer.receive({kind:'adminRecover',callId:'r',request:{owner:'x',trigger:'forged'}}),{ok:true})
+  assert.equal(calls.length,1)
+  assert.equal(calls[0].trigger,'bound-session')
+  assert.equal(calls[0].request.trigger,'forged')
+})
