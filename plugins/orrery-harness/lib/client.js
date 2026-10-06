@@ -1720,7 +1720,13 @@ window.__ModuleLoader__.load({
 				let remote = null;
 				try { remote = ctx.remote?.orreryCapabilities ?? null; } catch { remote = null; }
 				if (typeof remote?.[method] !== "function") return fallback;
-				try { return await remote[method](sid); } catch { return fallback; }
+				// Remote methods resolve to the RemoteResult ENVELOPE —
+				// { ok: true, value } or { ok: false, error } — never the bare
+				// payload (the voice-input precedent unwraps it at every call
+				// site; a failing call resolves, not rejects, with ok:false).
+				let result = null;
+				try { result = await remote[method](sid); } catch { return fallback; }
+				return result?.ok === true && result.value != null ? result.value : fallback;
 			};
 			// The presets & workspace-default view is its own chunk, pulled only
 			// when the Presets view is first selected (D3) — the composition root

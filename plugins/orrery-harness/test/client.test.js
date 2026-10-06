@@ -190,9 +190,9 @@ describe('orrery settings client half', () => {
       $mount: async (contribution) => {
         mountCalls.push(contribution)
         remote.orreryCapabilities = {
-          receipt: async (sid) => ({ status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid }),
-          list: async () => ({ skills: [], mcpServers: [] }),
-          conditions: async () => ({ conditions: [] }),
+          receipt: async (sid) => ({ ok: true, value: { status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid } }),
+          list: async () => ({ ok: true, value: { skills: [], mcpServers: [] } }),
+          conditions: async () => ({ ok: true, value: { conditions: [] } }),
         }
         return () => {}
       },
@@ -861,9 +861,9 @@ describe('orrery settings client half', () => {
     const receiptPayload = { status: 'applied', revision: 1, effective: { skills: ['debugging'], mcpServers: [] }, warnings: [] }
     const calls = []
     ctx.remote.orreryCapabilities = {
-      receipt: async (sid) => { calls.push(['receipt', sid]); return receiptPayload },
-      list: async (sid) => { calls.push(['list', sid]); return { skills: [], mcpServers: [] } },
-      conditions: async (sid) => { calls.push(['conditions', sid]); return { conditions: [] } },
+      receipt: async (sid) => { calls.push(['receipt', sid]); return { ok: true, value: receiptPayload } },
+      list: async (sid) => { calls.push(['list', sid]); return { ok: true, value: { skills: [], mcpServers: [] } } },
+      conditions: async (sid) => { calls.push(['conditions', sid]); return { ok: true, value: { conditions: [] } } },
     }
     surface.apply(ctx)
     slotInjects[11].fn()
@@ -886,9 +886,11 @@ describe('orrery settings client half', () => {
 
     // Degraded: a failing remote maps identically, still with no fallback to
     // the command channel.
+    // Production failures RESOLVE with { ok: false, error } (carrier failure
+    // folds into the envelope); a structural throw is covered too.
     ctx.remote.orreryCapabilities = {
-      receipt: async () => { throw new Error('gateway/down') },
-      list: async () => { throw new Error('gateway/down') },
+      receipt: async () => ({ ok: false, error: { code: 'gateway/internal', message: 'down' } }),
+      list: async () => ({ ok: false, error: { code: 'gateway/internal', message: 'down' } }),
       conditions: async () => { throw new Error('gateway/down') },
     }
     expect(await verbs.fetchReceipt('s7')).toBe(null)
@@ -981,9 +983,9 @@ describe('orrery settings client half', () => {
     const receiptPayload = { status: 'applied', revision: 2, effective: { skills: ['debugging'], mcpServers: [] }, warnings: [] }
     const liveReads = []
     ctx.remote.orreryCapabilities = {
-      receipt: async (sid) => { liveReads.push(['receipt', sid]); return receiptPayload },
-      list: async (sid) => { liveReads.push(['list', sid]); return { skills: [], mcpServers: [] } },
-      conditions: async (sid) => { liveReads.push(['conditions', sid]); return { conditions: [] } },
+      receipt: async (sid) => { liveReads.push(['receipt', sid]); return { ok: true, value: receiptPayload } },
+      list: async (sid) => { liveReads.push(['list', sid]); return { ok: true, value: { skills: [], mcpServers: [] } } },
+      conditions: async (sid) => { liveReads.push(['conditions', sid]); return { ok: true, value: { conditions: [] } } },
     }
     surface.apply(ctx)
     // $mount is NOT called again — the gateway would reject a duplicate mount
