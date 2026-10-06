@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveInitialSelection } from '../src/capabilities/initial-selection.js'
+import { resolveInitialSelection, bindDefaultSkillNames } from '../src/capabilities/initial-selection.js'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
@@ -61,6 +61,49 @@ const candidateOf = value => ({
   digest: `d-${value.name}`, invocation: { modelInvocable: true, userInvocable: true },
 })
 
+// Workspace-default name binding: a default saved from the client draft
+// (default-save from:'draft') stores plain name strings; they bind against
+// the live inventory by unique name, never guessed, never failing closed.
+test('default binding: identity-shaped entries pass through verbatim', () => {
+  const bound = bindDefaultSkillNames([alpha, builtinA], [candidateOf(alpha)])
+  expect(bound.skills[0] === alpha).toBe(true)
+  expect(bound.skills[1] === builtinA).toBe(true)
+  expect(bound.missing).toEqual([])
+})
+
+test('default binding: a unique name binds to that candidate identity', () => {
+  const bound = bindDefaultSkillNames(['deep-work'], [candidateOf(builtinA), candidateOf(builtinB)])
+  expect(bound.skills[0] === builtinA).toBe(true)
+  expect(bound.missing).toEqual([])
+})
+
+test('default binding: an unknown name is missing, never guessed', () => {
+  const bound = bindDefaultSkillNames(['ghost-skill'], [candidateOf(builtinA)])
+  expect(bound.skills).toEqual([])
+  expect(bound.missing).toEqual([{ kind: 'skill', ref: 'ghost-skill', reason: 'no longer in the inventory' }])
+})
+
+test('default binding: an ambiguous name is missing, never guessed', () => {
+  const dupUser = candidateOf(identity('user', 'dup'))
+  const dupProject = candidateOf(identity('project', 'dup'))
+  const bound = bindDefaultSkillNames(['dup'], [dupUser, dupProject])
+  expect(bound.skills).toEqual([])
+  expect(bound.missing).toEqual([{ kind: 'skill', ref: 'dup', reason: 'ambiguous in the inventory' }])
+})
+
+test('default binding: garbage entries are missing per entry, never throwing', () => {
+  const bound = bindDefaultSkillNames([42, null, builtinB], [candidateOf(builtinB)])
+  expect(bound.skills[0] === builtinB).toBe(true)
+  expect(bound.missing.length).toBe(2)
+  expect(bound.missing.every(entry => entry.kind === 'skill')).toBe(true)
+})
+
+test('default binding: a non-array candidates value is tolerated', () => {
+  const bound = bindDefaultSkillNames(['deep-work'], null)
+  expect(bound.skills).toEqual([])
+  expect(bound.missing).toEqual([{ kind: 'skill', ref: 'deep-work', reason: 'no longer in the inventory' }])
+})
+
 function mount(home, { inventoryCandidates }) {
   let registered
   const ctx = {
@@ -85,6 +128,29 @@ test('6.5 mounted: a saved workspace default selection drives a session without 
   const list = await provider.list(options('sess-1', 'ws-1'))
   const enabled = list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)
   expect(enabled).toEqual(['alpha'])
+})
+
+test('regression: a default saved from the draft (name strings) drives a new session', async () => {
+  const dir = home()
+  const store = openCapabilityStore({ root: rootOf(dir), platform: 'darwin' })
+  // Exactly what `/capabilities default-save` with from:'draft' commits:
+  // plain name strings, not SkillIdentity objects.
+  await store.commit({ kind: 'defaults', workspaceKey: 'ws-draft' }, 0, () => ({ skills: ['deep-work', 'research'], mcpServers: [], unresolvedRefs: [] }))
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA), candidateOf(builtinB)] })
+  const list = await provider.list(options('sess-draft', 'ws-draft'))
+  const enabled = list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)
+  expect(enabled).toEqual(['deep-work', 'research'])
+})
+
+test('regression: one unbindable name degrades to missing, the default does not fail closed', async () => {
+  const dir = home()
+  const store = openCapabilityStore({ root: rootOf(dir), platform: 'darwin' })
+  await store.commit({ kind: 'defaults', workspaceKey: 'ws-part' }, 0, () => ({ skills: ['deep-work', 'ghost-skill'], mcpServers: [], unresolvedRefs: [] }))
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA), candidateOf(builtinB)] })
+  const list = await provider.list(options('sess-part', 'ws-part'))
+  const enabled = list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)
+  expect(enabled).toEqual(['deep-work'])
+  expect(provider.status(options('sess-part', 'ws-part')).error ?? null).toBe(null)
 })
 
 test('6.5 mounted: without a default the builtin baseline is selected and reported', async () => {
