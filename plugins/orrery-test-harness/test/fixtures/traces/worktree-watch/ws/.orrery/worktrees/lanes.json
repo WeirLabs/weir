@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "seq": 1,
+  "lanes": [
+    {
+      "id": "watch-lane-001",
+      "title": "Watch lane",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/fixture-selfcontainment-068/.orrery/it-root/ws/.orrery/worktrees/watch-lane-001",
+      "branch": "orrery/watch-lane-001",
+      "base": {
+        "branch": "main",
+        "commit": "55da48c666e7858c342c6c4a3713128363eb1a0f"
+      },
+      "scope": [],
+      "state": "no-commits",
+      "ownerSession": "session-64ac8f24-64f1-4ef7-a374-854b1b0c6afe",
+      "boundChild": null,
+      "baseMoved": false,
+      "landableTree": null,
+      "setup": {
+        "status": "none"
+      },
+      "check": null,
+      "land": null,
+      "cleanup": null,
+      "reason": "no commits ahead of main",
+      "createdAt": 1791290427814,
+      "updatedAt": 1791290428281,
+      "history": [
+        {
+          "from": "preparing",
+          "to": "ready",
+          "event": "setup-ok",
+          "at": 1791290427853,
+          "by": "host"
+        },
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791290427922,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791290428002,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        },
+        {
+          "from": "no-commits",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791290428281,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        }
+      ]
+    }
+  ],
+  "watches": []
+}

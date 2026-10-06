@@ -1,3 +1,0 @@
-code=1
-dsh: session "ce52a1cb-2346-4c3a-9063-541ad3449e84" is already owned by an active write handle
-
