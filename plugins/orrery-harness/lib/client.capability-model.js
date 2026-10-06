@@ -139,7 +139,13 @@ window.__ModuleLoader__.load({
 		 */
 		function commitOutcomeOf(response) {
 			if (!response || typeof response !== "object") return { phase: "failed", error: "no response", draftKept: true };
-			if (response.status === "applied") return { phase: "applied", revision: response.revision ?? null };
+			// preset-skill-applicability: an applied commit may carry per-name
+			// skipped entries (known to the profile but not applicable in this
+			// preset) — the manager renders them as a warning, never a failure.
+			const skipped = Array.isArray(response.skipped)
+				? response.skipped.filter(entry => entry && typeof entry.name === "string").map(entry => ({ name: entry.name, reason: typeof entry.reason === "string" ? entry.reason : "not applicable in this agent preset" }))
+				: [];
+			if (response.status === "applied") return { phase: "applied", revision: response.revision ?? null, skipped };
 			if (response.status === "revision-conflict") return { phase: "revision-conflict", current: response.current ?? null, draftKept: true };
 			if (response.status === "indeterminate") return { phase: "indeterminate", requestId: response.receipt?.requestId ?? null, queryable: true };
 			if (response.status === "missing") return { phase: "install-or-configure", missing: Array.isArray(response.missing) ? response.missing : [] };

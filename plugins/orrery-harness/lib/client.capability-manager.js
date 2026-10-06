@@ -435,6 +435,9 @@ window.__ModuleLoader__.load({
 					}),
 					draft.dirty ? react_jsx_runtime.jsx("button", { type: "button", onClick: discardDraft, children: t("capability.discard", "Discard") }) : null,
 					commit?.phase === "applied" ? react_jsx_runtime.jsx("span", { children: t("capability.applied", "Applied") }) : null,
+					commit?.phase === "applied" && Array.isArray(commit.skipped) && commit.skipped.length > 0
+						? react_jsx_runtime.jsx("span", { style: warnTextStyle, title: commit.skipped.map(entry => `${entry.name} — ${entry.reason}`).join("\n"), children: t("capability.appliedSkipped", "skipped {n} (not applicable here)").replace("{n}", String(commit.skipped.length)) })
+						: null,
 					commit?.phase === "failed" ? react_jsx_runtime.jsx("span", { style: warnTextStyle, title: commit.error, children: t("capability.failed", "Failed — draft kept") }) : null,
 					commit?.phase === "revision-conflict" ? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: t("capability.conflictState", "Changed elsewhere — review current state") }) : null,
 					commit?.phase === "install-or-configure" ? react_jsx_runtime.jsx("span", { title: (commit.missing ?? []).join(", "), children: t("capability.missingAction", "Missing items need install/configure") }) : null,

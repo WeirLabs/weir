@@ -99,7 +99,11 @@ test('12.3 the draft seeds from the receipt with the CAS revision and toggles re
 })
 
 test('12.3 engine responses map onto the commit states', () => {
-  expect(model.commitOutcomeOf({ status: 'applied', revision: 5 })).toEqual({ phase: 'applied', revision: 5 })
+  expect(model.commitOutcomeOf({ status: 'applied', revision: 5 })).toEqual({ phase: 'applied', revision: 5, skipped: [] })
+  // preset-skill-applicability: an applied commit carries the skipped report through.
+  expect(model.commitOutcomeOf({ status: 'applied', revision: 6, skipped: [{ name: 'creative-only', reason: 'not applicable in this agent preset' }, { broken: true }] })).toEqual({
+    phase: 'applied', revision: 6, skipped: [{ name: 'creative-only', reason: 'not applicable in this agent preset' }],
+  })
   const conflict = model.commitOutcomeOf({ status: 'revision-conflict', current: { revision: 6 } })
   expect(conflict.phase).toBe('revision-conflict')
   expect(conflict.draftKept).toBe(true)
