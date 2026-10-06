@@ -34,7 +34,7 @@ import { validateAdminTransition } from './admin-ledger.js'
  * (one empty retention row per session). Version 4 preserves v2/v3 historical
  * assertions as inert records; the next durable write uses version 4.
  * @typedef {{ sessionId: string, holding: boolean, holdUntil: number|null, holdCumulativeMs: number }} HoldState
- * @typedef {{ version: 4|5, adminRecoveries?: any[], managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
+ * @typedef {{ version: 4|5|6, adminRecoveries?: any[], incarnations?: import('./incarnations.js').IncarnationEntry[], managerIncarnation: string|null, sessions: Session[], generations: Generation[], locks: Lock[], issuedRequests: IssuedRequest[], recovery: Recovery[], holds: HoldState[], operations: import('./operation-history.js').Operation[] }} AuthorityImage
  * @typedef {{ revision: number, state: AuthorityImage }} Snapshot
  */
 
@@ -95,6 +95,9 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
       throw error
     }
   }
+  /** The exact committed bytes read at open (recover mode only): the
+   * pre-image a composed administrative commit backs up before writing. */
+  let recoveredBytes
   if (mode === 'create') {
     current = { revision: 0, state: { version: 4, managerIncarnation: null, sessions: [], generations: [], locks: [], issuedRequests: [], recovery: [], holds: [], operations: [] } }
     await persist(current)
@@ -123,6 +126,7 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
       // verbatim with the read-only maintenance inspector: a snapshot the
       // inspector calls valid is exactly one this recover accepts.
       current = parseSnapshot(bytes, domainId)
+      recoveredBytes = Buffer.from(bytes)
     } finally { await file.close() }
   }
   let tail = Promise.resolve()
@@ -136,19 +140,23 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
   const recoveredKeys = new Set(current.state.operations.map(o => canonical([o.sessionId, o.operationId])))
   const api = {
     snapshot() { healthy(); return structuredClone(current) },
-    /** @param {{ expectedRevision: number, nextState: AuthorityImage }} input */
+    /** Committed bytes as read at open; undefined for a created store. The
+     * caller uses them only as the pre-image backup of an administrative
+     * commit in this handle's first record. @returns {Buffer|undefined} */
+    recoveredBytes() { healthy(); return recoveredBytes ? Buffer.from(recoveredBytes) : undefined },
+    /** @param {{ expectedRevision: number, nextState: AuthorityImage, base?: AuthorityImage }} input */
     async record(input) {
       if (closed) throw new Error('store closed')
       healthy()
-      shape(input, ['expectedRevision', 'nextState'])
+      const proof = undispatched.get(input)
+      const administrative = administrativeInputs.delete(input)
+      undispatched.delete(input)
+      shape(input, administrative && Object.hasOwn(input, 'base') ? ['expectedRevision', 'nextState', 'base'] : ['expectedRevision', 'nextState'])
       const { expectedRevision, nextState } = input
       valid(integer(expectedRevision), 'expected revision')
       validateImage(nextState)
       const state = structuredClone(nextState)
       validateImage(state)
-      const proof = undispatched.get(input)
-      const administrative = administrativeInputs.delete(input)
-      undispatched.delete(input)
       const pending = tail.then(async () => {
         healthy()
         if (expectedRevision !== current.revision) throw new Error('revision conflict')
@@ -163,7 +171,14 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
           previous.operations[index].fence = null
         }
         validateTransition(previous, state)
-        validateAdminTransition(previous, state, administrative)
+        const base = administrative && Object.hasOwn(input, 'base') ? input.base : undefined
+        if (base !== undefined) {
+          // The composed administrative commit (design D3): the supplied base
+          // is the ordinary part of the transition and must itself validate.
+          validateImage(base)
+          validateTransition(previous, base)
+        }
+        validateAdminTransition(previous, state, administrative, base)
         if (administrative) valid(state.adminRecoveries?.at(-1)?.committedRevision === current.revision + 1, 'administrative revision')
         valid(integer(current.revision + 1), 'revision overflow')
         const next = { revision: current.revision + 1, state }

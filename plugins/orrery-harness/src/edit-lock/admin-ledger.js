@@ -2,8 +2,13 @@
 // of publication outcome or old-writer quiescence. It lives in the atomic image.
 import { createHash } from 'node:crypto'
 import { canonical } from './snapshot.js'
+import { expectedRegistry, isRegistryUpgrade } from './incarnations.js'
 
 export const LATE_WRITER_RISK = 'Detached historic writers may still modify files after this override.'
+export const AUTOMATIC_RECOVERY_ACTOR = 'automatic-dead-process-recovery'
+/** Ledger actor vocabulary: the offline settings administrator and the
+ * dead-process automatic settlement (design D3) are the only writers. */
+const ACTORS = ['authenticated-settings-administrator', AUTOMATIC_RECOVERY_ACTOR]
 export const digest = value => createHash('sha256').update(canonical(value)).digest('hex')
 export const dispositionFor = (state, op) => state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
 export const revokedOwner = (state, owner) => state.adminRecoveries?.some(row => row.owner === owner) === true
@@ -17,15 +22,20 @@ const natural = value => Number.isSafeInteger(value) && value >= 0
 
 export function validateAdminLedger(state) {
   if (state.version === 4) return
-  requireThat(Array.isArray(state.adminRecoveries) && state.adminRecoveries.length > 0, 'nonempty v5 ledger')
+  requireThat(Array.isArray(state.adminRecoveries), 'ledger')
+  // The v5 ledger exists only once an override lands; a v6 image may carry an
+  // empty one (registry upgrade before any administrative recovery).
+  if (state.adminRecoveries.length === 0) { requireThat(state.version === 6, 'nonempty v5 ledger'); return }
   const ids = new Set(), owners = new Set()
-  let revision = -1
+  // Rows committed in one transaction share one expected/committed pair;
+  // across transactions both revisions are non-decreasing.
+  let lastExpected = -1, lastCommitted = -1
   for (const row of state.adminRecoveries) {
     keys(row, ['recoveryId', 'root', 'owner', 'expectedRevision', 'committedRevision', 'at', 'actor', 'reason', 'risk', 'confirmation', 'backup', 'operations', 'releasedLocks', 'revokedEpoch'])
     requireThat(text(row.recoveryId, 128) && !ids.has(row.recoveryId) && text(row.root, 4096) && text(row.owner) && !owners.has(row.owner), 'identity')
     ids.add(row.recoveryId); owners.add(row.owner)
-    requireThat(natural(row.expectedRevision) && natural(row.committedRevision) && row.committedRevision === row.expectedRevision + 1 && row.expectedRevision >= revision && natural(row.at) && row.actor === 'authenticated-settings-administrator' && text(row.reason, 2000), 'audit')
-    revision = row.committedRevision
+    requireThat(natural(row.expectedRevision) && natural(row.committedRevision) && row.committedRevision === row.expectedRevision + 1 && row.expectedRevision >= lastExpected && row.committedRevision >= lastCommitted && natural(row.at) && ACTORS.includes(row.actor) && text(row.reason, 2000), 'audit')
+    lastExpected = row.expectedRevision; lastCommitted = row.committedRevision
     requireThat(row.risk === LATE_WRITER_RISK && /^[a-f0-9]{64}$/.test(row.confirmation), 'risk acknowledgement')
     keys(row.backup, ['file', 'sha256', 'bytes'])
     requireThat(row.backup.file === `admin-backup-${digest([row.root, row.recoveryId])}.json` && /^[a-f0-9]{64}$/.test(row.backup.sha256) && natural(row.backup.bytes) && row.backup.bytes > 0, 'backup')
@@ -61,7 +71,7 @@ export function administrativeState(before, record) {
   requireThat(session && Number.isSafeInteger(session.executionEpoch + 1) && record.revokedEpoch === session.executionEpoch + 1, 'revocation epoch')
   requireThat(session.interrupted, 'interrupted owner required')
   requireThat(canonical(record.releasedLocks) === canonical(before.locks.filter(l => l.owner === record.owner)), 'exact ownership scope')
-  return { ...structuredClone(before), version: 5,
+  return { ...structuredClone(before), version: before.version === 6 ? 6 : 5,
     adminRecoveries: [...(before.adminRecoveries ?? []), structuredClone(record)],
     sessions: before.sessions.map(s => s.sessionId === record.owner ? { ...s, interrupted: true, executionEpoch: record.revokedEpoch } : { ...s }),
     locks: before.locks.filter(l => l.owner !== record.owner).map(l => ({ ...l })),
@@ -69,13 +79,36 @@ export function administrativeState(before, record) {
   }
 }
 
-export function validateAdminTransition(before, after, administrative = false) {
+/**
+ * Ledger and image-version transition discipline. Without an append the only
+ * allowed version change is the v6 registry upgrade; the registry itself may
+ * only ever gain the current manager incarnation's entry (expectedRegistry).
+ * With appends the transition must be administrative and exactly the fold of
+ * the appended records — over `before` itself for the single-record offline
+ * path, or over a caller-supplied `base` (the validated ordinary part of a
+ * composed commit) for the automatic recovery commit (design D3).
+ * @param {any} before @param {any} after @param {boolean} [administrative]
+ * @param {any} [base]
+ */
+export function validateAdminTransition(before, after, administrative = false, base = undefined) {
   const old = before.adminRecoveries ?? [], next = after.adminRecoveries ?? []
   requireThat(next.length >= old.length && old.every((row, i) => canonical(row) === canonical(next[i])), 'append-only ledger')
   if (next.length === old.length) {
-    requireThat(before.version === after.version, 'version transition requires explicit override')
+    if (before.version === after.version) {
+      requireThat(after.version !== 6 || canonical(after.incarnations) === canonical(expectedRegistry(before, after)), 'incarnation registry')
+      return
+    }
+    requireThat(isRegistryUpgrade(before, after), 'version transition requires explicit override')
     return
   }
-  requireThat(administrative && next.length === old.length + 1, 'explicit administrative operation required')
-  requireThat(canonical(after) === canonical(administrativeState(before, next.at(-1))), 'coherent authority transition')
+  requireThat(administrative, 'explicit administrative operation required')
+  if (base === undefined) {
+    requireThat(next.length === old.length + 1, 'explicit administrative operation required')
+    requireThat(canonical(after) === canonical(administrativeState(before, next.at(-1))), 'coherent authority transition')
+    return
+  }
+  requireThat(canonical(base.adminRecoveries ?? []) === canonical(old), 'administrative base ledger')
+  let expected = base
+  for (const record of next.slice(old.length)) expected = administrativeState(expected, record)
+  requireThat(canonical(after) === canonical(expected), 'coherent authority transition')
 }

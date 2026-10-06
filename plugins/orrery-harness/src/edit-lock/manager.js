@@ -1,49 +1,152 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { createEditLockState } from './state.js'
 import { bindRequest } from './request-binding.js'
 import { lookupOperation } from './operation-history.js'
 import { canonicalRequestData } from './request-data.js'
 import { admitMutation as admitHistory, publicationCandidate } from './admission.js'
-import { dispositionFor, revokedOwner } from './admin-ledger.js'
+import { administrativeState, AUTOMATIC_RECOVERY_ACTOR, digest, dispositionFor, LATE_WRITER_RISK, revokedOwner } from './admin-ledger.js'
+import { incarnationProcess, withIncarnation } from './incarnations.js'
 
 /**
  * Unmounted trusted manager core. Caller exclusively owns the store lifecycle;
  * this factory does not elect a singleton or expose any file publication path.
  * This fresh-store factory is separate from the trusted recovery entrypoint.
- * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string}} options
+ * The optional process identity (shared Liveness adapter, design D2) is
+ * registered in the durable image with the first committed write.
+ * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string, processIdentity?: import('./incarnations.js').ProcessIdentity|null}} options
  */
-export function createEditLockManager({ store, managerIncarnation }) {
+export function createEditLockManager({ store, managerIncarnation, processIdentity = null }) {
   const confirmed = store.snapshot()
   if (confirmed.revision !== 0 || confirmed.state.managerIncarnation !== null) {
     throw new Error('fresh store required; use trusted recovery entrypoint')
   }
-  return managerCore(store, createEditLockState(managerIncarnation))
+  return managerCore(store, createEditLockState(managerIncarnation), { processIdentity })
+}
+
+/**
+ * Design D3 eligibility for one recovery open: an owner is settled only when
+ * it is not already revoked, every one of its unresolved (unknown) operations
+ * originates from an incarnation whose recorded process identity differs from
+ * the recovering process, AND the shared Liveness adapter proves that process
+ * dead. Null identities and same-process remount incarnations never qualify.
+ * The records reuse the v5 adminRecoveries shape; the actor marks them
+ * automatic. @param {any} previous @param {any} base
+ * @param {{liveness: import('../capabilities/store/liveness.js').Liveness, root: string,
+ *   processIdentity: import('./incarnations.js').ProcessIdentity, now: () => number}} options
+ */
+async function automaticSettlementRecords(previous, base, { liveness, root, processIdentity, now }) {
+  /** @type {Map<string, any[]>} */
+  const unknownByOwner = new Map()
+  for (const operation of base.operations) {
+    if (operation.phase !== 'unknown') continue
+    const ops = unknownByOwner.get(operation.sessionId) ?? []
+    ops.push(operation)
+    unknownByOwner.set(operation.sessionId, ops)
+  }
+  /** @type {any[]} */
+  const records = []
+  for (const [owner, ops] of unknownByOwner) {
+    if (revokedOwner(base, owner)) continue
+    const session = base.sessions.find(s => s.sessionId === owner)
+    if (!session?.interrupted) continue
+    let eligible = true
+    for (const operation of ops) {
+      const process = incarnationProcess(base, operation.origin.managerIncarnation)
+      if (!process) { eligible = false; break }
+      if (process.pid === processIdentity.pid && process.bootNonce === processIdentity.bootNonce) { eligible = false; break }
+      const state = await liveness.state({ pid: process.pid, host: process.host, startIdentity: { osStart: process.osStart, bootNonce: process.bootNonce } })
+      if (state !== 'dead') { eligible = false; break }
+    }
+    if (!eligible) continue
+    const recoveryId = `automatic-${randomUUID()}`
+    const operationIds = ops.map(operation => operation.operationId).sort()
+    records.push({
+      recoveryId, root, owner,
+      expectedRevision: previous.revision, committedRevision: previous.revision + 1,
+      at: now(), actor: AUTOMATIC_RECOVERY_ACTOR,
+      reason: 'Every unresolved publication of this owner originated in a manager incarnation whose process is proven dead (pid and start identity), so that lifetime has no live writer; settled automatically on recovery open.',
+      risk: LATE_WRITER_RISK,
+      confirmation: digest({ root, owner, expectedRevision: previous.revision, operationIds, risk: LATE_WRITER_RISK }),
+      // Filled from the recovered pre-image bytes before the commit.
+      backup: { file: `admin-backup-${digest([root, recoveryId])}.json`, sha256: '', bytes: 0 },
+      operations: ops.map(operation => ({ operationId: operation.operationId, sha256: digest(operation) })),
+      releasedLocks: base.locks.filter((/** @param {any} lock */ lock) => lock.owner === owner),
+      revokedEpoch: session.executionEpoch + 1,
+    })
+  }
+  return records
 }
 
 /** Trusted lifecycle only: caller must establish exclusive ownership and old
  * publisher quiescence before opening the store. No IPC or automatic election.
- * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string}} options */
-export async function recoverEditLockManager({ store, managerIncarnation }) {
+ * When the shared Liveness adapter, the domain root and a backup writer are
+ * supplied, unknown-phase publications of provably dead incarnation processes
+ * are administratively settled in the SAME durable commit as the recovery
+ * (design D3): one snapshot commit, one ledger record per settled owner, the
+ * unknown outcomes and history preserved.
+ * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string,
+ *   processIdentity?: import('./incarnations.js').ProcessIdentity|null,
+ *   liveness?: import('../capabilities/store/liveness.js').Liveness|null, root?: string|null,
+ *   writeBackup?: ((file: string, bytes: Buffer) => Promise<void>)|null, now?: () => number,
+ *   onAutomaticRecovery?: (info: {records: any[], revision: number}) => void}} options */
+export async function recoverEditLockManager({ store, managerIncarnation, processIdentity = null, liveness = null, root = null, writeBackup = null, now = Date.now, onAutomaticRecovery = undefined }) {
   const previous = store.snapshot()
   if (!previous.state.managerIncarnation) throw new Error('historical store required')
-  const kernel = createEditLockState(managerIncarnation)
-  const draft = kernel.authority.beginRecovery({ ...previous.state, managerIncarnation: previous.state.managerIncarnation })
+  // Phase 1: the ordinary recovery mapping (staging kernel, never installed).
+  const staging = createEditLockState(managerIncarnation)
+  const staged = staging.authority.beginRecovery({ ...previous.state, managerIncarnation: previous.state.managerIncarnation })
+  const mapped = staging.authority.checkpoint(staged)
+  staging.authority.discard(staged)
   const operations = previous.state.operations.map(operation => {
     if (operation.phase === 'prepared') return { ...operation, phase: 'not-published',
       outcome: { kind: 'not-published', reason: 'rejected-before-dispatch' } }
     if (operation.phase === 'publishing') return { ...operation, phase: 'unknown', outcome: { kind: 'unknown' } }
     return operation
   })
-  await store.record({ expectedRevision: previous.revision,
-    nextState: { ...previous.state, ...kernel.authority.checkpoint(draft), operations } })
+  let base = withIncarnation({ ...previous.state, ...mapped, operations }, managerIncarnation, processIdentity, previous.state.managerIncarnation)
+  if (base.version === 6 && !(base.incarnations ?? []).some(entry => entry.incarnation === managerIncarnation)) {
+    // An identity-less recovery of a v6 image still registers the new
+    // incarnation — with a null identity, so it can never be auto-settled —
+    // because the registry must cover every incarnation the image references.
+    base = { ...base, incarnations: [...base.incarnations, { incarnation: managerIncarnation, process: null }] }
+  }
+  const settle = liveness !== null && root !== null && writeBackup !== null && processIdentity !== null
+  const records = settle ? await automaticSettlementRecords(previous, base, { liveness, root, processIdentity, now }) : []
+  if (records.length > 0) {
+    // Every record backs up the same recovered pre-image; the backup fields
+    // are part of the immutable ledger row, so they are filled BEFORE the
+    // administrative fold builds the committed state.
+    const bytes = store.recoveredBytes()
+    if (!bytes) throw new Error('automatic settlement requires the recovered pre-image bytes')
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    for (const record of records) record.backup = { file: record.backup.file, sha256, bytes: bytes.length }
+    for (const record of records) await writeBackup(record.backup.file, bytes)
+  }
+  const nextState = records.reduce((state, record) => administrativeState(state, record), base)
+  // Phase 2: the installed kernel hydrates from the FINAL kernel fields
+  // (post-settlement), so the in-memory authority matches the durable image.
+  const kernel = createEditLockState(managerIncarnation)
+  const draft = kernel.authority.beginRecovery({ ...nextState, managerIncarnation: previous.state.managerIncarnation })
+  if (records.length === 0) {
+    await store.record({ expectedRevision: previous.revision, nextState })
+  } else {
+    await store.recordAdministrativeRecovery({ expectedRevision: previous.revision, nextState, base })
+  }
   kernel.authority.install(draft)
-  return managerCore(store, kernel)
+  if (records.length > 0) onAutomaticRecovery?.({ records: structuredClone(records), revision: previous.revision + 1 })
+  return managerCore(store, kernel, { processIdentity })
 }
 
 /** @param {Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>} store
- * @param {ReturnType<typeof createEditLockState>} kernel */
-function managerCore(store, kernel) {
+ * @param {ReturnType<typeof createEditLockState>} kernel
+ * @param {{processIdentity?: import('./incarnations.js').ProcessIdentity|null}} [options] */
+function managerCore(store, kernel, { processIdentity = null } = {}) {
   const { operations, authority } = kernel
   const managerIncarnation = operations.status().managerIncarnation
+  // Every durable write of an identity-aware manager carries the incarnation
+  // registry (design D2); a no-op once this incarnation is registered.
+  /** @param {any} state @returns {any} */
+  const withIdentity = processIdentity ? state => withIncarnation(state, managerIncarnation, processIdentity) : state => state
   let confirmed = store.snapshot()
   // Only validated administrative dispositions lift a historical fence. The
   // immutable history still participates in operation-ID lookup before admission.
@@ -97,7 +200,7 @@ function managerCore(store, kernel) {
       try {
         const nextState = { ...confirmed.state, ...authority.checkpoint(draft) }
         if (patch) Object.assign(nextState, patch(nextState))
-        const saved = await store.record({ expectedRevision: confirmed.revision, nextState })
+        const saved = await store.record({ expectedRevision: confirmed.revision, nextState: withIdentity(nextState) })
         authority.install(draft)
         confirmed = saved
         return result
@@ -146,7 +249,7 @@ function managerCore(store, kernel) {
           binding, phase: 'prepared', fence: null, outcome: null, closeouts: [] }
         try {
           confirmed = await store.record({ expectedRevision: confirmed.revision,
-            nextState: { ...confirmed.state, operations: [...confirmed.state.operations, operation] } })
+            nextState: withIdentity({ ...confirmed.state, operations: [...confirmed.state.operations, operation] }) })
         } catch (error) { poison = error; throw error }
         // A cancellation during durability must not deliver a ready submission.
         if (cancelled.has(captured.sessionId)) {
@@ -154,7 +257,7 @@ function managerCore(store, kernel) {
             outcome: { kind: /** @type {const} */ ('not-published'), reason: /** @type {const} */ ('cancelled-before-dispatch') } }
           try {
             confirmed = await store.record({ expectedRevision: confirmed.revision,
-              nextState: { ...confirmed.state, operations: confirmed.state.operations.map(o => o === confirmed.state.operations.at(-1) ? rejected : o) } })
+              nextState: withIdentity({ ...confirmed.state, operations: confirmed.state.operations.map(o => o === confirmed.state.operations.at(-1) ? rejected : o) }) })
           } catch (error) { poison = error; throw error }
           throw new Error('session cancelled during preparation')
         }
@@ -183,10 +286,10 @@ function managerCore(store, kernel) {
          * @param {ReturnType<typeof authority.begin>} [draft] */
         const save = async (operation, draft) => {
           try {
-            const saved = await store.record({ expectedRevision: confirmed.revision, nextState: {
+            const saved = await store.record({ expectedRevision: confirmed.revision, nextState: withIdentity({
               ...confirmed.state, ...(draft ? authority.checkpoint(draft) : {}),
               operations: confirmed.state.operations.map(o => o.sessionId === key.sessionId && o.operationId === key.operationId ? operation : o),
-            } })
+            }) })
             if (draft) authority.install(draft)
             confirmed = saved
           } catch (error) { poison = error; throw error }
@@ -212,8 +315,8 @@ function managerCore(store, kernel) {
         let attempt
         try {
           attempt = await store.beginPublication({ expectedRevision: confirmed.revision,
-            nextState: { ...confirmed.state, operations: confirmed.state.operations.map(o =>
-              o.sessionId === key.sessionId && o.operationId === key.operationId ? publishing : o) } }, key, hooks.publish)
+            nextState: withIdentity({ ...confirmed.state, operations: confirmed.state.operations.map(o =>
+              o.sessionId === key.sessionId && o.operationId === key.operationId ? publishing : o) }) }, key, hooks.publish)
           confirmed = store.snapshot()
         } catch (error) { poison = error; throw error }
         try { validate() } catch (error) {

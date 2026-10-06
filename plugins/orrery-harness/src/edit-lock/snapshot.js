@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto'
 import { validateOperations } from './operation-history.js'
 import { validateAdminLedger } from './admin-ledger.js'
+import { validateIncarnations } from './incarnations.js'
 
 /**
  * @typedef {import('./store.js').AuthorityImage} AuthorityImage
@@ -67,8 +68,8 @@ export function upgradeFromV3(state) {
 
 /** @param {AuthorityImage} state */
 export function validateImage(state) {
-  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'holds', 'operations', ...(state.version === 5 ? ['adminRecoveries'] : [])])
-  valid(state.version === 4 || state.version === 5, `image version ${state.version}; expected 4 or 5`)
+  shape(state, ['version', 'managerIncarnation', 'sessions', 'generations', 'locks', 'issuedRequests', 'recovery', 'holds', 'operations', ...(state.version === 5 ? ['adminRecoveries'] : []), ...(state.version === 6 ? ['adminRecoveries', 'incarnations'] : [])])
+  valid(state.version === 4 || state.version === 5 || state.version === 6, `image version ${state.version}; expected 4, 5 or 6`)
   valid(state.managerIncarnation === null || id(state.managerIncarnation), 'incarnation')
   for (const collection of [state.sessions, state.generations, state.locks, state.issuedRequests, state.recovery, state.holds]) {
     valid(Array.isArray(collection) && Object.getPrototypeOf(collection) === Array.prototype, 'collection')
@@ -138,6 +139,7 @@ export function validateImage(state) {
   }
   validateAdminLedger(state)
   validateOperations(state)
+  if (state.version === 6) validateIncarnations(state)
 }
 
 /**
@@ -158,7 +160,7 @@ export function parseSnapshot(bytes, domainId) {
   shape(envelope, ['payload', 'checksum'])
   const payload = envelope.payload
   shape(payload, ['version', 'domainId', 'revision', 'state'])
-  valid(typeof payload.version === 'number' && [2, 3, 4, 5].includes(payload.version), `snapshot version ${payload.version}; supported: 2, 3, 4, 5; recover with a newer build or restore a pre-upgrade snapshot`)
+  valid(typeof payload.version === 'number' && [2, 3, 4, 5, 6].includes(payload.version), `snapshot version ${payload.version}; supported: 2, 3, 4, 5, 6; recover with a newer build or restore a pre-upgrade snapshot`)
   valid(payload.domainId === domainId, 'snapshot domain')
   valid(payload.state !== null && typeof payload.state === 'object' && 'version' in payload.state && payload.state.version === payload.version, 'snapshot/image version mismatch')
   valid(integer(payload.revision), 'snapshot revision')

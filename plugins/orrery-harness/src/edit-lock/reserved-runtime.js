@@ -1,5 +1,6 @@
 import { reservePublisher } from './reservation.js'
 import { openEditLockRuntime } from './runtime.js'
+import { createLiveness } from '../capabilities/store/liveness.js'
 
 /** Open only after exclusive reservation. A failure to OPEN releases it (nothing
  * was published); a crash or failed drain after opening retains it for
@@ -8,11 +9,17 @@ import { openEditLockRuntime } from './runtime.js'
  * @param {Omit<Parameters<typeof openEditLockRuntime>[0], 'assertExclusive'|'mode'> & {mode: 'create'|'recover'|(() => 'create'|'recover'),
  *   reservation?: Parameters<typeof reservePublisher>[1]}} options */
 export async function openReservedEditLockRuntime(options) {
-  const reservation = await reservePublisher(options.directory, options.reservation)
+  // One Liveness adapter per domain open (design D1/D2): the reservation
+  // owner document, the incarnation process identity and the dead-process
+  // settlement probe all read the same process facts.
+  const liveness = options.reservation?.liveness ?? createLiveness()
+  const reservation = await reservePublisher(options.directory, { ...options.reservation, liveness })
   let runtime
   try {
     const mode = typeof options.mode === 'function' ? options.mode() : options.mode
-    runtime = await openEditLockRuntime({...options, mode, assertExclusive:reservation.assertExclusive})
+    const startIdentity = await liveness.identity()
+    const processIdentity = { pid: liveness.pid, host: liveness.host, osStart: startIdentity.osStart, bootNonce: startIdentity.bootNonce }
+    runtime = await openEditLockRuntime({...options, mode, assertExclusive:reservation.assertExclusive, processIdentity, liveness})
   } catch (error) {
     // The runtime never opened, so this process published nothing under the
     // reservation: it is provably quiescent and must not strand its own claim.
@@ -26,6 +33,7 @@ export async function openReservedEditLockRuntime(options) {
   return Object.freeze({
     control: runtime.control,
     requests: runtime.requests,
+    automaticRecovery: runtime.automaticRecovery ?? null,
     close() {
       if (!closing) closing = (async () => {
         await runtime.close()

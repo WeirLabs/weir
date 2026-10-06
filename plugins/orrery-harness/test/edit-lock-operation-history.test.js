@@ -195,13 +195,13 @@ test('legacy envelopes cannot smuggle bound closeouts and future versions fail c
   op.fence = { kind: 'subtree', ancestor: '/workspace', basis: 'observed-ancestor' }
   op.closeouts = [{ kind: 'abandoned-unknown', assertionId: 'forged', binding: {} }]
   state.operations.push(op)
-  for (const version of [2, 3, 6]) {
+  for (const version of [2, 3, 7]) {
     const legacy = { ...state, version }
     if (version === 2) delete legacy.holds
     const payload = { version, domainId: 'd', revision: 1, state: legacy }
     const bytes = canonical({ payload, checksum: createHash('sha256').update(canonical(payload)).digest('hex') })
     await writeFile(join(directory, 'snapshot.json'), bytes)
-    await assert.rejects(openEditLockStore({ directory, domainId: 'd', mode: 'recover' }), version === 6 ? /supported: 2, 3, 4, 5/ : /schema keys/)
+    await assert.rejects(openEditLockStore({ directory, domainId: 'd', mode: 'recover' }), version === 7 ? /supported: 2, 3, 4, 5, 6/ : /schema keys/)
     assert.equal(await readFile(join(directory, 'snapshot.json'), 'utf8'), bytes)
   }
 })
