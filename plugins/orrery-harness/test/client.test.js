@@ -909,19 +909,28 @@ describe('orrery settings client half', () => {
     expect(contribution.package).toBe('orrery-harness')
     expect(contribution.descriptors.map((descriptor) => descriptor.method)).toEqual(['receipt', 'list', 'conditions'])
     for (const method of ['receipt', 'list', 'conditions']) {
-      // The parameter codec must be mode 'strict': the client-side $mount
-      // validation rejects any other parameter codec mode, and the codec is
+      // The parameter codec must be a COMPLETE strict codec: the gateway
+      // client requires mode 'strict' for parameters, and the remotes
+      // registry's validateCodec requires a nonempty typeSymbol plus a
+      // create() factory — a bare { mode: 'strict' } mount rejects with a
+      // TypeError. The codec is
       // never invoked client-side (raw JSON rides the wire either way, exactly
       // what the host contribution's src-json envelope accepts).
-      expect(contribution.descriptors.find((descriptor) => descriptor.method === method)).toEqual({
+      const descriptor = contribution.descriptors.find((candidate) => candidate.method === method)
+      const codec = descriptor?.parameters?.[0]?.codec
+      expect(descriptor).toEqual({
         id: `orrery-harness#orreryCapabilities/${method}`,
         service: 'orreryCapabilityRead',
         namespace: 'orreryCapabilities',
         method,
         invocation: { kind: 'direct' },
-        parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'strict' } }],
+        parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec }],
         result: { mode: 'src-json' },
       })
+      expect(codec?.mode).toBe('strict')
+      expect(codec?.typeSymbol).toBe('orrery-harness/types#CapabilitySessionId')
+      expect(typeof codec?.create).toBe('function')
+      expect(codec.create().parse('session-1')).toBe('session-1')
     }
 
     // once the mount settles, the Badge read path travels through the mounted

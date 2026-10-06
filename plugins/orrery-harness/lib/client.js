@@ -1670,14 +1670,17 @@ window.__ModuleLoader__.load({
 			// its own ctx.effect internally), so we deliberately do NOT wire our
 			// own ctx.effect disposal here; the reference is kept for tests.
 			//
-			// Descriptor note: the parameter codec must be mode "strict" — the
-			// client-side $mount validation rejects any other parameter codec mode
-			// ("client api: generated Remote <ns>/<method> field ... has no strict
-			// codec"). The codec is never invoked client-side (direct invocations
-			// pass raw JSON both ways), so this is wire-identical to the host
-			// contribution's src-json envelope, which validates the argument name
-			// only. The result needs no decoder and stays src-json (unvalidated on
-			// the client, raw pass-through either way).
+			// Descriptor note: client parameter codecs sit behind TWO gates —
+			// the gateway client's requireStrictInputs demands mode "strict"
+			// (dsh-api-gateway client), and the remotes registry's validateCodec
+			// demands every strict codec carry a nonempty typeSymbol plus a
+			// create() factory (dsh-typert-registry client). A bare
+			// { mode: "strict" } passes the first and crashes the second
+			// (TypeError on typeSymbol, caught as a silent mount rejection).
+			// The trivial parse-passthrough schema is never invoked client-side
+			// (direct invocations pass raw JSON both ways; results decode only
+			// when result.mode is "strict" with a decode hook), so the wire
+			// stays identical to the host contribution's src-json envelope.
 			let capabilityReadUnmount = null;
 			const capabilityReadMount = (() => {
 				try {
@@ -1692,7 +1695,11 @@ window.__ModuleLoader__.load({
 							namespace: "orreryCapabilities",
 							method,
 							invocation: { kind: "direct" },
-							parameters: [{ name: "sessionId", wire: "sessionId", source: "json", codec: { mode: "strict" } }],
+							parameters: [{ name: "sessionId", wire: "sessionId", source: "json", codec: {
+							mode: "strict",
+							typeSymbol: "orrery-harness/types#CapabilitySessionId",
+							create: () => ({ parse: (value) => value })
+						} }],
 							result: { mode: "src-json" }
 						}))
 					})).then((unmount) => {
