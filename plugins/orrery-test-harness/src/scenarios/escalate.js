@@ -1,7 +1,7 @@
 // Scenario: escalate — a deep child returns ESCALATE and is respawned at
 // deep-plus with the findings. Migrated from mock-llm.js decideEscalate /
 // run.mjs assertEscalate (D1/D2).
-import { lastOfRole, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 
 const id = 'escalate'
 const prompt = 'escalate-probe'
@@ -13,15 +13,17 @@ function decide(options, obs) {
     if (history.includes('escalation_findings')) return textChunks('escalated child settled properly')
     return textChunks('ESCALATE: deep-plus\nfirst pass hit a boundary')
   }
-  const lastRole = options.messages?.at(-1)?.role
-  if (lastRole === 'tool') {
-    const toolText = lastOfRole(options, 'tool')
-    if (toolText.includes('escalated to deep-plus')) return textChunks('parent observed the escalation respawn')
-    return textChunks('unhandled escalate tool turn')
-  }
   if (history.includes('escalate-probe') && !history.includes('ESCALATE_CHILD')) {
     return toolCallChunks('delegate', { category: 'deep', prompt: 'ESCALATE_CHILD\nTASK: probe escalation\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' })
   }
+  // Parent, post-delegation: observe the escalation respawn the delegate
+  // result announced. History-marker driven (design D1), never lastRole — a
+  // runtime-context snapshot interleaving as a user message between the tool
+  // result and the next request misaligned the old gate and ended the turn on
+  // the unhandled fallback without observing the respawn.
+  const verdict = waitForMarker(history, 'escalated to deep-plus')
+  if (verdict.state === 'advance') return textChunks('parent observed the escalation respawn')
+  if (verdict.state === 'wait') return verdict.chunks
   return textChunks('unhandled escalate turn')
 }
 

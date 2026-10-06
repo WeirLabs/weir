@@ -5,7 +5,7 @@
 // group / three-item batches carrying an unselected skill each reject the
 // whole batch with zero spawns — and the rejected supervision group's name
 // is never sealed, so the SAME name spawns cleanly right after.
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { lastOfRole, textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 
 const id = 'delegate-preflight'
 const prompt = 'preflight-probe'
@@ -63,7 +63,12 @@ function decide(options, obs) {
     })
   }
   if (!(history.includes('group member alpha done') && history.includes('group member beta done'))) {
-    return shellCall('wait', { seconds: 1 }, 'Let supervised children settle')
+    // Bounded marker wait (design D1): keep the turn alive until BOTH group
+    // members settle — never an unbounded hand-rolled sleep loop, and never a
+    // last-role gate an interleaved snapshot could misalign.
+    const verdict = waitForMarker(history, ['group member alpha done', 'group member beta done'])
+    if (verdict.state === 'wait') return verdict.chunks
+    return textChunks('unhandled preflight turn')
   }
   if (!history.includes('FAIL_BATCH')) {
     return toolCallChunks('delegate', { tasks: [
@@ -72,7 +77,10 @@ function decide(options, obs) {
       { category: 'quick', prompt: 'FAIL_BATCH\nTASK: must never spawn\nDELIVERABLE: nothing\nSCOPE: nothing\nVERIFY: nothing\nSTOP WHEN: never', load_skills: ['unselected-skill'] },
     ] })
   }
-  if (lastTool.includes('zero spawned')) {
+  // The FAIL_BATCH rejection rode the tool result into history (tool results
+  // always precede the next request). History-driven, never lastOfRole: an
+  // interleaved runtime-context user message must not skip the observation.
+  if (history.includes('zero spawned')) {
     return textChunks('parent observed preflight gates')
   }
   return textChunks('unhandled preflight turn')
