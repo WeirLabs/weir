@@ -1689,7 +1689,15 @@ window.__ModuleLoader__.load({
 				// bare payload; a failing call resolves { ok: false, error }
 				// rather than rejecting (the gateway folds carrier failures).
 				if (result?.ok === true && result.value != null) return result.value;
-				capabilityReadWarn("call-failed", method, result?.error ?? result ?? null);
+				// unknown-session at cold open is the DOCUMENTED convergence shape
+				// (先空后收敛): the Badge may read before the session's agent is
+				// registered; the agent-preset/selected frame refetches and
+				// converges. Never warn for it — warns are for failures that
+				// would otherwise stay invisible.
+				const failure = result?.error ?? result ?? null;
+				if (!/unknown session/.test(String(failure?.message ?? failure ?? ""))) {
+					capabilityReadWarn("call-failed", method, failure);
+				}
 				return fallback;
 			};
 			// The presets & workspace-default view is its own chunk, pulled only
