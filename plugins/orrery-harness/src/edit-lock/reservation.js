@@ -1,5 +1,5 @@
 /// <reference path="../capabilities/store/checked-contract.d.ts" />
-import { mkdirSync, realpathSync, lstatSync, rmdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, fsyncSync, closeSync, constants } from 'node:fs'
+import { mkdirSync, realpathSync, lstatSync, rmdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, fsyncSync, closeSync, constants } from 'node:fs'
 import { dirname, basename, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createLiveness } from '../capabilities/store/liveness.js'
@@ -210,8 +210,14 @@ export async function reservePublisher(directory, options = {}) {
       clearInterval(renewal)
       assertExclusive()
       // The resolved absolute target and original inode were checked above.
-      // Never recursive: unexpected contents retain the reservation.
-      unlinkSync(join(path, OWNER_FILE))
+      // Never recursive: unexpected contents retain the reservation — intact,
+      // owner document included, so a retained reservation stays reclaimable
+      // under the same death-proof rule as a crashed one. Only our own
+      // document (and its transient temp) are ever removed here.
+      const contents = readdirSync(path).filter(entry => entry !== OWNER_FILE && entry !== `.owner-${doc.ownerToken}.tmp`)
+      if (contents.length > 0) throw new Error(`publisher reservation has unexpected contents: ${contents[0]}`)
+      try { unlinkSync(join(path, `.owner-${doc.ownerToken}.tmp`)) } catch (error) { if (!hasCode(error, 'ENOENT')) throw error }
+      try { unlinkSync(join(path, OWNER_FILE)) } catch (error) { if (!hasCode(error, 'ENOENT')) throw error }
       rmdirSync(path)
       released = true
     },
