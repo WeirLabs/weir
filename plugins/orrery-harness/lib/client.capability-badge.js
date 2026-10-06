@@ -23,14 +23,22 @@ window.__ModuleLoader__.load({
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		// Focus ring and hover paint without stylesheets (inline-style chunk
 		// discipline): the handlers write to the event target's inline style and
-		// clear on the way out — no hooks, no structure change.
+		// clear on the way out — no hooks, no structure change. The ring follows
+		// :focus-visible semantics: mouse/touch activation suppresses it (a
+		// pointerdown flags the modality and the focus that follows leaves the
+		// button unpainted); keyboard focus paints it.
 		const paint = (event, styles) => {
 			const el = event?.currentTarget;
 			if (el && el.style) Object.assign(el.style, styles);
 		};
+		let pointerDriven = false;
 		const ring = {
-			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }),
-			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
+			onPointerDown: () => { pointerDriven = true; },
+			onFocus: (event) => {
+				if (pointerDriven) { pointerDriven = false; return; }
+				paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" });
+			},
+			onBlur: (event) => { pointerDriven = false; paint(event, { outline: "none", outlineOffset: "" }); },
 		};
 		const S = {
 			root: { position: "relative", display: "inline-flex" },

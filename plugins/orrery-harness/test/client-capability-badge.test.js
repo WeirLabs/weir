@@ -204,8 +204,24 @@ describe('client.capability-badge chunk', () => {
     // stylesheets, no extra hooks): the toggle carries them.
     expect(typeof button.onFocus).toBe('function')
     expect(typeof button.onBlur).toBe('function')
+    expect(typeof button.onPointerDown).toBe('function')
     expect(typeof button.onMouseEnter).toBe('function')
     expect(typeof button.onMouseLeave).toBe('function')
+    // The ring follows :focus-visible semantics: keyboard focus paints it...
+    const keyboardEl = { style: {} }
+    button.onFocus({ currentTarget: keyboardEl })
+    expect(keyboardEl.style.outline).toContain('2px solid')
+    // ...but pointer activation suppresses it — a mouse click focuses the
+    // button too and must not leave the outline painted.
+    const pointerEl = { style: {} }
+    button.onPointerDown({})
+    button.onFocus({ currentTarget: pointerEl })
+    expect(pointerEl.style.outline).toBeUndefined()
+    // onBlur resets the modality: the next keyboard focus paints again.
+    button.onBlur({ currentTarget: pointerEl })
+    const againEl = { style: {} }
+    button.onFocus({ currentTarget: againEl })
+    expect(againEl.style.outline).toContain('2px solid')
     // The affordance transitions stay inside the 120-160ms hover/selection budget.
     expect(button.style.transition).toContain('120ms')
   })
