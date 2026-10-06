@@ -33,6 +33,7 @@ import delegatePreflight from './delegate-preflight.js'
 import mcpGateway from './mcp-gateway.js'
 import presetDefaults from './preset-defaults.js'
 import capabilityPresetsSurface from './capability-presets-surface.js'
+import resumeIncarnation from './resume-incarnation.js'
 import capabilityRemote from './capability-remote.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
@@ -50,6 +51,7 @@ SCENARIOS.push(delegatePreflight)
 SCENARIOS.push(mcpGateway)
 SCENARIOS.push(presetDefaults)
 SCENARIOS.push(capabilityPresetsSurface)
+SCENARIOS.push(resumeIncarnation)
 SCENARIOS.push(worktreeWatch)
 SCENARIOS.push(notifyWorktree)
 SCENARIOS.push(childPrompt)

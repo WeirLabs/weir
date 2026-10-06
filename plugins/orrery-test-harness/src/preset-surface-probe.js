@@ -42,7 +42,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['saveTravel', 'cap', 'presetsSummary', 'receiptSummary', 'exportPack', 'craftRename', 'importPack', 'fileState', 'mutateAppend'] },
+        op: { type: 'string', enum: ['seedParent', 'corruptRecord', 'agentCreated', 'incarnationView', 'saveTravel', 'cap', 'presetsSummary', 'receiptSummary', 'exportPack', 'craftRename', 'importPack', 'fileState', 'mutateAppend'] },
         line: { type: 'string' },
         scope: { type: 'string' },
         presetId: { type: 'string' },
@@ -77,6 +77,75 @@ function apply(ctx, config = {}) {
           return { kind: value?.kind ?? null, payload }
         }
 
+        if (args.op === 'seedParent') {
+          // Commit the accepted record DIRECTLY through the real store: the
+          // six-step Apply engine rejects synthetic sessions at step 1
+          // (unauthenticated) by design — a hand-built incarnation id is not
+          // a real host session. The record layout is exactly what the
+          // engine's durable write produces.
+          const face = selectionPlugin.skillSelectionFor(ctx)
+          if (!face) throw new Error('skill selection plugin not mounted')
+          const inventoryResult = await face.inventory({ cwd: WS, scope: { session: { id: sessionId } } })
+          const identities = (Array.isArray(args.names) ? args.names : []).map(name => inventoryResult.candidates.find(c => c.name === name && c.status === 'parsed')?.identity).filter(Boolean)
+          if (identities.length !== (Array.isArray(args.names) ? args.names.length : 0)) throw new Error('parent fixture identities missing from inventory')
+          const store = (await import('../../orrery-harness/src/capabilities/store/store.js')).openCapabilityStore({ profileContext: ctx.get('profileContext') })
+          const committed = await store.commit({ kind: 'selection', scope: 'session', sessionId: String(args.sessionId) }, 0, () => ({ skills: identities, mcpServers: [] }))
+          report.apply = { status: committed?.status ?? null, revision: committed?.revision ?? null }
+          report.completed = report.apply.status === 'committed'
+          if (!report.completed) report.error = `seedParent commit failed: ${JSON.stringify(report.apply).slice(0, 240)}`
+          return report
+        }
+        if (args.op === 'corruptRecord') {
+          // Write a torn selection unit for the named session: snapshotFor
+          // classifies the parent as blocked-unreadable, exercising the D1
+          // capture-failure path (root rule: markBlocked, never throw).
+          const dir = join(HOME, 'orrery', 'profiles', 'orrery-it', 'capabilities', 'sessions', String(args.sessionId))
+          mkdirSync(dir, { recursive: true })
+          writeFileSync(join(dir, 'selection.json'), '{"schemaVersion":1,"revision":1,"payload":CORRUPT')
+          report.completed = true
+          return report
+        }
+        if (args.op === 'agentCreated') {
+          const face = selectionPlugin.skillSelectionFor(ctx)
+          if (!face) throw new Error('skill selection plugin not mounted')
+          const incId = String(args.sessionId)
+          let thrown = null
+          try {
+            face.lifecycle.agentCreated({ agent: { session: { id: incId, header: { cwd: WS, delegationDepth: 0, ...(typeof args.parentSession === 'string' ? { parentSession: args.parentSession } : {}) } } } })
+          } catch (cause) {
+            thrown = cause instanceof Error ? cause.message : String(cause)
+          }
+          const inherited = await face.lifecycle ? (async () => {
+            const store = (await import('../../orrery-harness/src/capabilities/store/store.js')).openCapabilityStore({ profileContext: ctx.get('profileContext') })
+            return store.read({ kind: 'inherited', sessionId: incId })
+          })() : { kind: 'unavailable' }
+          const inheritedRecord = await inherited
+          report.agentCreated = {
+            thrown,
+            inherited: inheritedRecord.kind === 'ok'
+              ? { kind: 'ok', skills: (inheritedRecord.payload?.skills ?? []).map(identity => identity?.name ?? null), origin: inheritedRecord.payload?.origin ?? null }
+              : { kind: inheritedRecord.kind },
+            blocked: face.lifecycle.snapshotFor(incId)?.state === 'blocked',
+          }
+          report.completed = true
+          return report
+        }
+        if (args.op === 'incarnationView') {
+          const face = selectionPlugin.skillSelectionFor(ctx)
+          if (!face) throw new Error('skill selection plugin not mounted')
+          const view = { cwd: WS, scope: { session: { id: String(args.sessionId), header: { cwd: WS, delegationDepth: 0, ...(typeof args.parentSession === 'string' ? { parentSession: args.parentSession } : {}) } } } }
+          // Force the lazy collect FIRST (the list drives readSelection), then
+          // read the status — the provider only carries the classified error
+          // after a collect has run.
+          const skills = await ctx.skills.list(view).catch(cause => ({ error: cause instanceof Error ? cause.message : String(cause) }))
+          const providerView = face.status(view)
+          report.view = {
+            status: providerView?.error ? { error: true, reason: providerView.reason ?? null } : { error: false },
+            selected: Array.isArray(skills) ? skills.map(skill => skill.name).sort() : skills,
+          }
+          report.completed = true
+          return report
+        }
         if (args.op === 'saveTravel') {
           const selection = selectionPlugin.skillSelectionFor(ctx)
           if (!selection) throw new Error('skill selection plugin not mounted')

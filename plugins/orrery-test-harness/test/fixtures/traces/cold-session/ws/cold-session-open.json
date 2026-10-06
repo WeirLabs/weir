@@ -17,7 +17,7 @@
             "type": "emit",
             "event": "agent-preset/selected",
             "args": [
-              "efc1f9e8-75d5-4e55-b1b8-da88bbd40b7d",
+              "6abfbcc3-ec2c-4eae-8761-721be728b04f",
               "orrery-it-cold"
             ],
             "via": [
@@ -25,7 +25,7 @@
               "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
               "at Array.map (<anonymous>)",
               "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-              "at emit (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:179:32)",
+              "at emit (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:183:32)",
               "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
               "at Object.agentCreated (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:76:16)"
             ]
@@ -49,7 +49,7 @@
             "type": "emit",
             "event": "agent-preset/selected",
             "args": [
-              "efc1f9e8-75d5-4e55-b1b8-da88bbd40b7d",
+              "6abfbcc3-ec2c-4eae-8761-721be728b04f",
               "orrery-it-cold"
             ],
             "via": [
@@ -57,7 +57,7 @@
               "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
               "at Array.map (<anonymous>)",
               "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-              "at emit (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:179:32)",
+              "at emit (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:183:32)",
               "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
               "at Object.agentCreated (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:76:16)"
             ]
@@ -81,10 +81,10 @@
   "held": {
     "failure": {
       "code": "session/writer-held",
-      "message": "dsh: session \"ce52a1cb-2346-4c3a-9063-541ad3449e84\" is already owned by an active write handle"
+      "message": "dsh: session \"ce6e1990-2a02-4791-aac8-dcbd69043299\" is already owned by an active write handle"
     },
     "statusUnderNote": {
-      "error": "dsh: session \"ce52a1cb-2346-4c3a-9063-541ad3449e84\" is already owned by an active write handle",
+      "error": "dsh: session \"ce6e1990-2a02-4791-aac8-dcbd69043299\" is already owned by an active write handle",
       "reason": "session-writer-held",
       "hint": "Another process holds this session log. Close the session in that process (or continue it there), then resume it here.",
       "conflicts": []

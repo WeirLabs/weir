@@ -155,6 +155,14 @@ const PRE_MIGRATION_KEYS = [
   'childFollowupSeen',
   'firstResultInParentContext',
   'secondResultInParentContext',
+  'parentApplied',
+  'captured',
+  'view1Resolves',
+  'blockedNoThrow',
+  'view2FailClosed',
+  'healed',
+  'ownRecordKept',
+  'selfRefSafe',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

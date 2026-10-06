@@ -1,1 +1,1 @@
-export const staleProbe = 1
+export const fixtureSymbol = 1
