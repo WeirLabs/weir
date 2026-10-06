@@ -1403,7 +1403,7 @@ window.__ModuleLoader__.load({
 		// sidebarRight / sidebarRightTabs are OPTIONAL (a shell without the
 		// right sidebar keeps every other worktree surface): they are reached
 		// through ctx.inject([...]) below, not through this list.
-		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands"];
+		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands", "connection"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-orrery-settings: dictionaries");
@@ -1645,107 +1645,49 @@ window.__ModuleLoader__.load({
 				}
 			};
 			// Read channel (silent-capability-reads): the Badge/panel READ verbs
-			// travel over the plugin-owned typert remote (orreryCapabilities
-			// namespace) — zero session-log writes, no transcript cards. There is
-			// deliberately NO command-channel fallback: a fallback would
-			// resurrect the command/run + command/done log noise. A missing
-			// remote or a failed call maps to the existing degraded semantics
-			// (receipt → null → "Capabilities n/a"; listing/conditions →
-			// { error: true }).
+			// travel as RAW gateway calls over the shared connection —
+			// POST /api/orreryCapabilities/<method> with an { args } payload,
+			// answered with a RemoteResult envelope ({ ok, value } / { ok: false,
+			// error }). Deliberately NO typed namespace mount: $mount registers
+			// the namespace service on a root-sibling fiber that cordis hides
+			// from this plugin behind the inject gate ("cannot get property
+			// without inject" — empirically hit), and declaring the namespace in
+			// inject would park this fiber forever (the mount it waits for would
+			// have to run inside this very apply). The raw channel needs no
+			// client-side registration, and the host gateway claims the endpoint
+			// from its own typert registry (curl-verified against the live
+			// desktop: a real receipt for a live session). There is deliberately
+			// NO command-channel fallback: a fallback would resurrect the
+			// command/run + command/done log noise. A missing connection or a
+			// failed call maps to the existing degraded semantics (receipt →
+			// null → "Capabilities n/a"; listing/conditions → { error: true }).
 			//
-			// A client remote namespace exists only after its descriptors are
-			// mounted through ctx.remote.$mount({package, descriptors}) — the
-			// api-remotes generated lists and the voice-input hand-carried
-			// contribution are the runtime precedents. This entry previously never
-			// mounted orreryCapabilities, so the gateway never projected
-			// ctx.remote.orreryCapabilities and every read silently degraded to its
-			// fallback ("Capabilities n/a" on every session). Mount once per apply,
-			// guarded and idempotent: on a re-apply/HMR generation whose previous
-			// mount is still live, the namespace face already exists and a second
-			// $mount would be rejected (the gateway refuses to double-mount a
-			// namespace method), so the live face is reused as-is. Any
-			// throw/rejection degrades to null — the Badge/panel keep their
-			// existing unavailable states and apply never breaks. The mount
-			// disposer's lifecycle is owned by the client root ($mount runs inside
-			// its own ctx.effect internally), so we deliberately do NOT wire our
-			// own ctx.effect disposal here; the reference is kept for tests.
-			//
-			// Descriptor note: client parameter codecs sit behind TWO gates —
-			// the gateway client's requireStrictInputs demands mode "strict"
-			// (dsh-api-gateway client), and the remotes registry's validateCodec
-			// demands every strict codec carry a nonempty typeSymbol plus a
-			// create() factory (dsh-typert-registry client). A bare
-			// { mode: "strict" } passes the first and crashes the second
-			// (TypeError on typeSymbol, caught as a silent mount rejection).
-			// The trivial parse-passthrough schema is never invoked client-side
-			// (direct invocations pass raw JSON both ways; results decode only
-			// when result.mode is "strict" with a decode hook), so the wire
-			// stays identical to the host contribution's src-json envelope.
-			let capabilityReadUnmount = null;
-			// One warn per distinct failure shape per page generation (see below).
+			// Degradation must be observable: the silent-fallback design made a
+			// multi-link failure chain invisible for days. Warn once per
+			// distinct failure shape per page generation, never per render.
 			const capabilityReadWarns = new Set();
 			const capabilityReadWarn = (kind, method, detail) => {
 				if (capabilityReadWarns.has(kind)) return;
 				capabilityReadWarns.add(kind);
 				console.warn(`[orrery] capability read degraded (${kind}${method ? `, ${method}` : ""})`, detail ?? "");
 			};
-			const capabilityReadMount = (() => {
-				try {
-					const existing = ctx.remote?.orreryCapabilities;
-					if (typeof existing?.receipt === "function") return Promise.resolve(existing);
-					if (typeof ctx.remote?.$mount !== "function") { capabilityReadWarn("mount-unavailable", null, null); return Promise.resolve(null); }
-					return Promise.resolve(ctx.remote.$mount({
-						package: "orrery-harness",
-						descriptors: ["receipt", "list", "conditions"].map((method) => ({
-							id: `orrery-harness#orreryCapabilities/${method}`,
-							service: "orreryCapabilityRead",
-							namespace: "orreryCapabilities",
-							method,
-							invocation: { kind: "direct" },
-							parameters: [{ name: "sessionId", wire: "sessionId", source: "json", codec: {
-							mode: "strict",
-							typeSymbol: "orrery-harness/types#CapabilitySessionId",
-							create: () => ({ parse: (value) => value })
-						} }],
-							result: { mode: "src-json" }
-						}))
-					})).then((unmount) => {
-						capabilityReadUnmount = typeof unmount === "function" ? unmount : null;
-						return ctx.remote?.orreryCapabilities ?? null;
-					}, (mountError) => {
-						capabilityReadWarn("mount-rejected", null, mountError && (mountError.stack || mountError.message || String(mountError)));
-						return null;
-					});
-				} catch (syncError) {
-					capabilityReadWarn("mount-threw", null, syncError && (syncError.stack || syncError.message || String(syncError)));
-					return Promise.resolve(null);
-				}
-			})();
 			const capabilityRead = async (method, sid, fallback) => {
-				// Await the one-time mount before reading: the Badge's first fetch
-				// races the mount, and without the await the namespace lookup could
-				// run before $mount installed it. The namespace face itself is
-				// re-read live at call time (a degraded composition may lose it
-				// again).
-				const mounted = await capabilityReadMount;
-				let remote = null;
-				try { remote = ctx.remote?.orreryCapabilities ?? null; } catch { remote = null; }
-				if (typeof remote?.[method] !== "function") {
-					// Degradation must be observable: the silent-fallback design
-					// made a four-link failure chain invisible for days. Warn
-					// once per distinct failure shape, never per render.
-					capabilityReadWarn(mounted === null ? "mount-null" : "namespace-missing", method, null);
+				let connection = null;
+				try { connection = ctx.get?.("connection") ?? null; } catch { connection = null; }
+				if (typeof connection?.rpc?.call !== "function") {
+					capabilityReadWarn("connection-missing", method, null);
 					return fallback;
 				}
-				// Remote methods resolve to the RemoteResult ENVELOPE —
-				// { ok: true, value } or { ok: false, error } — never the bare
-				// payload (the voice-input precedent unwraps it at every call
-				// site; a failing call resolves, not rejects, with ok:false).
 				let result = null;
-				try { result = await remote[method](sid); } catch (callError) {
-					capabilityReadWarn("call-threw", method, callError);
+				try {
+					result = await connection.rpc.call("/api", `orreryCapabilities/${method}`, { args: { sessionId: sid } });
+				} catch (callError) {
+					capabilityReadWarn("call-threw", method, callError && (callError.stack || callError.message || String(callError)));
 					return fallback;
 				}
+				// Remote calls resolve to the RemoteResult ENVELOPE — never the
+				// bare payload; a failing call resolves { ok: false, error }
+				// rather than rejecting (the gateway folds carrier failures).
 				if (result?.ok === true && result.value != null) return result.value;
 				capabilityReadWarn("call-failed", method, result?.error ?? result ?? null);
 				return fallback;
