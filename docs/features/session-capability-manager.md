@@ -127,7 +127,7 @@ Orrery 是自身所管理 MCP server 的唯一挂载入口：用户经 Orrery �
 
 **给模型的移除通知**（12.4，[selection-notify.js](<../../plugins/orrery-harness/src/capabilities/selection-notify.js>)）：Apply 被接受后净增减跨多次应用合并，在**下一次安全请求**时以完整 UserMessage（共享 helper）随该请求注入——绝不自行触发回合、不在 `session/event` 内同步 followup；来源标记为 `orrery-selection-notify`（非 `user`），intent gate 与 continuation/intent 分类器按构造排除（共享 `isGenuineUserMessage` 只认 `source.kind === 'user'`）；英文 advisory 模板明确「已 handed off 的调用仍可能完成、历史中任何回合或调用不被撤回或抹除」；注入失败只 audit/warn，绝不影响已接受的提交。
 
-**收敛语义（D-E）**：服务端精确性立即生效（任何调用以服务端校验为准）；宿主 `/` 菜单经 provider `invalidate()` + 5.2 的重发事件收敛（草稿 chip 可能短暂空白，侧栏预览与 transcript 中的 catalog 不刷新）；同会话第二窗口的 Badge 尝试订阅宿主转发的 `agent-preset/selected` 帧按 session ID 过滤刷新，订阅不可用时显示「refresh to sync」提示而非静默过期（浏览器侧实际效果待 13.3 验证，不在此声称已收敛）。
+**收敛语义（D-E）**：服务端精确性立即生效（任何调用以服务端校验为准）；宿主 `/` 菜单经 provider `invalidate()` + 5.2 的重发事件收敛（草稿 chip 可能短暂空白，侧栏预览与 transcript 中的 catalog 不刷新）；Badge/面板经 `ctx.remote.$on('agent-preset/selected')` 订阅收敛帧按 session ID 过滤刷新（订阅不可用时显示「refresh to sync」提示），Apply 被接受后经 apply 引擎的 `invalidate` 钩子重发该事件（曾长期未接线，2026-10-06 修复）；typert 注册为幂等且每次读取前自愈（fiber 重挂载竞态不再致命）；cwd 解析三级回退——`agent/created` 缓存 → 存活 agents 注册表 → 持久化会话日志头（无存活 agent 的历史/冷会话不再有竞态，"先空后收敛"仅在持久化记录缺失时出现）。
 
 ### 消费者
 
