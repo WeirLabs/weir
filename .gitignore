@@ -12,15 +12,18 @@ docs/*
 # Harness runtime scratch (notepads, research notes written by orrery sessions)
 .orrery/
 # Authentic replay evidence only; other runtime state remains ignored.
-!plugins/orrery-test-harness/test/fixtures/traces/rehydrate/ws/.orrery/
-plugins/orrery-test-harness/test/fixtures/traces/rehydrate/ws/.orrery/*
-!plugins/orrery-test-harness/test/fixtures/traces/rehydrate/ws/.orrery/audit.jsonl
-!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/
-plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/*
-!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/audit.jsonl
-!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/worktrees/
-plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/worktrees/*
-!plugins/orrery-test-harness/test/fixtures/traces/worktree/ws/.orrery/worktrees/lanes.json
+# One wildcard ruleset covers EVERY scenario fixture workspace (no per-fixture
+# stanzas): un-ignore ws/.orrery/ itself, re-ignore its contents, then un-ignore
+# the trackable state-file kinds level by level. The kind enum maps 1:1 to
+# TRACKABLE_ORRERY_STATE_KINDS in
+# plugins/orrery-test-harness/test/fixture-selfcontainment.test.js — extend
+# both sides together; the conformance suite fails while they diverge.
+!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/
+plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/*
+!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/audit.jsonl
+!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/worktrees/
+plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/worktrees/*
+!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/worktrees/lanes.json
 
 # Handoff and install runbooks (local process material, distributed with the tree)
 handoff-*.md
