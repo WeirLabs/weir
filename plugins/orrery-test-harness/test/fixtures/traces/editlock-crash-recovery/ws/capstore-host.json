@@ -1,0 +1,25 @@
+{
+  "label": "host",
+  "present": true,
+  "name": "orrery-it",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-autonomous-recovery-p1-071/.orrery/it-root/home",
+  "located": {
+    "supported": true,
+    "root": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-autonomous-recovery-p1-071/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities"
+  },
+  "sessionId": "session-9015040d-d659-46d9-baf7-fa3ddf7cc0dc",
+  "commit": "committed",
+  "read": {
+    "kind": "ok",
+    "revision": 1,
+    "payload": {
+      "probes": [
+        "host"
+      ]
+    }
+  },
+  "recordPath": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-autonomous-recovery-p1-071/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities/sessions/session-9015040d-d659-46d9-baf7-fa3ddf7cc0dc/selection.json",
+  "dirFiles": [
+    "selection.json"
+  ]
+}
