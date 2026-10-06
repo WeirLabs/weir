@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **Orrery 预设排除 DSH goal 功能**：`Orrery` 与「Orrery 创造模式」预设不再挂载 goal 行——`create_goal`/`get_goal`/`update_goal` 工具、`/goal` 斜杠命令与 goal 系统提示词段落从 Orrery 系会话中消失，goal 轮转续推随之不再触发（目标根本无法注册）。goal 的「单 Agent 自续推」语义与 Orrery 以编排者为中心、事件驱动的多 Agent 协作并存时产生两套续推机制、干扰协作流程，故按设计排除；其他预设（standard 等）不受影响。委派子代工具 deny 名单、Worktree 车道契约与 `deep-work` 技能中引用 goal 工具的残留一并清理。详见 [预设打包](docs/features/preset-packaging.md)。
+
 ### Fixed
 
 - **客户端构建校验不再误报「chunk 比入口新」**：`test/client.test.js` 的 mtime 顺序断言在 git 合并/checkout/克隆重新落盘 `lib/` 后必然假阳性（落盘顺序任意，实测合并仅差 0.758ms 即颠倒），每次车道合并后都要手动 restamp 才能转绿。断言本意（改了 chunk 必须重跑 build）已由入口 manifest 的 sha256 内容绑定确定性覆盖，mtime 断言移除；构建纪律简化为「改 chunk 后跑 `pnpm build`」。详见 [客户端模块切分文档](docs/features/client-module-chunking.md)。
