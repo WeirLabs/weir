@@ -16,6 +16,7 @@ const prompt = 'capability-remote-probe'
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
   if (!history.includes('done reads')) return toolCallChunks('capability_remote_probe', { op: 'reads', _marker: 'reads' })
+  if (!history.includes('done presetReads')) return toolCallChunks('capability_remote_probe', { op: 'presetReads', _marker: 'presetReads' })
   if (!history.includes('done unknown')) return toolCallChunks('capability_remote_probe', { op: 'unknownSession', _marker: 'unknown' })
   if (!history.includes('done counts-pre')) return toolCallChunks('capability_remote_probe', { op: 'logCounts', _marker: 'counts-pre' })
   if (!history.includes('done parity')) return toolCallChunks('capability_remote_probe', { op: 'parity', _marker: 'parity' })
@@ -29,10 +30,14 @@ function observe(obs) {
     readsOk: /done reads:.*"receipt":\{"status":"applied"/.test(history)
       && /done reads:.*"listing":\{"skills":\d+,"selected":\d+,"mcpServers":\d+\}/.test(history)
       && /done reads:.*"conditions":\{"conditions":\[\]\}/.test(history),
+    presetReadsOk: /done presetReads:.*"presetsIsList":true/.test(history)
+      && /done presetReads:.*"defaultStatus":"[a-z-]+"/.test(history),
+    presetParityOk: /done parity:.*"presetsEqual":true/.test(history)
+      && /done parity:.*"defaultEqual":true/.test(history),
     unknownOk: /done unknown:.*"code":"unknown-session"/.test(history),
     preZero: /done counts-pre:.*"counts":\{"run":0,"done":0\}/.test(history),
     parityOk: /done parity:.*"commandKind":"success","equal":true/.test(history),
-    postOne: /done counts-post:.*"counts":\{"run":1,"done":1\}/.test(history),
+    postThree: /done counts-post:.*"counts":\{"run":3,"done":3\}/.test(history),
   }
 }
 
@@ -116,10 +121,12 @@ function assert(run) {
   const any = flag => run.requests.some(request => request[flag])
   run.check('the flow completed', run.stdout.includes('capability remote done'), run.stdout.slice(-300))
   run.check('remote receipt/list/conditions returned the expected shapes', any('readsOk'), '')
+  run.check('remote presets/default-get reads returned the expected shapes', any('presetReadsOk'), '')
+  run.check('remote presets/default-get are byte-identical to the deliberate commands', any('presetParityOk'), '')
   run.check('an unknown session is the explicit typed error', any('unknownOk'), '')
   run.check('zero command lifecycle events before the deliberate parity command', any('preZero'), '')
   run.check('remote receipt is byte-identical to /capabilities receipt', any('parityOk'), '')
-  run.check('exactly the deliberate parity command recorded in-band', any('postOne'), '')
+  run.check('exactly the deliberate parity commands recorded in-band', any('postThree'), '')
 
   // Durable session log: the reads left no trace; exactly the one deliberate
   // parity command did (design D4).
@@ -129,8 +136,8 @@ function assert(run) {
   const events = Array.isArray(report?.events) ? report.events : []
   const runs = events.filter(event => event.type === 'command/run')
   const dones = events.filter(event => event.type === 'command/done')
-  run.check('the durable log holds exactly one command/run (the deliberate parity command)', runs.length === 1 && runs[0].name === 'capabilities' && String(runs[0].args ?? '').trim() === 'receipt', JSON.stringify(events).slice(0, 300))
-  run.check('the durable log holds exactly one command/done, settled success', dones.length === 1 && dones[0].kind === 'success', JSON.stringify(events).slice(0, 300))
+  run.check('the durable log holds exactly the three deliberate command/runs', runs.length === 3 && runs.every(event => event.name === 'capabilities') && ['receipt', 'presets', 'default-get'].every(verb => runs.some(event => String(event.args ?? '').trim() === verb)), JSON.stringify(events).slice(0, 300))
+  run.check('the durable log holds exactly three command/done events, all settled success', dones.length === 3 && dones.every(event => event.kind === 'success'), JSON.stringify(events).slice(0, 300))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 

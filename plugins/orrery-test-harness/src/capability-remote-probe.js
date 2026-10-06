@@ -36,7 +36,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['reads', 'unknownSession', 'logCounts', 'parity'] },
+        op: { type: 'string', enum: ['reads', 'presetReads', 'unknownSession', 'logCounts', 'parity'] },
         _marker: { type: 'string' },
       },
       required: ['op'],
@@ -66,6 +66,21 @@ function apply(ctx, config = {}) {
           report.completed = true
           return report
         }
+        if (args.op === 'presetReads') {
+          // silent-preset-reads: the Presets view's two automatic reads over
+          // the remote — payload parity with the deliberate commands is
+          // asserted by the parity op pattern (receipt covers the mechanism);
+          // here the payloads must be shaped and the reads log-silent (the
+          // counts ops bracket them).
+          const presets = await service.presets(sessionId)
+          const defaultGet = await service.defaultGet(sessionId)
+          report.presetReads = {
+            presetsIsList: Array.isArray(presets?.presets) || typeof presets?.status === 'string',
+            defaultStatus: typeof defaultGet?.status === 'string' ? defaultGet.status : null,
+          }
+          report.completed = true
+          return report
+        }
         if (args.op === 'unknownSession') {
           const cause = await service.receipt('it-unknown-session').then(() => null, error => error)
           report.error = { name: cause?.name ?? null, code: cause?.code ?? null, message: String(cause?.message ?? '').slice(0, 120) }
@@ -92,6 +107,22 @@ function apply(ctx, config = {}) {
             equal: commandPayload !== null && JSON.stringify(remoteReceipt) === JSON.stringify(commandPayload),
             revision: remoteReceipt?.revision ?? null,
             skills: Array.isArray(remoteReceipt?.effective?.skills) ? remoteReceipt.effective.skills.length : -1,
+          }
+          // silent-preset-reads: the other two deliberate user-visible
+          // invocations (these two may also log lifecycle events).
+          const remotePresets = await service.presets(sessionId)
+          const presetsSettled = await commands.execute(exec.agent, '/capabilities presets', [], new AbortController().signal)
+          const presetsValue = presetsSettled?.result !== undefined ? presetsSettled.result : presetsSettled
+          let presetsCommandPayload = null
+          if (typeof presetsValue?.text === 'string') { try { presetsCommandPayload = JSON.parse(presetsValue.text) } catch { presetsCommandPayload = null } }
+          const remoteDefaultGet = await service.defaultGet(sessionId)
+          const defaultSettled = await commands.execute(exec.agent, '/capabilities default-get', [], new AbortController().signal)
+          const defaultValue = defaultSettled?.result !== undefined ? defaultSettled.result : defaultSettled
+          let defaultCommandPayload = null
+          if (typeof defaultValue?.text === 'string') { try { defaultCommandPayload = JSON.parse(defaultValue.text) } catch { defaultCommandPayload = null } }
+          report.presetParity = {
+            presetsEqual: presetsCommandPayload !== null && JSON.stringify(remotePresets) === JSON.stringify(presetsCommandPayload),
+            defaultEqual: defaultCommandPayload !== null && JSON.stringify(remoteDefaultGet) === JSON.stringify(defaultCommandPayload),
           }
           report.completed = true
           return report

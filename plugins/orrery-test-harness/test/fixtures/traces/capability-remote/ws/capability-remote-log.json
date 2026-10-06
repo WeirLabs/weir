@@ -1,12 +1,36 @@
 {
   "logs": 1,
-  "frames": 22,
-  "decoded": 22,
+  "frames": 25,
+  "decoded": 25,
   "events": [
     {
       "type": "command/run",
       "name": "capabilities",
       "args": " receipt",
+      "kind": null
+    },
+    {
+      "type": "command/done",
+      "name": null,
+      "args": null,
+      "kind": "success"
+    },
+    {
+      "type": "command/run",
+      "name": "capabilities",
+      "args": " presets",
+      "kind": null
+    },
+    {
+      "type": "command/done",
+      "name": null,
+      "args": null,
+      "kind": "success"
+    },
+    {
+      "type": "command/run",
+      "name": "capabilities",
+      "args": " default-get",
       "kind": null
     },
     {

@@ -142,10 +142,12 @@ const PRE_MIGRATION_KEYS = [
   'halted',
   // capability-remote scenario observations (silent read channel, task 2.4)
   'readsOk',
+  'presetReadsOk',
+  'presetParityOk',
   'unknownOk',
   'preZero',
   'parityOk',
-  'postOne',
+  'postThree',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']
