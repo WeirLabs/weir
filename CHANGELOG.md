@@ -1,18 +1,28 @@
+# Changelog
+
+本项目的所有重要变更都记录在此文件。
+
+格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
+版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+
 ## [Unreleased]
 
-### Fixed
-- **创造模式限定技能导致普通预设会话 Apply 整批失败**：工作区默认值/预设库携带的创造模式技能（如 cordis-plugin-development）在普通 orrery 会话无法解析，此前任何 Apply 都被整批拒绝且只提示笼统失败。现在 Apply 自动**跳过**「已知但当前预设不适用」的条目（回执与面板逐条列明），其余正常提交、记录无损（切回创造模式自动恢复可用）；真正不存在的名称仍然明确报错。设置页同时修复「静默清理失效锁」开关默认显示为关（实际运行为开）的默认值声明。
-- **能力 Badge/面板反复显示「能力不可用」**：一组同族缺陷——typert 注册随 fiber 重挂载被静默撤回、cwd 解析错过启动恢复竞态且对无存活 agent 的历史会话无解、客户端订阅收敛帧调用了不存在的 API、Apply 后失效事件从未接线重发。修复：注册改为幂等且每次读取前自愈；cwd 解析依次走 事件缓存→存活 agent 注册表→**持久化会话日志头**（历史会话冷打开不再有竞态）；Badge 收敛订阅改走 `ctx.remote.$on`；Apply 被接受后正确重发失效事件，面板与 Badge 实时刷新。详见 [会话能力管理器](docs/features/session-capability-manager.md)「会话 Badge 与 Capabilities 面板」。
-
-- **Worktree 面板重启后首个会话显示为空**：GUI 查看恢复会话走冷读（`page`/`follow`/`projections`），从不激活 agent，而车道面板的只读端点只认 live agent——重启后首个会话得到 `SESSION_NOT_LIVE` 降级视图，面板挂载时读一次又不重试，直到切换会话重挂载才恢复。端点的会话解析改为冷读安全：live agent → 已 attach 会话 → `sessionQuery` 冷观察（车道账本是仓库级数据，只需 `header.cwd` 与会话 id；Worktree 模式取冷折叠的 `orreryWorktree` 投影），重启后面板立即可读；diff 端点同样打通。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+## [0.9.0] - 2026-10-07
 
 ### Added
+
 - **委派：continuable 形态（`mode: 'continuable'`）**：`delegate` 新增 `mode` 选项——`continuable` 子代立即返回稳定 childId、结果经内建结算通知送达，父代理可用 `send_message` 追问或中途纠偏（子代保留全部上下文）、`interrupt_agent` 打断当前回合而不销毁它，应用重启后冷恢复仍可续聊。默认 `one-shot` 不变；`mode` 与 `group` 互斥，continuable 与 `run_in_background`、`worktree` 互斥（均以明确错误拒绝）。continuable 子代占用运行时续聊容量（默认 8），容量满时以点名上限的错误失败，不排队、不降级。详见 [委派特性文档](docs/features/category-delegation.md)。
 - **编辑锁：崩溃自愈（全程无人工）**：publisher 预约现在携带活性凭证（pid／启动身份／boot 标识／租约，周期续约）；崩溃残留的预约在「租约超时且 owner 被证明死亡」时经串行化路径自动回收，域自动恢复；上一进程生命周期留下的未决发布（unknown）在重启时自动行政结清——受控创建不再被历史围栏永久阻断，`unknown` 结论与操作历史原样保留，过程只有一条事后汇总通知与完整审计。镜像演进至 v6（incarnation 记录进程身份，旧版本无损升级、旧 build 拒绝读取）。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 - **编辑锁：在线管理员恢复（一键、无重启）**：publisher 进程仍活着时的未决发布，设置页「编辑锁维护」面板直接给出恢复卡片——完整 scope、迟到写者风险原文与确认摘要（面板按离线路径同一算法自行计算并展示），点一次「在线结清」即在运行中的管理器里结清：不再要求「停用功能＋重启＋手打哈希」。离线 ADMIN OVERRIDE 保留用于 runtime 不可用的场景。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 - **Worktree 车道：清理前编辑锁残留警示**：land／abandon 删除 worktree 前，只读检查主管理域编辑锁权威中该 lane 会话的残留（未决操作与锁），有则在清理卡片上警示并给出结算路径（锁由静默清扫自动处理、未决发布由崩溃自愈或面板一键结清），警示不阻断清理。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
 
 ### Fixed
+
+- **创造模式限定技能导致普通预设会话 Apply 整批失败**：工作区默认值/预设库携带的创造模式技能（如 cordis-plugin-development）在普通 orrery 会话无法解析，此前任何 Apply 都被整批拒绝且只提示笼统失败。现在 Apply 自动**跳过**「已知但当前预设不适用」的条目（回执与面板逐条列明），其余正常提交、记录无损（切回创造模式自动恢复可用）；真正不存在的名称仍然明确报错。设置页同时修复「静默清理失效锁」开关默认显示为关（实际运行为开）的默认值声明。
+- **能力 Badge/面板反复显示「能力不可用」**：一组同族缺陷——typert 注册随 fiber 重挂载被静默撤回、cwd 解析错过启动恢复竞态且对无存活 agent 的历史会话无解、客户端订阅收敛帧调用了不存在的 API、Apply 后失效事件从未接线重发。修复：注册改为幂等且每次读取前自愈；cwd 解析依次走 事件缓存→存活 agent 注册表→**持久化会话日志头**（历史会话冷打开不再有竞态）；Badge 收敛订阅改走 `ctx.remote.$on`；Apply 被接受后正确重发失效事件，面板与 Badge 实时刷新。详见 [会话能力管理器](docs/features/session-capability-manager.md)「会话 Badge 与 Capabilities 面板」。
+
+- **Worktree 面板重启后首个会话显示为空**：GUI 查看恢复会话走冷读（`page`/`follow`/`projections`），从不激活 agent，而车道面板的只读端点只认 live agent——重启后首个会话得到 `SESSION_NOT_LIVE` 降级视图，面板挂载时读一次又不重试，直到切换会话重挂载才恢复。端点的会话解析改为冷读安全：live agent → 已 attach 会话 → `sessionQuery` 冷观察（车道账本是仓库级数据，只需 `header.cwd` 与会话 id；Worktree 模式取冷折叠的 `orreryWorktree` 投影），重启后面板立即可读；diff 端点同样打通。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+
 - **集成测试装置：修复负载下的确定性场景失败**：`rehydrate`/`escalate`/`delegate-preflight` 三个场景的等待逻辑此前门控在「最后一条消息的角色/内容」上，宿主注入的 runtime-context 快照在负载下插队于 tool result 与下一请求之间时门控错位，mock 落兜底文本导致回合提前结束、headless 在子代理运行中退出（表现为负载下确定性红、空闲独唱全绿）。等待改为 transcript 历史标记驱动的交错容忍原语（mock-kit 单点实现，有界重试），并对全部场景驱动逐一审查转换承重门控；同时 `run.mjs` 默认 IT root 增加咨询锁——同 checkout 并发套件自动改用私有后缀 root（响亮提示一行），不再互相 wiping。详见 [集成测试装置文档](docs/features/integration-test-harness.md)。
 - **集成测试装置：回放夹具自包含**：`.gitignore` 对 `.orrery/` 的全局忽略曾吞掉夹具工作区内的回放状态文件（`audit.jsonl`、车道账本），而逐夹具手工例外只覆盖两个老夹具——后录制的 `worktree-watch`/`editlock-stale-sweep` 的状态文件从未入库，全新 checkout 或新 worktree lane 中其回放必红（`editlock-stale-sweep` 连主 checkout 都红）。例外规则已通配化覆盖全部夹具工作区（可入库状态文件种类枚举单点声明），新增 conformance 测试逐夹具校验回放消费的文件全部被 git 跟踪——今后录制出不自包含的夹具当场被抓；主工作区的历史残留未跟踪状态已清算。详见 [集成测试装置文档](docs/features/integration-test-harness.md)。
 
