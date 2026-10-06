@@ -2,7 +2,7 @@
 // orchestrator-only tool deny list + merge, and the worker collaboration
 // contract (src/shared/child-scope.js). Pure module — driven directly.
 import { describe, expect, it } from './helpers.js'
-import { CHILD_DENY_TOOLS, WORKER_CONTRACT, childToolFilter, isDelegatedChild } from '../src/shared/child-scope.js'
+import { CHILD_DENY_TOOLS, CONTINUABLE_CONTRACT, WORKER_CONTRACT, childToolFilter, isDelegatedChild } from '../src/shared/child-scope.js'
 
 describe('isDelegatedChild', () => {
   it('fails open to main-agent rendering when fields are missing', () => {
@@ -78,5 +78,24 @@ describe('WORKER_CONTRACT', () => {
     expect(WORKER_CONTRACT).toContain('final message is the report delivered to the parent')
     expect(WORKER_CONTRACT).toContain('cannot delegate further')
     expect(WORKER_CONTRACT).toContain('cannot ask the user questions')
+  })
+})
+
+describe('CONTINUABLE_CONTRACT', () => {
+  it('pins the verbatim contract text', () => {
+    expect(CONTINUABLE_CONTRACT).toBe(
+      '\n\nYou are a continuable child: the parent may follow up with new messages after any of your turns, and each turn\'s final message is delivered to the parent automatically — keep it self-contained. An interrupted turn is not a cancelled task: wait for the next message and continue from your prior context.',
+    )
+  })
+
+  it('states the three continuation facts a one-shot contract does not cover', () => {
+    expect(CONTINUABLE_CONTRACT).toContain('follow up with new messages after any of your turns')
+    expect(CONTINUABLE_CONTRACT).toContain('final message is delivered to the parent automatically')
+    expect(CONTINUABLE_CONTRACT).toContain('interrupted turn is not a cancelled task')
+  })
+
+  it('never carries the supervised terminal-status vocabulary', () => {
+    expect(CONTINUABLE_CONTRACT).not.toContain('STATUS:')
+    expect(CONTINUABLE_CONTRACT).not.toContain('Terminal status contract')
   })
 })

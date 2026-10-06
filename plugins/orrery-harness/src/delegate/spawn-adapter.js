@@ -13,7 +13,7 @@
 import { SUPERVISION_CONTRACT } from './group-coordinator.js'
 import { attachReadOnlyBashGuard } from './robash-guard.js'
 import { attachLaneGuard } from '../worktree/guard.js'
-import { WORKER_CONTRACT, childToolFilter } from '../shared/child-scope.js'
+import { CONTINUABLE_CONTRACT, WORKER_CONTRACT, childToolFilter } from '../shared/child-scope.js'
 
 /**
  * @typedef {object} SpawnAssignment
@@ -165,6 +165,54 @@ export function supervisedLane({ coordinator, groupName, members }) {
       return childAgent
     },
     onGuardFailure(error) {
+      throw error
+    },
+  }
+}
+
+/**
+ * Continuable lane (design D2/D3/D7): an opt-in `mode: 'continuable'` child
+ * that starts via startContinuable and returns immediately; its results
+ * arrive through the runtime's built-in settlement notices. The persona
+ * carries WORKER_CONTRACT + CONTINUABLE_CONTRACT — NEVER SUPERVISION_CONTRACT:
+ * no binary terminal-status contract, no coordinator registration, no
+ * supervision bookkeeping (an untracked entry in supervised_status is the
+ * normal state, not an anomaly). The child→parent channel stays closed the
+ * same way as every lane: send_message is already in CHILD_DENY_TOOLS, which
+ * the single assembly point merges, so toolFilterFor is the identity.
+ *
+ * Teardown matches the supervised lane: continuable handles have no dispose,
+ * so a guard failure rethrows the original error with the child id attached;
+ * the catch side in tool.js then best-effort interrupts the residual child
+ * before propagating (the error names the child id, so the parent can
+ * dispose of it explicitly).
+ * @returns {SpawnLane}
+ */
+export function continuableLane() {
+  return {
+    // startContinuable takes label/signal beside the request, not inside it
+    // (provider API shape) — same start shape as the supervised lane.
+    start: (deps, request) => {
+      const { label, signal, ...rest } = request
+      return deps.subagents.startContinuable({ provider: 'spawn', label, request: rest, signal })
+    },
+    toolFilterFor: (toolFilter) => toolFilter,
+    personaFor: (target) => target.persona + WORKER_CONTRACT + CONTINUABLE_CONTRACT,
+    // No beforeGuardAttach: nothing registers anywhere on this lane.
+    // startContinuable returns { childId, messageId } (no localAgent), so the
+    // read-only shell guard attaches through the live agent handle — same
+    // guard, same fail-closed semantics as the other lanes.
+    guardHandleFor(started, deps) {
+      const childAgent = deps.agents?.get(started.childId)
+      if (!childAgent) {
+        const error = new Error(`delegate: read-only continuable child spawned but no live agent handle is available for "${started.childId}"`)
+        error.childId = started.childId
+        throw error
+      }
+      return childAgent
+    },
+    onGuardFailure(error, started) {
+      if (error && typeof error === 'object') error.childId = started.childId
       throw error
     },
   }

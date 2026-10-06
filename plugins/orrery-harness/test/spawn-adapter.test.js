@@ -5,9 +5,9 @@
 // one explicit pin. The full-stack lane behavior stays pinned by
 // delegate.test.js (zero-change survival).
 import { describe, expect, it } from './helpers.js'
-import { oneShotLane, spawnGuardedChild, supervisedLane, supervisedToolFilter } from '../src/delegate/spawn-adapter.js'
+import { continuableLane, oneShotLane, spawnGuardedChild, supervisedLane, supervisedToolFilter } from '../src/delegate/spawn-adapter.js'
 import { SUPERVISION_CONTRACT } from '../src/delegate/group-coordinator.js'
-import { CHILD_DENY_TOOLS, WORKER_CONTRACT } from '../src/shared/child-scope.js'
+import { CHILD_DENY_TOOLS, CONTINUABLE_CONTRACT, WORKER_CONTRACT } from '../src/shared/child-scope.js'
 
 const LISTS = {
   bash: { allow: ['ls'], gitAllow: [], deny: [] },
@@ -319,5 +319,113 @@ describe('spawn-adapter guard failure teardown', () => {
     const lane = supervisedLane({ coordinator: fakeCoordinator(log), groupName: 'scan', members })
     await spawnGuardedChild(assignmentOf(baseTarget({ readOnly: true })), lane, deps)
     expect(log).toEqual(['register', 'guard-attach'])
+  })
+})
+
+describe('spawn-adapter continuable lane', () => {
+  function continuableDeps({ agents, robash = enabledRobash, childId = 'child-1' } = {}) {
+    const specs = []
+    return {
+      specs,
+      deps: {
+        subagents: {
+          async startContinuable(spec) {
+            specs.push(spec)
+            return { childId, messageId: 'msg-1' }
+          },
+        },
+        robash,
+        agents,
+      },
+    }
+  }
+
+  it('calls startContinuable with label/signal beside the request', async () => {
+    const { specs, deps } = continuableDeps({ agents: { get: () => fakeAgentHandle() } })
+    const assignment = assignmentOf(baseTarget())
+    await spawnGuardedChild(assignment, continuableLane(), deps)
+    expect(specs).toHaveLength(1)
+    const spec = specs[0]
+    expect(spec.provider).toBe('spawn')
+    expect(spec.label).toBe('child-label')
+    expect(spec.signal).toBe(assignment.signal)
+    expect('label' in spec.request).toBe(false)
+    expect('signal' in spec.request).toBe(false)
+    expect(spec.request.prompt).toBe(assignment.prompt)
+    expect(spec.request.parent).toBe(assignment.parent)
+    expect(spec.request.maxDepth).toBe(1)
+  })
+
+  it('appends worker + continuation contracts to the persona, never the supervision contract', async () => {
+    const { specs, deps } = continuableDeps({ agents: { get: () => fakeAgentHandle() } })
+    await spawnGuardedChild(assignmentOf(baseTarget()), continuableLane(), deps)
+    expect(specs[0].request.persona).toBe('PERSONA' + WORKER_CONTRACT + CONTINUABLE_CONTRACT)
+    expect(specs[0].request.persona).not.toContain('Terminal status contract')
+    expect(specs[0].request.persona).not.toContain(SUPERVISION_CONTRACT)
+  })
+
+  it('passes the tool filter through identity; the assembly point still merges the child deny list (send_message included)', async () => {
+    const { specs, deps } = continuableDeps({ agents: { get: () => fakeAgentHandle() } })
+    await spawnGuardedChild(assignmentOf(baseTarget()), continuableLane(), deps)
+    expect(specs[0].request.toolFilter).toEqual({ deny: [...CHILD_DENY_TOOLS] })
+    expect(specs[0].request.toolFilter.deny).toContain('send_message')
+    // An allow-list filter (read-only curated target) passes through untouched.
+    const allow = { allow: ['read'] }
+    await spawnGuardedChild(assignmentOf(baseTarget({ toolFilter: allow })), continuableLane(), deps)
+    expect(specs[1].request.toolFilter).toBe(allow)
+  })
+
+  it('attaches the read-only guard through agents.get(childId), same as the supervised lane', async () => {
+    const handle = fakeAgentHandle()
+    const { deps } = continuableDeps({ agents: { get: () => handle } })
+    await spawnGuardedChild(assignmentOf(baseTarget({ readOnly: true })), continuableLane(), deps)
+    expect(handle.attached).toHaveLength(1)
+    expect(handle.attached[0]({ name: 'bash', arguments: { command: 'ls' } })).toBe(undefined)
+    expect(handle.attached[0]({ name: 'bash', arguments: { command: 'rm x' } })).toMatch(/read-only agent/)
+  })
+
+  it('throws the verbatim missing-handle error with the child id attached (no silent unguarded child)', async () => {
+    const { deps } = continuableDeps({ agents: { get: () => undefined }, childId: 'child-9' })
+    let caught
+    try {
+      await spawnGuardedChild(assignmentOf(baseTarget({ readOnly: true })), continuableLane(), deps)
+    } catch (error) {
+      caught = error
+    }
+    expect(caught?.message).toBe('delegate: read-only continuable child spawned but no live agent handle is available for "child-9"')
+    expect(caught?.childId).toBe('child-9')
+  })
+
+  it('rethrows a guard failure untouched with the child id attached, and registers nothing anywhere', async () => {
+    const boom = new Error('guard boom')
+    const handle = { ctx: { tools: { guard: () => { throw boom } } } }
+    const { deps } = continuableDeps({ agents: { get: () => handle } })
+    let caught
+    try {
+      await spawnGuardedChild(assignmentOf(baseTarget({ readOnly: true })), continuableLane(), deps)
+    } catch (error) {
+      caught = error
+    }
+    // Same error object (no wrapping), child id attached for the tool.js
+    // catch side: continuable handles have no dispose, so the residual
+    // child is best-effort interrupted by the caller, never torn down here.
+    expect(caught).toBe(boom)
+    expect(caught?.childId).toBe('child-1')
+  })
+
+  it('skips the guard attach on a disabled snapshot without throwing, but still resolves the handle first', async () => {
+    const handle = fakeAgentHandle()
+    const skipped = continuableDeps({ agents: { get: () => handle }, robash: disabledRobash })
+    await spawnGuardedChild(assignmentOf(baseTarget({ readOnly: true })), continuableLane(), skipped.deps)
+    expect(handle.attached).toHaveLength(0)
+
+    const missing = continuableDeps({ agents: { get: () => undefined }, robash: disabledRobash, childId: 'child-7' })
+    let caught
+    try {
+      await spawnGuardedChild(assignmentOf(baseTarget({ readOnly: true })), continuableLane(), missing.deps)
+    } catch (error) {
+      caught = error
+    }
+    expect(caught?.message).toBe('delegate: read-only continuable child spawned but no live agent handle is available for "child-7"')
   })
 })

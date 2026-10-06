@@ -4,7 +4,7 @@
 
 ## 概述
 
-`delegate` 是 Orchestrator 的执行手臂。任务类别（category）各自绑定一条按优先级排序的模型链和一份类别心智提示词；另有三个精选只读研究代理（`finder` 代码检索、`scholar` 文档/OSS 调研、`advisor` 架构咨询）。委派可单个、可批量（≤16）、可放后台；子代理不可再委派，保证拓扑可控。
+`delegate` 是 Orchestrator 的执行手臂。任务类别（category）各自绑定一条按优先级排序的模型链和一份类别心智提示词；另有三个精选只读研究代理（`finder` 代码检索、`scholar` 文档/OSS 调研、`advisor` 架构咨询）。委派可单个、可批量（≤16）、可放后台，也可选 `mode: 'continuable'` 派生可续聊子代理；子代理不可再委派，保证拓扑可控。
 
 ## 用户可见行为
 
@@ -12,6 +12,7 @@
 - 类别与精选 agent 都可绑定**期望路由**：链上首个可解析档位胜出，整链不可解析时显式报错（**不回退继承**）；精选 agent 未配置链时继承调用方路由。二者均由设置页在线配置、即时生效。
 - **停用的目标对模型不可见**：停用类别/agent 不出现在委托目标指引里，也不出现在任何「可选目标」报错文本中；派发它得到显式 disabled 错误。
 - 后台委派（`run_in_background: true`）立即返回 job 标识；完成时主 agent 只收到紧凑通知，完整报告用 `job_output` 拉取——报告全文不会自动灌进上下文。
+- **可续聊委派**（`mode: 'continuable'`，默认 `one-shot` 零行为变化）：立即返回 `{ continuable: true, children: [{ childId, label, name? }] }`，不等待结果——子代理的每个回合结果经 **DSH 内建结算通知**送达父会话（不包 jobs 包装，结算通知本身就是报告通道）；父 agent 可用 `send_message` 追问/纠偏（只有 continuable 子代才能接收 follow-up）、用 `interrupt_agent` 打断当前回合而不销毁子代理，应用重启后子代理从耐久会话 cold-resume 仍可续聊。顶层与批量 item 级都接受 `mode`，item 覆盖顶层、两级不要求一致（混合批量：one-shot item 等待结果、continuable item 立即返回 childId，渲染先列 childId 清单再附 one-shot 结果）。continuable 子代理 persona 追加 `WORKER_CONTRACT + CONTINUABLE_CONTRACT`（不含 `SUPERVISION_CONTRACT`，无二元终态契约），**不注册进监督协调器**——`supervised_status` 的既有孤儿检测会把它们列为 untracked，这是**正常态而非异常**（`list_agents` 是查看它们的正门）。continuable 子代理占用 DSH continuable 容量池（`maxActiveSubagents`，默认 **8**，满池 `ACTIVATION_LIMIT_REACHED` 显式报错、不排队、不静默降级为 one-shot）——注意批量上限 16 与池 8 的数值差：大 fan-out 仍应使用 one-shot。只读精选目标以 continuable 派遣时经 `deps.agents.get(childId)` 挂同一份只读守卫（与受监督道同一 fail-closed 语义）。
 - **受监督分组**（`group` 参数）：同一次调用内的全部任务构成一个组（**组不支持插入**——向已在场的组名再派即报错；批量派发先全量解析后 spawn，中途失败回滚已 spawn 成员并释放组名，未 seal 且全员 terminated 的组名可复用）；成员以 continuable 子代理运行，遵循二元终态契约（只可报 `STATUS: completed` 或 `STATUS: blocked`，无权判定任务存废）；**成员工具面不含 `send_message`**（spawn 时强制 deny，子→父直发通道关闭，唯一上报通道是终态契约；只读成员维持既有 allow 白名单不变且同样挂只读 bash 守卫，主 agent 自己的消息工具与 DSH 结算通知不受影响）；正常结束无终态报告会被催促续推、供应商错误按退避续推（默认 30s 翻倍、上限 5 次）；**每个成员的终态报告经 DSH 内建结算通知即时送达**（通知正文携带成员的 `STATUS/REPORT` 全文，Orrery 不再另发逐成员通知）；**组全员终态后送达恰好一条一行 group-settled 信号**（组名与成员数，不含成员正文；严格排在组内最后一条成员结算通知之后——以父会话日志观察到全员终态结算通知为准，通知缺失时 1s 兜底）；主 agent 可用 `resume_agent`（注入续推上下文恢复 blocked 子代理）、`terminate_agent`（运行中真正打断 / 非运行中仅状态簿记）裁决，以及 `supervised_status` 查看全量监督状态。
 - **监督可见性**（`supervised_status` 工具，仅主 agent 可用）：逐子代理报告 id/名称/组/状态（`running`/`blocked`/`completed`/`terminated`）/续推次数/报告摘要，逐组报告成员数与 sealed/settled 状态；并对 DSH catalog 中未被协调器登记的 continuable 子代理做**孤儿检测**（标记 untracked，绝不与空注册表混淆）。
 - **Worktree 车道绑定**（`worktree` 参数，详见 [git-worktree.md](git-worktree.md)）：给出车道 id 时，本次调用的每个子代理都绑定到该车道——提示词末尾附车道契约、标签显示为 `<目标> · lane:<id>`、spawn 时在只读守卫之后追加车道守卫（`workdir` 必须在车道内、写入路径限于车道与 `scope`、拒绝改变分支的 git 操作），挂载失败按既有语义拆除子代理；同一车道同时只允许一个写入子代理（`LANE_BUSY`），只读目标可绑定车道做调查而不改变车道状态。写入子代理结束时宿主自动检查车道，前台/后台委派把车道结论（含下一步）直接附在结果里，受监督成员的结论以通知送达。会话处于 Worktree 模式时，未带 `worktree` 的写类委派被拒（`WORKTREE_REQUIRED`）。不带该参数且未开 Worktree 模式时行为与以往完全一致。
@@ -23,7 +24,7 @@
 
 每个 spawn 出来的子代理看到的提示词与工具面都和主 agent 不同，三块差异统一收口在纯模块 `src/shared/child-scope.js`：
 
-- **persona + 协作契约**：类别/精选 agent 的 persona 之后追加 `WORKER_CONTRACT`（模板层英文）：最终消息就是交付给父代理的报告（自包含：改了什么/发现了什么、证据、假设）、不可再委派、不可向用户提问——从任务与代码库决断，真正受阻时以具体阻塞点收尾。受监督成员在其后再追加 `SUPERVISION_CONTRACT`（保持在最后）。两条 spawn 道（一次性/受监督）的 `personaFor` 装饰点各只有一处。
+- **persona + 协作契约**：类别/精选 agent 的 persona 之后追加 `WORKER_CONTRACT`（模板层英文）：最终消息就是交付给父代理的报告（自包含：改了什么/发现了什么、证据、假设）、不可再委派、不可向用户提问——从任务与代码库决断，真正受阻时以具体阻塞点收尾。受监督成员在其后再追加 `SUPERVISION_CONTRACT`（保持在最后）；continuable 子代追加的是 `CONTINUABLE_CONTRACT`（父代理可能在任何回合后追问、每个回合的最终消息都会自动送达父代理、被 `interrupt` 打断不等于任务取消——等下一条消息即可），**绝不**携带 `SUPERVISION_CONTRACT`（无二元终态、无协调器）。三条 spawn 道（一次性/受监督/continuable）的 `personaFor` 装饰点各只有一处。
 - **编排者专属 section 在子代渲染为空**：`orchestrator:doctrine`、`orchestrator:delegate-targets`、`orchestrator:worktree-lanes` 三个 section 注册为**静态裸变量引用**（`{{orrery_doctrine}}` / `{{orrery_delegate_targets}}` / `{{orrery_worktree_lanes}}`），抑制由变量 provider 承担——provider 是 DSH 每次提示词装配都以 `(context)` 调用的既有动态点（delegate-targets 清单本就随设置热更新），`isDelegatedChild(context)`（读 `context.agent.session.header.delegationDepth >= 1`，字段缺失 fail-open 到主 agent 渲染）判定为子代时返回 `''`，主 agent 渲染原文、逐字节不变。live 车道看板 context `orrery:worktree-board` 沿用其既有的函数 text 形态、加同一守卫。车道绑定子代理的车道契约本就直接附在其委派提示词里，看板缺席不丢信息。
 - **工具面扣除编排者专属工具**：spawn 的唯一装配点 `spawnGuardedChild` 在 lane 变换（如受监督道的 `send_message` deny）之后，把 `CHILD_DENY_TOOLS`（`delegate`/`subagent`/`subagent_fork`/`workflow`/监督与车道管控工具/`exit_plan_mode`/goal 三件套/`ask_user_question`/`present`/`edit_lock_*`）并入 `toolFilter.deny` 并去重；带 `allow` 白名单的目标（精选只读 agent）原样返回、语义不动。DSH 的 `tools.restrict()` 会拒绝组合中**未注册**的 deny 名（如 headless 组合没有 `ask_user_question`/`present`/`edit_lock_*`），故 deny 名单与每次 spawn 现读的组合可 restrict 工具集（`ctx.tools.view(undefined).restrictableNames`）求交——组合里没有的工具本来就不出现在子代目录里。`tool.js` 的深度守卫（`delegationDepth >= 1` 拒派）保留为纵深防御第二道。
 
@@ -61,7 +62,8 @@
 ## 设计细节
 
 - 模块布局（`orrery-harness/delegate`）：`index.js` 是约 90 行的组合根，实际职责分住五个命名模块——`settings-overlay.js`（delegate 专属的设置覆盖层工厂：三层 append/去重与整链替换语义，刻意不套用 shared `overlayConfig` 的浅合并模型）、`target-resolver.js`（「item + 父路由 → persona/options/filter/label」唯一脊柱，provider 快照缓存闭包化）、`supervision-mount.js`（协调器工厂与六个效应器）、`supervision-tools.js`（`resume_agent`/`terminate_agent` 定义，object-rooted schema）、`audit-readers.js`（监督重建的三个冷读读取器）；派发走 `ctx.subagents.start`，一次调用携带 `agentOptions`（钉模型与推理档）、`persona`、`toolFilter`（只读白名单）、`maxDepth: 1`（禁止再委派——该拓扑契约全仓只剩一处）。
-- spawn 道轴收编在 `spawn-adapter.js`：`spawnGuardedChild` 让「started ⇒ 已挂守卫」成为不变量，三条道（一次性/后台 job 包装/受监督）按 lane policy 参数化共享同一份请求装配与守卫核心；编排层（escalation 重派、两阶段/回滚/seal）留在 `tool.js`。
+- spawn 道轴收编在 `spawn-adapter.js`：`spawnGuardedChild` 让「started ⇒ 已挂守卫」成为不变量，四条道（一次性/后台 job 包装/受监督/continuable）按 lane policy 参数化共享同一份请求装配与守卫核心；编排层（escalation 重派、两阶段/回滚/seal、mode 分发与互斥校验）留在 `tool.js`。
+- **continuable 派遣道**（`continuableLane()`，`mode: 'continuable'` 专用）：与受监督道同形地走 `subagents.startContinuable({ provider: 'spawn', label, request, signal })`（label/signal 在 request 之外）；`toolFilterFor` 恒等（`send_message` 已在公共 `CHILD_DENY_TOOLS` 里，由装配点统一并入，子→父通道对所有道保持关闭）；只读目标的守卫经 `deps.agents.get(childId)` 挂载（缺 handle 即抛错，与受监督道同机制）；结果送达、追问、打断、cold-resume 全部落在 DSH 内建通道上，Orrery 零新增通知基建。
 - 链解析规则：provider 已注册且（其 catalog 为空或包含该 model）即可解析；`reasoningEffort` 支持度经模型信息校验；适配器更新事件触发重解析。
 - 精选 agent 与类别**共用同一条解析路径**：`resolveTargetRoute`（原 `resolveCategory`）对任何 `{ chain, gateModels, disabled }` 目标定义生效。agent 分支的基线注册表经 `overlay.agentsNow()` 取得（`CURATED_AGENTS` ∪ 行 config，再叠设置面的整链替换），与 `categoriesNow()` 同形；agent 整链不可解析时抛显式错误并点名 agent 与尝试过的档位，**不回退继承**。
 - 兑现两处既有契约：`delegate(agent=…, model=…)` 的 `model` 覆盖生效为「否则会使用的那条路由」的 model id 覆盖（provider 取该路由的 provider；provider catalog 未列出不拒绝——DSH 契约里 catalog 是 advisory）；精选 agent 的 `reasoningEffort` 提示仅在所选路由确实声明该档位时应用，否则静默丢弃。
@@ -85,6 +87,16 @@
 - 精选 agent 整链不可解析 → 显式错误点名 agent 与尝试过的档位，**不回退**到继承路由；只有空链才继承。
 - 停用目标**保证**不出现在任何模型可见面（指引清单、工具描述、报错名单）；注册表级 `disabled` 不可被设置面解除（设置面只能追加停用）。
 - `worktree` 参数：能力关闭 → `WORKTREE_DISABLED`；车道不存在 → `UNKNOWN_LANE`；车道不可派工 → `LANE_NOT_DISPATCHABLE`（附下一步）；已有写入者 → `LANE_BUSY`；spawn 失败时车道预留被回滚，不会卡在 `working`。
+- **`mode` 互斥表**（均在 execute 入口、任何 preflight/spawn 之前拒绝，invalid-arguments 错误且零子代泄漏；`mode` 未知值同样拒绝）：
+
+  | 组合 | 结果 |
+  |---|---|
+  | `mode: 'continuable'` × `run_in_background: true` | 拒绝（continuable 本身即异步，jobs 包装冗余） |
+  | `mode`（任一值）× `group` | 拒绝（受监督组已隐含 continuable 成员） |
+  | `mode: 'continuable'` × `worktree` | 拒绝（车道「worker settled ⇒ 检查」语义假定恰好结算一次的 worker） |
+
+- **continuable 容量耗尽**（`ACTIVATION_LIMIT_REACHED`，池默认 8）→ 显式工具错误：点名容量上限、建议改用 one-shot 或等待在位子代结算；**不排队、不静默降级**，失败启动不留任何已发布子代理。
+- **continuable 守卫失败残留边界**：continuable 句柄无 `dispose`，只读守卫挂载失败（start 已成功）时原始错误原样上抛（道上为错误附 `childId`），`tool.js` catch 侧对已知 childId 尽力 `interrupt` 后传播——子代理可能残留但未被使用，父代理拿到响亮错误并可凭 childId 显式处置；发生概率低（attach 是同步监听器注册）。
 
 ## 与编辑锁的关系
 
@@ -99,5 +111,6 @@
 - 单元测试：`test/` 覆盖参数校验、链解析（含死链报错）、变体选择、ESCALATE 重派、批量默认值；五个布局模块各有直测套件——`settings-overlay.test.js`（三层 append/去重语义与平台注入）、`target-resolver.test.js`（解析脊柱与「每次解析恰好一次覆盖层」）、`supervision-tools.test.js`（schema 形状与 depth 门）、`supervision-mount.test.js`（notifyParent 策略与 feed 路由，真实短定时器）、`audit-readers.test.js`（临时目录 JSONL 夹具），spawn 道轴由 `spawn-adapter.test.js`（装配形状/两种拆除语义/调用次序/禁用边角/CHILD_DENY_TOOLS 合并与 allow 不动/persona 契约装饰）钉住；子代提示词构成由 `test/child-scope.test.js`（`isDelegatedChild` 真值表、`childToolFilter` 合并与 restrictable 求交、`WORKER_CONTRACT` 逐字钉死）与各处「静态裸变量引用 + provider 抑制」的渲染断言（`core.test.js`/`delegate.test.js`/`worktree-surfaces.test.js`）及 `targets.test.js` 的 `renderDelegateTargetsSection` 组合一致性钉住；守卫采用「一个深核心 + 两个薄壳适配器」结构——`src/delegate/robash-guard-core.js` 收编全部跨壳共享策略（canonical 白名单 `DEFAULT_TABLES`、git 门控、`GIT_CONFIG_*` 拒绝、递归预算、重定向 sink 策略、`gateExecutable` 判定尾段、按壳键控的 `DANGEROUS_FLAGS` 与共享理由模板 `reasons`），`robash-guard.js`/`robash-guard-pwsh.js` 只保留壳词法（scanner/tokenizer/别名展开）并各导出同一签名 `check(command, lists)`；`test/robash-guard.test.js` 与 `test/robash-guard-pwsh.test.js` 的语料（放行/拒绝/注入绕过/自定义列表）作为行为冻结证据逐字存活；`test/robash-whitelist-parity.test.js` 缩为「`whitelist-defaults.json` ↔ `DEFAULT_TABLES`」单组比对 + 行内不得出现白名单键的既有不变式；`test/group-coordinator.test.js` 覆盖协调器全分支（组登记/禁插入/终态解析/催促/退避/耗尽/打断分类/resume/terminate/group-settled 信号渲染/失败批次释放组名/各投递失败降级）与挂载层（组派发、两阶段解析、回滚与组名复用、只读成员守卫、延迟 followup 投递）；**volatile 热更新**由 `test/delegate.test.js` 的四条 `hot reload:` 用例（提交后新委派的守卫行为与服务面立即改变、提交后新委派 fail-closed、提交不回溯收改已派发代理、dispose 退订）与两条挂载层用例（提交抵达**已建立**协调器、提交改变下一次受监督派发的只读面）覆盖；`test/group-coordinator.test.js` 另有 `setSupervision` 三条用例（收紧上限、重调退避而不动登记状态、忽略三个调参键之外的键）。
 - 新增 `test/targets.test.js`：指引渲染（启用过滤 / 注册表顺序 / 空集合与全停用兜底 / 模板只引用已注册变量）；`target-resolver.test.js` 补 agent 链解析、`model` 覆盖、effort 支持度、报错 available 名单过滤；`settings-overlay.test.js` 补 `agentsNow()` 与 `disabledCategories` 合并；`settings.test.js` 补两个新键的解析与坏 JSON 报错。
 - `test/worktree-surfaces.test.js`：`worktree` 参数的绑定、标签、契约、结算附带、spawn 失败回滚、`WORKTREE_REQUIRED`/`WORKTREE_DISABLED`/`LANE_BUSY` 透传，以及 spawn 道车道守卫在一次性与受监督两条通道上的挂载与 fail-closed 拆除。
-- 集成测试：`delegate` 场景（父委派、子会话、结果回传）；`robash` 场景——只读子代理的受守卫 bash：放行命令执行、写命令拒绝、目标文件零损伤；`grouped` 场景——受监督分组端到端：批量派发、供应商错误成员退避续推恢复、成员正文经 DSH 内建结算通知（`subagent-settled` 源）送达父会话、一行 group-settled 信号到达、父 agent 观察到信号；`escalate` 场景（ESCALATE 重派与发现传递）；`background` 场景（后台委派：紧凑通知到达、报告全文不入父上下文、父 agent 观察到通知）；`terminate` 场景（运行中成员真打断（turn aborted）、组 settle 信号到达）；`rehydrate` 场景（两阶段重启：blocked 报告经内建结算通知送达、send_message 工具面契约、审计事实链含 resume 与 group-settled、重建后 resume_agent 复工、group-settled 信号重发）；`child-prompt` 场景——子代首请求系统提示词无 `Orchestration Doctrine`/`Delegation targets`/`Worktree lanes` 段落、tools 载荷不含任何 `CHILD_DENY_TOOLS` 成员、persona 携带 `WORKER_CONTRACT` 关键句，且父面三者俱在（抑制只作用于子代）。
+- continuable 形态由三层钉住：`test/delegate.test.js` 的 `delegate continuable mode` 套件（三条互斥拒绝零泄漏、未知 mode 值、立即返回 childId、混合批量、item 级双向覆盖、`ACTIVATION_LIMIT_REACHED` 显式文案、守卫失败后 catch 侧尽力 interrupt、工具面 object-rooted enum 与描述段）、`test/spawn-adapter.test.js` 的 continuable 道套件（start 形状/persona 双契约且无 SUPERVISION_CONTRACT/toolFilter 恒等与公共 deny 合并/守卫经 `agents.get(childId)`/缺 handle 逐字报错/守卫失败原样上抛附 childId/禁用快照边角）、`test/child-scope.test.js` 的 `CONTINUABLE_CONTRACT` 逐字钉死与三要点断言、`test/core.test.js` 的 doctrine 形态选择指引渲染断言；`test/worktree-surfaces.test.js` 另钉 continuable×worktree 拒绝先于任何车道绑定。
+- 集成测试：`delegate` 场景（父委派、子会话、结果回传）；`robash` 场景——只读子代理的受守卫 bash：放行命令执行、写命令拒绝、目标文件零损伤；`grouped` 场景——受监督分组端到端：批量派发、供应商错误成员退避续推恢复、成员正文经 DSH 内建结算通知（`subagent-settled` 源）送达父会话、一行 group-settled 信号到达、父 agent 观察到信号；`continuable` 场景——`mode: 'continuable'` 端到端：立即返回 childId、首轮结果经内建结算通知送达父会话、父 agent `send_message` 追问、子代带着既有上下文作答、第二次结算通知到达、父 agent 观察到两轮结果；`escalate` 场景（ESCALATE 重派与发现传递）；`background` 场景（后台委派：紧凑通知到达、报告全文不入父上下文、父 agent 观察到通知）；`terminate` 场景（运行中成员真打断（turn aborted）、组 settle 信号到达）；`rehydrate` 场景（两阶段重启：blocked 报告经内建结算通知送达、send_message 工具面契约、审计事实链含 resume 与 group-settled、重建后 resume_agent 复工、group-settled 信号重发）；`child-prompt` 场景——子代首请求系统提示词无 `Orchestration Doctrine`/`Delegation targets`/`Worktree lanes` 段落、tools 载荷不含任何 `CHILD_DENY_TOOLS` 成员、persona 携带 `WORKER_CONTRACT` 关键句，且父面三者俱在（抑制只作用于子代）。
 - `delegate` 场景断言父系统提示词含委托目标指引（含启用类别名与精选 agent 名）；新增停用场景：被停用类别既不在小节里，派发它又得到显式 disabled 错误且不出现于 available 名单。

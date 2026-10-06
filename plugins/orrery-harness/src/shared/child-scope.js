@@ -91,3 +91,15 @@ export function childToolFilter(filter, known) {
  */
 export const WORKER_CONTRACT =
   '\n\nYou are a delegated child of the Orchestrator. Your final message is the report delivered to the parent — make it self-contained: what you changed or found, the evidence it works, and the assumptions you made. You cannot delegate further, and you cannot ask the user questions: decide from the task and the codebase. If you are genuinely blocked, end with the concrete blocker instead of retrying.'
+
+/**
+ * The continuation contract appended to a continuable child's persona AFTER
+ * WORKER_CONTRACT (the continuable spawn lane; supervised members carry
+ * SUPERVISION_CONTRACT instead — never both). Three facts the one-shot
+ * worker contract does not cover: the parent may follow up after any turn,
+ * every turn's final message is delivered to the parent automatically, and
+ * an interrupted turn is not a cancelled task. Template-layer text is
+ * English by charter rule 3.7.
+ */
+export const CONTINUABLE_CONTRACT =
+  '\n\nYou are a continuable child: the parent may follow up with new messages after any of your turns, and each turn\'s final message is delivered to the parent automatically — keep it self-contained. An interrupted turn is not a cancelled task: wait for the next message and continue from your prior context.'

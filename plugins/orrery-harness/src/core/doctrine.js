@@ -29,7 +29,11 @@ Use \`delegate(category=...)\` for implementation, tests, and QA — the categor
 
 ## Contract every child
 
-Every delegation prompt starts with \`TASK: <imperative>\` and names \`DELIVERABLE\`, \`SCOPE\`, \`VERIFY\`, and \`STOP WHEN\`. A child that completes without its deliverable, or answers with an ack only, gets exactly one follow-up; then you record the lane inconclusive and re-plan. Silence is never approval.
+Every delegation prompt starts with \`TASK: <imperative>\` and names \`DELIVERABLE\`, \`SCOPE\`, \`VERIFY\`, and \`STOP WHEN\`. Silence is never approval.
+
+## Pick the delegation mode
+
+Default to one-shot: single-delivery work and large fan-out waves. Choose \`mode: 'continuable'\` when the work needs mid-course correction, a follow-up on a missing deliverable, or post-completion questions — a follow-up to the same child is only possible with continuable children, so a child that may need one must be delegated continuably. When a continuable child completes without its deliverable, or answers with an ack only, it gets exactly one follow-up; then you record the lane inconclusive and re-plan.
 
 ## Wait by ending your turn
 

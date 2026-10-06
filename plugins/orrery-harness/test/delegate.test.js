@@ -10,7 +10,7 @@ import { resolveTargetRoute, rungResolves, snapshotProviders } from '../src/dele
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
 import { readWhitelistDefaults } from '../src/shared/whitelist-defaults.js'
-import { CHILD_DENY_TOOLS, WORKER_CONTRACT } from '../src/shared/child-scope.js'
+import { CHILD_DENY_TOOLS, CONTINUABLE_CONTRACT, WORKER_CONTRACT } from '../src/shared/child-scope.js'
 import { DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
@@ -165,6 +165,22 @@ describe('normalizeItems', () => {
     expect(item.load_skills).toEqual(['debugging'])
     expect(item.task_summary).toBe('batch label')
   })
+
+  it('passes an item-level mode through over the top-level value', () => {
+    const [a, b] = normalizeItems({
+      mode: 'continuable',
+      tasks: [
+        { prompt: 'x', category: 'quick', mode: 'one-shot' },
+        { prompt: 'y', category: 'quick' },
+      ],
+    })
+    expect(a.mode).toBe('one-shot')
+    expect(b.mode).toBe('continuable')
+  })
+
+  it('rejects an unknown mode value', () => {
+    expect(() => normalizeItems({ category: 'quick', prompt: 'x', mode: 'sticky' })).toThrow(/unknown mode/)
+  })
 })
 
 describe('delegate tool', () => {
@@ -183,8 +199,12 @@ describe('delegate tool', () => {
 
   function fakeDeps(overrides = {}) {
     const spawned = []
+    const continued = []
+    const interrupted = []
     return {
       spawned,
+      continued,
+      interrupted,
       resolveTarget: overrides.resolveTarget ?? (async (item) => ({
         persona: 'persona',
         label: item.name ?? 'child',
@@ -203,8 +223,17 @@ describe('delegate tool', () => {
             dispose: async () => {},
           }
         },
+        async startContinuable(spec) {
+          continued.push(spec)
+          return { childId: `child-c${continued.length}`, messageId: `msg-c${continued.length}` }
+        },
+        interrupt(targetId, authority) {
+          interrupted.push({ targetId, authority })
+        },
       },
       jobs: overrides.jobs,
+      agents: overrides.agents,
+      robash: overrides.robash,
     }
   }
 
@@ -275,6 +304,225 @@ describe('delegate tool', () => {
   })
 })
 
+describe('delegate continuable mode', () => {
+  function fakeExec(depth = 0) {
+    return {
+      agent: {
+        id: 'parent-session',
+        session: {
+          header: { delegationDepth: depth },
+          requestContext: () => undefined,
+        },
+      },
+      signal: new AbortController().signal,
+    }
+  }
+
+  function fakeDeps(overrides = {}) {
+    const spawned = []
+    const continued = []
+    const interrupted = []
+    return {
+      spawned,
+      continued,
+      interrupted,
+      resolveTarget: overrides.resolveTarget ?? (async (item) => ({
+        persona: 'persona',
+        label: item.name ?? 'child',
+        ...(item.agent === 'finder' ? { toolFilter: { allow: ['read'] } } : {}),
+      })),
+      loadSkill: async () => 'skill-body',
+      subagents: {
+        async start(provider, request) {
+          spawned.push({ provider, request })
+          return {
+            id: 'child-1',
+            result: Promise.resolve({
+              output: [{ type: 'text', text: 'done the thing' }],
+              stopReason: 'completed',
+            }),
+            dispose: async () => {},
+          }
+        },
+        async startContinuable(spec) {
+          continued.push(spec)
+          return { childId: `child-c${continued.length}`, messageId: `msg-c${continued.length}` }
+        },
+        interrupt(targetId, authority) {
+          interrupted.push({ targetId, authority })
+        },
+      },
+      jobs: overrides.jobs,
+      agents: overrides.agents,
+      robash: overrides.robash,
+    }
+  }
+
+  // --- The three mutexes (design D1/D4): rejected at the execute entry,
+  // before any preflight/spawn, with zero child leakage. ------------------
+
+  it('rejects continuable combined with run_in_background, at either level, before any spawn', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    await expect(async () =>
+      tool.execute({ category: 'quick', prompt: 'x', mode: 'continuable', run_in_background: true }, fakeExec()),
+    ).rejects.toThrow(/mode "continuable" and run_in_background cannot be combined/)
+    await expect(async () =>
+      tool.execute({ run_in_background: true, tasks: [{ category: 'quick', prompt: 'x', mode: 'continuable' }] }, fakeExec()),
+    ).rejects.toThrow(/mode "continuable" and run_in_background cannot be combined/)
+    expect(deps.spawned).toHaveLength(0)
+    expect(deps.continued).toHaveLength(0)
+  })
+
+  it('rejects mode combined with group — even explicit one-shot — before any spawn', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    await expect(async () =>
+      tool.execute({ group: 'g', mode: 'continuable', tasks: [{ category: 'quick', prompt: 'x' }] }, fakeExec()),
+    ).rejects.toThrow(/mode and group cannot be combined/)
+    await expect(async () =>
+      tool.execute({ group: 'g', mode: 'one-shot', tasks: [{ category: 'quick', prompt: 'x' }] }, fakeExec()),
+    ).rejects.toThrow(/mode and group cannot be combined/)
+    await expect(async () =>
+      tool.execute({ group: 'g', tasks: [{ category: 'quick', prompt: 'x', mode: 'continuable' }] }, fakeExec()),
+    ).rejects.toThrow(/mode and group cannot be combined/)
+    expect(deps.spawned).toHaveLength(0)
+    expect(deps.continued).toHaveLength(0)
+  })
+
+  it('rejects continuable combined with worktree before any lane binding or spawn', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    await expect(async () =>
+      tool.execute({ category: 'quick', prompt: 'x', mode: 'continuable', worktree: 'lane-1' }, fakeExec()),
+    ).rejects.toThrow(/mode "continuable" and worktree cannot be combined/)
+    expect(deps.spawned).toHaveLength(0)
+    expect(deps.continued).toHaveLength(0)
+  })
+
+  it('rejects an unknown mode value', async () => {
+    const tool = createDelegateTool(fakeDeps())
+    await expect(async () =>
+      tool.execute({ category: 'quick', prompt: 'x', mode: 'sticky' }, fakeExec()),
+    ).rejects.toThrow(/unknown mode/)
+  })
+
+  // --- Lane selection and the return contract (design D2). ---------------
+
+  it('dispatches a continuable child and returns its childId immediately', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({ category: 'quick', prompt: 'TASK: x', mode: 'continuable', name: 'alpha' }, fakeExec())
+    expect(value).toEqual({ continuable: true, children: [{ childId: 'child-c1', label: 'alpha', name: 'alpha' }] })
+    expect(deps.spawned).toHaveLength(0) // the one-shot lane stays untouched
+    expect(deps.continued).toHaveLength(1)
+    const spec = deps.continued[0]
+    expect(spec.provider).toBe('spawn')
+    expect(spec.label).toBe('alpha')
+    expect('label' in spec.request).toBe(false)
+    expect('signal' in spec.request).toBe(false)
+    // worker + continuation contracts; NEVER the supervised terminal-status contract
+    expect(spec.request.persona).toBe('persona' + WORKER_CONTRACT + CONTINUABLE_CONTRACT)
+    expect(spec.request.persona).not.toContain('Terminal status contract')
+    expect(spec.request.maxDepth).toBe(1)
+    // the child→parent channel stays closed via the common deny list
+    expect(spec.request.toolFilter.deny).toEqual([...CHILD_DENY_TOOLS])
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered).toContain('continuable')
+    expect(rendered).toContain('child-c1')
+    expect(rendered).toContain('settlement notice')
+  })
+
+  it('runs a mixed batch: one-shot items wait for results, continuable items return childIds', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      mode: 'one-shot',
+      tasks: [
+        { category: 'quick', prompt: 'TASK: a' },
+        { category: 'deep', prompt: 'TASK: b', mode: 'continuable', name: 'beta' },
+      ],
+    }, fakeExec())
+    expect(value.continuable).toBe(true)
+    expect(value.children).toEqual([{ childId: 'child-c1', label: 'beta', name: 'beta' }])
+    expect(value.results).toHaveLength(1)
+    expect(value.results[0].text).toBe('done the thing')
+    expect(deps.spawned).toHaveLength(1)
+    expect(deps.continued).toHaveLength(1)
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered).toContain('child-c1')
+    expect(rendered).toContain('done the thing')
+  })
+
+  it('lets an item-level mode override the call level in both directions (levels need not agree)', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      mode: 'continuable',
+      tasks: [
+        { category: 'quick', prompt: 'TASK: a', mode: 'one-shot' },
+        { category: 'quick', prompt: 'TASK: b' },
+      ],
+    }, fakeExec())
+    // the first item overrode back to one-shot (awaited result); the second
+    // inherited the call-level continuable mode.
+    expect(value.results).toHaveLength(1)
+    expect(value.children).toHaveLength(1)
+    expect(deps.spawned).toHaveLength(1)
+    expect(deps.continued).toHaveLength(1)
+  })
+
+  // --- Capacity and teardown failure semantics (design D3/D5). -----------
+
+  it('wraps ACTIVATION_LIMIT_REACHED into an explicit capacity error (no queue, no downgrade, no published child)', async () => {
+    const deps = fakeDeps()
+    deps.subagents.startContinuable = async () => {
+      const error = new Error('subagent limit reached (active child limit: 8); wait for an existing child to finish or complete this work with the current agents')
+      error.code = 'ACTIVATION_LIMIT_REACHED'
+      throw error
+    }
+    const tool = createDelegateTool(deps)
+    const error = await tool.execute({ category: 'quick', prompt: 'x', mode: 'continuable' }, fakeExec()).then(
+      () => { throw new Error('expected a rejection') },
+      (caught) => caught,
+    )
+    expect(error.message).toContain('continuable capacity exhausted')
+    expect(error.message).toContain('active child limit: 8')
+    expect(error.message).toContain('one-shot')
+    expect(error.message).toContain('wait for a resident continuable child to settle')
+    expect(deps.interrupted).toHaveLength(0) // nothing was published, nothing to interrupt
+  })
+
+  it('best-effort interrupts the known child when the guard attach fails after a successful start', async () => {
+    const boom = new Error('no tools service')
+    const deps = fakeDeps({
+      resolveTarget: async () => ({ persona: 'p', label: 'ro', readOnly: true }),
+      agents: { get: () => ({ ctx: { tools: { guard: () => { throw boom } } } }) },
+      robash: () => ({ enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: [], gitAllow: [], deny: [] } } }),
+    })
+    const tool = createDelegateTool(deps)
+    const error = await tool.execute({ agent: 'finder', prompt: 'x', mode: 'continuable' }, fakeExec()).then(
+      () => { throw new Error('expected a rejection') },
+      (caught) => caught,
+    )
+    // the original error propagates untouched (continuable handles have no
+    // dispose); the catch side interrupted the residual child it knows.
+    expect(error).toBe(boom)
+    expect(deps.interrupted).toHaveLength(1)
+    expect(deps.interrupted[0].targetId).toBe('child-c1')
+    expect(deps.interrupted[0].authority.kind).toBe('ancestor')
+  })
+
+  it('the tool surface documents the mode option as an object-rooted enum at both levels', () => {
+    const tool = createDelegateTool(fakeDeps())
+    expect(tool.parameters.type).toBe('object')
+    expect(tool.parameters.properties.mode.enum).toEqual(['one-shot', 'continuable'])
+    expect(tool.parameters.properties.tasks.items.properties.mode.enum).toEqual(['one-shot', 'continuable'])
+    expect(DELEGATE_DESCRIPTION).toContain("'continuable'")
+    expect(DELEGATE_DESCRIPTION).toContain('mode never combines with group')
+    expect(DELEGATE_DESCRIPTION).toContain('send_message')
+  })
+})
 describe('registry defaults', () => {
   it('ships the nine categories and three curated agents', () => {
     expect(Object.keys(DEFAULT_CATEGORIES).sort()).toEqual([

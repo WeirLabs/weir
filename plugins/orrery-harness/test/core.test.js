@@ -58,6 +58,9 @@ describe('orrery-core', () => {
       'delegate(agent=...)',
       'finder', 'scholar', 'advisor',
       'TASK:', 'DELIVERABLE', 'SCOPE', 'VERIFY', 'STOP WHEN',
+      'one-shot',
+      "mode: 'continuable'",
+      'only possible with continuable children',
       'end the turn',
       'job_output',
       'Evidence closes work',
@@ -74,5 +77,14 @@ describe('orrery-core', () => {
     expect(DOCTRINE).not.toContain('explore')
     expect(DOCTRINE).not.toContain('librarian')
     expect(DOCTRINE).not.toContain('oracle')
+  })
+
+  it('doctrine scopes the follow-up promise to continuable children', () => {
+    // The unscoped promise "a child gets exactly one follow-up" predated the
+    // continuable lane and promised what a one-shot child can never receive;
+    // the guidance now picks the mode first and scopes the follow-up to it.
+    expect(DOCTRINE).toContain('Pick the delegation mode')
+    expect(DOCTRINE).toContain('Default to one-shot')
+    expect(DOCTRINE).not.toContain('answers with an ack only, gets exactly one follow-up')
   })
 })

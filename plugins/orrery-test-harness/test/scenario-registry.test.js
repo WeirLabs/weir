@@ -26,6 +26,7 @@ EXPECTED_ORDER.push('notify-worktree')
 EXPECTED_ORDER.push('child-prompt')
 EXPECTED_ORDER.push('editlock-stale-sweep', 'editlock-stale-sweep-off')
 EXPECTED_ORDER.push('capability-remote')
+EXPECTED_ORDER.push('continuable')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
