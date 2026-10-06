@@ -8,6 +8,9 @@
 
 ### Added
 - **委派：continuable 形态（`mode: 'continuable'`）**：`delegate` 新增 `mode` 选项——`continuable` 子代立即返回稳定 childId、结果经内建结算通知送达，父代理可用 `send_message` 追问或中途纠偏（子代保留全部上下文）、`interrupt_agent` 打断当前回合而不销毁它，应用重启后冷恢复仍可续聊。默认 `one-shot` 不变；`mode` 与 `group` 互斥，continuable 与 `run_in_background`、`worktree` 互斥（均以明确错误拒绝）。continuable 子代占用运行时续聊容量（默认 8），容量满时以点名上限的错误失败，不排队、不降级。详见 [委派特性文档](docs/features/category-delegation.md)。
+- **编辑锁：崩溃自愈（全程无人工）**：publisher 预约现在携带活性凭证（pid／启动身份／boot 标识／租约，周期续约）；崩溃残留的预约在「租约超时且 owner 被证明死亡」时经串行化路径自动回收，域自动恢复；上一进程生命周期留下的未决发布（unknown）在重启时自动行政结清——受控创建不再被历史围栏永久阻断，`unknown` 结论与操作历史原样保留，过程只有一条事后汇总通知与完整审计。镜像演进至 v6（incarnation 记录进程身份，旧版本无损升级、旧 build 拒绝读取）。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
+- **编辑锁：在线管理员恢复（一键、无重启）**：publisher 进程仍活着时的未决发布，设置页「编辑锁维护」面板直接给出恢复卡片——完整 scope、迟到写者风险原文与确认摘要（面板按离线路径同一算法自行计算并展示），点一次「在线结清」即在运行中的管理器里结清：不再要求「停用功能＋重启＋手打哈希」。离线 ADMIN OVERRIDE 保留用于 runtime 不可用的场景。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
+- **Worktree 车道：清理前编辑锁残留警示**：land／abandon 删除 worktree 前，只读检查主管理域编辑锁权威中该 lane 会话的残留（未决操作与锁），有则在清理卡片上警示并给出结算路径（锁由静默清扫自动处理、未决发布由崩溃自愈或面板一键结清），警示不阻断清理。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
 
 ### Fixed
 - **集成测试装置：修复负载下的确定性场景失败**：`rehydrate`/`escalate`/`delegate-preflight` 三个场景的等待逻辑此前门控在「最后一条消息的角色/内容」上，宿主注入的 runtime-context 快照在负载下插队于 tool result 与下一请求之间时门控错位，mock 落兜底文本导致回合提前结束、headless 在子代理运行中退出（表现为负载下确定性红、空闲独唱全绿）。等待改为 transcript 历史标记驱动的交错容忍原语（mock-kit 单点实现，有界重试），并对全部场景驱动逐一审查转换承重门控；同时 `run.mjs` 默认 IT root 增加咨询锁——同 checkout 并发套件自动改用私有后缀 root（响亮提示一行），不再互相 wiping。详见 [集成测试装置文档](docs/features/integration-test-harness.md)。
