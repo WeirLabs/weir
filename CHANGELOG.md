@@ -5,6 +5,7 @@
 
 ### Fixed
 - **集成测试装置：修复负载下的确定性场景失败**：`rehydrate`/`escalate`/`delegate-preflight` 三个场景的等待逻辑此前门控在「最后一条消息的角色/内容」上，宿主注入的 runtime-context 快照在负载下插队于 tool result 与下一请求之间时门控错位，mock 落兜底文本导致回合提前结束、headless 在子代理运行中退出（表现为负载下确定性红、空闲独唱全绿）。等待改为 transcript 历史标记驱动的交错容忍原语（mock-kit 单点实现，有界重试），并对全部场景驱动逐一审查转换承重门控；同时 `run.mjs` 默认 IT root 增加咨询锁——同 checkout 并发套件自动改用私有后缀 root（响亮提示一行），不再互相 wiping。详见 [集成测试装置文档](docs/features/integration-test-harness.md)。
+- **集成测试装置：回放夹具自包含**：`.gitignore` 对 `.orrery/` 的全局忽略曾吞掉夹具工作区内的回放状态文件（`audit.jsonl`、车道账本），而逐夹具手工例外只覆盖两个老夹具——后录制的 `worktree-watch`/`editlock-stale-sweep` 的状态文件从未入库，全新 checkout 或新 worktree lane 中其回放必红（`editlock-stale-sweep` 连主 checkout 都红）。例外规则已通配化覆盖全部夹具工作区（可入库状态文件种类枚举单点声明），新增 conformance 测试逐夹具校验回放消费的文件全部被 git 跟踪——今后录制出不自包含的夹具当场被抓；主工作区的历史残留未跟踪状态已清算。详见 [集成测试装置文档](docs/features/integration-test-harness.md)。
 
 ## [0.8.0] - 2026-10-06
 
