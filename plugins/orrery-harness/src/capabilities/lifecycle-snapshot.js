@@ -39,6 +39,11 @@
 //   the memory snapshot becomes BLOCKED (empty Skill view, all managed MCP
 //   calls refused, recovery entry visible). Never a full-discovery
 //   fallback; the original file is never rewritten.
+// - resume/fork incarnation (depth 0 yet a parentSession header): the named
+//   parent's accepted snapshot is captured best-effort under the SAME root
+//   rule — a failed capture never throws and never rejects the session; the
+//   session runs BLOCKED like an unreadable root record, with the manager
+//   naming an explicit Apply as the recovery gesture.
 // - subagent (one-shot / background / supervised member / escalation /
 //   fork child): a parent snapshot that cannot be read, or a capture that
 //   cannot be written, makes the listener THROW. The host dispatches
@@ -432,7 +437,26 @@ export function createLifecycleSnapshots(options = {}) {
       if ((session.header?.delegationDepth ?? 0) === 0) {
         // Root / existing session: synchronous read only. An undecodable
         // record becomes BLOCKED inside snapshotFor — this path NEVER throws.
-        snapshotFor(sessionId)
+        const own = snapshotFor(sessionId)
+        // Resume/fork incarnation (D1): depth zero yet a parentSession
+        // header. The read side demands an inherited snapshot for such a
+        // session exactly when it carries NO accepted record of its own, so
+        // the capture side aligns with that gate: an incarnation WITH its
+        // own accepted record keeps it verbatim (an explicit user Apply is
+        // never narrowed by the parent lineage). The capture follows the
+        // ROOT failure rule, never the subagent rule below: a failed capture
+        // does NOT throw — the session is created and runs BLOCKED like an
+        // unreadable root record (6.4), never a full-discovery fallback. A
+        // parentSession equal to the session id is no parent (defensive).
+        const parentSessionId = session.header?.parentSession
+        if (own === null && typeof parentSessionId === 'string' && parentSessionId.length > 0 && parentSessionId !== sessionId) {
+          try {
+            captureInherited(sessionId, parentSessionId)
+          } catch (captureError) {
+            warn(`resume incarnation capture failed for session "${sessionId}": ${message(captureError)}`)
+            markBlocked(sessionId, 'unreadable')
+          }
+        }
         return undefined
       }
       // Subagent: durably capture the inherited snapshot NOW with blocking

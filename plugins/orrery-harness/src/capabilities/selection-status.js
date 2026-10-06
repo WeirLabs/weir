@@ -28,7 +28,7 @@ export function classifySelectionFailure(input) {
   if (text.includes('Inherited skill snapshot is')) {
     return {
       reason: 'inherited-snapshot-unavailable',
-      hint: 'This subagent has no readable inherited skill snapshot. Respawn it from the parent session so the snapshot is recaptured at creation.',
+      hint: 'This session has no readable inherited skill snapshot — the typical shape of a host-resumed or forked session. Open the Capabilities panel, select the skills this session needs, and Apply: the accepted selection frees the session from the inheritance dependency. A genuine subagent is instead respawned from its parent session, so the snapshot is recaptured at creation.',
     }
   }
   if (text.includes('Workspace default selection is')) {

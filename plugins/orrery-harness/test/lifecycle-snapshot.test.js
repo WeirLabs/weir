@@ -239,3 +239,67 @@ test('6.1 Apply acceptance loads the shared lifecycle snapshot via the engine pu
   expect(snapshot?.skills.map(s => s.name)).toEqual(['alpha'])
   expect(snapshot?.mcpServers).toEqual(['docs'])
 })
+
+// --- Resume/fork incarnation capture (capability-resume-incarnation-recovery D1) ---
+
+const incarnationPayload = (sessionId, parentSession) => ({
+  agent: { session: { id: sessionId, header: { delegationDepth: 0, ...(parentSession ? { parentSession } : {}) } } },
+})
+
+test('D1 incarnation: a depth-0 session with a parentSession captures the parent snapshot at creation (narrower-only)', async () => {
+  const root = base()
+  await seedSelection(root, 'parent', 2, [alpha, beta], ['docs'])
+  const lifecycle = createLifecycleSnapshots({ root })
+  expect(lifecycle.agentCreated(incarnationPayload('incarnation-1', 'parent'))).toBeUndefined()
+  // Interop: the captured record decodes through the async group-2 store.
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  const record = await store.read({ kind: 'inherited', sessionId: 'incarnation-1' })
+  expect(record.kind).toBe('ok')
+  expect(record.revision).toBe(1)
+  expect(record.payload.origin).toBe(INHERITED_ORIGIN)
+  expect(record.payload.skills.map(s => s.name)).toEqual(['alpha', 'beta'])
+  expect(record.payload.mcpServers).toEqual(['docs'])
+  expect(record.payload.parent).toEqual({ sessionId: 'parent', revision: 2 })
+  const memory = lifecycle.snapshotFor('incarnation-1')
+  expect(memory?.state).toBe('ready')
+  expect(memory?.captured?.parentSessionId).toBe('parent')
+})
+
+test('D1 incarnation: an unavailable parent snapshot blocks like an unreadable root record and NEVER throws', async () => {
+  const root = base()
+  mkdirSync(join(root, 'sessions', 'parent'), { recursive: true })
+  writeFileSync(join(root, 'sessions', 'parent', 'selection.json'), '{')
+  const warnings = []
+  const lifecycle = createLifecycleSnapshots({ root, warn: text => warnings.push(text) })
+  // The ROOT failure rule (6.4), never the subagent rule: creation is NOT rejected.
+  expect(lifecycle.agentCreated(incarnationPayload('incarnation-2', 'parent'))).toBeUndefined()
+  const snapshot = lifecycle.snapshotFor('incarnation-2')
+  expect(snapshot?.state).toBe('blocked')
+  expect(snapshot?.reason).toBe('unreadable')
+  expect(warnings.some(text => text.includes('incarnation-2'))).toBe(true)
+  // Nothing was captured; no full-discovery fallback happened.
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  expect((await store.read({ kind: 'inherited', sessionId: 'incarnation-2' })).kind).toBe('absent')
+})
+
+test('D1 incarnation: a parentSession equal to the session id is treated as no parent (defensive)', () => {
+  const lifecycle = createLifecycleSnapshots({ root: base() })
+  expect(lifecycle.agentCreated(incarnationPayload('self-incarnation', 'self-incarnation'))).toBeUndefined()
+  // No capture, no block: the cold absent state is legitimate.
+  expect(lifecycle.snapshotFor('self-incarnation')).toBeNull()
+})
+
+test('D1 incarnation: an own accepted record wins — no capture, the user selection is never parent-narrowed', async () => {
+  const root = base()
+  await seedSelection(root, 'parent', 1, [alpha], ['docs'])
+  await seedSelection(root, 'incarnation-3', 1, [alpha, beta], ['docs', 'web'])
+  const lifecycle = createLifecycleSnapshots({ root })
+  expect(lifecycle.agentCreated(incarnationPayload('incarnation-3', 'parent'))).toBeUndefined()
+  const snapshot = lifecycle.snapshotFor('incarnation-3')
+  expect(snapshot?.state).toBe('ready')
+  expect(snapshot?.skills.map(s => s.name)).toEqual(['alpha', 'beta'])
+  expect(snapshot?.mcpServers).toEqual(['docs', 'web'])
+  expect(snapshot?.captured).toBeNull()
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  expect((await store.read({ kind: 'inherited', sessionId: 'incarnation-3' })).kind).toBe('absent')
+})
