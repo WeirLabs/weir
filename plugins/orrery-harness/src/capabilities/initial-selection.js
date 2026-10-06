@@ -5,7 +5,10 @@
 // 1. A saved workspace-default snapshot (unit { kind: 'defaults', workspaceKey })
 //    wins — an EXPLICIT EMPTY default is a real choice, not a missing one.
 //    Unresolved refs recorded with the default are reported, never resolved
-//    by guessing.
+//    by guessing. Name-string skill entries (the client draft's wire shape,
+//    and records written by `default-save from:'draft'`) bind against the
+//    live inventory by unique name; unbindable entries are reported as
+//    missing, never guessed, never failing the whole default.
 // 2. Otherwise the explicit builtin-Skills baseline plus the managed MCP
 //    identities the composition already enables. A legacy Orrery session
 //    without any policy lands here too: its configured MCP is kept (this
@@ -15,6 +18,7 @@
 //    module is mounted by the preset's own selection row, so other presets
 //    are untouched by construction.
 
+import { createSkillIdentity } from './skill-identity.js'
 /**
  * @param {{
  *   defaultsRecord: { kind: string, payload?: unknown },
@@ -37,6 +41,46 @@ export function baselineSkillIdentities(candidates, scopes = ['orrery-builtin'])
   return (Array.isArray(candidates) ? candidates : [])
     .filter(candidate => candidate?.status === 'parsed' && admitted.has(/** @type {any} */ (candidate).identity?.scope))
     .map(candidate => /** @type {any} */ (candidate).identity)
+}
+
+/**
+ * Bind the skill entries of a workspace-default snapshot against the live
+ * inventory. An entry that already parses as a SkillIdentity is kept
+ * verbatim (records saved `from:'applied'`); a plain name string (the client
+ * draft's wire shape, records written by `default-save from:'draft'`) binds
+ * to exactly ONE parsed candidate with that name — zero or multiple matches
+ * are NOT authorized and degrade to a reported missing entry. Any other
+ * garbage entry is missing too: fail closed PER ENTRY, never throwing,
+ * never failing the whole default.
+ * @param {unknown} entries @param {unknown} candidates
+ * @returns {{ skills: unknown[],
+ *   missing: Array<{ kind: 'skill', ref: unknown, reason: string }> }}
+ */
+export function bindDefaultSkillNames(entries, candidates) {
+  const parsed = (Array.isArray(candidates) ? candidates : [])
+    .filter(candidate => /** @type {any} */ (candidate)?.status === 'parsed'
+      && /** @type {any} */ (candidate)?.identity
+      && typeof /** @type {any} */ (candidate)?.name === 'string')
+  const skills = []
+  const missing = []
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    try {
+      createSkillIdentity(/** @type {any} */ (entry))
+      skills.push(entry)
+      continue
+    } catch { /* not an identity shape — try name binding below */ }
+    if (typeof entry === 'string') {
+      const matches = parsed.filter(candidate => /** @type {any} */ (candidate).name === entry)
+      if (matches.length === 1) {
+        skills.push(/** @type {any} */ (matches[0]).identity)
+      } else {
+        missing.push({ kind: 'skill', ref: entry, reason: matches.length === 0 ? 'no longer in the inventory' : 'ambiguous in the inventory' })
+      }
+      continue
+    }
+    missing.push({ kind: 'skill', ref: entry, reason: 'not a skill identity or name' })
+  }
+  return { skills, missing }
 }
 
 export function resolveInitialSelection({ defaultsRecord, builtinIdentities = [], enabledMcpIdentities = [] }) {

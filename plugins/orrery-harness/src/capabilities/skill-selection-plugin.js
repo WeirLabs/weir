@@ -13,7 +13,7 @@ import { createPresetInvalidation, emitPresetSelected } from './preset-invalidat
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
-import { resolveInitialSelection, baselineSkillIdentities } from './initial-selection.js'
+import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
 import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
 import { createDefaultsTransaction } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
@@ -168,6 +168,18 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             } catch { /* an unreadable registry enables no managed identity by default */ }
           }
           const resolved = resolveInitialSelection({ defaultsRecord, builtinIdentities, enabledMcpIdentities })
+          // Name-string skill entries in a workspace default (the client
+          // draft's wire shape, written by default-save from:'draft') bind
+          // against the live inventory by unique name; unbindable entries
+          // degrade to reported missing, never failing the whole default.
+          // Identity-shaped records (from:'applied') skip the inventory
+          // entirely — it still only runs on the builtin-baseline path.
+          if (resolved.source === 'workspace-default' && resolved.selection.skills.some(entry => typeof entry === 'string')) {
+            const snapshot = await inventory(options)
+            const bound = bindDefaultSkillNames(resolved.selection.skills, snapshot?.candidates)
+            resolved.selection.skills = bound.skills
+            resolved.missing = [...resolved.missing, ...bound.missing]
+          }
           const sessionId = options.scope?.session?.id
           if (typeof sessionId === 'string' && sessionId.length) {
             initialReports.set(sessionId, { source: resolved.source, missing: resolved.missing, mcpServers: resolved.selection.mcpServers })
