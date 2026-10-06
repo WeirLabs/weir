@@ -148,6 +148,13 @@ const PRE_MIGRATION_KEYS = [
   'preZero',
   'parityOk',
   'postThree',
+  // continuable scenario observations (continuable delegation: two built-in
+  // settlement notices around a send_message follow-up)
+  'sawContinuableProbe',
+  'childFirstTurnSeen',
+  'childFollowupSeen',
+  'firstResultInParentContext',
+  'secondResultInParentContext',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']
