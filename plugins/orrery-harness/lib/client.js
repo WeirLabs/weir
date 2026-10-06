@@ -1714,13 +1714,13 @@ window.__ModuleLoader__.load({
 				fetchListing: (sid) => capabilityRead("list", sid, { error: true }),
 				fetchConditions: (sid) => capabilityRead("conditions", sid, { error: true }),
 				loadPresets: () => loadCapabilityPresetsChunk(),
-				fetchPresets: (sid) => capabilityPayload(sid, "/capabilities presets", true),
+				fetchPresets: (sid) => capabilityRead("presets", sid, { error: true }),
 				presetSave: (sid, spec) => capabilityPayload(sid, `/capabilities preset-save ${JSON.stringify(spec)}`, true),
 				presetLoad: (sid, spec) => capabilityPayload(sid, `/capabilities preset-load ${JSON.stringify(spec)}`, true),
 				presetDelete: (sid, spec) => capabilityPayload(sid, `/capabilities preset-delete ${JSON.stringify(spec)}`, true),
 				presetExport: (sid, spec) => capabilityPayload(sid, `/capabilities preset-export ${JSON.stringify(spec)}`, true),
 				presetImport: (sid, spec) => capabilityPayload(sid, `/capabilities preset-import ${JSON.stringify(spec)}`, true),
-				defaultGet: (sid) => capabilityPayload(sid, "/capabilities default-get", true),
+				defaultGet: (sid) => capabilityRead("defaultGet", sid, { error: true }),
 				defaultSave: (sid, spec) => capabilityPayload(sid, `/capabilities default-save ${JSON.stringify(spec)}`, true),
 				defaultClear: (sid, spec) => capabilityPayload(sid, `/capabilities default-clear ${JSON.stringify(spec ?? {})}`, true)
 			});

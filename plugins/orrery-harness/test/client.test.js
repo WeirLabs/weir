@@ -189,6 +189,8 @@ describe('orrery settings client half', () => {
           if (method === 'receipt') return { ok: true, value: { status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid: payload?.args?.sessionId } }
           if (method === 'list') return { ok: true, value: { skills: [], mcpServers: [] } }
           if (method === 'conditions') return { ok: true, value: { conditions: [] } }
+          if (method === 'presets') return { ok: true, value: { presets: [], workspaceKey: 'ws-test' } }
+          if (method === 'defaultGet') return { ok: true, value: { status: 'ok', revision: 1, cleared: false, snapshot: null, workspaceKey: 'ws-test' } }
           return { ok: false, error: { code: 'gateway/unknown', message: 'unknown endpoint' } }
         },
       },
@@ -873,10 +875,19 @@ describe('orrery settings client half', () => {
     expect(await verbs.fetchReceipt('s7')).toEqual({ status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid: 's7' })
     expect(await verbs.fetchListing('s7')).toEqual({ skills: [], mcpServers: [] })
     expect(await verbs.fetchConditions('s7')).toEqual({ conditions: [] })
+    // The Presets view's two automatic reads ride the same channel
+    // (silent-preset-reads); domain statuses like no-workspace arrive as
+    // VALUES, not channel fallbacks.
+    expect(await verbs.fetchPresets('s7')).toEqual({ presets: [], workspaceKey: 'ws-test' })
+    connection.rpcBehavior = (channel, endpoint) => (endpoint.endsWith('/defaultGet') ? { ok: true, value: { status: 'no-workspace' } } : { ok: true, value: {} })
+    expect(await verbs.defaultGet('s7')).toEqual({ status: 'no-workspace' })
+    connection.rpcBehavior = null
     expect(rpcCalls).toEqual([
       { channel: '/api', endpoint: 'orreryCapabilities/receipt', payload: { args: { sessionId: 's7' } } },
       { channel: '/api', endpoint: 'orreryCapabilities/list', payload: { args: { sessionId: 's7' } } },
       { channel: '/api', endpoint: 'orreryCapabilities/conditions', payload: { args: { sessionId: 's7' } } },
+      { channel: '/api', endpoint: 'orreryCapabilities/presets', payload: { args: { sessionId: 's7' } } },
+      { channel: '/api', endpoint: 'orreryCapabilities/defaultGet', payload: { args: { sessionId: 's7' } } },
     ])
     // Reads produced ZERO command executions (no session-log events).
     expect(executed).toEqual([])
