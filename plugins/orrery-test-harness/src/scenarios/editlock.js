@@ -4,7 +4,7 @@
 // authority lands under <ws>/.orrery/edit-lock and its files are not editable.
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { IT_ROOT, lastOfRole, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { IT_ROOT, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'editlock'
 const prompt = 'editlock-probe'
@@ -13,33 +13,39 @@ const TARGET = join(WS, 'locked.txt')
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
-  const last = (options.messages ?? []).at(-1)
-  // The turn-end settling notice arrives as a user message. The first one is
-  // answered with a bounded reservation; once reserved, the turn simply ends.
-  if (last?.role === 'user' && lastOfRole(options, 'user').startsWith('Edit Lock: the turn ended while this session still held')) {
-    return toolCallChunks('edit_lock_hold', { minutes: 30 })
+  // Every gate below is history-marker driven (never lastRole/lastOfRole):
+  // the turn-end settling notice and runtime-context snapshots both arrive as
+  // user messages and can interleave with tool results in either order — a
+  // role gate would shadow the notice or re-run the state-rewriting write.
+  if (!history.includes(prompt)) return textChunks('unhandled editlock turn')
+
+  // The turn-end settling notice: answer the FIRST one with a bounded
+  // reservation ('Keeping' marks the hold result, so the hold never re-arms);
+  // once reserved, surface the reservation in status and release it, so the
+  // batch ends instead of being held forever.
+  if (history.includes('Edit Lock: the turn ended while this session still held')) {
+    if (!/Keeping \d+ file/.test(history)) return toolCallChunks('edit_lock_hold', { minutes: 30 })
+    if (!history.includes('Reserved for')) return toolCallChunks('edit_lock_status', {})
+    if (!history.includes('Released')) return toolCallChunks('edit_lock_release', { file_path: TARGET })
+    return textChunks('editlock done')
   }
-  if (last?.role !== 'tool') {
-    return history.includes(prompt) ? toolCallChunks('write', { file_path: TARGET, content: 'first\n' }) : textChunks('unhandled editlock turn')
+
+  if (!/Created file/.test(history)) return toolCallChunks('write', { file_path: TARGET, content: 'first\n' })
+  if (!/1#[A-Z]{2}\|/.test(history)) return toolCallChunks('read', { file_path: TARGET })
+  if (!history.includes('hash_edit applied')) {
+    const anchor = /1#([ZPMQVRWSNKTXJBYH]{2})\| first/.exec(history)
+    if (anchor) {
+      return toolCallChunks('hash_edit', { file_path: TARGET, edits: [{ op: 'replace', pos: `1#${anchor[1]}`, text: 'second' }] })
+    }
+    return textChunks('unhandled editlock turn')
   }
-  const toolText = lastOfRole(options, 'tool')
-  if (!history.includes('read-done') && /Created file/.test(history) && !/1#[A-Z]{2}\|/.test(history)) {
-    return toolCallChunks('read', { file_path: TARGET })
-  }
-  const anchor = /1#([ZPMQVRWSNKTXJBYH]{2})\| first/.exec(toolText)
-  if (anchor) {
-    return toolCallChunks('hash_edit', { file_path: TARGET, edits: [{ op: 'replace', pos: `1#${anchor[1]}`, text: 'second' }] })
-  }
-  if (/hash_edit applied/.test(toolText)) return toolCallChunks('edit_lock_status', {})
-  // A reservation is visible in status — that is the state the user acts on — and
-  // the holder then releases it, so the batch ends instead of being held forever.
-  if (toolText.includes('Reserved for')) return toolCallChunks('edit_lock_release', { file_path: TARGET })
-  if (/Keeping \d+ file/.test(toolText)) return toolCallChunks('edit_lock_status', {})
-  if (/owner=this session/.test(toolText) && !history.includes('authority-probe') && !history.includes('Keeping')) {
+  if (!history.includes('owner=this session')) return toolCallChunks('edit_lock_status', {})
+  // Authority files are refused as edit targets; ending the turn still holding
+  // lets the turn-end settling notice take over.
+  if (!history.includes('authority-probe') && !history.includes('Keeping')) {
     return toolCallChunks('write', { file_path: join(WS, '.orrery', 'edit-lock', 'snapshot.json'), content: 'authority-probe' })
   }
-  // End the turn with the lock still held: the turn-end settling notice takes over.
-  if (/not editable/.test(toolText)) return textChunks('editlock turn ends holding')
+  if (history.includes('not editable')) return textChunks('editlock turn ends holding')
   return textChunks('editlock done')
 }
 

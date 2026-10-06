@@ -3,34 +3,36 @@
 // run.mjs assertRobash (D1/D2).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'robash'
 const prompt = 'robash-probe'
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
-  const lastRole = options.messages?.at(-1)?.role
   // Child brain (finder curated agent): prove the wait primitive is
   // allow-listed, then run a denied write. The wait leg is the end-to-end
   // regression pin for the cross-platform gap: `Start-Sleep` is unreachable on
   // Windows unless BOTH the module default AND the preset patch row carry it,
   // so without that pairing this child is refused here while passing on macOS.
+  // History-driven sequencing (never lastRole): an interleaved runtime-context
+  // snapshot must not re-arm the wait leg or skip the denial leg.
   if (history.includes('ROBASH_CHILD') && !history.includes('robash-probe')) {
-    if (lastRole === 'tool') {
-      const toolText = lastOfRole(options, 'tool')
-      if (toolText.includes('ROBASH_WAIT_RAN') && !history.includes('read-only agent')) {
-        return shellCall('remove-file', { path: 'fixture.txt' }, 'Try to delete the fixture')
-      }
+    if (history.includes('read-only agent')) {
       return textChunks('MARKER_ROBASH_OK: wait ran, write was denied')
+    }
+    if (history.includes('ROBASH_WAIT_RAN')) {
+      return shellCall('remove-file', { path: 'fixture.txt' }, 'Try to delete the fixture')
     }
     return shellCall('echo-and-wait', { text: 'ROBASH_WAIT_RAN', seconds: 1 }, 'Prove the read-only shell and its wait primitive both work')
   }
-  // Parent brain: delegate to the finder curated agent.
-  if (lastRole === 'tool') {
+  // Parent: the finder child's report rode the delegate result into history.
+  // History-driven (never lastRole): a snapshot interleaving after the tool
+  // result misaligned the old gate into an UNGUARDED re-delegation below.
+  if (history.includes('MARKER_ROBASH_OK')) {
     return textChunks('parent observed robash child result')
   }
-  if (history.includes('robash-probe')) {
+  if (history.includes('robash-probe') && !history.includes('ROBASH_CHILD')) {
     return toolCallChunks('delegate', {
       agent: 'finder',
       prompt: 'ROBASH_CHILD\nTASK: prove bash works, then attempt a write command\nDELIVERABLE: report both outcomes\nSCOPE: bash only\nVERIFY: the echo output and the denial both observed\nSTOP WHEN: reported',

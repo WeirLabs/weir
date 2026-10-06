@@ -11,14 +11,16 @@ const GUIDANCE_HEADING = DELEGATE_TARGETS_TEMPLATE.split('\n', 1)[0]
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
-  const lastRole = options.messages?.at(-1)?.role
+  // Parent: the child report rode the delegate result into history. History-
+  // driven (never lastRole): a runtime-context snapshot interleaving after the
+  // tool result misaligned the old gate into an UNGUARDED re-delegation below.
   if (history.includes('MARKER_CHILD_OK') && !history.includes('delegate-probe')) {
     return textChunks('MARKER_CHILD_OK: child finished')
   }
-  if (lastRole === 'tool') {
+  if (history.includes('MARKER_CHILD_OK')) {
     return textChunks('parent observed child result')
   }
-  if (history.includes('delegate-probe')) {
+  if (history.includes('delegate-probe') && !history.includes('MARKER_CHILD_OK')) {
     return toolCallChunks('delegate', {
       category: 'quick',
       prompt: 'TASK: reply with the exact marker text MARKER_CHILD_OK\nDELIVERABLE: the marker line\nSCOPE: nothing else\nVERIFY: the reply contains the marker\nSTOP WHEN: the marker is sent',

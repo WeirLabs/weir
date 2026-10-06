@@ -3,7 +3,7 @@
 // built-in settlement notice; a send_message follow-up starts a second turn
 // with the prior context intact, and its settlement notice arrives too.
 // Mirrors the grouped/background scenario conventions (D1/D2).
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 
 const id = 'continuable'
 const prompt = 'continuable-probe'
@@ -30,16 +30,19 @@ function decide(options, obs) {
     if (!match) return textChunks('continuable child id not found in the settlement notice')
     return toolCallChunks('send_message', { agent_id: match[1], message: 'CONTINUABLE_FOLLOWUP: answer with the second marker' })
   }
-  const lastRole = options.messages?.at(-1)?.role
-  if (lastRole === 'tool') {
-    const toolText = lastOfRole(options, 'tool')
-    if (toolText.includes('continuable child')) {
-      // Keep the turn alive so the (instant-mock) child settles inside the
-      // busy window and the notice steers in — same padding as grouped.
-      return shellCall('echo-and-wait', { text: 'CONTINUABLE_WAITED', seconds: 1 }, 'Let the continuable child settle')
-    }
-    // The send_message confirmation and the wait result both land here: end
-    // the turn and let the settlement notices wake the parent.
+  // Parent: the follow-up was sent — end the turn and let the second
+  // settlement notice wake the session (it persists into the inbox, S10.6).
+  if (history.includes('CONTINUABLE_FOLLOWUP')) {
+    return textChunks('continuable follow-up sent; waiting for the second settlement notice')
+  }
+  // Parent: the delegation returned the child id — pad the busy window until
+  // the first settlement notice lands. Bounded marker wait (design D1),
+  // never lastRole: a runtime-context snapshot interleaving as a user message
+  // between the tool result and the next request misaligned the old gate and
+  // ended the turn while the child was still running.
+  if (history.includes('continuable child')) {
+    const verdict = waitForMarker(history, 'CONTINUABLE_FIRST_RESULT')
+    if (verdict.state === 'wait') return verdict.chunks
     return textChunks('unhandled continuable tool turn')
   }
   if (history.includes('continuable-probe') && !history.includes('CONTINUABLE_CHILD')) {
