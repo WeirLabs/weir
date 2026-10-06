@@ -5,10 +5,11 @@
 // contribution with the frozen validateBinding shape (S27), and stay inert —
 // never break the host composition — when typert is unavailable or throws.
 import { test, expect } from './helpers.js'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createSkillSelectionPlugin, resolveSessionCwd } from '../src/capabilities/skill-selection-plugin.js'
+import zlib from 'node:zlib'
+import { createSkillSelectionPlugin, resolveSessionCwd, persistedSessionCwd } from '../src/capabilities/skill-selection-plugin.js'
 import {
   CAPABILITY_READ_METHODS,
   CAPABILITY_READ_NAMESPACE,
@@ -383,3 +384,37 @@ test('a duplicate registration race with live endpoints is success, never a warn
   expect(typert.local.get()).toBeTruthy()
   expect(registerCalls).toBe(0)
 })
+
+{
+  test('persistedSessionCwd reads the cwd from the durable log header without any agent', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orrery-persisted-cwd-'))
+    const sessionId = 'session-abc-123'
+    const dir = join(home, 'sessions', '--ws-slug--', sessionId)
+    mkdirSync(dir, { recursive: true })
+    const header = JSON.stringify({ type: 'session', version: 4, id: sessionId, createdAt: 1, cwd: '/ws/persisted', isSeeded: false, delegationDepth: 0 })
+    writeFileSync(join(dir, 'session.v4.jsonl.zstd'), zlib.zstdCompressSync(Buffer.from(header + '\n')))
+    expect(persistedSessionCwd(home, sessionId)).toEqual({ found: true, cwd: '/ws/persisted' })
+  })
+
+  test('resolveSessionCwd falls through agents-registry misses to the persisted header and caches it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orrery-persisted-fallthrough-'))
+    const sessionId = 'sess-cold'
+    const dir = join(home, 'sessions', '--ws--', sessionId)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'session.v4.jsonl'), JSON.stringify({ type: 'session', version: 4, id: sessionId, createdAt: 1, cwd: '/ws/cold', isSeeded: false, delegationDepth: 0 }) + '\n')
+    const cache = new Map()
+    const agents = { get: () => undefined }
+    expect(resolveSessionCwd(cache, agents, sessionId, { home })).toEqual({ found: true, cwd: '/ws/cold' })
+    expect(cache.get(sessionId)).toBe('/ws/cold')
+  })
+
+  test('persistedSessionCwd reports not-found for missing, foreign, or corrupt logs', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orrery-persisted-miss-'))
+    expect(persistedSessionCwd(home, 'sess-absent')).toEqual({ found: false, cwd: undefined })
+    const dir = join(home, 'sessions', '--ws--', 'sess-bad')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'session.v4.jsonl'), '{"type":"command/run"}\n')
+    expect(persistedSessionCwd(home, 'sess-bad')).toEqual({ found: false, cwd: undefined })
+    expect(persistedSessionCwd(undefined, 'sess-bad')).toEqual({ found: false, cwd: undefined })
+  })
+}

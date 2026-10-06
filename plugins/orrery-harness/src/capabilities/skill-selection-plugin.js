@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import zlib from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
@@ -966,7 +968,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         lifecycle,
         mcpManager: () => ctx.get?.('orreryMcpManager'),
         profileContext: () => ctx.get?.('profileContext'),
-        sessionCwd: sessionId => resolveSessionCwd(sessionCwds, ctx.get?.('agents'), sessionId),
+        sessionCwd: sessionId => resolveSessionCwd(sessionCwds, ctx.get?.('agents'), sessionId, { home: ctx.get?.('profileContext')?.home }),
       }), 'orrery-capability-read-bridge')
     } catch (cause) {
       ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)
@@ -989,13 +991,64 @@ export function createSkillSelectionPlugin(dependencies = {}) {
  * @param {string} sessionId
  * @returns {{ found: boolean, cwd: string | undefined }}
  */
-export function resolveSessionCwd(cache, agentsService, sessionId) {
+export function resolveSessionCwd(cache, agentsService, sessionId, deps = {}) {
   if (cache.has(sessionId)) return { found: true, cwd: cache.get(sessionId) }
   const agent = /** @type {any} */ (agentsService)?.get?.(sessionId)
-  if (!agent) return { found: false, cwd: undefined }
-  const cwd = agent?.session?.header?.cwd
-  cache.set(sessionId, cwd)
-  return { found: true, cwd }
+  if (agent) {
+    const cwd = agent?.session?.header?.cwd
+    cache.set(sessionId, cwd)
+    return { found: true, cwd }
+  }
+  // Follow-mode / cold / history sessions have no live agent YET (the restore
+  // promotes lazily and the badge reads before the agent enters). The session
+  // header is durable from creation: read cwd straight from the persisted log
+  // instead of depending on the agent lifecycle at all.
+  const persisted = persistedSessionCwd(deps.home, sessionId)
+  if (persisted.found) {
+    cache.set(sessionId, persisted.cwd)
+    return { found: true, cwd: persisted.cwd }
+  }
+  return { found: false, cwd: undefined }
+}
+
+/**
+ * Read a session's cwd from its persisted log header
+ * (<home>/sessions/<slug>/<sessionId>/session.v4.jsonl.zstd — first frame,
+ * first JSONL record, the `{type:'session', cwd}` header). The session-id
+ * directory name is matched exactly; a plain .jsonl log is accepted for
+ * pre-compression artifacts. Everything unreadable/corrupt reports not-found
+ * — never a guessed cwd.
+ * @param {string | undefined} home DSH home (profileContext.home)
+ * @param {string} sessionId
+ * @returns {{ found: boolean, cwd: string | undefined }}
+ */
+export function persistedSessionCwd(home, sessionId) {
+  if (typeof home !== 'string' || home.length === 0 || typeof sessionId !== 'string' || sessionId.length === 0) return { found: false, cwd: undefined }
+  let slugs
+  try { slugs = readdirSync(join(home, 'sessions')) } catch { return { found: false, cwd: undefined } }
+  for (const slug of slugs) {
+    const dir = join(home, 'sessions', slug, sessionId)
+    const zstdPath = join(dir, 'session.v4.jsonl.zstd')
+    const plainPath = join(dir, 'session.v4.jsonl')
+    try {
+      let firstLine = null
+      if (existsSync(zstdPath)) {
+        // Node's zstdDecompressSync decodes exactly the first frame of the
+        // append-only multi-frame log — enough for the header record.
+        const frame = zlib.zstdDecompressSync(readFileSync(zstdPath)).toString('utf8')
+        firstLine = frame.split('\n', 1)[0]
+      } else if (existsSync(plainPath)) {
+        firstLine = readFileSync(plainPath, 'utf8').split('\n', 1)[0]
+      } else {
+        continue
+      }
+      const header = JSON.parse(firstLine)
+      if (header?.type !== 'session') return { found: false, cwd: undefined }
+      const cwd = typeof header.cwd === 'string' && header.cwd.length ? header.cwd : undefined
+      return { found: true, cwd }
+    } catch { return { found: false, cwd: undefined } }
+  }
+  return { found: false, cwd: undefined }
 }
 
 export const name = 'orrery-skill-selection'
