@@ -3,6 +3,9 @@
 ### Added
 - **委派：continuable 形态（`mode: 'continuable'`）**：`delegate` 新增 `mode` 选项——`continuable` 子代立即返回稳定 childId、结果经内建结算通知送达，父代理可用 `send_message` 追问或中途纠偏（子代保留全部上下文）、`interrupt_agent` 打断当前回合而不销毁它，应用重启后冷恢复仍可续聊。默认 `one-shot` 不变；`mode` 与 `group` 互斥，continuable 与 `run_in_background`、`worktree` 互斥（均以明确错误拒绝）。continuable 子代占用运行时续聊容量（默认 8），容量满时以点名上限的错误失败，不排队、不降级。详见 [委派特性文档](docs/features/category-delegation.md)。
 
+### Fixed
+- **集成测试装置：修复负载下的确定性场景失败**：`rehydrate`/`escalate`/`delegate-preflight` 三个场景的等待逻辑此前门控在「最后一条消息的角色/内容」上，宿主注入的 runtime-context 快照在负载下插队于 tool result 与下一请求之间时门控错位，mock 落兜底文本导致回合提前结束、headless 在子代理运行中退出（表现为负载下确定性红、空闲独唱全绿）。等待改为 transcript 历史标记驱动的交错容忍原语（mock-kit 单点实现，有界重试），并对全部场景驱动逐一审查转换承重门控；同时 `run.mjs` 默认 IT root 增加咨询锁——同 checkout 并发套件自动改用私有后缀 root（响亮提示一行），不再互相 wiping。详见 [集成测试装置文档](docs/features/integration-test-harness.md)。
+
 ## [0.8.0] - 2026-10-06
 
 ### Added
