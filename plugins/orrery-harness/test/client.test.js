@@ -174,6 +174,7 @@ describe('orrery settings client half', () => {
     const scope = { ns: 'orrery-settings' }
     let sessionAccesses = 0
     const executed = []
+    const mountCalls = []
     const remote = {
       commands: {
         execute: async (sessionId, input, args) => {
@@ -182,6 +183,18 @@ describe('orrery settings client half', () => {
           return { ok: false, error: { message: 'boom', code: 'X' } }
         },
         list: async () => ({ ok: true, value: [{ name: 'lsp' }, { name: 'plan' }] }),
+      },
+      // The client remote surface mounts namespaces through $mount (the
+      // gateway projects the namespace once the contribution settles): the
+      // fake records the contribution and installs a sentinel face.
+      $mount: async (contribution) => {
+        mountCalls.push(contribution)
+        remote.orreryCapabilities = {
+          receipt: async (sid) => ({ status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid }),
+          list: async () => ({ skills: [], mcpServers: [] }),
+          conditions: async () => ({ conditions: [] }),
+        }
+        return () => {}
       },
     }
     Object.defineProperty(remote, 'session', {
@@ -219,7 +232,7 @@ describe('orrery settings client half', () => {
         },
       },
     }
-    return { ctx, effects, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, scope, executed, sessionAccesses: () => sessionAccesses }
+    return { ctx, effects, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, scope, executed, mountCalls, sessionAccesses: () => sessionAccesses }
   }
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -882,6 +895,97 @@ describe('orrery settings client half', () => {
     expect(await verbs.fetchListing('s7')).toEqual({ error: true })
     expect(await verbs.fetchConditions('s7')).toEqual({ error: true })
     expect(executed).toEqual([])
+  })
+
+  it('mounts the orreryCapabilities remote namespace exactly once at apply, with precisely the three read descriptors', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, mountCalls, slotInjects, slotRegistrations, executed } = makeCtx()
+    surface.apply(ctx)
+
+    // one contribution carrying exactly the three direct read descriptors on
+    // the plugin-owned host service
+    expect(mountCalls).toHaveLength(1)
+    const contribution = mountCalls[0]
+    expect(contribution.package).toBe('orrery-harness')
+    expect(contribution.descriptors.map((descriptor) => descriptor.method)).toEqual(['receipt', 'list', 'conditions'])
+    for (const method of ['receipt', 'list', 'conditions']) {
+      // The parameter codec must be mode 'strict': the client-side $mount
+      // validation rejects any other parameter codec mode, and the codec is
+      // never invoked client-side (raw JSON rides the wire either way, exactly
+      // what the host contribution's src-json envelope accepts).
+      expect(contribution.descriptors.find((descriptor) => descriptor.method === method)).toEqual({
+        id: `orrery-harness#orreryCapabilities/${method}`,
+        service: 'orreryCapabilityRead',
+        namespace: 'orreryCapabilities',
+        method,
+        invocation: { kind: 'direct' },
+        parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'strict' } }],
+        result: { mode: 'src-json' },
+      })
+    }
+
+    // once the mount settles, the Badge read path travels through the mounted
+    // namespace — and never the command channel
+    slotInjects[11].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    const verbs = badgeEntry.definition.inject('s1')
+    expect(await verbs.fetchReceipt('s1')).toEqual({ status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid: 's1' })
+    expect(await verbs.fetchListing('s1')).toEqual({ skills: [], mcpServers: [] })
+    expect(await verbs.fetchConditions('s1')).toEqual({ conditions: [] })
+    expect(executed).toEqual([])
+  })
+
+  it('a rejecting $mount never breaks apply, and the read path settles on its existing fallbacks', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, mountCalls, localeRegistrations, slotInjects, slotRegistrations } = makeCtx()
+    ctx.remote.$mount = (contribution) => {
+      mountCalls.push(contribution)
+      return Promise.reject(new Error('gateway/down'))
+    }
+    // the unhandled-rejection guard: a rejected mount must be swallowed by apply
+    let unhandled = null
+    const onUnhandled = (error) => { unhandled = error }
+    process.once('unhandledRejection', onUnhandled)
+    surface.apply(ctx) // must not throw
+    await flush()
+    await flush()
+    process.off('unhandledRejection', onUnhandled)
+    expect(unhandled).toBeNull()
+    expect(mountCalls).toHaveLength(1)
+    // everything else still registered
+    expect(localeRegistrations).toHaveLength(1)
+
+    // the read verbs resolve to their degraded semantics (receipt → null,
+    // listing/conditions → { error: true }) with no command-channel fallback
+    slotInjects[11].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    const verbs = badgeEntry.definition.inject('s7')
+    expect(await verbs.fetchReceipt('s7')).toBe(null)
+    expect(await verbs.fetchListing('s7')).toEqual({ error: true })
+    expect(await verbs.fetchConditions('s7')).toEqual({ error: true })
+  })
+
+  it('reuses an already-live orreryCapabilities namespace instead of double-mounting (re-apply/HMR guard)', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, mountCalls, slotInjects, slotRegistrations } = makeCtx()
+    // a previous generation's mount is still live: the namespace face already exists
+    const receiptPayload = { status: 'applied', revision: 2, effective: { skills: ['debugging'], mcpServers: [] }, warnings: [] }
+    const liveReads = []
+    ctx.remote.orreryCapabilities = {
+      receipt: async (sid) => { liveReads.push(['receipt', sid]); return receiptPayload },
+      list: async (sid) => { liveReads.push(['list', sid]); return { skills: [], mcpServers: [] } },
+      conditions: async (sid) => { liveReads.push(['conditions', sid]); return { conditions: [] } },
+    }
+    surface.apply(ctx)
+    // $mount is NOT called again — the gateway would reject a duplicate mount
+    expect(mountCalls).toEqual([])
+
+    // and the read path uses the live face directly
+    slotInjects[11].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
+    const verbs = badgeEntry.definition.inject('s7')
+    expect(await verbs.fetchReceipt('s7')).toEqual(receiptPayload)
+    expect(liveReads).toEqual([['receipt', 's7']])
   })
 
   it('build binds the entry to every chunk digest and publishes the entry last', () => {
