@@ -218,3 +218,69 @@ test('the contribution factory is standalone-stable for the gateway claim check'
     'orreryCapabilities/conditions',
   ])
 })
+
+// S27.2: the real registry's register → validatePackage requires a nonempty '#'-free
+// `package` and keys the package record by `face`. A contribution missing either passes
+// every direct-service test and then dies silently at typert.register inside apply()'s
+// catch (which only warns), so the declared shape and the mock registry are pinned apart.
+test('the read contribution carries the package and face the registry validates', () => {
+  const contribution = capabilityReadContribution()
+  expect(contribution.package).toBe('orrery-harness')
+  expect(contribution.face).toBe('host')
+  expect(contribution.schemas).toEqual([])
+  expect(contribution.model).toEqual({ services: [], events: [], objects: [] })
+  // Exactly this key set: a dropped or renamed top-level field is a registry-side contract change.
+  expect(Object.keys(contribution).sort()).toEqual(['face', 'invocations', 'model', 'package', 'schemas'])
+
+  expect(contribution.invocations).toHaveLength(3)
+  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions'])
+  for (const invocation of contribution.invocations) {
+    expect(invocation.id.startsWith('orrery-harness.')).toBe(true)
+    expect(invocation.id).toBe(`orrery-harness.${CAPABILITY_READ_NAMESPACE}.${invocation.method}`)
+    // Literal wire names: the gateway resolves these strings, not this module's constants.
+    expect(invocation.service).toBe('orreryCapabilityRead')
+    expect(invocation.namespace).toBe('orreryCapabilities')
+    expect(invocation.invocation).toEqual({ kind: 'direct' })
+    expect(invocation.parameters).toEqual([{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } }])
+    expect(invocation.result).toEqual({ mode: 'src-json' })
+  }
+})
+
+test('the shipped contribution survives the registry validatePackage, so registration cannot die silently', () => {
+  const warnings = []
+  const provided = []
+  let captured = null
+  // The real registry's validatePackage, reproduced: a nonempty '#'-free package name, and
+  // the package record keyed by face. It throws instead of silently dropping the contribution.
+  const typert = {
+    register(contribution) {
+      if (typeof contribution?.package !== 'string' || contribution.package.length === 0 || contribution.package.includes('#')) throw new TypeError('validatePackage: bad package')
+      if (typeof contribution?.face !== 'string') throw new TypeError('validatePackage: bad face')
+      captured = contribution
+    },
+  }
+  const ctx = {
+    get: name => (name === 'typert' ? typert : undefined),
+    root: { reflect: { provide: (key, service) => provided.push({ key, service }) } },
+    logger: { warn: text => warnings.push(text) },
+  }
+  remoteApply(ctx)
+
+  // apply() swallows a rejected registration into a warning: the pre-fix code left this silent.
+  expect(warnings).toEqual([])
+  expect(captured).toBeTruthy()
+  expect(captured.package).toBe('orrery-harness')
+  expect(captured.face).toBe('host')
+  expect(captured.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions'])
+  expect(provided).toHaveLength(1)
+  expect(provided[0].key).toBe(CAPABILITY_READ_SERVICE_KEY)
+  expect(provided[0].service.typertRemote.namespace).toBe(CAPABILITY_READ_NAMESPACE)
+
+  // Control: the rejector is not vacuous — the S27.2 shape dies exactly as it did in production.
+  const noPackage = capabilityReadContribution()
+  delete noPackage.package
+  expect(() => typert.register(noPackage)).toThrow(/validatePackage: bad package/)
+  const noFace = capabilityReadContribution()
+  delete noFace.face
+  expect(() => typert.register(noFace)).toThrow(/validatePackage: bad face/)
+})
