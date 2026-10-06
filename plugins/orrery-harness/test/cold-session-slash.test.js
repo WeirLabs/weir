@@ -272,6 +272,15 @@ test('5.3: classification maps writer-held and policy failures to reason plus ac
   expect(classifySelectionFailure(new Error('Skill selection policy is torn')).reason).toBe('policy-unreadable:torn')
   expect(classifySelectionFailure(new Error('Skill selection policy is unknown-schema')).reason).toBe('policy-unreadable:unknown-schema')
   expect(classifySelectionFailure(new Error('Skill selection policy is unsupported')).reason).toBe('policy-unsupported')
+  // D2 (resume-incarnation-recovery): the reason string is pinned unchanged;
+  // the hint names the real recovery gesture — an explicit Apply in the
+  // Capabilities panel (the accepted record frees the session from the
+  // inheritance dependency) — with the subagent respawn path kept.
+  const inherited = classifySelectionFailure(new Error('Inherited skill snapshot is absent'))
+  expect(inherited.reason).toBe('inherited-snapshot-unavailable')
+  expect(inherited.hint).toContain('Capabilities panel')
+  expect(inherited.hint).toContain('Apply')
+  expect(inherited.hint).toContain('respawned from its parent session')
   expect(classifySelectionFailure(new Error('something else entirely')).reason).toBe('selection-unavailable')
   expect(classifySelectionFailure(new Error('something else entirely')).hint.length > 0).toBe(true)
 })

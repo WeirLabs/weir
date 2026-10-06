@@ -162,6 +162,74 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
   expect(byName.unpicked?.selected).toBe(false)
 })
 
+test('/capabilities list under a failed selection view keeps inventory fidelity and carries the error state (D3)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'orrery-cmd-blocked-'))
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  for (const name of ['picked', 'unpicked']) {
+    mkdirSync(join(root, 'skills', name), { recursive: true })
+    writeFileSync(join(root, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: blocked fixture ${name}\n---\n${name}\n`)
+  }
+  let registeredCommands = []
+  let provider
+  const ctx = {
+    skills: {
+      registerProvider(create) { provider = create({ invalidate() {} }) },
+      async list(options) { return (await provider.list(options)).candidates },
+      layers: { global: { providers: new Map() } },
+    },
+    on() {},
+    effect(fn) { fn(); return () => {} },
+    logger: { warn() {} },
+    get(name) {
+      // A distinct profile home: the user-dsh root must not coincide with the custom skill dir (double discovery).
+      if (name === 'profileContext') return { home: join(root, 'profile'), name: 'it' }
+      if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      return undefined
+    },
+  }
+  // The selection view fails closed (the 2026-10-05 incarnation shape: the
+  // inherited snapshot is absent and the read side demands it).
+  createSkillSelectionPlugin({
+    readSelection: async () => { throw new Error('Inherited skill snapshot is absent') },
+  })(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
+  const command = registeredCommands.find(entry => entry.name === 'capabilities')
+  const agent = { id: 'sess-blocked', session: { id: 'sess-blocked', header: { cwd: root } } }
+
+  const listing = await command.handler({ agent, rawInput: 'list' })
+  expect(listing.kind).toBe('success')
+  const payload = JSON.parse(listing.text)
+  // Full raw inventory with real scope labels — never the 'unknown'/'other'
+  // degradation — and every selection mark false.
+  const names = payload.skills.map(row => row.name)
+  expect(names).toContain('picked')
+  expect(names).toContain('unpicked')
+  expect(names).toContain('debugging') // the Orrery builtin root still lists
+  expect(payload.skills.every(row => row.selected === false)).toBe(true)
+  expect(payload.skills.every(row => row.scope !== 'unknown')).toBe(true)
+  const byName = Object.fromEntries(payload.skills.map(row => [row.name, row]))
+  expect(byName.picked.scope).toBe('custom')
+  expect(byName.debugging.scope).toBe('orrery-builtin')
+  // The error state rides along, distinguishable from a successful empty
+  // inventory (which carries no selectionError at all).
+  expect(payload.selectionError?.reason).toBe('inherited-snapshot-unavailable')
+  expect(payload.selectionError?.hint).toContain('Capabilities panel')
+  expect(payload.selectionError?.hint).toContain('Apply')
+  expect(payload.selectionError?.error).toContain('Inherited skill snapshot is absent')
+  expect(Array.isArray(payload.mcpServers)).toBe(true)
+
+  // Apply heals from the degraded listing: the accepted record frees the
+  // session from the inheritance dependency, and the next listing is the
+  // healthy byte-shape again (no selectionError, real selection marks).
+  const applied = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['picked'], mcpServers: [] })}` })
+  expect(applied.kind).toBe('success')
+  expect(JSON.parse(applied.text).status).toBe('applied')
+  const healed = JSON.parse((await command.handler({ agent, rawInput: 'list' })).text)
+  expect(healed.selectionError).toBeUndefined()
+  const healedByName = Object.fromEntries(healed.skills.map(row => [row.name, row]))
+  expect(healedByName.picked?.selected).toBe(true)
+  expect(healedByName.unpicked?.selected).toBe(false)
+})
+
 test('/capabilities mcp-add registers a stdio server into the Orrery registry', async () => {
   const root = mkdtempSync(join(tmpdir(), 'orrery-cmd-mcp-'))
   let registeredCommands = []

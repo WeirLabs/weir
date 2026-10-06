@@ -490,6 +490,34 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                   provider,
                   mcpManager: ctx.get?.('orreryMcpManager'),
                 }, options)
+                // Degraded-listing fidelity (resume-incarnation-recovery D3):
+                // when the selection view is in an error state, provider.list
+                // fail-closed empty made buildListPayload list the inventory
+                // with every mark false — but the error state itself was
+                // invisible, indistinguishable from a successful empty
+                // inventory. Rebuild the rows from the RAW inventory with the
+                // real scope/provenance labels (candidate identity/root scope
+                // — never the 'unknown'/'other' degradation), every selection
+                // mark false, and carry the classified failure alongside, so
+                // the panel can still drive the Apply self-heal. The healthy
+                // path above stays byte-identical.
+                const status = provider.status(options)
+                if (status?.error) {
+                  const rawInventory = await inventory(options)
+                  const rawCandidates = Array.isArray(rawInventory?.candidates) ? rawInventory.candidates : []
+                  return { kind: 'success', text: JSON.stringify({
+                    skills: rawCandidates.map(candidate => ({
+                      name: candidate?.name,
+                      description: candidate?.description ?? '',
+                      scope: candidate?.identity?.scope ?? candidate?.root?.scope ?? 'unknown',
+                      status: candidate?.status ?? 'unknown',
+                      selected: false,
+                      conflict: Boolean(candidate?.conflict),
+                    })),
+                    mcpServers: payload.mcpServers,
+                    selectionError: { error: status.error, reason: status.reason ?? null, hint: status.hint ?? null },
+                  }) }
+                }
                 return { kind: 'success', text: JSON.stringify(payload) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
