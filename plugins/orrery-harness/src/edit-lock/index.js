@@ -28,7 +28,9 @@ import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor 
 import { createRecoveryDriver } from './recovery.js'
 import { createSettlementDriver } from './settle.js'
 import { editLockLimits } from '../settings/sections.js'
-import { buildView, unavailableView } from './view.js'
+import { buildColdView, buildView, unavailableView } from './view.js'
+import { parseSnapshot } from './snapshot.js'
+import { readSnapshotBytes, errorMessage } from './read-authority.js'
 
 const name = 'orrery-edit-lock'
 const inject = ['tools', 'fs', 'agents']
@@ -788,6 +790,48 @@ return (ctx, config = {}) => {
     if (domain) void Promise.resolve(domain.dispose(agent)).catch(() => {})
   })
 
+  /** Cold-read fallback for the status view (design D1/D2): a session with no
+   * live agent is observed cold through sessionQuery (never activated), its
+   * management root derived from the observed cwd, and the authority image read
+   * READ-ONLY with the maintenance inspector's discipline — no runtime open, no
+   * reservation, not one byte mutated. Publisher AND client mode both answer
+   * from this local read: the authority is a shared file on this filesystem.
+   * Every failure degrades to an unavailable view with an explicit reason —
+   * never a reasonless "starting" for a session that cannot be starting.
+   * @param {string} sessionId */
+  async function coldStatusView(sessionId) {
+    let observation
+    try { observation = await ctx.get?.('sessionQuery')?.observeSession?.(sessionId) } catch { observation = undefined }
+    if (!observation) return unavailableView('session is not live in this process and could not be cold-read')
+    try {
+      const fixed = options.fixed
+      const cwd = observation.header?.cwd
+      /** @type {string} */
+      let root
+      /** @type {string} */
+      let directory
+      /** @type {string} */
+      let domainId
+      if (fixed) {
+        // A pinned composition serves exactly one authority; the observed cwd
+        // only names the files in the view.
+        root = fixed.root; directory = fixed.directory; domainId = fixed.root
+      } else {
+        try { root = resolveRoot(/** @type {string} */ (cwd)) } catch (error) { return unavailableView(`session working directory resolves no Edit Lock domain: ${errorMessage(error)}`) }
+        directory = join(root, AUTHORITY_DIR); domainId = root
+      }
+      const read = readSnapshotBytes(directory)
+      if (read.presence === 'no-authority') return unavailableView('workspace has no Edit Lock authority')
+      if (read.presence === 'no-snapshot') return unavailableView('workspace authority has no committed snapshot')
+      if (read.presence !== 'valid') return unavailableView(`authority snapshot unreadable: ${read.presence === 'unreadable' ? read.message : read.presence}`)
+      let snapshot
+      try { snapshot = parseSnapshot(read.bytes, domainId) } catch (error) { return unavailableView(`authority snapshot invalid: ${errorMessage(error)}`) }
+      const autoResume = ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume !== false
+      return buildColdView({ image: snapshot.state, sessionId, cwd, root, autoResume, now: Date.now() })
+    } finally {
+      observation[Symbol.dispose]?.()
+    }
+  }
   // Structured status for the panel (design D6). Reading the view grants nothing
   // and writes nothing to the conversation; every action still goes through an
   // explicit /edit-lock command so it stays on the record. `connection` is a
@@ -809,7 +853,10 @@ return (ctx, config = {}) => {
         if (!sessionId) return reply({ ok: false, error: { code: 'orrery-edit-lock/invalid', message: 'body needs { sessionId }' } }, 400)
         const agent = ctx.get?.('agents')?.get?.(sessionId)
         const domain = agent && settled.get(agent)
-        if (!domain) return reply({ ok: true, value: unavailableView(agent ? startFailures.get(agent) ?? null : null) })
+        // A live agent whose domain is still starting (or failed to start)
+        // keeps the old answer; only a session with NO live agent cold-reads.
+        if (agent && !domain) return reply({ ok: true, value: unavailableView(startFailures.get(agent) ?? null) })
+        if (!domain) return reply({ ok: true, value: await coldStatusView(sessionId) })
         try {
           const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
           return reply({ ok: true, value: buildView({ status, locks, cwd: agent?.session?.header?.cwd, root: registry.rootOf(agent), mode: domain.mode, now: Date.now() }) })

@@ -7,6 +7,9 @@ import { join } from 'node:path'
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { createEditLockPlugin, storeMode } from '../src/edit-lock/index.js'
+import { openEditLockStore } from '../src/edit-lock/store.js'
+import { createEditLockManager } from '../src/edit-lock/manager.js'
+import { recoveryConfirmation } from '../src/edit-lock/admin-recovery.js'
 import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtureExclude as excludeFromGit } from './helpers/edit-lock-fixtures.js'
 const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
 import { createRecoveryDriver } from '../src/edit-lock/recovery.js'
@@ -645,4 +648,130 @@ test('with conflicting retention settings the saved abnormal disposition still a
   assert.match(status.text, /abnormal/)
   assert.doesNotMatch(status.text, /no locks held/)
   dispose()
+})
+
+/** Host double with the view endpoint captured and a scriptable sessionQuery:
+ * the cold-read fallback resolves sessionId -> observation -> header.cwd. */
+function coldHost(root, { observeSession } = {}) {
+  const host = fakeHost(root)
+  /** @type {any} */
+  let endpoint
+  host.ctx.inject = (names, callback) => {
+    if (names.includes('connection')) callback({ connection: { fetch: { register(definition) {
+      if (definition.path === '/api/orrery-edit-lock/view') endpoint = definition
+      return () => { if (endpoint === definition) endpoint = undefined }
+    } } } })
+  }
+  const agents = new Map()
+  const stats = { observations: 0, disposals: 0 }
+  const get = host.ctx.get
+  host.ctx.get = (name) => {
+    if (name === 'agents') return agents
+    if (name === 'sessionQuery') return {
+      observeSession: async (/** @type {string} */ sessionId) => {
+        stats.observations++
+        const observed = observeSession ? await observeSession(sessionId) : { header: { cwd: root } }
+        if (!observed) return undefined
+        return { ...observed, [Symbol.dispose]() { stats.disposals++ } }
+      },
+    }
+    return get(name)
+  }
+  const read = async (/** @type {any} */ body = { sessionId: 's' }) => (await endpoint.fetch({ json: async () => body })).json()
+  return { ...host, agents, stats, read }
+}
+
+test('the view endpoint answers a cold session its true recorded state, read-only', async () => {
+  const { root, directory } = await fixture()
+  const host = coldHost(root, { observeSession: (sessionId) => sessionId === 's' ? { header: { cwd: root } } : undefined })
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const service = host.provided.get('orreryEditLock')
+  const agent = host.agent('s')
+  host.agents.set('s', agent)
+  await host.emit('agent/created', { agent })
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  assert.equal((await host.command().handler({ agent, rawInput: 'stop', commandId: 'c1' })).kind, 'success')
+
+  // Live answer first: the fallback chain never disturbs a live agent.
+  const live = (await host.read()).value
+  assert.equal(live.state, 'stopped')
+  assert.equal(live.cold, undefined)
+  assert.equal(host.stats.observations, 0)
+
+  // The agent leaves the registry: the session is now cold (restored, never
+  // activated). The view must come from the authority image, not "starting".
+  host.agents.delete('s')
+  const snapshotPath = join(directory, 'snapshot.json')
+  const before = await readFile(snapshotPath)
+  const cold = (await host.read()).value
+  // The regression: the old chain returned { state: 'unavailable', reason: null } here.
+  assert.equal(cold.state, 'stopped')
+  assert.equal(cold.cold, true)
+  assert.equal(cold.reason, undefined)
+  assert.deepEqual(cold.files.map((/** @type {any} */ file) => [file.name, file.mine, file.status]), [['a.txt', true, 'user-interrupted']])
+  assert.equal(cold.autoResume, true)
+  assert.equal(host.stats.observations > 0, true)
+  // The read opened no runtime, took no reservation and mutated no byte; the
+  // observation lease is disposed exactly once per cold answer.
+  assert.deepEqual(await readFile(snapshotPath), before)
+  assert.equal(host.stats.disposals, host.stats.observations)
+
+  // A session the host can neither run nor observe fails with an explicit
+  // reason — the panel shows "unavailable + reason", never a reasonless starting.
+  const stranger = (await host.read({ sessionId: 'stranger' })).value
+  assert.equal(stranger.state, 'unavailable')
+  assert.equal(typeof stranger.reason, 'string')
+  dispose()
+})
+
+test('the view endpoint renders a cold revoked session as terminal', async () => {
+  const { root, directory } = await fixture()
+  // An ADMIN OVERRIDE over the owner's unknown operation revokes it durably.
+  const store = await openEditLockStore({ directory, domainId: root, mode: 'create' })
+  const manager = createEditLockManager({ store, managerIncarnation: 'm', root,
+    writeBackup: async (/** @type {string} */ file, /** @type {Buffer} */ bytes) => writeFile(join(directory, file), bytes) })
+  const owner = await manager.openSession('owner')
+  const target = join(root, 'a.txt')
+  const token = await manager.acquire(owner, target)
+  const request = { operationId: 'op-unknown', tool: 'write', filePath: target, cwd: root, args: {}, content: 'late',
+    effectivePolicy: { mode: 'workspace-write' },
+    target: { kind: 'update', resourceId: target, generation: token.generation, policy: { kind: 'replaceIfVersion', version: 'old' } } }
+  const hooks = { validate() {}, publish: async () => { throw new Error('unknown writer outcome') }, identify: () => target }
+  const ready = await manager.prepare(owner, request, hooks)
+  await assert.rejects(manager.commit(ready.submission), /unknown writer outcome/)
+  await manager.cancel(owner)
+  const input = { owner: 'owner', expectedRevision: store.snapshot().revision, operationIds: ['op-unknown'],
+    recoveryId: 'cold-revoked-1', reason: 'test override', acceptLateWriterRisk: true, confirmation: '' }
+  input.confirmation = recoveryConfirmation({ root, ...input })
+  await manager.adminRecoverOnline(input)
+  await manager.close()
+  await store.close()
+
+  const host = coldHost(root)
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const value = (await host.read({ sessionId: 'owner' })).value
+  assert.equal(value.state, 'revoked')
+  assert.equal(value.cold, true)
+  dispose()
+})
+
+test('the view endpoint names why a cold session has no view instead of saying "starting"', async () => {
+  const { root, directory } = await fixture()
+  // Non-fixed composition: the cold chain derives the management root from the
+  // observed cwd. No authority exists under this root.
+  const missing = coldHost(root)
+  const disposeMissing = apply(missing.ctx, { enabled: true })
+  const noAuthority = (await missing.read({ sessionId: 'cold' })).value
+  assert.equal(noAuthority.state, 'unavailable')
+  assert.match(noAuthority.reason, /authority/i)
+  disposeMissing()
+
+  // A committed image that no longer validates is named, not rendered as starting.
+  await writeFile(join(directory, 'snapshot.json'), 'not a snapshot')
+  const corrupt = coldHost(root)
+  const disposeCorrupt = apply(corrupt.ctx, { enabled: true, root, authorityDirectory: directory })
+  const unreadable = (await corrupt.read({ sessionId: 'cold' })).value
+  assert.equal(unreadable.state, 'unavailable')
+  assert.match(unreadable.reason, /invalid/i)
+  disposeCorrupt()
 })
