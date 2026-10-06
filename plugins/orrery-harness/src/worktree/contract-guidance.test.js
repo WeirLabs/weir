@@ -87,7 +87,6 @@ test('worker guidance is present only in the write contract; read-only contract 
   const write = renderChildContract(lane, { readOnly: false })
   const read = renderChildContract(lane, { readOnly: true })
   for (const line of [
-    'You are a delegated worker: do not call create_goal/update_goal; goal tools reject non-top-level agents.',
     'Report blockers and outcomes in your final report; do not send_message to the parent (its id is not available to you).',
     'Run every command, tests included, with workdir at the lane root; the integration-test root resolves lane-locally by default.',
   ]) {

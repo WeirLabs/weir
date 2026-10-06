@@ -69,7 +69,6 @@ You work in lane ${lane.id}: an isolated git worktree at ${lane.path} on branch 
 - Write files only with absolute paths under ${lane.path}.${scope}
 - Stay on ${lane.branch}: do not checkout, switch, push, or rename/delete branches. Merging ${lane.base.branch} into the lane to resolve conflicts is allowed.
 - Commit your finished work on ${lane.branch} before you end (git add + git commit). The host checks the lane when you finish: uncommitted changes or no commits send the lane back to you.
-- You are a delegated worker: do not call create_goal/update_goal; goal tools reject non-top-level agents.
 - Report blockers and outcomes in your final report; do not send_message to the parent (its id is not available to you).
 - Run every command, tests included, with workdir at the lane root; the integration-test root resolves lane-locally by default.
 </lane>`

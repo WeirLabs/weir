@@ -28,7 +28,7 @@ describe('CHILD_DENY_TOOLS', () => {
       'delegate', 'subagent', 'subagent_fork', 'workflow',
       'resume_agent', 'terminate_agent', 'supervised_status', 'interrupt_agent', 'list_agents', 'send_message',
       'worktree_open', 'worktree_land', 'worktree_cleanup', 'worktree_abandon', 'worktree_check',
-      'exit_plan_mode', 'create_goal', 'get_goal', 'update_goal',
+      'exit_plan_mode',
       'ask_user_question', 'present',
       'edit_lock_acquire', 'edit_lock_hold', 'edit_lock_pause', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal',
     ]

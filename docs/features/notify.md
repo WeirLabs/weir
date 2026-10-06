@@ -48,7 +48,7 @@
   - `agent/status`：转为 `running` 时撤销已暂存的完成通知。
   - `session/disposed`：清理该会话的定时器与计时。
   - `worktree/question`：Worktree 车道的决策卡片不经过工具层（车道服务直接调用 `userQuestions` 服务，见 [git-worktree.md](git-worktree.md)），不会产生白名单内的 `tool/call` 事件；worktree 模块在弹出**合并批准**与**放弃确认**卡片前 side-emit 此 cordis 事件（载荷为会话与卡片问题文本），本模块按 question 类型投递。卡片 id 白名单在 worktree 侧（新 id 默认不通知）；本监听器与 `session/event` 监听器同一纪律：整体 try/catch，异常只记 `warn`。
-- **结算窗口（settle）**：回合结束的通知先暂存 `settleMs`；窗口内 agent 重新进入 running 或新回合开始（后台任务唤醒、todo 续推、goal 轮转）就撤销——只在真正「停下来」时才打扰你。需要你处理的类型（审批/提问/计划）不等待，立即发出。
+- **结算窗口（settle）**：回合结束的通知先暂存 `settleMs`；窗口内 agent 重新进入 running 或新回合开始（后台任务唤醒、todo 续推）就撤销——只在真正「停下来」时才打扰你。需要你处理的类型（审批/提问/计划）不等待，立即发出。
 - **合并（coalesce）**：同一顶层会话、同一类型在 `coalesceMs` 内只发一条（并行工具调用同时请求审批时不刷屏）。
 - **重放保护**：事件时间早于 60 秒的视为历史重放（会话恢复），不通知。
 - **投递**：判定在宿主、弹出在页面（见下文「投递路由」）。宿主是 Node 模式子进程，没有 Electron `Notification`，所以**兜底路径**调用各平台自带命令（`src/notify/commands.js`，纯函数构造，`notifier.js` 注入 `execFile` 执行）：
@@ -112,7 +112,7 @@
 - **专注模式/勿扰会照常拦截**，且无法检测。窗口在前台时系统通常不弹横幅，所以默认前台不通知并不会损失什么；需要前台也提醒就切到「始终通知」。
 - 提问通知在 `ask_user_question` 的 `tool/call` 落盘时发出——即使该提问是限时的、之后被超时放行，通知也已发出（它在提问时刻本就该打扰你）。
 - Worktree 卡片通知在卡片弹出前现场发出——即使卡片之后被取消、超时被关闭或用户不作答，通知也已发出（它在提问时刻本就该打扰你）。该事件是纯 cordis 信号、不经 `session/event` 源，因此不受 60 秒重放保护约束，也永远不会在会话恢复时被重放。
-- goal 轮转没有独立通知：goal 完成或受阻最终都落在回合结束，由上述 `turn/end` 路径覆盖。
+- DSH 的 goal 特性已从 Orrery 预设排除（见 [preset-packaging.md](preset-packaging.md)），不存在 goal 轮转唤醒源；所有完成/受阻通知只走上述 `turn/end` 路径。
 - Windows 与 Linux 路径目前仅有单元测试（命令构造与注入的 `execFile`），**未在真实 Windows/Linux 桌面实机验证**；macOS 路径已在本机实际调用 `osascript` 成功退出。
 - 权限面板的边界：专注模式/勿扰数据在受保护目录（`~/Library/DoNotDisturb/DB/` 读取被系统拒绝），无法检测，面板只做提示；端点或命令失败时面板显示错误并给出手动路径（系统设置 → 通知 → DeepSeek Harness），不影响设置页其余内容与通知本身；面板渲染异常被错误边界限制在面板内。
 - 页面通道失败的边界：长轮询请求失败时页面按 1/2/5/10/20 秒退避重试、不会热循环；ack 失败不会卡住轮询（宿主 4 秒后兜底）；通道的任何故障只记警告、不影响会话回合、日志或续推，宿主不向会话日志追加事件。
