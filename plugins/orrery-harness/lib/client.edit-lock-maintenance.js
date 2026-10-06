@@ -117,6 +117,10 @@ window.__ModuleLoader__.load({
 		function recoveryConfirmation(scope) {
 			return `ADMIN OVERRIDE ${sha256Hex(canonicalJson({ root: scope.root, owner: scope.owner, expectedRevision: scope.expectedRevision, operationIds: [...scope.operationIds].sort(), risk: LATE_WRITER_RISK }))}`;
 		}
+		/** Recovery state is scoped exactly like the authority: per domain root
+		 * AND owner. Session ids are not unique across independent domains, so
+		 * one root's completed recovery must never disable another root's. */
+		const recoveryKey = (root, owner) => `${root}\n${owner}`;
 		/** Eligible one-click recoveries from one inspection: each interrupted
 		 * owner whose every unresolved operation is a still-blocking unknown.
 		 * @param {string} root @param {any} snapshot */
@@ -135,8 +139,15 @@ window.__ModuleLoader__.load({
 			}
 			/** @type {{owner: string, scope: {root: string, owner: string, expectedRevision: number, operationIds: string[]}, confirmation: string}[]} */
 			const candidates = [];
+			// An owner with a prepared operation can never be recovered online
+			// (the manager requires every unresolved operation to be unknown), so
+			// offering the action would present a click that always refuses.
+			const preparedOwners = new Set((Array.isArray(snapshot?.prepared) ? snapshot.prepared : [])
+				.map((op) => op?.key?.sessionId)
+				.filter((owner) => typeof owner === "string"));
 			for (const [owner, ops] of byOwner) {
 				if (!interrupted.has(owner)) continue;
+				if (preparedOwners.has(owner)) continue;
 				if (!(ops.length > 0 && ops.every((op) => op?.phase === "unknown" && op?.admissionBlocked === true))) continue;
 				const scope = { root, owner, expectedRevision: snapshot.revision, operationIds: ops.map((op) => op.key.operationId).sort() };
 				candidates.push({ owner, scope, confirmation: recoveryConfirmation(scope) });
@@ -184,7 +195,7 @@ window.__ModuleLoader__.load({
 			 * A refusal is shown next to a freshly reloaded scope.
 			 * @param {string} root @param {ReturnType<typeof recoveryCandidates>[number]} candidate */
 			const recover = (root, candidate) => {
-				setRecoveries((previous) => ({ ...previous, [candidate.owner]: { status: "busy" } }));
+				setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: { status: "busy" } }));
 				post("api/orrery-edit-lock/maintenance/recover-online", {
 					root,
 					owner: candidate.owner,
@@ -195,12 +206,12 @@ window.__ModuleLoader__.load({
 					acceptLateWriterRisk: true,
 					confirmation: candidate.confirmation,
 				}).then((payload) => {
-					setRecoveries((previous) => ({ ...previous, [candidate.owner]: payload?.ok
+					setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: payload?.ok
 						? { status: "done", revision: payload.value.revision, idempotent: payload.value.idempotent === true }
 						: { status: "error", message: payload?.error?.detail ?? payload?.error?.message ?? "unknown" } }));
 					inspect(root);
 				}).catch((error) => {
-					setRecoveries((previous) => ({ ...previous, [candidate.owner]: { status: "error", message: String(error?.message ?? error) } }));
+					setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: { status: "error", message: String(error?.message ?? error) } }));
 					inspect(root);
 				});
 			};
@@ -242,7 +253,7 @@ window.__ModuleLoader__.load({
 			 * verbatim and the computed digest, then the one explicit button.
 			 * @param {string} root @param {ReturnType<typeof recoveryCandidates>[number]} candidate */
 			const recoveryCard = (root, candidate) => {
-				const state = recoveries[candidate.owner];
+				const state = recoveries[recoveryKey(root, candidate.owner)];
 				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", padding: "8px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)" }, children: [
 					react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverRoot")}: ${candidate.scope.root}` }),
 					react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverOwner")}: ${candidate.owner}` }),
@@ -266,7 +277,7 @@ window.__ModuleLoader__.load({
 						onClick: () => recover(root, candidate),
 						children: state?.status === "busy" ? t("editLockMaintRecoverBusy") : t("editLockMaintRecoverConfirm")
 					}) })
-				], key: candidate.owner });
+				], key: recoveryKey(root, candidate.owner) });
 			};
 			const snapshotSection = (/** @type {string} */ root, /** @type {any} */ snapshot) => react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
 				react_jsx_runtime.jsx("div", { style: chainDescStyle, children: t("editLockMaintCounts")
@@ -380,7 +391,7 @@ window.__ModuleLoader__.load({
 		exports.EditLockMaintenanceBoundary = EditLockMaintenanceBoundary;
 		exports.EditLockMaintenanceField = EditLockMaintenanceField;
 		// Exported for the chunk test's 对拍 against the server-side digest.
-		exports.editLockRecovery = Object.freeze({ canonicalJson, sha256Hex, recoveryConfirmation, recoveryCandidates, LATE_WRITER_RISK });
+		exports.editLockRecovery = Object.freeze({ canonicalJson, sha256Hex, recoveryConfirmation, recoveryCandidates, recoveryKey, LATE_WRITER_RISK });
 		return module.exports;
 	}
 });

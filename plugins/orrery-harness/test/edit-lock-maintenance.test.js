@@ -238,6 +238,28 @@ describe('summarizeAuthorityImage (pure projection)', () => {
     assert.equal(summary.retainedLocks[1].reason, 'provider error')
     assert.equal(summary.sessions[0].recovery.attempts, 1)
   })
+
+  it('exposes prepared operations so the panel can hide impossible recoveries', () => {
+    const summary = summarizeAuthorityImage({
+      revision: 3,
+      state: {
+        version: 4,
+        managerIncarnation: 'm',
+        sessions: [{ sessionId: 's', executionEpoch: 1, interrupted: true }],
+        generations: [],
+        locks: [],
+        issuedRequests: [],
+        recovery: [],
+        holds: [],
+        operations: [
+          { sessionId: 's', operationId: 'op-prepared', binding: { tool: 'write', filePath: '/w/c.txt' }, phase: 'prepared' },
+          { sessionId: 's', operationId: 'op-unknown', binding: { tool: 'write', filePath: '/w/a.txt' }, phase: 'unknown', outcome: { kind: 'unknown' }, fence: { kind: 'resource', resourceId: '/w/a.txt' } },
+        ],
+      },
+    })
+    assert.equal(summary.unresolved.length, 1)
+    assert.deepEqual(summary.prepared, [{ target: { tool: 'write', filePath: '/w/c.txt' }, key: { sessionId: 's', operationId: 'op-prepared' } }])
+  })
 })
 
 describe('maintenance endpoints', () => {

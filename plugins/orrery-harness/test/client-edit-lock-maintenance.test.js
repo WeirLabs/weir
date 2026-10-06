@@ -374,6 +374,69 @@ describe('client.edit-lock-maintenance chunk', () => {
     }
   })
 
+  it('scopes recovery state per root and owner: one root\'s settle never disables another root\'s action', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { EditLockMaintenanceField } = exports
+    const STATUS_TWO = { ...STATUS, domains: [
+      { root: '/work/repo', hasAuthority: true, reservation: false, mode: 'publisher', error: null },
+      { root: '/work/other', hasAuthority: true, reservation: false, mode: 'publisher', error: null },
+    ] }
+    const eligibleFor = (root) => ({
+      root,
+      authorityDir: `${root}/.orrery/edit-lock`,
+      reservation: false,
+      endpoint: { path: '/tmp/x.sock', exists: true },
+      presence: 'valid',
+      snapshot: {
+        version: 4, revision: 12,
+        counts: { sessions: 1, locks: 1, operations: 1, unresolved: 1, retainedLocks: 1 },
+        unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }],
+        prepared: [],
+        retainedLocks: INSPECT.snapshot.retainedLocks,
+        sessions: [{ sessionId: 'sess-1', executionEpoch: 17, interrupted: true, recovery: null }],
+      },
+    })
+    const recoverPayload = { ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (url, init) => {
+      if (url === 'api/orrery-edit-lock/maintenance/status') return Promise.resolve({ json: async () => ({ ok: true, value: STATUS_TWO }) })
+      if (url === 'api/orrery-edit-lock/maintenance/inspect') {
+        const root = JSON.parse(init.body).root
+        return Promise.resolve({ json: async () => ({ ok: true, value: eligibleFor(root) }) })
+      }
+      if (url === 'api/orrery-edit-lock/maintenance/recover-online') return Promise.resolve({ json: async () => recoverPayload })
+      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    }
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const props = { t: (key) => key }
+    const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField(props)) }
+    const confirms = (tree) => collect(tree, (node) => node.children === 'editLockMaintRecoverConfirm' && typeof node.onClick === 'function')
+    const inspects = (tree) => collect(tree, (node) => node.children === 'editLockMaintInspect' && typeof node.onClick === 'function')
+    const doneText = (tree) => collect(tree, (node) => node.children === 'editLockMaintRecoverDone'.replace('{revision}', '13'))
+    try {
+      render().children[0].children[1].onClick()
+      await flush()
+      // Root A: inspect, recover, settle — done shows under A.
+      inspects(render())[0].onClick()
+      await flush()
+      confirms(render())[0].onClick()
+      await flush()
+      await flush()
+      expect(doneText(render())).toHaveLength(1)
+      // Root B carries the SAME owner id and still needs its recovery: no done,
+      // and its confirm stays enabled. (A's section collapses; only B renders.)
+      inspects(render()).at(-1).onClick()
+      await flush()
+      const treeB = render()
+      expect(doneText(treeB)).toHaveLength(0)
+      const confirmB = confirms(treeB)
+      expect(confirmB).toHaveLength(1)
+      expect(confirmB[0].disabled === true).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('chunk confirmation algorithm matches the server byte-for-byte, and eligibility mirrors the manager', async () => {
     const { exports } = await loadPanel()
     const { editLockRecovery } = exports
@@ -404,6 +467,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       sessions: [
         { sessionId: 'a', interrupted: true }, { sessionId: 'b', interrupted: false },
         { sessionId: 'c', interrupted: true }, { sessionId: 'd', interrupted: true },
+        { sessionId: 'e', interrupted: true },
       ],
       unresolved: [
         { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'a', operationId: 'op-2' } },
@@ -411,7 +475,11 @@ describe('client.edit-lock-maintenance chunk', () => {
         { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'b', operationId: 'op-3' } },
         { phase: 'publishing', admissionBlocked: true, key: { sessionId: 'c', operationId: 'op-4' } },
         { phase: 'unknown', admissionBlocked: false, key: { sessionId: 'd', operationId: 'op-5' } },
+        { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'e', operationId: 'op-6' } },
       ],
+      // 'e' is otherwise eligible but still holds a prepared operation: the
+      // online recovery can never succeed for it, so the panel must not offer it.
+      prepared: [{ target: { tool: 'write', filePath: '/w/e.txt' }, key: { sessionId: 'e', operationId: 'op-7' } }],
     })
     expect(candidates).toHaveLength(1)
     expect(candidates[0].owner).toBe('a')
