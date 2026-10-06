@@ -1,14 +1,14 @@
 import { createEditLockHost } from './host.js'
 import { createNegotiation } from './negotiation.js'
 import { RECOVERY_LIMITS } from './recovery.js'
-import { isMissingTarget } from './stale-sweep.js'
+import { isMissingTarget, STALE_SWEEP_COOLDOWN_MS } from './stale-sweep.js'
 
 /** Host-owned lifecycle controller. The authenticated transport must await stop;
  * stock GUI cancel acceptance alone does not constitute this acknowledgement.
  * Resume and confirm are trusted human ingress only; never expose them as tools.
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
  * @param {(agent: object) => string | undefined} sessionForAgent
- * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void}} [options] */
+ * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number}} [options] */
 export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
   /** @typedef {{sessionId:string, state:'starting'|'active'|'recovering'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
@@ -126,6 +126,41 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       recovery: runtime.control.recoveryUsage(entry.sessionId),
       retention: runtime.control.settlement(entry.sessionId, Date.now()),
     }
+  }
+  /** Publisher-authoritative sweep coalescing (one lifecycle serves ONE
+   * authority): a trigger arriving while a sweep runs joins it; a trigger
+   * inside the cooldown window is answered without scanning. The client-side
+   * mount scheduler stays the first-line throttle; this guard is what makes
+   * concurrent local and cross-process triggers converge on one scan.
+   * @type {Promise<{released: any[], skipped: any[], failed: any[]}> | null} */
+  let sweepInFlight = null
+  let sweepCompletedAt = Number.NEGATIVE_INFINITY
+  const sweepCooldownMs = options.sweepCooldownMs ?? STALE_SWEEP_COOLDOWN_MS
+  const sweepNow = options.sweepNow ?? (() => Date.now())
+  const warn = options.warn ?? (() => {})
+  /** The scan half of sweepStale, always run under the coalescing guard.
+   * Releases audit through options.onStaleRelease after durable success;
+   * skips stay quiet (counted only); each failure earns exactly one bounded
+   * warning. @param {string | null} triggerSessionId */
+  async function runStaleSweep(triggerSessionId) {
+    const status = runtime.control.status()
+    const sessions = new Map(status.sessions.map(/** @param {any} item */ item => [item.sessionId, item]))
+    /** @type {{resourceId: string, owner: string, generation: number, executionEpoch: number, status: string}[]} */
+    const observed = []
+    for (const lock of status.locks) {
+      const session = sessions.get(lock.owner)
+      if (!session || !isMissingTarget(lock.resourceId)) continue
+      observed.push({ resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation, executionEpoch: session.executionEpoch, status: lock.status })
+    }
+    if (observed.length === 0) return { released: [], skipped: [], failed: [] }
+    const result = await runtime.control.releaseStale(observed, isMissingTarget)
+    for (const row of result.released) {
+      try { options.onStaleRelease?.(row, triggerSessionId) } catch { /* audit is log-only and never breaks the sweep */ }
+    }
+    for (const failure of result.failed ?? []) {
+      try { warn(`edit lock stale sweep: release failed for ${/** @type {any} */ (failure)?.row?.resourceId}: ${/** @type {any} */ (failure)?.reason}`) } catch { /* logging never breaks the sweep */ }
+    }
+    return result
   }
   return Object.freeze({
     // Only this narrowed service belongs in the tool context.
@@ -336,7 +371,13 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     /** Trusted maintenance ingress for the stale-lock sweep (message-triggered;
      * local composition and the peer channel both land here). The publisher
      * shares the filesystem with the authority, so the scan ALWAYS runs on this
-     * side — a client process only triggers it. A lock row is a candidate ONLY
+     * side — a client process only triggers it. Coalescing is authoritative
+     * HERE, not only in the client-side mount scheduler: one lifecycle serves
+     * one authority, so a single in-flight sweep plus a cooldown window makes
+     * concurrent local and cross-process triggers converge on one scan — a
+     * trigger arriving while a sweep runs JOINS it (same result, no extra
+     * audit), and a trigger inside the cooldown window is answered with a
+     * `coalesced: 'cooldown'` result without scanning. A lock row is a candidate ONLY
      * when lstat of its stored canonical resource id fails with ENOENT; the
      * manager's releaseStale re-verifies the full observed row (owner,
      * generation, owner execution epoch, lock status) and re-probes the target
@@ -344,28 +385,25 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
      * re-generated or sits under an unresolved fence between scan and
      * execution is a skip, never an error. Silent by contract: each durable
      * release is reported through options.onStaleRelease (shared audit);
-     * skips and failures surface only in the returned counts for the caller's
-     * bounded logging. Never writes to any conversation.
+     * skips stay quiet (counted only); each FAILURE (persistence, poison,
+     * unexpected) gets exactly one bounded warning through options.warn.
+     * Never writes to any conversation.
      * @param {string | null} [triggerSessionId] session whose genuine user
      * message armed the sweep (audit metadata only)
-     * @returns {Promise<{released: any[], skipped: any[]}>} */
-    async sweepStale(triggerSessionId = null) {
-      if (closed) throw new Error('edit lifecycle closed')
-      const status = runtime.control.status()
-      const sessions = new Map(status.sessions.map(/** @param {any} item */ item => [item.sessionId, item]))
-      /** @type {{resourceId: string, owner: string, generation: number, executionEpoch: number, status: string}[]} */
-      const observed = []
-      for (const lock of status.locks) {
-        const session = sessions.get(lock.owner)
-        if (!session || !isMissingTarget(lock.resourceId)) continue
-        observed.push({ resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation, executionEpoch: session.executionEpoch, status: lock.status })
+     * @returns {Promise<{released: any[], skipped: any[], failed: any[], coalesced?: string}>} */
+    sweepStale(triggerSessionId = null) {
+      if (closed) return Promise.reject(new Error('edit lifecycle closed'))
+      if (sweepInFlight) return sweepInFlight
+      if (sweepNow() - sweepCompletedAt < sweepCooldownMs) {
+        return Promise.resolve({ released: [], skipped: [], failed: [], coalesced: 'cooldown' })
       }
-      if (observed.length === 0) return { released: [], skipped: [] }
-      const result = await runtime.control.releaseStale(observed, isMissingTarget)
-      for (const row of result.released) {
-        try { options.onStaleRelease?.(row, triggerSessionId) } catch { /* audit is log-only and never breaks the sweep */ }
-      }
-      return result
+      const running = runStaleSweep(triggerSessionId)
+      sweepInFlight = running
+      // The cooldown window opens at completion (success or failure), matching
+      // the client-side scheduler's semantics.
+      const settle = () => { if (sweepInFlight === running) { sweepInFlight = null; sweepCompletedAt = sweepNow() } }
+      running.then(settle, settle)
+      return running
     },
     /** Trusted human unlock by exact generation; never exposed as a tool.
      * Session interruption and pending confirmations are untouched.

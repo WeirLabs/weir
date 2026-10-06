@@ -372,6 +372,9 @@ return (ctx, config = {}) => {
         return domain
       }
       const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
+        // Bounded failure logging for the sweep: one warning per failed row
+        // (skips stay quiet), routed to the host logger.
+        warn: message => ctx.logger?.warn?.(message),
         deliver: (agent, text, wake) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'notice', text, wake: wake === true }); else deliverLocal(agent, text, wake) },
         onPending: (agent, count) => { const sink = sinks.get(agent); if (sink) sink({ kind: 'pending', count }); else syncReplyTool(agent, count) },
         // Stale-lock sweep audit: publisher-side, after each durable release;
@@ -690,7 +693,13 @@ return (ctx, config = {}) => {
         // its undispatched work; an already-submitted authority transaction
         // is never cancelled or reinterpreted.
         if (closed || disposedAgents.has(agent) || registry.rootOf(agent) !== root) return undefined
-        return registry.forRoot(root).then(domain => domain.sweepStale(agent, sessionOf(agent)))
+        return registry.forRoot(root).then(domain => {
+          // Re-check at fulfillment: a dispose landing while the domain-open
+          // promise was pending must cancel here, before any maintenance
+          // transaction is submitted for a disposed agent.
+          if (closed || disposedAgents.has(agent)) return undefined
+          return domain.sweepStale(agent, sessionOf(agent))
+        })
       })
     }
     if (ctx.get?.('orrerySettings')?.get?.('editLock')?.autoResume === false) return
