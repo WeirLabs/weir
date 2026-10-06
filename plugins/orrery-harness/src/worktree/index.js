@@ -170,20 +170,51 @@ function apply(ctx, config = {}) {
         // The latest GUI language also covers sessions the panel never polled.
         locales.set('*', body.locale)
       }
-      return { body, session: sessionId ? ctx.get?.('agents')?.get?.(sessionId)?.session : undefined, sessionId }
+      // Live first: an agent's session, else an attached session with no
+      // agent (still a real Session with live projection cells).
+      const live = sessionId ? ctx.get?.('agents')?.get?.(sessionId)?.session ?? ctx.get?.('sessions')?.get?.(sessionId) : undefined
+      if (live) return { body, session: live, cold: undefined, sessionId }
+      // Cold fallback: DSH GUI session reads are cold-safe (page/follow/
+      // projections) and never activate an agent, so after a restart a viewed
+      // session has no live agent and the panel would stay SESSION_NOT_LIVE
+      // until a remount. The lane ledger is repo-level: the read-only
+      // endpoints need only header.cwd, the session id, and the cold-folded
+      // mode projection — all carried by a sessionQuery observation, without
+      // making the session live. Any failure (unknown session included) falls
+      // through to the degraded replies below. The lease is disposed by the
+      // endpoint's finally.
+      let observation
+      try {
+        observation = sessionId ? await ctx.get?.('sessionQuery')?.observeSession?.(sessionId) : undefined
+      } catch {
+        observation = undefined
+      }
+      if (!observation) return { body, session: undefined, cold: undefined, sessionId }
+      return {
+        body,
+        session: { id: sessionId, header: observation.header },
+        cold: { observation, mode: observation.projections?.values?.[WORKTREE_PROJECTION_KEY]?.mode === true },
+        sessionId,
+      }
     }
     const offView = fetchRegistry.register({
       path: '/api/orrery-worktree/view',
       methods: ['POST'],
       requestBody: 'buffered',
       fetch: async (/** @type {any} */ request) => {
-        const { session, sessionId } = await sessionOf(request)
-        if (!sessionId) return reply({ ok: false, error: { code: 'orrery-worktree/invalid', message: 'body needs { sessionId }' } }, 400)
-        // Degraded shapes carry the same array fields as the full view so the
-        // panel's narrowing and summaries never see a lanes-less object.
-        if (!settingsNow().enabled) return reply({ ok: true, value: { available: false, enabled: false, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'WORKTREE_DISABLED', message: 'worktree lanes are disabled' } } })
-        if (!session) return reply({ ok: true, value: { available: false, enabled: true, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'SESSION_NOT_LIVE', message: 'open the session to load its lanes' } } })
-        return reply({ ok: true, value: { enabled: true, ...(await service.view(session)) } })
+        const { session, sessionId, cold } = await sessionOf(request)
+        try {
+          if (!sessionId) return reply({ ok: false, error: { code: 'orrery-worktree/invalid', message: 'body needs { sessionId }' } }, 400)
+          // Degraded shapes carry the same array fields as the full view so the
+          // panel's narrowing and summaries never see a lanes-less object.
+          if (!settingsNow().enabled) return reply({ ok: true, value: { available: false, enabled: false, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'WORKTREE_DISABLED', message: 'worktree lanes are disabled' } } })
+          if (!session) return reply({ ok: true, value: { available: false, enabled: true, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'SESSION_NOT_LIVE', message: 'open the session to load its lanes' } } })
+          // A cold pseudo session drives the same view with the cold-folded
+          // mode override; a live session keeps the exact current behavior.
+          return reply({ ok: true, value: { enabled: true, ...(await service.view(session, cold ? { mode: cold.mode } : undefined)) } })
+        } finally {
+          cold?.observation?.[Symbol.dispose]?.()
+        }
       },
     })
     const offDiff = fetchRegistry.register({
@@ -191,12 +222,16 @@ function apply(ctx, config = {}) {
       methods: ['POST'],
       requestBody: 'buffered',
       fetch: async (/** @type {any} */ request) => {
-        const { body, session } = await sessionOf(request)
-        if (!session || typeof body?.lane !== 'string') return reply({ ok: false, error: { code: 'orrery-worktree/invalid', message: 'body needs { sessionId, lane } of a live session' } }, 400)
+        const { body, session, cold } = await sessionOf(request)
         try {
-          return reply({ ok: true, value: { lane: body.lane, diff: await service.diffOf(session, body.lane) } })
-        } catch (error) {
-          return reply({ ok: false, error: { code: /** @type {any} */ (error)?.code ?? 'orrery-worktree/internal', message: /** @type {any} */ (error)?.reason ?? /** @type {any} */ (error)?.message ?? String(error) } }, 500)
+          if (!session || typeof body?.lane !== 'string') return reply({ ok: false, error: { code: 'orrery-worktree/invalid', message: 'body needs { sessionId, lane } of a live session' } }, 400)
+          try {
+            return reply({ ok: true, value: { lane: body.lane, diff: await service.diffOf(session, body.lane) } })
+          } catch (error) {
+            return reply({ ok: false, error: { code: /** @type {any} */ (error)?.code ?? 'orrery-worktree/internal', message: /** @type {any} */ (error)?.reason ?? /** @type {any} */ (error)?.message ?? String(error) } }, 500)
+          }
+        } finally {
+          cold?.observation?.[Symbol.dispose]?.()
         }
       },
     })

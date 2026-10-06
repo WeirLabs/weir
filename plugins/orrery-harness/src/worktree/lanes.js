@@ -1046,14 +1046,18 @@ export function createLaneService(deps) {
   /**
    * Full read-only view for the GUI panel.
    * @param {any} session
+   * @param {{ mode?: boolean }} [options] - cold-read override: a boolean
+   *   `mode` replaces the live projection read (a pseudo session folded from
+   *   the persisted log by sessionQuery has no live projection cells).
    */
-  async function view(session) {
+  async function view(session, options) {
+    const viewMode = () => (typeof options?.mode === 'boolean' ? options.mode : safeMode(session))
     let repo
     try {
       repo = await repoFor(cwdOf(session))
     } catch (error) {
       const known = error instanceof WorktreeError
-      return { available: false, mode: safeMode(session), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
+      return { available: false, mode: viewMode(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
     }
     try {
       const { mainBranch, unmanaged } = await refresh(repo)
@@ -1090,7 +1094,7 @@ export function createLaneService(deps) {
       }
       return {
         available: true,
-        mode: safeMode(session),
+        mode: viewMode(),
         ownedBySession: lanes.filter((lane) => lane.ownerSession === session?.id).map((lane) => lane.id),
         repo: { mainRoot: repo.mainRoot, root: repo.root, rootPath: repo.rootPath, branch: mainBranch, gitVersion: repo.version?.join('.') ?? null, exclude: hasExclude(repo.commonDir, repo.root), verification },
         lanes,
@@ -1098,7 +1102,7 @@ export function createLaneService(deps) {
       }
     } catch (error) {
       const known = error instanceof WorktreeError
-      return { available: false, mode: safeMode(session), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
+      return { available: false, mode: viewMode(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
     }
   }
 
