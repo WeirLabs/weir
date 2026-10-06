@@ -16,7 +16,7 @@
 // sleeping listener, so a sleep-shaped sabotage still captures (measured).
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { lastOfRole, textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 
 const id = 'lifecycle-inheritance'
 const prompt = 'lifecycle-probe'
@@ -97,7 +97,6 @@ function decide(options, obs) {
     return toolCallChunks('delegate', { category: 'quick', run_in_background: true, prompt: 'CHILD_BG\nTASK: reply with the exact marker text MARKER_BG\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' })
   }
   if (!history.includes('group member alpha done')) {
-    if (lastTool.includes('Supervised group')) return shellCall('wait', { seconds: 1 }, 'Let supervised children settle')
     if (!history.includes('GROUP_CHILD_A')) {
       return toolCallChunks('delegate', {
         group: 'lifecycle-group',
@@ -107,6 +106,13 @@ function decide(options, obs) {
         ],
       })
     }
+    // Bounded marker wait (design D1): keep the turn alive until the alpha
+    // member settles. The old gate reused lastOfRole ('Supervised group'),
+    // which only worked because sleep output is empty — make the wait
+    // explicit, bounded, and interleave-immune.
+    const verdict = waitForMarker(history, 'group member alpha done')
+    if (verdict.state === 'wait') return verdict.chunks
+    return textChunks('unhandled lifecycle-inheritance wait')
   }
   if (!history.includes('escalated to deep-plus') && !lastTool.includes('escalated to deep-plus') && !history.includes('escalated child settled')) {
     return toolCallChunks('delegate', { category: 'deep', prompt: 'ESCALATE_CHILD\nTASK: probe escalation\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' })

@@ -9,13 +9,14 @@
 //
 //   node run.mjs [scenario ...]     (default: all)
 import { execFileSync, execFile } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeRunView } from './src/run-view.js'
 import { SCENARIOS, byId } from './src/scenarios/index.js'
 import { defaultItRoot } from './src/it-root.js'
+import { LOCK_NAME, acquireRunLock, releaseRunLock } from './src/run-lock.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const WS_ROOT = join(HERE, '..', '..')
@@ -43,16 +44,33 @@ const DSH_BIN =
 // Keep the default inside this repository/worktree, outside system temp roots
 // so sandbox-mirroring regressions remain observable. Explicit overrides win.
 const IT_ROOT = process.env.ORRERY_IT_ROOT ?? defaultItRoot()
-const HOME = join(IT_ROOT, 'home')
+// Advisory lock (design D3): concurrent runs on the DEFAULT root must not
+// share mutable runtime state. An explicit ORRERY_IT_ROOT bypasses the lock
+// entirely — the caller owns isolation. The decision happens before any path
+// derives from the root, and the startup wipe only ever touches RUN_ROOT.
+const RUN_LOCK = process.env.ORRERY_IT_ROOT ? null : acquireRunLock(IT_ROOT)
+const RUN_ROOT = RUN_LOCK?.root ?? IT_ROOT
+if (RUN_LOCK?.lockPath) process.on('exit', () => releaseRunLock(RUN_LOCK))
+const HOME = join(RUN_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'orrery-it')
-const WS = join(IT_ROOT, 'ws')
+const WS = join(RUN_ROOT, 'ws')
 
 // When set, each scenario's run record + trace + post-run workspace fixtures
 // are copied into this directory (assert-replay fixtures, task 4.2).
 const RECORD_DIR = process.env.ORRERY_IT_RECORD ?? null
 
 function setup() {
-  rmSync(IT_ROOT, { recursive: true, force: true })
+  // Wipe only the root this run actually uses; when this run holds the
+  // advisory lock, the lock file itself survives the wipe.
+  if (RUN_LOCK?.lockPath) {
+    mkdirSync(RUN_ROOT, { recursive: true })
+    for (const entry of readdirSync(RUN_ROOT)) {
+      if (entry === LOCK_NAME) continue
+      rmSync(join(RUN_ROOT, entry), { recursive: true, force: true })
+    }
+  } else {
+    rmSync(RUN_ROOT, { recursive: true, force: true })
+  }
   mkdirSync(PROFILE, { recursive: true })
   mkdirSync(WS, { recursive: true })
   writeFileSync(
@@ -118,7 +136,7 @@ function scenarioEnv(scenarioId, trace, extra = {}) {
   return {
     ...process.env,
     DSH_HOME: HOME,
-    ORRERY_IT_ROOT: IT_ROOT,
+    ORRERY_IT_ROOT: RUN_ROOT,
     ORRERY_IT_SCENARIO: scenarioId,
     ORRERY_IT_TRACE: trace,
     ORRERY_IT_FIXTURE: join(WS, 'fixture.txt'),
@@ -128,7 +146,7 @@ function scenarioEnv(scenarioId, trace, extra = {}) {
 
 /** The generic one-boot scenario run: prompt + env come from the registry entry. */
 function runScenario(scenario) {
-  const trace = join(IT_ROOT, `trace-${scenario.id}.jsonl`)
+  const trace = join(RUN_ROOT, `trace-${scenario.id}.jsonl`)
   const hostControl = scenario.env?.ORRERY_IT_SKILL_COMPOSITION === 'HOST'
   writeFileSync(join(PROFILE, 'cordis.patch.yml'), hostControl
     ? `- id: skill-filesystem\n  disabled: false\n  config:\n    customSkillDirs:\n      - ${JSON.stringify(join(WS, 'skill-roots'))}\n- id: tool-skill\n  disabled: false\n- id: orrery-it-tool-skill\n  disabled: true\n`
@@ -141,7 +159,7 @@ function runScenario(scenario) {
 }
 
 /** The context handed to a scenario's optional run override (rehydrate). */
-const driverCtx = { IT_ROOT, spawnHeadless, scenarioEnv }
+const driverCtx = { IT_ROOT: RUN_ROOT, spawnHeadless, scenarioEnv }
 
 // ---------- assertion collection ----------
 

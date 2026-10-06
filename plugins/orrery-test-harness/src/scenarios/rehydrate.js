@@ -4,7 +4,7 @@
 // the rebuilt state. Migrated from mock-llm.js decideRehydrate / run.mjs
 // assertRehydrate + runRehydrateScenario (D1/D2; the run override is D5).
 import { join } from 'node:path'
-import { IT_ROOT, lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { shellCall, textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 import { parseJsonlLines, readJsonl } from '../jsonl.js'
 import { shellToolName } from '../shell.js'
 
@@ -17,7 +17,7 @@ function decide(options, obs) {
   // (The bash round-trip makes a second request whose tool list is observable
   // in the trace — the first request of an agent carries no tools there.)
   if (history.includes('REHYDRATE_CHILD_A') && !history.includes('rehydrate-probe') && !history.includes('rehydrate-resume-probe')) {
-    if (options.messages?.at(-1)?.role === 'tool') {
+    if (history.includes('REHYDRATE_A_BASH_RAN')) {
       return textChunks('STATUS: completed\nREPORT: alpha rehydrate done')
     }
     return shellCall('echo-only', { text: 'REHYDRATE_A_BASH_RAN' }, 'prove the inherited toolset works')
@@ -35,29 +35,32 @@ function decide(options, obs) {
     if (history.includes('<supervised_group_settled')) {
       return textChunks('parent observed post-restart group-settled signal')
     }
-    if (history.includes('Resumed supervised child') && !history.includes('REHYDRATE_WAITED')) {
-      return shellCall('echo-and-wait', { text: 'REHYDRATE_WAITED', seconds: 2 }, 'Let the resumed child settle')
-    }
-    if (history.includes('REHYDRATE_WAITED')) {
-      // End the turn: the group-settled signal then arrives via the deferred
-      // followup — never loop on sleeps.
+    if (history.includes('Resumed supervised child')) {
+      // Bounded marker wait (design D1) replaces the one-shot REHYDRATE_WAITED
+      // sleep: the group-settled signal must be observed IN HISTORY before the
+      // turn ends while the headless driver is still busy.
+      const verdict = waitForMarker(history, '<supervised_group_settled')
+      if (verdict.state === 'wait') return verdict.chunks
+      // Budget spent: end the turn — the signal still arrives via the deferred
+      // followup and wakes the session (never loop on sleeps).
       return textChunks('waiting for the post-restart group-settled signal')
     }
     return toolCallChunks('resume_agent', { agent: 'beta', context: 'payload ready' })
   }
   // Parent phase 1: delegate the group, then STOP once the blocked notice
   // arrives — the run exits with the child still blocked (simulated restart
-  // happens between the two phases).
-  const lastRole = options.messages?.at(-1)?.role
-  if (lastRole === 'tool') {
-    const toolText = lastOfRole(options, 'tool')
-    if (toolText.includes('Supervised group')) {
-      return shellCall('wait', { seconds: 1 }, 'Let supervised children settle')
-    }
-    return textChunks('unhandled rehydrate tool turn')
-  }
+  // happens between the two phases). History-marker driven (design D1), never
+  // lastRole: a runtime-context snapshot interleaving as a user message
+  // between the tool result and the next request misaligned the old gate,
+  // ended the turn while the blocked child still ran, and the headless
+  // quiescence exit aborted it (S10.6).
   if (history.includes('rehydrate child stuck on missing payload')) {
     return textChunks('parent observed the built-in blocked settlement; stopping before the simulated restart')
+  }
+  if (history.includes('Supervised group')) {
+    const verdict = waitForMarker(history, 'rehydrate child stuck on missing payload')
+    if (verdict.state === 'wait') return verdict.chunks
+    return textChunks('unhandled rehydrate tool turn')
   }
   if (history.includes('rehydrate-probe') && !history.includes('Supervised group')) {
     return toolCallChunks('delegate', {
@@ -88,8 +91,8 @@ function observe(obs) {
  *   - ctx.scenarioEnv(scenarioId, trace) → the ORRERY_IT_* env for one boot
  */
 async function run(ctx) {
-  const trace1 = join(IT_ROOT, 'trace-rehydrate.jsonl')
-  const trace2 = join(IT_ROOT, 'trace-rehydrate-phase2.jsonl')
+  const trace1 = join(ctx.IT_ROOT, 'trace-rehydrate.jsonl')
+  const trace2 = join(ctx.IT_ROOT, 'trace-rehydrate-phase2.jsonl')
   const p1 = await ctx.spawnHeadless(['orrery-it', '--json', prompt], ctx.scenarioEnv(id, trace1))
   const sessionLine = parseJsonlLines(p1.stdout).find((entry) => entry?.type === 'session')
   const sessionId = sessionLine?.sessionId

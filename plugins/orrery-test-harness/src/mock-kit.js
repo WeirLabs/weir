@@ -105,6 +105,53 @@ function* errorChunks(message) {
   yield { type: 'finish', reason: { kind: 'error', failure: { message, code: 'MOCK_429' } } }
 }
 
+// ---------- interleave-tolerant waits (design D1) ----------
+
+// The single source of the wait-marker text: generated and parsed here only,
+// so a rename can never desynchronize the retry-count rebuild (design risks).
+// The token matches the shell safe-token grammar (echo-and-wait validates it).
+const WAIT_MARKER_PREFIX = 'ORRERY_WAIT_'
+const WAIT_MARKER_PATTERN = /ORRERY_WAIT_(\d+)/g
+
+// The retry budget is rebuilt from the transcript, never from process-local
+// state — the mock's decide stays a pure function, so the count must be
+// recoverable from the wait markers the earlier turns left in history.
+function waitCount(history) {
+  let used = 0
+  for (const match of history.matchAll(WAIT_MARKER_PATTERN)) {
+    used = Math.max(used, Number(match[1]))
+  }
+  return used
+}
+
+/**
+ * The interleave-tolerant wait primitive (design D1): the ONLY way a scenario
+ * waits for an asynchronous settlement event. History-marker driven — a
+ * runtime-context snapshot interleaving as a user message between a tool
+ * result and the next request cannot misalign it (no lastRole/lastOfRole
+ * gating). Three-state verdict:
+ *   - 'advance':    every marker is present in history — proceed now
+ *   - 'wait':       marker absent, budget remains — `chunks` is a 1s
+ *                   echo-and-wait shell call that stamps ORRERY_WAIT_<n+1>
+ *   - 'exhausted':  budget spent — the scenario's unhandled fallback is only
+ *                   allowed from this state
+ * @param {string} history - the transcript (obs.transcript)
+ * @param {string|string[]} markers - target marker(s); ALL must be present
+ * @param {number} [budget] - max wait chunks before 'exhausted' (default 8)
+ * @returns {{state: 'advance'} | {state: 'wait', waits: number, chunks: Generator} | {state: 'exhausted', waits: number}}
+ */
+function waitForMarker(history, markers, budget = 8) {
+  const wanted = Array.isArray(markers) ? markers : [markers]
+  if (wanted.every((marker) => history.includes(marker))) return { state: 'advance' }
+  const used = waitCount(history)
+  if (used >= budget) return { state: 'exhausted', waits: used }
+  return {
+    state: 'wait',
+    waits: used + 1,
+    chunks: shellCall('echo-and-wait', { text: `${WAIT_MARKER_PREFIX}${used + 1}`, seconds: 1 }, 'Wait for the async settlement marker'),
+  }
+}
+
 export {
   IT_ROOT,
   blockText,
@@ -117,4 +164,6 @@ export {
   toolCallChunks,
   errorChunks,
   shellCall,
+  WAIT_MARKER_PREFIX,
+  waitForMarker,
 }

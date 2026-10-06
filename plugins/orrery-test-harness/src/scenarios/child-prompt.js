@@ -14,14 +14,16 @@ const CONTRACT_KEY_SENTENCE = WORKER_CONTRACT.split('\n').filter(Boolean)[0]
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
-  const lastRole = options.messages?.at(-1)?.role
   if (history.includes('CHILD_MARKER_OK') && !history.includes('child-prompt-probe')) {
     return textChunks('CHILD_MARKER_OK: child finished')
   }
-  if (lastRole === 'tool') {
+  // Parent: the child report rode the delegate result into history. History-
+  // driven (never lastRole): a runtime-context snapshot interleaving after the
+  // tool result misaligned the old gate into an UNGUARDED re-delegation below.
+  if (history.includes('CHILD_MARKER_OK')) {
     return textChunks('parent observed child result')
   }
-  if (history.includes('child-prompt-probe')) {
+  if (history.includes('child-prompt-probe') && !history.includes('CHILD_MARKER_OK')) {
     return toolCallChunks('delegate', {
       category: 'quick',
       prompt: 'TASK: reply with the exact marker text CHILD_MARKER_OK\nDELIVERABLE: the marker line\nSCOPE: nothing else\nVERIFY: the reply contains the marker\nSTOP WHEN: the marker is sent',

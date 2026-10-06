@@ -3,7 +3,7 @@
 // built-in settlement notice; a send_message follow-up starts a second turn
 // with the prior context intact, and its settlement notice arrives too.
 // Mirrors the grouped/background scenario conventions (D1/D2).
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 
 const id = 'continuable'
 const prompt = 'continuable-probe'
@@ -23,24 +23,45 @@ function decide(options, obs) {
   if (history.includes('CONTINUABLE_SECOND_RESULT')) {
     return textChunks('parent observed both continuable settlements')
   }
+  // Parent: the follow-up was delivered. The guard is the send_message tool
+  // RESULT text: tool-call ARGUMENTS never render into the transcript
+  // (message-text.js only takes text blocks), so a CONTINUABLE_FOLLOWUP
+  // presence guard can never fire in the parent and would re-send in a loop
+  // (the repeat-tool-reminder noise in the recorded fixture came from that).
+  if (history.includes('message delivered to agent')) {
+    // Keep the turn alive until the SECOND settlement notice lands (bounded
+    // marker wait, design D1): ending the turn here races the headless
+    // quiescence exit against the deferred notice flush (S10.6) — the notice
+    // persists in the inbox, but a one-shot headless process exits before the
+    // flush unless a live turn keeps it busy.
+    const verdict = waitForMarker(history, 'CONTINUABLE_SECOND_RESULT')
+    if (verdict.state === 'wait') return verdict.chunks
+    return textChunks('continuable follow-up sent; waiting for the second settlement notice')
+  }
   // Parent: the first settlement notice arrived on the built-in channel —
   // follow up with send_message to the child id the notice names.
-  if (history.includes('CONTINUABLE_FIRST_RESULT') && !history.includes('CONTINUABLE_FOLLOWUP')) {
+  if (history.includes('CONTINUABLE_FIRST_RESULT')) {
     const match = history.match(/Background subagent ([0-9a-f-]{36}) finished/)
     if (!match) return textChunks('continuable child id not found in the settlement notice')
     return toolCallChunks('send_message', { agent_id: match[1], message: 'CONTINUABLE_FOLLOWUP: answer with the second marker' })
   }
-  const lastRole = options.messages?.at(-1)?.role
-  if (lastRole === 'tool') {
-    const toolText = lastOfRole(options, 'tool')
-    if (toolText.includes('continuable child')) {
-      // Keep the turn alive so the (instant-mock) child settles inside the
-      // busy window and the notice steers in — same padding as grouped.
-      return shellCall('echo-and-wait', { text: 'CONTINUABLE_WAITED', seconds: 1 }, 'Let the continuable child settle')
-    }
-    // The send_message confirmation and the wait result both land here: end
-    // the turn and let the settlement notices wake the parent.
-    return textChunks('unhandled continuable tool turn')
+  // Parent: the delegation returned the child id — pad the busy window until
+  // the first settlement notice lands. Bounded marker wait (design D1),
+  // never lastRole: a runtime-context snapshot interleaving as a user message
+  // between the tool result and the next request misaligned the old gate and
+  // ended the turn while the child was still running. The gate marker is the
+  // result text's signature, NOT the bare words 'continuable child' — the
+  // doctrine renders in-history as a system message and carries that phrase
+  // as prose, so a bare-phrase gate would fire before any delegation.
+  if (history.includes('continuable child(ren); each result arrives in a built-in settlement notice')) {
+    // One-shot pad (budget 1 = the original CONTINUABLE_WAITED semantics):
+    // end the turn after the pad — the notice persists in the inbox and wakes
+    // a fresh turn (S10.6). Keeping the turn alive across the settlement
+    // compresses the follow-up into the same turn and races the quiescence
+    // exit against the second settle flush.
+    const verdict = waitForMarker(history, 'CONTINUABLE_FIRST_RESULT', 1)
+    if (verdict.state === 'wait') return verdict.chunks
+    return textChunks('continuable child running; the settlement notice will wake the parent')
   }
   if (history.includes('continuable-probe') && !history.includes('CONTINUABLE_CHILD')) {
     return toolCallChunks('delegate', {
