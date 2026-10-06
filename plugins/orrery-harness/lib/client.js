@@ -1711,10 +1711,18 @@ window.__ModuleLoader__.load({
 			const capabilityVerbs = (sessionId) => ({
 				sessionId,
 				fetchReceipt: (sid) => capabilityRead("receipt", sid, null),
-				// Lazy like every other verb (S17): inject() never dereferences remote.session.
-				subscribeFrames: (callback) => (ctx.remote.session?.subscribe
-					? ctx.remote.session.subscribe("agent-preset/selected", callback)
-					: undefined),
+				// Forwarded host events arrive via ctx.remote.$on — NOT a
+				// remote.session.subscribe (that API does not exist; the old
+				// wiring silently never subscribed, which is why cold sessions
+				// never converged and Badge state went stale until a remount).
+				// The event's first arg is the session id; the Badge model
+				// matches on a { sessionId } frame shape.
+				subscribeFrames: (callback) => {
+					if (typeof ctx.remote?.$on !== "function") return undefined;
+					try {
+						return ctx.remote.$on("agent-preset/selected", (sid) => callback({ sessionId: sid }));
+					} catch { return undefined; }
+				},
 				// The panel distinguishes loading (promise pending) from failure
 				// (explicit error surface) — a null payload maps to the error state.
 				applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`),

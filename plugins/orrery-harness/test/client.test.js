@@ -195,7 +195,13 @@ describe('orrery settings client half', () => {
         },
       },
     }
+    const eventSubscriptions = []
     const remote = {
+      $on: (event, listener) => {
+        const subscription = { event, listener }
+        eventSubscriptions.push(subscription)
+        return () => { eventSubscriptions.splice(eventSubscriptions.indexOf(subscription), 1) }
+      },
       commands: {
         execute: async (sessionId, input, args) => {
           executed.push({ sessionId, input, args })
@@ -241,7 +247,7 @@ describe('orrery settings client half', () => {
         },
       },
     }
-    return { ctx, effects, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, scope, executed, rpcCalls, connection, sessionAccesses: () => sessionAccesses }
+    return { ctx, effects, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, scope, executed, rpcCalls, connection, eventSubscriptions, sessionAccesses: () => sessionAccesses }
   }
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -864,7 +870,7 @@ describe('orrery settings client half', () => {
 
   it('capability read verbs travel as raw gateway calls over the shared connection, never the command channel', async () => {
     const { surface } = await loadEntry()
-    const { ctx, slotInjects, slotRegistrations, executed, rpcCalls, connection } = makeCtx()
+    const { ctx, slotInjects, slotRegistrations, executed, rpcCalls, connection, eventSubscriptions } = makeCtx()
     surface.apply(ctx)
     slotInjects[11].fn()
     const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
@@ -889,6 +895,17 @@ describe('orrery settings client half', () => {
       { channel: '/api', endpoint: 'orreryCapabilities/presets', payload: { args: { sessionId: 's7' } } },
       { channel: '/api', endpoint: 'orreryCapabilities/defaultGet', payload: { args: { sessionId: 's7' } } },
     ])
+    // Frame convergence rides ctx.remote.$on('agent-preset/selected') — the
+    // only API that delivers forwarded host events; the session id arg is
+    // wrapped into the { sessionId } frame the Badge model matches on.
+    const frames = []
+    const stop = verbs.subscribeFrames((frame) => frames.push(frame))
+    expect(eventSubscriptions).toHaveLength(1)
+    expect(eventSubscriptions[0].event).toBe('agent-preset/selected')
+    eventSubscriptions[0].listener('s7')
+    expect(frames).toEqual([{ sessionId: 's7' }])
+    expect(typeof stop).toBe('function')
+
     // Reads produced ZERO command executions (no session-log events).
     expect(executed).toEqual([])
 
