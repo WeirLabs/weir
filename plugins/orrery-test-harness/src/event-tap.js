@@ -13,6 +13,7 @@ import { AUDIT_TYPES, AUDIT_SUBTYPES } from '../../orrery-harness/src/shared/aud
 import { installStopProbe } from './edit-lock-stop-probe.js'
 import { installAutoResumeProbe } from './edit-lock-auto-resume-probe.js'
 import { installStaleSweepProbe } from './edit-lock-stale-sweep-probe.js'
+import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
 
 const name = 'orrery-it-event-tap'
 const inject = ['fs']
@@ -45,6 +46,7 @@ function apply(ctx) {
   installStopProbe(ctx, tap)
   installAutoResumeProbe(ctx, tap)
   installStaleSweepProbe(ctx, tap)
+  installColdViewProbe(ctx, tap)
   // Cordis audit channel (cold-safe; session logs stay clean).
   for (const type of AUDIT_SUBSCRIPTIONS) {
     ctx.on(`orrery/${type}`, (record) => {
