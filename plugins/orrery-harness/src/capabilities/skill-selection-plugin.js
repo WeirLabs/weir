@@ -961,12 +961,36 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         lifecycle,
         mcpManager: () => ctx.get?.('orreryMcpManager'),
         profileContext: () => ctx.get?.('profileContext'),
-        sessionCwd: sessionId => (sessionCwds.has(sessionId) ? { found: true, cwd: sessionCwds.get(sessionId) } : { found: false, cwd: undefined }),
+        sessionCwd: sessionId => resolveSessionCwd(sessionCwds, ctx.get?.('agents'), sessionId),
       }), 'orrery-capability-read-bridge')
     } catch (cause) {
       ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)
     }
   }
+}
+
+/**
+ * Session cwd resolution for the capability read bridge (silent-capability-reads):
+ * the agent/created warm cache MISSES sessions whose agent was announced before
+ * this plugin's listener registered — the boot-restore race, where the host
+ * re-enters restored sessions while the preset composition is still mounting.
+ * On a miss, resolve the LIVE agent through the host-plane agents registry
+ * (agent.id === session.id, dsh-agent) exactly like the /capabilities command
+ * handler's invocation.agent path, and backfill the cache. A session with no
+ * live agent stays unknown (the typed unknown-session error), matching the
+ * command path's requirement of a live agent.
+ * @param {Map<string, string | undefined>} cache
+ * @param {unknown} agentsService host `agents` service (ctx.get('agents'))
+ * @param {string} sessionId
+ * @returns {{ found: boolean, cwd: string | undefined }}
+ */
+export function resolveSessionCwd(cache, agentsService, sessionId) {
+  if (cache.has(sessionId)) return { found: true, cwd: cache.get(sessionId) }
+  const agent = /** @type {any} */ (agentsService)?.get?.(sessionId)
+  if (!agent) return { found: false, cwd: undefined }
+  const cwd = agent?.session?.header?.cwd
+  cache.set(sessionId, cwd)
+  return { found: true, cwd }
 }
 
 export const name = 'orrery-skill-selection'

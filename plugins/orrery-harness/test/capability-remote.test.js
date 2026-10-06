@@ -8,7 +8,7 @@ import { test, expect } from './helpers.js'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
+import { createSkillSelectionPlugin, resolveSessionCwd } from '../src/capabilities/skill-selection-plugin.js'
 import {
   CAPABILITY_READ_NAMESPACE,
   CAPABILITY_READ_SERVICE_KEY,
@@ -284,3 +284,27 @@ test('the shipped contribution survives the registry validatePackage, so registr
   delete noFace.face
   expect(() => typert.register(noFace)).toThrow(/validatePackage: bad face/)
 })
+
+{
+  test('resolveSessionCwd serves the warm cache without touching the registry', () => {
+    const cache = new Map([['s1', '/ws/one']])
+    let registryCalls = 0
+    const agents = { get: () => { registryCalls += 1; return undefined } }
+    expect(resolveSessionCwd(cache, agents, 's1')).toEqual({ found: true, cwd: '/ws/one' })
+    expect(registryCalls).toBe(0)
+  })
+
+  test('resolveSessionCwd falls back to the live agents registry on a cache miss and backfills', () => {
+    const cache = new Map()
+    const agents = { get: (id) => (id === 's2' ? { session: { header: { cwd: '/ws/two' } } } : undefined) }
+    expect(resolveSessionCwd(cache, agents, 's2')).toEqual({ found: true, cwd: '/ws/two' })
+    expect(cache.get('s2')).toBe('/ws/two')
+  })
+
+  test('resolveSessionCwd reports not-found only when no live agent holds the session', () => {
+    const cache = new Map()
+    expect(resolveSessionCwd(cache, { get: () => undefined }, 's3')).toEqual({ found: false, cwd: undefined })
+    expect(resolveSessionCwd(cache, undefined, 's3')).toEqual({ found: false, cwd: undefined })
+    expect(cache.has('s3')).toBe(false)
+  })
+}
