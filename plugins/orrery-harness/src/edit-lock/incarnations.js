@@ -92,12 +92,29 @@ export function isRegistryUpgrade(before, after) {
 export function withIncarnation(state, incarnation, process, previousIncarnation = null) {
   if (!process) return state
   if ((state.incarnations ?? []).some(/** @param {IncarnationEntry} entry */ entry => entry.incarnation === incarnation)) return state
-  const referenced = referencedIncarnations(state)
-  if (id(previousIncarnation)) referenced.add(previousIncarnation)
-  referenced.delete(incarnation)
-  const base = state.version === 6
-    ? state.incarnations
-    : [...referenced].map(incarnation => ({ incarnation, process: null }))
+  // Pre-v6 migration seed, byte-identical to the one the transition validator
+  // derives from the UNCHANGED pre-image (expectedRegistry →
+  // seedIncarnations): the pre-image's current manager incarnation FIRST,
+  // then every operation origin in encounter order. The candidate already
+  // carries the NEW manager incarnation (recovery replaced it), so the
+  // pre-image manager is the explicitly supplied previous incarnation; the
+  // committing incarnation itself is never seeded — it is appended below with
+  // its process identity.
+  /** @type {IncarnationEntry[]} */
+  const seeded = []
+  const known = new Set()
+  /** @param {unknown} value */
+  const seedNull = value => {
+    if (id(value) && value !== incarnation && !known.has(value)) {
+      known.add(value)
+      seeded.push({ incarnation: value, process: null })
+    }
+  }
+  if (state.version !== 6) {
+    seedNull(id(previousIncarnation) ? previousIncarnation : state.managerIncarnation)
+    for (const operation of state.operations ?? []) seedNull(operation.origin.managerIncarnation)
+  }
+  const base = state.version === 6 ? state.incarnations : seeded
   return { ...state, version: 6, adminRecoveries: state.adminRecoveries ?? [], incarnations: [...base, { incarnation, process }] }
 }
 
