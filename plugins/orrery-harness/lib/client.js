@@ -1652,7 +1652,64 @@ window.__ModuleLoader__.load({
 			// remote or a failed call maps to the existing degraded semantics
 			// (receipt → null → "Capabilities n/a"; listing/conditions →
 			// { error: true }).
+			//
+			// A client remote namespace exists only after its descriptors are
+			// mounted through ctx.remote.$mount({package, descriptors}) — the
+			// api-remotes generated lists and the voice-input hand-carried
+			// contribution are the runtime precedents. This entry previously never
+			// mounted orreryCapabilities, so the gateway never projected
+			// ctx.remote.orreryCapabilities and every read silently degraded to its
+			// fallback ("Capabilities n/a" on every session). Mount once per apply,
+			// guarded and idempotent: on a re-apply/HMR generation whose previous
+			// mount is still live, the namespace face already exists and a second
+			// $mount would be rejected (the gateway refuses to double-mount a
+			// namespace method), so the live face is reused as-is. Any
+			// throw/rejection degrades to null — the Badge/panel keep their
+			// existing unavailable states and apply never breaks. The mount
+			// disposer's lifecycle is owned by the client root ($mount runs inside
+			// its own ctx.effect internally), so we deliberately do NOT wire our
+			// own ctx.effect disposal here; the reference is kept for tests.
+			//
+			// Descriptor note: the parameter codec must be mode "strict" — the
+			// client-side $mount validation rejects any other parameter codec mode
+			// ("client api: generated Remote <ns>/<method> field ... has no strict
+			// codec"). The codec is never invoked client-side (direct invocations
+			// pass raw JSON both ways), so this is wire-identical to the host
+			// contribution's src-json envelope, which validates the argument name
+			// only. The result needs no decoder and stays src-json (unvalidated on
+			// the client, raw pass-through either way).
+			let capabilityReadUnmount = null;
+			const capabilityReadMount = (() => {
+				try {
+					const existing = ctx.remote?.orreryCapabilities;
+					if (typeof existing?.receipt === "function") return Promise.resolve(existing);
+					if (typeof ctx.remote?.$mount !== "function") return Promise.resolve(null);
+					return Promise.resolve(ctx.remote.$mount({
+						package: "orrery-harness",
+						descriptors: ["receipt", "list", "conditions"].map((method) => ({
+							id: `orrery-harness#orreryCapabilities/${method}`,
+							service: "orreryCapabilityRead",
+							namespace: "orreryCapabilities",
+							method,
+							invocation: { kind: "direct" },
+							parameters: [{ name: "sessionId", wire: "sessionId", source: "json", codec: { mode: "strict" } }],
+							result: { mode: "src-json" }
+						}))
+					})).then((unmount) => {
+						capabilityReadUnmount = typeof unmount === "function" ? unmount : null;
+						return ctx.remote?.orreryCapabilities ?? null;
+					}, () => null);
+				} catch {
+					return Promise.resolve(null);
+				}
+			})();
 			const capabilityRead = async (method, sid, fallback) => {
+				// Await the one-time mount before reading: the Badge's first fetch
+				// races the mount, and without the await the namespace lookup could
+				// run before $mount installed it. The namespace face itself is
+				// re-read live at call time (a degraded composition may lose it
+				// again).
+				await capabilityReadMount;
 				let remote = null;
 				try { remote = ctx.remote?.orreryCapabilities ?? null; } catch { remote = null; }
 				if (typeof remote?.[method] !== "function") return fallback;
