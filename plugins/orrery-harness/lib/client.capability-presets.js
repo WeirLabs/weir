@@ -20,45 +20,218 @@ window.__ModuleLoader__.load({
 		// categorized feedback), and the workspace-default section with
 		// count-naming confirmations. Every categorization comes from the pure
 		// model; this chunk renders and forwards the composition root's verbs.
-		const sectionStyle = { marginTop: "10px" };
-		const sectionTitleStyle = {
-			fontSize: "11px",
-			fontWeight: 600,
-			color: "var(--dsw-alias-label-secondary, #888)",
-			margin: "0 0 4px"
+		//
+		// Visual layer (capabilities-panel-visual-polish, D1): one consolidated
+		// style table S. Preset rows are cards (name + counts + namespace badge
+		// + inline actions), destructive confirms are warning strips, the
+		// workspace default is its own card, and the import/export blocks sit in
+		// labeled cards. Interactive affordances (focus ring, hover fill) are
+		// painted by the ring/hover handlers — no hooks, no wrapper components,
+		// and every button keeps its exact label-only children (the chunk tests
+		// locate buttons by label).
+		const ACCENT = "var(--dsw-alias-state-business-primary, #4176e6)";
+		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover, #3563d1)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary, #22c55e)";
+		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
+		const DANGER = "var(--dsw-alias-state-error-primary, #ef4444)";
+		const LABEL1 = "var(--dsw-alias-label-primary, inherit)";
+		const LABEL2 = "var(--dsw-alias-label-secondary, #61666b)";
+		const MUTED = "var(--dsw-alias-label-tertiary, #81858c)";
+		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
+		const BORDER_STRONG = "var(--dsw-alias-border-l3, rgba(127,127,127,.26))";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
+		const CARD_BG = "var(--dsw-alias-bg-base, #fff)";
+		const MONO = "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)";
+		const TRANSITION = "background-color 120ms ease, color 120ms ease, border-color 120ms ease";
+		/** Soft tinted background (worktree-view recipe); the colored border/text stays as the no-color-mix fallback. */
+		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+		// Scope → hue (D1): user green, project blue; preset namespaces rhyme
+		// with them (global = this machine's user library, workspace = this
+		// project), so the badge color reads the same way everywhere.
+		const SCOPE_HUES = {
+			user: SUCCESS,
+			global: SUCCESS,
+			project: "var(--dsw-static-blue-500, #3b82f6)",
+			workspace: "var(--dsw-static-blue-500, #3b82f6)",
 		};
-		const rowStyle = { display: "flex", alignItems: "center", gap: "6px", padding: "3px 0", flexWrap: "wrap" };
-		const nameTextStyle = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "none", maxWidth: "55%" };
-		const summaryStyle = { fontSize: "11px", color: "var(--dsw-alias-label-secondary, #888)", flex: 1, minWidth: "80px" };
-		const hintStyle = { fontSize: "11px", color: "var(--dsw-alias-label-secondary, #888)", padding: "2px 0" };
-		const warnTextStyle = { fontSize: "11px", color: "var(--dsw-alias-state-warn-primary, #c80)" };
-		const noticeStyle = { fontSize: "11px", color: "var(--dsw-alias-state-success-primary, #2a7d2a)", padding: "2px 0" };
-		const boxStyle = {
-			display: "flex",
-			flexDirection: "column",
-			gap: "4px",
-			border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-sm)",
-			padding: "6px",
-			margin: "4px 0"
+		// Focus ring and hover paint without stylesheets (inline-style chunk
+		// discipline): the handlers write to the event target's inline style and
+		// clear on the way out; no hooks and no DOM structure change.
+		const paint = (event, styles) => {
+			const el = event?.currentTarget;
+			if (el && el.style) Object.assign(el.style, styles);
 		};
-		const inputStyle = { width: "100%", boxSizing: "border-box", fontSize: "12px" };
-		const textareaStyle = {
-			...inputStyle,
-			fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)",
-			minHeight: "96px",
-			resize: "vertical",
-			whiteSpace: "pre"
+		const ring = {
+			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }),
+			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 		};
-		const buttonRowStyle = { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" };
-		const linkButtonStyle = {
-			fontSize: "11px",
-			padding: "1px 6px",
-			cursor: "pointer",
-			background: "none",
-			border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-sm)",
-			color: "var(--dsw-alias-label-secondary, #888)"
+		const hover = (over, out) => ({
+			onMouseEnter: (event) => paint(event, { background: over }),
+			onMouseLeave: (event) => paint(event, { background: out }),
+		});
+		const S = {
+			section: { marginTop: "12px" },
+			title: {
+				fontSize: "11px",
+				lineHeight: "16px",
+				fontWeight: 600,
+				color: LABEL2,
+				margin: "0 0 4px"
+			},
+			// Labeled card (save form, import box, export viewer, workspace
+			// default): one surface per task block.
+			card: {
+				display: "flex",
+				flexDirection: "column",
+				gap: "6px",
+				background: CARD_BG,
+				border: `1px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-md, 8px)",
+				padding: "8px 10px",
+				margin: "6px 0"
+			},
+			cardTitle: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2 },
+			// Warning strip (destructive confirms, name conflicts): 2px left bar
+			// on a warn tint — the worktree callout recipe.
+			strip: {
+				display: "flex",
+				flexDirection: "column",
+				gap: "6px",
+				padding: "6px 8px",
+				fontSize: "11px",
+				lineHeight: "16px",
+				color: LABEL2,
+				background: tint(WARN, 10),
+				borderLeft: `2px solid ${WARN}`,
+				borderRadius: "var(--dsw-radius-xs, 4px)",
+				margin: "4px 0"
+			},
+			notice: {
+				padding: "5px 8px",
+				fontSize: "11px",
+				lineHeight: "16px",
+				color: "var(--dsw-alias-state-success-primary, #2a7d2a)",
+				background: tint(SUCCESS, 10),
+				borderLeft: `2px solid ${SUCCESS}`,
+				borderRadius: "var(--dsw-radius-xs, 4px)",
+				margin: "4px 0"
+			},
+			// Preset row card: header line (name + namespace badge + counts) with
+			// the inline actions trailing.
+			preset: {
+				background: CARD_BG,
+				border: `1px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-md, 8px)",
+				padding: "7px 10px",
+				margin: "0 0 6px"
+			},
+			row: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" },
+			name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "none", maxWidth: "46%", fontWeight: 600 },
+			summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, flex: 1, minWidth: "80px" },
+			hint: { fontSize: "11px", lineHeight: "16px", color: MUTED, padding: "2px 0" },
+			warn: { fontSize: "11px", lineHeight: "16px", color: WARN_TEXT },
+			input: {
+				width: "100%",
+				boxSizing: "border-box",
+				fontSize: "12px",
+				lineHeight: "16px",
+				padding: "4px 8px",
+				background: CARD_BG,
+				border: `1px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				color: LABEL1,
+				transition: TRANSITION
+			},
+			textarea: {
+				width: "100%",
+				boxSizing: "border-box",
+				fontSize: "12px",
+				lineHeight: "16px",
+				padding: "6px 8px",
+				background: CARD_BG,
+				border: `1px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				color: LABEL1,
+				fontFamily: MONO,
+				minHeight: "96px",
+				resize: "vertical",
+				whiteSpace: "pre",
+				transition: TRANSITION
+			},
+			select: { fontSize: "11px", lineHeight: "16px", color: LABEL1, background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm, 6px)", padding: "1px 4px" },
+			buttonRow: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
+			label: { fontSize: "11px", lineHeight: "16px", display: "flex", gap: "4px", alignItems: "center", color: LABEL2 },
+			button: {
+				fontSize: "11px",
+				lineHeight: "16px",
+				fontWeight: 500,
+				padding: "2px 8px",
+				cursor: "pointer",
+				background: "none",
+				border: `1px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				color: LABEL2,
+				flex: "none",
+				transition: TRANSITION
+			},
+			primary: {
+				fontSize: "11px",
+				lineHeight: "16px",
+				fontWeight: 600,
+				padding: "2px 10px",
+				cursor: "pointer",
+				border: "none",
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				background: ACCENT,
+				color: "var(--dsw-alias-bg-base, #fff)",
+				flex: "none",
+				transition: TRANSITION
+			},
+			danger: {
+				fontSize: "11px",
+				lineHeight: "16px",
+				fontWeight: 600,
+				padding: "2px 10px",
+				cursor: "pointer",
+				border: "none",
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				background: DANGER,
+				color: "var(--dsw-alias-bg-base, #fff)",
+				flex: "none",
+				transition: TRANSITION
+			},
+			dangerOutline: {
+				fontSize: "11px",
+				lineHeight: "16px",
+				fontWeight: 500,
+				padding: "2px 8px",
+				cursor: "pointer",
+				background: "none",
+				border: `1px solid ${DANGER}`,
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				color: DANGER,
+				flex: "none",
+				transition: TRANSITION
+			},
+			disabled: { opacity: 0.5, cursor: "not-allowed" },
+			// Namespace / install-target badge (preset scope chip, import scope
+			// badge): tiny tonal tag.
+			badge: (scope) => {
+				const hue = SCOPE_HUES[scope] ?? MUTED;
+				return {
+					fontSize: "10px",
+					lineHeight: "14px",
+					fontWeight: 600,
+					padding: "0 5px",
+					border: `1px solid ${hue}`,
+					borderRadius: "var(--dsw-radius-sm, 6px)",
+					background: tint(hue, 10),
+					color: hue,
+					flex: "none",
+					whiteSpace: "nowrap"
+				};
+			}
 		};
 		function CapabilityPresetsView(props) {
 			const model = props.model;
@@ -368,29 +541,39 @@ window.__ModuleLoader__.load({
 					? t("capability.presets.countsUnresolved", " · {n} unresolved").replace("{n}", String(row.counts.unresolvedRefs))
 					: "";
 				return react_jsx_runtime.jsxs("div", {
+					style: S.preset,
 					children: [
 						react_jsx_runtime.jsxs("div", {
-							style: rowStyle,
+							style: S.row,
 							children: [
-								react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
-								react_jsx_runtime.jsx("span", { style: summaryStyle, children: countText(row.counts.skills, row.counts.mcpServers) + unresolvedSuffix }),
+								react_jsx_runtime.jsx("span", { style: S.name, title: row.name, children: row.name }),
+								react_jsx_runtime.jsx("span", {
+									style: S.badge(row.scope),
+									children: row.scope === "global" ? t("capability.presets.scopeGlobal", "global") : t("capability.presets.scopeWorkspace", "workspace")
+								}),
+								react_jsx_runtime.jsx("span", { style: S.summary, children: countText(row.counts.skills, row.counts.mcpServers) + unresolvedSuffix }),
 								react_jsx_runtime.jsx("button", {
 									type: "button",
-									style: linkButtonStyle,
+									style: active && rowAction.busy ? { ...S.primary, ...S.disabled } : S.primary,
+									...ring,
 									disabled: active && rowAction.busy,
 									onClick: () => loadPreset(row),
 									children: active && rowAction.kind === "load" && rowAction.busy ? t("capability.presets.loading", "Loading…") : t("capability.presets.load", "Load")
 								}),
 								react_jsx_runtime.jsx("button", {
 									type: "button",
-									style: linkButtonStyle,
+									style: active && rowAction.busy ? { ...S.button, ...S.disabled } : S.button,
+									...ring,
+									...hover(HOVER_BG, "none"),
 									disabled: active && rowAction.busy,
 									onClick: () => (active && rowAction.kind === "export" ? setRowAction(null) : openExport(row)),
 									children: t("capability.presets.export", "Export")
 								}),
 								react_jsx_runtime.jsx("button", {
 									type: "button",
-									style: linkButtonStyle,
+									style: active && rowAction.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+									...ring,
+									...hover(tint(DANGER, 10), "none"),
 									disabled: active && rowAction.busy,
 									onClick: () => (active && rowAction.kind === "delete" ? setRowAction(null) : setRowAction({ presetId: row.presetId, scope: row.scope, kind: "delete", busy: false, error: null })),
 									children: t("capability.presets.delete", "Delete")
@@ -398,19 +581,34 @@ window.__ModuleLoader__.load({
 							]
 						}),
 						active && rowAction.kind === "load" && rowAction.error
-							? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: rowAction.error })
+							? react_jsx_runtime.jsx("div", { style: S.warn, children: rowAction.error })
 							: null,
 						active && rowAction.kind === "delete"
 							? react_jsx_runtime.jsxs("div", {
-								style: boxStyle,
+								style: S.strip,
 								children: [
-									react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.deleteConfirm", "Delete preset \"{name}\"? This cannot be undone.").replace("{name}", row.name) }),
+									react_jsx_runtime.jsx("span", { children: t("capability.presets.deleteConfirm", "Delete preset \"{name}\"? This cannot be undone.").replace("{name}", row.name) }),
 									react_jsx_runtime.jsxs("div", {
-										style: buttonRowStyle,
+										style: S.buttonRow,
 										children: [
-											react_jsx_runtime.jsx("button", { type: "button", disabled: rowAction.busy, onClick: () => confirmDelete(row), children: rowAction.busy ? t("capability.presets.deleting", "Deleting…") : t("capability.presets.deleteConfirmButton", "Delete preset") }),
-											react_jsx_runtime.jsx("button", { type: "button", disabled: rowAction.busy, onClick: () => setRowAction(null), children: t("capability.presets.cancel", "Cancel") }),
-											rowAction.error ? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: rowAction.error }) : null
+											react_jsx_runtime.jsx("button", {
+												type: "button",
+												style: rowAction.busy ? { ...S.danger, ...S.disabled } : S.danger,
+												...ring,
+												disabled: rowAction.busy,
+												onClick: () => confirmDelete(row),
+												children: rowAction.busy ? t("capability.presets.deleting", "Deleting…") : t("capability.presets.deleteConfirmButton", "Delete preset")
+											}),
+											react_jsx_runtime.jsx("button", {
+												type: "button",
+												style: rowAction.busy ? { ...S.button, ...S.disabled } : S.button,
+												...ring,
+												...hover(HOVER_BG, "none"),
+												disabled: rowAction.busy,
+												onClick: () => setRowAction(null),
+												children: t("capability.presets.cancel", "Cancel")
+											}),
+											rowAction.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: rowAction.error }) : null
 										]
 									})
 								]
@@ -418,24 +616,45 @@ window.__ModuleLoader__.load({
 							: null,
 						active && rowAction.kind === "export"
 							? react_jsx_runtime.jsxs("div", {
-								style: boxStyle,
+								style: { ...S.card, margin: "6px 0 0" },
 								children: [
 									rowAction.busy
-										? react_jsx_runtime.jsx("span", { style: hintStyle, children: t("capability.loading", "Loading capabilities…") })
+										? react_jsx_runtime.jsx("span", { style: S.hint, children: t("capability.loading", "Loading capabilities…") })
 										: rowAction.text
-											? react_jsx_runtime.jsx("textarea", { style: textareaStyle, readOnly: true, value: rowAction.text, "aria-label": t("capability.presets.exportLabel", "Preset JSON") })
+											? react_jsx_runtime.jsx("textarea", { style: S.textarea, ...ring, readOnly: true, value: rowAction.text, "aria-label": t("capability.presets.exportLabel", "Preset JSON") })
 											: null,
 									react_jsx_runtime.jsxs("div", {
-										style: buttonRowStyle,
+										style: S.buttonRow,
 										children: [
 											rowAction.text
-												? react_jsx_runtime.jsx("button", { type: "button", onClick: downloadExport, children: rowAction.downloaded ? t("capability.presets.downloaded", "Downloaded") : t("capability.presets.exportDownload", "Download .json") })
+												? react_jsx_runtime.jsx("button", {
+													type: "button",
+													style: S.primary,
+													...ring,
+													...hover(ACCENT_HOVER, ACCENT),
+													onClick: downloadExport,
+													children: rowAction.downloaded ? t("capability.presets.downloaded", "Downloaded") : t("capability.presets.exportDownload", "Download .json")
+												})
 												: null,
 											rowAction.text
-												? react_jsx_runtime.jsx("button", { type: "button", onClick: copyExport, children: rowAction.copied ? t("capability.presets.copied", "Copied") : t("capability.presets.copy", "Copy to clipboard") })
+												? react_jsx_runtime.jsx("button", {
+													type: "button",
+													style: S.button,
+													...ring,
+													...hover(HOVER_BG, "none"),
+													onClick: copyExport,
+													children: rowAction.copied ? t("capability.presets.copied", "Copied") : t("capability.presets.copy", "Copy to clipboard")
+												})
 												: null,
-											react_jsx_runtime.jsx("button", { type: "button", onClick: () => setRowAction(null), children: t("capability.presets.close", "Close") }),
-											rowAction.error ? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: rowAction.error }) : null
+											react_jsx_runtime.jsx("button", {
+												type: "button",
+												style: S.button,
+												...ring,
+												...hover(HOVER_BG, "none"),
+												onClick: () => setRowAction(null),
+												children: t("capability.presets.close", "Close")
+											}),
+											rowAction.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: rowAction.error }) : null
 										]
 									})
 								]
@@ -445,11 +664,11 @@ window.__ModuleLoader__.load({
 				}, `${row.scope}:${row.presetId}`);
 			};
 			const presetGroup = (title, rows, emptyText) => react_jsx_runtime.jsxs("div", {
-				style: sectionStyle,
+				style: S.section,
 				children: [
-					react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: title }),
+					react_jsx_runtime.jsx("div", { style: S.title, children: title }),
 					rows.length === 0
-						? react_jsx_runtime.jsx("div", { style: hintStyle, children: emptyText })
+						? react_jsx_runtime.jsx("div", { style: S.hint, children: emptyText })
 						: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: rows.map(presetRow) })
 				]
 			}, title);
@@ -460,17 +679,10 @@ window.__ModuleLoader__.load({
 			const appliedCounts = props.draft ? { skills: props.draft.applied.skills.length, mcpServers: props.draft.applied.mcpServers.length } : null;
 			const defaultFromCounts = defaultBox.from === "draft" ? draftCounts : appliedCounts;
 			const importFeedback = importBox.feedback;
-			// Small dsw-token badge naming a Skill's install target scope
+			// Small tonal badge naming a Skill's install target scope
 			// (project = this workspace, user = this machine's user root).
 			const scopeBadge = (scope) => react_jsx_runtime.jsx("span", {
-				style: {
-					fontSize: "10px",
-					padding: "0 4px",
-					border: "1px solid var(--dsw-alias-border-l2)",
-					borderRadius: "var(--dsw-radius-sm)",
-					color: "var(--dsw-alias-label-secondary, #888)",
-					flex: "none"
-				},
+				style: S.badge(scope),
 				children: scope === "user" ? t("capability.presets.scopeUser", "user") : t("capability.presets.scopeProject", "project")
 			});
 			const fileCountText = (n) => t("capability.presets.importFiles", "{n} file(s)").replace("{n}", String(n));
@@ -479,37 +691,39 @@ window.__ModuleLoader__.load({
 			// the confirm carries the collision decision.
 			const importSummaryChildren = (summary) => {
 				const installRow = (row) => react_jsx_runtime.jsxs("div", {
-					style: rowStyle,
+					style: S.row,
 					children: [
 						scopeBadge(row.targetScope),
-						react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
-						react_jsx_runtime.jsx("span", { style: { ...summaryStyle, flex: "none" }, children: fileCountText(row.fileCount) }),
+						react_jsx_runtime.jsx("span", { style: S.name, title: row.name, children: row.name }),
+						react_jsx_runtime.jsx("span", { style: { ...S.summary, flex: "none" }, children: fileCountText(row.fileCount) }),
 						row.collision
-							? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: t("capability.presets.importCollision", "name collision") })
-							: (row.targetRoot ? react_jsx_runtime.jsx("span", { style: { ...hintStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: row.targetRoot, children: row.targetRoot }) : null)
+							? react_jsx_runtime.jsx("span", { style: S.warn, children: t("capability.presets.importCollision", "name collision") })
+							: (row.targetRoot ? react_jsx_runtime.jsx("span", { style: { ...S.hint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: row.targetRoot, children: row.targetRoot }) : null)
 					]
 				}, `install:${row.targetScope}:${row.name}`);
 				return [
-					react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.importSummaryTitle", "Import summary — review before anything is written") }),
+					react_jsx_runtime.jsx("div", { style: S.cardTitle, children: t("capability.presets.importSummaryTitle", "Import summary — review before anything is written") }),
 					summary.install.length === 0
-						? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.importNoInstalls", "This package bundles no Skills to install.") })
+						? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.presets.importNoInstalls", "This package bundles no Skills to install.") })
 						: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: summary.install.map(installRow) }),
 					summary.unresolved.length > 0
 						? react_jsx_runtime.jsxs("div", {
 							children: [
-								react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.importUnresolvedTitle", "Unresolved refs — not installed:") }),
-								...summary.unresolved.map((ref, index) => react_jsx_runtime.jsx("div", { style: hintStyle, children: model.unresolvedLabelOf(ref) }, `unresolved:${index}`))
+								react_jsx_runtime.jsx("div", { style: S.title, children: t("capability.presets.importUnresolvedTitle", "Unresolved refs — not installed:") }),
+								...summary.unresolved.map((ref, index) => react_jsx_runtime.jsx("div", { style: S.hint, children: model.unresolvedLabelOf(ref) }, `unresolved:${index}`))
 							]
 						})
 						: null,
 					summary.hasCollisions
 						? react_jsx_runtime.jsxs("label", {
-							style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap" },
+							style: S.label,
 							children: [
 								t("capability.presets.importCollisionDecision", "When a bundled Skill name already exists:"),
 								react_jsx_runtime.jsxs("select", {
+									style: S.select,
 									value: importBox.decision,
 									"data-orrery-import-decision": "",
+									...ring,
 									onChange: (event) => setImportBox({ ...importBox, decision: event.target.value }),
 									children: [
 										react_jsx_runtime.jsx("option", { value: "cancel", children: t("capability.presets.collisionCancel", "skip it (default)") }),
@@ -522,19 +736,54 @@ window.__ModuleLoader__.load({
 						: null,
 					importFeedback && importFeedback.kind === "name-conflict"
 						? react_jsx_runtime.jsxs("div", {
-							style: buttonRowStyle,
+							style: S.strip,
 							children: [
-								react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
-								react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => confirmImport("replace"), children: t("capability.presets.replace", "Replace it") }),
-								react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: cancelImportSummary, children: t("capability.presets.cancel", "Cancel") })
+								react_jsx_runtime.jsx("span", { children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
+								react_jsx_runtime.jsxs("div", {
+									style: S.buttonRow,
+									children: [
+										react_jsx_runtime.jsx("button", {
+											type: "button",
+											style: importBox.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+											...ring,
+											disabled: importBox.busy,
+											onClick: () => confirmImport("replace"),
+											children: t("capability.presets.replace", "Replace it")
+										}),
+										react_jsx_runtime.jsx("button", {
+											type: "button",
+											style: importBox.busy ? { ...S.button, ...S.disabled } : S.button,
+											...ring,
+											...hover(HOVER_BG, "none"),
+											disabled: importBox.busy,
+											onClick: cancelImportSummary,
+											children: t("capability.presets.cancel", "Cancel")
+										})
+									]
+								})
 							]
 						})
 						: null,
 					react_jsx_runtime.jsxs("div", {
-						style: buttonRowStyle,
+						style: S.buttonRow,
 						children: [
-							react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy || !model.importConfirmReadyOf(summary, importBox.decision), onClick: () => confirmImport(undefined), children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importConfirm", "Confirm import") }),
-							react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: cancelImportSummary, children: t("capability.presets.cancel", "Cancel") })
+							react_jsx_runtime.jsx("button", {
+								type: "button",
+								style: (importBox.busy || !model.importConfirmReadyOf(summary, importBox.decision)) ? { ...S.primary, ...S.disabled } : S.primary,
+								...ring,
+								disabled: importBox.busy || !model.importConfirmReadyOf(summary, importBox.decision),
+								onClick: () => confirmImport(undefined),
+								children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importConfirm", "Confirm import")
+							}),
+							react_jsx_runtime.jsx("button", {
+								type: "button",
+								style: importBox.busy ? { ...S.button, ...S.disabled } : S.button,
+								...ring,
+								...hover(HOVER_BG, "none"),
+								disabled: importBox.busy,
+								onClick: cancelImportSummary,
+								children: t("capability.presets.cancel", "Cancel")
+							})
 						]
 					})
 				];
@@ -552,75 +801,103 @@ window.__ModuleLoader__.load({
 								? t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", result.reason)
 								: t("capability.presets.noWorkspace", "This session has no workspace.");
 					return [
-						react_jsx_runtime.jsx("div", { style: warnTextStyle, children: text }),
-						react_jsx_runtime.jsx("div", { style: buttonRowStyle, children: react_jsx_runtime.jsx("button", { type: "button", onClick: closeImportResult, children: t("capability.presets.close", "Close") }) })
+						react_jsx_runtime.jsx("div", { style: S.warn, children: text }),
+						react_jsx_runtime.jsx("div", {
+							style: S.buttonRow,
+							children: react_jsx_runtime.jsx("button", {
+								type: "button",
+								style: S.button,
+								...ring,
+								...hover(HOVER_BG, "none"),
+								onClick: closeImportResult,
+								children: t("capability.presets.close", "Close")
+							})
+						})
 					];
 				}
 				const installedRow = (row) => react_jsx_runtime.jsxs("div", {
-					style: rowStyle,
+					style: S.row,
 					children: [
 						scopeBadge(row.targetScope),
-						react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
-						react_jsx_runtime.jsx("span", { style: summaryStyle, children: `${fileCountText(row.fileCount)} · ${row.status}` })
+						react_jsx_runtime.jsx("span", { style: S.name, title: row.name, children: row.name }),
+						react_jsx_runtime.jsx("span", { style: S.summary, children: `${fileCountText(row.fileCount)} · ${row.status}` })
 					]
 				}, `installed:${row.targetScope}:${row.name}`);
 				const collisionRow = (row) => react_jsx_runtime.jsxs("div", {
-					style: rowStyle,
+					style: S.row,
 					children: [
 						scopeBadge(row.targetScope),
-						react_jsx_runtime.jsx("span", { style: nameTextStyle, title: row.name, children: row.name }),
-						react_jsx_runtime.jsx("span", { style: warnTextStyle, children: row.decision })
+						react_jsx_runtime.jsx("span", { style: S.name, title: row.name, children: row.name }),
+						react_jsx_runtime.jsx("span", { style: S.warn, children: row.decision })
 					]
 				}, `collision:${row.targetScope}:${row.name}`);
 				return [
-					react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.importResultTitle", "Import result") }),
+					react_jsx_runtime.jsx("div", { style: S.cardTitle, children: t("capability.presets.importResultTitle", "Import result") }),
 					result.installed.length > 0 ? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: result.installed.map(installedRow) }) : null,
 					result.collisions.length > 0 ? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: result.collisions.map(collisionRow) }) : null,
-					react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.importInstalledNote", "Installed Skills stay unselected — pick them in the draft and Apply to activate.") }),
-					react_jsx_runtime.jsx("div", { style: buttonRowStyle, children: react_jsx_runtime.jsx("button", { type: "button", onClick: closeImportResult, children: t("capability.presets.close", "Close") }) })
+					react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.presets.importInstalledNote", "Installed Skills stay unselected — pick them in the draft and Apply to activate.") }),
+					react_jsx_runtime.jsx("div", {
+						style: S.buttonRow,
+						children: react_jsx_runtime.jsx("button", {
+							type: "button",
+							style: S.button,
+							...ring,
+							...hover(HOVER_BG, "none"),
+							onClick: closeImportResult,
+							children: t("capability.presets.close", "Close")
+						})
+					})
 				];
 			};
 			return react_jsx_runtime.jsxs("div", {
 				children: [
 					react_jsx_runtime.jsxs("div", {
-						style: buttonRowStyle,
+						style: S.buttonRow,
 						children: [
 							react_jsx_runtime.jsx("button", {
 								type: "button",
-								style: linkButtonStyle,
+								style: typeof props.presetSave !== "function" ? { ...S.button, ...S.disabled } : S.button,
+								...ring,
+								...hover(HOVER_BG, "none"),
 								disabled: typeof props.presetSave !== "function",
 								onClick: () => setSaveForm({ ...saveForm, open: !saveForm.open, error: null, conflict: null }),
 								children: saveForm.open ? t("capability.presets.cancel", "Cancel") : t("capability.presets.saveOpen", "Save as preset…")
 							}),
 							react_jsx_runtime.jsx("button", {
 								type: "button",
-								style: linkButtonStyle,
+								style: typeof props.presetImport !== "function" ? { ...S.button, ...S.disabled } : S.button,
+								...ring,
+								...hover(HOVER_BG, "none"),
 								disabled: typeof props.presetImport !== "function",
 								onClick: () => setImportBox({ ...importBox, open: !importBox.open, feedback: null, document: null, summary: null, decision: "cancel", result: null }),
 								children: importBox.open ? t("capability.presets.cancel", "Cancel") : t("capability.presets.importOpen", "Import…")
 							})
 						]
 					}),
-					notice ? react_jsx_runtime.jsx("div", { style: noticeStyle, children: notice }) : null,
+					notice ? react_jsx_runtime.jsx("div", { style: S.notice, children: notice }) : null,
 					saveForm.open
 						? react_jsx_runtime.jsxs("div", {
-							style: boxStyle,
+							style: S.card,
 							children: [
+								react_jsx_runtime.jsx("div", { style: S.cardTitle, children: t("capability.presets.saveTitle", "Save as preset") }),
 								react_jsx_runtime.jsx("input", {
-									style: inputStyle,
+									style: S.input,
+									...ring,
 									placeholder: t("capability.presets.name", "Preset name"),
 									value: saveForm.name,
 									onChange: (event) => setSaveForm({ ...saveForm, name: event.target.value, error: null })
 								}),
 								react_jsx_runtime.jsxs("div", {
-									style: buttonRowStyle,
+									style: S.buttonRow,
 									children: [
 										react_jsx_runtime.jsxs("label", {
-											style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center" },
+											style: S.label,
 											children: [
 												t("capability.presets.namespace", "Namespace"),
 												react_jsx_runtime.jsxs("select", {
+													style: S.select,
 													value: saveForm.scope,
+													...ring,
 													onChange: (event) => setSaveForm({ ...saveForm, scope: event.target.value }),
 													children: [
 														react_jsx_runtime.jsx("option", { value: "workspace", children: t("capability.presets.scopeWorkspace", "workspace") }),
@@ -630,11 +907,13 @@ window.__ModuleLoader__.load({
 											]
 										}),
 										react_jsx_runtime.jsxs("label", {
-											style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center" },
+											style: S.label,
 											children: [
 												t("capability.presets.source", "From"),
 												react_jsx_runtime.jsxs("select", {
+													style: S.select,
 													value: saveForm.from,
+													...ring,
 													onChange: (event) => setSaveForm({ ...saveForm, from: event.target.value }),
 													children: [
 														react_jsx_runtime.jsx("option", { value: "draft", children: t("capability.presets.fromDraft", "current draft") }),
@@ -647,30 +926,56 @@ window.__ModuleLoader__.load({
 								}),
 								saveForm.conflict
 									? react_jsx_runtime.jsxs("div", {
-										style: boxStyle,
+										style: S.strip,
 										children: [
-											react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.nameConflict", "A preset named \"{name}\" already exists in this namespace.").replace("{name}", saveForm.name.trim()) }),
+											react_jsx_runtime.jsx("span", { children: t("capability.presets.nameConflict", "A preset named \"{name}\" already exists in this namespace.").replace("{name}", saveForm.name.trim()) }),
 											react_jsx_runtime.jsxs("div", {
-												style: buttonRowStyle,
+												style: S.buttonRow,
 												children: [
 													react_jsx_runtime.jsx("button", {
 														type: "button",
+														style: saveForm.busy ? { ...S.button, ...S.disabled } : S.button,
+														...ring,
+														...hover(HOVER_BG, "none"),
 														disabled: saveForm.busy,
 														onClick: () => setSaveForm({ ...saveForm, conflict: null, error: t("capability.presets.renameHint", "Edit the name, then save again.") }),
 														children: t("capability.presets.rename", "Rename…")
 													}),
-													react_jsx_runtime.jsx("button", { type: "button", disabled: saveForm.busy, onClick: () => submitSave("replace"), children: t("capability.presets.replace", "Replace it") }),
-													react_jsx_runtime.jsx("button", { type: "button", disabled: saveForm.busy, onClick: () => setSaveForm({ ...saveForm, open: false, conflict: null }), children: t("capability.presets.cancel", "Cancel") })
+													react_jsx_runtime.jsx("button", {
+														type: "button",
+														style: saveForm.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+														...ring,
+														disabled: saveForm.busy,
+														onClick: () => submitSave("replace"),
+														children: t("capability.presets.replace", "Replace it")
+													}),
+													react_jsx_runtime.jsx("button", {
+														type: "button",
+														style: saveForm.busy ? { ...S.button, ...S.disabled } : S.button,
+														...ring,
+														...hover(HOVER_BG, "none"),
+														disabled: saveForm.busy,
+														onClick: () => setSaveForm({ ...saveForm, open: false, conflict: null }),
+														children: t("capability.presets.cancel", "Cancel")
+													})
 												]
 											})
 										]
 									})
 									: null,
 								react_jsx_runtime.jsxs("div", {
-									style: buttonRowStyle,
+									style: S.buttonRow,
 									children: [
-										react_jsx_runtime.jsx("button", { type: "button", disabled: saveForm.busy, onClick: () => submitSave(undefined), children: saveForm.busy ? t("capability.presets.saving", "Saving…") : t("capability.presets.save", "Save preset") }),
-										saveForm.error ? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: saveForm.error }) : null
+										react_jsx_runtime.jsx("button", {
+											type: "button",
+											style: saveForm.busy ? { ...S.primary, ...S.disabled } : S.primary,
+											...ring,
+											...(saveForm.busy ? {} : hover(ACCENT_HOVER, ACCENT)),
+											disabled: saveForm.busy,
+											onClick: () => submitSave(undefined),
+											children: saveForm.busy ? t("capability.presets.saving", "Saving…") : t("capability.presets.save", "Save preset")
+										}),
+										saveForm.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: saveForm.error }) : null
 									]
 								})
 							]
@@ -678,7 +983,7 @@ window.__ModuleLoader__.load({
 						: null,
 					importBox.open
 						? react_jsx_runtime.jsxs("div", {
-							style: boxStyle,
+							style: S.card,
 							...(importBox.result
 								? { "data-orrery-import-result": "" }
 								: importBox.summary
@@ -689,21 +994,25 @@ window.__ModuleLoader__.load({
 								: importBox.summary
 									? importSummaryChildren(importBox.summary)
 									: [
+										react_jsx_runtime.jsx("div", { style: S.cardTitle, children: t("capability.presets.importTitle", "Import preset") }),
 										react_jsx_runtime.jsx("textarea", {
-											style: textareaStyle,
+											style: S.textarea,
+											...ring,
 											placeholder: t("capability.presets.importPlaceholder", "Paste a portable preset document (JSON)…"),
 											value: importBox.text,
 											onChange: (event) => setImportBox({ ...importBox, text: event.target.value, feedback: null, document: null, summary: null, result: null })
 										}),
 										react_jsx_runtime.jsxs("div", {
-											style: buttonRowStyle,
+											style: S.buttonRow,
 											children: [
 												react_jsx_runtime.jsxs("label", {
-													style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center" },
+													style: S.label,
 													children: [
 														t("capability.presets.namespace", "Namespace"),
 														react_jsx_runtime.jsxs("select", {
+															style: S.select,
 															value: importBox.scope,
+															...ring,
 															onChange: (event) => setImportBox({ ...importBox, scope: event.target.value }),
 															children: [
 																react_jsx_runtime.jsx("option", { value: "workspace", children: t("capability.presets.scopeWorkspace", "workspace") }),
@@ -712,38 +1021,65 @@ window.__ModuleLoader__.load({
 														})
 													]
 												}),
-												react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy || importBox.text.trim() === "", onClick: () => submitImport(undefined), children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importSubmit", "Import") })
+												react_jsx_runtime.jsx("button", {
+													type: "button",
+													style: (importBox.busy || importBox.text.trim() === "") ? { ...S.primary, ...S.disabled } : S.primary,
+													...ring,
+													disabled: importBox.busy || importBox.text.trim() === "",
+													onClick: () => submitImport(undefined),
+													children: importBox.busy ? t("capability.presets.importing", "Importing…") : t("capability.presets.importSubmit", "Import")
+												})
 											]
 										}),
 										importFeedback && importFeedback.kind === "invalid-json"
-											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importInvalidJson", "Not valid JSON — nothing was written.") })
+											? react_jsx_runtime.jsx("div", { style: S.warn, children: t("capability.presets.importInvalidJson", "Not valid JSON — nothing was written.") })
 											: null,
 										importFeedback && importFeedback.kind === "rejected"
-											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", importFeedback.reason) })
+											? react_jsx_runtime.jsx("div", { style: S.warn, children: t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", importFeedback.reason) })
 											: null,
 										importFeedback && importFeedback.kind === "name-conflict"
 											? react_jsx_runtime.jsxs("div", {
-												style: buttonRowStyle,
+												style: S.strip,
 												children: [
-													react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
-													react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => submitImport("replace"), children: t("capability.presets.replace", "Replace it") }),
-													react_jsx_runtime.jsx("button", { type: "button", disabled: importBox.busy, onClick: () => setImportBox({ ...importBox, feedback: null, document: null }), children: t("capability.presets.cancel", "Cancel") })
+													react_jsx_runtime.jsx("span", { children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
+													react_jsx_runtime.jsxs("div", {
+														style: S.buttonRow,
+														children: [
+															react_jsx_runtime.jsx("button", {
+																type: "button",
+																style: importBox.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+																...ring,
+																disabled: importBox.busy,
+																onClick: () => submitImport("replace"),
+																children: t("capability.presets.replace", "Replace it")
+															}),
+															react_jsx_runtime.jsx("button", {
+																type: "button",
+																style: importBox.busy ? { ...S.button, ...S.disabled } : S.button,
+																...ring,
+																...hover(HOVER_BG, "none"),
+																disabled: importBox.busy,
+																onClick: () => setImportBox({ ...importBox, feedback: null, document: null }),
+																children: t("capability.presets.cancel", "Cancel")
+															})
+														]
+													})
 												]
 											})
 											: null,
 										importFeedback && importFeedback.kind === "no-workspace"
-											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
+											? react_jsx_runtime.jsx("div", { style: S.warn, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
 											: null,
 										importFeedback && importFeedback.kind === "error"
-											? react_jsx_runtime.jsx("div", { style: warnTextStyle, children: t("capability.presets.importFailed", "Import failed — nothing was written.") })
+											? react_jsx_runtime.jsx("div", { style: S.warn, children: t("capability.presets.importFailed", "Import failed — nothing was written.") })
 											: null
 									]
 						})
 						: null,
 					list === null
-						? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.loading", "Loading capabilities…") })
+						? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.loading", "Loading capabilities…") })
 						: list.error
-							? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.unavailable", "Presets are unavailable on this host.") })
+							? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.presets.unavailable", "Presets are unavailable on this host.") })
 							: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
 								children: [
 									presetGroup(
@@ -761,19 +1097,19 @@ window.__ModuleLoader__.load({
 								]
 							}),
 					react_jsx_runtime.jsxs("div", {
-						style: sectionStyle,
+						style: { ...S.card, ...S.section },
 						children: [
-							react_jsx_runtime.jsx("div", { style: sectionTitleStyle, children: t("capability.presets.defaultTitle", "Workspace default for new sessions") }),
+							react_jsx_runtime.jsx("div", { style: S.cardTitle, children: t("capability.presets.defaultTitle", "Workspace default for new sessions") }),
 							defaultState === null
-								? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.loading", "Loading capabilities…") })
+								? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.loading", "Loading capabilities…") })
 								: defaultState.kind === "error"
-									? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.defaultUnavailable", "The workspace default is unavailable.") })
+									? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.presets.defaultUnavailable", "The workspace default is unavailable.") })
 									: defaultState.kind === "unsupported"
-										? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
+										? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
 										: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
 											children: [
 												react_jsx_runtime.jsx("div", {
-													style: hintStyle,
+													style: S.hint,
 													children: defaultState.kind === "none"
 														? t("capability.presets.defaultNone", "No default is set — new sessions use the builtin baseline.")
 														: defaultState.kind === "empty"
@@ -781,14 +1117,16 @@ window.__ModuleLoader__.load({
 															: t("capability.presets.defaultEntries", "Default: {counts}").replace("{counts}", countText(defaultState.skills, defaultState.mcpServers))
 												}),
 												defaultState.kind === "entries" && defaultState.unresolvedRefs > 0
-													? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("capability.presets.defaultUnresolved", "…with {n} unresolved ref(s) reported on resolve.").replace("{n}", String(defaultState.unresolvedRefs)) })
+													? react_jsx_runtime.jsx("div", { style: S.hint, children: t("capability.presets.defaultUnresolved", "…with {n} unresolved ref(s) reported on resolve.").replace("{n}", String(defaultState.unresolvedRefs)) })
 													: null,
 												react_jsx_runtime.jsxs("div", {
-													style: buttonRowStyle,
+													style: S.buttonRow,
 													children: [
 														react_jsx_runtime.jsx("button", {
 															type: "button",
-															style: linkButtonStyle,
+															style: (props.draft === null || typeof props.defaultSave !== "function") ? { ...S.button, ...S.disabled } : S.button,
+															...ring,
+															...hover(HOVER_BG, "none"),
 															disabled: props.draft === null || typeof props.defaultSave !== "function",
 															title: props.draft === null ? t("capability.presets.needsReceipt", "Unavailable until the session receipt loads.") : undefined,
 															onClick: () => setDefaultBox({ ...defaultBox, confirm: defaultBox.confirm === "save" ? null : "save", error: null }),
@@ -797,7 +1135,9 @@ window.__ModuleLoader__.load({
 														defaultState.kind !== "none"
 															? react_jsx_runtime.jsx("button", {
 																type: "button",
-																style: linkButtonStyle,
+																style: typeof props.defaultClear !== "function" ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+																...ring,
+																...hover(tint(DANGER, 10), "none"),
 																disabled: typeof props.defaultClear !== "function",
 																onClick: () => setDefaultBox({ ...defaultBox, confirm: defaultBox.confirm === "clear" ? null : "clear", error: null }),
 																children: t("capability.presets.defaultClearOpen", "Clear default…")
@@ -807,14 +1147,16 @@ window.__ModuleLoader__.load({
 												}),
 												defaultBox.confirm === "save"
 													? react_jsx_runtime.jsxs("div", {
-														style: boxStyle,
+														style: S.strip,
 														children: [
 															react_jsx_runtime.jsxs("div", {
-																style: { fontSize: "11px", display: "flex", gap: "4px", alignItems: "center" },
+																style: S.label,
 																children: [
 																	t("capability.presets.source", "From"),
 																	react_jsx_runtime.jsxs("select", {
+																		style: S.select,
 																		value: defaultBox.from,
+																		...ring,
 																		onChange: (event) => setDefaultBox({ ...defaultBox, from: event.target.value }),
 																		children: [
 																			react_jsx_runtime.jsx("option", { value: "draft", children: t("capability.presets.fromDraft", "current draft") }),
@@ -824,17 +1166,31 @@ window.__ModuleLoader__.load({
 																]
 															}),
 															react_jsx_runtime.jsx("span", {
-																style: { fontSize: "11px" },
 																children: defaultFromCounts
 																	? t("capability.presets.defaultSaveConfirm", "Save {counts} as this workspace's default? New sessions in this workspace will start from it; the current session does not change.").replace("{counts}", countText(defaultFromCounts.skills, defaultFromCounts.mcpServers))
 																	: t("capability.presets.needsReceipt", "Unavailable until the session receipt loads.")
 															}),
 															react_jsx_runtime.jsxs("div", {
-																style: buttonRowStyle,
+																style: S.buttonRow,
 																children: [
-																	react_jsx_runtime.jsx("button", { type: "button", disabled: defaultBox.busy || !defaultFromCounts, onClick: submitDefaultSave, children: defaultBox.busy ? t("capability.presets.saving", "Saving…") : t("capability.presets.defaultSaveConfirmButton", "Save default") }),
-																	react_jsx_runtime.jsx("button", { type: "button", disabled: defaultBox.busy, onClick: () => setDefaultBox({ ...defaultBox, confirm: null, error: null }), children: t("capability.presets.cancel", "Cancel") }),
-																	defaultBox.error ? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: defaultBox.error }) : null
+																	react_jsx_runtime.jsx("button", {
+																		type: "button",
+																		style: (defaultBox.busy || !defaultFromCounts) ? { ...S.primary, ...S.disabled } : S.primary,
+																		...ring,
+																		disabled: defaultBox.busy || !defaultFromCounts,
+																		onClick: submitDefaultSave,
+																		children: defaultBox.busy ? t("capability.presets.saving", "Saving…") : t("capability.presets.defaultSaveConfirmButton", "Save default")
+																	}),
+																	react_jsx_runtime.jsx("button", {
+																		type: "button",
+																		style: defaultBox.busy ? { ...S.button, ...S.disabled } : S.button,
+																		...ring,
+																		...hover(HOVER_BG, "none"),
+																		disabled: defaultBox.busy,
+																		onClick: () => setDefaultBox({ ...defaultBox, confirm: null, error: null }),
+																		children: t("capability.presets.cancel", "Cancel")
+																	}),
+																	defaultBox.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: defaultBox.error }) : null
 																]
 															})
 														]
@@ -842,15 +1198,30 @@ window.__ModuleLoader__.load({
 													: null,
 												defaultBox.confirm === "clear"
 													? react_jsx_runtime.jsxs("div", {
-														style: boxStyle,
+														style: S.strip,
 														children: [
-															react_jsx_runtime.jsx("span", { style: { fontSize: "11px" }, children: t("capability.presets.defaultClearConfirm", "Clear the workspace default? New sessions return to the builtin baseline; open sessions do not change.") }),
+															react_jsx_runtime.jsx("span", { children: t("capability.presets.defaultClearConfirm", "Clear the workspace default? New sessions return to the builtin baseline; open sessions do not change.") }),
 															react_jsx_runtime.jsxs("div", {
-																style: buttonRowStyle,
+																style: S.buttonRow,
 																children: [
-																	react_jsx_runtime.jsx("button", { type: "button", disabled: defaultBox.busy, onClick: submitDefaultClear, children: defaultBox.busy ? t("capability.presets.clearing", "Clearing…") : t("capability.presets.defaultClearConfirmButton", "Clear default") }),
-																	react_jsx_runtime.jsx("button", { type: "button", disabled: defaultBox.busy, onClick: () => setDefaultBox({ ...defaultBox, confirm: null, error: null }), children: t("capability.presets.cancel", "Cancel") }),
-																	defaultBox.error ? react_jsx_runtime.jsx("span", { style: warnTextStyle, children: defaultBox.error }) : null
+																	react_jsx_runtime.jsx("button", {
+																		type: "button",
+																		style: defaultBox.busy ? { ...S.danger, ...S.disabled } : S.danger,
+																		...ring,
+																		disabled: defaultBox.busy,
+																		onClick: submitDefaultClear,
+																		children: defaultBox.busy ? t("capability.presets.clearing", "Clearing…") : t("capability.presets.defaultClearConfirmButton", "Clear default")
+																	}),
+																	react_jsx_runtime.jsx("button", {
+																		type: "button",
+																		style: defaultBox.busy ? { ...S.button, ...S.disabled } : S.button,
+																		...ring,
+																		...hover(HOVER_BG, "none"),
+																		disabled: defaultBox.busy,
+																		onClick: () => setDefaultBox({ ...defaultBox, confirm: null, error: null }),
+																		children: t("capability.presets.cancel", "Cancel")
+																	}),
+																	defaultBox.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: defaultBox.error }) : null
 																]
 															})
 														]

@@ -366,3 +366,23 @@ test('6.4 exportFileNameOf slugs the preset name, falls back to the id, then to 
   expect(model.exportFileNameOf('  spaced   name  ', null)).toBe('spaced-name.json')
   expect(model.exportFileNameOf('x'.repeat(200), null)).toBe(`${'x'.repeat(64)}.json`)
 })
+
+// Visual polish (capabilities-panel-visual-polish): the view color-codes
+// source tags by scope family — the model must keep exposing scopeKey for
+// exactly the families the S table maps (orrery-builtin/user/project/custom).
+test('visual polish: skillRowOf keeps exposing scopeKey for the scope→hue tag families', () => {
+  const partition = model.partitionManagerListing({
+    skills: [
+      { name: 'b1', scope: 'orrery-builtin', status: 'parsed' },
+      { name: 'u1', scope: 'user', status: 'parsed' },
+      { name: 'p1', scope: 'project', status: 'parsed' },
+      { name: 'c1', scope: 'custom', status: 'parsed' },
+      { name: 'x1', status: 'parsed' },
+    ],
+    mcpServers: [],
+  })
+  expect(partition.skills.map((row) => row.scopeKey)).toEqual(['orrery-builtin', 'user', 'project', 'custom', 'unknown'])
+  // The display label stays independent of the hue key (12.2 contract).
+  expect(partition.skills[0].source).toBe('Orrery builtin')
+  expect(partition.skills[4].source).toBe('unknown')
+})

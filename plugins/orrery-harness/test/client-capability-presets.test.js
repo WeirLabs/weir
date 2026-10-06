@@ -376,4 +376,51 @@ describe('client.capability-presets chunk', () => {
     expect(findButton(tree, 'Copied')).toBeTruthy()
     expect(findButton(tree, 'Downloaded')).toBeTruthy()
   })
+
+  it('visual polish: preset rows render as cards with a namespace badge; the delete confirm is a warning strip', async () => {
+    const { view, reactStub } = await loadView()
+    const { props } = makeProps({
+      presets: [
+        { scope: 'workspace', presetId: 'pack-01', name: 'Travel Pack!', revision: 1, counts: { skills: 1, mcpServers: 0, unresolvedRefs: 0 } },
+        { scope: 'global', presetId: 'g-1', name: 'Shared', revision: 3, counts: { skills: 2, mcpServers: 1, unresolvedRefs: 0 } },
+      ],
+    })
+
+    reactStub.reset()
+    reactStub.begin()
+    view(props)
+    await flush()
+    reactStub.begin()
+    let tree = view(props)
+
+    // Preset rows are cards (border + radius-md surface) carrying a tonal
+    // namespace badge; the inline actions keep their exact labels.
+    const cards = findAll(tree, (node) => node.__type === 'div' && node.style && node.style.borderRadius === 'var(--dsw-radius-md, 8px)' && node.style.padding === '7px 10px')
+    expect(cards).toHaveLength(2)
+    expect(findAll(tree, (node) => node.__type === 'span' && node.children === 'workspace')).toHaveLength(1)
+    expect(findAll(tree, (node) => node.__type === 'span' && node.children === 'global')).toHaveLength(1)
+    expect(findButton(tree, 'Load')).toBeTruthy()
+    expect(findButton(tree, 'Export')).toBeTruthy()
+    const deleteButton = findButton(tree, 'Delete')
+    expect(deleteButton).toBeTruthy()
+    // The badge is a colored tonal tag (border + tinted background tokens).
+    const badge = findAll(tree, (node) => node.__type === 'span' && node.children === 'workspace')[0]
+    expect(badge.style.border).toContain('1px solid')
+    expect(badge.style.background).toContain('color-mix')
+
+    // The destructive confirm renders as a warning strip (2px left bar on a
+    // warn tint), never a plain box.
+    deleteButton.onClick()
+    reactStub.begin()
+    tree = view(props)
+    const strips = findAll(tree, (node) => node.style && typeof node.style.borderLeft === 'string' && node.style.borderLeft.startsWith('2px solid var(--dsw-alias-state-warn-primary'))
+    expect(strips).toHaveLength(1)
+    expect(findAll(strips[0], (node) => node.children === 'Delete preset "Travel Pack!"? This cannot be undone.')).toHaveLength(1)
+    expect(findButton(strips[0].children, 'Delete preset')).toBeTruthy()
+    expect(findButton(strips[0].children, 'Cancel')).toBeTruthy()
+
+    // The workspace-default section is its own labeled card.
+    const defaultTitle = findAll(tree, (node) => node.children === 'Workspace default for new sessions')[0]
+    expect(defaultTitle).toBeTruthy()
+  })
 })

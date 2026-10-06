@@ -11,24 +11,66 @@ window.__ModuleLoader__.load({
 		// Applied counts come from the SERVER RECEIPT only (12.2) — the fetch
 		// verb arrives via props from the composition root; the pure model
 		// (client.capability-model.js) decides every presentation state.
-		const badgeStyle = {
-			display: "inline-flex",
-			alignItems: "center",
-			gap: "6px",
-			background: "none",
-			border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-sm)",
-			cursor: "pointer",
-			padding: "3px 8px",
-			fontSize: "12px",
-			lineHeight: "16px",
-			color: "var(--dsw-alias-label-secondary)"
+		//
+		// Visual layer (capabilities-panel-visual-polish): consolidated style
+		// table + spacing/alignment micro-tuning only. The pinned structure is
+		// untouched: root span children[0] = toggle button (its aria-label keeps
+		// the full counts), children[1] = error boundary → panel.
+		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
+		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
+		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+		// Focus ring and hover paint without stylesheets (inline-style chunk
+		// discipline): the handlers write to the event target's inline style and
+		// clear on the way out — no hooks, no structure change.
+		const paint = (event, styles) => {
+			const el = event?.currentTarget;
+			if (el && el.style) Object.assign(el.style, styles);
 		};
-		const warnDotStyle = {
-			width: "7px",
-			height: "7px",
-			borderRadius: "50%",
-			background: "var(--dsw-alias-state-warn-primary, #c80)"
+		const ring = {
+			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }),
+			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
+		};
+		const S = {
+			root: { position: "relative", display: "inline-flex" },
+			badge: {
+				display: "inline-flex",
+				alignItems: "center",
+				gap: "5px",
+				background: "none",
+				border: `1px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm, 6px)",
+				cursor: "pointer",
+				padding: "2px 8px",
+				fontSize: "12px",
+				lineHeight: "16px",
+				color: "var(--dsw-alias-label-secondary, #61666b)",
+				transition: "background-color 120ms ease, color 120ms ease, border-color 120ms ease"
+			},
+			warnDot: {
+				width: "6px",
+				height: "6px",
+				borderRadius: "50%",
+				background: WARN,
+				boxShadow: `0 0 0 2px ${tint(WARN, 18)}`,
+				flex: "none"
+			},
+			errorBox: {
+				position: "absolute",
+				bottom: "calc(100% + 8px)",
+				left: 0,
+				maxWidth: "280px",
+				padding: "8px 10px",
+				fontSize: "12px",
+				lineHeight: "16px",
+				border: `1px solid ${BORDER}`,
+				borderLeft: `2px solid ${WARN}`,
+				borderRadius: "var(--dsw-radius-md, 8px)",
+				background: "var(--dsw-alias-bg-overlay, #fff)",
+				boxShadow: "var(--dsw-elevation-soft, 0 4px 16px rgba(0,0,0,.08))",
+				color: WARN_TEXT
+			}
 		};
 		// 12.2's "an error must not take down neighboring composer controls":
 		// a crashing panel surfaces an inline error and leaves the Badge alive.
@@ -43,7 +85,7 @@ window.__ModuleLoader__.load({
 			render() {
 				if (this.state.error !== null) {
 					return react_jsx_runtime.jsx("div", {
-						style: { position: "absolute", bottom: "calc(100% + 8px)", left: 0, padding: "8px", fontSize: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", background: "var(--dsw-alias-background-elevated, #fff)", color: "var(--dsw-alias-state-warn-primary, #c80)" },
+						style: S.errorBox,
 						children: `Capabilities panel error: ${String(this.state.error?.message ?? this.state.error)}`
 					});
 				}
@@ -154,12 +196,15 @@ window.__ModuleLoader__.load({
 				]
 			});
 			return react_jsx_runtime.jsxs("span", {
-				style: { position: "relative", display: "inline-flex" },
+				style: S.root,
 				"data-orrery-capability-root": "",
 				children: [
 					react_jsx_runtime.jsxs("button", {
 						type: "button",
-						style: badgeStyle,
+						style: S.badge,
+						...ring,
+						onMouseEnter: (event) => paint(event, { background: HOVER_BG, color: "var(--dsw-alias-label-primary, inherit)" }),
+						onMouseLeave: (event) => paint(event, { background: "none", color: "var(--dsw-alias-label-secondary, #61666b)" }),
 						title,
 						"aria-label": label,
 						// aria-expanded follows the actual destination: only the
@@ -167,7 +212,7 @@ window.__ModuleLoader__.load({
 						"aria-expanded": openPanel ? undefined : panelOpen,
 						onClick: onActivate,
 						children: [
-							hasWarning ? react_jsx_runtime.jsx("span", { style: warnDotStyle }) : null,
+							hasWarning ? react_jsx_runtime.jsx("span", { style: S.warnDot }) : null,
 							blocksIcon,
 							compactLabel
 						]

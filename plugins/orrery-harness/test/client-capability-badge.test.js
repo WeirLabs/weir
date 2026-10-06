@@ -171,6 +171,44 @@ describe('client.capability-badge chunk', () => {
       delete globalThis.document
     }
   })
+
+  it('renders the compact label, warn dot and painted focus/hover affordances (visual polish)', async () => {
+    const { exports, reactStub } = await loadBadge()
+    const { CapabilityBadge } = exports
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const { props } = baseProps()
+    props.model = {
+      badgeStateOf: () => ({ known: true, applied: { skills: 10, mcpServers: 0 }, unavailable: ['fixture-a-unavailable'] }),
+      convergenceHintOf: () => null,
+      frameRefreshesSession: () => false,
+    }
+
+    reactStub.reset()
+    reactStub.begin()
+    CapabilityBadge(props)
+    await flush()
+    reactStub.begin()
+    const settled = CapabilityBadge(props)
+    const button = settled.children[0]
+    // The pinned contract holds: children[0] stays the toggle button with the
+    // full-count aria-label.
+    expect(button.__type).toBe('button')
+    expect(button['aria-label']).toBe('10 skills · 0 MCP')
+    // The visible label is the compact pair next to the blocks icon.
+    expect(button.children).toContain('10 · 0')
+    // A session with warnings paints the warn dot and lists them in the tooltip.
+    const dot = button.children.find((child) => child && child.style && child.style.borderRadius === '50%')
+    expect(dot).toBeTruthy()
+    expect(button.title).toBe('fixture-a-unavailable')
+    // Inline-style chunks paint focus/hover affordances via handlers (no
+    // stylesheets, no extra hooks): the toggle carries them.
+    expect(typeof button.onFocus).toBe('function')
+    expect(typeof button.onBlur).toBe('function')
+    expect(typeof button.onMouseEnter).toBe('function')
+    expect(typeof button.onMouseLeave).toBe('function')
+    // The affordance transitions stay inside the 120-160ms hover/selection budget.
+    expect(button.style.transition).toContain('120ms')
+  })
 })
 
 describe('capability chunks locale contract (2026-10-05 badge slot crash)', () => {
