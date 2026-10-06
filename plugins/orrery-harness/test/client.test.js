@@ -1,5 +1,5 @@
 import { describe, expect, it } from './helpers.js'
-import { readdirSync, statSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 
@@ -958,20 +958,22 @@ describe('orrery settings client half', () => {
     expect(await verbs.fetchConditions('s1')).toEqual({ error: true })
   })
 
-  it('build binds the entry to every chunk digest and publishes the entry last', () => {
-    // Host chunk URLs carry the entry revision. Both content binding and write
-    // ordering matter: a timestamp-only restamp is not a client build.
+  it('build binds the entry to every chunk digest', () => {
+    // Content binding is the red line: the entry header pins each chunk's
+    // sha256, so a chunk edit without `pnpm build` fails here
+    // deterministically. mtime ordering is deliberately NOT asserted: git
+    // relayout (merge/checkout/clone) rewrites mtimes in arbitrary order,
+    // which made the old mtime assertion a guaranteed false positive after
+    // any lane merge touching lib/ (see client-module-chunking.md).
     const libDir = new URL('../lib/', import.meta.url)
-    const entryMtimeMs = statSync(new URL('client.js', libDir)).mtimeMs
     const chunks = readdirSync(libDir).filter((name) => /^client\..+\.js$/.test(name))
     expect(chunks.length).toBeGreaterThan(0)
     const firstLine = readFileSync(new URL('client.js', libDir), 'utf8').split('\n')[0]
     const manifest = JSON.parse(firstLine.replace('// Orrery client chunks: ', ''))
     expect(Object.keys(manifest).sort()).toEqual([...chunks].sort())
     for (const name of chunks) {
-      const chunkMtimeMs = statSync(new URL(name, libDir)).mtimeMs
-      expect(chunkMtimeMs <= entryMtimeMs, `${name} is newer than the entry — run pnpm build`).toBe(true)
-      expect(manifest[name]).toBe(createHash('sha256').update(readFileSync(new URL(name, libDir))).digest('hex'))
+      expect(manifest[name], `${name} differs from the manifest — run pnpm build`)
+        .toBe(createHash('sha256').update(readFileSync(new URL(name, libDir))).digest('hex'))
     }
   })
 })

@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- **客户端构建校验不再误报「chunk 比入口新」**：`test/client.test.js` 的 mtime 顺序断言在 git 合并/checkout/克隆重新落盘 `lib/` 后必然假阳性（落盘顺序任意，实测合并仅差 0.758ms 即颠倒），每次车道合并后都要手动 restamp 才能转绿。断言本意（改了 chunk 必须重跑 build）已由入口 manifest 的 sha256 内容绑定确定性覆盖，mtime 断言移除；构建纪律简化为「改 chunk 后跑 `pnpm build`」。详见 [客户端模块切分文档](docs/features/client-module-chunking.md)。
+
 - **编辑锁：冷会话面板不再卡在「启动中」**：重启后打开的历史会话（GUI 冷读、无存活 agent）此前让状态端点查无 agent，面板永久显示「启动中」。端点现在冷读安全——经会话冷观察与只读权威镜像回答真实状态（已停止／异常／保留／ revoked 终态与域锁列表），冷会话的主动作改为指引「发送任意消息即自动继续编辑」（auto-resume 语义）；无法解析的会话给出带明确原因的「不可用」。写动作不开放冷通道，绑定仍在你发首条消息时的既有路径完成。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 
 ## [0.9.0] - 2026-10-07
