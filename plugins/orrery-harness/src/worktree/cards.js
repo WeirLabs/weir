@@ -55,6 +55,12 @@ const COPY = {
     abandonLine: (/** @type {string} */ id, /** @type {string} */ title, /** @type {string} */ state) => `Abandon lane \`${id}\` — ${title} (state ${state}).`,
     unmergedLost: (/** @type {number} */ count, /** @type {string} */ branch) => `**${count} unmerged commit(s)** on \`${branch}\` will be lost if the branch is removed.`,
     noUnmerged: (/** @type {string} */ branch) => `\`${branch}\` has no unmerged commits.`,
+    residueWarning: (/** @type {{ operations: number, locks: number }} */ residue) => {
+      const parts = []
+      if (residue.operations > 0) parts.push(`${residue.operations} unresolved Edit Lock operation(s)`)
+      if (residue.locks > 0) parts.push(`${residue.locks} Edit Lock lock(s)`)
+      return `⚠️ **Edit Lock residue**: this lane's session left ${parts.join(' and ')} in the Edit Lock authority. Locks are reclaimed automatically by the stale-lock sweep; unresolved publications settle via crash self-heal (dead process) or one-click recovery in the Edit Lock maintenance panel (Settings → Editing). This is a warning only — cleanup still proceeds.`
+    },
   },
   zh: {
     mergeHeader: 'Worktree 合并',
@@ -87,6 +93,12 @@ const COPY = {
     abandonLine: (/** @type {string} */ id, /** @type {string} */ title, /** @type {string} */ state) => `放弃车道 \`${id}\` —— ${title}（状态 ${state}）。`,
     unmergedLost: (/** @type {number} */ count, /** @type {string} */ branch) => `删除分支将**永久丢失** \`${branch}\` 上的 **${count} 个未合并提交**。`,
     noUnmerged: (/** @type {string} */ branch) => `\`${branch}\` 没有未合并的提交。`,
+    residueWarning: (/** @type {{ operations: number, locks: number }} */ residue) => {
+      const parts = []
+      if (residue.operations > 0) parts.push(`${residue.operations} 个未决 Edit Lock 操作`)
+      if (residue.locks > 0) parts.push(`${residue.locks} 把 Edit Lock 锁`)
+      return `⚠️ **Edit Lock 残留**：该车道的会话在 Edit Lock 权威中留有 ${parts.join(' 和 ')}。锁会由 stale-lock 自动清扫回收；未决发布会由崩溃自愈（进程死亡时）或 Edit Lock 维护面板（设置 → 编辑）的一键恢复结清。此仅为警示——清理仍会进行。`
+    },
   },
 }
 
@@ -118,22 +130,24 @@ export function cardCopy(locale) {
         `*${copy.fullDiff}*`,
       ].join('\n')
     },
-    /** @param {any} lane @param {{ files: number, added: number, removed: number }} stat @param {string} [root] */
-    cleanupDetail(lane, stat, root) {
+    /** @param {any} lane @param {{ files: number, added: number, removed: number }} stat @param {string} [root] @param {{ operations: number, locks: number } | null} [residue] */
+    cleanupDetail(lane, stat, root, residue = null) {
       return [
         `- ${copy.merged(lane.branch, lane.base.branch)} (${stat.files} ${copy.files}, +${stat.added} −${stat.removed}).`,
         `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
         `- ${copy.scratch}`,
+        ...(residue ? ['', copy.residueWarning(residue)] : []),
       ].join('\n')
     },
-    /** @param {any} lane @param {number} unmerged @param {string} [root] */
-    abandonDetail(lane, unmerged, root) {
+    /** @param {any} lane @param {number} unmerged @param {string} [root] @param {{ operations: number, locks: number } | null} [residue] */
+    abandonDetail(lane, unmerged, root, residue = null) {
       return [
         `- ${copy.abandonLine(lane.id, lane.title, lane.state)}`,
         `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
         '',
         // The unmerged-commit warning stays its own paragraph for emphasis.
         unmerged > 0 ? copy.unmergedLost(unmerged, lane.branch) : copy.noUnmerged(lane.branch),
+        ...(residue ? ['', copy.residueWarning(residue)] : []),
       ].join('\n')
     },
   }
