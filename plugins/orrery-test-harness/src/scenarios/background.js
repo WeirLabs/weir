@@ -1,7 +1,7 @@
 // Scenario: background — run_in_background delegation; the compact job notice
 // reaches the parent while the full report stays pull-only. Migrated from
 // mock-llm.js decideBackground / run.mjs assertBackground (D1/D2).
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'background'
 const prompt = 'background-probe'
@@ -12,25 +12,19 @@ function decide(options, obs) {
   if (history.includes('BACKGROUND_CHILD') && !history.includes('background-probe')) {
     return textChunks('BACKGROUND_CHILD_MARKER: background child finished its work')
   }
-  // Parent: keep the turn alive until the compact job notice arrives, then
-  // observe it WITHOUT pulling — the pull-only discipline is the contract.
-  // (The full report must never enter the parent context.)
-  const lastRole = options.messages?.at(-1)?.role
-  if (lastRole === 'tool') {
-    const toolText = lastOfRole(options, 'tool')
-    if (toolText.includes('Delegated in the background')) {
-      return shellCall('echo-and-wait', { text: 'WAITED_FOR_JOB', seconds: 1 }, 'Keep the turn alive until the background job settles')
-    }
-    if (toolText.includes('WAITED_FOR_JOB')) {
-      if (history.includes('finished [status: completed]')) {
-        return textChunks('parent observed the compact notice; the full report stays pull-only')
-      }
-      return shellCall('echo-and-wait', { text: 'WAITED_FOR_JOB', seconds: 1 }, 'Wait for the job notice')
-    }
-    return textChunks('unhandled background tool turn')
-  }
+  // Parent: the compact job notice arrived — observe it WITHOUT pulling; the
+  // pull-only discipline is the contract (the full report must never enter
+  // the parent context).
   if (history.includes('finished [status: completed]') && history.includes('background job')) {
     return textChunks('parent observed the compact notice; the full report stays pull-only')
+  }
+  // Parent: the delegate call returned a job id — keep the turn alive until
+  // the compact notice lands. History-driven on purpose (never lastRole):
+  // runtime-context snapshots can interleave as user messages between the
+  // tool result and the next request, and a lastRole gate would end the turn
+  // early — the headless quiescence exit then aborts the still-running job.
+  if (history.includes('Delegated in the background')) {
+    return shellCall('echo-and-wait', { text: 'WAITED_FOR_JOB', seconds: 1 }, 'Keep the turn alive until the background job settles')
   }
   if (history.includes('background-probe') && !history.includes('BACKGROUND_CHILD')) {
     return toolCallChunks('delegate', { agent: 'finder', prompt: 'BACKGROUND_CHILD\nTASK: finish the background work\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done', run_in_background: true })
