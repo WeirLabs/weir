@@ -60,6 +60,17 @@ describe('preset realm composition for the worktree lanes service', () => {
   })
 })
 
+describe('preset skill supplemental directories (preset-skill-applicability)', () => {
+  it('BOTH skill-selection rows declare the same supplementalSkillDirs root for apply-missing classification', () => {
+    const rows = PATCH.split(/\n(?=\s*- id: orrery-skill-selection)/).filter(chunk => chunk.includes("name: 'orrery-harness/skill-selection'"))
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.includes('supplementalSkillDirs:'), 'every skill-selection row must carry the classification root').toBe(true)
+      expect(row.includes('@deepseek-ai/dsh-agent-preset/package.json'), 'the classification root resolves the creative skills package').toBe(true)
+    }
+  })
+})
+
 describe('preset realm composition for the MCP manager services', () => {
   it('mcp-manager (provider) and skill-selection (consumer) share one group isolating both services', () => {
     const group = enclosingGroup('orrery-harness/mcp-manager')
