@@ -8,11 +8,6 @@ import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimi
 // 代价是新增字段要改三处，本测试让"忘了改"变成响亮失败。
 // 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
 const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
-// 拆期键机制（FIELDS 已入库、设置页后续批次补齐时）暂存于此，补齐后移除
-// 让 parity 恢复全量对拍；反向断言保证移除义务响亮可见。
-// 当前拆期键：editLockStaleSweep（设置页 client chunk 与 locale 在本车道写面之外，
-// 页面行由后续批次补齐；schema/服务层已生效）。
-const PENDING_PAGE_SYNC = new Set(['editLockStaleSweep'])
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])
@@ -50,16 +45,8 @@ describe('settings field-key parity (FIELDS ↔ patch row ↔ settings page)', (
 
   it('the settings page shows exactly FIELDS minus the config-face-only keys', () => {
     const page = settingsPageFields()
-    const expected = new Set([...fieldKeys].filter((key) => !CONFIG_FACE_ONLY.has(key) && !PENDING_PAGE_SYNC.has(key)))
+    const expected = new Set([...fieldKeys].filter((key) => !CONFIG_FACE_ONLY.has(key)))
     expect([...page].sort()).toEqual([...expected].sort())
-  })
-
-  it('a pending-page-sync key is a declared field not yet rendered by the page', () => {
-    const page = settingsPageFields()
-    for (const key of PENDING_PAGE_SYNC) {
-      expect(fieldKeys.has(key), `${key} must stay declared in FIELDS`).toBe(true)
-      expect(page.has(key), `${key} reached the settings page: remove it from PENDING_PAGE_SYNC`).toBe(false)
-    }
   })
 })
 

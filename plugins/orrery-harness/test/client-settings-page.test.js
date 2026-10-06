@@ -126,7 +126,7 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
   it('renders the GROUPS field table through the prop-injected editors', async () => {
     const { definition, exports, editors } = await loadPage()
@@ -156,17 +156,17 @@ describe('client.settings-page chunk', () => {
     })
 
     expect(rendered.__type).toBeTruthy()
-    // 9 group headers + 15 choice rows + 1 model picker + 25 value-field rows
+    // 9 group headers + 16 choice rows + 1 model picker + 25 value-field rows
     // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
     // + 1 disabled-categories editor row + 1 notification-permission row
     // + 1 edit-lock-maintenance row
-    expect(rendered.children).toHaveLength(61)
+    expect(rendered.children).toHaveLength(62)
     // the permission entry sits at the end of the notify group
     const permissionRow = rendered.children.find((child) => child.key === 'notify-permissions')
     expect(permissionRow.__type).toBe(editors.NotifyPermissionsField)
     expect(typeof permissionRow.t).toBe('function')
     expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(9)
-    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(15)
+    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(16)
     expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
     expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(25)
     // the Edit Lock maintenance row opens the profile-wide maintenance panel
@@ -265,9 +265,9 @@ describe('client.settings-page chunk', () => {
       editors,
     })
 
-    // the modal trails the form children (61 group rows + 1 modal)
-    expect(rendered.children).toHaveLength(62)
-    const modal = rendered.children[61]
+    // the modal trails the form children (62 group rows + 1 modal)
+    expect(rendered.children).toHaveLength(63)
+    const modal = rendered.children[62]
     expect(modal.key).toBe('restart-reminder')
     expect(modal.open).toBe(true)
     expect(modal.title).toBe('restartReminderTitle')
