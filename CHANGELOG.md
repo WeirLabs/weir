@@ -4,6 +4,8 @@
 - **创造模式限定技能导致普通预设会话 Apply 整批失败**：工作区默认值/预设库携带的创造模式技能（如 cordis-plugin-development）在普通 orrery 会话无法解析，此前任何 Apply 都被整批拒绝且只提示笼统失败。现在 Apply 自动**跳过**「已知但当前预设不适用」的条目（回执与面板逐条列明），其余正常提交、记录无损（切回创造模式自动恢复可用）；真正不存在的名称仍然明确报错。设置页同时修复「静默清理失效锁」开关默认显示为关（实际运行为开）的默认值声明。
 - **能力 Badge/面板反复显示「能力不可用」**：一组同族缺陷——typert 注册随 fiber 重挂载被静默撤回、cwd 解析错过启动恢复竞态且对无存活 agent 的历史会话无解、客户端订阅收敛帧调用了不存在的 API、Apply 后失效事件从未接线重发。修复：注册改为幂等且每次读取前自愈；cwd 解析依次走 事件缓存→存活 agent 注册表→**持久化会话日志头**（历史会话冷打开不再有竞态）；Badge 收敛订阅改走 `ctx.remote.$on`；Apply 被接受后正确重发失效事件，面板与 Badge 实时刷新。详见 [会话能力管理器](docs/features/session-capability-manager.md)「会话 Badge 与 Capabilities 面板」。
 
+- **Worktree 面板重启后首个会话显示为空**：GUI 查看恢复会话走冷读（`page`/`follow`/`projections`），从不激活 agent，而车道面板的只读端点只认 live agent——重启后首个会话得到 `SESSION_NOT_LIVE` 降级视图，面板挂载时读一次又不重试，直到切换会话重挂载才恢复。端点的会话解析改为冷读安全：live agent → 已 attach 会话 → `sessionQuery` 冷观察（车道账本是仓库级数据，只需 `header.cwd` 与会话 id；Worktree 模式取冷折叠的 `orreryWorktree` 投影），重启后面板立即可读；diff 端点同样打通。详见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+
 ### Added
 - **委派：continuable 形态（`mode: 'continuable'`）**：`delegate` 新增 `mode` 选项——`continuable` 子代立即返回稳定 childId、结果经内建结算通知送达，父代理可用 `send_message` 追问或中途纠偏（子代保留全部上下文）、`interrupt_agent` 打断当前回合而不销毁它，应用重启后冷恢复仍可续聊。默认 `one-shot` 不变；`mode` 与 `group` 互斥，continuable 与 `run_in_background`、`worktree` 互斥（均以明确错误拒绝）。continuable 子代占用运行时续聊容量（默认 8），容量满时以点名上限的错误失败，不排队、不降级。详见 [委派特性文档](docs/features/category-delegation.md)。
 
