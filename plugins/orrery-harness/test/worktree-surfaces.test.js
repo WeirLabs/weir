@@ -376,6 +376,18 @@ describe('delegate lane binding', () => {
     const { tool } = delegateWith({ lanes: undefined })
     await tool.execute({ category: 'quick', prompt: 'TASK: x', worktree: 'a-001' }, exec).then(() => expect(1).toBe(0), (error) => expect(error.message).toContain('WORKTREE_DISABLED'))
   })
+
+  it('rejects mode "continuable" before any lane binding (a lane expects a settle-once worker)', async () => {
+    const lanes = fakeLanes()
+    const { tool, spawned } = delegateWith({ lanes })
+    await tool.execute({ category: 'quick', prompt: 'TASK: x', mode: 'continuable', worktree: 'a-001' }, exec).then(
+      () => expect(1).toBe(0),
+      (error) => expect(error.message).toContain('worktree cannot be combined'),
+    )
+    expect(spawned).toHaveLength(0)
+    // the execute-entry mutex fires before any lane work: no bind, no rollback
+    expect(lanes.log).toEqual([])
+  })
 })
 
 describe('Worktree mode guard on main agents', () => {
