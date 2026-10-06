@@ -39,8 +39,11 @@ function decide(options, obs) {
   // the first settlement notice lands. Bounded marker wait (design D1),
   // never lastRole: a runtime-context snapshot interleaving as a user message
   // between the tool result and the next request misaligned the old gate and
-  // ended the turn while the child was still running.
-  if (history.includes('continuable child')) {
+  // ended the turn while the child was still running. The gate marker is the
+  // result text's signature, NOT the bare words 'continuable child' — the
+  // doctrine renders in-history as a system message and carries that phrase
+  // as prose, so a bare-phrase gate would fire before any delegation.
+  if (history.includes('continuable child(ren); each result arrives in a built-in settlement notice')) {
     const verdict = waitForMarker(history, 'CONTINUABLE_FIRST_RESULT')
     if (verdict.state === 'wait') return verdict.chunks
     return textChunks('unhandled continuable tool turn')
