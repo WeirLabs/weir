@@ -25,7 +25,10 @@ export const STALE_SWEEP_COOLDOWN_MS = 60_000
 
 /** Per-key detached sweep scheduler. At most one in-flight sweep and one
  * cooldown window per key (the management-domain ROOT, not a session), so
- * message volume across sessions never scales the aggregate scan cost.
+ * message volume across sessions never scales the aggregate scan cost. Idle
+ * entries whose cooldown window expired are RECLAIMED — on each trigger pass
+ * and when a job completes — and close() empties the registry, so the map
+ * never grows unboundedly with the number of domains a process has touched.
  *
  * Dispatch happens on a zero-delay timer and is NEVER awaited by the caller:
  * the turn proceeds immediately (unlike auto-resume, which must precede the
@@ -42,12 +45,22 @@ export function createStaleSweepScheduler({ cooldownMs = STALE_SWEEP_COOLDOWN_MS
   /** @type {Map<string, {inFlight: Promise<unknown> | null, coolingUntil: number, handle: unknown}>} */
   const entries = new Map()
   let closed = false
+  /** Reclaim entries that are neither dispatched nor in flight and whose
+   * cooldown window expired. @param {unknown} [except] */
+  function prune(except = undefined) {
+    const at = now()
+    for (const [key, entry] of entries) {
+      if (entry === except) continue
+      if (entry.inFlight === null && entry.handle === null && at >= entry.coolingUntil) entries.delete(key)
+    }
+  }
   return Object.freeze({
     /** Arm one sweep for key. Returns false when the key is closed, one is
      * already dispatched or in flight, or the cooldown window is still open.
      * @param {string} key @param {() => unknown} job */
     trigger(key, job) {
       if (closed || typeof key !== 'string' || key.length === 0 || typeof job !== 'function') return false
+      prune()
       let entry = entries.get(key)
       if (!entry) {
         entry = { inFlight: null, coolingUntil: 0, handle: null }
@@ -66,18 +79,25 @@ export function createStaleSweepScheduler({ cooldownMs = STALE_SWEEP_COOLDOWN_MS
           .then(() => {
             entry.inFlight = null
             entry.coolingUntil = now() + cooldownMs
+            // Completion is the other reclamation point: peers whose windows
+            // lapsed while this job ran are dropped here.
+            prune(entry)
           })
         entry.inFlight = pending
       })
       return true
     },
-    /** Cancel every undispatched sweep. In-flight jobs settle untouched. */
+    /** Entry count, for diagnostics and tests. */
+    get size() { return entries.size },
+    /** Cancel every undispatched sweep and forget every key. In-flight jobs
+     * settle untouched. */
     close() {
       closed = true
       for (const entry of entries.values()) {
         if (entry.handle !== null) disarm(entry.handle)
         entry.handle = null
       }
+      entries.clear()
     },
   })
 }

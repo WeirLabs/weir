@@ -18,6 +18,7 @@ import { createEditLockManager } from '../src/edit-lock/manager.js'
 import { createEditLockPlugin } from '../src/edit-lock/index.js'
 import { remoteDomain } from '../src/edit-lock/domain.js'
 import { createEditLockPeer, PEER_KINDS } from '../src/edit-lock/peer.js'
+import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtureExclude as excludeFromGit } from './helpers/edit-lock-fixtures.js'
 
 const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
@@ -111,6 +112,32 @@ test('B: keys are independent and close() cancels only undispatched work', async
   assert.equal(b, 0)
   assert.equal(scheduler.trigger('root-a', () => { a++ }), false)
   assert.equal(a, 0)
+})
+
+test('B: expired-cooldown entries are reclaimed on the next pass and close() empties the registry', async () => {
+  const timer = manualTimer()
+  let clock = 1000
+  const scheduler = createStaleSweepScheduler({ cooldownMs: 60_000, now: () => clock, setTimer: timer.setTimer, clearTimer: timer.clearTimer })
+  const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve() }
+
+  assert.equal(scheduler.trigger('root-a', () => {}), true)
+  assert.equal(scheduler.size, 1)
+  timer.fire()
+  await flush()
+  // root-a is cooling; a different key's pass does not reclaim it yet.
+  assert.equal(scheduler.trigger('root-b', () => {}), true)
+  assert.equal(scheduler.size, 2)
+  timer.fire()
+  await flush()
+  // Both cooldown windows lapse; the next schedule pass reclaims both entries.
+  clock += 60_001
+  assert.equal(scheduler.trigger('root-c', () => {}), true)
+  assert.equal(scheduler.size, 1)
+  // A reclaimed key starts fresh: it arms again at once.
+  assert.equal(scheduler.trigger('root-a', () => {}), true)
+  assert.equal(scheduler.size, 2)
+  scheduler.close()
+  assert.equal(scheduler.size, 0)
 })
 
 // ---------- C. manager.releaseStale ----------
@@ -273,6 +300,7 @@ test('C: ownership required by an unresolved update is refused by ordinary fence
     assert.equal(result.skipped.length, 1)
     assert.equal(result.skipped[0].row.resourceId, fenced)
     assert.match(result.skipped[0].reason, /fence/)
+    assert.deepEqual(result.failed, [])  // fence refusal is a quiet skip, never a failure
     assert.equal(manager.status().locks.length, 1)
     assert.equal(manager.status().locks[0].resourceId, fenced)
   })
@@ -298,6 +326,44 @@ test('C: a duplicated sweep answer is idempotent — already-released rows skip,
   })
 })
 
+test('C: a persistence failure surfaces as a failure, never a skip — and poisons the manager', async () => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'orrery-stale-mgr-')))
+  const directory = join(base, 'authority')
+  const work = join(base, 'w')
+  await mkdir(directory)
+  await mkdir(work)
+  const realStore = await openEditLockStore({ directory, domainId: base, mode: 'create' })
+  let failWrites = false
+  const store = /** @type {any} */ ({
+    snapshot: () => realStore.snapshot(),
+    record: (/** @type {any} */ input) => (failWrites ? Promise.reject(new Error('disk full')) : realStore.record(input)),
+    close: () => realStore.close(),
+  })
+  try {
+    const manager = createEditLockManager({ store, managerIncarnation: 'm' })
+    const target = join(work, 'gone.txt')
+    await writeFile(target, 'x')
+    const execution = await manager.openSession('s')
+    await manager.acquire(execution, target)
+    await rm(target)
+    const observed = observe(manager, target)
+
+    failWrites = true
+    const result = await manager.releaseStale([observed], isMissingTarget)
+    assert.deepEqual(result.released, [])
+    assert.deepEqual(result.skipped, [])  // a persistence failure is NOT counted as a skip
+    assert.equal(result.failed.length, 1)
+    assert.equal(result.failed[0].row.resourceId, target)
+    assert.match(result.failed[0].reason, /persistence|poisoned/)
+    // Fail-closed: nothing persisted, and the poisoned manager refuses further work.
+    assert.throws(() => manager.status(), /poisoned/)
+  } finally {
+    failWrites = false
+    await realStore.close()
+    await rm(base, { recursive: true, force: true })
+  }
+})
+
 // ---------- D. composition ----------
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
@@ -313,7 +379,7 @@ async function fixture() {
   return { base, root, directory }
 }
 
-function fakeHost(root) {
+function fakeHost(root, { sweepSetTimeout } = {}) {
   const listeners = new Map()
   const provided = new Map()
   const agents = new Map()
@@ -323,6 +389,8 @@ function fakeHost(root) {
   let editLockSection
   const ctx = {
     fs: stubFs,
+    // Optional manual timer for the sweep scheduler (dispose-race tests).
+    ...(sweepSetTimeout ? { setTimeout: sweepSetTimeout } : {}),
     logger: { warn(message) { warns.push(String(message)) } },
     on(name, fn) { listeners.set(name, [...(listeners.get(name) ?? []), fn]) },
     emit(name, record) { emitted.push({ name, record }) },
@@ -523,6 +591,40 @@ test('D: plugin unmount before dispatch cancels undispatched sweeps', async (t) 
   assert.equal(snapshot.payload.state.locks.length, 1)
 })
 
+test('D: a dispose landing while the domain-open fulfillment is pending cancels the sweep', async (t) => {
+  const { root, directory } = await fixture()
+  // Manual sweep timer: dispatch is synchronous with fire(), so the test can
+  // dispose the agent in the exact window between the job's pre-submission
+  // checks and the forRoot(...).then fulfillment callback.
+  const queue = []
+  const sweepTimer = {
+    setTimer: (/** @type {() => void} */ fn) => { queue.push(fn); return fn },
+    fire: () => { const fn = queue.shift(); if (fn) fn() },
+  }
+  const host = fakeHost(root, { sweepSetTimeout: sweepTimer.setTimer })
+  const { dispose, service } = await boot(host, root, directory)
+  t.after(() => dispose())
+  await deadOwnerLock(host, service, root, 's-dead', 'a.txt')
+  const live = await createAgent(host, 's-live')
+
+  await host.userMessage(live)
+  assert.equal(queue.length, 1)
+  sweepTimer.fire()
+  // The job ran (pre-submission checks passed) and queued its fulfillment
+  // callback behind this continuation; the dispose listener body is
+  // synchronous, so the dispose lands BEFORE the fulfillment runs.
+  await Promise.resolve()
+  await host.emit('agent/disposed', { agent: live })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  // The fulfillment re-check saw the dispose: no scan, no release, no audit.
+  assert.equal(host.emitted.filter((e) => e.record?.data?.kind === 'stale-sweep').length, 0)
+  assert.deepEqual(host.warns, [])
+  await dispose()
+  const snapshot = JSON.parse(await readFile(join(directory, 'snapshot.json'), 'utf8'))
+  assert.equal(snapshot.payload.state.locks.length, 1)
+})
+
 // ---------- E. cross-process ----------
 
 test('E: the client domain forwards the sweep trigger as a staleSweep channel call', async () => {
@@ -543,4 +645,89 @@ test('E: the publisher peer routes staleSweep to the lifecycle with the channel 
   assert.deepEqual(seen, ['remote-session'])
   assert.deepEqual(result, { released: [], skipped: [] })
   assert.equal(PEER_KINDS.includes('staleSweep'), true)
+})
+
+// ---------- F. lifecycle coalescing + failure surfacing (publisher-authoritative) ----------
+
+/** Minimal runtime double for sweep tests: one lock row with a genuinely
+ * missing target (ENOENT) and a scripted releaseStale. */
+function sweepRuntime(lock, releaseStale) {
+  return /** @type {any} */ ({
+    control: {
+      status: () => ({ managerIncarnation: 'm', sessions: [{ sessionId: lock.owner, executionEpoch: 7 }], locks: [lock] }),
+      releaseStale,
+    },
+    requests: {},
+    close: async () => {},
+  })
+}
+
+test('F: concurrent local and as-if-peer triggers share ONE scan; the cooldown answers without scanning', async (t) => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'orrery-stale-life-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const missing = join(base, 'gone.txt')  // never created: ENOENT
+  let clock = 5000
+  let scans = 0
+  let releaseCalls = 0
+  /** @type {(() => void) | undefined} */
+  let open
+  const lock = { resourceId: missing, owner: 'dead', generation: 3, status: 'user-interrupted' }
+  const runtime = sweepRuntime(lock, (/** @type {any[]} */ observed) => {
+    releaseCalls++
+    return new Promise((resolve) => { open = () => resolve({ released: [], skipped: observed.map((row) => ({ row, reason: 'stale row target exists again' })), failed: [] }) })
+  })
+  const rawStatus = runtime.control.status
+  runtime.control.status = () => { scans++; return rawStatus() }
+  const lifecycle = createEditLockLifecycle(runtime, () => undefined, { sweepCooldownMs: 60_000, sweepNow: () => clock })
+
+  // A local trigger and an as-if-peer trigger landing together run one scan.
+  const local = lifecycle.sweepStale('local-session')
+  const peer = lifecycle.sweepStale('peer-session')
+  assert.equal(scans, 1)
+  assert.equal(releaseCalls, 1)
+  open?.()
+  const [first, joined] = await Promise.all([local, peer])
+  assert.equal(joined, first)  // the in-flight trigger JOINED: same result, no extra scan
+
+  // Inside the cooldown window a trigger is answered without scanning.
+  const cooled = await lifecycle.sweepStale('another-peer')
+  assert.equal(cooled.coalesced, 'cooldown')
+  assert.deepEqual([cooled.released, cooled.skipped, cooled.failed], [[], [], []])
+  assert.equal(scans, 1)
+
+  // After the window the next trigger scans again.
+  clock += 60_001
+  const again = lifecycle.sweepStale(null)
+  assert.equal(scans, 2)
+  assert.equal(releaseCalls, 2)
+  open?.()
+  await again
+  await lifecycle.close()
+})
+
+test('F: each failure earns exactly one bounded warning; skips stay quiet; releases still audit', async (t) => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'orrery-stale-life-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const missing = join(base, 'gone.txt')
+  const warns = []
+  const audits = []
+  const lock = { resourceId: missing, owner: 'dead', generation: 1, status: 'active' }
+  const runtime = sweepRuntime(lock, async (/** @type {any[]} */ observed) => ({
+    released: [{ resourceId: missing, owner: 'dead', generation: 1 }],
+    skipped: [{ row: observed[0], reason: 'unresolved publication fence: retained-ownership' }],
+    failed: [{ row: observed[0], reason: 'manager persistence or installation failed; poisoned' }],
+  }))
+  const lifecycle = createEditLockLifecycle(runtime, () => undefined, {
+    warn: (/** @type {string} */ message) => warns.push(String(message)),
+    onStaleRelease: (/** @type {any} */ row, /** @type {any} */ trigger) => audits.push({ row, trigger }),
+  })
+  const result = await lifecycle.sweepStale('trigger-session')
+  assert.equal(result.failed.length, 1)
+  assert.equal(result.skipped.length, 1)
+  assert.equal(warns.length, 1)  // exactly one bounded warning, for the failure only
+  assert.match(warns[0], /stale sweep/)
+  assert.match(warns[0], /poisoned/)
+  assert.match(warns[0], /gone\.txt/)
+  assert.deepEqual(audits.map((entry) => [entry.row.resourceId, entry.trigger]), [[missing, 'trigger-session']])
+  await lifecycle.close()
 })

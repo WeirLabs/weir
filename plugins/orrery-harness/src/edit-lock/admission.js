@@ -28,7 +28,11 @@ export function admitMutation(operations, candidate, mode = 'normal') {
   for (const operation of operations) {
     if (operation.phase !== 'publishing' && operation.phase !== 'unknown') continue
     const fence = operation.fence
-    const deny = (/** @type {string} */ reason) => { throw new Error(`unresolved publication fence: ${reason}`) }
+    const deny = (/** @type {string} */ reason) => {
+      // Tagged so trusted maintenance (the stale-lock sweep) can tell this
+      // expected refusal from a persistence/poison/unexpected failure.
+      throw Object.assign(new Error(`unresolved publication fence: ${reason}`), { admissionRefusal: true })
+    }
     if (!candidate || !fence) deny('scope-unproved')
     // Pure removal cannot publish or grant authority, but MUST retain the exact
     // ownership required by unresolved updates, even under historical fences.

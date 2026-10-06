@@ -507,37 +507,50 @@ function managerCore(store, kernel) {
      * not the owner class, provides the safety. Any mismatch, an already-gone
      * row, or the ordinary unresolved-publication fence admission refusal is
      * a SKIP — a discarded draft, never a persisted no-op, never an error —
-     * and every other row is still processed. The missing-target probe is
-     * injected: this layer performs no filesystem IO.
+     * and every other row is still processed. Persistence, poison and any
+     * unexpected error are NOT skips: the row lands in `failed` so the caller
+     * can log it (fail-closed semantics untouched: nothing was persisted).
+     * The missing-target probe is injected: this layer performs no filesystem IO.
      * @param {{resourceId: string, owner: string, generation: number, executionEpoch: number, status: string}[]} observed
      * @param {(resourceId: string) => boolean} isMissing
-     * @returns {Promise<{released: {resourceId: string, owner: string, generation: number}[], skipped: {row: object, reason: string}[]}>} */
+     * @returns {Promise<{released: {resourceId: string, owner: string, generation: number}[], skipped: {row: object, reason: string}[], failed: {row: object, reason: string}[]}>} */
     async releaseStale(observed, isMissing) {
       healthy()
       if (typeof isMissing !== 'function') throw new Error('stale release requires a missing-target probe')
       const released = []
       const skipped = []
+      /** @type {{row: object, reason: string}[]} */
+      const failed = []
+      /** An expected skip: the observation no longer holds at the execution
+       * point; a discarded draft, never a persisted no-op, never an error.
+       * @param {string} reason */
+      const staleSkip = reason => Object.assign(new Error(reason), { staleSkip: true })
       for (const input of Array.isArray(observed) ? observed : []) {
         const row = { resourceId: input?.resourceId, owner: input?.owner, generation: input?.generation, executionEpoch: input?.executionEpoch, status: input?.status }
         try {
           released.push(await transact(draft => {
             const status = operations.status()
             const lock = status.locks.find(item => item.resourceId === row.resourceId)
-            if (!lock) throw new Error('stale row already released')
+            if (!lock) throw staleSkip('stale row already released')
             const session = status.sessions.find(item => item.sessionId === lock.owner)
             if (!session || lock.owner !== row.owner || lock.generation !== row.generation ||
                 lock.status !== row.status || session.executionEpoch !== row.executionEpoch) {
-              throw new Error('stale row changed before execution')
+              throw staleSkip('stale row changed before execution')
             }
-            if (!isMissing(row.resourceId)) throw new Error('stale row target exists again')
+            if (!isMissing(row.resourceId)) throw staleSkip('stale row target exists again')
             draft.operations.release({ managerIncarnation, sessionId: lock.owner, executionEpoch: session.executionEpoch, resourceId: lock.resourceId, generation: lock.generation })
             return { resourceId: lock.resourceId, owner: lock.owner, generation: lock.generation }
           }, { kind: 'resources', resourceIds: [row.resourceId] }, 'release'))
         } catch (error) {
-          skipped.push({ row, reason: String(/** @type {any} */ (error)?.message ?? error) })
+          const reason = String(/** @type {any} */ (error)?.message ?? error)
+          // Quiet, counted skips: the row was gone, the predicate no longer
+          // matched, or ordinary fence admission refused. Anything else —
+          // persistence failure, poison, unexpected — is a surfaced failure.
+          if (/** @type {any} */ (error)?.staleSkip === true || /** @type {any} */ (error)?.admissionRefusal === true) skipped.push({ row, reason })
+          else failed.push({ row, reason })
         }
       }
-      return { released, skipped }
+      return { released, skipped, failed }
     },
     /** Trusted classifier only (durable turn/end error). Marks every retained,
      * not yet abnormal lock of the session abnormal; never releases. Subtractive,
