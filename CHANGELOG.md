@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- **编辑锁：失效锁静默清扫（默认开启）**：你发送任意消息时，系统会为该工作区的编辑锁管理域调度一次静默清扫——凡是锁目标文件已不存在（被外部删除或移动）的锁，经仲裁点逐字段复核（owner／generation／epoch／锁状态与观察时刻一致、且目标在执行点仍缺失）后按普通释放自动清理，不再只能逐个手动 `/edit-lock unlock`。未决发布围栏保护的归属绝不被触碰；清扫不写入对话，每次释放经共享审计留痕；运行时注入消息不触发，每个管理域 60 秒冷却且单飞。设置页「编辑」组新增开关可关闭，即时生效。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 
 - **Orrery 创造模式（新预设变体）**：预设选择器新增「Orrery 创造模式」——完整的 Orrery 工作方式（意图门、分类委派、todo 续推、自动压缩、锚点编辑等全部保留）融合 DSH 创造模式的能力：只读运行时检查工具（`cordis_inspect_list`/`cordis_inspect_query`）、持久化插件管理工具，以及四项 Cordis 插件/预设开发技能（`agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`，首次会话即默认启用）。用于开发、调试和实验 DSH 本身；「Orrery」预设与进行中会话完全不受影响。详见 [预设打包](docs/features/preset-packaging.md)。
 - **Orrery 创造模式：内置使用指引**：创造模式会话的系统提示词新增 `orchestrator:creative-guide` 段（紧随 Orchestrator 协作规则）——运行时检查的正确调用顺序（先 list 后 query、只读语义）、插件管理纪律（先列表再操作、改动经禁用→启用重应用、版本豁免需明示风险）、四项开发技能的加载时机，以及插件组合纪律（ctx-only、object-rooted schema、isolate realm）。仅创造模式会话携带；「Orrery」预设不变。详见 [预设打包](docs/features/preset-packaging.md)。
