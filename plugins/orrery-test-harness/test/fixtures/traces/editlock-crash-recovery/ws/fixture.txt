@@ -1,0 +1,6 @@
+line one
+CHANGED-BY-HASHLINE
+bulk 一
+bulk 二
+bulk 三
+line three

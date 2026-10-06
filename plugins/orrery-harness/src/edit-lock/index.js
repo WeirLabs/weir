@@ -324,6 +324,10 @@ return (ctx, config = {}) => {
   /** Agents disposed in this mount; their undispatched sweep work cancels.
    * @type {WeakSet<object>} */
   const disposedAgents = new WeakSet()
+  /** One queued automatic-recovery summary notice per management root (design
+   * D3): delivered to the first agent that finishes domain start, then gone.
+   * @type {Map<string, string>} */
+  const recoveryNotices = new Map()
   // The tool registry may hand back a normalized copy of a definition; the
   // claimed execute function is what actually runs, so it is the identity.
   /** @type {WeakSet<Function>} */
@@ -351,14 +355,31 @@ return (ctx, config = {}) => {
     if (event?.kind === 'pending' && Number.isSafeInteger(event.count)) syncReplyTool(agent, event.count)
   }
 
-  /** @param {string} root @param {string} directory */
-  async function openDomain(root, directory) {
+  /** @param {string} root @param {string} directory
+   * @param {string} [noticeKey] registry key agents are bound to (differs from
+   * `root` in fixed-domain compositions: the registry key is the resolved
+   * management root of the session cwd) */
+  async function openDomain(root, directory, noticeKey = root) {
     try {
       if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode: 0o700 })
       let runtime
       try {
         // The store mode is read only after the reservation is held.
         runtime = await openReservedEditLockRuntime({ root, directory, domainId: root, mode: () => storeMode(directory), fs })
+        // Dead-process unknowns settled in the recovery commit (design D3):
+        // one shared audit per recovery, and at most one summary notice
+        // queued for the first agent that starts a turn in this domain.
+        const settledRecovery = runtime.automaticRecovery
+        if (settledRecovery?.records?.length) {
+          const settledOperations = settledRecovery.records.reduce((count, record) => count + record.operations.length, 0)
+          audit(null, AUDIT_TYPES.editLockMaintenance, {
+            kind: 'automatic-recovery', root, revision: settledRecovery.revision,
+            owners: settledRecovery.records.map(record => record.owner),
+            recoveryIds: settledRecovery.records.map(record => record.recoveryId),
+            operations: settledOperations,
+          }, { root })
+          recoveryNotices.set(noticeKey, `Edit Lock: ${settledOperations} unresolved publication(s) left behind by a previous, crashed process were settled automatically while opening this workspace. Their outcomes stay unknown in history; the blocked files are editable again. Details are in the administrative ledger and the maintenance audit.`)
+        }
       } catch (error) {
         if (/** @type {any} */ (error)?.code !== 'EEXIST') throw error
         // Another cooperating host publishes: become its client, never a writer.
@@ -399,9 +420,9 @@ return (ctx, config = {}) => {
   }
   const registry = createDomainRegistry(root => {
     const fixed = options.fixed
-    if (fixed) return openDomain(fixed.root, fixed.directory)
+    if (fixed) return openDomain(fixed.root, fixed.directory, root)
     try { exclude(root) } catch (error) { ctx.logger?.warn?.(`edit lock: could not update .git/info/exclude: ${/** @type {any} */ (error)?.message ?? error}`) }
-    return openDomain(root, join(root, AUTHORITY_DIR))
+    return openDomain(root, join(root, AUTHORITY_DIR), root)
   }, resolveRoot)
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
@@ -645,6 +666,14 @@ return (ctx, config = {}) => {
     // reservation a holder just asked for, one step later.
     if (domain && turn && lastTurn.get(agent) !== turn) {
       lastTurn.set(agent, turn)
+      // A queued automatic-recovery summary (design D3) reaches exactly one
+      // agent as an ordinary mid-turn notice — the same proven delivery point
+      // as the settling and expiry notices.
+      const recoveryNotice = recoveryNotices.get(registry.rootOf(agent) ?? '')
+      if (recoveryNotice) {
+        recoveryNotices.delete(registry.rootOf(agent) ?? '')
+        try { deliverLocal(agent, recoveryNotice) } catch { /* the audit record is the durable account */ }
+      }
       // A genuine user message arrived while this session was stopped: resume
       // it and confirm its retained files BEFORE the turn's first step, so the
       // edits the turn is about to request are admitted (message-driven

@@ -1,0 +1,211 @@
+{
+  "completed": false,
+  "op": "report",
+  "caller": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+  "sessions": {
+    "2b3a5905-8467-4516-91a1-ceaac5e14429": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156768
+      }
+    },
+    "2bb6a634-d1e3-41cd-a3e5-907c0cf40d77": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156567
+      }
+    },
+    "3d8ca534-b621-4ff3-a5ab-17a503458304": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156622
+      }
+    },
+    "61006c5c-0daa-478d-8311-42b11a4463d8": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156348
+      }
+    },
+    "690a6471-ce1c-4319-902e-7372ef094b3d": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156904
+      }
+    },
+    "7382d971-a7df-4826-92f6-fe02886a3e0f": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156456
+      }
+    },
+    "86ab6016-661c-4fea-a1ff-f5bc60d4d5c7": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156837
+      }
+    },
+    "92989bdc-acf4-49b6-b225-21c7e0dfb2f6": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156692
+      }
+    },
+    "9bf92cac-c561-4d7d-a01c-2dd8645f0b6f": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156971
+      }
+    },
+    "c6d75297-1d24-4b63-af20-73b388102d3c": {
+      "inherited": {
+        "revision": 2,
+        "skillNames": [
+          "fixture-a"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 2
+        },
+        "capturedAt": 1791311157140
+      }
+    },
+    "d9c113b8-fe16-4b9d-9ebe-fd73aabcfae1": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156517
+      }
+    },
+    "f7b97e32-0971-4e7d-916e-7ff48b55f45a": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1",
+          "revision": 1
+        },
+        "capturedAt": 1791311156425
+      }
+    },
+    "session-27222bc9-b6cc-4642-9cee-f9fe6faf97b1": {
+      "selection": {
+        "revision": 2,
+        "skillNames": [
+          "fixture-a"
+        ],
+        "origin": "apply",
+        "parent": null,
+        "capturedAt": null
+      }
+    }
+  },
+  "recapture": {
+    "child": "c6d75297-1d24-4b63-af20-73b388102d3c",
+    "revision": 2,
+    "skillNames": [
+      "fixture-a"
+    ]
+  },
+  "callerStatus": {
+    "reason": null,
+    "error": null
+  },
+  "callerCatalog": [
+    "fixture-a"
+  ]
+}
