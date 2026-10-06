@@ -63,6 +63,7 @@
 
 - **会话能力管理器：Capabilities 面板与预设入口（UX 重做）**：能力管理器从输入框上方的 320px 弹层升级为**右侧栏 Capabilities 面板**（与 Worktree 面板同模式）——Skills 视图按来源分组（Orrery 内置/user/project/custom）、真实复选框、技能描述次行、冲突/缺失标记与搜索；MCP 视图保留「Orrery 管理/未托管」分组并重做添加表单（逐字段校验）；底栏 Apply/Discard 带净增减摘要（+n/−m）。输入框 Badge 保留为会话级状态与入口（回执计数、警告点、帧订阅收敛不变），点击打开面板；无右侧栏的 shell 自动回退为原弹层（同一视图组件树，零分叉）。**预设功能补交付**：新增「预设与默认值」视图——预设列表（全局/工作区分节）、保存当前草稿或已应用选择为预设、载入预设进草稿（未解析项明确报告）、重命名/替换/删除（显式确认）、工作区默认值的保存/查看/清除；对应 `/capabilities` 命令新增 `presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear` 九个动词，命令行路径同样可用。详见 [会话能力管理器](docs/features/session-capability-manager.md)「管理界面与通知」。
 - **会话能力管理器：预设打包导出与两阶段导入**：预设导出升级为 **version-2 打包文档**——按 Skill 来源分别处理：远程仓库来源只记录链接（portable ref）；安装在工作区与本地全局的 Skill 直接把文件打包随文档旅行；Orrery 内置按名称引用。导入永远先出摘要（每个 Skill 装进哪个根目录、几个文件、有没有同名冲突），你确认并选择冲突处理方式（默认取消，替换/共存需显式选择）后才落盘：工作区 Skill 装进当前工作区、本地 Skill 装进本机用户技能目录；任一文件写失败自动回滚，装入的技能不会自动启用（仍需勾选 + Apply）。全程零网络、零 server 启动，导入审计记录安装结果与冲突决策。详见 [会话能力管理器](docs/features/session-capability-manager.md)「预设与默认值」。
+- **Capabilities 面板视觉升级（纯视觉，零行为变化）**：分段控件标签栏、sticky 分组标题（计数徽标）、按来源着色的技能标签、行项悬停/选中/键盘焦点三态、MCP 与预设卡片分组、加载骨架行、错误/不支持/降级完整空态、底栏 diff 徽标与主按钮层级、危险操作警示条；Badge 同源微调。深浅主题安全（全 dsw token + hex fallback），hook 数与既有交互契约不变。详见 [会话能力管理器](docs/features/session-capability-manager.md)「管理界面与通知」。
 
 ### Changed
 
