@@ -9,7 +9,7 @@ import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
 import { assertBuiltinSkillMigration } from './skill-builtin-migration.js'
 import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
-import { createPresetInvalidation } from './preset-invalidation.js'
+import { createPresetInvalidation, emitPresetSelected } from './preset-invalidation.js'
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
@@ -248,6 +248,12 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         provider,
         publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
         onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
+        // The Apply-path convergence emission (5.2 parity with agent/created):
+        // an accepted Apply re-emits the preset invalidation event so every
+        // connected client drops cached capability state and refetches —
+        // without this hook the engine never re-emits and every Badge/panel
+        // goes stale until a remount.
+        invalidate: (sessionId, presetId) => emitPresetSelected((...args) => ctx.emit(...args), sessionId, presetId, text => ctx.logger?.warn?.(text)),
         warn: text => ctx.logger?.warn?.(text),
       })
       return sharedEngine

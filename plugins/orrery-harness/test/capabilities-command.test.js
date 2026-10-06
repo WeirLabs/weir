@@ -98,6 +98,7 @@ test('/capabilities apply commits through the shared engine and the receipt refl
     },
     on() {},
     effect(fn) { fn(); return () => {} },
+    emit(...args) { emitted.push(args) },
     logger: { warn() {} },
     get(name) {
       if (name === 'profileContext') return { home: root, name: 'it' }
@@ -105,6 +106,7 @@ test('/capabilities apply commits through the shared engine and the receipt refl
       return undefined
     },
   }
+  const emitted = []
   createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
   const command = registeredCommands.find(entry => entry.name === 'capabilities')
   const agent = { id: 'sess-apply', session: { id: 'sess-apply', header: { cwd: root } } }
@@ -123,6 +125,10 @@ test('/capabilities apply commits through the shared engine and the receipt refl
   const missing = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-2', expectedRevision: 1, skills: ['ghost'], mcpServers: [] })}` })
   expect(missing.kind).toBe('error')
   expect(JSON.parse(missing.text).missing).toEqual(['ghost'])
+
+  // The Apply-path convergence emission (5.2 parity): an accepted Apply
+  // re-emits the preset invalidation event so connected clients refetch.
+  expect(emitted).toEqual([['agent-preset/selected', 'sess-apply', 'orrery']])
 })
 
 test('/capabilities list shows the FULL inventory with selection marks (user-global/workspace skills visible)', async () => {
@@ -142,6 +148,7 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
     },
     on() {},
     effect(fn) { fn(); return () => {} },
+    emit(...args) { emitted.push(args) },
     logger: { warn() {} },
     get(name) {
       if (name === 'profileContext') return { home: root, name: 'it' }
@@ -149,6 +156,7 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
       return undefined
     },
   }
+  const emitted = []
   createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
   const command = registeredCommands.find(entry => entry.name === 'capabilities')
   const agent = { id: 'sess-list', session: { id: 'sess-list', header: { cwd: root } } }
