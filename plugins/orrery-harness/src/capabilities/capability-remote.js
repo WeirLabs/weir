@@ -36,6 +36,7 @@ export const CAPABILITY_READ_METHODS = ['receipt', 'list', 'conditions', 'preset
  *   - 'unknown-session' — the session id never reached the cwd cache (not an
  *                         agent this runtime created).
  *   - 'payload-failed'  — an underlying face threw; the cause is chained.
+ *   - 'channel-unavailable' — the typert registration is absent and could not be re-established.
  */
 export class CapabilityReadError extends Error {
   /**
@@ -89,7 +90,16 @@ export function capabilityReadBridge() {
 export function createCapabilityReadService(dependencies = {}) {
   const bridgeFor = dependencies.bridge ?? capabilityReadBridge
   const storeFor = dependencies.store ?? (profileContext => openCapabilityStore({ profileContext }))
+  // Self-healing registration (registration-race lesson): the typert
+  // contribution's lifecycle is tied to this plugin's fiber, and any fiber
+  // re-mount can leave the gateway's strict definition withdrawn (the
+  // re-enable races the previous registration's disposal and the duplicate
+  // rejection is swallowed). Verify on EVERY read and re-register on demand —
+  // a withdrawn channel recovers on the next Badge refresh instead of dying
+  // until the next app restart.
+  const ensure = dependencies.ensureRegistered ?? (() => true)
   const read = async (sessionId, build) => {
+    if (!ensure()) throw new CapabilityReadError('channel-unavailable', 'capability read channel is not registered with the gateway')
     const faces = bridgeFor()
     if (!faces) throw new CapabilityReadError('bridge-absent', 'capability read channel is not offered (non-Orrery preset or unmounted bridge)')
     const location = typeof faces.sessionCwd === 'function' ? faces.sessionCwd(sessionId) : null
@@ -178,8 +188,29 @@ export function apply(ctx) {
     warn('orrery capability remote: typert service is unavailable in this composition; capability reads stay unavailable on the client')
     return
   }
+  // Idempotent, self-healing registration. The registry rejects a duplicate
+  // package contribution, so a re-mount that races the previous fiber's
+  // disposal must not treat "already registered" as fatal when the endpoints
+  // are actually live — and a later withdrawal (that previous fiber finally
+  // disposing) must be repaired on the next read rather than left dead.
+  const endpointLive = () => {
+    try { return Boolean(typert.local?.get?.(`${CAPABILITY_READ_NAMESPACE}/receipt`)) } catch { return false }
+  }
+  const ensureRegistered = () => {
+    if (endpointLive()) return true
+    try {
+      typert.register(capabilityReadContribution())
+      return true
+    } catch (cause) {
+      // Duplicate-package race: a previous generation's registration still
+      // serves the endpoints — that is success, not a warning.
+      if (endpointLive()) return true
+      warn(`orrery capability remote: registration failed (${cause instanceof Error ? cause.message : String(cause)}); capability reads stay unavailable on the client`)
+      return false
+    }
+  }
   try {
-    const service = createCapabilityReadService()
+    const service = createCapabilityReadService({ ensureRegistered })
     // The exact frozen binding validateBinding requires (S27): { service,
     // serviceKey, namespace } — built by hand, no protocol import.
     service.typertRemote = Object.freeze({
@@ -189,9 +220,9 @@ export function apply(ctx) {
     })
     Object.freeze(service)
     ctx.root.reflect.provide(CAPABILITY_READ_SERVICE_KEY, service)
-    typert.register(capabilityReadContribution())
+    ensureRegistered()
   } catch (cause) {
-    warn(`orrery capability remote: registration failed (${cause instanceof Error ? cause.message : String(cause)}); capability reads stay unavailable on the client`)
+    warn(`orrery capability remote: setup failed (${cause instanceof Error ? cause.message : String(cause)}); capability reads stay unavailable on the client`)
   }
 }
 

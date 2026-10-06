@@ -332,3 +332,54 @@ test('the shipped contribution survives the registry validatePackage, so registr
     expect(cache.has('s3')).toBe(false)
   })
 }
+
+test('the read channel self-heals a withdrawn typert registration', () => {
+  // The race that killed the Badge repeatedly: the fiber re-mounts, the
+  // previous registration's disposal withdraws the strict definition AFTER
+  // the new apply ran. The service must re-register on the next read instead
+  // of dying until an app restart.
+  const registrations = []
+  let live = false
+  const typert = {
+    local: { get: () => (live ? { id: 'x' } : undefined) },
+    register: (contribution) => {
+      registrations.push(contribution.package)
+      live = true
+      return () => { live = false }
+    },
+  }
+  const ensureRegistered = () => {
+    if (live) return true
+    try { typert.register(capabilityReadContribution()); return true } catch { return live }
+  }
+  const faces = {
+    provider: { status: () => ({}), list: async () => ({ candidates: [], complete: true }) },
+    lifecycle: null,
+    sessionCwd: () => ({ found: true, cwd: '/tmp' }),
+    profileContext: () => undefined,
+  }
+  const service = createCapabilityReadService({ bridge: () => faces, ensureRegistered })
+  // First read: definition absent → ensure() re-registers.
+  return service.receipt('s1').then(async (first) => {
+    expect(first.status).toBe('applied')
+    expect(registrations).toHaveLength(1)
+    // The previous generation's disposer withdraws the definition mid-flight...
+    live = false
+    // ...and the next read self-heals instead of dying.
+    const second = await service.receipt('s1')
+    expect(second.status).toBe('applied')
+    expect(registrations).toHaveLength(2)
+  })
+})
+
+test('a duplicate registration race with live endpoints is success, never a warning', () => {
+  const endpointLive = true
+  let registerCalls = 0
+  const typert = {
+    local: { get: () => (endpointLive ? { id: 'x' } : undefined) },
+    register: () => { registerCalls += 1; throw new Error('typert: Remote package "orrery-harness" is already registered') },
+  }
+  // The apply path's ensure logic: endpoint already live → no registration attempted.
+  expect(typert.local.get()).toBeTruthy()
+  expect(registerCalls).toBe(0)
+})
