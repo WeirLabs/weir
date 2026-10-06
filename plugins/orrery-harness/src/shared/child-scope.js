@@ -21,7 +21,7 @@ export function isDelegatedChild(context) {
 
 /**
  * Orchestrator-only tools every spawned child loses. A child cannot delegate,
- * supervise, steer lanes, drive plan/goal flows, ask the user, present files,
+ * supervise, steer lanes, drive plan flows, ask the user, present files,
  * or hold edit locks — those verbs belong to the parent alone. Allow-list
  * filters (curated read-only targets) already exclude these and stay
  * untouched; see childToolFilter.
@@ -43,9 +43,6 @@ export const CHILD_DENY_TOOLS = [
   'worktree_abandon',
   'worktree_check',
   'exit_plan_mode',
-  'create_goal',
-  'get_goal',
-  'update_goal',
   'ask_user_question',
   'present',
   'edit_lock_acquire',

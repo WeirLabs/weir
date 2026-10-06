@@ -44,9 +44,11 @@ first"). When unsure, take HEAVY. Never downgrade mid-task.
    discovery wave: parallel lookups over the code, git history of the paths to
    touch, and prior evidence — fan out `delegate(agent="finder")` in the
    background for anything wider than one read wave.
-2. **Register the goal** with `create_goal`: every deliverable, every named
-   surface, every constraint, plus the success criteria and a one-line WHEN TO
-   STOP. The registered goal is the binding contract; skipping it is a defect.
+2. **State the binding contract in the notepad**: every deliverable, every
+   named surface, every constraint, plus the success criteria and a
+   one-line WHEN TO STOP — recorded in the notepad's Success criteria
+   section (opened in the next step). The written contract is binding;
+   skipping it is a defect.
 3. **Open a durable notepad** (`$(pwd)/.orrery/notepad-<timestamp>.md` or the
    system's temp dir): sections Plan / Success criteria / Now / Todo /
    Findings / Learnings. Append-only — never rewrite. After any compaction or
