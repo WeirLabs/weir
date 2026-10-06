@@ -14,6 +14,7 @@ import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtu
 const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
 import { createRecoveryDriver } from '../src/edit-lock/recovery.js'
 import { createRemoteEditLockDomain, serveEditLockEndpoint } from '../src/edit-lock/remote.js'
+import { openReservedEditLockRuntime } from '../src/edit-lock/reserved-runtime.js'
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
@@ -774,4 +775,30 @@ test('the view endpoint names why a cold session has no view instead of saying "
   assert.equal(unreadable.state, 'unavailable')
   assert.match(unreadable.reason, /invalid/i)
   disposeCorrupt()
+})
+
+test('a cold view is answered from the local image even when the domain would be a client (no peer kind, no channel)', async () => {
+  const { root, directory } = await fixture()
+  // A FOREIGN publisher holds the reservation and owns the interrupted session
+  // in the image: any domain this composition opened could only be its client.
+  const publisher = await openReservedEditLockRuntime({ root, directory, domainId: root, mode: () => storeMode(directory), fs: stubFs })
+  const lifecycle = createEditLockLifecycle(publisher, agent => agent.id)
+  const owner = { id: 's' }
+  await lifecycle.start(owner)
+  await lifecycle.service.acquire({ agent: owner }, { filePath: 'a.txt', cwd: root })
+  await lifecycle.stop(owner)
+  await lifecycle.dispose(owner)
+
+  // The composition mounts with NO agent ever created: the cold answer must
+  // come from the local image read — opening a client domain (the only kind
+  // possible here) or dialing the peer channel would neither happen nor help.
+  const host = coldHost(root)
+  const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
+  const value = (await host.read({ sessionId: 's' })).value
+  assert.equal(value.state, 'stopped')
+  assert.equal(value.cold, true)
+  assert.deepEqual(value.files.map((/** @type {any} */ file) => [file.name, file.status]), [['a.txt', 'user-interrupted']])
+  dispose()
+  await lifecycle.close()
+  await publisher.close()
 })
