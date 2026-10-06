@@ -1682,11 +1682,18 @@ window.__ModuleLoader__.load({
 			// when result.mode is "strict" with a decode hook), so the wire
 			// stays identical to the host contribution's src-json envelope.
 			let capabilityReadUnmount = null;
+			// One warn per distinct failure shape per page generation (see below).
+			const capabilityReadWarns = new Set();
+			const capabilityReadWarn = (kind, method, detail) => {
+				if (capabilityReadWarns.has(kind)) return;
+				capabilityReadWarns.add(kind);
+				console.warn(`[orrery] capability read degraded (${kind}${method ? `, ${method}` : ""})`, detail ?? "");
+			};
 			const capabilityReadMount = (() => {
 				try {
 					const existing = ctx.remote?.orreryCapabilities;
 					if (typeof existing?.receipt === "function") return Promise.resolve(existing);
-					if (typeof ctx.remote?.$mount !== "function") return Promise.resolve(null);
+					if (typeof ctx.remote?.$mount !== "function") { capabilityReadWarn("mount-unavailable", null, null); return Promise.resolve(null); }
 					return Promise.resolve(ctx.remote.$mount({
 						package: "orrery-harness",
 						descriptors: ["receipt", "list", "conditions"].map((method) => ({
@@ -1705,8 +1712,12 @@ window.__ModuleLoader__.load({
 					})).then((unmount) => {
 						capabilityReadUnmount = typeof unmount === "function" ? unmount : null;
 						return ctx.remote?.orreryCapabilities ?? null;
-					}, () => null);
-				} catch {
+					}, (mountError) => {
+						capabilityReadWarn("mount-rejected", null, mountError && (mountError.stack || mountError.message || String(mountError)));
+						return null;
+					});
+				} catch (syncError) {
+					capabilityReadWarn("mount-threw", null, syncError && (syncError.stack || syncError.message || String(syncError)));
 					return Promise.resolve(null);
 				}
 			})();
@@ -1716,17 +1727,28 @@ window.__ModuleLoader__.load({
 				// run before $mount installed it. The namespace face itself is
 				// re-read live at call time (a degraded composition may lose it
 				// again).
-				await capabilityReadMount;
+				const mounted = await capabilityReadMount;
 				let remote = null;
 				try { remote = ctx.remote?.orreryCapabilities ?? null; } catch { remote = null; }
-				if (typeof remote?.[method] !== "function") return fallback;
+				if (typeof remote?.[method] !== "function") {
+					// Degradation must be observable: the silent-fallback design
+					// made a four-link failure chain invisible for days. Warn
+					// once per distinct failure shape, never per render.
+					capabilityReadWarn(mounted === null ? "mount-null" : "namespace-missing", method, null);
+					return fallback;
+				}
 				// Remote methods resolve to the RemoteResult ENVELOPE —
 				// { ok: true, value } or { ok: false, error } — never the bare
 				// payload (the voice-input precedent unwraps it at every call
 				// site; a failing call resolves, not rejects, with ok:false).
 				let result = null;
-				try { result = await remote[method](sid); } catch { return fallback; }
-				return result?.ok === true && result.value != null ? result.value : fallback;
+				try { result = await remote[method](sid); } catch (callError) {
+					capabilityReadWarn("call-threw", method, callError);
+					return fallback;
+				}
+				if (result?.ok === true && result.value != null) return result.value;
+				capabilityReadWarn("call-failed", method, result?.error ?? result ?? null);
+				return fallback;
 			};
 			// The presets & workspace-default view is its own chunk, pulled only
 			// when the Presets view is first selected (D3) — the composition root
