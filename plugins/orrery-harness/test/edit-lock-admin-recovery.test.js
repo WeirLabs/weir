@@ -162,7 +162,7 @@ it('never steals an existing publisher reservation and serializes concurrent rec
   await entered
   try {
     await assert.rejects(recoverAuthority(f.input), /reserv/)
-    assert.throws(() => reservePublisher(f.directory), /reserv/)
+    await assert.rejects(reservePublisher(f.directory), /reserv/)
     assert.deepEqual(await readFile(join(f.directory, 'snapshot.json')), bytes)
   } finally { unblock() }
   assert.equal((await first).idempotent, false)

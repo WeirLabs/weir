@@ -5,9 +5,10 @@ import { openEditLockRuntime } from './runtime.js'
  * was published); a crash or failed drain after opening retains it for
  * operator-assisted recovery. Callers never auto-promote after a disconnect.
  * `mode` may be decided only after the reservation is held.
- * @param {Omit<Parameters<typeof openEditLockRuntime>[0], 'assertExclusive'|'mode'> & {mode: 'create'|'recover'|(() => 'create'|'recover')}} options */
+ * @param {Omit<Parameters<typeof openEditLockRuntime>[0], 'assertExclusive'|'mode'> & {mode: 'create'|'recover'|(() => 'create'|'recover'),
+ *   reservation?: Parameters<typeof reservePublisher>[1]}} options */
 export async function openReservedEditLockRuntime(options) {
-  const reservation = reservePublisher(options.directory)
+  const reservation = await reservePublisher(options.directory, options.reservation)
   let runtime
   try {
     const mode = typeof options.mode === 'function' ? options.mode() : options.mode
