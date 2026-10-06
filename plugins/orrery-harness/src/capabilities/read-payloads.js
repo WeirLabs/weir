@@ -5,6 +5,10 @@
 // payloads from one implementation. Plain functions with explicit deps — no
 // ctx, no singletons.
 import { skillIdentityKey } from './skill-identity.js'
+import { workspaceKeyOf } from './preset-library.js'
+import { createDefaultsTransaction } from './defaults-transaction.js'
+import { enumeratePresetUnits } from './store/enumerate.js'
+import { isSegment } from './store/paths.js'
 
 /**
  * The receipt payload: provider status + the provider's selected candidates
@@ -87,4 +91,67 @@ export async function buildListPayload(deps, options) {
  */
 export function buildConditionsPayload() {
   return { conditions: [] }
+}
+
+/**
+ * The presets payload: the presets of the global namespace plus this
+ * session's workspace namespace (read-only store scan). Domain failures are
+ * VALUES, not thrown errors — `{ status, reason? }` mirrors exactly what the
+ * command verb serializes into its error text, so the remote resolves it and
+ * the CLI keeps its byte-identical output from one implementation.
+ *
+ * @param {{ store: any }} deps store: an opened capability store.
+ * @param {{ cwd?: string, scope: { session: { id: string } } }} options
+ * @returns {Promise<object>} `{ presets, workspaceKey }` or `{ status, reason? }`
+ */
+export async function buildPresetsPayload(deps, options) {
+  const workspaceKey = workspaceKeyOf(options)
+  const listed = await enumeratePresetUnits(deps.store, { workspaceKey: isSegment(workspaceKey) ? workspaceKey : undefined })
+  if (listed.kind !== 'ok') {
+    const failure = { status: listed.kind }
+    if (listed.reason !== undefined) failure.reason = listed.reason
+    return failure
+  }
+  const countOf = value => (Array.isArray(value) ? value.length : 0)
+  const presets = listed.presets.map(preset => {
+    const document = /** @type {Record<string, unknown>} */ (preset.document ?? {})
+    const selection = /** @type {Record<string, unknown>} */ (document.selection ?? {})
+    return {
+      scope: preset.scope,
+      presetId: preset.presetId,
+      name: typeof document.name === 'string' ? document.name : '',
+      revision: preset.revision,
+      counts: {
+        skills: countOf(selection.skills),
+        mcpServers: countOf(selection.mcpServers),
+        unresolvedRefs: countOf(selection.unresolvedRefs),
+      },
+    }
+  })
+  return { presets, workspaceKey }
+}
+
+/**
+ * The workspace-default payload: this workspace's new-session default. A
+ * cleared marker is reported distinctly — clearing is never an explicit
+ * empty set, which stays a savable choice. Domain statuses are VALUES:
+ * `{ status: 'no-workspace' }` when the session has no workspace key, and
+ * `{ status: <record.kind>, workspaceKey }` for a non-ok record (the command
+ * verb serializes the no-workspace case as an error and the rest as success —
+ * that mapping stays in the command shell; the remote resolves the value).
+ *
+ * @param {{ store: any }} deps store: an opened capability store.
+ * @param {{ cwd?: string, scope: { session: { id: string } } }} options
+ * @returns {Promise<object>} `{ status: 'no-workspace' }` | `{ status: string, workspaceKey }` | `{ status: 'ok', revision, cleared, snapshot, workspaceKey }`
+ */
+export async function buildDefaultGetPayload(deps, options) {
+  const workspaceKey = workspaceKeyOf(options)
+  if (!isSegment(workspaceKey)) return { status: 'no-workspace' }
+  const transaction = createDefaultsTransaction({ store: deps.store })
+  const record = await transaction.read(workspaceKey)
+  if (record.kind !== 'ok') return { status: record.kind, workspaceKey }
+  const snapshot = record.snapshot
+  const cleared = snapshot !== null && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    && /** @type {Record<string, unknown>} */ (snapshot).cleared === true
+  return { status: 'ok', revision: record.revision, cleared, snapshot, workspaceKey }
 }

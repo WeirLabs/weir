@@ -19,14 +19,14 @@
 // preset or an unmounted bridge surfaces as an explicit typed error, never a
 // guessed or empty payload.
 import { openCapabilityStore } from './store/store.js'
-import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
+import { buildReceiptPayload, buildListPayload, buildConditionsPayload, buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 
 /** The host-root service key the typert gateway resolves (S27: ctx.get from the host root). */
 export const CAPABILITY_READ_SERVICE_KEY = 'orreryCapabilityRead'
 /** The wire namespace: POST /api/orreryCapabilities/<method>, client ctx.remote.orreryCapabilities.*. */
 export const CAPABILITY_READ_NAMESPACE = 'orreryCapabilities'
 /** The three read methods, each taking exactly one parameter. */
-export const CAPABILITY_READ_METHODS = ['receipt', 'list', 'conditions']
+export const CAPABILITY_READ_METHODS = ['receipt', 'list', 'conditions', 'presets', 'defaultGet']
 
 /**
  * Typed read-channel failure. `code` is the machine-readable discriminant:
@@ -114,6 +114,16 @@ export function createCapabilityReadService(dependencies = {}) {
       mcpManager: faces.mcpManager?.(),
     }, options)),
     conditions: sessionId => read(sessionId, () => buildConditionsPayload()),
+    // Presets view reads (silent-preset-reads): the preset listing and the
+    // workspace-default inspection. Domain statuses ({status:'no-workspace'},
+    // a store-level listing failure) are VALUES the panel categorizes — only
+    // infrastructure failures become CapabilityReadError.
+    presets: sessionId => read(sessionId, (faces, options) => buildPresetsPayload({
+      store: storeFor(faces.profileContext?.()),
+    }, options)),
+    defaultGet: sessionId => read(sessionId, (faces, options) => buildDefaultGetPayload({
+      store: storeFor(faces.profileContext?.()),
+    }, options)),
   }
 }
 

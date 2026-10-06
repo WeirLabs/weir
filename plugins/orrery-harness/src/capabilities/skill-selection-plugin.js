@@ -14,6 +14,7 @@ import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection, baselineSkillIdentities } from './initial-selection.js'
 import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
 import { createDefaultsTransaction } from './defaults-transaction.js'
+import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 import { bindImportedSelection, validatePortableDocument } from './portable-refs.js'
 import { enumeratePresetUnits } from './store/enumerate.js'
 import { bindPackageSelection, packPresetPackage, planPackageInstall, validatePresetPackage } from './preset-package.js'
@@ -572,31 +573,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               }
             }
             if (verb === 'presets') {
-              // List the presets of the global namespace plus this session's
-              // workspace namespace (read-only store scan; fail closed when
-              // the store root is unsupported).
+              // Thin shell over the shared builder (read-payloads.js): domain
+              // failures stay JSON status text (the panel categorizes them);
+              // the remote resolves the same object as a plain value.
               try {
-                const store = capabilityStore()
-                const workspaceKey = sessionWorkspaceKey()
-                const listed = await enumeratePresetUnits(store, { workspaceKey: isSegment(workspaceKey) ? workspaceKey : undefined })
-                if (listed.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: listed.kind, reason: listed.reason }) }
-                const countOf = value => (Array.isArray(value) ? value.length : 0)
-                const presets = listed.presets.map(preset => {
-                  const document = /** @type {Record<string, unknown>} */ (preset.document ?? {})
-                  const selection = /** @type {Record<string, unknown>} */ (document.selection ?? {})
-                  return {
-                    scope: preset.scope,
-                    presetId: preset.presetId,
-                    name: typeof document.name === 'string' ? document.name : '',
-                    revision: preset.revision,
-                    counts: {
-                      skills: countOf(selection.skills),
-                      mcpServers: countOf(selection.mcpServers),
-                      unresolvedRefs: countOf(selection.unresolvedRefs),
-                    },
-                  }
-                })
-                return { kind: 'success', text: JSON.stringify({ presets, workspaceKey }) }
+                const payload = await buildPresetsPayload({ store: capabilityStore() }, options)
+                if (typeof payload.status === 'string') return { kind: 'error', text: JSON.stringify(payload) }
+                return { kind: 'success', text: JSON.stringify(payload) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities presets failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
@@ -824,19 +807,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               }
             }
             if (verb === 'default-get') {
-              // Inspect this workspace's new-session default. A cleared marker
-              // is reported distinctly — clearing is never an explicit empty
-              // set, which stays a savable choice.
+              // Thin shell over the shared builder. The no-workspace status is
+              // the ONLY error mapping (the historical noWorkspace object);
+              // every other status — including a non-ok record — stays success.
               try {
-                const workspaceKey = sessionWorkspaceKey()
-                if (!isSegment(workspaceKey)) return noWorkspace
-                const transaction = createDefaultsTransaction({ store: capabilityStore() })
-                const record = await transaction.read(workspaceKey)
-                if (record.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: record.kind, workspaceKey }) }
-                const snapshot = record.snapshot
-                const cleared = snapshot !== null && typeof snapshot === 'object' && !Array.isArray(snapshot)
-                  && /** @type {Record<string, unknown>} */ (snapshot).cleared === true
-                return { kind: 'success', text: JSON.stringify({ status: 'ok', revision: record.revision, cleared, snapshot, workspaceKey }) }
+                const payload = await buildDefaultGetPayload({ store: capabilityStore() }, options)
+                if (payload.status === 'no-workspace') return { kind: 'error', text: JSON.stringify(payload) }
+                return { kind: 'success', text: JSON.stringify(payload) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities default-get failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }

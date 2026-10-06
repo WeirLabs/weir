@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin, resolveSessionCwd } from '../src/capabilities/skill-selection-plugin.js'
 import {
+  CAPABILITY_READ_METHODS,
   CAPABILITY_READ_NAMESPACE,
   CAPABILITY_READ_SERVICE_KEY,
   CapabilityReadError,
@@ -83,6 +84,27 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
   const commandConditions = await command.handler({ agent, rawInput: 'conditions' })
   expect(JSON.stringify(remoteConditions)).toBe(commandConditions.text)
   expect(remoteConditions).toEqual({ conditions: [] })
+
+  // Presets view reads (silent-preset-reads): same byte-parity contract.
+  const remotePresets = await service.presets('sess-remote')
+  const commandPresets = await command.handler({ agent, rawInput: 'presets' })
+  expect(commandPresets.kind).toBe('success')
+  expect(JSON.stringify(remotePresets)).toBe(commandPresets.text)
+  expect(Array.isArray(remotePresets.presets)).toBe(true)
+
+  const remoteDefaultGet = await service.defaultGet('sess-remote')
+  const commandDefaultGet = await command.handler({ agent, rawInput: 'default-get' })
+  expect(JSON.stringify(remoteDefaultGet)).toBe(commandDefaultGet.text)
+
+  // Domain statuses are VALUES on the remote while the command maps only
+  // no-workspace to its historical error kind — both from one payload.
+  const homelessAgent = { id: 'sess-noworkspace', session: { id: 'sess-noworkspace', header: {} } }
+  harness.fireCreated({ agent: homelessAgent })
+  const remoteNoWorkspace = await service.defaultGet('sess-noworkspace')
+  const commandNoWorkspace = await command.handler({ agent: homelessAgent, rawInput: 'default-get' })
+  expect(remoteNoWorkspace.status).toBe('no-workspace')
+  expect(commandNoWorkspace.kind).toBe('error')
+  expect(JSON.stringify(remoteNoWorkspace)).toBe(commandNoWorkspace.text)
 })
 
 test('unknown session and missing bridge are explicit typed errors', async () => {
@@ -101,7 +123,7 @@ test('unknown session and missing bridge are explicit typed errors', async () =>
 
   // Bridge absent (non-Orrery preset / unmounted): typed, never a guess.
   const absent = createCapabilityReadService({ bridge: () => null })
-  for (const method of ['receipt', 'list', 'conditions']) {
+  for (const method of CAPABILITY_READ_METHODS) {
     const cause = await absent[method]('sess-remote').then(() => null, error => error)
     expect(cause).toBeInstanceOf(CapabilityReadError)
     expect(cause.code).toBe('bridge-absent')
@@ -163,7 +185,7 @@ test('host apply publishes the frozen binding and registers the hand-written con
   const contribution = registered[0]
   expect(contribution.schemas).toEqual([])
   expect(contribution.model).toEqual({ services: [], events: [], objects: [] })
-  expect(contribution.invocations).toHaveLength(3)
+  expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length)
   for (const invocation of contribution.invocations) {
     expect(invocation.service).toBe(CAPABILITY_READ_SERVICE_KEY)
     expect(invocation.namespace).toBe(CAPABILITY_READ_NAMESPACE)
@@ -172,7 +194,7 @@ test('host apply publishes the frozen binding and registers the hand-written con
     expect(invocation.parameters).toEqual([{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } }])
     expect(invocation.result).toEqual({ mode: 'src-json' })
   }
-  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions'])
+  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
 })
 
 test('host apply stays inert with a warning when typert is unavailable or registration throws', () => {
@@ -216,6 +238,8 @@ test('the contribution factory is standalone-stable for the gateway claim check'
     'orreryCapabilities/receipt',
     'orreryCapabilities/list',
     'orreryCapabilities/conditions',
+    'orreryCapabilities/presets',
+    'orreryCapabilities/defaultGet',
   ])
 })
 
@@ -232,8 +256,8 @@ test('the read contribution carries the package and face the registry validates'
   // Exactly this key set: a dropped or renamed top-level field is a registry-side contract change.
   expect(Object.keys(contribution).sort()).toEqual(['face', 'invocations', 'model', 'package', 'schemas'])
 
-  expect(contribution.invocations).toHaveLength(3)
-  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions'])
+  expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length)
+  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
   for (const invocation of contribution.invocations) {
     expect(invocation.id.startsWith('orrery-harness.')).toBe(true)
     expect(invocation.id).toBe(`orrery-harness.${CAPABILITY_READ_NAMESPACE}.${invocation.method}`)
@@ -271,7 +295,7 @@ test('the shipped contribution survives the registry validatePackage, so registr
   expect(captured).toBeTruthy()
   expect(captured.package).toBe('orrery-harness')
   expect(captured.face).toBe('host')
-  expect(captured.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions'])
+  expect(captured.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
   expect(provided).toHaveLength(1)
   expect(provided[0].key).toBe(CAPABILITY_READ_SERVICE_KEY)
   expect(provided[0].service.typertRemote.namespace).toBe(CAPABILITY_READ_NAMESPACE)
