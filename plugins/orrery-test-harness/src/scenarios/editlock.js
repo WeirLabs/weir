@@ -40,12 +40,14 @@ function decide(options, obs) {
     return textChunks('unhandled editlock turn')
   }
   if (!history.includes('owner=this session')) return toolCallChunks('edit_lock_status', {})
-  // Authority files are refused as edit targets; ending the turn still holding
-  // lets the turn-end settling notice take over.
-  if (!history.includes('authority-probe') && !history.includes('Keeping')) {
+  // Authority files are refused as edit targets; the REFUSAL text is the
+  // visible terminal marker (the write's content args never render into the
+  // transcript, so keying on 'authority-probe' would re-dispatch forever).
+  // Ending the turn still holding lets the turn-end settling notice take over.
+  if (history.includes('not editable')) return textChunks('editlock turn ends holding')
+  if (!history.includes('Keeping')) {
     return toolCallChunks('write', { file_path: join(WS, '.orrery', 'edit-lock', 'snapshot.json'), content: 'authority-probe' })
   }
-  if (history.includes('not editable')) return textChunks('editlock turn ends holding')
   return textChunks('editlock done')
 }
 
