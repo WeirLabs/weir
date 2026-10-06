@@ -17,6 +17,7 @@ import { createLedger } from './ledger.js'
 import { ensureExclude, hasExclude } from './exclude.js'
 import { renderBoard, renderChildContract, renderNotice, renderWatchExpired, renderWatchHit } from './prompts.js'
 import { cardCopy, cardLocale } from './cards.js'
+import { authorityResidue } from './authority.js'
 
 export const CONFIG_FILE = '.config.json'
 const SETUP_TIMEOUT_MS = 600_000
@@ -28,6 +29,18 @@ const AUDIT_KIND = Object.freeze({
   'check-pass': 'check', 'check-fail': 'check', invalidate: 'invalidate', ask: 'ask', decline: 'decline',
   conflict: 'conflict', land: 'land', keep: 'cleanup', clean: 'cleanup', abandon: 'abandon', missing: 'abandon',
 })
+
+/**
+ * Model-facing English residue warning appended to cleanup/abandon tool
+ * results (the human-facing card copy localizes its own in cards.js).
+ * @param {{ operations: number, locks: number }} residue
+ */
+function residueNote(residue) {
+  const parts = []
+  if (residue.operations > 0) parts.push(`${residue.operations} unresolved Edit Lock operation(s)`)
+  if (residue.locks > 0) parts.push(`${residue.locks} Edit Lock lock(s)`)
+  return `warning: the lane's session left ${parts.join(' and ')} in the management authority; locks are reclaimed by the stale-lock sweep, unresolved publications settle via crash self-heal (dead process) or the Edit Lock maintenance panel's one-click recovery`
+}
 
 /**
  * Comparable form of a path: realpath when it exists, '/'-separated, and
@@ -73,6 +86,7 @@ export function pathKey(path, platform = process.platform) {
  * @property {(handle: any) => void} [clearTimer]
  * @property {number} [pid] - this process id (tests)
  * @property {{ warn?: (message: string) => void }} [logger]
+ * @property {(root: string, sessionId: string | null | undefined) => ({ operations: number, locks: number } | null)} [authorityResidue] - read-only Edit Lock residue probe feeding the cleanup/abandon warning (tests); defaults to the bounded snapshot read in ./authority.js
  */
 
 /** @param {LaneServiceDeps} deps */
@@ -288,6 +302,22 @@ export function createLaneService(deps) {
       deps.notify(lane.ownerSession, renderNotice(lane, detail))
     } catch (error) {
       deps.logger?.warn?.(`worktree: notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
+  }
+
+  /**
+   * Best-effort Edit Lock authority-residue probe (design D5): does the
+   * lane's owner session still own unresolved operations or locks in the
+   * management domain? Warning input only — read-only, and a failed check
+   * is silent (never blocks the cleanup/abandon transition).
+   * @param {any} repo @param {any} lane @returns {{ operations: number, locks: number } | null}
+   */
+  function residueOf(repo, lane) {
+    try {
+      return (deps.authorityResidue ?? authorityResidue)(repo.mainRoot, lane?.ownerSession) ?? null
+    } catch (error) {
+      deps.logger?.warn?.(`worktree: authority-residue check failed: ${/** @type {any} */ (error)?.message ?? error}`)
+      return null
     }
   }
 
@@ -853,7 +883,7 @@ export function createLaneService(deps) {
         id: 'cleanup',
         header: copy.cleanupHeader,
         question: copy.cleanupQuestion(lane.title),
-        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot),
+        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot, residueOf(repo, lane)),
         options: [
           { label: copy.choices.keep, description: copy.cleanupDescriptions.keep },
           { label: copy.choices.worktree, description: copy.cleanupDescriptions.worktree },
@@ -897,6 +927,9 @@ export function createLaneService(deps) {
       const kept = await apply(repo, laneId, { type: 'keep', by, patch: { cleanup: { mode: 'keep', at: now(), by } } })
       return result(kept, `kept ${kept.path}`)
     }
+    // Read-only residue probe BEFORE anything is removed (design D5): a
+    // warning only, never a gate, and it never mutates the authority.
+    const residue = residueOf(repo, lane)
     const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
     if (existsSync(lane.path)) await git.worktreeRemove(repo.mainRoot, lane.path)
     let branchNote = ''
@@ -913,7 +946,7 @@ export function createLaneService(deps) {
       ? await patchLane(repo, laneId, () => ({ cleanup: record }))
       : await apply(repo, laneId, { type: 'clean', by, patch: { cleanup: record } })
     deps.audit('cleanup', { lane: laneId, mode, by, scratch }, repo.mainRoot, lane.ownerSession)
-    return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}`)
+    return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}${residue ? `; ${residueNote(residue)}` : ''}`)
   }
 
   /**
@@ -936,7 +969,7 @@ export function createLaneService(deps) {
           id: 'abandon',
           header: copy.abandonHeader,
           question: copy.abandonQuestion(lane.title),
-          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot),
+          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane)),
           options: [
             { label: copy.choices.keep, description: copy.abandonDescriptions.keep },
             { label: copy.choices.worktree, description: copy.abandonDescriptions.worktree },
@@ -954,6 +987,10 @@ export function createLaneService(deps) {
     if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first`, { lane: laneId })
     const abandoned = await apply(repo, laneId, { type: 'abandon', by: 'user', reason: 'abandoned by the user', patch: { cleanup: { mode, at: now(), by: 'user' } } })
     if (mode === 'keep') return result(abandoned, `abandoned; ${abandoned.path} and ${abandoned.branch} are kept`)
+    // Read-only residue probe BEFORE anything is removed (design D5): a
+    // warning only, never a gate, and it never mutates the authority. The
+    // confirmation card already carried the warning when there was one.
+    const residue = residueOf(repo, lane)
     const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
     if (existsSync(lane.path)) {
       try {
@@ -971,7 +1008,7 @@ export function createLaneService(deps) {
       branchNote = `; deleted ${lane.branch}${unmerged > 0 ? ` (${unmerged} unmerged commit(s) discarded)` : ''}`
     }
     const final = await patchLane(repo, laneId, (current) => ({ cleanup: { ...current.cleanup, scratch } }))
-    return result(final, `abandoned; removed ${lane.path}${branchNote}`)
+    return result(final, `abandoned; removed ${lane.path}${branchNote}${residue ? `; ${residueNote(residue)}` : ''}`)
   }
 
   // ─── watches (lane state subscriptions) ────────────────────────────────

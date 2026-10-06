@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { createGit } from '../src/worktree/git.js'
 import { createLaneService } from '../src/worktree/lanes.js'
 import { makeRepo, nodeGitRun, sh } from './helpers/worktree-fixtures.js'
+import { openEditLockStore } from '../src/edit-lock/store.js'
+import { createEditLockManager } from '../src/edit-lock/manager.js'
 
 /** Shell runner over child_process with the host runner's result shape. */
 function nodeShellRun({ command, cwd, timeoutMs }) {
@@ -31,7 +33,7 @@ function fakeClock(start = 1_760_000_000_000) {
   }
 }
 
-function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup, clock } = {}) {
+function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup, clock, authorityResidue } = {}) {
   const fixture = makeRepo()
   const notices = []
   const audits = []
@@ -46,6 +48,7 @@ function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false
     modeOf: () => mode,
     localeOf: () => locale,
     ...(resolveSetup !== undefined ? { resolveSetup } : {}),
+    ...(authorityResidue !== undefined ? { authorityResidue } : {}),
     ...(clock ? { now: () => clock.value, setTimer: (handler, delayMs) => clock.set(handler, delayMs), clearTimer: (id) => clock.clear(id) } : {}),
   })
   const session = { id: 'main-1', header: { cwd: fixture.repo } }
@@ -702,6 +705,113 @@ describe('worktree lane service: cleanup and abandon', () => {
       } finally {
         h2.cleanup()
       }
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+describe('worktree lane service: authority-residue warning', () => {
+  const pickFirst = (questions) => ({ answers: [{ id: questions[0].id, selected: [questions[0].options[0].label] }] })
+  const pick = (label) => (questions) => ({ answers: [{ id: questions[0].id, selected: [label] }] })
+  const residue = { operations: 1, locks: 1 }
+
+  it('warns on the cleanup card when the probe finds residue, silently passes without it', async () => {
+    const h = harness({ ask: pickFirst, authorityResidue: () => residue })
+    try {
+      const lane = await workedLane(h)
+      await h.service.land(h.agent, lane)
+      const cleaned = await h.service.askCleanup(h.agent, lane)
+      expect(cleaned.state).toBe('kept') // pickFirst chose 'Keep worktree': warning never blocks
+      const card = h.asked.at(-1)[0]
+      expect(card.header).toBe('Worktree cleanup')
+      expect(card.detail).toContain('⚠️ **Edit Lock residue**')
+      expect(card.detail).toContain('maintenance panel')
+      expect(card.detail).toContain('stale-lock')
+      const h2 = harness({ ask: pickFirst, authorityResidue: () => null })
+      try {
+        const lane2 = await workedLane(h2)
+        await h2.service.land(h2.agent, lane2)
+        await h2.service.askCleanup(h2.agent, lane2)
+        expect(h2.asked.at(-1)[0].detail).not.toContain('⚠️')
+      } finally {
+        h2.cleanup()
+      }
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('warns on the abandon card and in the removal summary, never blocking the transition', async () => {
+    const h = harness({ ask: pick('Remove worktree and branch'), authorityResidue: () => residue })
+    try {
+      const lane = await workedLane(h)
+      const abandoned = await h.service.abandon(h.agent, lane)
+      expect(abandoned.state).toBe('abandoned')
+      expect(h.asked[0][0].detail).toContain('⚠️ **Edit Lock residue**')
+      expect(abandoned.summary).toContain('warning:')
+      expect(abandoned.summary).toContain('stale-lock sweep')
+      expect(existsSync(abandoned.path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${lane}`)).toBe('')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('adds the warning to the direct cleanup summary and a throwing probe never blocks', async () => {
+    const h = harness({ ask: pick('Merge into main (--no-ff)'), authorityResidue: () => residue })
+    try {
+      const lane = await workedLane(h)
+      await h.service.land(h.agent, lane)
+      const cleaned = await h.service.cleanup(h.session, lane, 'all')
+      expect(cleaned.state).toBe('cleaned')
+      expect(cleaned.summary).toContain('warning:')
+      expect(cleaned.summary).toContain('1 unresolved Edit Lock operation(s)')
+      expect(cleaned.summary).toContain('1 Edit Lock lock(s)')
+      const h2 = harness({ ask: pick('Merge into main (--no-ff)'), authorityResidue: () => { throw new Error('authority exploded') } })
+      try {
+        const lane2 = await workedLane(h2)
+        await h2.service.land(h2.agent, lane2)
+        const cleaned2 = await h2.service.cleanup(h2.session, lane2, 'all')
+        expect(cleaned2.state).toBe('cleaned')
+        expect(cleaned2.summary).not.toContain('warning:')
+      } finally {
+        h2.cleanup()
+      }
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('the default probe reads the real authority under the main root (no injection)', async () => {
+    const h = harness({ ask: pick('Merge into main (--no-ff)') })
+    try {
+      const lane = await workedLane(h)
+      // A real authority in the fixture's main root whose owner session is
+      // the lane's ownerSession ('main-1'), left with an unknown publication
+      // and its retained lock.
+      const directory = join(h.repo, '.orrery', 'edit-lock')
+      mkdirSync(directory, { recursive: true })
+      const store = await openEditLockStore({ directory, domainId: h.repo, mode: 'create' })
+      const manager = createEditLockManager({ store, managerIncarnation: 'm' })
+      const child = await manager.openSession('main-1')
+      const token = await manager.acquire(child, '/w/child.txt')
+      const publisher = { validate() {}, publish: async () => { throw new Error('invoked failure') }, identify: () => token.resourceId }
+      const ready = await manager.prepare(child, {
+        operationId: 'interrupted', tool: 'write', filePath: '/w/child.txt', cwd: '/w', args: {}, content: 'new',
+        effectivePolicy: { mode: 'workspace-write' },
+        target: { kind: 'update', resourceId: token.resourceId, generation: token.generation, policy: { kind: 'replaceIfVersion', version: 'old' } },
+      }, publisher)
+      await manager.commit(ready.submission).then(() => expect(1).toBe(0), () => {})
+      await store.close()
+      const before = readFileSync(join(directory, 'snapshot.json'))
+      await h.service.land(h.agent, lane)
+      const cleaned = await h.service.cleanup(h.session, lane, 'all')
+      expect(cleaned.state).toBe('cleaned')
+      expect(cleaned.summary).toContain('warning:')
+      expect(cleaned.summary).toContain('1 unresolved Edit Lock operation(s)')
+      // The probe is read-only: the authority bytes are untouched.
+      expect(readFileSync(join(directory, 'snapshot.json')).equals(before)).toBe(true)
     } finally {
       h.cleanup()
     }
