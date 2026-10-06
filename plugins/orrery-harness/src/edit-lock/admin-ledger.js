@@ -6,9 +6,11 @@ import { expectedRegistry, isRegistryUpgrade } from './incarnations.js'
 
 export const LATE_WRITER_RISK = 'Detached historic writers may still modify files after this override.'
 export const AUTOMATIC_RECOVERY_ACTOR = 'automatic-dead-process-recovery'
-/** Ledger actor vocabulary: the offline settings administrator and the
- * dead-process automatic settlement (design D3) are the only writers. */
-const ACTORS = ['authenticated-settings-administrator', AUTOMATIC_RECOVERY_ACTOR]
+export const ONLINE_RECOVERY_ACTOR = 'online-administrator'
+/** Ledger actor vocabulary: the offline settings administrator, the online
+ * one-click administrator (design D4) and the dead-process automatic
+ * settlement (design D3) are the only writers. */
+const ACTORS = ['authenticated-settings-administrator', AUTOMATIC_RECOVERY_ACTOR, ONLINE_RECOVERY_ACTOR]
 export const digest = value => createHash('sha256').update(canonical(value)).digest('hex')
 export const dispositionFor = (state, op) => state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
 export const revokedOwner = (state, owner) => state.adminRecoveries?.some(row => row.owner === owner) === true

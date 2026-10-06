@@ -4,7 +4,8 @@ import { bindRequest } from './request-binding.js'
 import { lookupOperation } from './operation-history.js'
 import { canonicalRequestData } from './request-data.js'
 import { admitMutation as admitHistory, publicationCandidate } from './admission.js'
-import { administrativeState, AUTOMATIC_RECOVERY_ACTOR, digest, dispositionFor, LATE_WRITER_RISK, revokedOwner } from './admin-ledger.js'
+import { administrativeState, AUTOMATIC_RECOVERY_ACTOR, digest, dispositionFor, LATE_WRITER_RISK, ONLINE_RECOVERY_ACTOR, revokedOwner } from './admin-ledger.js'
+import { canonical } from './snapshot.js'
 import { incarnationProcess, withIncarnation } from './incarnations.js'
 
 /**
@@ -12,15 +13,17 @@ import { incarnationProcess, withIncarnation } from './incarnations.js'
  * this factory does not elect a singleton or expose any file publication path.
  * This fresh-store factory is separate from the trusted recovery entrypoint.
  * The optional process identity (shared Liveness adapter, design D2) is
- * registered in the durable image with the first committed write.
- * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string, processIdentity?: import('./incarnations.js').ProcessIdentity|null}} options
+ * registered in the durable image with the first committed write. The
+ * optional domain root and backup writer enable the online administrative
+ * recovery transaction (design D4); without them that transaction refuses.
+ * @param {{store: Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>, managerIncarnation: string, processIdentity?: import('./incarnations.js').ProcessIdentity|null, root?: string|null, writeBackup?: ((file: string, bytes: Buffer) => Promise<void>)|null}} options
  */
-export function createEditLockManager({ store, managerIncarnation, processIdentity = null }) {
+export function createEditLockManager({ store, managerIncarnation, processIdentity = null, root = null, writeBackup = null }) {
   const confirmed = store.snapshot()
   if (confirmed.revision !== 0 || confirmed.state.managerIncarnation !== null) {
     throw new Error('fresh store required; use trusted recovery entrypoint')
   }
-  return managerCore(store, createEditLockState(managerIncarnation), { processIdentity })
+  return managerCore(store, createEditLockState(managerIncarnation), { processIdentity, root, writeBackup })
 }
 
 /**
@@ -134,13 +137,13 @@ export async function recoverEditLockManager({ store, managerIncarnation, proces
   }
   kernel.authority.install(draft)
   if (records.length > 0) onAutomaticRecovery?.({ records: structuredClone(records), revision: previous.revision + 1 })
-  return managerCore(store, kernel, { processIdentity })
+  return managerCore(store, kernel, { processIdentity, root, writeBackup })
 }
 
 /** @param {Awaited<ReturnType<typeof import('./store.js').openEditLockStore>>} store
  * @param {ReturnType<typeof createEditLockState>} kernel
- * @param {{processIdentity?: import('./incarnations.js').ProcessIdentity|null}} [options] */
-function managerCore(store, kernel, { processIdentity = null } = {}) {
+ * @param {{processIdentity?: import('./incarnations.js').ProcessIdentity|null, root?: string|null, writeBackup?: ((file: string, bytes: Buffer) => Promise<void>)|null}} [options] */
+function managerCore(store, kernel, { processIdentity = null, root = null, writeBackup = null } = {}) {
   const { operations, authority } = kernel
   const managerIncarnation = operations.status().managerIncarnation
   // Every durable write of an identity-aware manager carries the incarnation
@@ -598,6 +601,118 @@ function managerCore(store, kernel, { processIdentity = null } = {}) {
         draft.operations.release({ managerIncarnation, sessionId: lock.owner, executionEpoch: session.executionEpoch, resourceId, generation })
         return { resourceId, generation, owner: lock.owner }
       }, { kind: 'resources', resourceIds: [resourceId] }, 'release')
+    },
+    /** Trusted online administrative recovery (design D4): the settings-plane
+     * operator's one explicit click, executed as ONE serialized transaction of
+     * the running manager — locally or forwarded over the peer channel. Every
+     * check the offline ADMIN OVERRIDE performs is re-verified HERE at the
+     * FIFO execution point against the live confirmed state: owner
+     * interrupted, every unresolved operation of the owner unknown-phase, the
+     * operation id set exact (sorted compare), the revision unmoved and the
+     * confirmation digest matching the SAME scoped algorithm (canonical JSON
+     * of {root, owner, expectedRevision, operationIds sorted, risk:
+     * LATE_WRITER_RISK}, SHA-256, "ADMIN OVERRIDE <hex>"). The durable commit
+     * is the offline commit's exact shape: the adminRecoveries ledger record
+     * (actor marks it online), the owner's locks released and its epoch
+     * revoked, admission unblocked; unknown outcomes and operation history
+     * are byte-identical. A retry with the same recoveryId returns the
+     * existing record WITHOUT re-releasing or appending. Refusals carry a
+     * `orrery-edit-lock/*` code and never persist; a backup-writer failure
+     * happens before the commit attempt and changes nothing; only a failed
+     * or uncertain durable commit poisons (same discipline as transact).
+     * @param {any} rawInput
+     * @returns {Promise<{revision: number, idempotent: boolean, record: any}>} */
+    adminRecoverOnline(rawInput) {
+      healthy()
+      const refuse = (/** @type {string} */ code, /** @type {string} */ message) => {
+        throw Object.assign(new Error(message), { code: `orrery-edit-lock/${code}`, recoveryRefusal: true })
+      }
+      if (!root || !writeBackup) refuse('unavailable', 'online administrative recovery requires a domain root and backup writer in this composition')
+      // Capture before the first await: the operator request cannot change in flight.
+      const input = structuredClone(rawInput)
+      const keys = ['owner', 'expectedRevision', 'operationIds', 'recoveryId', 'reason', 'acceptLateWriterRisk', 'confirmation']
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).length !== keys.length || !keys.every(key => Object.hasOwn(input, key))) {
+        refuse('invalid-recovery', 'Exact recovery fields required')
+      }
+      for (const key of ['owner', 'recoveryId', 'reason']) {
+        if (typeof input[key] !== 'string' || !input[key].trim() ||
+            input[key].length > (key === 'reason' ? 2000 : key === 'recoveryId' ? 128 : 512) || input[key].includes('\0')) {
+          refuse('invalid-recovery', `Invalid ${key}`)
+        }
+      }
+      if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) refuse('invalid-recovery', 'Expected revision required')
+      if (!Array.isArray(input.operationIds) || input.operationIds.length === 0 || input.operationIds.length > 10000 ||
+          !input.operationIds.every((/** @type {any} */ id) => typeof id === 'string' && id.trim() && id.length <= 1024)) {
+        refuse('invalid-recovery', 'Operation IDs required')
+      }
+      if (new Set(input.operationIds).size !== input.operationIds.length) refuse('invalid-recovery', 'Duplicate operation ID')
+      if (input.acceptLateWriterRisk !== true) refuse('invalid-recovery', 'Explicit late-writer risk acceptance required')
+      const scoped = { root, owner: input.owner, expectedRevision: input.expectedRevision, operationIds: [...input.operationIds].sort(), risk: LATE_WRITER_RISK }
+      if (input.confirmation !== `ADMIN OVERRIDE ${digest(scoped)}`) refuse('confirmation-mismatch', 'Explicit scoped ADMIN OVERRIDE confirmation required')
+      const pending = tail.then(async () => {
+        healthy()
+        const state = confirmed.state
+        // Idempotent retry: the same recoveryId returns the committed record
+        // without re-releasing, re-revoking or appending.
+        const existing = state.adminRecoveries?.find((/** @type {any} */ row) => row.recoveryId === input.recoveryId)
+        if (existing) {
+          if (existing.confirmation !== digest(scoped) || existing.reason !== input.reason) refuse('invalid-recovery', 'Recovery ID reused with different request')
+          return { revision: confirmed.revision, idempotent: true, record: structuredClone(existing) }
+        }
+        if (confirmed.revision !== input.expectedRevision) refuse('revision-conflict', 'Authority revision changed; inspect and confirm again')
+        if (revokedOwner(state, input.owner)) refuse('invalid-recovery', 'owner already revoked by administrative recovery')
+        const session = state.sessions.find((/** @type {any} */ row) => row.sessionId === input.owner)
+        if (!session || !session.interrupted) refuse('invalid-recovery', 'Only an interrupted historical owner can be overridden')
+        const unresolved = state.operations.filter((/** @type {any} */ op) => op.sessionId === input.owner && ['prepared', 'publishing', 'unknown'].includes(op.phase))
+        if (!(unresolved.length > 0 && unresolved.every((/** @type {any} */ op) => op.phase === 'unknown'))) refuse('invalid-recovery', 'Recover to stable unknown history before administrative override')
+        if (canonical(unresolved.map((/** @type {any} */ op) => op.operationId).sort()) !== canonical(scoped.operationIds)) refuse('invalid-recovery', 'Confirm every unresolved operation for this owner')
+        const bytes = store.currentBytes()
+        if (!bytes) refuse('unavailable', 'online administrative recovery requires the committed authority bytes')
+        const backup = { file: `admin-backup-${digest([root, input.recoveryId])}.json`,
+          sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length }
+        const record = { recoveryId: input.recoveryId, root, owner: input.owner,
+          expectedRevision: confirmed.revision, committedRevision: confirmed.revision + 1, at: Date.now(), actor: ONLINE_RECOVERY_ACTOR,
+          reason: input.reason, risk: LATE_WRITER_RISK, confirmation: digest(scoped), backup,
+          operations: unresolved.map((/** @type {any} */ op) => ({ operationId: op.operationId, sha256: digest(op) })),
+          releasedLocks: state.locks.filter((/** @type {any} */ lock) => lock.owner === input.owner), revokedEpoch: session.executionEpoch + 1 }
+        // The kernel fold is exactly administrativeState's ordinary part:
+        // revoke the owner's epoch (cancel) and release its exact locks; the
+        // batch allowance ends with the last lock. The ledger append and the
+        // version discipline are applied on top of the checkpoint, so the
+        // committed state is byte-equal to administrativeState(base, record).
+        const draft = authority.begin()
+        try {
+          draft.authority.cancel({ managerIncarnation, sessionId: session.sessionId, executionEpoch: session.executionEpoch })
+          for (const lock of record.releasedLocks) {
+            draft.operations.release({ managerIncarnation, sessionId: session.sessionId, executionEpoch: record.revokedEpoch, resourceId: lock.resourceId, generation: lock.generation })
+          }
+        } catch (error) {
+          authority.discard(draft)
+          throw error
+        }
+        const base = withIdentity(state)
+        const nextState = { ...base, ...authority.checkpoint(draft), version: /** @type {5|6} */ (base.version === 6 ? 6 : 5),
+          adminRecoveries: [...(base.adminRecoveries ?? []), structuredClone(record)] }
+        // The backup must be durable BEFORE the commit that references it; a
+        // failure here attempted no persistence and leaves the manager healthy.
+        try { await writeBackup(record.backup.file, bytes) } catch (error) {
+          try { authority.discard(draft) } catch { /* draft already closed */ }
+          throw error
+        }
+        try {
+          const saved = await store.recordAdministrativeRecovery({ expectedRevision: confirmed.revision, nextState, base })
+          authority.install(draft)
+          confirmed = saved
+          return { revision: saved.revision, idempotent: false, record }
+        } catch (error) {
+          try { authority.discard(draft) } catch { /* draft already closed */ }
+          poison = error
+          throw new Error('manager persistence or installation failed; poisoned', { cause: error })
+        }
+      })
+      tail = pending.then(() => {}, () => {})
+      return pending
     },
     /** Trusted maintenance ingress for the stale-lock sweep: conditionally
      * release rows a publisher-side scan observed with a missing target. Every
