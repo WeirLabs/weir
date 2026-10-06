@@ -107,7 +107,11 @@ test('/capabilities apply commits through the shared engine and the receipt refl
     },
   }
   const emitted = []
-  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
+  // A profile-supplemental directory (preset-skill-applicability D2): holds
+  // skills known to the profile but NOT enumerated into this preset.
+  mkdirSync(join(root, 'supplemental', 'creative-only'), { recursive: true })
+  writeFileSync(join(root, 'supplemental', 'creative-only', 'SKILL.md'), '---\nname: creative-only\ndescription: supplemental fixture\n---\nCREATIVE\n')
+  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')], supplementalSkillDirs: [join(root, 'supplemental')] })
   const command = registeredCommands.find(entry => entry.name === 'capabilities')
   const agent = { id: 'sess-apply', session: { id: 'sess-apply', header: { cwd: root } } }
 
@@ -129,6 +133,26 @@ test('/capabilities apply commits through the shared engine and the receipt refl
   // The Apply-path convergence emission (5.2 parity): an accepted Apply
   // re-emits the preset invalidation event so connected clients refetch.
   expect(emitted).toEqual([['agent-preset/selected', 'sess-apply', 'orrery']])
+
+  // preset-skill-applicability (D2 partition): a known-but-inapplicable name
+  // is SKIPPED with a reason while the resolvable remainder commits — and the
+  // record keeps only the applied identities (skipped is never written).
+  const partitioned = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-3', expectedRevision: 1, skills: ['alpha', 'creative-only'], mcpServers: [] })}` })
+  expect(partitioned.kind).toBe('success')
+  const partitionedResponse = JSON.parse(partitioned.text)
+  expect(partitionedResponse.status).toBe('applied')
+  expect(partitionedResponse.skipped).toEqual([{ name: 'creative-only', reason: 'not applicable in this agent preset' }])
+  const afterPartition = JSON.parse((await command.handler({ agent, rawInput: 'receipt' })).text)
+  expect(afterPartition.effective.skills).toEqual(['alpha'])
+
+  // A genuinely unknown name still hard-fails with the draft preserved; a
+  // skipped entry found alongside it is reported too.
+  const hardFail = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-4', expectedRevision: 2, skills: ['ghost', 'creative-only'], mcpServers: [] })}` })
+  expect(hardFail.kind).toBe('error')
+  const hardFailPayload = JSON.parse(hardFail.text)
+  expect(hardFailPayload.status).toBe('missing')
+  expect(hardFailPayload.missing).toEqual(['ghost'])
+  expect(hardFailPayload.skipped).toEqual([{ name: 'creative-only', reason: 'not applicable in this agent preset' }])
 })
 
 test('/capabilities list shows the FULL inventory with selection marks (user-global/workspace skills visible)', async () => {
@@ -157,7 +181,11 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
     },
   }
   const emitted = []
-  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')] })
+  // A profile-supplemental directory (preset-skill-applicability D2): holds
+  // skills known to the profile but NOT enumerated into this preset.
+  mkdirSync(join(root, 'supplemental', 'creative-only'), { recursive: true })
+  writeFileSync(join(root, 'supplemental', 'creative-only', 'SKILL.md'), '---\nname: creative-only\ndescription: supplemental fixture\n---\nCREATIVE\n')
+  createSkillSelectionPlugin()(ctx, { machineId: 'orrery-it-machine', includeDefaultRoots: false, customSkillDirs: [join(root, 'skills')], supplementalSkillDirs: [join(root, 'supplemental')] })
   const command = registeredCommands.find(entry => entry.name === 'capabilities')
   const agent = { id: 'sess-list', session: { id: 'sess-list', header: { cwd: root } } }
   // Apply one of the two; the OTHER must stay visible with selected:false.

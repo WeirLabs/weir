@@ -71,7 +71,7 @@ export async function buildListPayload(deps, options) {
       return {
         name: candidate.name,
         description: candidate.description ?? '',
-        scope: candidate.source?.scope ?? candidate.scope ?? 'unknown',
+        scope: candidate.source?.scope ?? candidate.scope ?? candidate.identity?.scope ?? 'unknown',
         status: candidate.status ?? 'unknown',
         selected: key !== null && selectedKeys.has(key),
         conflict: Boolean(candidate.conflict),

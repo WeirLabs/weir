@@ -27,6 +27,7 @@ import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
 import { feedCapabilityReadBridge } from './capability-remote.js'
+import { parseFrontmatter } from './frontmatter.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 
@@ -556,13 +557,26 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                   if (candidate?.identity) identities.push(candidate.identity)
                   else missing.push(String(name))
                 }
-                if (missing.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing }) }
+                // preset-skill-applicability (D2): partition the missing names —
+                // KNOWN-BUT-INAPPLICABLE (resolvable in a profile-supplemental
+                // directory, e.g. creative-preset skills carried by a workspace
+                // default) are SKIPPED with a per-name reason while the
+                // resolvable remainder commits; genuinely unknown names keep
+                // the hard-failure contract. Records are never rewritten for
+                // applicability, so a preset round-trip stays lossless.
+                const unknown = []
+                const skipped = []
+                for (const name of missing) {
+                  if (supplementalSkillKnown(config.supplementalSkillDirs, name)) skipped.push({ name, reason: 'not applicable in this agent preset' })
+                  else unknown.push(name)
+                }
+                if (unknown.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: unknown, ...(skipped.length > 0 ? { skipped } : {}) }) }
                 const response = await face.applySelection(
                   { sessionId: agent.id, cwd: agent.session?.header?.cwd, presetId: 'orrery' },
                   { requestId: draft.requestId, expectedRevision: draft.expectedRevision, selection: { skills: identities, mcpServers: draft.mcpServers ?? [] }, unresolved: [] },
                   options,
                 )
-                return { kind: 'success', text: JSON.stringify(response) }
+                return { kind: 'success', text: JSON.stringify(skipped.length > 0 ? { ...response, skipped } : response) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities apply failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
@@ -1015,6 +1029,33 @@ export function resolveSessionCwd(cache, agentsService, sessionId, deps = {}) {
     return { found: true, cwd: persisted.cwd }
   }
   return { found: false, cwd: undefined }
+}
+
+/**
+ * preset-skill-applicability D2: classify an inventory-missing skill name as
+ * KNOWN-BUT-INAPPLICABLE vs genuinely unknown using the profile-supplemental
+ * skill directories (row config `supplementalSkillDirs` — every preset row's
+ * extra roots, declared in the composition, never enumerated into the
+ * effective selection). A name counts as known only when `<dir>/<name>/SKILL.md`
+ * exists AND its frontmatter name matches; any unreadable directory or
+ * parse failure counts as NOT known (conservative hard-failure, never a
+ * guessed skip).
+ * @param {unknown} dirs row config value (expected string[])
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function supplementalSkillKnown(dirs, name) {
+  if (!Array.isArray(dirs) || typeof name !== 'string' || name.length === 0) return false
+  for (const dir of dirs) {
+    if (typeof dir !== 'string' || dir.length === 0) continue
+    try {
+      const file = join(dir, name, 'SKILL.md')
+      if (!existsSync(file)) continue
+      const parsed = parseFrontmatter(readFileSync(file, 'utf8'))
+      if (parsed?.data?.name === name) return true
+    } catch { /* unreadable dir/entry — not evidence of knowledge */ }
+  }
+  return false
 }
 
 /**

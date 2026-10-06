@@ -136,6 +136,13 @@
             config:
               - id: orrery-skill-selection
                 name: 'orrery-harness/skill-selection'
+                config:
+                  # preset-skill-applicability (D2): profile-supplemental roots
+                  # used ONLY to classify apply-missing names as known-but-
+                  # inapplicable (skip with report) vs genuinely unknown — the
+                  # same creative root the orrery-creative row enumerates.
+                  supplementalSkillDirs:
+                    - !!js (() => { try { const p = process.getBuiltinModule('node:path'); return p.join(p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills') } catch { return process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:os').tmpdir(), 'dsh-agent-preset-skills-unavailable') } })()
               # Orrery-managed MCP: runtime per-server isolated mounts with the
               # proxy facade, admission gate and adopt flow (task 8.2+).
               - id: orrery-mcp-manager
@@ -338,6 +345,8 @@
               - id: orrery-skill-selection
                 name: 'orrery-harness/skill-selection'
                 config:
+                  supplementalSkillDirs:
+                    - !!js (() => { try { const p = process.getBuiltinModule('node:path'); return p.join(p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills') } catch { return process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:os').tmpdir(), 'dsh-agent-preset-skills-unavailable') } })()
                   customSkillDirs:
                     # Same resolution as the cordis preset's skill-filesystem
                     # row, wrapped fail-safe: an unresolvable package degrades
