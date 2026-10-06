@@ -1,7 +1,7 @@
 // Scenario: terminate — a running member is interrupted for real, the settle
 // signal still arrives. Migrated from mock-llm.js decideTerminate / run.mjs
 // assertTerminate (D1/D2).
-import { lastOfRole, shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+import { shellCall, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'terminate'
 const prompt = 'terminate-probe'
@@ -16,30 +16,29 @@ function decide(options, obs) {
   if (history.includes('TERMINATE_CHILD_B') && !history.includes('terminate-probe')) {
     return textChunks('STATUS: completed\nREPORT: beta finished for termination count')
   }
-  // Parent: wait briefly, terminate the busy member, then observe the signal.
-  // Keyed off history: the child's settlement notice may interleave as a user
-  // message between the sleep result and the terminate call.
+  // Parent: the settle signal arrived after the termination. Keyed off
+  // history throughout: settlement notices and runtime-context snapshots may
+  // interleave as user messages between tool results and the next request.
   if (history.includes('<supervised_group_settled')) {
     return textChunks('parent observed the settle signal after termination')
   }
-  if (history.includes('TERMINATE_WAITED') && !history.includes('interrupted while running') && !history.includes('state bookkeeping')) {
-    return toolCallChunks('terminate_agent', { agent: 'alpha' })
-  }
-  const lastRole = options.messages?.at(-1)?.role
-  if (lastRole === 'tool') {
-    const toolText = lastOfRole(options, 'tool')
-    if (toolText.includes('Supervised group')) {
-      return shellCall('echo-and-wait', { text: 'TERMINATE_WAITED', seconds: 1 }, 'Let the busy child start, then interrupt it')
-    }
-    if (toolText.includes('interrupted while running')) {
-      // Keep the turn alive: the aborted member's settlement notice and the
-      // gated group-settled signal land right after the interrupt result.
-      return shellCall('echo-and-wait', { text: 'TERMINATE_DONE', seconds: 1 }, 'Let the final notice and signal land')
-    }
-    if (toolText.includes('TERMINATE_DONE')) {
+  // Parent: the interrupt result landed — keep the turn alive so the aborted
+  // member's settlement notice and the gated group-settled signal land.
+  if (history.includes('interrupted while running') || history.includes('state bookkeeping')) {
+    if (history.includes('TERMINATE_DONE')) {
       return textChunks('parent terminated alpha; waiting for the settle signal')
     }
-    return textChunks('unhandled terminate tool turn')
+    return shellCall('echo-and-wait', { text: 'TERMINATE_DONE', seconds: 1 }, 'Let the final notice and signal land')
+  }
+  // Parent: the busy child had time to start — interrupt it mid-flight.
+  if (history.includes('TERMINATE_WAITED')) {
+    return toolCallChunks('terminate_agent', { agent: 'alpha' })
+  }
+  // Parent: the group call returned — let the busy child start, then
+  // interrupt it. History-driven on purpose (never lastRole): a lastRole
+  // gate would skip the scripted interrupt when a snapshot interleaves.
+  if (history.includes('Supervised group')) {
+    return shellCall('echo-and-wait', { text: 'TERMINATE_WAITED', seconds: 1 }, 'Let the busy child start, then interrupt it')
   }
   if (history.includes('terminate-probe') && !history.includes('Supervised group')) {
     return toolCallChunks('delegate', {
