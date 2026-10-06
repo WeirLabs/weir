@@ -62,6 +62,8 @@
 
 ### Fixed
 
+- **崩溃恢复/fork 产生的会话化身能力视图永久 fail-closed**：宿主恢复或 fork 生成的「delegationDepth 为 0 但带 parentSession」的会话，因快照捕获门（只看 depth）与读取门（还看 parentSession）不对称，永远捕获不到继承快照却被当子代理要求快照——技能视图空、slash 菜单空、Badge 显示 `inherited-snapshot-unavailable`，只能手动 Apply 自愈。现在创建时按 resume 语义 best-effort 捕获父已接受快照（只缩不扩；已有自己选择的化身逐字保留）；父快照不可读时走根会话失败语义（会话照常创建、空视图 + 分类原因、提示点名面板 Apply 恢复），绝不拒创建主会话、绝不回退全量目录。同时选择视图错误态下的能力列表保持全量库存与真实来源标签（不再退化为 unknown/other），降级态下勾选 + Apply 即可自愈。详见 [会话能力管理器](docs/features/session-capability-manager.md)「初始化与继承」。
+
 - **能力面板「预设」页签每次打开都打印 `/capabilities presets` 与 `/capabilities default-get` 命令卡片**：预设列表与工作区默认值两个自动读取迁入同一 `orreryCapabilities` 静默通道（方法 `presets`/`defaultGet`），打开页签不再产生会话日志事件；`no-workspace` 等域状态返回值语义与面板分类不变，手打命令行为保留。详见 [会话能力管理器](docs/features/session-capability-manager.md)「会话 Badge 与 Capabilities 面板」。
 - **每次进入会话都打印 `/capabilities receipt` 命令卡片**：能力 Badge 与管理器面板的读取（receipt/list/conditions）此前借用 `/capabilities` 命令通道拉数，而宿主对每次命令执行无条件写入会话日志并硬编码归因为用户发起——每打开一次会话就永久多出至少一张命令卡片。读取现已迁到插件自有的 `orreryCapabilities` remote 通道（宿主层服务、预设层经 bridge 供数），读操作零会话日志写入；手打 `/capabilities` 与 Apply 等变更操作行为不变。详见 [会话能力管理器](docs/features/session-capability-manager.md)「会话 Badge 与 Capabilities 面板」。
 - **Worktree merge 审批与 abandon 确认卡片不触发系统通知**：Worktree 车道的提问卡片绕过工具层、由车道服务直接调用 `userQuestions` 服务弹出，会话事件流中从不出现通知模块监听的提问工具调用，车道等待用户审批时毫无通知。现在发问漏斗在卡片弹出前对 merge / abandon 两类卡片发出 `worktree/question` 事件，通知模块监听后按既有「提问」路径投递；cleanup 卡片永远紧随用户刚答完的 merge 审批或亲手执行的 land 命令弹出，刻意不通知。详见 [系统通知](docs/features/notify.md)与 [Worktree 车道](docs/features/git-worktree.md)特性文档。

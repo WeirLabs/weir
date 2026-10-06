@@ -82,7 +82,9 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Orrery 在
 - **子代理快照 durable 捕获**：子代理的 `agent/created` 内用阻塞式同步 I/O（`writeFileSync` + `fsyncSync`，经第 2 组单元布局 `sessions/<id>/inherited.json` 与锁约定）捕获父已接受快照。捕获**并非**与宿主会话发布原子——如实陈述：崩溃窗口留下的无快照子代理在显式 resume 时按子代理 fail-closed 规则拒绝。
 - **创建时继承**（6.3）：创建取父快照逐字（叠加委派约束 `allowSkills`/`allowMcpServers`，只缩不扩）；显式 resume／escalation 取「子原快照 ∩ 当前父快照」——被移除的能力不恢复、父新增的能力不下发；向仍存活子代理发消息（无 `agent/created`）不重新捕获，存活子代理的快照不被父的后续编辑改动。
 - **读取路径**：子代理会话无 accepted 记录时从其 inherited 快照解析（`readSelection` 回退）；无快照的子代理被显式拒绝（`inherited-snapshot-unavailable`），绝不授予根基线。
+- **崩溃恢复/fork 化身（resume incarnation，2026-10-06 `capability-resume-incarnation-recovery`）**：宿主恢复或 fork 产生的「`delegationDepth: 0` 但带 `parentSession` 头」的会话，捕获门与读取门已对齐——`agent/created` 按 resume 语义 best-effort 捕获父已接受快照（只缩不扩；自身引用按无父处理；**已持自己 accepted 记录的化身逐字保留**，一次显式 Apply 永不被父系收窄）。捕获失败走**根失败语义**：监听器不抛出、会话照常创建、blocked 空视图 + 分类 reason，hint 点名恢复动作（Capabilities 面板显式 Apply）；绝不回退全量目录、绝不拒创建用户主会话。父记录缺失（非 blocked）时捕获写入空 inherited（origin inherited），与既有子代理行为一致。
 - **fail closed 双规则**（6.4，每种情形恰好一条规则）：①根会话／已存在会话的选择记录不可读／损坏／未知版本 → 监听器**不抛出**，会话照常创建／恢复，视图为空 + 分类 reason/hint（`policy-unreadable:*`），原文件绝不改写；恢复 = 人工修复记录 + 新 Apply。②子代理的父快照不可读或无法捕获 → 监听器抛出拒创建，父会话继续并经委派结果得知原因。插件 dispose／reload 窗口保守拒绝（denials-only）。
+- **降级列表保真**：选择视图错误态下 `/capabilities list` 回退到全量原始库存——选择标记全 false、scope/provenance/conflict 标签保留（不降级为 unknown/other），错误状态随行；Apply 以全量库存映射名称不受影响，因此 blocked 会话在面板勾选 + Apply 即可自愈（`resume-incarnation` 集成场景 10/10 钉住全链）。
 - **初始化优先级**（6.5，[initial-selection.js](<../../plugins/orrery-harness/src/capabilities/initial-selection.js>)）：新根会话无 accepted 记录时——保存的工作区默认（含显式空集）逐字胜出并报告缺失项（默认不可解码则 fail closed `workspace-default-unavailable`）；无默认时内置 Skill 基线 + 组合中已启用的 managed MCP；历史内容不构成授权，本路径零持久化；闸门只对 `orrery` 预设生效（组合保证）。
 
 ### 预设与默认值
