@@ -181,9 +181,12 @@ window.__ModuleLoader__.load({
 				if (state === "confirm") return `${base} (${view.pendingCount})`;
 				return base;
 			})();
-			const primary = view ? primaryOf(state, view) : null;
+			// A cold view (restored session, no live agent) is read-only: every write
+			// action needs the live agent's command channel, so no button renders.
+			const cold = view?.cold === true;
+			const primary = view && !cold ? primaryOf(state, view) : null;
 			const files = view?.files ?? [];
-			const canRevoke = state !== "stopped" && state !== "unavailable" && state !== "revoked";
+			const canRevoke = !cold && state !== "stopped" && state !== "unavailable" && state !== "revoked";
 			const children = [
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
 					dot(state),
@@ -192,6 +195,7 @@ window.__ModuleLoader__.load({
 				] }, "head"),
 				view?.reason ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-orrery-edit-lock-reason": "", children: view.reason }, "reason") : null,
 				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-orrery-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
+				cold && state === "stopped" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-orrery-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdResumeManual" : "editLockColdResumeAuto") }, "cold") : null,
 				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, children: t("editLockRecovery").replace("{n}", String(view.recovery.attempts)) }, "recovery") : null,
 				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,
 				files.length ? jsx("div", { style: { marginTop: "8px" }, "data-orrery-edit-lock-files": "", children: files.map((file) => jsxs("div", {
@@ -200,7 +204,7 @@ window.__ModuleLoader__.load({
 					children: [
 						jsx("span", { style: nameStyle, title: file.detail.path, children: file.name }),
 						jsx("span", { style: mutedStyle, children: file.mine ? t(`editLockStatus_${file.status}`) : t("editLockOwnerOther") }),
-						!rowCommand(file) ? null
+						cold || !rowCommand(file) ? null
 							: file.action === "unlock" && armedUnlock !== file.detail.path
 								? action(`arm-unlock:${file.detail.path}`, t("editLockRow_unlock"), () => setArmedUnlock(file.detail.path))
 								: action(`${file.action}:${file.detail.path}`, t(file.action === "unlock" ? "editLockRow_unlockConfirm" : `editLockRow_${file.action}`), () => run(rowCommand(file)), file.action === "unlock" ? dangerStyle : buttonStyle)

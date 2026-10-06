@@ -1,12 +1,13 @@
 // Settings-plane maintenance remains reachable while enforcement is disabled.
 // Inspection is read-only; explicit offline ADMIN OVERRIDE uses its own durable
 // ledger and publisher reservation. No model tools or automatic repair.
-import { lstatSync, readdirSync, realpathSync, openSync, closeSync, fstatSync, readSync, constants } from 'node:fs'
-import { join, resolve, parse, relative, sep } from 'node:path'
+import { lstatSync, readdirSync, realpathSync } from 'node:fs'
+import { join } from 'node:path'
 import { AUTHORITY_DIR } from './domains.js'
 import { reservationPathFor } from './reservation.js'
 import { parseSnapshot } from './snapshot.js'
 import { maintenanceState, summarizeAuthorityImage } from './inspect.js'
+import { readSnapshotBytes, checkedPath, verifyPins, missing, errorMessage, MAX_SNAPSHOT_BYTES } from './read-authority.js'
 import { recoverAuthority } from './admin-recovery.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 
@@ -65,30 +66,8 @@ export function createEditLockEvidence() {
   }
 }
 
-// Pin every component, including the trusted root's ancestors. Node exposes no
-// portable openat: compare identities before/after opening and before/after read.
-// NOFOLLOW protects the leaf; NONBLOCK prevents swapped FIFO/device hangs.
-// These checks fail closed on observed races, not an atomic hostile-rename proof.
-function checkedPath(path) {
-  const absolute = resolve(path)
-  let current = parse(absolute).root
-  const pins = []
-  for (const part of relative(current, absolute).split(sep).filter(Boolean)) {
-    current = join(current, part)
-    const stat = lstatSync(current)
-    if (stat.isSymbolicLink()) throw new Error('symlink authority component refused')
-    pins.push({ path: current, stat })
-  }
-  return pins
-}
-function sameNode(a, b) { return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode }
-function verifyPins(pins) {
-  for (const pin of pins) if (!sameNode(pin.stat, lstatSync(pin.path))) throw new Error('authority path changed during inspection')
-}
-/** @param {unknown} error */
-function missing(error) { return error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT' }
-/** @param {unknown} error */
-function errorMessage(error) { return error instanceof Error ? error.message : String(error) }
+// The bounded, pinned, identity-checked snapshot read is shared with the cold
+// status view: read-authority.js. Only the inspection-specific facts stay here.
 function domainFacts(root) {
   const authorityDir = join(root, AUTHORITY_DIR)
   try {
@@ -134,51 +113,29 @@ export function trustedRoots(candidateRoots, evidenceRoots) {
  * left byte-identical.
  * @param {string} root - canonical (realpath) trusted root
  */
-export const MAX_INSPECTION_BYTES = 16 * 1024 * 1024
+export const MAX_INSPECTION_BYTES = MAX_SNAPSHOT_BYTES
 export function inspectAuthority(root) {
   const facts = domainFacts(root)
   const { authorityDir, reservation } = facts
   const base = { root, authorityDir, reservation, endpoint: null }
   if (facts.error) return { ...base, presence: 'unreadable', message: facts.error }
   if (!facts.hasAuthority) return { ...base, presence: 'none' }
-  let fd
-  let bytes
-  try {
-    const parents = checkedPath(authorityDir)
-    const path = join(authorityDir, 'snapshot.json')
-    let leaf
-    try { leaf = lstatSync(path) } catch (error) { if (!missing(error)) throw error }
-    if (!leaf) {
+  const read = readSnapshotBytes(authorityDir)
+  // The authority directory vanished between the facts and the read: the same
+  // race the inline read reported as unreadable.
+  if (read.presence === 'no-authority') return { ...base, presence: 'unreadable', message: 'authority path changed during inspection' }
+  if (read.presence === 'no-snapshot') {
+    try {
       const entries = readdirSync(authorityDir)
-      verifyPins(parents)
       return { ...base, presence: entries.length ? 'no-committed-snapshot' : 'empty' }
+    } catch (error) {
+      return { ...base, presence: 'unreadable', message: errorMessage(error) }
     }
-    if (!leaf.isFile() || leaf.isSymbolicLink()) return { ...base, presence: 'not-a-file' }
-    if (!constants.O_NOFOLLOW) throw new Error('safe inspection unsupported on this platform')
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    const opened = fstatSync(fd)
-    if (!opened.isFile() || !sameNode(leaf, opened)) throw new Error('opened snapshot identity changed')
-    verifyPins(parents)
-    if (!sameNode(opened, lstatSync(path))) throw new Error('snapshot replaced before read')
-    if (opened.size > MAX_INSPECTION_BYTES) throw new Error('snapshot exceeds inspection byte limit')
-    const buffer = Buffer.alloc(Math.min(opened.size + 1, MAX_INSPECTION_BYTES + 1))
-    let length = 0
-    while (length < buffer.length) {
-      const count = readSync(fd, buffer, length, buffer.length - length, length)
-      if (!count) break
-      length += count
-    }
-    const after = fstatSync(fd)
-    verifyPins(parents)
-    if (!sameNode(opened, lstatSync(path)) || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || length !== opened.size) {
-      throw new Error('snapshot changed during bounded read')
-    }
-    bytes = buffer.subarray(0, length)
-  } catch (error) {
-    return { ...base, presence: 'unreadable', message: errorMessage(error) }
-  } finally { if (fd !== undefined) closeSync(fd) }
+  }
+  if (read.presence === 'not-a-file') return { ...base, presence: 'not-a-file' }
+  if (read.presence !== 'valid') return { ...base, presence: 'unreadable', message: read.message }
   try {
-    return { ...base, presence: 'valid', snapshot: summarizeAuthorityImage(parseSnapshot(bytes, root)) }
+    return { ...base, presence: 'valid', snapshot: summarizeAuthorityImage(parseSnapshot(read.bytes, root)) }
   } catch (error) {
     return { ...base, presence: 'corrupt', message: errorMessage(error) }
   }

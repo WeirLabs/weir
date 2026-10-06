@@ -1,8 +1,9 @@
 // Status view contract (design D6): the panel derives colour and controls from
 // this shape, so wording can change without breaking it, and technical
-// identifiers stay out of the primary fields.
+// identifiers stay out of the primary fields. The cold-session builder maps a
+// validated authority image into the same shape (design D2).
 import { expect, it } from './helpers.js'
-import { buildView, shortName, unavailableView, VIEW_STATES } from '../src/edit-lock/view.js'
+import { buildColdView, buildView, shortName, unavailableView, VIEW_STATES } from '../src/edit-lock/view.js'
 
 const base = (over = {}) => ({ sessionId: 's1', state: 'active', interrupted: false, executionEpoch: 2, locks: [], recovery: null, retention: null, ...over })
 const lock = (resourceId, owner = 's1', status = 'active', extra = {}) => ({ resourceId, owner, generation: 3, status, ...extra })
@@ -74,4 +75,68 @@ it('an unresolvable session renders as an action-free unavailable view', () => {
 it('an unavailable view carries the registration failure so the panel does not say "starting" forever', () => {
   expect(unavailableView('edit lock publisher unreachable').reason).toBe('edit lock publisher unreachable')
   expect(unavailableView().reason).toBe(null)
+})
+
+/** A minimal valid authority image for the cold builder. */
+const imageOf = (over = {}) => ({
+  sessions: [{ sessionId: 's1', executionEpoch: 2, interrupted: true }],
+  generations: [{ resourceId: '/w/a.txt', generation: 3 }],
+  locks: [{ resourceId: '/w/a.txt', owner: 's1', generation: 3, status: 'user-interrupted' }],
+  holds: [{ sessionId: 's1', holding: false, holdUntil: null, holdCumulativeMs: 0 }],
+  recovery: [],
+  adminRecoveries: [],
+  ...over,
+})
+const coldView = (image, sessionId = 's1', extra = {}) => buildColdView({ image, sessionId, cwd: '/w', root: '/w', now: 1, ...extra })
+
+it('a cold interrupted session renders its true stopped view with the cold marker, never "starting"', () => {
+  const result = coldView(imageOf())
+  expect(result.state).toBe('stopped')
+  expect(result.cold).toBe(true)
+  expect(result.reason).toBe(undefined)
+  expect(result.files.map((file) => [file.name, file.mine, file.status])).toEqual([['a.txt', true, 'user-interrupted']])
+  expect(result.technical).toEqual({ sessionId: 's1', executionEpoch: 2, root: '/w', mode: null, at: 1 })
+})
+
+it('a cold view lists the domain\'s locks so the panel can show who else holds files', () => {
+  const image = imageOf({ locks: [
+    { resourceId: '/w/a.txt', owner: 's1', generation: 3, status: 'user-interrupted' },
+    { resourceId: '/w/b.txt', owner: 's2', generation: 1, status: 'abnormal', reason: 'provider-error' },
+  ] })
+  const files = coldView(image).files
+  expect(files.map((file) => [file.name, file.mine, file.action])).toEqual([['a.txt', true, 'release'], ['b.txt', false, 'unlock']])
+})
+
+it('an administratively revoked cold session is terminal, ahead of stopped', () => {
+  const image = imageOf({ locks: [], adminRecoveries: [{ recoveryId: 'r1', root: '/w', owner: 's1', committedRevision: 4, operations: [] }] })
+  expect(coldView(image).state).toBe('revoked')
+})
+
+it('cold retention settles against the read instant, exactly like the live read-time settlement', () => {
+  const image = imageOf({
+    sessions: [{ sessionId: 's1', executionEpoch: 1, interrupted: false }],
+    locks: [{ resourceId: '/w/a.txt', owner: 's1', generation: 3, status: 'active' }],
+    holds: [{ sessionId: 's1', holding: true, holdUntil: 5_000, holdCumulativeMs: 1_800_000 }],
+  })
+  const held = coldView(image, 's1', { now: 1_000 })
+  expect(held.state).toBe('holding')
+  expect(held.hold).toEqual({ until: 5_000, remainingMinutes: 1, usedMinutes: 30 })
+  // An expiry never survives as ownership: past the deadline it is ordinary editing.
+  expect(coldView(image, 's1', { now: 6_000 }).state).toBe('editing')
+  // A hold row without owned locks is no hold at all (kernel settleHold: holding && owns).
+  const orphan = imageOf({
+    sessions: [{ sessionId: 's1', executionEpoch: 1, interrupted: false }],
+    locks: [],
+    holds: [{ sessionId: 's1', holding: true, holdUntil: 5_000, holdCumulativeMs: 0 }],
+  })
+  expect(coldView(orphan, 's1', { now: 1_000 }).state).toBe('idle')
+})
+
+it('a cold session unknown to the authority is honestly idle, and the auto-resume gate travels with the view', () => {
+  const image = imageOf({ sessions: [], locks: [], holds: [] })
+  const result = coldView(image, 'stranger')
+  expect(result.state).toBe('idle')
+  expect(result.cold).toBe(true)
+  expect(result.autoResume).toBe(true)
+  expect(coldView(imageOf(), 's1', { autoResume: false }).autoResume).toBe(false)
 })

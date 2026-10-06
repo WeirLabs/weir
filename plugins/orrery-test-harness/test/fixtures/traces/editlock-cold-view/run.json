@@ -1,0 +1,8 @@
+{
+  "scenario": "editlock-cold-view",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-cold-session-view-076/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "cold view resume editing restored\n",
+  "stderr": "\n\n",
+  "sessionId": "session-d8bb240e-43b8-4f25-b8d6-4bda0d7b0644"
+}

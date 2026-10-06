@@ -100,3 +100,57 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
 export function unavailableView(reason = null) {
   return { state: 'unavailable', reason: reason ?? null, files: [], ownCount: 0, pendingCount: 0, hold: null, recovery: null, technical: null }
 }
+
+/**
+ * Cold-session view (design D2): map one validated authority image into the
+ * same buildView input a live status read would produce, so a restored session
+ * shows its TRUE recorded state — interrupted as stopped, an ADMIN OVERRIDE as
+ * terminal revoked, its own locks and the domain's locks, retention settled
+ * against the read instant — never a reasonless "starting". The `cold` marker
+ * tells the panel to replace live-only actions with activation guidance, and
+ * the auto-resume gate travels with the view so the guidance matches the
+ * committed setting. Pure like buildView: no IO, no clock, no ctx — the caller
+ * supplies the parsed image and `now`.
+ * @param {{
+ *   image: any,
+ *   sessionId: string,
+ *   cwd?: string,
+ *   root?: string,
+ *   autoResume?: boolean,
+ *   now: number,
+ * }} input
+ */
+export function buildColdView({ image, sessionId, cwd, root, autoResume = true, now }) {
+  const sessions = Array.isArray(image?.sessions) ? image.sessions : []
+  const locks = (Array.isArray(image?.locks) ? image.locks : []).filter(lock => lock !== null && typeof lock === 'object')
+  const holds = Array.isArray(image?.holds) ? image.holds : []
+  const recoveries = Array.isArray(image?.recovery) ? image.recovery : []
+  const adminRecoveries = Array.isArray(image?.adminRecoveries) ? image.adminRecoveries : []
+  const session = sessions.find(row => row?.sessionId === sessionId) ?? null
+  // The manager derives the revoked flag from the administrative ledger at
+  // status time (revokedOwner); the cold read applies the same rule to the image.
+  const revoked = adminRecoveries.some(row => row?.owner === sessionId)
+  // Read-time retention settlement, byte-equivalent to the kernel's settleHold:
+  // a hold counts only while the session owns a lock, and the remaining budget
+  // is computed against the read instant, so a missed expiry timer can never
+  // leave stale ownership behind a status read.
+  const held = holds.find(row => row?.sessionId === sessionId) ?? null
+  const owns = locks.some(lock => lock.owner === sessionId)
+  const remainingMs = held?.holdUntil == null ? 0 : Math.max(0, held.holdUntil - now)
+  const holding = held?.holding === true && owns
+  const retention = held ? { sessionId, held: holding, expired: holding && held.holdUntil !== null && remainingMs === 0,
+    holdUntil: held.holdUntil, remainingMs, holdCumulativeMs: held.holdCumulativeMs } : null
+  const status = {
+    sessionId,
+    // Interrupted records a stopped session (a restarted host interrupts every
+    // known session durably). Otherwise the state derives from locks/retention.
+    state: session?.interrupted === true ? 'stopped' : 'active',
+    interrupted: session?.interrupted ?? null,
+    revoked,
+    executionEpoch: session?.executionEpoch ?? null,
+    locks: locks.filter(lock => lock.owner === sessionId),
+    recovery: recoveries.find(row => row?.sessionId === sessionId) ?? null,
+    retention,
+  }
+  return { ...buildView({ status, locks, cwd, root, now }), cold: true, autoResume: autoResume !== false }
+}

@@ -42,6 +42,7 @@ import staleSweep from './editlock-stale-sweep.js'
 import staleSweepOff from './editlock-stale-sweep-off.js'
 import continuable from './continuable.js'
 import crashRecovery from './editlock-crash-recovery.js'
+import coldView from './editlock-cold-view.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
@@ -61,6 +62,7 @@ SCENARIOS.push(staleSweepOff)
 SCENARIOS.push(capabilityRemote)
 SCENARIOS.push(continuable)
 SCENARIOS.push(crashRecovery)
+SCENARIOS.push(coldView)
 
 /**
  * Find a scenario entry by id.

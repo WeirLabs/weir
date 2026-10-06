@@ -201,6 +201,38 @@ describe('client.edit-lock-panel chunk', () => {
     expect(find(tree, (node) => node['data-orrery-edit-lock-revoked'] !== undefined).children).toBe('editLockRevokedHint')
     expect(runs).toEqual([])
   })
+	it('a cold stopped session shows activation guidance and offers no live-only action', async () => {
+		const { runs, render } = await mounted([viewOf('stopped', [own('a.txt', 'user-interrupted')], { cold: true, autoResume: true })])
+		find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+		const tree = render()
+		// No resume primary, no per-file action, no revoke: every write needs the
+		// live agent's command channel, which a cold session does not have.
+		expect(byAction(tree, 'primary')).toBe(undefined)
+		expect(byAction(tree, 'release:/w/a.txt')).toBe(undefined)
+		expect(byAction(tree, 'arm-stop')).toBe(undefined)
+		// The file list stays, read-only, and the guidance matches the auto-resume gate.
+		expect(find(tree, (node) => node['data-orrery-edit-lock-file'] === '/w/a.txt')).toBeTruthy()
+		expect(find(tree, (node) => node['data-orrery-edit-lock-cold'] !== undefined).children).toBe('editLockColdResumeAuto')
+		expect(runs).toEqual([])
+	})
+
+	it('a cold stopped session with auto-resume off is told to activate, then continue by hand', async () => {
+		const { render } = await mounted([viewOf('stopped', [], { cold: true, autoResume: false })])
+		find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+		expect(find(render(), (node) => node['data-orrery-edit-lock-cold'] !== undefined).children).toBe('editLockColdResumeManual')
+	})
+
+	it('a cold view in any other state is read-only too: no primary, no row action, no revoke, no guidance', async () => {
+		const stuck = { name: 'x.txt', mine: false, status: 'abnormal', reason: 'provider-error', action: 'unlock', detail: { path: '/w/x.txt', owner: 's2', generation: 7 } }
+		const { render } = await mounted([viewOf('editing', [own('a.txt'), stuck], { cold: true, autoResume: true })])
+		find(render(), (node) => node['data-orrery-edit-lock'] === '').onClick(); await flush()
+		const tree = render()
+		expect(byAction(tree, 'primary')).toBe(undefined)
+		expect(byAction(tree, 'release:/w/a.txt')).toBe(undefined)
+		expect(byAction(tree, 'arm-unlock:/w/x.txt')).toBe(undefined)
+		expect(byAction(tree, 'arm-stop')).toBe(undefined)
+		expect(find(tree, (node) => node['data-orrery-edit-lock-cold'] !== undefined)).toBe(undefined)
+	})
 
   it('closes on an outside pointerdown, stays open for inside ones, and re-opens cleanly', async () => {
     const listeners = []
