@@ -8,7 +8,7 @@ import { isMissingTarget, STALE_SWEEP_COOLDOWN_MS } from './stale-sweep.js'
  * Resume and confirm are trusted human ingress only; never expose them as tools.
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
  * @param {(agent: object) => string | undefined} sessionForAgent
- * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number}} [options] */
+ * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, onAdminRecovery?: (info: {revision: number, idempotent: boolean, record: any, trigger: string | null}) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number}} [options] */
 export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
   /** @typedef {{sessionId:string, state:'starting'|'active'|'recovering'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
@@ -411,6 +411,21 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     unlock(resourceId, generation) {
       if (closed) return Promise.reject(new Error('edit lifecycle closed'))
       return runtime.control.adminUnlock(resourceId, generation)
+    },
+    /** Trusted online administrative recovery (design D4), executed
+     * publisher-side as one serialized manager transaction — the maintenance
+     * panel's one-click confirmation reaches here directly (local domain) or
+     * through the peer channel (`adminRecover` kind). The `trigger` identity
+     * comes from the CALLER (the channel's bound agent or the local settings
+     * plane), never from the request payload; it is audit metadata only.
+     * Never exposed as a tool.
+     * @param {any} request @param {string | null} [trigger] */
+    async adminRecoverOnline(request, trigger = null) {
+      if (closed) throw new Error('edit lifecycle closed')
+      const result = await runtime.control.adminRecoverOnline(request)
+      // Shared audit after durable success; it never breaks the recovery.
+      try { options.onAdminRecovery?.({ ...result, trigger: trigger ?? null }) } catch { /* log-only */ }
+      return result
     },
     /** Domain-wide observation for trusted UI/commands; grants nothing. */
     locks() { return runtime.control.status().locks },
