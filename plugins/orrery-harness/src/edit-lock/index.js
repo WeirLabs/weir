@@ -702,6 +702,23 @@ return (ctx, config = {}) => {
     // No agent registry in this composition: only the creation path binds.
   }
 
+  // Preset-switch re-binding (design D1): select → recompose rebinds the
+  // agent's scope chain to the new generation WITHOUT re-emitting
+  // agent/created; the preset registry re-emits this session event unscoped
+  // (dsh-agent-preset-registry: ctx.emit('agent-preset/selected', session.id,
+  // agentPreset)) AFTER the rebind has landed, so a re-setup here binds under
+  // THIS generation. The listener must return undefined (serial-bail
+  // discipline). A switch to a foreign preset fails the ownAgent fence and
+  // stays hard-refused, exactly as before; a setup failure lands in the
+  // fourfold record and the guard's lazy path does not retry it this
+  // generation.
+  ctx.on('agent-preset/selected', (/** @type {any} */ sessionId) => {
+    if (closed) return
+    const agent = typeof sessionId === 'string' ? ctx.get?.('agents')?.get?.(sessionId) : undefined
+    if (!agent || !ownAgent(agent)) return
+    void setupAgent(agent)
+  })
+
   // Stock Stop aborts the active turn signal synchronously: close admission at
   // that instant. Idle Stop has no signal; /edit-lock stop is the awaitable path.
   /** Turn identity seen last per agent, so a new turn is detected exactly once.
