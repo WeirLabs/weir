@@ -4,6 +4,7 @@ import { mkdtempSync, realpathSync, lstatSync, rmSync, writeFileSync, mkdirSync,
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { createResourceIdentity } from '../src/edit-lock/resource-identity.js'
+import { apfsNameContractSkip } from './helpers.js'
 
 function fixture(t) {
   const parent = realpathSync.native(tmpdir())
@@ -139,7 +140,7 @@ test('witnesses physical ancestors hidden inside symlink targets, not only the f
 })
 
 
-test('case and NFC aliases have no missing key and reject old observations after creation on this volume', t => {
+test('case and NFC aliases have no missing key and reject old observations after creation on this volume', { skip: apfsNameContractSkip }, t => {
   const cwd = fixture(t)
   const identity = createResourceIdentity()
   for (const [stored, alias] of [['CaseWitness', 'casewitness'], ['caf\u00e9', 'cafe\u0301']]) {

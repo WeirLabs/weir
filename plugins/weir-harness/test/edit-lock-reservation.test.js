@@ -45,7 +45,7 @@ test('a runtime that fails to open releases its own reservation, so the same pro
 
 // --- P1 (openspec edit-lock-autonomous-recovery): owner doc + death-proof reclaim ---
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync } from 'node:fs'
 import { parseOwnerDoc } from '../src/capabilities/store/lock.js'
 import { reservationPathFor } from '../src/edit-lock/reservation.js'
 
@@ -179,12 +179,20 @@ test('an interrupted recovery lock is retaken only when its own owner is also pr
 test('a renewal that cannot land fails exclusivity closed instead of masquerading as a live lease', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'weir-renewal-failure-'))
   const held = await reservePublisher(directory, { liveness: fakeLiveness(222, () => 'alive'), leaseMs: 10_000, renewMs: 30 })
-  // The reservation is replaced behind the holder's back (a legitimate reclaim).
-  rmSync(reservationPathFor(directory), { recursive: true })
-  mkdirSync(reservationPathFor(directory), { mode: 0o700 })
+  // The reservation is replaced behind the holder's back, shaped exactly like
+  // a legitimate reclaim: the old directory is renamed aside (its inode stays
+  // alive at the stale sibling) and a fresh directory takes the name. Renaming
+  // instead of delete+recreate keeps the fixture platform-true — on
+  // inode-reusing filesystems (ext4/tmpfs) a freed inode can be recycled for
+  // the replacement, which the dev/ino identity check could not observe.
+  const reservation = reservationPathFor(directory)
+  const retired = `${reservation}.stale.replaced`
+  renameSync(reservation, retired)
+  mkdirSync(reservation, { mode: 0o700 })
   await sleep(120)
   assert.throws(() => held.assertExclusive(), /renewal failed|replaced/)
-  rmSync(reservationPathFor(directory), { recursive: true })
+  rmSync(reservation, { recursive: true })
+  rmSync(retired, { recursive: true })
 })
 
 test('release semantics are unchanged: unexpected contents retain the reservation', async () => {

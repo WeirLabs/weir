@@ -34,6 +34,16 @@ export const storePlatformSkip = storePlatformSupported
   ? false
   : 'Weir capability store writes are darwin-only by the C-1.10 platform matrix; this test exercises the store-backed path'
 
+// Volume-contract guard for tests that observe APFS-only name aliasing. The
+// default APFS volume resolves names case-insensitively and NFC-normalizes
+// them, so two spellings (CaseWitness/casewitness, NFC vs NFD) alias the same
+// file. That is a property of the concrete volume, not of POSIX: an ext4/tmpfs
+// volume resolves the spellings as distinct names and cannot produce the
+// fixture. Skip with a documented reason, full strength on darwin.
+export const apfsNameContractSkip = process.platform === 'darwin'
+  ? false
+  : 'case-insensitive and NFC-normalized name aliasing is an APFS volume contract; this test observes real aliases on the test volume, which non-APFS filesystems cannot produce'
+
 const PINNED_HOST_ENV = ['HOME', 'DSH_HOME', 'DSH_AGENTS_HOME', 'DSH_BUNDLED_SKILL_DIR']
 
 /**

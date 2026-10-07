@@ -60,6 +60,11 @@ function worker(t, args) {
   let buffer = ''
   let notify = () => {}
   child.stdout.setEncoding('utf8')
+  child.stdin.on('error', error => {
+    // A peer that departed before a late write landed (see send): its broken
+    // pipe is not an observation failure. Any other stdin error stays loud.
+    if (error?.code !== 'EPIPE') throw error
+  })
   child.stdout.on('data', chunk => {
     buffer += chunk
     for (let at = buffer.indexOf('\n'); at >= 0; at = buffer.indexOf('\n')) {
@@ -85,7 +90,19 @@ function worker(t, args) {
     }
     check()
   })
-  const send = (/** @type {string} */ word) => { child.stdin.write(`${word}\n`) }
+  const send = (/** @type {string} */ word) => {
+    try {
+      child.stdin.write(`${word}\n`)
+    } catch (error) {
+      // The peer may legitimately depart before a late RELEASE arrives: the
+      // losing reclaimer reports its result and exits right away, so its pipe
+      // is broken (EPIPE) when the parent writes. The write is not the
+      // observation — every send is followed by a strict line() wait or an
+      // exit-code assertion — so a write to a departed child is a no-op, and
+      // a child gone before GO still fails loudly at its next line() wait.
+      if (error?.code !== 'EPIPE') throw error
+    }
+  }
   return { child, line, exited, send }
 }
 
