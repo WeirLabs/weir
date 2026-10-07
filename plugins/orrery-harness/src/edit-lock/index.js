@@ -935,7 +935,15 @@ return (ctx, config = {}) => {
   ctx.inject?.(['connection'], (/** @type {any} */ scope) => {
     const connection = scope.connection
     if (!connection?.fetch?.register) return
-    const dispose = connection.fetch.register({
+    // Duplicate-route tolerance (design D2): with several preset mounts in one
+    // process the first mount owns these process-wide routes, and the host
+    // connection refuses a later mount's identical registration. Skipping only
+    // that exact refusal keeps this mount's inject callback intact instead of
+    // aborting it mid-mount; correctness never depends on mount order because
+    // the surviving handler routes every agent to its owning mount (D1).
+    /** @type {(() => void) | undefined} */
+    let dispose
+    try { dispose = connection.fetch.register({
       path: '/api/orrery-edit-lock/view',
       methods: ['POST'],
       requestBody: 'buffered',
@@ -946,6 +954,29 @@ return (ctx, config = {}) => {
         const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
         if (!sessionId) return reply({ ok: false, error: { code: 'orrery-edit-lock/invalid', message: 'body needs { sessionId }' } }, 400)
         const agent = ctx.get?.('agents')?.get?.(sessionId)
+        // Multi-mount routing (design D1): this route belongs to whichever
+        // mount happened to register first, but the answer must come from the
+        // mount that owns the agent. Resolve the agent's own orreryEditLock
+        // instance through the preset registry (the own-preset fence's
+        // mechanism) and let its describe build the view; an absent, throwing
+        // or non-resolving registry falls back to this mount's local records
+        // below (design D4).
+        if (agent) {
+          /** @type {any} */
+          let owning = null
+          try { owning = typeof presets?.serviceFor === 'function' ? presets.serviceFor(agent, 'orreryEditLock') : null } catch { owning = null }
+          if (owning && typeof owning.describe === 'function') {
+            try {
+              const described = await owning.describe(agent)
+              return reply({ ok: true, value: buildView({ status: described.status, locks: described.locks, cwd: agent?.session?.header?.cwd, root: described.root, mode: described.mode, now: Date.now() }) })
+            } catch (error) {
+              // Failure loudening (design D3): a failed binding names its
+              // reason; a reasonless "starting" is reserved for a genuinely
+              // in-flight setup (describe's await absorbs that window).
+              return reply({ ok: true, value: unavailableView(String(/** @type {any} */ (error)?.message ?? error)) })
+            }
+          }
+        }
         const domain = agent && settled.get(agent)
         // A live agent whose domain is still starting (or failed to start)
         // keeps the old answer; only a session with NO live agent cold-reads.
@@ -958,13 +989,17 @@ return (ctx, config = {}) => {
           return reply({ ok: false, error: { code: 'orrery-edit-lock/internal', message: /** @type {any} */ (error)?.message ?? String(error) } }, 500)
         }
       },
-    })
+    }) } catch (error) {
+      if (!duplicateRouteRegistration(error, '/api/orrery-edit-lock/view')) throw error
+    }
     // Online administrative recovery (design D4): the maintenance panel's
     // one-click confirmation. Root membership is exact against the roots this
     // process actually serves (never an open, never a client path read); the
     // manager re-verifies every condition at its FIFO position. Refusals
     // expose no filesystem detail beyond what inspect already shows.
-    const disposeRecovery = connection.fetch.register({
+    /** @type {(() => void) | undefined} */
+    let disposeRecovery
+    try { disposeRecovery = connection.fetch.register({
       path: '/api/orrery-edit-lock/maintenance/recover-online',
       methods: ['POST'],
       requestBody: 'buffered',
@@ -998,7 +1033,9 @@ return (ctx, config = {}) => {
             detail: e?.recoveryRefusal === true ? String(e.message) : undefined, commitStatus: 'not-acknowledged' } }, 409)
         }
       },
-    })
+    }) } catch (error) {
+      if (!duplicateRouteRegistration(error, '/api/orrery-edit-lock/maintenance/recover-online')) throw error
+    }
     offView = () => { dispose?.(); disposeRecovery?.() }
     return offView
   })
@@ -1064,6 +1101,13 @@ function safeSetTimer(ctx) {
     const timer = ctx?.setTimeout
     return typeof timer === 'function' ? timer.bind(ctx) : undefined
   } catch { return undefined }
+}
+/** The host connection refuses a second registration of an exact route path
+ * with this precise message (dsh-client-connection); only that refusal may be
+ * skipped by a later mount — every other registration error still aborts the
+ * mount. @param {any} error @param {string} path */
+function duplicateRouteRegistration(error, path) {
+  return /** @type {any} */ (error)?.message === `connection: exact Fetch route ${JSON.stringify(path)} is already registered`
 }
 /** Any abort latches (denial is always safe) except disposal, which
  * agent/disposed revokes and forgets. @param {AbortSignal} signal */
