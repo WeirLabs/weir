@@ -73,7 +73,8 @@
     - id: orrery-capability-remote
       name: 'orrery-harness/capability-remote'
     # Browser half of the same package: the Orrery settings page registered
-    # into the Settings Plugins page (./client export, dsh.client manifest).
+    # as a top-level section of the global Settings panel (./client export,
+    # dsh.client manifest).
     - id: ui-orrery-settings
       name: 'orrery-harness'
     # Isolated reusable model picker client module (own package + own client
