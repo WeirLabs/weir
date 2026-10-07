@@ -109,12 +109,12 @@ export function blackboardRemoteBridge() {
   return bridgeFaces
 }
 
-/** Strip one kernel row to the pinned wire entry shape (summary copied, content optional, the promoted marker rides along when present). */
+/** Strip one kernel row to the pinned wire entry shape (summary is a free-text string, content optional, the promoted marker rides along when present). */
 function wireEntry(entry, { content = false } = {}) {
   const row = {
     key: entry.key,
     entryType: entry.entryType,
-    summary: { ...entry.summary },
+    summary: entry.summary,
     readCount: entry.readCount,
     subscribeCount: entry.subscribeCount,
     updatedAt: entry.updatedAt,
@@ -185,11 +185,13 @@ export function createBlackboardRemoteService(dependencies = {}) {
       })
     },
 
-    /** Batch content read; unknown keys are values, not errors. */
+    /** Batch content read; unknown keys are values, not errors. Audit reads
+     * through this remote (the panel) never move read counts — counting is
+     * the agent-tool path's reuse evidence, not a page-view metric. */
     read(agent, args) {
       return payloadWrap('read', () => {
         const { boardId, faces } = resolve(agent)
-        const result = faces.kernel.read(boardId, args?.keys ?? [])
+        const result = faces.kernel.read(boardId, args?.keys ?? [], { count: false })
         return { entries: result.found.map((/** @type {any} */ entry) => wireEntry(entry, { content: true })) }
       })
     },

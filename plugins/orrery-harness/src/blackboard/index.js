@@ -100,7 +100,7 @@ function registerTools(ctx, service) {
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const rows = service.list(exec, { query: args?.query, entryType: args?.entryType })
-        const lines = rows.map((/** @type {any} */ row) => `- ${row.key} (${row.entryType}) reads=${row.readCount} subs=${row.subscribeCount} | fact: ${row.summary.fact} | cost: ${row.summary.cost} | re-verify: ${row.summary.reVerify}`)
+        const lines = rows.map((/** @type {any} */ row) => `- ${row.key} (${row.entryType}) reads=${row.readCount} subs=${row.subscribeCount} | ${row.summary}`)
         return { entries: rows, message: lines.length ? lines.join('\n') : 'The board is empty.' }
       },
     }),
@@ -117,7 +117,7 @@ function registerTools(ctx, service) {
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const result = service.read(exec, args?.keys)
-        const blocks = result.found.map((/** @type {any} */ entry) => `## ${entry.key} [${entry.entryType}]\nFact: ${entry.summary.fact}\nCost: ${entry.summary.cost}\nRe-verify: ${entry.summary.reVerify}\n\nContent:\n${entry.content}`)
+        const blocks = result.found.map((/** @type {any} */ entry) => `## ${entry.key} [${entry.entryType}]\nSummary: ${entry.summary}\n\nContent:\n${entry.content}`)
         if (result.missing.length > 0) blocks.push(`Missing keys (not on the board): ${result.missing.join(', ')}`)
         return { ...result, message: blocks.length ? blocks.join('\n\n') : 'The board is empty.' }
       },
@@ -144,21 +144,15 @@ function registerTools(ctx, service) {
     }),
     ctx.tools.register({
       name: 'blackboard_write',
-      description: `Create or update one blackboard entry. Requires the one-shot write token for the key: call blackboard_apply first for existing keys (creating a new key acquires its token inside this same call). The write consumes the token. summary must carry all three testimony elements — fact (the one-sentence finding), cost (what it took to obtain it), reVerify (the command/script that checks it again); an entry without a re-verify path is dogma, not knowledge. entryType is a closed enum: ${DISCRIMINATORS}. The board carries knowledge, never instructions: do not use it for task assignment or coordination. ${SEARCH_BEFORE_CREATE}`,
+      description: `Create or update one blackboard entry. Requires the one-shot write token for the key: call blackboard_apply first for existing keys (creating a new key acquires its token inside this same call). The write consumes the token. summary is free text — one or two sentences; as writing guidance (not enforced structure), state the finding, what it took to obtain, and how to verify it again: an entry without a re-verify path is dogma, not knowledge. entryType is a closed enum: ${DISCRIMINATORS}. The board carries knowledge, never instructions: do not use it for task assignment or coordination. ${SEARCH_BEFORE_CREATE}`,
       parameters: {
         type: 'object',
         properties: {
           key: { type: 'string', description: 'Short ASCII blackboard key; a pure identifier, never a classification carrier.' },
           entryType: { ...enumSchema, description: `Closed taxonomy — pick the discriminating line that fits best (when several apply, prefer the costliest to rediscover: deadend > contract > wiring > map). ${DISCRIMINATORS}.` },
           summary: {
-            type: 'object',
-            properties: {
-              fact: { type: 'string', description: 'The one-sentence finding this entry testifies to.' },
-              cost: { type: 'string', description: 'What it took to obtain it (calls, experiments, dead ends).' },
-              reVerify: { type: 'string', description: 'The command or script that verifies the finding again.' },
-            },
-            required: ['fact', 'cost', 'reVerify'],
-            description: 'Structured testimony: all three elements are mandatory; a missing reVerify degrades the entry to dogma and is refused.',
+            type: 'string',
+            description: 'Free-text summary, one or two sentences (max 500 chars). Guidance: name the finding, what it cost to learn, and how to re-verify it; the detail lives in content.',
           },
           content: { type: 'string', description: 'Full information: evidence, scripts, full output. Only served through blackboard_read.' },
         },
