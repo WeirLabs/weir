@@ -61,6 +61,9 @@
         notifyMinTurnSeconds: 15
         notifySound: true
         notifyForeground: skip
+        # Session blackboard: write-token TTL (minutes); expiry releases the
+        # key and notifies its subscribers. Volatile — edits apply live.
+        blackboardWriteTokenTtlMinutes: 60
     # System notifications (profile level, so every session is covered, not only
     # Orrery-preset ones): approval / question / plan-review / failure / long-turn
     # completion. Pure observer of session events; settings overlay is read live.
@@ -207,6 +210,9 @@
               # Worktree lanes service: provider (worktree) and consumer
               # (delegate) share this realm (S24 / S26 S-A).
               orreryWorktreeLanes: true
+              # Session blackboard: provider + tool consumers (slice 1) and the
+              # delegate write-contract consumer (slice 2) share this realm.
+              orreryBlackboard: true
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
@@ -247,6 +253,9 @@
               # F3 分类委派：类别路由 + 精选只读代理 + 后台 job 道
               - id: delegate
                 name: 'orrery-harness/delegate'
+              # 会话黑板：会话级 KV + 写入权仲裁 + 五个模型工具（提供 orreryBlackboard 服务）
+              - id: blackboard
+                name: 'orrery-harness/blackboard'
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'orrery-harness/todo-driver'
@@ -406,6 +415,7 @@
               workflowEngine: true
               orreryEditLock: true
               orreryWorktreeLanes: true
+              orreryBlackboard: true
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
@@ -442,6 +452,8 @@
                 name: 'orrery-harness/worktree'
               - id: delegate
                 name: 'orrery-harness/delegate'
+              - id: blackboard
+                name: 'orrery-harness/blackboard'
               - id: todo-driver
                 name: 'orrery-harness/todo-driver'
               # Must precede hashline-edit / lsp (mount-time capture).
