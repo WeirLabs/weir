@@ -32,7 +32,7 @@ function makeBridge({ ttlMs = () => TTL } = {}) {
   }
 }
 
-const SUMMARY = { fact: 'the fact', cost: 'two searches', reVerify: 'ls packages' }
+const SUMMARY = 'the fact; took two searches; re-verify: ls packages'
 const ENTRY = { key: 'probe.key', entryType: 'map', summary: SUMMARY, content: 'full content' }
 
 function serviceOf(bridge) {
@@ -43,7 +43,7 @@ describe('remote list/read (pinned wire shapes, zero content at the aggregate la
   it('list returns exactly the pinned entry fields, filtered by type and query', () => {
     const bridge = makeBridge()
     bridge.kernel.write('root-session', { holderId: 'root-session', ...ENTRY, ttlMs: TTL })
-    bridge.kernel.write('root-session', { holderId: 'root-session', key: 'dead.key', entryType: 'deadend', summary: { fact: 'nope', cost: 'c', reVerify: 'r' }, content: 'x', ttlMs: TTL })
+    bridge.kernel.write('root-session', { holderId: 'root-session', key: 'dead.key', entryType: 'deadend', summary: 'nope', content: 'x', ttlMs: TTL })
     const service = serviceOf(bridge)
     const listed = service.list(AGENT, {})
     expect(Object.keys(listed)).toEqual(['entries'])
@@ -70,8 +70,9 @@ describe('remote list/read (pinned wire shapes, zero content at the aggregate la
     expect(row.content).toBe('full content')
     expect(row.summary).toEqual(SUMMARY)
     expect(typeof row.updatedAt).toBe('number')
-    // The read counted (usage evidence shared with the agent tools).
-    expect(bridge.kernel.entriesOf('root-session')[0].readCount).toBe(1)
+    // Audit reads through the remote NEVER count — only the agent tool's
+    // reads are usage evidence (a user inspecting an entry is auditing).
+    expect(bridge.kernel.entriesOf('root-session')[0].readCount).toBe(0)
   })
 
   it('reads are session-scoped: a child agent resolves its root board', () => {
@@ -144,7 +145,7 @@ describe('remote apply/write/remove (the panel shares the agents\' arbitration k
     const badType = service.write(AGENT, { ...ENTRY, entryType: 'banana' })
     expect(badType.ok).toBe(false)
     expect(badType.error).toMatch(/entryType must be one of/)
-    const dogma = service.write(AGENT, { ...ENTRY, summary: { fact: 'f' } })
+    const dogma = service.write(AGENT, { ...ENTRY, summary: '  ' })
     expect(dogma.ok).toBe(false)
     expect(dogma.error).toMatch(/summary/)
   })

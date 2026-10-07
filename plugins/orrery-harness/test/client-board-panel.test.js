@@ -24,10 +24,10 @@ function fakeRemote(handlers) {
 const okEnvelope = (value) => ({ ok: true, value })
 
 const ROWS = [
-  { key: 'alpha-map', entryType: 'map', summary: { fact: 'where things live', cost: '3 calls', reVerify: 'ls src' }, readCount: 4, subscribeCount: 1, updatedAt: 1000 },
-  { key: 'beta-contract', entryType: 'contract', summary: { fact: 'what holds', cost: '1 experiment', reVerify: 'node t.js' }, readCount: 2, subscribeCount: 0, updatedAt: 2000 },
-  { key: 'gamma-map', entryType: 'map', summary: { fact: 'second region', cost: '2 calls', reVerify: 'ls lib' }, readCount: 1, subscribeCount: 2, updatedAt: 3000 },
-  { key: 'delta-deadend', entryType: 'deadend', summary: { fact: 'what does not work', cost: '1 spike', reVerify: 'git log' }, readCount: 7, subscribeCount: 0, updatedAt: 4000 },
+  { key: 'alpha-map', entryType: 'map', summary: 'where things live', readCount: 4, subscribeCount: 1, updatedAt: 1000 },
+  { key: 'beta-contract', entryType: 'contract', summary: 'what holds', readCount: 2, subscribeCount: 0, updatedAt: 2000 },
+  { key: 'gamma-map', entryType: 'map', summary: 'second region', readCount: 1, subscribeCount: 2, updatedAt: 3000 },
+  { key: 'delta-deadend', entryType: 'deadend', summary: 'what does not work', readCount: 7, subscribeCount: 0, updatedAt: 4000 },
 ]
 
 describe('client.blackboard-model: wire channel against a mocked carrier', () => {
@@ -45,7 +45,7 @@ describe('client.blackboard-model: wire channel against a mocked carrier', () =>
     await channel.list({ type: 'map', query: 'layout' })
     await channel.read(['a', 'b'])
     await channel.apply('alpha-map')
-    await channel.write({ key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'body' })
+    await channel.write({ key: 'k', entryType: 'map', summary: 'f', content: 'body' })
     await channel.remove('k')
     expect(remote.calls.map((call) => call.endpoint)).toEqual([
       'orreryBlackboard/list', 'orreryBlackboard/list', 'orreryBlackboard/read',
@@ -57,7 +57,7 @@ describe('client.blackboard-model: wire channel against a mocked carrier', () =>
     expect(remote.calls[1].payload).toEqual({ args: { agentId: 'session-1', args: { type: 'map', query: 'layout' } } })
     expect(remote.calls[2].payload).toEqual({ args: { agentId: 'session-1', args: { keys: ['a', 'b'] } } })
     expect(remote.calls[3].payload).toEqual({ args: { agentId: 'session-1', args: { key: 'alpha-map' } } })
-    expect(remote.calls[4].payload).toEqual({ args: { agentId: 'session-1', args: { key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'body' } } })
+    expect(remote.calls[4].payload).toEqual({ args: { agentId: 'session-1', args: { key: 'k', entryType: 'map', summary: 'f', content: 'body' } } })
     expect(remote.calls[5].payload).toEqual({ args: { agentId: 'session-1', args: { key: 'k' } } })
   })
 
@@ -143,7 +143,7 @@ describe('client.blackboard-model: outcome categorizers', () => {
     expect(outcome.rows).toHaveLength(5)
     expect(outcome.rows[4]).toEqual({
       key: 'sparse', entryType: 'unknown',
-      summary: { fact: '', cost: '', reVerify: '' },
+      summary: '',
       readCount: 0, subscribeCount: 0, updatedAt: 0,
     })
     expect(outcome.rows[0].content).toBeUndefined()
@@ -182,11 +182,11 @@ describe('client.blackboard-model: outcome categorizers', () => {
 })
 
 describe('client.blackboard-model: grouping, filter, search', () => {
-  it('filters by exact entryType and by the kernel haystack (key + summary triple, case-insensitive)', async () => {
+  it('filters by exact entryType and by the kernel haystack (key + summary, case-insensitive)', async () => {
     const { exports: model } = await loadModel()
     expect(model.filterEntries(ROWS, { type: 'map' }).map((row) => row.key)).toEqual(['alpha-map', 'gamma-map'])
-    expect(model.filterEntries(ROWS, { query: 'EXPERIMENT' }).map((row) => row.key)).toEqual(['beta-contract'])
-    expect(model.filterEntries(ROWS, { query: 'git log' }).map((row) => row.key)).toEqual(['delta-deadend'])
+    expect(model.filterEntries(ROWS, { query: 'WHAT HOLDS' }).map((row) => row.key)).toEqual(['beta-contract'])
+    expect(model.filterEntries(ROWS, { query: 'does not work' }).map((row) => row.key)).toEqual(['delta-deadend'])
     expect(model.filterEntries(ROWS, { query: 'alpha' }).map((row) => row.key)).toEqual(['alpha-map'])
     expect(model.filterEntries(ROWS, { type: 'map', query: 'second' }).map((row) => row.key)).toEqual(['gamma-map'])
     // empty/blank queries and unknown types filter nothing
@@ -198,7 +198,7 @@ describe('client.blackboard-model: grouping, filter, search', () => {
 
   it('groups by entryType in the enum order with key-sorted rows; unknown types trail', async () => {
     const { exports: model } = await loadModel()
-    const exotic = { key: 'zzz-custom', entryType: 'custom-kind', summary: { fact: 'x', cost: '', reVerify: '' }, readCount: 0, subscribeCount: 0, updatedAt: 5000 }
+    const exotic = { key: 'zzz-custom', entryType: 'custom-kind', summary: 'x', readCount: 0, subscribeCount: 0, updatedAt: 5000 }
     const groups = model.groupEntries([...ROWS, exotic])
     expect(groups.map((group) => group.type)).toEqual(['map', 'contract', 'deadend', 'custom-kind'])
     expect(groups[0].rows.map((row) => row.key)).toEqual(['alpha-map', 'gamma-map'])
@@ -312,24 +312,24 @@ describe('client.blackboard-model: poll refresh staleness by updatedAt', () => {
 describe('client.blackboard-model: editor draft', () => {
   it('seeds empty/update drafts and validates against the kernel gate', async () => {
     const { exports: model } = await loadModel()
-    expect(model.emptyEditorDraft()).toEqual({ key: '', entryType: 'map', fact: '', cost: '', reVerify: '', content: '' })
+    expect(model.emptyEditorDraft()).toEqual({ key: '', entryType: 'map', summary: '', content: '' })
     const entry = {
       key: 'alpha-map', entryType: 'map',
-      summary: { fact: 'f', cost: 'c', reVerify: 'r' },
+      summary: 'f',
       content: 'body', readCount: 1, subscribeCount: 0, updatedAt: 1,
     }
-    expect(model.editorDraftFromEntry(entry)).toEqual({ key: 'alpha-map', entryType: 'map', fact: 'f', cost: 'c', reVerify: 'r', content: 'body' })
+    expect(model.editorDraftFromEntry(entry)).toEqual({ key: 'alpha-map', entryType: 'map', summary: 'f', content: 'body' })
     // every required field named
     const blank = model.editorErrorsOf(model.emptyEditorDraft())
-    expect(blank).toEqual({ key: 'required', fact: 'required', cost: 'required', reVerify: 'required', content: 'required' })
+    expect(blank).toEqual({ key: 'required', summary: 'required', content: 'required' })
     // the kernel key rule: letter/digit first, then letters digits . _ - /
     expect(model.editorErrorsOf({ ...entry, key: '-bad' }).key).toBe('invalid')
     expect(model.editorErrorsOf({ ...entry, key: 'has space' }).key).toBe('invalid')
     expect(model.editorErrorsOf({ ...entry, entryType: 'nope' }).entryType).toBe('invalid')
     expect(model.editorErrorsOf(model.editorDraftFromEntry(entry))).toEqual({})
     // the write payload trims and re-assembles the summary triple
-    expect(model.editorWritePayload({ key: ' k ', entryType: 'why', fact: ' f ', cost: ' c ', reVerify: ' r ', content: 'body' }))
-      .toEqual({ key: 'k', entryType: 'why', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'body' })
+    expect(model.editorWritePayload({ key: ' k ', entryType: 'why', summary: ' f ', content: 'body' }))
+      .toEqual({ key: 'k', entryType: 'why', summary: 'f', content: 'body' })
   })
 })
 
@@ -436,8 +436,8 @@ test('the panel renders loading → grouped list → detail → create form with
   expect(findAll(detail, (node) => node.children === 'the full evidence body')).toHaveLength(1)
   expect(findAll(detail, (node) => node.children === 'Edit')).toHaveLength(1)
   expect(findAll(detail, (node) => node.children === 'Delete')).toHaveLength(1)
-  // the summary triple labels render
-  for (const label of ['Fact', 'Cost', 'Re-verify', 'Content']) {
+  // the summary + content blocks render
+  for (const label of ['Summary', 'Content']) {
     expect(findAll(detail, (node) => node.children === label).length).toBeGreaterThanOrEqual(1)
   }
 
@@ -457,7 +457,7 @@ test('the panel renders loading → grouped list → detail → create form with
   const save = findAll(form, (node) => node.children === 'Save' && typeof node.onClick === 'function')[0]
   save.onClick()
   const validated = renderOnce()
-  expect(findAll(validated, (node) => node.children === 'Required.').length).toBe(5)
+  expect(findAll(validated, (node) => node.children === 'Required.').length).toBe(3)
   // no write ever hit the wire
   expect(remote.calls.filter((call) => call.endpoint === 'orreryBlackboard/write')).toHaveLength(0)
 
