@@ -149,10 +149,17 @@
     - id: orrery-it-notify
       name: 'orrery-harness/notify'
       disabled: !!js process.env.ORRERY_IT_NOTIFY_WORKTREE !== '1'
+    - id: orrery-it-worktree-approve-probe
+      name: 'orrery-test-harness/worktree-approve-probe'
+      # Scripted /worktree approve driver (worktree auto-approve scenarios):
+      # commands.execute records the same command/run + command/done lifecycle
+      # a user-typed switch does, so the orreryWorktree projection folds it.
+      config:
+        enabled: !!js "process.env.ORRERY_IT_WORKTREE_AUTO_APPROVE === '1' || process.env.ORRERY_IT_NOTIFY_WORKTREE === '1'"
     - id: orrery-it-user-questions-stub
       name: 'orrery-test-harness/user-questions-stub'
       config:
-        enabled: !!js (process.env.ORRERY_IT_NOTIFY_WORKTREE === '1' || process.env.ORRERY_IT_ZOMBIE_LANE === '1')
+        enabled: !!js (process.env.ORRERY_IT_NOTIFY_WORKTREE === '1' || process.env.ORRERY_IT_ZOMBIE_LANE === '1' || process.env.ORRERY_IT_WORKTREE_AUTO_APPROVE === '1')
     # Mirror the product's host-layer capability read remote (silent-capability-
     # reads). Headless has no typert gateway, so the row proves the designed
     # inert path (warn + never break the composition); the direct-call probe
