@@ -12,14 +12,30 @@ const inject = []
 
 /** The lane service's decision-card ids (src/worktree/lanes.js). */
 const ANSWERED = new Set(['merge', 'abandon', 'cleanup'])
+/** The blackboard promotion adjudication question id (the injected brief's ask, slice 3). */
+const PROMOTION_QUESTION_ID = 'blackboard-promotion'
 
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
   ctx.on('user-questions/request', (request, next) => {
-    const question = request?.questions?.[0]
-    const label = question?.options?.[0]?.label
-    if (!ANSWERED.has(question?.id) || typeof label !== 'string') return next()
-    return { answers: [{ id: question.id, selected: [label] }] }
+    const questions = request?.questions
+    if (!Array.isArray(questions)) return next()
+    const answers = []
+    for (const question of questions) {
+      // The promotion brief asks one question per candidate (stable id); the
+      // scripted headless user picks the FIRST option — the recommended
+      // destination the scripted agent put first.
+      if (question?.id === PROMOTION_QUESTION_ID) {
+        const label = question?.options?.[0]?.label
+        if (typeof label === 'string') answers.push({ id: question.id, selected: [label] })
+        continue
+      }
+      if (!ANSWERED.has(question?.id)) return next()
+      const label = question?.options?.[0]?.label
+      if (typeof label !== 'string') return next()
+      answers.push({ id: question.id, selected: [label] })
+    }
+    return { answers }
   })
 }
 

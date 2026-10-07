@@ -34,6 +34,7 @@ EXPECTED_ORDER.push('editlock-cold-view')
 EXPECTED_ORDER.push('zombie-lane')
 EXPECTED_ORDER.push('lane-resumable')
 EXPECTED_ORDER.push('blackboard')
+EXPECTED_ORDER.push('blackboard-promotion')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
