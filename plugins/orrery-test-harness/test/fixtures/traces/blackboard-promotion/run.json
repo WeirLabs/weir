@@ -1,0 +1,8 @@
+{
+  "scenario": "blackboard-promotion",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-promotion-100/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "BB_PROMO_DONE: blackboard promotion scenario finished\n",
+  "stderr": "",
+  "sessionId": null
+}

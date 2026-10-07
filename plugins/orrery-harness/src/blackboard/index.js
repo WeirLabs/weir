@@ -18,9 +18,10 @@
 // kernel + board resolution + TTL so the host-layer typert remote row can
 // serve the future side panel against the same arbitration kernel.
 
-import { createBlackboardKernel, ENTRY_TYPES } from './kernel.js'
+import { createBlackboardKernel, ENTRY_TYPES, PROMOTION_DESTINATIONS } from './kernel.js'
 import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_SECTION_NAME, BLACKBOARD_SECTION_ORDER_OFFSET, BLACKBOARD_VARIABLE_NAME, BLACKBOARD_WORKER_SECTION_NAME, BLACKBOARD_WORKER_SECTION_ORDER, BLACKBOARD_WORKER_VARIABLE_NAME, BLACKBOARD_WRITE_CONTRACT } from './contracts.js'
 import { createReleaseNotifier } from './notify.js'
+import { createPromotionRequester } from './promote.js'
 import { feedBlackboardRemoteBridge } from './remote.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
 import { AUDIT_TYPES } from '../shared/audit.js'
@@ -197,6 +198,30 @@ function registerTools(ctx, service) {
         return { ...result, message: `Deleted entry "${result.key}". ${ONE_SHOT}` }
       },
     }),
+
+    ctx.tools.register({
+      name: 'blackboard_mark_promoted',
+      description: `Mark one blackboard entry as promoted to a durable document after the user adjudicated its promotion. The entry becomes read-only: blackboard_apply, blackboard_write and blackboard_delete refuse it with an explicit promoted error, while its content and read/subscribe counts keep serving the session. destination is a closed enum: docs/spikes.md = verified runtime hard contracts; runtime-map = where-things-live layout knowledge; agents-pointer = a one-line pointer into AGENTS.md's knowledge map. Discarded entries are NOT marked. Only the conversation's main agent may mark (promotion decisions are adjudicated by the user, never by delegated children).`,
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'Blackboard key of the adjudicated entry.' },
+          destination: { type: 'string', enum: [...PROMOTION_DESTINATIONS], description: 'The durable document the entry landed in, from the closed destination set.' },
+        },
+        required: ['key', 'destination'],
+      },
+      output: text('message'),
+      async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+        const depth = exec?.agent?.session?.header?.delegationDepth ?? 0
+        if (depth !== 0) throw new Error('blackboard_mark_promoted is reserved for the conversation main agent: promotion is adjudicated by the user, not by delegated children')
+        const result = service.markPromoted(exec, { key: args?.key, destination: args?.destination })
+        if (result.status === 'missing') throw new Error(`Blackboard key "${result.key}" does not exist.`)
+        if (result.status === 'already-promoted') {
+          return { ...result, message: `Entry "${result.key}" was already promoted to ${result.destination} (marked at ${new Date(result.promotedAt).toISOString()}).` }
+        }
+        return { ...result, message: `Marked entry "${result.key}" promoted to ${result.destination}. The entry is now read-only on the board.` }
+      },
+    }),
   ]
 }
 
@@ -335,6 +360,7 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
       apply: (/** @type {any} */ exec, /** @type {any} */ key) => kernelInstance.apply(boardOf(exec?.agent), { holderId: exec?.agent?.id, key, ttlMs: ttlMs() }),
       write: (/** @type {any} */ exec, /** @type {any} */ payload) => kernelInstance.write(boardOf(exec?.agent), { holderId: exec?.agent?.id, key: payload.key, entryType: payload.entryType, summary: payload.summary, content: payload.content, ttlMs: ttlMs() }),
       deleteKey: (/** @type {any} */ exec, /** @type {any} */ key) => kernelInstance.deleteKey(boardOf(exec?.agent), { holderId: exec?.agent?.id, key }),
+      markPromoted: (/** @type {any} */ exec, /** @type {any} */ payload) => kernelInstance.markPromoted(boardOf(exec?.agent), { key: payload.key, destination: payload.destination }),
       boardOf,
       entriesOf: (/** @type {string} */ boardId) => kernelInstance.entriesOf(boardId),
       tokensOf: (/** @type {string} */ boardId) => kernelInstance.tokensOf(boardId),
@@ -347,8 +373,25 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
     registerTools(ctx, service)
 
     // The remote bridge (./remote.js): this mount's kernel + board resolution
-    // + live TTL, read at call time by the host-layer typert remote row.
-    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, ttlMs })
+    // + live TTL + the promotion requester, read at call time by the host-
+    // layer typert remote row.
+    // Promotion delivery (design D6, slice 3): the panel button's request
+    // resolves the conversation's MAIN agent — the acting agent itself when
+    // it is the root (the usual panel case), else the root from the live
+    // agents registry via the same boardOf walk — and defers the brief
+    // delivery (./promote.js, timer-deferred, steer/followup, bounded retry).
+    const promotionRequester = createPromotionRequester({
+      resolveMainAgent: (agent) => {
+        if ((agent?.session?.header?.delegationDepth ?? 0) === 0) return agent
+        const boardId = boardOf(agent)
+        if (typeof boardId !== 'string' || boardId.length === 0) return undefined
+        let agents
+        try { agents = ctx.get?.('agents') } catch { agents = undefined }
+        return agents?.get?.(boardId)
+      },
+      logger: ctx.logger,
+    })
+    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, ttlMs, requestPromotion: (/** @type {any} */ agent) => promotionRequester(agent) })
 
     // Terminate path (design D3): the supervision terminate fact names the
     // child, and its tokens die with it. TTL stays the backstop for abnormal

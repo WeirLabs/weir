@@ -15,6 +15,11 @@
 /** The closed entry-type taxonomy (D4); schema `enum` and runtime both pin it. */
 export const ENTRY_TYPES = Object.freeze(['map', 'contract', 'deadend', 'wiring', 'recipe', 'why'])
 
+/** The closed promotion destinations (slice 3): the durable documents a
+ * promoted entry can land in. `discard` is NOT a destination — a discarded
+ * entry is simply left unmarked on the board (editable, re-evaluable). */
+export const PROMOTION_DESTINATIONS = Object.freeze(['docs/spikes.md', 'runtime-map', 'agents-pointer'])
+
 /** Short ASCII identifier: letter/digit first, then letters, digits and . _ - / */
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/
 
@@ -32,6 +37,19 @@ export function validateEntryType(entryType) {
     throw new Error(`blackboard: entryType must be one of: ${ENTRY_TYPES.join(', ')} (got ${JSON.stringify(entryType)})`)
   }
   return entryType
+}
+
+/**
+ * Validate one promotion destination against the closed set. Throws on
+ * anything else, naming the set (the enum is the mechanism).
+ * @param {unknown} destination
+ * @returns {string} the validated value
+ */
+export function validatePromotionDestination(destination) {
+  if (typeof destination !== 'string' || !PROMOTION_DESTINATIONS.includes(destination)) {
+    throw new Error(`blackboard: destination must be one of: ${PROMOTION_DESTINATIONS.join(', ')} (got ${JSON.stringify(destination)})`)
+  }
+  return destination
 }
 
 /**
@@ -185,6 +203,18 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
     return matches
   }
 
+  /**
+   * The promoted read-only refusal: a promoted entry keeps its content and
+   * counters forever, but every authority-bearing mutation is refused with
+   * this explicit status (slice 3). Returns null for unmarked entries.
+   * @param {any} state @param {string} key
+   */
+  function promotedRefusal(state, key) {
+    const entry = state.entries.get(key)
+    if (!entry?.promoted) return null
+    return { status: 'promoted', key, destination: entry.promoted.destination, promotedAt: entry.promoted.at }
+  }
+
   return Object.freeze({
     /**
      * Register a release listener (slice 2 wires notification delivery here).
@@ -216,6 +246,7 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
           key: entry.key, entryType: entry.entryType, summary: { ...entry.summary },
           readCount: entry.readCount, subscribeCount: entry.subscribeCount,
           createdAt: entry.createdAt, updatedAt: entry.updatedAt,
+          ...(entry.promoted ? { promoted: { destination: entry.promoted.destination, at: entry.promoted.at } } : {}),
         })
       }
       rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
@@ -241,6 +272,7 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
           key, entryType: entry.entryType, summary: { ...entry.summary }, content: entry.content,
           readCount: entry.readCount, subscribeCount: entry.subscribeCount,
           createdAt: entry.createdAt, updatedAt: entry.updatedAt,
+          ...(entry.promoted ? { promoted: { destination: entry.promoted.destination, at: entry.promoted.at } } : {}),
         })
       }
       return { found, missing }
@@ -260,6 +292,8 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('blackboard: ttlMs must be a positive number')
       const state = board(boardId)
       settle(boardId, key, at)
+      const promoted = promotedRefusal(state, key)
+      if (promoted) return promoted
       const token = state.tokens.get(key)
       if (token && token.holder !== holderId) {
         const subscribers = state.subscribers.get(key) ?? new Set()
@@ -292,6 +326,10 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       const state = board(boardId)
       settle(boardId, key, at)
       const existing = state.entries.get(key)
+      if (existing) {
+        const promoted = promotedRefusal(state, key)
+        if (promoted) return promoted
+      }
       if (!existing) {
         const token = state.tokens.get(key)
         if (token && token.holder !== holderId) {
@@ -329,6 +367,8 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       const state = board(boardId)
       settle(boardId, key, at)
       if (!state.entries.has(key)) return { status: 'missing', key }
+      const promoted = promotedRefusal(state, key)
+      if (promoted) return promoted
       const token = state.tokens.get(key)
       if (!token || token.holder !== holderId) {
         return { status: 'no-authority', key, holder: token?.holder ?? null, expiresAt: token?.expiresAt ?? null }
@@ -336,6 +376,28 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       state.entries.delete(key)
       consume(state, boardId, key, 'delete', at)
       return { status: 'deleted', key }
+    },
+
+    /**
+     * Mark one entry promoted to a durable document (slice 3): records the
+     * destination + timestamp on the entry and makes it read-only — apply,
+     * write and delete refuse it with the explicit promoted status while
+     * read/subscribe counts keep accumulating (the in-session references
+     * must never break). Marking twice reports the existing marker; the
+     * content payload is never touched, so no write token is required — the
+     * decision to promote belongs to the user, executed by the main agent.
+     * @param {string} boardId
+     * @param {{ key: string, destination: string }} request
+     */
+    markPromoted(boardId, { key, destination }, at = now()) {
+      key = validateKey(key)
+      destination = validatePromotionDestination(destination)
+      const state = board(boardId)
+      const existing = state.entries.get(key)
+      if (!existing) return { status: 'missing', key }
+      if (existing.promoted) return { status: 'already-promoted', key, destination: existing.promoted.destination, promotedAt: existing.promoted.at }
+      existing.promoted = { destination, at }
+      return { status: 'promoted', key, destination, promotedAt: at }
     },
 
     /**
