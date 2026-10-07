@@ -18,14 +18,13 @@
   <g font-family="'SF Mono',Menlo,monospace" font-size="12" letter-spacing="2">
     <text x="28" y="36" fill="#ecece6">WEIR / AI AGENT HARNESS</text>
     <text x="1172" y="36" fill="rgba(236,236,230,0.5)" text-anchor="end">R01 · 2026</text>
-    <text x="28" y="452" fill="rgba(236,236,230,0.5)">SN-0001-ACID · BUILD 2026 · <tspan fill="#ccff00">● VERIFIED</tspan></text>
-    <text x="1172" y="452" fill="rgba(236,236,230,0.5)" text-anchor="end">FLUID.SIM / LIVE</text>
+    <text x="28" y="452" fill="rgba(236,236,230,0.5)">V1.0.0 · <tspan fill="#ccff00">MIT LICENSE</tspan></text>
+    <text x="1172" y="452" fill="rgba(236,236,230,0.5)" text-anchor="end">DEEPSEEK HARNESS · AGENT PRESET</text>
   </g>
 
-  <!-- acid crest line (weir water level) -->
+  <!-- acid crest line -->
   <rect x="28" y="238" width="1144" height="1.5" fill="#ccff00"/>
   <rect x="356" y="233" width="11" height="11" fill="#ccff00"/>
-  <text x="380" y="228" font-family="'SF Mono',Menlo,monospace" font-size="11" letter-spacing="2" fill="#ccff00">CREST · 堰口水位线</text>
 
   <!-- pink survey mark -->
   <g stroke="#ff2e9a" stroke-width="1.2" fill="none">
@@ -53,7 +52,7 @@
   </g>
 
   <!-- tagline -->
-  <text x="502" y="296" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="24" fill="#ecece6" letter-spacing="1">让 AI 助手像总指挥一样为你工作</text>
+  <text x="502" y="296" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="28" fill="#ecece6" letter-spacing="6">调度百川，水到渠成</text>
   <text x="502" y="332" font-family="'SF Mono',Menlo,monospace" font-size="13" letter-spacing="3" fill="rgba(236,236,230,0.55)">ORCHESTRATE · DELEGATE · VERIFY · COMPLETE</text>
 
   <!-- bottom fade -->
