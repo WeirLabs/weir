@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **会话黑板（切片一：核心机制）**：会话级的结构化知识交换所已具备内核——逐会话独立的条目存储（key + 封闭类型枚举 `map`/`contract`/`deadend`/`wiring`/`recipe`/`why` + 结构化摘要 + 完整信息 + 用量计数）、写入权仲裁（一次性令牌、TTL 默认 60 分钟可配 `blackboardWriteTokenTtlMinutes`、竞争自动订阅、超时与终止自动释放），以及五个模型工具（`blackboard_list`/`blackboard_read`/`blackboard_apply`/`blackboard_write`/`blackboard_delete`，挂载进两个预设的隔离 delegation realm）。侧边栏面板、订阅通知投递与晋升评估按钮随后续切片交付。详见 [会话黑板](docs/features/blackboard.md)。
+
 ## [0.9.5] - 2026-10-07
 
 ### Added
