@@ -1,0 +1,40 @@
+{
+  "completed": false,
+  "op": "report",
+  "rpcCount": 2,
+  "adopt": {
+    "status": "conflict",
+    "reason": "host row \"orrery-it-host-gamma\" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged."
+  },
+  "listing": {
+    "managed": [
+      {
+        "identity": "manager",
+        "groupId": "orrery-mcp-manager",
+        "label": "manager",
+        "generation": null,
+        "state": "registered"
+      },
+      {
+        "identity": "docs",
+        "groupId": "orrery-mcp-docs",
+        "label": "docs",
+        "generation": 1,
+        "state": "mounted"
+      }
+    ],
+    "unmanaged": [
+      {
+        "serverName": "gamma",
+        "state": "unmanaged"
+      }
+    ]
+  },
+  "publicNames": [
+    [
+      "mcp__docs__echo",
+      "docs"
+    ]
+  ],
+  "startErrors": []
+}

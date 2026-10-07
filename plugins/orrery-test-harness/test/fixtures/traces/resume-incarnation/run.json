@@ -1,6 +1,6 @@
 {
   "scenario": "resume-incarnation",
-  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
   "code": 0,
   "stdout": "resume incarnation done\n",
   "stderr": "",

@@ -3,16 +3,16 @@
   "mode": "seed",
   "preset": "orrery-it-cold",
   "created": "orrery-it-cold",
-  "sessionId": "efc1f9e8-75d5-4e55-b1b8-da88bbd40b7d",
-  "cwd": "/Users/young/Documents/Orrery/.orrery/it-root/ws",
+  "sessionId": "8a1f6d61-ab36-4150-89fc-f38817a0efdd",
+  "cwd": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws",
   "createdAgents": [
     {
-      "id": "session-03ca6b3d-a0a1-41c0-bd64-31f76243c778",
+      "id": "session-b9ac5f83-10f4-4757-852c-a52049b9f2b4",
       "origin": null,
       "depth": 0
     },
     {
-      "id": "efc1f9e8-75d5-4e55-b1b8-da88bbd40b7d",
+      "id": "8a1f6d61-ab36-4150-89fc-f38817a0efdd",
       "origin": null,
       "depth": 0
     }
@@ -22,7 +22,7 @@
       "type": "emit",
       "event": "agent-preset/selected",
       "args": [
-        "efc1f9e8-75d5-4e55-b1b8-da88bbd40b7d",
+        "8a1f6d61-ab36-4150-89fc-f38817a0efdd",
         "orrery-it-cold"
       ],
       "via": [
@@ -30,16 +30,16 @@
         "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
         "at Array.map (<anonymous>)",
         "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-        "at emit (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:179:32)",
-        "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
-        "at Object.agentCreated (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:76:16)"
+        "at emit (file:///Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/plugins/orrery-harness/src/capabilities/skill-selection-plugin.js:198:32)",
+        "at emitPresetSelected (file:///Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
+        "at Object.agentCreated (file:///Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/plugins/orrery-harness/src/capabilities/preset-invalidation.js:76:16)"
       ]
     },
     {
       "type": "emit",
       "event": "agent-preset/selected",
       "args": [
-        "efc1f9e8-75d5-4e55-b1b8-da88bbd40b7d",
+        "8a1f6d61-ab36-4150-89fc-f38817a0efdd",
         "orrery-it-cold"
       ],
       "via": [
@@ -47,9 +47,9 @@
         "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
         "at Array.map (<anonymous>)",
         "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-        "at file:///Users/young/Documents/Orrery/plugins/orrery-test-harness/src/cold-session-probe.js:127:80",
-        "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
-        "at invalidate (file:///Users/young/Documents/Orrery/plugins/orrery-test-harness/src/cold-session-probe.js:127:44)"
+        "at file:///Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/plugins/orrery-test-harness/src/cold-session-probe.js:127:80",
+        "at emitPresetSelected (file:///Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/plugins/orrery-harness/src/capabilities/preset-invalidation.js:38:5)",
+        "at invalidate (file:///Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/plugins/orrery-test-harness/src/cold-session-probe.js:127:44)"
       ]
     }
   ],
@@ -88,7 +88,7 @@
     ]
   },
   "unselectedPresent": true,
-  "plainSessionId": "ce52a1cb-2346-4c3a-9063-541ad3449e84",
+  "plainSessionId": "da9a8a63-578a-4e7f-863a-f7c88d5c2f50",
   "heldApply": {
     "status": "applied",
     "reason": null,

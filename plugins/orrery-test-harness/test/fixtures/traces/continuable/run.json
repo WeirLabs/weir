@@ -1,6 +1,6 @@
 {
   "scenario": "continuable",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/delegate-continuable-mode-066/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
   "code": 0,
   "stdout": "parent observed both continuable settlements\n",
   "stderr": "",

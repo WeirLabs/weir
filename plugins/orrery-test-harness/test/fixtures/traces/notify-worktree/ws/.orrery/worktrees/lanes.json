@@ -5,28 +5,28 @@
     {
       "id": "notify-lane-001",
       "title": "Notify lane",
-      "path": "/Users/young/Documents/Orrery/.orrery/it-root/ws/.orrery/worktrees/notify-lane-001",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/notify-lane-001",
       "branch": "orrery/notify-lane-001",
       "base": {
         "branch": "main",
-        "commit": "4eb86c9aca7cee172b5aa79d899281b0639fdadf"
+        "commit": "3bbe13976c0195961d869435da6111c28f3cc24b"
       },
       "scope": [],
       "state": "kept",
-      "ownerSession": "session-b465d746-08ab-469b-b7f7-d4abacb6c522",
+      "ownerSession": "session-f02d495c-e990-4e9a-8da8-92a92f08a1a9",
       "boundChild": null,
       "baseMoved": false,
-      "landableTree": "42c9e2df742bdcf65641fb0c6f6042fc194164d4",
+      "landableTree": "4e0ea438a1c090affe83f2e21e00930c3cb64d8f",
       "setup": {
         "status": "none"
       },
       "check": {
         "enabled": false,
-        "tree": "42c9e2df742bdcf65641fb0c6f6042fc194164d4"
+        "tree": "4e0ea438a1c090affe83f2e21e00930c3cb64d8f"
       },
       "land": {
-        "commit": "5af2430d1c05427b0a0f1204260d0e6eb8a6409d",
-        "at": 1791234455899,
+        "commit": "3a1bc8538ee5a10c12531e5fdad64776881632b9",
+        "at": 1791375569106,
         "by": "host",
         "stat": {
           "files": 1,
@@ -36,59 +36,59 @@
       },
       "cleanup": {
         "mode": "keep",
-        "at": 1791234455914,
+        "at": 1791375569121,
         "by": "user"
       },
       "reason": null,
-      "createdAt": 1791234455367,
-      "updatedAt": 1791234455914,
+      "createdAt": 1791375568611,
+      "updatedAt": 1791375569122,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791234455419,
+          "at": 1791375568664,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791234455438,
+          "at": 1791375568685,
           "by": "host"
         },
         {
           "from": "working",
           "to": "landable",
           "event": "checked",
-          "at": 1791234455607,
+          "at": 1791375568848,
           "by": "host"
         },
         {
           "from": "landable",
           "to": "awaiting-approval",
           "event": "ask",
-          "at": 1791234455755,
+          "at": 1791375568992,
           "by": "host"
         },
         {
           "from": "awaiting-approval",
           "to": "landed",
           "event": "land",
-          "at": 1791234455900,
+          "at": 1791375569106,
           "by": "host"
         },
         {
           "from": "landed",
           "to": "kept",
           "event": "keep",
-          "at": 1791234455914,
+          "at": 1791375569122,
           "by": "user"
         }
       ],
       "asking": {
-        "pid": 47549,
-        "at": 1791234455755
+        "pid": 46146,
+        "at": 1791375568991
       }
     }
   ],
