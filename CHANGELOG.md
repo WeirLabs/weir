@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-07
+
 ### Added
 
 - **车道绑定的可续作工人（continuable + worktree 放开）**：`delegate` 的 `mode: "continuable"` 与 `worktree` 从互斥拒绝变为合法组合——车道绑定的 continuable 工人自动以隐式监督身份运行（隐式组名 `lane:<车道id>`，保留前缀，显式组名占用会被拒绝），自动获得 STATUS 终态契约、`resume_agent`/`terminate_agent`/`supervised_status` 支持与正确的车道结算语义。工人报 `STATUS: blocked` 时车道保持绑定（`working`，他人再绑仍拒 `LANE_BUSY`），主 Agent 补充上下文 resume 后在原车道续作，终态汇报时宿主才检查车道。用户不再需要知道"想要可恢复的车道工人就得手动开 supervised group"。详见 [类别委派文档](docs/features/category-delegation.md) 与 [Worktree 车道文档](docs/features/git-worktree.md)。
