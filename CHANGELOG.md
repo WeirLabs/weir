@@ -21,6 +21,8 @@
 
 - **能力 Badge 点击后残留外描边高亮**：Badge 切换按钮的 `onFocus` 处理器此前无条件绘制 2px 焦点环，鼠标点击后按钮保持焦点，高亮框选便一直挂着。焦点环改为 `:focus-visible` 语义——pointerdown 标记输入模态、随后的 focus 不再描边，鼠标/触摸点击彻底不再出现框选；键盘 Tab 聚焦仍绘制焦点环，可达性不变。
 
+- **工作区默认值中重名技能永不持久化（如 16 个里恒缺 research）**：默认值记录只存名字串时，库存中同名的技能（如 builtin 与 user scope 各一份 `research`）在新会话唯一名绑定时被 fail-closed 拒授权，且从草稿反复重存也无济于事（歧义在库存不在记录）。`default-save from:'draft'` 现在在服务端把草稿名字**解析为精确 SkillIdentity 再落盘**（落实设计文档的 resolved sets 契约）：唯一库存匹配直接定；重名时以会话当前已应用选择消歧（恰有一个同名已应用身份才采用，绝不猜测）；无法解析（missing）或仍歧义（ambiguous）显式报错、零写入。身份形态条目逐字通过。在 `research` 已生效的会话重存一次默认值即永久修复。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ## [0.9.0] - 2026-10-07
 
 ### Added
