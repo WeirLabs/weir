@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 import { CURATED_AGENTS } from '../src/delegate/agents.js'
 import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
-import { RESTART_KEYS } from '../src/settings/sections.js'
+import { FIELD_DEFAULTS as SERVER_FIELD_DEFAULTS, RESTART_KEYS } from '../src/settings/sections.js'
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
@@ -527,6 +527,120 @@ describe('client.settings-page chunk', () => {
     }
   })
 
+  it('mirrors FIELD_DEFAULTS from the server schema and derives BOOLEAN_DEFAULTS from it', async () => {
+    const { exports } = await loadPage()
+    const { FIELD_DEFAULTS, BOOLEAN_DEFAULTS } = exports
+    // the hand-maintained mirror of src/settings/sections.js FIELD_DEFAULTS:
+    // exact key set + values, frozen (the settings-fields suite additionally
+    // pins the literal text; here the loaded export is checked)
+    expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
+    expect(Object.keys(FIELD_DEFAULTS).sort()).toEqual(Object.keys(SERVER_FIELD_DEFAULTS).sort())
+    expect(FIELD_DEFAULTS).toEqual(SERVER_FIELD_DEFAULTS)
+    // BOOLEAN_DEFAULTS is the derived boolean subset — exactly the previous
+    // hand-maintained literal (14 entries), never a second literal
+    expect(BOOLEAN_DEFAULTS).toEqual({
+      todoEnabled: true,
+      guardEnabled: true,
+      hashlineHideStockEdit: true,
+      editLockEnabled: false,
+      editLockAutoResume: true,
+      editLockStaleSweep: true,
+      worktreeEnabled: true,
+      worktreeAutoSetup: true,
+      robashEnabled: true,
+      lspEnabled: false,
+      notifyEnabled: true,
+      notifyOnComplete: true,
+      notifyOnAttention: true,
+      notifySound: true,
+    })
+    const derived = Object.fromEntries(Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === 'boolean'))
+    expect(BOOLEAN_DEFAULTS).toEqual(derived)
+  })
+
+  it('renders the product default as the displayed value of an unset field — without overriding or staging it', async () => {
+    const { exports, editors, primitivesStub } = await loadPage()
+    const fields = makeFields({ intentGateClassifier: { text: '' } })
+    const rendered = renderCard(exports, editors, {
+      fields,
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const valueFields = findAll(rendered.children, (node) => node.__type === primitivesStub.SettingsValueField)
+    const byId = Object.fromEntries(valueFields.map((el) => [el.id, el]))
+    // number input: the formatted default is the displayed text, and the
+    // field stays non-overridden with no invalid marking
+    const timeout = byId['plugin-config-orrery-settings-intentGateTimeoutMs']
+    expect(timeout.text).toBe('1500')
+    expect(timeout.overridden).toBe(false)
+    expect(timeout.invalid).toBe(false)
+    // text input with a default
+    expect(byId['plugin-config-orrery-settings-worktreeRoot'].text).toBe('.orrery/worktrees')
+    // a field WITHOUT a default stays empty (displayText pure check: the
+    // lspServers row is hidden under the off-by-default lspEnabled switch)
+    expect(exports.displayText({ field: 'lspServers', kind: 'text' }, { text: '' })).toBe('')
+    expect(exports.displayText({ field: 'intentGateTimeoutMs', kind: 'number' }, undefined)).toBe('1500')
+    // the underlying form field is untouched: nothing staged, so the save
+    // plan has no entry for it and it is never written unless edited
+    expect(fields.intentGateTimeoutMs.text).toBe('')
+    expect(fields.intentGateTimeoutMs.overridden).toBe(false)
+    // enum SegmentedControl: the default is the selected segment when unset
+    const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
+    const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
+    const segmentedOf = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === primitivesStub.SegmentedControl)[0]
+    expect(segmentedOf('intentGateClassifier').value).toBe('regex')
+    expect(segmentedOf('notifyForeground').value).toBe('skip')
+  })
+
+  it('staged drafts and saved values win over the default display; clearing re-shows it', async () => {
+    const { exports, editors, primitivesStub } = await loadPage()
+    const valueFieldProps = (fields, name) => {
+      const rendered = renderCard(exports, editors, {
+        fields,
+        env: { status: 'ready', facts: { platform: 'darwin' } },
+      })
+      return findAll(rendered.children, (node) => node.__type === primitivesStub.SettingsValueField && node.id === `plugin-config-orrery-settings-${name}`)[0]
+    }
+    // a staged draft text wins
+    expect(valueFieldProps(makeFields({ intentGateTimeoutMs: { text: '2500' } }), 'intentGateTimeoutMs').text).toBe('2500')
+    // a saved value (arrives as the formatted resting text) wins over the default
+    const saved = valueFieldProps(makeFields({ intentGateTimeoutMs: { text: '2000', overridden: true } }), 'intentGateTimeoutMs')
+    expect(saved.text).toBe('2000')
+    expect(saved.overridden).toBe(true)
+    // an invalid draft is shown as-is (the form layer owns invalid marking)
+    expect(valueFieldProps(makeFields({ intentGateTimeoutMs: { text: 'abc', invalid: true } }), 'intentGateTimeoutMs').text).toBe('abc')
+    // cleared back to empty → the default reappears
+    expect(valueFieldProps(makeFields({ intentGateTimeoutMs: { text: '' } }), 'intentGateTimeoutMs').text).toBe('1500')
+    // enum: a staged/saved selection wins over the default segment
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: 'llm' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const choiceRow = findAll(rendered.children, (node) => node.descriptor?.field === 'intentGateClassifier')[0]
+    expect(findAll(choiceRow.__type(choiceRow), (node) => node.__type === primitivesStub.SegmentedControl)[0].value).toBe('llm')
+  })
+
+  it('evaluates the classifier conditions against the regex product default when unset — same visible set as before', async () => {
+    const { exports, editors } = await loadPage()
+    const { evaluateCondition, resolveEffectiveValue, FIELDS } = exports
+    const descriptorByName = Object.fromEntries(FIELDS.map((descriptor) => [descriptor.field, descriptor]))
+    const resolve = {
+      value: (key) => resolveEffectiveValue(descriptorByName[key], { text: '' }, undefined),
+      env: () => undefined,
+    }
+    // unset resolves to the concrete 'regex' default, so both alternative-
+    // classifier conditions are false — exactly the rows the old undefined-
+    // driven behavior hid, now via a real value
+    expect(resolveEffectiveValue(descriptorByName.intentGateClassifier, { text: '' }, undefined)).toBe('regex')
+    expect(evaluateCondition({ key: 'intentGateClassifier', equals: 'llm' }, resolve)).toBe(false)
+    expect(evaluateCondition({ key: 'intentGateClassifier', equals: 'jev' }, resolve)).toBe(false)
+    expect(evaluateCondition({ key: 'intentGateClassifier', equals: 'regex' }, resolve)).toBe(true)
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: '' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(rendered), 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
+  })
+
   it('renders the six mirrored switches ON with their children visible when the profile never saved them', async () => {
     const { exports, editors, primitivesStub } = await loadPage()
     const rendered = renderCard(exports, editors, {
@@ -616,21 +730,23 @@ describe('client.settings-page chunk', () => {
     // empty draft is the clear gesture → product default
     expect(resolveEffectiveValue(boolean, { text: '' }, false)).toBe(true)
     expect(resolveEffectiveValue(offBoolean, { text: '' }, true)).toBe(false)
-    expect(resolveEffectiveValue(number, { text: '' }, 4)).toBe(undefined)
-    expect(resolveEffectiveValue(enumField, { text: '' }, 'llm')).toBe(undefined)
+    expect(resolveEffectiveValue(number, { text: '' }, 4)).toBe(8)
+    expect(resolveEffectiveValue(enumField, { text: '' }, 'llm')).toBe('regex')
     // unparseable draft falls back to the saved value (no visibility flicker)
     expect(resolveEffectiveValue(number, { text: 'abc' }, 4)).toBe(4)
-    expect(resolveEffectiveValue(number, { text: 'abc' }, undefined)).toBe(undefined)
+    expect(resolveEffectiveValue(number, { text: 'abc' }, undefined)).toBe(8)
     expect(resolveEffectiveValue(boolean, { text: 'yes' }, true)).toBe(true)
     expect(resolveEffectiveValue(enumField, { text: 'nope' }, 'regex')).toBe('regex')
     // resting state: the text IS the formatted saved value
     expect(resolveEffectiveValue(number, { text: '4' }, undefined)).toBe(4)
     expect(resolveEffectiveValue(boolean, { text: 'true' }, undefined)).toBe(true)
-    // never set: booleans take the product default, others undefined
+    // never set: every kind takes its concrete product default (booleans
+    // via the derived BOOLEAN_DEFAULTS subset)
     expect(resolveEffectiveValue(boolean, { text: '' }, undefined)).toBe(true)
     expect(resolveEffectiveValue(offBoolean, { text: '' }, undefined)).toBe(false)
-    expect(resolveEffectiveValue(number, { text: '' }, undefined)).toBe(undefined)
-    expect(resolveEffectiveValue(enumField, { text: '' }, undefined)).toBe(undefined)
+    expect(resolveEffectiveValue(number, { text: '' }, undefined)).toBe(8)
+    expect(resolveEffectiveValue(enumField, { text: '' }, undefined)).toBe('regex')
+    expect(resolveEffectiveValue(text, { text: '' }, undefined)).toBe('.orrery/worktrees')
     // absent field face behaves like an unset text
     expect(resolveEffectiveValue(boolean, undefined, undefined)).toBe(true)
   })
