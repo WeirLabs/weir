@@ -88,13 +88,17 @@ export function bindDefaultSkillNames(entries, candidates) {
  * exact SkillIdentity objects BEFORE persisting, so the workspace-default
  * record carries the resolved-sets contract instead of ambiguous name
  * strings (a name with two parsed candidates would otherwise be refused by
- * the read side's unique-name binding forever). A name with exactly ONE
+ * the read side's unique-name binding forever). An entry that ALREADY parses
+ * as a SkillIdentity (an identity-shaped draft entry) passes through VERBATIM
+ * — it is an already-resolved set member; an injected unresolvable identity
+ * still fails closed later at session init. A name string with exactly ONE
  * parsed inventory candidate binds to that candidate's identity; a name
  * with MULTIPLE candidates binds only when the session's effective
  * (applied) selection contains exactly ONE identity of that name — the
  * applied selection is the authoritative disambiguation, never a guess.
- * Everything else is reported (missing/ambiguous) and the caller writes
- * nothing. Pure: never throws, never touches the store or the inventory.
+ * Anything else (non-string non-identity garbage, unresolvable names) is
+ * reported (missing/ambiguous) and the caller writes nothing. Pure: never
+ * throws, never touches the store or the inventory.
  * @param {unknown} names draft skill entries (non-array treated as empty)
  * @param {unknown} candidates live inventory candidates
  * @param {unknown} appliedSkills the session's effective selection identities
@@ -125,6 +129,11 @@ export function resolveSkillNamesForSave(names, candidates, appliedSkills) {
   const missing = []
   const ambiguous = []
   for (const entry of Array.isArray(names) ? names : []) {
+    try {
+      createSkillIdentity(/** @type {any} */ (entry))
+      identities.push(entry)
+      continue
+    } catch { /* not an identity shape — try name binding below */ }
     if (typeof entry !== 'string' || entry.length === 0) {
       missing.push(entry)
       continue
