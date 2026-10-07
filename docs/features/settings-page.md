@@ -17,7 +17,7 @@ Orrery 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）�
 - **重启标记常驻**：重启生效条目的标签旁常驻「Restart required／需重启」标记，无需先保存。
 - **保存与重启提醒**（既有契约，未变）：保存被宿主全部接受即落地、草稿清空；被拒绝则草稿保留并按既有文案提示。落地且触达重启生效选项时弹出居中警告弹窗，按设置声明顺序点名本次触达的选项；弹窗可经主按钮、遮罩、Esc 或右上角关闭消除，消除不改动任何值。只改即时生效选项不出现弹窗，也不清掉已显示的弹窗；保存失败不出现弹窗；改回原值（无净改动）不算触达。
 - **覆盖/重置**：被用户层覆盖的字段显示「已覆盖」标记与「恢复默认」入口，行为不变。
-- **默认值显示**：未设置的字段直接显示生效的产品默认值——数字/文本输入框显示格式化后的默认值（如 `intentGateTimeoutMs` 显示 1500、`worktreeRoot` 显示 `.orrery/worktrees`），枚举分段控件选中默认项（如 `intentGateClassifier` 选中 `regex`、`notifyForeground` 选中 `skip`），与布尔开关显示默认开/关的既有行为一致。显示默认值不等于写入：字段保持「未覆盖」状态、不产生保存计划，只有用户真正编辑才会落值；暂存草稿与已保存值始终优先于默认显示，清空输入则回到默认显示。unset 有语义的键（路由覆盖、chains、五张 whitelist 表、`robashDefaultsPath/Reload`、`lspServers`）没有默认值，保持空显示。
+- **默认值显示**：未设置的字段直接显示生效的产品默认值——数字/文本输入框显示格式化后的默认值（如 `intentGateTimeoutMs` 显示 1500、`worktreeRoot` 显示 `.orrery/worktrees`），枚举控件选中默认项（分段控件如 `intentGateClassifier` 选中 `regex`；选项较长的 `worktreeAutoApprove` 用紧凑下拉菜单渲染、同样选中默认项 `auto-clean`——描述符加 `display: "select"` 即切换呈现），与布尔开关显示默认开/关的既有行为一致。显示默认值不等于写入：字段保持「未覆盖」状态、不产生保存计划，只有用户真正编辑才会落值；暂存草稿与已保存值始终优先于默认显示，清空输入则回到默认显示。unset 有语义的键（路由覆盖、chains、五张 whitelist 表、`robashDefaultsPath/Reload`、`lspServers`）没有默认值，保持空显示。
 
 ## 配置
 
