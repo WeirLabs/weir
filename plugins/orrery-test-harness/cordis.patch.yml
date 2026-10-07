@@ -234,3 +234,17 @@
           name: '@deepseek-ai/dsh-compaction-basic'
         - id: orrery-it-context-guard
           name: 'orrery-harness/context-guard'
+
+    # Mirror the preset realm structure for the session blackboard service:
+    # the provider row sits in its own isolated group exactly like the
+    # preset's delegation group. Mounted only for the blackboard scenario
+    # (slice 2) so every other scenario keeps today's tool surface.
+    - id: orrery-it-blackboard
+      name: cordis:group
+      group: true
+      isolate:
+        orreryBlackboard: true
+      config:
+        - id: orrery-it-blackboard-provider
+          name: 'orrery-harness/blackboard'
+          disabled: !!js process.env.ORRERY_IT_BLACKBOARD !== '1'

@@ -197,6 +197,7 @@ window.__ModuleLoader__.load({
 			worktreeAutoSetup: true,
 			worktreeWatchTimeoutMinutes: 360,
 			worktreeAutoApprove: "auto-clean",
+			blackboardWriteTokenTtlMinutes: 60,
 			notifyEnabled: true,
 			notifyOnComplete: true,
 			notifyOnAttention: true,
