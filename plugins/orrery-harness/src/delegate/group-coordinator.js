@@ -410,7 +410,7 @@ export function createGroupCoordinator(deps, config = {}) {
    * Load a rehydrated state snapshot (restart rebuild). Fills the registry,
    * records rehydration meta for the visibility tool, and re-emits one
    * group-settled signal per fully-settled group.
-   * @param {{ children: object[], groups: object[], untracked: object[], confidence: string }} state
+   * @param {{ children: object[], groups: object[], untracked: object[], confidence: string, recovered?: Array<{ childId: string, status: string, report: string }> }} state
    */
   function hydrate(state) {
     for (const child of state.children ?? []) {
@@ -432,6 +432,24 @@ export function createGroupCoordinator(deps, config = {}) {
       }))
     }
     meta = { confidence: state.confidence ?? 'partial', untracked: state.untracked ?? [], hydrated: true }
+    // Re-emit every member settlement (worktree-zombie-lane-reclamation D3):
+    // the live settle/terminate fact is the ONLY signal that frees a lane
+    // binding, and a member that settled while no live listener existed never
+    // had its fact delivered. The re-emission rides the audit channel again
+    // (recovered: true — recovery promotions used to leave zero trace) and
+    // lanes.childSettled is idempotent on unbound lanes, so redelivery
+    // deduplicates naturally. `evidence` names how the terminal state is
+    // known: replayed facts, or the child-log recovery list rehydrate.js
+    // produced (state.recovered).
+    const logRecovered = new Set((state.recovered ?? []).map((/** @type {any} */ entry) => entry?.childId))
+    for (const child of children.values()) {
+      const evidence = logRecovered.has(child.id) ? 'session-log' : 'audit-replay'
+      if (child.status === 'completed' || child.status === 'blocked') {
+        deps.onFact?.({ kind: 'settle', childId: child.id, status: child.status, report: child.report ?? '', recovered: true, evidence })
+      } else if (child.status === 'terminated') {
+        deps.onFact?.({ kind: 'terminate', childId: child.id, reason: child.report ?? '', recovered: true, evidence })
+      }
+    }
     for (const group of groups.values()) {
       if (group.sealed && group.settled && group.memberIds.length > 0) {
         deps.notifyParent?.(renderGroupSettled(group.name, group.memberIds.length))

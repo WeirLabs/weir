@@ -1,0 +1,8 @@
+{
+  "scenario": "zombie-lane",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "ZOMBIE_PROBE_DONE\n",
+  "stderr": "",
+  "sessionId": "session-4e8b89b0-2a9c-4d01-b9ab-d2a248dd7d1c"
+}

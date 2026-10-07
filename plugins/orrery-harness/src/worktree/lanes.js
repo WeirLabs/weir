@@ -87,6 +87,7 @@ export function pathKey(path, platform = process.platform) {
  * @property {number} [pid] - this process id (tests)
  * @property {{ warn?: (message: string) => void }} [logger]
  * @property {(root: string, sessionId: string | null | undefined) => ({ operations: number, locks: number } | null)} [authorityResidue] - read-only Edit Lock residue probe feeding the cleanup/abandon warning (tests); defaults to the bounded snapshot read in ./authority.js
+ * @property {(boundChild: string, ownerSession: string | null, context: { root: string }) => Promise<{ childAlive: boolean, ownerAlive: boolean, terminalEvidence: { source: string, detail: string } | null }>} [bindingLiveness] - read-only zombie-binding probe (design D2); absent = LANE_BUSY refusals stand unreconciled
  */
 
 /** @param {LaneServiceDeps} deps */
@@ -606,6 +607,87 @@ export function createLaneService(deps) {
 
   // ─── binding ──────────────────────────────────────────────────────────
 
+  /** One-phrase reconciliation outcome for LANE_BUSY messages. @param {any} verdict */
+  function reconcileNote(verdict) {
+    if (verdict?.childAlive) return 'the bound worker is still live'
+    if (verdict?.ownerAlive) return 'the lane owner session is still live'
+    return 'no terminal evidence exists for the bound worker (offline is not dead)'
+  }
+
+  /**
+   * Zombie-binding reconciliation (worktree-zombie-lane-reclamation D1/D2):
+   * the read-only liveness probe runs before any LANE_BUSY refusal. Only
+   * terminal evidence ∧ both sides dead settles the binding — through the
+   * exact childSettled path, so a reconciled settlement is indistinguishable
+   * from a live one downstream — and the settlement is audited
+   * (worktree/reconcile-binding), exactly once (the call that actually
+   * cleared the binding audits; a concurrent/repeat reconcile finds the
+   * binding gone and audits nothing). A refusal leaves the ledger untouched.
+   * `forced` skips the probe: the user's explicit card decision (D4).
+   * @param {any} repo @param {any} lane @param {any} session @param {{ forced?: boolean }} [options]
+   * @returns {Promise<{ settled: boolean, lane: any, verdict: any, childId: string, forced: boolean } | null>} null = no binding, or no probe available
+   */
+  async function reconcileBinding(repo, lane, session, options = {}) {
+    if (!lane?.boundChild) return null
+    const childId = lane.boundChild
+    const forced = options.forced === true
+    /** @type {any} */
+    let verdict = null
+    if (!forced) {
+      if (typeof deps.bindingLiveness !== 'function') return null
+      try {
+        verdict = await deps.bindingLiveness(childId, lane.ownerSession ?? null, { root: repo.mainRoot })
+      } catch (error) {
+        deps.logger?.warn?.(`worktree: binding liveness probe failed for lane ${lane.id}: ${/** @type {any} */ (error)?.message ?? error}`)
+        return null
+      }
+      if (!verdict || verdict.childAlive || verdict.ownerAlive || !verdict.terminalEvidence) {
+        return { settled: false, lane, verdict, childId, forced }
+      }
+    }
+    const cleared = await childSettled(childId, session)
+    const after = laneOf(repo, lane.id)
+    if (cleared != null) {
+      deps.audit('reconcile-binding', {
+        lane: lane.id,
+        child: childId,
+        ownerSession: lane.ownerSession ?? null,
+        forced,
+        evidence: verdict?.terminalEvidence ?? null,
+        childAlive: verdict?.childAlive ?? null,
+        ownerAlive: verdict?.ownerAlive ?? null,
+      }, repo.mainRoot, lane.ownerSession)
+    }
+    return { settled: after.boundChild == null, lane: after, verdict, childId, forced }
+  }
+
+  /**
+   * The disputed-binding card (design D4): the reconciliation outcome leads
+   * and the only constructive choice is an explicit force-reclaim.
+   * @param {any} agent @param {any} lane @param {any} reconciliation @param {any} copy @param {any} repo @param {AbortSignal} [signal]
+   * @returns {Promise<boolean>} whether the user confirmed the force-reclaim
+   */
+  async function askForceReclaim(agent, lane, reconciliation, copy, repo, signal) {
+    if (!deps.ask) return false
+    /** @type {any} */
+    let answer
+    try {
+      answer = await deps.ask(agent, [{
+        id: 'abandon',
+        header: copy.abandonHeader,
+        question: copy.abandonQuestion(lane.title),
+        detail: copy.abandonDisputedDetail(lane, lane.boundChild, reconciliation?.verdict ?? null, repo.mainRoot, residueOf(repo, lane)),
+        options: [
+          { label: copy.forceReclaim, description: copy.forceReclaimDescription },
+          { label: copy.cancel, description: copy.abandonDescriptions.cancel },
+        ],
+      }], signal)
+    } catch {
+      return false
+    }
+    return answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'abandon')?.selected?.[0] === copy.forceReclaim
+  }
+
   /**
    * Reserve a lane for a child before it is spawned. Writers move the lane to
    * `working` under the lock (a second writer is refused LANE_BUSY);
@@ -623,6 +705,11 @@ export function createLaneService(deps) {
     const nonce = `pending:${randomUUID()}`
     /** @type {any} */
     let before
+    // Zombie-binding reconciliation (D1): a lane stuck in `working` on a dead
+    // binding settles first, so the bind proceeds from the lane's post-settle
+    // state; a standing refusal is re-thrown atomically inside apply below.
+    const stuck = laneOf(repo, laneId)
+    if (stuck.state === 'working' && stuck.boundChild) await reconcileBinding(repo, stuck, parentSession)
     const lane = await apply(repo, laneId, { type: 'bind', patch: { boundChild: nonce }, code: WORKTREE_CODES.LANE_NOT_DISPATCHABLE }, (current) => {
       if (current.state === 'working' && current.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} already has a bound worker (${current.boundChild})`, { lane: laneId, next: nextFor(current) })
       before = current
@@ -681,7 +768,15 @@ export function createLaneService(deps) {
     }
     const lane = laneOf(repo, laneId)
     if (!CHECKABLE.includes(lane.state)) return lane
-    if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; the host checks it when the worker settles`, { lane: laneId, next: nextFor(lane) })
+    if (lane.boundChild) {
+      // Zombie-binding reconciliation (D1) before the refusal: only terminal
+      // evidence ∧ both sides dead clears the binding (audited); the settle
+      // path then ran this very check, so return its outcome.
+      const outcome = await reconcileBinding(repo, lane, session)
+      if (outcome?.settled) return outcome.lane
+      const detail = outcome?.verdict ? ` (binding reconciliation: ${reconcileNote(outcome.verdict)}; the abandon confirmation card offers a force-reclaim)` : ''
+      throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; the host checks it when the worker settles${detail}`, { lane: laneId, next: nextFor(lane) })
+    }
     const changes = await git.status(lane.path)
     /** @type {{ to: string, reason: string } | null} */
     let failed = null
@@ -955,13 +1050,34 @@ export function createLaneService(deps) {
    */
   async function abandon(agent, laneId, options = {}) {
     const repo = await repoFor(cwdOf(agent?.session))
-    const lane = laneOf(repo, laneId)
+    let lane = laneOf(repo, laneId)
     if (!isActive(lane)) throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is already ${lane.state}`, { lane: laneId })
+    // Zombie-binding reconciliation BEFORE the confirmation card (design
+    // D1/D4): a binding with terminal evidence and no live side settles here
+    // through the childSettled path; a standing one is disclosed on the card
+    // with an explicit force-reclaim choice.
+    /** @type {any} */
+    let reconciliation = null
+    if (lane.boundChild) {
+      reconciliation = await reconcileBinding(repo, lane, agent?.session)
+      if (reconciliation?.settled) lane = reconciliation.lane
+      if (!isActive(lane)) throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is already ${lane.state}`, { lane: laneId })
+    }
     const unmerged = (await git.branchExists(repo.mainRoot, lane.branch)) ? await git.unmergedCount(repo.mainRoot, lane.base.branch, lane.branch) : 0
     let mode = options.mode
     const copy = cardCopy(cardLocale(deps.localeOf?.(agent?.session?.id)))
     if (!mode) {
       if (!deps.ask) throw new WorktreeError(WORKTREE_CODES.MAIN_AGENT_ONLY, 'abandoning needs the user\'s confirmation and no answerer is available')
+      // A binding the reconciliation would not clear is the user's call
+      // (design D4): the disputed card states the outcome, and the explicit
+      // force-reclaim settles through the same path, audited as forced.
+      if (lane.boundChild) {
+        const reclaim = await askForceReclaim(agent, lane, reconciliation, copy, repo, options.signal)
+        if (!reclaim) return result(lane, 'not abandoned: the user cancelled')
+        reconciliation = await reconcileBinding(repo, lane, agent?.session, { forced: true })
+        lane = laneOf(repo, laneId)
+        if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} is still bound to ${lane.boundChild}; the force-reclaim could not settle it`, { lane: laneId })
+      }
       /** @type {any} */
       let answer
       try {
@@ -969,7 +1085,7 @@ export function createLaneService(deps) {
           id: 'abandon',
           header: copy.abandonHeader,
           question: copy.abandonQuestion(lane.title),
-          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane)),
+          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane), reconciliation?.settled ? { child: reconciliation.childId, forced: reconciliation.forced } : null),
           options: [
             { label: copy.choices.keep, description: copy.abandonDescriptions.keep },
             { label: copy.choices.worktree, description: copy.abandonDescriptions.worktree },
@@ -984,7 +1100,10 @@ export function createLaneService(deps) {
       mode = /** @type {any} */ (Object.entries(copy.choices).find(([, label]) => label === choice)?.[0])
       if (!mode) return result(lane, 'not abandoned: the user cancelled')
     }
-    if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first`, { lane: laneId })
+    if (lane.boundChild) {
+      const detail = reconciliation?.verdict ? ` (binding reconciliation: ${reconcileNote(reconciliation.verdict)}; call worktree_abandon without a mode and use the card's force-reclaim)` : ''
+      throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first${detail}`, { lane: laneId })
+    }
     const abandoned = await apply(repo, laneId, { type: 'abandon', by: 'user', reason: 'abandoned by the user', patch: { cleanup: { mode, at: now(), by: 'user' } } })
     if (mode === 'keep') return result(abandoned, `abandoned; ${abandoned.path} and ${abandoned.branch} are kept`)
     // Read-only residue probe BEFORE anything is removed (design D5): a

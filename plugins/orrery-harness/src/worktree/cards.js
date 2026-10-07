@@ -61,6 +61,18 @@ const COPY = {
       if (residue.locks > 0) parts.push(`${residue.locks} Edit Lock lock(s)`)
       return `⚠️ **Edit Lock residue**: this lane's session left ${parts.join(' and ')} in the Edit Lock authority. Locks are reclaimed automatically by the stale-lock sweep; unresolved publications settle via crash self-heal (dead process) or one-click recovery in the Edit Lock maintenance panel (Settings → Editing). This is a warning only — cleanup still proceeds.`
     },
+    forceReclaim: 'Force-reclaim the binding',
+    forceReclaimDescription: 'Settle the disputed worker binding on your explicit decision (audited as forced), then choose what to remove',
+    reconciledNote: (/** @type {string} */ child, /** @type {boolean} */ forced) => forced
+      ? `**Binding force-reclaimed**: the binding to worker \`${child}\` was settled on your explicit decision (audited as forced).`
+      : `**Binding reconciliation**: terminal evidence exists for the bound worker \`${child}\` and neither the worker nor the lane's owner session is live, so the binding was settled automatically (audited).`,
+    disputedWarning: (/** @type {string} */ child, /** @type {string} */ reason) => `⚠️ **Disputed worker binding**: this lane is bound to worker \`${child}\` and the liveness reconciliation would not clear it — ${reason}. Force-reclaim settles the binding anyway, on your explicit decision (audited as forced). Only force this when you are sure the worker is gone: an offline worker can still be resumed, and two live writers in one scope corrupt each other's work.`,
+    disputedReasons: {
+      childLive: 'the bound worker is still live',
+      ownerLive: "the lane's owner session is still live",
+      noEvidence: 'no terminal evidence exists for the bound worker (offline is not dead)',
+      unavailable: 'the liveness probe was unavailable',
+    },
   },
   zh: {
     mergeHeader: 'Worktree 合并',
@@ -98,6 +110,18 @@ const COPY = {
       if (residue.operations > 0) parts.push(`${residue.operations} 个未决 Edit Lock 操作`)
       if (residue.locks > 0) parts.push(`${residue.locks} 把 Edit Lock 锁`)
       return `⚠️ **Edit Lock 残留**：该车道的会话在 Edit Lock 权威中留有 ${parts.join(' 和 ')}。锁会由 stale-lock 自动清扫回收；未决发布会由崩溃自愈（进程死亡时）或 Edit Lock 维护面板（设置 → 编辑）的一键恢复结清。此仅为警示——清理仍会进行。`
+    },
+    forceReclaim: '强制回收绑定',
+    forceReclaimDescription: '按你的明确决定结清存在争议的车道绑定（审计记录为强制），随后选择清理方式',
+    reconciledNote: (/** @type {string} */ child, /** @type {boolean} */ forced) => forced
+      ? `**绑定已强制回收**：对 worker \`${child}\` 的绑定已按你的明确决定结清（审计记录为强制）。`
+      : `**绑定对账**：绑定的 worker \`${child}\` 存在终态铁证，且 worker 与车道属主会话均无存活证据，绑定已自动结清（已审计）。`,
+    disputedWarning: (/** @type {string} */ child, /** @type {string} */ reason) => `⚠️ **绑定存在争议**：该车道绑定了 worker \`${child}\`，活性对账无法结清——${reason}。强制回收将按你的明确决定结清绑定（审计记录为强制）。仅在确认 worker 已消亡时使用：离线的 worker 仍可能被 resume，两个活跃写者共处同一 scope 会互相破坏。`,
+    disputedReasons: {
+      childLive: '绑定的 worker 仍然存活',
+      ownerLive: '车道属主会话仍然存活',
+      noEvidence: '绑定的 worker 没有终态铁证（离线不等于死亡）',
+      unavailable: '活性对账探针不可用',
     },
   },
 }
@@ -139,14 +163,42 @@ export function cardCopy(locale) {
         ...(residue ? ['', copy.residueWarning(residue)] : []),
       ].join('\n')
     },
-    /** @param {any} lane @param {number} unmerged @param {string} [root] @param {{ operations: number, locks: number } | null} [residue] */
-    abandonDetail(lane, unmerged, root, residue = null) {
+    /**
+     * Reason phrase for a standing reconciliation refusal (design D4 card).
+     * @param {{ childAlive?: boolean, ownerAlive?: boolean, terminalEvidence?: any } | null} verdict
+     */
+    disputedReason(verdict) {
+      if (verdict?.childAlive) return copy.disputedReasons.childLive
+      if (verdict?.ownerAlive) return copy.disputedReasons.ownerLive
+      if (verdict == null) return copy.disputedReasons.unavailable
+      return copy.disputedReasons.noEvidence
+    },
+    /**
+     * @param {any} lane @param {number} unmerged @param {string} [root] @param {{ operations: number, locks: number } | null} [residue]
+     * @param {{ child: string, forced: boolean } | null} [reclaimed] - a binding this abandon already settled (design D1/D4), disclosed on the card
+     */
+    abandonDetail(lane, unmerged, root, residue = null, reclaimed = null) {
       return [
         `- ${copy.abandonLine(lane.id, lane.title, lane.state)}`,
         `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
         '',
         // The unmerged-commit warning stays its own paragraph for emphasis.
         unmerged > 0 ? copy.unmergedLost(unmerged, lane.branch) : copy.noUnmerged(lane.branch),
+        ...(reclaimed ? ['', copy.reconciledNote(reclaimed.child, reclaimed.forced)] : []),
+        ...(residue ? ['', copy.residueWarning(residue)] : []),
+      ].join('\n')
+    },
+    /**
+     * The disputed-binding card body (design D4): lane facts, then the
+     * reconciliation outcome as the warning paragraph.
+     * @param {any} lane @param {string} child @param {{ childAlive?: boolean, ownerAlive?: boolean, terminalEvidence?: any } | null} verdict @param {string} [root] @param {{ operations: number, locks: number } | null} [residue]
+     */
+    abandonDisputedDetail(lane, child, verdict, root, residue = null) {
+      return [
+        `- ${copy.abandonLine(lane.id, lane.title, lane.state)}`,
+        `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
+        '',
+        copy.disputedWarning(child, this.disputedReason(verdict)),
         ...(residue ? ['', copy.residueWarning(residue)] : []),
       ].join('\n')
     },

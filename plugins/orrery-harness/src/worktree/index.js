@@ -5,6 +5,7 @@
 // guards, settlement, Worktree mode). Plain ESM, ctx-only (no static
 // @deepseek-ai imports). The service is a preset service, so the row sits in
 // the `delegation` group with `orreryWorktreeLanes` isolated (S24 / S26 S-A).
+import { join } from 'node:path'
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
@@ -18,6 +19,8 @@ import { DEFAULT_ROOT } from './rules.js'
 import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECTION_TEXT, LANES_VARIABLE_NAME } from './prompts.js'
 import { DEFAULT_WATCH_TIMEOUT_MINUTES } from './watches.js'
 import { WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
+import { readAuditTail, readChildFinalText } from '../delegate/audit-readers.js'
+import { parseTerminalStatus } from '../delegate/group-coordinator.js'
 
 const name = 'orrery-worktree'
 // subprocess is a host-plane service every composition mounts; it is a hard
@@ -82,6 +85,7 @@ function apply(ctx, config = {}) {
     audit: (kind, data, root, sessionId) => audit({ id: sessionId ?? null, header: { cwd: root } }, `${AUDIT_TYPES.worktree}/${kind}`, data, { root }),
     modeOf: (session) => projections?.stateOf?.(session, WORKTREE_PROJECTION_KEY)?.mode === true,
     localeOf: (sessionId) => (sessionId ? locales.get(sessionId) : undefined) ?? locales.get('*'),
+    bindingLiveness: createBindingLiveness(ctx),
     logger: ctx.logger,
   })
   // Service API for the delegate plugin (same realm; see the row comment).
@@ -279,6 +283,53 @@ export function createAsk(ctx) {
       }
     }
     return userQuestions.ask({ questions, agent, ...(signal ? { signal } : {}) })
+  }
+}
+/**
+ * Read-only liveness probe for a suspected-zombie lane binding
+ * (worktree-zombie-lane-reclamation D2). Live evidence is the single-process
+ * agents registry (a miss proves offline, never dead); terminal evidence is
+ * ironclad only — a settle/terminate fact in the audit tail, or a terminal
+ * STATUS report as the child's final word. Any ambiguity keeps the LANE_BUSY
+ * refusal standing (064: offline is not dead). Exported for tests.
+ * @param {any} ctx
+ */
+export function createBindingLiveness(ctx) {
+  /**
+   * @param {string} boundChild @param {string | null} ownerSession
+   * @param {{ root: string }} context - the lane repository's main root (audit anchor)
+   * @returns {Promise<{ childAlive: boolean, ownerAlive: boolean, terminalEvidence: { source: string, detail: string } | null }>}
+   */
+  return async (boundChild, ownerSession, context) => {
+    const agents = ctx.get?.('agents')
+    const childAlive = typeof boundChild === 'string' && boundChild.length > 0 && agents?.get?.(boundChild) != null
+    const ownerAlive = typeof ownerSession === 'string' && ownerSession.length > 0 && agents?.get?.(ownerSession) != null
+    /** @type {{ source: string, detail: string } | null} */
+    let terminalEvidence = null
+    if (!childAlive && typeof boundChild === 'string' && boundChild.length > 0) {
+      // Ironclad (a): a settle/terminate supervision fact in the audit tail
+      // (bounded 256KB window — an aged-out fact degrades to "no evidence",
+      // never to a wrong release; the card's force-reclaim is the escape).
+      const records = readAuditTail(join(context.root, '.orrery', 'audit.jsonl'))
+      const fact = records.find((record) =>
+        (record?.type === 'orrery/supervision/settle' || record?.type === 'orrery/supervision/terminate')
+        && record?.data?.childId === boundChild)
+      if (fact) {
+        terminalEvidence = { source: 'audit', detail: `${fact.type} (childId ${boundChild})` }
+      } else {
+        // Ironclad (b): a terminal STATUS report as the child's final word.
+        const sessionQuery = ctx.get?.('sessionQuery')
+        if (sessionQuery?.readSession) {
+          try {
+            const terminal = parseTerminalStatus(await readChildFinalText(sessionQuery, boundChild))
+            if (terminal) terminalEvidence = { source: 'session-log', detail: `terminal STATUS: ${terminal.status}` }
+          } catch {
+            // an unreadable child log is no evidence — the refusal stands
+          }
+        }
+      }
+    }
+    return { childAlive, ownerAlive, terminalEvidence }
   }
 }
 

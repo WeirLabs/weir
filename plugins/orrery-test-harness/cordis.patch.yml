@@ -141,16 +141,18 @@
         # keeps every category enabled. The `targets` scenario uses it to prove
         # that a disabled target is neither advertised nor spawnable.
         categories: !!js 'Object.fromEntries((process.env.ORRERY_IT_DISABLED_CATEGORY ?? "").split(",").filter(Boolean).map((name) => [name, { disabled: true }]))'
-    # System notifications + a scripted user-questions answerer: mounted for
-    # the notify-worktree scenario only, so no other run can spawn a real
-    # platform notification command or auto-answer a decision card.
+    # System notifications + a scripted user-questions answerer: notifications
+    # mount for the notify-worktree scenario only, so no other run can spawn a
+    # real platform notification command; the card answerer additionally serves
+    # the zombie-lane scenario (its abandon decision cards need a headless
+    # answerer, including the disputed force-reclaim card).
     - id: orrery-it-notify
       name: 'orrery-harness/notify'
       disabled: !!js process.env.ORRERY_IT_NOTIFY_WORKTREE !== '1'
     - id: orrery-it-user-questions-stub
       name: 'orrery-test-harness/user-questions-stub'
       config:
-        enabled: !!js process.env.ORRERY_IT_NOTIFY_WORKTREE === '1'
+        enabled: !!js (process.env.ORRERY_IT_NOTIFY_WORKTREE === '1' || process.env.ORRERY_IT_ZOMBIE_LANE === '1')
     # Mirror the product's host-layer capability read remote (silent-capability-
     # reads). Headless has no typert gateway, so the row proves the designed
     # inert path (warn + never break the composition); the direct-call probe

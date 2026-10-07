@@ -196,6 +196,8 @@ function recordRun(run) {
         ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')]]
         : run.scenario === 'notify-worktree'
           ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')], ['notify-delivery.log', 'notify-delivery.log']]
+        : run.scenario === 'zombie-lane'
+          ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')]]
         : run.scenario.startsWith('editlock-stop-')
           ? (() => {
             const boundary = run.scenario.slice('editlock-stop-'.length)
