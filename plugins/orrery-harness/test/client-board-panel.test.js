@@ -84,6 +84,52 @@ describe('client.blackboard-model: wire channel against a mocked carrier', () =>
   })
 })
 
+describe('client.blackboard-model: wire channel slice-3 verbs', () => {
+  it('sends the slice-3 verbs requestPromotion and markPromoted to the pinned endpoints', async () => {
+    const { exports: model } = await loadModel()
+    const remote = fakeRemote({
+      requestPromotion: () => okEnvelope({ ok: true }),
+      markPromoted: () => okEnvelope({ ok: true, destination: 'docs/spikes.md' }),
+    })
+    const channel = model.createBlackboardChannel(remote.rawCall, 'session-1')
+    await channel.requestPromotion()
+    await channel.markPromoted('alpha-map', 'docs/spikes.md')
+    expect(remote.calls.map((call) => call.endpoint)).toEqual(['orreryBlackboard/requestPromotion', 'orreryBlackboard/markPromoted'])
+    expect(remote.calls[0].payload).toEqual({ args: { agentId: 'session-1', args: {} } })
+    expect(remote.calls[1].payload).toEqual({ args: { agentId: 'session-1', args: { key: 'alpha-map', destination: 'docs/spikes.md' } } })
+  })
+})
+
+describe('client.blackboard-model: promotion (slice 3: button state, outcomes, promoted rows)', () => {
+  it('promotionButtonState enables exactly when a non-promoted entry exists', async () => {
+    const { exports: model } = await loadModel()
+    expect(model.promotionButtonState([])).toEqual({ enabled: false, candidateCount: 0 })
+    expect(model.promotionButtonState(ROWS)).toEqual({ enabled: true, candidateCount: 4 })
+    const allPromoted = ROWS.map((row) => ({ ...row, promoted: { destination: 'docs/spikes.md', at: 1 } }))
+    expect(model.promotionButtonState(allPromoted)).toEqual({ enabled: false, candidateCount: 0 })
+    const mixed = [{ ...ROWS[0], promoted: { destination: 'agents-pointer', at: 2 } }, ROWS[1]]
+    expect(model.promotionButtonState(mixed)).toEqual({ enabled: true, candidateCount: 1 })
+  })
+
+  it('entryRowOf normalizes the promoted marker defensively and applyOutcomeOf folds the promoted refusal', async () => {
+    const { exports: model } = await loadModel()
+    const row = model.entryRowOf({ ...ROWS[0], promoted: { destination: 'runtime-map', at: 42 } })
+    expect(row.promoted).toEqual({ destination: 'runtime-map', at: 42 })
+    expect(model.entryRowOf({ ...ROWS[0], promoted: 'garbage' }).promoted).toBeUndefined()
+    expect(model.entryRowOf(ROWS[0]).promoted).toBeUndefined()
+    expect(model.applyOutcomeOf(okEnvelope({ acquired: false, promoted: true, destination: 'docs/spikes.md' }))).toEqual({ kind: 'promoted', destination: 'docs/spikes.md' })
+  })
+
+  it('promotionOutcomeOf and markPromotedOutcomeOf fold the remote shapes', async () => {
+    const { exports: model } = await loadModel()
+    expect(model.promotionOutcomeOf(okEnvelope({ ok: true }))).toEqual({ kind: 'requested' })
+    expect(model.promotionOutcomeOf({ ok: false, error: { message: 'main agent is not live' } })).toEqual({ kind: 'failed', message: 'main agent is not live' })
+    expect(model.markPromotedOutcomeOf(okEnvelope({ ok: true, destination: 'docs/spikes.md' }))).toEqual({ kind: 'marked', destination: 'docs/spikes.md', already: false })
+    expect(model.markPromotedOutcomeOf(okEnvelope({ ok: true, destination: 'docs/spikes.md', alreadyPromoted: true }))).toEqual({ kind: 'marked', destination: 'docs/spikes.md', already: true })
+    expect(model.markPromotedOutcomeOf(okEnvelope({ ok: false, error: 'blackboard key "k" does not exist' })).kind).toBe('failed')
+  })
+})
+
 describe('client.blackboard-model: outcome categorizers', () => {
   it('listOutcomeOf normalizes rows defensively and reports failures', async () => {
     const { exports: model } = await loadModel()
@@ -417,7 +463,7 @@ test('the panel renders loading → grouped list → detail → create form with
 
   // hook-count stability across every transition (React #310 guard)
   expect(new Set(renders).size).toBe(1)
-  expect(renders[0]).toBe('13/7')
+  expect(renders[0]).toBe('14/7')
 })
 
 test('the panel settles the explicit unavailable state when the channel degrades', async () => {
@@ -445,4 +491,57 @@ test('the panel settles the explicit unavailable state when the channel degrades
   statePanels[0].action.onClick()
   await flush()
   expect(remote.calls.filter((call) => call.endpoint === 'orreryBlackboard/list').length).toBeGreaterThanOrEqual(2)
+})
+
+test('the panel renders the promoted badge, disables editing, and gates the promotion button', async () => {
+  const counts = { useState: 0, useEffect: 0 }
+  const reactStub = makeReactStub(counts)
+  const { exports: model } = await loadModel()
+  const { exports: panel } = await loadClientChunk('lib/client.blackboard-panel.js', requireStubFor(reactStub))
+  const { BlackboardPanel } = panel
+  const promoted = { ...ROWS[0], promoted: { destination: 'docs/spikes.md', at: 5000 } }
+  const rows = [promoted, ROWS[1]]
+  const remote = fakeRemote({
+    list: () => okEnvelope({ entries: rows }),
+    read: () => okEnvelope({ entries: [{ ...promoted, content: 'durable copy already landed' }] }),
+    requestPromotion: () => okEnvelope({ ok: true }),
+  })
+  const props = {
+    sessionId: 's1',
+    model,
+    t: (key) => key,
+    callBoard: remote.rawCall,
+    pollMs: 0,
+    watchMs: 0,
+  }
+  reactStub.reset()
+  const renderOnce = () => {
+    counts.useState = 0
+    counts.useEffect = 0
+    reactStub.begin()
+    return BlackboardPanel(props)
+  }
+  renderOnce()
+  await flush()
+  const loaded = renderOnce()
+  // The header shows the promotion button (a non-promoted entry exists) and the promoted row shows the badge.
+  expect(findAll(loaded, (node) => node['aria-label'] === 'Evaluate for promotion')).toHaveLength(1)
+  expect(findAll(loaded, (node) => node.children === 'promoted')).toHaveLength(1)
+  // Open the promoted entry's detail: the badge renders, Edit/Delete are gone, the read-only note shows.
+  const row = findAll(loaded, (node) => node.role === 'button' && typeof node.onClick === 'function')[0]
+  row.onClick()
+  renderOnce()
+  await flush()
+  const detail = renderOnce()
+  expect(findAll(detail, (node) => node.children === 'promoted')).toHaveLength(1)
+  expect(findAll(detail, (node) => node.children === 'Edit')).toHaveLength(0)
+  expect(findAll(detail, (node) => node.children === 'Delete')).toHaveLength(0)
+  expect(findAll(detail, (node) => typeof node.children === 'string' && node.children.includes('read-only'))).toHaveLength(1)
+  // The promotion button works: clicking it calls requestPromotion and reports the notice.
+  const promoteButton = findAll(loaded, (node) => node['aria-label'] === 'Evaluate for promotion')[0]
+  promoteButton.onClick()
+  await flush()
+  const after = renderOnce()
+  expect(findAll(after, (node) => typeof node.children === 'string' && node.children.includes('promotion-evaluation request'))).toHaveLength(1)
+  expect(remote.calls.some((call) => call.endpoint === 'orreryBlackboard/requestPromotion')).toBe(true)
 })

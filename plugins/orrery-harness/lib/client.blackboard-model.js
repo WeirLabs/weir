@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({
 				list: (args) => call("list", cleanArgs({ type: args?.type, query: args?.query })),
 				/** read({ keys }) — unknown keys come back by absence, never thrown. */
 				read: (keys) => call("read", { keys: Array.isArray(keys) ? keys : [] }),
-				/** apply({ key }) — acquires the one-shot write authority or reports the holder (auto-subscribed). */
+				/** apply({ key }) — acquires the one-shot write authority or reports the holder (auto-subscribed) or the promoted refusal. */
 				apply: (key) => call("apply", { key }),
 				/** write({ key, entryType, summary, content }) — consumes the held authority (create acquires inside). */
 				write: (entry) => call("write", cleanArgs({
@@ -92,6 +92,10 @@ window.__ModuleLoader__.load({
 				})),
 				/** remove({ key }) — delete under the held authority. */
 				remove: (key) => call("remove", { key }),
+				/** requestPromotion() — the panel button: injects the promotion-evaluation brief into the main agent. */
+				requestPromotion: () => call("requestPromotion", {}),
+				/** markPromoted({ key, destination }) — the panel's 1:1 mirror of the agent tool (the agent marks; the panel only reads the marker). */
+				markPromoted: (key, destination) => call("markPromoted", { key, destination }),
 			};
 		}
 
@@ -113,6 +117,12 @@ window.__ModuleLoader__.load({
 				updatedAt: typeof raw?.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
 			};
 			if (typeof raw?.content === "string") row.content = raw.content;
+			if (raw?.promoted && typeof raw.promoted === "object") {
+				row.promoted = {
+					destination: typeof raw.promoted.destination === "string" ? raw.promoted.destination : "",
+					at: typeof raw.promoted.at === "number" && Number.isFinite(raw.promoted.at) ? raw.promoted.at : 0,
+				};
+			}
 			return row;
 		}
 
@@ -145,6 +155,9 @@ window.__ModuleLoader__.load({
 					expiresAt: typeof value.expiresAt === "number" && Number.isFinite(value.expiresAt) ? value.expiresAt : 0,
 				};
 			}
+			if (value?.promoted === true) {
+				return { kind: "promoted", destination: typeof value?.destination === "string" ? value.destination : "" };
+			}
 			return {
 				kind: "contended",
 				holder: typeof value?.holder === "string" && value.holder !== "" ? value.holder : "another session",
@@ -165,6 +178,28 @@ window.__ModuleLoader__.load({
 			if (result?.ok !== true) return { kind: "failed", message: result?.error?.message ?? "unknown" };
 			const value = result.value;
 			if (value?.ok === true) return { kind: "removed" };
+			return { kind: "failed", message: typeof value?.error === "string" ? value.error : "unknown" };
+		}
+
+		// ---- promotion (slice 3: panel button + promoted marker) ----
+
+		/** The promotion button state over the live listing: enabled exactly when at least one entry is NOT promoted. */
+		function promotionButtonState(rows) {
+			const list = Array.isArray(rows) ? rows : [];
+			return { enabled: list.some((row) => !row?.promoted), candidateCount: list.filter((row) => !row?.promoted).length };
+		}
+
+		/** requestPromotion: the brief was accepted by the main agent's delivery, or the folded failure. */
+		function promotionOutcomeOf(result) {
+			if (result?.ok !== true) return { kind: "failed", message: result?.error?.message ?? "unknown" };
+			return { kind: "requested" };
+		}
+
+		/** markPromoted: marked with the destination, an already-promoted report, or the folded failure. */
+		function markPromotedOutcomeOf(result) {
+			if (result?.ok !== true) return { kind: "failed", message: result?.error?.message ?? "unknown" };
+			const value = result.value;
+			if (value?.ok === true) return { kind: "marked", destination: typeof value.destination === "string" ? value.destination : "", already: value?.alreadyPromoted === true };
 			return { kind: "failed", message: typeof value?.error === "string" ? value.error : "unknown" };
 		}
 
@@ -340,6 +375,9 @@ window.__ModuleLoader__.load({
 		exports.applyOutcomeOf = applyOutcomeOf;
 		exports.writeOutcomeOf = writeOutcomeOf;
 		exports.removeOutcomeOf = removeOutcomeOf;
+		exports.promotionButtonState = promotionButtonState;
+		exports.promotionOutcomeOf = promotionOutcomeOf;
+		exports.markPromotedOutcomeOf = markPromotedOutcomeOf;
 		exports.filterEntries = filterEntries;
 		exports.groupEntries = groupEntries;
 		exports.tokenCountdownOf = tokenCountdownOf;
