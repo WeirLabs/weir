@@ -21,8 +21,20 @@ Weir — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 `w
 
 ## 安装
 
-由 Harness 会话内 `plugin_manager install_bundle` 以本目录绝对路径安装；重复安装用 `set_bundle` 禁用/启用循环重应用。
+要求 DeepSeek Harness 版本 `>=0.2.0-rc.2 <0.3.0`（不兼容的运行时会在安装前被明确拒绝）。
+
+CLI 一条命令：
+
+```sh
+dsh plugin --profile web add weir-harness
+```
+
+或 Harness 会话内：`plugin_manager` 的 `install_bundle`，target 填 `weir-harness`（可带 `@版本`）。
+
+安装后在新建会话的预设选择器中选择 **Weir**；GUI 设置页出现「Weir」专页。升级到最新版：同一安装命令改填 `weir-harness@latest`。
 
 ## 开发
 
 纯 ESM JavaScript，无构建步骤（`src/**/*.js` 即运行时输入）。测试：`node --test "test/**/*.test.js"`；静态检查：`pnpm run check`（tsc checkJs 覆盖强类型核心；适配层经单测覆盖）。
+
+开发者 link 安装：Harness 会话内 `plugin_manager install_bundle` 以本目录绝对路径安装；重复安装用 `set_bundle` 禁用/启用循环重应用。
