@@ -87,6 +87,20 @@ describe('preset realm composition for the MCP manager services', () => {
   })
 })
 
+describe('host-layer composition for the blackboard panel remote', () => {
+  it('the remote row sits in the top-level insert list beside the capability remote', () => {
+    // Same S27 constraint as the capability read remote: the typert gateway
+    // resolves the service from the host root. A missing row is a silent
+    // production 404 the test-harness mirror cannot catch (slice-2 incident:
+    // the mirror had the row, the production patch did not).
+    const row = PATCH.indexOf("name: 'orrery-harness/blackboard-remote'")
+    expect(row >= 0, 'cordis.patch.yml must mount orrery-harness/blackboard-remote').toBe(true)
+    expect(row > PATCH.indexOf('- id: orrery-notify')).toBe(true)
+    expect(row < PATCH.indexOf('- id: preset-orrery')).toBe(true)
+    expect(row < PATCH.indexOf('- id: preset-orrery-creative')).toBe(true)
+  })
+})
+
 describe('host-layer composition for the capability read remote', () => {
   it('the remote row sits in the top-level insert list, sibling of orrery-notify and before every preset row', () => {
     // The typert gateway resolves the service from the host root, so a

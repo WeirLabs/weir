@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **黑板面板生产环境 404**：生产 patch 漏挂 `orrery-harness/blackboard-remote` 宿主层行（测试装置镜像有该行，集成测试因此无法暴露缺口），重启后黑板面板报 transport failure。已补挂并新增静态守卫钉住行位（S27 约束同 capability remote）。
+
 ### Added
 
 - **会话黑板（切片二：Agent 契约、订阅投递与黑板面板）**：子 Agent prompt 现在携带黑板写入契约（四触发器、search-before-create、结算报告引用条目 key），主 Agent 派发前会先查板并把相关 key 写进子任务；写入权释放/删除/超时现在会真实投递给订阅的 Agent（不触发新回合、不写会话日志）。右侧栏新增**黑板面板**：条目按类型分组、可过滤搜索、点开看完整信息与读写计数；创建/编辑/删除与助手走同一套写入权仲裁（先申请、持权倒计时、被占用可订阅待释放）；数据走插件自有 typert remote 通道，读操作零会话日志。设置页新增「黑板」组，写入权 TTL（默认 60 分钟）可直接在线调整。详见 [会话黑板](docs/features/blackboard.md)。

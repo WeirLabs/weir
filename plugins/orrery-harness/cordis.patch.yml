@@ -77,6 +77,14 @@
     # module-level bridge. Inert with a warning when typert is absent.
     - id: orrery-capability-remote
       name: 'orrery-harness/capability-remote'
+    # Session blackboard panel data channel (design D8): plugin-owned typert
+    # remote serving list/read/apply/write/remove so panel reads never touch
+    # the session log. Host layer for the same S27 reason as the capability
+    # remote above (gateway resolves from the host root); the preset-layer
+    # blackboard plugin feeds the kernel/TTL faces through the module-level
+    # bridge. Inert with a warning when typert is absent.
+    - id: orrery-blackboard-remote
+      name: 'orrery-harness/blackboard-remote'
     # Browser half of the same package: the Orrery settings page registered
     # as a top-level section of the global Settings panel (./client export,
     # dsh.client manifest).
