@@ -162,6 +162,22 @@ describe('storage and usage counts', () => {
     expect(row.subscribeCount).toBe(1)
   })
 
+  it('the write revision starts at 1 and increments per update (remote wire contract)', () => {
+    const { kernel } = makeKernel()
+    const created = kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: TTL })
+    expect(created.status).toBe('created')
+    expect(created.revision).toBe(1)
+    kernel.apply(BOARD, { holderId: A, key: 'dsh-runtime-map', ttlMs: TTL })
+    const updated = kernel.write(BOARD, { holderId: A, ...entry({ content: 'revised' }), ttlMs: TTL })
+    expect(updated.status).toBe('updated')
+    expect(updated.revision).toBe(2)
+    // The stored entry carries the revision (entriesOf spreads it) without touching the counters.
+    const row = kernel.entriesOf(BOARD)[0]
+    expect(row.revision).toBe(2)
+    expect(row.readCount).toBe(0)
+    expect(row.subscribeCount).toBe(0)
+  })
+
   it('boards are isolated per root session', () => {
     const { kernel } = makeKernel()
     kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: TTL })
