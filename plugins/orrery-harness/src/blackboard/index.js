@@ -1,19 +1,33 @@
 // Orrery session blackboard composition: the five model tools, the
-// orreryBlackboard service surface, the settings-driven write-token TTL, and
-// the lifecycle hooks — an agent's termination releases its tokens, and the
-// root agent's disposal drops the whole conversation board (volatile,
-// session-capped). Plain ESM, ctx-only; blackboard state never touches the
-// session log (cold-read red line S13) and never touches disk (design D1).
+// orreryBlackboard service surface, the settings-driven write-token TTL, the
+// agent contracts (orchestrator retrieval section and the child write
+// contract, both registered here), subscription delivery, the remote-service
+// bridge feed, and the lifecycle hooks — an agent's
+// termination releases its tokens, and the root agent's disposal drops the
+// whole conversation board (volatile, session-capped). Plain ESM, ctx-only;
+// blackboard state never touches the session log (cold-read red line S13)
+// and never touches disk (design D1).
 //
 // The kernel instance is shared module-level (the capability-bridge pattern):
 // a preset switch remounts the row but must not lose a conversation's board.
 // Release events are emitted as cordis events (audit-channel shape, NO disk
-// mirror) so slice 2 can wire subscriber delivery without any session write.
+// mirror) and delivered to the subscribed agents through the safe in-session
+// push in ./notify.js.
+//
+// The module-level remote bridge (./remote.js) is fed with this mount's
+// kernel + board resolution + TTL so the host-layer typert remote row can
+// serve the future side panel against the same arbitration kernel.
 
 import { createBlackboardKernel, ENTRY_TYPES } from './kernel.js'
+import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_SECTION_NAME, BLACKBOARD_SECTION_ORDER_OFFSET, BLACKBOARD_VARIABLE_NAME, BLACKBOARD_WORKER_SECTION_NAME, BLACKBOARD_WORKER_SECTION_ORDER, BLACKBOARD_WORKER_VARIABLE_NAME, BLACKBOARD_WRITE_CONTRACT } from './contracts.js'
+import { createReleaseNotifier } from './notify.js'
+import { feedBlackboardRemoteBridge } from './remote.js'
+import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
+import { AUDIT_TYPES } from '../shared/audit.js'
+import { isDelegatedChild } from '../shared/child-scope.js'
 
 const name = 'orrery-blackboard'
-const inject = ['tools']
+const inject = ['tools', 'systemPrompt']
 
 /** Product default of the write-token TTL, mirrored by the settings tree. */
 export const DEFAULT_WRITE_TOKEN_TTL_MINUTES = 60
@@ -191,19 +205,77 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
   return (ctx, _config = {}) => {
     const kernelInstance = kernel()
 
-    // Slice 2 wires delivery here: every release with waiters becomes a cordis
-    // event in the audit-channel shape (no disk mirror, no session write).
+    // Release delivery (design D3): every release with waiters becomes (a) a
+    // cordis event in the audit-channel shape (no disk mirror, no session
+    // write) and (b) an in-session push to each subscriber — timer-deferred,
+    // steer while busy, followup when idle, producer-tagged, bounded retry
+    // (./notify.js). A delivery failure must never break arbitration.
+    // A subscribed child between turns has no live agent AND no live session
+    // registry entry (the runtime drops both at the turn boundary), so the
+    // parent lookup falls back to the durable session header via sessionQuery
+    // (the same seam the supervision rebuild uses).
+    const parentOf = async (childId) => {
+      try {
+        const live = ctx.get?.('sessions')?.get?.(childId)
+        if (typeof live?.header?.parentSession === 'string' && live.header.parentSession.length > 0) return live.header.parentSession
+      } catch { /* fall through to the durable lookup */ }
+      try {
+        // readSession returns { session, events } — the session record IS the
+        // durable header (id, parentSession, delegationDepth, ...).
+        const read = await ctx.get?.('sessionQuery')?.readSession?.(childId)
+        if (typeof read?.session?.parentSession === 'string' && read.session.parentSession.length > 0) return read.session.parentSession
+      } catch { /* an unreadable child log yields no parent */ }
+      return undefined
+    }
+    const notifyRelease = createReleaseNotifier({
+      agents: () => ctx.get?.('agents'),
+      parentOf,
+      subagents: () => ctx.get?.('subagents'),
+      logger: ctx.logger,
+    })
     const offRelease = kernelInstance.onRelease(event => {
       try {
-        ctx.emit('orrery/blackboard/released', {
+        ctx.emit(`orrery/${AUDIT_TYPES.blackboard}/released`, {
           time: Date.now(),
           session: event.boardId,
           type: 'orrery/blackboard/released',
           data: { key: event.key, holder: event.holder, reason: event.reason, subscriberIds: event.subscriberIds },
         })
       } catch { /* emission must never break arbitration */ }
+      try {
+        notifyRelease(event)
+      } catch { /* delivery must never break arbitration */ }
     })
     try { ctx.effect?.(() => offRelease, 'orrery-blackboard-release') } catch { /* best-effort lifecycle tie */ }
+
+    // Agent contracts (design D7): the orchestrator retrieval section renders
+    // for main agents only; the child write contract renders as its own
+    // worker section for delegated children whose effective tool catalog
+    // actually keeps the blackboard tools. Static bare variable references —
+    // the audience decision rides the variable providers DSH calls at every
+    // prompt assembly (the doctrine pattern).
+    const disposeRetrievalSection = ctx.systemPrompt.section({
+      name: BLACKBOARD_SECTION_NAME,
+      order: DOCTRINE_SECTION_ORDER + BLACKBOARD_SECTION_ORDER_OFFSET,
+      text: `{{${BLACKBOARD_VARIABLE_NAME}}}`,
+    })
+    const disposeRetrievalVariable = ctx.systemPrompt.variable(BLACKBOARD_VARIABLE_NAME, (context) =>
+      isDelegatedChild(context) ? '' : BLACKBOARD_RETRIEVAL_SECTION,
+    )
+    const disposeWorkerSection = ctx.systemPrompt.section({
+      name: BLACKBOARD_WORKER_SECTION_NAME,
+      order: BLACKBOARD_WORKER_SECTION_ORDER,
+      text: `{{${BLACKBOARD_WORKER_VARIABLE_NAME}}}`,
+    })
+    // The tools service's per-agent view (the viewing scope IS the assembled
+    // agent) admits deny-filter category children and excludes allow-listed
+    // read-only curated agents — a child never reads a contract about tools
+    // it does not have. Fail-closed: an unqueryable view renders ''.
+    const disposeWorkerVariable = ctx.systemPrompt.variable(BLACKBOARD_WORKER_VARIABLE_NAME, (context) => {
+      if (!isDelegatedChild(context)) return ''
+      const visible = ctx.tools?.view?.(context.agent)?.visible
+      return visible?.has?.('blackboard_write') ? BLACKBOARD_WRITE_CONTRACT : ''
+    })
 
     // The TTL is read live per apply: a volatile settings commit takes effect
     // on the next acquisition, no remount. A bad saved value warns once and
@@ -274,6 +346,10 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
 
     registerTools(ctx, service)
 
+    // The remote bridge (./remote.js): this mount's kernel + board resolution
+    // + live TTL, read at call time by the host-layer typert remote row.
+    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, ttlMs })
+
     // Terminate path (design D3): the supervision terminate fact names the
     // child, and its tokens die with it. TTL stays the backstop for abnormal
     // deaths. The record rides the audit-channel shape (time/session/type/data).
@@ -290,7 +366,7 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
       service.releaseHolder(id)
       if ((agent?.session?.header?.delegationDepth ?? 0) === 0) service.dropBoard(id)
     })
-    return () => { offTerminate?.(); offDisposed?.(); offRelease() }
+    return () => { offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.() }
   }
 }
 
