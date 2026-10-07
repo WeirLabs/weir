@@ -153,6 +153,15 @@
 - 面板数据来自只读端点 `POST /api/orrery-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图），不从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。解析链是冷读安全的：存活 agent（现状）→ `sessionQuery.observeSession` 冷观察（取 `header.cwd`，绝不激活会话）→ `managementRootFor` 推导管理根 → **只读**权威镜像（`read-authority.js`，与维护 inspector 同一纪律：有界 ≤16MiB、`O_NOFOLLOW`、读前读后身份核对、`parseSnapshot` 校验；不打开 runtime、不取预约、一个字节都不改）。冷会话视图由 `buildColdView` 把镜像映射成与存活读取相同的输入：interrupted→stopped、`adminRecoveries` 撤权→revoked 终态、自身锁与全域锁、保留按读时结算对 `now` 计算；顶层带 `cold: true` 与 auto-resume 开关值。publisher 与 client 两种模式都从本地镜像读取回答（权威是共享文件系统上的本地文件），不新增 peer kind。会话无法冷观察、工作区无权威或镜像损坏时返回带**明确 reason** 的 unavailable（面板显示「不可用＋原因」），不再退化为无 reason 的「启动中」——无 reason 的「启动中」只剩一种情形：agent 存活但其 domain 仍在启动（或启动失败的原因未知）。写动作（resume/release/unlock/清扫）不新增冷通道。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
 
+### 预设切换重绑定与绑定自愈（设计 D1–D4，变更 edit-lock-binding-self-heal）
+
+- **问题形态**：会话创建后的 blank 窗口内切换预设（如 `orrery` → `orrery-creative`）时，宿主走 `select → recompose → bind`，只 emit `tools/change`、**不重发 `agent/created`**——新代挂载的 `setupAgent` 对该 agent 永不运行，编辑锁绑定随旧代挂载孤儿化，一切受管写入被永久拒绝（两起实证事故）。受管 write 注册在 agent **自有作用域层**，rebind 不 dispose 自有层，因此重安装必须先 retire 旧层，否则撞 duplicate-register——这正是早期连手工重绑也会失败的原因。
+- **D3 可重入前置**：写作用域的 disposer 存入按宿主键控、按 agent 键控的宿主生命期容器（`write-scopes.js`），不随 mount 销毁；任何重安装（切预设/重应用/懒绑定）先 `disposeWriteScope` 同 agent 旧层再注册；`agent/disposed` 时随 agent 释放。卸载刻意不拆除受管 write——gap 期拆除会暴露 stock 直写。
+- **D1 预设切换重绑定（消窗）**：订阅宿主转播的 `agent-preset/selected`（rebind 落地后 emit，载荷为 sessionId），对本预设 root agent 重跑幂等 `setupAgent`；切到 foreign 预设过 `ownAgent` 栅栏不绑。监听器按 serial-bail 纪律返回 undefined。
+- **D2 守卫懒绑定（兜底）**：pre-execute 守卫与锁工具路由（`domainFor`）遇到「本预设 root ∧ 无绑定 ∧ 本代无失败记录」时先做一次幂等重绑定再判定；成功后写入正常走锁。失败则拒绝文案点名真实原因（无 Edit Lock 域、setup 失败原因）与恢复动作（重启或新会话），且**本代不再重试**（startFailures 抑制）；子代理（delegationDepth>0）与 foreign 预设永不尝试。
+- **并发幂等**：所有入口（创建/切预设/补课/懒绑定）共享按 agent 的 in-flight setup（`setupAgentOnce` + `setupInFlight`），并发调用绝不重复注册。
+- **D4 失败四联**：写作用域安装/registry 绑定失败从仅 `logger.warn`（运行时无读者的 ring buffer）升级为四面留痕——startFailures（状态面板可读原因）+ `evidence.recordSessionFailure`（维护面板）+ 会话内 `deliverLocal` 通知（点名编辑已禁用与恢复动作）+ 冷读安全审计（`setup-failed`）；warn 保留为第四份。绑定失败从此不再静默。
+
 ### 消息触发的失效锁清扫（设计）
 
 - **触发与调度**：`agent/inbox/inserted` + `isGenuineUserMessage`（与消息驱动自动恢复同一挂点，运行时注入消息天然排除）为**该会话的管理域根**调度一次清扫。调度按域根聚合在 `src/edit-lock/stale-sweep.js` 的 `createStaleSweepScheduler`：单飞 + 60 秒冷却（自完成时刻起），零延时定时器 **detached 派发——回合绝不等待**（不同于必须先于首 step 的 auto-resume）；冷却已过期的空闲条目在每次调度与任务完成时回收、`close()` 清空注册表，键数不随历史域数无界增长。`editLock.staleSweep` 按消息即时读取（`!== false` 即开）。插件卸载 `sweeps.close()` 取消全部未派发工作；agent dispose（`disposedAgents` WeakSet 标记）取消其 arming 的未派发工作——派发前与 `registry.forRoot` 兑现回调内各检一次，域打开 pending 期间的 dispose 同样取消，不为已 dispose 的 agent 提交维护事务；已提交的权威事务永不打断、永不 reinterpret。
