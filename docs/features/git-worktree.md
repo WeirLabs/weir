@@ -102,6 +102,14 @@
 - **降级形态不崩溃**：端点的降级返回（`WORKTREE_DISABLED`、`SESSION_NOT_LIVE`）与完整视图同构（同样携带 `lanes`/`ownedBySession`/`unmanaged`/`repo` 字段）；端点数据在进入组件前经 `narrowView` 收窄（收窄失败按读取失败呈现），`summaryOf`/`needsPolling` 对缺失或非数组字段容错返回中性结果——任何畸形/降级负载都不会在渲染期抛错（曾因渲染期 TypeError 被壳层错误边界吞掉表现为面板空白）。
 - **隔离**：每个界面注册在各自的 `ctx.effect` 中；视图代码经 `require.async` 到达（到达前渲染占位/平铺体）；右侧栏页签通过可选 `ctx.inject(["sidebarRightTabs"])` 注册，没有该包的组合其余界面照常工作。文案中英双语，仅使用主题 token（淡色底用 `color-mix` 并保留描边兜底）。
 
+## 失效绑定回收
+
+车道的 `boundChild` 正常由绑定工人的结算清零（宿主检查随之触发）。当属主会话死亡/失联、或宿主重启导致结算 fact 无人送达时，绑定可能残留为「僵尸」——车道卡 `working`，abandon/check/再绑定均被 `LANE_BUSY` 拒绝。三层防护：
+
+1. **对账放行（自动，保守）**：`worktree_abandon`、`worktree_check`、再绑定三处因 `LANE_BUSY` 拒绝之前，宿主对绑定做只读活性对账（`bindingLiveness`）：终态铁证（审计尾窗内的 settle/terminate fact，或子会话日志的终态 STATUS 报告）**且**属主会话与 boundChild 均无存活证据（agents 注册表查询，不命中只证明不在线、不证明死亡）时才结清绑定、放行原操作，并写审计 `worktree/reconcile-binding`（车道、被清子代理、所用证据）。任一方在线或缺铁证，拒绝原样维持——064 教训：不在线不等于死亡，可冷恢复的 continuable 子代理绝不会被误清。审计尾窗有界（256KB），铁证滚出窗口时退化为「无铁证维持拒绝」，不会错放。
+2. **重启补发（自愈）**：监督状态重建（rehydrate / 崩溃恢复把子代理提升为终态）时，对每个已终态成员补发结算；`childSettled` 对无绑定车道幂等返回，天然去重。恢复提升同时补记审计 fact（此前零痕迹）。
+3. **强制回收（用户兜底）**：对账未放行时，abandon 确认卡展示对账结论（哪方被判存活、缺什么证据）并提供 force-reclaim 选项；用户显式确认后才结清绑定，审计记录 `forced: true`。check/再绑定不提供强制面——放弃车道是唯一逃生门。
+
 ## 边界与失败语义
 
 - 前置条件不满足时 `worktree_open` 不创建任何东西：`NOT_A_REPO`、`GIT_TOO_OLD`（需要 git ≥ 2.38，`merge-tree --write-tree` 的门槛；低于它整个能力不可用而不是降级跳过预检）、`DETACHED_HEAD`、`MAX_ACTIVE`、`SCOPE_OVERLAP`、`BRANCH_EXISTS`、`ROOT_OUTSIDE_REPO`、`WORKTREE_DISABLED`。
@@ -120,6 +128,7 @@
 ## 测试
 
 - 单元测试：`test/worktree-core.test.js`（状态机全转移与非法转移、规则推导、对账、账本原子写/并发/陈旧锁/损坏、账本 `watches` 字段——无 watches 旧账本读入补空、条目形态非法判损坏、exclude 幂等、git 封装从不 force、真仓库 add/precheck/merge/remove 与冲突不动主仓）；`test/worktree-watches.test.js`（订阅注册表纯逻辑：`WATCHABLE` 集合、非法/空状态集合拒绝、超时解析与 `expiresAt` 固化、替换插入、命中扫描、过期摘除、看板计数，及命中/过期英文模板文本）；`test/worktree-pkgmgr.test.js`（推导 setup 解析：系统命中与 Node 目录注入、系统有管理器但无 Node 时落到捆绑、捆绑 pnpm 经捆绑 node 执行 pnpm.mjs、npm 仅在捆绑 bin 含 npm 时、yarn/bun 无捆绑、双缺诊断、含空格路径引号、frozen-lockfile 语义，以及对本机捆绑运行时的真实执行校验）；`test/worktree-lanes.test.js`（真 git 仓库上的服务：开车道与各前置拒绝、后台 setup 成功/失败/沙箱拒绝/关闭、单写入者绑定与回滚、结算到 `dirty`/`no-commits`/`landable`、新提交使结论失效、验证顺序执行/首败即停/改写即败/`VERIFICATION_DISABLED`、批准合并与模板消息、四种不合并路径、冲突不询问、`BASE_MOVED`/`MAIN_STAGED`/`MAIN_DIRTY_OVERLAP`、卡片期间主仓变化不合并、孤儿卡片转 `declined`、用户命令合并免卡片、收尾三模式与 scratch 同步、删除受阻不强删、放弃的未合并提交提示与取消、手删车道转 missing、未托管 worktree 不动、视图与合法操作、损坏账本显式重建、验证建议只建议不写入；订阅——命中一次后不再通知、跨会话投递给订阅者、已在目标态立即命中、过渡态/空集合/未知车道拒绝、重复订阅替换、超时摘除并投递过期通知、双实例过期竞态只投递一次、重启后已过期订阅静默清理 + 审计、看板 `· N watching` 与 view `watchCount`/`watchStates`）；`test/worktree-surfaces.test.js`（车道守卫判定表含命令位置与包装命令、Worktree 模式判定、投影折叠与引用稳定、工具 schema/meta/主代理限定/错误渲染（含 `worktree_watch` 无超时字段的 schema、`meta.worktree.watch`、`UNWATCHABLE_STATE` 渲染）、命令映射、spawn-adapter 车道守卫挂载与两条通道的失败拆除、delegate 绑定/标签/契约/结算/回滚/`WORKTREE_REQUIRED`/`WORKTREE_DISABLED`、主代理模式守卫只作用于主代理自身调用）；`test/worktree-endpoints.test.js`（面板端点会话解析：冷观察路径以冷 cwd 与冷折叠 mode 驱动视图并恰好释放一次租约、live 路径不触碰 sessionQuery、会话彻底缺失回 `SESSION_NOT_LIVE`、diff 冷路径与 400 形态）；`test/worktree-ask-notify.test.js`（ask 漏斗的通知 side-emit：`merge`/`abandon` 白名单 emit 携带会话与问题、`cleanup` 与未知 id 静默、缺服务拒 `NO_PROVIDER` 且不 emit、监听器异常只告警）；`test/audit.test.js`（审计根目录锚定）；`test/settings-fields.test.js` 与 `test/client-settings-page.test.js`（五个设置键的 FIELDS ↔ patch 行 ↔ 设置页对齐）。
+- 失效绑定回收：`plugins/orrery-test-harness/test/worktree-binding-reconcile.test.js`（对账四象限——铁证+双亡放行 / 属主在线拒 / 子代理在线拒 / 无铁证拒、审计事件字段、childSettled 幂等）与集成场景 `zombie-lane`（属主死亡 + 铁证 → abandon 放行全链路）。
 - 残留警示：`test/worktree-authority.test.js`（只读探针：真实权威上的 unknown 发布 + 留存锁、prepared 操作 + 活跃锁均报残留且读后字节不变；干净/缺失/损坏权威与坏参数一律静默）；`test/worktree-cards.test.js`（警示段双语对拍：收尾/放弃 detail 有残留时追加独立警示段并点名结算路径、无残留不渲染、按存在的种类组合计数）；`test/worktree-lanes.test.js` 的 `authority-residue warning` 组（收尾卡警示与静默、放弃卡 + 摘要警示且不阻断迁移、直接 cleanup 摘要警示、探针抛错绝不阻断、无注入时默认探针读取主仓真实权威且不改动字节）。
 - 契约指引回归：`src/worktree/contract-guidance.test.js`（受 lane 写范围约束就近放置；显式运行 `node --test plugins/orrery-harness/src/worktree/contract-guidance.test.js`）：两类开启拒绝的结构化载荷、全部活跃车道及无 `landable` 回退、拒绝不改变账本或创建 worktree、写入契约三句指引与只读契约逐字不变。
 - 集成测试：见 `plugins/orrery-test-harness` 的 `worktree` 场景（端到端：开车道 → 委派 → 自动检查 → 批准合并 → 收尾，以及 Worktree 模式写入被拒）、`worktree-watch` 场景（订阅 → 车道到达目标态 → 订阅者被续推一次 → 手动再检查进入同一目标态不重复通知，账本订阅清空）与 `notify-worktree` 场景（合并批准卡片的系统通知全链路：真实 `worktree_land` → ask 漏斗 `worktree/question` 事件 → 真实挂载的 notify 模块投递到 PATH-stub 的平台命令；收尾卡片不通知）。
