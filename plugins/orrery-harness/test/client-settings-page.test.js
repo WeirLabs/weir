@@ -131,7 +131,7 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
   // The six boolean product defaults shipped after BOOLEAN_DEFAULTS was first
   // written. Their module/bundle defaults are all ON (cordis.patch.yml
@@ -224,7 +224,7 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs'])
     expect(rowKeys(cards, 'guard')).toEqual(['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'])
     expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled'])
-    expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes'])
+    expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes', 'worktreeAutoApprove'])
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
     expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
@@ -533,6 +533,16 @@ describe('client.settings-page chunk', () => {
     const classifier = segmented.find((node) => node.label === 'intentGateClassifier')
     expect(classifier.value).toBe('regex')
     expect(classifier.options).toHaveLength(3)
+    // the worktree auto-approve enum: three segments with the option-label
+    // dictionary keys (hyphenated values are quoted keys), default selected
+    const approveSegmented = findAll(renderChoice('worktreeAutoApprove'), (node) => node.__type === primitivesStub.SegmentedControl)
+    const approve = approveSegmented.find((node) => node.label === 'worktreeAutoApprove')
+    expect(approve.value).toBe('auto-clean')
+    expect(approve.options).toEqual([
+      { value: 'manual', label: 'worktreeAutoApproveOptionManual' },
+      { value: 'auto-keep', label: 'worktreeAutoApproveOptionAuto-keep' },
+      { value: 'auto-clean', label: 'worktreeAutoApproveOptionAuto-clean' },
+    ])
   })
 
   it('mirrors the six late boolean product defaults in the map, the helper and the conditions', async () => {
@@ -618,6 +628,7 @@ describe('client.settings-page chunk', () => {
     const segmentedOf = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === primitivesStub.SegmentedControl)[0]
     expect(segmentedOf('intentGateClassifier').value).toBe('regex')
     expect(segmentedOf('notifyForeground').value).toBe('skip')
+    expect(segmentedOf('worktreeAutoApprove').value).toBe('auto-clean')
   })
 
   it('staged drafts and saved values win over the default display; clearing re-shows it', async () => {
@@ -1114,6 +1125,10 @@ describe('client.settings-page chunk', () => {
       for (const descriptor of exports.FIELDS) {
         expectResolved(dict, descriptor.field)
         expectResolved(dict, `${descriptor.field}Hint`)
+        // every enum row resolves the option labels the SegmentedControl renders
+        for (const value of descriptor.values ?? []) {
+          expectResolved(dict, `${descriptor.field}Option${value.charAt(0).toUpperCase()}${value.slice(1)}`)
+        }
       }
       // every chain-editor lane (categories + curated agents) has a human label
       const laneKeys = [

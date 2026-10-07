@@ -3,7 +3,7 @@
 // the delegate binding, and the Worktree mode guard.
 import { describe, expect, it } from './helpers.js'
 import { decideLaneCall, decideModeCall, isLaneQuery, laneGitViolation, maskLaneQueries, tokenize } from '../src/worktree/guard.js'
-import { foldWorktreeState, initialWorktreeState, worktreeView } from '../src/worktree/projection.js'
+import { APPROVE_MODES, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView } from '../src/worktree/projection.js'
 import { createWorktreeTools, renderResult } from '../src/worktree/tools.js'
 import { createWorktreeCommand } from '../src/worktree/command.js'
 import { WorktreeError } from '../src/worktree/errors.js'
@@ -111,7 +111,73 @@ describe('worktree session projection', () => {
     expect(foldWorktreeState(next, { type: 'tool/result', data: { meta: { worktree: { tool: 'worktree_open', lane: 'a-001' } } } })).toBe(next)
     expect(foldWorktreeState(next, { type: 'tool/result', data: { meta: { worktree: { tool: 'worktree_land', lane: 'b-002' } } } })).toBe(next)
     expect(worktreeView(next)).toBe(worktreeView(next))
-    expect(worktreeView(next)).toEqual({ mode: false, lanes: ['a-001'] })
+    expect(worktreeView(next)).toEqual({ mode: false, lanes: ['a-001'], approve: null })
+  })
+
+  it('folds /worktree approve only on a successful command pair', () => {
+    let state = initialWorktreeState()
+    expect(state.approve).toBeNull()
+    state = foldWorktreeState(state, { type: 'command/run', data: { commandId: 'a1', name: 'worktree', args: ' approve auto-keep' } })
+    expect(state.approve).toBeNull() // pending only: the flip waits for command/done
+    state = foldWorktreeState(state, { type: 'command/done', data: { commandId: 'a1', kind: 'error' } })
+    expect(state.approve).toBeNull()
+    expect(state.pending).toEqual({})
+    state = foldWorktreeState(state, { type: 'command/run', data: { commandId: 'a2', name: 'worktree', args: 'approve auto-keep' } })
+    state = foldWorktreeState(state, { type: 'command/done', data: { commandId: 'a2', kind: 'success' } })
+    expect(state.approve).toBe('auto-keep')
+    expect(state.pending).toEqual({})
+    // a later switch overwrites the override, and the mode marker is untouched
+    state = foldWorktreeState(state, { type: 'command/run', data: { commandId: 'a3', name: 'worktree', args: 'approve manual' } })
+    state = foldWorktreeState(state, { type: 'command/done', data: { commandId: 'a3', kind: 'success' } })
+    expect(state.approve).toBe('manual')
+    expect(state.mode).toBe(false)
+  })
+
+  it('an invalid approve value never enters the pending slot, so no settlement can flip it', () => {
+    const state = initialWorktreeState()
+    const afterRun = foldWorktreeState(state, { type: 'command/run', data: { commandId: 'bad', name: 'worktree', args: 'approve sometimes' } })
+    expect(afterRun).toBe(state) // no pending entry: same state reference
+    expect(afterRun.pending).toEqual({})
+    const settled = foldWorktreeState(afterRun, { type: 'command/done', data: { commandId: 'bad', kind: 'success' } })
+    expect(settled.approve).toBeNull()
+    // a missing argument is rejected the same way
+    expect(foldWorktreeState(state, { type: 'command/run', data: { commandId: 'x', name: 'worktree', args: 'approve' } })).toBe(state)
+  })
+
+  it('restart replay restores the same folded state (cold-read safe)', () => {
+    const events = [
+      { type: 'command/run', data: { commandId: 'c1', name: 'worktree', args: 'on' } },
+      { type: 'command/done', data: { commandId: 'c1', kind: 'success' } },
+      { type: 'command/run', data: { commandId: 'c2', name: 'worktree', args: 'approve auto-keep' } },
+      { type: 'command/done', data: { commandId: 'c2', kind: 'success' } },
+      { type: 'tool/result', data: { meta: { worktree: { tool: 'worktree_open', lane: 'a-001' } } } },
+    ]
+    let state = initialWorktreeState()
+    for (const event of events) state = foldWorktreeState(state, event)
+    let replayed = initialWorktreeState()
+    for (const event of events) replayed = foldWorktreeState(replayed, event)
+    expect(replayed).toEqual(state)
+    expect(replayed).toEqual({ mode: true, lanes: ['a-001'], pending: {}, approve: 'auto-keep' })
+    expect(worktreeView(replayed)).toEqual({ mode: true, lanes: ['a-001'], approve: 'auto-keep' })
+  })
+
+  it('legacy logs without an approve command fold to a null override', () => {
+    // An old log (before /worktree approve existed) replays into the SAME
+    // initial state: the mode marker folds, no approve field is ever set.
+    let state = initialWorktreeState()
+    state = foldWorktreeState(state, { type: 'command/run', data: { commandId: 'c1', name: 'worktree', args: 'on' } })
+    state = foldWorktreeState(state, { type: 'command/done', data: { commandId: 'c1', kind: 'success' } })
+    expect(state).toEqual({ mode: true, lanes: [], pending: {}, approve: null })
+    expect(worktreeView(state)).toEqual({ mode: true, lanes: [], approve: null })
+    // the schema accepts a persisted legacy shape without the approve field,
+    // and the fold still works from one
+    expect(worktreeStateSchema.parse({ mode: true, lanes: [], pending: {} })).toEqual({ mode: true, lanes: [], pending: {} })
+    const legacy = { mode: true, lanes: ['a-001'], pending: {} }
+    const next = foldWorktreeState(legacy, { type: 'command/run', data: { commandId: 'a1', name: 'worktree', args: 'approve manual' } })
+    expect(foldWorktreeState(next, { type: 'command/done', data: { commandId: 'a1', kind: 'success' } }).approve).toBe('manual')
+    // a corrupted approve value is rejected loudly by the schema, never folded
+    expect(() => worktreeStateSchema.parse({ mode: true, lanes: [], pending: {}, approve: 'sometimes' })).toThrow(/approve/)
+    expect(APPROVE_MODES).toEqual(['manual', 'auto-keep', 'auto-clean'])
   })
 })
 
@@ -150,6 +216,19 @@ describe('worktree tools and command', () => {
     expect(value.cleanup).toEqual({ state: 'cleaned', summary: 'removed' })
     expect(value.next).toBeNull()
     await land.execute({ lane: 'a-001' }, exec(1)).then(() => expect(1).toBe(0), (error) => expect(error.message).toContain('MAIN_AGENT_ONLY'))
+  })
+
+  it('worktree_land passes an already-cleaned auto-path value through without asking again', async () => {
+    let askCleanupCalls = 0
+    const tools = createWorktreeTools(fakeService({
+      land: async () => ({ ...lane, state: 'landed', cleanup: { state: 'cleaned', summary: 'removed' }, next: null }),
+      askCleanup: async () => { askCleanupCalls++; return null },
+    }))
+    const land = tools.find((tool) => tool.name === 'worktree_land')
+    const value = await land.execute({ lane: 'a-001' }, exec())
+    expect(value.state).toBe('landed')
+    expect(value.cleanup).toEqual({ state: 'cleaned', summary: 'removed' })
+    expect(askCleanupCalls).toBe(0)
   })
 
   it('worktree_watch: object-rooted schema without any timeout field, watch meta, main-agent only', async () => {
@@ -207,6 +286,48 @@ describe('worktree tools and command', () => {
     expect(switched.text).toContain('Lanes work without this mode; it is optional discipline.')
     const refusing = createWorktreeCommand(service, { modeAvailable: async () => 'not inside a git repository' })
     expect((await refusing.handler({ agent, rawInput: 'on' })).text).toContain('not inside a git repository')
+  })
+
+  it('the command skips the cleanup card when land() already cleaned up (auto path)', async () => {
+    const calls = []
+    const service = fakeService({
+      land: async () => { calls.push(['land']); return { ...lane, state: 'landed', cleanup: { state: 'cleaned', summary: 'removed all' }, next: null } },
+      askCleanup: async () => { calls.push(['askCleanup']); return null },
+    })
+    const command = createWorktreeCommand(service, { modeAvailable: async () => null })
+    const agent = { session: { id: 's', header: { cwd: '/r' } } }
+    const out = await command.handler({ agent, rawInput: 'land a-001' })
+    expect(out.kind).toBe('success')
+    expect(out.text).toContain('lane a-001: landed')
+    expect(calls).toEqual([['land']])
+  })
+
+  it('/worktree approve echoes the effective mode and its source, rejecting anything else', async () => {
+    const service = fakeService({ approveGlobal: () => 'auto-clean' })
+    const command = createWorktreeCommand(service, { modeAvailable: async () => null })
+    const agent = { session: { id: 's', header: { cwd: '/r' } } }
+    const manual = await command.handler({ agent, rawInput: 'approve manual' })
+    expect(manual.kind).toBe('success')
+    expect(manual.text).toContain('Auto-approve mode: manual')
+    expect(manual.text).toContain('session override')
+    expect(manual.text).toContain('auto-clean')
+    const matching = await command.handler({ agent, rawInput: 'approve auto-clean' })
+    expect(matching.kind).toBe('success')
+    expect(matching.text).toContain('Auto-approve mode: auto-clean')
+    expect(matching.text).toContain('matches the global default')
+    const invalid = await command.handler({ agent, rawInput: 'approve sometimes' })
+    expect(invalid.kind).toBe('error')
+    expect(invalid.text).toContain('valid modes: manual, auto-keep, auto-clean')
+    const missing = await command.handler({ agent, rawInput: 'approve' })
+    expect(missing.kind).toBe('error')
+    expect(missing.text).toContain('Usage: /worktree approve')
+    // the global default falls back to auto-clean without a service echo
+    const bare = createWorktreeCommand(fakeService(), { modeAvailable: async () => null })
+    const override = await bare.handler({ agent, rawInput: 'approve auto-keep' })
+    expect(override.text).toContain('session override')
+    expect(override.text).toContain('auto-clean')
+    const usage = await bare.handler({ agent, rawInput: 'bogus' })
+    expect(usage.text).toContain('approve manual|auto-keep|auto-clean')
   })
 })
 

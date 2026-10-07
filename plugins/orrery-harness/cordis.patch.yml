@@ -32,12 +32,14 @@
         guardHardThreshold: 0.88
         hashlineHideStockEdit: true
         # Worktree lanes (git-worktree-lanes): capability switch, lane root,
-        # active-lane cap, automatic dependency setup, lane-watch timeout.
+        # active-lane cap, automatic dependency setup, lane-watch timeout, and
+        # the global auto-approve default (manual / auto-keep / auto-clean).
         worktreeEnabled: true
         worktreeRoot: .orrery/worktrees
         worktreeMaxActive: 4
         worktreeAutoSetup: true
         worktreeWatchTimeoutMinutes: 360
+        worktreeAutoApprove: auto-clean
         editLockEnabled: false
         # Message-driven auto-resume (edit-lock-auto-resume-on-message): a genuine
         # user message resumes a stopped session and confirms its retained files.

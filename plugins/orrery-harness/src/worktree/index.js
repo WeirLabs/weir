@@ -18,7 +18,7 @@ import { createWorktreeCommand } from './command.js'
 import { DEFAULT_ROOT } from './rules.js'
 import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECTION_TEXT, LANES_VARIABLE_NAME } from './prompts.js'
 import { DEFAULT_WATCH_TIMEOUT_MINUTES } from './watches.js'
-import { WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
+import { APPROVE_MODES, WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
 import { readAuditTail, readChildFinalText } from '../delegate/audit-readers.js'
 import { isTerminalStatus, parseTerminalStatus } from '../delegate/group-coordinator.js'
 
@@ -31,6 +31,20 @@ const inject = ['tools', 'systemPrompt', 'subprocess']
 export const WORKTREE_SERVICE = 'orreryWorktreeLanes'
 export const LANES_SECTION_ORDER_OFFSET = 20
 export const DEFAULTS = Object.freeze({ enabled: true, root: DEFAULT_ROOT, maxActive: 4, autoSetup: true, watchTimeoutMinutes: DEFAULT_WATCH_TIMEOUT_MINUTES })
+
+/**
+ * The single resolver for the effective auto-approve mode (design D2): a
+ * valid session override wins, then a valid global setting, then the module
+ * default `auto-clean`. Pure — the wiring below feeds it the two raw reads.
+ * @param {string | null | undefined} sessionApprove - the projection's `approve` (null = no session override)
+ * @param {string | null | undefined} globalApprove - orrerySettings worktree.autoApprove
+ * @returns {'manual' | 'auto-keep' | 'auto-clean'}
+ */
+export function resolveApproveMode(sessionApprove, globalApprove) {
+  if (APPROVE_MODES.includes(sessionApprove)) return sessionApprove
+  if (APPROVE_MODES.includes(globalApprove)) return globalApprove
+  return 'auto-clean'
+}
 
 /**
  * Effective settings: module defaults ← row config ← orrerySettings section,
@@ -58,6 +72,20 @@ function apply(ctx, config = {}) {
   const settings = ctx.get?.('orrerySettings')
   const settingsNow = () => worktreeSettings(config, settings?.get?.('worktree'))
   const projections = ctx.get?.('sessionProjections')
+  // The auto-approve reads (design D2): the projection cell on the same
+  // live/cold path as `modeOf`, the volatile global setting re-read on every
+  // use. A throwing projection registry (pseudo cold sessions) resolves as
+  // "no override" — the global default still answers.
+  /** @param {any} session @returns {string | null | undefined} */
+  const sessionApproveOf = (session) => {
+    try {
+      return projections?.stateOf?.(session, WORKTREE_PROJECTION_KEY)?.approve
+    } catch {
+      return undefined
+    }
+  }
+  /** The resolved global default (never a raw invalid value). */
+  const globalApprove = () => resolveApproveMode(undefined, settings?.get?.('worktree')?.autoApprove)
   /** GUI language last reported by the browser per session (decision-card copy). @type {Map<string, string>} */
   const locales = new Map()
   /** Optional executors, captured when (and if) they mount. @type {{ shell?: any, sandboxPolicy?: any }} */
@@ -84,6 +112,9 @@ function apply(ctx, config = {}) {
     notify: (sessionId, text) => deliver(ctx, audit, sessionId, text),
     audit: (kind, data, root, sessionId) => audit({ id: sessionId ?? null, header: { cwd: root } }, `${AUDIT_TYPES.worktree}/${kind}`, data, { root }),
     modeOf: (session) => projections?.stateOf?.(session, WORKTREE_PROJECTION_KEY)?.mode === true,
+    approveModeOf: (session) => resolveApproveMode(sessionApproveOf(session), globalApprove()),
+    approveModeSourceOf: (session) => (APPROVE_MODES.includes(sessionApproveOf(session)) ? 'session' : 'global'),
+    approveGlobal: globalApprove,
     localeOf: (sessionId) => (sessionId ? locales.get(sessionId) : undefined) ?? locales.get('*'),
     bindingLiveness: createBindingLiveness(ctx),
     logger: ctx.logger,
@@ -92,6 +123,8 @@ function apply(ctx, config = {}) {
   ctx.reflect?.provide?.(WORKTREE_SERVICE, {
     enabled: () => settingsNow().enabled,
     modeOf: (/** @type {any} */ session) => settingsNow().enabled && projections?.stateOf?.(session, WORKTREE_PROJECTION_KEY)?.mode === true,
+    approveModeOf: (/** @type {any} */ session) => resolveApproveMode(sessionApproveOf(session), globalApprove()),
+    approveModeSourceOf: (/** @type {any} */ session) => (APPROVE_MODES.includes(sessionApproveOf(session)) ? 'session' : 'global'),
     prepareBind: service.prepareBind,
     childSettled: service.childSettled,
     resolveArgPath: service.resolveArgPath,
@@ -194,10 +227,16 @@ function apply(ctx, config = {}) {
         observation = undefined
       }
       if (!observation) return { body, session: undefined, cold: undefined, sessionId }
+      const coldState = observation.projections?.values?.[WORKTREE_PROJECTION_KEY]
       return {
         body,
         session: { id: sessionId, header: observation.header },
-        cold: { observation, mode: observation.projections?.values?.[WORKTREE_PROJECTION_KEY]?.mode === true },
+        cold: {
+          observation,
+          mode: coldState?.mode === true,
+          approve: APPROVE_MODES.includes(coldState?.approve) ? coldState.approve : null,
+          approveSource: APPROVE_MODES.includes(coldState?.approve) ? 'session' : 'global',
+        },
         sessionId,
       }
     }
@@ -211,11 +250,11 @@ function apply(ctx, config = {}) {
           if (!sessionId) return reply({ ok: false, error: { code: 'orrery-worktree/invalid', message: 'body needs { sessionId }' } }, 400)
           // Degraded shapes carry the same array fields as the full view so the
           // panel's narrowing and summaries never see a lanes-less object.
-          if (!settingsNow().enabled) return reply({ ok: true, value: { available: false, enabled: false, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'WORKTREE_DISABLED', message: 'worktree lanes are disabled' } } })
-          if (!session) return reply({ ok: true, value: { available: false, enabled: true, mode: false, lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'SESSION_NOT_LIVE', message: 'open the session to load its lanes' } } })
+          if (!settingsNow().enabled) return reply({ ok: true, value: { available: false, enabled: false, mode: false, approveMode: globalApprove(), approveModeSource: 'global', lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'WORKTREE_DISABLED', message: 'worktree lanes are disabled' } } })
+          if (!session) return reply({ ok: true, value: { available: false, enabled: true, mode: false, approveMode: globalApprove(), approveModeSource: 'global', lanes: [], ownedBySession: [], unmanaged: [], repo: null, error: { code: 'SESSION_NOT_LIVE', message: 'open the session to load its lanes' } } })
           // A cold pseudo session drives the same view with the cold-folded
           // mode override; a live session keeps the exact current behavior.
-          return reply({ ok: true, value: { enabled: true, ...(await service.view(session, cold ? { mode: cold.mode } : undefined)) } })
+          return reply({ ok: true, value: { enabled: true, ...(await service.view(session, cold ? { mode: cold.mode, approve: cold.approve, approveSource: cold.approveSource } : undefined)) } })
         } finally {
           cold?.observation?.[Symbol.dispose]?.()
         }

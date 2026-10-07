@@ -4,9 +4,10 @@
 // mutation the user makes is on the session record.
 import { WorktreeError } from './errors.js'
 import { renderBoard, renderNext } from './prompts.js'
+import { APPROVE_MODES } from './projection.js'
 
 export const WORKTREE_COMMAND = 'worktree'
-export const COMMAND_USAGE = '[--json] | on | off | init [show|write <json>] | setup <lane> [--skip] | check <lane> | land <lane> | clean <lane> worktree|all|keep | abandon <lane> [keep|worktree|all] | reconcile [--rebuild]'
+export const COMMAND_USAGE = '[--json] | on | off | approve manual|auto-keep|auto-clean | init [show|write <json>] | setup <lane> [--skip] | check <lane> | land <lane> | clean <lane> worktree|all|keep | abandon <lane> [keep|worktree|all] | reconcile [--rebuild]'
 
 /**
  * @param {any} service
@@ -50,6 +51,22 @@ export function createWorktreeCommand(service, deps) {
           }
           case 'off':
             return ok('Worktree mode OFF for this session. Existing lanes keep their state.')
+          case 'approve': {
+            // Session auto-approve switch (design D4): the projection folds
+            // ONLY a successful command pair, so this handler's output is the
+            // flip; lane state is never touched here. The echo names the
+            // effective mode and its source: a value differing from the
+            // global default is a session override, a matching one is an
+            // override that currently equals the global default.
+            if (!APPROVE_MODES.includes(lane ?? '')) {
+              return { kind: 'error', text: `Usage: /worktree approve manual|auto-keep|auto-clean\nvalid modes: ${APPROVE_MODES.join(', ')}` }
+            }
+            const global = service.approveGlobal?.() ?? 'auto-clean'
+            const mode = /** @type {string} */ (lane)
+            return mode === global
+              ? ok(`Auto-approve mode: ${mode} (matches the global default; the session now keeps this mode even if the global setting changes)`)
+              : ok(`Auto-approve mode: ${mode} (session override; the global default remains ${global})`)
+          }
           case 'init': {
             if (lane === 'write') {
               const json = String(invocation.rawInput ?? '').trim().replace(/^init\s+write\s+/, '')
@@ -65,7 +82,9 @@ export function createWorktreeCommand(service, deps) {
             return ok(describe(await service.check(session, required(lane))))
           case 'land': {
             const value = await service.land(agent, required(lane), { userApproved: true })
-            if (value.state === 'landed') void service.askCleanup(agent, value.lane).catch(() => {})
+            // The auto paths handled the cleanup inside land() (value.cleanup
+            // is set); only a manual-mode merge still needs the cleanup card.
+            if (value.state === 'landed' && !value.cleanup) void service.askCleanup(agent, value.lane).catch(() => {})
             return ok(describe(value))
           }
           case 'clean': {
