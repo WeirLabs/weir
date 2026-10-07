@@ -135,6 +135,10 @@ export async function applyChildLogRecovery(state, readChildFinalText) {
 
   const remainingUntracked = []
   const recoveredIds = []
+  /** Members THIS recovery pass promoted to a terminal state (the audit
+   * trail's evidence tag — hydrate re-emits their settlement facts).
+   * @type {Array<{ childId: string, status: string, report: string }>} */
+  const recovered = []
   for (const entry of state.untracked ?? []) {
     const terminal = parseTerminalStatus(await safeRead(readChildFinalText, entry.id))
     if (terminal) {
@@ -146,6 +150,7 @@ export async function applyChildLogRecovery(state, readChildFinalText) {
         report: terminal.report,
       }))
       recoveredIds.push(entry.id)
+      recovered.push({ childId: entry.id, status: terminal.status, report: terminal.report })
     } else {
       remainingUntracked.push(entry)
     }
@@ -161,9 +166,11 @@ export async function applyChildLogRecovery(state, readChildFinalText) {
     if (terminal) {
       child.status = terminal.status
       child.report = terminal.report
+      recovered.push({ childId: child.id, status: terminal.status, report: terminal.report })
     }
   }
 
+  state.recovered = recovered
   recomputeGroupSettle(state)
   return state
 }
