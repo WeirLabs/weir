@@ -17,7 +17,7 @@ import { DEFAULTS as NOTIFY_DEFAULTS } from '../src/notify/policy.js'
 // D5 显式拒绝跨运行时统一（ModuleLoader 同包同步 require 不可能 + YAML 层），
 // 代价是新增字段要改三处，本测试让"忘了改"变成响亮失败。
 // 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
-const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload', 'blackboardWriteTokenTtlMinutes'])
+const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])

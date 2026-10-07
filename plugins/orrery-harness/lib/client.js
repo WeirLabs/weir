@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"2f8f3f8e96d69f8041ce255774d192ac7e4d7b58dd9273bc850ea23524e42aa6","client.lsp-panel.js":"24bb0fc3c35e45ad2a83669eb99be28bab0726517e6d5ac666547aab3585343f","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"b517f9c10dca29b4a908673c0868970943aa5c0ae331d5f0973739dcbc94706d","client.worktree-model.js":"b844c5b9f6b6e9b9d09a8d3a44093c2a854d6266b10e71d5df3cd0ee7387c4c4","client.worktree-view.js":"99a5c899113a47cb77eaf3896157c009a93f0102af34daf4096aba18556d64e9"}
+// Orrery client chunks: {"client.blackboard-model.js":"06c89d7bcf7180ff83e7a881645b3a8063b73cb94e33f833e965296af4e2b01c","client.blackboard-panel.js":"3f180d8107c5d6b9ed0d45b9b893858f248d2b49b46f10ddef0a73b734b78931","client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"2f8f3f8e96d69f8041ce255774d192ac7e4d7b58dd9273bc850ea23524e42aa6","client.lsp-panel.js":"24bb0fc3c35e45ad2a83669eb99be28bab0726517e6d5ac666547aab3585343f","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"e5d3c362b2d13f5ae81fd374a2969a8164c7c78a8bf2dda795d5343040c842d2","client.worktree-model.js":"b844c5b9f6b6e9b9d09a8d3a44093c2a854d6266b10e71d5df3cd0ee7387c4c4","client.worktree-view.js":"99a5c899113a47cb77eaf3896157c009a93f0102af34daf4096aba18556d64e9"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -63,6 +63,9 @@ window.__ModuleLoader__.load({
 			groupRobash: "Read-only bash",
 			groupLsp: "LSP",
 			groupNotify: "Notifications",
+			groupBlackboard: "Blackboard",
+			blackboardWriteTokenTtlMinutes: "Blackboard write-token TTL (minutes)",
+			blackboardWriteTokenTtlMinutesHint: "Minutes an acquired blackboard write authority stays valid; expiry releases the key and notifies its subscribers (default 60). Applies immediately.",
 			intentGateClassifierOptionRegex: "regex",
 			intentGateClassifierOptionLlm: "llm",
 			intentGateClassifierOptionJev: "jev",
@@ -650,7 +653,70 @@ window.__ModuleLoader__.load({
 			"capability.presets.importInstallFailed": "Installation failed: {reason} — rolled back {n} file(s); no preset was created.",
 			"capability.presets.importNoTargetRoot": "No {scope} Skill root is available on this host — nothing was installed.",
 			"capability.presets.scopeProject": "project",
-			"capability.presets.scopeUser": "user"
+			"capability.presets.scopeUser": "user",
+			// Session blackboard (slice 2): the right-sidebar panel's tab, list,
+			// detail and editor strings. Type labels are short semantic names,
+			// translated per locale.
+			blackboardTabLabel: "Blackboard",
+			blackboardGuideTitle: "Session blackboard",
+			blackboardGuideDescription: "Findings shared across this session: entries, usage counts, arbitrated editing.",
+			"blackboard.title": "Blackboard",
+			"blackboard.entries": "{n} entries",
+			"blackboard.loading": "Loading the board…",
+			"blackboard.unavailable": "Blackboard unavailable for this session.",
+			"blackboard.retry": "Retry",
+			"blackboard.empty": "The board is empty.",
+			"blackboard.emptyDesc": "Findings agents write to this session's board appear here.",
+			"blackboard.noMatch": "No entries match.",
+			"blackboard.search": "Search",
+			"blackboard.new": "New entry",
+			"blackboard.refresh": "Refresh",
+			"blackboard.back": "Back",
+			"blackboard.dismiss": "Dismiss",
+			"blackboard.filterAll": "All",
+			"blackboard.type.map": "map",
+			"blackboard.type.contract": "contract",
+			"blackboard.type.deadend": "dead end",
+			"blackboard.type.wiring": "wiring",
+			"blackboard.type.recipe": "recipe",
+			"blackboard.type.why": "why",
+			"blackboard.rowMeta": "{read} reads · {watching} watching",
+			"blackboard.updated": "updated {time}",
+			"blackboard.fact": "Fact",
+			"blackboard.cost": "Cost",
+			"blackboard.reVerify": "Re-verify",
+			"blackboard.content": "Content",
+			"blackboard.gone": "This entry is gone.",
+			"blackboard.goneDesc": "It was deleted from the board (possibly by another writer).",
+			"blackboard.error": "The entry could not be loaded.",
+			"blackboard.edit": "Edit",
+			"blackboard.delete": "Delete",
+			"blackboard.deleting": "Deleting…",
+			"blackboard.deleted": "Entry deleted.",
+			"blackboard.deleteConfirm": "Delete this entry? The write authority is consumed.",
+			"blackboard.contention": "Write authority is held by {holder}.",
+			"blackboard.watch": "Notify me when free",
+			"blackboard.watching": "watching {key}",
+			"blackboard.watchingState": "watching…",
+			"blackboard.released": "Key free — you hold the write authority.",
+			"blackboard.editorNew": "New entry",
+			"blackboard.formKey": "Key",
+			"blackboard.formType": "Type",
+			"blackboard.formRequired": "Required.",
+			"blackboard.formKeyInvalid": "Letters, digits and . _ - / only; start with a letter or digit.",
+			"blackboard.formFactPlaceholder": "One sentence: the finding",
+			"blackboard.formCostPlaceholder": "What it took to obtain",
+			"blackboard.formReVerifyPlaceholder": "The command/script that verifies it again",
+			"blackboard.save": "Save",
+			"blackboard.saving": "Saving…",
+			"blackboard.cancel": "Cancel",
+			"blackboard.saved": "Saved (revision {n}).",
+			"blackboard.created": "Entry created.",
+			"blackboard.applying": "Acquiring write authority…",
+			"blackboard.reacquire": "Re-acquire",
+			"blackboard.tokenHeld": "write authority {time}",
+			"blackboard.tokenExpired": "Write authority expired — re-acquire before saving.",
+			"blackboard.tokenExpiredShort": "write authority expired"
 		};
 		const zh = {
 			title: "Orrery",
@@ -686,6 +752,9 @@ window.__ModuleLoader__.load({
 			groupRobash: "只读 bash",
 			groupLsp: "LSP 语义工具",
 			groupNotify: "系统通知",
+			groupBlackboard: "黑板",
+			blackboardWriteTokenTtlMinutes: "黑板写入权有效期（分钟）",
+			blackboardWriteTokenTtlMinutesHint: "已申请的黑板写入权在此分钟后过期，键被释放并通知其订阅者（默认 60）。立即生效。",
 			intentGateClassifierOptionRegex: "regex（正则）",
 			intentGateClassifierOptionLlm: "llm（语义）",
 			intentGateClassifierOptionJev: "jev（实验）",
@@ -1271,7 +1340,69 @@ window.__ModuleLoader__.load({
 			"capability.presets.importInstallFailed": "安装失败：{reason}——已回滚 {n} 个文件；未创建预设。",
 			"capability.presets.importNoTargetRoot": "此宿主没有可用的 {scope} 技能根目录——未安装任何内容。",
 			"capability.presets.scopeProject": "工作区",
-			"capability.presets.scopeUser": "用户"
+			"capability.presets.scopeUser": "用户",
+			// 会话黑板（切片二）：右侧边栏面板的页签、列表、详情与编辑字符串。
+			// 类型标签为短语义名，随语言翻译。
+			blackboardTabLabel: "黑板",
+			blackboardGuideTitle: "会话黑板",
+			blackboardGuideDescription: "本会话共享的发现：条目、用量计数与仲裁编辑。",
+			"blackboard.title": "黑板",
+			"blackboard.entries": "{n} 条",
+			"blackboard.loading": "正在加载黑板…",
+			"blackboard.unavailable": "此会话的黑板不可用。",
+			"blackboard.retry": "重试",
+			"blackboard.empty": "黑板为空。",
+			"blackboard.emptyDesc": "Agent 写入本会话黑板的发现会出现在这里。",
+			"blackboard.noMatch": "没有匹配的条目。",
+			"blackboard.search": "搜索",
+			"blackboard.new": "新建条目",
+			"blackboard.refresh": "刷新",
+			"blackboard.back": "返回",
+			"blackboard.dismiss": "忽略",
+			"blackboard.filterAll": "全部",
+			"blackboard.type.map": "布局",
+			"blackboard.type.contract": "契约",
+			"blackboard.type.deadend": "死路",
+			"blackboard.type.wiring": "接线",
+			"blackboard.type.recipe": "配方",
+			"blackboard.type.why": "缘由",
+			"blackboard.rowMeta": "{read} 次读取 · {watching} 个等待者",
+			"blackboard.updated": "更新于 {time}",
+			"blackboard.fact": "事实",
+			"blackboard.cost": "代价",
+			"blackboard.reVerify": "复核",
+			"blackboard.content": "正文",
+			"blackboard.gone": "此条目已不存在。",
+			"blackboard.goneDesc": "它已从黑板删除（可能是其他写入者所为）。",
+			"blackboard.error": "条目加载失败。",
+			"blackboard.edit": "编辑",
+			"blackboard.delete": "删除",
+			"blackboard.deleting": "删除中…",
+			"blackboard.deleted": "条目已删除。",
+			"blackboard.deleteConfirm": "删除此条目？写入权将被消耗。",
+			"blackboard.contention": "写入权正被 {holder} 持有。",
+			"blackboard.watch": "释放时通知我",
+			"blackboard.watching": "正在监视 {key}",
+			"blackboard.watchingState": "监视中…",
+			"blackboard.released": "键已释放——写入权现由你持有。",
+			"blackboard.editorNew": "新建条目",
+			"blackboard.formKey": "键",
+			"blackboard.formType": "类型",
+			"blackboard.formRequired": "必填。",
+			"blackboard.formKeyInvalid": "仅限字母、数字与 . _ - /；须以字母或数字开头。",
+			"blackboard.formFactPlaceholder": "一句话：发现本身",
+			"blackboard.formCostPlaceholder": "获取它付出的代价",
+			"blackboard.formReVerifyPlaceholder": "能再次验证它的命令/脚本",
+			"blackboard.save": "保存",
+			"blackboard.saving": "保存中…",
+			"blackboard.cancel": "取消",
+			"blackboard.saved": "已保存（修订 {n}）。",
+			"blackboard.created": "条目已创建。",
+			"blackboard.applying": "正在申请写入权…",
+			"blackboard.reacquire": "重新申请",
+			"blackboard.tokenHeld": "写入权 {time}",
+			"blackboard.tokenExpired": "写入权已过期——保存前请重新申请。",
+			"blackboard.tokenExpiredShort": "写入权已过期"
 		};
 		const NS = "settings.orrery";
 		const SECTION_ID = "orrery-settings";
@@ -1872,6 +2003,66 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: (sessionId) => (sessionId ? capabilityVerbs(sessionId) : {})
 				}, CapabilityPanelWrapper), "ui-orrery-settings: capability panel body");
+			});
+			// ---- Session blackboard panel (slice 2, tasks 2.3/2.4) ----
+			// The board data channel is the plugin-owned typert remote
+			// (src/blackboard/remote.js): hand-written src-json contributions
+			// cannot ride ctx.remote.$mount (its strict-codec gate rejects
+			// src-json codecs), so the panel calls the RAW gateway exactly like
+			// the capability reads — POST /api/orreryBlackboard/<method>,
+			// answered with the RemoteResult envelope, zero session log. The
+			// pinned wire shape ({ agentId, args }) and the envelope folding are
+			// owned by the model chunk's channel factory; this closure only binds
+			// the carrier. Degradation warns once per shape per page generation,
+			// never per render (the silent-fallback lesson).
+			const blackboardCallWarns = new Set();
+			const blackboardCallWarn = (kind, method, detail) => {
+				if (blackboardCallWarns.has(kind)) return;
+				blackboardCallWarns.add(kind);
+				console.warn(`[orrery] blackboard call degraded (${kind}${method ? `, ${method}` : ""})`, detail ?? "");
+			};
+			const blackboardRawCall = (endpoint, payload) => {
+				let connection = null;
+				try { connection = ctx.get?.("connection") ?? null; } catch { connection = null; }
+				if (typeof connection?.rpc?.call !== "function") {
+					blackboardCallWarn("connection-missing", endpoint, null);
+					return Promise.resolve({ ok: false, error: { code: "channel-unavailable", message: "the blackboard channel has no gateway connection" } });
+				}
+				return connection.rpc.call("/api", endpoint, payload);
+			};
+			const loadBlackboardPanelChunks = lazyChunks(() => Promise.all([
+				require.async("./client.blackboard-model.js"),
+				require.async("./client.blackboard-panel.js")
+			]));
+			function BlackboardPanelWrapper(props) {
+				const arrival = useChunkArrival(loadBlackboardPanelChunks, typeof props.sessionId === "string" && props.sessionId !== "");
+				if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: typeof props.t === "function" ? props.t("blackboard.loading") : "" });
+				const [model, panel] = arrival.chunks;
+				return react_jsx_runtime.jsx(panel.BlackboardPanel, { ...props, model });
+			}
+			// The blackboard panel as a right-sidebar tab — the same optional-
+			// inject pattern as the worktree/capability panels: a shell without
+			// the sidebar right package skips the whole block.
+			ctx.inject?.(["sidebarRightTabs"], (sidebarScope) => {
+				const tabId = "orrery-blackboard";
+				sidebarScope.effect(() => sidebarScope.sidebarRightTabs.register({
+					id: tabId,
+					kind: "orrery-blackboard",
+					priority: "extension",
+					title: () => sidebarScope.locale.bind(NS)("blackboardTabLabel"),
+					guide: [{
+						id: "blackboard",
+						order: 50,
+						title: () => sidebarScope.locale.bind(NS)("blackboardGuideTitle"),
+						description: () => sidebarScope.locale.bind(NS)("blackboardGuideDescription")
+					}]
+				}), "ui-orrery-settings: blackboard tab type");
+				sidebarScope.effect(() => sidebarScope.slots.register({
+					name: "sidebar.right.pane.tab",
+					key: tabId,
+					locale: NS,
+					inject: (sessionId) => (sessionId ? { sessionId, callBoard: blackboardRawCall } : {})
+				}, BlackboardPanelWrapper), "ui-orrery-settings: blackboard panel body");
 			});
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot

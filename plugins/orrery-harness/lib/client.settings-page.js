@@ -146,6 +146,12 @@ window.__ModuleLoader__.load({
 				// confirms its platform (self-gating), so it stays unconditional
 				// here even as a custom node in the tree.
 				{ kind: "custom", slot: "notifyPermissions" }
+			] },
+			// Session blackboard (2.4a): the write-token TTL leaves
+			// config-face-only and rides its own group. A single live number row
+			// (volatile config — no restart marker, no master switch).
+			{ id: "blackboard", fields: [
+				{ field: "blackboardWriteTokenTtlMinutes", kind: "number" }
 			] }
 		];
 		// Form fields: every node that names a flat settings key (custom
