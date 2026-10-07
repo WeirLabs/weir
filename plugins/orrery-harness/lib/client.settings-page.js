@@ -146,26 +146,60 @@ window.__ModuleLoader__.load({
 		// flat table exactly — test pins this list.
 		const FIELDS = GROUPS.flatMap((group) => group.fields).filter((descriptor) => typeof descriptor.field === "string");
 		const FIELD_BY_NAME = Object.fromEntries(FIELDS.map((descriptor) => [descriptor.field, descriptor]));
-		/** Product defaults of the boolean switches (mirrors the bundle's
-		 * orrery-settings row). A profile-level row replaces that row's config
-		 * wholesale, so a key the profile never saved arrives unset; the switch
-		 * then shows the value the modules actually use, not "off". */
-		const BOOLEAN_DEFAULTS = {
+		/** Product defaults of every flat settings key with a concrete
+		 * default — hand-maintained mirror of FIELD_DEFAULTS in
+		 * src/settings/sections.js (same-package sync require is impossible
+		 * in the ModuleLoader, same pattern as RESTART_FIELDS; drift pinned
+		 * by test). A profile-level row replaces the bundle's orrery-settings
+		 * row wholesale, so a key the profile never saved arrives unset; the
+		 * page then shows the value the modules actually use. Keys where
+		 * unset is meaningful (route overrides, chains, whitelist tables,
+		 * lspServers) have no entry. */
+		const FIELD_DEFAULTS = Object.freeze({
+			intentGateClassifier: "regex",
+			intentGateTimeoutMs: 1500,
+			jevModel: "jev",
+			supervisionMaxRetries: 5,
+			supervisionInitialBackoffMs: 30000,
+			supervisionMaxBackoffMs: 300000,
 			todoEnabled: true,
+			todoMaxConsecutive: 8,
+			todoErrorRetryMax: 5,
+			todoErrorBackoffBaseMs: 30000,
+			todoErrorBackoffCapMs: 300000,
 			guardEnabled: true,
+			guardSoftThreshold: 0.72,
+			guardHardThreshold: 0.88,
 			hashlineHideStockEdit: true,
 			editLockEnabled: false,
+			editLockHoldDefaultMinutes: 30,
+			editLockHoldSingleMaxMinutes: 30,
+			editLockHoldCumulativeMaxMinutes: 120,
+			editLockNudgeAttempts: 2,
+			editLockNudgeFallback: "release",
 			editLockAutoResume: true,
 			editLockStaleSweep: true,
-			worktreeEnabled: true,
-			worktreeAutoSetup: true,
 			robashEnabled: true,
 			lspEnabled: false,
+			lspIdleMs: 600000,
+			lspRequestTimeoutMs: 15000,
+			lspDiagnosticsWaitMs: 2000,
+			worktreeEnabled: true,
+			worktreeRoot: ".orrery/worktrees",
+			worktreeMaxActive: 4,
+			worktreeAutoSetup: true,
+			worktreeWatchTimeoutMinutes: 360,
 			notifyEnabled: true,
 			notifyOnComplete: true,
 			notifyOnAttention: true,
-			notifySound: true
-		};
+			notifyMinTurnSeconds: 15,
+			notifySound: true,
+			notifyForeground: "skip"
+		});
+		// The boolean subset of FIELD_DEFAULTS, derived (never a second
+		// literal): the Switch's `checked` display and the `when` conditions
+		// read it through productDefault.
+		const BOOLEAN_DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === "boolean")));
 		// ---- pure: condition DSL evaluation (design D2) ----
 		/** Evaluate one condition node against a resolver pair:
 		 * resolve.value(key) → the key's effective value, resolve.env(name) →
@@ -199,13 +233,26 @@ window.__ModuleLoader__.load({
 			return typeof node?.env === "string";
 		}
 		// ---- pure: effective value resolution (design D3) ----
-		/** The product default for an unset key: booleans fall to
-		 * BOOLEAN_DEFAULTS (off when unlisted, matching the switch's display
-		 * rule); anything else is undefined (never satisfies a condition
-		 * unless it explicitly says `equals: undefined`). */
+		/** The product default for an unset key: booleans fall to the boolean
+		 * subset of FIELD_DEFAULTS (off when unlisted, matching the switch's
+		 * display rule); every other kind falls to FIELD_DEFAULTS itself
+		 * (undefined when unlisted — never satisfies a condition unless it
+		 * explicitly says `equals: undefined`). */
 		function productDefault(descriptor) {
 			if (descriptor.kind === "boolean") return BOOLEAN_DEFAULTS[descriptor.field] === true;
-			return void 0;
+			return FIELD_DEFAULTS[descriptor.field];
+		}
+		/** What a resting input shows: the field's own text, or the formatted
+		 * product default when that text is empty (the field is unset, or the
+		 * user cleared it — the clear gesture falls back to the default).
+		 * Display-only: save/staging/overridden semantics never read this, so
+		 * an unset field showing its default stays non-overridden and is
+		 * never written unless the user actually edits it. */
+		function displayText(descriptor, field) {
+			const text = field?.text ?? "";
+			if (text !== "") return text;
+			const fallback = FIELD_DEFAULTS[descriptor.field];
+			return fallback === void 0 ? text : String(fallback);
 		}
 		/** Parse the field's display text the way the field's own spec would:
 		 * { kind: "set", value } | { kind: "clear" } | undefined (unparseable). */
@@ -562,7 +609,9 @@ window.__ModuleLoader__.load({
 						label: t(descriptor.field)
 					}) : react_jsx_runtime.jsx(primitives.SegmentedControl, {
 						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
-						value: field.text,
+						// unset enum (resting text empty): show the product default
+						// as the selected segment; a staged/saved text always wins
+						value: displayText(descriptor, field),
 						options: descriptor.values.map((value) => ({ value, label: t(`${descriptor.field}Option${value.charAt(0).toUpperCase()}${value.slice(1)}`) })),
 						onChange: (value) => props.onChange(value),
 						disabled,
@@ -776,7 +825,9 @@ window.__ModuleLoader__.load({
 					resetLabel: t("reset"),
 					invalidLabel: t("invalidValue"),
 					disabled,
-					text: field.text,
+					// unset number/text (resting text empty): show the formatted
+					// product default; a staged draft or saved value always wins
+					text: displayText(node, field),
 					invalid: field.invalid,
 					overridden: field.overridden,
 					onChange: (text) => props.edit(node.field, text),
@@ -844,6 +895,8 @@ window.__ModuleLoader__.load({
 		});
 		exports.GROUPS = GROUPS;
 		exports.BOOLEAN_DEFAULTS = BOOLEAN_DEFAULTS;
+		exports.FIELD_DEFAULTS = FIELD_DEFAULTS;
+		exports.displayText = displayText;
 		exports.CURATED_AGENT_NAMES = CURATED_AGENT_NAMES;
 		exports.CATEGORY_NAMES = CATEGORY_NAMES;
 		exports.RESTART_FIELDS = RESTART_FIELDS;

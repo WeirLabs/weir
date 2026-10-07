@@ -84,6 +84,57 @@ export const RESTART_KEYS = Object.freeze(FIELDS.filter(({ restart }) => restart
 
 export { FIELDS }
 
+/** Product defaults of the flat settings keys, mirrored from the consuming
+ * modules' code defaults (intent-gate classifier, delegate supervision,
+ * todo driver, context guard, edit-lock retention, robash, lsp, worktree,
+ * notify). This is the canonical declaration: the cordis.patch.yml
+ * orrery-settings row carries the same values so saved profiles resolve
+ * them, and the settings page mirrors this table client-side to SHOW the
+ * effective default of an unset field (both directions pinned by test).
+ * Keys where unset is meaningful (route overrides, chains, the five robash
+ * whitelist tables, robashDefaultsPath/Reload, lspServers) have NO entry. */
+export const FIELD_DEFAULTS = Object.freeze({
+  intentGateClassifier: 'regex',
+  intentGateTimeoutMs: 1500,
+  jevModel: 'jev',
+  supervisionMaxRetries: 5,
+  supervisionInitialBackoffMs: 30000,
+  supervisionMaxBackoffMs: 300000,
+  todoEnabled: true,
+  todoMaxConsecutive: 8,
+  todoErrorRetryMax: 5,
+  todoErrorBackoffBaseMs: 30000,
+  todoErrorBackoffCapMs: 300000,
+  guardEnabled: true,
+  guardSoftThreshold: 0.72,
+  guardHardThreshold: 0.88,
+  hashlineHideStockEdit: true,
+  editLockEnabled: false,
+  editLockHoldDefaultMinutes: 30,
+  editLockHoldSingleMaxMinutes: 30,
+  editLockHoldCumulativeMaxMinutes: 120,
+  editLockNudgeAttempts: 2,
+  editLockNudgeFallback: 'release',
+  editLockAutoResume: true,
+  editLockStaleSweep: true,
+  robashEnabled: true,
+  lspEnabled: false,
+  lspIdleMs: 600000,
+  lspRequestTimeoutMs: 15000,
+  lspDiagnosticsWaitMs: 2000,
+  worktreeEnabled: true,
+  worktreeRoot: '.orrery/worktrees',
+  worktreeMaxActive: 4,
+  worktreeAutoSetup: true,
+  worktreeWatchTimeoutMinutes: 360,
+  notifyEnabled: true,
+  notifyOnComplete: true,
+  notifyOnAttention: true,
+  notifyMinTurnSeconds: 15,
+  notifySound: true,
+  notifyForeground: 'skip',
+})
+
 /** Resolved Edit Lock retention policy. The keys are declared above; this is the
  * ONE place that turns them into the values the lifecycle consumes, so defaults
  * and validation cannot drift apart. */

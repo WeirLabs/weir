@@ -1,6 +1,15 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
-import { EDIT_LOCK_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimits } from '../src/settings/sections.js'
+import { EDIT_LOCK_DEFAULTS, FIELD_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimits } from '../src/settings/sections.js'
+import { DEFAULT_CLASSIFIER_TIMEOUT_MS } from '../src/intent-gate/classifier.js'
+import { DEFAULT_SUPERVISION } from '../src/delegate/group-coordinator.js'
+import { DEFAULTS as TODO_DEFAULTS } from '../src/todo-driver/state-machine.js'
+import { PRESSURE_DEFAULTS } from '../src/context-guard/pressure.js'
+import { LSP_DEFAULTS } from '../src/lsp/manager.js'
+import { DEFAULTS as WORKTREE_DEFAULTS } from '../src/worktree/index.js'
+import { DEFAULT_ROOT } from '../src/worktree/rules.js'
+import { DEFAULT_WATCH_TIMEOUT_MINUTES } from '../src/worktree/watches.js'
+import { DEFAULTS as NOTIFY_DEFAULTS } from '../src/notify/policy.js'
 
 // Drift防线：settings 键的三处表示（sections.js 的 FIELDS / cordis.patch.yml
 // 行 config 的产品默认镜像 / 设置页 GROUPS 字段集）由本对拍测试守卫——
@@ -101,21 +110,124 @@ describe('editLockLimits default/single coherence', () => {
   })
 })
 
-describe('settings page boolean defaults', () => {
-  it('every switch default the page assumes equals the bundle row product default', async () => {
-    const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
-    const rowStart = patch.indexOf('- id: orrery-settings')
-    const row = patch.slice(rowStart, patch.indexOf('- id:', rowStart + 1))
-    const page = readFileSync(new URL('../lib/client.settings-page.js', import.meta.url), 'utf8')
-    const block = page.slice(page.indexOf('const BOOLEAN_DEFAULTS = {'), page.indexOf('};', page.indexOf('const BOOLEAN_DEFAULTS = {')))
-    const entries = [...block.matchAll(/(\w+): (true|false)/g)].map((match) => [match[1], match[2]])
-    expect(entries.length).toBeGreaterThan(0)
-    for (const [key, value] of entries) {
-      const declared = new RegExp(`^ {8}${key}: (true|false)$`, 'm').exec(row)?.[1]
-      expect(declared, `${key} must be a boolean product default in the patch row`).toBe(value)
+// FIELD_DEFAULTS（产品默认值的唯一声明，sections.js）：四层对拍——
+// ① 声明本体（39 键、冻结、unset 有语义的键无条目）；② ↔ 可导入的模块
+// 常量（源头）；③ ↔ 客户端 chunk 手维护镜像（ModuleLoader 同包同步
+// require 不可能的既定代价，raw 文本提取）；④ ↔ cordis.patch.yml
+// orrery-settings 行（raw 文本提取，不引入 yaml 依赖）。
+// unset 有语义、刻意无默认条目的键：
+const NO_DEFAULT_KEYS = [
+  'intentGateProvider', 'intentGateModel', 'intentGateReasoningEffort',
+  'jevEndpoint', 'jevApiKeyEnv',
+  'delegateCategoryChains', 'delegateAgentChains', 'delegateDisabledCategories',
+  'robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny',
+  'robashDefaultsPath', 'robashDefaultsReload', 'lspServers',
+]
+
+function coerceRowValue(raw) {
+  if (raw === 'true') return true
+  if (raw === 'false') return false
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw)
+  return raw
+}
+
+function patchRowEntries() {
+  const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+  const rowStart = patch.indexOf('- id: orrery-settings')
+  const row = patch.slice(rowStart, patch.indexOf('- id:', rowStart + 1))
+  const entries = new Map()
+  for (const match of row.matchAll(/^ {8}(\w+): (.+)$/gm)) entries.set(match[1], match[2])
+  return entries
+}
+
+function chunkFieldDefaults() {
+  const page = readFileSync(new URL('../lib/client.settings-page.js', import.meta.url), 'utf8')
+  const start = page.indexOf('const FIELD_DEFAULTS = Object.freeze({')
+  if (start < 0) throw new Error('client.settings-page.js: frozen FIELD_DEFAULTS literal not found')
+  const block = page.slice(start, page.indexOf('})', start))
+  const entries = new Map()
+  for (const match of block.matchAll(/(\w+): (".+"|true|false|[\d.]+),?/g)) {
+    const raw = match[2]
+    entries.set(match[1], raw === 'true' ? true : raw === 'false' ? false : raw.startsWith('"') ? raw.slice(1, -1) : Number(raw))
+  }
+  return entries
+}
+
+describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
+  it('declares exactly the 39 concrete defaults, frozen, with no entry where unset is meaningful', () => {
+    expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
+    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(39)
+    for (const key of NO_DEFAULT_KEYS) {
+      expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must stay unset-meaningful (no default entry)`).toBe(false)
     }
-    expect(entries.map(([key]) => key)).toContain('worktreeEnabled')
-    expect(entries.map(([key]) => key)).toContain('worktreeAutoSetup')
+    for (const key of Object.keys(FIELD_DEFAULTS)) {
+      expect(fieldKeys.has(key), `FIELD_DEFAULTS key ${key} is not declared in FIELDS`).toBe(true)
+    }
+  })
+
+  it('agrees with every importable module constant (source of truth)', () => {
+    expect(FIELD_DEFAULTS.intentGateTimeoutMs).toBe(DEFAULT_CLASSIFIER_TIMEOUT_MS)
+    expect(FIELD_DEFAULTS.supervisionMaxRetries).toBe(DEFAULT_SUPERVISION.maxRetries)
+    expect(FIELD_DEFAULTS.supervisionInitialBackoffMs).toBe(DEFAULT_SUPERVISION.initialBackoffMs)
+    expect(FIELD_DEFAULTS.supervisionMaxBackoffMs).toBe(DEFAULT_SUPERVISION.maxBackoffMs)
+    expect(FIELD_DEFAULTS.todoEnabled).toBe(TODO_DEFAULTS.enabled)
+    expect(FIELD_DEFAULTS.todoMaxConsecutive).toBe(TODO_DEFAULTS.maxConsecutive)
+    expect(FIELD_DEFAULTS.todoErrorRetryMax).toBe(TODO_DEFAULTS.errorRetryMax)
+    expect(FIELD_DEFAULTS.todoErrorBackoffBaseMs).toBe(TODO_DEFAULTS.errorBackoffBaseMs)
+    expect(FIELD_DEFAULTS.todoErrorBackoffCapMs).toBe(TODO_DEFAULTS.errorBackoffCapMs)
+    expect(FIELD_DEFAULTS.guardEnabled).toBe(PRESSURE_DEFAULTS.enabled)
+    expect(FIELD_DEFAULTS.guardSoftThreshold).toBe(PRESSURE_DEFAULTS.softThreshold)
+    expect(FIELD_DEFAULTS.guardHardThreshold).toBe(PRESSURE_DEFAULTS.hardThreshold)
+    expect(FIELD_DEFAULTS.editLockHoldDefaultMinutes).toBe(EDIT_LOCK_DEFAULTS.holdDefaultMinutes)
+    expect(FIELD_DEFAULTS.editLockHoldSingleMaxMinutes).toBe(EDIT_LOCK_DEFAULTS.holdSingleMaxMinutes)
+    expect(FIELD_DEFAULTS.editLockHoldCumulativeMaxMinutes).toBe(EDIT_LOCK_DEFAULTS.holdCumulativeMaxMinutes)
+    expect(FIELD_DEFAULTS.editLockNudgeAttempts).toBe(EDIT_LOCK_DEFAULTS.nudgeAttempts)
+    expect(FIELD_DEFAULTS.editLockNudgeFallback).toBe(EDIT_LOCK_DEFAULTS.nudgeFallback)
+    expect(FIELD_DEFAULTS.lspIdleMs).toBe(LSP_DEFAULTS.idleMs)
+    expect(FIELD_DEFAULTS.lspRequestTimeoutMs).toBe(LSP_DEFAULTS.requestTimeoutMs)
+    expect(FIELD_DEFAULTS.lspDiagnosticsWaitMs).toBe(LSP_DEFAULTS.diagnosticsWaitMs)
+    expect(FIELD_DEFAULTS.worktreeEnabled).toBe(WORKTREE_DEFAULTS.enabled)
+    expect(FIELD_DEFAULTS.worktreeRoot).toBe(DEFAULT_ROOT)
+    expect(FIELD_DEFAULTS.worktreeRoot).toBe(WORKTREE_DEFAULTS.root)
+    expect(FIELD_DEFAULTS.worktreeMaxActive).toBe(WORKTREE_DEFAULTS.maxActive)
+    expect(FIELD_DEFAULTS.worktreeAutoSetup).toBe(WORKTREE_DEFAULTS.autoSetup)
+    expect(FIELD_DEFAULTS.worktreeWatchTimeoutMinutes).toBe(DEFAULT_WATCH_TIMEOUT_MINUTES)
+    expect(FIELD_DEFAULTS.worktreeWatchTimeoutMinutes).toBe(WORKTREE_DEFAULTS.watchTimeoutMinutes)
+    expect(FIELD_DEFAULTS.notifyEnabled).toBe(NOTIFY_DEFAULTS.enabled)
+    expect(FIELD_DEFAULTS.notifyOnComplete).toBe(NOTIFY_DEFAULTS.onComplete)
+    expect(FIELD_DEFAULTS.notifyOnAttention).toBe(NOTIFY_DEFAULTS.onAttention)
+    expect(FIELD_DEFAULTS.notifyMinTurnSeconds).toBe(NOTIFY_DEFAULTS.minTurnSeconds)
+    expect(FIELD_DEFAULTS.notifySound).toBe(NOTIFY_DEFAULTS.sound)
+    expect(FIELD_DEFAULTS.notifyForeground).toBe(NOTIFY_DEFAULTS.foreground)
+  })
+
+  it('the client chunk mirrors it verbatim (exact key set, values, frozen literal)', () => {
+    const mirror = chunkFieldDefaults()
+    expect([...mirror.keys()].sort()).toEqual([...Object.keys(FIELD_DEFAULTS)].sort())
+    for (const [key, value] of mirror) {
+      expect(value, `chunk FIELD_DEFAULTS.${key} drifted from sections.js`).toEqual(FIELD_DEFAULTS[key])
+    }
+  })
+
+  it('the patch row mirrors it: every row key is a FIELD_DEFAULTS key with the same value', () => {
+    const entries = patchRowEntries()
+    // the 30 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
+    // absences (whitelist tables, defaultsPath/Reload) are covered by the
+    // dedicated tests above, not required here
+    expect(entries.size).toBe(30)
+    for (const [key, raw] of entries) {
+      expect(Object.hasOwn(FIELD_DEFAULTS, key), `patch row key ${key} has no FIELD_DEFAULTS entry`).toBe(true)
+      expect(FIELD_DEFAULTS[key], `patch row value of ${key} drifted from FIELD_DEFAULTS`).toEqual(coerceRowValue(raw))
+    }
+  })
+
+  it('the boolean subset is exactly the 14 switch defaults the patch row declares', () => {
+    const booleans = Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === 'boolean')
+    expect(booleans).toHaveLength(14)
+    const row = patchRowEntries()
+    for (const [key, value] of booleans) {
+      expect(row.get(key), `${key} must ride the patch row as a boolean product default`).toBe(String(value))
+    }
   })
 })
 
