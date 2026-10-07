@@ -11,6 +11,10 @@
 
 - **CI/CD 发布管线**：新增 GitHub Actions——`ci.yml`（push/PR 门禁：静态检查、单元测试、release 脚本测试、pack 冒烟验证 tarball 形状）与加固版 `release.yml`（tag 与 manifest 版本一致性守卫、OIDC trusted publishing、自动从 CHANGELOG 对应版本段生成 GitHub Release notes）。
 
+### Fixed
+
+- **测试 CI 适配**：修复测试套件的宿主机依赖——无 DSH 运行时或非 darwin 环境下的失败项全部治理（capability store darwin-only 守卫、reclaimer EPIPE 竞争去抖、inode 复用夹具修正、APFS 名称别名契约带文档 skip），断言强度零损失。
+
 ## [1.1.0] - 2026-10-08
 
 ### Added
