@@ -17,7 +17,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['remote'] },
+        op: { type: 'string', enum: ['remote', 'promotion', 'promotion-verify'] },
         _marker: { type: 'string' },
       },
       required: ['op'],
@@ -32,6 +32,34 @@ function apply(ctx, config = {}) {
         const agent = exec.agent
         if (!agent?.id) throw new Error('probe agent unavailable')
         const service = createBlackboardRemoteService()
+        if (args?.op === 'promotion') {
+          // Slice 3: the panel button's request over the SAME pinned remote
+          // service — the delivery of the evaluation brief into the main
+          // agent happens timer-deferred, so the agent's next request sees it.
+          const result = service.requestPromotion(agent, {})
+          report.requested = result.ok === true
+          report.promotionError = result.ok === false ? result.error : null
+          report.completed = true
+          return report
+        }
+        if (args?.op === 'promotion-verify') {
+          // Post-marking read-only verification: the promoted marker rides
+          // list/read rows, every authority-bearing mutation refuses, and a
+          // second mark reports the existing marker.
+          const marked = service.list(agent, {}).entries.find((entry) => entry.key === 'promote.key')
+          report.promotedMarker = marked?.promoted?.destination ?? null
+          const promotedWrite = service.write(agent, { key: 'promote.key', entryType: 'map', summary: { fact: 'x', cost: 'y', reVerify: 'z' }, content: 'no token anyway' })
+          report.writeRefused = promotedWrite?.ok === false && /promoted/.test(promotedWrite.error)
+          const promotedRemove = service.remove(agent, { key: 'promote.key' })
+          report.removeRefused = promotedRemove?.ok === false && /promoted/.test(promotedRemove.error)
+          const promotedApply = service.apply(agent, { key: 'promote.key' })
+          report.applyRefused = promotedApply?.acquired === false && promotedApply?.promoted === true
+          const remarked = service.markPromoted(agent, { key: 'promote.key', destination: 'runtime-map' })
+          report.alreadyMarked = remarked?.ok === true && remarked?.alreadyPromoted === true
+          report.listCount = service.list(agent, {}).entries.length
+          report.completed = true
+          return report
+        }
         // The board at probe time holds writer.key and contend.key (scenario state).
         const listed = service.list(agent, {})
         const read = service.read(agent, { keys: ['writer.key'] })

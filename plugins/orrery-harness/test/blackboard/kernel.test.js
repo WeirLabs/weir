@@ -381,3 +381,50 @@ describe('arbitration: expiry, terminate release, board disposal', () => {
     expect(() => kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: Number.NaN })).toThrow(/ttlMs/)
   })
 })
+
+describe('promotion marking (slice 3: promoted entries are read-only, counters keep accumulating)', () => {
+  it('markPromoted records destination + timestamp and reports already-promoted on a second mark', () => {
+    const { kernel, clock } = makeKernel()
+    kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: TTL }, 1_000_000)
+    const marked = kernel.markPromoted(BOARD, { key: 'dsh-runtime-map', destination: 'docs/spikes.md' }, 1_010_000)
+    expect(marked).toEqual({ status: 'promoted', key: 'dsh-runtime-map', destination: 'docs/spikes.md', promotedAt: 1_010_000 })
+    const again = kernel.markPromoted(BOARD, { key: 'dsh-runtime-map', destination: 'runtime-map' }, 1_020_000)
+    expect(again).toEqual({ status: 'already-promoted', key: 'dsh-runtime-map', destination: 'docs/spikes.md', promotedAt: 1_010_000 })
+    expect(clock.pending()).toBe(0)
+  })
+
+  it('refuses an unknown destination and a missing key', () => {
+    const { kernel } = makeKernel()
+    expect(() => kernel.markPromoted(BOARD, { key: 'k', destination: 'elsewhere' })).toThrow(/destination must be one of/)
+    expect(kernel.markPromoted(BOARD, { key: 'ghost', destination: 'docs/spikes.md' })).toEqual({ status: 'missing', key: 'ghost' })
+  })
+
+  it('apply, write and delete refuse a promoted entry with the explicit promoted status', () => {
+    const { kernel } = makeKernel()
+    kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: TTL })
+    kernel.markPromoted(BOARD, { key: 'dsh-runtime-map', destination: 'agents-pointer' })
+    const refused = { status: 'promoted', key: 'dsh-runtime-map', destination: 'agents-pointer', promotedAt: 1_000_000 }
+    expect(kernel.apply(BOARD, { holderId: B, key: 'dsh-runtime-map', ttlMs: TTL })).toEqual(refused)
+    expect(kernel.write(BOARD, { holderId: A, ...entry({ content: 'changed' }), ttlMs: TTL })).toEqual(refused)
+    expect(kernel.deleteKey(BOARD, { holderId: A, key: 'dsh-runtime-map' })).toEqual(refused)
+    // A token held before the marking is void too.
+    kernel.apply(BOARD, { holderId: A, key: 'dsh-runtime-map', ttlMs: TTL })
+    const refused2 = { status: 'promoted', key: 'dsh-runtime-map', destination: 'agents-pointer', promotedAt: 1_000_000 }
+    expect(kernel.write(BOARD, { holderId: A, ...entry({ content: 'changed again' }), ttlMs: TTL })).toEqual(refused2)
+  })
+
+  it('list/read carry the promoted marker and counts keep accumulating after the mark', () => {
+    const { kernel } = makeKernel()
+    kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: TTL }, 1_000_000)
+    kernel.read(BOARD, ['dsh-runtime-map'])
+    kernel.markPromoted(BOARD, { key: 'dsh-runtime-map', destination: 'runtime-map' }, 1_010_000)
+    const row = kernel.list(BOARD)[0]
+    expect(row.promoted).toEqual({ destination: 'runtime-map', at: 1_010_000 })
+    expect(row.readCount).toBe(1)
+    const read = kernel.read(BOARD, ['dsh-runtime-map'])
+    expect(read.found[0].promoted).toEqual({ destination: 'runtime-map', at: 1_010_000 })
+    expect(read.found[0].readCount).toBe(2)
+    expect(read.found[0].content).toBe('full layout notes')
+    expect(kernel.entriesOf(BOARD)[0].promoted.destination).toBe('runtime-map')
+  })
+})

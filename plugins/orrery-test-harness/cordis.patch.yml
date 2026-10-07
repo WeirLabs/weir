@@ -159,7 +159,7 @@
     - id: orrery-it-user-questions-stub
       name: 'orrery-test-harness/user-questions-stub'
       config:
-        enabled: !!js (process.env.ORRERY_IT_NOTIFY_WORKTREE === '1' || process.env.ORRERY_IT_ZOMBIE_LANE === '1' || process.env.ORRERY_IT_WORKTREE_AUTO_APPROVE === '1')
+        enabled: !!js (process.env.ORRERY_IT_NOTIFY_WORKTREE === '1' || process.env.ORRERY_IT_ZOMBIE_LANE === '1' || process.env.ORRERY_IT_WORKTREE_AUTO_APPROVE === '1' || process.env.ORRERY_IT_BLACKBOARD_PROMOTION === '1')
     # Mirror the product's host-layer capability read remote (silent-capability-
     # reads). Headless has no typert gateway, so the row proves the designed
     # inert path (warn + never break the composition); the direct-call probe
@@ -174,6 +174,12 @@
     # Mirror the product's host-layer blackboard remote (design D8). Headless
     # has no typert gateway, so the row proves the designed inert path; the
     # probe below drives the service directly for the blackboard scenario.
+    # The promotion scenario's ask_user_question tool (slice 3): the injected
+    # brief drives the per-entry adjudication through the stock ask funnel,
+    # answered headlessly by the stub above (the user is scripted).
+    - id: orrery-it-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+      disabled: !!js process.env.ORRERY_IT_BLACKBOARD_PROMOTION !== '1'
     - id: orrery-it-blackboard-remote
       name: 'orrery-harness/blackboard-remote'
       disabled: !!js process.env.ORRERY_IT_BLACKBOARD !== '1'

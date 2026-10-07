@@ -78,9 +78,9 @@ describe('resolveWriteTokenTtlMinutes (volatile settings resolution)', () => {
 describe('tool surface (S12: object-rooted schemas, closed enum, English discipline)', () => {
   const mount = mountStub()
 
-  it('registers exactly the five board tools, each object-rooted with a required array', () => {
+  it('registers exactly the six board tools, each object-rooted with a required array', () => {
     expect(mount.registered.map((/** @type {any} */ definition) => definition.name).sort()).toEqual([
-      'blackboard_apply', 'blackboard_delete', 'blackboard_list', 'blackboard_read', 'blackboard_write',
+      'blackboard_apply', 'blackboard_delete', 'blackboard_list', 'blackboard_mark_promoted', 'blackboard_read', 'blackboard_write',
     ])
     for (const definition of mount.registered) {
       expect(definition.parameters.type).toBe('object')
@@ -99,6 +99,16 @@ describe('tool surface (S12: object-rooted schemas, closed enum, English discipl
     expect(tool(mount, 'blackboard_write').parameters.properties.summary.required).toEqual(['fact', 'cost', 'reVerify'])
   })
 
+  it('the markPromoted tool pins the closed destination enum and names the promoted read-only semantics', () => {
+    const mark = tool(mount, 'blackboard_mark_promoted')
+    expect(mark.parameters.type).toBe('object')
+    expect(mark.parameters.required).toEqual(['key', 'destination'])
+    expect(mark.parameters.properties.destination.enum).toEqual(['docs/spikes.md', 'runtime-map', 'agents-pointer'])
+    expect(mark.description).toMatch(/read-only/)
+    expect(mark.description).toMatch(/Only the conversation's main agent may mark/)
+    expect(mark.description).toMatch(/Discarded entries are NOT marked/)
+  })
+
   it('descriptions carry the six discriminators and the search-before-create discipline', () => {
     const list = tool(mount, 'blackboard_list').description
     const write = tool(mount, 'blackboard_write').description
@@ -113,10 +123,10 @@ describe('tool surface (S12: object-rooted schemas, closed enum, English discipl
     expect(list).toContain('List NEVER returns entry content')
   })
 
-  it('provides the orreryBlackboard service with the five routes and the lifecycle surface', () => {
+  it('provides the orreryBlackboard service with the six routes and the lifecycle surface', () => {
     const service = mount.provided.get('orreryBlackboard')
     expect(service).toBeTruthy()
-    for (const method of ['list', 'read', 'apply', 'write', 'deleteKey', 'boardOf', 'entriesOf', 'tokensOf', 'subscriptionsOf', 'releaseHolder', 'dropBoard']) {
+    for (const method of ['list', 'read', 'apply', 'write', 'deleteKey', 'markPromoted', 'boardOf', 'entriesOf', 'tokensOf', 'subscriptionsOf', 'releaseHolder', 'dropBoard']) {
       expect(typeof service[method]).toBe('function')
     }
   })
@@ -139,6 +149,34 @@ describe('board identity across the delegation tree', () => {
     const mount = mountStub({ sessions: new Map() })
     const service = mount.provided.get('orreryBlackboard')
     expect(service.boardOf(childExec('child', 'root').agent)).toBe('root')
+  })
+})
+
+describe('markPromoted tool execution (slice 3: root-gated, fold the kernel statuses)', () => {
+  it('the root agent marks an entry promoted; the entry then refuses every mutation', async () => {
+    const mount = mountStub()
+    const service = mount.provided.get('orreryBlackboard')
+    service.write(rootExec('root'), { key: 'probe.key', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'body' })
+    const mark = tool(mount, 'blackboard_mark_promoted')
+    const result = await mark.execute({ key: 'probe.key', destination: 'docs/spikes.md' }, rootExec('root'))
+    expect(result.status).toBe('promoted')
+    expect(result.message).toContain('Marked entry "probe.key" promoted to docs/spikes.md')
+    expect(result.message).toContain('read-only')
+    // Marking twice reports the existing marker instead of overwriting it.
+    const again = await mark.execute({ key: 'probe.key', destination: 'runtime-map' }, rootExec('root'))
+    expect(again.status).toBe('already-promoted')
+    expect(again.destination).toBe('docs/spikes.md')
+    // The kernel refuses mutations with the explicit promoted status.
+    expect(service.apply(rootExec('root'), 'probe.key').status).toBe('promoted')
+    // A delegated child is refused outright — promotion is the user's call.
+    await expect(async () => mark.execute({ key: 'probe.key', destination: 'docs/spikes.md' }, childExec('child', 'root'))).rejects.toThrow(/reserved for the conversation main agent/)
+  })
+
+  it('a missing key and a bad destination surface as explicit errors', async () => {
+    const mount = mountStub()
+    const mark = tool(mount, 'blackboard_mark_promoted')
+    await expect(async () => mark.execute({ key: 'ghost', destination: 'docs/spikes.md' }, rootExec('root'))).rejects.toThrow(/does not exist/)
+    await expect(async () => mark.execute({ key: 'k', destination: 'banana' }, rootExec('root'))).rejects.toThrow(/destination must be one of/)
   })
 })
 
@@ -283,8 +321,26 @@ describe('agent contracts (design D7) and the remote bridge feed', () => {
     expect(typeof faces.kernel.list).toBe('function')
     expect(typeof faces.boardOf).toBe('function')
     expect(typeof faces.ttlMs).toBe('function')
+    expect(typeof faces.requestPromotion).toBe('function')
     expect(faces.boardOf(rootExec('root').agent)).toBe('root')
     mount.dispose()
     expect(blackboardRemoteBridge()).toBeNull()
+  })
+
+  it('the bridge requestPromotion face delivers the brief to the root agent, deferred and producer-tagged', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const mount = mountStub()
+    const delivered = []
+    const root = { id: 'root', session: { id: 'root', header: { delegationDepth: 0 } }, status: 'idle', steer: (/** @type {any} */ m) => { delivered.push(m) }, followup: (/** @type {any} */ m) => { delivered.push(m) } }
+    const faces = blackboardRemoteBridge()
+    const request = faces.requestPromotion(root)
+    expect(request).toEqual({ requested: true, channel: 'followup' })
+    expect(delivered).toHaveLength(0)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].role).toBe('user')
+    expect(delivered[0].source.kind).toBe('orrery-blackboard-promotion')
+    expect(delivered[0].content[0].text.startsWith('Blackboard promotion request')).toBe(true)
+    mount.dispose()
   })
 })

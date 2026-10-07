@@ -179,6 +179,40 @@ describe('remote typed failures and the contribution', () => {
     expect(caught.code).toBe('unknown-session')
   })
 
+  it('requestPromotion asks the bridge face and markPromoted marks through the shared kernel', () => {
+    const bridge = makeBridge()
+    const requested = []
+    const faces = { ...bridge.faces, requestPromotion: (agent) => { requested.push(agent); return { requested: true, channel: 'steer' } } }
+    const service = createBlackboardRemoteService({ bridge: () => faces })
+    expect(service.requestPromotion(AGENT, {})).toEqual({ ok: true })
+    expect(requested).toEqual([AGENT])
+    // A bridge without the face (an older blackboard plugin) folds the explicit error.
+    expect(createBlackboardRemoteService({ bridge: () => bridge.faces }).requestPromotion(AGENT, {})).toEqual({ ok: false, error: 'the blackboard bridge does not offer promotion requests' })
+    // markPromoted: fresh mark, already-promoted report, missing-key error.
+    bridge.kernel.write('root-session', { holderId: 'root-session', ...ENTRY, ttlMs: TTL })
+    expect(service.markPromoted(AGENT, { key: 'probe.key', destination: 'docs/spikes.md' })).toEqual({ ok: true, destination: 'docs/spikes.md' })
+    expect(service.markPromoted(AGENT, { key: 'probe.key', destination: 'runtime-map' })).toEqual({ ok: true, destination: 'docs/spikes.md', alreadyPromoted: true })
+    expect(service.markPromoted(AGENT, { key: 'ghost', destination: 'docs/spikes.md' })).toEqual({ ok: false, error: 'blackboard key "ghost" does not exist' })
+  })
+
+  it('a promoted entry refuses apply with the explicit promoted shape; write/remove fold the promoted error', () => {
+    const bridge = makeBridge()
+    const service = serviceOf(bridge)
+    bridge.kernel.write('root-session', { holderId: 'root-session', ...ENTRY, ttlMs: TTL })
+    bridge.kernel.markPromoted('root-session', { key: 'probe.key', destination: 'agents-pointer' })
+    expect(service.apply(AGENT, { key: 'probe.key' })).toEqual({ acquired: false, promoted: true, destination: 'agents-pointer' })
+    const written = service.write(AGENT, { ...ENTRY, content: 'v2' })
+    expect(written.ok).toBe(false)
+    expect(written.error).toMatch(/promoted \(agents-pointer\) and read-only/)
+    const removed = service.remove(AGENT, { key: 'probe.key' })
+    expect(removed.ok).toBe(false)
+    expect(removed.error).toMatch(/promoted \(agents-pointer\) and read-only/)
+    // The list wire row carries the promoted marker.
+    const row = service.list(AGENT, {}).entries[0]
+    expect(row.promoted.destination).toBe('agents-pointer')
+    expect(typeof row.promoted.at).toBe('number')
+  })
+
   it('a failing ensureRegistered gate blocks every call before any face resolves', () => {
     const bridge = makeBridge()
     const service = createBlackboardRemoteService({ bridge: () => bridge.faces, ensureRegistered: () => false })
@@ -187,7 +221,7 @@ describe('remote typed failures and the contribution', () => {
     expect(caught.code).toBe('channel-unavailable')
   })
 
-  it('the hand-written contribution pins the wire contract: namespace, five methods, agent lookup + args', () => {
+  it('the hand-written contribution pins the wire contract: namespace, seven methods, agent lookup + args', () => {
     const contribution = blackboardRemoteContribution()
     expect(contribution.package).toBe('orrery-blackboard')
     expect(contribution.face).toBe('host')

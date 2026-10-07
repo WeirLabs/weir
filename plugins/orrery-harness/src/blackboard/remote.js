@@ -23,15 +23,23 @@
 //   below need no session field:
 //
 //   - list({ type?, query? }) → { entries: [{ key, entryType, summary,
-//     readCount, subscribeCount, updatedAt }] }
+//     readCount, subscribeCount, updatedAt, promoted? }] }
 //   - read({ keys: [...] })  → { entries: [{ key, entryType, summary,
-//     content, readCount, subscribeCount, updatedAt }] } (unknown keys are
-//     values: only found entries come back)
+//     content, readCount, subscribeCount, updatedAt, promoted? }] } (unknown
+//     keys are values: only found entries come back)
 //   - apply({ key })          → { acquired: true, token, expiresAt }
 //                             | { acquired: false, holder, subscribed: true }
+//                             | { acquired: false, promoted: true, destination }
 //   - write({ key, entryType, summary, content }) → { ok: true, revision }
 //                             | { ok: false, error }
 //   - remove({ key })         → { ok: true } | { ok: false, error }
+//   - requestPromotion({})    → { ok: true } | { ok: false, error } — injects
+//                             the promotion-evaluation brief into the
+//                             session's MAIN agent (slice 3); zero session-log
+//                             events
+//   - markPromoted({ key, destination }) → { ok: true, destination }
+//                             | { ok: false, error } — makes the entry
+//                             read-only with the promoted marker
 //
 //   `token` is an opaque per-acquisition identifier (the authority itself is
 //   the acting session's live kernel token, re-checked at every mutation);
@@ -48,8 +56,8 @@
 export const BLACKBOARD_REMOTE_SERVICE_KEY = 'orreryBlackboardRemote'
 /** The wire namespace: POST /api/orreryBlackboard/<method>, client ctx.remote.orreryBlackboard.*. */
 export const BLACKBOARD_REMOTE_NAMESPACE = 'orreryBlackboard'
-/** The five methods, each taking one JSON `args` parameter plus the acting-session lookup. */
-export const BLACKBOARD_REMOTE_METHODS = Object.freeze(['list', 'read', 'apply', 'write', 'remove'])
+/** The seven methods, each taking one JSON `args` parameter plus the acting-session lookup. */
+export const BLACKBOARD_REMOTE_METHODS = Object.freeze(['list', 'read', 'apply', 'write', 'remove', 'requestPromotion', 'markPromoted'])
 /** The wire package identity (distinct from 'orrery-harness' — the capability-remote contribution already owns that package face). */
 const BLACKBOARD_REMOTE_PACKAGE = 'orrery-blackboard'
 
@@ -101,7 +109,7 @@ export function blackboardRemoteBridge() {
   return bridgeFaces
 }
 
-/** Strip one kernel row to the pinned wire entry shape (summary copied, content optional). */
+/** Strip one kernel row to the pinned wire entry shape (summary copied, content optional, the promoted marker rides along when present). */
 function wireEntry(entry, { content = false } = {}) {
   const row = {
     key: entry.key,
@@ -111,6 +119,7 @@ function wireEntry(entry, { content = false } = {}) {
     subscribeCount: entry.subscribeCount,
     updatedAt: entry.updatedAt,
   }
+  if (entry.promoted) row.promoted = { destination: entry.promoted.destination, at: entry.promoted.at }
   if (content) row.content = entry.content
   return row
 }
@@ -185,12 +194,13 @@ export function createBlackboardRemoteService(dependencies = {}) {
       })
     },
 
-    /** Acquire the one-shot write authority for one key (auto-subscribes on contention). */
+    /** Acquire the one-shot write authority for one key (auto-subscribes on contention; a promoted key refuses explicitly). */
     apply(agent, args) {
       return payloadWrap('apply', () => {
         const { sessionId, boardId, faces } = resolve(agent)
         const result = faces.kernel.apply(boardId, { holderId: sessionId, key: args?.key, ttlMs: faces.ttlMs() })
         if (result.status === 'contended') return { acquired: false, holder: result.holder, subscribed: true }
+        if (result.status === 'promoted') return { acquired: false, promoted: true, destination: result.destination }
         return { acquired: true, token: freshToken(), expiresAt: result.expiresAt }
       })
     },
@@ -209,6 +219,9 @@ export function createBlackboardRemoteService(dependencies = {}) {
         })
         if (result.status === 'contended') {
           return { ok: false, error: `write authority for "${result.key}" is held by another agent; it releases automatically` }
+        }
+        if (result.status === 'promoted') {
+          return { ok: false, error: `entry "${result.key}" is promoted (${result.destination}) and read-only; promoted entries can never be edited` }
         }
         if (result.status === 'no-authority') {
           const held = result.holder ? ` (held by another agent)` : ''
@@ -229,6 +242,9 @@ export function createBlackboardRemoteService(dependencies = {}) {
         const { sessionId, boardId, faces } = resolve(agent)
         const result = faces.kernel.deleteKey(boardId, { holderId: sessionId, key: args?.key })
         if (result.status === 'missing') return { ok: false, error: `blackboard key "${result.key}" does not exist` }
+        if (result.status === 'promoted') {
+          return { ok: false, error: `entry "${result.key}" is promoted (${result.destination}) and read-only; promoted entries can never be deleted` }
+        }
         if (result.status === 'no-authority') {
           const held = result.holder ? ` (held by another agent)` : ''
           return { ok: false, error: `write authority for "${result.key}" is not held by this session${held}; acquire it first` }
@@ -238,6 +254,39 @@ export function createBlackboardRemoteService(dependencies = {}) {
         const error = cause instanceof BlackboardRemoteError
           ? cause.message
           : `blackboard remove failed: ${cause instanceof Error ? cause.message : String(cause)}`
+        return { ok: false, error }
+      }
+    },
+
+    /** Request the promotion-evaluation brief into the session's main agent (slice 3). Folds failures like the mutations. */
+    requestPromotion(agent, args) {
+      try {
+        const { faces } = resolve(agent)
+        if (typeof faces.requestPromotion !== 'function') {
+          return { ok: false, error: 'the blackboard bridge does not offer promotion requests' }
+        }
+        faces.requestPromotion(agent)
+        return { ok: true }
+      } catch (cause) {
+        const error = cause instanceof BlackboardRemoteError
+          ? cause.message
+          : `blackboard promotion request failed: ${cause instanceof Error ? cause.message : String(cause)}`
+        return { ok: false, error }
+      }
+    },
+
+    /** Mark one entry promoted under the user-adjudicated destination (slice 3); marking is an annotation, not a payload mutation. */
+    markPromoted(agent, args) {
+      try {
+        const { boardId, faces } = resolve(agent)
+        const result = faces.kernel.markPromoted(boardId, { key: args?.key, destination: args?.destination })
+        if (result.status === 'missing') return { ok: false, error: `blackboard key "${result.key}" does not exist` }
+        if (result.status === 'already-promoted') return { ok: true, destination: result.destination, alreadyPromoted: true }
+        return { ok: true, destination: result.destination }
+      } catch (cause) {
+        const error = cause instanceof BlackboardRemoteError
+          ? cause.message
+          : `blackboard markPromoted failed: ${cause instanceof Error ? cause.message : String(cause)}`
         return { ok: false, error }
       }
     },

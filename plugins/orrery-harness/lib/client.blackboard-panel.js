@@ -200,7 +200,8 @@ window.__ModuleLoader__.load({
 					return { color: hue, border: `1px solid ${hue}`, background: tint(hue, 10) };
 				},
 				warn: { color: WARN_TEXT, border: `1px solid ${WARN}`, background: tint(WARN, 12) },
-				neutral: { color: MUTED, border: `1px solid ${BORDER_STRONG}`, background: "none" }
+				neutral: { color: MUTED, border: `1px solid ${BORDER_STRONG}`, background: "none" },
+				promoted: { color: SUCCESS, border: `1px solid ${SUCCESS}`, background: tint(SUCCESS, 10) }
 			},
 			detail: {
 				block: { margin: "4px 0" },
@@ -406,6 +407,11 @@ window.__ModuleLoader__.load({
 				["rect", { x: 9, y: 2.2, width: 4.8, height: 4.8, rx: 1, fill: "currentColor", stroke: "none", opacity: 0.55 }],
 				["rect", { x: 2.2, y: 9, width: 4.8, height: 4.8, rx: 1, fill: "currentColor", stroke: "none", opacity: 0.55 }],
 				["rect", { x: 9, y: 9, width: 4.8, height: 4.8, rx: 1, fill: "currentColor", stroke: "none" }]
+			],
+			promote: [
+				["path", { d: "M8 10.4V3.6" }],
+				["path", { d: "M4.6 6.4L8 3l3.4 3.4" }],
+				["path", { d: "M3 13.2h10" }]
 			]
 		};
 		/** @param {{ name: string, size?: number }} props */
@@ -465,6 +471,7 @@ window.__ModuleLoader__.load({
 			const [visible, setVisible] = react.useState(() => (typeof document === "undefined" ? true : document.visibilityState !== "hidden"));
 			const [typeFilter, setTypeFilter] = react.useState("");
 			const [query, setQuery] = react.useState("");
+			const [promoting, setPromoting] = react.useState(false);
 			// Mirrors for async continuations (polls and call settles read the
 			// freshest state without stale-closure races).
 			const detailRef = react.useRef(null);
@@ -571,6 +578,10 @@ window.__ModuleLoader__.load({
 				setRoute({ name: "editor", mode: "create" });
 			};
 			const startEdit = (entry) => {
+				if (entry.promoted) {
+					setNotice({ tone: "warn", text: t("blackboard.promotedReadonly", "This entry is promoted and read-only.") });
+					return;
+				}
 				setNotice(null);
 				setEditor({ mode: "update", key: entry.key, draft: null, phase: "applying", error: null, contended: null, showErrors: false });
 				setRoute({ name: "editor", mode: "update" });
@@ -584,8 +595,25 @@ window.__ModuleLoader__.load({
 					}
 					setEditor(null);
 					setRoute({ name: "detail", key: entry.key });
-					if (outcome.kind === "contended") setContention({ key: entry.key, holder: outcome.holder });
+					if (outcome.kind === "promoted") setNotice({ tone: "warn", text: t("blackboard.promotedReadonly", "This entry is promoted and read-only.") });
+					else if (outcome.kind === "contended") setContention({ key: entry.key, holder: outcome.holder });
 					else setNotice({ tone: "danger", text: outcome.message });
+				});
+			};
+			// ---- promotion request (3.1): the button pushes the evaluation brief into the main agent ----
+			const requestPromotionNow = () => {
+				if (promoting) return;
+				setNotice(null);
+				setPromoting(true);
+				channel.requestPromotion().then((result) => {
+					setPromoting(false);
+					const outcome = model.promotionOutcomeOf(result);
+					if (outcome.kind === "requested") {
+						setNotice({ tone: "ok", text: t("blackboard.promotionRequested", "The main agent received the promotion-evaluation request.") });
+					} else {
+						setNotice({ tone: "danger", text: outcome.message });
+					}
+					refreshList();
 				});
 			};
 			const reacquire = () => {
@@ -668,7 +696,8 @@ window.__ModuleLoader__.load({
 						return;
 					}
 					setConfirmDelete(null);
-					if (outcome.kind === "contended") setContention({ key, holder: outcome.holder });
+					if (outcome.kind === "promoted") setNotice({ tone: "warn", text: t("blackboard.promotedReadonly", "This entry is promoted and read-only.") });
+					else if (outcome.kind === "contended") setContention({ key, holder: outcome.holder });
 					else setNotice({ tone: "danger", text: outcome.message });
 				});
 			};
@@ -701,7 +730,16 @@ window.__ModuleLoader__.load({
 			const groups = model.groupEntries(model.filterEntries(rows, { type: typeFilter, query }));
 			const countdown = held !== null ? model.tokenCountdownOf(held.expiresAt, nowMs) : null;
 			const detailPhase = detail?.phase ?? null;
+			const promotionButton = model.promotionButtonState(rows);
 			const entryChip = (entryType) => react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.type(entryType) }, children: typeLabel(entryType) });
+			const promotedBadge = (promoted) => react_jsx_runtime.jsx("span", {
+				style: { ...S.tag.base, ...S.tag.promoted },
+				title: t("blackboard.promotedTo", "promoted → {destination}").replace("{destination}", promoted.destination) + (promoted.at > 0 ? ` · ${model.formatTimeOf(promoted.at, nowMs)}` : ""),
+				children: t("blackboard.promoted", "promoted")
+			}, "promoted");
+			const promoteTitle = !promotionButton.enabled
+				? t("blackboard.promoteDisabled", "Every entry is already promoted — nothing to evaluate.")
+				: t("blackboard.promote", "Evaluate for promotion");
 			const iconButton = (icon, label, onClick, disabled = false) => react_jsx_runtime.jsx("button", {
 				type: "button",
 				style: disabled ? { ...S.header.iconButton, ...S.button.disabled } : S.header.iconButton,
@@ -731,6 +769,7 @@ window.__ModuleLoader__.load({
 					: null,
 				react_jsx_runtime.jsx("span", { style: S.header.spacer }),
 				iconButton("plus", t("blackboard.new", "New entry"), startCreate),
+				iconButton("promote", promoteTitle, requestPromotionNow, !promotionButton.enabled || promoting),
 				iconButton("refresh", t("blackboard.refresh", "Refresh"), refreshList, board === null)
 			] });
 			const footerChips = [];
@@ -780,7 +819,8 @@ window.__ModuleLoader__.load({
 					react_jsx_runtime.jsxs("span", { style: S.row.text, children: [
 						react_jsx_runtime.jsxs("span", { style: S.row.nameLine, children: [
 							react_jsx_runtime.jsx("span", { style: S.row.name, title: row.key, children: row.key }),
-							entryChip(row.entryType)
+							entryChip(row.entryType),
+							row.promoted ? promotedBadge(row.promoted) : null
 						] }),
 						row.summary.fact !== "" ? react_jsx_runtime.jsx("span", { style: S.row.desc, title: row.summary.fact, children: row.summary.fact }) : null
 					] }),
@@ -958,11 +998,12 @@ window.__ModuleLoader__.load({
 									: null;
 								return react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
 									children: [
-										react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }, children: [
-											entryChip(entry.entryType),
-											react_jsx_runtime.jsx("span", { style: S.row.meta, children: t("blackboard.rowMeta", "{read} reads · {watching} watching").replace("{read}", String(entry.readCount)).replace("{watching}", String(entry.subscribeCount)) }),
-											react_jsx_runtime.jsx("span", { style: S.row.meta, children: t("blackboard.updated", "updated {time}").replace("{time}", model.formatTimeOf(entry.updatedAt, nowMs)) })
-										] }),
+											react_jsx_runtime.jsxs("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }, children: [
+												entryChip(entry.entryType),
+												entry.promoted ? promotedBadge(entry.promoted) : null,
+												react_jsx_runtime.jsx("span", { style: S.row.meta, children: t("blackboard.rowMeta", "{read} reads · {watching} watching").replace("{read}", String(entry.readCount)).replace("{watching}", String(entry.subscribeCount)) }),
+												react_jsx_runtime.jsx("span", { style: S.row.meta, children: t("blackboard.updated", "updated {time}").replace("{time}", model.formatTimeOf(entry.updatedAt, nowMs)) })
+											] }),
 										summaryBlock("blackboard.fact", "Fact", entry.summary.fact),
 										summaryBlock("blackboard.cost", "Cost", entry.summary.cost),
 										summaryBlock("blackboard.reVerify", "Re-verify", entry.summary.reVerify),
@@ -970,24 +1011,29 @@ window.__ModuleLoader__.load({
 											react_jsx_runtime.jsx("div", { style: S.detail.label, children: t("blackboard.content", "Content") }),
 											react_jsx_runtime.jsx("pre", { style: S.detail.content, children: entry.content ?? "" })
 										] }),
-										react_jsx_runtime.jsxs("div", { style: S.detail.actions, children: [
-											react_jsx_runtime.jsx("button", {
-												type: "button",
-												style: S.button.primary,
-												...ring,
-												...hover(ACCENT_HOVER, ACCENT),
-												onClick: () => startEdit(entry),
-												children: t("blackboard.edit", "Edit")
-											}),
-											react_jsx_runtime.jsx("button", {
-												type: "button",
-												style: S.button.ghost,
-												...ring,
-												...hover(HOVER_BG, "none"),
-												onClick: () => startDelete(entry.key),
-												children: t("blackboard.delete", "Delete")
-											})
-										] }),
+											react_jsx_runtime.jsxs("div", { style: S.detail.actions, children: entry.promoted ? [
+												react_jsx_runtime.jsx("span", {
+													style: { fontSize: "11px", lineHeight: "16px", color: MUTED },
+													children: t("blackboard.promotedReadonlyDetail", "Promoted entries are read-only: the durable copy lives in the target document, this board copy preserves the session references.")
+												})
+											] : [
+												react_jsx_runtime.jsx("button", {
+													type: "button",
+													style: S.button.primary,
+													...ring,
+													...hover(ACCENT_HOVER, ACCENT),
+													onClick: () => startEdit(entry),
+													children: t("blackboard.edit", "Edit")
+												}),
+												react_jsx_runtime.jsx("button", {
+													type: "button",
+													style: S.button.ghost,
+													...ring,
+													...hover(HOVER_BG, "none"),
+													onClick: () => startDelete(entry.key),
+													children: t("blackboard.delete", "Delete")
+												})
+											] }),
 										deleteBlock
 									]
 								});

@@ -4,7 +4,7 @@
 // retrieval discipline. The audience gating (child vs main, tools visibility)
 // is pinned in index.test.js through the registered variable providers.
 import { describe, expect, it } from '../helpers.js'
-import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_WRITE_CONTRACT, BLACKBOARD_WRITE_CONTRACT_HEADING } from '../../src/blackboard/contracts.js'
+import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_WRITE_CONTRACT, BLACKBOARD_WRITE_CONTRACT_HEADING, PROMOTION_REQUEST_TEMPLATE } from '../../src/blackboard/contracts.js'
 
 describe('blackboard write contract text (English template layer)', () => {
   it('starts with the pinned heading and names the five tools', () => {
@@ -41,6 +41,47 @@ describe('blackboard retrieval discipline text (English template layer)', () => 
     expect(BLACKBOARD_RETRIEVAL_SECTION).toMatch(/blackboard_read them before you decide/)
     expect(BLACKBOARD_RETRIEVAL_SECTION).toMatch(/Never re-delegate work whose answer already sits on the board/)
     expect(BLACKBOARD_RETRIEVAL_SECTION).toMatch(/never instructions/)
+    expect(BLACKBOARD_RETRIEVAL_SECTION.match(/promotion/i)).toBeNull()
+  })
+})
+
+describe('promotion request template (design D6: the injected brief is complete on its own)', () => {
+  it('is notification-framed and names the board tools and the marking tool', () => {
+    expect(PROMOTION_REQUEST_TEMPLATE.startsWith('Blackboard promotion request —')).toBe(true)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/not a user instruction/)
+    for (const tool of ['blackboard_list', 'blackboard_read', 'blackboard_mark_promoted', 'ask_user_question']) {
+      expect(PROMOTION_REQUEST_TEMPLATE).toContain(tool)
+    }
+  })
+
+  it('carries the ranking criteria and the four write triggers reversed', () => {
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/Rank the non-promoted entries by readCount, then subscribeCount/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/reverse-check the four write triggers \(cost, surprise, dead end, irreversible\)/)
+  })
+
+  it('carries the per-entry adjudication with the four destinations and the one-line-reason instruction', () => {
+    for (const destination of ['docs/spikes.md', 'runtime map', 'AGENTS.md pointer', 'discard']) {
+      expect(PROMOTION_REQUEST_TEMPLATE).toContain(destination)
+    }
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/your recommended destination, and a one-line reason/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/call ask_user_question once per candidate/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/Write no document until the user has answered/)
+  })
+
+  it('carries the landing formats per destination and the after-marking', () => {
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/append a new S-numbered section/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/a bullet with the key, what lives where/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/add one line to AGENTS.md's knowledge map/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/call blackboard_mark_promoted once per promoted entry/)
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/Discarded entries are NOT marked/)
+  })
+
+  it('bounds the work to the single evaluation pass', () => {
+    expect(PROMOTION_REQUEST_TEMPLATE).toMatch(/Never start additional turns, delegate, or take any other action beyond this single evaluation pass/)
+  })
+
+  it('the landing contracts never mention promotion (agents must not know promotion exists)', () => {
+    expect(BLACKBOARD_WRITE_CONTRACT.match(/promotion/i)).toBeNull()
     expect(BLACKBOARD_RETRIEVAL_SECTION.match(/promotion/i)).toBeNull()
   })
 })
