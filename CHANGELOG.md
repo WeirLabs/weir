@@ -10,11 +10,18 @@
 ### Added
 
 - **MIT 开源协议**：仓库新增 [LICENSE](LICENSE)，项目以 MIT 协议开放分发（此前为私有未授权状态）。
+- **npm 公共分发**：`weir-harness` 发布到公共 npm registry，安装只需一条命令——`dsh plugin --profile web add weir-harness`（或会话内 `plugin_manager` 的 `install_bundle`）；manifest 声明 `@deepseek-ai/dsh` 兼容区间（`>=0.2.0-rc.2 <0.3.0`），不兼容的运行时在安装前即被明确拒绝而非静默装坏；发布产物经 `files` 白名单自包含（`src/`、`lib/`、`skills/`、patch、`whitelist-defaults.json`），`prepack` 钩子保证 tarball 内含新鲜构建的 client。
+- **Release 自动化**：新增 `scripts/release.mjs` 打版编排（工作树检查 → CHANGELOG 固化 → version bump → 测试门禁 → tag → publish），杜绝 tag 与包版本脱节。
 
 ### Changed
 
 - **README 精简改版与头图流体化**：README 重写为「一句话定位 → 痛点对照表 → 工作流程图 → 亮点 → 技能 → 快速开始 → 技术概览」结构，文字大幅精简；头图去掉瞄准标记，新增 Orchestrator 编排示意，并以 Obsidian Lime 流体作底、符号 W 缺口内嵌 Oil Slick 流体（均由 AcidArt 流体引擎渲染后内嵌，仍为单个 SVG）。
 - **README 产品化改版**：重写产品门面为商业化产品介绍结构——新增 Acid 风格头图与徽标（视觉语言来自品牌探索：暗底虚空 + 骨白 + 酸性绿 + 工业网格，主标语「调度百川，水到渠成」），特色功能前置并按「指挥调度 / 工程执行 / 全程在线」三组展开差异化卖点，敬称统一为「您」，技能表与能力管理段落收敛。品牌 SVG 资产（符号 / 词标 / 锁定组合 / 图标，骨白与墨黑双色）入库至 `docs/assets/brand/`。
+- **安装方式变更**：用户安装从「克隆仓库 + link 安装」改为从 npm registry 一键安装；link 安装仍保留为开发者工作流。
+
+### Fixed
+
+- **版本对齐修复**：`plugins/weir-harness/package.json` 的 `version` 自 0.7.0 起与 CHANGELOG/tag 脱节（rename 提交后未再 bump）；自本版起 manifest version、CHANGELOG 版本段、git tag、npm 包版本四位一体，由 release 脚本强制。
 
 ## [1.0.0] - 2026-10-08
 

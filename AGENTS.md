@@ -44,7 +44,7 @@ LICENSE                     # MIT 开源协议（入库）
 5. **状态分类**：续推/重试的分类只依据 `turn/end` 的 `reason`（`completed` / `aborted{kind:'user'}` / `error{LlmFailure}`），禁止猜测其他启发式。
 6. **会话日志纪律（冷读红线）**：严禁 `session.append` 自定义事件类型——本运行时的持久化在冷读（重启恢复/子代理 cold-resume）时拒绝解释含未知且未标 `ignorable` 类型的日志，而 `append` 无 ignorable 通道，写入即埋雷。审计一律走 `src/shared/audit.js`（cordis emit + `.weir/audit.jsonl` 双写）。
 7. **文本纪律**：模板层（提示词/通知/工具描述/技能正文/注入模板）一律英文；实例内容（标签、摘要、todo 文本等）跟随会话语言。文档层（README/docs/CHANGELOG/AGENTS.md）以中文为主、技术标识符保留英文。
-8. **依赖纪律**：bundle 保持 `private: true`、无 `dependencies`/`peerDependencies` 的官方模板风格（避免 pnpm auto-install-peers 去 registry 拉不存在的 `@deepseek-ai/dsh`）；确需引入真实 npm 依赖时须先 spike 验证 link 安装下的解析，并在变更提案中声明。**已登记例外**：settings schema 依赖 `schemastery`/`cosmokit` 以 DSH fork 形式 vendored 于 `src/vendor/`（上游无 volatile 机制，S16；见 THIRD-PARTY.md），不新增 npm 依赖。
+8. **依赖纪律**：bundle 发布到公共 npm registry（包名 `weir-harness`）；manifest 禁止以 `dependencies`/`devDependencies` 引入 `@deepseek-ai/*`（一律走 ctx 解析，防重复实例）；`peerDependencies` 仅声明 `@deepseek-ai/dsh` 兼容区间作为 DSH 版本闸门（DSH 兼容性检查只认该字段的 `@deepseek-ai/dsh(-*)` 条目，profile 的 pnpm `autoInstallPeers: false` 不会触发拉取）。**注意**：`@deepseek-ai/dsh` 自 0.2.0-rc.2 起已实际存在于公共 registry，仓库在 `pnpm-workspace.yaml` 固定 `autoInstallPeers: false`——严禁删除该设置，否则每次 install 都会把整个 DSH 运行时（500+ 包）拉进 node_modules。确需引入真实 npm 依赖时须先 spike 验证 link 安装下的解析，并在变更提案中声明。**已登记例外**：settings schema 依赖 `schemastery`/`cosmokit` 以 DSH fork 形式 vendored 于 `src/vendor/`（上游无 volatile 机制，S16；见 THIRD-PARTY.md），不新增 npm 依赖。
 9. **测试装置隔离**：`weir-test-harness` 仅用于开发，严禁安装进任何正式 profile。
 10. **多 Agent 协作**：一切多 Agent 能力自研实现，**不依赖** DSH 官方 experimental Agent Team 插件。
 11. **车道纪律**：行为变更的实施阶段走 worktree lane 落地；开车道时 `scope` 取最小写面（只含本变更要改的路径，`AGENTS.md`/`CHANGELOG.md` 由主会话统一同步、不进 lane scope）；注意活跃 lane 上限（默认 4，满槽报 `MAX_ACTIVE`）。细节见 [Worktree 车道特性文档](docs/features/git-worktree.md)。**lane scope 必须包含本变更新增组合行时的生产 `cordis.patch.yml`**——测试装置镜像的挂载会掩盖生产缺挂（黑板 remote 404 事故：镜像有行、生产无行，集成测试全绿但面板 404）。
@@ -54,7 +54,7 @@ LICENSE                     # MIT 开源协议（入库）
 1. **入库范围**：仅限产品实际内容——`plugins/`（源码/测试/技能/清单/构建配置）、`AGENTS.md`、`README.md`、`CHANGELOG.md`、`LICENSE`、`docs/features/`、`docs/assets/`、workspace 配置。其余一律 `.gitignore`（详见文件内注释）。
 2. **提交节奏**：阶段性 feat/fix 即提交，不攒超大 commit；一个逻辑变更一个 commit。
 3. **提交信息**：Conventional Commits（`feat/fix/docs/chore/refactor/test(scope): ...`）；**严禁** `Co-authored-by` 与任何 AI 署名；不含敏感信息。
-4. **打版纪律**：版本号语义化；打版 = CHANGELOG 的 Unreleased 段落固化为版本段 + `git tag vX.Y.Z`；tag 与 CHANGELOG 必须一一对应。
+4. **打版纪律**：版本号语义化；打版 = CHANGELOG 的 Unreleased 段落固化为版本段 + `plugins/weir-harness/package.json` version 同步 bump + `git tag vX.Y.Z` + `npm publish`，四者版本一一对应，由 `scripts/release.mjs` 编排强制执行；脱节即事故（0.7.0 与 tag 脱节教训）。
 5. **lockfile**：`pnpm-lock.yaml` 随 workspace 结构变化同步提交，不留悬空 diff。
 
 ## 5. 文档规范（产品级文档体系）
