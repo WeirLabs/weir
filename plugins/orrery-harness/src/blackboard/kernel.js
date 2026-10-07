@@ -301,9 +301,10 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
           return { status: 'contended', key, holder: token.holder, expiresAt: token.expiresAt, subscribed: true }
         }
         grant(state, boardId, key, holderId, ttlMs, at)
-        state.entries.set(key, { key, entryType, summary: normalized, content, readCount: 0, subscribeCount: 0, createdAt: at, updatedAt: at })
+        state.entries.set(key, { key, entryType, summary: normalized, content, readCount: 0, subscribeCount: 0, revision: 1, createdAt: at, updatedAt: at })
+        const revision = 1
         consume(state, boardId, key, 'write', at)
-        return { status: 'created', key, entryType }
+        return { status: 'created', key, entryType, revision }
       }
       const token = state.tokens.get(key)
       if (!token || token.holder !== holderId) {
@@ -311,9 +312,10 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       }
       // Usage counts are entry-lifetime evidence (D5): an update replaces the
       // payload but preserves the counters and the creation instant.
-      state.entries.set(key, { ...existing, entryType, summary: normalized, content, updatedAt: at })
+       const revision = (existing.revision ?? 1) + 1
+       state.entries.set(key, { ...existing, entryType, summary: normalized, content, revision, updatedAt: at })
       consume(state, boardId, key, 'write', at)
-      return { status: 'updated', key, entryType }
+       return { status: 'updated', key, entryType, revision }
     },
 
     /**

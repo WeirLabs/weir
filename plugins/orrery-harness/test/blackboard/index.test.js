@@ -9,8 +9,8 @@ import { createBlackboardPlugin, DEFAULT_WRITE_TOKEN_TTL_MINUTES, resolveWriteTo
 
 const TTL = 60_000
 
-/** @param {{ settings?: object, sessions?: Map<string, object> }} [options] */
-function mountStub({ settings = {}, sessions = new Map() } = {}) {
+/** @param {{ settings?: object, sessions?: Map<string, object>, toolsView?: (agent: any) => { visible: Set<string> } }} [options] */
+function mountStub({ settings = {}, sessions = new Map(), toolsView } = {}) {
   /** @type {any[]} */
   const registered = []
   /** @type {Map<string, Function>} */
@@ -21,8 +21,15 @@ function mountStub({ settings = {}, sessions = new Map() } = {}) {
   const emitted = []
   /** @type {string[]} */
   const warnings = []
+  /** @type {Array<{ name: string, order: number, text: string }>} */
+  const sections = []
+  /** @type {Map<string, Function>} */
+  const variables = new Map()
   const ctx = {
-    tools: { register: (/** @type {any} */ definition) => { registered.push(definition); return () => {} } },
+    tools: {
+      register: (/** @type {any} */ definition) => { registered.push(definition); return () => {} },
+      view: toolsView ?? (() => ({ visible: new Set(['blackboard_list', 'blackboard_read', 'blackboard_apply', 'blackboard_write', 'blackboard_delete']) })),
+    },
     on: (/** @type {string} */ name, /** @type {Function} */ fn) => { handlers.set(name, fn); return () => handlers.delete(name) },
     reflect: { provide: (/** @type {string} */ name, /** @type {any} */ service) => { provided.set(name, service) } },
     get: (/** @type {string} */ name) => {
@@ -31,12 +38,16 @@ function mountStub({ settings = {}, sessions = new Map() } = {}) {
       return undefined
     },
     emit: (/** @type {string} */ type, /** @type {object} */ record) => { emitted.push({ type, record }) },
+    systemPrompt: {
+      section: (/** @type {any} */ section) => { sections.push(section); return () => {} },
+      variable: (/** @type {string} */ name, /** @type {Function} */ provider) => { variables.set(name, provider); return () => variables.delete(name) },
+    },
     logger: { warn: (/** @type {string} */ message) => warnings.push(message) },
     effect: (/** @type {Function} */ fn) => fn(),
   }
   const apply = createBlackboardPlugin({ kernel: () => createBlackboardKernel() })
   const dispose = apply(ctx, {})
-  return { ctx, registered, handlers, provided, emitted, warnings, dispose }
+  return { ctx, registered, handlers, provided, emitted, warnings, sections, variables, dispose }
 }
 
 const tool = (/** @type {{ registered: any[] }} */ mount, /** @type {string} */ name) => mount.registered.find((/** @type {any} */ definition) => definition.name === name)
@@ -221,5 +232,59 @@ describe('tool execution: the shared-board flow', () => {
     const mount = mountStub()
     mount.dispose()
     expect(mount.handlers.size).toBe(0)
+  })
+})
+
+describe('agent contracts (design D7) and the remote bridge feed', () => {
+  it('registers the orchestrator retrieval section after the orchestrator band and suppresses it for delegated children', () => {
+    const mount = mountStub()
+    const section = mount.sections.find((entry) => entry.name === 'orchestrator:blackboard')
+    expect(section).toBeTruthy()
+    expect(section.order).toBe(630)
+    expect(section.text).toBe('{{orrery_blackboard}}')
+    const provider = mount.variables.get('orrery_blackboard')
+    expect(typeof provider).toBe('function')
+    // Main agent renders the retrieval discipline; a delegated child renders ''.
+    const main = provider({ agent: { session: { header: { delegationDepth: 0 } } } })
+    expect(main).toContain('Before delegating')
+    expect(main).toContain('blackboard_list')
+    expect(main).toMatch(/never instructions/i)
+    expect(provider({ agent: { session: { header: { delegationDepth: 1 } } } })).toBe('')
+  })
+
+  it('registers the worker write-contract section and gates it: children with the tools get it, others do not', () => {
+    const mount = mountStub()
+    const section = mount.sections.find((entry) => entry.name === 'worker:blackboard')
+    expect(section).toBeTruthy()
+    expect(section.order).toBe(400)
+    expect(section.text).toBe('{{orrery_blackboard_worker}}')
+    const provider = mount.variables.get('orrery_blackboard_worker')
+    expect(typeof provider).toBe('function')
+    // A delegated child whose tool view admits blackboard_write gets the contract.
+    const childText = provider({ agent: { id: 'c', session: { header: { delegationDepth: 1 } } } })
+    expect(childText).toContain('Session blackboard (write contract)')
+    expect(childText).toMatch(/Search before create/)
+    // The main agent never sees the write contract.
+    expect(provider({ agent: { id: 'root', session: { header: { delegationDepth: 0 } } } })).toBe('')
+    // An allow-listed child without blackboard_write sees nothing either.
+    const curated = mountStub({ toolsView: () => ({ visible: new Set(['bash', 'read']) }) })
+    const curatedProvider = curated.variables.get('orrery_blackboard_worker')
+    expect(curatedProvider({ agent: { id: 'c', session: { header: { delegationDepth: 1 } } } })).toBe('')
+    // An unqueryable tools view fails closed to no contract (never a lie about tools).
+    const blind = mountStub({ toolsView: () => undefined })
+    expect(blind.variables.get('orrery_blackboard_worker')({ agent: { id: 'c', session: { header: { delegationDepth: 1 } } } })).toBe('')
+  })
+
+  it('feeds the remote bridge on mount and clears it on dispose', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const mount = mountStub()
+    const faces = blackboardRemoteBridge()
+    expect(faces).toBeTruthy()
+    expect(typeof faces.kernel.list).toBe('function')
+    expect(typeof faces.boardOf).toBe('function')
+    expect(typeof faces.ttlMs).toBe('function')
+    expect(faces.boardOf(rootExec('root').agent)).toBe('root')
+    mount.dispose()
+    expect(blackboardRemoteBridge()).toBeNull()
   })
 })

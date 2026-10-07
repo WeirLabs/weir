@@ -64,6 +64,10 @@ function apply(ctx) {
   ctx.on('worktree/question', (session, payload) => {
     tap({ kind: 'worktree-question', session: session?.id ?? null, question: typeof payload?.question === 'string' ? payload.question : null })
   })
+  // Session blackboard release events ride the enumerated AUDIT_SUBSCRIPTIONS
+  // above ('blackboard/released' sub-event), so no extra subscription here —
+  // the blackboard scenario asserts the arbitration release carried the
+  // subscribed waiters through that channel.
   ctx.on('session/event', (session, event) => {
     const type = event?.type
     if (typeof type !== 'string') return

@@ -29,6 +29,10 @@ export const AUDIT_TYPES = Object.freeze({
   // capability-manager-ux (D6): one record per confirmed v2 package import
   // (install outcome + collision decisions); never commit evidence by itself.
   capabilityPresetImport: 'capability-preset-import',
+  // Session blackboard release facts (design D3): one record per key release
+  // that had waiting subscribers; the emission lives in the blackboard plugin
+  // and never touches a session log.
+  blackboard: 'blackboard',
 })
 /**
  * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
@@ -42,6 +46,7 @@ export const AUDIT_SUBTYPES = Object.freeze({
   // Lane transitions (git-worktree-lanes): one kind per state-machine event
   // family, plus reconciliation reports.
   worktree: Object.freeze(['open', 'setup', 'bind', 'checked', 'check', 'invalidate', 'ask', 'decline', 'conflict', 'land', 'cleanup', 'abandon', 'reconcile', 'watch']),
+  blackboard: Object.freeze(['released']),
 })
 
 /**

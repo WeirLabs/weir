@@ -171,6 +171,16 @@
       name: 'orrery-test-harness/capability-remote-probe'
       config:
         enabled: !!js process.env.ORRERY_IT_CAPABILITY_REMOTE === '1'
+    # Mirror the product's host-layer blackboard remote (design D8). Headless
+    # has no typert gateway, so the row proves the designed inert path; the
+    # probe below drives the service directly for the blackboard scenario.
+    - id: orrery-it-blackboard-remote
+      name: 'orrery-harness/blackboard-remote'
+      disabled: !!js process.env.ORRERY_IT_BLACKBOARD !== '1'
+    - id: orrery-it-blackboard-remote-probe
+      name: 'orrery-test-harness/blackboard-remote-probe'
+      config:
+        enabled: !!js process.env.ORRERY_IT_BLACKBOARD === '1'
     # Mirror the preset realm structure for the Edit Lock service: provider
     # (edit-lock) and consumers (todo-driver, hashline-edit, lsp) share one
     # isolated realm, exactly like the preset's delegation group. A consumer
