@@ -9,6 +9,8 @@
 
 ### Added
 
+- **车道绑定的可续作工人（continuable + worktree 放开）**：`delegate` 的 `mode: "continuable"` 与 `worktree` 从互斥拒绝变为合法组合——车道绑定的 continuable 工人自动以隐式监督身份运行（隐式组名 `lane:<车道id>`，保留前缀，显式组名占用会被拒绝），自动获得 STATUS 终态契约、`resume_agent`/`terminate_agent`/`supervised_status` 支持与正确的车道结算语义。工人报 `STATUS: blocked` 时车道保持绑定（`working`，他人再绑仍拒 `LANE_BUSY`），主 Agent 补充上下文 resume 后在原车道续作，终态汇报时宿主才检查车道。用户不再需要知道"想要可恢复的车道工人就得手动开 supervised group"。详见 [类别委派文档](docs/features/category-delegation.md) 与 [Worktree 车道文档](docs/features/git-worktree.md)。
+
 - **设置项条件显隐与子设置项**：Orrery 设置页的每个条目获得两个声明能力——可见性条件（可引用其他设置项的生效值或宿主平台等环境事实，支持与/或/非组合；翻动开关即时显隐、无需保存，被隐藏条目的已保存值与草稿原样保留）与父子层级（子项自动归位到父项正下方、支持多级嵌套、父隐则子隐，以缩进与引导线呈现）。落地效果：各功能细调参数只在其总开关打开时出现，模型选择器仅在意图分类器选 LLM 时出现，Jev 选项仅在选 Jev 时出现，pwsh 白名单仅在 Windows 宿主出现。声明非法（指错父级、条件引用未知键）在页面加载时即报错而非渲染错误布局。详见 [设置页文档](docs/features/settings-page.md)。
 
 ### Changed
@@ -20,6 +22,8 @@
 ### Fixed
 
 - **编辑锁：会话切换预设后编辑不再永久失效**：创建后、首轮前切换预设（如 orrery → orrery-creative）时宿主不重发 `agent/created`，编辑锁绑定随旧代挂载孤儿化，受管写入被永久拒绝且无任何会话级恢复路径（两起实证）。现在三层自愈：① 预设切换事件驱动对本预设会话自动重绑定（幂等，foreign 预设不绑）；② 写入守卫与锁工具遇到「本预设会话无绑定」先做一次幂等懒绑定重试再判定；③ 绑定失败四联留痕（面板原因 + 维护证据 + 会话内通知 + 审计），拒绝文案点名真实原因与恢复动作。前置修复：受管 write 注册的 disposer 跨挂载代留存、重安装先 retire 旧层，消除了连手工重绑都会失败的 duplicate-register 障碍。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
+
+- **车道绑定不再被 blocked 提前结算**：supervised 车道工人报 `STATUS: blocked` 时，此前车道会被立即释放并触发过早的宿主检查，resume 后续作期间的提交不再受单写入者保护、也永不再被检查。现在车道结算只在终态（completed/terminated/terminate）发生，blocked 全程保绑定。配套对齐：僵尸绑定对账的终态铁证不再认 blocked（审计 settle fact 须为 completed/terminated、子会话日志须为 `STATUS: completed`），监督重建补发跳过 blocked 成员——blocked 是"待命"不是"终态"，双冷 + 仅 blocked 证据时维持拒绝，用户可经 abandon 卡强制回收兜底。
 
 - **失效车道绑定可自动/受控回收**：车道绑定工人的属主会话死亡或失联后，车道此前永久卡在 working——abandon/check/再绑定一律被 LANE_BUSY 拒绝（实证曾停滞近 14 小时）。现在三层防护：① abandon/check/再绑定被拒前对绑定做只读活性对账，仅当子代理存在终态铁证（审计 settle/terminate fact 或子会话日志终态报告）且属主与子代理均无存活证据时，自动结清绑定并放行（审计留痕 `worktree/reconcile-binding`；任一方在线或无铁证一律维持拒绝——不在线不等于死亡）；② 宿主重启重建监督状态时，对被恢复流程提升为终态的绑定子代理补发结算，存量僵尸车道自动解套；③ 对账未放行时，abandon 确认卡展示对账结论并提供强制回收选项（用户显式确认才执行，同样留痕）。详见 [Worktree 车道文档](docs/features/git-worktree.md)。
 
