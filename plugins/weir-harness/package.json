@@ -1,6 +1,6 @@
 {
   "name": "weir-harness",
-  "version": "0.7.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Weir \u2014 orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
   "license": "MIT",
