@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"2f8f3f8e96d69f8041ce255774d192ac7e4d7b58dd9273bc850ea23524e42aa6","client.lsp-panel.js":"24bb0fc3c35e45ad2a83669eb99be28bab0726517e6d5ac666547aab3585343f","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"fe840368065d4cc302336104ffb9e94b18609cd0a0a3d7549859905b2c8a0411","client.worktree-model.js":"7182c054488867055d4b697ee4206eaba642f92ecdb3f1a15ad1bdedee300e42","client.worktree-view.js":"18c16470b3dd024755f7c7a36a4316297a079693e987e1144838f7824f8b4076"}
+// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"2f8f3f8e96d69f8041ce255774d192ac7e4d7b58dd9273bc850ea23524e42aa6","client.lsp-panel.js":"24bb0fc3c35e45ad2a83669eb99be28bab0726517e6d5ac666547aab3585343f","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"fe840368065d4cc302336104ffb9e94b18609cd0a0a3d7549859905b2c8a0411","client.worktree-model.js":"b844c5b9f6b6e9b9d09a8d3a44093c2a854d6266b10e71d5df3cd0ee7387c4c4","client.worktree-view.js":"99a5c899113a47cb77eaf3896157c009a93f0102af34daf4096aba18556d64e9"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -398,6 +398,11 @@ window.__ModuleLoader__.load({
 			worktreeModeLabel: "Worktree",
 			worktreeModeTitle: "Optional discipline: lanes work without this mode. Turned on, the assistant stops editing files directly and every change goes through isolated lanes.",
 			worktreeModeUnavailable: "Worktree mode unavailable:",
+			worktreeApproveLabel: "Auto-approve",
+			worktreeApproveTitle: "Lane auto-approve mode ({mode}): manual asks on every card; auto-keep merges/abandons without cards and removes the worktree but keeps the branch; auto-clean also deletes the branch. The new-session default lives in Settings › Worktree.",
+			worktreeApproveOptionManual: "manual",
+			worktreeApproveOptionAutoKeep: "keep",
+			worktreeApproveOptionAutoClean: "clean",
 			worktreeLoading: "Loading lanes…",
 			worktreeLoadFailed: "The lane view could not be read.",
 			worktreeUnavailable: "Worktree lanes are unavailable for this session.",
@@ -1016,6 +1021,11 @@ window.__ModuleLoader__.load({
 			worktreeModeLabel: "Worktree",
 			worktreeModeTitle: "可选纪律：车道随时可用，无需开启。开启后助手不再直接改文件，所有改动走隔离车道。",
 			worktreeModeUnavailable: "Worktree 模式不可用：",
+			worktreeApproveLabel: "自动授权",
+			worktreeApproveTitle: "车道自动授权模式（{mode}）：manual 每张卡片都要批准；auto-keep 自动批准合并/放弃并清理 worktree 但保留分支；auto-clean 连分支一起删除。新会话默认在设置 › Worktree 车道。",
+			worktreeApproveOptionManual: "手动",
+			worktreeApproveOptionAutoKeep: "保留",
+			worktreeApproveOptionAutoClean: "清理",
 			worktreeLoading: "正在加载车道…",
 			worktreeLoadFailed: "车道视图读取失败。",
 			worktreeUnavailable: "本会话无法使用 Worktree 车道。",

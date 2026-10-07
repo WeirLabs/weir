@@ -410,6 +410,34 @@ window.__ModuleLoader__.load({
 				],
 			});
 		}
+		/** Panel toolbar auto-approve switch: three compact segments showing the
+		 * session's effective mode (session override or global default). Clicking
+		 * a segment runs /worktree approve <mode> through the panel's command
+		 * channel; the control is disabled with the reason when lanes are
+		 * unavailable. */
+		function WorktreeApproveSwitch(props) {
+			const current = typeof props.mode === "string" ? props.mode : "manual";
+			const disabled = props.disabled === true;
+			const options = ["manual", "auto-keep", "auto-clean"];
+			const optionKey = (value) => value === "auto-keep" ? "approveOptionAutoKeep" : value === "auto-clean" ? "approveOptionAutoClean" : "approveOptionManual";
+			return jsx("div", {
+				role: "group", "aria-label": props.t("approveLabel"), title: props.title,
+				"data-orrery-worktree-approve": current,
+				style: { display: "flex", alignItems: "center", gap: "1px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", overflow: "hidden", flex: "none", opacity: disabled ? 0.5 : 1 },
+				children: options.map((value) => {
+					const active = value === current;
+					return jsx("button", {
+						type: "button", disabled, "aria-pressed": active,
+						"data-orrery-worktree-approve-option": value,
+						style: active
+							? { ...buttonBase, background: BUSINESS, border: "none", borderRadius: 0, color: "var(--dsw-alias-bg-base)", fontWeight: 600 }
+							: { ...buttonBase, border: "none", borderRadius: 0 },
+						onClick: () => { if (!active) props.onSelect(value); },
+						children: props.t(optionKey(value))
+					}, value);
+				})
+			});
+		}
 		/** U3 — lanes panel (right sidebar tab body). */
 		function LanesPanel(props) {
 			const t = props.t;
@@ -491,6 +519,13 @@ window.__ModuleLoader__.load({
 				onToggle: toggleMode,
 				t,
 			}, "mode") : null;
+			const approveSwitch = view ? jsx(WorktreeApproveSwitch, {
+				mode: view.approveMode,
+				disabled: view.available === false || busy,
+				title: view.available === false ? `${t("modeUnavailable")} ${unavailableReason}` : t("approveTitle").replace("{mode}", view.approveMode ?? "manual"),
+				onSelect: (value) => runLine(`approve ${value}`),
+				t,
+			}, "approve") : null;
 			const children = [];
 			if (!view) {
 				children.push(jsx("div", {
@@ -505,6 +540,7 @@ window.__ModuleLoader__.load({
 				}, "unavailable"));
 				children.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px", marginTop: "8px" }, children: [
 					jsx("span", { style: { flex: 1 } }, "spacer"),
+					approveSwitch,
 					modeToggle,
 				] }, "toolbar"));
 			} else {
@@ -546,6 +582,7 @@ window.__ModuleLoader__.load({
 					btn("configure", t("configure"), openConfig, ghostStyle, false, t("configure"), "sliders"),
 					groups.history.length ? btn("history", history ? t("hideHistory") : t("showHistory").replace("{n}", String(groups.history.length)), () => setHistory(!history), ghostStyle, false, null, "history") : null,
 					jsx("span", { style: { flex: 1 } }, "spacer"),
+					approveSwitch,
 					modeToggle,
 				] }, "toolbar"));
 				if (init) {

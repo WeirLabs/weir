@@ -103,6 +103,8 @@ window.__ModuleLoader__.load({
 				available: raw.available === true,
 				enabled: raw.enabled !== false,
 				mode: raw.mode === true,
+				approveMode: str(raw.approveMode),
+				approveModeSource: str(raw.approveModeSource),
 				error: isObject(raw.error) ? { code: str(raw.error.code) ?? "ERROR", message: str(raw.error.message) ?? "" } : null,
 				repo,
 				lanes,
