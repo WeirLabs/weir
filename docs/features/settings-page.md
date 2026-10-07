@@ -1,20 +1,22 @@
 # Orrery 设置页
 
-> 预设的一站式配置面；保存「重启后才生效」的选项后，页面会弹出居中警告弹窗，点名哪些改动需要重启 DeepSeek Harness。
+> 预设的一站式配置面：仅在全局设置面板提供入口，按卡片分区呈现；细调参数收为总开关的子项并按条件显隐；重启生效选项行内常驻「需重启」标记，保存后另有居中弹窗点名本次触达的改动。
 
 ## 概述
 
-Orrery 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把预设的全部扁平设置键组织成一张分组表单：意图分类、委派与模型链、续推、上下文压力、编辑、Worktree 车道、只读 bash、LSP、系统通知。所有键在 `src/settings/sections.js` 的 `FIELDS` 表里声明一次，Config schema、服务端 section 映射与页面分组都从这里派生。
+Orrery 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把预设的全部扁平设置键组织成九个卡片分区：意图分类、委派与模型链、续推、上下文压力、编辑、Worktree 车道、只读 bash、LSP、系统通知。所有键在 `src/settings/sections.js` 的 `FIELDS` 表里声明一次，Config schema 与服务端 section 映射从那里派生；页面分组、可见性条件（`when`）与父子层级（`parent`）是**纯展示层概念**，在客户端 chunk 的 `GROUPS` 表里声明，不影响任何设置键的生效语义。
 
-设置键分两类生效语义：**即时生效**（每次消费时重读，或经 `settings.onChange` 推送，如 `delegate*`/`supervision*`、`robash*`、`lsp*`、`worktree*`、`notify*`、编辑锁保留策略 `editLockHold*`/`editLockNudge*`）与**重启生效**（消费插件在 `apply` 期一次性快照，volatile 提交不会重读）。后者过去保存后毫无反馈，容易误以为「没生效是 bug」；本页面的重启提醒弹窗即为补上这层反馈。
+设置键分两类生效语义：**即时生效**（每次消费时重读，或经 `settings.onChange` 推送）与**重启生效**（消费插件在 `apply` 期一次性快照，volatile 提交不会重读）。后者由两层反馈覆盖：行内常驻「需重启」标记 + 保存后的重启提醒弹窗。
 
 ## 用户可见行为
 
-- 修改任意字段后点「保存」：保存被宿主全部接受即落地，草稿清空；被宿主拒绝则草稿保留、按既有失败文案提示修正。
-- 保存落地且本次改动**触达了重启生效选项**时，页面遮罩之上弹出居中警告弹窗：标题「Restart to apply／重启后生效」，正文说明这些改动重启 DeepSeek Harness 后才生效（其余改动已即时生效），并以标签逐个**点名**本次触达的选项（用该选项的显示语言标签，按设置声明顺序排列）。
-- 弹窗可用底部主按钮「Got it／知道了」消除，点遮罩、按 Esc 或右上角关闭（aria 标签 Dismiss）同样消除；消除只关闭弹窗，不改动任何设置值或草稿。
-- 只改即时生效选项的保存不会出现弹窗；已经有弹窗时，这样的保存也不会清掉它。保存失败不会出现弹窗。再次落地且触达重启生效选项的保存会把弹窗名单更新为本次触达的选项。
-- 把某重启生效选项改回原值后再保存（无净改动）不算触达，不会出现弹窗。
+- **唯一入口**：设置仅从全局设置面板的 Orrery 分区进入；插件面板不再有 Orrery 设置项（UI 层面 breaking，迁移路径就是全局设置）。
+- **条件显隐，即时求值**：细调参数只在其前提成立时出现——翻动总开关（尚未保存）立即显示/隐藏其细调子项；`intentGateProvider/Model/ReasoningEffort`（合并为一行模型选择器）仅在分类器为 `llm` 时出现，`jev*` 仅在 `jev` 时出现；`robashPwsh*`（pwsh 黑白名单）仅在 Windows 宿主出现。隐藏是纯视觉行为：被隐藏条目的已保存值与已暂存草稿都原样保留，后续保存仍按既有契约写入。
+- **层级缩进**：子设置项紧随父条目渲染，以左侧引导线 + 按深度递增的缩进呈现（如 `notifyMinTurnSeconds` 是 `notifyOnComplete` 的子项、两级嵌套）；父条目隐藏时整个子树随之隐藏。
+- **环境门控无闪烁**：依赖宿主环境事实（平台）的条目在事实到达前不渲染任何内容；端点请求失败时这些条目保持隐藏，页面其余部分正常可用（控制台警告一次）。
+- **重启标记常驻**：重启生效条目的标签旁常驻「Restart required／需重启」标记，无需先保存。
+- **保存与重启提醒**（既有契约，未变）：保存被宿主全部接受即落地、草稿清空；被拒绝则草稿保留并按既有文案提示。落地且触达重启生效选项时弹出居中警告弹窗，按设置声明顺序点名本次触达的选项；弹窗可经主按钮、遮罩、Esc 或右上角关闭消除，消除不改动任何值。只改即时生效选项不出现弹窗，也不清掉已显示的弹窗；保存失败不出现弹窗；改回原值（无净改动）不算触达。
+- **覆盖/重置**：被用户层覆盖的字段显示「已覆盖」标记与「恢复默认」入口，行为不变。
 
 ## 配置
 
@@ -27,26 +29,32 @@ Orrery 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）�
 | 上下文压力 | `guardEnabled`、`guardSoftThreshold`、`guardHardThreshold` |
 | 编辑 | `hashlineHideStockEdit`、`editLockEnabled` |
 
-其余键均为 volatile config，提交即生效（生效时机双路径见 [category-delegation.md](category-delegation.md) 的「读取时解析 / 提交时推送」）。
+条件与层级的落地方案（`GROUPS` 声明）：各功能细调参数收为其总开关的子项并以其开启为显示条件（`todo*` → `todoEnabled`、`guard*` → `guardEnabled`、`editLock*`（含维护面板）→ `editLockEnabled`、`worktree*` → `worktreeEnabled`、`robash*` → `robashEnabled`、`lsp*`（含 LSP 管理器）→ `lspEnabled`、`notify*` → `notifyEnabled`，`notifyMinTurnSeconds` 再收为 `notifyOnComplete` 的子项）；`robashPwshAllow/Deny` 追加 `{ env: 'platform', in: ['win32'] }`；`intentGateProvider`（模型选择器行，含 folded 的 `intentGateModel`/`intentGateReasoningEffort`）条件 `classifier == 'llm'`，`jev*` 条件 `== 'jev'`。委派分组字段与总开关本身无条件。
 
 ## 设计细节
 
-- **单一声明**：`src/settings/sections.js` 的 `FIELDS` 条目用 `restart: true` 标记重启生效键，`RESTART_KEYS`（冻结数组）从同一声明派生；模块保持纯（无 ctx、无 node: import，jsconfig curation 规则）。
-- **客户端副本由测试钉住**：ModuleLoader 内同包同步 require 不可能，设置页 chunk 持有 `RESTART_FIELDS` 常量（注册表顺序），`test/client-settings-page.test.js` 将其与 `RESTART_KEYS` 逐项对拍——与 `CURATED_AGENT_NAMES`/`CATEGORY_NAMES` 同一钉法，任一侧漂移即红。
-- **保存流程**（`OrreryCardController.inject()` 的 save 动作）：先读 `form.plan()` 记下本次触达的字段（保存落地后 staged 草稿即清空，事后无法反推）；直接 `await form.save()`——宿主的 `actions().save` 丢弃 Promise，await 它等于不等待；结算后**总是** `settingsBus.notify()` 恰好一次（composer 的 LSP 开关借此重检）；`form.shell().failed` 为假且触达 ∩ `RESTART_FIELDS` 非空时，把受影响键按 `RESTART_FIELDS` 顺序写入 `restartReminder` 状态；最后 `form.publish()` 让绑定 store 重投影。
-- **弹窗渲染**：`OrreryCard` 把弹窗追加到表单 children 末尾，经 `primitives.Modal` 渲染——portal 挂载到 `document.body`、页面遮罩之上居中，长页面上也不会被忽略；标题/正文/关闭 aria 标签走字典键 `restartReminderTitle`/`restartReminderBody`/`restartReminderDismiss`（en 英文模板、zh 中文），底部主按钮（`primitives.Button` variant `primary`）走 `restartReminderAcknowledge`，选项名复用各字段既有标签 `t(field)`，以 `primitives.Tag`（accent）呈现在弹窗正文。无提醒时不渲染，表单行数逐字节不变。
-- **组合接线**：消除动作 `dismissRestartReminder` 经 `lib/client.js` 的 `cardFace` 注入（与 `edit`/`save`/`discard` 同一代理范式）。
+- **条件 DSL（纯数据 AST，客户端求值）**：`when` 节点为 `{ key, equals|in }` / `{ env, equals|in }` / `{ all: [...] }` / `{ any: [...] }` / `{ not: ... }`（冻结纯数据）。`evaluateCondition(node, resolve)` 是纯函数：严格相等/严格成员判定，未解析的值只匹配显式 `equals: undefined`。
+- **生效值解析（草稿优先）**：`resolveEffectiveValue` 按「可解析草稿 → 已保存值 → 产品默认」求值——草稿为空（clear 语义）取产品默认（布尔走 `BOOLEAN_DEFAULTS`，其余 `undefined` 即默认不满足）；草稿不可解析回退已保存值，避免无效输入期间显隐抖动。布尔开关的 `checked` 显示与条件求值共用这一个 helper，显示与条件不可能不一致。
+- **层级组织与声明校验**：`parent` 必须引用同组字段；`buildLayout(GROUPS)` 产出每组有序树（根保持声明顺序，子节点 DFS 归位到父节点正下方并携带 `depth`），渲染与声明顺序无关。`validateLayout(GROUPS)` 在 chunk 加载时执行：未知父键、跨组父键、父子环、`when` 引用未知设置键、未知环境事实名均以 `SettingsLayoutError`（指明问题键）fail-loud。父隐则子隐由树裁剪天然获得。
+- **特殊编辑器归一**：链式编辑器 ×2、停用类别编辑器、robash 列表 ×5、模型选择器行、LSP 管理器、Edit Lock 维护面板、notify 权限入口统一为 `kind: 'custom'` 节点（携带渲染槽标识），与普通行同享 `parent`/`when`。模型选择器行保持合并语义：节点挂在 `intentGateProvider` 上，两个 folded 字段不独立渲染、`when` 与承载行一致声明；错误边界降级为三个纯文本字段的契约不变。
+- **环境事实端点**：宿主新增 `POST /api/orrery-settings/env`（`src/settings/env-admin.js`，注入 platform 便于测试），返回 `{ ok: true, value: { platform } }`；只读、无秘密、不轮询。接线在 `src/settings/index.js` 经 `ctx.inject(['connection'])`（与 `wireLspAdmin` 同款，S19 不新增 package subpath）；模块本体按 `src/lsp/admin.d.ts` 同款 `.d.ts` 影子声明留在 checkJs 检查图之外。客户端在页面到达时取一次，三态 pending/ready/failed：依赖 env 的条目 pending/failed 均不渲染（`conditionUsesEnv` 判定，`not` 也不例外），failed 控制台警告一次。
+- **分区视觉**：每组一张卡片——`background: var(--dsw-alias-bg-layer-1)`、`border: 1px solid var(--dsw-alias-border-l1)`、圆角（几何硬编码），组标题在卡片内顶部，组内条目间 `border-top: 1px solid var(--dsw-alias-border-l2)` 细分隔；子项 `padding-left` 按 `depth` 递增 + `--dsw-alias-border-l2` 引导线，标签字号随层级略降。全部用色仅主题 token，深浅主题由宿主 token 双值保证。
+- **重启标记同源**：行内常驻 `primitives.Tag`（字典键 `restartRequired`，en 英文/zh 中文）与保存后弹窗共用客户端 `RESTART_FIELDS` 常量；该常量由测试与宿主 `RESTART_KEYS` 逐项对拍，任一侧漂移即红。
+- **保存流程**（既有契约，`OrreryCardController.inject()`）：先读 `form.plan()` 记下触达字段；`await form.save()` 结算后 `settingsBus.notify()` 恰好一次；落地且触达 ∩ `RESTART_FIELDS` 非空时按注册表顺序写入 `restartReminder`；最后 `form.publish()` 重投影。投影为每个字段附带 `saved`（`form.sectionValue`），供不可解析草稿回退。
+- **入口唯一**：组合根只注册 `settings.section` 与 `settings.orrery.item` 两个槽位；`plugins.item` 注册及其 disposer 已删除，`SettingsCardWrapper` 的 `view === 'summary'` 死分支（唯一调用方是插件面板）同步清理。
 
 ## 边界与失败语义
 
-- 保存被宿主拒绝（`failed`）：不出现弹窗，草稿保留；`settingsBus.notify()` 仍在结算后触发一次（让消费者重检真实状态）。
-- 保存进行中：不发生广播、不出现弹窗——结算（无论成败）是唯一触发点。
-- 空保存计划（无净改动）：宿主 `save()` no-op，不广播之外的任何状态变化，弹窗不变。
-- 草稿无法解析（invalid）：表单拒绝执行保存（真实 UI 中此时保存按钮禁用），程序化调用下也不出现弹窗——触达名单只来自可执行且落地的保存。
-- 只触达即时生效选项的保存：不改变已显示的弹窗；触达重启生效选项的落地保存**替换**弹窗名单为本次触达集合。
-- 弹窗只是提醒：不提供重启入口，不阻止继续使用；重启与否由用户决定。
+- 环境事实未到达（pending）或端点失败（failed）：依赖 env 的条目保持不渲染，其余条目不受影响；失败控制台警告一次（chunk 生命周期内）。
+- 草稿不可解析：条件按已保存值求值（无抖动）；表单自身契约不变（保存按钮禁用、程序化保存被拒绝）。
+- 隐藏条目：保存值与暂存草稿均保留；隐藏本身不产生任何写入。
+- 非法声明（指错父、跨组父、环、未知条件键/环境名）：chunk 加载即抛 `SettingsLayoutError`，页面宁可不渲染也不渲染错误布局。
+- 保存被宿主拒绝 / 保存进行中 / 空保存计划 / 仅即时键保存：均不出现弹窗、不清既有弹窗；`settingsBus.notify()` 仍在结算后触发一次。触达重启键的落地保存替换弹窗名单。
+- 弹窗只是提醒：不提供重启入口，不阻止继续使用。
 
 ## 测试
 
-- 单元测试 `plugins/orrery-harness/test/settings-fields.test.js`：`RESTART_KEYS` 内容全量对拍（18 键、声明顺序）、由 `FIELDS` 标记派生、冻结性。
-- 单元测试 `plugins/orrery-harness/test/client-settings-page.test.js`：`RESTART_FIELDS` ↔ `RESTART_KEYS` 漂移守护；保存流程六例（落地触达重启键按注册表顺序显示、仅即时键不显示、失败保存不显示但仍在结算后广播、已显示弹窗不受仅即时键保存影响且可被后续重启保存替换、消除清空并重投影、广播只在保存 Promise 结算后触发——修复了此前保存开始即广播的时序缺陷）；弹窗渲染用例（open/标题/正文、遮罩与 Esc 消除接线、主按钮消除接线、选项标签翻译）；字典完整性用例覆盖四个新字典键。
+- 单元测试 `plugins/orrery-harness/test/client-settings-page.test.js`：`evaluateCondition`（key/env 谓词、all/any/not、严格成员、未知键）、`resolveEffectiveValue`（D3 全部分支）、`validateLayout`（未知父/跨组父/环/未知条件键/未知 env 名/重复字段/畸形条件，错误命名与键名钉住）、`buildLayout`（声明顺序无关的归位与 depth、DFS 序）、真实 `LAYOUT` 结构（两级嵌套用例）；渲染用例——逐组默认可见集合快照、开关草稿即时显隐、枚举条件、env 三态门控、父隐则子隐、隐藏不产生写入、缩进引导线与分隔线结构、特殊编辑器归一（含模型选择器合并行与 folded 语义）、常驻重启标记恰好出现在可见 RESTART 行、Switch 显示与条件共用 helper；`RESTART_FIELDS` ↔ `RESTART_KEYS`、`CURATED_AGENT_NAMES`、`CATEGORY_NAMES` 漂移守护；字典完整性（含 `restartRequired`）；保存流程七例（时序、提醒、消除、失败语义）不回归；控制器 env 获取（ready 重投影、failed 警告一次）。
+- 单元测试 `plugins/orrery-harness/test/client.test.js`：组合断言——不再注册 `plugins.item`，`settings.section`/`settings.orrery.item` 保留，inject 面不变。
+- 单元测试 `plugins/orrery-harness/test/settings-env-admin.test.js`：env 端点契约（注入 platform 的应答形状、无 connection 时警告且不注册、`wireEnvAdmin` 接线与幂等 dispose）。
+- 单元测试 `plugins/orrery-harness/test/settings-fields.test.js`：`RESTART_KEYS` 内容全量对拍（18 键、声明顺序、冻结性）。
