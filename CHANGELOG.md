@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- **编辑锁面板：多预设共存时状态视图不再错挂「启动中」**：`orrery` 与 `orrery-creative` 同时挂载编辑锁时，状态视图端点由先挂载的预设服务全部会话，后挂载预设（如创造模式）的会话因查不到本挂载绑定而永久显示「编辑锁启动中」（功能本身不受影响）。端点现在把存活会话的视图请求路由到其所属挂载的观察面，答案与挂载顺序无关；绑定失败返回带原因的不可用而非无原因「启动中」；重复路由注册容错跳过。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
+
 - **编辑锁：会话切换预设后编辑不再永久失效**：创建后、首轮前切换预设（如 orrery → orrery-creative）时宿主不重发 `agent/created`，编辑锁绑定随旧代挂载孤儿化，受管写入被永久拒绝且无任何会话级恢复路径（两起实证）。现在三层自愈：① 预设切换事件驱动对本预设会话自动重绑定（幂等，foreign 预设不绑）；② 写入守卫与锁工具遇到「本预设会话无绑定」先做一次幂等懒绑定重试再判定；③ 绑定失败四联留痕（面板原因 + 维护证据 + 会话内通知 + 审计），拒绝文案点名真实原因与恢复动作。前置修复：受管 write 注册的 disposer 跨挂载代留存、重安装先 retire 旧层，消除了连手工重绑都会失败的 duplicate-register 障碍。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
 
 - **车道绑定不再被 blocked 提前结算**：supervised 车道工人报 `STATUS: blocked` 时，此前车道会被立即释放并触发过早的宿主检查，resume 后续作期间的提交不再受单写入者保护、也永不再被检查。现在车道结算只在终态（completed/terminated/terminate）发生，blocked 全程保绑定。配套对齐：僵尸绑定对账的终态铁证不再认 blocked（审计 settle fact 须为 completed/terminated、子会话日志须为 `STATUS: completed`），监督重建补发跳过 blocked 成员——blocked 是"待命"不是"终态"，双冷 + 仅 blocked 证据时维持拒绝，用户可经 abandon 卡强制回收兜底。
