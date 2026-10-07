@@ -1,8 +1,8 @@
 {
   "scenario": "zombie-lane",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
   "code": 0,
   "stdout": "ZOMBIE_PROBE_DONE\n",
   "stderr": "",
-  "sessionId": "session-a9d67fbd-af8e-44cb-9382-84befbfbb3c7"
+  "sessionId": "session-a183c012-2158-4bad-ae2f-aae70c047921"
 }

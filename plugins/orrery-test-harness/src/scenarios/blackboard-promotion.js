@@ -22,9 +22,9 @@ const prompt = 'blackboard-promotion-probe'
 const PROMO_CONTENT = 'PROMO_DURABLE_PAYLOAD'
 const LANDED_MARKER = 'PROMO_LANDED'
 
-const WRITER_SUMMARY = { fact: 'the durable finding to promote', cost: 'one probe', reVerify: 'blackboard_list promote.key' }
+const WRITER_SUMMARY = 'the durable finding to promote (one probe; re-verify: blackboard_list promote.key)'
 
-const LANDED_DOC = `## S-promote promote.key\n\nFact: ${WRITER_SUMMARY.fact}\nEvidence: ${PROMO_CONTENT}\nRe-verify: blackboard_list promote.key\n\n${LANDED_MARKER}\n`
+const LANDED_DOC = `## S-promote promote.key\n\nFact: the durable finding to promote\nEvidence: ${PROMO_CONTENT}\nRe-verify: blackboard_list promote.key\n\n${LANDED_MARKER}\n`
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)

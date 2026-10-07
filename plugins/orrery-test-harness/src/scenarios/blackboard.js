@@ -21,8 +21,8 @@ const CONTEND_CONTENT = 'BB_CONTEND_CONTENT'
 const CONTINUABLE_RESULT_MARKER = 'continuable child(ren); each result arrives in a built-in settlement notice'
 const RETRIEVAL_MARKER = 'Before delegating: run blackboard_list'
 
-const WRITER_SUMMARY = { fact: 'the session runtime layout lives here', cost: 'one probe', reVerify: 'blackboard_list writer.key' }
-const HOLDER_SUMMARY = { fact: 'the contended layout entry', cost: 'one probe', reVerify: 'blackboard_list contend.key' }
+const WRITER_SUMMARY = 'the session runtime layout lives here (one probe; re-verify: blackboard_list writer.key)'
+const HOLDER_SUMMARY = 'the contended layout entry (one probe; re-verify: blackboard_list contend.key)'
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
@@ -98,7 +98,7 @@ function decide(options, obs) {
   // Phase 1: delegate the writer child (one-shot).
   return toolCallChunks('delegate', {
     category: 'quick',
-    prompt: `BB_WRITER\nTASK: create the blackboard entry writer.key with blackboard_write (entryType map, summary fact "the session runtime layout lives here", cost "one probe", reVerify "blackboard_list writer.key", content "${CONTENT}"), then reply with the exact marker text BB_WROTE\nDELIVERABLE: the marker line\nSCOPE: nothing else\nVERIFY: the reply contains the marker\nSTOP WHEN: the marker is sent`,
+    prompt: `BB_WRITER\nTASK: create the blackboard entry writer.key with blackboard_write (entryType map, summary "the session runtime layout lives here (one probe; re-verify: blackboard_list writer.key)", content "${CONTENT}"), then reply with the exact marker text BB_WROTE\nDELIVERABLE: the marker line\nSCOPE: nothing else\nVERIFY: the reply contains the marker\nSTOP WHEN: the marker is sent`,
     task_summary: 'blackboard writer child',
   })
 }
