@@ -131,7 +131,7 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground','blackboardWriteTokenTtlMinutes']
 
   // The six boolean product defaults shipped after BOOLEAN_DEFAULTS was first
   // written. Their module/bundle defaults are all ON (cordis.patch.yml
@@ -209,7 +209,7 @@ describe('client.settings-page chunk', () => {
     expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '12px' })
     const cards = cardsOf(rendered)
     const groupIds = Object.keys(cards)
-    expect(groupIds).toEqual(['intent', 'delegate', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify'])
+    expect(groupIds).toEqual(['intent', 'delegate', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify', 'blackboard'])
     // every card: layered background, l1 border, radius, title inside the top
     for (const [id, card] of Object.entries(cards)) {
       expect(card.style.background).toBe('var(--dsw-alias-bg-layer-1)')
@@ -228,6 +228,7 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
     expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
+    expect(rowKeys(cards, 'blackboard')).toEqual(['blackboardWriteTokenTtlMinutes'])
     // hairline separators: the first row in a card has none, the rest do
     const todoRows = cards.todo.children.slice(1)
     expect(todoRows[0].style.borderTop).toBe('none')
