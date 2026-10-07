@@ -166,6 +166,14 @@ const PRE_MIGRATION_KEYS = [
   // zombie-lane scenario observations (abandon probe seen, lane worker spawned)
   'zombieAbandonProbe',
   'zombieWorkerSeen',
+  // lane-resumable scenario observations (implicit supervised dispatch, the
+  // blocked stand-by, the resume, the lane contract, the committed completion)
+  'laneResumableProbe',
+  'implicitGroupSeen',
+  'workerBlockedSeen',
+  'resumeContextSeen',
+  'workerCommittedSeen',
+  'workerDoneSeen',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

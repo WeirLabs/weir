@@ -20,7 +20,7 @@ import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECT
 import { DEFAULT_WATCH_TIMEOUT_MINUTES } from './watches.js'
 import { WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
 import { readAuditTail, readChildFinalText } from '../delegate/audit-readers.js'
-import { parseTerminalStatus } from '../delegate/group-coordinator.js'
+import { isTerminalStatus, parseTerminalStatus } from '../delegate/group-coordinator.js'
 
 const name = 'orrery-worktree'
 // subprocess is a host-plane service every composition mounts; it is a hard
@@ -289,9 +289,11 @@ export function createAsk(ctx) {
  * Read-only liveness probe for a suspected-zombie lane binding
  * (worktree-zombie-lane-reclamation D2). Live evidence is the single-process
  * agents registry (a miss proves offline, never dead); terminal evidence is
- * ironclad only — a settle/terminate fact in the audit tail, or a terminal
- * STATUS report as the child's final word. Any ambiguity keeps the LANE_BUSY
- * refusal standing (064: offline is not dead). Exported for tests.
+ * ironclad only — a terminate fact or a completed/terminated settle fact in
+ * the audit tail, or a STATUS: completed report as the child's final word
+ * (blocked never counts: a blocked member stands by for resume). Any
+ * ambiguity keeps the LANE_BUSY refusal standing (064: offline is not dead).
+ * Exported for tests.
  * @param {any} ctx
  */
 export function createBindingLiveness(ctx) {
@@ -307,22 +309,27 @@ export function createBindingLiveness(ctx) {
     /** @type {{ source: string, detail: string } | null} */
     let terminalEvidence = null
     if (!childAlive && typeof boundChild === 'string' && boundChild.length > 0) {
-      // Ironclad (a): a settle/terminate supervision fact in the audit tail
-      // (bounded 256KB window — an aged-out fact degrades to "no evidence",
-      // never to a wrong release; the card's force-reclaim is the escape).
+      // Ironclad (a): a TERMINAL supervision fact in the audit tail (bounded
+      // 256KB window — an aged-out fact degrades to "no evidence", never to a
+      // wrong release; the card's force-reclaim is the escape). Terminal means
+      // a terminate fact, or a settle fact whose status is completed or
+      // terminated (resumable-lane-workers D6): a blocked settle is a
+      // stand-by, not a death certificate — the member may still be resumed.
       const records = readAuditTail(join(context.root, '.orrery', 'audit.jsonl'))
       const fact = records.find((record) =>
-        (record?.type === 'orrery/supervision/settle' || record?.type === 'orrery/supervision/terminate')
+        (record?.type === 'orrery/supervision/terminate'
+          || (record?.type === 'orrery/supervision/settle' && isTerminalStatus(record?.data?.status)))
         && record?.data?.childId === boundChild)
       if (fact) {
         terminalEvidence = { source: 'audit', detail: `${fact.type} (childId ${boundChild})` }
       } else {
-        // Ironclad (b): a terminal STATUS report as the child's final word.
+        // Ironclad (b): a STATUS: completed report as the child's final word
+        // (blocked is, again, not terminal).
         const sessionQuery = ctx.get?.('sessionQuery')
         if (sessionQuery?.readSession) {
           try {
             const terminal = parseTerminalStatus(await readChildFinalText(sessionQuery, boundChild))
-            if (terminal) terminalEvidence = { source: 'session-log', detail: `terminal STATUS: ${terminal.status}` }
+            if (terminal?.status === 'completed') terminalEvidence = { source: 'session-log', detail: `terminal STATUS: ${terminal.status}` }
           } catch {
             // an unreadable child log is no evidence — the refusal stands
           }

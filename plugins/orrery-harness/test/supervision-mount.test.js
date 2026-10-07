@@ -5,7 +5,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Duck ctx: only the four faces the mount consumes (on / subagents / get /
 // logger), plus the audit sink as a plain recorder.
-function makeMount({ settings, supervisionNow, subagents = {} } = {}) {
+function makeMount({ settings, supervisionNow, subagents = {}, onChildSettled } = {}) {
   const handlers = new Map()
   const warnings = []
   const audits = []
@@ -27,7 +27,7 @@ function makeMount({ settings, supervisionNow, subagents = {} } = {}) {
     logger: { warn: (message) => warnings.push(message) },
   }
   const audit = (session, type, payload) => audits.push({ session, type, payload })
-  const mount = mountSupervision({ ctx, audit, settings, supervisionNow: supervisionNow ?? (() => ({})) })
+  const mount = mountSupervision({ ctx, audit, settings, supervisionNow: supervisionNow ?? (() => ({})), onChildSettled })
   const feed = (session, event) => handlers.get('session/event')(session, event)
   return { mount, handlers, warnings, audits, sent, interrupts, feed }
 }
@@ -233,6 +233,73 @@ describe('mountSupervision session/event feed', () => {
     await sleep(20)
     const note = audits.find((a) => a.type === 'supervision' && a.payload?.note?.includes('turn-end processing failed for child c1'))
     expect(note).toBeTruthy()
+  })
+})
+
+describe('mountSupervision lane settlement forwarding (resumable-lane-workers D1)', () => {
+  // A member reaching a TERMINAL outcome frees its worktree lane through
+  // onChildSettled; a blocked member stands by for resume_agent, so its lane
+  // binding must survive. The blocked fact still rides the audit channel.
+  function mountWithLane() {
+    const settled = []
+    const kit = makeMount({ onChildSettled: (childId, parent) => settled.push({ childId, parentId: parent.id }) })
+    return { ...kit, settled }
+  }
+
+  async function runningChild(mount, parent, id = 'c1') {
+    const coordinator = await mount.coordinatorFor(parent)
+    coordinator.hydrate({
+      children: [{ id, name: id, group: 'g', status: 'running' }],
+      groups: [{ name: 'g', sealed: true, memberIds: [id] }],
+      untracked: [],
+      confidence: 'full',
+    })
+    return coordinator
+  }
+
+  async function settleTurn(feed, id, status) {
+    feed({ id }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `STATUS: ${status}\nREPORT: r` }] } } })
+    feed({ id }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await sleep(20)
+  }
+
+  it('a blocked settle writes the audit fact but does NOT free the lane', async () => {
+    const { mount, feed, audits, settled } = mountWithLane()
+    const parent = fakeParent()
+    await runningChild(mount, parent)
+    await settleTurn(feed, 'c1', 'blocked')
+    expect(audits.some((a) => a.type === 'supervision/settle' && a.payload?.status === 'blocked' && a.payload?.childId === 'c1')).toBeTruthy()
+    expect(settled).toHaveLength(0)
+  })
+
+  it('a completed settle frees the lane', async () => {
+    const { mount, feed, settled } = mountWithLane()
+    const parent = fakeParent()
+    await runningChild(mount, parent)
+    await settleTurn(feed, 'c1', 'completed')
+    expect(settled).toEqual([{ childId: 'c1', parentId: 'p1' }])
+  })
+
+  it('terminating a blocked member frees the lane via the terminate fact', async () => {
+    const { mount, feed, audits, settled } = mountWithLane()
+    const parent = fakeParent()
+    const coordinator = await runningChild(mount, parent)
+    await settleTurn(feed, 'c1', 'blocked')
+    expect(settled).toHaveLength(0)
+    coordinator.terminate('c1', 'redirected')
+    await sleep(20)
+    expect(audits.some((a) => a.type === 'supervision/terminate' && a.payload?.childId === 'c1')).toBeTruthy()
+    expect(settled).toEqual([{ childId: 'c1', parentId: 'p1' }])
+  })
+
+  it('a terminated settle (non-user abort) frees the lane', async () => {
+    const { mount, feed, audits, settled } = mountWithLane()
+    const parent = fakeParent()
+    await runningChild(mount, parent)
+    feed({ id: 'c1' }, { type: 'turn/end', data: { reason: { kind: 'aborted', reason: { kind: 'crash' } } } })
+    await sleep(20)
+    expect(audits.some((a) => a.type === 'supervision/settle' && a.payload?.status === 'terminated')).toBeTruthy()
+    expect(settled).toEqual([{ childId: 'c1', parentId: 'p1' }])
   })
 })
 

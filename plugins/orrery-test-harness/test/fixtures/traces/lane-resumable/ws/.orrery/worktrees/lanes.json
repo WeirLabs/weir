@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "seq": 1,
+  "lanes": [
+    {
+      "id": "lane-resumable-001",
+      "title": "Lane resumable",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/resumable-lane-workers-090/.orrery/it-root/ws/.orrery/worktrees/lane-resumable-001",
+      "branch": "orrery/lane-resumable-001",
+      "base": {
+        "branch": "main",
+        "commit": "c42283e250fe6fee375e6d1300a98891b545c81b"
+      },
+      "scope": [],
+      "state": "landable",
+      "ownerSession": "session-b280f82b-9261-4ca9-8e63-664bc237f6b2",
+      "boundChild": null,
+      "baseMoved": false,
+      "landableTree": "f673df72ca7b455c0c685b4b5c9f6213b5c88770",
+      "setup": {
+        "status": "none"
+      },
+      "check": {
+        "enabled": false,
+        "tree": "f673df72ca7b455c0c685b4b5c9f6213b5c88770"
+      },
+      "land": null,
+      "cleanup": null,
+      "reason": null,
+      "createdAt": 1791342220674,
+      "updatedAt": 1791342222016,
+      "history": [
+        {
+          "from": "preparing",
+          "to": "ready",
+          "event": "setup-ok",
+          "at": 1791342220714,
+          "by": "host"
+        },
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791342220738,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "landable",
+          "event": "checked",
+          "at": 1791342222016,
+          "by": "host"
+        }
+      ]
+    }
+  ],
+  "watches": []
+}

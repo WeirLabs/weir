@@ -432,19 +432,22 @@ export function createGroupCoordinator(deps, config = {}) {
       }))
     }
     meta = { confidence: state.confidence ?? 'partial', untracked: state.untracked ?? [], hydrated: true }
-    // Re-emit every member settlement (worktree-zombie-lane-reclamation D3):
-    // the live settle/terminate fact is the ONLY signal that frees a lane
-    // binding, and a member that settled while no live listener existed never
-    // had its fact delivered. The re-emission rides the audit channel again
-    // (recovered: true — recovery promotions used to leave zero trace) and
-    // lanes.childSettled is idempotent on unbound lanes, so redelivery
-    // deduplicates naturally. `evidence` names how the terminal state is
-    // known: replayed facts, or the child-log recovery list rehydrate.js
-    // produced (state.recovered).
+    // Re-emit every TERMINAL member settlement (worktree-zombie-lane-reclamation
+    // D3, narrowed by resumable-lane-workers D6): the live settle/terminate fact
+    // is the ONLY signal that frees a lane binding, and a member that settled
+    // while no live listener existed never had its fact delivered. The
+    // re-emission rides the audit channel again (recovered: true — recovery
+    // promotions used to leave zero trace) and lanes.childSettled is idempotent
+    // on unbound lanes, so redelivery deduplicates naturally. A blocked member
+    // is deliberately SKIPPED: blocked is not terminal, the rebuilt member
+    // stays resumable, and a restart must not manufacture fresh settle evidence
+    // that zombie-binding reconciliation would read as terminal. `evidence`
+    // names how the terminal state is known: replayed facts, or the child-log
+    // recovery list rehydrate.js produced (state.recovered).
     const logRecovered = new Set((state.recovered ?? []).map((/** @type {any} */ entry) => entry?.childId))
     for (const child of children.values()) {
       const evidence = logRecovered.has(child.id) ? 'session-log' : 'audit-replay'
-      if (child.status === 'completed' || child.status === 'blocked') {
+      if (child.status === 'completed') {
         deps.onFact?.({ kind: 'settle', childId: child.id, status: child.status, report: child.report ?? '', recovered: true, evidence })
       } else if (child.status === 'terminated') {
         deps.onFact?.({ kind: 'terminate', childId: child.id, reason: child.report ?? '', recovered: true, evidence })

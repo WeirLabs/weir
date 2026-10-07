@@ -1,0 +1,8 @@
+{
+  "scenario": "lane-resumable",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/resumable-lane-workers-090/.orrery/it-root/home",
+  "code": 0,
+  "stdout": "parent observed the landable lane after the resume\n",
+  "stderr": "",
+  "sessionId": null
+}

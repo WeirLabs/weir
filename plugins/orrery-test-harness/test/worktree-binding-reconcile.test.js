@@ -369,10 +369,48 @@ describe('createBindingLiveness (worktree/index.js probe)', () => {
       cleanup()
     }
   })
+
+  it('a blocked settle fact in the audit tail is NOT terminal evidence (D6)', async () => {
+    const { root, cleanup } = makeRoot()
+    try {
+      appendFileSync(join(root, '.orrery', 'audit.jsonl'), auditRecord('orrery/supervision/settle', { kind: 'settle', childId: 'child-1', status: 'blocked', report: 'standing by' }))
+      const verdict = await createBindingLiveness(makeCtx())('child-1', 'owner-1', { root })
+      assert.deepEqual(verdict, { childAlive: false, ownerAlive: false, terminalEvidence: null })
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('a STATUS: blocked final word in the child log is NOT terminal evidence (D6)', async () => {
+    const { root, cleanup } = makeRoot()
+    try {
+      const sessionQuery = {
+        readSession: async () => ({
+          events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: still waiting' }] } } }],
+        }),
+      }
+      const verdict = await createBindingLiveness(makeCtx({ sessionQuery }))('child-1', 'owner-1', { root })
+      assert.equal(verdict.terminalEvidence, null)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('a blocked settle followed by a completed settle in the audit tail IS terminal evidence (D6)', async () => {
+    const { root, cleanup } = makeRoot()
+    try {
+      appendFileSync(join(root, '.orrery', 'audit.jsonl'), auditRecord('orrery/supervision/settle', { kind: 'settle', childId: 'child-1', status: 'blocked', report: 'standing by' }))
+      appendFileSync(join(root, '.orrery', 'audit.jsonl'), auditRecord('orrery/supervision/settle', { kind: 'settle', childId: 'child-1', status: 'completed', report: 'done after resume' }))
+      const verdict = await createBindingLiveness(makeCtx())('child-1', 'owner-1', { root })
+      assert.deepEqual(verdict.terminalEvidence, { source: 'audit', detail: 'orrery/supervision/settle (childId child-1)' })
+    } finally {
+      cleanup()
+    }
+  })
 })
 
 describe('rebuild re-emission (D3): pure layer', () => {
-  it('hydrate re-emits a settle/terminate fact per terminal member, tagged with its evidence', () => {
+  it('hydrate re-emits a settle/terminate fact per TERMINAL member (blocked is skipped), tagged with its evidence', () => {
     const facts = []
     const coordinator = createGroupCoordinator({
       sendTo: async () => {},
@@ -392,10 +430,12 @@ describe('rebuild re-emission (D3): pure layer', () => {
       confidence: 'full',
       recovered: [{ childId: 'c4', status: 'blocked', report: 'stuck' }],
     })
+    // resumable-lane-workers D6(b): c4 (blocked) is NOT re-emitted — blocked
+    // is a stand-by, not a terminal outcome, and a restart must not
+    // manufacture fresh settle evidence for a still-resumable member.
     assert.deepEqual(facts, [
       { kind: 'settle', childId: 'c1', status: 'completed', report: 'done', recovered: true, evidence: 'audit-replay' },
       { kind: 'terminate', childId: 'c2', reason: 'redirected', recovered: true, evidence: 'audit-replay' },
-      { kind: 'settle', childId: 'c4', status: 'blocked', report: 'stuck', recovered: true, evidence: 'session-log' },
     ])
   })
 
@@ -474,6 +514,178 @@ describe('restart rebuild (D3): re-emitted settlement frees the zombie lane', ()
       // The recovery promotion closed its audit trail: a settle fact exists.
       assert.ok(audits.some((entry) => entry.type === 'supervision/settle' && entry.payload?.childId === 'c1'))
       mount.dispose()
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+describe('resumable lane workers (resumable-lane-workers D1/D2): terminal-only lane settlement', () => {
+  // A lane-bound supervised member reporting blocked keeps its lane binding
+  // (resume_agent continues it); only the terminal report frees the lane and
+  // runs the host check. Driven through the REAL mount + lane service.
+  function mountFor(h) {
+    const audits = []
+    const handlers = new Map()
+    const ctx = {
+      on: (event, fn) => handlers.set(event, fn),
+      subagents: { sendMessage: async () => {}, interrupt: () => {}, listChildren: async () => [] },
+      get: () => undefined,
+      logger: { warn: () => {} },
+    }
+    const parent = { id: 'main-1', session: h.session, status: 'idle', steer: () => {}, followup: () => {} }
+    const mount = mountSupervision({
+      ctx,
+      audit: (session, type, payload) => audits.push({ session, type, payload }),
+      supervisionNow: () => ({}),
+      onChildSettled: (childId, p) => {
+        void h.service.childSettled(childId, p?.session, { silent: true })?.catch?.(() => {})
+      },
+    })
+    const feed = (session, event) => handlers.get('session/event')(session, event)
+    return { mount, parent, audits, feed }
+  }
+
+  async function statusTurn(feed, childId, status) {
+    feed({ id: childId }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `STATUS: ${status}\nREPORT: ${status} report` }] } } })
+    feed({ id: childId }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+
+  async function awaitSettled(h, laneId) {
+    const deadline = Date.now() + 10_000
+    let lane = await laneOf(h, laneId)
+    while ((lane.boundChild !== null || lane.state === 'working') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      lane = await laneOf(h, laneId)
+    }
+    return lane
+  }
+
+  async function runningMember(h, childId = 'child-1') {
+    const laneId = await boundLane(h, childId, 'Resumable work')
+    const kit = mountFor(h)
+    const coordinator = await kit.mount.coordinatorFor(kit.parent)
+    coordinator.hydrate({
+      children: [{ id: childId, name: 'worker', group: `lane:${laneId}`, status: 'running' }],
+      groups: [{ name: `lane:${laneId}`, sealed: true, memberIds: [childId] }],
+      untracked: [],
+      confidence: 'full',
+    })
+    return { laneId, coordinator, ...kit }
+  }
+
+  it('blocked keeps the lane working and bound (no host check), rebind stays LANE_BUSY; resume -> completed frees and checks it', async () => {
+    const h = harness()
+    try {
+      const { laneId, coordinator, mount, feed, audits } = await runningMember(h)
+
+      await statusTurn(feed, 'child-1', 'blocked')
+      // The blocked settle fact is audited, but the lane is untouched: still
+      // working, still bound, and NO host check ran (a settle-triggered check
+      // would have moved the lane out of `working`).
+      assert.ok(audits.some((entry) => entry.type === 'supervision/settle' && entry.payload?.status === 'blocked'))
+      let lane = await laneOf(h, laneId)
+      assert.equal(lane.state, 'working')
+      assert.equal(lane.boundChild, 'child-1')
+
+      // A second writer is still refused — the binding survived the blocked report.
+      await assert.rejects(h.service.prepareBind(h.session, laneId, { readOnly: false }), (error) => error.code === 'LANE_BUSY')
+      lane = await laneOf(h, laneId)
+      assert.equal(lane.boundChild, 'child-1')
+
+      // Resume (no lane-side re-bind needed) -> the terminal completed report
+      // settles the lane through the normal childSettled path.
+      const resumed = await coordinator.resume('child-1', 'blocker cleared')
+      assert.equal(resumed.status, 'running')
+      await statusTurn(feed, 'child-1', 'completed')
+      lane = await awaitSettled(h, laneId)
+      assert.equal(lane.boundChild, null)
+      assert.equal(lane.state, 'no-commits')
+      mount.dispose()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('terminating a blocked member frees the lane and runs the host check (regression)', async () => {
+    const h = harness()
+    try {
+      const { laneId, coordinator, mount, feed } = await runningMember(h)
+      await statusTurn(feed, 'child-1', 'blocked')
+      assert.equal((await laneOf(h, laneId)).boundChild, 'child-1')
+
+      coordinator.terminate('child-1', 'redirected elsewhere')
+      const lane = await awaitSettled(h, laneId)
+      assert.equal(lane.boundChild, null)
+      assert.equal(lane.state, 'no-commits')
+      mount.dispose()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a restart rebuild of a blocked lane-bound member re-emits NOTHING: binding kept, no fresh audit settle fact, member stays resumable (D6b)', async () => {
+    const h = harness()
+    try {
+      const laneId = await boundLane(h, 'child-1', 'Resumable work')
+      const { mount, parent, audits } = mountFor(h)
+      const coordinator = await mount.coordinatorFor(parent)
+      coordinator.hydrate({
+        children: [{ id: 'child-1', name: 'worker', group: `lane:${laneId}`, status: 'blocked', report: 'stuck across the restart' }],
+        groups: [{ name: `lane:${laneId}`, sealed: true, memberIds: ['child-1'] }],
+        untracked: [],
+        confidence: 'full',
+      })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      const lane = await laneOf(h, laneId)
+      assert.equal(lane.state, 'working')
+      assert.equal(lane.boundChild, 'child-1')
+      assert.ok(!audits.some((entry) => entry.type === 'supervision/settle' && entry.payload?.childId === 'child-1'))
+
+      const resumed = await coordinator.resume('child-1', 'go again')
+      assert.equal(resumed.status, 'running')
+      mount.dispose()
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+describe('binding reconciliation: blocked is not terminal evidence (resumable-lane-workers D6)', () => {
+  // Lane-level quadrants through the REAL createBindingLiveness probe.
+  const realProbe = () => (child, owner, context) =>
+    createBindingLiveness({ get: (name) => ({ agents: new Map() })[name] })(child, owner, context)
+  const auditLine = (data) => `${JSON.stringify({ time: 1, session: 'main-1', type: 'orrery/supervision/settle', data })}\n`
+
+  it('blocked-only audit evidence + both sides dead keeps the LANE_BUSY refusal (the force-reclaim card is the escape)', async () => {
+    const h = harness({ bindingLiveness: realProbe() })
+    try {
+      const laneId = await boundLane(h)
+      appendFileSync(join(h.repo, '.orrery', 'audit.jsonl'), auditLine({ kind: 'settle', childId: 'child-1', status: 'blocked', report: 'standing by' }))
+      await assert.rejects(h.service.check(h.session, laneId), (error) => error.code === 'LANE_BUSY')
+      const lane = await laneOf(h, laneId)
+      assert.equal(lane.state, 'working')
+      assert.equal(lane.boundChild, 'child-1')
+      assert.equal(reconcileAudits(h).length, 0)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('blocked-then-completed audit evidence releases the binding through the settle path', async () => {
+    const h = harness({ bindingLiveness: realProbe() })
+    try {
+      const laneId = await boundLane(h)
+      appendFileSync(join(h.repo, '.orrery', 'audit.jsonl'), auditLine({ kind: 'settle', childId: 'child-1', status: 'blocked', report: 'standing by' }))
+      appendFileSync(join(h.repo, '.orrery', 'audit.jsonl'), auditLine({ kind: 'settle', childId: 'child-1', status: 'completed', report: 'done after resume' }))
+      const checked = await h.service.check(h.session, laneId)
+      assert.equal(checked.state, 'no-commits')
+      assert.equal((await laneOf(h, laneId)).boundChild, null)
+      const audits = reconcileAudits(h)
+      assert.equal(audits.length, 1)
+      assert.equal(audits[0].data.evidence?.source, 'audit')
     } finally {
       h.cleanup()
     }
