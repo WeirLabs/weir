@@ -81,7 +81,11 @@
 
 ### 晋升流程（用户发起）
 
-面板按钮点击 → 向主 Agent 注入评估上下文（黑板访问方式、评估判据、裁决交互方式）→ 主 Agent list 全板、按 read/subscribe 计数排序 → 逐项给出建议（去向：spikes.md / runtime map / AGENTS.md 指针 / 丢弃，附理由）→ 用户逐项裁决 → 主 Agent 执行落盘。与仓库治理纹理一致：OpenSpec 立项人批、worktree land 人批、黑板晋升用户批——机制提议、人类裁决。
+面板按钮点击 → 向主 Agent 注入评估上下文（黑板访问方式、评估判据、裁决交互方式）→ 主 Agent list 全板、按 read/subscribe 计数排序 → 逐项给出建议（去向：spikes.md / runtime map / AGENTS.md 指针 / 丢弃，附理由）→ 用户逐项裁决 → 主 Agent 执行落盘。与仓库治理纹理一致：OpenSpec 立项人批、worktree land 默认人批（可按会话 opt-in 自动审批）、黑板晋升用户批——机制提议、人类裁决。
+
+### 面板数据通道
+
+面板的 list/read/apply/write/delete 走**插件自有 typert remote 服务**（`src/capabilities/capability-remote.js` 先例：宿主 typert gateway + 手写 wire schema，客户端 `ctx.remote.<ns>.*` 直调，读操作零会话日志），与 Agent 工具共享同一仲裁内核；不经 commands 通道（`execute()` 无条件落日志且硬编码 user 来源）。
 
 ### 仲裁与 Edit Lock 的关系
 
