@@ -45,12 +45,12 @@ test('the DSH peer dependency is declared as a valid semver range', () => {
   expect(isValidSemverRange(range), range).toBe(true)
 })
 
-test('the prepack hook re-runs check, test and build', () => {
+test('the prepack hook re-runs the static check, the tests and the client build', () => {
   const prepack = manifest.scripts?.prepack
   expect(typeof prepack).toBe('string')
-  expect(prepack).toContain('check')
-  expect(prepack).toContain('test')
-  expect(prepack).toContain('build')
+  expect(prepack).toContain('tsc --noEmit')
+  expect(prepack).toContain('node --test')
+  expect(prepack).toContain('build-client')
 })
 
 test('every path listed in files exists on disk', () => {

@@ -70,6 +70,6 @@
     "build": "node scripts/build-client.js",
     "check": "tsc --noEmit -p jsconfig.json",
     "test": "node --test \"test/**/*.test.js\"",
-    "prepack": "pnpm run check && pnpm test && pnpm run build"
+    "prepack": "tsc --noEmit -p jsconfig.json && node --test \"test/**/*.test.js\" && node scripts/build-client.js"
   }
 }
