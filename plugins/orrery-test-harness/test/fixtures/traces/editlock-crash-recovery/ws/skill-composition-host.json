@@ -1601,7 +1601,7 @@
       "provider": "orrery-selected",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-autonomous-recovery-p1-071/.orrery/it-root/ws/skill-roots/selected-fixture"
+        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/skill-roots/selected-fixture"
       },
       "content": "CONTENT_selected-fixture"
     },
@@ -1610,7 +1610,7 @@
       "provider": "filesystem",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/edit-lock-autonomous-recovery-p1-071/.orrery/it-root/ws/skill-roots/unselected-fixture"
+        "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/skill-roots/unselected-fixture"
       },
       "content": "CONTENT_unselected-fixture"
     }

@@ -24,6 +24,7 @@ EXPECTED_ORDER.push('capability-presets-surface')
 EXPECTED_ORDER.push('resume-incarnation')
 EXPECTED_ORDER.push('worktree-watch')
 EXPECTED_ORDER.push('notify-worktree')
+EXPECTED_ORDER.push('worktree-auto-approve')
 EXPECTED_ORDER.push('child-prompt')
 EXPECTED_ORDER.push('editlock-stale-sweep', 'editlock-stale-sweep-off')
 EXPECTED_ORDER.push('capability-remote')
@@ -69,7 +70,7 @@ describe('scenario registry', () => {
 
   // Scenarios whose preconditions need driver-side work: rehydrate boots twice
   // with one session id; worktree initializes a git repository in the workspace.
-  const RUN_OVERRIDE = ['rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'editlock-stale-sweep', 'editlock-stale-sweep-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'capability-remote', 'editlock-crash-recovery', 'editlock-cold-view', 'zombie-lane', 'lane-resumable']
+  const RUN_OVERRIDE = ['rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'editlock-stale-sweep', 'editlock-stale-sweep-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'editlock-crash-recovery', 'editlock-cold-view', 'zombie-lane', 'lane-resumable']
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

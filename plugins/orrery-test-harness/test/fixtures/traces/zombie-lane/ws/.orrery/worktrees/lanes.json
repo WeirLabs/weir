@@ -5,15 +5,15 @@
     {
       "id": "zombie-evidence-001",
       "title": "Zombie evidence",
-      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/ws/.orrery/worktrees/zombie-evidence-001",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/zombie-evidence-001",
       "branch": "orrery/zombie-evidence-001",
       "base": {
         "branch": "main",
-        "commit": "0534017f3203c8c05e3a746424b0e1e09979f80c"
+        "commit": "e7b50a6144e40427d3ac2381054847b837e8baf6"
       },
       "scope": [],
       "state": "abandoned",
-      "ownerSession": "session-4e8b89b0-2a9c-4d01-b9ab-d2a248dd7d1c",
+      "ownerSession": "session-a9d67fbd-af8e-44cb-9382-84befbfbb3c7",
       "boundChild": null,
       "baseMoved": false,
       "landableTree": null,
@@ -23,33 +23,34 @@
       "check": null,
       "land": null,
       "cleanup": {
-        "mode": "keep",
-        "at": 1791336770180,
-        "by": "user"
+        "mode": "all",
+        "at": 1791375590170,
+        "by": "host",
+        "scratch": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/lanes/zombie-evidence-001"
       },
-      "reason": "abandoned by the user",
-      "createdAt": 1791336766430,
-      "updatedAt": 1791336770181,
+      "reason": "abandoned automatically (auto-clean mode)",
+      "createdAt": 1791375586317,
+      "updatedAt": 1791375590238,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791336766471,
+          "at": 1791375586373,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791336766491,
+          "at": 1791375586396,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791336766588,
+          "at": 1791375586495,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -57,7 +58,7 @@
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791336770155,
+          "at": 1791375590146,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -65,9 +66,9 @@
           "from": "no-commits",
           "to": "abandoned",
           "event": "abandon",
-          "at": 1791336770181,
-          "by": "user",
-          "reason": "abandoned by the user"
+          "at": 1791375590171,
+          "by": "host",
+          "reason": "abandoned automatically (auto-clean mode)"
         }
       ]
     },
@@ -75,13 +76,13 @@
       "id": "zombie-rehydrate-002",
       "title": "zombie-rehydrate-002",
       "state": "no-commits",
-      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/ws/.orrery/worktrees/zombie-rehydrate-002",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/zombie-rehydrate-002",
       "branch": "orrery/zombie-rehydrate-002",
       "base": {
         "branch": "main",
-        "commit": "0534017f3203c8c05e3a746424b0e1e09979f80c"
+        "commit": "e7b50a6144e40427d3ac2381054847b837e8baf6"
       },
-      "ownerSession": "session-4e8b89b0-2a9c-4d01-b9ab-d2a248dd7d1c",
+      "ownerSession": "session-a9d67fbd-af8e-44cb-9382-84befbfbb3c7",
       "boundChild": null,
       "scope": [],
       "setup": {
@@ -89,21 +90,21 @@
       },
       "landableTree": null,
       "reason": "no commits ahead of main",
-      "createdAt": 1791250367636,
-      "updatedAt": 1791336768358,
+      "createdAt": 1791289187516,
+      "updatedAt": 1791375588315,
       "history": [
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791250367636,
+          "at": 1791289187516,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791336768358,
+          "at": 1791375588315,
           "by": "host",
           "reason": "no commits ahead of main"
         }
@@ -113,11 +114,11 @@
       "id": "zombie-forced-003",
       "title": "zombie-forced-003",
       "state": "abandoned",
-      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/ws/.orrery/worktrees/zombie-forced-003",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/zombie-forced-003",
       "branch": "orrery/zombie-forced-003",
       "base": {
         "branch": "main",
-        "commit": "0534017f3203c8c05e3a746424b0e1e09979f80c"
+        "commit": "e7b50a6144e40427d3ac2381054847b837e8baf6"
       },
       "ownerSession": "session-eeeeeeee-dead-dead-dead-eeeeeeeeeeee",
       "boundChild": null,
@@ -127,21 +128,21 @@
       },
       "landableTree": null,
       "reason": "abandoned by the user",
-      "createdAt": 1791250369444,
-      "updatedAt": 1791336770264,
+      "createdAt": 1791289189368,
+      "updatedAt": 1791375590362,
       "history": [
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791250369444,
+          "at": 1791289189368,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791336770263,
+          "at": 1791375590361,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -149,14 +150,14 @@
           "from": "no-commits",
           "to": "abandoned",
           "event": "abandon",
-          "at": 1791336770264,
+          "at": 1791375590362,
           "by": "user",
           "reason": "abandoned by the user"
         }
       ],
       "cleanup": {
         "mode": "keep",
-        "at": 1791336770264,
+        "at": 1791375590362,
         "by": "user"
       }
     }

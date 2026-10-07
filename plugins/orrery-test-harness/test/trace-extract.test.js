@@ -174,6 +174,16 @@ const PRE_MIGRATION_KEYS = [
   'resumeContextSeen',
   'workerCommittedSeen',
   'workerDoneSeen',
+  // worktree-auto-approve scenario observations (per-session auto-approve
+  // switch, card-free auto lands, branch kept vs deleted)
+  'approveManualOk',
+  'invalidRejected',
+  'switchCleanOk',
+  'viewCleanOk',
+  'switchKeepOk',
+  'viewKeepOk',
+  'cleanLaneLanded',
+  'keepLaneLanded',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

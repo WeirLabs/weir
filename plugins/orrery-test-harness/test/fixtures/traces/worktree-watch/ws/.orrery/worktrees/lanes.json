@@ -5,15 +5,15 @@
     {
       "id": "watch-lane-001",
       "title": "Watch lane",
-      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/fixture-selfcontainment-068/.orrery/it-root/ws/.orrery/worktrees/watch-lane-001",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/watch-lane-001",
       "branch": "orrery/watch-lane-001",
       "base": {
         "branch": "main",
-        "commit": "55da48c666e7858c342c6c4a3713128363eb1a0f"
+        "commit": "67263d82ccfbd05bbc56408329be8df98cc6a1a1"
       },
       "scope": [],
       "state": "no-commits",
-      "ownerSession": "session-64ac8f24-64f1-4ef7-a374-854b1b0c6afe",
+      "ownerSession": "session-4902a043-6a8b-4e5a-be1c-ca255becf42c",
       "boundChild": null,
       "baseMoved": false,
       "landableTree": null,
@@ -24,28 +24,28 @@
       "land": null,
       "cleanup": null,
       "reason": "no commits ahead of main",
-      "createdAt": 1791290427814,
-      "updatedAt": 1791290428281,
+      "createdAt": 1791375567299,
+      "updatedAt": 1791375567667,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791290427853,
+          "at": 1791375567352,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791290427922,
+          "at": 1791375567414,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791290428002,
+          "at": 1791375567501,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -53,7 +53,7 @@
           "from": "no-commits",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791290428281,
+          "at": 1791375567667,
           "by": "host",
           "reason": "no commits ahead of main"
         }

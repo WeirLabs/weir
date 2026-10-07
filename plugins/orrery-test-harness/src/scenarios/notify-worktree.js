@@ -11,8 +11,12 @@
 // logs its argv, and the assert reads that log. Every module between the
 // card and the command — funnel emit, cordis dispatch, notify classification,
 // composition, coalescing, channel fallback, notifier — is production code.
-// The merge-approval card is auto-approved by the user-questions stub
-// (choosing the card's first option); the cleanup card that follows must NOT
+// Sessions default to auto-clean since the auto-approve feature: this
+// scenario pins the CARD behavior, so the mock first switches the session to
+// manual through the real /worktree approve command (the probe drives
+// commands.execute). The merge-approval card is then auto-answered by the
+// user-questions stub (choosing the card's first option); the cleanup card
+// that follows must NOT
 // emit (whitelist), which the trace assertion pins. On win32 the platform
 // command (powershell.exe) cannot be PATH-stubbed, so only the emit seam is
 // asserted there — the command construction itself is unit-tested.
@@ -48,6 +52,14 @@ function decide(options, obs) {
     return toolCallChunks(process.platform === 'win32' ? 'pwsh' : 'bash', { command, workdir: LANE_PATH, description: 'commit the lane work' })
   }
   // Parent brain: branch on the last tool result, never on role heuristics.
+  // The feature default is auto-clean: this scenario pins the CARD behavior,
+  // so the session switches itself to manual through the real command path
+  // before any lane exists (the probe drives commands.execute — the same
+  // lifecycle a user-typed /worktree approve manual records).
+  if (!history.includes('done APPROVE_MANUAL')) return toolCallChunks('worktree_approve_probe', { op: 'approve', mode: 'manual', _marker: 'APPROVE_MANUAL' })
+  // The probe result is the first non-empty tool turn, so the open gate must
+  // not hide behind the lastTool fallback (it branches on history only).
+  if (!history.includes(`lane ${LANE}: ready`) && !history.includes(`merged orrery/${LANE} into main`)) return toolCallChunks('worktree_open', { title: TITLE })
   if (lastTool.includes(`merged orrery/${LANE} into main`)) return textChunks('NOTIFY_PROBE_DONE')
   if (lastTool.includes(`[worktree] lane ${LANE} landable`)) return toolCallChunks('worktree_land', { lane: LANE })
   if (lastTool.includes(`lane ${LANE}: ready`)) {
@@ -66,6 +78,8 @@ function observe(obs) {
   return {
     // The merge result line reached the parent's context (land succeeded).
     notifyMergeSeen: obs.transcript.includes(`merged orrery/${LANE} into main`),
+    approveManualOk: /done APPROVE_MANUAL:.*"commandKind":"success"/.test(obs.transcript)
+      && /done APPROVE_MANUAL:.*Auto-approve mode: manual \(session override; the global default remains auto-clean\)/.test(obs.transcript),
   }
 }
 
@@ -111,6 +125,7 @@ function assert(view) {
   const lane = ledger?.lanes?.find((entry) => entry.id === LANE)
   const taps = view.records.filter((record) => record.kind === 'worktree-question')
   view.check('the lane merged through the auto-approved card and was kept afterwards', lane?.state === 'kept' && typeof lane?.land?.commit === 'string', JSON.stringify(lane))
+  view.check('the session switched itself to manual before the land (session override echo)', view.requests.some((record) => record.approveManualOk), JSON.stringify(view.requests.filter((record) => record.lastTool?.includes('done APPROVE_MANUAL'))))
   view.check(
     'the ask funnel emitted worktree/question exactly once, for the merge-approval card',
     taps.length === 1 && taps[0]?.question === `Merge lane "${TITLE}" into main?` && typeof taps[0]?.session === 'string',

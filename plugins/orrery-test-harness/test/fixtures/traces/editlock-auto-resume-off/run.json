@@ -1,8 +1,8 @@
 {
   "scenario": "editlock-auto-resume-off",
-  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
   "code": 0,
   "stdout": "auto-resume-off stayed stopped\n",
   "stderr": "\n",
-  "sessionId": "session-566e1d41-e98c-431f-9b4e-854ed5e99977"
+  "sessionId": "session-91f91b1e-1b6f-4a45-a220-7aed2f861742"
 }

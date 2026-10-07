@@ -1,6 +1,6 @@
 {
   "scenario": "cold-session",
-  "home": "/Users/young/Documents/Orrery/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
   "code": 0,
   "stdout": "cold session probe done\n",
   "stderr": "",

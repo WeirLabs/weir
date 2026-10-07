@@ -196,6 +196,8 @@ function recordRun(run) {
         ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')]]
         : run.scenario === 'notify-worktree'
           ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')], ['notify-delivery.log', 'notify-delivery.log']]
+        : run.scenario === 'worktree-auto-approve'
+          ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')]]
         : run.scenario === 'zombie-lane' || run.scenario === 'lane-resumable'
           ? [[join('.orrery', 'worktrees', 'lanes.json'), join('.orrery', 'worktrees', 'lanes.json')]]
         : run.scenario.startsWith('editlock-stop-')

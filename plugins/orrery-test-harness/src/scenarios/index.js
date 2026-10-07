@@ -37,6 +37,7 @@ import resumeIncarnation from './resume-incarnation.js'
 import capabilityRemote from './capability-remote.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
+import worktreeAutoApprove from './worktree-auto-approve.js'
 import childPrompt from './child-prompt.js'
 import staleSweep from './editlock-stale-sweep.js'
 import staleSweepOff from './editlock-stale-sweep-off.js'
@@ -58,6 +59,7 @@ SCENARIOS.push(capabilityPresetsSurface)
 SCENARIOS.push(resumeIncarnation)
 SCENARIOS.push(worktreeWatch)
 SCENARIOS.push(notifyWorktree)
+SCENARIOS.push(worktreeAutoApprove)
 SCENARIOS.push(childPrompt)
 SCENARIOS.push(staleSweep)
 SCENARIOS.push(staleSweepOff)

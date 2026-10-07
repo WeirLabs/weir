@@ -5,50 +5,50 @@
     {
       "id": "lane-resumable-001",
       "title": "Lane resumable",
-      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/resumable-lane-workers-090/.orrery/it-root/ws/.orrery/worktrees/lane-resumable-001",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/lane-resumable-001",
       "branch": "orrery/lane-resumable-001",
       "base": {
         "branch": "main",
-        "commit": "c42283e250fe6fee375e6d1300a98891b545c81b"
+        "commit": "7b5a2fe5153e58aa7629b37823c5c157134ec275"
       },
       "scope": [],
       "state": "landable",
-      "ownerSession": "session-b280f82b-9261-4ca9-8e63-664bc237f6b2",
+      "ownerSession": "session-839b9c85-2075-476e-ad71-eb87be1d48ec",
       "boundChild": null,
       "baseMoved": false,
-      "landableTree": "f673df72ca7b455c0c685b4b5c9f6213b5c88770",
+      "landableTree": "0e0367b87e0dfa3d547673cced0f2bbabf30ceee",
       "setup": {
         "status": "none"
       },
       "check": {
         "enabled": false,
-        "tree": "f673df72ca7b455c0c685b4b5c9f6213b5c88770"
+        "tree": "0e0367b87e0dfa3d547673cced0f2bbabf30ceee"
       },
       "land": null,
       "cleanup": null,
       "reason": null,
-      "createdAt": 1791342220674,
-      "updatedAt": 1791342222016,
+      "createdAt": 1791375591242,
+      "updatedAt": 1791375592573,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791342220714,
+          "at": 1791375591294,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791342220738,
+          "at": 1791375591322,
           "by": "host"
         },
         {
           "from": "working",
           "to": "landable",
           "event": "checked",
-          "at": 1791342222016,
+          "at": 1791375592573,
           "by": "host"
         }
       ]
