@@ -1,2 +1,8 @@
 packages:
   - plugins/*
+
+# Bundle manifests declare peerDependencies on @deepseek-ai/dsh (the DSH
+# compatibility gate). pnpm's default auto-install-peers would pull the whole
+# published DSH runtime into this workspace's node_modules on every install;
+# the DSH profile itself also runs with autoInstallPeers: false. Keep it off.
+autoInstallPeers: false
