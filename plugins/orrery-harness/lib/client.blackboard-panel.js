@@ -49,8 +49,17 @@ window.__ModuleLoader__.load({
 			const el = event?.currentTarget;
 			if (el && el.style) Object.assign(el.style, styles);
 		};
+		// Focus ring follows focus-visible semantics: keyboard navigation paints
+		// the outline, pointer interaction never does (a clicked button must not
+		// keep a persistent highlight). Modality is tracked once per window.
+		let keyboardModality = false;
+		if (typeof window !== "undefined" && typeof window.addEventListener === "function" && !window.__orreryBlackboardModality) {
+			window.__orreryBlackboardModality = true;
+			window.addEventListener("keydown", (event) => { if (event.key === "Tab") keyboardModality = true; }, true);
+			window.addEventListener("pointerdown", () => { keyboardModality = false; }, true);
+		}
 		const ring = {
-			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }),
+			onFocus: (event) => { if (keyboardModality) paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }); },
 			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 		};
 		const hover = (over, out) => ({
@@ -822,7 +831,7 @@ window.__ModuleLoader__.load({
 							entryChip(row.entryType),
 							row.promoted ? promotedBadge(row.promoted) : null
 						] }),
-						row.summary.fact !== "" ? react_jsx_runtime.jsx("span", { style: S.row.desc, title: row.summary.fact, children: row.summary.fact }) : null
+						row.summary !== "" ? react_jsx_runtime.jsx("span", { style: S.row.desc, title: row.summary, children: row.summary }) : null
 					] }),
 					react_jsx_runtime.jsx("span", {
 						style: S.row.meta,
@@ -1004,9 +1013,7 @@ window.__ModuleLoader__.load({
 												react_jsx_runtime.jsx("span", { style: S.row.meta, children: t("blackboard.rowMeta", "{read} reads · {watching} watching").replace("{read}", String(entry.readCount)).replace("{watching}", String(entry.subscribeCount)) }),
 												react_jsx_runtime.jsx("span", { style: S.row.meta, children: t("blackboard.updated", "updated {time}").replace("{time}", model.formatTimeOf(entry.updatedAt, nowMs)) })
 											] }),
-										summaryBlock("blackboard.fact", "Fact", entry.summary.fact),
-										summaryBlock("blackboard.cost", "Cost", entry.summary.cost),
-										summaryBlock("blackboard.reVerify", "Re-verify", entry.summary.reVerify),
+										summaryBlock("blackboard.summary", "Summary", entry.summary),
 										react_jsx_runtime.jsxs("div", { style: S.detail.block, children: [
 											react_jsx_runtime.jsx("div", { style: S.detail.label, children: t("blackboard.content", "Content") }),
 											react_jsx_runtime.jsx("pre", { style: S.detail.content, children: entry.content ?? "" })
@@ -1084,9 +1091,7 @@ window.__ModuleLoader__.load({
 										errors.entryType ? react_jsx_runtime.jsx("div", { style: S.form.error, children: fieldError(errors.entryType) }) : null
 									]
 								}, "type"),
-								draftField("fact", "blackboard.fact", "Fact", t("blackboard.formFactPlaceholder", "One sentence: the finding")),
-								draftField("cost", "blackboard.cost", "Cost", t("blackboard.formCostPlaceholder", "What it took to obtain")),
-								draftField("reVerify", "blackboard.reVerify", "Re-verify", t("blackboard.formReVerifyPlaceholder", "The command/script that verifies it again")),
+								draftField("summary", "blackboard.summary", "Summary", t("blackboard.formSummaryPlaceholder", "One or two sentences: the finding, what it cost, how to verify it")),
 								react_jsx_runtime.jsxs("div", {
 									children: [
 										react_jsx_runtime.jsx("div", { style: S.detail.label, children: t("blackboard.content", "Content") }),

@@ -27,8 +27,8 @@ window.__ModuleLoader__.load({
 		/** Verbatim copy of the kernel's key rule (src/blackboard/kernel.js KEY_PATTERN): a letter/digit first, then letters, digits and . _ - / */
 		const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 
-		/** The three testimony elements a summary must carry (kernel validateSummary). */
-		const SUMMARY_FIELDS = Object.freeze(["fact", "cost", "reVerify"]);
+		/** Free-text summary cap (mirrors the kernel's validateSummary). */
+		const SUMMARY_MAX_LENGTH = 500;
 
 		/** Watch polling gives up after this many consecutive carrier failures. */
 		const WATCH_GIVE_UP_AFTER = 3;
@@ -103,15 +103,10 @@ window.__ModuleLoader__.load({
 
 		/** Defensive normalization of one wire row (list or read shape; content only present on reads). */
 		function entryRowOf(raw) {
-			const summary = raw?.summary && typeof raw.summary === "object" ? raw.summary : {};
 			const row = {
 				key: typeof raw?.key === "string" ? raw.key : "unknown",
 				entryType: typeof raw?.entryType === "string" ? raw.entryType : "unknown",
-				summary: {
-					fact: typeof summary.fact === "string" ? summary.fact : "",
-					cost: typeof summary.cost === "string" ? summary.cost : "",
-					reVerify: typeof summary.reVerify === "string" ? summary.reVerify : "",
-				},
+				summary: typeof raw?.summary === "string" ? raw.summary : "",
 				readCount: Number.isSafeInteger(raw?.readCount) ? raw.readCount : 0,
 				subscribeCount: Number.isSafeInteger(raw?.subscribeCount) ? raw.subscribeCount : 0,
 				updatedAt: typeof raw?.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
@@ -205,7 +200,7 @@ window.__ModuleLoader__.load({
 
 		// ---- list shaping (mirrors the kernel's list filter semantics) ----
 
-		/** Filter rows by exact entryType and a case-insensitive substring over key + the summary triple — the kernel list haystack. */
+		/** Filter rows by exact entryType and a case-insensitive substring over key + summary — the kernel list haystack. */
 		function filterEntries(rows, { type, query } = {}) {
 			let list = Array.isArray(rows) ? rows : [];
 			if (typeof type === "string" && type !== "" && ENTRY_TYPES.includes(type)) {
@@ -213,7 +208,7 @@ window.__ModuleLoader__.load({
 			}
 			const needle = typeof query === "string" && query.trim() !== "" ? query.trim().toLowerCase() : null;
 			if (needle !== null) {
-				list = list.filter((row) => `${row?.key ?? ""} ${row?.summary?.fact ?? ""} ${row?.summary?.cost ?? ""} ${row?.summary?.reVerify ?? ""}`.toLowerCase().includes(needle));
+				list = list.filter((row) => `${row?.key ?? ""} ${row?.summary ?? ""}`.toLowerCase().includes(needle));
 			}
 			return list;
 		}
@@ -316,7 +311,7 @@ window.__ModuleLoader__.load({
 
 		/** The blank create draft (entryType defaults to the first enum value so the segmented control always has a selection). */
 		function emptyEditorDraft() {
-			return { key: "", entryType: ENTRY_TYPES[0], fact: "", cost: "", reVerify: "", content: "" };
+			return { key: "", entryType: ENTRY_TYPES[0], summary: "", content: "" };
 		}
 
 		/** The update draft seeded from a full read entry. */
@@ -324,16 +319,15 @@ window.__ModuleLoader__.load({
 			return {
 				key: typeof entry?.key === "string" ? entry.key : "",
 				entryType: ENTRY_TYPES.includes(entry?.entryType) ? entry.entryType : ENTRY_TYPES[0],
-				fact: entry?.summary?.fact ?? "",
-				cost: entry?.summary?.cost ?? "",
-				reVerify: entry?.summary?.reVerify ?? "",
+				summary: typeof entry?.summary === "string" ? entry.summary : "",
 				content: typeof entry?.content === "string" ? entry.content : "",
 			};
 		}
 
 		/**
 		 * Per-field draft errors mirroring the kernel's write gate (validateKey,
-		 * the closed entryType enum, the summary triple, non-empty content); an
+		 * the closed entryType enum, non-empty free-text summary within the
+		 * cap, non-empty content); an
 		 * empty object means the draft may be submitted. The server stays
 		 * authoritative — this only keeps obviously bad writes off the wire.
 		 */
@@ -343,29 +337,24 @@ window.__ModuleLoader__.load({
 			if (key === "") errors.key = "required";
 			else if (!KEY_PATTERN.test(key)) errors.key = "invalid";
 			if (!ENTRY_TYPES.includes(draft?.entryType)) errors.entryType = "invalid";
-			for (const field of SUMMARY_FIELDS) {
-				if (typeof draft?.[field] !== "string" || draft[field].trim() === "") errors[field] = "required";
-			}
+			if (typeof draft?.summary !== "string" || draft.summary.trim() === "") errors.summary = "required";
+			else if (draft.summary.trim().length > SUMMARY_MAX_LENGTH) errors.summary = "invalid";
 			if (typeof draft?.content !== "string" || draft.content.trim() === "") errors.content = "required";
 			return errors;
 		}
 
-		/** The write payload for a valid draft (summary re-assembled as the kernel's triple). */
+		/** The write payload for a valid draft (free-text summary). */
 		function editorWritePayload(draft) {
 			return {
 				key: typeof draft?.key === "string" ? draft.key.trim() : "",
 				entryType: draft?.entryType,
-				summary: {
-					fact: draft?.fact?.trim() ?? "",
-					cost: draft?.cost?.trim() ?? "",
-					reVerify: draft?.reVerify?.trim() ?? "",
-				},
+				summary: draft?.summary?.trim() ?? "",
 				content: draft?.content ?? "",
 			};
 		}
 
 		exports.ENTRY_TYPES = ENTRY_TYPES;
-		exports.SUMMARY_FIELDS = SUMMARY_FIELDS;
+		exports.SUMMARY_MAX_LENGTH = SUMMARY_MAX_LENGTH;
 		exports.WATCH_GIVE_UP_AFTER = WATCH_GIVE_UP_AFTER;
 		exports.foldRemoteResult = foldRemoteResult;
 		exports.createBlackboardChannel = createBlackboardChannel;
