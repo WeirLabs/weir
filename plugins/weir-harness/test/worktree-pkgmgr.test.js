@@ -176,7 +176,15 @@ describe('createSetupResolver against the real host', () => {
   const pnpm = `${dshHome}/dsh-runtimes/dsh-primary-runtime/${BUNDLED_REL.pnpm}`
   const bundled = existsSync(node) && existsSync(pnpm)
 
-  it('resolves pnpm to a working invocation (system or bundled)', async () => {
+  it('resolves pnpm to a working invocation (system or bundled)', async (t) => {
+    // Host-contract test: the seam is created with subprocess undefined, so
+    // the system-PATH probe is disabled by design and only the bundled DSH
+    // runtime can satisfy the resolution. Machines without one (e.g. CI
+    // runners) cannot meet the contract — skip like the sibling test.
+    if (!bundled) {
+      t.skip('no DSH bundled runtime on this machine')
+      return
+    }
     const resolve = createSetupResolver({ subprocess: undefined, env: { DSH_HOME: dshHome } })
     const resolution = await resolve('pnpm')
     expect(resolution.ok, JSON.stringify(resolution)).toBe(true)
