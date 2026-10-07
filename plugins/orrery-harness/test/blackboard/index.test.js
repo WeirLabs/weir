@@ -96,7 +96,7 @@ describe('tool surface (S12: object-rooted schemas, closed enum, English discipl
       expect(tool(mount, name).parameters.properties.entryType.type).toBe('string')
     }
     expect(tool(mount, 'blackboard_write').parameters.required).toEqual(['key', 'entryType', 'summary', 'content'])
-    expect(tool(mount, 'blackboard_write').parameters.properties.summary.required).toEqual(['fact', 'cost', 'reVerify'])
+    expect(tool(mount, 'blackboard_write').parameters.properties.summary.type).toBe('string')
   })
 
   it('the markPromoted tool pins the closed destination enum and names the promoted read-only semantics', () => {
@@ -156,7 +156,7 @@ describe('markPromoted tool execution (slice 3: root-gated, fold the kernel stat
   it('the root agent marks an entry promoted; the entry then refuses every mutation', async () => {
     const mount = mountStub()
     const service = mount.provided.get('orreryBlackboard')
-    service.write(rootExec('root'), { key: 'probe.key', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'body' })
+    service.write(rootExec('root'), { key: 'probe.key', entryType: 'map', summary: 'f', content: 'body' })
     const mark = tool(mount, 'blackboard_mark_promoted')
     const result = await mark.execute({ key: 'probe.key', destination: 'docs/spikes.md' }, rootExec('root'))
     expect(result.status).toBe('promoted')
@@ -185,7 +185,7 @@ describe('tool execution: the shared-board flow', () => {
     const mount = mountStub()
     const root = rootExec('root')
     const child = childExec('child', 'root')
-    await tool(mount, 'blackboard_write').execute({ key: 'dsh-runtime-map', entryType: 'map', summary: { fact: 'the fact', cost: 'two searches', reVerify: 'ls packages' }, content: 'full content' }, root)
+    await tool(mount, 'blackboard_write').execute({ key: 'dsh-runtime-map', entryType: 'map', summary: 'the fact', content: 'full content' }, root)
     const listed = await tool(mount, 'blackboard_list').execute({}, child)
     expect(listed.message).toContain('- dsh-runtime-map (map)')
     expect(listed.message).toContain('the fact')
@@ -198,8 +198,8 @@ describe('tool execution: the shared-board flow', () => {
   it('list search and exact type filter work through the tool', async () => {
     const mount = mountStub()
     const root = rootExec('root')
-    await tool(mount, 'blackboard_write').execute({ key: 'layout-map', entryType: 'map', summary: { fact: 'where packages live', cost: 'c', reVerify: 'r' }, content: 'c1' }, root)
-    await tool(mount, 'blackboard_write').execute({ key: 'deadend-x', entryType: 'deadend', summary: { fact: 'plugin does not work', cost: 'c', reVerify: 'r' }, content: 'c2' }, root)
+    await tool(mount, 'blackboard_write').execute({ key: 'layout-map', entryType: 'map', summary: 'where packages live', content: 'c1' }, root)
+    await tool(mount, 'blackboard_write').execute({ key: 'deadend-x', entryType: 'deadend', summary: 'plugin does not work', content: 'c2' }, root)
     expect((await tool(mount, 'blackboard_list').execute({ query: 'PACKAGES' }, root)).message).toContain('layout-map')
     expect((await tool(mount, 'blackboard_list').execute({ entryType: 'deadend' }, root)).message).toContain('deadend-x')
     expect((await tool(mount, 'blackboard_list').execute({ entryType: 'deadend' }, root)).message).not.toContain('layout-map')
@@ -209,7 +209,7 @@ describe('tool execution: the shared-board flow', () => {
     const mount = mountStub()
     const root = rootExec('root')
     const child = childExec('child', 'root')
-    await tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c' }, root)
+    await tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: 'f', content: 'c' }, root)
     const applied = await tool(mount, 'blackboard_apply').execute({ key: 'k' }, child)
     expect(applied.status).toBe('granted')
     await expect(async () => tool(mount, 'blackboard_apply').execute({ key: 'k' }, root)).rejects.toThrow(/held by another agent/)
@@ -228,18 +228,18 @@ describe('tool execution: the shared-board flow', () => {
     const mount = mountStub()
     const root = rootExec('root')
     const child = childExec('child', 'root')
-    await tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c' }, root)
+    await tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: 'f', content: 'c' }, root)
     await tool(mount, 'blackboard_apply').execute({ key: 'k' }, child)
-    await expect(async () => tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c' }, root)).rejects.toThrow(/not held by this session.*held by another agent/)
+    await expect(async () => tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: 'f', content: 'c' }, root)).rejects.toThrow(/not held by this session.*held by another agent/)
     await expect(async () => tool(mount, 'blackboard_delete').execute({ key: 'k' }, root)).rejects.toThrow(/not held by this session/)
     await expect(async () => tool(mount, 'blackboard_delete').execute({ key: 'ghost' }, root)).rejects.toThrow(/does not exist/)
   })
 
-  it('entryType outside the closed enum and a summary missing reVerify are refused at write time', async () => {
+  it('entryType outside the closed enum and a non-string/blank summary are refused at write time', async () => {
     const mount = mountStub()
     const root = rootExec('root')
-    await expect(async () => tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'banana', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c' }, root)).rejects.toThrow(/entryType must be one of/)
-    await expect(async () => tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c' }, content: 'c' }, root)).rejects.toThrow(/summary\.reVerify/)
+    await expect(async () => tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'banana', summary: 'f', content: 'c' }, root)).rejects.toThrow(/entryType must be one of/)
+    await expect(async () => tool(mount, 'blackboard_write').execute({ key: 'k', entryType: 'map', summary: '  ', content: 'c' }, root)).rejects.toThrow(/summary/)
   })
 
   it('reads the write-token TTL live from the settings section', async () => {
@@ -256,7 +256,7 @@ describe('tool execution: the shared-board flow', () => {
   it('agent disposal releases a child token and drops the root board', () => {
     const mount = mountStub()
     const service = mount.provided.get('orreryBlackboard')
-    service.write(rootExec('root'), { key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c' })
+    service.write(rootExec('root'), { key: 'k', entryType: 'map', summary: 'f', content: 'c' })
     service.apply(childExec('child', 'root'), 'k')
     expect(service.tokensOf('root')).toHaveLength(1)
     mount.handlers.get('agent/disposed')({ agent: childExec('child', 'root').agent })

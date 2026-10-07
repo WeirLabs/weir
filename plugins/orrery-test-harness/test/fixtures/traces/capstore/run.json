@@ -1,6 +1,6 @@
 {
   "scenario": "capstore",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
   "code": 0,
   "stdout": "capstore done\n",
   "stderr": "",

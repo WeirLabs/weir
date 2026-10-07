@@ -48,7 +48,7 @@ function apply(ctx, config = {}) {
           // second mark reports the existing marker.
           const marked = service.list(agent, {}).entries.find((entry) => entry.key === 'promote.key')
           report.promotedMarker = marked?.promoted?.destination ?? null
-          const promotedWrite = service.write(agent, { key: 'promote.key', entryType: 'map', summary: { fact: 'x', cost: 'y', reVerify: 'z' }, content: 'no token anyway' })
+          const promotedWrite = service.write(agent, { key: 'promote.key', entryType: 'map', summary: 'x', content: 'no token anyway' })
           report.writeRefused = promotedWrite?.ok === false && /promoted/.test(promotedWrite.error)
           const promotedRemove = service.remove(agent, { key: 'promote.key' })
           report.removeRefused = promotedRemove?.ok === false && /promoted/.test(promotedRemove.error)
@@ -72,11 +72,11 @@ function apply(ctx, config = {}) {
         report.acquired = applied.acquired
         report.tokenString = typeof applied.token === 'string'
         report.expiresAtNumber = typeof applied.expiresAt === 'number'
-        const written = service.write(agent, { key: 'panel.key', entryType: 'map', summary: { fact: 'panel probe', cost: 'one probe', reVerify: 'blackboard_list panel.key' }, content: 'panel payload' })
+        const written = service.write(agent, { key: 'panel.key', entryType: 'map', summary: 'panel probe (one probe; re-verify: blackboard_list panel.key)', content: 'panel payload' })
         report.writeRevision = written?.revision ?? null
         // Arbitration parity: the write consumed the one-shot token, so the
         // next write on the EXISTING entry must fail without a fresh apply.
-        const blocked = service.write(agent, { key: 'panel.key', entryType: 'map', summary: { fact: 'x', cost: 'y', reVerify: 'z' }, content: 'no token' })
+        const blocked = service.write(agent, { key: 'panel.key', entryType: 'map', summary: 'x', content: 'no token' })
         report.blockedWithoutAuthority = blocked?.ok === false
         const reapplied = service.apply(agent, { key: 'panel.key' })
         const removed = service.remove(agent, { key: 'panel.key' })

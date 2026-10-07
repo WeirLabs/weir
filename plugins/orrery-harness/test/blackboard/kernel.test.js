@@ -49,7 +49,7 @@ function makeKernel() {
 function entry(overrides = {}) {
   return {
     key: 'dsh-runtime-map', entryType: 'map',
-    summary: { fact: 'packages live under packages/<group>/<name>', cost: 'two fs searches', reVerify: 'ls packages/*/*/package.json' },
+    summary: 'packages live under packages/<group>/<name>',
     content: 'full layout notes',
     ...overrides,
   }
@@ -72,17 +72,18 @@ describe('entryType closed enum (D4)', () => {
   })
 })
 
-describe('summary testimony validation', () => {
-  it('accepts a summary carrying all three elements and normalizes it', () => {
-    expect(validateSummary({ fact: 'f', cost: 'c', reVerify: 'r' })).toEqual({ fact: 'f', cost: 'c', reVerify: 'r' })
-    expect(validateSummary({ fact: ' f ', cost: 'c', reVerify: 'r', extra: 'ignored' })).toEqual({ fact: 'f', cost: 'c', reVerify: 'r' })
+describe('summary validation (free text)', () => {
+  it('accepts a free-text summary and trims it', () => {
+    expect(validateSummary('packages live under packages/<group>/<name>')).toBe('packages live under packages/<group>/<name>')
+    expect(validateSummary('  padded  ')).toBe('padded')
   })
 
-  it('refuses a missing, empty or blank element (no re-verify = dogma)', () => {
+  it('refuses non-strings, blanks, and over-long summaries (detail belongs in content)', () => {
     expect(() => validateSummary(undefined)).toThrow(/summary/)
-    expect(() => validateSummary({ fact: 'f', cost: 'c' })).toThrow(/summary\.reVerify/)
-    expect(() => validateSummary({ fact: '', cost: 'c', reVerify: 'r' })).toThrow(/summary\.fact/)
-    expect(() => validateSummary({ fact: 'f', cost: '   ', reVerify: 'r' })).toThrow(/summary\.cost/)
+    expect(() => validateSummary({ fact: 'f' })).toThrow(/summary/)
+    expect(() => validateSummary('')).toThrow(/summary/)
+    expect(() => validateSummary('   ')).toThrow(/summary/)
+    expect(() => validateSummary('x'.repeat(501))).toThrow(/500/)
   })
 })
 
@@ -138,7 +139,7 @@ describe('storage and usage counts', () => {
   it('list filters by exact entryType and by case-insensitive query over key and summary', () => {
     const { kernel } = makeKernel()
     kernel.write(BOARD, { holderId: A, ...entry({ key: 'layout-map' }), ttlMs: TTL })
-    kernel.write(BOARD, { holderId: A, ...entry({ key: 'deadend-one', entryType: 'deadend', summary: { fact: 'Vite plugin X does not hot-reload', cost: 'one spike', reVerify: 'touch file, watch' } }), ttlMs: TTL })
+    kernel.write(BOARD, { holderId: A, ...entry({ key: 'deadend-one', entryType: 'deadend', summary: 'Vite plugin X does not hot-reload' }), ttlMs: TTL })
     expect(kernel.list(BOARD, { entryType: 'deadend' }).map((/** @type {any} */ row) => row.key)).toEqual(['deadend-one'])
     expect(kernel.list(BOARD, { entryType: 'map' })).toHaveLength(1)
     expect(kernel.list(BOARD, { query: 'VITE' }).map((/** @type {any} */ row) => row.key)).toEqual(['deadend-one'])
@@ -154,10 +155,10 @@ describe('storage and usage counts', () => {
     kernel.apply(BOARD, { holderId: A, key: 'dsh-runtime-map', ttlMs: TTL })
     const blocker = kernel.apply(BOARD, { holderId: B, key: 'dsh-runtime-map', ttlMs: TTL })
     expect(blocker.status).toBe('contended')
-    const updated = kernel.write(BOARD, { holderId: A, ...entry({ summary: { fact: 'updated fact', cost: 're-checked', reVerify: 'ls again' } }), ttlMs: TTL })
+    const updated = kernel.write(BOARD, { holderId: A, ...entry({ summary: 'updated fact' }), ttlMs: TTL })
     expect(updated.status).toBe('updated')
     const row = kernel.list(BOARD)[0]
-    expect(row.summary.fact).toBe('updated fact')
+    expect(row.summary).toBe('updated fact')
     expect(row.readCount).toBe(1)
     expect(row.subscribeCount).toBe(1)
   })
@@ -193,7 +194,7 @@ describe('arbitration: apply → write → one-shot invalidation', () => {
     expect(applied).toEqual({ status: 'granted', key: 'k', holder: A, expiresAt: clock.now() + TTL, ttlMs: TTL, renewed: false, similarKeys: [] })
     expect(clock.pending()).toBe(1)
     expect(kernel.tokensOf(BOARD)).toEqual([{ key: 'k', holder: A, expiresAt: clock.now() + TTL }])
-    const written = kernel.write(BOARD, { holderId: A, key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c', ttlMs: TTL })
+    const written = kernel.write(BOARD, { holderId: A, key: 'k', entryType: 'map', summary: 'f', content: 'c', ttlMs: TTL })
     expect(written.status).toBe('created')
     expect(kernel.tokensOf(BOARD)).toEqual([])
     expect(clock.pending()).toBe(0)
@@ -203,11 +204,11 @@ describe('arbitration: apply → write → one-shot invalidation', () => {
     const { kernel, clock } = makeKernel()
     kernel.write(BOARD, { holderId: A, ...entry(), ttlMs: TTL })
     kernel.apply(BOARD, { holderId: B, key: 'dsh-runtime-map', ttlMs: TTL })
-    const denied = kernel.write(BOARD, { holderId: A, ...entry({ summary: { fact: 'f2', cost: 'c2', reVerify: 'r2' } }), ttlMs: TTL })
+    const denied = kernel.write(BOARD, { holderId: A, ...entry({ summary: 'f2' }), ttlMs: TTL })
     expect(denied).toEqual({ status: 'no-authority', key: 'dsh-runtime-map', holder: B, expiresAt: clock.now() + TTL })
     // An existing entry with no token at all: holder is null in the refusal.
-    kernel.write(BOARD, { holderId: A, ...entry({ key: 'other', summary: { fact: 'f2', cost: 'c2', reVerify: 'r2' } }), ttlMs: TTL })
-    const fresh = kernel.write(BOARD, { holderId: A, ...entry({ key: 'other', summary: { fact: 'f3', cost: 'c3', reVerify: 'r3' } }), ttlMs: TTL })
+    kernel.write(BOARD, { holderId: A, ...entry({ key: 'other', summary: 'f2' }), ttlMs: TTL })
+    const fresh = kernel.write(BOARD, { holderId: A, ...entry({ key: 'other', summary: 'f3' }), ttlMs: TTL })
     expect(fresh.status).toBe('no-authority')
     expect(fresh.holder).toBeNull()
   })
@@ -236,7 +237,7 @@ describe('arbitration: apply → write → one-shot invalidation', () => {
     expect(renewed.status).toBe('granted')
     expect(renewed.renewed).toBe(true)
     expect(renewed.expiresAt).toBe(clock.now() + TTL)
-    kernel.write(BOARD, { holderId: A, key: 'k', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c', ttlMs: TTL })
+    kernel.write(BOARD, { holderId: A, key: 'k', entryType: 'map', summary: 'f', content: 'c', ttlMs: TTL })
     const again = kernel.apply(BOARD, { holderId: A, key: 'k', ttlMs: TTL })
     expect(again.status).toBe('granted')
     expect(again.renewed).toBe(false)
@@ -283,7 +284,7 @@ describe('arbitration: contention and auto-subscription', () => {
   it('create on a key another agent already applied for fails and subscribes too', () => {
     const { kernel } = makeKernel()
     kernel.apply(BOARD, { holderId: A, key: 'unborn', ttlMs: TTL })
-    const blocked = kernel.write(BOARD, { holderId: B, key: 'unborn', entryType: 'map', summary: { fact: 'f', cost: 'c', reVerify: 'r' }, content: 'c', ttlMs: TTL })
+    const blocked = kernel.write(BOARD, { holderId: B, key: 'unborn', entryType: 'map', summary: 'f', content: 'c', ttlMs: TTL })
     expect(blocked.status).toBe('contended')
     expect(blocked.holder).toBe(A)
     // No entry yet → no subscribeCount, but the subscriber waits for the release.

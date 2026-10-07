@@ -2,12 +2,12 @@
   "label": "realm",
   "present": true,
   "name": "orrery-it",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
   "located": {
     "supported": true,
-    "root": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities"
+    "root": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities"
   },
-  "sessionId": "session-c45855ff-1a1d-4699-b20b-19fc0e67da2e",
+  "sessionId": "session-f1a0d410-407b-4ae2-b049-23696a467843",
   "commit": "committed",
   "read": {
     "kind": "ok",
@@ -19,7 +19,7 @@
       ]
     }
   },
-  "recordPath": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities/sessions/session-c45855ff-1a1d-4699-b20b-19fc0e67da2e/selection.json",
+  "recordPath": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home/orrery/profiles/orrery-it/capabilities/sessions/session-f1a0d410-407b-4ae2-b049-23696a467843/selection.json",
   "dirFiles": [
     "selection.json"
   ]

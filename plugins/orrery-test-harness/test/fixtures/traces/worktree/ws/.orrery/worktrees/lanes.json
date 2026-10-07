@@ -5,15 +5,15 @@
     {
       "id": "it-lane-001",
       "title": "IT lane",
-      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/ws/.orrery/worktrees/it-lane-001",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/ws/.orrery/worktrees/it-lane-001",
       "branch": "orrery/it-lane-001",
       "base": {
         "branch": "main",
-        "commit": "6c94fbdc9c50764e45ff2249f2270b1b7548085e"
+        "commit": "252cf58e466cc6a77d7106bd88f270d3efe62992"
       },
       "scope": [],
       "state": "no-commits",
-      "ownerSession": "session-4448f622-e29f-49d6-811b-8ffbc99f7797",
+      "ownerSession": "session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad",
       "boundChild": null,
       "baseMoved": false,
       "landableTree": null,
@@ -24,28 +24,28 @@
       "land": null,
       "cleanup": null,
       "reason": "no commits ahead of main",
-      "createdAt": 1791375519410,
-      "updatedAt": 1791375525027,
+      "createdAt": 1791395195968,
+      "updatedAt": 1791395201778,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791375519451,
+          "at": 1791395196008,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791375519471,
+          "at": 1791395196029,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791375525027,
+          "at": 1791395201778,
           "by": "host",
           "reason": "no commits ahead of main"
         }

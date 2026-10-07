@@ -1,6 +1,6 @@
 {
   "scenario": "blackboard",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-inject-notify-098/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
   "code": 0,
   "stdout": "BB_PARENT_DONE: blackboard scenario finished\n",
   "stderr": "",

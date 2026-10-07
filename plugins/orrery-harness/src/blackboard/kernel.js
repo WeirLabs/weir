@@ -23,8 +23,8 @@ export const PROMOTION_DESTINATIONS = Object.freeze(['docs/spikes.md', 'runtime-
 /** Short ASCII identifier: letter/digit first, then letters, digits and . _ - / */
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/
 
-/** The three testimony elements a summary must carry (fact / cost / re-verify). */
-const SUMMARY_FIELDS = Object.freeze(['fact', 'cost', 'reVerify'])
+/** Free-text summary cap; the detail belongs in content. */
+const SUMMARY_MAX_LENGTH = 500
 
 /**
  * Validate one entryType against the closed enum. Throws on anything else:
@@ -53,26 +53,23 @@ export function validatePromotionDestination(destination) {
 }
 
 /**
- * Validate and normalize a structured testimony summary. All three elements
- * must be non-empty strings: an entry without a re-verify path is dogma, so
- * a missing element refuses the write instead of degrading silently.
+ * Validate and normalize a free-text summary: one or two sentences, no
+ * enforced inner structure (the fact/cost/re-verify guidance lives in the
+ * tool description as writing advice, not schema — UX refinement: the
+ * structured triple was too fine-grained and less generic than the original
+ * summary + content two-layer design).
  * @param {unknown} summary
- * @returns {{ fact: string, cost: string, reVerify: string }} the normalized summary
+ * @returns {string} the normalized summary
  */
 export function validateSummary(summary) {
-  if (summary === null || typeof summary !== 'object' || Array.isArray(summary)) {
-    throw new Error('blackboard: summary must be an object carrying the three testimony elements (fact, cost, reVerify)')
+  if (typeof summary !== 'string' || summary.trim().length === 0) {
+    throw new Error('blackboard: summary must be a non-empty free-text string (one or two sentences; keep the detail in content)')
   }
-  /** @type {{ fact: string, cost: string, reVerify: string }} */
-  const out = { fact: '', cost: '', reVerify: '' }
-  for (const field of SUMMARY_FIELDS) {
-    const value = summary[field]
-    if (typeof value !== 'string' || value.trim().length === 0) {
-      throw new Error(`blackboard: summary.${field} must be a non-empty string (fact = the finding, cost = what it took to obtain it, reVerify = the command/script that verifies it again)`)
-    }
-    out[field] = value.trim()
+  const trimmed = summary.trim()
+  if (trimmed.length > SUMMARY_MAX_LENGTH) {
+    throw new Error(`blackboard: summary must be at most ${SUMMARY_MAX_LENGTH} characters (got ${trimmed.length}); keep the detail in content`)
   }
-  return out
+  return trimmed
 }
 
 /**
@@ -239,11 +236,11 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       for (const entry of state.entries.values()) {
         if (entryType !== null && entry.entryType !== entryType) continue
         if (query !== null) {
-          const haystack = `${entry.key} ${entry.summary.fact} ${entry.summary.cost} ${entry.summary.reVerify}`.toLowerCase()
+          const haystack = `${entry.key} ${entry.summary}`.toLowerCase()
           if (!haystack.includes(query)) continue
         }
         rows.push({
-          key: entry.key, entryType: entry.entryType, summary: { ...entry.summary },
+          key: entry.key, entryType: entry.entryType, summary: entry.summary,
           readCount: entry.readCount, subscribeCount: entry.subscribeCount,
           createdAt: entry.createdAt, updatedAt: entry.updatedAt,
           ...(entry.promoted ? { promoted: { destination: entry.promoted.destination, at: entry.promoted.at } } : {}),
@@ -254,11 +251,13 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
     },
 
     /**
-     * Batch content read; each found entry increments its read count once
-     * (usage evidence, D5). Unknown keys are values, not errors.
-     * @param {string} boardId @param {string[]} keys
+     * Batch content read. Unknown keys are values, not errors.
+     * `count` defaults to true (agent tool reads are usage evidence, D5);
+     * the panel's audit views pass { count: false } — a user inspecting an
+     * entry is auditing, not reusing, and must not move the count.
+     * @param {string} boardId @param {string[]} keys @param {{ count?: boolean }} [options]
      */
-    read(boardId, keys) {
+    read(boardId, keys, { count = true } = {}) {
       if (!Array.isArray(keys) || keys.length === 0) throw new Error('blackboard: keys must be a non-empty array of key strings')
       const state = board(boardId)
       const found = []
@@ -267,9 +266,9 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
         const key = validateKey(raw)
         const entry = state.entries.get(key)
         if (!entry) { missing.push(key); continue }
-        entry.readCount += 1
+        if (count) entry.readCount += 1
         found.push({
-          key, entryType: entry.entryType, summary: { ...entry.summary }, content: entry.content,
+          key, entryType: entry.entryType, summary: entry.summary, content: entry.content,
           readCount: entry.readCount, subscribeCount: entry.subscribeCount,
           createdAt: entry.createdAt, updatedAt: entry.updatedAt,
           ...(entry.promoted ? { promoted: { destination: entry.promoted.destination, at: entry.promoted.at } } : {}),
@@ -314,7 +313,7 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
      * create acquires the token for the new key inside the same call (设计:
      * 创建即对新键先取得写入权). The mutation consumes the token (one-shot).
      * @param {string} boardId
-     * @param {{ holderId: string, key: string, entryType: string, summary: object, content: string, ttlMs: number }} request
+     * @param {{ holderId: string, key: string, entryType: string, summary: string, content: string, ttlMs: number }} request
      */
     write(boardId, { holderId, key, entryType, summary, content, ttlMs }, at = now()) {
       if (typeof holderId !== 'string' || holderId.length === 0) throw new Error('blackboard: session identity unavailable')

@@ -1,8 +1,8 @@
 {
   "scenario": "rehydrate",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
   "code": 0,
   "stdout": "parent observed post-restart group-settled signal\n",
   "stderr": "",
-  "sessionId": "session-186a2b90-4ece-4e13-beb5-b1b5acab00df"
+  "sessionId": "session-3778f0dd-a93e-4d88-a953-6a0176d4d430"
 }

@@ -1,8 +1,8 @@
 {
   "scenario": "editlock-auto-resume",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/auto-approve-integration-tests-093/.orrery/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
   "code": 0,
   "stdout": "auto-resume editing restored\n",
   "stderr": "\n",
-  "sessionId": "session-8fe646f5-0ccb-4e53-9fb0-2ab537413043"
+  "sessionId": "session-3e7a2b3c-e5cb-41c7-a306-0d2dbf119651"
 }
