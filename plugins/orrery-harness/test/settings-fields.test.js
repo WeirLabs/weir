@@ -17,7 +17,7 @@ import { DEFAULTS as NOTIFY_DEFAULTS } from '../src/notify/policy.js'
 // D5 显式拒绝跨运行时统一（ModuleLoader 同包同步 require 不可能 + YAML 层），
 // 代价是新增字段要改三处，本测试让"忘了改"变成响亮失败。
 // 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
-const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
+const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload', 'blackboardWriteTokenTtlMinutes'])
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])
@@ -155,9 +155,9 @@ function chunkFieldDefaults() {
 }
 
 describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
-  it('declares exactly the 40 concrete defaults, frozen, with no entry where unset is meaningful', () => {
+  it('declares exactly the 41 concrete defaults, frozen, with no entry where unset is meaningful', () => {
     expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
-    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(40)
+    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(41)
     for (const key of NO_DEFAULT_KEYS) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must stay unset-meaningful (no default entry)`).toBe(false)
     }
@@ -214,10 +214,10 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
 
   it('the patch row mirrors it: every row key is a FIELD_DEFAULTS key with the same value', () => {
     const entries = patchRowEntries()
-    // the 31 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
+    // the 32 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
     // absences (whitelist tables, defaultsPath/Reload) are covered by the
     // dedicated tests above, not required here
-    expect(entries.size).toBe(31)
+    expect(entries.size).toBe(32)
     for (const [key, raw] of entries) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `patch row key ${key} has no FIELD_DEFAULTS entry`).toBe(true)
       expect(FIELD_DEFAULTS[key], `patch row value of ${key} drifted from FIELD_DEFAULTS`).toEqual(coerceRowValue(raw))
