@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-08
+
 ### Added
 
 - **CI/CD 发布管线**：新增 GitHub Actions——`ci.yml`（push/PR 门禁：静态检查、单元测试、release 脚本测试、pack 冒烟验证 tarball 形状）与加固版 `release.yml`（tag 与 manifest 版本一致性守卫、OIDC trusted publishing、自动从 CHANGELOG 对应版本段生成 GitHub Release notes）。
