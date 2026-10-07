@@ -20,7 +20,8 @@
     "./preset-surface-probe": "./src/preset-surface-probe.js",
     "./capability-remote-probe": "./src/capability-remote-probe.js",
     "./worktree-approve-probe": "./src/worktree-approve-probe.js",
-    "./user-questions-stub": "./src/user-questions-stub.js"
+    "./user-questions-stub": "./src/user-questions-stub.js",
+    "./blackboard-remote-probe": "./src/blackboard-remote-probe.js"
   },
   "dsh": {
     "bundle": {
