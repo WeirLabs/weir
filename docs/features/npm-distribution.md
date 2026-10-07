@@ -33,7 +33,7 @@ Weir 以 `weir-harness` 包发布到公共 npm registry。DSH 的插件管理原
 
 **Registry 安装的两道校验**：装前 preflight（`pnpm view` 读 peer，仅 registry spec 触发）与装后校验（恰好新增一个依赖、patch 可加载、peer 复查；失败回滚 profile 的 `package.json` + `pnpm-lock.yaml`）。路径/tarball 安装只有装后校验。
 
-**打版四位一体**：`scripts/release.mjs` 编排——工作树干净检查 → CHANGELOG Unreleased 固化为版本段 → manifest version bump → check + 单测 + 集成测试门禁 → `git tag vX.Y.Z` → `npm publish`。后续接 npm Trusted Publishing（OIDC）后，publish 由 tag 触发的 GitHub Actions 执行并附 `--provenance`。
+**打版四位一体**：`scripts/release.mjs` 编排——工作树干净检查 → CHANGELOG Unreleased 固化为版本段 → manifest version bump → check + 单测 + 集成测试门禁 → `git tag vX.Y.Z` → `npm publish`。tag 推送后由 `.github/workflows/release.yml` 接管：先校验 tag 与 manifest 版本一致（防手工乱打 tag），再经 npm Trusted Publishing（OIDC）带 `--provenance` 发布，最后从 CHANGELOG 对应版本段自动生成 GitHub Release notes。日常门禁由 `.github/workflows/ci.yml` 承担：push/PR 触发静态检查、单元测试、release 脚本测试与 pack 冒烟（prepack 门禁 + tarball 形状断言）。集成测试因依赖桌面运行时留在本地 release 门禁，不进 CI。
 
 ## 边界与失败语义
 
