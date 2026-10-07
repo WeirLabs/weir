@@ -387,11 +387,40 @@ describe('client.settings-page chunk', () => {
     const maintenance = findAll(rendered.children, (node) => node.__type === editors.EditLockMaintenanceField)
     expect(maintenance).toHaveLength(1)
     expect(rowKeys(cards, 'editing')).toContain('editLockMaintenance')
-    // the LSP manager as a child of the lsp switch, fed the lspServers draft
+    // the LSP manager row: the raw lspServers JSON row folded in — ONE
+    // custom node carrying the field (robashList pattern), keyed lspServers,
+    // fed the lspServers draft plus the override/reset wiring
     const manager = findAll(rendered.children, (node) => node.__type === editors.LspManagerField)
     expect(manager).toHaveLength(1)
+    expect(manager[0].field).toBe('lspServers')
+    expect(manager[0].text).toBe('')
     expect(manager[0].serversText).toBe('')
-    expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled', 'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs', 'lspServers', 'lspManager'])
+    expect(manager[0].overridden).toBe(false)
+    expect(manager[0].invalid).toBe(false)
+    expect(typeof manager[0].edit).toBe('function')
+    expect(typeof manager[0].onReset).toBe('function')
+    expect(typeof manager[0].t).toBe('function')
+    expect(manager[0].disabled).toBe(false)
+    expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled', 'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs', 'lspServers'])
+    // the merged node declaration: custom-with-field sharing parent/when
+    // with the old pair, exactly one lspManager slot in the group
+    const lspGroup = exports.GROUPS.find((group) => group.id === 'lsp')
+    const lspServersNode = lspGroup.fields.find((node) => node.field === 'lspServers')
+    expect(lspServersNode.kind).toBe('custom')
+    expect(lspServersNode.slot).toBe('lspManager')
+    expect(lspServersNode.parent).toBe('lspEnabled')
+    expect(lspGroup.fields.filter((node) => node.slot === 'lspManager')).toHaveLength(1)
+    // onReset targets lspServers; an overridden saved value flows through
+    const resets = []
+    const overriddenRender = renderCard(exports, editors, {
+      fields: makeFields({ lspEnabled: { text: 'true' }, lspServers: { text: '{"zig":{"command":"zls"}}', overridden: true } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }, { resetField: (name) => resets.push(name) })
+    const overriddenManager = findAll(overriddenRender.children, (node) => node.__type === editors.LspManagerField)[0]
+    expect(overriddenManager.serversText).toBe('{"zig":{"command":"zls"}}')
+    expect(overriddenManager.overridden).toBe(true)
+    overriddenManager.onReset()
+    expect(resets).toEqual(['lspServers'])
     // the notify permission entry stays rendered (self-gating inside)
     const permissions = findAll(rendered.children, (node) => node.__type === editors.NotifyPermissionsField)
     expect(permissions).toHaveLength(1)
@@ -1102,6 +1131,11 @@ describe('client.settings-page chunk', () => {
       }
       // the disabled-categories editor's own panel keys resolve too
       for (const key of ['disabledCategoriesCount', 'disabledCategoriesPanelHint', 'disabledCategoriesInvalid']) {
+        expectResolved(dict, key)
+      }
+      // the LSP manager's malformed-JSON hint resolves too (the folded
+      // lspServers row's error state)
+      for (const key of ['lspManagerInvalidJson']) {
         expectResolved(dict, key)
       }
     }

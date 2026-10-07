@@ -7,6 +7,7 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
+		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		// LSP service manager panel: status over the catalog + one-click
 		// install + custom servers, talking to the host over raw fetch
 		// ("/api/orrery-lsp/*"). The lsp model trio (client.lsp-model.js) and
@@ -23,6 +24,8 @@ window.__ModuleLoader__.load({
 		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
 		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
+		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
+		const errorStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-danger-primary, #d33)" };
 		/** Error boundary isolating the LSP manager panel from the settings page. */
 		class LspManagerBoundary extends react.Component {
 			constructor(props) {
@@ -54,6 +57,10 @@ window.__ModuleLoader__.load({
 			const t = props.t;
 			const canEdit = typeof props.edit === "function";
 			const customEntries = model.jsonToLspServers(props.serversText);
+			// Malformed stored JSON (robash precedent): the hint is visible but
+			// the panel still opens with an empty custom map and saving
+			// overwrites the malformed value — the field is never trapped.
+			const serversInvalid = model.lspServersJsonValid(props.serversText) === false;
 			const load = () => {
 				setView({ status: "loading" });
 				fetch("api/orrery-lsp/status", { method: "POST", credentials: "include" })
@@ -198,7 +205,14 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("span", { style: labelStyle, children: t("lspManager") }),
 						react_jsx_runtime.jsx("span", { style: hintStyle, children: t("lspManagerHint") })
 					] }),
-					react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, onClick: toggle, children: open ? t("chainCancel") : t("chainEdit") })
+					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+						react_jsx_runtime.jsx("button", { type: "button", style: chainButtonStyle, disabled: props.disabled, onClick: toggle, children: open ? t("chainCancel") : t("chainEdit") }),
+						serversInvalid ? react_jsx_runtime.jsx("span", { style: errorStyle, children: t("lspManagerInvalidJson") }) : null,
+						props.overridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+							react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
+							react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, disabled: props.disabled, onClick: props.onReset, children: t("reset") })
+						] }) : null
+					] })
 				] }),
 				open ? react_jsx_runtime.jsx(LspManagerBoundary, { t, children: panelBody() }) : null
 			] });

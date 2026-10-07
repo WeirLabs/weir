@@ -29,4 +29,20 @@ describe('client.lsp-model chunk', () => {
     expect(splitInstallCommand('  ')).toBe(undefined)
     expect(splitInstallCommand(undefined)).toBe(undefined)
   })
+
+  it('judges stored lspServers JSON validity: blank or a plain map pass, arrays/scalars/broken JSON fail', async () => {
+    const { exports } = await loadClientChunk('lib/client.lsp-model.js')
+    const { lspServersJsonValid } = exports
+    expect(lspServersJsonValid('')).toBe(true)
+    expect(lspServersJsonValid('   ')).toBe(true)
+    expect(lspServersJsonValid(undefined)).toBe(true)
+    expect(lspServersJsonValid('{}')).toBe(true)
+    expect(lspServersJsonValid('{"zig":{"command":"zls"}}')).toBe(true)
+    expect(lspServersJsonValid('[1]')).toBe(false)
+    expect(lspServersJsonValid('"x"')).toBe(false)
+    expect(lspServersJsonValid('42')).toBe(false)
+    expect(lspServersJsonValid('null')).toBe(false)
+    expect(lspServersJsonValid('not-json')).toBe(false)
+    expect(lspServersJsonValid('{"zig":')).toBe(false)
+  })
 })

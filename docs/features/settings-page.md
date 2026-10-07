@@ -38,7 +38,7 @@ Orrery 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）�
 - **生效值解析（草稿优先）**：`resolveEffectiveValue` 按「可解析草稿 → 已保存值 → 产品默认」求值——草稿为空（clear 语义）取产品默认（布尔走 `BOOLEAN_DEFAULTS` 派生子集，其余各 kind 走 `FIELD_DEFAULTS`，无条目时 `undefined` 即默认不满足条件）；草稿不可解析回退已保存值，避免无效输入期间显隐抖动。布尔开关的 `checked` 显示与条件求值共用这一个 helper，显示与条件不可能不一致。
 - **产品默认值的唯一声明与三层镜像**：`src/settings/sections.js` 导出冻结的 `FIELD_DEFAULTS`（39 个有具体默认值的扁平设置键，纯模块、无新增 import），是唯一权威声明；`cordis.patch.yml` 的 `orrery-settings` 行携带同样值让已保存 profile 解析到默认；客户端 chunk 手维护一份逐字镜像（ModuleLoader 同包同步 require 不可能的既定代价，与 `RESTART_FIELDS` 同款），`BOOLEAN_DEFAULTS` 改为从镜像派生（布尔子集），不再手写第二份字面量。显示层走 `displayText`：字段静止文本为空且有默认条目时把格式化默认值作为 `SettingsValueField` 的 `text` / `SegmentedControl` 的 `value`——纯显示，保存/暂存/覆盖语义不读它。三层漂移由测试对拍钉死：sections.js ↔ 各模块常量（源头）、sections.js ↔ chunk 字面量（raw 文本提取）、sections.js ↔ patch 行（raw 文本提取，不引入 yaml 依赖）。
 - **层级组织与声明校验**：`parent` 必须引用同组字段；`buildLayout(GROUPS)` 产出每组有序树（根保持声明顺序，子节点 DFS 归位到父节点正下方并携带 `depth`），渲染与声明顺序无关。`validateLayout(GROUPS)` 在 chunk 加载时执行：未知父键、跨组父键、父子环、`when` 引用未知设置键、未知环境事实名均以 `SettingsLayoutError`（指明问题键）fail-loud。父隐则子隐由树裁剪天然获得。
-- **特殊编辑器归一**：链式编辑器 ×2、停用类别编辑器、robash 列表 ×5、模型选择器行、LSP 管理器、Edit Lock 维护面板、notify 权限入口统一为 `kind: 'custom'` 节点（携带渲染槽标识），与普通行同享 `parent`/`when`。模型选择器行保持合并语义：节点挂在 `intentGateProvider` 上，两个 folded 字段不独立渲染、`when` 与承载行一致声明；错误边界降级为三个纯文本字段的契约不变。
+- **特殊编辑器归一**：链式编辑器 ×2、停用类别编辑器、robash 列表 ×5、模型选择器行、LSP 管理器、Edit Lock 维护面板、notify 权限入口统一为 `kind: 'custom'` 节点（携带渲染槽标识），与普通行同享 `parent`/`when`。LSP 管理器行已并入原 `lspServers` 原始 JSON 行：单一 custom 节点携带 `lspServers` 字段（robash 列表同款形态，表单层 text-backed），覆盖标记/恢复默认与坏 JSON 报错提示（`lspManagerInvalidJson`，danger token 文案）都收在管理器行的折叠控制区；坏 JSON 时面板仍以空自定义列表打开，增删服务器后保存即覆盖坏值——任何存储态都不会把字段卡死（robash 同款语义）。模型选择器行保持合并语义：节点挂在 `intentGateProvider` 上，两个 folded 字段不独立渲染、`when` 与承载行一致声明；错误边界降级为三个纯文本字段的契约不变。
 - **环境事实端点**：宿主新增 `POST /api/orrery-settings/env`（`src/settings/env-admin.js`，注入 platform 便于测试），返回 `{ ok: true, value: { platform } }`；只读、无秘密、不轮询。接线在 `src/settings/index.js` 经 `ctx.inject(['connection'])`（与 `wireLspAdmin` 同款，S19 不新增 package subpath）；模块本体按 `src/lsp/admin.d.ts` 同款 `.d.ts` 影子声明留在 checkJs 检查图之外。客户端在页面到达时取一次，三态 pending/ready/failed：依赖 env 的条目 pending/failed 均不渲染（`conditionUsesEnv` 判定，`not` 也不例外），failed 控制台警告一次。
 - **分区视觉**：每组一张卡片——`background: var(--dsw-alias-bg-layer-1)`、`border: 1px solid var(--dsw-alias-border-l1)`、圆角（几何硬编码），组标题在卡片内顶部，组内条目间 `border-top: 1px solid var(--dsw-alias-border-l2)` 细分隔；子项 `padding-left` 按 `depth` 递增 + `--dsw-alias-border-l2` 引导线，标签字号随层级略降。全部用色仅主题 token，深浅主题由宿主 token 双值保证。
 - **重启标记同源**：行内常驻 `primitives.Tag`（字典键 `restartRequired`，en 英文/zh 中文）与保存后弹窗共用客户端 `RESTART_FIELDS` 常量；该常量由测试与宿主 `RESTART_KEYS` 逐项对拍，任一侧漂移即红。
@@ -49,6 +49,7 @@ Orrery 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）�
 
 - 环境事实未到达（pending）或端点失败（failed）：依赖 env 的条目保持不渲染，其余条目不受影响；失败控制台警告一次（chunk 生命周期内）。
 - 草稿不可解析：条件按已保存值求值（无抖动）；表单自身契约不变（保存按钮禁用、程序化保存被拒绝）。
+- 已保存的 `lspServers` 是坏 JSON：管理器行显示错误提示，面板以空自定义列表打开；增删后保存覆盖坏值，字段永不被卡死。
 - 隐藏条目：保存值与暂存草稿均保留；隐藏本身不产生任何写入。
 - 非法声明（指错父、跨组父、环、未知条件键/环境名）：chunk 加载即抛 `SettingsLayoutError`，页面宁可不渲染也不渲染错误布局。
 - 保存被宿主拒绝 / 保存进行中 / 空保存计划 / 仅即时键保存：均不出现弹窗、不清既有弹窗；`settingsBus.notify()` 仍在结算后触发一次。触达重启键的落地保存替换弹窗名单。
