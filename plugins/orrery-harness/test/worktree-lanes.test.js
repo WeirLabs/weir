@@ -7,6 +7,7 @@ import { createLaneService } from '../src/worktree/lanes.js'
 import { makeRepo, nodeGitRun, sh } from './helpers/worktree-fixtures.js'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager } from '../src/edit-lock/manager.js'
+import { createWorktreeTools } from '../src/worktree/tools.js'
 
 /** Shell runner over child_process with the host runner's result shape. */
 function nodeShellRun({ command, cwd, timeoutMs }) {
@@ -1206,6 +1207,73 @@ describe('worktree lane service: auto-approve modes', () => {
       expect((await laneOf(h, lane)).state).toBe('landed')
       expect(existsSync(path)).toBe(true)
       expect(sh(h.repo, 'branch', '--list', `orrery/${lane}`)).toContain(`orrery/${lane}`)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('auto-mode land through the tool surface returns the result shape the tool wrapper needs', async () => {
+    const h = harness({ approveMode: 'auto-clean', approveModeSource: 'session', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Tool surface')
+      const tool = createWorktreeTools(h.service).find((entry) => entry.name === 'worktree_land')
+      const value = await tool.execute({ lane }, { agent: h.agent, signal: new AbortController().signal })
+      expect(value.lane).toBe(lane)
+      expect(value.state).toBe('landed')
+      expect(typeof value.summary).toBe('string')
+      expect(value.summary).toContain('merged')
+      expect(value.summary).toContain(value.merge.commit.slice(0, 7))
+      expect(value.summary).toContain('cleanup')
+      expect(value.cleanup.state).toBe('cleaned')
+      expect(value.cleanup.summary).toContain('removed')
+      expect(value.next).toBeNull()
+      // the runtime persists presentationMeta as JSON: an undefined value is dropped
+      const meta = tool.output.presentationMeta({}, value)
+      expect(JSON.parse(JSON.stringify(meta))).toEqual(meta)
+      expect(meta.worktree.lane).toBe(lane)
+      expect(meta.worktree.summary).toBe(value.summary)
+      expect(meta.worktree.cleanup).toEqual(value.cleanup)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a blocked auto cleanup through the tool surface reports the blocking path in result shape', async () => {
+    const h = harness({ approveMode: 'auto-clean', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Blocked surface')
+      const { path } = await laneOf(h, lane)
+      writeFileSync(join(path, 'stray.txt'), 'untracked')
+      const tool = createWorktreeTools(h.service).find((entry) => entry.name === 'worktree_land')
+      const value = await tool.execute({ lane }, { agent: h.agent, signal: new AbortController().signal })
+      expect(value.lane).toBe(lane)
+      expect(value.state).toBe('landed')
+      expect(value.summary).toContain('merged')
+      expect(value.summary).toContain('blocked')
+      expect(value.cleanup.error).toContain('REMOVE_BLOCKED')
+      expect((await laneOf(h, lane)).state).toBe('landed')
+      expect(existsSync(path)).toBe(true)
+      const meta = tool.output.presentationMeta({}, value)
+      expect(JSON.parse(JSON.stringify(meta))).toEqual(meta)
+      expect(meta.worktree.lane).toBe(lane)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('auto-mode abandon through the tool surface is result-shaped too (sibling contract)', async () => {
+    const h = harness({ approveMode: 'auto-keep', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Abandon surface')
+      const tool = createWorktreeTools(h.service).find((entry) => entry.name === 'worktree_abandon')
+      const value = await tool.execute({ lane }, { agent: h.agent, signal: new AbortController().signal })
+      expect(value.lane).toBe(lane)
+      expect(value.state).toBe('abandoned')
+      expect(typeof value.summary).toBe('string')
+      expect(value.summary).toContain('removed')
+      const meta = tool.output.presentationMeta({}, value)
+      expect(JSON.parse(JSON.stringify(meta))).toEqual(meta)
+      expect(meta.worktree.lane).toBe(lane)
     } finally {
       h.cleanup()
     }

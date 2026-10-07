@@ -997,9 +997,10 @@ export function createLaneService(deps) {
     const cleanupMode = approveMode === 'auto-keep' ? 'worktree' : 'all'
     try {
       const cleaned = await cleanup(session, laneId, /** @type {'worktree' | 'all'} */ (cleanupMode), { by: 'host', auto: true, approveMode })
-      return { ...landed, cleanup: { state: cleaned.state, summary: cleaned.summary }, next: cleaned.next, merge: { commit: merged.commit, stat }, diff }
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup (mode ${cleanupMode}): ${cleaned.summary}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { state: cleaned.state, summary: cleaned.summary }, next: cleaned.next })
     } catch (error) {
-      return { ...landed, cleanup: { error: String(/** @type {any} */ (error)?.message ?? error) }, merge: { commit: merged.commit, stat }, diff }
+      const message = String(/** @type {any} */ (error)?.message ?? error)
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup blocked: ${message}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { error: message } })
     }
   }
 
