@@ -14,6 +14,7 @@
     "./context-guard": "./src/context-guard/index.js",
     "./hashline-edit": "./src/hashline-edit/index.js",
     "./edit-lock": "./src/edit-lock/index.js",
+    "./blackboard": "./src/blackboard/index.js",
     "./worktree": "./src/worktree/index.js",
     "./settings": "./src/settings/index.js",
     "./skill-selection": "./src/capabilities/skill-selection-plugin.js",
