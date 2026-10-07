@@ -105,7 +105,7 @@ export function createWorktreeTools(service) {
     },
     {
       name: 'worktree_abandon',
-      description: 'Ask the user to confirm abandoning a lane and choose what to remove (the card states how many unmerged commits would be lost).',
+      description: 'Ask the user to confirm abandoning a lane and choose what to remove (the card states how many unmerged commits would be lost). A lane stuck on a dead worker binding is reconciled before the card: with terminal evidence and neither side live the binding settles automatically; otherwise the card shows the reconciliation outcome and offers a force-reclaim.',
       parameters: { type: 'object', properties: laneParam, required: ['lane'] },
       output: { schema: { type: 'object' }, render, presentationMeta: meta('worktree_abandon') },
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
