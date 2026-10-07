@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **会话黑板（切片三：晋升评估按钮）**：黑板面板新增「Evaluate for promotion」按钮——点击后助手收到评估任务（此前它对晋升一无所知，设计使然），按读写/订阅计数排序逐条给出晋升建议（去向：`docs/spikes.md` / runtime map / AGENTS.md 指针 / 丢弃，附理由），你逐项裁决后由助手落盘持久文档；已晋升条目转为只读并带上去向徽标（会话内引用不断、计数继续累积、不可再编辑）。集成测试覆盖按钮触发 → 评估 → 裁决 → 落盘 → 只读标记全链路。详见 [会话黑板](docs/features/blackboard.md)。
+
 ### Fixed
 
 - **黑板面板生产环境 404**：生产 patch 漏挂 `orrery-harness/blackboard-remote` 宿主层行（测试装置镜像有该行，集成测试因此无法暴露缺口），重启后黑板面板报 transport failure。已补挂并新增静态守卫钉住行位（S27 约束同 capability remote）。
