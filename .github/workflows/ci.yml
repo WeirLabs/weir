@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # pnpm-workspace.yaml pins autoInstallPeers: false, so the declared
+      # @deepseek-ai/dsh peer is never fetched into this workspace.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter weir-harness run check
+
+      - run: pnpm --filter weir-harness test
+
+      - run: node --test scripts/*.test.mjs
+
+      # Pack smoke: exercises the prepack gates (check + tests + client build)
+      # and proves the published tarball shape on every change.
+      - name: pack smoke
+        run: |
+          pnpm --filter weir-harness pack --pack-destination /tmp
+          tar -tzf /tmp/weir-harness-*.tgz | grep -q 'package/cordis.patch.yml'
+          tar -tzf /tmp/weir-harness-*.tgz | grep -q 'package/lib/client.js'
+          tar -tzf /tmp/weir-harness-*.tgz | grep -q 'package/whitelist-defaults.json'
+          ! tar -tzf /tmp/weir-harness-*.tgz | grep -q 'package/test/'

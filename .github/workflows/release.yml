@@ -7,13 +7,24 @@ on:
 
 permissions:
   id-token: write # npm Trusted Publishing (OIDC)
-  contents: read
+  contents: write # publish + GitHub Release notes
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Guard: the tag must equal the bundle manifest version, so a stray
+      # manual tag can never publish a mismatched package.
+      - name: verify tag matches manifest version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./plugins/weir-harness/package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG does not match manifest version $PKG" >&2
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@v4
 
@@ -28,3 +39,15 @@ jobs:
       # so the published tarball always carries a freshly built client.
       - run: npm publish --provenance --access public
         working-directory: plugins/weir-harness
+
+      # Release notes = this version's CHANGELOG section, verbatim.
+      - name: create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          awk -v ver="## \[${GITHUB_REF_NAME#v}\]" '
+            $0 ~ ver { found=1; print; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
