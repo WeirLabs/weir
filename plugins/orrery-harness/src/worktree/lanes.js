@@ -78,8 +78,10 @@ export function pathKey(path, platform = process.platform) {
  * @property {null | ((agent: any, questions: any[], signal?: AbortSignal) => Promise<{ answers: Array<{ id: string, selected: string[], custom?: string }> }>)} ask
  * @property {(sessionId: string, text: string) => void} notify
  * @property {(type: string, data: any, root: string, sessionId?: string | null) => void} audit
- * @property {(session: any) => boolean} modeOf
- * @property {(manager: string) => Promise<{ ok: true, source: string, command: string, display: string } | { ok: false, manager: string }>} [resolveSetup] - resolves a DERIVED setup's manager into an executable invocation; absent = legacy bare command
+  * @property {(session: any) => boolean} modeOf
+  * @property {(session: any) => 'manual' | 'auto-keep' | 'auto-clean'} [approveModeOf] - the session's effective auto-approve mode (projection override ?? global setting ?? module default); absent = manual (no auto paths)
+  * @property {(session: any) => 'session' | 'global'} [approveModeSourceOf] - where the effective mode comes from; absent = global
+  * @property {() => 'manual' | 'auto-keep' | 'auto-clean'} [approveGlobal] - the resolved global default (module default when unset/invalid); absent = auto-clean
  * @property {(sessionId: string | undefined) => string | undefined} [localeOf] - the GUI language last reported for a session
  * @property {() => number} [now]
  * @property {(handler: () => void, delayMs: number) => any} [setTimer] - watch-expiry scheduler (tests); defaults to an unref'd setTimeout
@@ -94,6 +96,22 @@ export function pathKey(path, platform = process.platform) {
 export function createLaneService(deps) {
   const { git, settings } = deps
   const now = deps.now ?? Date.now
+  /** Effective auto-approve mode for a session, fail-safe to `manual` so a missing dep (tests, older wiring) never auto-approves. @param {any} session */
+  const approveModeSafe = (session) => {
+    try {
+      return deps.approveModeOf?.(session) ?? 'manual'
+    } catch {
+      return 'manual'
+    }
+  }
+  /** Where the effective mode comes from ('session' override vs 'global' setting). @param {any} session */
+  const approveModeSourceSafe = (session) => {
+    try {
+      return deps.approveModeSourceOf?.(session) ?? 'global'
+    } catch {
+      return 'global'
+    }
+  }
   /** @type {Map<string, Promise<any>>} cwd+root → repo */
   const pending = new Map()
   /** @type {Map<string, any>} cwd+root → resolved repo (sync access for the prompt board) */
@@ -274,7 +292,10 @@ export function createLaneService(deps) {
       return { ledger, result: next }
     })
     const kind = AUDIT_KIND[/** @type {keyof typeof AUDIT_KIND} */ (event.type)]
-    if (kind) deps.audit(kind, { lane: lane.id, from: lane.history.at(-1)?.from, to: lane.state, event: event.type, reason: event.reason ?? null, by: event.by ?? 'host' }, repo.mainRoot, lane.ownerSession)
+    // `event.audit` carries extra payload for the SAME kind (the auto-approve
+    // marker on land/abandon) without a new audit type; transition() ignores
+    // the key, so it never leaks into the lane record.
+    if (kind) deps.audit(kind, { lane: lane.id, from: lane.history.at(-1)?.from, to: lane.state, event: event.type, reason: event.reason ?? null, by: event.by ?? 'host', ...(event.audit ?? {}) }, repo.mainRoot, lane.ownerSession)
     for (const hit of hits) {
       disarmWatch(hit.id)
       try {
@@ -910,7 +931,14 @@ export function createLaneService(deps) {
     const heads = { main: await git.revParse(repo.mainRoot, 'HEAD'), lane: await git.revParse(lane.path, 'HEAD') }
     const stat = await git.diffStat(repo.mainRoot, lane.base.branch, lane.branch)
     const by = options.userApproved ? 'user' : 'host'
-    if (!options.userApproved) {
+    const approveMode = approveModeSafe(agent?.session)
+    const auto = approveMode !== 'manual'
+    // Auto-approve mode (design D3): the approval card is bypassed entirely —
+    // no `awaiting-approval`, no ask funnel, no card-open re-verification
+    // window (the entry tree check above already bound the merge target).
+    // Every precheck before this point is shared with the manual path. The
+    // manual path below stays byte-identical.
+    if (!options.userApproved && !auto) {
       const declined = (/** @type {string} */ reason, /** @type {string | undefined} */ feedback) => apply(repo, laneId, { type: 'decline', reason, patch: { decline: { reason, feedback: feedback ?? null, at: now() } } })
       if (!deps.ask) {
         await apply(repo, laneId, { type: 'ask' })
@@ -956,9 +984,23 @@ export function createLaneService(deps) {
       const conflicted = await apply(repo, laneId, { type: 'conflict', reason: `merge failed and was aborted: ${merged.detail}` })
       return result(conflicted, 'not merged: git refused the merge (aborted, main worktree unchanged)')
     }
-    const landed = await apply(repo, laneId, { type: 'land', by, patch: { land: { commit: merged.commit, at: now(), by, stat } } })
+    const landed = await apply(repo, laneId, { type: 'land', by, audit: auto ? { auto: true, approveMode } : undefined, patch: { land: { commit: merged.commit, at: now(), by, stat } } })
     const diff = await git.diff(repo.mainRoot, `${merged.commit}^1`, merged.commit, 60_000).catch(() => '')
-    return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}`, { merge: { commit: merged.commit, stat }, diff })
+    if (!auto) {
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}`, { merge: { commit: merged.commit, stat }, diff })
+    }
+    // Auto cleanup after the merge (design D3): auto-keep → mode worktree,
+    // auto-clean → mode all. The existing cleanup() body runs unchanged —
+    // scratch sync first, never --force, the Edit Lock residue probe feeding
+    // the summary. A blocked removal stays `landed` and the blocking path is
+    // reported instead of a false success (the user can clean up later).
+    const cleanupMode = approveMode === 'auto-keep' ? 'worktree' : 'all'
+    try {
+      const cleaned = await cleanup(session, laneId, /** @type {'worktree' | 'all'} */ (cleanupMode), { by: 'host', auto: true, approveMode })
+      return { ...landed, cleanup: { state: cleaned.state, summary: cleaned.summary }, next: cleaned.next, merge: { commit: merged.commit, stat }, diff }
+    } catch (error) {
+      return { ...landed, cleanup: { error: String(/** @type {any} */ (error)?.message ?? error) }, merge: { commit: merged.commit, stat }, diff }
+    }
   }
 
   /**
@@ -1007,7 +1049,11 @@ export function createLaneService(deps) {
   }
 
   /**
-   * @param {any} session @param {string} laneId @param {'keep' | 'worktree' | 'all'} mode @param {{ by?: string }} [options]
+   * Auto paths (design D3) reuse this exact body with `{ by: 'host', auto: true,
+   * approveMode }`: the scratch sync, the never-forced removal, the residue
+   * warning and the blocked-removal semantics are identical; only the audit
+   * payload gains the auto marker.
+   * @param {any} session @param {string} laneId @param {'keep' | 'worktree' | 'all'} mode @param {{ by?: string, auto?: boolean, approveMode?: string }} [options]
    */
   async function cleanup(session, laneId, mode, options = {}) {
     if (!['keep', 'worktree', 'all'].includes(mode)) throw new Error('cleanup mode must be keep, worktree, or all')
@@ -1040,7 +1086,7 @@ export function createLaneService(deps) {
     const next = lane.state === 'abandoned'
       ? await patchLane(repo, laneId, () => ({ cleanup: record }))
       : await apply(repo, laneId, { type: 'clean', by, patch: { cleanup: record } })
-    deps.audit('cleanup', { lane: laneId, mode, by, scratch }, repo.mainRoot, lane.ownerSession)
+    deps.audit('cleanup', { lane: laneId, mode, by, scratch, ...(options.auto === true ? { auto: true, approveMode: options.approveMode ?? null } : {}) }, repo.mainRoot, lane.ownerSession)
     return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}${residue ? `; ${residueNote(residue)}` : ''}`)
   }
 
@@ -1065,6 +1111,14 @@ export function createLaneService(deps) {
     }
     const unmerged = (await git.branchExists(repo.mainRoot, lane.branch)) ? await git.unmergedCount(repo.mainRoot, lane.base.branch, lane.branch) : 0
     let mode = options.mode
+    // Auto-approve path (design D3): no card, the mapped mode decides —
+    // auto-keep removes the worktree and keeps the branch, auto-clean also
+    // deletes it. Force-reclaim is NEVER auto: a binding the reconciliation
+    // would not clear skips this branch entirely and falls back to the manual
+    // card below (reconciliation outcome + force-reclaim choice) in EVERY mode.
+    const approveMode = approveModeSafe(agent?.session)
+    const auto = !mode && approveMode !== 'manual' && !lane.boundChild
+    if (auto) mode = approveMode === 'auto-keep' ? 'worktree' : 'all'
     const copy = cardCopy(cardLocale(deps.localeOf?.(agent?.session?.id)))
     if (!mode) {
       if (!deps.ask) throw new WorktreeError(WORKTREE_CODES.MAIN_AGENT_ONLY, 'abandoning needs the user\'s confirmation and no answerer is available')
@@ -1104,7 +1158,7 @@ export function createLaneService(deps) {
       const detail = reconciliation?.verdict ? ` (binding reconciliation: ${reconcileNote(reconciliation.verdict)}; call worktree_abandon without a mode and use the card's force-reclaim)` : ''
       throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first${detail}`, { lane: laneId })
     }
-    const abandoned = await apply(repo, laneId, { type: 'abandon', by: 'user', reason: 'abandoned by the user', patch: { cleanup: { mode, at: now(), by: 'user' } } })
+    const abandoned = await apply(repo, laneId, { type: 'abandon', by: auto ? 'host' : 'user', reason: auto ? `abandoned automatically (${approveMode} mode)` : 'abandoned by the user', audit: auto ? { auto: true, approveMode } : undefined, patch: { cleanup: { mode, at: now(), by: auto ? 'host' : 'user' } } })
     if (mode === 'keep') return result(abandoned, `abandoned; ${abandoned.path} and ${abandoned.branch} are kept`)
     // Read-only residue probe BEFORE anything is removed (design D5): a
     // warning only, never a gate, and it never mutates the authority. The
@@ -1202,18 +1256,22 @@ export function createLaneService(deps) {
   /**
    * Full read-only view for the GUI panel.
    * @param {any} session
-   * @param {{ mode?: boolean }} [options] - cold-read override: a boolean
+   * @param {{ mode?: boolean, approve?: string | null, approveSource?: 'session' | 'global' }} [options] - cold-read override: a boolean
    *   `mode` replaces the live projection read (a pseudo session folded from
-   *   the persisted log by sessionQuery has no live projection cells).
+   *   the persisted log by sessionQuery has no live projection cells); `approve`
+   *   and `approveSource` carry the cold-folded auto-approve override the same
+   *   way (null = no override → the global default answers).
    */
   async function view(session, options) {
     const viewMode = () => (typeof options?.mode === 'boolean' ? options.mode : safeMode(session))
+    const viewApproveMode = () => (options && typeof options.approve === 'string' ? options.approve : approveModeSafe(session))
+    const viewApproveModeSource = () => (options && (options.approveSource === 'session' || options.approveSource === 'global') ? options.approveSource : approveModeSourceSafe(session))
     let repo
     try {
       repo = await repoFor(cwdOf(session))
     } catch (error) {
       const known = error instanceof WorktreeError
-      return { available: false, mode: viewMode(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
+      return { available: false, mode: viewMode(), approveMode: viewApproveMode(), approveModeSource: viewApproveModeSource(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
     }
     try {
       const { mainBranch, unmanaged } = await refresh(repo)
@@ -1251,6 +1309,8 @@ export function createLaneService(deps) {
       return {
         available: true,
         mode: viewMode(),
+        approveMode: viewApproveMode(),
+        approveModeSource: viewApproveModeSource(),
         ownedBySession: lanes.filter((lane) => lane.ownerSession === session?.id).map((lane) => lane.id),
         repo: { mainRoot: repo.mainRoot, root: repo.root, rootPath: repo.rootPath, branch: mainBranch, gitVersion: repo.version?.join('.') ?? null, exclude: hasExclude(repo.commonDir, repo.root), verification },
         lanes,
@@ -1258,7 +1318,7 @@ export function createLaneService(deps) {
       }
     } catch (error) {
       const known = error instanceof WorktreeError
-      return { available: false, mode: viewMode(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
+      return { available: false, mode: viewMode(), approveMode: viewApproveMode(), approveModeSource: viewApproveModeSource(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
     }
   }
 
@@ -1385,8 +1445,17 @@ export function createLaneService(deps) {
     return pathKey(isAbsolute(path) ? path : resolvePath(cwd, path))
   }
 
+  /** The resolved global auto-approve default (command echo; never a raw invalid value). */
+  const approveGlobalSafe = () => {
+    try {
+      return deps.approveGlobal?.() ?? 'auto-clean'
+    } catch {
+      return 'auto-clean'
+    }
+  }
   return {
     repoFor, refresh, open, setup, prepareBind, childSettled, check, land, askCleanup, cleanup, abandon, watch,
     view, diffOf, board, summaryOf, initSuggestions, writeConfig, reconcile: reconcileCommand, resolveArgPath, actionsFor,
+    approveGlobal: approveGlobalSafe,
   }
 }

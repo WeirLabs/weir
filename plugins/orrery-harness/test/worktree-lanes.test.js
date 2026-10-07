@@ -33,7 +33,7 @@ function fakeClock(start = 1_760_000_000_000) {
   }
 }
 
-function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup, clock, authorityResidue } = {}) {
+function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false, locale, resolveSetup, clock, authorityResidue, approveMode = 'manual', approveModeSource = 'global', bindingLiveness } = {}) {
   const fixture = makeRepo()
   const notices = []
   const audits = []
@@ -46,6 +46,9 @@ function harness({ ask = null, shell = nodeShellRun, settings = {}, mode = false
     notify: (sessionId, text) => notices.push({ sessionId, text }),
     audit: (type, data, root) => audits.push({ type, data, root }),
     modeOf: () => mode,
+    approveModeOf: () => approveMode,
+    approveModeSourceOf: () => approveModeSource,
+    ...(bindingLiveness !== undefined ? { bindingLiveness } : {}),
     localeOf: () => locale,
     ...(resolveSetup !== undefined ? { resolveSetup } : {}),
     ...(authorityResidue !== undefined ? { authorityResidue } : {}),
@@ -1115,6 +1118,203 @@ describe('worktree lane service: watches', () => {
       expect(entry.watchStates).toEqual(['landable', 'abandoned', 'landed'])
     } finally {
       h.cleanup()
+    }
+  })
+})
+
+describe('worktree lane service: auto-approve modes', () => {
+  const approve = (questions) => ({ answers: [{ id: questions[0].id, selected: [questions[0].options[0].label] }] })
+  const mustNotAsk = () => { throw new Error('must not ask in auto mode') }
+  const auditOf = (h, type) => h.audits.filter((entry) => entry.type === type)
+
+  it('auto-clean land merges with no card, cleans with mode all, and audits the auto marker', async () => {
+    const h = harness({ approveMode: 'auto-clean', approveModeSource: 'session', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Auto clean')
+      const landed = await h.service.land(h.agent, lane)
+      expect(landed.state).toBe('landed')
+      expect(landed.cleanup.state).toBe('cleaned')
+      expect(landed.cleanup.summary).toContain('removed')
+      expect(landed.cleanup.summary).toContain(`deleted orrery/${lane}`)
+      expect(h.asked).toHaveLength(0)
+      const record = await laneOf(h, lane)
+      expect(record.state).toBe('cleaned')
+      expect(existsSync(landed.path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${lane}`)).toBe('')
+      expect(sh(h.repo, 'log', '-1', '--format=%s')).toBe(`merge(lane): Auto clean (${lane})`)
+      const landAudit = auditOf(h, 'land').at(-1)
+      expect(landAudit.data.auto).toBe(true)
+      expect(landAudit.data.approveMode).toBe('auto-clean')
+      expect(landAudit.data.by).toBe('host')
+      const cleanupAudit = auditOf(h, 'cleanup').at(-1)
+      expect(cleanupAudit.data.by).toBe('host')
+      expect(cleanupAudit.data.auto).toBe(true)
+      expect(cleanupAudit.data.approveMode).toBe('auto-clean')
+      expect(cleanupAudit.data.mode).toBe('all')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('auto-keep land removes the worktree but keeps the merged branch', async () => {
+    const h = harness({ approveMode: 'auto-keep', approveModeSource: 'session', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Auto keep')
+      const landed = await h.service.land(h.agent, lane)
+      expect(landed.state).toBe('landed')
+      expect(landed.cleanup.state).toBe('cleaned')
+      expect(h.asked).toHaveLength(0)
+      expect((await laneOf(h, lane)).state).toBe('cleaned')
+      expect(existsSync(landed.path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${lane}`)).toContain(`orrery/${lane}`)
+      const cleanupAudit = auditOf(h, 'cleanup').at(-1)
+      expect(cleanupAudit.data.mode).toBe('worktree')
+      expect(cleanupAudit.data.auto).toBe(true)
+      expect(cleanupAudit.data.approveMode).toBe('auto-keep')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('the conflict precheck still wins in auto mode: no merge, no card, main untouched', async () => {
+    const h = harness({ approveMode: 'auto-clean', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'conflict', 'a.txt', 'lane\n')
+      writeFileSync(join(h.repo, 'a.txt'), 'main\n')
+      sh(h.repo, 'commit', '-qam', 'main change')
+      const head = sh(h.repo, 'rev-parse', 'HEAD')
+      const outcome = await h.service.land(h.agent, lane)
+      expect(outcome.state).toBe('conflicted')
+      expect(outcome.conflicts).toEqual(['a.txt'])
+      expect(h.asked).toHaveLength(0)
+      expect(sh(h.repo, 'rev-parse', 'HEAD')).toBe(head)
+      expect((await laneOf(h, lane)).state).toBe('conflicted')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a blocked auto cleanup stays landed and reports the blocking path instead of a false success', async () => {
+    const h = harness({ approveMode: 'auto-clean', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Blocked cleanup')
+      const { path } = await laneOf(h, lane)
+      writeFileSync(join(path, 'stray.txt'), 'untracked')
+      const landed = await h.service.land(h.agent, lane)
+      expect(landed.state).toBe('landed')
+      expect(landed.cleanup.error).toContain('REMOVE_BLOCKED')
+      expect((await laneOf(h, lane)).state).toBe('landed')
+      expect(existsSync(path)).toBe(true)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${lane}`)).toContain(`orrery/${lane}`)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('auto-clean abandon discards unmerged commits with no card and states the count', async () => {
+    const h = harness({ approveMode: 'auto-clean', approveModeSource: 'session', ask: mustNotAsk })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Three commits' })
+      const bound = await h.service.prepareBind(h.session, opened.lane, { readOnly: false })
+      await bound.commit('child-1')
+      for (const file of ['one.txt', 'two.txt', 'three.txt']) {
+        writeFileSync(join(opened.path, file), `${file}\n`)
+        sh(opened.path, 'add', '.')
+        sh(opened.path, 'commit', '-qm', file)
+      }
+      await h.service.childSettled('child-1', h.session)
+      const abandoned = await h.service.abandon(h.agent, opened.lane)
+      expect(abandoned.state).toBe('abandoned')
+      expect(abandoned.summary).toContain('3 unmerged commit(s) discarded')
+      expect(abandoned.summary).toContain('removed')
+      expect(h.asked).toHaveLength(0)
+      expect(existsSync(abandoned.path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${opened.lane}`)).toBe('')
+      const abandonAudit = auditOf(h, 'abandon').at(-1)
+      expect(abandonAudit.data.auto).toBe(true)
+      expect(abandonAudit.data.approveMode).toBe('auto-clean')
+      expect(abandonAudit.data.by).toBe('host')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('auto-keep abandon removes the worktree and keeps the branch', async () => {
+    const h = harness({ approveMode: 'auto-keep', ask: mustNotAsk })
+    try {
+      const lane = await workedLane(h, 'Keep branch')
+      const abandoned = await h.service.abandon(h.agent, lane)
+      expect(abandoned.state).toBe('abandoned')
+      expect(abandoned.summary).toContain('removed')
+      expect(h.asked).toHaveLength(0)
+      expect(existsSync(abandoned.path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${lane}`)).toContain(`orrery/${lane}`)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a disputed binding falls back to the force-reclaim card even in auto mode', async () => {
+    const h = harness({
+      approveMode: 'auto-clean',
+      bindingLiveness: async () => ({ childAlive: false, ownerAlive: false, terminalEvidence: null }),
+      ask: (questions) => ({ answers: [{ id: questions[0].id, selected: ['Cancel'] }] }),
+    })
+    try {
+      const opened = await h.service.open(h.session, { title: 'Disputed' })
+      const bound = await h.service.prepareBind(h.session, opened.lane, { readOnly: false })
+      await bound.commit('child-1')
+      const outcome = await h.service.abandon(h.agent, opened.lane)
+      expect(outcome.state).toBe('working')
+      expect(outcome.summary).toContain('not abandoned: the user cancelled')
+      expect(h.asked).toHaveLength(1)
+      const card = h.asked[0][0]
+      expect(card.id).toBe('abandon')
+      expect(card.options.map((option) => option.label)).toEqual(['Force-reclaim the binding', 'Cancel'])
+      expect(card.detail).toContain('child-1')
+      expect(card.detail).toContain('no terminal evidence')
+      expect(existsSync(opened.path)).toBe(true)
+      expect(sh(h.repo, 'branch', '--list', `orrery/${opened.lane}`)).toContain(`orrery/${opened.lane}`)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('manual mode keeps the card path byte-identical: ask, land, then the cleanup card', async () => {
+    const h = harness({ approveMode: 'manual', ask: approve })
+    try {
+      const lane = await workedLane(h, 'Manual still manual')
+      const landed = await h.service.land(h.agent, lane)
+      expect(landed.state).toBe('landed')
+      expect(landed.cleanup).toBeUndefined()
+      expect(h.asked).toHaveLength(1)
+      expect(h.asked[0][0].id).toBe('merge')
+      expect((await laneOf(h, lane)).state).toBe('landed')
+      const cleaned = await h.service.askCleanup(h.agent, lane)
+      expect(cleaned.state).toBe('kept')
+      const landAudit = auditOf(h, 'land').at(-1)
+      expect(landAudit.data.auto).toBeUndefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('the view reports the effective approve mode and its source', async () => {
+    const auto = harness({ approveMode: 'auto-keep', approveModeSource: 'session' })
+    try {
+      const view = await auto.service.view(auto.session)
+      expect(view.approveMode).toBe('auto-keep')
+      expect(view.approveModeSource).toBe('session')
+    } finally {
+      auto.cleanup()
+    }
+    const plain = harness()
+    try {
+      const view = await plain.service.view(plain.session)
+      expect(view.approveMode).toBe('manual')
+      expect(view.approveModeSource).toBe('global')
+    } finally {
+      plain.cleanup()
     }
   })
 })

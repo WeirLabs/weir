@@ -6,7 +6,8 @@ import { DEFAULT_SUPERVISION } from '../src/delegate/group-coordinator.js'
 import { DEFAULTS as TODO_DEFAULTS } from '../src/todo-driver/state-machine.js'
 import { PRESSURE_DEFAULTS } from '../src/context-guard/pressure.js'
 import { LSP_DEFAULTS } from '../src/lsp/manager.js'
-import { DEFAULTS as WORKTREE_DEFAULTS } from '../src/worktree/index.js'
+import { APPROVE_MODES } from '../src/worktree/projection.js'
+import { DEFAULTS as WORKTREE_DEFAULTS, resolveApproveMode } from '../src/worktree/index.js'
 import { DEFAULT_ROOT } from '../src/worktree/rules.js'
 import { DEFAULT_WATCH_TIMEOUT_MINUTES } from '../src/worktree/watches.js'
 import { DEFAULTS as NOTIFY_DEFAULTS } from '../src/notify/policy.js'
@@ -154,9 +155,9 @@ function chunkFieldDefaults() {
 }
 
 describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
-  it('declares exactly the 39 concrete defaults, frozen, with no entry where unset is meaningful', () => {
+  it('declares exactly the 40 concrete defaults, frozen, with no entry where unset is meaningful', () => {
     expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
-    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(39)
+    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(40)
     for (const key of NO_DEFAULT_KEYS) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must stay unset-meaningful (no default entry)`).toBe(false)
     }
@@ -193,6 +194,8 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
     expect(FIELD_DEFAULTS.worktreeAutoSetup).toBe(WORKTREE_DEFAULTS.autoSetup)
     expect(FIELD_DEFAULTS.worktreeWatchTimeoutMinutes).toBe(DEFAULT_WATCH_TIMEOUT_MINUTES)
     expect(FIELD_DEFAULTS.worktreeWatchTimeoutMinutes).toBe(WORKTREE_DEFAULTS.watchTimeoutMinutes)
+    expect(FIELD_DEFAULTS.worktreeAutoApprove).toBe('auto-clean')
+    expect(FIELD_DEFAULTS.worktreeAutoApprove).toBe(resolveApproveMode(undefined, undefined))
     expect(FIELD_DEFAULTS.notifyEnabled).toBe(NOTIFY_DEFAULTS.enabled)
     expect(FIELD_DEFAULTS.notifyOnComplete).toBe(NOTIFY_DEFAULTS.onComplete)
     expect(FIELD_DEFAULTS.notifyOnAttention).toBe(NOTIFY_DEFAULTS.onAttention)
@@ -211,10 +214,10 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
 
   it('the patch row mirrors it: every row key is a FIELD_DEFAULTS key with the same value', () => {
     const entries = patchRowEntries()
-    // the 30 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
+    // the 31 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
     // absences (whitelist tables, defaultsPath/Reload) are covered by the
     // dedicated tests above, not required here
-    expect(entries.size).toBe(30)
+    expect(entries.size).toBe(31)
     for (const [key, raw] of entries) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `patch row key ${key} has no FIELD_DEFAULTS entry`).toBe(true)
       expect(FIELD_DEFAULTS[key], `patch row value of ${key} drifted from FIELD_DEFAULTS`).toEqual(coerceRowValue(raw))
@@ -297,5 +300,25 @@ describe('editLockStaleSweep (message-triggered stale-lock sweep switch)', () =>
     expect(gate({})).toBe(true)
     expect(gate({ editLockStaleSweep: true })).toBe(true)
     expect(gate({ editLockStaleSweep: false })).toBe(false)
+  })
+})
+
+describe('worktreeAutoApprove (worktree auto-approve mode)', () => {
+  it('declares the union row once in FIELDS, matching the APPROVE_MODES vocabulary', () => {
+    const row = FIELDS.find(({ key }) => key === 'worktreeAutoApprove')
+    expect(row).toEqual({
+      key: 'worktreeAutoApprove', section: 'worktree', field: 'autoApprove', type: { union: APPROVE_MODES },
+      description: 'Worktree auto-approve mode: manual shows every decision card; auto-keep auto-approves merges and abandons, removing the worktree but keeping the branch; auto-clean also deletes the branch. The initial mode for sessions without a /worktree approve override (default auto-clean); a session override wins over this global value',
+    })
+    expect(RESTART_KEYS.includes('worktreeAutoApprove')).toBe(false)
+  })
+
+  it('the resolver prefers a valid session override over a valid global value, then the module default', () => {
+    expect(resolveApproveMode('manual', 'auto-clean')).toBe('manual')
+    expect(resolveApproveMode('auto-keep', 'auto-clean')).toBe('auto-keep')
+    expect(resolveApproveMode(null, 'auto-keep')).toBe('auto-keep')
+    expect(resolveApproveMode('sometimes', 'auto-keep')).toBe('auto-keep')
+    expect(resolveApproveMode(undefined, 'sometimes')).toBe('auto-clean')
+    expect(resolveApproveMode(null, undefined)).toBe('auto-clean')
   })
 })

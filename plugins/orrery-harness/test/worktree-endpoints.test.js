@@ -67,11 +67,11 @@ async function call(routes, path, body) {
 }
 
 /** A cold observation lease over the persisted log of `sessionId`. */
-function coldObservation({ sessionId, cwd, mode, onDispose }) {
+function coldObservation({ sessionId, cwd, mode, approve, onDispose }) {
   return {
     source: 'prepared',
     header: { id: sessionId, cwd },
-    projections: { values: { [WORKTREE_PROJECTION_KEY]: { mode, lanes: [] } } },
+    projections: { values: { [WORKTREE_PROJECTION_KEY]: { mode, lanes: [], ...(approve !== undefined ? { approve } : {}) } } },
     retain() { return this },
     [Symbol.dispose]() { onDispose() },
   }
@@ -88,7 +88,7 @@ describe('worktree panel endpoints (cold-safe)', () => {
       stateOf: () => { throw new Error('no live projection cells on a pseudo session') },
       observeSession: async (sessionId) => {
         observed++
-        return coldObservation({ sessionId, cwd: '/nonexistent-cold', mode: true, onDispose: () => { disposed++ } })
+        return coldObservation({ sessionId, cwd: '/nonexistent-cold', mode: true, approve: 'auto-keep', onDispose: () => { disposed++ } })
       },
     })
     const dispose = apply(ctx, {})
@@ -101,7 +101,10 @@ describe('worktree panel endpoints (cold-safe)', () => {
     expect(reply.value.error.message).toContain('/nonexistent-cold')
     // The cold-folded mode override reached the view (stateOf would have thrown).
     expect(reply.value.mode).toBe(true)
-    // The observation lease was disposed exactly once.
+    // The cold-folded approve override reached the view the same way: a
+    // session override wins and is reported with its source.
+    expect(reply.value.approveMode).toBe('auto-keep')
+    expect(reply.value.approveModeSource).toBe('session')
     expect(disposed).toBe(1)
     dispose()
   })
@@ -134,6 +137,10 @@ describe('worktree panel endpoints (cold-safe)', () => {
     expect(reply.value.available).toBe(false)
     expect(reply.value.error.code).toBe('SESSION_NOT_LIVE')
     expect(reply.value.lanes).toEqual([])
+    // No session context at all: the degraded reply falls back to the global
+    // default (auto-clean without an orrerySettings service).
+    expect(reply.value.approveMode).toBe('auto-clean')
+    expect(reply.value.approveModeSource).toBe('global')
     dispose()
   })
 

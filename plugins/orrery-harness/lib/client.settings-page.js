@@ -108,7 +108,8 @@ window.__ModuleLoader__.load({
 				{ field: "worktreeAutoSetup", kind: "boolean", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
 				{ field: "worktreeMaxActive", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
 				{ field: "worktreeRoot", kind: "text", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
-				{ field: "worktreeWatchTimeoutMinutes", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") }
+				{ field: "worktreeWatchTimeoutMinutes", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
+				{ field: "worktreeAutoApprove", kind: "enum", values: ["manual", "auto-keep", "auto-clean"], parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") }
 			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },
@@ -192,6 +193,7 @@ window.__ModuleLoader__.load({
 			worktreeMaxActive: 4,
 			worktreeAutoSetup: true,
 			worktreeWatchTimeoutMinutes: 360,
+			worktreeAutoApprove: "auto-clean",
 			notifyEnabled: true,
 			notifyOnComplete: true,
 			notifyOnAttention: true,

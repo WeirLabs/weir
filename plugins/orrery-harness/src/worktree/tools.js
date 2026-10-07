@@ -84,7 +84,10 @@ export function createWorktreeTools(service) {
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         mainOnly(exec, 'worktree_land')
         const value = await service.land(exec.agent, args.lane, { signal: exec.signal }).catch(rethrow)
-        if (value.state !== 'landed') return value
+        // The auto-approve paths finished the cleanup inside land() (value.cleanup
+        // carries the outcome, success or blocked removal); only a manual-mode
+        // merge still asks the cleanup card.
+        if (value.state !== 'landed' || value.cleanup) return value
         const cleanup = await service.askCleanup(exec.agent, args.lane, exec.signal).catch((/** @type {any} */ error) => ({ error: String(error?.message ?? error) }))
         return { ...value, ...(cleanup ? { cleanup: cleanup.error ? { error: cleanup.error } : { state: cleanup.state, summary: cleanup.summary } } : {}), next: cleanup && !cleanup.error ? cleanup.next : value.next }
       },
