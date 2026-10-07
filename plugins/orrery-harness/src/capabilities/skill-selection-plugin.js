@@ -13,7 +13,7 @@ import { createPresetInvalidation, emitPresetSelected } from './preset-invalidat
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
-import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
+import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames, resolveSkillNamesForSave } from './initial-selection.js'
 import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
 import { createDefaultsTransaction } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
@@ -905,7 +905,29 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                   return { kind: 'error', text: 'capabilities default-save: expectedRevision must be a non-negative integer' }
                 }
                 const sets = await selectionSetsOf(spec)
-                const result = await transaction.save({ workspaceKey, expectedRevision, snapshot: { skills: sets.skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs } })
+                let skills = sets.skills
+                if (spec.from === 'draft') {
+                  // The draft's wire shape is name strings: resolve them to
+                  // exact SkillIdentity objects BEFORE persisting, so the
+                  // default record carries the resolved-sets contract and a
+                  // duplicated name never lands as an unbindable string. The
+                  // session's applied selection is the authoritative
+                  // disambiguation; unresolvable or still-ambiguous names are
+                  // an explicit error with ZERO writes.
+                  const inventoryResult = await inventory(options)
+                  const inventoryCandidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+                  const appliedResult = await provider.list(options)
+                  const appliedCandidates = Array.isArray(appliedResult?.candidates) ? appliedResult.candidates : []
+                  const appliedIdentities = []
+                  for (const candidate of appliedCandidates) {
+                    if (candidate?.selected && candidate.identity) appliedIdentities.push(candidate.identity)
+                  }
+                  const resolved = resolveSkillNamesForSave(spec.skills, inventoryCandidates, appliedIdentities)
+                  if (resolved.missing.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: resolved.missing }) }
+                  if (resolved.ambiguous.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'ambiguous', ambiguous: resolved.ambiguous }) }
+                  skills = resolved.identities
+                }
+                const result = await transaction.save({ workspaceKey, expectedRevision, snapshot: { skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs } })
                 return { kind: 'success', text: JSON.stringify({ ...result, workspaceKey }) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities default-save failed: ${cause instanceof Error ? cause.message : String(cause)}` }

@@ -83,6 +83,68 @@ export function bindDefaultSkillNames(entries, candidates) {
   return { skills, missing }
 }
 
+/**
+ * Resolve the draft skill NAMES of a `default-save from:'draft'` spec into
+ * exact SkillIdentity objects BEFORE persisting, so the workspace-default
+ * record carries the resolved-sets contract instead of ambiguous name
+ * strings (a name with two parsed candidates would otherwise be refused by
+ * the read side's unique-name binding forever). A name with exactly ONE
+ * parsed inventory candidate binds to that candidate's identity; a name
+ * with MULTIPLE candidates binds only when the session's effective
+ * (applied) selection contains exactly ONE identity of that name — the
+ * applied selection is the authoritative disambiguation, never a guess.
+ * Everything else is reported (missing/ambiguous) and the caller writes
+ * nothing. Pure: never throws, never touches the store or the inventory.
+ * @param {unknown} names draft skill entries (non-array treated as empty)
+ * @param {unknown} candidates live inventory candidates
+ * @param {unknown} appliedSkills the session's effective selection identities
+ * @returns {{ identities: unknown[], missing: unknown[], ambiguous: string[] }}
+ */
+export function resolveSkillNamesForSave(names, candidates, appliedSkills) {
+  const byName = new Map()
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    if (/** @type {any} */ (candidate)?.status !== 'parsed'
+      || !/** @type {any} */ (candidate)?.identity
+      || typeof /** @type {any} */ (candidate)?.name !== 'string') continue
+    const name = /** @type {any} */ (candidate).name
+    const list = byName.get(name) ?? []
+    list.push(/** @type {any} */ (candidate).identity)
+    byName.set(name, list)
+  }
+  const appliedByName = new Map()
+  for (const entry of Array.isArray(appliedSkills) ? appliedSkills : []) {
+    let identity
+    try {
+      identity = createSkillIdentity(/** @type {any} */ (entry))
+    } catch { continue /* not an identity shape — not evidence */ }
+    const list = appliedByName.get(identity.name) ?? []
+    list.push(identity)
+    appliedByName.set(identity.name, list)
+  }
+  const identities = []
+  const missing = []
+  const ambiguous = []
+  for (const entry of Array.isArray(names) ? names : []) {
+    if (typeof entry !== 'string' || entry.length === 0) {
+      missing.push(entry)
+      continue
+    }
+    const matches = byName.get(entry) ?? []
+    if (matches.length === 1) {
+      identities.push(matches[0])
+      continue
+    }
+    if (matches.length > 1) {
+      const applied = appliedByName.get(entry) ?? []
+      if (applied.length === 1) identities.push(applied[0])
+      else ambiguous.push(entry)
+      continue
+    }
+    missing.push(entry)
+  }
+  return { identities, missing, ambiguous }
+}
+
 export function resolveInitialSelection({ defaultsRecord, builtinIdentities = [], enabledMcpIdentities = [] }) {
   // A cleared marker is an explicit removal (9.4): it behaves as ABSENT —
   // clearing is never an explicit empty set, which stays a savable choice.
