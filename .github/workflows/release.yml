@@ -45,9 +45,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          awk -v ver="## \[${GITHUB_REF_NAME#v}\]" '
-            $0 ~ ver { found=1; print; next }
-            found && /^## \[/ { exit }
+          # index()-based extraction: mawk (ubuntu default) treats \[ in a
+          # dynamic regex as a character class, so $0 ~ ver never matches.
+          awk -v ver="## [${GITHUB_REF_NAME#v}]" '
+            index($0, ver) == 1 { found=1; print; next }
+            found && index($0, "## [") == 1 { exit }
             found { print }
           ' CHANGELOG.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "no CHANGELOG section found for ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
