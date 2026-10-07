@@ -75,6 +75,7 @@ const FIELDS = [
   { key: 'notifyMinTurnSeconds', section: 'notify', field: 'minTurnSeconds', type: 'number', description: 'A finished turn is only reported when it ran at least this many seconds (0 reports every turn)' },
   { key: 'notifySound', section: 'notify', field: 'sound', type: 'boolean', description: 'Play the platform notification sound where supported' },
   { key: 'notifyForeground', section: 'notify', field: 'foreground', type: { union: ['skip', 'always'] }, description: 'DeepSeek Harness window in the foreground: skip stays quiet (default), always notifies anyway' },
+  { key: 'blackboardWriteTokenTtlMinutes', section: 'blackboard', field: 'writeTokenTtlMinutes', type: 'number', description: 'Session blackboard write-token TTL (minutes): an acquired write authority expires after this long, the key is released, and its subscribers are notified (default 60)' },
 ]
 
 /** Flat settings keys that only take effect after an app restart: their
@@ -135,6 +136,7 @@ export const FIELD_DEFAULTS = Object.freeze({
   notifyMinTurnSeconds: 15,
   notifySound: true,
   notifyForeground: 'skip',
+  blackboardWriteTokenTtlMinutes: 60,
 })
 
 /** Resolved Edit Lock retention policy. The keys are declared above; this is the
