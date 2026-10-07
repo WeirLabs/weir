@@ -390,12 +390,22 @@ describe('delegate continuable mode', () => {
     expect(deps.continued).toHaveLength(0)
   })
 
-  it('rejects continuable combined with worktree before any lane binding or spawn', async () => {
+  it('rejects an explicit group name with the reserved lane: prefix before any spawn (resumable-lane-workers D3/D5)', async () => {
     const deps = fakeDeps()
     const tool = createDelegateTool(deps)
     await expect(async () =>
-      tool.execute({ category: 'quick', prompt: 'x', mode: 'continuable', worktree: 'lane-1' }, fakeExec()),
-    ).rejects.toThrow(/mode "continuable" and worktree cannot be combined/)
+      tool.execute({ group: 'lane:fix-001', tasks: [{ category: 'quick', prompt: 'x' }] }, fakeExec()),
+    ).rejects.toThrow(/reserved "lane:" prefix/)
+    expect(deps.spawned).toHaveLength(0)
+    expect(deps.continued).toHaveLength(0)
+  })
+
+  it('still rejects mode combined with group when a lane is named (D5)', async () => {
+    const deps = fakeDeps()
+    const tool = createDelegateTool(deps)
+    await expect(async () =>
+      tool.execute({ group: 'g', mode: 'continuable', worktree: 'lane-1', tasks: [{ category: 'quick', prompt: 'x' }] }, fakeExec()),
+    ).rejects.toThrow(/mode and group cannot be combined/)
     expect(deps.spawned).toHaveLength(0)
     expect(deps.continued).toHaveLength(0)
   })
@@ -521,6 +531,9 @@ describe('delegate continuable mode', () => {
     expect(DELEGATE_DESCRIPTION).toContain("'continuable'")
     expect(DELEGATE_DESCRIPTION).toContain('mode never combines with group')
     expect(DELEGATE_DESCRIPTION).toContain('send_message')
+    // Lane-bound continuables run supervised (implicit group), never the old settle-once mutex.
+    expect(DELEGATE_DESCRIPTION).toContain("implicit group 'lane:<laneId>'")
+    expect(DELEGATE_DESCRIPTION).not.toContain('settles exactly once')
   })
 })
 describe('registry defaults', () => {

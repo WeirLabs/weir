@@ -8,6 +8,9 @@ import { contentText } from '../shared/content-text.js'
 export const DELEGATE_TOOL_NAME = 'delegate'
 export const BATCH_LIMIT = 16
 
+/** Reserved group-name prefix of a lane-bound continuable dispatch's implicit supervised group ('lane:<laneId>'). */
+export const IMPLICIT_GROUP_PREFIX = 'lane:'
+
 export const DELEGATE_DESCRIPTION = `Delegate work to a specialist child agent. Spawn one child or fan out a batch.
 
 Each call item MUST provide exactly one of category or agent (never both, never neither):
@@ -18,7 +21,7 @@ NEVER pass model together with category: category-routed children take their mod
 
 Options: run_in_background (return a job id immediately; the completion arrives as a compact notice and you pull the report with job_output), load_skills (skill bodies prepended to the child's prompt), name (stable handle), task_summary (one-line label), group (supervised group: all items of THIS call form one group whose members run as supervised continuable children; groups never accept later insertion; when every member settles you receive ONE group-settled signal — each member's terminal report arrives individually in that member's settlement notice).
 
-Mode: 'one-shot' (the default) waits for each child's result and returns it — the lane for single-delivery work and large fan-out. 'continuable' returns immediately with a stable childId; the result arrives later in a built-in settlement notice, and the child keeps its context, so you can follow up with send_message (mid-course correction, a missing deliverable, post-completion questions) or interrupt its current turn with interrupt_agent. A follow-up to the same child is only possible with continuable children. mode never combines with group (a supervised group already runs continuable members); continuable never combines with run_in_background (a continuable child is already asynchronous — the jobs wrapper adds nothing) or worktree (a lane expects a worker that settles exactly once).
+Mode: 'one-shot' (the default) waits for each child's result and returns it — the lane for single-delivery work and large fan-out. 'continuable' returns immediately with a stable childId; the result arrives later in a built-in settlement notice, and the child keeps its context, so you can follow up with send_message (mid-course correction, a missing deliverable, post-completion questions) or interrupt its current turn with interrupt_agent. A follow-up to the same child is only possible with continuable children. mode never combines with group (a supervised group already runs continuable members); continuable never combines with run_in_background (a continuable child is already asynchronous — the jobs wrapper adds nothing). continuable combines with worktree: a lane-bound continuable worker runs supervised in the implicit group 'lane:<laneId>' — it keeps its lane while blocked and settles the lane on its terminal report.
 
 Supervised children report a binary terminal status (completed or blocked). A member's terminal report reaches you in its settlement notice; resume a blocked member with resume_agent (attach unblocking context) or terminate it with terminate_agent. Terminate a blocked child and delegate a fresh one when the task's direction changed substantially.
 
@@ -26,7 +29,7 @@ Batch form: tasks (1-16 items) shares top-level options; an item-level run_in_ba
 
 Every child prompt MUST be self-contained and start with TASK: <imperative>, then name DELIVERABLE, SCOPE, VERIFY, and STOP WHEN. Prompts are executable assignments, not context handoffs: include only what the child needs.
 
-Worktree lanes: worktree (a lane id from worktree_open) binds every child of this call to that lane — the host adds the lane contract to the prompt, guards the child's workdir/writes/branch, and checks the lane when the writer settles. One writing child per lane at a time. In Worktree mode, writing categories require worktree.
+Worktree lanes: worktree (a lane id from worktree_open) binds every child of this call to that lane — the host adds the lane contract to the prompt, guards the child's workdir/writes/branch, and checks the lane when the writer settles. A lane-bound continuable worker runs supervised (implicit group 'lane:<laneId>'): it keeps the lane while blocked — resume_agent continues it in place — and its terminal report settles the lane. One writing child per lane at a time. In Worktree mode, writing categories require worktree.
 
 Children cannot delegate further. Curated agents are read-only and never write files; their bash access is guarded by a fail-closed read-only whitelist.`
 
@@ -81,9 +84,9 @@ export function createDelegateTool(deps) {
         load_skills: { type: 'array', items: { type: 'string' }, description: 'Skills to prepend to the child prompt.' },
         name: { type: 'string', description: 'Stable handle for the child.' },
         task_summary: { type: 'string', description: 'One-line label (<=80 chars) for the UI.' },
-        group: { type: 'string', description: 'Supervised group name: every item of this call joins the group (no later insertion); a one-line group-settled signal arrives when all members settle.' },
+        group: { type: 'string', description: "Supervised group name: every item of this call joins the group (no later insertion); a one-line group-settled signal arrives when all members settle. Names with the reserved 'lane:' prefix are rejected — they belong to the implicit group of a lane-bound continuable dispatch." },
         worktree: { type: 'string', description: 'Lane id (from worktree_open) every child of this call works in.' },
-        mode: { type: 'string', enum: ['one-shot', 'continuable'], description: "Delegation lane: 'one-shot' (default; waits for the result) or 'continuable' (returns a childId immediately; the result arrives in a settlement notice; the child accepts send_message follow-ups). A batch item's mode overrides this value." },
+        mode: { type: 'string', enum: ['one-shot', 'continuable'], description: "Delegation lane: 'one-shot' (default; waits for the result) or 'continuable' (returns a childId immediately; the result arrives in a settlement notice; the child accepts send_message follow-ups). A batch item's mode overrides this value. With worktree, a continuable child runs supervised in the implicit group lane:<laneId> — it keeps its lane while blocked and settles it on the terminal report." },
       },
     },
     output: {
@@ -94,11 +97,14 @@ export function createDelegateTool(deps) {
       const items = normalizeItems(args)
       const background = Boolean(args.run_in_background)
 
-      // Mode mutexes (design D1/D4), before any preflight/spawn so a rejected
-      // call leaks zero children: continuable is already asynchronous (no
-      // jobs wrapper); a supervised group already runs continuable members;
-      // a lane's settle-once contract cannot host a resumable worker.
+      // Mode mutexes (design D1/D4 + resumable-lane-workers D3), before any
+      // preflight/spawn so a rejected call leaks zero children and zero lane
+      // reservations: continuable is already asynchronous (no jobs wrapper);
+      // a supervised group already runs continuable members; the 'lane:'
+      // group-name prefix is reserved for the implicit supervised group a
+      // lane-bound continuable dispatch runs under.
       const groupName = typeof args.group === 'string' && args.group.length > 0 ? args.group : null
+      const laneId = typeof args.worktree === 'string' && args.worktree.length > 0 ? args.worktree : null
       const modeProvided = items.some((item) => item.mode !== undefined)
       const anyContinuable = items.some((item) => item.mode === 'continuable')
       if (anyContinuable && background) {
@@ -107,8 +113,8 @@ export function createDelegateTool(deps) {
       if (modeProvided && groupName) {
         throw new Error('delegate: mode and group cannot be combined (a supervised group already runs continuable members)')
       }
-      if (anyContinuable && typeof args.worktree === 'string' && args.worktree.length > 0) {
-        throw new Error('delegate: mode "continuable" and worktree cannot be combined (a lane expects a worker that settles exactly once)')
+      if (groupName?.startsWith(IMPLICIT_GROUP_PREFIX)) {
+        throw new Error(`delegate: group "${groupName}" uses the reserved "${IMPLICIT_GROUP_PREFIX}" prefix — those names belong to the implicit supervised group of a lane-bound continuable dispatch; pick another name`)
       }
 
       // Depth guard: workers spawned by a preset child composition must not
@@ -130,6 +136,17 @@ export function createDelegateTool(deps) {
       if (groupName) {
         if (background) throw new Error('delegate: group and run_in_background cannot be combined (supervised groups are continuable children)')
         return spawnSupervisedGroup(groupName, items, args, deps, exec)
+      }
+
+      // Implicit supervised dispatch (resumable-lane-workers D3): lane-bound
+      // continuable items run as members of the implicit group 'lane:<laneId>'
+      // — SUPERVISION_CONTRACT persona, coordinator registration, and
+      // resume_agent/terminate_agent/supervised_status support come with it,
+      // and the lane stays bound while a member is blocked (terminal-only
+      // settlement, D1). Runs after ALL preflight and before any other spawn:
+      // a rejected call leaks zero children and zero lane reservations.
+      if (laneId && anyContinuable) {
+        return spawnLaneBoundContinuables(laneId, items, args, deps, exec)
       }
 
       const outcomes = []
@@ -218,8 +235,9 @@ async function spawnForeground(item, args, deps, exec) {
  * Continuable dispatch (design D2/D5): start the child through the
  * continuable lane and return its stable child id immediately — the result
  * arrives later through the runtime's built-in settlement notice, so there
- * is no jobs wrapper and nothing to await. `worktree` is rejected at the
- * execute mutex, so no lane binding ever exists on this path.
+ * is no jobs wrapper and nothing to await. Lane-bound continuables are
+ * routed to the implicit supervised group at dispatch (resumable-lane-workers
+ * D3), so no lane binding ever exists on this path.
  */
 async function spawnContinuable(item, args, deps, exec) {
   const target = await deps.resolveTarget(item, parentRouteOf(exec))
@@ -394,6 +412,37 @@ async function spawnSupervisedGroup(groupName, items, args, deps, exec) {
 }
 
 /**
+ * Lane-bound continuable dispatch (resumable-lane-workers D3): the call's
+ * continuable items become members of ONE implicit supervised group named
+ * 'lane:<laneId>' (spawned at the first continuable item's position, in item
+ * order); one-shot items keep their existing sequential foreground semantics
+ * — a writer finding the lane busy fails honestly with LANE_BUSY, never a
+ * silent downgrade.
+ */
+async function spawnLaneBoundContinuables(laneId, items, args, deps, exec) {
+  const results = []
+  /** @type {any} */
+  let group = null
+  for (const item of items) {
+    if (item.mode === 'continuable') {
+      if (!group) {
+        group = await spawnSupervisedGroup(`${IMPLICIT_GROUP_PREFIX}${laneId}`, items.filter((candidate) => candidate.mode === 'continuable'), args, deps, exec)
+      }
+      continue
+    }
+    results.push(await spawnForeground(item, args, deps, exec))
+  }
+  return {
+    supervised: true,
+    implicit: true,
+    lane: laneId,
+    group: group.group,
+    members: group.members,
+    ...(results.length > 0 ? { background: false, results } : {}),
+  }
+}
+
+/**
  * Reserve the lane a delegation names (or enforce Worktree mode when it names
  * none). Returns null for an unbound delegation.
  * @returns {Promise<any>}
@@ -473,6 +522,13 @@ function renderDelegateResult(value) {
   if (!value || typeof value !== 'object') return String(value)
   if (value.supervised) {
     const lines = value.members.map((member) => `- ${member.name} (${member.id})`)
+    if (value.implicit) {
+      // Lane-bound continuable dispatch (D3/D4): name the implicit group, the
+      // member ids, and the lane binding semantics (blocked keeps the lane).
+      const text = `Lane-bound continuable worker(s) started as the implicit supervised group "${value.group}" — each member is bound to lane ${value.lane}; the lane stays bound while a member is blocked (resume_agent continues it in place) and settles on the member's terminal report (the host then checks the lane):\n${lines.join('\n')}\n\nEach member reports a terminal status (completed/blocked); each member's report reaches you in that member's settlement notice. Manage the members with resume_agent / terminate_agent / supervised_status.`
+      if (!value.results) return text
+      return `${text}\n\n---\n\n${renderForegroundResults(value.results)}`
+    }
     return `Supervised group "${value.group}" started with ${value.members.length} member(s); they now run as supervised continuable children:\n${lines.join('\n')}\n\nEach member will report a terminal status (completed/blocked); each member's report reaches you in that member's settlement notice. A one-line group-settled signal arrives when every member settles.`
   }
   if (value.continuable) {
