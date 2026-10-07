@@ -1,9 +1,34 @@
 {
   "name": "weir-harness",
   "version": "0.7.0",
-  "private": true,
   "type": "module",
   "description": "Weir \u2014 orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
+  "license": "MIT",
+  "author": "Lim-Young",
+  "homepage": "https://github.com/WeirLabs/weir#readme",
+  "bugs": "https://github.com/WeirLabs/weir/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WeirLabs/weir.git",
+    "directory": "plugins/weir-harness"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "agent-preset",
+    "orchestrator",
+    "weir"
+  ],
+  "files": [
+    "src",
+    "lib",
+    "skills",
+    "cordis.patch.yml",
+    "whitelist-defaults.json"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0"
+  },
   "exports": {
     "./package.json": "./package.json",
     "./core": "./src/core/index.js",
@@ -44,6 +69,7 @@
   "scripts": {
     "build": "node scripts/build-client.js",
     "check": "tsc --noEmit -p jsconfig.json",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "prepack": "pnpm run check && pnpm test && pnpm run build"
   }
 }
