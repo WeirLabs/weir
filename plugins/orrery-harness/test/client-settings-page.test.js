@@ -503,12 +503,13 @@ describe('client.settings-page chunk', () => {
     expect(dismissals).toEqual(['dismiss', 'dismiss'])
   })
 
-  it('renders boolean rows via the shared effective-value helper and enum rows as segmented controls', async () => {
+  it('renders boolean rows via the shared effective-value helper and enum rows per their display marker', async () => {
     const { exports, editors, primitivesStub } = await loadPage()
+    const edits = []
     const rendered = renderCard(exports, editors, {
       fields: makeFields(),
       env: { status: 'ready', facts: { platform: 'darwin' } },
-    })
+    }, { edit: (name, text) => edits.push([name, text]) })
     // choice rows are component elements: invoke them to read the Switch /
     // SegmentedControl props (same pattern as the pre-overhaul suite)
     const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
@@ -528,21 +529,42 @@ describe('client.settings-page chunk', () => {
     })
     const draftedRow = findAll(drafted.children, (node) => node.descriptor?.field === 'todoEnabled')[0]
     expect(findAll(draftedRow.__type(draftedRow), (node) => node.__type === primitivesStub.Switch)[0].checked).toBe(false)
-    // the enum row renders the segmented control with the dictionary options
+    // the short-valued enums keep the segmented control with the dictionary options
     const segmented = findAll(renderChoice('intentGateClassifier'), (node) => node.__type === primitivesStub.SegmentedControl)
     const classifier = segmented.find((node) => node.label === 'intentGateClassifier')
     expect(classifier.value).toBe('regex')
     expect(classifier.options).toHaveLength(3)
-    // the worktree auto-approve enum: three segments with the option-label
-    // dictionary keys (hyphenated values are quoted keys), default selected
-    const approveSegmented = findAll(renderChoice('worktreeAutoApprove'), (node) => node.__type === primitivesStub.SegmentedControl)
-    const approve = approveSegmented.find((node) => node.label === 'worktreeAutoApprove')
+    const foreground = findAll(renderChoice('notifyForeground'), (node) => node.__type === primitivesStub.SegmentedControl)
+    expect(foreground.find((node) => node.label === 'notifyForeground').value).toBe('skip')
+    // the worktree auto-approve enum carries `display: "select"` (its three
+    // long option labels squeeze the row label in a segmented control) and
+    // renders a compact native dropdown instead: no SegmentedControl, one
+    // <select> whose options carry the option-label dictionary keys
+    // (hyphenated values are quoted keys), the product default selected when unset
+    const approveRow = renderChoice('worktreeAutoApprove')
+    expect(findAll(approveRow, (node) => node.__type === primitivesStub.SegmentedControl)).toHaveLength(0)
+    const approveSelects = findAll(approveRow, (node) => node.__type === 'select')
+    expect(approveSelects).toHaveLength(1)
+    const approve = approveSelects[0]
+    expect(approve['aria-label']).toBe('worktreeAutoApprove')
     expect(approve.value).toBe('auto-clean')
-    expect(approve.options).toEqual([
-      { value: 'manual', label: 'worktreeAutoApproveOptionManual' },
-      { value: 'auto-keep', label: 'worktreeAutoApproveOptionAuto-keep' },
-      { value: 'auto-clean', label: 'worktreeAutoApproveOptionAuto-clean' },
+    expect(approve.disabled).toBe(false)
+    expect(approve.children.map((option) => [option.value, option.children])).toEqual([
+      ['manual', 'worktreeAutoApproveOptionManual'],
+      ['auto-keep', 'worktreeAutoApproveOptionAuto-keep'],
+      ['auto-clean', 'worktreeAutoApproveOptionAuto-clean'],
     ])
+    // a native change event writes the raw value through the row's onChange
+    approve.onChange({ target: { value: 'auto-keep' } })
+    expect(edits).toEqual([['worktreeAutoApprove', 'auto-keep']])
+    // disabled passthrough: a read-only form disables the dropdown
+    const readOnly = renderCard(exports, editors, {
+      fields: makeFields(),
+      writable: false,
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const readOnlyRow = findAll(readOnly.children, (node) => node.descriptor?.field === 'worktreeAutoApprove')[0]
+    expect(findAll(readOnlyRow.__type(readOnlyRow), (node) => node.__type === 'select')[0].disabled).toBe(true)
   })
 
   it('mirrors the six late boolean product defaults in the map, the helper and the conditions', async () => {
@@ -622,13 +644,14 @@ describe('client.settings-page chunk', () => {
     // plan has no entry for it and it is never written unless edited
     expect(fields.intentGateTimeoutMs.text).toBe('')
     expect(fields.intentGateTimeoutMs.overridden).toBe(false)
-    // enum SegmentedControl: the default is the selected segment when unset
+    // enum controls: the default is the selected segment/option when unset
     const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
     const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
     const segmentedOf = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === primitivesStub.SegmentedControl)[0]
     expect(segmentedOf('intentGateClassifier').value).toBe('regex')
     expect(segmentedOf('notifyForeground').value).toBe('skip')
-    expect(segmentedOf('worktreeAutoApprove').value).toBe('auto-clean')
+    const selectOf = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === 'select')[0]
+    expect(selectOf('worktreeAutoApprove').value).toBe('auto-clean')
   })
 
   it('staged drafts and saved values win over the default display; clearing re-shows it', async () => {
@@ -657,6 +680,13 @@ describe('client.settings-page chunk', () => {
     })
     const choiceRow = findAll(rendered.children, (node) => node.descriptor?.field === 'intentGateClassifier')[0]
     expect(findAll(choiceRow.__type(choiceRow), (node) => node.__type === primitivesStub.SegmentedControl)[0].value).toBe('llm')
+    // the dropdown enum: a staged/saved selection wins over the default option
+    const approveRendered = renderCard(exports, editors, {
+      fields: makeFields({ worktreeAutoApprove: { text: 'auto-keep' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const approveRow = findAll(approveRendered.children, (node) => node.descriptor?.field === 'worktreeAutoApprove')[0]
+    expect(findAll(approveRow.__type(approveRow), (node) => node.__type === 'select')[0].value).toBe('auto-keep')
   })
 
   it('evaluates the classifier conditions against the regex product default when unset — same visible set as before', async () => {
@@ -1125,7 +1155,8 @@ describe('client.settings-page chunk', () => {
       for (const descriptor of exports.FIELDS) {
         expectResolved(dict, descriptor.field)
         expectResolved(dict, `${descriptor.field}Hint`)
-        // every enum row resolves the option labels the SegmentedControl renders
+        // every enum row resolves the option labels its control renders
+        // (segmented control or, for display: "select" rows, the dropdown)
         for (const value of descriptor.values ?? []) {
           expectResolved(dict, `${descriptor.field}Option${value.charAt(0).toUpperCase()}${value.slice(1)}`)
         }
