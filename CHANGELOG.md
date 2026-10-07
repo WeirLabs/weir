@@ -13,6 +13,7 @@
 
 - **设置项条件显隐与子设置项**：Orrery 设置页的每个条目获得两个声明能力——可见性条件（可引用其他设置项的生效值或宿主平台等环境事实，支持与/或/非组合；翻动开关即时显隐、无需保存，被隐藏条目的已保存值与草稿原样保留）与父子层级（子项自动归位到父项正下方、支持多级嵌套、父隐则子隐，以缩进与引导线呈现）。落地效果：各功能细调参数只在其总开关打开时出现，模型选择器仅在意图分类器选 LLM 时出现，Jev 选项仅在选 Jev 时出现，pwsh 白名单仅在 Windows 宿主出现。声明非法（指错父级、条件引用未知键）在页面加载时即报错而非渲染错误布局。详见 [设置页文档](docs/features/settings-page.md)。
 
+- **Worktree 车道自动授权（逐会话三档）**：仿 DSH 沙箱授权机制，`/worktree approve <manual|auto-keep|auto-clean>` 逐会话切换：`manual` 保持逐张卡片批准（现状）；`auto-keep` 自动批准合并与放弃、收尾清理 worktree 保留分支；`auto-clean` 自动批准合并与放弃、收尾清理 worktree 与分支。自动模式下动作仍由助手显式发起，全部落地前置检查、冲突预检与失败语义不变（审计载荷带 `auto` 标记），只是不再弹卡；放弃删除未合并分支时结果摘要写明丢弃的提交数；失效绑定的 force-reclaim 永不自动，一律回退手动确认卡。新会话的初始模式由设置项「Worktree 车道 → `worktreeAutoApprove`」决定（默认 `auto-clean`），车道面板工具条可直接切换。详见 [Worktree 车道文档](docs/features/git-worktree.md)。
 ### Changed
 
 - **设置入口统一为全局设置**：Orrery 设置不再出现在插件面板，唯一入口是全局设置面板的 Orrery 分区（UI 层面 breaking：习惯从插件面板进入的用户改从全局设置进入）。同一张表单两处入口并存造成的「以哪处为准」困惑随之消除。详见 [设置页文档](docs/features/settings-page.md)。
