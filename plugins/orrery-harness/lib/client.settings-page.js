@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
 		// render inside another row (the model picker folds intentGateModel /
 		// intentGateReasoningEffort into the intentGateProvider row; their
 		// `when` matches the carrier row by declaration). Field-less custom
-		// nodes (maintenance/manager/permission panels) hang in the same tree.
+		// nodes (maintenance/permission panels) hang in the same tree.
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
@@ -123,8 +123,11 @@ window.__ModuleLoader__.load({
 				{ field: "lspIdleMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
 				{ field: "lspRequestTimeoutMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
 				{ field: "lspDiagnosticsWaitMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
-				{ field: "lspServers", kind: "text", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
-				{ kind: "custom", slot: "lspManager", parent: "lspEnabled", when: enabledWhen("lspEnabled") }
+				// The raw lspServers JSON row is folded into the manager row: one
+				// custom node carrying the field (the robashList pattern —
+				// text-backed at the form layer via specFor), so the panel owns the
+				// overridden/reset affordance and the malformed-JSON hint.
+				{ field: "lspServers", kind: "custom", slot: "lspManager", parent: "lspEnabled", when: enabledWhen("lspEnabled") }
 			] },
 			{ id: "notify", fields: [
 				{ field: "notifyEnabled", kind: "boolean" },
@@ -792,10 +795,19 @@ window.__ModuleLoader__.load({
 					}
 					if (node.slot === "modelPicker") return wrap(renderModelPickerNode(node, state, props, disabled, t));
 					if (node.slot === "lspManager") {
+						// The merged lspServers row: the full robashList wiring plus
+						// the panel's own props; the panel renders the override tag,
+						// the reset button and the malformed-JSON hint itself.
 						return wrap(react_jsx_runtime.jsx(props.editors.LspManagerField, {
+							field: "lspServers",
+							text: field?.text ?? "",
+							serversText: field?.text ?? "",
+							overridden: field?.overridden ?? false,
+							invalid: field?.invalid ?? false,
+							edit: (name, text) => props.edit(name, text),
+							onReset: () => props.resetField("lspServers"),
 							t,
-							serversText: state.fields.lspServers?.text ?? "",
-							edit: (name, text) => props.edit(name, text)
+							disabled
 						}));
 					}
 					if (node.slot === "editLockMaintenance") {

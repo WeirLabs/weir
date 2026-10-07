@@ -42,6 +42,7 @@ describe('client.lsp-panel chunk', () => {
     const requireStub = (name) => {
       if (name === 'react') return reactStub
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Tag: (props) => ({ __tag: props }) }
       throw new Error(`unexpected require ${name}`)
     }
     const { definition, exports } = await loadClientChunk('lib/client.lsp-panel.js', requireStub)
@@ -87,11 +88,14 @@ describe('client.lsp-panel chunk', () => {
     const settle = async () => settleWith(props)
 
     try {
-      // closed: a labeled row with the open button
+      // closed: a labeled row; the toggle is the first control in the
+      // collapsed row's control column, with no hint/override row behind it
       const initial = await settle()
-      expect(initial.settled.children[0].children[1].children).toBe('chainEdit')
+      expect(initial.settled.children[0].children[1].children[0].children).toBe('chainEdit')
+      expect(initial.settled.children[0].children[1].children[1]).toBe(null)
+      expect(initial.settled.children[0].children[1].children[2]).toBe(null)
       // open it → status loads
-      initial.settled.children[0].children[1].onClick()
+      initial.settled.children[0].children[1].children[0].onClick()
       await flush()
       const opened = render()
       const body = opened.children[1].children
@@ -132,7 +136,7 @@ describe('client.lsp-panel chunk', () => {
       // fetch failure → inline error row with retry
       globalThis.fetch = () => Promise.reject(new Error('down'))
       const failed = await settle()
-      failed.settled.children[0].children[1].onClick()
+      failed.settled.children[0].children[1].children[0].onClick()
       await flush()
       const errored = render()
       const errorBody = errored.children[1].children
@@ -152,7 +156,7 @@ describe('client.lsp-panel chunk', () => {
       const edited = []
       const customProps = { t: (key) => key, model, serversText: '{}', edit: (field, text) => edited.push({ field, text }) }
       const customRun = await settleWith(customProps)
-      customRun.settled.children[0].children[1].onClick()
+      customRun.settled.children[0].children[1].children[0].onClick()
       await flush()
       const formRow = () => {
         const panel = renderWith(customProps)
@@ -180,6 +184,116 @@ describe('client.lsp-panel chunk', () => {
       expect(model.jsonToLspServers('not-json')).toEqual({})
       expect(model.jsonToLspServers(edited[0].text).zig.command).toBe('zls')
       expect(model.lspServersToJson({})).toBe('{}')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('carries the override/reset affordance and the malformed-JSON hint on the collapsed row', async () => {
+    const reactState = []
+    let hookCursor = 0
+    const reactStub = {
+      reset() {
+        reactState.length = 0
+      },
+      begin() {
+        hookCursor = 0
+      },
+      useState(initial) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = [initial, (next) => {
+          reactState[at][0] = next
+        }]
+        return reactState[at]
+      },
+      useEffect(fn) {
+        const at = hookCursor++
+        if (!(at in reactState)) reactState[at] = { cleanup: fn() }
+        return undefined
+      },
+      useRef: (initial) => ({ current: initial }),
+      Component: class {
+        constructor(props) {
+          this.props = props
+          this.state = undefined
+        }
+      },
+    }
+    const requireStub = (name) => {
+      if (name === 'react') return reactStub
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Tag: (props) => ({ __tag: props }) }
+      throw new Error(`unexpected require ${name}`)
+    }
+    const { exports } = await loadClientChunk('lib/client.lsp-panel.js', requireStub)
+    const { exports: model } = await loadClientChunk('lib/client.lsp-model.js')
+    const { LspManagerField } = exports
+    const t = (key) => key
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const renderWith = (componentProps) => {
+      reactStub.begin()
+      return LspManagerField(componentProps)
+    }
+    // collapsed control column: [toggle, malformed hint|null, override row|null]
+    const controlsOf = (rendered) => rendered.children[0].children[1].children
+
+    // overridden: the accent tag + underline reset sit beside the Edit button
+    const resets = []
+    const overridden = renderWith({ t, model, serversText: '{}', overridden: true, onReset: () => resets.push('reset') })
+    const overrideRow = controlsOf(overridden)[2]
+    expect(overrideRow.children[0].tone).toBe('accent')
+    expect(overrideRow.children[0].children).toBe('overridden')
+    expect(overrideRow.children[1].children).toBe('reset')
+    expect(overrideRow.children[1].style.textDecoration).toBe('underline')
+    expect(overrideRow.children[1].disabled).toBe(undefined)
+    overrideRow.children[1].onClick()
+    expect(resets).toEqual(['reset'])
+    // a disabled form disables the reset button
+    const disabledRender = renderWith({ t, model, serversText: '{}', overridden: true, disabled: true, onReset: () => {} })
+    expect(controlsOf(disabledRender)[2].children[1].disabled).toBe(true)
+    // not overridden: no override row
+    expect(controlsOf(renderWith({ t, model, serversText: '{}' }))[2]).toBe(null)
+
+    // malformed stored JSON: the danger hint shows…
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (url) => {
+      if (url === 'api/orrery-lsp/status') return Promise.resolve({ json: async () => ({ ok: true, value: { servers: [] } }) })
+      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    }
+    try {
+      const edited = []
+      const malformedProps = { t, model, serversText: 'not-json', edit: (field, text) => edited.push({ field, text }) }
+      reactStub.reset()
+      const collapsed = renderWith(malformedProps)
+      const hint = controlsOf(collapsed)[1]
+      expect(hint.children).toBe('lspManagerInvalidJson')
+      expect(hint.style.color).toContain('--dsw-alias-state-danger-primary')
+      // …but the panel still opens with an empty custom list (never trapped)
+      controlsOf(collapsed)[0].onClick()
+      await flush()
+      const opened = renderWith(malformedProps)
+      const panelBody = opened.children[1].children
+      const customSection = panelBody.children[panelBody.children.length - 1]
+      // title + add form only: no custom rows parsed out of the bad value
+      expect(customSection.children).toHaveLength(2)
+      // adding a server from the malformed state synthesizes clean JSON,
+      // overwriting the stored value on save
+      // re-render between inputs: each onChange closure sees the draft of
+      // its own render, so consecutive edits need fresh elements
+      const formRow = () => {
+        const panel = renderWith(malformedProps)
+        const body = panel.children[1].children
+        const section = body.children[body.children.length - 1]
+        return section.children[section.children.length - 1]
+      }
+      formRow().children[0].onChange({ target: { value: 'zig' } })
+      await flush()
+      formRow().children[1].onChange({ target: { value: 'zls' } })
+      await flush()
+      formRow().children[4].onClick()
+      expect(edited).toHaveLength(1)
+      expect(edited[0].field).toBe('lspServers')
+      expect(JSON.parse(edited[0].text)).toEqual({ zig: { command: 'zls' } })
     } finally {
       globalThis.fetch = originalFetch
     }

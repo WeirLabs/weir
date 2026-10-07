@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"44e253cbb34b2524bd0c4a44c9b3a4a121d563f31724c8411507995c3baa610d","client.worktree-model.js":"7182c054488867055d4b697ee4206eaba642f92ecdb3f1a15ad1bdedee300e42","client.worktree-view.js":"18c16470b3dd024755f7c7a36a4316297a079693e987e1144838f7824f8b4076"}
+// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"2f8f3f8e96d69f8041ce255774d192ac7e4d7b58dd9273bc850ea23524e42aa6","client.lsp-panel.js":"24bb0fc3c35e45ad2a83669eb99be28bab0726517e6d5ac666547aab3585343f","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"044e6157a0c50b8595d5cdb94f5c35c94c0182379591422aadc7606f03cd0f64","client.worktree-model.js":"7182c054488867055d4b697ee4206eaba642f92ecdb3f1a15ad1bdedee300e42","client.worktree-view.js":"18c16470b3dd024755f7c7a36a4316297a079693e987e1144838f7824f8b4076"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -288,7 +288,7 @@ window.__ModuleLoader__.load({
 			lspDiagnosticsWaitMs: "Diagnostics wait (ms)",
 			lspDiagnosticsWaitMsHint: "How long to wait for published diagnostics before answering.",
 			lspServers: "Custom LSP servers (JSON)",
-			lspServersHint: "Custom language server definitions, managed visually in the LSP manager below.",
+			lspServersHint: "Custom language server definitions, edited visually in this row's LSP manager panel.",
 			notifyEnabled: "System notifications",
 			notifyEnabledHint: "Master switch: send a system notification when a session needs you or a turn finishes (true/false).",
 			notifyOnComplete: "Notify on completion",
@@ -368,6 +368,7 @@ window.__ModuleLoader__.load({
 			lspManagerInstallCmd: "install command (optional)",
 			lspManagerPendingStatus: "detected after save",
 			lspManagerInstallerMissing: "Installer unavailable: install it first, then retry.",
+			lspManagerInvalidJson: "The stored custom-servers JSON is malformed; the panel opened with an empty list — saving replaces the stored value.",
 			lspFamily_typescript: "TypeScript",
 			lspFamily_python: "Python",
 			lspFamily_go: "Go",
@@ -900,7 +901,7 @@ window.__ModuleLoader__.load({
 			lspDiagnosticsWaitMs: "诊断等待（毫秒）",
 			lspDiagnosticsWaitMsHint: "回答前等待诊断发布的窗口时长。",
 			lspServers: "自定义 LSP 服务器（JSON）",
-			lspServersHint: "自定义语言服务器定义，经下方 LSP 管理面板可视化管理。",
+			lspServersHint: "自定义语言服务器定义，经本行的 LSP 管理面板可视化编辑。",
 			notifyEnabled: "系统通知",
 			notifyEnabledHint: "总开关：会话需要你处理、或一轮任务结束时发送系统通知（true/false）。",
 			notifyOnComplete: "完成时通知",
@@ -980,6 +981,7 @@ window.__ModuleLoader__.load({
 			lspManagerInstallCmd: "安装命令（可空）",
 			lspManagerPendingStatus: "保存后检测",
 			lspManagerInstallerMissing: "安装器不可用：请先安装安装器，再重试。",
+			lspManagerInvalidJson: "已保存的自定义服务器 JSON 格式有误；面板已以空列表打开——保存将覆盖该值。",
 			lspFamily_typescript: "TypeScript",
 			lspFamily_python: "Python",
 			lspFamily_go: "Go",
