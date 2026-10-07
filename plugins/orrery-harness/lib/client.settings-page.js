@@ -51,9 +51,12 @@ window.__ModuleLoader__.load({
 		const CLASSIFIER_JEV = Object.freeze({ key: "intentGateClassifier", equals: "jev" });
 		const WINDOWS_ONLY = Object.freeze({ env: "platform", in: Object.freeze(["win32"]) });
 		const ROBASH_WINDOWS = Object.freeze({ all: Object.freeze([enabledWhen("robashEnabled"), WINDOWS_ONLY]) });
-		// The GROUPS field table. Every node: { field?, kind, values?, when?,
-		// parent?, folded?, slot? }. kind: boolean | enum | number | text |
-		// custom. `custom` nodes carry a render `slot` identifier and share
+		// The GROUPS field table. Every node: { field?, kind, values?, display?,
+		// when?, parent?, folded?, slot? }. kind: boolean | enum | number | text |
+		// custom. An enum node may set `display: "select"` to render a compact
+		// native dropdown instead of the segmented control (long option labels
+		// squeeze the row label). `custom` nodes carry a render `slot` identifier
+		// and share
 		// parent/when with plain rows; a custom node with a `field` is
 		// text-backed at the form layer. `folded` fields stay in the form but
 		// render inside another row (the model picker folds intentGateModel /
@@ -109,7 +112,7 @@ window.__ModuleLoader__.load({
 				{ field: "worktreeMaxActive", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
 				{ field: "worktreeRoot", kind: "text", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
 				{ field: "worktreeWatchTimeoutMinutes", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
-				{ field: "worktreeAutoApprove", kind: "enum", values: ["manual", "auto-keep", "auto-clean"], parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") }
+				{ field: "worktreeAutoApprove", kind: "enum", values: ["manual", "auto-keep", "auto-clean"], display: "select", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") }
 			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },
@@ -577,6 +580,11 @@ window.__ModuleLoader__.load({
 		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "12px" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
+		// Compact native dropdown for enum rows marked `display: "select"`
+		// (today only worktreeAutoApprove — its three long option labels squeeze
+		// the row label in a segmented control). Geometry matches the small
+		// inputs of the worktree-view config editor; colors from theme tokens.
+		const selectStyle = { fontSize: "12px", lineHeight: "16px", padding: "3px 6px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", maxWidth: "220px", flex: "none" };
 		const reminderTagsStyle = { display: "flex", flexWrap: "wrap", gap: "6px" };
 		// Row chrome inside a card: hairline separator (skipped on the first
 		// row), and for child rows a left guide line plus padding scaled by
@@ -612,6 +620,21 @@ window.__ModuleLoader__.load({
 						onChange: (checked) => props.onChange(String(checked)),
 						disabled,
 						label: t(descriptor.field)
+					}) : descriptor.display === "select" ? react_jsx_runtime.jsx("select", {
+						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
+						// unset enum (resting text empty): the product default is the
+						// selected option; a staged/saved text always wins — the same
+						// displayText semantics the segmented control below uses
+						value: displayText(descriptor, field),
+						onChange: (event) => props.onChange(event.target.value),
+						disabled,
+						"aria-label": t(descriptor.field),
+						style: selectStyle,
+						children: descriptor.values.map((value) => react_jsx_runtime.jsx("option", {
+							value,
+							children: t(`${descriptor.field}Option${value.charAt(0).toUpperCase()}${value.slice(1)}`),
+							key: value
+						}))
 					}) : react_jsx_runtime.jsx(primitives.SegmentedControl, {
 						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
 						// unset enum (resting text empty): show the product default
