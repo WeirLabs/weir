@@ -155,10 +155,16 @@ window.__ModuleLoader__.load({
 			guardEnabled: true,
 			hashlineHideStockEdit: true,
 			editLockEnabled: false,
+			editLockAutoResume: true,
+			editLockStaleSweep: true,
 			worktreeEnabled: true,
 			worktreeAutoSetup: true,
 			robashEnabled: true,
-			lspEnabled: false
+			lspEnabled: false,
+			notifyEnabled: true,
+			notifyOnComplete: true,
+			notifyOnAttention: true,
+			notifySound: true
 		};
 		// ---- pure: condition DSL evaluation (design D2) ----
 		/** Evaluate one condition node against a resolver pair:

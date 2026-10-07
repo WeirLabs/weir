@@ -133,6 +133,14 @@ describe('client.settings-page chunk', () => {
 
   const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
+  // The six boolean product defaults shipped after BOOLEAN_DEFAULTS was first
+  // written. Their module/bundle defaults are all ON (cordis.patch.yml
+  // orrery-settings row; src/notify/policy.js DEFAULTS.enabled/onComplete/
+  // onAttention/sound), and a profile-level row replaces the bundle row
+  // wholesale — so a key the profile never saved arrives unset and must still
+  // read ON for the Switch AND for the `when` conditions of its children.
+  const MIRRORED_ON_BOOLEANS = ['editLockAutoResume', 'editLockStaleSweep', 'notifyEnabled', 'notifyOnComplete', 'notifyOnAttention', 'notifySound']
+
   /** A full fields map at rest (every text the formatted saved value). */
   function makeFields(overrides = {}) {
     const fields = Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }]))
@@ -209,8 +217,8 @@ describe('client.settings-page chunk', () => {
       expect(card.style.borderRadius).toBe('12px')
       expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
-    // the default visible set (product defaults: todo/guard/worktree/robash
-    // on; editLock/lsp/notify off; classifier regex; platform darwin)
+    // the default visible set (product defaults: todo/guard/worktree/robash/
+    // notify on; editLock/lsp off; classifier regex; platform darwin)
     expect(rowKeys(cards, 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
     expect(rowKeys(cards, 'delegate')).toEqual(['delegateCategoryChains', 'delegateAgentChains', 'delegateDisabledCategories', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
     expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs'])
@@ -219,7 +227,7 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes'])
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
-    expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyPermissions'])
+    expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
     // hairline separators: the first row in a card has none, the rest do
     const todoRows = cards.todo.children.slice(1)
     expect(todoRows[0].style.borderTop).toBe('none')
@@ -496,6 +504,49 @@ describe('client.settings-page chunk', () => {
     const classifier = segmented.find((node) => node.label === 'intentGateClassifier')
     expect(classifier.value).toBe('regex')
     expect(classifier.options).toHaveLength(3)
+  })
+
+  it('mirrors the six late boolean product defaults in the map, the helper and the conditions', async () => {
+    const { exports } = await loadPage()
+    const { BOOLEAN_DEFAULTS, FIELDS, resolveEffectiveValue, evaluateCondition } = exports
+    const descriptorByName = Object.fromEntries(FIELDS.map((descriptor) => [descriptor.field, descriptor]))
+    for (const field of MIRRORED_ON_BOOLEANS) {
+      expect(BOOLEAN_DEFAULTS[field], `${field} must be a true product default`).toBe(true)
+      const descriptor = descriptorByName[field]
+      expect(descriptor.kind, `${field} must be a boolean row`).toBe('boolean')
+      // an unset text is the clear gesture → product default: ON, never "off"
+      expect(resolveEffectiveValue(descriptor, { text: '' }, undefined), `${field} unset must resolve ON`).toBe(true)
+      // the absent field face behaves like an unset text
+      expect(resolveEffectiveValue(descriptor, undefined, undefined), `${field} absent must resolve ON`).toBe(true)
+      // the `when` conditions read the SAME helper, so an untouched key is ON
+      const resolve = {
+        value: (key) => resolveEffectiveValue(descriptorByName[key], { text: '' }, undefined),
+        env: () => undefined,
+      }
+      expect(evaluateCondition({ key: field, equals: true }, resolve), `${field} must satisfy when-enabled`).toBe(true)
+    }
+  })
+
+  it('renders the six mirrored switches ON with their children visible when the profile never saved them', async () => {
+    const { exports, editors, primitivesStub } = await loadPage()
+    const rendered = renderCard(exports, editors, {
+      // editLockEnabled is a false product default, so its two late children
+      // are staged into view; the whole notify family is ON with no staging
+      fields: makeFields({ editLockEnabled: { text: 'true' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
+    const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
+    const switchOf = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === primitivesStub.Switch)[0]
+    for (const field of MIRRORED_ON_BOOLEANS) {
+      expect(choiceByName[field], `${field} must render a choice row`).toBeTruthy()
+      expect(switchOf(field).checked, `${field} renders ON while unset`).toBe(true)
+    }
+    // the conditional-visibility engine agrees: the children are on screen
+    const cards = cardsOf(rendered)
+    expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
+    expect(rowKeys(cards, 'editing')).toContain('editLockAutoResume')
+    expect(rowKeys(cards, 'editing')).toContain('editLockStaleSweep')
   })
 
   it('renders the section as the nested item slot', async () => {
