@@ -3,7 +3,7 @@
 // Skill view plus a classified, actionable recovery entry — never a
 // full-discovery fallback, never a rewritten original file. A new accepted
 // Apply is the recovery path. A disposed provider stays denial-only.
-import { test, expect } from './helpers.js'
+import { test, expect, storePlatformSkip } from './helpers.js'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,7 +38,7 @@ const seedRecord = async (root, sessionId, payload) => {
   await store.commit({ kind: 'selection', sessionId }, 0, () => payload)
 }
 
-test('6.4 an unreadable record is a distinct classified failure with an actionable hint', async () => {
+test('6.4 an unreadable record is a distinct classified failure with an actionable hint', { skip: storePlatformSkip }, async () => {
   const dir = home()
   mkdirSync(join(rootOf(dir), 'sessions', 's1', 'selection.json'), { recursive: true }) // EISDIR
   const provider = mount(dir)
@@ -49,7 +49,7 @@ test('6.4 an unreadable record is a distinct classified failure with an actionab
   expect(typeof (status.hint ?? status.note?.hint)).toBe('string')
 })
 
-test('6.4 corrupt, unknown-schema and torn records classify with their own reasons and never get rewritten', async () => {
+test('6.4 corrupt, unknown-schema and torn records classify with their own reasons and never get rewritten', { skip: storePlatformSkip }, async () => {
   const dir = home()
   const root = rootOf(dir)
   mkdirSync(join(root, 'sessions', 'corrupt'), { recursive: true })

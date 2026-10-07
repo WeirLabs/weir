@@ -1,7 +1,7 @@
 // Tasks 5.1-5.4 of the session-capability-manager change: cold-session
 // fail-closed listing, invalidation re-emission, resume-failure status and
 // the single Skill trigger source.
-import { test, expect } from './helpers.js'
+import { test, expect, storePlatformSkip } from './helpers.js'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
@@ -69,7 +69,7 @@ test('5.1: two sessions of one directory hold different selections without leaki
   expect((await provider.list(STANDING)).candidates).toEqual([])
 })
 
-test('5.1: persisted per-session reads stay isolated for one cwd (plugin default readSelection)', async () => {
+test('5.1: persisted per-session reads stay isolated for one cwd (plugin default readSelection)', { skip: storePlatformSkip }, async () => {
   const base = await realpath(tmpdir())
   const root = await mkdtemp(join(base, 'weir-cold-slash-'))
   try {

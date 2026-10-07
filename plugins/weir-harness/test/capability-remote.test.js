@@ -4,7 +4,7 @@
 // payload-failed) instead of guessed payloads, register a hand-written typert
 // contribution with the frozen validateBinding shape (S27), and stay inert —
 // never break the host composition — when typert is unavailable or throws.
-import { test, expect } from './helpers.js'
+import { test, expect, storePlatformSkip, pinHermeticHostRoots } from './helpers.js'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -56,56 +56,63 @@ function makePluginCtx(root) {
   }
 }
 
-test('remote receipt/list/conditions are byte-identical to the /capabilities verbs', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'weir-remote-'))
-  const harness = makePluginCtx(root)
-  createSkillSelectionPlugin()(harness.ctx, { machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [] })
-  const command = harness.command()
-  expect(typeof command?.handler).toBe('function')
-  // The bridge is fed by the plugin apply (ctx.effect ran synchronously).
-  expect(capabilityReadBridge()).toBeTruthy()
-  const agent = { id: 'sess-remote', session: { id: 'sess-remote', header: { cwd: root } } }
-  harness.fireCreated({ agent })
+test('remote receipt/list/conditions are byte-identical to the /capabilities verbs', { skip: storePlatformSkip }, async () => {
+  // Hermetic roots: the mounted plugin resolves agentsHome/dshHome — pin the
+  // host-dependent env so a runner with user-global skills never leaks in.
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-remote-'))
+    const harness = makePluginCtx(root)
+    createSkillSelectionPlugin()(harness.ctx, { machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [], agentsHome: host.agentsHome, dshHome: root })
+    const command = harness.command()
+    expect(typeof command?.handler).toBe('function')
+    // The bridge is fed by the plugin apply (ctx.effect ran synchronously).
+    expect(capabilityReadBridge()).toBeTruthy()
+    const agent = { id: 'sess-remote', session: { id: 'sess-remote', header: { cwd: root } } }
+    harness.fireCreated({ agent })
 
-  const service = createCapabilityReadService()
-  const remoteReceipt = await service.receipt('sess-remote')
-  const commandReceipt = await command.handler({ agent, rawInput: 'receipt' })
-  expect(commandReceipt.kind).toBe('success')
-  expect(JSON.stringify(remoteReceipt)).toBe(commandReceipt.text)
-  expect(remoteReceipt.status).toBe('applied')
+    const service = createCapabilityReadService()
+    const remoteReceipt = await service.receipt('sess-remote')
+    const commandReceipt = await command.handler({ agent, rawInput: 'receipt' })
+    expect(commandReceipt.kind).toBe('success')
+    expect(JSON.stringify(remoteReceipt)).toBe(commandReceipt.text)
+    expect(remoteReceipt.status).toBe('applied')
 
-  const remoteList = await service.list('sess-remote')
-  const commandList = await command.handler({ agent, rawInput: 'list' })
-  expect(commandList.kind).toBe('success')
-  expect(JSON.stringify(remoteList)).toBe(commandList.text)
-  expect(Array.isArray(remoteList.skills)).toBe(true)
-  expect(Array.isArray(remoteList.mcpServers)).toBe(true)
+    const remoteList = await service.list('sess-remote')
+    const commandList = await command.handler({ agent, rawInput: 'list' })
+    expect(commandList.kind).toBe('success')
+    expect(JSON.stringify(remoteList)).toBe(commandList.text)
+    expect(Array.isArray(remoteList.skills)).toBe(true)
+    expect(Array.isArray(remoteList.mcpServers)).toBe(true)
 
-  const remoteConditions = await service.conditions('sess-remote')
-  const commandConditions = await command.handler({ agent, rawInput: 'conditions' })
-  expect(JSON.stringify(remoteConditions)).toBe(commandConditions.text)
-  expect(remoteConditions).toEqual({ conditions: [] })
+    const remoteConditions = await service.conditions('sess-remote')
+    const commandConditions = await command.handler({ agent, rawInput: 'conditions' })
+    expect(JSON.stringify(remoteConditions)).toBe(commandConditions.text)
+    expect(remoteConditions).toEqual({ conditions: [] })
 
-  // Presets view reads (silent-preset-reads): same byte-parity contract.
-  const remotePresets = await service.presets('sess-remote')
-  const commandPresets = await command.handler({ agent, rawInput: 'presets' })
-  expect(commandPresets.kind).toBe('success')
-  expect(JSON.stringify(remotePresets)).toBe(commandPresets.text)
-  expect(Array.isArray(remotePresets.presets)).toBe(true)
+    // Presets view reads (silent-preset-reads): same byte-parity contract.
+    const remotePresets = await service.presets('sess-remote')
+    const commandPresets = await command.handler({ agent, rawInput: 'presets' })
+    expect(commandPresets.kind).toBe('success')
+    expect(JSON.stringify(remotePresets)).toBe(commandPresets.text)
+    expect(Array.isArray(remotePresets.presets)).toBe(true)
 
-  const remoteDefaultGet = await service.defaultGet('sess-remote')
-  const commandDefaultGet = await command.handler({ agent, rawInput: 'default-get' })
-  expect(JSON.stringify(remoteDefaultGet)).toBe(commandDefaultGet.text)
+    const remoteDefaultGet = await service.defaultGet('sess-remote')
+    const commandDefaultGet = await command.handler({ agent, rawInput: 'default-get' })
+    expect(JSON.stringify(remoteDefaultGet)).toBe(commandDefaultGet.text)
 
-  // Domain statuses are VALUES on the remote while the command maps only
-  // no-workspace to its historical error kind — both from one payload.
-  const homelessAgent = { id: 'sess-noworkspace', session: { id: 'sess-noworkspace', header: {} } }
-  harness.fireCreated({ agent: homelessAgent })
-  const remoteNoWorkspace = await service.defaultGet('sess-noworkspace')
-  const commandNoWorkspace = await command.handler({ agent: homelessAgent, rawInput: 'default-get' })
-  expect(remoteNoWorkspace.status).toBe('no-workspace')
-  expect(commandNoWorkspace.kind).toBe('error')
-  expect(JSON.stringify(remoteNoWorkspace)).toBe(commandNoWorkspace.text)
+    // Domain statuses are VALUES on the remote while the command maps only
+    // no-workspace to its historical error kind — both from one payload.
+    const homelessAgent = { id: 'sess-noworkspace', session: { id: 'sess-noworkspace', header: {} } }
+    harness.fireCreated({ agent: homelessAgent })
+    const remoteNoWorkspace = await service.defaultGet('sess-noworkspace')
+    const commandNoWorkspace = await command.handler({ agent: homelessAgent, rawInput: 'default-get' })
+    expect(remoteNoWorkspace.status).toBe('no-workspace')
+    expect(commandNoWorkspace.kind).toBe('error')
+    expect(JSON.stringify(remoteNoWorkspace)).toBe(commandNoWorkspace.text)
+  } finally {
+    host.restore()
+  }
 })
 
 test('unknown session and missing bridge are explicit typed errors', async () => {

@@ -14,6 +14,12 @@ import { preloadLifecycleSnapshots } from '../src/capabilities/lifecycle-preload
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
 
+// Pin the supported store row: createLifecycleSnapshots accepts an explicit
+// `platform` (the same platform-matrix seam as openCapabilityStore), and the
+// suite convention is to pin `platform: 'darwin'` so store-backed behavior
+// keeps its full assertion strength on any host — including the ubuntu CI
+// runner, where the process platform would otherwise fail closed unsupported.
+
 const base = () => mkdtempSync(join(tmpdir(), 'weir-lifecycle-'))
 const alpha = createSkillIdentity({ scope: 'user', root: '/user', name: 'alpha', opaqueId: 'user-alpha' })
 const beta = createSkillIdentity({ scope: 'project', root: '/project', name: 'beta', opaqueId: 'project-beta' })
@@ -46,7 +52,7 @@ test('6.1 memory snapshot: publish then read hits memory, snapshots are frozen',
 test('6.1 disk-miss performs one blocking synchronous read and caches the record', async () => {
   const root = base()
   await seedSelection(root, 's2', 2, [alpha, beta], ['docs'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   const snapshot = lifecycle.snapshotFor('s2')
   expect(snapshot?.state).toBe('ready')
   expect(snapshot?.revision).toBe(2)
@@ -73,7 +79,7 @@ test('6.4 root rule: corrupt, unknown-schema and torn records become BLOCKED and
   const torn = JSON.parse(readFileSync(tornPath, 'utf8'))
   torn.revision = 5 // digest no longer matches
   writeFileSync(tornPath, JSON.stringify(torn))
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   expect(lifecycle.snapshotFor('corrupt-session')?.reason).toBe('corrupt')
   expect(lifecycle.snapshotFor('schema-session')?.reason).toBe('unknown-schema')
   expect(lifecycle.snapshotFor('torn-session')?.reason).toBe('torn')
@@ -87,7 +93,7 @@ test('6.4 root rule: corrupt, unknown-schema and torn records become BLOCKED and
 test('6.4 root rule: an unreadable record (EISDIR) becomes BLOCKED, never a guessed authorization', () => {
   const root = base()
   mkdirSync(join(root, 'sessions', 'unreadable-session', 'selection.json'), { recursive: true })
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   const snapshot = lifecycle.snapshotFor('unreadable-session')
   expect(snapshot?.state).toBe('blocked')
   expect(snapshot?.reason).toBe('unreadable')
@@ -95,7 +101,7 @@ test('6.4 root rule: an unreadable record (EISDIR) becomes BLOCKED, never a gues
 
 test('6.1 unsupported platform and missing profileContext are explicit, not silent', () => {
   expect(createLifecycleSnapshots({ root: base(), platform: 'win32' }).support.supported).toBe(false)
-  expect(createLifecycleSnapshots({}).support).toEqual({ supported: false, reason: 'profile-context-unavailable' })
+  expect(createLifecycleSnapshots({ platform: 'darwin' }).support).toEqual({ supported: false, reason: 'profile-context-unavailable' })
   const lifecycle = createLifecycleSnapshots({ root: base(), platform: 'win32' })
   assert.throws(() => lifecycle.captureInherited('c1', 'p1'), /unsupported/)
 })
@@ -103,7 +109,7 @@ test('6.1 unsupported platform and missing profileContext are explicit, not sile
 test('6.2 capture: subagent listener durably captures the parent snapshot verbatim', async () => {
   const root = base()
   await seedSelection(root, 'parent', 2, [alpha, beta], ['docs'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   expect(lifecycle.agentCreated(childPayload('child-1', 'parent'))).toBeUndefined()
   // Interop: the captured record decodes through the async group-2 store.
   const store = openCapabilityStore({ root, platform: 'darwin' })
@@ -122,7 +128,7 @@ test('6.2 capture: subagent listener durably captures the parent snapshot verbat
 test('6.2 capture: a second capture of the same subagent writes the next revision (resume seam for 6.3)', async () => {
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   lifecycle.agentCreated(childPayload('child-2', 'parent'))
   lifecycle.agentCreated(childPayload('child-2', 'parent'))
   const store = openCapabilityStore({ root, platform: 'darwin' })
@@ -140,7 +146,7 @@ test('6.2 fail closed: an unreadable parent snapshot refuses the capture and wri
   const root = base()
   mkdirSync(join(root, 'sessions', 'parent'), { recursive: true })
   writeFileSync(join(root, 'sessions', 'parent', 'selection.json'), '{')
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   assert.throws(() => lifecycle.agentCreated(childPayload('child-3', 'parent')), /unreadable/)
   const store = openCapabilityStore({ root, platform: 'darwin' })
   expect((await store.read({ kind: 'inherited', sessionId: 'child-3' })).kind).toBe('absent')
@@ -152,7 +158,7 @@ test('6.2 fail closed: an existing undecodable inherited record is never overwri
   mkdirSync(join(root, 'sessions', 'child-4'), { recursive: true })
   const recordPath = join(root, 'sessions', 'child-4', 'inherited.json')
   writeFileSync(recordPath, 'not json')
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   assert.throws(() => lifecycle.captureInherited('child-4', 'parent'), /refusing to overwrite/)
   expect(readFileSync(recordPath, 'utf8')).toBe('not json')
 })
@@ -169,7 +175,7 @@ test('6.1 listener is synchronous: no await anywhere in the module and every suc
   expect(/\bawait\b/.test(source)).toBe(false)
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   expect(lifecycle.agentCreated.constructor.name).toBe('Function')
   expect(lifecycle.agentCreated(rootPayload('parent'))).toBeUndefined()
   expect(lifecycle.agentCreated(childPayload('child-5', 'parent'))).toBeUndefined()
@@ -249,7 +255,7 @@ const incarnationPayload = (sessionId, parentSession) => ({
 test('D1 incarnation: a depth-0 session with a parentSession captures the parent snapshot at creation (narrower-only)', async () => {
   const root = base()
   await seedSelection(root, 'parent', 2, [alpha, beta], ['docs'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   expect(lifecycle.agentCreated(incarnationPayload('incarnation-1', 'parent'))).toBeUndefined()
   // Interop: the captured record decodes through the async group-2 store.
   const store = openCapabilityStore({ root, platform: 'darwin' })
@@ -293,7 +299,7 @@ test('D1 incarnation: an own accepted record wins — no capture, the user selec
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha], ['docs'])
   await seedSelection(root, 'incarnation-3', 1, [alpha, beta], ['docs', 'web'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   expect(lifecycle.agentCreated(incarnationPayload('incarnation-3', 'parent'))).toBeUndefined()
   const snapshot = lifecycle.snapshotFor('incarnation-3')
   expect(snapshot?.state).toBe('ready')

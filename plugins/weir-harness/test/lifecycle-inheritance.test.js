@@ -12,6 +12,12 @@ import { createLifecycleSnapshots } from '../src/capabilities/lifecycle-snapshot
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
 
+// Pin the supported store row: createLifecycleSnapshots accepts an explicit
+// `platform` (the same platform-matrix seam as openCapabilityStore), and the
+// suite convention is to pin `platform: 'darwin'` so store-backed behavior
+// keeps its full assertion strength on any host — including the ubuntu CI
+// runner, where the process platform would otherwise fail closed unsupported.
+
 const base = () => mkdtempSync(join(tmpdir(), 'weir-inherit-'))
 const identity = (scope, name) => createSkillIdentity({ scope, root: `/${scope}`, name, opaqueId: `${scope}-${name}` })
 const alpha = identity('user', 'alpha')
@@ -39,11 +45,11 @@ const names = skills => skills.map(s => s.name)
 test('6.3 create: the child inherits the parent accepted set verbatim, constraints only narrow', async () => {
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha, beta], ['docs', 'web'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   lifecycle.agentCreated(childPayload('child-a', 'parent'))
   expect(names((await inheritedRecord(root, 'child-a')).payload.skills)).toEqual(['alpha', 'beta'])
   // Constraints intersect: beta dropped, and gamma (not in the parent) never appears.
-  const narrowed = createLifecycleSnapshots({ root })
+  const narrowed = createLifecycleSnapshots({ root, platform: 'darwin' })
   narrowed.captureInherited('child-b', 'parent', { allowSkills: [alpha, gamma], allowMcpServers: ['web'] })
   const record = await inheritedRecord(root, 'child-b')
   expect(names(record.payload.skills)).toEqual(['alpha'])
@@ -53,12 +59,12 @@ test('6.3 create: the child inherits the parent accepted set verbatim, constrain
 test('6.3 resume after the parent narrowed: the removed capability never returns', async () => {
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha, beta], ['docs', 'web'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   lifecycle.agentCreated(childPayload('child-c', 'parent'))
   // Parent narrows to alpha-only.
   await seedSelection(root, 'parent', 1, [alpha], ['docs'])
   // A fresh lifecycle (cold process) re-reads everything from disk.
-  const cold = createLifecycleSnapshots({ root })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
   cold.agentCreated(childPayload('child-c', 'parent'))
   const record = await inheritedRecord(root, 'child-c')
   expect(record.revision).toBe(2)
@@ -69,7 +75,7 @@ test('6.3 resume after the parent narrowed: the removed capability never returns
 test('6.3 a live child is never widened: parent additions arrive only at an explicit resume, intersected', async () => {
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha], ['docs'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   lifecycle.agentCreated(childPayload('child-d', 'parent'))
   // Parent widens with gamma. Messaging the live child produces NO
   // agent/created, so no recapture: the durable record stays revision 1.
@@ -79,7 +85,7 @@ test('6.3 a live child is never widened: parent additions arrive only at an expl
   expect(lifecycle.snapshotFor('child-d')?.skills.map(s => s.name)).toEqual(['alpha'])
   // An explicit resume recomputes child-previous ∩ current-parent: gamma is
   // NOT granted (the child never had it), alpha is kept.
-  const cold = createLifecycleSnapshots({ root })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
   cold.agentCreated(childPayload('child-d', 'parent'))
   const record = await inheritedRecord(root, 'child-d')
   expect(record.revision).toBe(2)
@@ -90,10 +96,10 @@ test('6.3 a live child is never widened: parent additions arrive only at an expl
 test('6.3 escalation follows the resume rule and constraints still apply on top', async () => {
   const root = base()
   await seedSelection(root, 'parent', 1, [alpha, beta], ['docs'])
-  const lifecycle = createLifecycleSnapshots({ root })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
   lifecycle.agentCreated(childPayload('child-e', 'parent'))
   await seedSelection(root, 'parent', 1, [beta], ['docs'])
-  const cold = createLifecycleSnapshots({ root })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
   // Escalation re-announces agent/created: resume ∩ plus constraints.
   cold.captureInherited('child-e', 'parent', { allowSkills: [alpha] })
   const record = await inheritedRecord(root, 'child-e')
@@ -102,7 +108,7 @@ test('6.3 escalation follows the resume rule and constraints still apply on top'
 })
 
 test('6.3 a parent without any accepted record yields an empty inherited set', () => {
-  const lifecycle = createLifecycleSnapshots({ root: base() })
+  const lifecycle = createLifecycleSnapshots({ root: base(), platform: 'darwin' })
   const snapshot = lifecycle.captureInherited('child-f', 'no-such-parent')
   expect(snapshot.state).toBe('ready')
   expect(snapshot.skills).toEqual([])

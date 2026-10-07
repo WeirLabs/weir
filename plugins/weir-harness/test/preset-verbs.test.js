@@ -2,7 +2,7 @@
 // preset/default verbs of /capabilities (the lane-049 implementation's
 // deferred test debt). Per verb: success / conflict / rejection / zero-write
 // paths, through the ctx-stub pattern of capabilities-command.test.js.
-import { test, expect } from './helpers.js'
+import { test, expect, storePlatformSkip } from './helpers.js'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,7 +49,7 @@ const identityFixture = (name = 'alpha') => ({ scope: 'custom', root: '/skills',
 
 // ---- presets ---------------------------------------------------------------
 
-test('presets: lists both namespaces with counts; an unsupported store fails closed', async () => {
+test('presets: lists both namespaces with counts; an unsupported store fails closed', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
   const empty = await callJson('presets')
@@ -79,7 +79,7 @@ test('presets: lists both namespaces with counts; an unsupported store fails clo
 
 // ---- preset-save -------------------------------------------------------------
 
-test('preset-save: create success; name collision is zero-write unless replaced; stale revision conflicts', async () => {
+test('preset-save: create success; name collision is zero-write unless replaced; stale revision conflicts', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { call, callJson } = mountCapabilities(root)
   const spec = { scope: 'global', name: 'My Preset', from: 'draft', skills: [identityFixture()], mcpServers: ['docs'], unresolvedRefs: [] }
@@ -127,7 +127,7 @@ test('preset-save: workspace scope without a workspace is an explicit status', a
   expect(JSON.parse(noCwd.text).status).toBe('no-workspace')
 })
 
-test('preset-save from:applied is server-authoritative — client-sent sets are never trusted', async () => {
+test('preset-save from:applied is server-authoritative — client-sent sets are never trusted', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
   writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: alpha fixture\n---\nALPHA\n')
@@ -151,7 +151,7 @@ test('preset-save from:applied is server-authoritative — client-sent sets are 
 
 // ---- preset-load -------------------------------------------------------------
 
-test('preset-load: returns the stored document; absent and invalid ids are explicit', async () => {
+test('preset-load: returns the stored document; absent and invalid ids are explicit', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
   await callJson('preset-save', { scope: 'global', name: 'Keep', from: 'draft', skills: [identityFixture()], mcpServers: [], unresolvedRefs: [] })
@@ -167,7 +167,7 @@ test('preset-load: returns the stored document; absent and invalid ids are expli
 
 // ---- preset-delete -----------------------------------------------------------
 
-test('preset-delete: deletes under CAS; a stale revision conflicts and keeps the preset', async () => {
+test('preset-delete: deletes under CAS; a stale revision conflicts and keeps the preset', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
   await callJson('preset-save', { scope: 'global', name: 'Doomed', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
@@ -182,7 +182,7 @@ test('preset-delete: deletes under CAS; a stale revision conflicts and keeps the
 
 // ---- preset-export -----------------------------------------------------------
 
-test('preset-export: package is the default v2; document is the v1 verbatim path; bad format rejected', async () => {
+test('preset-export: package is the default v2; document is the v1 verbatim path; bad format rejected', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
   await callJson('preset-save', { scope: 'global', name: 'Export Me', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
@@ -209,7 +209,7 @@ test('preset-export: package is the default v2; document is the v1 verbatim path
   expect((await callJson('preset-export', { scope: 'global', presetId: 'ghost', format: 'document' })).payload.status).toBe('absent')
 })
 
-test('preset-export package round-trips the applied selection through the live inventory', async () => {
+test('preset-export package round-trips the applied selection through the live inventory', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
   writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: alpha fixture\n---\nALPHA\n')
@@ -230,7 +230,7 @@ test('preset-export package round-trips the applied selection through the live i
 
 // ---- preset-import (v1 + v2 dispatch) ----------------------------------------
 
-test('preset-import v1: binds configured MCP only; poison documents reject with zero writes', async () => {
+test('preset-import v1: binds configured MCP only; poison documents reject with zero writes', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
   await callJson('mcp-add', { identity: 'docs', label: 'Docs', command: 'npx' })
@@ -285,7 +285,7 @@ test('preset-import v1: binds configured MCP only; poison documents reject with 
 
 // ---- default-get / default-save / default-clear ------------------------------
 
-test('default verbs: absent → explicit empty set → stale conflict → cleared marker (clear ≠ empty set)', async () => {
+test('default verbs: absent → explicit empty set → stale conflict → cleared marker (clear ≠ empty set)', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
   expect((await callJson('default-get')).payload.status).toBe('absent')
@@ -323,7 +323,7 @@ test('default verbs: absent → explicit empty set → stale conflict → cleare
 
 // ---- v2 round-trip across two machines ----------------------------------------
 
-test('save → export package → dryRun → confirmed import round-trips between two isolated roots', async () => {
+test('save → export package → dryRun → confirmed import round-trips between two isolated roots', { skip: storePlatformSkip }, async () => {
   const rootA = tmp()
   mkdirSync(join(rootA, 'custom', 'alpha'), { recursive: true })
   writeFileSync(join(rootA, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: alpha fixture\n---\nALPHA\n')

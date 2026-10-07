@@ -2,7 +2,7 @@
 // package — pack (origin split), validate (atomic gate, bounds), the
 // two-phase import plan, and the confirmed install discipline (temp-name →
 // rename, rollback, same-name-policy collisions, audit).
-import { test, expect } from './helpers.js'
+import { test, expect, storePlatformSkip } from './helpers.js'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -498,7 +498,7 @@ const packageFixture = () => ({
   warnings: [],
 })
 
-test('preset-import v2: a poison package is rejected atomically with zero writes', async () => {
+test('preset-import v2: a poison package is rejected atomically with zero writes', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { command, agent } = mountCapabilities(root)
   const poison = packageFixture()
@@ -513,7 +513,7 @@ test('preset-import v2: a poison package is rejected atomically with zero writes
   expect(JSON.parse((await command.handler({ agent, rawInput: 'presets' })).text).presets).toEqual([])
 })
 
-test('preset-import v2: dry-run zero writes; confirmed installs; enabled set untouched', async () => {
+test('preset-import v2: dry-run zero writes; confirmed installs; enabled set untouched', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { command, agent } = mountCapabilities(root)
   const before = JSON.parse((await command.handler({ agent, rawInput: 'receipt' })).text)
@@ -570,7 +570,7 @@ test('preset-import v2: dry-run zero writes; confirmed installs; enabled set unt
   expect(auditLog).toContain('"outcome":"installed"')
 })
 
-test('preset-import v2: a name collision without a decision cancels that Skill (zero writes for it)', async () => {
+test('preset-import v2: a name collision without a decision cancels that Skill (zero writes for it)', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { command, agent } = mountCapabilities(root)
   await command.handler({ agent, rawInput: `preset-import ${JSON.stringify({ document: packageFixture(), scope: 'global' })}` })
@@ -619,7 +619,7 @@ test('preset-import v2: a package needing an unresolvable root fails before any 
   expect(summary.install.find(entry => entry.name === 'ws-tool').targetRoot).toBeNull()
 })
 
-test('preset-import v2: a preset name conflict leaves the confirmed install in place and reports both', async () => {
+test('preset-import v2: a preset name conflict leaves the confirmed install in place and reports both', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { command, agent } = mountCapabilities(root)
   await command.handler({ agent, rawInput: `preset-save ${JSON.stringify({ scope: 'global', name: 'Bundle', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })}` })

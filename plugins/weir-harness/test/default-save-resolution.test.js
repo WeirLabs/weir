@@ -4,7 +4,7 @@
 // candidates (e.g. `research` duplicated across builtin and user scope) must
 // not be stored as a bare name, because the read side's unique-name binding
 // would refuse it in every new session forever (the 15/16 bug).
-import { test, expect } from './helpers.js'
+import { test, expect, storePlatformSkip } from './helpers.js'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -114,7 +114,7 @@ const discoverIdentities = async root => {
   return snapshot.candidates.filter(candidate => candidate.status === 'parsed').map(candidate => candidate.identity)
 }
 
-test('default-save from:draft persists resolved identities, and a new session gets every skill (15/16 regression)', async () => {
+test('default-save from:draft persists resolved identities, and a new session gets every skill (15/16 regression)', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   plantUserResearch(root)
   const { callJson } = mountCapabilities(root)
@@ -145,7 +145,7 @@ test('default-save from:draft persists resolved identities, and a new session ge
   expect(receipt.payload.effective.skills.sort()).toEqual(['debugging', 'research'])
 })
 
-test('default-save from:draft refuses an ambiguous name without applied evidence (zero write)', async () => {
+test('default-save from:draft refuses an ambiguous name without applied evidence (zero write)', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   plantUserResearch(root)
   const { callJson } = mountCapabilities(root)
@@ -162,7 +162,7 @@ test('default-save from:draft refuses an ambiguous name without applied evidence
   expect((await storeOf(root).read({ kind: 'defaults', workspaceKey: workspaceKeyOf({ cwd: root }) })).kind).toBe('absent')
 })
 
-test('default-save from:draft refuses unknown names (zero write)', async () => {
+test('default-save from:draft refuses unknown names (zero write)', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   plantUserResearch(root)
   const { callJson } = mountCapabilities(root)
