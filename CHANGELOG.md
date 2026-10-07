@@ -9,6 +9,8 @@
 
 ### Added
 
+- **会话黑板（切片二：Agent 契约、订阅投递与黑板面板）**：子 Agent prompt 现在携带黑板写入契约（四触发器、search-before-create、结算报告引用条目 key），主 Agent 派发前会先查板并把相关 key 写进子任务；写入权释放/删除/超时现在会真实投递给订阅的 Agent（不触发新回合、不写会话日志）。右侧栏新增**黑板面板**：条目按类型分组、可过滤搜索、点开看完整信息与读写计数；创建/编辑/删除与助手走同一套写入权仲裁（先申请、持权倒计时、被占用可订阅待释放）；数据走插件自有 typert remote 通道，读操作零会话日志。设置页新增「黑板」组，写入权 TTL（默认 60 分钟）可直接在线调整。详见 [会话黑板](docs/features/blackboard.md)。
+
 - **会话黑板（切片一：核心机制）**：会话级的结构化知识交换所已具备内核——逐会话独立的条目存储（key + 封闭类型枚举 `map`/`contract`/`deadend`/`wiring`/`recipe`/`why` + 结构化摘要 + 完整信息 + 用量计数）、写入权仲裁（一次性令牌、TTL 默认 60 分钟可配 `blackboardWriteTokenTtlMinutes`、竞争自动订阅、超时与终止自动释放），以及五个模型工具（`blackboard_list`/`blackboard_read`/`blackboard_apply`/`blackboard_write`/`blackboard_delete`，挂载进两个预设的隔离 delegation realm）。侧边栏面板、订阅通知投递与晋升评估按钮随后续切片交付。详见 [会话黑板](docs/features/blackboard.md)。
 
 ## [0.9.5] - 2026-10-07

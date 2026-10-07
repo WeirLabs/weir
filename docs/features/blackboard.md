@@ -10,7 +10,7 @@
 
 黑板逐会话独立、易失。它是两层缓存架构中的 L1（会话内 staging + 横向共享），持久文档（`docs/spikes.md`、runtime map、AGENTS.md 指针）是 L2；L1→L2 的门只有一扇，钥匙只在用户手里。
 
-当前实施进度：**切片一已落地**（核心存储 + 写入权仲裁 + 五个模型工具 + volatile 配置 `blackboardWriteTokenTtlMinutes`；工具已进入两个预设的模型目录，Agent 侧已可用）。订阅通知投递、侧边栏面板与晋升按钮随 OpenSpec 变更 `session-blackboard` 的切片二/三交付，本文同步补全。
+当前实施进度：**切片一、二已落地**——核心存储 + 写入权仲裁 + 五个模型工具、Agent 写入契约与检索纪律注入、订阅通知端到端投递、插件自有 typert remote 数据通道、右侧侧边栏黑板面板（类型分组/过滤/搜索、申请→写入/删除全流程、令牌倒计时、竞争订阅）、设置页上架 `blackboardWriteTokenTtlMinutes`。晋升评估按钮随 OpenSpec 变更 `session-blackboard` 的切片三交付，本文同步补全。
 
 ## 用户可见行为
 
@@ -24,7 +24,7 @@
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `blackboard.writeTokenTtlMinutes` | `60` | 写入权超时（分钟），超时自动释放并通知订阅者；切片一起为 config-face-only（不占设置页 UI），随切片二上架 |
+| `blackboard.writeTokenTtlMinutes` | `60` | 写入权超时（分钟），超时自动释放并通知订阅者；设置页「黑板」组可直接编辑 |
 | `blackboard.maxEntriesPerAgent` | （待定） | 单 Agent 写入配额，防黑板变垃圾桶；实施切片中定稿 |
 
 （配置均为 volatile config，在线编辑、无需重挂载。）
