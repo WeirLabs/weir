@@ -163,6 +163,9 @@ const PRE_MIGRATION_KEYS = [
   'healed',
   'ownRecordKept',
   'selfRefSafe',
+  // zombie-lane scenario observations (abandon probe seen, lane worker spawned)
+  'zombieAbandonProbe',
+  'zombieWorkerSeen',
 ]
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']

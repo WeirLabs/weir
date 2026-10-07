@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "seq": 3,
+  "lanes": [
+    {
+      "id": "zombie-evidence-001",
+      "title": "Zombie evidence",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/ws/.orrery/worktrees/zombie-evidence-001",
+      "branch": "orrery/zombie-evidence-001",
+      "base": {
+        "branch": "main",
+        "commit": "0534017f3203c8c05e3a746424b0e1e09979f80c"
+      },
+      "scope": [],
+      "state": "abandoned",
+      "ownerSession": "session-4e8b89b0-2a9c-4d01-b9ab-d2a248dd7d1c",
+      "boundChild": null,
+      "baseMoved": false,
+      "landableTree": null,
+      "setup": {
+        "status": "none"
+      },
+      "check": null,
+      "land": null,
+      "cleanup": {
+        "mode": "keep",
+        "at": 1791336770180,
+        "by": "user"
+      },
+      "reason": "abandoned by the user",
+      "createdAt": 1791336766430,
+      "updatedAt": 1791336770181,
+      "history": [
+        {
+          "from": "preparing",
+          "to": "ready",
+          "event": "setup-ok",
+          "at": 1791336766471,
+          "by": "host"
+        },
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791336766491,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791336766588,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791336770155,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        },
+        {
+          "from": "no-commits",
+          "to": "abandoned",
+          "event": "abandon",
+          "at": 1791336770181,
+          "by": "user",
+          "reason": "abandoned by the user"
+        }
+      ]
+    },
+    {
+      "id": "zombie-rehydrate-002",
+      "title": "zombie-rehydrate-002",
+      "state": "no-commits",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/ws/.orrery/worktrees/zombie-rehydrate-002",
+      "branch": "orrery/zombie-rehydrate-002",
+      "base": {
+        "branch": "main",
+        "commit": "0534017f3203c8c05e3a746424b0e1e09979f80c"
+      },
+      "ownerSession": "session-4e8b89b0-2a9c-4d01-b9ab-d2a248dd7d1c",
+      "boundChild": null,
+      "scope": [],
+      "setup": {
+        "status": "none"
+      },
+      "landableTree": null,
+      "reason": "no commits ahead of main",
+      "createdAt": 1791250367636,
+      "updatedAt": 1791336768358,
+      "history": [
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791250367636,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791336768358,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        }
+      ]
+    },
+    {
+      "id": "zombie-forced-003",
+      "title": "zombie-forced-003",
+      "state": "abandoned",
+      "path": "/Users/young/Documents/Orrery/.orrery/worktrees/zombie-lane-reclamation-083/.orrery/it-root/ws/.orrery/worktrees/zombie-forced-003",
+      "branch": "orrery/zombie-forced-003",
+      "base": {
+        "branch": "main",
+        "commit": "0534017f3203c8c05e3a746424b0e1e09979f80c"
+      },
+      "ownerSession": "session-eeeeeeee-dead-dead-dead-eeeeeeeeeeee",
+      "boundChild": null,
+      "scope": [],
+      "setup": {
+        "status": "none"
+      },
+      "landableTree": null,
+      "reason": "abandoned by the user",
+      "createdAt": 1791250369444,
+      "updatedAt": 1791336770264,
+      "history": [
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791250369444,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791336770263,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        },
+        {
+          "from": "no-commits",
+          "to": "abandoned",
+          "event": "abandon",
+          "at": 1791336770264,
+          "by": "user",
+          "reason": "abandoned by the user"
+        }
+      ],
+      "cleanup": {
+        "mode": "keep",
+        "at": 1791336770264,
+        "by": "user"
+      }
+    }
+  ],
+  "watches": []
+}
