@@ -450,6 +450,21 @@ return (ctx, config = {}) => {
   }, resolveRoot)
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
+  /** Lazy re-bind (design D2): an own-preset main agent with no binding —
+   * orphaned by a preset switch in the blank window — gets ONE idempotent
+   * re-setup through the standard path before the call is refused. A recorded
+   * failure suppresses retries for the rest of this mount generation, and
+   * foreign-preset agents are never tried (the own-preset fence is unchanged).
+   * `ownAgent`/`setupAgent` are declared below and only dereferenced when a
+   * call actually arrives. @param {any} agent */
+  async function domainFor(agent) {
+    if (!registry.rootOf(agent) && !closed && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) await setupAgent(agent)
+    if (registry.rootOf(agent)) return registry.forAgent(agent)
+    const failure = startFailures.get(agent)
+    if (failure) throw new Error(`this session has no Edit Lock domain: setup failed under the current preset generation (${failure}); the automatic re-bind was already attempted. Recovery: restart DeepSeek Harness or start a new conversation.`)
+    // No fence match (foreign preset) or unmount: keep the stock refusal.
+    return registry.forAgent(agent)
+  }
 
   /** The holder's structured reply tool. It is registered on the first request
    * and retired at a turn boundary once no request is pending: unregistering it
@@ -474,7 +489,7 @@ return (ctx, config = {}) => {
     registered.dispose()
   }
   /** @param {string} method */
-  const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainOf(exec.agent)).service)[method](exec, request)
+  const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainFor(exec.agent)).service)[method](exec, request)
   const recovery = createRecoveryDriver({
     domainFor: agent => settled.get(agent),
     followup: (agent, text) => /** @type {any} */ (agent).followup(userTextMessage(text, 'orrery-edit-lock-recovery')),
@@ -549,7 +564,7 @@ return (ctx, config = {}) => {
     acquire: route('acquire'),
     release: route('release'),
     /** @param {any} exec */
-    async locks(exec) { return (await domainOf(exec.agent)).service.locks(exec) },
+    async locks(exec) { return (await domainFor(exec.agent)).service.locks(exec) },
     trySteal: route('trySteal'),
     reply: route('reply'),
     /** @param {any} exec @param {number} minutes */
@@ -560,7 +575,7 @@ return (ctx, config = {}) => {
     async hold(exec, ms) {
       const policy = strictLimits()
       if (ms === undefined) ms = Math.round(policy.holdDefaultMinutes * 60_000)
-      const result = await (await domainOf(exec.agent)).hold(exec.agent, ms, {
+      const result = await (await domainFor(exec.agent)).hold(exec.agent, ms, {
         singleMaxMs: policy.holdSingleMaxMinutes * 60_000,
         cumulativeMaxMs: policy.holdCumulativeMaxMinutes * 60_000,
       })
@@ -572,7 +587,7 @@ return (ctx, config = {}) => {
      * per-agent binding, so a read-only observation works from any tool context.
      * @param {any} exec */
     async retention(exec) {
-      const domain = await domainOf(exec.agent)
+      const domain = await domainFor(exec.agent)
       return domain.retention(exec.agent)
     },
     /** Mount-time handshake from a managed editor. @param {object} definition */
@@ -588,7 +603,7 @@ return (ctx, config = {}) => {
     },
     /** Trusted UI observation for one agent; grants nothing. @param {any} agent */
     async describe(agent) {
-      const domain = await domainOf(agent)
+      const domain = await domainFor(agent)
       return { root: registry.rootOf(agent), mode: domain.mode, status: await domain.status(agent), locks: await domain.locks(agent), recovery: recovery.state(agent) }
     },
   })
@@ -596,11 +611,25 @@ return (ctx, config = {}) => {
 
   const offTools = registerLockTools(ctx, service)
 
-  ctx.on('tools/pre-execute', (/** @type {any} */ exec, /** @type {() => Promise<any>} */ next) => {
+  ctx.on('tools/pre-execute', async (/** @type {any} */ exec, /** @type {() => Promise<any>} */ next) => {
     if (!GUARDED_TOOLS.includes(exec?.name)) return next()
-    const definition = ctx.tools.get(exec.name, exec.agent)
-    if (typeof definition?.execute === 'function' && managed.has(definition.execute)) return next()
-    return Promise.resolve({ kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` })
+    const admitted = () => {
+      const definition = ctx.tools.get(exec.name, exec.agent)
+      return typeof definition?.execute === 'function' && managed.has(definition.execute)
+    }
+    if (admitted()) return next()
+    // Lazy re-bind fallback (design D2): an own-preset agent whose binding was
+    // orphaned by a blank-window preset switch gets ONE idempotent re-setup
+    // before denial. A recorded failure suppresses further retries for the
+    // rest of this mount generation; foreign agents are never tried.
+    const agent = exec?.agent
+    if (!closed && agent && !registry.rootOf(agent) && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) {
+      await setupAgent(agent)
+      if (admitted()) return next()
+    }
+    const failure = /** @type {any} */ (agent) ? startFailures.get(agent) : undefined
+    if (failure) return { kind: 'deny', reason: `${exec.name} refused: this session has no Edit Lock domain under the current preset generation (setup failed: ${failure}); an automatic re-bind was attempted and did not recover it. Recovery: restart DeepSeek Harness or start a new conversation.` }
+    return { kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` }
   })
 
   /** Per-agent Edit Lock setup, shared by the creation listener, the
@@ -982,7 +1011,7 @@ return (ctx, config = {}) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
-        const domain = await domainOf(agent)
+        const domain = await domainFor(agent)
         const raw = String(invocation.rawInput ?? '')
         // Only the hold verb depends on the retention settings being coherent.
         const policy = /^\s*hold\b/.test(raw) ? strictLimits() : limits()
