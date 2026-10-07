@@ -40,6 +40,7 @@ import notifyWorktree from './notify-worktree.js'
 import childPrompt from './child-prompt.js'
 import staleSweep from './editlock-stale-sweep.js'
 import staleSweepOff from './editlock-stale-sweep-off.js'
+import laneResumable from './lane-resumable.js'
 import continuable from './continuable.js'
 import crashRecovery from './editlock-crash-recovery.js'
 import coldView from './editlock-cold-view.js'
@@ -65,6 +66,7 @@ SCENARIOS.push(continuable)
 SCENARIOS.push(crashRecovery)
 SCENARIOS.push(coldView)
 SCENARIOS.push(zombieLane)
+SCENARIOS.push(laneResumable)
 
 /**
  * Find a scenario entry by id.
