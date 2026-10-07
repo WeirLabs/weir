@@ -142,7 +142,9 @@ async function run(ctx) {
   const trace1 = join(ctx.IT_ROOT, 'trace-zombie-lane.jsonl')
   const p1 = await ctx.spawnHeadless(['orrery-it', '--json', prompt], ctx.scenarioEnv(id, trace1))
   const sessionA = parseJsonlLines(p1.stdout).find((entry) => entry?.type === 'session')?.sessionId ?? null
-  const childId = readJsonl(AUDIT).find((record) => record?.type === 'orrery/supervision/settle')?.data?.childId ?? null
+  // The audit log is SHARED with every earlier scenario in the suite run, so
+  // the worker is keyed by this scenario's unique report text, not by order.
+  const childId = readJsonl(AUDIT).find((record) => record?.type === 'orrery/supervision/settle' && record?.session === sessionA && record?.data?.report === 'zombie evidence worker done')?.data?.childId ?? null
 
   // Phase 2: lane C zombie (bound to the REALLY settled child, owner session A)
   // is freed by the restart rebuild's settlement re-emission alone.
@@ -172,7 +174,9 @@ function assert(view) {
   const laneB = ledger?.lanes?.find((entry) => entry.id === LANE_B)
   const laneC = ledger?.lanes?.find((entry) => entry.id === LANE_C)
   const audit = readJsonl(join(view.ws, '.orrery', 'audit.jsonl'))
-  const childId = audit.find((record) => record?.type === 'orrery/supervision/settle')?.data?.childId ?? null
+  // Shared audit log (suite run and recorded fixture alike): key the worker
+  // by this scenario's unique report text, never by record order.
+  const childId = audit.find((record) => record?.type === 'orrery/supervision/settle' && record?.data?.report === 'zombie evidence worker done')?.data?.childId ?? null
   const reconciles = audit.filter((record) => record?.type === 'orrery/worktree/reconcile-binding')
   const forLane = (laneId) => reconciles.find((record) => record?.data?.lane === laneId)
 
