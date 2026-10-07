@@ -295,7 +295,7 @@ describe('orrery settings client half', () => {
     expect(whileServedCalls[0].namespaces).toEqual(['orrery-settings'])
 
     // drive the whileServed registration: the composer toggle and the hash_edit
-    // toolview registered at apply, then three page-chain slot injects
+    // toolview registered at apply, then two page-chain slot injects
     whileServedCalls[0].register(new Set(['orrery-settings']))
     expect(slotInjects.map((inject) => inject.name)).toEqual([
       'conversation.input.right', 'tool.call.toolview', 'conversation.input.right',
@@ -304,7 +304,7 @@ describe('orrery settings client half', () => {
       'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
       // the session capability Badge (12.1): order 95, apply-level registration
       'conversation.input.right',
-      'settings.section', 'settings.orrery.item', 'plugins.item',
+      'settings.section', 'settings.orrery.item',
     ])
 
     // the per-session LSP toggle in the conversation composer bar slot
@@ -356,15 +356,13 @@ describe('orrery settings client half', () => {
     reactStub.begin()
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
-    // the item slot registration hosting the form card
+    // the item slot registration hosting the form card (the single entry:
+    // no plugins.item registration anymore)
     slotInjects[13].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
     expect(itemEntry.definition.id).toBe('orrery-config')
+    expect(slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')).toBeUndefined()
 
-    // the Plugins-page entry
-    slotInjects[14].fn()
-    const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
-    expect(definition.name).toBe('plugins.item')
     // the session capability Badge slot registration (12.1)
     slotInjects[11].fn()
     const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'orrery-capability-badge')
@@ -375,22 +373,13 @@ describe('orrery settings client half', () => {
     expect(badgeVerbs.sessionId).toBe('s0')
     expect(typeof badgeVerbs.fetchReceipt).toBe('function')
 
-    expect(definition.id).toBe('orrery-settings')
-    expect(definition.order).toBe(30)
-    expect(typeof definition.label).toBe('function')
-    expect(typeof definition.inject).toBe('function')
-
     // the page inject(): form hooks + save/edit/discard actions (a stable
     // deferred-store face plus controller-delegating verbs)
-    const injected = definition.inject()
+    const injected = itemEntry.definition.inject()
     expect(injected.hooks.orrerySettingsCard).toBeTruthy()
     expect(typeof injected.save).toBe('function')
     expect(typeof injected.edit).toBe('function')
     expect(typeof injected.discard).toBe('function')
-
-    // the card wrapper renders the summary description without pulling chunks
-    reactStub.begin()
-    expect(component({ view: 'summary', t: (key) => key })).toBe('description')
 
     // S17: apply and the registration chain never dereference remote.session
     expect(sessionAccesses()).toBe(0)
@@ -401,8 +390,8 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[14].fn()
-    const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
+    slotInjects[13].fn()
+    const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
     const injected = definition.inject()
 
     const settle = async (props) => {
@@ -471,8 +460,8 @@ describe('orrery settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['orrery-settings']))
-    slotInjects[14].fn()
-    const { component } = slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')
+    slotInjects[13].fn()
+    const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.orrery.item')
 
     const settle = async (props) => {
       reactStub.reset()

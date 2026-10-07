@@ -1,4 +1,4 @@
-// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"d9468512d02458973adaf57cfec1439279478436ab4ece5923109d38c7868fc8","client.worktree-model.js":"7182c054488867055d4b697ee4206eaba642f92ecdb3f1a15ad1bdedee300e42","client.worktree-view.js":"18c16470b3dd024755f7c7a36a4316297a079693e987e1144838f7824f8b4076"}
+// Orrery client chunks: {"client.capability-badge.js":"447f4851bd140a3a2d958d3abc87bdcf6dc996de1e37cabae9e4db7f875ac11e","client.capability-manager.js":"af649d09da036ba3e3784ae0e50cbb86b7ffa5afe1be65ec24861b16c4135539","client.capability-model.js":"b6f4c15d8b22a840514031195872aa9607f87b4e9ea9232c8a60717120f0c365","client.capability-presets.js":"4e0681827575f0cef8633ee69996442175897364296dc5126fcf0471d38bb277","client.chain-editor.js":"7474bd068644f6e0eacc34cbcb17263667cf2b385c05f57cc1d07bf91091d4ca","client.chain-model.js":"17db00da66fa2d3ba968fc87db4612606fa6c3f854ae96e2fb66aa39989073c9","client.disabled-categories-editor.js":"8a4cfecdfda020c4ec111391e79327f90c2ae027329363586ca09ca23a67bc8a","client.edit-lock-maintenance.js":"f20b1e5b8fe89473fb48802285520d703e522dbbf521642066ec5f33b0ac7d8a","client.edit-lock-panel.js":"8032445ad8fe1644bac54c79fce9ebb34fba248c91fd4327aafbabda7847eac8","client.hash-edit-model.js":"ed9b350b90e4e2e2d14c4584bbf6982e487efe7f20737d69c0da9d14910d4fb9","client.hash-edit-view.js":"b342643ed56d9c3a75fc2addb0aae35dd13eb7a050fbe31518be0d3738287f38","client.lsp-model.js":"d0e9d4684af02d5f0910c16fa124a6a9b223659be31d9e24d431a16f2bd9394d","client.lsp-panel.js":"5c8eaad37a74eaa326d08c1afa9eef5d0f582aa212bab9068f94b16500b886a0","client.lsp-toggle.js":"0c2976163bfd99b8030341703a2120359051afc6dc7eee68e5ee70e7dbaf98a4","client.notify-permissions.js":"383f13758706106da782c0ec2e8996cd4ff33605ac5399c1743baeedc7bb0798","client.notify-web.js":"db8579df79733a3a415c214c6ecc82ea7698af0d34270bebcfda028875af2f0d","client.robash-editor.js":"969c42990fe4ec82e75b3d6e9eb68d4838733d5e631bb05bc5784a28102ea8cc","client.robash-model.js":"b3c010adbca19dc47fcaf1a4c4ef4c394165853432704c51f010fd1820370136","client.settings-page.js":"513413a8c7b764aebbd5a5df812f0194cb0c00fec58cef1a10a2a992a6584698","client.worktree-model.js":"7182c054488867055d4b697ee4206eaba642f92ecdb3f1a15ad1bdedee300e42","client.worktree-view.js":"18c16470b3dd024755f7c7a36a4316297a079693e987e1144838f7824f8b4076"}
 window.__ModuleLoader__.load({
 	id: "orrery-harness",
 	factory: (require) => {
@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
 			saving: "Saving…",
 			overridden: "Overridden",
 			reset: "Reset to default",
+			restartRequired: "Restart required",
 			invalidValue: "Enter a value this field accepts, or leave blank to use the default.",
 			restartReminderTitle: "Restart to apply",
 			restartReminderBody: "These settings changed and take effect after restarting DeepSeek Harness. Everything else you saved is already live.",
@@ -652,6 +653,7 @@ window.__ModuleLoader__.load({
 			saving: "保存中…",
 			overridden: "已覆盖",
 			reset: "恢复默认",
+			restartRequired: "需重启",
 			invalidValue: "请输入该字段接受的值，或留空以使用默认值。",
 			restartReminderTitle: "重启后生效",
 			restartReminderBody: "以下设置已更改，重启 DeepSeek Harness 后才会生效；本次保存的其它改动已即时生效。",
@@ -1851,7 +1853,7 @@ window.__ModuleLoader__.load({
 			});
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
-			// hosting the form; plus a Plugins-page entry for discoverability.
+			// hosting the form — the single Orrery settings entry.
 			ctx.effect(() => ctx.configForms.whileServed([ORRERY_NS], () => {
 				const scope = ctx.configForms.get(ORRERY_NS);
 				// The settings page arrives as 8 package-local chunks in one
@@ -1922,8 +1924,7 @@ window.__ModuleLoader__.load({
 					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
 				}
 				function SettingsCardWrapper(props) {
-					const cardArrival = useChunkArrival(ensureSettingsChunks, props.view !== "summary");
-					if (props.view === "summary") return props.t("description");
+					const cardArrival = useChunkArrival(ensureSettingsChunks);
 					if (cardArrival?.chunks) {
 						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.OrreryCard, { ...props, editors: cardArrival.chunks.editors });
 					}
@@ -1950,20 +1951,11 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: () => cardFace
 				}, SettingsCardWrapper));
-				const offPluginsItem = ctx.slots.inject("plugins.item", () => ctx.slots.register({
-					name: "plugins.item",
-					id: "orrery-settings",
-					order: 30,
-					label: () => t("title"),
-					locale: NS,
-					inject: () => cardFace
-				}, SettingsCardWrapper));
 				return () => {
 					serving = false;
 					controller?.dispose();
 					offSection();
 					offItem();
-					offPluginsItem();
 				};
 			}), "ui-orrery-settings: page");
 		}

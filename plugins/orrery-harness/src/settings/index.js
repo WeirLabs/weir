@@ -13,6 +13,7 @@ import { createWhitelistDefaultsCache, DEFAULT_WHITELIST_PATH } from '../shared/
 import { configValue } from './volatile.js'
 import { computeSections } from './sections.js'
 import { wireLspAdmin } from '../lsp/admin.js'
+import { wireEnvAdmin } from './env-admin.js'
 import { createEditLockEvidence, wireEditLockMaintenance } from '../edit-lock/maintenance.js'
 import { managementRootFor } from '../edit-lock/domains.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
@@ -126,7 +127,10 @@ return (ctx, config = {}) => {
   const offLspAdmin = wireLspAdmin(ctx, () => compute().lsp?.servers)
 
   const offMaintenance = wireEditLockMaintenance(ctx, { savedEnabled, evidence: editLockEvidence, candidateRoots })
-  return () => { offMaintenance(); offLspAdmin(); listeners.clear() }
+  // Environment facts endpoint (settings-page `when: { env }` rows): same
+  // settings-row wiring as the LSP endpoints above (S19).
+  const offEnvAdmin = wireEnvAdmin(ctx)
+  return () => { offMaintenance(); offLspAdmin(); offEnvAdmin(); listeners.clear() }
 }
 }
 const apply = createSettingsPlugin()

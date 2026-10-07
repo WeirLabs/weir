@@ -9,14 +9,23 @@ window.__ModuleLoader__.load({
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let modelPicker = require("orrery-model-picker");
-		// Orrery settings page: one flat form over the `orrery-settings`
-		// namespace (the shared SettingsFormModel only addresses flat fields).
-		// The three field editors (chain/robash list/LSP manager) arrive as
+		// Orrery settings page: one form over the `orrery-settings` namespace
+		// (the shared SettingsFormModel only addresses flat fields), organized
+		// as card sections with conditional rows (`when`) and nested
+		// sub-settings (`parent`). The special field editors (chain/robash
+		// list/LSP manager/notify permissions/Edit Lock maintenance) arrive as
 		// props from the composition root; `settingsBus` and the lazily
 		// evaluated `getSession` closure are prop-injected (S17). ORRERY_NS is
 		// a verbatim copy of the entry constant (same-package sync require is
 		// impossible in the ModuleLoader).
 		const ORRERY_NS = "orrery-settings";
+		// Host environment-facts endpoint (src/settings/env-admin.js): read
+		// once per page arrival, POST like the other orrery-* fetch endpoints.
+		const ENV_PATH = "api/orrery-settings/env";
+		// Environment fact names a `when` condition may reference. Keep in sync
+		// with the facts the endpoint answers (platform today); validateLayout
+		// fails module load on any other name.
+		const ENV_FACTS = ["platform"];
 		// Curated read-only agent names, in registry order — the SINGLE
 		// client-side source for the agent chain-editor lanes (do not scatter).
 		// test/client-settings-page.test.js pins this list to
@@ -30,85 +39,113 @@ window.__ModuleLoader__.load({
 		// registry change cannot drift the two sides.
 		const CATEGORY_NAMES = ["quick", "deep", "deep-plus", "visual", "writing", "general-low", "general-high", "artistry", "architect"];
 		// Restart-required settings keys, in registry order — the SINGLE
-		// client-side source for the post-save restart reminder (do not
+		// client-side source for the post-save restart reminder AND the
+		// always-on inline restart tag (same list, one source; do not
 		// scatter). test/client-settings-page.test.js pins this list to
 		// RESTART_KEYS from src/settings/sections.js, so a declaration
 		// change on either side cannot drift the two sides.
 		const RESTART_FIELDS = ["intentGateClassifier", "intentGateProvider", "intentGateModel", "intentGateReasoningEffort", "intentGateTimeoutMs", "jevEndpoint", "jevModel", "jevApiKeyEnv", "todoEnabled", "todoMaxConsecutive", "todoErrorRetryMax", "todoErrorBackoffBaseMs", "todoErrorBackoffCapMs", "guardEnabled", "guardSoftThreshold", "guardHardThreshold", "hashlineHideStockEdit", "editLockEnabled"];
+		// ---- condition declaration shorthands (frozen pure data, D2) ----
+		const enabledWhen = (key) => Object.freeze({ key, equals: true });
+		const CLASSIFIER_LLM = Object.freeze({ key: "intentGateClassifier", equals: "llm" });
+		const CLASSIFIER_JEV = Object.freeze({ key: "intentGateClassifier", equals: "jev" });
+		const WINDOWS_ONLY = Object.freeze({ env: "platform", in: Object.freeze(["win32"]) });
+		const ROBASH_WINDOWS = Object.freeze({ all: Object.freeze([enabledWhen("robashEnabled"), WINDOWS_ONLY]) });
+		// The GROUPS field table. Every node: { field?, kind, values?, when?,
+		// parent?, folded?, slot? }. kind: boolean | enum | number | text |
+		// custom. `custom` nodes carry a render `slot` identifier and share
+		// parent/when with plain rows; a custom node with a `field` is
+		// text-backed at the form layer. `folded` fields stay in the form but
+		// render inside another row (the model picker folds intentGateModel /
+		// intentGateReasoningEffort into the intentGateProvider row; their
+		// `when` matches the carrier row by declaration). Field-less custom
+		// nodes (maintenance/manager/permission panels) hang in the same tree.
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
-				{ field: "intentGateProvider", kind: "text" },
-				{ field: "intentGateModel", kind: "text" },
-				{ field: "intentGateReasoningEffort", kind: "text" },
+				{ field: "intentGateProvider", kind: "custom", slot: "modelPicker", when: CLASSIFIER_LLM },
+				{ field: "intentGateModel", kind: "text", folded: true, when: CLASSIFIER_LLM },
+				{ field: "intentGateReasoningEffort", kind: "text", folded: true, when: CLASSIFIER_LLM },
 				{ field: "intentGateTimeoutMs", kind: "number" },
-				{ field: "jevEndpoint", kind: "text" },
-				{ field: "jevModel", kind: "text" },
-				{ field: "jevApiKeyEnv", kind: "text" }
+				{ field: "jevEndpoint", kind: "text", when: CLASSIFIER_JEV },
+				{ field: "jevModel", kind: "text", when: CLASSIFIER_JEV },
+				{ field: "jevApiKeyEnv", kind: "text", when: CLASSIFIER_JEV }
 			] },
 			{ id: "delegate", fields: [
-				{ field: "delegateCategoryChains", kind: "text" },
-				{ field: "delegateAgentChains", kind: "text" },
-				{ field: "delegateDisabledCategories", kind: "text" },
+				{ field: "delegateCategoryChains", kind: "custom", slot: "chainEditor" },
+				{ field: "delegateAgentChains", kind: "custom", slot: "agentChainEditor" },
+				{ field: "delegateDisabledCategories", kind: "custom", slot: "disabledCategoriesEditor" },
 				{ field: "supervisionMaxRetries", kind: "number" },
 				{ field: "supervisionInitialBackoffMs", kind: "number" },
 				{ field: "supervisionMaxBackoffMs", kind: "number" }
 			] },
 			{ id: "todo", fields: [
 				{ field: "todoEnabled", kind: "boolean" },
-				{ field: "todoMaxConsecutive", kind: "number" },
-				{ field: "todoErrorRetryMax", kind: "number" },
-				{ field: "todoErrorBackoffBaseMs", kind: "number" },
-				{ field: "todoErrorBackoffCapMs", kind: "number" }
+				{ field: "todoMaxConsecutive", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") },
+				{ field: "todoErrorRetryMax", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") },
+				{ field: "todoErrorBackoffBaseMs", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") },
+				{ field: "todoErrorBackoffCapMs", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") }
 			] },
 			{ id: "guard", fields: [
 				{ field: "guardEnabled", kind: "boolean" },
-				{ field: "guardSoftThreshold", kind: "number" },
-				{ field: "guardHardThreshold", kind: "number" }
+				{ field: "guardSoftThreshold", kind: "number", parent: "guardEnabled", when: enabledWhen("guardEnabled") },
+				{ field: "guardHardThreshold", kind: "number", parent: "guardEnabled", when: enabledWhen("guardEnabled") }
 			] },
 			{ id: "editing", fields: [
 				{ field: "hashlineHideStockEdit", kind: "boolean" },
 				{ field: "editLockEnabled", kind: "boolean" },
-				{ field: "editLockAutoResume", kind: "boolean" },
-				{ field: "editLockStaleSweep", kind: "boolean" },
-				{ field: "editLockHoldDefaultMinutes", kind: "number" },
-				{ field: "editLockHoldSingleMaxMinutes", kind: "number" },
-				{ field: "editLockHoldCumulativeMaxMinutes", kind: "number" },
-				{ field: "editLockNudgeAttempts", kind: "number" },
-				{ field: "editLockNudgeFallback", kind: "text" }
+				{ field: "editLockAutoResume", kind: "boolean", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ field: "editLockStaleSweep", kind: "boolean", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ field: "editLockHoldDefaultMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ field: "editLockHoldSingleMaxMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ field: "editLockHoldCumulativeMaxMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ field: "editLockNudgeAttempts", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ field: "editLockNudgeFallback", kind: "text", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
+				{ kind: "custom", slot: "editLockMaintenance", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") }
 			] },
 			{ id: "worktree", fields: [
 				{ field: "worktreeEnabled", kind: "boolean" },
-				{ field: "worktreeAutoSetup", kind: "boolean" },
-				{ field: "worktreeMaxActive", kind: "number" },
-				{ field: "worktreeRoot", kind: "text" },
-				{ field: "worktreeWatchTimeoutMinutes", kind: "number" }
+				{ field: "worktreeAutoSetup", kind: "boolean", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
+				{ field: "worktreeMaxActive", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
+				{ field: "worktreeRoot", kind: "text", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") },
+				{ field: "worktreeWatchTimeoutMinutes", kind: "number", parent: "worktreeEnabled", when: enabledWhen("worktreeEnabled") }
 			] },
 			{ id: "robash", fields: [
 				{ field: "robashEnabled", kind: "boolean" },
-				{ field: "robashAllow", kind: "text" },
-				{ field: "robashGitAllow", kind: "text" },
-				{ field: "robashDeny", kind: "text" },
-				{ field: "robashPwshAllow", kind: "text" },
-				{ field: "robashPwshDeny", kind: "text" }
+				{ field: "robashAllow", kind: "custom", slot: "robashList", parent: "robashEnabled", when: enabledWhen("robashEnabled") },
+				{ field: "robashGitAllow", kind: "custom", slot: "robashList", parent: "robashEnabled", when: enabledWhen("robashEnabled") },
+				{ field: "robashDeny", kind: "custom", slot: "robashList", parent: "robashEnabled", when: enabledWhen("robashEnabled") },
+				{ field: "robashPwshAllow", kind: "custom", slot: "robashList", parent: "robashEnabled", when: ROBASH_WINDOWS },
+				{ field: "robashPwshDeny", kind: "custom", slot: "robashList", parent: "robashEnabled", when: ROBASH_WINDOWS }
 			] },
 			{ id: "lsp", fields: [
 				{ field: "lspEnabled", kind: "boolean" },
-				{ field: "lspIdleMs", kind: "number" },
-				{ field: "lspRequestTimeoutMs", kind: "number" },
-				{ field: "lspDiagnosticsWaitMs", kind: "number" },
-				{ field: "lspServers", kind: "text" }
+				{ field: "lspIdleMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
+				{ field: "lspRequestTimeoutMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
+				{ field: "lspDiagnosticsWaitMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
+				{ field: "lspServers", kind: "text", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
+				{ kind: "custom", slot: "lspManager", parent: "lspEnabled", when: enabledWhen("lspEnabled") }
 			] },
 			{ id: "notify", fields: [
 				{ field: "notifyEnabled", kind: "boolean" },
-				{ field: "notifyOnComplete", kind: "boolean" },
-				{ field: "notifyOnAttention", kind: "boolean" },
-				{ field: "notifyMinTurnSeconds", kind: "number" },
-				{ field: "notifySound", kind: "boolean" },
-				{ field: "notifyForeground", kind: "enum", values: ["skip", "always"] }
+				{ field: "notifyOnComplete", kind: "boolean", parent: "notifyEnabled", when: enabledWhen("notifyEnabled") },
+				{ field: "notifyOnAttention", kind: "boolean", parent: "notifyEnabled", when: enabledWhen("notifyEnabled") },
+				// two-level nesting: the minimum turn length is a sub-setting of
+				// the completion switch, itself a child of the master switch
+				{ field: "notifyMinTurnSeconds", kind: "number", parent: "notifyOnComplete", when: enabledWhen("notifyOnComplete") },
+				{ field: "notifySound", kind: "boolean", parent: "notifyEnabled", when: enabledWhen("notifyEnabled") },
+				{ field: "notifyForeground", kind: "enum", values: ["skip", "always"], parent: "notifyEnabled", when: enabledWhen("notifyEnabled") },
+				// macOS-only permission entry: it renders nothing until the host
+				// confirms its platform (self-gating), so it stays unconditional
+				// here even as a custom node in the tree.
+				{ kind: "custom", slot: "notifyPermissions" }
 			] }
 		];
-		const FIELDS = GROUPS.flatMap((group) => group.fields);
+		// Form fields: every node that names a flat settings key (custom
+		// panels without a field render only). Order matches the pre-overhaul
+		// flat table exactly — test pins this list.
+		const FIELDS = GROUPS.flatMap((group) => group.fields).filter((descriptor) => typeof descriptor.field === "string");
+		const FIELD_BY_NAME = Object.fromEntries(FIELDS.map((descriptor) => [descriptor.field, descriptor]));
 		/** Product defaults of the boolean switches (mirrors the bundle's
 		 * orrery-settings row). A profile-level row replaces that row's config
 		 * wholesale, so a key the profile never saved arrives unset; the switch
@@ -123,6 +160,191 @@ window.__ModuleLoader__.load({
 			robashEnabled: true,
 			lspEnabled: false
 		};
+		// ---- pure: condition DSL evaluation (design D2) ----
+		/** Evaluate one condition node against a resolver pair:
+		 * resolve.value(key) → the key's effective value, resolve.env(name) →
+		 * the environment fact. Strict equality / strict membership; an
+		 * unresolved value only matches an explicit `equals: undefined`. */
+		function evaluateCondition(node, resolve) {
+			if (Array.isArray(node?.all)) return node.all.every((child) => evaluateCondition(child, resolve));
+			if (Array.isArray(node?.any)) return node.any.some((child) => evaluateCondition(child, resolve));
+			if (node?.not !== void 0) return !evaluateCondition(node.not, resolve);
+			if (typeof node?.key === "string") {
+				const value = resolve.value(node.key);
+				if (Object.hasOwn(node, "equals")) return value === node.equals;
+				if (Array.isArray(node.in)) return node.in.includes(value);
+				return false;
+			}
+			if (typeof node?.env === "string") {
+				const value = resolve.env(node.env);
+				if (Object.hasOwn(node, "equals")) return value === node.equals;
+				if (Array.isArray(node.in)) return node.in.includes(value);
+				return false;
+			}
+			return false;
+		}
+		/** Whether any node in the condition subtree references an environment
+		 * fact — such rows render nothing until the facts arrive (and stay
+		 * hidden after a failed fetch), even under `not`. */
+		function conditionUsesEnv(node) {
+			if (Array.isArray(node?.all)) return node.all.some(conditionUsesEnv);
+			if (Array.isArray(node?.any)) return node.any.some(conditionUsesEnv);
+			if (node?.not !== void 0) return conditionUsesEnv(node.not);
+			return typeof node?.env === "string";
+		}
+		// ---- pure: effective value resolution (design D3) ----
+		/** The product default for an unset key: booleans fall to
+		 * BOOLEAN_DEFAULTS (off when unlisted, matching the switch's display
+		 * rule); anything else is undefined (never satisfies a condition
+		 * unless it explicitly says `equals: undefined`). */
+		function productDefault(descriptor) {
+			if (descriptor.kind === "boolean") return BOOLEAN_DEFAULTS[descriptor.field] === true;
+			return void 0;
+		}
+		/** Parse the field's display text the way the field's own spec would:
+		 * { kind: "set", value } | { kind: "clear" } | undefined (unparseable). */
+		function parseDraft(descriptor, text) {
+			const trimmed = typeof text === "string" ? text.trim() : "";
+			if (trimmed === "") return { kind: "clear" };
+			if (descriptor.kind === "boolean") {
+				const lowered = trimmed.toLowerCase();
+				if (lowered === "true") return { kind: "set", value: true };
+				if (lowered === "false") return { kind: "set", value: false };
+				return void 0;
+			}
+			if (descriptor.kind === "enum") {
+				return descriptor.values.includes(trimmed) ? { kind: "set", value: trimmed } : void 0;
+			}
+			if (descriptor.kind === "number") {
+				const parsed = Number(trimmed);
+				return Number.isFinite(parsed) ? { kind: "set", value: parsed } : void 0;
+			}
+			return { kind: "set", value: trimmed };
+		}
+		/** One effective-value resolver shared by the Switch's `checked`
+		 * computation and every `when` evaluation, so display and conditions
+		 * can never disagree. Priority (D3): parseable staged draft → saved
+		 * value → product default. An empty draft is the clear gesture and
+		 * resolves to the product default; an unparseable draft falls back to
+		 * the saved value so dependent rows do not flicker while the user is
+		 * mid-edit. With nothing staged, the field text IS the formatted
+		 * saved value, so the same three branches cover the resting state. */
+		function resolveEffectiveValue(descriptor, field, savedValue) {
+			const draft = parseDraft(descriptor, field?.text ?? "");
+			if (draft === void 0) return savedValue !== void 0 ? savedValue : productDefault(descriptor);
+			if (draft.kind === "clear") return productDefault(descriptor);
+			return draft.value;
+		}
+		// ---- pure: declaration validation + layout tree (design D4) ----
+		function settingsLayoutError(message) {
+			const error = new Error(`orrery-settings layout: ${message}`);
+			error.name = "SettingsLayoutError";
+			return error;
+		}
+		function validatePredicate(node, owner) {
+			const hasEquals = Object.hasOwn(node, "equals");
+			const hasIn = Object.hasOwn(node, "in");
+			if (hasEquals === hasIn) throw settingsLayoutError(`'${owner}' declares a condition needing exactly one of equals/in`);
+			if (hasIn && !Array.isArray(node.in)) throw settingsLayoutError(`'${owner}' declares a non-array 'in' condition`);
+		}
+		function validateConditionNode(node, owner, knownKeys) {
+			if (node === null || typeof node !== "object" || Array.isArray(node)) {
+				throw settingsLayoutError(`'${owner}' declares a malformed condition`);
+			}
+			const branches = ["key", "env", "all", "any", "not"].filter((branch) => node[branch] !== void 0);
+			if (branches.length !== 1) {
+				throw settingsLayoutError(`'${owner}' declares a malformed condition (exactly one of key/env/all/any/not)`);
+			}
+			if (node.key !== void 0) {
+				if (typeof node.key !== "string" || !knownKeys.has(node.key)) {
+					throw settingsLayoutError(`'${owner}' declares a condition on unknown key '${String(node.key)}'`);
+				}
+				validatePredicate(node, owner);
+				return;
+			}
+			if (node.env !== void 0) {
+				if (typeof node.env !== "string" || !ENV_FACTS.includes(node.env)) {
+					throw settingsLayoutError(`'${owner}' declares a condition on unknown env fact '${String(node.env)}'`);
+				}
+				validatePredicate(node, owner);
+				return;
+			}
+			if (node.all !== void 0 || node.any !== void 0) {
+				const children = node.all ?? node.any;
+				if (!Array.isArray(children) || children.length === 0) {
+					throw settingsLayoutError(`'${owner}' declares an empty '${node.all !== void 0 ? "all" : "any"}' condition`);
+				}
+				for (const child of children) validateConditionNode(child, owner, knownKeys);
+				return;
+			}
+			validateConditionNode(node.not, owner, knownKeys);
+		}
+		/** Fail-loud declaration validation, run at module load: unknown or
+		 * cross-group parents, parent cycles, conditions on unknown keys or
+		 * unknown env facts — every error names the offending key. */
+		function validateLayout(groups) {
+			const keyToGroup = new Map();
+			for (const group of groups) {
+				for (const node of group.fields) {
+					if (typeof node.field !== "string") continue;
+					if (keyToGroup.has(node.field)) throw settingsLayoutError(`duplicate field '${node.field}'`);
+					keyToGroup.set(node.field, group.id);
+				}
+			}
+			const knownKeys = new Set(keyToGroup.keys());
+			for (const group of groups) {
+				const byKey = new Map();
+				for (const node of group.fields) if (typeof node.field === "string") byKey.set(node.field, node);
+				for (const node of group.fields) {
+					const owner = typeof node.field === "string" ? node.field : `slot '${String(node.slot)}'`;
+					if (node.parent !== void 0) {
+						if (typeof node.parent !== "string" || !knownKeys.has(node.parent)) {
+							throw settingsLayoutError(`'${owner}' declares unknown parent '${String(node.parent)}'`);
+						}
+						if (keyToGroup.get(node.parent) !== group.id) {
+							throw settingsLayoutError(`'${owner}' declares cross-group parent '${node.parent}'`);
+						}
+					}
+					if (node.when !== void 0) validateConditionNode(node.when, owner, knownKeys);
+				}
+				for (const node of group.fields) {
+					if (typeof node.field !== "string" || node.parent === void 0) continue;
+					const seen = new Set([node.field]);
+					let current = byKey.get(node.parent);
+					while (current !== void 0) {
+						if (seen.has(current.field)) throw settingsLayoutError(`'${node.field}' declares a parent cycle through '${current.field}'`);
+						seen.add(current.field);
+						current = current.parent !== void 0 ? byKey.get(current.parent) : void 0;
+					}
+				}
+			}
+		}
+		/** Per-group ordered trees: roots keep declaration order; children nest
+		 * into their parent's subtree regardless of declaration position and
+		 * carry their nesting `depth` (DFS). */
+		function buildLayout(groups) {
+			return groups.map((group) => {
+				const nodes = group.fields.map((descriptor) => ({ ...descriptor, depth: 0, children: [] }));
+				const byKey = new Map();
+				for (const node of nodes) if (typeof node.field === "string") byKey.set(node.field, node);
+				const roots = [];
+				for (const node of nodes) {
+					const parent = typeof node.parent === "string" ? byKey.get(node.parent) : void 0;
+					if (parent !== void 0) parent.children.push(node);
+					else roots.push(node);
+				}
+				const assignDepth = (node, depth) => {
+					node.depth = depth;
+					for (const child of node.children) assignDepth(child, depth + 1);
+				};
+				for (const root of roots) assignDepth(root, 0);
+				return { id: group.id, roots };
+			});
+		}
+		// Declaration-time validation (D4): a bad GROUPS table fails chunk load
+		// with a named error instead of rendering a broken page.
+		validateLayout(GROUPS);
+		const LAYOUT = buildLayout(GROUPS);
 		function booleanSpec(field) {
 			return {
 				field,
@@ -150,9 +372,11 @@ window.__ModuleLoader__.load({
 		}
 		function specFor(descriptor) {
 			if (descriptor.kind === "number") return primitives.settingsNumberField(descriptor.field);
-			if (descriptor.kind === "text") return primitives.settingsTextField(descriptor.field);
 			if (descriptor.kind === "boolean") return booleanSpec(descriptor.field);
-			return enumSpec(descriptor.field, descriptor.values);
+			if (descriptor.kind === "enum") return enumSpec(descriptor.field, descriptor.values);
+			// text, and custom rows naming a field (chains, robash lists, the
+			// model-picker carrier) are text-backed at the form layer
+			return primitives.settingsTextField(descriptor.field);
 		}
 		function formLabels(t) {
 			return {
@@ -163,6 +387,24 @@ window.__ModuleLoader__.load({
 				saving: t("saving")
 			};
 		}
+		// ---- environment facts (design D6) ----
+		let envFailureWarned = false;
+		function warnEnvFailureOnce(error) {
+			if (envFailureWarned) return;
+			envFailureWarned = true;
+			console.warn(`orrery-settings: environment facts unavailable — env-gated rows stay hidden (${String(error?.message ?? error)})`);
+		}
+		function fetchEnvFacts() {
+			return fetch(ENV_PATH, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: "{}"
+			}).then((response) => response.json()).then((payload) => {
+				if (payload?.ok !== true || typeof payload.value?.platform !== "string") throw new Error("malformed environment facts response");
+				return { platform: payload.value.platform };
+			});
+		}
 		var OrreryCardController = class {
 			form;
 			store;
@@ -170,7 +412,8 @@ window.__ModuleLoader__.load({
 				// Prop-injected dependencies: the entry-owned settings bus (save →
 				// toggle re-check) and a getSession closure resolving the
 				// remote.session domain lazily at call time (it may not be wired
-				// yet during apply, S17).
+				// yet during apply, S17). fetchEnv is the injectable environment
+				// facts read (tests); production uses the fetch above.
 				this.deps = deps;
 				this.form = new primitives.SettingsFormModel(scope, FIELDS.map(specFor));
 				this.store = this.form.bind(() => this.projection());
@@ -178,17 +421,43 @@ window.__ModuleLoader__.load({
 				// registry order; null until such a save lands or after the
 				// user dismisses the reminder.
 				this.restartReminder = null;
+				// Environment facts, fetched once per page arrival (the
+				// platform does not change during a process lifetime, so no
+				// polling). pending: env-gated rows render nothing; ready:
+				// evaluated against facts; failed: same as pending plus one
+				// console warning — the rest of the page stays usable.
+				this.env = { status: "pending", facts: {} };
+				Promise.resolve()
+					.then(() => (deps.fetchEnv ?? fetchEnvFacts)())
+					.then(
+						(facts) => {
+							this.env = { status: "ready", facts: facts ?? {} };
+						},
+						(error) => {
+							this.env = { status: "failed", facts: {} };
+							warnEnvFailureOnce(error);
+						}
+					)
+					.then(() => {
+						this.form.publish();
+					});
 			}
 			getSession() {
 				return this.deps.getSession();
 			}
 			projection() {
 				const fields = {};
-				for (const descriptor of FIELDS) fields[descriptor.field] = this.form.field(descriptor.field);
+				for (const descriptor of FIELDS) {
+					// `saved` rides along so condition evaluation can fall back
+					// to the saved value while an unparseable draft is staged
+					// (D3) — the merged field text alone cannot express it.
+					fields[descriptor.field] = { ...this.form.field(descriptor.field), saved: this.form.sectionValue(descriptor.field) };
+				}
 				return {
 					...this.form.shell(),
 					fields,
-					restartReminder: this.restartReminder
+					restartReminder: this.restartReminder,
+					env: this.env
 				};
 			}
 			inject() {
@@ -238,22 +507,50 @@ window.__ModuleLoader__.load({
 		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
 		const labelStyle = { fontSize: "14px", fontWeight: 500, lineHeight: "20px" };
+		// child rows step the label size down slightly with depth
+		const childLabelStyle = { ...labelStyle, fontSize: "13px" };
+		const labelTextStyle = { display: "inline-flex", alignItems: "center", gap: "6px" };
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const groupTitleStyle = { fontSize: "12px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--dsw-alias-label-secondary)", padding: "18px 0 6px", borderTop: "1px solid var(--dsw-alias-border-l2)" };
-		const firstGroupTitleStyle = { ...groupTitleStyle, borderTop: "none", paddingTop: "0" };
+		// Card-based group sections (design D7): layered background, l1 border,
+		// radius, the group title inside the card top, hairline l2 separators
+		// between rows. Colors only from theme tokens; geometry hardcoded.
+		const cardStyle = { background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", padding: "6px 16px 12px" };
+		const cardTitleStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px", padding: "8px 0 2px", color: "var(--dsw-alias-label-primary)" };
+		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "12px" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
 		const reminderTagsStyle = { display: "flex", flexWrap: "wrap", gap: "6px" };
+		// Row chrome inside a card: hairline separator (skipped on the first
+		// row), and for child rows a left guide line plus padding scaled by
+		// depth — both in the l2 border token.
+		function rowWrapStyle(depth, first) {
+			return {
+				borderTop: first ? "none" : "1px solid var(--dsw-alias-border-l2)",
+				...(depth > 0 ? { borderLeft: "1px solid var(--dsw-alias-border-l2)", marginLeft: "2px", paddingLeft: `${depth * 16}px` } : {})
+			};
+		}
+		// The always-on restart-required tag for rows in RESTART_FIELDS — the
+		// same list copy the post-save modal uses, so the two can never drift.
+		function restartTag(node, t) {
+			if (typeof node.field !== "string" || !RESTART_FIELDS.includes(node.field)) return null;
+			return react_jsx_runtime.jsx(primitives.Tag, { tone: "neutral", children: t("restartRequired") });
+		}
+		function labelWithTag(node, t, style) {
+			return react_jsx_runtime.jsx("span", { style, children: react_jsx_runtime.jsxs("span", { style: labelTextStyle, children: [t(node.field), restartTag(node, t)] }) });
+		}
 		function ChoiceField(props) {
 			const { descriptor, field, t, disabled } = props;
+			const depth = props.depth ?? 0;
 			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-					react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
+					labelWithTag(descriptor, t, depth > 0 ? childLabelStyle : labelStyle),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
 				] }),
 				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
-						checked: field.text === "true" || (field.text === "" && BOOLEAN_DEFAULTS[descriptor.field] === true),
+						// ONE effective-value helper with the condition evaluator:
+						// what the switch shows is what `when` sees.
+						checked: resolveEffectiveValue(descriptor, field, field?.saved) === true,
 						onChange: (checked) => props.onChange(String(checked)),
 						disabled,
 						label: t(descriptor.field)
@@ -272,214 +569,237 @@ window.__ModuleLoader__.load({
 				] })
 			] });
 		}
+		// The model-picker merged row (design D5): one row edits
+		// intentGateProvider + intentGateModel + intentGateReasoningEffort; the
+		// two folded fields never render their own row. The picker runs inside
+		// an error boundary: a picker failure degrades to plain text fields
+		// instead of blanking the settings page.
+		function renderModelPickerNode(node, state, props, disabled, t) {
+			const pickerOverridden = state.fields.intentGateProvider.overridden || state.fields.intentGateModel.overridden || state.fields.intentGateReasoningEffort.overridden;
+			const pickerRow = react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
+				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
+					labelWithTag(node, t, labelStyle),
+					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${node.field}Hint`) })
+				] }),
+				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+					react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
+						value: {
+							provider: state.fields.intentGateProvider.text,
+							model: state.fields.intentGateModel.text,
+							reasoningEffort: state.fields.intentGateReasoningEffort.text
+						},
+						onChange: (selection) => {
+							props.edit("intentGateProvider", selection.provider ?? "");
+							props.edit("intentGateModel", selection.model ?? "");
+							props.edit("intentGateReasoningEffort", selection.reasoningEffort ?? "");
+						},
+						getSession: () => props.getSession(),
+						t,
+						disabled
+					}),
+					pickerOverridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
+						react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
+						react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => {
+							props.resetField("intentGateProvider");
+							props.resetField("intentGateModel");
+							props.resetField("intentGateReasoningEffort");
+						}, children: t("reset") })
+					] }) : null
+				] })
+			] });
+			return react_jsx_runtime.jsx(modelPicker.ModelPickerBoundary, {
+				fallback: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+					react_jsx_runtime.jsx(primitives.SettingsValueField, {
+						id: "plugin-config-fallback-intentGateProvider",
+						label: t("intentGateProvider"),
+						hint: t("intentGateProviderHint"),
+						overriddenLabel: t("overridden"),
+						resetLabel: t("reset"),
+						invalidLabel: t("invalidValue"),
+						disabled,
+						text: state.fields.intentGateProvider.text,
+						invalid: state.fields.intentGateProvider.invalid,
+						overridden: state.fields.intentGateProvider.overridden,
+						onChange: (text) => props.edit("intentGateProvider", text),
+						onReset: () => props.resetField("intentGateProvider")
+					}),
+					react_jsx_runtime.jsx(primitives.SettingsValueField, {
+						id: "plugin-config-fallback-intentGateModel",
+						label: t("intentGateModel"),
+						hint: t("intentGateModelHint"),
+						overriddenLabel: t("overridden"),
+						resetLabel: t("reset"),
+						invalidLabel: t("invalidValue"),
+						disabled,
+						text: state.fields.intentGateModel.text,
+						invalid: state.fields.intentGateModel.invalid,
+						overridden: state.fields.intentGateModel.overridden,
+						onChange: (text) => props.edit("intentGateModel", text),
+						onReset: () => props.resetField("intentGateModel")
+					}),
+					react_jsx_runtime.jsx(primitives.SettingsValueField, {
+						id: "plugin-config-fallback-intentGateReasoningEffort",
+						label: t("intentGateReasoningEffort"),
+						hint: t("intentGateReasoningEffortHint"),
+						overriddenLabel: t("overridden"),
+						resetLabel: t("reset"),
+						invalidLabel: t("invalidValue"),
+						disabled,
+						text: state.fields.intentGateReasoningEffort.text,
+						invalid: state.fields.intentGateReasoningEffort.invalid,
+						overridden: state.fields.intentGateReasoningEffort.overridden,
+						onChange: (text) => props.edit("intentGateReasoningEffort", text),
+						onReset: () => props.resetField("intentGateReasoningEffort")
+					})
+				] }),
+				children: pickerRow
+			});
+		}
 		function OrreryCard(props) {
 			const state = props.useOrrerySettingsCard((snapshot) => snapshot);
 			const { t } = props;
 			if (props.view === "summary") return t("description");
 			const disabled = !state.writable;
-			const children = GROUPS.flatMap((group, groupIndex) => {
-				const rows = group.fields.map((descriptor) => {
-					const field = state.fields[descriptor.field];
-					if (descriptor.field === "delegateCategoryChains") {
-						return react_jsx_runtime.jsx(props.editors.ChainEditorField, {
+			// env three-state (D6): pending/failed hide env-gated rows only.
+			const env = state.env ?? { status: "ready", facts: {} };
+			const resolve = {
+				value: (key) => {
+					const descriptor = FIELD_BY_NAME[key];
+					const field = state.fields[key];
+					return resolveEffectiveValue(descriptor, field, field?.saved);
+				},
+				env: (name) => env.facts?.[name]
+			};
+			const visible = (node) => {
+				if (node.when === void 0) return true;
+				if (conditionUsesEnv(node.when) && env.status !== "ready") return false;
+				return evaluateCondition(node.when, resolve);
+			};
+			const renderNode = (node, first) => {
+				const field = typeof node.field === "string" ? state.fields[node.field] : void 0;
+				const key = typeof node.field === "string" ? node.field : node.slot;
+				const wrap = (content) => react_jsx_runtime.jsx("div", { style: rowWrapStyle(node.depth, first), "data-depth": node.depth > 0 ? node.depth : void 0, children: content, key });
+				if (node.kind === "custom") {
+					if (node.slot === "chainEditor") {
+						return wrap(react_jsx_runtime.jsx(props.editors.ChainEditorField, {
 							field: "delegateCategoryChains",
 							text: state.fields.delegateCategoryChains.text,
 							overridden: state.fields.delegateCategoryChains.overridden,
-							edit: (field, text) => props.edit(field, text),
+							edit: (name, text) => props.edit(name, text),
 							onReset: () => props.resetField("delegateCategoryChains"),
 							getSession: () => props.getSession(),
 							t,
-							disabled,
-							key: descriptor.field
-						});
+							disabled
+						}));
 					}
-					if (descriptor.field === "delegateAgentChains") {
-						// The curated-agent counterpart of the category chains above:
-						// same visual editor, agent lanes and agent dictionary stems.
-						return react_jsx_runtime.jsx(props.editors.ChainEditorField, {
+					if (node.slot === "agentChainEditor") {
+						// The curated-agent counterpart of the category chains: same
+						// visual editor, agent lanes and agent dictionary stems.
+						return wrap(react_jsx_runtime.jsx(props.editors.ChainEditorField, {
 							field: "delegateAgentChains",
 							rows: CURATED_AGENT_NAMES,
 							rowLabelPrefix: "chainAgent_",
 							panelHintKey: "chainAgentPanelHint",
 							text: state.fields.delegateAgentChains.text,
 							overridden: state.fields.delegateAgentChains.overridden,
-							edit: (field, text) => props.edit(field, text),
+							edit: (name, text) => props.edit(name, text),
 							onReset: () => props.resetField("delegateAgentChains"),
 							getSession: () => props.getSession(),
 							t,
-							disabled,
-							key: descriptor.field
-						});
+							disabled
+						}));
 					}
-					if (descriptor.field === "delegateDisabledCategories") {
-						// The closed-set counterpart of the editors above: one switch
-						// per registry category, the JSON array of the switched-on
-						// names synthesized on save.
-						return react_jsx_runtime.jsx(props.editors.DisabledCategoriesEditorField, {
+					if (node.slot === "disabledCategoriesEditor") {
+						// The closed-set counterpart of the editors above: one
+						// switch per registry category, the JSON array of the
+						// switched-on names synthesized on save.
+						return wrap(react_jsx_runtime.jsx(props.editors.DisabledCategoriesEditorField, {
 							field: "delegateDisabledCategories",
 							rows: CATEGORY_NAMES,
 							text: state.fields.delegateDisabledCategories.text,
 							overridden: state.fields.delegateDisabledCategories.overridden,
-							edit: (field, text) => props.edit(field, text),
+							edit: (name, text) => props.edit(name, text),
 							onReset: () => props.resetField("delegateDisabledCategories"),
 							t,
-							disabled,
-							key: descriptor.field
-						});
+							disabled
+						}));
 					}
-					if (descriptor.field === "robashAllow" || descriptor.field === "robashGitAllow" || descriptor.field === "robashDeny" || descriptor.field === "robashPwshAllow" || descriptor.field === "robashPwshDeny") {
-						return react_jsx_runtime.jsx(props.editors.RobashListEditorField, {
-							field: descriptor.field,
+					if (node.slot === "robashList") {
+						return wrap(react_jsx_runtime.jsx(props.editors.RobashListEditorField, {
+							field: node.field,
 							text: field.text,
 							overridden: field.overridden,
 							edit: (name, text) => props.edit(name, text),
-							onReset: () => props.resetField(descriptor.field),
+							onReset: () => props.resetField(node.field),
 							t,
-							disabled,
-							key: descriptor.field
-						});
+							disabled
+						}));
 					}
-					if (descriptor.field === "intentGateModel" || descriptor.field === "intentGateReasoningEffort" || descriptor.field === "lspServers") {
-						// folded into the model-picker row / the LSP manager panel
-						return null;
-					}
-					if (descriptor.field === "intentGateProvider") {
-						const pickerOverridden = state.fields.intentGateProvider.overridden || state.fields.intentGateModel.overridden || state.fields.intentGateReasoningEffort.overridden;
-						const pickerRow = react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
-							react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
-								react_jsx_runtime.jsx("span", { style: labelStyle, children: t(descriptor.field) }),
-								react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
-							] }),
-							react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
-									value: {
-										provider: state.fields.intentGateProvider.text,
-										model: state.fields.intentGateModel.text,
-										reasoningEffort: state.fields.intentGateReasoningEffort.text
-									},
-									onChange: (selection) => {
-										props.edit("intentGateProvider", selection.provider ?? "");
-										props.edit("intentGateModel", selection.model ?? "");
-										props.edit("intentGateReasoningEffort", selection.reasoningEffort ?? "");
-									},
-									getSession: () => props.getSession(),
-									t,
-									disabled
-								}),
-								pickerOverridden ? react_jsx_runtime.jsxs("div", { style: controlsStyle, children: [
-									react_jsx_runtime.jsx(primitives.Tag, { tone: "accent", children: t("overridden") }),
-									react_jsx_runtime.jsx("button", { type: "button", style: resetStyle, onClick: () => {
-										props.resetField("intentGateProvider");
-										props.resetField("intentGateModel");
-										props.resetField("intentGateReasoningEffort");
-									}, children: t("reset") })
-								] }) : null
-							] })
-						] });
-						// The picker runs inside an error boundary: a picker
-						// failure degrades to plain text fields instead of
-						// blanking the settings page.
-						return react_jsx_runtime.jsx(modelPicker.ModelPickerBoundary, {
-							key: descriptor.field,
-							fallback: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
-								react_jsx_runtime.jsx(primitives.SettingsValueField, {
-									id: "plugin-config-fallback-intentGateProvider",
-									label: t("intentGateProvider"),
-									hint: t("intentGateProviderHint"),
-									overriddenLabel: t("overridden"),
-									resetLabel: t("reset"),
-									invalidLabel: t("invalidValue"),
-									disabled,
-									text: state.fields.intentGateProvider.text,
-									invalid: state.fields.intentGateProvider.invalid,
-									overridden: state.fields.intentGateProvider.overridden,
-									onChange: (text) => props.edit("intentGateProvider", text),
-									onReset: () => props.resetField("intentGateProvider")
-								}),
-								react_jsx_runtime.jsx(primitives.SettingsValueField, {
-									id: "plugin-config-fallback-intentGateModel",
-									label: t("intentGateModel"),
-									hint: t("intentGateModelHint"),
-									overriddenLabel: t("overridden"),
-									resetLabel: t("reset"),
-									invalidLabel: t("invalidValue"),
-									disabled,
-									text: state.fields.intentGateModel.text,
-									invalid: state.fields.intentGateModel.invalid,
-									overridden: state.fields.intentGateModel.overridden,
-									onChange: (text) => props.edit("intentGateModel", text),
-									onReset: () => props.resetField("intentGateModel")
-								}),
-								react_jsx_runtime.jsx(primitives.SettingsValueField, {
-									id: "plugin-config-fallback-intentGateReasoningEffort",
-									label: t("intentGateReasoningEffort"),
-									hint: t("intentGateReasoningEffortHint"),
-									overriddenLabel: t("overridden"),
-									resetLabel: t("reset"),
-									invalidLabel: t("invalidValue"),
-									disabled,
-									text: state.fields.intentGateReasoningEffort.text,
-									invalid: state.fields.intentGateReasoningEffort.invalid,
-									overridden: state.fields.intentGateReasoningEffort.overridden,
-									onChange: (text) => props.edit("intentGateReasoningEffort", text),
-									onReset: () => props.resetField("intentGateReasoningEffort")
-								})
-							] }),
-							children: pickerRow
-						});
-					}
-					if (descriptor.kind === "boolean" || descriptor.kind === "enum") {
-						return react_jsx_runtime.jsx(ChoiceField, {
-							descriptor,
-							field,
+					if (node.slot === "modelPicker") return wrap(renderModelPickerNode(node, state, props, disabled, t));
+					if (node.slot === "lspManager") {
+						return wrap(react_jsx_runtime.jsx(props.editors.LspManagerField, {
 							t,
-							disabled,
-							onChange: (text) => props.edit(descriptor.field, text),
-							onReset: () => props.resetField(descriptor.field),
-							key: descriptor.field
-						});
+							serversText: state.fields.lspServers?.text ?? "",
+							edit: (name, text) => props.edit(name, text)
+						}));
 					}
-					return react_jsx_runtime.jsx(primitives.SettingsValueField, {
-						id: `plugin-config-${ORRERY_NS}-${descriptor.field}`,
-						label: t(descriptor.field),
-						hint: t(`${descriptor.field}Hint`),
-						overriddenLabel: t("overridden"),
-						resetLabel: t("reset"),
-						invalidLabel: t("invalidValue"),
+					if (node.slot === "editLockMaintenance") {
+						// Edit Lock maintenance: profile-wide switch status and
+						// read-only authority diagnostics (read-only).
+						return wrap(react_jsx_runtime.jsx(props.editors.EditLockMaintenanceField, { t }));
+					}
+					// notifyPermissions: the macOS-only permission entry
+					return wrap(react_jsx_runtime.jsx(props.editors.NotifyPermissionsField, { t }));
+				}
+				if (node.kind === "boolean" || node.kind === "enum") {
+					return wrap(react_jsx_runtime.jsx(ChoiceField, {
+						descriptor: node,
+						field,
+						t,
 						disabled,
-						text: field.text,
-						invalid: field.invalid,
-						overridden: field.overridden,
-						onChange: (text) => props.edit(descriptor.field, text),
-						onReset: () => props.resetField(descriptor.field),
-						key: descriptor.field
-					});
+						depth: node.depth,
+						onChange: (text) => props.edit(node.field, text),
+						onReset: () => props.resetField(node.field)
+					}));
+				}
+				return wrap(react_jsx_runtime.jsx(primitives.SettingsValueField, {
+					id: `plugin-config-${ORRERY_NS}-${node.field}`,
+					label: react_jsx_runtime.jsxs("span", { style: labelTextStyle, children: [t(node.field), restartTag(node, t)] }),
+					hint: t(`${node.field}Hint`),
+					overriddenLabel: t("overridden"),
+					resetLabel: t("reset"),
+					invalidLabel: t("invalidValue"),
+					disabled,
+					text: field.text,
+					invalid: field.invalid,
+					overridden: field.overridden,
+					onChange: (text) => props.edit(node.field, text),
+					onReset: () => props.resetField(node.field)
+				}));
+			};
+			// Card sections: the tree walk prunes hidden subtrees wholesale (a
+			// hidden parent hides every descendant), and children land directly
+			// under their parent's subtree in DFS order.
+			const cards = LAYOUT.map((groupLayout) => {
+				const rows = [];
+				const walk = (node, ancestorsVisible) => {
+					const isVisible = ancestorsVisible && visible(node);
+					if (!isVisible) return;
+					if (node.folded !== true) rows.push(renderNode(node, rows.length === 0));
+					for (const child of node.children) walk(child, isVisible);
+				};
+				for (const root of groupLayout.roots) walk(root, true);
+				return react_jsx_runtime.jsxs("div", {
+					style: cardStyle,
+					"data-group": groupLayout.id,
+					children: [
+						react_jsx_runtime.jsx("div", { style: cardTitleStyle, children: t(`group${groupLayout.id.charAt(0).toUpperCase()}${groupLayout.id.slice(1)}`) }),
+						...rows
+					],
+					key: `group-${groupLayout.id}`
 				});
-				// Edit Lock maintenance: profile-wide switch status and read-only
-				// authority diagnostics (read-only; the switch stays a plain field).
-				if (group.id === "editing") {
-					rows.push(react_jsx_runtime.jsx(props.editors.EditLockMaintenanceField, {
-						t,
-						key: "edit-lock-maintenance"
-					}));
-				}
-				if (group.id === "lsp") {
-					rows.push(react_jsx_runtime.jsx(props.editors.LspManagerField, {
-						t,
-						key: "lsp-manager",
-						serversText: state.fields.lspServers?.text ?? "",
-						edit: (field, text) => props.edit(field, text)
-					}));
-				}
-				// macOS-only permission entry: it renders nothing until the host confirms its platform.
-				if (group.id === "notify") {
-					rows.push(react_jsx_runtime.jsx(props.editors.NotifyPermissionsField, { t, key: "notify-permissions" }));
-				}
-				return [
-					react_jsx_runtime.jsx("h3", { style: groupIndex === 0 ? firstGroupTitleStyle : groupTitleStyle, children: t(`group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`), key: `group-${group.id}` }),
-					...rows
-				].filter(Boolean);
 			});
+			const children = [react_jsx_runtime.jsx("div", { style: cardsColumnStyle, children: cards, key: "groups" })];
 			// Restart reminder: a landed save that touched restart-required
 			// keys raises a centered warning Modal (portal-mounted over a page
 			// mask, so it cannot be missed on a long page), naming the affected
@@ -522,6 +842,13 @@ window.__ModuleLoader__.load({
 		exports.CATEGORY_NAMES = CATEGORY_NAMES;
 		exports.RESTART_FIELDS = RESTART_FIELDS;
 		exports.FIELDS = FIELDS;
+		exports.ENV_FACTS = ENV_FACTS;
+		exports.evaluateCondition = evaluateCondition;
+		exports.conditionUsesEnv = conditionUsesEnv;
+		exports.resolveEffectiveValue = resolveEffectiveValue;
+		exports.validateLayout = validateLayout;
+		exports.buildLayout = buildLayout;
+		exports.LAYOUT = LAYOUT;
 		exports.OrreryCardController = OrreryCardController;
 		exports.OrreryCard = OrreryCard;
 		exports.OrrerySection = OrrerySection;

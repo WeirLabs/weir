@@ -6,10 +6,12 @@ import { RESTART_KEYS } from '../src/settings/sections.js'
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
- * primitives/modelPicker stubs per the chunk's actual require face. The three
+ * primitives/modelPicker stubs per the chunk's require face. The special
  * field editors arrive as sentinel props (composition-root injection).
- * Assertions migrated verbatim from the pre-split client.test.js settings
- * page blocks, plus the prop-injected controller dependency pins.
+ * Covers the pure exports (evaluateCondition / resolveEffectiveValue /
+ * validateLayout / buildLayout), the env three-state gating, the card/tree
+ * render structure, the always-on restart tag, and the save-flow contract
+ * migrated from the pre-split client.test.js settings page blocks.
  */
 
 describe('client.settings-page chunk', () => {
@@ -69,6 +71,9 @@ describe('client.settings-page chunk', () => {
         field(name) {
           return { text: '', overridden: false, invalid: false, name }
         }
+        sectionValue(name) {
+          return this.savedValues?.[name]
+        }
         plan() {
           return this.planItems ?? []
         }
@@ -104,7 +109,7 @@ describe('client.settings-page chunk', () => {
       NotifyPermissionsField: (props) => ({ __notifyPermissions: props }),
       EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }),
     }
-    return { definition, exports, editors, specsSeen, reactStub }
+    return { definition, exports, editors, specsSeen, reactStub, primitivesStub }
   }
 
   // Capture the entry's synchronously registered en/zh dictionaries by
@@ -128,163 +133,369 @@ describe('client.settings-page chunk', () => {
 
   const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
-  it('renders the GROUPS field table through the prop-injected editors', async () => {
-    const { definition, exports, editors } = await loadPage()
-    expect(definition.id).toBe('orrery-harness')
-    expect(definition.chunk).toBe('client.settings-page.js')
+  /** A full fields map at rest (every text the formatted saved value). */
+  function makeFields(overrides = {}) {
+    const fields = Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }]))
+    // production default: the classifier arrives set from the composition layer
+    fields.intentGateClassifier.text = 'regex'
+    for (const [name, patch] of Object.entries(overrides)) fields[name] = { ...fields[name], ...patch }
+    return fields
+  }
 
-    const { GROUPS, OrreryCard } = exports
-    // the GROUPS field table is exactly the pre-split flat namespace
-    expect(GROUPS.flatMap((group) => group.fields).map((descriptor) => descriptor.field)).toEqual(FIELD_NAMES)
-
-    const component = OrreryCard
-    expect(component({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('description')
-    const rendered = component({
+  function renderCard(exports, editors, state, spies = {}) {
+    return exports.OrreryCard({
       view: 'form',
       t: (key) => key,
-      useOrrerySettingsCard: (selector) => selector({
-        writable: true,
-        fields: Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }])),
-        catalog: { status: 'ready', groups: [] },
-      }),
-      edit: () => {},
-      resetField: () => {},
+      useOrrerySettingsCard: (selector) => selector({ writable: true, ...state }),
+      edit: spies.edit ?? (() => {}),
+      resetField: spies.resetField ?? (() => {}),
       save: () => {},
       discard: () => {},
+      dismissRestartReminder: spies.dismissRestartReminder ?? (() => {}),
       getSession: () => {},
       editors,
     })
+  }
 
-    expect(rendered.__type).toBeTruthy()
-    // 9 group headers + 16 choice rows + 1 model picker + 25 value-field rows
-    // + 1 LSP manager row + 5 robash list-editor rows + 2 chain-editor rows
-    // + 1 disabled-categories editor row + 1 notification-permission row
-    // + 1 edit-lock-maintenance row
-    expect(rendered.children).toHaveLength(62)
-    // the permission entry sits at the end of the notify group
-    const permissionRow = rendered.children.find((child) => child.key === 'notify-permissions')
-    expect(permissionRow.__type).toBe(editors.NotifyPermissionsField)
-    expect(typeof permissionRow.t).toBe('function')
-    expect(rendered.children.filter((child) => typeof child.children === 'string')).toHaveLength(9)
-    expect(rendered.children.filter((child) => child.descriptor)).toHaveLength(16)
-    expect(rendered.children.filter((child) => child.fallback !== undefined)).toHaveLength(1)
-    expect(rendered.children.filter((child) => typeof child.id === 'string')).toHaveLength(25)
-    // the Edit Lock maintenance row opens the profile-wide maintenance panel
-    const maintenanceRow = rendered.children.find((child) => child.key === 'edit-lock-maintenance')
-    expect(maintenanceRow).toBeTruthy()
-    expect(maintenanceRow.__type).toBe(editors.EditLockMaintenanceField)
-    expect(typeof maintenanceRow.t).toBe('function')
-    // the LSP manager row opens the service management panel
-    const managerRow = rendered.children.find((child) => child.key === 'lsp-manager')
-    expect(managerRow).toBeTruthy()
-    expect(managerRow.__type).toBe(editors.LspManagerField)
-    // the two chains rows render the visual editor: category lanes (default
-    // rows) and curated-agent lanes (rows from the pinned registry list)
-    const chainRows = rendered.children.filter((child) => child.__type === editors.ChainEditorField)
+  /** Card lookup: rendered.children[0] is the cards column; cards carry data-group. */
+  function cardsOf(rendered) {
+    const column = rendered.children[0]
+    return Object.fromEntries(column.children.map((card) => [card['data-group'], card]))
+  }
+  /** Row keys of one card, in render order (card children minus the title). */
+  function rowKeys(cards, groupId) {
+    return cards[groupId].children.slice(1).map((row) => row.key)
+  }
+  /** Recursive element-tree search (styles are leaf objects; functions skipped). */
+  function findAll(node, pred, acc = []) {
+    if (node && typeof node === 'object') {
+      if (pred(node)) acc.push(node)
+      for (const value of Object.values(node)) {
+        if (Array.isArray(value)) for (const item of value) findAll(item, pred, acc)
+        else if (value && typeof value === 'object') findAll(value, pred, acc)
+      }
+    }
+    return acc
+  }
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('keeps the flat FIELDS table (order unchanged) and renders the summary description', async () => {
+    const { definition, exports, editors } = await loadPage()
+    expect(definition.id).toBe('orrery-harness')
+    expect(definition.chunk).toBe('client.settings-page.js')
+    // the form-layer field table is exactly the pre-overhaul flat namespace
+    expect(exports.FIELDS.map((descriptor) => descriptor.field)).toEqual(FIELD_NAMES)
+    expect(exports.OrreryCard({ view: 'summary', t: (key) => key, useOrrerySettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('description')
+  })
+
+  it('renders the card-based sections and the default visible set per group', async () => {
+    const { exports, editors } = await loadPage()
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    // one child: the cards column (no restart reminder)
+    expect(rendered.children).toHaveLength(1)
+    const column = rendered.children[0]
+    expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '12px' })
+    const cards = cardsOf(rendered)
+    const groupIds = Object.keys(cards)
+    expect(groupIds).toEqual(['intent', 'delegate', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify'])
+    // every card: layered background, l1 border, radius, title inside the top
+    for (const [id, card] of Object.entries(cards)) {
+      expect(card.style.background).toBe('var(--dsw-alias-bg-layer-1)')
+      expect(card.style.border).toBe('1px solid var(--dsw-alias-border-l1)')
+      expect(card.style.borderRadius).toBe('12px')
+      expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
+    }
+    // the default visible set (product defaults: todo/guard/worktree/robash
+    // on; editLock/lsp/notify off; classifier regex; platform darwin)
+    expect(rowKeys(cards, 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
+    expect(rowKeys(cards, 'delegate')).toEqual(['delegateCategoryChains', 'delegateAgentChains', 'delegateDisabledCategories', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
+    expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs'])
+    expect(rowKeys(cards, 'guard')).toEqual(['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'])
+    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled'])
+    expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes'])
+    expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
+    expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
+    expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyPermissions'])
+    // hairline separators: the first row in a card has none, the rest do
+    const todoRows = cards.todo.children.slice(1)
+    expect(todoRows[0].style.borderTop).toBe('none')
+    for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('1px solid var(--dsw-alias-border-l2)')
+  })
+
+  it('indents child rows with a guide line scaled by depth, including the two-level case', async () => {
+    const { exports, editors } = await loadPage()
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({
+        notifyEnabled: { text: 'true' },
+        notifyOnComplete: { text: 'true' },
+      }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const cards = cardsOf(rendered)
+    // depth 1 children in the todo card
+    const todoRows = cards.todo.children.slice(1)
+    expect(todoRows[0]['data-depth']).toBe(undefined)
+    expect(todoRows[0].style.borderLeft).toBe(undefined)
+    for (const row of todoRows.slice(1)) {
+      expect(row['data-depth']).toBe(1)
+      expect(row.style.borderLeft).toBe('1px solid var(--dsw-alias-border-l2)')
+      expect(row.style.paddingLeft).toBe('16px')
+    }
+    // the two-level case: notifyMinTurnSeconds nests under notifyOnComplete
+    expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
+    const notifyRows = cards.notify.children.slice(1)
+    const minTurn = notifyRows.find((row) => row.key === 'notifyMinTurnSeconds')
+    expect(minTurn['data-depth']).toBe(2)
+    expect(minTurn.style.paddingLeft).toBe('32px')
+    // it renders directly under its parent, before the later siblings
+    expect(notifyRows.indexOf(minTurn)).toBe(notifyRows.findIndex((row) => row.key === 'notifyOnComplete') + 1)
+  })
+
+  it('flips dependent rows live with the staged switch draft — no save needed', async () => {
+    const { exports, editors } = await loadPage()
+    // todoEnabled product default is on; a staged "false" draft hides its
+    // children immediately, a staged "true" draft brings them back
+    const off = renderCard(exports, editors, {
+      fields: makeFields({ todoEnabled: { text: 'false' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(off), 'todo')).toEqual(['todoEnabled'])
+    const on = renderCard(exports, editors, {
+      fields: makeFields({ todoEnabled: { text: 'true' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(on), 'todo')).toHaveLength(5)
+    // hiding performs no writes: the hidden rows' staged drafts and saved
+    // values are untouched by the render itself
+    const editCalls = []
+    const hidden = renderCard(exports, editors, {
+      fields: makeFields({ todoEnabled: { text: 'false' }, todoMaxConsecutive: { text: '7' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }, { edit: (...args) => editCalls.push(args) })
+    const hiddenRowKeys = Object.values(cardsOf(hidden)).flatMap((card) => card.children.slice(1).map((row) => row.key))
+    expect(hiddenRowKeys).not.toContain('todoMaxConsecutive')
+    expect(editCalls).toEqual([])
+  })
+
+  it('evaluates enum conditions: classifier llm shows the picker row, jev shows the jev rows', async () => {
+    const { exports, editors } = await loadPage()
+    const llm = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: 'llm' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(llm), 'intent')).toEqual(['intentGateClassifier', 'intentGateProvider', 'intentGateTimeoutMs'])
+    const jev = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: 'jev' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(jev), 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs', 'jevEndpoint', 'jevModel', 'jevApiKeyEnv'])
+  })
+
+  it('gates env-dependent rows on the env three-state: pending hides, ready evaluates, failed stays hidden', async () => {
+    const { exports, editors } = await loadPage()
+    const pwshRows = ['robashPwshAllow', 'robashPwshDeny']
+    // pending: no flicker — env rows render nothing, the rest renders
+    const pending = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'pending', facts: {} },
+    })
+    const pendingKeys = rowKeys(cardsOf(pending), 'robash')
+    expect(pendingKeys).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
+    // ready on macOS: the Windows-only rows stay hidden
+    const darwin = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(darwin), 'robash')).toEqual(pendingKeys)
+    // ready on Windows: both pwsh rows appear under the master switch
+    const win32 = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'win32' } },
+    })
+    expect(rowKeys(cardsOf(win32), 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny', ...pwshRows])
+    // failed: same as pending, the rest of the page unaffected
+    const failed = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'failed', facts: {} },
+    })
+    expect(rowKeys(cardsOf(failed), 'robash')).toEqual(pendingKeys)
+    expect(rowKeys(cardsOf(failed), 'todo')).toHaveLength(5)
+    // ...but a disabled master switch hides even Windows-matching rows
+    const win32Off = renderCard(exports, editors, {
+      fields: makeFields({ robashEnabled: { text: 'false' } }),
+      env: { status: 'ready', facts: { platform: 'win32' } },
+    })
+    expect(rowKeys(cardsOf(win32Off), 'robash')).toEqual(['robashEnabled'])
+  })
+
+  it('hides the whole subtree when a parent is hidden, whatever the children conditions say', async () => {
+    const { exports, editors } = await loadPage()
+    // notifyEnabled off → notifyOnComplete hidden → notifyMinTurnSeconds
+    // hidden too, even with a staged "true" draft of its own condition key
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({
+        notifyEnabled: { text: 'false' },
+        notifyOnComplete: { text: 'true' },
+      }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    expect(rowKeys(cardsOf(rendered), 'notify')).toEqual(['notifyEnabled', 'notifyPermissions'])
+  })
+
+  it('renders the special editors as custom tree nodes with their composition-root props', async () => {
+    const { exports, editors } = await loadPage()
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({
+        intentGateClassifier: { text: 'llm' },
+        editLockEnabled: { text: 'true' },
+        lspEnabled: { text: 'true' },
+      }),
+      env: { status: 'ready', facts: { platform: 'win32' } },
+    })
+    const cards = cardsOf(rendered)
+    // the two chain editors (category lanes default, curated-agent lanes
+    // pinned) — sentinel components arrive as element types, never invoked
+    const chainRows = findAll(rendered.children, (node) => node.__type === editors.ChainEditorField)
     expect(chainRows).toHaveLength(2)
     expect(chainRows[0].field).toBe('delegateCategoryChains')
     expect(chainRows[0].rows).toBeUndefined()
-    expect(chainRows[0].key).toBe('delegateCategoryChains')
     expect(typeof chainRows[0].getSession).toBe('function')
     expect(chainRows[1].field).toBe('delegateAgentChains')
     expect(chainRows[1].rows).toBe(exports.CURATED_AGENT_NAMES)
     expect(chainRows[1].rowLabelPrefix).toBe('chainAgent_')
     expect(chainRows[1].panelHintKey).toBe('chainAgentPanelHint')
-    expect(chainRows[1].key).toBe('delegateAgentChains')
-    expect(typeof chainRows[1].getSession).toBe('function')
-
-    // the disabled-categories row renders the toggle editor over the
-    // parity-pinned category rows
-    const disabledRow = rendered.children.find((child) => child.key === 'delegateDisabledCategories')
-    expect(disabledRow).toBeTruthy()
-    expect(disabledRow.__type).toBe(editors.DisabledCategoriesEditorField)
-    expect(disabledRow.field).toBe('delegateDisabledCategories')
-    expect(disabledRow.rows).toBe(exports.CATEGORY_NAMES)
-    expect(typeof disabledRow.edit).toBe('function')
-    expect(typeof disabledRow.onReset).toBe('function')
-
-    // the five robash whitelist rows render the list editor (GROUPS.robash):
-    // bash allow/gitAllow/deny + pwsh allow/deny, reusing RobashListEditorField
-    const ROBASH_LIST_FIELDS = ['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny']
-    const robashRows = rendered.children.filter((child) => ROBASH_LIST_FIELDS.includes(child.field))
-    expect(robashRows).toHaveLength(5)
-    expect(robashRows.map((row) => row.key)).toEqual(ROBASH_LIST_FIELDS)
-    expect(robashRows.every((row) => row.__type === editors.RobashListEditorField && typeof row.edit === 'function' && typeof row.onReset === 'function')).toBe(true)
-
-    // the single model picker row: the library picker inside its error boundary
-    const pickerRow = rendered.children.find((child) => child.key === 'intentGateProvider')
-    const boundary = pickerRow.__type
-    const boundaryInstance = new boundary(pickerRow)
-    expect(boundaryInstance.render()).toBe(pickerRow.children)
-    // inner row renders the picker library component bound to the form fields
-    const innerRow = boundaryInstance.props.children
-    const picker = innerRow.children[1].children[0]
-    expect(picker.value.provider).toBe('')
-    expect(picker.value.model).toBe('')
-    expect(picker.value.reasoningEffort).toBe('')
+    // the disabled-categories editor over the parity-pinned category rows
+    const disabledRow = findAll(rendered.children, (node) => node.__type === editors.DisabledCategoriesEditorField)
+    expect(disabledRow).toHaveLength(1)
+    expect(disabledRow[0].rows).toBe(exports.CATEGORY_NAMES)
+    // the five robash list editors (master on + Windows env facts)
+    const robashRows = findAll(rendered.children, (node) => node.__type === editors.RobashListEditorField)
+    expect(robashRows.map((row) => row.field)).toEqual(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])
+    // the Edit Lock maintenance panel as a child of the editLock switch
+    const maintenance = findAll(rendered.children, (node) => node.__type === editors.EditLockMaintenanceField)
+    expect(maintenance).toHaveLength(1)
+    expect(rowKeys(cards, 'editing')).toContain('editLockMaintenance')
+    // the LSP manager as a child of the lsp switch, fed the lspServers draft
+    const manager = findAll(rendered.children, (node) => node.__type === editors.LspManagerField)
+    expect(manager).toHaveLength(1)
+    expect(manager[0].serversText).toBe('')
+    expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled', 'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs', 'lspServers', 'lspManager'])
+    // the notify permission entry stays rendered (self-gating inside)
+    const permissions = findAll(rendered.children, (node) => node.__type === editors.NotifyPermissionsField)
+    expect(permissions).toHaveLength(1)
+    // the model picker merged row inside its error boundary
+    const boundaries = findAll(rendered.children, (node) => node.fallback !== undefined)
+    expect(boundaries).toHaveLength(1)
+    const boundaryInstance = new boundaries[0].__type(boundaries[0])
+    expect(boundaryInstance.render()).toBe(boundaries[0].children)
+    const pickerRow = boundaryInstance.props.children
+    const picker = pickerRow.children[1].children[0]
+    expect(picker.value).toEqual({ provider: '', model: '', reasoningEffort: '' })
     expect(typeof picker.onChange).toBe('function')
     expect(typeof picker.getSession).toBe('function')
+    // the folded fields never render a row of their own
+    expect(rowKeys(cards, 'intent')).not.toContain('intentGateModel')
+    expect(rowKeys(cards, 'intent')).not.toContain('intentGateReasoningEffort')
+  })
 
-    // boolean rows render Switch; the enum row renders SegmentedControl
-    const booleanRow = rendered.children.find((child) => child.descriptor?.kind === 'boolean')
-    const booleanRendered = booleanRow.__type({ descriptor: booleanRow.descriptor, field: { text: 'true', overridden: false }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
-    // switch on top, no reset line below
-    expect(booleanRendered.children[1].children[0].checked).toBe(true)
-    expect(typeof booleanRendered.children[1].children[0].onChange).toBe('function')
-    expect(booleanRendered.children[1].children[1]).toBe(null)
-    // overridden → the reset line appears BELOW the control (stable layout)
-    const overriddenRendered = booleanRow.__type({ descriptor: booleanRow.descriptor, field: { text: 'false', overridden: true }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
-    expect(overriddenRendered.children[1].children[1].children[0].children).toBe('overridden')
-    const enumRow = rendered.children.find((child) => child.descriptor?.kind === 'enum')
-    const enumRendered = enumRow.__type({ descriptor: enumRow.descriptor, field: { text: 'llm', overridden: true }, t: (key) => key, disabled: false, onChange: () => {}, onReset: () => {} })
-    // segmented control on top, reset line below
-    expect(enumRendered.children[1].children[0].value).toBe('llm')
-    expect(enumRendered.children[1].children[0].options).toHaveLength(3)
-    expect(enumRendered.children[1].children[1].children[0].children).toBe('overridden')
+  it('renders the always-on restart tag exactly on the visible RESTART_FIELDS rows', async () => {
+    const { exports, editors, primitivesStub } = await loadPage()
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    // the value rows carry their tags eagerly in the label prop (the
+    // ChoiceField component tree only materializes when invoked — covered
+    // below): timeout + todo 4 + guard 2
+    const tags = findAll(rendered.children, (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
+    expect(tags).toHaveLength(7)
+    expect(tags.every((tag) => tag.tone === 'neutral')).toBe(true)
+    // no other Tag elements on the page (nothing overridden by default)
+    const allTags = findAll(rendered.children, (node) => node.__type === primitivesStub.Tag)
+    expect(allTags).toHaveLength(7)
+    // choice rows: invoking the ChoiceField element materializes the tag
+    const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
+    const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
+    const choiceTag = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
+    expect(choiceTag('intentGateClassifier')).toHaveLength(1)
+    expect(choiceTag('todoEnabled')).toHaveLength(1)
+    expect(choiceTag('guardEnabled')).toHaveLength(1)
+    expect(choiceTag('hashlineHideStockEdit')).toHaveLength(1)
+    expect(choiceTag('editLockEnabled')).toHaveLength(1)
+    // non-restart choice rows carry no tag
+    expect(choiceTag('notifyEnabled')).toHaveLength(0)
+    expect(choiceTag('worktreeEnabled')).toHaveLength(0)
+    // with the picker row visible, its merged row carries the tag too
+    const llm = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: 'llm' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const llmTags = findAll(llm.children, (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
+    // value rows 7 + the picker carrier = 8
+    expect(llmTags).toHaveLength(8)
   })
 
   it('renders the restart reminder as a centered modal when the state carries one', async () => {
     const { exports, editors } = await loadPage()
-    const { OrreryCard } = exports
-
     const dismissals = []
-    const rendered = OrreryCard({
-      view: 'form',
-      t: (key) => key,
-      useOrrerySettingsCard: (selector) => selector({
-        writable: true,
-        fields: Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }])),
-        restartReminder: ['todoEnabled', 'editLockEnabled'],
-      }),
-      edit: () => {},
-      resetField: () => {},
-      save: () => {},
-      discard: () => {},
-      dismissRestartReminder: () => dismissals.push('dismiss'),
-      getSession: () => {},
-      editors,
-    })
-
-    // the modal trails the form children (62 group rows + 1 modal)
-    expect(rendered.children).toHaveLength(63)
-    const modal = rendered.children[62]
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+      restartReminder: ['todoEnabled', 'editLockEnabled'],
+    }, { dismissRestartReminder: () => dismissals.push('dismiss') })
+    // the modal trails the cards column
+    expect(rendered.children).toHaveLength(2)
+    const modal = rendered.children[1]
     expect(modal.key).toBe('restart-reminder')
     expect(modal.open).toBe(true)
     expect(modal.title).toBe('restartReminderTitle')
     expect(modal.description).toBe('restartReminderBody')
     expect(modal.closeLabel).toBe('restartReminderDismiss')
-    // closing via the mask or Escape dismisses through the injected action
     modal.onClose()
     expect(dismissals).toEqual(['dismiss'])
-    // body: one accent tag per affected field, labeled via t(field)
     const tags = modal.children.children
     expect(tags.map((tag) => tag.children)).toEqual(['todoEnabled', 'editLockEnabled'])
     expect(tags.every((tag) => tag.tone === 'accent')).toBe(true)
-    // footer: a primary acknowledge button that dismisses too
     expect(modal.footer.variant).toBe('primary')
     expect(modal.footer.children).toBe('restartReminderAcknowledge')
     modal.footer.onClick()
     expect(dismissals).toEqual(['dismiss', 'dismiss'])
+  })
+
+  it('renders boolean rows via the shared effective-value helper and enum rows as segmented controls', async () => {
+    const { exports, editors, primitivesStub } = await loadPage()
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    // choice rows are component elements: invoke them to read the Switch /
+    // SegmentedControl props (same pattern as the pre-overhaul suite)
+    const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
+    const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
+    const renderChoice = (name) => choiceByName[name].__type(choiceByName[name])
+    const switchOf = (name) => findAll(renderChoice(name), (node) => node.__type === primitivesStub.Switch)[0]
+    // product defaults through the SAME helper the conditions use:
+    // todoEnabled on, editLockEnabled off (unset texts)
+    expect(switchOf('todoEnabled').checked).toBe(true)
+    expect(switchOf('editLockEnabled').checked).toBe(false)
+    expect(switchOf('lspEnabled').checked).toBe(false)
+    expect(switchOf('worktreeEnabled').checked).toBe(true)
+    // a staged draft flips the display the same way it flips the conditions
+    const drafted = renderCard(exports, editors, {
+      fields: makeFields({ todoEnabled: { text: 'false' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const draftedRow = findAll(drafted.children, (node) => node.descriptor?.field === 'todoEnabled')[0]
+    expect(findAll(draftedRow.__type(draftedRow), (node) => node.__type === primitivesStub.Switch)[0].checked).toBe(false)
+    // the enum row renders the segmented control with the dictionary options
+    const segmented = findAll(renderChoice('intentGateClassifier'), (node) => node.__type === primitivesStub.SegmentedControl)
+    const classifier = segmented.find((node) => node.label === 'intentGateClassifier')
+    expect(classifier.value).toBe('regex')
+    expect(classifier.options).toHaveLength(3)
   })
 
   it('renders the section as the nested item slot', async () => {
@@ -293,6 +504,201 @@ describe('client.settings-page chunk', () => {
     const section = OrrerySection({ renderSlot: (slot) => slot })
     expect(section.children).toBe('settings.orrery.item')
   })
+
+  // ---- pure export: evaluateCondition ----
+
+  it('evaluateCondition: key/env predicates and all/any/not combinations', async () => {
+    const { exports } = await loadPage()
+    const { evaluateCondition } = exports
+    const resolve = {
+      value: (key) => ({ classifier: 'llm', enabled: true, count: 3 })[key],
+      env: (name) => ({ platform: 'darwin' })[name],
+    }
+    expect(evaluateCondition({ key: 'classifier', equals: 'llm' }, resolve)).toBe(true)
+    expect(evaluateCondition({ key: 'classifier', equals: 'jev' }, resolve)).toBe(false)
+    expect(evaluateCondition({ key: 'enabled', equals: true }, resolve)).toBe(true)
+    expect(evaluateCondition({ key: 'count', in: [1, 3, 5] }, resolve)).toBe(true)
+    expect(evaluateCondition({ key: 'count', in: [1, 5] }, resolve)).toBe(false)
+    expect(evaluateCondition({ env: 'platform', equals: 'darwin' }, resolve)).toBe(true)
+    expect(evaluateCondition({ env: 'platform', in: ['win32'] }, resolve)).toBe(false)
+    // strict membership: no coercion between types
+    expect(evaluateCondition({ key: 'count', in: ['3'] }, resolve)).toBe(false)
+    // combinations
+    expect(evaluateCondition({ all: [{ key: 'enabled', equals: true }, { env: 'platform', in: ['darwin', 'linux'] }] }, resolve)).toBe(true)
+    expect(evaluateCondition({ all: [{ key: 'enabled', equals: true }, { env: 'platform', equals: 'win32' }] }, resolve)).toBe(false)
+    expect(evaluateCondition({ any: [{ key: 'classifier', equals: 'jev' }, { key: 'classifier', equals: 'llm' }] }, resolve)).toBe(true)
+    expect(evaluateCondition({ not: { key: 'classifier', equals: 'jev' } }, resolve)).toBe(true)
+    expect(evaluateCondition({ not: { all: [{ key: 'enabled', equals: true }] } }, resolve)).toBe(false)
+    // unknown keys resolve undefined and never match (except an explicit equals: undefined)
+    expect(evaluateCondition({ key: 'missing', equals: 'x' }, resolve)).toBe(false)
+    expect(evaluateCondition({ key: 'missing', equals: undefined }, resolve)).toBe(true)
+    // malformed nodes evaluate false (validateLayout is the loud gate)
+    expect(evaluateCondition({}, resolve)).toBe(false)
+    expect(evaluateCondition({ key: 'count' }, resolve)).toBe(false)
+  })
+
+  it('conditionUsesEnv: detects env references through combinators', async () => {
+    const { exports } = await loadPage()
+    const { conditionUsesEnv } = exports
+    expect(conditionUsesEnv({ env: 'platform', equals: 'win32' })).toBe(true)
+    expect(conditionUsesEnv({ key: 'a', equals: 1 })).toBe(false)
+    expect(conditionUsesEnv({ all: [{ key: 'a', equals: 1 }, { env: 'platform', in: ['win32'] }] })).toBe(true)
+    expect(conditionUsesEnv({ any: [{ key: 'a', equals: 1 }] })).toBe(false)
+    expect(conditionUsesEnv({ not: { env: 'platform', equals: 'win32' } })).toBe(true)
+  })
+
+  // ---- pure export: resolveEffectiveValue (design D3) ----
+
+  it('resolveEffectiveValue: parseable draft → saved value → product default', async () => {
+    const { exports } = await loadPage()
+    const { resolveEffectiveValue } = exports
+    const boolean = { field: 'todoEnabled', kind: 'boolean' }
+    const offBoolean = { field: 'editLockEnabled', kind: 'boolean' }
+    const number = { field: 'todoMaxConsecutive', kind: 'number' }
+    const text = { field: 'worktreeRoot', kind: 'text' }
+    const enumField = { field: 'intentGateClassifier', kind: 'enum', values: ['regex', 'llm', 'jev'] }
+    // parseable staged draft wins over the saved value
+    expect(resolveEffectiveValue(boolean, { text: 'false' }, true)).toBe(false)
+    expect(resolveEffectiveValue(number, { text: '12' }, 4)).toBe(12)
+    expect(resolveEffectiveValue(enumField, { text: 'llm' }, 'regex')).toBe('llm')
+    expect(resolveEffectiveValue(text, { text: 'custom/dir' }, 'old')).toBe('custom/dir')
+    // empty draft is the clear gesture → product default
+    expect(resolveEffectiveValue(boolean, { text: '' }, false)).toBe(true)
+    expect(resolveEffectiveValue(offBoolean, { text: '' }, true)).toBe(false)
+    expect(resolveEffectiveValue(number, { text: '' }, 4)).toBe(undefined)
+    expect(resolveEffectiveValue(enumField, { text: '' }, 'llm')).toBe(undefined)
+    // unparseable draft falls back to the saved value (no visibility flicker)
+    expect(resolveEffectiveValue(number, { text: 'abc' }, 4)).toBe(4)
+    expect(resolveEffectiveValue(number, { text: 'abc' }, undefined)).toBe(undefined)
+    expect(resolveEffectiveValue(boolean, { text: 'yes' }, true)).toBe(true)
+    expect(resolveEffectiveValue(enumField, { text: 'nope' }, 'regex')).toBe('regex')
+    // resting state: the text IS the formatted saved value
+    expect(resolveEffectiveValue(number, { text: '4' }, undefined)).toBe(4)
+    expect(resolveEffectiveValue(boolean, { text: 'true' }, undefined)).toBe(true)
+    // never set: booleans take the product default, others undefined
+    expect(resolveEffectiveValue(boolean, { text: '' }, undefined)).toBe(true)
+    expect(resolveEffectiveValue(offBoolean, { text: '' }, undefined)).toBe(false)
+    expect(resolveEffectiveValue(number, { text: '' }, undefined)).toBe(undefined)
+    expect(resolveEffectiveValue(enumField, { text: '' }, undefined)).toBe(undefined)
+    // absent field face behaves like an unset text
+    expect(resolveEffectiveValue(boolean, undefined, undefined)).toBe(true)
+  })
+
+  // ---- pure export: validateLayout (design D4, fail-loud) ----
+
+  it('validateLayout: accepts the real GROUPS and rejects every illegal declaration with a named error', async () => {
+    const { exports } = await loadPage()
+    const { validateLayout, GROUPS } = exports
+    validateLayout(GROUPS) // does not throw
+    const expectLayoutError = (groups, pattern) => {
+      let thrown = null
+      try {
+        validateLayout(groups)
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeTruthy()
+      expect(thrown.name).toBe('SettingsLayoutError')
+      expect(thrown.message).toContain(pattern)
+    }
+    // unknown parent
+    expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text' }, { field: 'b', kind: 'text', parent: 'zzz' }] }], `unknown parent 'zzz'`)
+    // the error names the offending row
+    expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text' }, { field: 'b', kind: 'text', parent: 'zzz' }] }], `'b'`)
+    // cross-group parent
+    expectLayoutError([
+      { id: 'g1', fields: [{ field: 'a', kind: 'text' }] },
+      { id: 'g2', fields: [{ field: 'b', kind: 'text', parent: 'a' }] },
+    ], `cross-group parent 'a'`)
+    // parent cycle
+    expectLayoutError([{ id: 'g', fields: [
+      { field: 'a', kind: 'text', parent: 'b' },
+      { field: 'b', kind: 'text', parent: 'a' },
+    ] }], 'parent cycle')
+    // self-parent cycle
+    expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text', parent: 'a' }] }], 'parent cycle')
+    // condition on an unknown settings key
+    expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text', when: { key: 'zzz', equals: 1 } }] }], `unknown key 'zzz'`)
+    // condition on an unknown env fact
+    expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text', when: { env: 'os', equals: 'x' } }] }], `unknown env fact 'os'`)
+    // malformed conditions: two branches, missing predicate, empty all
+    expectLayoutError([{ id: 'g', fields: [
+      { field: 'a', kind: 'text' },
+      { field: 'b', kind: 'text', when: { key: 'a', equals: 1, not: { key: 'a', equals: 2 } } },
+    ] }], 'malformed condition')
+    expectLayoutError([{ id: 'g', fields: [
+      { field: 'a', kind: 'text' },
+      { field: 'b', kind: 'text', when: { key: 'a' } },
+    ] }], 'exactly one of equals/in')
+    expectLayoutError([{ id: 'g', fields: [
+      { field: 'a', kind: 'text' },
+      { field: 'b', kind: 'text', when: { all: [] } },
+    ] }], `empty 'all' condition`)
+    // duplicate field
+    expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text' }, { field: 'a', kind: 'number' }] }], `duplicate field 'a'`)
+    // conditions may reference keys of other groups (existence only)
+    validateLayout([
+      { id: 'g1', fields: [{ field: 'a', kind: 'text' }] },
+      { id: 'g2', fields: [{ field: 'b', kind: 'text', when: { key: 'a', equals: 'x' } }] },
+    ]) // does not throw
+  })
+
+  // ---- pure export: buildLayout (design D4) ----
+
+  it('buildLayout: children nest under their parent regardless of declaration order, with depth', async () => {
+    const { exports } = await loadPage()
+    const { buildLayout } = exports
+    const [layout] = buildLayout([{ id: 'g', fields: [
+      { field: 'grandchild', kind: 'text', parent: 'child' },
+      { field: 'root', kind: 'text' },
+      { field: 'child2', kind: 'text', parent: 'root' },
+      { field: 'child', kind: 'text', parent: 'root' },
+      { field: 'other', kind: 'text' },
+    ] }])
+    // roots keep declaration order; children follow declaration order within
+    // their parent
+    expect(layout.roots.map((node) => node.field)).toEqual(['root', 'other'])
+    const root = layout.roots[0]
+    expect(root.depth).toBe(0)
+    expect(root.children.map((node) => node.field)).toEqual(['child2', 'child'])
+    expect(root.children.every((node) => node.depth === 1)).toBe(true)
+    const child = root.children[1]
+    expect(child.children.map((node) => node.field)).toEqual(['grandchild'])
+    expect(child.children[0].depth).toBe(2)
+    // DFS flatten: the grandchild renders inside its parent's subtree
+    const flat = []
+    const walk = (node) => {
+      flat.push(`${node.field}@${node.depth}`)
+      for (const next of node.children) walk(next)
+    }
+    for (const node of layout.roots) walk(node)
+    expect(flat).toEqual(['root@0', 'child2@1', 'child@1', 'grandchild@2', 'other@0'])
+  })
+
+  it('the real LAYOUT nests the declared sub-settings (two-level notify case included)', async () => {
+    const { exports } = await loadPage()
+    const byId = Object.fromEntries(exports.LAYOUT.map((group) => [group.id, group]))
+    const flatten = (group) => {
+      const flat = []
+      const walk = (node) => {
+        flat.push({ key: node.field ?? node.slot, depth: node.depth })
+        for (const child of node.children) walk(child)
+      }
+      for (const root of group.roots) walk(root)
+      return flat
+    }
+    const notify = flatten(byId.notify)
+    expect(notify.find((row) => row.key === 'notifyMinTurnSeconds').depth).toBe(2)
+    expect(notify.find((row) => row.key === 'notifyOnComplete').depth).toBe(1)
+    expect(notify.find((row) => row.key === 'notifyPermissions').depth).toBe(0)
+    // the min-turn row sits directly inside its parent's subtree
+    expect(notify.indexOf(notify.find((row) => row.key === 'notifyMinTurnSeconds')))
+      .toBe(notify.indexOf(notify.find((row) => row.key === 'notifyOnComplete')) + 1)
+    const editing = flatten(byId.editing)
+    expect(editing.find((row) => row.key === 'editLockMaintenance').depth).toBe(1)
+  })
+
+  // ---- controller: inject face, env fetch, save flow ----
 
   it('controller: builds the flat field specs, exposes the inject face, and bumps the prop-injected bus on save', async () => {
     const { exports, specsSeen } = await loadPage()
@@ -307,10 +713,10 @@ describe('client.settings-page chunk', () => {
       return session
     }
     const scope = { ns: 'orrery-settings' }
-    const controller = new OrreryCardController(scope, { settingsBus, getSession })
+    const controller = new OrreryCardController(scope, { settingsBus, getSession, fetchEnv: () => new Promise(() => {}) })
 
-    // the form model tracks the flat FIELDS spec list (robash list fields are
-    // plain text fields at this layer)
+    // the form model tracks the flat FIELDS spec list (custom rows naming a
+    // field — chains, robash lists, the picker carrier — are text-backed)
     const ROBASH_LIST_FIELDS = ['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny']
     expect(specsSeen).toHaveLength(FIELDS.length)
     expect(specsSeen.filter((spec) => ROBASH_LIST_FIELDS.includes(spec.field))).toHaveLength(5)
@@ -330,10 +736,44 @@ describe('client.settings-page chunk', () => {
     // a successful save bumps the prop-injected settings bus (the composer
     // toggle's re-check propagation)
     face.save()
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
     expect(notifications).toEqual(['bump'])
 
     controller.dispose()
+  })
+
+  it('controller: env fetch resolves to ready facts and re-projects; failure degrades to failed with one warning', async () => {
+    const { exports } = await loadPage()
+    const settingsBus = { subscribe: () => () => {}, notify: () => {} }
+    // pending until the fetch settles
+    let settleEnv
+    const envPromise = new Promise((resolve) => { settleEnv = resolve })
+    const pendingController = new exports.OrreryCardController({ ns: 'orrery-settings' }, { settingsBus, getSession: () => ({}), fetchEnv: () => envPromise })
+    expect(pendingController.env).toEqual({ status: 'pending', facts: {} })
+    expect(pendingController.projection().env.status).toBe('pending')
+    settleEnv({ platform: 'darwin' })
+    await flush()
+    expect(pendingController.env).toEqual({ status: 'ready', facts: { platform: 'darwin' } })
+    expect(pendingController.form.publishCount).toBe(1)
+    pendingController.dispose()
+
+    // failed: env failed, one console.warn total across controllers
+    const warns = []
+    const originalWarn = console.warn
+    console.warn = (message) => warns.push(message)
+    try {
+      const failedOne = new exports.OrreryCardController({ ns: 'orrery-settings' }, { settingsBus, getSession: () => ({}), fetchEnv: () => Promise.reject(new Error('endpoint down')) })
+      const failedTwo = new exports.OrreryCardController({ ns: 'orrery-settings' }, { settingsBus, getSession: () => ({}), fetchEnv: () => Promise.reject(new Error('endpoint down')) })
+      await flush()
+      expect(failedOne.env.status).toBe('failed')
+      expect(failedTwo.env.status).toBe('failed')
+      expect(warns).toHaveLength(1)
+      expect(warns[0]).toContain('endpoint down')
+      failedOne.dispose()
+      failedTwo.dispose()
+    } finally {
+      console.warn = originalWarn
+    }
   })
 
   // Save-flow controller tests: the stub SettingsFormModel is driven through
@@ -343,7 +783,7 @@ describe('client.settings-page chunk', () => {
     const { exports } = await loadPage()
     const notifications = []
     const settingsBus = { subscribe: () => () => {}, notify: () => notifications.push('bump') }
-    const controller = new exports.OrreryCardController({ ns: 'orrery-settings' }, { settingsBus, getSession: () => ({}) })
+    const controller = new exports.OrreryCardController({ ns: 'orrery-settings' }, { settingsBus, getSession: () => ({}), fetchEnv: () => new Promise(() => {}) })
     return { controller, notifications, face: controller.inject() }
   }
 
@@ -423,7 +863,7 @@ describe('client.settings-page chunk', () => {
     let settle
     controller.form.save = () => new Promise((resolve) => { settle = resolve })
     const pending = face.save()
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await flush()
     // save still in flight: neither the bus bump nor the reminder may fire early
     expect(notifications).toEqual([])
     expect(controller.restartReminder).toBe(null)
@@ -433,6 +873,7 @@ describe('client.settings-page chunk', () => {
     expect(controller.restartReminder).toEqual(['todoEnabled'])
     expect(controller.form.publishCount).toBe(1)
   })
+
   it('pins the curated agent lane names to the server registry (rename drift guard)', async () => {
     const { exports } = await loadPage()
     // The client keeps the curated agent names in ONE exported constant; the
@@ -452,14 +893,14 @@ describe('client.settings-page chunk', () => {
 
   it('pins the restart-required field list to the server schema (drift guard)', async () => {
     const { exports } = await loadPage()
-    // The client keeps the restart-required keys in ONE exported constant;
-    // the server schema (RESTART_KEYS, derived from the FIELDS restart
-    // markers in src/settings/sections.js) is the authority. A change on
-    // either side turns this red instead of drifting the restart reminder.
+    // The client keeps the restart-required keys in ONE exported constant —
+    // the same list driving both the post-save modal and the always-on
+    // inline tag; the server schema (RESTART_KEYS, derived from the FIELDS
+    // restart markers in src/settings/sections.js) is the authority.
     expect(exports.RESTART_FIELDS).toEqual([...RESTART_KEYS])
   })
 
-  it('resolves a label and a hint for every GROUPS field in both dictionaries — never the raw key', async () => {
+  it('resolves a label and a hint for every form field in both dictionaries — never the raw key', async () => {
     const { exports } = await loadPage()
     const { exports: chainModel } = await loadClientChunk('lib/client.chain-model.js')
     const dicts = await loadDictionaries()
@@ -474,7 +915,7 @@ describe('client.settings-page chunk', () => {
     }
     for (const locale of ['en', 'zh']) {
       const dict = dicts[locale]
-      for (const descriptor of exports.GROUPS.flatMap((group) => group.fields)) {
+      for (const descriptor of exports.FIELDS) {
         expectResolved(dict, descriptor.field)
         expectResolved(dict, `${descriptor.field}Hint`)
       }
@@ -487,8 +928,9 @@ describe('client.settings-page chunk', () => {
         expectResolved(dict, key)
         expectResolved(dict, `${key}_desc`)
       }
-      // the restart reminder banner's own keys resolve too
-      for (const key of ['restartReminderTitle', 'restartReminderBody', 'restartReminderDismiss']) {
+      // the restart reminder banner's own keys resolve too, plus the
+      // always-on inline restart tag's key
+      for (const key of ['restartReminderTitle', 'restartReminderBody', 'restartReminderDismiss', 'restartRequired']) {
         expectResolved(dict, key)
       }
       // the disabled-categories editor's own panel keys resolve too
