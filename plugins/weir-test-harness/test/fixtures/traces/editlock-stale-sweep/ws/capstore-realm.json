@@ -1,0 +1,26 @@
+{
+  "label": "realm",
+  "present": true,
+  "name": "weir-it",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "located": {
+    "supported": true,
+    "root": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home/weir/profiles/weir-it/capabilities"
+  },
+  "sessionId": "session-f1a0d410-407b-4ae2-b049-23696a467843",
+  "commit": "committed",
+  "read": {
+    "kind": "ok",
+    "revision": 2,
+    "payload": {
+      "probes": [
+        "host",
+        "realm"
+      ]
+    }
+  },
+  "recordPath": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home/weir/profiles/weir-it/capabilities/sessions/session-f1a0d410-407b-4ae2-b049-23696a467843/selection.json",
+  "dirFiles": [
+    "selection.json"
+  ]
+}

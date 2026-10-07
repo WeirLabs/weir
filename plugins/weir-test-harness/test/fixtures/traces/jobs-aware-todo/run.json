@@ -1,0 +1,8 @@
+{
+  "scenario": "jobs-aware-todo",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "code": 0,
+  "stdout": "Waiting for the background job settlement notice.\n",
+  "stderr": "",
+  "sessionId": null
+}

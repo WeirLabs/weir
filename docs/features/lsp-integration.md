@@ -4,7 +4,7 @@
 
 ## 概述
 
-Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查询（`lsp_diagnostics`、`lsp_definition`、`lsp_references`、`lsp_symbols`）加一个改写工具 `lsp_rename`（跨文件符号重命名，经 fs 版本护栏安全落盘）。客户端为**零依赖自研**的最小 LSP 协议实现（JSON-RPC 2.0 + Content-Length 帧 over stdio，经 `ctx.subprocess` 起停语言服务器），因为 desktop 宿主无法解析 link bundle 的裸 npm 依赖（S14）。
+Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询（`lsp_diagnostics`、`lsp_definition`、`lsp_references`、`lsp_symbols`）加一个改写工具 `lsp_rename`（跨文件符号重命名，经 fs 版本护栏安全落盘）。客户端为**零依赖自研**的最小 LSP 协议实现（JSON-RPC 2.0 + Content-Length 帧 over stdio，经 `ctx.subprocess` 起停语言服务器），因为 desktop 宿主无法解析 link bundle 的裸 npm 依赖（S14）。
 
 开关分两层，语义明确：
 
@@ -46,12 +46,12 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
 
 ## 设计细节
 
-- 模块：`orrery-harness/lsp`（`client.js` 协议端点、`manager.js` server record 生命周期、`child-process.js` 可执行解析→启动形态→受限运行、`uri.js` URI codec 纯叶子、`registry.js` 服务器注册表、`tools.js` 四工具、`index.js` 门闸与双通道开关）。
+- 模块：`weir-harness/lsp`（`client.js` 协议端点、`manager.js` server record 生命周期、`child-process.js` 可执行解析→启动形态→受限运行、`uri.js` URI codec 纯叶子、`registry.js` 服务器注册表、`tools.js` 四工具、`index.js` 门闸与双通道开关）。
 - 客户端：Content-Length 帧缓冲拼接（粘包/分包容错、畸形头重同步）；JSON-RPC 请求-响应路由 + 通知分发；server→client 请求一律回 `result: null`（防对方阻塞）；`initialize`/`initialized`/`shutdown`/`exit` 状态机；每请求独立超时。
 - 生命周期：`${cwd}:${languageFamily}` 一实例；didOpen 首触/didChange 后续（Full 同步、版本自增）；`publishDiagnostics` 收集到 per-file 快照；会话为服务器 holder，toggle off 或会话销毁时按引用计数关停空服务器。manager 的对外接口是**命名操作**而非 record 回调——`requestOn`（同步 + `paramsOf(uri)` 请求）、`diagnosticsFor`（wait-once 策略内建）、`capabilitiesOf`（握手能力集，不做文档同步），record 形状、languageId 赋值与 holder 登记都收在私有 `prepare()` 后面；`createLspManager` 有独立直接单测套件。
 - **门闸状态机**：`gate = settings.get('lsp').enabled ?? 行配置 enabled ?? false`；开闸 `setupSurface()`（注册投影 + `lsp` 工具 + `/lsp` 命令，持有全部 disposer），关闸 `teardownSurface()`（注销面、清理已启用会话、终止全部服务器）；`settings.onChange` 驱动实时翻转。
-- **持久状态**：`orreryLsp` 会话投影（stateVersion 1，声明 `wire` 以推送到客户端）纯折叠会话日志——`tool/call`（name `lsp`，`arguments.enabled`）与 `command/run`（name `lsp`，args `on`/`off`）更新 `{enabled}`；`agent/created` 时按投影恢复（冷 resume 后工具仍在），`agent/disposed` 清理。
-- **双通道**：`/lsp on|off`（面板，`ctx.commands.register`，invocation.agent 缺失/坏参返回 error）与 `lsp` 工具（模型，exec.agent）共享同一 per-session 运行时状态；面板开关状态由客户端 `useProjection("orreryLsp")` 读宿主折叠值。
+- **持久状态**：`weirLsp` 会话投影（stateVersion 1，声明 `wire` 以推送到客户端）纯折叠会话日志——`tool/call`（name `lsp`，`arguments.enabled`）与 `command/run`（name `lsp`，args `on`/`off`）更新 `{enabled}`；`agent/created` 时按投影恢复（冷 resume 后工具仍在），`agent/disposed` 清理。
+- **双通道**：`/lsp on|off`（面板，`ctx.commands.register`，invocation.agent 缺失/坏参返回 error）与 `lsp` 工具（模型，exec.agent）共享同一 per-session 运行时状态；面板开关状态由客户端 `useProjection("weirLsp")` 读宿主折叠值。
 - 客户端面板开关：注入 `conversation.input.right` 槽（composer 栏，空白与有内容会话均常驻；会话头 utilities 槽仅在会话有内容后出现）；命令目录不含 `lsp` 时不渲染（能力关）；点击经 `remote.commands.execute(sessionId, "/lsp on|off", [])`；无 `useProjection` 注入时降级为投影拉取 + 乐观更新。
 - 管理端点：`src/lsp/admin.js` 经 `wireLspAdmin(ctx, getServers)` 被 **profile 级 settings 行调用**完成接线（调用点必须留在该行——S19 新增包子路径需应用重启；inject 元组、registry 构造与 disposer 簿记都收在 `wireLspAdmin` 体内，settings 行不再知晓它们）；注册表为 live provider（内置 + `lspServers`）；status 含 `installerAvailable`（安装器自身可否解析）。
 - **可执行解析的平台分支**：`src/lsp/child-process.js` 服务优先、扩展目录扫描回退（S21：GUI 进程 PATH 最小化事故）。解析接口按目标平台参数化（默认宿主，沿用 `installSpecFor(entry, platform)` 先例）：
@@ -62,7 +62,7 @@ Orrery 的 LSP 集成把五个语义工具带给单个会话：四个只读查�
   - `npmGlobalPrefix()` win32 返回 `%APPDATA%\npm`，POSIX 返回 `~/.npm-global`。
 - **启动形态包装**：`spawnArgv(command, args, platform)` 决定真正交给 `ctx.subprocess.spawn` 的 argv——Windows 的 CreateProcess 既不执行批处理也无 shebang 处理（Node 对 `.cmd` 直接 `EINVAL`）。**不经 shell**：`.cmd`/`.bat` shim 被读入并**拆包**，交付 `node <cli> <args>`。三类真实 shim 均覆盖：npm 自带的 `"%NODE_EXE%" "%NPM_CLI_JS%" %*`（含 npm 的字面 `\"` 转义与 `SET` 变量链）、corepack/pnpm 的 `"%~dp0\node.exe"` 形态、以及 `%APPDATA%\npm` 安装用的 `"%_prog%"` 模板。解析是**结构化**而非按引号形状：取最后一行 `%*` 转发、只剔离引号转义（保留路径分隔符）、变量链迭代到不动点且给候选排序（npm 对 `NPM_CLI_JS` 赋值三次，`%%F` 那个 FOR 循环产物在启动时永不可解）。解释器按 shim 自身规则选（`%dp0%\node.exe` 存在则用它，否则用当前运行的 Node——shim 会用的裸 `node` 并不在声明的子环境 PATH 里）。**只有**当路径与每个参数都可证明不含空格/引号/cmd 元字符时，才回退 `cmd.exe /d /c`（**不用 `/s`**）；否则**明确拒绝**（宁失败也不得静默弄错路径或放行注入）。`.ps1` 经 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`，`.exe`/`.com` 直启，POSIX 维持 `[command, ...args]`。服务器、版本探测、面板安装器三个 spawn 点共用该形态；`childEnvironment()` 在 Windows 额外带上 `SystemRoot`/`ComSpec`（供 cmd 回退使用）。实测（本机，全部无 shell、含含空格路径）：npm 11.17.0、pnpm 11.7.0、typescript-language-server 6.0.1、dsh 0.1.7-rc.2；反例：`cmd /d /c <含空格 shim> --prefix "C:\Users\John Smith\…"` → `'C:\Program' is not recognized`，`--prefix "C:\a&b\npm"` → `&` 被当作命令分隔符。
 - 管理端点的两个定时器均不拖住宿主：「带 deadline 跑到完」的唯一实现是 `child-process.js` 的 `runBounded(subprocess, { argv, timeoutMs, unref })`——累积合并 stdout/stderr、竞速完成与 deadline、超时回调内尽力 terminate、退出码归一化，定时器在**所有结算路径**释放（`try/finally`——真正漏的是**抛错路径**：启动失败（spawn EINVAL）会从 race 中抛出，此前已武装的 8s 定时器会让进程多活到它开火；实测 4ms 工作 → 8007ms 进程寿命，修后 7ms）。`unref` 为显式选项：**安装截止时间 `unref: true`**（无人等待也不拖住宿主）；**探测窗口 `unref: false`**——实证（Node v24）unref 定时器开火后仍被活动资源计数短暂滞留，会破坏探测卫生钉，故探测路径保持 ref 形态。`probeVersion`/`runInstall` 只是供给 argv/timeout/结果塑形的薄适配器；输出截断与版本行提取留在适配器。
-- `POST /api/orrery-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/orrery-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
+- `POST /api/weir-lsp/status`（逐族 PATH 探测 + 版本轻探测）与 `POST /api/weir-lsp/install`（族名校验、平台化命令、argv 直执行无 shell、输出收集、超时终止、退出码归一化）；connection/subprocess 缺席时优雅降级（不注册端点）。面板 UI 置于错误边界内，端点不可用时面板内联错误。
 - 语言识别：按目标文件扩展名映射 LSP languageId（`.ts/.tsx/.js/.py/.go/.rs`…），扩展名未知直接拒绝（不起服务器）。
 
 ## 边界与失败语义

@@ -1,0 +1,8 @@
+{
+  "scenario": "worktree",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "code": 0,
+  "stdout": "parent saw the lane check: no-commits\n",
+  "stderr": "",
+  "sessionId": null
+}

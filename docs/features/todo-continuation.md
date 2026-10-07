@@ -29,7 +29,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 
 ## 设计细节
 
-- 模块：`orrery-harness/todo-driver`。
+- 模块：`weir-harness/todo-driver`。
 - todo 读取：`sessionProjections` 的 todos 投影（live 引用，只读）。
 - 续推挂点：`agent/turn-stopping`——回合收尾且无欠账时触发，监听器内 `agent.steer(...)` 注入续推消息，机器重读 inbox 再跑一步（协议认可的正规续推方式；`session/event` 监听器内禁止同步 followup）。
 - 结束原因分类严格依据 `turn/end` 的 `reason`（AGENTS.md §3.5）：`completed` → 续推；`aborted{kind:'user'}` → disarm；`error{LlmFailure}` → 退避延迟续推+计数；其余（max-tokens/interrupted/forked 等）不续推。禁止启发式猜测。分类词汇的唯一实现是纯函数 `classifyTurnOutcome({ signal, reason, error })`（`state-machine.js`，11 行优先级真值表：durable reason 绝对优先于 signal/error 预分类——后者仅在 `turn/end` 尚不存在的 turn-stopping 时刻生效；signal 先于 error），两个决策点（turn-stopping 的 steer 与 turn/end 的计数/复位）消费同一结果，user-interrupt disarm 收敛为单一实现。

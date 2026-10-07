@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "seq": 1,
+  "lanes": [
+    {
+      "id": "notify-lane-001",
+      "title": "Notify lane",
+      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/notify-lane-001",
+      "branch": "weir/notify-lane-001",
+      "base": {
+        "branch": "main",
+        "commit": "760e19f20b645d6ea059070a7462f38895e3c6a4"
+      },
+      "scope": [],
+      "state": "kept",
+      "ownerSession": "session-d6b1c683-5030-484b-ae4c-ccea6a184f3f",
+      "boundChild": null,
+      "baseMoved": false,
+      "landableTree": "f227e5788731233ddc6e6625954bd840d77fc648",
+      "setup": {
+        "status": "none"
+      },
+      "check": {
+        "enabled": false,
+        "tree": "f227e5788731233ddc6e6625954bd840d77fc648"
+      },
+      "land": {
+        "commit": "ec0f6a0596f7572443806f2dddc41b5b547aec43",
+        "at": 1791395246490,
+        "by": "host",
+        "stat": {
+          "files": 1,
+          "added": 1,
+          "removed": 0
+        }
+      },
+      "cleanup": {
+        "mode": "keep",
+        "at": 1791395246505,
+        "by": "user"
+      },
+      "reason": null,
+      "createdAt": 1791395246007,
+      "updatedAt": 1791395246506,
+      "history": [
+        {
+          "from": "preparing",
+          "to": "ready",
+          "event": "setup-ok",
+          "at": 1791395246058,
+          "by": "host"
+        },
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791395246077,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "landable",
+          "event": "checked",
+          "at": 1791395246237,
+          "by": "host"
+        },
+        {
+          "from": "landable",
+          "to": "awaiting-approval",
+          "event": "ask",
+          "at": 1791395246382,
+          "by": "host"
+        },
+        {
+          "from": "awaiting-approval",
+          "to": "landed",
+          "event": "land",
+          "at": 1791395246491,
+          "by": "host"
+        },
+        {
+          "from": "landed",
+          "to": "kept",
+          "event": "keep",
+          "at": 1791395246506,
+          "by": "user"
+        }
+      ],
+      "asking": {
+        "pid": 34006,
+        "at": 1791395246382
+      }
+    }
+  ],
+  "watches": []
+}

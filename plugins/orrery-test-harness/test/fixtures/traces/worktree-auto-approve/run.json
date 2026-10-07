@@ -1,8 +1,0 @@
-{
-  "scenario": "worktree-auto-approve",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
-  "code": 0,
-  "stdout": "WORKTREE_AUTO_APPROVE_DONE\n",
-  "stderr": "",
-  "sessionId": null
-}

@@ -22,7 +22,7 @@
 ## 设计细节
 
 实现机制：挂载点、数据流、关键决策及理由。可引用 DSH 机制（服务/事件）与
-`plugins/orrery-harness/src/` 下的模块路径。
+`plugins/weir-harness/src/` 下的模块路径。
 
 ## 边界与失败语义
 
@@ -31,5 +31,5 @@
 
 ## 测试
 
-- 单元测试：`plugins/orrery-harness/test/` 中对应文件的覆盖要点。
-- 集成测试：`plugins/orrery-test-harness` 中对应场景（若有）。
+- 单元测试：`plugins/weir-harness/test/` 中对应文件的覆盖要点。
+- 集成测试：`plugins/weir-test-harness` 中对应场景（若有）。

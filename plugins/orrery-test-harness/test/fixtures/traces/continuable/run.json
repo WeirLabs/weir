@@ -1,8 +1,0 @@
-{
-  "scenario": "continuable",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
-  "code": 0,
-  "stdout": "parent observed both continuable settlements\n",
-  "stderr": "",
-  "sessionId": null
-}

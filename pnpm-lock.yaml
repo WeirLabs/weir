@@ -15,11 +15,11 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  plugins/orrery-harness: {}
+  plugins/weir-harness: {}
 
-  plugins/orrery-model-picker: {}
+  plugins/weir-model-picker: {}
 
-  plugins/orrery-test-harness: {}
+  plugins/weir-test-harness: {}
 
 packages:
 

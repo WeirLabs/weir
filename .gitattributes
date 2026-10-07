@@ -1,4 +1,4 @@
 * text=auto eol=lf
 
 # Replay fixtures must stay byte-exact (the lsp scenario pins CRLF preservation).
-plugins/orrery-test-harness/test/fixtures/** -text
+plugins/weir-test-harness/test/fixtures/** -text

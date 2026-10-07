@@ -1,0 +1,266 @@
+# Integration-test composition for the `weir-it` headless profile:
+# a scripted mock LLM adapter (provider `mock`) plus the weir modules
+# mounted at host level. Skill composition scenarios additionally create a real
+# preset; the product bundle supplies resolution, not profile activation.
+# Mirror the product's OFF composition; HOST is an explicit negative control.
+- id: skill-filesystem
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: mock
+    model: mock-1
+# Mirror the desktop host's sandbox semantics (S23): pin the DEPLOYMENT
+# fallback workspace root AWAY from the session workspace, so any ctx.fs
+# writer that omits the per-call policy is denied exactly like desktop
+# sessions. The test workspace lives outside /tmp and tmpdir(), so the
+# unconditional writable roots cannot rescue a faulty call either.
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js (process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/outside'
+- insert:
+    - id: weir-it-mock-llm
+      name: 'weir-test-harness/mock-llm'
+    - id: weir-skill-selection
+      name: 'weir-test-harness/skill-selection'
+      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_APPLY_TX || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_LIFECYCLE || process.env.WEIR_IT_MCP || process.env.WEIR_IT_PRESET || process.env.WEIR_IT_PRESET_SURFACE)"
+    - id: weir-it-tool-skill
+      name: '@deepseek-ai/dsh-tool-skill'
+      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION)"
+    - id: weir-it-agent-presets
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION)"
+      config:
+        default: weir-it-selection
+    - id: weir-it-skill-composition-probe
+      name: 'weir-test-harness/skill-composition-probe'
+    # Apply-transaction probe (task 4.7): drives the group-4 Apply engine,
+    # admission fence and receipt recovery in-session (apply-transaction only).
+    - id: weir-it-apply-transaction-probe
+      name: 'weir-test-harness/apply-transaction-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_APPLY_TX === '1'
+    - id: weir-it-lifecycle-probe
+      name: 'weir-test-harness/lifecycle-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_LIFECYCLE === '1'
+    # Mirror the product preset's capabilities group (S11): the manager
+    # publishes weirMcpGate/weirMcpManager, so provider and consumer
+    # (probe) share one isolated realm. A realm mistake now fails the mcp
+    # scenarios headlessly instead of only the real preset at session create.
+    - id: weir-it-mcp
+      name: cordis:group
+      group: true
+      isolate:
+        weirMcpGate: true
+        weirMcpManager: true
+      config:
+        - id: weir-mcp-manager
+          name: 'weir-harness/mcp-manager'
+        - id: weir-it-mcp-probe
+          name: 'weir-test-harness/mcp-probe'
+          config:
+            enabled: !!js process.env.WEIR_IT_MCP === '1'
+    - id: weir-it-preset-probe
+      name: 'weir-test-harness/preset-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_PRESET === '1'
+    - id: weir-it-preset-surface-probe
+      name: 'weir-test-harness/preset-surface-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_PRESET_SURFACE === '1'
+    - id: weir-it-host-gamma
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js process.env.WEIR_IT_MCP !== '1'
+      config:
+        transport: 'stdio'
+        serverName: 'gamma'
+        command: !!js process.execPath
+        args: !!js "[process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('weir-test-harness/package.json')), 'src/mock-mcp-server.mjs'), 'gamma']"
+        env: { WEIR_IT_MCP_LOG: !!js "process.env.WEIR_IT_ROOT + '/ws/mcp-server-log.jsonl'", WEIR_IT_MCP_ORIGIN: 'host' }
+
+    # Cold-session convergence probe (task 5.5): seeds a real preset session
+    # with an accepted selection + real invalidation frames, then replays the
+    # cold-open race and the writer-held status face in a cold process
+    # (cold-session scenario only).
+    - id: weir-it-cold-session-probe
+      name: 'weir-test-harness/cold-session-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_COLD_SESSION === '1'
+    - id: weir-it-office
+      name: '@deepseek-ai/dsh-skill-office'
+      disabled: !!js "process.env.WEIR_IT_SKILL_COMPOSITION !== 'OFFICE'"
+      config:
+        node: !!js process.env.WEIR_IT_NODE
+        cli: !!js process.env.WEIR_IT_OFFICE_CLI
+    # Mirror the profile-level settings row: exercises the weirSettings
+    # service path headlessly (it supplies the classifier route — the semantic
+    # scenario only passes when the overlay actually delivers these values).
+    - id: weir-it-settings
+      name: 'weir-harness/settings'
+      config:
+        intentGateProvider: mock
+        intentGateModel: mock-1
+        # Message-driven auto-resume counter-case: the live gate is switched off
+        # only when the scenario asks for it (default stays ON everywhere else).
+        editLockAutoResume: !!js "process.env.WEIR_IT_AUTO_RESUME === 'off' ? false : undefined"
+    - id: weir-it-event-tap
+      name: 'weir-test-harness/event-tap'
+    # Capability-store probe, host level: the baseline the isolated row below
+    # is compared against (capstore scenario only).
+    - id: weir-it-capstore-probe-host
+      name: 'weir-test-harness/capstore-probe'
+      config:
+        label: host
+        enabled: !!js process.env.WEIR_IT_CAPSTORE === '1'
+    - id: weir-it-core
+      name: 'weir-harness/core'
+    - id: weir-it-intent-gate
+      name: 'weir-harness/intent-gate'
+      config:
+        # Exercise the semantic classifier headlessly; the sidecar route comes
+        # from the settings row above (weirSettings overlay proof).
+        classifier: 'llm'
+    # Worktree lanes: host state machine + lane tools + /worktree command.
+    # Provider (worktree) and consumer (delegate) sit at the same host level
+    # here, mirroring the preset where both share the delegation group.
+    - id: weir-it-worktree
+      name: 'weir-harness/worktree'
+    - id: weir-it-delegate
+      name: 'weir-harness/delegate'
+      config:
+        # Keep the supervision backoff fast enough for a headless run.
+        supervision:
+          initialBackoffMs: 50
+          maxBackoffMs: 100
+        # Per-scenario registry-level disable: empty unless a scenario sets
+        # WEIR_IT_DISABLED_CATEGORY (comma-separated), so the shared baseline
+        # keeps every category enabled. The `targets` scenario uses it to prove
+        # that a disabled target is neither advertised nor spawnable.
+        categories: !!js 'Object.fromEntries((process.env.WEIR_IT_DISABLED_CATEGORY ?? "").split(",").filter(Boolean).map((name) => [name, { disabled: true }]))'
+    # System notifications + a scripted user-questions answerer: notifications
+    # mount for the notify-worktree scenario only, so no other run can spawn a
+    # real platform notification command; the card answerer additionally serves
+    # the zombie-lane scenario (its abandon decision cards need a headless
+    # answerer, including the disputed force-reclaim card).
+    - id: weir-it-notify
+      name: 'weir-harness/notify'
+      disabled: !!js process.env.WEIR_IT_NOTIFY_WORKTREE !== '1'
+    - id: weir-it-worktree-approve-probe
+      name: 'weir-test-harness/worktree-approve-probe'
+      # Scripted /worktree approve driver (worktree auto-approve scenarios):
+      # commands.execute records the same command/run + command/done lifecycle
+      # a user-typed switch does, so the weirWorktree projection folds it.
+      config:
+        enabled: !!js "process.env.WEIR_IT_WORKTREE_AUTO_APPROVE === '1' || process.env.WEIR_IT_NOTIFY_WORKTREE === '1'"
+    - id: weir-it-user-questions-stub
+      name: 'weir-test-harness/user-questions-stub'
+      config:
+        enabled: !!js (process.env.WEIR_IT_NOTIFY_WORKTREE === '1' || process.env.WEIR_IT_ZOMBIE_LANE === '1' || process.env.WEIR_IT_WORKTREE_AUTO_APPROVE === '1' || process.env.WEIR_IT_BLACKBOARD_PROMOTION === '1')
+    # Mirror the product's host-layer capability read remote (silent-capability-
+    # reads). Headless has no typert gateway, so the row proves the designed
+    # inert path (warn + never break the composition); the direct-call probe
+    # below mirrors the service for the capability-remote scenario only.
+    - id: weir-it-capability-remote
+      name: 'weir-harness/capability-remote'
+      disabled: !!js process.env.WEIR_IT_CAPABILITY_REMOTE !== '1'
+    - id: weir-it-capability-remote-probe
+      name: 'weir-test-harness/capability-remote-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_CAPABILITY_REMOTE === '1'
+    # Mirror the product's host-layer blackboard remote (design D8). Headless
+    # has no typert gateway, so the row proves the designed inert path; the
+    # probe below drives the service directly for the blackboard scenario.
+    # The promotion scenario's ask_user_question tool (slice 3): the injected
+    # brief drives the per-entry adjudication through the stock ask funnel,
+    # answered headlessly by the stub above (the user is scripted).
+    - id: weir-it-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+      disabled: !!js process.env.WEIR_IT_BLACKBOARD_PROMOTION !== '1'
+    - id: weir-it-blackboard-remote
+      name: 'weir-harness/blackboard-remote'
+      disabled: !!js process.env.WEIR_IT_BLACKBOARD !== '1'
+    - id: weir-it-blackboard-remote-probe
+      name: 'weir-test-harness/blackboard-remote-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_BLACKBOARD === '1'
+    # Mirror the preset realm structure for the Edit Lock service: provider
+    # (edit-lock) and consumers (todo-driver, hashline-edit, lsp) share one
+    # isolated realm, exactly like the preset's delegation group. A consumer
+    # outside the realm would not see the service and its edits would be
+    # denied by the guard, so the editlock scenario fails on a realm mistake.
+    - id: weir-it-editing
+      name: cordis:group
+      group: true
+      isolate:
+        weirEditLock: true
+      config:
+        - id: weir-it-todo-driver
+          name: 'weir-harness/todo-driver'
+        # Capability-store probe inside an isolated realm: proves the host
+        # profileContext reaches Weir rows mounted under a cordis:group.
+        - id: weir-it-capstore-probe-realm
+          name: 'weir-test-harness/capstore-probe'
+          config:
+            label: realm
+            enabled: !!js process.env.WEIR_IT_CAPSTORE === '1'
+        # Edit Lock row in preset order (before hashline-edit). Enabled only for
+        # the editlock scenario so every other scenario keeps today's behavior.
+        - id: weir-it-edit-lock
+          name: 'weir-harness/edit-lock'
+          config:
+            enabled: !!js process.env.WEIR_IT_EDIT_LOCK === '1'
+            # A fixed authority is pinned for the stop-boundary family and for
+            # the auto-resume family (a second boot must reopen the same one).
+            root: !!js "(process.env.WEIR_IT_STOP_BOUNDARY || process.env.WEIR_IT_AUTO_RESUME || process.env.WEIR_IT_EDIT_LOCK === '1') ? process.env.WEIR_IT_ROOT + '/ws' : undefined"
+            authorityDirectory: !!js "process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined))"
+        - id: weir-it-hashline-edit
+          name: 'weir-harness/hashline-edit'
+          config:
+            # Mirror the real preset's default: hash_edit is the only edit tool.
+            hideStockEdit: true
+        # LSP module under test: registry points the typescript server at the
+        # scripted mock LSP server (protocol fixture, no external installs), with
+        # the capability gate ON (mirrors the settings row flipped on).
+        - id: weir-it-lsp
+          name: 'weir-harness/lsp'
+          config:
+            enabled: true
+            servers:
+              typescript:
+                # process.execPath = the interpreter that booted this profile, so the
+                # mock server launches on any platform without a hardcoded path.
+                command: !!js process.execPath
+                args: [!!js (process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/ws/mock-lsp-server.js']
+                installHint: 'not-needed-in-tests'
+    # Mirror the real preset's realm structure: the compaction provider and the
+    # context-guard consumer co-isolated in one group. This reproduces the
+    # "waiting for compaction" preset-load failure class headlessly.
+    - id: weir-it-compaction
+      name: cordis:group
+      group: true
+      isolate:
+        compaction: true
+        toolResultPruner: true
+      config:
+        - id: weir-it-compaction-basic
+          name: '@deepseek-ai/dsh-compaction-basic'
+        - id: weir-it-context-guard
+          name: 'weir-harness/context-guard'
+
+    # Mirror the preset realm structure for the session blackboard service:
+    # the provider row sits in its own isolated group exactly like the
+    # preset's delegation group. Mounted only for the blackboard scenario
+    # (slice 2) so every other scenario keeps today's tool surface.
+    - id: weir-it-blackboard
+      name: cordis:group
+      group: true
+      isolate:
+        weirBlackboard: true
+      config:
+        - id: weir-it-blackboard-provider
+          name: 'weir-harness/blackboard'
+          disabled: !!js process.env.WEIR_IT_BLACKBOARD !== '1'

@@ -1,0 +1,69 @@
+{"time":1791395175006,"session":"session-f16bafec-e771-4645-afc9-b62ef8c7cb71","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791395175692,"session":"session-97b53eb4-9320-4abf-a1a6-819516c89d5a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395175780,"session":"a1f9bb79-11cf-4536-8bd6-d21c0b96f7fa","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395176407,"session":"session-b0d24330-869f-4d12-8219-5ed7f0bccbc0","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395177148,"session":"session-8092f92b-bbc6-4d9f-b62f-4100c0c1677c","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395177822,"session":"session-64f214e9-c949-484b-988e-e9887bdfafb1","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395177913,"session":"25effecf-af78-4531-a7d7-1f18f73786ef","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395179623,"session":"session-e978e9da-648a-4fb0-91b1-5467481ec1ed","type":"weir/intent-classify","data":{"mode":"llm","hit":"deep-work"}}
+{"time":1791395179647,"session":"session-e978e9da-648a-4fb0-91b1-5467481ec1ed","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791395180270,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395180364,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"8824e49a-efb2-4823-b155-5ed2616c4548","name":"quick: GROUPED_CHILD_A","group":"probe-group"}}
+{"time":1791395180365,"session":"8824e49a-efb2-4823-b155-5ed2616c4548","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395180387,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision","data":{"note":"child quick: GROUPED_CHILD_A: retry in 50ms"}}
+{"time":1791395180407,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"760e1749-5093-4ab7-8513-ec4c5f2e96b8","name":"quick: GROUPED_CHILD_B","group":"probe-group"}}
+{"time":1791395180407,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["8824e49a-efb2-4823-b155-5ed2616c4548","760e1749-5093-4ab7-8513-ec4c5f2e96b8"]}}
+{"time":1791395180412,"session":"760e1749-5093-4ab7-8513-ec4c5f2e96b8","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395180438,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/settle","data":{"kind":"settle","childId":"760e1749-5093-4ab7-8513-ec4c5f2e96b8","status":"completed","report":"beta finished first try"}}
+{"time":1791395180495,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/settle","data":{"kind":"settle","childId":"8824e49a-efb2-4823-b155-5ed2616c4548","status":"completed","report":"alpha finished after one retry"}}
+{"time":1791395180496,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
+{"time":1791395182128,"session":"session-1839d86a-59be-46f0-a426-1673ec3a430c","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395182214,"session":"6be08c86-d3b8-4d6e-adee-4f387a9555db","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395182257,"session":"4acddc9a-883e-4df3-a52f-5aae37241572","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395182913,"session":"session-c61f75c4-ea21-43c3-9b46-47943df8de02","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395183015,"session":"606a5e24-8561-4396-b739-cea7aba9a1ab","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395184656,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395184746,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"21cb74ee-fbdb-4b6a-9d1b-bf6f1a4556b8","name":"alpha","group":"probe-group"}}
+{"time":1791395184746,"session":"21cb74ee-fbdb-4b6a-9d1b-bf6f1a4556b8","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395184786,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"8a0d5e05-2346-404c-94a2-ae43f6a85101","name":"beta","group":"probe-group"}}
+{"time":1791395184786,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["21cb74ee-fbdb-4b6a-9d1b-bf6f1a4556b8","8a0d5e05-2346-404c-94a2-ae43f6a85101"]}}
+{"time":1791395184791,"session":"8a0d5e05-2346-404c-94a2-ae43f6a85101","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395184816,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/supervision/settle","data":{"kind":"settle","childId":"8a0d5e05-2346-404c-94a2-ae43f6a85101","status":"completed","report":"beta finished for termination count"}}
+{"time":1791395185872,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/supervision/terminate","data":{"kind":"terminate","childId":"21cb74ee-fbdb-4b6a-9d1b-bf6f1a4556b8","reason":"Terminated by the main agent."}}
+{"time":1791395185872,"session":"session-3ce8c5e4-cc21-4968-9f09-904aa82abfc7","type":"weir/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
+{"time":1791395187587,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395187678,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"04d7a1ce-0e01-4d43-95b3-0c7152631735","name":"alpha","group":"probe-group"}}
+{"time":1791395187679,"session":"04d7a1ce-0e01-4d43-95b3-0c7152631735","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395187717,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"f89ebbaf-215f-495c-ac75-685952f8ba75","name":"beta","group":"probe-group"}}
+{"time":1791395187718,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["04d7a1ce-0e01-4d43-95b3-0c7152631735","f89ebbaf-215f-495c-ac75-685952f8ba75"]}}
+{"time":1791395187722,"session":"f89ebbaf-215f-495c-ac75-685952f8ba75","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395187748,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/settle","data":{"kind":"settle","childId":"04d7a1ce-0e01-4d43-95b3-0c7152631735","status":"completed","report":"alpha rehydrate done"}}
+{"time":1791395187765,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/settle","data":{"kind":"settle","childId":"f89ebbaf-215f-495c-ac75-685952f8ba75","status":"blocked","report":"rehydrate child stuck on missing payload"}}
+{"time":1791395189469,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395189515,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/settle","data":{"kind":"settle","childId":"04d7a1ce-0e01-4d43-95b3-0c7152631735","status":"completed","report":"alpha rehydrate done","recovered":true,"evidence":"audit-replay"}}
+{"time":1791395189516,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/resume","data":{"kind":"resume","childId":"f89ebbaf-215f-495c-ac75-685952f8ba75"}}
+{"time":1791395189560,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/settle","data":{"kind":"settle","childId":"f89ebbaf-215f-495c-ac75-685952f8ba75","status":"completed","report":"beta resumed after restart"}}
+{"time":1791395189561,"session":"session-3778f0dd-a93e-4d88-a953-6a0176d4d430","type":"weir/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
+{"time":1791395191230,"session":"session-90a62d96-cea5-426a-bfe2-326ab6f6a0fe","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395194141,"session":"session-ca625a44-1a2b-4a1c-bfcb-73045e8a5527","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395194878,"session":"session-80fe69c9-1b3b-4d61-8d9e-d3eacb390e73","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395195865,"session":"session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395196007,"session":"session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad","type":"weir/worktree/open","data":{"lane":"it-lane-001","title":"IT lane","branch":"weir/it-lane-001","base":{"branch":"main","commit":"252cf58e466cc6a77d7106bd88f270d3efe62992"},"scope":[]}}
+{"time":1791395196008,"session":"session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad","type":"weir/worktree/setup","data":{"lane":"it-lane-001","from":"preparing","to":"ready","event":"setup-ok","reason":null,"by":"host"}}
+{"time":1791395196029,"session":"session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad","type":"weir/worktree/bind","data":{"lane":"it-lane-001","from":"ready","to":"working","event":"bind","reason":null,"by":"host"}}
+{"time":1791395196062,"session":"af790c88-6f07-4959-9050-2580fe4fbcfa","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395201779,"session":"session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad","type":"weir/worktree/checked","data":{"lane":"it-lane-001","from":"working","to":"no-commits","event":"checked","reason":"no commits ahead of main","by":"host"}}
+{"time":1791395202406,"session":"session-f1a0d410-407b-4ae2-b049-23696a467843","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395203169,"session":"session-d231375e-488e-4d2c-a530-cc6ab7a2bffd","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395203257,"session":"0b00351e-972f-420e-b6be-7cfac7c32dbf","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395203935,"session":"session-dd4d92de-09e7-41f5-b3b3-6036667d6a16","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395204747,"session":"session-08416343-1615-4ad3-b252-2cb1de40b85a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395204837,"session":"a46daec5-3b74-4e2f-ba92-5c61ab90081d","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395205554,"session":"session-b7002dbc-e7b9-4320-886d-d7e235ef63c3","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395206378,"session":"session-653ad189-1a58-4ece-b832-6dcb699f60e0","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395206468,"session":"b892805e-58ea-4a27-b53b-84f7f90ea955","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395207180,"session":"session-7635e638-faa0-4fd4-9d14-eb73c326cb28","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395207975,"session":"session-50748f2e-1e3b-43c5-a9cc-b240a0ce235f","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395208070,"session":"f828a8f3-19bf-475c-86d9-7db440ab9dff","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395208803,"session":"session-92cfcdf0-56ec-4760-8fde-9c5da2f40505","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395209490,"session":"session-b76048f5-a815-4f62-912b-1afb7cb045f3","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}

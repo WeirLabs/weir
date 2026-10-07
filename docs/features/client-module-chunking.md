@@ -22,9 +22,9 @@
 
 - **入口即组合根**（`lib/client.js`，约 670 行）：en/zh 字典（`apply` 同步 `ctx.locale.register`，chunk 异步到达赶不上同步注册，故字典必须留入口）、`settingsBus`（两个消费者分居不同 chunk，提升为入口并经 props 注入）、三个 slot 包装组件。每个表面对所含 chunk 做**一次 `Promise.all` 并行 fan-out**，不做 chunk 间嵌套 `require.async` 的瀑布。
 - **11 个 chunk**（命名匹配宿主 `CLIENT_CHUNK` 正则）：4 个零依赖 model chunk（`client.chain-model.js` / `client.robash-model.js` / `client.lsp-model.js` / `client.hash-edit-model.js`，factory 内零 `require` 调用，纯 view-model 可被 node:test 直接 import）+ 7 个 UI chunk（settings-page / chain-editor / robash-editor / **disabled-categories-editor** / lsp-panel / lsp-toggle / hash-edit-view）。
-- **同步 require 面不扩大**：全 lib/ 的同步 require 说明符仍只有 `react`、`react/jsx-runtime`、`@deepseek-ai/dsh-client-ui-primitives`、`orrery-model-picker` 四个（S14）；`orrery-model-picker` 经组合图跨模块同步到达（S18 先例）。
+- **同步 require 面不扩大**：全 lib/ 的同步 require 说明符仍只有 `react`、`react/jsx-runtime`、`@deepseek-ai/dsh-client-ui-primitives`、`weir-model-picker` 四个（S14）；`weir-model-picker` 经组合图跨模块同步到达（S18 先例）。
 - **宿主缓存约束**：宿主按入口缓存 slot `inject()` face，因此设置卡片 face 自带一个稳定的 deferred snapshot store；controller 在 chunk 到达时于入口侧构造（生命周期绑定 serve 代次），不建在 react 树内。
-- **样式常量按 chunk 复制**：同包同步 require 不可能，故各 UI chunk 逐字携带自用的样式常量与 `ORRERY_NS` / `LSP_PROJECTION_KEY`（入口为自己的闭包保留副本）——这是该宿主约束下的显式取舍，不是疏漏。
+- **样式常量按 chunk 复制**：同包同步 require 不可能，故各 UI chunk 逐字携带自用的样式常量与 `WEIR_NS` / `LSP_PROJECTION_KEY`（入口为自己的闭包保留副本）——这是该宿主约束下的显式取舍，不是疏漏。
 - **派生副本纪律（逻辑级复制）**：当某个纯契约的权威实现住在 `src/`（宿主侧）而 chunk 也需要它时，chunk 携带**逐字派生副本**（`DERIVED FROM <src 路径>` 头注）而不是 import——首例是 `client.hash-edit-model.js` 对 `src/hashline-edit/planned-fragments.js`（见 [hash-edit-diff-view.md](hash-edit-diff-view.md)）。漂移由行为等价钉结构性兜底：同一语料两侧逐案等价，单侧修改即红（改 src/ 忘同步 chunk 或反之）。该模式从「常量复制」（上条）升格到「逻辑复制」的唯一通行证就是这类 parity 钉；没有钉就不允许复制逻辑。
 - **rev 重戳（内容绑定自动完成）**：chunk URL 携带**入口**文件的 rev（由 `lib/client.js` 的 mtime/ctime/size 派生）。`scripts/build-client.js` 把每个 chunk 的 sha256 写进入口首行 manifest，因此**任何 chunk 编辑后跑 `pnpm build`，入口内容必然变化**（mtime 随 rev 自动重戳）；改了 chunk 不跑 build 则由 `test/client.test.js` 的 digest 断言确定性判红。纪律只有一条：改 chunk 后跑 build。不依赖文件 mtime 序——git 合并/checkout/克隆会按任意顺序重写 mtime，曾使旧的 mtime 断言在车道合并后必红（假阳性，已移除）。
 - **S17 保持**：`remote.session` 惰性访问以 `getSession` 闭包注入，chunk 不做早解引用（有单测钉零解引用）。
@@ -32,7 +32,7 @@
 ## 边界与失败语义
 
 - **chunk 拉取失败**：设置页进入字典化错误态，重试可用（失败结果不被记忆化，下一次 fan-out 会真发请求）；composer 开关保持不渲染；toolview 保持通用 body。**任何单个 chunk 失败都不会波及其他表面**（per-surface fan-out 相互独立）。
-- **旧 rev 404**：改了 chunk 漏跑 build 时，浏览器按旧 rev 请求 chunk 得到 404 → 上述错误态（digest 断言会先于合入判红）。恢复 = `pnpm --filter orrery-harness run build` + 重新应用 bundle。
+- **旧 rev 404**：改了 chunk 漏跑 build 时，浏览器按旧 rev 请求 chunk 得到 404 → 上述错误态（digest 断言会先于合入判红）。恢复 = `pnpm --filter weir-harness run build` + 重新应用 bundle。
 - **零依赖 model chunk 永不 require**：这是结构性保证（factory 体内无 `require(`），由 5.2 审计与单测共同钉住。
 
 ## 测试

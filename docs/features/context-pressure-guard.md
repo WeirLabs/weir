@@ -25,7 +25,7 @@
 
 ## 设计细节
 
-- 模块：`orrery-harness/context-guard`。
+- 模块：`weir-harness/context-guard`。
 - 压力来源：`tokenMeter.measure(session)` 的 `totalTokens`（确定性测量，无模型调用）÷ 上下文窗口（`session.requestContext()`，缺省时经模型信息解析兜底，带缓存）。
 - 压缩走 `ctx.compaction.compactNow`（绑定 agent 的维护例程，idle-only）；忙碌/进行中/span 变更等抛出结构化错误 → 工具返回"排队到下一边界重试"语义而非失败。结果分类的唯一实现是纯函数 `classifyCompactionOutcome(error) → 'busy' | 'failed'`（`src/context-guard/compaction-outcome.js`）：宿主 `ManualCompactionError` 的稳定 `code` 字段优先——`code === 'busy'` 判 busy、其他任何 string code 判 failed 且**消息文本永不参与**（防止非 busy 错误的措辞碰巧含 "active" 而被无限重排）；无 string code 时遗留消息正则兼底。此前版本只对消息文本做正则匹配，实测把宿主两个真实 busy 变体（"already has an open turn" / "requires an idle agent"）误牲为 failed → **排队压缩被静默丢弃**，该缺陷已随结构化分类修复（红绿证据见测试）。
 - 完成后续推经 `agent.followup` 注入英文模板指令。

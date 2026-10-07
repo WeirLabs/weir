@@ -1,0 +1,1462 @@
+// Worktree lane service: the host side of the lane pipeline. Every lane
+// mutation in the product — tools, /worktree commands, child settlement —
+// goes through this module, which reads facts from git, decides with the pure
+// rule/state modules, persists through the ledger, and reports the next step.
+// ctx-free by construction: git, shell, questions, notifications, audit and
+// the session-mode reader are injected (src/worktree/index.js wires them).
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve as resolvePath, sep } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { WORKTREE_CODES, WorktreeError } from './errors.js'
+import { CHECKABLE, DISPATCHABLE, LANDABLE_FROM, TRANSIENT, isActive, nextFor, transition } from './state.js'
+import { collectWatchHits, createWatch, normalizeWatchStates, pruneExpiredWatches, removeWatchForExpiry, upsertWatch, watchFacts, watchTimeoutMinutesOf } from './watches.js'
+import { branchFor, laneIdFor, normalizeRoot, parseRepoConfig, scopesOverlap, setupManagerFor, suggestChecks } from './rules.js'
+import { bareSetupCommand, setupMissingReason } from './pkgmgr.js'
+import { reconcile } from './reconcile.js'
+import { createLedger } from './ledger.js'
+import { ensureExclude, hasExclude } from './exclude.js'
+import { renderBoard, renderChildContract, renderNotice, renderWatchExpired, renderWatchHit } from './prompts.js'
+import { cardCopy, cardLocale } from './cards.js'
+import { authorityResidue } from './authority.js'
+
+export const CONFIG_FILE = '.config.json'
+const SETUP_TIMEOUT_MS = 600_000
+const LOG_TAIL_LINES = 40
+
+/** Audit kind per state-machine event (AUDIT_SUBTYPES.worktree). */
+const AUDIT_KIND = Object.freeze({
+  'setup-ok': 'setup', 'setup-fail': 'setup', 'setup-retry': 'setup', bind: 'bind', checked: 'checked',
+  'check-pass': 'check', 'check-fail': 'check', invalidate: 'invalidate', ask: 'ask', decline: 'decline',
+  conflict: 'conflict', land: 'land', keep: 'cleanup', clean: 'cleanup', abandon: 'abandon', missing: 'abandon',
+})
+
+/**
+ * Model-facing English residue warning appended to cleanup/abandon tool
+ * results (the human-facing card copy localizes its own in cards.js).
+ * @param {{ operations: number, locks: number }} residue
+ */
+function residueNote(residue) {
+  const parts = []
+  if (residue.operations > 0) parts.push(`${residue.operations} unresolved Edit Lock operation(s)`)
+  if (residue.locks > 0) parts.push(`${residue.locks} Edit Lock lock(s)`)
+  return `warning: the lane's session left ${parts.join(' and ')} in the management authority; locks are reclaimed by the stale-lock sweep, unresolved publications settle via crash self-heal (dead process) or the Edit Lock maintenance panel's one-click recovery`
+}
+
+/**
+ * Comparable form of a path: realpath when it exists, '/'-separated, and
+ * case-folded on win32.
+ * @param {string} path
+ * @param {string} [platform]
+ */
+export function pathKey(path, platform = process.platform) {
+  let real = path
+  try {
+    real = realpathSync.native(path)
+  } catch {
+    // a path that does not exist yet keeps its lexical form
+    let parent = dirname(path)
+    const tail = [path.slice(parent.length + 1)]
+    while (parent !== dirname(parent)) {
+      try {
+        real = join(realpathSync.native(parent), ...tail.reverse())
+        break
+      } catch {
+        tail.push(parent.slice(dirname(parent).length + 1))
+        parent = dirname(parent)
+      }
+    }
+  }
+  const slashed = real.split(sep).join('/').replace(/\/+$/, '')
+  return platform === 'win32' ? slashed.toLowerCase() : slashed
+}
+
+/**
+ * @typedef {object} LaneServiceDeps
+ * @property {ReturnType<typeof import('./git.js').createGit>} git
+ * @property {null | ((request: { command: string, cwd: string, timeoutMs: number, session?: any }) => Promise<{ code: number, output: string, denied: boolean, timedOut: boolean }>)} shellRun
+ * @property {() => { enabled: boolean, root: string, maxActive: number, autoSetup: boolean }} settings
+ * @property {null | ((agent: any, questions: any[], signal?: AbortSignal) => Promise<{ answers: Array<{ id: string, selected: string[], custom?: string }> }>)} ask
+ * @property {(sessionId: string, text: string) => void} notify
+ * @property {(type: string, data: any, root: string, sessionId?: string | null) => void} audit
+  * @property {(session: any) => boolean} modeOf
+  * @property {(session: any) => 'manual' | 'auto-keep' | 'auto-clean'} [approveModeOf] - the session's effective auto-approve mode (projection override ?? global setting ?? module default); absent = manual (no auto paths)
+  * @property {(session: any) => 'session' | 'global'} [approveModeSourceOf] - where the effective mode comes from; absent = global
+  * @property {() => 'manual' | 'auto-keep' | 'auto-clean'} [approveGlobal] - the resolved global default (module default when unset/invalid); absent = auto-clean
+ * @property {(sessionId: string | undefined) => string | undefined} [localeOf] - the GUI language last reported for a session
+ * @property {() => number} [now]
+ * @property {(handler: () => void, delayMs: number) => any} [setTimer] - watch-expiry scheduler (tests); defaults to an unref'd setTimeout
+ * @property {(handle: any) => void} [clearTimer]
+ * @property {number} [pid] - this process id (tests)
+ * @property {{ warn?: (message: string) => void }} [logger]
+ * @property {(root: string, sessionId: string | null | undefined) => ({ operations: number, locks: number } | null)} [authorityResidue] - read-only Edit Lock residue probe feeding the cleanup/abandon warning (tests); defaults to the bounded snapshot read in ./authority.js
+ * @property {(boundChild: string, ownerSession: string | null, context: { root: string }) => Promise<{ childAlive: boolean, ownerAlive: boolean, terminalEvidence: { source: string, detail: string } | null }>} [bindingLiveness] - read-only zombie-binding probe (design D2); absent = LANE_BUSY refusals stand unreconciled
+ */
+
+/** @param {LaneServiceDeps} deps */
+export function createLaneService(deps) {
+  const { git, settings } = deps
+  const now = deps.now ?? Date.now
+  /** Effective auto-approve mode for a session, fail-safe to `manual` so a missing dep (tests, older wiring) never auto-approves. @param {any} session */
+  const approveModeSafe = (session) => {
+    try {
+      return deps.approveModeOf?.(session) ?? 'manual'
+    } catch {
+      return 'manual'
+    }
+  }
+  /** Where the effective mode comes from ('session' override vs 'global' setting). @param {any} session */
+  const approveModeSourceSafe = (session) => {
+    try {
+      return deps.approveModeSourceOf?.(session) ?? 'global'
+    } catch {
+      return 'global'
+    }
+  }
+  /** @type {Map<string, Promise<any>>} cwd+root → repo */
+  const pending = new Map()
+  /** @type {Map<string, any>} cwd+root → resolved repo (sync access for the prompt board) */
+  const resolved = new Map()
+  /** @type {Promise<number[] | null> | null} */
+  let versionProbe = null
+  /** Lanes whose approval card is open in THIS process. @type {Set<string>} */
+  const asking = new Set()
+  const pid = deps.pid ?? process.pid
+  /** Whether an approval card recorded in the ledger is still open somewhere. @param {any} lane */
+  const askAlive = (lane) => {
+    const owner = lane.asking?.pid
+    if (owner === pid) return asking.has(lane.id)
+    if (typeof owner !== 'number') return false
+    try {
+      process.kill(owner, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // ─── watch-expiry timers (this instance only; the ledger owns the truth) ─
+
+  /** Watch-expiry timers armed by THIS service instance, watch id → handle.
+   * The lock arbitrates between instances: whichever instance removes the
+   * record under the ledger lock delivers that watch's single expiry notice. */
+  const watchTimers = new Map()
+  const setTimer = deps.setTimer ?? ((/** @type {() => void} */ handler, /** @type {number} */ delayMs) => {
+    const timer = setTimeout(handler, delayMs)
+    timer.unref?.()
+    return timer
+  })
+  const clearTimer = deps.clearTimer ?? clearTimeout
+
+  /** @param {string} watchId */
+  function disarmWatch(watchId) {
+    const handle = watchTimers.get(watchId)
+    if (handle !== undefined) {
+      clearTimer(handle)
+      watchTimers.delete(watchId)
+    }
+  }
+
+  /** @param {any} repo @param {any} entry */
+  function armWatch(repo, entry) {
+    if (watchTimers.has(entry.id)) return
+    const delay = entry.expiresAt - now()
+    if (delay <= 0) return
+    watchTimers.set(entry.id, setTimer(() => {
+      watchTimers.delete(entry.id)
+      void expireWatch(repo, entry.id).catch((error) => deps.logger?.warn?.(`worktree: watch expiry failed: ${/** @type {any} */ (error)?.message ?? error}`))
+    }, delay))
+  }
+
+  /**
+   * An expiry timer fired: remove the watch under the ledger lock; only the
+   * instance that actually removes the record delivers the expiry notice
+   * (the watch's single delivery), so two instances can never double-deliver.
+   * @param {any} repo @param {string} watchId
+   */
+  async function expireWatch(repo, watchId) {
+    const removed = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const watch = removeWatchForExpiry(ledger, watchId, now())
+      return watch ? { ledger, result: watch } : {}
+    })
+    if (!removed) return
+    deps.audit('watch', { lane: removed.laneId, sessionId: removed.sessionId, states: removed.states, outcome: 'expired' }, repo.mainRoot, removed.sessionId)
+    try {
+      deps.notify(removed.sessionId, renderWatchExpired(removed))
+    } catch (error) {
+      deps.logger?.warn?.(`worktree: watch-expiry notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
+  }
+
+  /**
+   * Ledger lazy-cleanup + per-instance timer arming (design D4). Runs on every
+   * refresh — which is also the host-load path: watches whose deadline passed
+   * while the host was down are pruned silently + audited (never delivered,
+   * never hit-tested); every live watch gets this instance's expiry timer.
+   * @param {any} repo
+   */
+  async function syncWatches(repo) {
+    const pruned = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const expired = pruneExpiredWatches(ledger, now())
+      return expired.length > 0 ? { ledger, result: expired } : {}
+    })
+    for (const watch of pruned ?? []) {
+      deps.audit('watch', { lane: watch.laneId, sessionId: watch.sessionId, states: watch.states, outcome: 'pruned' }, repo.mainRoot, watch.sessionId)
+    }
+    for (const entry of repo.ledger.read().watches) armWatch(repo, entry)
+  }
+
+  const cwdOf = (/** @type {any} */ session) => {
+    const cwd = session?.header?.cwd
+    if (typeof cwd !== 'string' || !cwd) throw new WorktreeError(WORKTREE_CODES.NOT_A_REPO, 'this session has no working directory')
+    return cwd
+  }
+
+  function config() {
+    const value = settings()
+    if (!value.enabled) throw new WorktreeError(WORKTREE_CODES.WORKTREE_DISABLED, 'worktree lanes are disabled (worktreeEnabled is off)')
+    return value
+  }
+
+  /** @param {string} cwd */
+  async function repoFor(cwd) {
+    const root = normalizeRoot(config().root)
+    const key = `${cwd}\0${root}`
+    if (!pending.has(key)) {
+      const promise = resolveRepo(cwd, root).then((repo) => {
+        resolved.set(key, repo)
+        return repo
+      })
+      promise.catch(() => pending.delete(key))
+      pending.set(key, promise)
+    }
+    return pending.get(key)
+  }
+
+  /** @param {string} cwd @param {string} root */
+  async function resolveRepo(cwd, root) {
+    versionProbe ??= git.version(cwd)
+    const version = await versionProbe
+    if (!git.supported(version)) {
+      versionProbe = null
+      throw new WorktreeError(WORKTREE_CODES.GIT_TOO_OLD, version
+        ? `git ${version.join('.')} is too old; worktree lanes need git 2.38 or newer`
+        : `git could not be run (${git.lastVersionError ?? 'unknown error'}); worktree lanes need git 2.38 or newer`)
+    }
+    const info = await git.repoOf(cwd)
+    if (!info) throw new WorktreeError(WORKTREE_CODES.NOT_A_REPO, `${cwd} is not inside a git repository`)
+    const mainRoot = realpathSync.native(info.mainRoot)
+    const rootPath = join(mainRoot, ...root.split('/'))
+    return { cwd, mainRoot, commonDir: info.commonDir, root, rootPath, ledger: createLedger(rootPath, { now }), version, unmanaged: /** @type {string[]} */ ([]) }
+  }
+
+  /** Resolved repo for sync callers (prompt board), or null. @param {any} session */
+  function repoCached(session) {
+    try {
+      const value = settings()
+      if (!value.enabled) return null
+      const cwd = cwdOf(session)
+      const key = `${cwd}\0${normalizeRoot(value.root)}`
+      if (!resolved.has(key) && !pending.has(key)) void repoFor(cwd).catch(() => {})
+      return resolved.get(key) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  // ─── ledger helpers ───────────────────────────────────────────────────
+
+  /** @param {any} repo @param {string} laneId */
+  function laneOf(repo, laneId) {
+    const lane = repo.ledger.read().lanes.find((/** @type {any} */ entry) => entry.id === laneId)
+    if (!lane) throw new WorktreeError(WORKTREE_CODES.UNKNOWN_LANE, `no lane "${laneId}" in ${repo.rootPath}`)
+    return lane
+  }
+
+  /**
+   * Transition one lane under the ledger lock; `check` runs inside the lock
+   * against the current record (throw to refuse).
+   * @param {any} repo @param {string} laneId @param {any} event @param {(lane: any, ledger: any) => void} [check]
+   */
+  async function apply(repo, laneId, event, check) {
+    /** Watches this transition consumed (removed in the same atomic write). @type {any[]} */
+    let hits = []
+    const lane = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const index = ledger.lanes.findIndex((/** @type {any} */ entry) => entry.id === laneId)
+      if (index === -1) throw new WorktreeError(WORKTREE_CODES.UNKNOWN_LANE, `no lane "${laneId}"`)
+      check?.(ledger.lanes[index], ledger)
+      const next = transition(ledger.lanes[index], { at: now(), ...event })
+      ledger.lanes[index] = next
+      // One-shot watches: a hit is removed in the SAME atomic write as the
+      // state transition, so it can never be collected twice (design D3).
+      hits = collectWatchHits(ledger, next)
+      return { ledger, result: next }
+    })
+    const kind = AUDIT_KIND[/** @type {keyof typeof AUDIT_KIND} */ (event.type)]
+    // `event.audit` carries extra payload for the SAME kind (the auto-approve
+    // marker on land/abandon) without a new audit type; transition() ignores
+    // the key, so it never leaks into the lane record.
+    if (kind) deps.audit(kind, { lane: lane.id, from: lane.history.at(-1)?.from, to: lane.state, event: event.type, reason: event.reason ?? null, by: event.by ?? 'host', ...(event.audit ?? {}) }, repo.mainRoot, lane.ownerSession)
+    for (const hit of hits) {
+      disarmWatch(hit.id)
+      try {
+        deps.notify(hit.sessionId, renderWatchHit(lane))
+      } catch (error) {
+        deps.logger?.warn?.(`worktree: watch-hit notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+      }
+    }
+    return lane
+  }
+
+  /** Non-state field update (no transition). @param {any} repo @param {string} laneId @param {(lane: any) => any} patch */
+  async function patchLane(repo, laneId, patch) {
+    return repo.ledger.update((/** @type {any} */ ledger) => {
+      const index = ledger.lanes.findIndex((/** @type {any} */ entry) => entry.id === laneId)
+      if (index === -1) return {}
+      ledger.lanes[index] = { ...ledger.lanes[index], ...patch(ledger.lanes[index]), updatedAt: now() }
+      return { ledger, result: ledger.lanes[index] }
+    })
+  }
+
+  /** @param {any} lane @param {string} [detail] */
+  function notifyOwner(lane, detail) {
+    if (!lane?.ownerSession) return
+    try {
+      deps.notify(lane.ownerSession, renderNotice(lane, detail))
+    } catch (error) {
+      deps.logger?.warn?.(`worktree: notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
+  }
+
+  /**
+   * Best-effort Edit Lock authority-residue probe (design D5): does the
+   * lane's owner session still own unresolved operations or locks in the
+   * management domain? Warning input only — read-only, and a failed check
+   * is silent (never blocks the cleanup/abandon transition).
+   * @param {any} repo @param {any} lane @returns {{ operations: number, locks: number } | null}
+   */
+  function residueOf(repo, lane) {
+    try {
+      return (deps.authorityResidue ?? authorityResidue)(repo.mainRoot, lane?.ownerSession) ?? null
+    } catch (error) {
+      deps.logger?.warn?.(`worktree: authority-residue check failed: ${/** @type {any} */ (error)?.message ?? error}`)
+      return null
+    }
+  }
+
+  /** @param {any} lane */
+  function result(lane, summary, extra = {}) {
+    return {
+      lane: lane.id, state: lane.state, summary, path: lane.path, branch: lane.branch, next: nextFor(lane),
+      ...(lane.check?.enabled && Array.isArray(lane.check.results) && lane.check.results.length ? { check: { results: lane.check.results.map((/** @type {any} */ entry) => ({ name: entry.name, exit: entry.exit, ms: entry.ms })) } } : {}),
+      ...extra,
+    }
+  }
+
+  /** @param {any} repo */
+  function readConfig(repo) {
+    const file = join(repo.rootPath, CONFIG_FILE)
+    if (!existsSync(file)) return parseRepoConfig(undefined)
+    let raw
+    try {
+      raw = JSON.parse(readFileSync(file, 'utf8'))
+    } catch (error) {
+      throw new Error(`invalid ${file}: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
+    try {
+      return parseRepoConfig(raw)
+    } catch (error) {
+      throw new Error(`invalid ${file}: ${/** @type {any} */ (error)?.message ?? error}`)
+    }
+  }
+
+  /** @param {any} repo @param {string} laneId @param {string} name */
+  function logFile(repo, laneId, name) {
+    const dir = join(repo.rootPath, '.logs', laneId)
+    mkdirSync(dir, { recursive: true })
+    return join(dir, `${name}.log`)
+  }
+
+  // ─── reconciliation ───────────────────────────────────────────────────
+
+  /** @param {any} repo */
+  async function refresh(repo) {
+    // Watch maintenance first (design D4): prune watches that expired while
+    // the host was down (silent + audited) and arm this instance's timers;
+    // the reconcile transitions below then hit only live watches.
+    await syncWatches(repo)
+    const worktrees = await git.worktreeList(repo.mainRoot)
+    const ledger = repo.ledger.read()
+    const mainBranch = await git.currentBranch(repo.mainRoot)
+    /** @type {Map<string, string | null>} */
+    const trees = new Map()
+    for (const lane of ledger.lanes) {
+      if (LANDABLE_FROM.includes(lane.state) && lane.landableTree && existsSync(lane.path)) trees.set(lane.id, await git.tree(lane.path))
+    }
+    const outcome = reconcile({ lanes: ledger.lanes, worktrees, rootPath: repo.rootPath, mainBranch, trees, normalize: (path) => pathKey(path) })
+    for (const event of outcome.events) {
+      await apply(repo, event.id, { type: event.type, reason: event.reason }).catch(() => {})
+    }
+    // An approval card dies with the tool call that raised it (restart,
+    // crash): such a lane is declined, never left waiting forever.
+    for (const lane of ledger.lanes) {
+      if (lane.state === 'awaiting-approval' && !askAlive(lane)) {
+        await apply(repo, lane.id, { type: 'decline', reason: 'the approval card was closed before an answer (the tool call ended)' }).catch(() => {})
+      }
+    }
+    const flagsChanged = ledger.lanes.some((/** @type {any} */ lane) => outcome.baseMoved.has(lane.id) && Boolean(lane.baseMoved) !== outcome.baseMoved.get(lane.id))
+    if (flagsChanged) {
+      await repo.ledger.update((/** @type {any} */ current) => {
+        for (const lane of current.lanes) if (outcome.baseMoved.has(lane.id)) lane.baseMoved = outcome.baseMoved.get(lane.id)
+        return { ledger: current }
+      })
+    }
+    if (outcome.unmanaged.length && outcome.unmanaged.join() !== repo.unmanaged.join()) {
+      deps.audit('reconcile', { unmanaged: outcome.unmanaged }, repo.mainRoot, null)
+    }
+    repo.unmanaged = outcome.unmanaged
+    return { mainBranch, unmanaged: outcome.unmanaged }
+  }
+
+  // ─── open / setup ─────────────────────────────────────────────────────
+
+  /**
+   * The invocation for a DERIVED setup: resolved through deps.resolveSetup
+   * when available (system tool first, DSH bundled runtime second), else the
+   * legacy bare command. A user-configured setup never reaches this helper.
+   * @param {string} manager
+   * @returns {Promise<{ command: string, display: string } | { error: string }>}
+   */
+  async function deriveSetup(manager) {
+    if (deps.resolveSetup) {
+      const resolution = await deps.resolveSetup(manager)
+      if (!resolution.ok) return { error: setupMissingReason(manager) }
+      return { command: resolution.command, display: resolution.display }
+    }
+    const display = bareSetupCommand(manager)
+    return { command: display, display }
+  }
+
+
+  /**
+   * @param {any} session - the owning (main) session
+   * @param {{ title: string, scope?: string[] }} args
+   */
+  async function open(session, args) {
+    const settingsNow = config()
+    if (typeof args?.title !== 'string' || args.title.trim().length === 0) throw new Error('worktree_open: title must be a non-empty string')
+    const scope = args.scope ?? []
+    if (!Array.isArray(scope) || scope.some((glob) => typeof glob !== 'string' || glob.trim().length === 0)) throw new Error('worktree_open: scope must be an array of non-empty path globs')
+    const repo = await repoFor(cwdOf(session))
+    const base = await git.currentBranch(repo.mainRoot)
+    if (!base) throw new WorktreeError(WORKTREE_CODES.DETACHED_HEAD, 'the main worktree is on a detached HEAD; check out a branch first', { next: { waitFor: 'user', hint: 'the user checks out a base branch' } })
+    const baseCommit = await git.revParse(repo.mainRoot, 'HEAD')
+    await refresh(repo)
+    ensureExclude(repo.commonDir, repo.root)
+    const at = now()
+    const lane = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const active = ledger.lanes.filter(isActive)
+      if (active.length >= settingsNow.maxActive) {
+        const lanes = active.map((/** @type {any} */ lane) => ({
+          id: lane.id, state: lane.state,
+          hint: lane.state === 'landable'
+            ? `call worktree_land({ lane: "${lane.id}" })`
+            : `wait for lane ${lane.id} or call worktree_abandon({ lane: "${lane.id}" })`,
+        }))
+        const hint = (lanes.find((lane) => lane.state === 'landable') ?? lanes[0]).hint
+        throw new WorktreeError(WORKTREE_CODES.MAX_ACTIVE, `${active.length} lanes are active (limit ${settingsNow.maxActive}):\n${lanes.map((lane) => `${lane.id} · ${lane.state} · ${lane.hint}`).join('\n')}`, {
+          data: { lanes }, next: { waitFor: 'user', hint },
+        })
+      }
+      const clash = active.find((/** @type {any} */ other) => scopesOverlap(scope, other.scope ?? []))
+      if (clash) {
+        const overlapping = {
+          scope: scope.filter((glob) => scopesOverlap([glob], clash.scope)),
+          laneScope: clash.scope.filter((glob) => scopesOverlap(scope, [glob])),
+        }
+        const hint = `narrow the new scope to avoid ${overlapping.laneScope.join(', ')} or wait for lane ${clash.id} to land before opening it`
+        throw new WorktreeError(WORKTREE_CODES.SCOPE_OVERLAP, `scope ${overlapping.scope.join(', ')} overlaps lane ${clash.id} (${overlapping.laneScope.join(', ')}); ${hint}`, {
+          lane: clash.id, data: { overlapping }, next: { waitFor: 'user', hint },
+        })
+      }
+      const seq = ledger.seq + 1
+      const id = laneIdFor(args.title, seq)
+      const record = {
+        id,
+        title: args.title.trim(),
+        path: join(repo.rootPath, id),
+        branch: branchFor(id),
+        base: { branch: base, commit: baseCommit },
+        scope,
+        state: 'preparing',
+        ownerSession: session.id ?? null,
+        boundChild: null,
+        baseMoved: false,
+        landableTree: null,
+        setup: { status: 'pending' },
+        check: null,
+        land: null,
+        cleanup: null,
+        reason: null,
+        createdAt: at,
+        updatedAt: at,
+        history: [],
+      }
+      return { ledger: { ...ledger, seq, lanes: [...ledger.lanes, record] }, result: record }
+    })
+    try {
+      if (await git.branchExists(repo.mainRoot, lane.branch)) throw new WorktreeError(WORKTREE_CODES.BRANCH_EXISTS, `branch ${lane.branch} already exists`)
+      mkdirSync(repo.rootPath, { recursive: true })
+      await git.worktreeAdd(repo.mainRoot, lane.path, lane.branch, baseCommit)
+    } catch (error) {
+      await repo.ledger.update((/** @type {any} */ ledger) => ({ ledger: { ...ledger, lanes: ledger.lanes.filter((/** @type {any} */ entry) => entry.id !== lane.id) } }))
+      throw error
+    }
+    deps.audit('open', { lane: lane.id, title: lane.title, branch: lane.branch, base: lane.base, scope }, repo.mainRoot, lane.ownerSession)
+    let command = null
+    let display = null
+    /** @type {{ kind: 'configured' } | { kind: 'derived', manager: string } | null} */
+    let provenance = null
+    let configError = null
+    if (settingsNow.autoSetup) {
+      try {
+        const configured = readConfig(repo).setup ?? null
+        if (configured) {
+          command = display = configured
+          provenance = { kind: 'configured' }
+        } else {
+          const manager = setupManagerFor(readdirSync(lane.path))
+          if (manager) {
+            provenance = { kind: 'derived', manager }
+            const derived = await deriveSetup(manager)
+            if ('error' in derived) configError = derived.error.replaceAll('<lane>', lane.id)
+            else ({ command, display } = derived)
+          }
+        }
+      } catch (error) {
+        configError = /** @type {any} */ (error)?.message ?? String(error)
+      }
+    }
+    if (configError) {
+      const failed = await apply(repo, lane.id, { type: 'setup-fail', reason: configError, patch: { setup: { status: 'failed' } } })
+      return result(failed, `lane opened at ${failed.path}, but setup could not start: ${configError}`)
+    }
+    if (!command) {
+      const ready = await apply(repo, lane.id, { type: 'setup-ok', patch: { setup: { status: settingsNow.autoSetup ? 'none' : 'disabled' } } })
+      return result(ready, `lane opened at ${ready.path} on ${ready.branch} (base ${base})`)
+    }
+    const preparing = await patchLane(repo, lane.id, () => ({ setup: { status: 'running', display: display ?? command, provenance } }))
+    void runSetup(repo, lane.id, command, session, display ?? command)
+    return result(preparing, `lane opened at ${preparing.path}; running setup: ${display ?? command}`)
+  }
+
+  /** @param {any} repo @param {string} laneId @param {string} command @param {any} session @param {string} [display] */
+  async function runSetup(repo, laneId, command, session, display = command) {
+    const log = logFile(repo, laneId, '0-setup')
+    /** @type {{ ok: boolean, reason?: string }} */
+    let outcome
+    if (!deps.shellRun) {
+      outcome = { ok: false, reason: `${WORKTREE_CODES.SHELL_UNAVAILABLE}: no shell executor is available to run "${command}"` }
+    } else {
+      try {
+        const run = await deps.shellRun({ command, cwd: laneOf(repo, laneId).path, timeoutMs: SETUP_TIMEOUT_MS, session })
+        writeFileSync(log, `$ ${display}\n\n${run.output}`)
+        outcome = run.code === 0
+          ? { ok: true }
+          : { ok: false, reason: run.denied ? `sandbox denied the setup (exit ${run.code}); switch the session permission and retry with /worktree setup ${laneId}, or skip with /worktree setup ${laneId} --skip` : run.timedOut ? 'setup timed out' : `setup exited ${run.code}` }
+      } catch (error) {
+        outcome = { ok: false, reason: `setup could not run: ${/** @type {any} */ (error)?.message ?? error}` }
+      }
+    }
+    try {
+      const lane = await apply(repo, laneId, outcome.ok
+        ? { type: 'setup-ok', patch: { setup: { ...laneOf(repo, laneId).setup, status: 'ok', display, log } } }
+        : { type: 'setup-fail', reason: outcome.reason, patch: { setup: { ...laneOf(repo, laneId).setup, status: 'failed', display, log } } })
+      notifyOwner(lane, outcome.ok ? `setup finished: ${display}` : `${outcome.reason}; log ${log}`)
+    } catch {
+      // the lane moved on (abandoned) while setup ran: nothing to report
+    }
+  }
+
+  /** /worktree setup <id> [--skip] @param {any} session @param {string} laneId @param {{ skip?: boolean }} options */
+  async function setup(session, laneId, options = {}) {
+    const repo = await repoFor(cwdOf(session))
+    if (options.skip) {
+      const lane = await apply(repo, laneId, { type: 'setup-ok', by: 'user', patch: { setup: { ...laneOf(repo, laneId).setup, status: 'skipped' } } })
+      return result(lane, 'setup skipped by the user')
+    }
+    const current = laneOf(repo, laneId)
+    // Execution strings are NEVER taken from the ledger: a stored display
+    // may be the bare or unquoted form, and tools change between attempts.
+    // Provenance decides the source — config wins, otherwise the lane's
+    // lockfile (or the manager recorded at open) — and derived commands are
+    // resolved fresh on every attempt.
+    let command = null
+    let display = current.setup?.display ?? null
+    /** @type {string | null} */
+    let manager = null
+    try {
+      const configured = readConfig(repo).setup ?? null
+      if (configured) {
+        command = display = configured
+      } else {
+        manager = setupManagerFor(readdirSync(current.path)) ?? current.setup?.provenance?.manager ?? null
+        if (manager) {
+          const derived = await deriveSetup(manager)
+          if ('error' in derived) {
+            // Still setup-failed: keep the state legal and refresh the reason.
+            const failed = await patchLane(repo, laneId, (record) => ({
+              setup: { ...record.setup, status: 'failed' },
+              reason: derived.error.replaceAll('<lane>', laneId),
+            }))
+            return result(failed, `setup could not start: ${failed.reason}`)
+          }
+          ({ command, display } = derived)
+        }
+      }
+    } catch (error) {
+      throw new Error(/** @type {any} */ (error)?.message ?? String(error))
+    }
+    if (!command) {
+      const lane = await apply(repo, laneId, { type: 'setup-ok', by: 'user', patch: { setup: { status: 'none' } } })
+      return result(lane, 'no setup command applies; lane is ready')
+    }
+    const provenance = manager ? { kind: 'derived', manager } : { kind: 'configured' }
+    const lane = await apply(repo, laneId, { type: 'setup-retry', by: 'user', patch: { setup: { status: 'running', display: display ?? command, provenance } } })
+    void runSetup(repo, laneId, command, session, display ?? command)
+    return result(lane, `setup restarted: ${display ?? command}`)
+  }
+
+  // ─── binding ──────────────────────────────────────────────────────────
+
+  /** One-phrase reconciliation outcome for LANE_BUSY messages. @param {any} verdict */
+  function reconcileNote(verdict) {
+    if (verdict?.childAlive) return 'the bound worker is still live'
+    if (verdict?.ownerAlive) return 'the lane owner session is still live'
+    return 'no terminal evidence exists for the bound worker (offline is not dead)'
+  }
+
+  /**
+   * Zombie-binding reconciliation (worktree-zombie-lane-reclamation D1/D2):
+   * the read-only liveness probe runs before any LANE_BUSY refusal. Only
+   * terminal evidence ∧ both sides dead settles the binding — through the
+   * exact childSettled path, so a reconciled settlement is indistinguishable
+   * from a live one downstream — and the settlement is audited
+   * (worktree/reconcile-binding), exactly once (the call that actually
+   * cleared the binding audits; a concurrent/repeat reconcile finds the
+   * binding gone and audits nothing). A refusal leaves the ledger untouched.
+   * `forced` skips the probe: the user's explicit card decision (D4).
+   * @param {any} repo @param {any} lane @param {any} session @param {{ forced?: boolean }} [options]
+   * @returns {Promise<{ settled: boolean, lane: any, verdict: any, childId: string, forced: boolean } | null>} null = no binding, or no probe available
+   */
+  async function reconcileBinding(repo, lane, session, options = {}) {
+    if (!lane?.boundChild) return null
+    const childId = lane.boundChild
+    const forced = options.forced === true
+    /** @type {any} */
+    let verdict = null
+    if (!forced) {
+      if (typeof deps.bindingLiveness !== 'function') return null
+      try {
+        verdict = await deps.bindingLiveness(childId, lane.ownerSession ?? null, { root: repo.mainRoot })
+      } catch (error) {
+        deps.logger?.warn?.(`worktree: binding liveness probe failed for lane ${lane.id}: ${/** @type {any} */ (error)?.message ?? error}`)
+        return null
+      }
+      if (!verdict || verdict.childAlive || verdict.ownerAlive || !verdict.terminalEvidence) {
+        return { settled: false, lane, verdict, childId, forced }
+      }
+    }
+    const cleared = await childSettled(childId, session)
+    const after = laneOf(repo, lane.id)
+    if (cleared != null) {
+      deps.audit('reconcile-binding', {
+        lane: lane.id,
+        child: childId,
+        ownerSession: lane.ownerSession ?? null,
+        forced,
+        evidence: verdict?.terminalEvidence ?? null,
+        childAlive: verdict?.childAlive ?? null,
+        ownerAlive: verdict?.ownerAlive ?? null,
+      }, repo.mainRoot, lane.ownerSession)
+    }
+    return { settled: after.boundChild == null, lane: after, verdict, childId, forced }
+  }
+
+  /**
+   * The disputed-binding card (design D4): the reconciliation outcome leads
+   * and the only constructive choice is an explicit force-reclaim.
+   * @param {any} agent @param {any} lane @param {any} reconciliation @param {any} copy @param {any} repo @param {AbortSignal} [signal]
+   * @returns {Promise<boolean>} whether the user confirmed the force-reclaim
+   */
+  async function askForceReclaim(agent, lane, reconciliation, copy, repo, signal) {
+    if (!deps.ask) return false
+    /** @type {any} */
+    let answer
+    try {
+      answer = await deps.ask(agent, [{
+        id: 'abandon',
+        header: copy.abandonHeader,
+        question: copy.abandonQuestion(lane.title),
+        detail: copy.abandonDisputedDetail(lane, lane.boundChild, reconciliation?.verdict ?? null, repo.mainRoot, residueOf(repo, lane)),
+        options: [
+          { label: copy.forceReclaim, description: copy.forceReclaimDescription },
+          { label: copy.cancel, description: copy.abandonDescriptions.cancel },
+        ],
+      }], signal)
+    } catch {
+      return false
+    }
+    return answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'abandon')?.selected?.[0] === copy.forceReclaim
+  }
+
+  /**
+   * Reserve a lane for a child before it is spawned. Writers move the lane to
+   * `working` under the lock (a second writer is refused LANE_BUSY);
+   * read-only investigators leave the lane state alone.
+   * @param {any} parentSession @param {string} laneId @param {{ readOnly: boolean }} options
+   */
+  async function prepareBind(parentSession, laneId, { readOnly }) {
+    const repo = await repoFor(cwdOf(parentSession))
+    const spec = (/** @type {any} */ lane) => ({ laneId: lane.id, lanePath: pathKey(lane.path), scope: lane.scope?.length ? lane.scope : null, readOnly })
+    if (readOnly) {
+      const lane = laneOf(repo, laneId)
+      if (!isActive(lane) && lane.state !== 'kept') throw new WorktreeError(WORKTREE_CODES.LANE_NOT_DISPATCHABLE, `lane ${laneId} is ${lane.state}`, { lane: laneId })
+      return { lane, repo, spec: spec(lane), contract: renderChildContract(lane, { readOnly: true }), commit: async () => {}, rollback: async () => {} }
+    }
+    const nonce = `pending:${randomUUID()}`
+    /** @type {any} */
+    let before
+    // Zombie-binding reconciliation (D1): a lane stuck in `working` on a dead
+    // binding settles first, so the bind proceeds from the lane's post-settle
+    // state; a standing refusal is re-thrown atomically inside apply below.
+    const stuck = laneOf(repo, laneId)
+    if (stuck.state === 'working' && stuck.boundChild) await reconcileBinding(repo, stuck, parentSession)
+    const lane = await apply(repo, laneId, { type: 'bind', patch: { boundChild: nonce }, code: WORKTREE_CODES.LANE_NOT_DISPATCHABLE }, (current) => {
+      if (current.state === 'working' && current.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} already has a bound worker (${current.boundChild})`, { lane: laneId, next: nextFor(current) })
+      before = current
+    })
+    return {
+      lane,
+      repo,
+      spec: spec(lane),
+      contract: renderChildContract(lane, { readOnly: false }),
+      /** @param {string} childId */
+      commit: async (childId) => {
+        await patchLane(repo, laneId, (current) => (current.boundChild === nonce ? { boundChild: childId } : {}))
+      },
+      rollback: async () => {
+        await repo.ledger.update((/** @type {any} */ ledger) => {
+          const index = ledger.lanes.findIndex((/** @type {any} */ entry) => entry.id === laneId)
+          if (index === -1 || ledger.lanes[index].boundChild !== nonce) return {}
+          ledger.lanes[index] = before
+          return { ledger }
+        })
+      },
+    }
+  }
+
+  /**
+   * A bound writer settled: free the lane and run the host check. `silent`
+   * suppresses the immediate notice when the caller reports the outcome
+   * itself (foreground result / job result); background verification still
+   * notifies when it finishes.
+   * @param {string} childId @param {any} parentSession @param {{ silent?: boolean }} [options]
+   */
+  async function childSettled(childId, parentSession, options = {}) {
+    let repo
+    try {
+      repo = await repoFor(cwdOf(parentSession))
+    } catch {
+      return null
+    }
+    const lane = repo.ledger.read().lanes.find((/** @type {any} */ entry) => entry.boundChild === childId)
+    if (!lane) return null
+    await patchLane(repo, lane.id, () => ({ boundChild: null }))
+    const checked = await runChecks(repo, lane.id, parentSession, { trigger: 'settle', silent: options.silent })
+    return { ...checked, notice: renderNotice(checked, checked.reason ?? undefined) }
+  }
+
+  // ─── checks ───────────────────────────────────────────────────────────
+
+  /**
+   * Mandatory preconditions, then (when configured) verification in the
+   * background. Returns the lane as of the precondition outcome.
+   * @param {any} repo @param {string} laneId @param {any} session @param {{ trigger: string, awaitVerification?: boolean, silent?: boolean }} options
+   */
+  async function runChecks(repo, laneId, session, options) {
+    const tell = (/** @type {any} */ lane, /** @type {string} */ detail) => {
+      if (!options.silent) notifyOwner(lane, detail)
+    }
+    const lane = laneOf(repo, laneId)
+    if (!CHECKABLE.includes(lane.state)) return lane
+    if (lane.boundChild) {
+      // Zombie-binding reconciliation (D1) before the refusal: only terminal
+      // evidence ∧ both sides dead clears the binding (audited); the settle
+      // path then ran this very check, so return its outcome.
+      const outcome = await reconcileBinding(repo, lane, session)
+      if (outcome?.settled) return outcome.lane
+      const detail = outcome?.verdict ? ` (binding reconciliation: ${reconcileNote(outcome.verdict)}; the abandon confirmation card offers a force-reclaim)` : ''
+      throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; the host checks it when the worker settles${detail}`, { lane: laneId, next: nextFor(lane) })
+    }
+    const changes = await git.status(lane.path)
+    /** @type {{ to: string, reason: string } | null} */
+    let failed = null
+    if (changes.length > 0) failed = { to: 'dirty', reason: `${changes.length} uncommitted path(s): ${changes.slice(0, 5).map((entry) => entry.path).join(', ')}` }
+    else if ((await git.currentBranch(lane.path)) !== lane.branch) failed = { to: 'branch-moved', reason: `HEAD is not on ${lane.branch}` }
+    else if ((await git.aheadBehind(repo.mainRoot, lane.base.branch, lane.branch)).ahead === 0) failed = { to: 'no-commits', reason: `no commits ahead of ${lane.base.branch}` }
+    if (failed) {
+      const next = await apply(repo, laneId, { type: 'checked', to: failed.to, reason: failed.reason })
+      tell(next, failed.reason)
+      return next
+    }
+    const tree = await git.tree(lane.path)
+    /** @type {any} */
+    let repoConfig
+    try {
+      repoConfig = readConfig(repo)
+    } catch (error) {
+      const checking = await apply(repo, laneId, { type: 'checked', to: 'checking', patch: { check: { enabled: true, tree, results: [] } } })
+      const failedLane = await apply(repo, checking.id, { type: 'check-fail', reason: /** @type {any} */ (error)?.message ?? String(error) })
+      tell(failedLane, failedLane.reason)
+      return failedLane
+    }
+    if (repoConfig.check.length === 0) {
+      const landable = await apply(repo, laneId, { type: 'checked', to: 'landable', patch: { landableTree: tree, check: { enabled: false, tree } } })
+      tell(landable, 'mandatory checks passed; verification is not enabled for this repository')
+      return landable
+    }
+    const checking = await apply(repo, laneId, { type: 'checked', to: 'checking', patch: { check: { enabled: true, tree, results: [], startedAt: now() } } })
+    const run = runVerification(repo, laneId, repoConfig.check, session, tree)
+    if (options.awaitVerification) return run
+    void run
+    return checking
+  }
+
+  /** @param {any} repo @param {string} laneId @param {Array<{ name: string, run: string, timeoutSec: number }>} commands @param {any} session @param {string | null} tree */
+  async function runVerification(repo, laneId, commands, session, tree) {
+    const lanePath = laneOf(repo, laneId).path
+    /** @type {any[]} */
+    const results = []
+    /** @type {string | null} */
+    let failure = null
+    let tail = ''
+    if (!deps.shellRun) failure = `${WORKTREE_CODES.SHELL_UNAVAILABLE}: no shell executor is available for verification`
+    for (const [index, command] of commands.entries()) {
+      if (failure) break
+      const log = logFile(repo, laneId, `${index + 1}-${command.name.replace(/[^A-Za-z0-9_.-]+/g, '-')}`)
+      const started = now()
+      try {
+        const run = await /** @type {any} */ (deps.shellRun)({ command: command.run, cwd: lanePath, timeoutMs: command.timeoutSec * 1000, session })
+        writeFileSync(log, run.output)
+        results.push({ name: command.name, run: command.run, exit: run.code, ms: now() - started, log, denied: run.denied })
+        if (run.code !== 0) {
+          failure = `${command.name} ${run.timedOut ? 'timed out' : `exited ${run.code}`}${run.denied ? ' (sandbox denied)' : ''}`
+          tail = run.output.split(/\r?\n/).slice(-LOG_TAIL_LINES).join('\n')
+        }
+      } catch (error) {
+        results.push({ name: command.name, run: command.run, exit: -1, ms: now() - started, log })
+        failure = `${command.name} could not run: ${/** @type {any} */ (error)?.message ?? error}`
+      }
+    }
+    if (!failure) {
+      const after = await git.status(lanePath)
+      if (after.length > 0 || (await git.tree(lanePath)) !== tree) failure = 'verification modified lane content'
+    }
+    try {
+      const lane = failure
+        ? await apply(repo, laneId, { type: 'check-fail', reason: failure, patch: { check: { enabled: true, tree, results, finishedAt: now() } } })
+        : await apply(repo, laneId, { type: 'check-pass', patch: { landableTree: tree, check: { enabled: true, tree, results, finishedAt: now() } } })
+      const last = results.at(-1)
+      notifyOwner(lane, failure ? `${failure}; log ${last?.log ?? 'n/a'}${tail ? `\n${tail}` : ''}` : `verification passed: ${results.map((entry) => entry.name).join(', ')}`)
+      return lane
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * worktree_check / /worktree check.
+   * @param {any} session @param {string} laneId @param {{ verificationOnly?: boolean, awaitVerification?: boolean }} [options]
+   */
+  async function check(session, laneId, options = {}) {
+    const repo = await repoFor(cwdOf(session))
+    await refresh(repo)
+    const current = laneOf(repo, laneId)
+    if (options.verificationOnly && readConfig(repo).check.length === 0) {
+      throw new WorktreeError(WORKTREE_CODES.VERIFICATION_DISABLED, 'verification is not enabled for this repository (no "check" in the worktree config)', { lane: laneId, next: nextFor(current) })
+    }
+    if (!CHECKABLE.includes(current.state)) {
+      throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is ${current.state} and cannot be checked`, { lane: laneId, next: nextFor(current) })
+    }
+    const lane = await runChecks(repo, laneId, session, { trigger: 'check', awaitVerification: options.awaitVerification })
+    return result(lane, `lane ${lane.state}${lane.reason ? `: ${lane.reason}` : ''}`)
+  }
+
+  // ─── landing ──────────────────────────────────────────────────────────
+
+  /**
+   * worktree_land (agent asks the user) or /worktree land (the user's
+   * command is the approval).
+   * @param {any} agent - the calling main agent
+   * @param {string} laneId
+   * @param {{ userApproved?: boolean, signal?: AbortSignal }} [options]
+   */
+  async function land(agent, laneId, options = {}) {
+    const session = agent?.session
+    const repo = await repoFor(cwdOf(session))
+    const { mainBranch } = await refresh(repo)
+    const lane = laneOf(repo, laneId)
+    if (!LANDABLE_FROM.includes(lane.state) || !lane.landableTree) {
+      throw new WorktreeError(WORKTREE_CODES.NOT_LANDABLE, `lane ${laneId} is ${lane.state}${lane.reason ? ` (${lane.reason})` : ''}; only a checked, landable lane can be merged`, { lane: laneId, next: nextFor(lane) })
+    }
+    const tree = await git.tree(lane.path)
+    if (tree !== lane.landableTree) throw new WorktreeError(WORKTREE_CODES.STALE_LANDABLE, `lane ${laneId} changed after it was checked`, { lane: laneId, next: { tool: 'worktree_check', args: { lane: laneId } } })
+    if (mainBranch !== lane.base.branch) {
+      throw new WorktreeError(WORKTREE_CODES.BASE_MOVED, `the main worktree is on ${mainBranch ?? 'a detached HEAD'}, not ${lane.base.branch}`, { lane: laneId, next: { waitFor: 'user', hint: `the user checks out ${lane.base.branch} in the main worktree` } })
+    }
+    const precheck = await git.mergeTreeCheck(repo.mainRoot, lane.base.branch, lane.branch)
+    if (!precheck.clean) {
+      const conflicted = await apply(repo, laneId, { type: 'conflict', reason: `conflicts with ${lane.base.branch}: ${precheck.conflicts.join(', ')}`, patch: { conflicts: precheck.conflicts } })
+      return result(conflicted, `not merged: ${precheck.conflicts.length} conflicting path(s)`, { conflicts: precheck.conflicts })
+    }
+    if (!(await git.indexEmpty(repo.mainRoot))) {
+      throw new WorktreeError(WORKTREE_CODES.MAIN_STAGED, 'the main worktree has staged changes; commit or unstage them before merging', { lane: laneId, next: { waitFor: 'user', hint: 'the user commits or unstages the staged changes' } })
+    }
+    const changed = await git.changedFiles(repo.mainRoot, lane.base.branch, lane.branch)
+    const dirty = (await git.status(repo.mainRoot)).map((entry) => entry.path)
+    const overlap = dirty.filter((path) => changed.includes(path))
+    if (overlap.length > 0) {
+      throw new WorktreeError(WORKTREE_CODES.MAIN_DIRTY_OVERLAP, `uncommitted changes in the main worktree touch lane files: ${overlap.join(', ')}`, { lane: laneId, data: { paths: overlap }, next: { waitFor: 'user', hint: 'the user commits or stashes those files' } })
+    }
+    const heads = { main: await git.revParse(repo.mainRoot, 'HEAD'), lane: await git.revParse(lane.path, 'HEAD') }
+    const stat = await git.diffStat(repo.mainRoot, lane.base.branch, lane.branch)
+    const by = options.userApproved ? 'user' : 'host'
+    const approveMode = approveModeSafe(agent?.session)
+    const auto = approveMode !== 'manual'
+    // Auto-approve mode (design D3): the approval card is bypassed entirely —
+    // no `awaiting-approval`, no ask funnel, no card-open re-verification
+    // window (the entry tree check above already bound the merge target).
+    // Every precheck before this point is shared with the manual path. The
+    // manual path below stays byte-identical.
+    if (!options.userApproved && !auto) {
+      const declined = (/** @type {string} */ reason, /** @type {string | undefined} */ feedback) => apply(repo, laneId, { type: 'decline', reason, patch: { decline: { reason, feedback: feedback ?? null, at: now() } } })
+      if (!deps.ask) {
+        await apply(repo, laneId, { type: 'ask' })
+        const lane2 = await declined('no user-question answerer is available')
+        return result(lane2, 'not merged: nobody could be asked for approval')
+      }
+      await apply(repo, laneId, { type: 'ask', patch: { asking: { pid, at: now() } } })
+      asking.add(laneId)
+      const commits = await git.commits(repo.mainRoot, lane.base.branch, lane.branch)
+      const copy = cardCopy(cardLocale(deps.localeOf?.(session?.id)))
+      const mergeLabel = copy.mergeOption(lane.base.branch)
+      /** @type {any} */
+      let answer
+      try {
+        answer = await deps.ask(agent, [{
+          id: 'merge',
+          header: copy.mergeHeader,
+          question: copy.mergeQuestion(lane.title, lane.base.branch),
+          detail: copy.mergeDetail({ lane, commits, stat, verification: lane.check }),
+          options: [{ label: mergeLabel, description: copy.mergeOptionDescription(lane.branch) }, { label: copy.notNow, description: copy.notNowDescription }],
+        }], options.signal)
+      } catch (error) {
+        const lane2 = await declined(`approval not given (${/** @type {any} */ (error)?.code ?? /** @type {any} */ (error)?.message ?? 'cancelled'})`)
+        return result(lane2, 'not merged: the approval card was dismissed or unavailable')
+      } finally {
+        asking.delete(laneId)
+      }
+      const reply = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'merge')
+      const approved = reply?.selected?.length === 1 && reply.selected[0] === mergeLabel && !reply.custom
+      if (!approved) {
+        const lane2 = await declined(reply?.custom ? 'the user replied instead of approving' : 'the user chose not to merge now', reply?.custom)
+        return result(lane2, 'not merged: the user did not approve', reply?.custom ? { feedback: reply.custom } : {})
+      }
+      const sameMain = (await git.revParse(repo.mainRoot, 'HEAD')) === heads.main && (await git.currentBranch(repo.mainRoot)) === lane.base.branch
+      const sameLane = (await git.revParse(lane.path, 'HEAD')) === heads.lane && (await git.tree(lane.path)) === lane.landableTree
+      if (!sameMain || !sameLane) {
+        await declined('the main worktree or the lane changed while the approval card was open')
+        throw new WorktreeError(WORKTREE_CODES.STALE_LANDABLE, 'the main worktree or the lane changed while the approval card was open; nothing was merged', { lane: laneId, next: { tool: 'worktree_check', args: { lane: laneId } } })
+      }
+    }
+    const merged = await git.mergeNoFf(repo.mainRoot, lane.branch, `merge(lane): ${lane.title} (${lane.id})`)
+    if (!merged.ok) {
+      const conflicted = await apply(repo, laneId, { type: 'conflict', reason: `merge failed and was aborted: ${merged.detail}` })
+      return result(conflicted, 'not merged: git refused the merge (aborted, main worktree unchanged)')
+    }
+    const landed = await apply(repo, laneId, { type: 'land', by, audit: auto ? { auto: true, approveMode } : undefined, patch: { land: { commit: merged.commit, at: now(), by, stat } } })
+    const diff = await git.diff(repo.mainRoot, `${merged.commit}^1`, merged.commit, 60_000).catch(() => '')
+    if (!auto) {
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}`, { merge: { commit: merged.commit, stat }, diff })
+    }
+    // Auto cleanup after the merge (design D3): auto-keep → mode worktree,
+    // auto-clean → mode all. The existing cleanup() body runs unchanged —
+    // scratch sync first, never --force, the Edit Lock residue probe feeding
+    // the summary. A blocked removal stays `landed` and the blocking path is
+    // reported instead of a false success (the user can clean up later).
+    const cleanupMode = approveMode === 'auto-keep' ? 'worktree' : 'all'
+    try {
+      const cleaned = await cleanup(session, laneId, /** @type {'worktree' | 'all'} */ (cleanupMode), { by: 'host', auto: true, approveMode })
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup (mode ${cleanupMode}): ${cleaned.summary}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { state: cleaned.state, summary: cleaned.summary }, next: cleaned.next })
+    } catch (error) {
+      const message = String(/** @type {any} */ (error)?.message ?? error)
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup blocked: ${message}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { error: message } })
+    }
+  }
+
+  /**
+   * The post-merge cleanup card (user chooses keep / worktree / all).
+   * @param {any} agent @param {string} laneId @param {AbortSignal} [signal]
+   */
+  async function askCleanup(agent, laneId, signal) {
+    if (!deps.ask) return null
+    const repo = await repoFor(cwdOf(agent.session))
+    const lane = laneOf(repo, laneId)
+    if (lane.state !== 'landed') return null
+    const copy = cardCopy(cardLocale(deps.localeOf?.(agent.session?.id)))
+    /** @type {any} */
+    let answer
+    try {
+      answer = await deps.ask(agent, [{
+        id: 'cleanup',
+        header: copy.cleanupHeader,
+        question: copy.cleanupQuestion(lane.title),
+        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot, residueOf(repo, lane)),
+        options: [
+          { label: copy.choices.keep, description: copy.cleanupDescriptions.keep },
+          { label: copy.choices.worktree, description: copy.cleanupDescriptions.worktree },
+          { label: copy.choices.all, description: copy.cleanupDescriptions.all },
+        ],
+      }], signal)
+    } catch {
+      return null
+    }
+    const choice = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'cleanup')?.selected?.[0]
+    const mode = Object.entries(copy.choices).find(([, label]) => label === choice)?.[0]
+    if (!mode) return null
+    return cleanup(agent.session, laneId, /** @type {'keep' | 'worktree' | 'all'} */ (mode), { by: 'user' })
+  }
+
+  // ─── cleanup / abandon ────────────────────────────────────────────────
+
+  /** Copy the lane's .weir scratch into the main repository. @param {any} repo @param {any} lane */
+  function syncScratch(repo, lane) {
+    const source = join(lane.path, '.weir')
+    if (!existsSync(source)) return null
+    const target = join(repo.mainRoot, '.weir', 'lanes', lane.id)
+    mkdirSync(target, { recursive: true })
+    cpSync(source, target, { recursive: true, force: true })
+    return target
+  }
+
+  /**
+   * Auto paths (design D3) reuse this exact body with `{ by: 'host', auto: true,
+   * approveMode }`: the scratch sync, the never-forced removal, the residue
+   * warning and the blocked-removal semantics are identical; only the audit
+   * payload gains the auto marker.
+   * @param {any} session @param {string} laneId @param {'keep' | 'worktree' | 'all'} mode @param {{ by?: string, auto?: boolean, approveMode?: string }} [options]
+   */
+  async function cleanup(session, laneId, mode, options = {}) {
+    if (!['keep', 'worktree', 'all'].includes(mode)) throw new Error('cleanup mode must be keep, worktree, or all')
+    const repo = await repoFor(cwdOf(session))
+    const lane = laneOf(repo, laneId)
+    const by = options.by ?? 'user'
+    if (!['landed', 'kept', 'abandoned'].includes(lane.state)) {
+      throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is ${lane.state}; cleanup applies to merged (or abandoned) lanes`, { lane: laneId, next: nextFor(lane) })
+    }
+    if (mode === 'keep') {
+      if (lane.state !== 'landed') return result(lane, 'nothing to do: the worktree is already kept')
+      const kept = await apply(repo, laneId, { type: 'keep', by, patch: { cleanup: { mode: 'keep', at: now(), by } } })
+      return result(kept, `kept ${kept.path}`)
+    }
+    // Read-only residue probe BEFORE anything is removed (design D5): a
+    // warning only, never a gate, and it never mutates the authority.
+    const residue = residueOf(repo, lane)
+    const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
+    if (existsSync(lane.path)) await git.worktreeRemove(repo.mainRoot, lane.path)
+    let branchNote = ''
+    if (mode === 'all' && (await git.branchExists(repo.mainRoot, lane.branch))) {
+      try {
+        await git.branchDelete(repo.mainRoot, lane.branch)
+        branchNote = `; deleted ${lane.branch}`
+      } catch (error) {
+        branchNote = `; kept ${lane.branch} (${/** @type {any} */ (error)?.message ?? error})`
+      }
+    }
+    const record = { mode, at: now(), by, scratch }
+    const next = lane.state === 'abandoned'
+      ? await patchLane(repo, laneId, () => ({ cleanup: record }))
+      : await apply(repo, laneId, { type: 'clean', by, patch: { cleanup: record } })
+    deps.audit('cleanup', { lane: laneId, mode, by, scratch, ...(options.auto === true ? { auto: true, approveMode: options.approveMode ?? null } : {}) }, repo.mainRoot, lane.ownerSession)
+    return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}${residue ? `; ${residueNote(residue)}` : ''}`)
+  }
+
+  /**
+   * @param {any} agent @param {string} laneId
+   * @param {{ mode?: 'keep' | 'worktree' | 'all', signal?: AbortSignal }} [options] - a mode is the user's typed choice (command path)
+   */
+  async function abandon(agent, laneId, options = {}) {
+    const repo = await repoFor(cwdOf(agent?.session))
+    let lane = laneOf(repo, laneId)
+    if (!isActive(lane)) throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is already ${lane.state}`, { lane: laneId })
+    // Zombie-binding reconciliation BEFORE the confirmation card (design
+    // D1/D4): a binding with terminal evidence and no live side settles here
+    // through the childSettled path; a standing one is disclosed on the card
+    // with an explicit force-reclaim choice.
+    /** @type {any} */
+    let reconciliation = null
+    if (lane.boundChild) {
+      reconciliation = await reconcileBinding(repo, lane, agent?.session)
+      if (reconciliation?.settled) lane = reconciliation.lane
+      if (!isActive(lane)) throw new WorktreeError(WORKTREE_CODES.ILLEGAL_TRANSITION, `lane ${laneId} is already ${lane.state}`, { lane: laneId })
+    }
+    const unmerged = (await git.branchExists(repo.mainRoot, lane.branch)) ? await git.unmergedCount(repo.mainRoot, lane.base.branch, lane.branch) : 0
+    let mode = options.mode
+    // Auto-approve path (design D3): no card, the mapped mode decides —
+    // auto-keep removes the worktree and keeps the branch, auto-clean also
+    // deletes it. Force-reclaim is NEVER auto: a binding the reconciliation
+    // would not clear skips this branch entirely and falls back to the manual
+    // card below (reconciliation outcome + force-reclaim choice) in EVERY mode.
+    const approveMode = approveModeSafe(agent?.session)
+    const auto = !mode && approveMode !== 'manual' && !lane.boundChild
+    if (auto) mode = approveMode === 'auto-keep' ? 'worktree' : 'all'
+    const copy = cardCopy(cardLocale(deps.localeOf?.(agent?.session?.id)))
+    if (!mode) {
+      if (!deps.ask) throw new WorktreeError(WORKTREE_CODES.MAIN_AGENT_ONLY, 'abandoning needs the user\'s confirmation and no answerer is available')
+      // A binding the reconciliation would not clear is the user's call
+      // (design D4): the disputed card states the outcome, and the explicit
+      // force-reclaim settles through the same path, audited as forced.
+      if (lane.boundChild) {
+        const reclaim = await askForceReclaim(agent, lane, reconciliation, copy, repo, options.signal)
+        if (!reclaim) return result(lane, 'not abandoned: the user cancelled')
+        reconciliation = await reconcileBinding(repo, lane, agent?.session, { forced: true })
+        lane = laneOf(repo, laneId)
+        if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} is still bound to ${lane.boundChild}; the force-reclaim could not settle it`, { lane: laneId })
+      }
+      /** @type {any} */
+      let answer
+      try {
+        answer = await deps.ask(agent, [{
+          id: 'abandon',
+          header: copy.abandonHeader,
+          question: copy.abandonQuestion(lane.title),
+          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane), reconciliation?.settled ? { child: reconciliation.childId, forced: reconciliation.forced } : null),
+          options: [
+            { label: copy.choices.keep, description: copy.abandonDescriptions.keep },
+            { label: copy.choices.worktree, description: copy.abandonDescriptions.worktree },
+            { label: copy.choices.all, description: copy.abandonDescriptions.all(unmerged) },
+            { label: copy.cancel, description: copy.abandonDescriptions.cancel },
+          ],
+        }], options.signal)
+      } catch {
+        return result(lane, 'not abandoned: the confirmation card was dismissed')
+      }
+      const choice = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'abandon')?.selected?.[0]
+      mode = /** @type {any} */ (Object.entries(copy.choices).find(([, label]) => label === choice)?.[0])
+      if (!mode) return result(lane, 'not abandoned: the user cancelled')
+    }
+    if (lane.boundChild) {
+      const detail = reconciliation?.verdict ? ` (binding reconciliation: ${reconcileNote(reconciliation.verdict)}; call worktree_abandon without a mode and use the card's force-reclaim)` : ''
+      throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first${detail}`, { lane: laneId })
+    }
+    const abandoned = await apply(repo, laneId, { type: 'abandon', by: auto ? 'host' : 'user', reason: auto ? `abandoned automatically (${approveMode} mode)` : 'abandoned by the user', audit: auto ? { auto: true, approveMode } : undefined, patch: { cleanup: { mode, at: now(), by: auto ? 'host' : 'user' } } })
+    if (mode === 'keep') return result(abandoned, `abandoned; ${abandoned.path} and ${abandoned.branch} are kept`)
+    // Read-only residue probe BEFORE anything is removed (design D5): a
+    // warning only, never a gate, and it never mutates the authority. The
+    // confirmation card already carried the warning when there was one.
+    const residue = residueOf(repo, lane)
+    const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
+    if (existsSync(lane.path)) {
+      try {
+        await git.worktreeRemove(repo.mainRoot, lane.path)
+      } catch (error) {
+        // Abandoned, but the worktree stays: record it as kept so a later
+        // cleanup can retry once the blocking files are dealt with.
+        await patchLane(repo, laneId, (current) => ({ cleanup: { ...current.cleanup, mode: 'keep', blocked: String(/** @type {any} */ (error)?.message ?? error) } }))
+        throw error
+      }
+    }
+    let branchNote = ''
+    if (mode === 'all' && (await git.branchExists(repo.mainRoot, lane.branch))) {
+      await git.branchDelete(repo.mainRoot, lane.branch, { force: unmerged > 0 })
+      branchNote = `; deleted ${lane.branch}${unmerged > 0 ? ` (${unmerged} unmerged commit(s) discarded)` : ''}`
+    }
+    const final = await patchLane(repo, laneId, (current) => ({ cleanup: { ...current.cleanup, scratch } }))
+    return result(final, `abandoned; removed ${lane.path}${branchNote}${residue ? `; ${residueNote(residue)}` : ''}`)
+  }
+
+  // ─── watches (lane state subscriptions) ────────────────────────────────
+
+  /**
+   * worktree_watch: subscribe the calling session to conclusion states of one
+   * lane in this repository (including lanes another session opened). One-shot:
+   * the first target state hit — or the expiry — delivers exactly one notice
+   * to the SUBSCRIBER and removes the watch. Re-subscribing the same lane
+   * replaces the old watch. A lane already in a target state hits immediately
+   * (delivered once, never stored). The lifetime comes from the
+   * worktreeWatchTimeoutMinutes setting, frozen into `expiresAt` at subscribe
+   * time; the model cannot override it (no timeout parameter).
+   * @param {any} session - the subscribing (main) session
+   * @param {{ lane: string, states: string[] }} args
+   */
+  async function watch(session, args) {
+    const states = normalizeWatchStates(args?.states)
+    const laneId = typeof args?.lane === 'string' ? args.lane : ''
+    const sessionId = session?.id
+    if (typeof sessionId !== 'string' || !sessionId) throw new Error('worktree_watch: the subscribing session has no id')
+    const repo = await repoFor(cwdOf(session))
+    // Reconcile first so the immediate-hit test below reads the lane's true
+    // state (and so expired watches are pruned before this one is stored).
+    await refresh(repo)
+    const timeoutMinutes = watchTimeoutMinutesOf(config())
+    const entry = createWatch({ id: randomUUID(), laneId, sessionId, states, now: now(), timeoutMinutes })
+    // Check-vs-insert is atomic inside the ledger lock: a lane that reaches a
+    // target state concurrently either hits BEFORE (immediate path) or AFTER
+    // (the transition's own hit scan) this subscribe — never both, never none.
+    const outcome = await repo.ledger.update((/** @type {any} */ ledger) => {
+      const current = ledger.lanes.find((/** @type {any} */ record) => record.id === laneId)
+      if (!current) throw new WorktreeError(WORKTREE_CODES.UNKNOWN_LANE, `no lane "${laneId}" in ${repo.rootPath}`)
+      if (states.includes(current.state)) return { result: { lane: current, immediate: true, replaced: null } }
+      const replaced = upsertWatch(ledger, entry)
+      return { ledger, result: { lane: current, immediate: false, replaced } }
+    })
+    const { lane, immediate, replaced } = /** @type {any} */ (outcome)
+    if (replaced) disarmWatch(replaced.id)
+    if (immediate) {
+      deps.audit('watch', { lane: lane.id, sessionId, states, outcome: 'hit-immediate' }, repo.mainRoot, sessionId)
+      try {
+        deps.notify(sessionId, renderWatchHit(lane))
+      } catch (error) {
+        deps.logger?.warn?.(`worktree: watch-hit notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
+      }
+      return result(lane, `already ${lane.state}; the watch fired immediately and was not stored`, { hit: lane.state })
+    }
+    armWatch(repo, entry)
+    deps.audit('watch', { lane: lane.id, sessionId, states, expiresAt: entry.expiresAt, replaced: replaced?.id ?? null, outcome: 'subscribed' }, repo.mainRoot, sessionId)
+    return result(lane, `watching for ${states.join(', ')} until ${new Date(entry.expiresAt).toISOString()}`, { watch: { lane: lane.id, states: entry.states, expiresAt: entry.expiresAt } })
+  }
+
+  // ─── views ────────────────────────────────────────────────────────────
+
+  /** Legal actions per lane for the panel (disabled ones carry the reason). @param {any} lane */
+  function actionsFor(lane) {
+    const deny = (/** @type {string} */ reason) => ({ enabled: false, reason })
+    const allow = { enabled: true }
+    const exists = !['cleaned'].includes(lane.state) && !(lane.state === 'abandoned' && lane.cleanup?.mode !== 'keep')
+    return {
+      diff: lane.state === 'preparing' ? deny('setup is still running') : allow,
+      check: !CHECKABLE.includes(lane.state) ? deny(`not available while ${lane.state}`) : lane.boundChild ? deny('a worker is running in this lane') : allow,
+      land: !LANDABLE_FROM.includes(lane.state) ? deny(`only a landable lane can be merged (now ${lane.state})`) : lane.baseMoved ? deny(`the main worktree is not on ${lane.base.branch}`) : allow,
+      clean: ['landed', 'kept'].includes(lane.state) || (lane.state === 'abandoned' && lane.cleanup?.mode === 'keep') ? allow : deny('cleanup applies after merging'),
+      abandon: isActive(lane) ? (lane.boundChild ? deny('a worker is running in this lane') : allow) : deny(`already ${lane.state}`),
+      setup: lane.state === 'setup-failed' ? allow : deny('setup only reruns after a failure'),
+      copyPath: exists ? allow : deny('the worktree was removed'),
+    }
+  }
+
+  /**
+   * Full read-only view for the GUI panel.
+   * @param {any} session
+   * @param {{ mode?: boolean, approve?: string | null, approveSource?: 'session' | 'global' }} [options] - cold-read override: a boolean
+   *   `mode` replaces the live projection read (a pseudo session folded from
+   *   the persisted log by sessionQuery has no live projection cells); `approve`
+   *   and `approveSource` carry the cold-folded auto-approve override the same
+   *   way (null = no override → the global default answers).
+   */
+  async function view(session, options) {
+    const viewMode = () => (typeof options?.mode === 'boolean' ? options.mode : safeMode(session))
+    const viewApproveMode = () => (options && typeof options.approve === 'string' ? options.approve : approveModeSafe(session))
+    const viewApproveModeSource = () => (options && (options.approveSource === 'session' || options.approveSource === 'global') ? options.approveSource : approveModeSourceSafe(session))
+    let repo
+    try {
+      repo = await repoFor(cwdOf(session))
+    } catch (error) {
+      const known = error instanceof WorktreeError
+      return { available: false, mode: viewMode(), approveMode: viewApproveMode(), approveModeSource: viewApproveModeSource(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
+    }
+    try {
+      const { mainBranch, unmanaged } = await refresh(repo)
+      const ledger = repo.ledger.read()
+      /** @type {any} */
+      let verification
+      try {
+        const repoConfig = readConfig(repo)
+        verification = { enabled: repoConfig.check.length > 0, commands: repoConfig.check.map((entry) => entry.name), setup: repoConfig.setup }
+      } catch (error) {
+        verification = { enabled: true, commands: [], error: String(/** @type {any} */ (error)?.message ?? error) }
+      }
+      const lanes = []
+      for (const lane of [...ledger.lanes].reverse()) {
+        const exists = existsSync(lane.path)
+        let counts = null
+        let stat = null
+        if ((await git.branchExists(repo.mainRoot, lane.branch).catch(() => false))) {
+          counts = await git.aheadBehind(repo.mainRoot, lane.base.branch, lane.branch).catch(() => null)
+          stat = await git.diffStat(repo.mainRoot, lane.base.branch, lane.branch).catch(() => null)
+        }
+        lanes.push({
+          ...lane,
+          history: (lane.history ?? []).slice(-12),
+          exists,
+          ahead: counts?.ahead ?? null,
+          behind: counts?.behind ?? null,
+          stat,
+          next: nextFor(lane),
+          transient: TRANSIENT.includes(lane.state),
+          ...watchFacts(ledger.watches, lane.id),
+          actions: actionsFor(lane),
+        })
+      }
+      return {
+        available: true,
+        mode: viewMode(),
+        approveMode: viewApproveMode(),
+        approveModeSource: viewApproveModeSource(),
+        ownedBySession: lanes.filter((lane) => lane.ownerSession === session?.id).map((lane) => lane.id),
+        repo: { mainRoot: repo.mainRoot, root: repo.root, rootPath: repo.rootPath, branch: mainBranch, gitVersion: repo.version?.join('.') ?? null, exclude: hasExclude(repo.commonDir, repo.root), verification },
+        lanes,
+        unmanaged,
+      }
+    } catch (error) {
+      const known = error instanceof WorktreeError
+      return { available: false, mode: viewMode(), approveMode: viewApproveMode(), approveModeSource: viewApproveModeSource(), error: known ? error.toJSON() : { code: 'ERROR', message: String(/** @type {any} */ (error)?.message ?? error) } }
+    }
+  }
+
+  /** @param {any} session */
+  function safeMode(session) {
+    try {
+      return deps.modeOf(session) === true
+    } catch {
+      return false
+    }
+  }
+
+  /** @param {any} session @param {string} laneId */
+  async function diffOf(session, laneId) {
+    const repo = await repoFor(cwdOf(session))
+    const lane = laneOf(repo, laneId)
+    if (lane.land?.commit) return git.diff(repo.mainRoot, `${lane.land.commit}^1`, lane.land.commit)
+    return git.diff(repo.mainRoot, lane.base.branch, lane.branch)
+  }
+
+  /** Runtime-context board (sync; empty until the repo resolved once). @param {any} session */
+  function board(session) {
+    const repo = repoCached(session)
+    const mode = safeMode(session)
+    if (!repo) return mode ? renderBoard({ lanes: [], mode }) : ''
+    try {
+      const ledger = repo.ledger.read()
+      return renderBoard({ lanes: ledger.lanes, watches: ledger.watches, mode })
+    } catch {
+      return ''
+    }
+  }
+
+  /** Lane ids this session owns / active counts for quick status. @param {any} session */
+  function summaryOf(session) {
+    const repo = repoCached(session)
+    if (!repo) return null
+    try {
+      const lanes = repo.ledger.read().lanes.filter((/** @type {any} */ lane) => lane.ownerSession === session?.id)
+      return { active: lanes.filter(isActive).length, awaiting: lanes.filter((/** @type {any} */ lane) => lane.state === 'awaiting-approval').length }
+    } catch {
+      return null
+    }
+  }
+
+  // ─── repository config ────────────────────────────────────────────────
+
+  /** /worktree init: current config + detected suggestions (never written here). @param {any} session */
+  async function initSuggestions(session) {
+    const repo = await repoFor(cwdOf(session))
+    let current = null
+    let error = null
+    try {
+      current = readConfig(repo)
+    } catch (caught) {
+      error = String(/** @type {any} */ (caught)?.message ?? caught)
+    }
+    const files = readdirSync(repo.mainRoot)
+    let packageJson
+    try {
+      packageJson = JSON.parse(readFileSync(join(repo.mainRoot, 'package.json'), 'utf8'))
+    } catch {
+      packageJson = undefined
+    }
+    // The setup suggestion must be an invocation that works on THIS host
+    // (bundled-runtime resolution), not a bare manager name — the user may
+    // accept it verbatim into the config.
+    let setup = null
+    let setupWarning = null
+    const manager = setupManagerFor(files)
+    if (manager) {
+      const derived = await deriveSetup(manager)
+      if ('error' in derived) {
+        setup = bareSetupCommand(manager)
+        setupWarning = setupMissingReason(manager).replace('setup needs', 'suggestion note:')
+      } else {
+        setup = derived.command
+      }
+    }
+    return { file: join(repo.rootPath, CONFIG_FILE), current, error, suggested: { setup, setupWarning, check: suggestChecks({ packageJson, fileNames: files }) } }
+  }
+
+  /** Write the repository config after the user confirmed it. @param {any} session @param {any} value */
+  async function writeConfig(session, value) {
+    const repo = await repoFor(cwdOf(session))
+    const parsed = parseRepoConfig(value)
+    ensureExclude(repo.commonDir, repo.root)
+    mkdirSync(repo.rootPath, { recursive: true })
+    const file = join(repo.rootPath, CONFIG_FILE)
+    writeFileSync(file, `${JSON.stringify({ ...(parsed.setup ? { setup: parsed.setup } : {}), check: parsed.check }, null, 2)}\n`)
+    return { file, config: parsed }
+  }
+
+  /** /worktree reconcile [--rebuild] @param {any} session @param {{ rebuild?: boolean }} [options] */
+  async function reconcileCommand(session, options = {}) {
+    const repo = await repoFor(cwdOf(session))
+    if (options.rebuild) {
+      const worktrees = await git.worktreeList(repo.mainRoot)
+      const prefix = `${pathKey(repo.rootPath)}/`
+      const at = now()
+      const lanes = worktrees
+        .filter((entry) => pathKey(entry.path).startsWith(prefix) && entry.branch?.startsWith('weir/'))
+        .map((entry) => {
+          const id = /** @type {string} */ (entry.branch).slice('weir/'.length)
+          return {
+            id, title: id, path: entry.path, branch: /** @type {string} */ (entry.branch), base: { branch: 'main', commit: null }, scope: [], state: 'working',
+            ownerSession: session?.id ?? null, boundChild: null, baseMoved: false, landableTree: null, setup: { status: 'unknown' }, check: null, land: null,
+            cleanup: null, reason: 'rebuilt from git; base assumed from the main worktree branch', createdAt: at, updatedAt: at, history: [],
+          }
+        })
+      const mainBranch = await git.currentBranch(repo.mainRoot)
+      for (const lane of lanes) lane.base.branch = mainBranch ?? 'main'
+      const seq = lanes.reduce((max, lane) => Math.max(max, Number(/-(\d+)$/.exec(lane.id)?.[1] ?? 0)), 0)
+      await repo.ledger.replace({ schemaVersion: 1, seq, lanes })
+      deps.audit('reconcile', { rebuilt: lanes.map((lane) => lane.id) }, repo.mainRoot, session?.id ?? null)
+      return { rebuilt: lanes.map((lane) => lane.id), unmanaged: [] }
+    }
+    const outcome = await refresh(repo)
+    return { rebuilt: null, unmanaged: outcome.unmanaged }
+  }
+
+  /** Normalized absolute path of a tool argument relative to a session cwd. @param {string} cwd @param {string} path */
+  function resolveArgPath(cwd, path) {
+    return pathKey(isAbsolute(path) ? path : resolvePath(cwd, path))
+  }
+
+  /** The resolved global auto-approve default (command echo; never a raw invalid value). */
+  const approveGlobalSafe = () => {
+    try {
+      return deps.approveGlobal?.() ?? 'auto-clean'
+    } catch {
+      return 'auto-clean'
+    }
+  }
+  return {
+    repoFor, refresh, open, setup, prepareBind, childSettled, check, land, askCleanup, cleanup, abandon, watch,
+    view, diffOf, board, summaryOf, initSuggestions, writeConfig, reconcile: reconcileCommand, resolveArgPath, actionsFor,
+    approveGlobal: approveGlobalSafe,
+  }
+}

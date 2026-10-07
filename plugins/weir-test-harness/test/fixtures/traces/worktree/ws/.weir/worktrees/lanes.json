@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "seq": 1,
+  "lanes": [
+    {
+      "id": "it-lane-001",
+      "title": "IT lane",
+      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/it-lane-001",
+      "branch": "weir/it-lane-001",
+      "base": {
+        "branch": "main",
+        "commit": "252cf58e466cc6a77d7106bd88f270d3efe62992"
+      },
+      "scope": [],
+      "state": "no-commits",
+      "ownerSession": "session-0d53f34a-e3e2-4485-bf0d-02c3a8309dad",
+      "boundChild": null,
+      "baseMoved": false,
+      "landableTree": null,
+      "setup": {
+        "status": "none"
+      },
+      "check": null,
+      "land": null,
+      "cleanup": null,
+      "reason": "no commits ahead of main",
+      "createdAt": 1791395195968,
+      "updatedAt": 1791395201778,
+      "history": [
+        {
+          "from": "preparing",
+          "to": "ready",
+          "event": "setup-ok",
+          "at": 1791395196008,
+          "by": "host"
+        },
+        {
+          "from": "ready",
+          "to": "working",
+          "event": "bind",
+          "at": 1791395196029,
+          "by": "host"
+        },
+        {
+          "from": "working",
+          "to": "no-commits",
+          "event": "checked",
+          "at": 1791395201778,
+          "by": "host",
+          "reason": "no commits ahead of main"
+        }
+      ]
+    }
+  ],
+  "watches": []
+}

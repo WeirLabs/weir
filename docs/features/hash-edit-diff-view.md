@@ -33,4 +33,4 @@
 ## 测试
 
 - 单元测试：`test/hashline-edit.test.js` 覆盖 `diffFragments`（分 hunk、上下文、纯插入的 context-only oldText、相同内容为空）与 `presentationMeta`（成功持久化片段、拒绝调用无元数据、渲染文本不变）；`test/hashline-planned-fragments.test.js` 覆盖计划预览契约三节（src 模块单测语料 / chunk↔src 等价钉 / planned↔applied 对账）；`test/client-hash-edit-model.test.js` 与 `test/client-hash-edit-view.test.js` 覆盖视图模型助手（meta 窄化、args 解析、状态推导、路径相对化）与 `HashEditRow` 各阶段渲染决策（含注册形状断言 `{ name: 'tool.call.toolview', key: 'hash_edit' }`）。
-- 集成测试：`orrery-test-harness` 的 hashline 场景新增两条断言——成功 `hash_edit` 的 `tool/result` 事件持久化 `meta.diffs` 片段；失败调用无 diff 元数据。
+- 集成测试：`weir-test-harness` 的 hashline 场景新增两条断言——成功 `hash_edit` 的 `tool/result` 事件持久化 `meta.diffs` 片段；失败调用无 diff 元数据。

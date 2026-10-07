@@ -25,7 +25,7 @@ volatile config，在线编辑即刻生效。
 
 ## 设计细节
 
-- 模块：`orrery-harness/hashline-edit`。
+- 模块：`weir-harness/hashline-edit`。
 - 锚点生成：`tools/post-execute` 增强 `read` 结果；两字符码取自字符集 `ZPMQVRWSNKTXJBYH`，由行内容哈希（自实现 xxHash32）导出；纯空白行以行号为种子，保证可区分。
 - 校验模型：fail-closed——所有锚点先对当前文件内容验明正身，全部通过才应用任一操作；应用按行号自底向上，避免位移污染。
 - 内容切分：运行时将 `text` 按 `split('\n')` 切行，**至多丢弃一个尾部空元素**、内部空行保留（`'a\nb\n'` → `['a','b']`，`''` → `[]`），与写盘的 `join('\n')` 互逆，不会静默增删空行。Schema 的 `edits.items.required` 为 `['op','pos','text']`，单通道后 schema 重新完整描述契约。

@@ -1,0 +1,36 @@
+{
+  "name": "weir-test-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only integration test harness for weir-harness (scripted mock LLM + host-level mounts). Never install into a real profile.",
+  "exports": {
+    "./package.json": "./package.json",
+    "./mock-llm": "./src/mock-llm.js",
+    "./event-tap": "./src/event-tap.js",
+    "./shell": "./src/shell.js",
+    "./apply-transaction-probe": "./src/apply-transaction-probe.js",
+    "./capstore-probe": "./src/capstore-probe.js",
+    "./skill-composition-probe": "./src/skill-composition-probe.js",
+    "./skill-selection": "./src/skill-selection.js",
+    "./cold-session-probe": "./src/cold-session-probe.js",
+    "./lifecycle-probe": "./src/lifecycle-probe.js",
+    "./mcp-probe": "./src/mcp-probe.js",
+    "./preset-probe": "./src/preset-probe.js",
+    "./preset-surface-probe": "./src/preset-surface-probe.js",
+    "./capability-remote-probe": "./src/capability-remote-probe.js",
+    "./worktree-approve-probe": "./src/worktree-approve-probe.js",
+    "./user-questions-stub": "./src/user-questions-stub.js",
+    "./blackboard-remote-probe": "./src/blackboard-remote-probe.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:integration": "node run.mjs",
+    "record": "node test/record-fixtures.mjs"
+  }
+}

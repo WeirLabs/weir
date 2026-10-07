@@ -1,8 +1,0 @@
-{
-  "scenario": "preset-defaults",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
-  "code": 0,
-  "stdout": "boot1 preset defaults done\n",
-  "stderr": "",
-  "sessionId": null
-}

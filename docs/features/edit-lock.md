@@ -1,10 +1,10 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **实验特性，默认关闭**：`orrery-harness/edit-lock` 已加入 `orrery` 预设（排在 hashline-edit／lsp 之前），只有在 Orrery 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时不安装编辑保护服务、工具或监听器。设置页只读维护面板独立保留。
+> **实验特性，默认关闭**：`weir-harness/edit-lock` 已加入 `weir` 预设（排在 hashline-edit／lsp 之前），只有在 Weir 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时不安装编辑保护服务、工具或监听器。设置页只读维护面板独立保留。
 >
 > **版本**：特性分支 `dev/edit-lock` 单独维护版本号，已发布 `edit-lock-v0.1.0`（2026-10-02）与 `edit-lock-v0.2.0`（2026-10-03，UX 改版：回合末收尾、有期限保留、面板重做），见 [CHANGELOG.md](../../CHANGELOG.md)。两个版本都已完成人工验收（单会话与跨会话、状态面板与命令入口），并以实验特性形态随主分支 `0.7.0` 合入。
 >
-> **已知限制**：锁在回合结束时由助手释放或有期限地保留（异常锁除外）；shell 与外部编辑器的写入不在保护范围；不防恶意同用户进程；删除 `.orrery/` 会丢失锁历史与未决发布围栏；跨文件批量失败不做回滚；本机 publisher 通道不做认证（区别于经宿主浏览器认证的维护 HTTP 端点）。
+> **已知限制**：锁在回合结束时由助手释放或有期限地保留（异常锁除外）；shell 与外部编辑器的写入不在保护范围；不防恶意同用户进程；删除 `.weir/` 会丢失锁历史与未决发布围栏；跨文件批量失败不做回滚；本机 publisher 通道不做认证（区别于经宿主浏览器认证的维护 HTTP 端点）。
 
 ## 概述
 
@@ -14,9 +14,9 @@
 
 ### 发布链路
 
-**组合插件 `orrery-harness/edit-lock`**。预设中该行位于 `delegation` 组，组的 `isolate` 声明 `orreryEditLock: true`：预设注册表拒绝把服务发布到根 realm 的预设，因此提供者与全部消费者（todo-driver、hashline-edit、lsp）必须同组同 realm（`test/preset-realms.test.js` 守卫）。启用条件：行配置或设置 `editLock.enabled` 为 true（挂载时读取，改动需重启）。
+**组合插件 `weir-harness/edit-lock`**。预设中该行位于 `delegation` 组，组的 `isolate` 声明 `weirEditLock: true`：预设注册表拒绝把服务发布到根 realm 的预设，因此提供者与全部消费者（todo-driver、hashline-edit、lsp）必须同组同 realm（`test/preset-realms.test.js` 守卫）。启用条件：行配置或设置 `editLock.enabled` 为 true（挂载时读取，改动需重启）。
 
-**管理域**：每个 agent 在创建时按会话工作目录绑定一次管理根——位于 git 仓库内取仓库顶层（`git rev-parse --show-toplevel`），否则取工作目录本身；若某个上级目录已存在 `.orrery/edit-lock`，则并入该外层域，保证嵌套目录的会话共用一把锁。权威状态在 `<根>/.orrery/edit-lock/`（空目录新建，含 `snapshot.json` 则恢复，其余内容拒绝），预约在 `<根>/.orrery/.edit-lock.publisher-reservation`。git 仓库内首次打开时把这两项追加到仓库自身的 `.git/info/exclude`（worktree 感知，幂等），不改动任何受版本控制的文件。受控 write／hash_edit／lsp_rename 一律拒绝写入这两处（`Edit Lock authority files are not editable`）；shell 不在保证内，`git clean -fdx` 或手动删除 `.orrery/` 会丢失锁历史与未决发布围栏，下次启动按全新域处理。同一进程可同时持有多个根的域，按需打开。开发组合仍可用行配置 `{root, authorityDirectory}` 固定单一域。iCloud／Dropbox／网络盘不在支持范围。
+**管理域**：每个 agent 在创建时按会话工作目录绑定一次管理根——位于 git 仓库内取仓库顶层（`git rev-parse --show-toplevel`），否则取工作目录本身；若某个上级目录已存在 `.weir/edit-lock`，则并入该外层域，保证嵌套目录的会话共用一把锁。权威状态在 `<根>/.weir/edit-lock/`（空目录新建，含 `snapshot.json` 则恢复，其余内容拒绝），预约在 `<根>/.weir/.edit-lock.publisher-reservation`。git 仓库内首次打开时把这两项追加到仓库自身的 `.git/info/exclude`（worktree 感知，幂等），不改动任何受版本控制的文件。受控 write／hash_edit／lsp_rename 一律拒绝写入这两处（`Edit Lock authority files are not editable`）；shell 不在保证内，`git clean -fdx` 或手动删除 `.weir/` 会丢失锁历史与未决发布围栏，下次启动按全新域处理。同一进程可同时持有多个根的域，按需打开。开发组合仍可用行配置 `{root, authorityDirectory}` 固定单一域。iCloud／Dropbox／网络盘不在支持范围。
 
 ## 用户可见行为
 
@@ -27,7 +27,7 @@
 - **保留有上限**。单次保留与一批文件的累计保留都有上限（默认 30 分钟／2 小时），用尽后只能释放；延长一个仍在生效的保留只计新增的分钟数，且「从现在起的窗口」不得超过单次上限。没有永久保留——唯一能一直占着的是异常锁（出错或停止留下的锁），由你或助手处理。
 - **保留中（holding）的含义**。会话已收尾但仍保留文件：其他会话照常被拒、转交照常协商；本会话自己仍可编辑这些文件，并且**一开始新回合，全部保留立刻解除**，回到普通占用。保留到期时会话空闲则自动释放；到期时恰在回合中，则在该回合结束时释放。
 - **停止即收回后续编辑权**。你按停止（或面板「收回编辑权」）后，助手不能发起新的编辑，直到编辑权被恢复；已经调用文件系统的那一次提交会等待完成，仍可能落盘，但不会恢复会话权限。**默认开启「消息驱动的自动恢复」**：停止后你发送的下一条消息即被视作「继续编辑」，自动依次执行 `resume` 与 `confirm --all`（每个文件仍走原有确认检查），新回合可直接编辑；运行时注入的消息（续推、收尾提醒、恢复提示、后台通知）不触发，管理员撤销的会话永远是终态。设置页「编辑」组可关闭该开关，关闭后回到手动「继续编辑」。面板的「继续编辑」按钮与 `/edit-lock resume` 命令依然可用。
-- **失效锁静默清扫（默认开启）**。锁的目标文件被 shell／外部编辑器删除或移走后（这些写入不在保护范围内），锁行仍会留在权威镜像里；持有会话已消亡时，以往只能逐把 `/edit-lock unlock <resourceId> <generation>` 人工清理。现在：任意会话收到一条**真实用户消息**时，会为该管理域调度一次静默清扫——在后台执行，不阻塞回合、不写对话、不通知——把「目标路径已不存在」的锁按普通释放移除（保留 generation 墓碑）。只有 `lstat` 返回 `ENOENT` 才算目标缺失（dangling symlink 不算）；释放前在仲裁点逐字段复核归属没有变化，未决发布围栏保护的归属绝不移除。每次成功释放写一条共享审计（`orrery/edit-lock-maintenance` 的 `stale-sweep`，含管理根、触发会话、owner、resourceId、generation），镜像在 `<管理根>/.orrery/audit.jsonl`。运行时注入的消息不触发；同一管理域 60 秒内至多清扫一次，成本不随会话数增长。设置页「编辑」组的 `editLockStaleSweep` 可关闭，即时生效。
+- **失效锁静默清扫（默认开启）**。锁的目标文件被 shell／外部编辑器删除或移走后（这些写入不在保护范围内），锁行仍会留在权威镜像里；持有会话已消亡时，以往只能逐把 `/edit-lock unlock <resourceId> <generation>` 人工清理。现在：任意会话收到一条**真实用户消息**时，会为该管理域调度一次静默清扫——在后台执行，不阻塞回合、不写对话、不通知——把「目标路径已不存在」的锁按普通释放移除（保留 generation 墓碑）。只有 `lstat` 返回 `ENOENT` 才算目标缺失（dangling symlink 不算）；释放前在仲裁点逐字段复核归属没有变化，未决发布围栏保护的归属绝不移除。每次成功释放写一条共享审计（`weir/edit-lock-maintenance` 的 `stale-sweep`，含管理根、触发会话、owner、resourceId、generation），镜像在 `<管理根>/.weir/audit.jsonl`。运行时注入的消息不触发；同一管理域 60 秒内至多清扫一次，成本不随会话数增长。设置页「编辑」组的 `editLockStaleSweep` 可关闭，即时生效。
 - **崩溃自愈（预约回收＋死进程 unknown 自动结清）**。publisher 进程崩溃或被 kill 后，不再需要人工确认与清理：下一个打开该项目的 Harness 发现残留预约时，只要「租约已超时且登记 owner 被证明死亡（同主机、同 boot、pid 消亡或启动身份不符）」，就经串行化恢复锁自动回收预约成为新 publisher——挂起（SIGSTOP）的进程永远产生不了死亡证明，仅超时不会被偷取。恢复打开权威镜像时，凡能证明属于已死进程 incarnation 的 unknown 发布会在**同一次恢复提交**里被自动行政结清：准入阻塞解除、历史中的 unknown 结论与操作记录原样保留、该 owner 的锁释放且 epoch 撤权，你只会收到**一条**汇总通知；审计与 `adminRecoveries` 台账（actor 为 `automatic-dead-process-recovery`）保留完整明细。进程还活着、死活不明、无进程身份的历史存量、以及同一进程内重挂载产生的 unknown 一律不自动结清，仍走既有显式路径（离线 ADMIN OVERRIDE／解锁）。
 - **状态入口**。输入栏右侧「编辑锁」按钮的圆点表示本会话状态：灰＝未占用文件，蓝（主题强调色）＝正在编辑／文件为本会话保留，琥珀黄＝编辑已停止或等你确认继续，红＝需要你处理。打开面板：
   - 只在需要时给**一个主动作**：已停止→「继续编辑」；等你确认→「继续编辑这些文件」；保留中→「立即释放全部文件」；正常编辑与空闲不给主动作。
@@ -54,7 +54,7 @@
 
 **一次原子变更**：精确备份原镜像并验证 SHA-256、字节数、canonical 格式、版本、域与所有不变量，文件及父目录 fsync 成功后，才提交 v5 镜像。`adminRecoveries` 必填审计行与 owner 的全部锁释放、epoch 递增、永久撤权在同一次 snapshot rename + directory fsync 内落盘。其他 owner、原 operations（包括绑定、outcome、closeout）逐字义保留；旧 operation ID 查历史，不重放，换内容复用 ID 仍拒绝。旧 owner 不能 reopen/resume/acquire，新 owner 仍须正常取得递增 generation 后才能发布。
 
-**HTTP 交接契约**：`POST /api/orrery-edit-lock/maintenance/recover` 只注册到宿主 `connection.fetch`，依赖该 `/api` 通道既有的 Host/Origin 检查与已认证浏览器 cookie；不是模型工具或原始 HTTP server。操作者身份由服务端写为 `authenticated-settings-administrator`，不接受客户端 actor。`root` 必须精确等于 status 列表中服务端推导的 canonical root；检查在对客户端路径进行任何 IO 之前完成。
+**HTTP 交接契约**：`POST /api/weir-edit-lock/maintenance/recover` 只注册到宿主 `connection.fetch`，依赖该 `/api` 通道既有的 Host/Origin 检查与已认证浏览器 cookie；不是模型工具或原始 HTTP server。操作者身份由服务端写为 `authenticated-settings-administrator`，不接受客户端 actor。`root` 必须精确等于 status 列表中服务端推导的 canonical root；检查在对客户端路径进行任何 IO 之前完成。
 
 请求为以下八个字段（拒绝缺失及多余字段）：
 
@@ -81,7 +81,7 @@
 - authority 与备份仅接受 ≤16 MiB 的单链接常规文件；拒绝符号链接及祖先路径变动，有限读取并核对 inode/size/mtime/ctime。此机制不防同用户恶意进程，支持 POSIX 本地文件系统，目录须由调用者控制；目录 fsync 不支持时不降级确认。
 - 备份文件采用 `admin-backup-<SHA256([root,recoveryId])>.json`（0600，wx 创建），已有备份必须逐字节匹配。备份失败、冲突、输入/审计校验失败、rename 前失败均不修改旧 authority 或目标文件。备份是证据，**不是存在迟到写者时可以安全回滚的承诺**。
 - rename 后失败可能已提交：HTTP 409 `{ok:false,error:{code,message,commitStatus}}` 只表示未确认，不保证回滚。`commitStatus:uncertain` 时先 inspect，再以完全相同 recoveryId/scope/reason 重试；重试验证已提交 ledger 和原备份，返回 `idempotent:true`，不重复释放或追加。revision 冲突则重新 inspect/明确确认；错误不会返回原始文件系统路径或堆栈。
-- 权威 ledger 是原子强制审计；成功后另经共享审计发送 `orrery/edit-lock-maintenance` 的 `admin-override` 并 best-effort 写入根下 audit JSONL。不调用 `session.append`，镜像审计失败不否定已完成的权威提交。
+- 权威 ledger 是原子强制审计；成功后另经共享审计发送 `weir/edit-lock-maintenance` 的 `admin-override` 并 best-effort 写入根下 audit JSONL。不调用 `session.append`，镜像审计失败不否定已完成的权威提交。
 - 普通镜像继续使用 v4，首次 override 才升级 v5；v2/v3 仍无损升级。旧构建拒绝 v5；禁止简单删 ledger 或恢复旧备份冒充安全降级。scope/checksum 是完整性绑定，不是防有权限编辑 authority 的恶意管理员签名。
 
 **测试证据**：新增 `edit-lock-admin-recovery.test.js` 使用真实 store/manager/publisher 异常制造 22 把保留锁，验证备份、原历史不变、旧 token/owner/ID 非重放、新 owner 再获取并发布，以及备份/文件 fsync/rename/目录 fsync 故障、丢失确认幂等、预约竞争、ledger 防篡改和服务端 root allowlist。安装版宿主认证来源已核对；不把 mock connection 单测当作 GUI/HTTP 认证端到端测试，真实运行时和 GUI 验收由集成阶段完成。
@@ -92,8 +92,8 @@
 
 - **manager 事务 `adminRecoverOnline`**：在 FIFO 执行点对当前已确认状态复核——owner 已 interrupted、其全部未决操作都是 `unknown`、operationIds 精确匹配（排序比较）、expectedRevision 未动、确认摘要匹配（与离线路径**同一算法**：`{root, owner, expectedRevision, operationIds 排序, risk}` canonical JSON 的 SHA-256，`ADMIN OVERRIDE <hex>`）。随后在**同一次持久事务**里落盘：`adminRecoveries` 台账行（actor 为 `online-administrator`，与离线 `authenticated-settings-administrator`、自动 `automatic-dead-process-recovery` 区分）、该 owner 的锁全部释放、epoch 撤权、准入阻塞解除；`unknown` 结论与操作历史逐字不动。备份沿用 `admin-backup-<SHA256([root,recoveryId])>.json`，内容是**当前**已提交镜像的精确字节（store 在每次持久化后留存 `currentBytes()`），先于提交落盘。相同 recoveryId 的幂等重试返回既有台账行，不重复释放、不追加。确认摘要不符、revision 竞态、owner 未 interrupted、未决非全 unknown、operationIds 不符一律拒绝且不产生 revision、不写备份；备份写失败发生在提交前，管理器不中毒；只有提交本身失败才按既有纪律中毒。
 - **不重启的一致性**：内核折叠（cancel＋逐锁 release）与 `administrativeState(base, record)` 的普通部分逐字节一致，持久化确认后同一事务安装内存内核——面板点击后立刻可编辑，权威镜像与内存从不分叉。
-- **peer 通道**：`PEER_KINDS` 新增 `adminRecover`；publisher 侧执行**同一事务**，触发身份取自通道绑定的 agent（`agent.id`），**永不取自载荷**（载荷根本没有身份字段，多一个字段即被 manager 的精确字段纪律拒绝）。client 进程经自己某个活会话的通道转发；publisher 侧审计 `orrery/edit-lock-maintenance` 的 `admin-override-online`（含 root、trigger、owner、recoveryId、revision、idempotent、操作数），镜像在 `<管理根>/.orrery/audit.jsonl`。
-- **HTTP 交接**：`POST /api/orrery-edit-lock/maintenance/recover-online` 由 edit-lock 插件注册在宿主 `connection.fetch`（同一认证通道）；`root` 必须精确等于**本进程实际服务**的域根（membership only，绝不因请求打开新域）；本进程是 client 时还需有活会话承载通道，否则 409 指引改用离线路径。拒绝只返回 `orrery-edit-lock/*` 错误码与通用文案（已知拒绝附安全 detail），409 `commitStatus:'not-acknowledged'` 与离线路径同语义。特性未启用或该域未在本进程打开时端点不存在，面板按不可用展示并指向离线路径。
+- **peer 通道**：`PEER_KINDS` 新增 `adminRecover`；publisher 侧执行**同一事务**，触发身份取自通道绑定的 agent（`agent.id`），**永不取自载荷**（载荷根本没有身份字段，多一个字段即被 manager 的精确字段纪律拒绝）。client 进程经自己某个活会话的通道转发；publisher 侧审计 `weir/edit-lock-maintenance` 的 `admin-override-online`（含 root、trigger、owner、recoveryId、revision、idempotent、操作数），镜像在 `<管理根>/.weir/audit.jsonl`。
+- **HTTP 交接**：`POST /api/weir-edit-lock/maintenance/recover-online` 由 edit-lock 插件注册在宿主 `connection.fetch`（同一认证通道）；`root` 必须精确等于**本进程实际服务**的域根（membership only，绝不因请求打开新域）；本进程是 client 时还需有活会话承载通道，否则 409 指引改用离线路径。拒绝只返回 `weir-edit-lock/*` 错误码与通用文案（已知拒绝附安全 detail），409 `commitStatus:'not-acknowledged'` 与离线路径同语义。特性未启用或该域未在本进程打开时端点不存在，面板按不可用展示并指向离线路径。
 - **面板一键确认**：只读 inspect 响应已含全部 scope 事实（revision、未决操作的 owner/operationId/phase/admissionBlocked、会话 interrupted，以及 `prepared` 操作清单——有 `prepared` 的 owner 在线恢复必被 manager 拒绝，面板依此不提供动作）；chunk 内重新实现 canonical JSON 与纯 JS SHA-256（浏览器无 node:crypto），**客户端计算**并展示摘要，点击即提交——确认动作仍在，消灭的是路径成本。chunk 对拍测试把客户端实现与服务端 `recoveryConfirmation`/`canonical` 逐字节钉死（含中文与 SHA-256 填充边界向量）；资格判定（owner interrupted ∧ 全部未决 unknown ∧ 仍阻塞 ∧ 无 prepared）与 manager 准入条件镜像；恢复进行状态以 `root＋owner` 为键（会话 id 跨域不唯一，一个域的成功不抑制另一域同名 owner 的恢复）。
 - **测试证据**：`edit-lock-online-recovery.test.js`（manager 事务：确认不符/未 interrupted/非全 unknown/ID 不符/revision 竞态/幂等重试/无 root·备份器拒绝/台账 actor/备份先落盘/内核折叠等式＋单进程组合探针：活 publisher 不重启在线结清、围栏解除、审计 trigger）；`edit-lock-online-recovery-peer.test.js`（双进程探针：client 主机经 peer 通道结清活 publisher 的 unknown，trigger 取自通道、幂等重试、创建恢复准入）；`edit-lock-peer.test.js`（通道身份单测）；chunk 测试（资格分组含 prepared 排除、摘要展示、点击提交体、跨根恢复状态隔离、双语键）；`edit-lock-maintenance.test.js`（inspect 暴露 prepared 操作）；资格与跨根两条面板回归均经变异校验（变异即红）。
 ### 撤权后的会话呈现
@@ -143,20 +143,20 @@
 
 ### 运行时接线（`src/edit-lock/index.js`）
 
-- 挂载时捕获原始 `ctx.fs`，以跨进程预约打开唯一 runtime，并提供 `orreryEditLock` 服务。cordis 的兄弟行服务在其 apply 之后才可见，因此 `hash_edit` 同时接受挂载时与延迟 inject 的服务；一旦受管，服务移除只会拒绝，不回退直写。
+- 挂载时捕获原始 `ctx.fs`，以跨进程预约打开唯一 runtime，并提供 `weirEditLock` 服务。cordis 的兄弟行服务在其 apply 之后才可见，因此 `hash_edit` 同时接受挂载时与延迟 inject 的服务；一旦受管，服务移除只会拒绝，不回退直写。
 - `tools/pre-execute` 守卫：`write`、`edit`、`hash_edit`、`lsp_rename`、`str_replace_editor` 中凡执行函数未经服务 `claim` 的定义一律拒绝。组合顺序错误、晚装服务或未知编辑器因此 fail closed。
 - `agent/created`（发布前 await）安装写作用域：隐藏继承 stock write/edit，注册受控 write；随后注册会话。管理器已知的会话（重启恢复、同会话重建 agent）一律以中断态开始，不隐式重臂。
-- **迟挂载补课绑定**：重启后首个会话的 preset 是为该会话自身挂载的，其主 agent 的 `agent/created` 事件已经过去（与 worktree-mode 守卫相同的挂载顺序隐患）。挂载时经 `ctx.get?.('agents')?.roots?.()` 枚举现存主 agent（无 agents 注册表的组合容忍缺席），对每个尚未绑定管理根的根 agent 运行与创建路径完全相同的 `setupAgent`——幂等，`registry.rootOf` 已绑定即跳过，绝不重复安装写作用域、重复绑定或重复 `domain.start`；子代理总在挂载之后创建，无需补课。**跨预设围栏**：`agents.roots()` 是进程级注册表，而创建监听器只会听到经本挂载冒泡的事件——补课必须显式判定归属，否则会把其他预设的存活 agent 绑进编辑锁（2026-10-05 宿主崩溃事故：绑定失败后的兜底 `restrict` 点名对方目录不认识的工具名，在 reload 期间升级为宿主致命错误）。组合内有 `agentPresets` 注册表时，以 `serviceFor(agent, 'orreryEditLock')` 解析到的服务实例与本服务同一性判定——只有本挂载保留的 agent 会解析到这个确切对象；无注册表的宿主级组合（如集成测试装置）维持全量补课。兜底拒绝自身绝不抛出：只点名该 agent 工具目录里实际存在的受控工具。
+- **迟挂载补课绑定**：重启后首个会话的 preset 是为该会话自身挂载的，其主 agent 的 `agent/created` 事件已经过去（与 worktree-mode 守卫相同的挂载顺序隐患）。挂载时经 `ctx.get?.('agents')?.roots?.()` 枚举现存主 agent（无 agents 注册表的组合容忍缺席），对每个尚未绑定管理根的根 agent 运行与创建路径完全相同的 `setupAgent`——幂等，`registry.rootOf` 已绑定即跳过，绝不重复安装写作用域、重复绑定或重复 `domain.start`；子代理总在挂载之后创建，无需补课。**跨预设围栏**：`agents.roots()` 是进程级注册表，而创建监听器只会听到经本挂载冒泡的事件——补课必须显式判定归属，否则会把其他预设的存活 agent 绑进编辑锁（2026-10-05 宿主崩溃事故：绑定失败后的兜底 `restrict` 点名对方目录不认识的工具名，在 reload 期间升级为宿主致命错误）。组合内有 `agentPresets` 注册表时，以 `serviceFor(agent, 'weirEditLock')` 解析到的服务实例与本服务同一性判定——只有本挂载保留的 agent 会解析到这个确切对象；无注册表的宿主级组合（如集成测试装置）维持全量补课。兜底拒绝自身绝不抛出：只点名该 agent 工具目录里实际存在的受控工具。
 - active 回合内 stock Stop 同步触发 turn signal，立即封闭准入并持久撤权；idle Stop 没有 signal，使用 `/edit-lock stop` 获得可等待的持久撤权确认。`agent/disposed` 同样撤权。
 - **消息驱动的自动恢复**（两阶段）：`agent/inbox/inserted`（回合前进站口，载荷携带 `{ agent, message }`）对真实用户消息（`isGenuineUserMessage`）置一次性旗标，开关按消息实时读取（`autoResume !== false`）；下一回合首个 `agent/pre-step` 在新回合检测处消费旗标，若会话非 active 则**在 `next()` 之前 await** 可信 resume（服务端铸造 `auto:user-message:<uuid>` 一次性 requestId）加 `confirmAll` 重放，保证该回合的编辑请求不再被拒。失败（revoked、与手动 Continue 竞争落败）仅告警放行。置旗点刻意不是持久的 `user/message` 会话事件：该事件在本运行时要到回合中途才落盘，晚于必须先行恢复的 pre-step（集成证据 `editlock-auto-resume`）。
 - 可信人类入口 `/edit-lock`：`status`、`locks`、`hold [minutes]`、`release <path>`、`stop`、`resume`（以 commandId 作一次性 requestId 签发并消费 receipt，新 epoch，保留锁转 pending-confirmation）、`confirm <path>`／`--all`、`unlock <path> <generation>`。状态查询、后台通知与运行时注入消息都不恢复权限；`editLockAutoResume` 开启（默认）时，一条真实用户消息（`source.kind === 'user'`）等价于一次可信 Continue；todo 续推在会话非 active 时不触发。
-- 面板数据来自只读端点 `POST /api/orrery-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图），不从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。解析链是冷读安全的：存活 agent（现状）→ `sessionQuery.observeSession` 冷观察（取 `header.cwd`，绝不激活会话）→ `managementRootFor` 推导管理根 → **只读**权威镜像（`read-authority.js`，与维护 inspector 同一纪律：有界 ≤16MiB、`O_NOFOLLOW`、读前读后身份核对、`parseSnapshot` 校验；不打开 runtime、不取预约、一个字节都不改）。冷会话视图由 `buildColdView` 把镜像映射成与存活读取相同的输入：interrupted→stopped、`adminRecoveries` 撤权→revoked 终态、自身锁与全域锁、保留按读时结算对 `now` 计算；顶层带 `cold: true` 与 auto-resume 开关值。publisher 与 client 两种模式都从本地镜像读取回答（权威是共享文件系统上的本地文件），不新增 peer kind。会话无法冷观察、工作区无权威或镜像损坏时返回带**明确 reason** 的 unavailable（面板显示「不可用＋原因」），不再退化为无 reason 的「启动中」——无 reason 的「启动中」只剩一种情形：agent 存活但其 domain 仍在启动（或启动失败的原因未知）。写动作（resume/release/unlock/清扫）不新增冷通道。
-- **多挂载路由（fix-edit-lock-view-multi-mount）**：`orrery` 与 `orrery-creative` 等多预设同进程共存时各自挂载 edit-lock，而视图/在线恢复端点是进程级全局路由（宿主 `connection.fetch.register` 同路径重复注册抛错，先挂者胜出、后者容错跳过）。视图 handler 对存活 agent 经 `agentPresets.serviceFor(agent, 'orreryEditLock')` 路由到**所属挂载**的 `describe()` 构造视图——答案与挂载顺序无关；无预设注册表的组合回退挂载本地路径。`describe` 失败（绑定失败/懒绑定已拒）返回带原因的 unavailable，无原因「启动中」只剩真实启动窗口。
+- 面板数据来自只读端点 `POST /api/weir-edit-lock/view`（`src/edit-lock/view.js` 构造的结构化视图），不从命令文本里推断状态；`connection` 是 host-plane 服务，隔离 realm 不影响它。解析链是冷读安全的：存活 agent（现状）→ `sessionQuery.observeSession` 冷观察（取 `header.cwd`，绝不激活会话）→ `managementRootFor` 推导管理根 → **只读**权威镜像（`read-authority.js`，与维护 inspector 同一纪律：有界 ≤16MiB、`O_NOFOLLOW`、读前读后身份核对、`parseSnapshot` 校验；不打开 runtime、不取预约、一个字节都不改）。冷会话视图由 `buildColdView` 把镜像映射成与存活读取相同的输入：interrupted→stopped、`adminRecoveries` 撤权→revoked 终态、自身锁与全域锁、保留按读时结算对 `now` 计算；顶层带 `cold: true` 与 auto-resume 开关值。publisher 与 client 两种模式都从本地镜像读取回答（权威是共享文件系统上的本地文件），不新增 peer kind。会话无法冷观察、工作区无权威或镜像损坏时返回带**明确 reason** 的 unavailable（面板显示「不可用＋原因」），不再退化为无 reason 的「启动中」——无 reason 的「启动中」只剩一种情形：agent 存活但其 domain 仍在启动（或启动失败的原因未知）。写动作（resume/release/unlock/清扫）不新增冷通道。
+- **多挂载路由（fix-edit-lock-view-multi-mount）**：`weir` 与 `weir-creative` 等多预设同进程共存时各自挂载 edit-lock，而视图/在线恢复端点是进程级全局路由（宿主 `connection.fetch.register` 同路径重复注册抛错，先挂者胜出、后者容错跳过）。视图 handler 对存活 agent 经 `agentPresets.serviceFor(agent, 'weirEditLock')` 路由到**所属挂载**的 `describe()` 构造视图——答案与挂载顺序无关；无预设注册表的组合回退挂载本地路径。`describe` 失败（绑定失败/懒绑定已拒）返回带原因的 unavailable，无原因「启动中」只剩真实启动窗口。
 - 插件卸载撤销所有会话、排空发布，再释放预约；失败保留预约供人工核对。apply 写成箭头函数：cordis 会以 `new` 构造带 prototype 的回调并丢弃其返回的 disposer。
 
 ### 预设切换重绑定与绑定自愈（设计 D1–D4，变更 edit-lock-binding-self-heal）
 
-- **问题形态**：会话创建后的 blank 窗口内切换预设（如 `orrery` → `orrery-creative`）时，宿主走 `select → recompose → bind`，只 emit `tools/change`、**不重发 `agent/created`**——新代挂载的 `setupAgent` 对该 agent 永不运行，编辑锁绑定随旧代挂载孤儿化，一切受管写入被永久拒绝（两起实证事故）。受管 write 注册在 agent **自有作用域层**，rebind 不 dispose 自有层，因此重安装必须先 retire 旧层，否则撞 duplicate-register——这正是早期连手工重绑也会失败的原因。
+- **问题形态**：会话创建后的 blank 窗口内切换预设（如 `weir` → `weir-creative`）时，宿主走 `select → recompose → bind`，只 emit `tools/change`、**不重发 `agent/created`**——新代挂载的 `setupAgent` 对该 agent 永不运行，编辑锁绑定随旧代挂载孤儿化，一切受管写入被永久拒绝（两起实证事故）。受管 write 注册在 agent **自有作用域层**，rebind 不 dispose 自有层，因此重安装必须先 retire 旧层，否则撞 duplicate-register——这正是早期连手工重绑也会失败的原因。
 - **D3 可重入前置**：写作用域的 disposer 存入按宿主键控、按 agent 键控的宿主生命期容器（`write-scopes.js`），不随 mount 销毁；任何重安装（切预设/重应用/懒绑定）先 `disposeWriteScope` 同 agent 旧层再注册；`agent/disposed` 时随 agent 释放。卸载刻意不拆除受管 write——gap 期拆除会暴露 stock 直写。
 - **D1 预设切换重绑定（消窗）**：订阅宿主转播的 `agent-preset/selected`（rebind 落地后 emit，载荷为 sessionId），对本预设 root agent 重跑幂等 `setupAgent`；切到 foreign 预设过 `ownAgent` 栅栏不绑。监听器按 serial-bail 纪律返回 undefined。
 - **D2 守卫懒绑定（兜底）**：pre-execute 守卫与锁工具路由（`domainFor`）遇到「本预设 root ∧ 无绑定 ∧ 本代无失败记录」时先做一次幂等重绑定再判定；成功后写入正常走锁。失败则拒绝文案点名真实原因（无 Edit Lock 域、setup 失败原因）与恢复动作（重启或新会话），且**本代不再重试**（startFailures 抑制）；子代理（delegationDepth>0）与 foreign 预设永不尝试。
@@ -168,7 +168,7 @@
 - **触发与调度**：`agent/inbox/inserted` + `isGenuineUserMessage`（与消息驱动自动恢复同一挂点，运行时注入消息天然排除）为**该会话的管理域根**调度一次清扫。调度按域根聚合在 `src/edit-lock/stale-sweep.js` 的 `createStaleSweepScheduler`：单飞 + 60 秒冷却（自完成时刻起），零延时定时器 **detached 派发——回合绝不等待**（不同于必须先于首 step 的 auto-resume）；冷却已过期的空闲条目在每次调度与任务完成时回收、`close()` 清空注册表，键数不随历史域数无界增长。`editLock.staleSweep` 按消息即时读取（`!== false` 即开）。插件卸载 `sweeps.close()` 取消全部未派发工作；agent dispose（`disposedAgents` WeakSet 标记）取消其 arming 的未派发工作——派发前与 `registry.forRoot` 兑现回调内各检一次，域打开 pending 期间的 dispose 同样取消，不为已 dispose 的 agent 提交维护事务；已提交的权威事务永不打断、永不 reinterpret。
 - **失效判定**（`isMissingTarget`，publisher 侧执行——它与权威共享文件系统，客户端进程只负责触发）：对域内每一锁行 `lstatSync(resourceId)`，**仅 `ENOENT`** 计为候选；lstat 成功（含 dangling symlink）与 `EACCES`/`ENOTDIR`/symlink 环等其他错误一律跳过。不追踪被移动的文件、不把别名解析成替代身份、不为缺失路径构造资源键。
 - **仲裁点条件释放**：manager 新增可信维护入口 `releaseStale(observed, isMissing)`。每行各走一条 FIFO 事务，在**执行点**逐字段复核观察行——owner、generation、owner executionEpoch、锁状态——并**再次 lstat** 确认目标仍缺失；全部满足才走普通 `operations.release`。任一不满足、行已消失、或既有未决发布围栏准入拒绝（与 `adminUnlock` 同一条 release-mode 准入，未决 update 必需的归属永不移除）都是**跳过而非错误**：丢弃 draft、不产生 revision、不影响其余行。范围是域内全部锁行，不限 owner 状态（active、holding、pending-confirmation、user-interrupted、abnormal 一视同仁）——谓词钉死「观察时刻的行状态」，观察之后归属发生任何变化即自动跳过。`isMissing` 探针注入，manager 层不做文件系统 IO。
-- **静默但可审计**：不写对话、不通知、不 `session.append`（§3.6 红线）。每次持久化成功的释放由 **publisher 侧**经 `createEditLockLifecycle` 的 `onStaleRelease` 钩子发共享审计 `orrery/edit-lock-maintenance`，`data.kind: 'stale-sweep'`，携带 `root`（管理根）、`trigger`（触发会话）、`owner`、`resourceId`、`generation`；JSONL 镜像经 `createAudit` 的显式 `root` 锚定 `<管理根>/.orrery/audit.jsonl`。跳过（行已消失/谓词不符/围栏拒放）静默只计数；失败（持久化/poison/意外）由 `releaseStale` 计入 `failed` 列表，lifecycle 对每个失败发恰好一条有界 `ctx.logger` 警告（跳过不产生日志）。权威镜像中体现为普通 release（generation 墓碑保留；owner 最后一把锁消失时 holds 行按既有内核语义归零），不新增历史表，不改围栏、操作历史或恢复计数。
+- **静默但可审计**：不写对话、不通知、不 `session.append`（§3.6 红线）。每次持久化成功的释放由 **publisher 侧**经 `createEditLockLifecycle` 的 `onStaleRelease` 钩子发共享审计 `weir/edit-lock-maintenance`，`data.kind: 'stale-sweep'`，携带 `root`（管理根）、`trigger`（触发会话）、`owner`、`resourceId`、`generation`；JSONL 镜像经 `createAudit` 的显式 `root` 锚定 `<管理根>/.weir/audit.jsonl`。跳过（行已消失/谓词不符/围栏拒放）静默只计数；失败（持久化/poison/意外）由 `releaseStale` 计入 `failed` 列表，lifecycle 对每个失败发恰好一条有界 `ctx.logger` 警告（跳过不产生日志）。权威镜像中体现为普通 release（generation 墓碑保留；owner 最后一把锁消失时 holds 行按既有内核语义归零），不新增历史表，不改围栏、操作历史或恢复计数。
 - **跨进程接线**：`lifecycle.sweepStale(triggerSessionId)` 同时暴露到 peer 通道（`PEER_KINDS` 新增 `staleSweep`）；客户端域 `sweepStale` 转发通道调用，publisher 侧 peer 以**通道自身会话**（`agent.id`）为触发会话执行扫描——扫描永远发生在 publisher，客户端只是触发。聚合的权威也在 publisher：`sweepStale` 内置单飞 + 60 秒冷却（in-flight promise + 完成时刻时间戳），运行中的触发 **join** 同一扫描（共享结果、不重复审计），冷却窗内的触发返回 `coalesced: 'cooldown'` 结果不再扫描——两个协作进程各自带客户端冷却也不会并发清扫同一 authority。IPC 应答丢失不会重复释放：重放的同一观察行在执行点已不复存在，按「行已消失」跳过（幂等）。
 
 ### 预约租约与死证回收（设计 D1）
@@ -183,13 +183,13 @@
 - **v6 镜像注册表**：镜像为每个 manager incarnation 记录 `{incarnation, process: {pid, host, osStart, bootNonce} | null}`（取自与预约同一个 Liveness 适配器）。v4/v5 镜像在**首次身份感知的写入**时无损升级：既有 incarnation（含全部 operation origin 与上一 manager incarnation）补 `process: null`——种子顺序与校验器从**未改动的前像**推导的顺序逐字节一致（前像当前 manager incarnation 在前，operation origin 按出现顺序随后），新 incarnation 追加在末尾；旧 build 按既有版本纪律拒绝 v6，v6 缺注册表/注册表被改写（重排、回填、增删条目）同样 fail closed。注册表条目不可变，普通转换只允许追加「当前 manager incarnation」一条。
 - **自动结清判定**（恢复打开时逐 owner）：该 owner 未被撤权、恢复后处于 interrupted，且其**每一个**未决 unknown 操作的 origin incarnation 都登记了进程身份、该身份与当前进程不同（pid＋bootNonce 判定，同进程重挂载永不结清）、且 Liveness 证明该进程已死——三者缺一即保持人工路径。安全论证与人工 ADMIN OVERRIDE 的人脑担保相同：全部写只发生于 publisher 进程内，进程死亡 ⇒ 其生命周期全部 detached writer 死亡 ⇒ 迟到写者风险结构性归零。
 - **一次持久提交**：结清与恢复合并为同一次 snapshot 提交——台账行复用 v5 `adminRecoveries` 结构（actor 记 `automatic-dead-process-recovery`，scope 确认摘要由服务端自算自记，同一提交的多个 owner 共享 expected/committed revision），unknown outcome 与操作历史逐字保留，仅准入阻塞解除，owner 的锁释放、epoch 撤权。备份沿用 `admin-backup-<SHA256([root,recoveryId])>.json`：内容即恢复时读到的前像字节，在提交前落盘（temp+rename＋目录 fsync）。提交后安装的内核按**结清后**的最终镜像重建，内存权威与磁盘一致。
-- **审计与通知**：每次恢复至多一条共享审计（`orrery/edit-lock-maintenance` 的 `automatic-recovery`，含 root、revision、owners、recoveryIds、操作数）与至多一条汇总用户通知（排队给该域第一个完成注册的 agent；已撤权 owner 永远跳过，第二次恢复不会重复结清也不会重复通知）。
+- **审计与通知**：每次恢复至多一条共享审计（`weir/edit-lock-maintenance` 的 `automatic-recovery`，含 root、revision、owners、recoveryIds、操作数）与至多一条汇总用户通知（排队给该域第一个完成注册的 agent；已撤权 owner 永远跳过，第二次恢复不会重复结清也不会重复通知）。
 - **不自动结清的情形**：null 身份（含 v4/v5 时代的历史存量与身份缺失恢复的 incarnation）、同进程重挂载、Liveness 判活或判不明、owner 已被撤权。这些仍走显式路径：进程活着时的维护面板一键在线结清（见「在线管理员恢复」），或 runtime 起不来时的离线 ADMIN OVERRIDE。
 
 ### 独立维护边界
 
-- profile 设置行提供维护端点与证据入口，不依赖 `orreryEditLock` 或恢复器。每次 preset 挂载持有独立代次；旧 disposer 只删除自己的证据，排空失败保留失败状态。证据按宿主根 context 存在 WeakMap 中，同一模块的设置行重挂载不遗忘仍活跃的行；模块整体替换/进程重启不继承内存证据。
-- `POST /api/orrery-edit-lock/maintenance/{status,inspect}` 通过 `connection.fetch.register` 注册；安装版宿主先执行 Host/Origin fence 与浏览器会话认证。根只由存活 agent 的 cwd 经 `managementRootFor` 及挂载记录推导；客户端必须原样选择返回的根，成员检查先于对客户端路径的任何文件操作。
+- profile 设置行提供维护端点与证据入口，不依赖 `weirEditLock` 或恢复器。每次 preset 挂载持有独立代次；旧 disposer 只删除自己的证据，排空失败保留失败状态。证据按宿主根 context 存在 WeakMap 中，同一模块的设置行重挂载不遗忘仍活跃的行；模块整体替换/进程重启不继承内存证据。
+- `POST /api/weir-edit-lock/maintenance/{status,inspect}` 通过 `connection.fetch.register` 注册；安装版宿主先执行 Host/Origin fence 与浏览器会话认证。根只由存活 agent 的 cwd 经 `managementRootFor` 及挂载记录推导；客户端必须原样选择返回的根，成员检查先于对客户端路径的任何文件操作。
 - inspector 拒绝根以下及祖先中的符号链接，快照使用 `O_NOFOLLOW | O_NONBLOCK`、文件描述符身份与读前后路径/metadata 核对，最多读取 16 MiB；平台不提供 `O_NOFOLLOW` 则拒绝。只复用 store 的镜像验证器，不打开 runtime/预约、不恢复、不修复，检查前后权威字节不变。
 - **不是恶意并发目录改名的原子隔离证明**：Node 无便携 `openat`，上述身份核对能拒绝观察到的路径替换，但不能排除恶意同用户进程的 ABA 命名空间竞态。不要把此维护入口暴露为不可信文件系统的读取代理。
 - 开关提交仅记录 enable/disable 意图，走共享 `createAudit`（事件及有服务端工作目录时的 JSONL 镜像），不写自定义 session 事件。只读检查不写审计；无工作目录时只 emit，不退回开发进程 cwd。共享审计镜像沿用既有 best-effort 文件系统语义，不宣称具有 inspector 的路径保护。
@@ -271,12 +271,12 @@
 
 下一步必须先建立提供者内部、绑定本次调用且不可伪造的 pre-staging 分支回执，或经明确契约允许的完整稳定执行依赖约束，再接 store 私有结算。当前没有新增默认启用认证 adapter，也没有开放 version-conflict 结算；stock stale 仍保守 unknown。此证据不证明所有 adapter 技术路线不可能，只明确否定边界快照路线。历史 unknown 不能借本次新审计改判，现有围栏未解除。面向人的“导出 → 独占／静止证明 → 精确批准 → 结清 → 重启核验”维护入口与可见阻塞原因仍是未交付的 UX／控制面缺口。
 
-可复现测试：[audit-publication-rejection.mjs](../../plugins/orrery-test-harness/test/audit-publication-rejection.mjs)。它显式加载所指定安装目录的真实 provider，经独立 Cordis context 注册，不安装到正式 profile；所有目标与权威镜像写入隔离根，保留产物供检查。不在 portable 单测 glob 内，以免缺少宿主时静默跳过：
+可复现测试：[audit-publication-rejection.mjs](../../plugins/weir-test-harness/test/audit-publication-rejection.mjs)。它显式加载所指定安装目录的真实 provider，经独立 Cordis context 注册，不安装到正式 profile；所有目标与权威镜像写入隔离根，保留产物供检查。不在 portable 单测 glob 内，以免缺少宿主时静默跳过：
 
 ```sh
-ORRERY_AUDIT_HOST_ROOT=/absolute/path/to/dsh \
-ORRERY_AUDIT_ROOT=/absolute/path/to/isolated-output \
-node --test plugins/orrery-test-harness/test/audit-publication-rejection.mjs
+WEIR_AUDIT_HOST_ROOT=/absolute/path/to/dsh \
+WEIR_AUDIT_ROOT=/absolute/path/to/isolated-output \
+node --test plugins/weir-test-harness/test/audit-publication-rejection.mjs
 ```
 
 实测 8/8 通过；local 模块磁盘 SHA256 为 `63fbb41d2c33e07111884b798be507e68c2752acab8249c821c20ade436e894f`。这只是回归证据提交，不是 prospective settlement 功能交付，也不是历史会话修复。
@@ -333,7 +333,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### 信任模型
 
-保证范围是「同一工作目录管理域内、经 Orrery 接线的受控写入」；shell、外部 IDE 与绕过提交路径的写入明确排除。跨进程身份由可信 spawn 连接与真实 Agent/Session 对象绑定，不依赖消息字段；产品建立可靠的连接/session 绑定并保真传递有效 policy，但不声称抵御同用户恶意进程或恶意宿主插件。
+保证范围是「同一工作目录管理域内、经 Weir 接线的受控写入」；shell、外部 IDE 与绕过提交路径的写入明确排除。跨进程身份由可信 spawn 连接与真实 Agent/Session 对象绑定，不依赖消息字段；产品建立可靠的连接/session 绑定并保真传递有效 policy，但不声称抵御同用户恶意进程或恶意宿主插件。
 
 ## 边界与失败语义
 
@@ -344,8 +344,8 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **后续接入的 fail-closed 要求**：资源别名无法安全归一、可信执行上下文缺失或 manager 断连时拒绝写入，不做本地无锁后备。资源身份从真实文件系统解析既有节点的 native 规范身份（不折叠词法 `..`、不做大小写/Unicode 归一），但**不判定缺失名称的等价性**——不预创建占位文件、不猜测别名；store 只写自己的 `snapshot.json`，release 也不等于验证通过。
 - **宿主父子 Stop 与编辑锁命令不同**：每个会话有各自的锁状态；宿主对 active 父会话的用户 Stop 会传播取消给子代理（父 turn 为 aborted/user、子 turn 为 aborted/parent），双方已调用的文件提交仍按上述边界等待结算。`/edit-lock stop` 只撤销所选会话的编辑权限，不宣称取消整个委派树。
 - **shell 与外部写入不在保护范围**：`printf > file`、`echo x >> file` 这类 shell 命令与任何外部编辑器的写入完全绕过锁，不受占用判断影响；不承诺覆盖任意磁盘写入面（bash、PTC、外部编辑器与任意 filesystem API 都在保证之外），也不承诺分布式多机共识。
-- **失效锁清扫的保守边界**：清扫只认 `lstat` 的 `ENOENT`——目标被移动不会被追踪（新位置的文件与原锁无关，原锁留在原地等保留到期、转交或人工解锁）；dangling symlink、`EACCES`/`ENOTDIR` 等错误一律跳过而非当作缺失。清扫是**尽力而为的维护**，不是释放保证：观察与执行之间归属发生任何变化（resume、confirm、generation 前进、撤权）、目标在执行点重新出现、或未决发布围栏保护，该行一律跳过且不报错；持久化/poison/意外失败计入 `failed` 并逐条留有界日志（fail-closed：未持久化任何东西，poison 后 manager 拒绝后续一切操作），残留锁永远可以 `/edit-lock unlock <resourceId> <generation>` 人工清理。清扫不结清 unknown 发布围栏（仍需 ADMIN OVERRIDE），不改恢复、保留与回合末收尾语义，也不清理 `.orrery/` 之外的任何文件。
-- **崩溃自愈的保守边界**：预约回收只信「租约超时＋死亡证明」双条件，仅超时或 owner 死活不明一律照旧成为客户端；死进程 unknown 的自动结清只发生在 publisher 进程恢复打开时、且要求该 owner 全部未决 unknown 的 origin incarnation 都有死亡证明——混合身份（部分 null/部分死亡）的 owner 不部分结清。自动结清不修改目标文件、不重放发布、不改写 unknown 结论；备份是证据，不是存在迟到写者时可安全回滚的承诺。pid 复用＋启动身份同时失效的理论窗口由双因素身份与串行化复读对冲，无法结构性消除（见「预约租约与死证回收」）。`git clean -fdx` 或手动删除 `.orrery/` 同样会丢失 v6 注册表与台账。
+- **失效锁清扫的保守边界**：清扫只认 `lstat` 的 `ENOENT`——目标被移动不会被追踪（新位置的文件与原锁无关，原锁留在原地等保留到期、转交或人工解锁）；dangling symlink、`EACCES`/`ENOTDIR` 等错误一律跳过而非当作缺失。清扫是**尽力而为的维护**，不是释放保证：观察与执行之间归属发生任何变化（resume、confirm、generation 前进、撤权）、目标在执行点重新出现、或未决发布围栏保护，该行一律跳过且不报错；持久化/poison/意外失败计入 `failed` 并逐条留有界日志（fail-closed：未持久化任何东西，poison 后 manager 拒绝后续一切操作），残留锁永远可以 `/edit-lock unlock <resourceId> <generation>` 人工清理。清扫不结清 unknown 发布围栏（仍需 ADMIN OVERRIDE），不改恢复、保留与回合末收尾语义，也不清理 `.weir/` 之外的任何文件。
+- **崩溃自愈的保守边界**：预约回收只信「租约超时＋死亡证明」双条件，仅超时或 owner 死活不明一律照旧成为客户端；死进程 unknown 的自动结清只发生在 publisher 进程恢复打开时、且要求该 owner 全部未决 unknown 的 origin incarnation 都有死亡证明——混合身份（部分 null/部分死亡）的 owner 不部分结清。自动结清不修改目标文件、不重放发布、不改写 unknown 结论；备份是证据，不是存在迟到写者时可安全回滚的承诺。pid 复用＋启动身份同时失效的理论窗口由双因素身份与串行化复读对冲，无法结构性消除（见「预约租约与死证回收」）。`git clean -fdx` 或手动删除 `.weir/` 同样会丢失 v6 注册表与台账。
 - **保留设置冲突只影响保留**：保留了互相矛盾的保留设置（例如单次上限低于默认时长）时，只有保留申请按设置键名报错；回合末收尾、状态、释放、停止和解锁继续工作，保留相关字段改用内置默认值，提醒次数与兜底处置仍按保存值生效。一个设置错误不会让文件无法释放。
 - **未承诺的时点保证**：观察是一串同步 filesystem 调用，**不是原子快照**；外部 shell/IDE 在调用之间改变盘面不在保证内，dev/ino 连续性无法证明不存在 inode reuse 或「改后复原」（ABA）。调用方必须先自行协调变更顺序（manager 生命周期/发布协调）。
 - **明确不承诺**：不承诺跨文件回滚（已发布的字节不会因取消自动撤销）；跨文件批量失败只区分 written / not-written / uncertain，不宣称回滚。
@@ -364,14 +364,14 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 | 层 | 命令 | 结果 |
 |---|---|---|
-| 静态检查 | `pnpm --filter orrery-harness run check` | 0 错误 |
-| 产品单测 | `pnpm --filter orrery-harness test` | 1189/1189，0 fail、0 skip（151 suites） |
-| 装置单测 | `pnpm --filter orrery-test-harness test` | 99/99 |
-| headless 集成 | `pnpm --filter orrery-test-harness run test:integration`（`ORRERY_IT_DSH_EXEC` = 安装版 CLI） | 95/95，其中 `editlock` 场景 11/11 |
-| 安装版单进程探针 | `.orrery/edit-lock-verification/composition-native.mjs` | 28/28 |
-| 安装版双进程探针 | `.orrery/edit-lock-verification/cross-native.mjs` | publisher 8/8，client 15/15 |
+| 静态检查 | `pnpm --filter weir-harness run check` | 0 错误 |
+| 产品单测 | `pnpm --filter weir-harness test` | 1189/1189，0 fail、0 skip（151 suites） |
+| 装置单测 | `pnpm --filter weir-test-harness test` | 99/99 |
+| headless 集成 | `pnpm --filter weir-test-harness run test:integration`（`WEIR_IT_DSH_EXEC` = 安装版 CLI） | 95/95，其中 `editlock` 场景 11/11 |
+| 安装版单进程探针 | `.weir/edit-lock-verification/composition-native.mjs` | 28/28 |
+| 安装版双进程探针 | `.weir/edit-lock-verification/cross-native.mjs` | publisher 8/8，client 15/15 |
 
-集成与探针都跑在安装版 DSH `0.2.0-rc.2` 上（Electron 44 / Node 24.21.0）。两个探针从 `app.asar` 解析 DSH 模块，必须在安装版运行时下执行（裸 Node 解析不了 asar）；表里的数字取自当轮记录在 `.orrery/edit-lock-verification/composition-G6CVQB/`（checks.json 28/28）与 `cross-AfjOl6/`（publisher-checks.json 8/8、client-checks.json 15/15）的产物。探针脚本与产物都是本地过程材料，不入库。
+集成与探针都跑在安装版 DSH `0.2.0-rc.2` 上（Electron 44 / Node 24.21.0）。两个探针从 `app.asar` 解析 DSH 模块，必须在安装版运行时下执行（裸 Node 解析不了 asar）；表里的数字取自当轮记录在 `.weir/edit-lock-verification/composition-G6CVQB/`（checks.json 28/28）与 `cross-AfjOl6/`（publisher-checks.json 8/8、client-checks.json 15/15）的产物。探针脚本与产物都是本地过程材料，不入库。
 
 ### 单元测试要点
 
@@ -381,18 +381,18 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **管理与组合**：`test/edit-lock-manager.test.js`（持久后安装、取消 overlay 与持久 ack、pending 注册的取消、竞争冲突不毒化、未决围栏）、`test/edit-lock-composition.test.js`（服务与工具面、受控 write 与 hash_edit 链路、view 端点、人工 `release` 命令）、`test/edit-lock-lifecycle.test.js`、`test/edit-lock-host.test.js`、`test/edit-lock-write.test.js`、`test/edit-lock-tool-scope.test.js`、`test/edit-lock-publication.test.js`、`test/edit-lock-reservation.test.js`、`test/edit-lock-peer*.test.js`、`test/edit-lock-remote-service.test.js`、`test/edit-lock-request-*.test.js`、`test/edit-lock-call-context.test.js`。
 - **消息驱动的自动恢复**：`test/edit-lock-auto-resume.test.js`（真实用户消息置旗并在下一回合 resume + confirm-all、注入消息不置旗、开关关闭不恢复、revoked 终态跳过、零锁会话恢复、与手动 Continue 竞争幂等）；集成场景 `editlock-auto-resume`（停止后仅发消息即恢复 read → write → release，快照携带 `auto:user-message:<uuid>` requestId）与 `editlock-auto-resume-off`（开关关闭时同一写入被拒、会话保持 stopped），两者各用私有 authority 目录与目标文件。
 - **冷会话状态视图**：`test/edit-lock-view.test.js`（`buildColdView`：interrupted→stopped＋cold 标记、撤权→revoked 终态优先、全域锁列出、保留按读时结算（holding/过期/无锁行不算）、镜像不认识的会话→idle、auto-resume 开关随视图）；`test/edit-lock-composition.test.js`（端点冷读：冷会话→真实 stopped 视图且镜像字节前后一致＋观察租约逐次释放、冷撤权会话→revoked 终态、无法冷观察/无权威/镜像损坏→带明确 reason 的 unavailable、存活 agent 路径不受回退链影响）；`test/client-edit-lock-panel.test.js`（cold stopped 无主动作/无行动作/无收回按钮＋按 auto-resume 开关的激活指引、cold 其它状态同样零按钮零指引）。headless 集成场景 `editlock-cold-view`（18 项：seed boot 留 interrupted＋保留锁；cold-read boot（该会话在进程内无存活 agent，经捕获连接的探针直接调端点）首读即真实 stopped 视图（cold 标记、retained 锁、autoResume）、非「启动中」，冷读前后该会话镜像行逐字节不变；resume boot 一条真实用户消息即自动恢复，read → write → release 成功、`auto:user-message:` requestId 与新 epoch 落镜像），replay fixture 已入库。
-- **失效锁静默清扫**：`test/edit-lock-stale-sweep.test.js`（23 项，五镜：`isMissingTarget` 真实 fs 判定——既有文件/dangling symlink/ENOTDIR 一律跳过、仅 ENOENT 为候选；`createStaleSweepScheduler` 注入时钟/定时器的单飞+60s 冷却+dispose 取消+失败告警仍冷却+冷却过期条目回收与 close() 清空；`manager.releaseStale` 真实 store——resume/confirm 后同 generation 按 epoch/status 谓词跳过且 revision 不变、release 后重获取 generation 递增跳过、执行点目标重建跳过、retention holding 锁缺失目标释放且 owner 最后一把锁消失后 holds 行归零、未决 update 围栏内归属按既有 release-mode 准入拒放（静默跳过且 `failed` 为空）而无关失效锁照放、同一观察行重放幂等跳过、持久化失败计入 `failed` 而非 skip 且 poison 后 fail-closed；组合层——真实用户消息触发 dead session 缺失目标锁的静默释放+publisher 审计 cordis/JSONL 双写+对话零注入、注入消息不触发、开关关闭不调度、冷却窗内第二条消息不调度、agent dispose 与插件卸载取消未派发、域打开兑现回调内 dispose 重检（手动定时器确定性复现竞态）；跨进程——客户端域转发 `staleSweep` 通道调用、publisher peer 以通道会话为触发转发 lifecycle；lifecycle 聚合——本地与彷 peer 并发触发共享单次扫描、冷却窗内返回 `coalesced: 'cooldown'` 不再扫描、每个失败恰好一条有界警告且跳过静默）。headless 集成场景 `editlock-stale-sweep`（消亡会话残留缺失目标锁，另一会话的真实用户消息后锁被静默释放、generation 墓碑保留、对话无注入、`stale-sweep` 审计 cordis 与 `<根>/.orrery/audit.jsonl` 双落盘）与 `editlock-stale-sweep-off`（开关关闭时同一消息不清扫、无审计、锁保留），各用私有 authority 目录与目标文件，replay fixture 已入库。
+- **失效锁静默清扫**：`test/edit-lock-stale-sweep.test.js`（23 项，五镜：`isMissingTarget` 真实 fs 判定——既有文件/dangling symlink/ENOTDIR 一律跳过、仅 ENOENT 为候选；`createStaleSweepScheduler` 注入时钟/定时器的单飞+60s 冷却+dispose 取消+失败告警仍冷却+冷却过期条目回收与 close() 清空；`manager.releaseStale` 真实 store——resume/confirm 后同 generation 按 epoch/status 谓词跳过且 revision 不变、release 后重获取 generation 递增跳过、执行点目标重建跳过、retention holding 锁缺失目标释放且 owner 最后一把锁消失后 holds 行归零、未决 update 围栏内归属按既有 release-mode 准入拒放（静默跳过且 `failed` 为空）而无关失效锁照放、同一观察行重放幂等跳过、持久化失败计入 `failed` 而非 skip 且 poison 后 fail-closed；组合层——真实用户消息触发 dead session 缺失目标锁的静默释放+publisher 审计 cordis/JSONL 双写+对话零注入、注入消息不触发、开关关闭不调度、冷却窗内第二条消息不调度、agent dispose 与插件卸载取消未派发、域打开兑现回调内 dispose 重检（手动定时器确定性复现竞态）；跨进程——客户端域转发 `staleSweep` 通道调用、publisher peer 以通道会话为触发转发 lifecycle；lifecycle 聚合——本地与彷 peer 并发触发共享单次扫描、冷却窗内返回 `coalesced: 'cooldown'` 不再扫描、每个失败恰好一条有界警告且跳过静默）。headless 集成场景 `editlock-stale-sweep`（消亡会话残留缺失目标锁，另一会话的真实用户消息后锁被静默释放、generation 墓碑保留、对话无注入、`stale-sweep` 审计 cordis 与 `<根>/.weir/audit.jsonl` 双落盘）与 `editlock-stale-sweep-off`（开关关闭时同一消息不清扫、无审计、锁保留），各用私有 authority 目录与目标文件，replay fixture 已入库。
 - **预约回收与崩溃自愈**：`test/edit-lock-reservation.test.js`（P1：owner doc 写/读/损坏/未知版本、死证成立与不成立、pid 复用 ABA、回收竞态与串行化复读、`releaseAfterQuiescence` 回归）；`test/edit-lock-incarnations.test.js`（14 项：引用收集与 null 种子、注册表不可变、v4/v5→v6 首次写入无损升级、注册表校验（形状/唯一/身份字段/覆盖）、v6 镜像拒绝篡改与缺注册表、v7 拒绝）；`test/edit-lock-auto-recovery.test.js`（8 项：死进程 unknown 在恢复提交内结清（台账/放锁/撤权/准入各断言）、多 owner 一次提交、二次恢复不重复、判活/判不明/同进程重挂载/null 身份/混合身份均不结清、备份即前像字节）；`test/edit-lock-recovery-notice.test.js`（组合级：真实插件挂载覆盖崩溃 authority——域打开一条 `automatic-recovery` 审计、首个回合恰好一条汇总通知且同域第二个 agent 不重复、准入恢复、重挂载终态不复发）。headless 集成场景 `editlock-crash-recovery`（13 项：真实 SIGKILL 子进程在 publish 钩子内死亡留下 publishing 记录、半成品文件与短租约泄漏预约；整体重启后预约经死证规则回收、恢复提交内自动结清、受控 create 重新准入、unknown 结论与历史保留、v6 注册表携带各 incarnation 的 pid、备份落盘、审计与汇总通知各一、退出后预约释放），replay fixture 已入库。
 - **独立维护**：`test/edit-lock-maintenance.test.js` 覆盖四态/未知、损坏拒绝、字节不变、服务端根、设置审计与生命周期；`test/edit-lock-maintenance-safety.test.js` 覆盖父目录/authority/快照符号链接、多挂载顺序、旧回调、安装失败、设置重挂载及超限快照；客户端维护/设置用例验证警示与后代错误隔离（包括成功但畸形的响应）。fixture 注入受 ceiling 限制的根发现/Git 排除适配器及 lane 内短 socket 地址，不改变生产默认路径。Git ceiling 与文件系统祖先扫描分别约束，不能互相替代。
-- **静态与客户端构建**：checkJs 包含 maintenance、snapshot、settings adapter 及维护客户端；宿主边界使用本地声明。`pnpm --filter orrery-harness run build` 校验全部手写 ModuleLoader chunk 的语法，以精确字节 SHA-256 生成入口 manifest 并最后写入口；测试校验清单与 chunk 集合/摘要一致，不接受仅 touch 时间戳作为构建。
+- **静态与客户端构建**：checkJs 包含 maintenance、snapshot、settings adapter 及维护客户端；宿主边界使用本地声明。`pnpm --filter weir-harness run build` 校验全部手写 ModuleLoader chunk 的语法，以精确字节 SHA-256 生成入口 manifest 并最后写入口；测试校验清单与 chunk 集合/摘要一致，不接受仅 touch 时间戳作为构建。
 
 ### 独立维护批次验收（2026-10-04）
 
 本节仅对应独立维护面板与相关测试隔离批次，不替代上文历史发布记录，也不表示父级 OpenSpec 全部完成：**本批次没有交付历史恢复、provider receipt 或默认发布 adapter**，未修改父级 OpenSpec tasks。
 
-- **最终静态与单测**：`pnpm --filter orrery-harness run build` 验证 17 个客户端 chunk 并生成精确字节 manifest；checkJs 0 错误；产品单测 **1556/1556**，装置单测 **118/118**，均 0 fail、0 skip、exit 0。运行前清除继承的 `GIT_*`，以 lane 内 `.orrery/maintenance-qa/final-tmp` 为 `TMPDIR` 和 Git ceiling，禁用全局/系统 Git 配置；根发现与 socket 使用上述 fixture 适配器。日志为本地 `.orrery/maintenance-qa/final-{build,check,product,harness}.log`，不入库。
+- **最终静态与单测**：`pnpm --filter weir-harness run build` 验证 17 个客户端 chunk 并生成精确字节 manifest；checkJs 0 错误；产品单测 **1556/1556**，装置单测 **118/118**，均 0 fail、0 skip、exit 0。运行前清除继承的 `GIT_*`，以 lane 内 `.weir/maintenance-qa/final-tmp` 为 `TMPDIR` 和 Git ceiling，禁用全局/系统 Git 配置；根发现与 socket 使用上述 fixture 适配器。日志为本地 `.weir/maintenance-qa/final-{build,check,product,harness}.log`，不入库。
 - **安装版全量集成**：协调者在新建可丢弃隔离根执行，**165/165，exit 0**（只读核验 `/tmp/oq-fpE0BU/integration.log`）；未使用 driver 默认根。此后仅更正证据文档，未改变 runtime 代码，既有集成证据继续适用于本批次。
-- **真实 GUI**：隔离安装版 GUI 共 **16/16 PASS**，19 张截图；覆盖停用、保存启用后等待重启、刷新/重开、检查、loading、注入 unknown、网络失败/重试，以及畸形成功响应的后代错误隔离。QA 无产品代码改动。报告与截图保存在本地 `.orrery/maintenance-qa/qa-report.md` 与 `shots/`，不入库。
+- **真实 GUI**：隔离安装版 GUI 共 **16/16 PASS**，19 张截图；覆盖停用、保存启用后等待重启、刷新/重开、检查、loading、注入 unknown、网络失败/重试，以及畸形成功响应的后代错误隔离。QA 无产品代码改动。报告与截图保存在本地 `.weir/maintenance-qa/qa-report.md` 与 `shots/`，不入库。
 - **明确未覆盖**：blocked 行及自然安装失败/缺失挂载证据的服务端状态仅有单测；unknown 的浏览器呈现使用注入载荷，不冒充自然失败。恶意同用户进程的路径 ABA 不在威胁模型内；本轮不声称默认发布 adapter 或历史恢复验收。
 - **独立评审**：协调者报告最终 advisor 无阻塞发现；这不是父级更大恢复计划的完成声明。
 
@@ -405,7 +405,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### 更早的组件级证据
 
-开发期还留下了若干**组件级**证据（`.orrery/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
+开发期还留下了若干**组件级**证据（`.weir/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
 
 ### 未覆盖的验证
 

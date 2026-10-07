@@ -1,19 +1,19 @@
-# AGENTS.md — Orrery 项目开发宪章
+# AGENTS.md — Weir 项目开发宪章
 
-> 本文件是 Orrery 仓库的唯一权威纪律来源：开发纪律、环境上下文、版本控制纪律、文档规范、测试流程。
+> 本文件是 Weir 仓库的唯一权威纪律来源：开发纪律、环境上下文、版本控制纪律、文档规范、测试流程。
 > 任何在本仓库工作的 Agent 或开发者，动手前必须先读完本文件。
 > 本文件自身随纪律演进同步修订（修订走正常 feat/docs 提交）。
 
 ## 1. 项目速览
 
-- **产品**：Orrery —— 以 Orchestrator（总指挥）为中心的 DeepSeek Harness（DSH）agent 预设，以 bundle 包 `plugins/orrery-harness/`（包名 `orrery-harness`）交付，声明预设 `orrery`（GUI 显示名 "Orrery"）。
+- **产品**：Weir —— 以 Orchestrator（总指挥）为中心的 DeepSeek Harness（DSH）agent 预设，以 bundle 包 `plugins/weir-harness/`（包名 `weir-harness`）交付，声明预设 `weir`（GUI 显示名 "Weir"）。
 - **当前版本**：见 [CHANGELOG.md](CHANGELOG.md)（语义化版本，tag 与 CHANGELOG 严格对应）。
 - **仓库布局**：
 
 ```
 plugins/
-├── orrery-harness/         # 正式 bundle：预设声明 + 特性模块 + 技能（唯一产品代码）
-└── orrery-test-harness/    # 开发专用集成测试装置（mock LLM + headless profile），严禁入正式 profile
+├── weir-harness/         # 正式 bundle：预设声明 + 特性模块 + 技能（唯一产品代码）
+└── weir-test-harness/    # 开发专用集成测试装置（mock LLM + headless profile），严禁入正式 profile
 docs/
 └── features/               # 特性细节文档（入库，产品级）
 AGENTS.md                   # 本文件（入库）
@@ -40,10 +40,10 @@ CHANGELOG.md                # 更新日志（入库）
 3. **realm 纪律**：凡 `inject` 的服务在某 `cordis:group` 被 `isolate`，本插件行必须与提供者同组（S11 事故）；host-plane 服务（tools/subagents/skills/jobs/llm/tokenMeter/systemPrompt/sessionProjections/fs 等）不受隔离影响。
 4. **消息纪律**：`steer`/`followup`/`inject` 入参必须是完整 UserMessage 对象（共享助手 `src/shared/user-message.js`）；`session/event` 监听器内禁止同步 followup（session.append 重入拒绝）；续推走 `agent/turn-stopping` 的 steer 或 timer 延迟 followup。
 5. **状态分类**：续推/重试的分类只依据 `turn/end` 的 `reason`（`completed` / `aborted{kind:'user'}` / `error{LlmFailure}`），禁止猜测其他启发式。
-6. **会话日志纪律（冷读红线）**：严禁 `session.append` 自定义事件类型——本运行时的持久化在冷读（重启恢复/子代理 cold-resume）时拒绝解释含未知且未标 `ignorable` 类型的日志，而 `append` 无 ignorable 通道，写入即埋雷。审计一律走 `src/shared/audit.js`（cordis emit + `.orrery/audit.jsonl` 双写）。
+6. **会话日志纪律（冷读红线）**：严禁 `session.append` 自定义事件类型——本运行时的持久化在冷读（重启恢复/子代理 cold-resume）时拒绝解释含未知且未标 `ignorable` 类型的日志，而 `append` 无 ignorable 通道，写入即埋雷。审计一律走 `src/shared/audit.js`（cordis emit + `.weir/audit.jsonl` 双写）。
 7. **文本纪律**：模板层（提示词/通知/工具描述/技能正文/注入模板）一律英文；实例内容（标签、摘要、todo 文本等）跟随会话语言。文档层（README/docs/CHANGELOG/AGENTS.md）以中文为主、技术标识符保留英文。
 8. **依赖纪律**：bundle 保持 `private: true`、无 `dependencies`/`peerDependencies` 的官方模板风格（避免 pnpm auto-install-peers 去 registry 拉不存在的 `@deepseek-ai/dsh`）；确需引入真实 npm 依赖时须先 spike 验证 link 安装下的解析，并在变更提案中声明。**已登记例外**：settings schema 依赖 `schemastery`/`cosmokit` 以 DSH fork 形式 vendored 于 `src/vendor/`（上游无 volatile 机制，S16；见 THIRD-PARTY.md），不新增 npm 依赖。
-9. **测试装置隔离**：`orrery-test-harness` 仅用于开发，严禁安装进任何正式 profile。
+9. **测试装置隔离**：`weir-test-harness` 仅用于开发，严禁安装进任何正式 profile。
 10. **多 Agent 协作**：一切多 Agent 能力自研实现，**不依赖** DSH 官方 experimental Agent Team 插件。
 11. **车道纪律**：行为变更的实施阶段走 worktree lane 落地；开车道时 `scope` 取最小写面（只含本变更要改的路径，`AGENTS.md`/`CHANGELOG.md` 由主会话统一同步、不进 lane scope）；注意活跃 lane 上限（默认 4，满槽报 `MAX_ACTIVE`）。细节见 [Worktree 车道特性文档](docs/features/git-worktree.md)。**lane scope 必须包含本变更新增组合行时的生产 `cordis.patch.yml`**——测试装置镜像的挂载会掩盖生产缺挂（黑板 remote 404 事故：镜像有行、生产无行，集成测试全绿但面板 404）。
 
@@ -87,10 +87,10 @@ CHANGELOG.md                # 更新日志（入库）
 
 | 层 | 命令 | 期望 | 何时跑 |
 |---|---|---|---|
-| 静态检查 | `pnpm --filter orrery-harness run check` | tsc checkJs 零错误 | 改 `src/**` 后 |
-| 单元测试 | `pnpm --filter orrery-harness test` | 全部通过（node:test + 自研 expect 门面） | 改 `src/**`、`test/**` 后；每次提交前 |
-| 集成测试 | `pnpm --filter orrery-test-harness run test:integration` | 全部通过（写入 `ORRERY_IT_ROOT`，默认 `<仓库根>/.orrery/it-root`，lane 内自动解析为 lane 内路径；headless launcher 失效时用 `ORRERY_IT_DSH_EXEC` 走安装版 CLI） | 改预设组合、工具表面、续推/压缩/委派行为后；打版前必跑 |
-| 装置单测 | `pnpm --filter orrery-test-harness test` | 全部通过（`src/shell.js` 的平台 shell 契约） | 改 `plugins/orrery-test-harness/**` 后 |
+| 静态检查 | `pnpm --filter weir-harness run check` | tsc checkJs 零错误 | 改 `src/**` 后 |
+| 单元测试 | `pnpm --filter weir-harness test` | 全部通过（node:test + 自研 expect 门面） | 改 `src/**`、`test/**` 后；每次提交前 |
+| 集成测试 | `pnpm --filter weir-test-harness run test:integration` | 全部通过（写入 `WEIR_IT_ROOT`，默认 `<仓库根>/.weir/it-root`，lane 内自动解析为 lane 内路径；headless launcher 失效时用 `WEIR_IT_DSH_EXEC` 走安装版 CLI） | 改预设组合、工具表面、续推/压缩/委派行为后；打版前必跑 |
+| 装置单测 | `pnpm --filter weir-test-harness test` | 全部通过（`src/shell.js` 的平台 shell 契约） | 改 `plugins/weir-test-harness/**` 后 |
 
 纪律：
 1. **不要安装 vitest**——捆绑 Node 因 TeamID 签名无法 dlopen 原生插件；单测只用 node:test。
@@ -116,13 +116,13 @@ CHANGELOG.md                # 更新日志（入库）
 #   load_workspace_dependencies → 取 node/pnpm 绝对路径
 
 # 日常
-pnpm --filter orrery-harness run check     # 静态检查
-pnpm --filter orrery-harness test          # 单元测试
-pnpm --filter orrery-test-harness run test:integration   # 集成测试
+pnpm --filter weir-harness run check     # 静态检查
+pnpm --filter weir-harness test          # 单元测试
+pnpm --filter weir-test-harness run test:integration   # 集成测试
 
 # 长跑测试：逐套件分开跑，输出落盘再 tail（勿把串行测试链塞进单个后台 job）
 #   node --test --test-reporter=spec "test/**/*.test.js" > /tmp/unit.log 2>&1 && tail -5 /tmp/unit.log
 
 # bundle 重应用（Harness 会话内）
-#   plugin_manager: set_bundle(orrery-harness, off) → set_bundle(orrery-harness, on)
+#   plugin_manager: set_bundle(weir-harness, off) → set_bundle(weir-harness, on)
 ```

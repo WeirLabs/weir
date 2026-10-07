@@ -1,0 +1,4 @@
+{"time":1791395175006,"session":"session-f16bafec-e771-4645-afc9-b62ef8c7cb71","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791395175692,"session":"session-97b53eb4-9320-4abf-a1a6-819516c89d5a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395175780,"session":"a1f9bb79-11cf-4536-8bd6-d21c0b96f7fa","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791395176407,"session":"session-b0d24330-869f-4d12-8219-5ed7f0bccbc0","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}

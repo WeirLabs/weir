@@ -9,21 +9,21 @@ openspec/
 docs/*
 !docs/features/
 
-# Harness runtime scratch (notepads, research notes written by orrery sessions)
-.orrery/
+# Harness runtime scratch (notepads, research notes written by weir sessions)
+.weir/
 # Authentic replay evidence only; other runtime state remains ignored.
 # One wildcard ruleset covers EVERY scenario fixture workspace (no per-fixture
-# stanzas): un-ignore ws/.orrery/ itself, re-ignore its contents, then un-ignore
+# stanzas): un-ignore ws/.weir/ itself, re-ignore its contents, then un-ignore
 # the trackable state-file kinds level by level. The kind enum maps 1:1 to
-# TRACKABLE_ORRERY_STATE_KINDS in
-# plugins/orrery-test-harness/test/fixture-selfcontainment.test.js — extend
+# TRACKABLE_WEIR_STATE_KINDS in
+# plugins/weir-test-harness/test/fixture-selfcontainment.test.js — extend
 # both sides together; the conformance suite fails while they diverge.
-!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/
-plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/*
-!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/audit.jsonl
-!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/worktrees/
-plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/worktrees/*
-!plugins/orrery-test-harness/test/fixtures/**/ws/.orrery/worktrees/lanes.json
+!plugins/weir-test-harness/test/fixtures/**/ws/.weir/
+plugins/weir-test-harness/test/fixtures/**/ws/.weir/*
+!plugins/weir-test-harness/test/fixtures/**/ws/.weir/audit.jsonl
+!plugins/weir-test-harness/test/fixtures/**/ws/.weir/worktrees/
+plugins/weir-test-harness/test/fixtures/**/ws/.weir/worktrees/*
+!plugins/weir-test-harness/test/fixtures/**/ws/.weir/worktrees/lanes.json
 
 # Handoff and install runbooks (local process material, distributed with the tree)
 handoff-*.md
@@ -42,8 +42,8 @@ plugins/*/lib/
 plugins/*/dist/
 # The bundle's client half is AUTHORED in the build-output format (no build
 # step — zero-dependency discipline); un-ignore that one directory's files.
-!plugins/orrery-harness/lib/
-!plugins/orrery-model-picker/lib/
+!plugins/weir-harness/lib/
+!plugins/weir-model-picker/lib/
 
 # Secrets & credentials (never committed)
 .env

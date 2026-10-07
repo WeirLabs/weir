@@ -102,5 +102,5 @@
 
 ## 测试
 
-- 单元测试：`plugins/orrery-harness/test/`——KV 存储与计数、仲裁状态机（申请/写入/释放/超时/一次性失效/订阅通知）、entryType 枚举 schema 校验（object-rooted 合规，严格供应商不拒绝）、summary 三要素校验。
-- 集成测试：`plugins/orrery-test-harness`——mock LLM 下「子 Agent 写板 → 父/兄弟 Agent list+read 复用」链路、双 Agent 竞争同键的仲裁与订阅通知、terminate 释放与 TTL 超时、晋升按钮注入 → 评估 → 裁决落盘全链路（随对应切片交付）。
+- 单元测试：`plugins/weir-harness/test/`——KV 存储与计数、仲裁状态机（申请/写入/释放/超时/一次性失效/订阅通知）、entryType 枚举 schema 校验（object-rooted 合规，严格供应商不拒绝）、summary 三要素校验。
+- 集成测试：`plugins/weir-test-harness`——mock LLM 下「子 Agent 写板 → 父/兄弟 Agent list+read 复用」链路、双 Agent 竞争同键的仲裁与订阅通知、terminate 释放与 TTL 超时、晋升按钮注入 → 评估 → 裁决落盘全链路（随对应切片交付）。

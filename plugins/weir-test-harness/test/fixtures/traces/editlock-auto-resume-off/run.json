@@ -1,0 +1,8 @@
+{
+  "scenario": "editlock-auto-resume-off",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "code": 0,
+  "stdout": "auto-resume-off stayed stopped\n",
+  "stderr": "\n",
+  "sessionId": "session-58121d59-6749-4d4f-8824-672590c6f615"
+}

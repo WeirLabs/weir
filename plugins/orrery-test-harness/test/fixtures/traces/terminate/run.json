@@ -1,8 +1,0 @@
-{
-  "scenario": "terminate",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
-  "code": 0,
-  "stdout": "parent observed the settle signal after termination\n",
-  "stderr": "",
-  "sessionId": null
-}

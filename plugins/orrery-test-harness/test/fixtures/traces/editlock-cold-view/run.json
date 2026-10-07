@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-cold-view",
-  "home": "/Users/young/Documents/Orrery/.orrery/worktrees/blackboard-ux-fixes-101/.orrery/it-root/home",
-  "code": 0,
-  "stdout": "cold view resume editing restored\n",
-  "stderr": "\n\n",
-  "sessionId": "session-c95f18c5-a616-431b-b62b-3f82955e147c"
-}
