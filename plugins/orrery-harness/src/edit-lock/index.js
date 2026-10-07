@@ -17,6 +17,7 @@ import { openReservedEditLockRuntime } from './reserved-runtime.js'
 import { reservationPathFor } from './reservation.js'
 import { createEditLockLifecycle } from './lifecycle.js'
 import { installEditLockWriteScope } from './tool-scope.js'
+import { disposeWriteScope, writeScopesFor } from './write-scopes.js'
 import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { isGenuineUserMessage } from '../shared/runtime-messages.js'
@@ -334,6 +335,15 @@ return (ctx, config = {}) => {
   // claimed execute function is what actually runs, so it is the identity.
   /** @type {WeakSet<Function>} */
   const managed = new WeakSet()
+  /** Managed write registrations outlive this mount: the tool is installed
+   * into the agent's OWN scope layer, which a preset rebind never disposes.
+   * Their disposers live in a host-lifetime store so any later generation can
+   * retire the stale layer before re-installing (design D3); entries are
+   * released at agent/disposed. Unmount deliberately leaves them in place —
+   * tearing the managed write down mid-gap would expose the stock writers
+   * until the next mount's per-agent re-install.
+   * @type {WeakMap<object, import('./write-scopes.js').WriteScopeEntry>} */
+  const writeScopes = writeScopesFor(ctx.root ?? ctx)
   let closed = false
   /** Remote channel agents on the publisher side → their notice sink.
    * @type {WeakMap<object, (event: unknown) => void>} */
@@ -342,6 +352,10 @@ return (ctx, config = {}) => {
   const startFailures = new WeakMap()
   /** Settled domain per bound agent, for synchronous gates. @type {WeakMap<object, any>} */
   const settled = new WeakMap()
+  /** In-flight setup per agent, shared by every entry point (creation,
+   * preset-switch, catch-up, lazy re-bind) so concurrent callers can never
+   * double-register. @type {WeakMap<object, Promise<void>>} */
+  const setupInFlight = new WeakMap()
   /** `wake` is used only for an ownership request addressed to an idle holder:
    * inject alone would sit unread until the holder's next user message, which is
    * how a request expired unanswered. Interrupted holders are never woken.
@@ -436,6 +450,21 @@ return (ctx, config = {}) => {
   }, resolveRoot)
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
+  /** Lazy re-bind (design D2): an own-preset main agent with no binding —
+   * orphaned by a preset switch in the blank window — gets ONE idempotent
+   * re-setup through the standard path before the call is refused. A recorded
+   * failure suppresses retries for the rest of this mount generation, and
+   * foreign-preset agents are never tried (the own-preset fence is unchanged).
+   * `ownAgent`/`setupAgent` are declared below and only dereferenced when a
+   * call actually arrives. @param {any} agent */
+  async function domainFor(agent) {
+    if (!registry.rootOf(agent) && !closed && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) await setupAgent(agent)
+    if (registry.rootOf(agent)) return registry.forAgent(agent)
+    const failure = startFailures.get(agent)
+    if (failure) throw new Error(`this session has no Edit Lock domain: setup failed under the current preset generation (${failure}); the automatic re-bind was already attempted. Recovery: restart DeepSeek Harness or start a new conversation.`)
+    // No fence match (foreign preset) or unmount: keep the stock refusal.
+    return registry.forAgent(agent)
+  }
 
   /** The holder's structured reply tool. It is registered on the first request
    * and retired at a turn boundary once no request is pending: unregistering it
@@ -460,7 +489,7 @@ return (ctx, config = {}) => {
     registered.dispose()
   }
   /** @param {string} method */
-  const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainOf(exec.agent)).service)[method](exec, request)
+  const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainFor(exec.agent)).service)[method](exec, request)
   const recovery = createRecoveryDriver({
     domainFor: agent => settled.get(agent),
     followup: (agent, text) => /** @type {any} */ (agent).followup(userTextMessage(text, 'orrery-edit-lock-recovery')),
@@ -535,7 +564,7 @@ return (ctx, config = {}) => {
     acquire: route('acquire'),
     release: route('release'),
     /** @param {any} exec */
-    async locks(exec) { return (await domainOf(exec.agent)).service.locks(exec) },
+    async locks(exec) { return (await domainFor(exec.agent)).service.locks(exec) },
     trySteal: route('trySteal'),
     reply: route('reply'),
     /** @param {any} exec @param {number} minutes */
@@ -546,7 +575,7 @@ return (ctx, config = {}) => {
     async hold(exec, ms) {
       const policy = strictLimits()
       if (ms === undefined) ms = Math.round(policy.holdDefaultMinutes * 60_000)
-      const result = await (await domainOf(exec.agent)).hold(exec.agent, ms, {
+      const result = await (await domainFor(exec.agent)).hold(exec.agent, ms, {
         singleMaxMs: policy.holdSingleMaxMinutes * 60_000,
         cumulativeMaxMs: policy.holdCumulativeMaxMinutes * 60_000,
       })
@@ -558,7 +587,7 @@ return (ctx, config = {}) => {
      * per-agent binding, so a read-only observation works from any tool context.
      * @param {any} exec */
     async retention(exec) {
-      const domain = await domainOf(exec.agent)
+      const domain = await domainFor(exec.agent)
       return domain.retention(exec.agent)
     },
     /** Mount-time handshake from a managed editor. @param {object} definition */
@@ -574,7 +603,7 @@ return (ctx, config = {}) => {
     },
     /** Trusted UI observation for one agent; grants nothing. @param {any} agent */
     async describe(agent) {
-      const domain = await domainOf(agent)
+      const domain = await domainFor(agent)
       return { root: registry.rootOf(agent), mode: domain.mode, status: await domain.status(agent), locks: await domain.locks(agent), recovery: recovery.state(agent) }
     },
   })
@@ -582,22 +611,44 @@ return (ctx, config = {}) => {
 
   const offTools = registerLockTools(ctx, service)
 
-  ctx.on('tools/pre-execute', (/** @type {any} */ exec, /** @type {() => Promise<any>} */ next) => {
+  ctx.on('tools/pre-execute', async (/** @type {any} */ exec, /** @type {() => Promise<any>} */ next) => {
     if (!GUARDED_TOOLS.includes(exec?.name)) return next()
-    const definition = ctx.tools.get(exec.name, exec.agent)
-    if (typeof definition?.execute === 'function' && managed.has(definition.execute)) return next()
-    return Promise.resolve({ kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` })
+    const admitted = () => {
+      const definition = ctx.tools.get(exec.name, exec.agent)
+      return typeof definition?.execute === 'function' && managed.has(definition.execute)
+    }
+    if (admitted()) return next()
+    // Lazy re-bind fallback (design D2): an own-preset agent whose binding was
+    // orphaned by a blank-window preset switch gets ONE idempotent re-setup
+    // before denial. A recorded failure suppresses further retries for the
+    // rest of this mount generation; foreign agents are never tried.
+    const agent = exec?.agent
+    if (!closed && agent && !registry.rootOf(agent) && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) {
+      await setupAgent(agent)
+      if (admitted()) return next()
+    }
+    const failure = /** @type {any} */ (agent) ? startFailures.get(agent) : undefined
+    if (failure) return { kind: 'deny', reason: `${exec.name} refused: this session has no Edit Lock domain under the current preset generation (setup failed: ${failure}); an automatic re-bind was attempted and did not recover it. Recovery: restart DeepSeek Harness or start a new conversation.` }
+    return { kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` }
   })
 
-  /** Per-agent Edit Lock setup, shared by the creation listener and the
-   * late-mount catch-up below so the two paths can never diverge. Idempotent:
+  /** Per-agent Edit Lock setup, shared by the creation listener, the
+   * preset-switch re-bind, the late-mount catch-up and the guard/acquire lazy
+   * re-bind, so the paths can never diverge. Idempotent per mount generation:
    * an agent whose root is already bound is left untouched — no second tool
-   * scope, no second bind, no second domain.start. @param {any} agent */
-  async function setupAgent(agent) {
+   * scope, no second bind, no second domain.start — and concurrent entrants
+   * share one in-flight setup so a second caller never double-registers.
+   * @param {any} agent */
+  async function setupAgentOnce(agent) {
     if (closed) return
     if (registry.rootOf(agent)) return
     try {
-      installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef)
+      // A previous generation's managed write survives in the agent's own
+      // scope layer (a preset rebind never disposes own-layer registrations);
+      // retire it first or the scope registry throws duplicate-registration
+      // and the re-bind dies here (design D3).
+      disposeWriteScope(writeScopes, agent)
+      writeScopes.set(agent, { owner: service, dispose: installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef) })
       registry.bind(agent, options.fixed?.root ?? agent?.session?.header?.cwd)
     } catch (error) {
       // The denial itself must never escape: restrict() throws on names the
@@ -607,8 +658,16 @@ return (ctx, config = {}) => {
       try {
         const known = GUARDED_TOOLS.filter(name => ctx.tools?.get?.(name, agent) !== undefined)
         if (known.length > 0) agent?.ctx?.tools?.restrict?.({ deny: [...known] })
-      } catch { /* the denial is best-effort; the warn below is the visible record */ }
-      ctx.logger?.warn?.(`edit lock scope failed; edit tools denied: ${/** @type {any} */ (error)?.message ?? error}`)
+      } catch { /* the denial is best-effort; the records below are the visible account */ }
+      // Failure visibility (design D4): the same reason lands in the panel
+      // state, the maintenance evidence, an in-session notice and the durable
+      // audit; the warn stays as the host ring-buffer copy.
+      const reason = String(/** @type {any} */ (error)?.message ?? error)
+      startFailures.set(agent, reason)
+      try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
+      audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, { kind: 'setup-failed', sessionId: sessionOf(agent) ?? null, reason })
+      try { deliverLocal(agent, `Edit Lock is unavailable for this session (${reason}); managed file editing is disabled. Recovery: restart DeepSeek Harness or start a new conversation.`) } catch { /* the audit record is the durable account */ }
+      ctx.logger?.warn?.(`edit lock scope failed; edit tools denied: ${reason}`)
       return
     }
     try {
@@ -617,11 +676,26 @@ return (ctx, config = {}) => {
       settled.set(agent, domain)
     } catch (error) {
       // Kept so the panel can say WHY editing is unavailable instead of
-      // showing "starting" forever.
-      startFailures.set(agent, String(/** @type {any} */ (error)?.message ?? error))
-      try { evidence?.recordSessionFailure?.(sessionOf(agent), String(/** @type {any} */ (error)?.message ?? error)) } catch { /* reporting only */ }
-      ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${/** @type {any} */ (error)?.message ?? error}`)
+      // showing "starting" forever; the notice aligns this catch with the
+      // write-scope failure above.
+      const reason = String(/** @type {any} */ (error)?.message ?? error)
+      startFailures.set(agent, reason)
+      try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
+      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is unavailable. Recovery: restart DeepSeek Harness or start a new conversation.`) } catch { /* the panel record remains */ }
+      ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${reason}`)
     }
+  }
+  /** Concurrent entry points (agent/created, preset-switch, lazy re-bind)
+   * share one in-flight setup per agent; a completed setup short-circuits on
+   * the root binding. @param {any} agent @returns {Promise<void>} */
+  function setupAgent(agent) {
+    if (closed || registry.rootOf(agent)) return Promise.resolve()
+    const pending = setupInFlight.get(agent)
+    if (pending) return pending
+    const inner = setupAgentOnce(agent)
+    const task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
+    setupInFlight.set(agent, task)
+    return task
   }
   ctx.on('agent/created', (/** @type {any} */ { agent }) => setupAgent(agent))
 
@@ -656,6 +730,23 @@ return (ctx, config = {}) => {
   } catch {
     // No agent registry in this composition: only the creation path binds.
   }
+
+  // Preset-switch re-binding (design D1): select → recompose rebinds the
+  // agent's scope chain to the new generation WITHOUT re-emitting
+  // agent/created; the preset registry re-emits this session event unscoped
+  // (dsh-agent-preset-registry: ctx.emit('agent-preset/selected', session.id,
+  // agentPreset)) AFTER the rebind has landed, so a re-setup here binds under
+  // THIS generation. The listener must return undefined (serial-bail
+  // discipline). A switch to a foreign preset fails the ownAgent fence and
+  // stays hard-refused, exactly as before; a setup failure lands in the
+  // fourfold record and the guard's lazy path does not retry it this
+  // generation.
+  ctx.on('agent-preset/selected', (/** @type {any} */ sessionId) => {
+    if (closed) return
+    const agent = typeof sessionId === 'string' ? ctx.get?.('agents')?.get?.(sessionId) : undefined
+    if (!agent || !ownAgent(agent)) return
+    void setupAgent(agent)
+  })
 
   // Stock Stop aborts the active turn signal synchronously: close admission at
   // that instant. Idle Stop has no signal; /edit-lock stop is the awaitable path.
@@ -779,6 +870,9 @@ return (ctx, config = {}) => {
     // Undispatched sweep work armed by this agent cancels here (an in-flight
     // authority transaction is never cancelled or reinterpreted).
     disposedAgents.add(agent)
+    // The managed write lives on the agent's own scope layer, which dies with
+    // the agent: retire the host-lifetime registration here (design D3).
+    disposeWriteScope(writeScopes, agent)
     replyTools.get(agent)?.dispose()
     replyTools.delete(agent)
     const timer = expiry.get(agent)?.timer
@@ -917,7 +1011,7 @@ return (ctx, config = {}) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
-        const domain = await domainOf(agent)
+        const domain = await domainFor(agent)
         const raw = String(invocation.rawInput ?? '')
         // Only the hold verb depends on the retention settings being coherent.
         const policy = /^\s*hold\b/.test(raw) ? strictLimits() : limits()
