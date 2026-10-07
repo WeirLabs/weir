@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-08
+
 ### Changed
 
 - **产品更名：Orrery → Weir（BREAKING）**：产品、预设与全部标识符统一更名。GUI 预设选择器显示名改为 **Weir** 与 **Weir 创造模式**（预设 id `weir` / `weir-creative`）；bundle 包名改为 `weir-harness`（仓库目录 `plugins/weir-harness/`，测试装置 `weir-test-harness`，模型选择器 `weir-model-picker`）；设置页分区显示为「Weir」。运行时目录 `.orrery/` 改为 `.weir/`（车道、审计、编辑锁、黑板数据随目录迁移），车道分支前缀 `orrery/<lane>` 改为 `weir/<lane>`，集成测试环境变量 `ORRERY_IT_ROOT`/`ORRERY_IT_DSH_EXEC` 改为 `WEIR_IT_ROOT`/`WEIR_IT_DSH_EXEC`。升级动作：重新以 link 安装 `plugins/weir-harness`（旧的 `orrery-harness` 条目需移除），profile 中的默认预设选择 `selectedDefault: orrery` 改为 `weir`，设置覆盖行 id `orrery-settings` 改为 `weir-settings`（行内已保存的设置值原样保留）。绑定旧 `orrery` 预设的历史会话不能在新名称下恢复，请新建 Weir 会话。
