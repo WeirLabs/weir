@@ -15,10 +15,12 @@ plugins/
 ├── weir-harness/         # 正式 bundle：预设声明 + 特性模块 + 技能（唯一产品代码）
 └── weir-test-harness/    # 开发专用集成测试装置（mock LLM + headless profile），严禁入正式 profile
 docs/
-└── features/               # 特性细节文档（入库，产品级）
+├── features/               # 特性细节文档（入库，产品级）
+└── assets/                 # 品牌与 README 图像资产（入库，SVG）
 AGENTS.md                   # 本文件（入库）
 README.md                   # 客户面向产品门面（入库）
 CHANGELOG.md                # 更新日志（入库）
+LICENSE                     # MIT 开源协议（入库）
 ```
 
 - **知识地图**（本地流程材料，**不入库**，但在磁盘上）：`docs/design.md`（设计决策）、`docs/spikes.md`（S1–S12 运行时硬契约，**改代码前必读**）、`openspec/`（变更流程材料）、仓库根三份分析 `*.md`。
@@ -49,7 +51,7 @@ CHANGELOG.md                # 更新日志（入库）
 
 ## 4. 版本控制纪律
 
-1. **入库范围**：仅限产品实际内容——`plugins/`（源码/测试/技能/清单/构建配置）、`AGENTS.md`、`README.md`、`CHANGELOG.md`、`docs/features/`、workspace 配置。其余一律 `.gitignore`（详见文件内注释）。
+1. **入库范围**：仅限产品实际内容——`plugins/`（源码/测试/技能/清单/构建配置）、`AGENTS.md`、`README.md`、`CHANGELOG.md`、`LICENSE`、`docs/features/`、`docs/assets/`、workspace 配置。其余一律 `.gitignore`（详见文件内注释）。
 2. **提交节奏**：阶段性 feat/fix 即提交，不攒超大 commit；一个逻辑变更一个 commit。
 3. **提交信息**：Conventional Commits（`feat/fix/docs/chore/refactor/test(scope): ...`）；**严禁** `Co-authored-by` 与任何 AI 署名；不含敏感信息。
 4. **打版纪律**：版本号语义化；打版 = CHANGELOG 的 Unreleased 段落固化为版本段 + `git tag vX.Y.Z`；tag 与 CHANGELOG 必须一一对应。

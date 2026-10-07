@@ -8,6 +8,8 @@ openspec/
 # docs/features/ holds the versioned product feature docs (committed).
 docs/*
 !docs/features/
+# docs/assets/ holds committed brand & README imagery (SVG).
+!docs/assets/
 
 # Harness runtime scratch (notepads, research notes written by weir sessions)
 .weir/
