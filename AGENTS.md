@@ -45,7 +45,7 @@ CHANGELOG.md                # 更新日志（入库）
 8. **依赖纪律**：bundle 保持 `private: true`、无 `dependencies`/`peerDependencies` 的官方模板风格（避免 pnpm auto-install-peers 去 registry 拉不存在的 `@deepseek-ai/dsh`）；确需引入真实 npm 依赖时须先 spike 验证 link 安装下的解析，并在变更提案中声明。**已登记例外**：settings schema 依赖 `schemastery`/`cosmokit` 以 DSH fork 形式 vendored 于 `src/vendor/`（上游无 volatile 机制，S16；见 THIRD-PARTY.md），不新增 npm 依赖。
 9. **测试装置隔离**：`orrery-test-harness` 仅用于开发，严禁安装进任何正式 profile。
 10. **多 Agent 协作**：一切多 Agent 能力自研实现，**不依赖** DSH 官方 experimental Agent Team 插件。
-11. **车道纪律**：行为变更的实施阶段走 worktree lane 落地；开车道时 `scope` 取最小写面（只含本变更要改的路径，`AGENTS.md`/`CHANGELOG.md` 由主会话统一同步、不进 lane scope）；注意活跃 lane 上限（默认 4，满槽报 `MAX_ACTIVE`）。细节见 [Worktree 车道特性文档](docs/features/git-worktree.md)。
+11. **车道纪律**：行为变更的实施阶段走 worktree lane 落地；开车道时 `scope` 取最小写面（只含本变更要改的路径，`AGENTS.md`/`CHANGELOG.md` 由主会话统一同步、不进 lane scope）；注意活跃 lane 上限（默认 4，满槽报 `MAX_ACTIVE`）。细节见 [Worktree 车道特性文档](docs/features/git-worktree.md)。**lane scope 必须包含本变更新增组合行时的生产 `cordis.patch.yml`**——测试装置镜像的挂载会掩盖生产缺挂（黑板 remote 404 事故：镜像有行、生产无行，集成测试全绿但面板 404）。
 
 ## 4. 版本控制纪律
 
