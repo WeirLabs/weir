@@ -335,10 +335,12 @@ describe('client.edit-lock-maintenance chunk', () => {
       // Exactly one eligible owner card: the full scope, the risk verbatim,
       // the client-computed digest. The other two owners render no action.
       expect(collect(inspected, (node) => node.children === 'editLockMaintRecoveries')).toHaveLength(1)
-      expect(collect(inspected, (node) => node.children === `editLockMaintRecoverDigest: ${expectedConfirmation}`)).toHaveLength(1)
-      expect(collect(inspected, (node) => node.children === 'editLockMaintRecoverRisk: Detached historic writers may still modify files after this override.')).toHaveLength(1)
-      expect(collect(inspected, (node) => node.children === 'editLockMaintRecoverOwner: sess-1')).toHaveLength(1)
-      expect(collect(inspected, (node) => node.children === 'editLockMaintRecoverRevision: 12')).toHaveLength(1)
+      // The blocked zone card (auto-inspection) and the expanded detail card
+      // both display the same scope/risk/digest — two surfaces, one action.
+      expect(collect(inspected, (node) => node.children === `editLockMaintRecoverDigest: ${expectedConfirmation}`)).toHaveLength(2)
+      expect(collect(inspected, (node) => node.children === 'editLockMaintRecoverRisk: Detached historic writers may still modify files after this override.')).toHaveLength(2)
+      expect(collect(inspected, (node) => node.children === 'editLockMaintRecoverOwner: sess-1')).toHaveLength(2)
+      expect(collect(inspected, (node) => node.children === 'editLockMaintRecoverRevision: 12')).toHaveLength(2)
       expect(collect(inspected, (node) => node.children === 'op-1').length).toBeGreaterThan(0)
       expect(collect(inspected, (node) => typeof node.children === 'string' && node.children.includes('sess-2') && node.children.includes('Recover'))).toHaveLength(0)
       const confirm = collect(inspected, (node) => node.children === 'editLockMaintRecoverConfirm' && typeof node.onClick === 'function')
@@ -360,15 +362,18 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(body.confirmation).toBe(expectedConfirmation)
       const settled = render()
       expect(collect(settled, (node) => node.children === 'editLockMaintRecoverDone'.replace('{revision}', '13'))).toHaveLength(1)
-      // The panel re-inspected after the settle: the scope reloads.
-      expect(fetchCalls.filter((entry) => entry.url === 'api/weir-edit-lock/maintenance/inspect').length).toBe(2)
+      // The panel re-inspected after the settle: the scope reloads. Three
+      // inspection calls total: the automatic one on open, the manual expand,
+      // and the post-settle reload.
+      expect(fetchCalls.filter((entry) => entry.url === 'api/weir-edit-lock/maintenance/inspect').length).toBe(3)
       // A refusal is shown next to the reloaded scope, with the server's detail.
       recoverPayload = { ok: false, error: { code: 'weir-edit-lock/revision-conflict', message: 'Recovery not acknowledged.', detail: 'Authority revision changed; inspect and confirm again.' } }
       collect(settled, (node) => node.children === 'editLockMaintRecoverConfirm' && typeof node.onClick === 'function')[0].onClick()
       await flush()
       await flush()
       const refused = render()
-      expect(collect(refused, (node) => node.children === 'editLockMaintRecoverFailed Authority revision changed; inspect and confirm again.')).toHaveLength(1)
+      // The refusal surfaces in both the zone card and the expanded detail card.
+      expect(collect(refused, (node) => node.children === 'editLockMaintRecoverFailed Authority revision changed; inspect and confirm again.')).toHaveLength(2)
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -485,5 +490,142 @@ describe('client.edit-lock-maintenance chunk', () => {
     expect(candidates[0].owner).toBe('a')
     expect(candidates[0].scope).toEqual({ root: '/work/repo', owner: 'a', expectedRevision: 7, operationIds: ['op-1', 'op-2'] })
     expect(candidates[0].confirmation).toBe(serverConfirmation(candidates[0].scope))
+  })
+
+  it('recoveryDiagnosis classifies the blocked rows, the force-release scope and every named failing precondition', async () => {
+    const { exports } = await loadPanel()
+    const { editLockRecovery } = exports
+    const snapshot = {
+      revision: 7,
+      sessions: [
+        { sessionId: 'a', interrupted: true }, { sessionId: 'b', interrupted: false },
+        { sessionId: 'c', interrupted: true }, { sessionId: 'd', interrupted: true },
+        { sessionId: 'e', interrupted: true }, { sessionId: 'f', interrupted: true },
+        { sessionId: 'x', interrupted: true },
+      ],
+      unresolved: [
+        // Eligible owner a: lock + file fence on the same resource (the incident shape).
+        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'file', path: '/r/b.txt' }, fence: { kind: 'resource', resourceId: '/r/b.txt' }, key: { sessionId: 'a', operationId: 'op-2' } },
+        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'file', path: '/r/a.txt' }, fence: { kind: 'resource', resourceId: '/r/a.txt' }, key: { sessionId: 'a', operationId: 'op-1' } },
+        // Ineligible blocking owners, one per precondition.
+        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'file', path: '/r/c.txt' }, fence: { kind: 'resource', resourceId: '/r/c.txt' }, key: { sessionId: 'b', operationId: 'op-3' } },
+        { phase: 'publishing', admissionBlocked: true, scope: { kind: 'file', path: '/r/d.txt' }, fence: { kind: 'resource', resourceId: '/r/d.txt' }, key: { sessionId: 'c', operationId: 'op-4' } },
+        { phase: 'unknown', admissionBlocked: false, scope: { kind: 'file', path: '/r/e.txt' }, fence: { kind: 'resource', resourceId: '/r/e.txt' }, key: { sessionId: 'd', operationId: 'op-5' } },
+        // Eligible owner f with a subtree fence and NO file row: the candidate
+        // still carries the scope (the domain detail renders its card).
+        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'subtree', path: '/r/sub' }, fence: { kind: 'subtree', ancestor: '/r/sub' }, key: { sessionId: 'f', operationId: 'op-6' } },
+      ],
+      prepared: [{ target: { tool: 'write', filePath: '/w/e.txt' }, key: { sessionId: 'e', operationId: 'op-7' } }],
+      retainedLocks: [
+        { resourceId: '/r/a.txt', owner: 'a', generation: 3, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/b.txt', owner: 'a', generation: 1, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/c.txt', owner: 'b', generation: 1, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/d.txt', owner: 'c', generation: 1, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/e.txt', owner: 'd', generation: 1, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/g.txt', owner: 'e', generation: 1, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/h.txt', owner: 'ghost', generation: 1, status: 'user-interrupted', reason: null },
+        { resourceId: '/r/i.txt', owner: 'x', generation: 1, status: 'user-interrupted', reason: null },
+      ],
+    }
+    const diagnosis = editLockRecovery.recoveryDiagnosis('/work/repo', snapshot)
+    // Candidates: the eligible owners (a and the row-less f).
+    expect(diagnosis.candidates).toHaveLength(2)
+    expect(diagnosis.candidates.map((candidate) => candidate.owner).sort()).toEqual(['a', 'f'])
+    expect(diagnosis.candidates.find((candidate) => candidate.owner === 'a').scope)
+      .toEqual({ root: '/work/repo', owner: 'a', expectedRevision: 7, operationIds: ['op-1', 'op-2'] })
+    // Blocked rows: only rows whose owner has the force-release action, sorted by resource id.
+    expect(diagnosis.blocked.map((row) => row.resourceId)).toEqual(['/r/a.txt', '/r/b.txt'])
+    expect(diagnosis.blocked[0].owner).toBe('a')
+    expect(diagnosis.blocked[0].lockStatus).toBe('user-interrupted')
+    expect(diagnosis.blocked[0].fence).toBe(true)
+    expect(diagnosis.blocked[0].interrupted).toBe(true)
+    // Unmet: named preconditions in the manager's refusal order, sorted by owner.
+    expect(diagnosis.unmet.map((entry) => entry.owner)).toEqual(['b', 'c', 'd', 'e', 'ghost', 'x'])
+    const byOwner = new Map(diagnosis.unmet.map((entry) => [entry.owner, entry]))
+    expect(byOwner.get('b').reason).toBe(editLockRecovery.RECOVERY_UX.reasonNotInterrupted)
+    expect(byOwner.get('c').reason).toBe(editLockRecovery.RECOVERY_UX.reasonPublishing)
+    expect(byOwner.get('d').reason).toBe(editLockRecovery.RECOVERY_UX.reasonDisposition)
+    expect(byOwner.get('e').reason).toBe(editLockRecovery.RECOVERY_UX.reasonPrepared)
+    expect(byOwner.get('ghost').reason).toBe(editLockRecovery.RECOVERY_UX.reasonUnknownSession)
+    expect(byOwner.get('x').reason).toBe(editLockRecovery.RECOVERY_UX.reasonNoUnresolved)
+    expect(byOwner.get('e').rows.map((row) => row.resourceId)).toEqual(['/r/g.txt'])
+  })
+
+  it('opens with an automatic read-only inspection, renders the three zones, and the Force release click submits the computed confirmation', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { EditLockMaintenanceField, editLockRecovery } = exports
+    const incident = {
+      root: '/work/repo',
+      authorityDir: '/work/repo/.weir/edit-lock',
+      reservation: false,
+      presence: 'valid',
+      snapshot: {
+        version: 4, revision: 12,
+        counts: { sessions: 2, locks: 2, operations: 2, unresolved: 2, retainedLocks: 2 },
+        unresolved: [
+          { ...INSPECT.snapshot.unresolved[0], admissionBlocked: true },
+          { ...INSPECT.snapshot.unresolved[0], admissionBlocked: true, scope: { kind: 'file', path: '/work/repo/b.txt' }, fence: { kind: 'resource', resourceId: '/work/repo/b.txt' }, target: { tool: 'write', filePath: '/work/repo/b.txt' }, key: { sessionId: 'sess-3', operationId: 'op-3' } },
+        ],
+        prepared: [],
+        retainedLocks: [
+          { resourceId: '/work/repo/a.txt', owner: 'sess-1', generation: 3, status: 'user-interrupted', reason: null },
+          { resourceId: '/work/repo/b.txt', owner: 'sess-3', generation: 1, status: 'user-interrupted', reason: null },
+        ],
+        sessions: [
+          { sessionId: 'sess-1', executionEpoch: 17, interrupted: true, recovery: null },
+          { sessionId: 'sess-3', executionEpoch: 4, interrupted: false, recovery: null },
+        ],
+      },
+    }
+    const fetchCalls = []
+    const fetchStub = (url, init) => {
+      fetchCalls.push({ url, init })
+      if (url === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ json: async () => ({ ok: true, value: STATUS }) })
+      if (url === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ json: async () => ({ ok: true, value: incident }) })
+      if (url === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ json: async () => ({ ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }) })
+      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchStub
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const props = { t: (key) => key }
+    const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField(props)) }
+    try {
+      const initial = render()
+      initial.children[0].children[1].onClick()
+      await flush()
+      const opened = render()
+      // Opening alone runs the read-only inspection — no manual step.
+      const inspectCalls = fetchCalls.filter((entry) => entry.url === 'api/weir-edit-lock/maintenance/inspect')
+      expect(inspectCalls).toHaveLength(1)
+      expect(JSON.parse(inspectCalls[0].init.body)).toEqual({ root: '/work/repo' })
+      // Blocked zone (top): the header, the file with holder and holder state,
+      // and the one primary force-release action per row.
+      expect(collect(opened, (node) => node.children === 'Blocked files — one-click force release')).toHaveLength(1)
+      expect(collect(opened, (node) => node.children === '/work/repo/a.txt')).toHaveLength(1)
+      expect(collect(opened, (node) => node.children === 'holder sess-1 · user-interrupted · publication fence · interrupted')).toHaveLength(1)
+      expect(collect(opened, (node) => typeof node.children === 'string' && node.children.startsWith('editLockMaintRecoverDigest:'))).toHaveLength(1)
+      expect(collect(opened, (node) => node.children === 'editLockMaintRecoverRisk: Detached historic writers may still modify files after this override.')).toHaveLength(1)
+      const force = collect(opened, (node) => node.children === 'Force release' && typeof node.onClick === 'function')
+      expect(force).toHaveLength(1)
+      // Unmet zone: the ineligible owner's file and the named precondition.
+      expect(collect(opened, (node) => node.children === 'Blocked files — recovery preconditions not met')).toHaveLength(1)
+      expect(collect(opened, (node) => typeof node.children === 'string' && node.children.includes('/work/repo/b.txt'))).toHaveLength(1)
+      expect(collect(opened, (node) => node.children === editLockRecovery.RECOVERY_UX.reasonNotInterrupted)).toHaveLength(1)
+      // The one explicit click submits the computed confirmation.
+      force[0].onClick()
+      await flush()
+      await flush()
+      const call = fetchCalls.find((entry) => entry.url === 'api/weir-edit-lock/maintenance/recover-online')
+      const body = JSON.parse(call.init.body)
+      expect(body.root).toBe('/work/repo')
+      expect(body.owner).toBe('sess-1')
+      expect(body.expectedRevision).toBe(12)
+      expect(body.operationIds).toEqual(['op-1'])
+      expect(body.acceptLateWriterRisk).toBe(true)
+      expect(body.confirmation).toBe(editLockRecovery.recoveryConfirmation({ root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] }))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
