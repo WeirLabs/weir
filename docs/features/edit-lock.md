@@ -79,7 +79,7 @@
 **失败、重试与运行时接入**：
 
 - 恢复独占既有 publisher reservation，与 runtime 打开及其他恢复互斥。已有预约一律拒绝、不偷取；预约不存在也不声称旧写者静止。应先正常停用/排空当前 runtime；遗留预约必须另行处理，API 不负责删除。当前实现只接受 owner 已 interrupted 且所有未决操作均为 unknown；prepared/publishing 先经既有恢复规范化，不能用此入口推断结果。
-- authority 与备份仅接受 ≤16 MiB 的单链接常规文件；拒绝符号链接及祖先路径变动，有限读取并核对 inode/size/mtime/ctime。此机制不防同用户恶意进程，支持 POSIX 本地文件系统，目录须由调用者控制；目录 fsync 不支持时不降级确认。
+- authority 与备份仅接受 ≤16 MiB 的单链接常规文件；拒绝符号链接及祖先路径变动，有限读取并核对 inode/size/mtime/ctime。此机制不防同用户恶意进程，支持 POSIX 与 win32/NTFS 本地文件系统，目录须由调用者控制；目录 fsync 仅在 POSIX 执行（win32 上 EPERM 不可用）——win32 行的写入确认依赖文件级 fsync + 原子 rename 与 NTFS 日志，这是该平台的行定义而非降级路径。
 - 备份文件采用 `admin-backup-<SHA256([root,recoveryId])>.json`（0600，wx 创建），已有备份必须逐字节匹配。备份失败、冲突、输入/审计校验失败、rename 前失败均不修改旧 authority 或目标文件。备份是证据，**不是存在迟到写者时可以安全回滚的承诺**。
 - rename 后失败可能已提交：HTTP 409 `{ok:false,error:{code,message,commitStatus}}` 只表示未确认，不保证回滚。`commitStatus:uncertain` 时先 inspect，再以完全相同 recoveryId/scope/reason 重试；重试验证已提交 ledger 和原备份，返回 `idempotent:true`，不重复释放或追加。revision 冲突则重新 inspect/明确确认；错误不会返回原始文件系统路径或堆栈。
 - 权威 ledger 是原子强制审计；成功后另经共享审计发送 `weir/edit-lock-maintenance` 的 `admin-override` 并 best-effort 写入根下 audit JSONL。不调用 `session.append`，镜像审计失败不否定已完成的权威提交。
@@ -191,7 +191,7 @@
 
 - profile 设置行提供维护端点与证据入口，不依赖 `weirEditLock` 或恢复器。每次 preset 挂载持有独立代次；旧 disposer 只删除自己的证据，排空失败保留失败状态。证据按宿主根 context 存在 WeakMap 中，同一模块的设置行重挂载不遗忘仍活跃的行；模块整体替换/进程重启不继承内存证据。
 - `POST /api/weir-edit-lock/maintenance/{status,inspect}` 通过 `connection.fetch.register` 注册；安装版宿主先执行 Host/Origin fence 与浏览器会话认证。根只由存活 agent 的 cwd 经 `managementRootFor` 及挂载记录推导；客户端必须原样选择返回的根，成员检查先于对客户端路径的任何文件操作。
-- inspector 拒绝根以下及祖先中的符号链接，快照使用 `O_NOFOLLOW | O_NONBLOCK`、文件描述符身份与读前后路径/metadata 核对，最多读取 16 MiB；平台不提供 `O_NOFOLLOW` 则拒绝。只复用 store 的镜像验证器，不打开 runtime/预约、不恢复、不修复，检查前后权威字节不变。
+- inspector 拒绝根以下及祖先中的符号链接，快照使用 `O_NOFOLLOW | O_NONBLOCK`（win32 无此二标志，降级为 leaf lstat 拒符号链接 + open 后 fstat 身份比对；残余 TOCTOU 窗口在 Windows 上由「创建符号链接需特权」收敛）、文件描述符身份与读前后路径/metadata 核对，最多读取 16 MiB。只复用 store 的镜像验证器，不打开 runtime/预约、不恢复、不修复，检查前后权威字节不变。
 - **不是恶意并发目录改名的原子隔离证明**：Node 无便携 `openat`，上述身份核对能拒绝观察到的路径替换，但不能排除恶意同用户进程的 ABA 命名空间竞态。不要把此维护入口暴露为不可信文件系统的读取代理。
 - 开关提交仅记录 enable/disable 意图，走共享 `createAudit`（事件及有服务端工作目录时的 JSONL 镜像），不写自定义 session 事件。只读检查不写审计；无工作目录时只 emit，不退回开发进程 cwd。共享审计镜像沿用既有 best-effort 文件系统语义，不宣称具有 inspector 的路径保护。
 
@@ -234,7 +234,7 @@
 
 语义边界：不折叠词法 `..`（`alias/../file` 按 alias 的物理目标解析），不做大小写或 Unicode 归一（本卷把 case 与 NFC/NFD 别名合并为同一 native realpath——测试只记录该卷实测结果，不推广为所有文件系统的等价规则）；忽略内容、时间戳与兄弟文件变化。连续性证据由 entry 与 canonical 祖先链的 dev/ino、逐跳 symlink target 共同构成：文件替换、symlink 替换/改向、祖先替换、新 symlink 祖先与 kind 变化一律 `topology changed`；新增硬链接则使目标不再满足「单链接普通文件」，`resolve` 与 `revalidate` 都直接拒绝（`not editable`）。普通新目录被创建时 `revalidate` **返回一个新的缺失观察**：调用方必须改用并保留这个新观察，原观察只作历史，之后新 symlink 祖先出现时两者都拒绝。
 
-平台与失败语义：仅 darwin/linux，其他平台 factory 直接抛错（Linux 只经代码路径允许，未实机验证）；目录、dangling symlink、symlink 环、特殊文件、`nlink > 1`、`missing/..`、相对 cwd、空路径与含 NUL 路径全部拒绝，不做本地无锁后备。
+平台与失败语义：darwin/linux/win32（Linux 与 win32 行经代码路径与单元/跨进程套件验证，Linux 未实机验证；win32 行经 NTFS 实测），其余平台 factory 直接抛错；目录、dangling symlink、symlink 环、特殊文件、`nlink > 1`、`missing/..`、相对 cwd、空路径与含 NUL 路径全部拒绝，不做本地无锁后备。
 
 ### 历史镜像与 operation history
 
@@ -247,7 +247,7 @@
 - **串行本地 revision CAS**：每 handle 一条串行队列，`expectedRevision` 与当前 revision 不符即 conflict，溢出拒绝且不写入、不毒化。这是 **handle 内**的 CAS，不是跨进程/跨 handle CAS，也不是单实例选举。
 - **持久化 IO 失败毒化整个 handle**：任何持久化失败（含真实 syscall 错误）都毒化 handle，排队中与后续的 `record` **连同 `snapshot()`** 一律拒绝——过期内存不得冒充回滚后的状态；参数、CAS、transition 与溢出错误不毒化。错误 code 为 `EDIT_LOCK_STORE_PERSISTENCE`，`commitStatus` 区分 `not-renamed` 与 `uncertain`。
 - **外部前提由调用方证明**：模块要求调用方在**模块之外**证明该目录的独占生命周期与旧 publisher 静默，并持续到 `close()`；目录需预先 provision，`create` 只接受空目录，目录与其祖先不得被并发替换。模块不提供 singleton election、PID 超时接管、租约或 handover。
-- **恢复语义**：`recover` 只读 `snapshot.json`，拒绝 symlink/特殊文件/目录，并在打开前后两次确认 regular file；committed snapshot 缺失或非法即失败，**不初始化、不修复、不重试 create**，合法 committed snapshot 可与遗留 temp 共存。面向支持文件与目录 sync 的 POSIX 本地文件系统；不承诺网络文件系统、Windows 或掉电硬件语义。store 只写自己的 `snapshot.json`，不签发也不保存 receipt（receipt 是进程内能力，禁止持久化）。
+- **恢复语义**：`recover` 只读 `snapshot.json`，拒绝 symlink/特殊文件/目录，并在打开前后两次确认 regular file；committed snapshot 缺失或非法即失败，**不初始化、不修复、不重试 create**，合法 committed snapshot 可与遗留 temp 共存。面向支持文件 sync 的本地文件系统（POSIX 含目录 sync，win32 行跳过目录 sync）；不承诺网络文件系统或掉电硬件语义。store 只写自己的 `snapshot.json`，不签发也不保存 receipt（receipt 是进程内能力，禁止持久化）。
 
 **持久 operation history**（`src/edit-lock/operation-history.js`）与既有权威状态同处**同一份原子 snapshot 镜像**（envelope、canonical 编码、写序与串行 revision CAS 全部不变），**没有**独立的第二本内存账本：
 
@@ -414,6 +414,6 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 - **两个完整 GUI Harness 应用并发**：跨进程只验证过两个安装版 runtime 进程（共用 authority 目录、经可信 spawn 连接），不是两个真实 GUI 应用并排运行；单实例仲裁在 GUI 下的表现未验证。
 - **真实回合里的 `lsp_rename`**：批量原子获取与逐文件发布有单测与组合探针覆盖，但没有在真实会话里跑完整一回合的跨文件改名。
-- **Linux**：仅经代码路径允许（`resource-identity.js` 只在 darwin/linux 下构造），未在 Linux 实机验证。
-- **Windows**：不支持——资源身份依赖 dev/ino，跨进程依赖 Unix socket，两项在 Windows 上都不成立。
+- **Linux**：仅经代码路径允许（`resource-identity.js` 在 darwin/linux/win32 下构造），未在 Linux 实机验证。
+- **Windows 的 GUI 实机验收**：win32 行（NTFS dev/ino 资源身份、`\\.\pipe\weir-edit-lock-<hash>` 命名管道跨进程、降级打开标志、目录 fsync 跳过）有单元与跨进程 SIGKILL 套件实测，但未经两个真实 GUI 应用并排的实机验收。
 - **面板的异常、恢复中、暂停与部分写入状态**：常态、已停止、待确认与保留中已经人工 GUI 验收，异常／恢复中／暂停的画面与跨文件部分写入的呈现没有 GUI 验证。
