@@ -56,7 +56,14 @@ function apply(ctx, config = {}) {
           const receipt = await service.receipt(sessionId)
           const listing = await service.list(sessionId)
           const conditions = await service.conditions(sessionId)
-          report.receipt = receipt
+          // Identity objects make the full receipt exceed compact()'s budget.
+          // Summarize here, as for listing; parity below compares full payloads.
+          report.receipt = {
+            status: receipt.status,
+            revision: receipt.revision,
+            skills: receipt.effective?.skills?.length ?? -1,
+            skillIdentities: receipt.effective?.skillIdentities?.length ?? -1,
+          }
           report.listing = {
             skills: Array.isArray(listing.skills) ? listing.skills.length : -1,
             selected: Array.isArray(listing.skills) ? listing.skills.filter(row => row.selected === true).length : -1,

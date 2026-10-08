@@ -11,6 +11,25 @@ window.__ModuleLoader__.load({
 		// is a function over plain data so the DOM layer stays thin and the
 		// node:test suite covers the semantics.
 
+		// Like the SEGMENT-regex mirror below, same-package sync require is
+		// impossible in the ModuleLoader. Mirror src/capabilities/skill-identity.js.
+		function skillIdentityKeyOf(identity) {
+			if (!identity || typeof identity !== "object" || Array.isArray(identity)) return null;
+			const { scope, root, name, provenance, opaqueId } = identity;
+			if (typeof scope !== "string" || typeof root !== "string" || typeof name !== "string") return null;
+			const sorted = provenance == null ? null : Object.fromEntries(Object.keys(provenance).sort().map(key => [key, provenance[key]]));
+			return JSON.stringify([scope, root, name, sorted, sorted === null ? (opaqueId ?? null) : null]);
+		}
+		function skillEntryKeyOf(entry) {
+			if (typeof entry === "string") return "name:" + entry;
+			const key = skillIdentityKeyOf(entry);
+			return key === null ? null : "id:" + key;
+		}
+		const sortSkills = (entries) => [...entries].sort((a, b) => {
+			const left = skillEntryKeyOf(a), right = skillEntryKeyOf(b);
+			return left < right ? -1 : left > right ? 1 : 0;
+		});
+
 		/** Applied counts come from the SERVER receipt, never the optimistic draft (12.2). */
 		function badgeStateOf(receipt, draft) {
 			const applied = receipt && receipt.status === "applied"
@@ -46,6 +65,7 @@ window.__ModuleLoader__.load({
 				missing: status !== "parsed" && status !== "unknown",
 				selected: Boolean(candidate?.selected),
 				conflict: candidate?.conflict === true,
+				identity: candidate?.identity ?? null,
 			};
 		}
 		function partitionManagerListing(listing) {
@@ -110,24 +130,33 @@ window.__ModuleLoader__.load({
 		// ---- Draft editing (12.3 manager Apply surface) ----
 		/** The edit draft seeded from the server receipt (CAS revision included). */
 		function draftFromReceipt(receipt) {
-			const skills = Array.isArray(receipt?.effective?.skills) ? [...receipt.effective.skills] : [];
+			const skills = Array.isArray(receipt?.effective?.skillIdentities) ? [...receipt.effective.skillIdentities]
+				: Array.isArray(receipt?.effective?.skills) ? [...receipt.effective.skills] : [];
 			const mcpServers = Array.isArray(receipt?.effective?.mcpServers) ? [...receipt.effective.mcpServers] : [];
 			return {
-				skills: [...skills].sort(),
+				skills: sortSkills(skills),
 				mcpServers: [...mcpServers].sort(),
-				applied: { skills: [...skills].sort(), mcpServers: [...mcpServers].sort() },
+				applied: { skills: sortSkills(skills), mcpServers: [...mcpServers].sort() },
 				revision: Number.isSafeInteger(receipt?.revision) ? receipt.revision : 0,
 				dirty: false,
 			};
 		}
 
-		/** Toggle one name in the draft; dirty is recomputed against the applied sets. */
+		/** Toggle one entry in the draft; skills compare by identity, MCP by name. */
 		function draftToggle(draft, kind, name) {
+			if (kind === "skills") {
+				const key = skillEntryKeyOf(name);
+				const list = new Map(draft.skills.map(entry => [skillEntryKeyOf(entry), entry]));
+				if (list.has(key)) list.delete(key); else list.set(key, name);
+				const next = { ...draft, skills: sortSkills([...list.values()]) };
+				next.dirty = draftDiffOf(next).any;
+				return next;
+			}
 			const list = new Set(draft[kind]);
 			if (list.has(name)) list.delete(name); else list.add(name);
 			const next = { ...draft, [kind]: [...list].sort() };
 			const same = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
-			next.dirty = !same(next.skills, draft.applied.skills) || !same(next.mcpServers, draft.applied.mcpServers);
+			next.dirty = !same(next.skills.map(skillEntryKeyOf), draft.applied.skills.map(skillEntryKeyOf)) || !same(next.mcpServers, draft.applied.mcpServers);
 			return next;
 		}
 
@@ -189,7 +218,7 @@ window.__ModuleLoader__.load({
 				for (const name of baseSet) if (!currentSet.has(name)) removed += 1;
 				return { added, removed };
 			};
-			const skills = count(draft.skills, draft.applied.skills);
+			const skills = count(draft.skills.map(skillEntryKeyOf), (draft.applied.skills ?? []).map(skillEntryKeyOf));
 			const mcp = count(draft.mcpServers, draft.applied.mcpServers);
 			return {
 				skillsAdded: skills.added,
@@ -222,10 +251,11 @@ window.__ModuleLoader__.load({
 		 * carried for reporting; the CAS base (revision/applied) is kept; preset
 		 * metadata never produces an Apply by itself — dirty is recomputed
 		 * against the applied sets. */
-		function draftFromPreset(document, current) {
+		function draftFromPreset(document, current, resolveName) {
 			const selection = document?.selection ?? {};
 			const clean = (value) => (Array.isArray(value) ? value.map(String) : []).sort();
-			const skills = clean(selection.skills);
+			const skills = sortSkills((Array.isArray(selection.skills) ? selection.skills : []).map(entry =>
+				typeof entry === "string" ? (resolveName?.(entry) ?? entry) : entry));
 			const mcpServers = clean(selection.mcpServers);
 			const unresolvedRefs = Array.isArray(selection.unresolvedRefs) ? [...selection.unresolvedRefs] : [];
 			const applied = current?.applied && Array.isArray(current.applied.skills) && Array.isArray(current.applied.mcpServers)
@@ -238,7 +268,7 @@ window.__ModuleLoader__.load({
 				applied,
 				revision: Number.isSafeInteger(current?.revision) ? current.revision : 0,
 				unresolvedRefs,
-				dirty: !same(skills, [...applied.skills].sort()) || !same(mcpServers, [...applied.mcpServers].sort()),
+				dirty: !same(skills.map(skillEntryKeyOf), sortSkills(applied.skills).map(skillEntryKeyOf)) || !same(mcpServers, [...applied.mcpServers].sort()),
 			};
 		}
 
@@ -468,6 +498,8 @@ window.__ModuleLoader__.load({
 			return `${base}.json`;
 		}
 
+		exports.skillIdentityKeyOf = skillIdentityKeyOf;
+		exports.skillEntryKeyOf = skillEntryKeyOf;
 		exports.badgeStateOf = badgeStateOf;
 		exports.skillRowOf = skillRowOf;
 		exports.partitionManagerListing = partitionManagerListing;

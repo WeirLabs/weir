@@ -35,6 +35,7 @@ export async function buildReceiptPayload(deps, options) {
     revision: record.kind === 'ok' ? record.revision : 0,
     effective: {
       skills: selected.map(candidate => candidate.name),
+      skillIdentities: selected.filter(candidate => candidate.identity).map(candidate => candidate.identity),
       mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [],
     },
     warnings: (status?.error ?? null) ? [String(status.reason ?? 'selection-unavailable')] : [],
@@ -75,6 +76,7 @@ export async function buildListPayload(deps, options) {
         status: candidate.status ?? 'unknown',
         selected: key !== null && selectedKeys.has(key),
         conflict: Boolean(candidate.conflict),
+        identity: candidate.identity ?? null,
       }
     }),
     mcpServers: [

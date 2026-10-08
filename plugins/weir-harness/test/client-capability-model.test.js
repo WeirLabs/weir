@@ -1,3 +1,4 @@
+import { createSkillIdentity, skillIdentityKey } from '../src/capabilities/skill-identity.js'
 // Client view-model for the capability Badge and manager (tasks 12.2/12.3/12.5).
 import { test, expect } from './helpers.js'
 import { readFileSync } from 'node:fs'
@@ -385,4 +386,52 @@ test('visual polish: skillRowOf keeps exposing scopeKey for the scope→hue tag 
   // The display label stays independent of the hue key (12.2 contract).
   expect(partition.skills[0].source).toBe('Weir builtin')
   expect(partition.skills[4].source).toBe('unknown')
+})
+
+const identity = (root) => createSkillIdentity({ scope: 'custom', root, name: 'same', opaqueId: root })
+
+test('identity keys mirror server normalization and reject non-identities', () => {
+  const fixtures = [
+    { scope: 'project', root: '/portable', name: 'same', provenance: { z: 'last', a: 'first' }, opaqueId: 'ignored' },
+    { scope: 'custom', root: '/local', name: 'same', opaqueId: 'machine' },
+    { scope: 'user', root: '/null', name: 'same', provenance: null, opaqueId: 'local' },
+  ]
+  for (const fixture of fixtures) {
+    expect(model.skillIdentityKeyOf(fixture)).toBe(skillIdentityKey(fixture))
+    expect(model.skillIdentityKeyOf(createSkillIdentity(fixture))).toBe(skillIdentityKey(fixture))
+  }
+  for (const invalid of [null, 'same', {}, { scope: 'user', root: 1, name: 'same' }]) {
+    expect(model.skillIdentityKeyOf(invalid)).toBe(null)
+  }
+  expect(model.skillEntryKeyOf('same')).toBe('name:same')
+  expect(model.skillEntryKeyOf({})).toBe(null)
+})
+
+test('same-named identities toggle independently with exact diff counts', () => {
+  const a = identity('/a'), b = identity('/b')
+  const base = model.draftFromReceipt({ effective: { skills: ['same'], skillIdentities: [a], mcpServers: [] } })
+  expect(base.skills).toEqual([a])
+  expect(base.applied.skills).toEqual([a])
+  const added = model.draftToggle(base, 'skills', b)
+  expect(added.skills).toEqual([a, b])
+  expect(model.draftDiffOf(added)).toEqual({ skillsAdded: 1, skillsRemoved: 0, mcpAdded: 0, mcpRemoved: 0, any: true })
+  const removed = model.draftToggle(added, 'skills', JSON.parse(JSON.stringify(a)))
+  expect(removed.skills).toEqual([b])
+  expect(model.draftToggle(added, 'skills', b).dirty).toBe(false)
+  expect(model.draftFromReceipt({ effective: { skills: ['z', 'a'] } }).skills).toEqual(['a', 'z'])
+  expect(model.draftFromReceipt({ effective: { skills: ['same'], skillIdentities: [] } }).skills).toEqual([])
+})
+
+test('preset staging preserves identity objects and resolves only known names', () => {
+  const a = identity('/a'), b = identity('/b')
+  const current = model.draftFromReceipt({ effective: { skillIdentities: [a] } })
+  const staged = model.draftFromPreset({ selection: { skills: [a, 'resolve-me', 'missing'] } }, current,
+    name => name === 'resolve-me' ? b : undefined)
+  expect(staged.skills).toEqual([a, b, 'missing'])
+  expect(staged.dirty).toBe(true)
+  expect(model.draftFromPreset({ selection: { skills: [JSON.parse(JSON.stringify(a))] } }, current).dirty).toBe(false)
+  const stagedSame = model.draftFromPreset({ selection: { skills: [JSON.parse(JSON.stringify(a))] } }, current)
+  const withMcp = model.draftToggle(stagedSame, 'mcpServers', 'docs')
+  expect(model.draftToggle(withMcp, 'mcpServers', 'docs').dirty).toBe(false)
+  expect(loadModel().draftFromPreset({ selection: { skills: [a] } }, current).skills[0]).toBe(a)
 })

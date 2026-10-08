@@ -77,12 +77,16 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
     expect(commandReceipt.kind).toBe('success')
     expect(JSON.stringify(remoteReceipt)).toBe(commandReceipt.text)
     expect(remoteReceipt.status).toBe('applied')
+    expect(remoteReceipt.effective.skillIdentities.map(identity => identity.name)).toEqual(remoteReceipt.effective.skills)
+    expect(Object.keys(remoteReceipt.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers'])
 
     const remoteList = await service.list('sess-remote')
     const commandList = await command.handler({ agent, rawInput: 'list' })
     expect(commandList.kind).toBe('success')
     expect(JSON.stringify(remoteList)).toBe(commandList.text)
     expect(Array.isArray(remoteList.skills)).toBe(true)
+    expect(remoteList.skills.every(row => Object.keys(row).at(-1) === 'identity')).toBe(true)
+    expect(remoteList.skills.filter(row => row.selected).map(row => row.identity)).toEqual(remoteReceipt.effective.skillIdentities)
     expect(Array.isArray(remoteList.mcpServers)).toBe(true)
 
     const remoteConditions = await service.conditions('sess-remote')
