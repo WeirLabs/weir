@@ -166,8 +166,18 @@ async function runCommand(domain, agent, raw, commandId, limits) {
       if (observation.kind !== 'file') throw new Error('unlock requires an existing regular file or an exact locked resource id')
       resourceId = observation.resourceId
     }
-    const result = await domain.unlock(agent, resourceId, generation)
-    return `Unlocked ${result.resourceId} (generation ${result.generation}, owner ${result.owner}). Content was not validated.`
+    try {
+      const result = await domain.unlock(agent, resourceId, generation)
+      return `Unlocked ${result.resourceId} (generation ${result.generation}, owner ${result.owner}). Content was not validated.`
+    } catch (error) {
+      // Actionable guidance (recovery UX D4): a fence refusal must name the
+      // resolution path, never leave a bare error code. The guidance is
+      // template-layer copy and stays English per the text discipline.
+      if (/** @type {any} */ (error)?.admissionRefusal === true) {
+        throw Object.assign(new Error(`${/** @type {any} */ (error).message}. Settle it with the administrative recovery in the Edit Lock maintenance panel (Settings → Edit Lock maintenance): it clears the unresolved publication fence and releases the owner's locks in one step.`), { admissionRefusal: true })
+      }
+      throw error
+    }
   }
   throw new Error('Usage: /edit-lock [status|locks|hold [minutes]|release <path>|stop|resume|confirm <path>|confirm --all|unlock <path> <generation>]')
 }

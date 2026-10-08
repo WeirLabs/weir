@@ -123,7 +123,11 @@ test('try_steal negotiation transfers only on a current holder reply', async () 
   await new Promise(resolve => setTimeout(resolve, 350))
   await assert.rejects(tools.reply({ agent: alice }, { requestId: silent.requestId, decision: 'release' }), /not pending/)
   assert.equal(lifecycle.status(alice).locks.length, 1)
-  assert.match(notices.find(([id, text]) => id === 'bob' && /expired/.test(text))[1], /unchanged/)
+  const expiryNotice = notices.find(([id, text]) => id === 'bob' && /expired/.test(text))[1]
+  assert.match(expiryNotice, /unchanged/)
+  // Actionable guidance (recovery UX D4): the expiry notice names the panel's
+  // administrative force-release path (template-layer English, pinned here).
+  assert.match(expiryNotice, /Edit Lock maintenance panel \(Settings → Edit Lock maintenance\) offers the administrative force release/)
   // A generation change makes earlier consent stale.
   const stale = await tools.trySteal({ agent: bob }, file)
   await tools.release({ agent: alice }, file)

@@ -77,7 +77,8 @@ export function createNegotiation(options) {
         requester: { ...requester }, state: 'pending', expiresAt: now() + timeoutMs }
       requests.set(request.requestId, request)
       request.timer = setTimeout(() => settle(request, 'expired',
-        `Edit Lock request ${request.requestId} for ${resourceId} expired without a holder reply; ownership is unchanged.`), timeoutMs)
+        `Edit Lock request ${request.requestId} for ${resourceId} expired without a holder reply; ownership is unchanged. ` +
+        `If the holder cannot reply, the Edit Lock maintenance panel (Settings → Edit Lock maintenance) offers the administrative force release for the stuck lock.`), timeoutMs)
       request.timer.unref?.()
       // An interrupted holder is never woken; its request simply expires.
       if (session && !session.interrupted) {
