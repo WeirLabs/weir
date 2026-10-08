@@ -455,7 +455,10 @@ describe('worktree lane service: verification', () => {
   it('stops at the first failure and blocks landing', async () => {
     const h = harness()
     try {
-      config(h, [{ name: 'ok', run: 'true' }, { name: 'bad', run: 'echo nope; exit 4' }, { name: 'never', run: 'touch never-ran' }])
+      // The harness shell is the platform's (cmd on win32, sh elsewhere):
+      // the check commands must parse in the shell that actually runs them.
+      const win = process.platform === 'win32'
+      config(h, [{ name: 'ok', run: win ? 'exit 0' : 'true' }, { name: 'bad', run: win ? 'echo nope& exit 4' : 'echo nope; exit 4' }, { name: 'never', run: win ? 'echo.>never-ran' : 'touch never-ran' }])
       const lane = await workedLane(h)
       const failed = await until(async () => {
         const record = await laneOf(h, lane)

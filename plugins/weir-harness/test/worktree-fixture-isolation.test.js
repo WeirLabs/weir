@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+
+// Git prints forward-slash paths even on win32; compare in native spelling.
+const nativeSpelling = value => value.replaceAll('/', sep)
 import { makeRepo, nodeGitRun, sh } from './helpers/worktree-fixtures.js'
 
 // An enclosing repository is disposable too. No test ever uses the real
@@ -22,7 +25,7 @@ test('nested non-repository fixtures cannot discover or mutate enclosing Git sta
     const write = await nodeGitRun(['git', 'config', '--local', 'test.contamination', 'forbidden'], { cwd: inner.root })
     assert.notEqual(write.code, 0)
     assert.throws(() => sh(inner.root, 'rev-parse', '--show-toplevel'))
-    assert.equal(sh(inner.repo, 'rev-parse', '--show-toplevel'), inner.repo)
+    assert.equal(nativeSpelling(sh(inner.repo, 'rev-parse', '--show-toplevel')), inner.repo)
     assert.equal(sh(outer.repo, 'rev-parse', 'HEAD'), head)
     assert.equal(readFileSync(join(outer.repo, '.git', 'config'), 'utf8'), config)
     assert.deepEqual(readdirSync(outer.repo).sort(), before)
@@ -46,7 +49,7 @@ test('fixture Git does not inherit repository overrides', async () => {
     process.env.GIT_DIR = join(fixture.repo, '.git')
     const probe = await nodeGitRun(['git', 'rev-parse', '--show-toplevel'], { cwd: fixture.root })
     assert.notEqual(probe.code, 0)
-    assert.equal(sh(fixture.repo, 'rev-parse', '--show-toplevel'), fixture.repo)
+    assert.equal(nativeSpelling(sh(fixture.repo, 'rev-parse', '--show-toplevel')), fixture.repo)
   } finally {
     if (old === undefined) delete process.env.GIT_DIR
     else process.env.GIT_DIR = old

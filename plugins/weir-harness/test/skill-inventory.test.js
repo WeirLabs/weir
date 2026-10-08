@@ -52,7 +52,9 @@ test('root paths, labels and ranks match host reference, with a separate Weir ra
   await fs.mkdir(join(base, 'project/.git'), { recursive: true })
   await fs.mkdir(join(base, 'project/nested'), { recursive: true })
   const roots = await resolveSkillRoots({ cwd: join(base, 'project/nested'), dshHome: join(base, 'dsh'), agentsHome: join(base, 'agents'), customSkillDirs: [join(base, 'custom')], bundledSkillDir: join(base, 'bundled') })
-  expect(roots.map(({ scope, ...root }) => ({ ...root, path: root.path.replace(base, '$ROOT'), ...(root.projectRoot ? { projectRoot: root.projectRoot.replace(base, '$ROOT') } : {}) }))).toEqual(reference.roots)
+  // The committed reference carries POSIX separators; win32 roots are native.
+  const portable = value => value.replace(base, '$ROOT').replaceAll('\\', '/')
+  expect(roots.map(({ scope, ...root }) => ({ ...root, path: portable(root.path), ...(root.projectRoot ? { projectRoot: portable(root.projectRoot) } : {}) }))).toEqual(reference.roots)
   expect(await findProjectRoot(join(base, 'outside'))).toBe(join(base, 'outside'))
   await put(join(base, 'worktree/.git'), 'gitdir: elsewhere')
   expect(await findProjectRoot(join(base, 'worktree'))).toBe(join(base, 'worktree'))

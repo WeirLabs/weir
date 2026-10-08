@@ -11,8 +11,8 @@ import { contentPinOf, snapshotVerdict, pinSelfSufficient, refreshVerdict, local
 
 test('11.2 the root table maps staging output to DSH-recognized roots and refuses bundled targets', () => {
   const table = resolveScopeRoots({ agentsHome: '/agents', workspaceRoot: '/ws', bundledRoot: '/bundle' })
-  expect(table.rootFor('global')).toEqual({ allowed: true, root: '/agents/skills' })
-  expect(table.rootFor('workspace')).toEqual({ allowed: true, root: '/ws/.agents/skills' })
+  expect(table.rootFor('global')).toEqual({ allowed: true, root: join('/agents', 'skills') })
+  expect(table.rootFor('workspace')).toEqual({ allowed: true, root: join('/ws', '.agents', 'skills') })
   expect(table.rootFor('bundled').allowed).toBe(false)
   expect(table.rootFor('bundled').reason).toContain('not publish targets')
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from './helpers.js'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, utimesSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { WORKTREE_CODES, WorktreeError } from '../src/worktree/errors.js'
 import { DISPATCHABLE, FINISHED, STATES, TRANSITIONS, isActive, nextFor, transition } from '../src/worktree/state.js'
@@ -398,7 +398,9 @@ describe('worktree git wrapper', () => {
       const version = await git.version(repo)
       expect(git.supported(version)).toBe(true)
       const info = await git.repoOf(repo)
-      expect(info.mainRoot).toBe(repo)
+      // The git wrapper reports Git's own (forward-slash) spelling; consumers
+      // canonicalize (lanes.js realpathSync.native).
+      expect(realpathSync.native(info.mainRoot)).toBe(repo)
       expect(await git.currentBranch(repo)).toBe('main')
       const path = join(repo, '.weir', 'worktrees', 'x-001')
       ensureExclude(info.commonDir, '.weir/worktrees')

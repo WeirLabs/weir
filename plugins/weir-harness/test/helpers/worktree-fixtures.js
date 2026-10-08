@@ -10,7 +10,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 // stop above the fixture, including for deliberately non-repository cwds.
 const fixtureRoots = new Set()
 function fixtureEnvironment(cwd) {
-  const canonical = realpathSync(cwd)
+  const canonical = realpathSync.native(cwd)
   const root = [...fixtureRoots].filter(root => {
     const path = relative(root, canonical)
     return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
@@ -48,7 +48,7 @@ export function sh(cwd, ...args) {
  * `cleanup()`.
  */
 export function makeRepo() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'weir-wt-')))
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'weir-wt-')))
   const repo = join(root, 'repo')
   fixtureRoots.add(root)
   sh(root, 'init', '-q', '-b', 'main', repo)
@@ -59,7 +59,7 @@ export function makeRepo() {
   sh(repo, 'add', '.')
   sh(repo, 'commit', '-qm', 'init')
   return { root, repo, cleanup: () => {
-    if (!fixtureRoots.has(root) || realpathSync(root) !== root) throw new Error('fixture cleanup root changed')
+    if (!fixtureRoots.has(root) || realpathSync.native(root) !== root) throw new Error('fixture cleanup root changed')
     rmSync(root, { recursive: true, force: true })
     fixtureRoots.delete(root)
   } }
