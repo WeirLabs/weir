@@ -93,6 +93,8 @@ function fsyncPath(path) {
 
 /** fsync one directory entry change (mirrors the fs-adapter fsyncDir step). @param {string} dir */
 function fsyncDirectory(dir) {
+  // Directory fsync is POSIX-only (EPERM on win32 — same gate as fs-adapter.js).
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return
   const fd = openSync(dir, 'r')
   try {
     fsyncSync(fd)

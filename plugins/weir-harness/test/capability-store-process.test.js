@@ -5,7 +5,7 @@ import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createLiveness, psStartTime } from '../src/capabilities/store/liveness.js'
+import { createLiveness, psStartTime, windowsStartTime } from '../src/capabilities/store/liveness.js'
 import { digestOf } from '../src/capabilities/store/record.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 
@@ -26,15 +26,20 @@ function probe(command, args) {
     }
   })
 }
+// The liveness start-time probe is platform-routed (ps on POSIX,
+// powershell.exe on win32); probe the command this host actually uses.
 const unavailable = await probe(process.execPath, ['-e', 'process.exit(0)']) ??
-  await probe('ps', ['-o', 'lstart=', '-p', String(process.pid)])
+  (process.platform === 'win32'
+    ? await probe('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id $PID).StartTime.ToFileTimeUtc()'])
+    : await probe('ps', ['-o', 'lstart=', '-p', String(process.pid)]))
 const test = (name, body) => nodeTest(name, { timeout: 30_000 }, async t => {
   if (unavailable) return t.skip(`real process capability unavailable: ${unavailable}`)
   await body(t)
 })
 
-test('real psStartTime and liveness identity observe this process', async () => {
-  const start = await psStartTime(process.pid)
+test('real start-time probe and liveness identity observe this process', async () => {
+  const startTime = process.platform === 'win32' ? windowsStartTime : psStartTime
+  const start = await startTime(process.pid)
   assert.equal(typeof start, 'string')
   assert.ok(start.length > 0)
   const liveness = createLiveness()

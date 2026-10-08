@@ -9,6 +9,8 @@ import { openCapabilityStore } from '../../src/capabilities/store/store.js'
 
 const { role, root, unit, expected, id, point, leaseMs, dir, deadlineMs } = JSON.parse(process.argv[2])
 const line = (/** @type {string} */ text) => writeSync(1, `${text}\n`)
+/** Crash-point suffix checks compare forward-slash spellings; win32 adapter args arrive backslashed. */
+const slash = (/** @type {string} */ path) => path.replace(/\\/g, '/')
 const input = createInterface({ input: process.stdin })
 const commands = input[Symbol.asyncIterator]()
 /** Block without polling until the parent writes `word` on stdin; polling starves timing-sensitive suites running in parallel. @param {string} word */
@@ -30,14 +32,14 @@ if (role === 'commit') {
   let renamed = false
   /** @param {string} op @param {string[]} args */
   const reached = (op, args) => {
-    if (op === 'rename' && args[1].endsWith('/selection.json')) renamed = true
+    if (op === 'rename' && slash(args[1]).endsWith('/selection.json')) renamed = true
     switch (point) {
-      case 'after-lock-create': return op === 'link' && args[1].endsWith('/selection.lock')
+      case 'after-lock-create': return op === 'link' && slash(args[1]).endsWith('/selection.lock')
       case 'after-write-temp': return op === 'createExclusive' && args[0].endsWith('.tmp')
       case 'after-fsync': return op === 'fsyncFile' && args[0].endsWith('.tmp')
-      case 'after-rename': return op === 'rename' && args[1].endsWith('/selection.json')
+      case 'after-rename': return op === 'rename' && slash(args[1]).endsWith('/selection.json')
       case 'after-dir-fsync': return op === 'fsyncDir' && renamed
-      case 'after-release': return op === 'unlink' && args[0].endsWith('/selection.lock')
+      case 'after-release': return op === 'unlink' && slash(args[0]).endsWith('/selection.lock')
       default: throw new Error(`unknown crash point ${point}`)
     }
   }
@@ -54,12 +56,12 @@ if (role === 'commit') {
   let switched = false
   /** @param {string} op @param {string[]} args */
   const reached = (op, args) => {
-    if (op === 'rename' && args[1].endsWith('/active.json')) switched = true
+    if (op === 'rename' && slash(args[1]).endsWith('/active.json')) switched = true
     switch (point) {
-      case 'after-generation-file': return op === 'createExclusive' && args[0].includes('/generations/')
-      case 'after-generation-fsync': return op === 'fsyncDir' && args[0].endsWith('/generations')
+      case 'after-generation-file': return op === 'createExclusive' && slash(args[0]).includes('/generations/')
+      case 'after-generation-fsync': return op === 'fsyncDir' && slash(args[0]).endsWith('/generations')
       case 'after-write-temp': return op === 'createExclusive' && args[0].endsWith('.tmp')
-      case 'after-rename': return op === 'rename' && args[1].endsWith('/active.json')
+      case 'after-rename': return op === 'rename' && slash(args[1]).endsWith('/active.json')
       case 'after-dir-fsync': return op === 'fsyncDir' && switched
       default: throw new Error(`unknown publish crash point ${point}`)
     }
@@ -74,11 +76,11 @@ if (role === 'commit') {
   await store.publishPointer('global', { expectedRevision: expected, generationId: id, files: { 'SKILL.md': `body ${id}`, 'b.txt': `b ${id}` }, provenance: { writer: id } })
   line('DONE')
 } else if (role === 'reclaim') {
-  const lockFile = `${dir}/selection.lock`
+  const lockFile = slash(`${dir}/selection.lock`)
   /** @type {string[]} */
   const lockOps = []
   const fs = instrumentFs(createNodeFs(), (op, args, phase) => {
-    if (phase === 'before' && (op === 'rename' || op === 'unlink') && args[0] === lockFile) lockOps.push(op)
+    if (phase === 'before' && (op === 'rename' || op === 'unlink') && slash(args[0]) === lockFile) lockOps.push(op)
   })
   const lock = createLockProtocol({ fs, liveness: createLiveness(), deadlineMs })
   line('READY')

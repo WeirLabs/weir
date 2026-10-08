@@ -29,10 +29,10 @@ export const test = nodeTest
 //    itself declines the store there. They skip with a documented reason, the
 //    same host-contract pattern as the DSH-runtime skip in
 //    worktree-pkgmgr.test.js.
-export const storePlatformSupported = process.platform === 'darwin'
+export const storePlatformSupported = process.platform === 'darwin' || process.platform === 'win32'
 export const storePlatformSkip = storePlatformSupported
   ? false
-  : 'Weir capability store writes are darwin-only by the C-1.10 platform matrix; this test exercises the store-backed path'
+  : 'Weir capability store writes are enabled only on verified platform rows (darwin, win32); this test exercises the store-backed path'
 
 // Volume-contract guard for tests that observe APFS-only name aliasing. The
 // default APFS volume resolves names case-insensitively and NFC-normalizes

@@ -26,6 +26,7 @@ declare module 'node:os' {
 }
 declare var process: {
   pid: number;
+  platform: string;
   kill(pid: number, signal?: number): void;
 };
 

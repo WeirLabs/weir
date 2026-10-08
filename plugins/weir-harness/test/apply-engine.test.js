@@ -287,11 +287,11 @@ test('an unreadable policy record fails closed and is never overwritten', async 
 })
 
 test('an unsupported store reports unsupported and writes nothing', async t => {
-  const { store, engine } = await fixture(t, { storeOptions: { platform: 'win32' } })
+  const { store, engine } = await fixture(t, { storeOptions: { platform: 'freebsd' } })
   const response = await engine.apply(auth, request())
   assert.equal(response.status, 'rejected')
   assert.ok(response.reason.startsWith('unsupported:platform-unsupported'), response.reason)
-  assert.deepEqual(await store.read(unit), { kind: 'unsupported', reason: 'platform-unsupported:win32' })
+  assert.deepEqual(await store.read(unit), { kind: 'unsupported', reason: 'platform-unsupported:freebsd' })
 })
 
 test('preparation failure keeps the old authority, the user draft and sends no notification', async t => {

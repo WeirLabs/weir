@@ -118,18 +118,28 @@ test('unreadable records fail closed and are never overwritten', async t => {
 
 test('unsupported platforms and a missing profileContext perform zero writes', async t => {
   const root = await fixture(t)
-  const win = openCapabilityStore({ root, platform: 'win32' })
-  assert.deepEqual(win.support, { supported: false, reason: 'platform-unsupported:win32' })
-  assert.deepEqual(await win.read(unit), { kind: 'unsupported', reason: 'platform-unsupported:win32' })
-  assert.deepEqual(await win.commit(unit, 0, () => ({})), { status: 'unsupported', reason: 'platform-unsupported:win32' })
-  assert.deepEqual(await win.publishPointer('global', { expectedRevision: 0, generationId: 'g1', files: { a: 'x' } }),
-    { status: 'unsupported', reason: 'platform-unsupported:win32' })
+  const unsupported = openCapabilityStore({ root, platform: 'freebsd' })
+  assert.deepEqual(unsupported.support, { supported: false, reason: 'platform-unsupported:freebsd' })
+  assert.deepEqual(await unsupported.read(unit), { kind: 'unsupported', reason: 'platform-unsupported:freebsd' })
+  assert.deepEqual(await unsupported.commit(unit, 0, () => ({})), { status: 'unsupported', reason: 'platform-unsupported:freebsd' })
+  assert.deepEqual(await unsupported.publishPointer('global', { expectedRevision: 0, generationId: 'g1', files: { a: 'x' } }),
+    { status: 'unsupported', reason: 'platform-unsupported:freebsd' })
   assert.deepEqual(await readdir(root), [])
   const orphan = openCapabilityStore({ platform: 'darwin' })
   assert.deepEqual(await orphan.commit(unit, 0, () => ({})), { status: 'unsupported', reason: 'profile-context-unavailable' })
   const located = openCapabilityStore({ platform: 'darwin', profileContext: { home: root, name: 'it' } })
   assert.equal((await located.commit(unit, 0, () => ({ ok: true }))).status, 'committed')
   assert.deepEqual(await readdir(join(root, 'weir', 'profiles', 'it', 'capabilities', 'sessions')), [SESSION])
+})
+
+test('win32 is a supported platform row and commits with the real filesystem', async t => {
+  const root = await fixture(t)
+  const store = openCapabilityStore({ root, platform: 'win32' })
+  assert.deepEqual(store.support, { supported: true, root })
+  const committed = await store.commit(unit, 0, () => ({ ok: true }), { requestId: 'req-win32', requestDigest: 'digest-win32' })
+  assert.equal(committed.status, 'committed')
+  assert.equal(committed.revision, 1)
+  assert.equal((await store.read(unit)).kind, 'ok')
 })
 
 test('holder sweeps only this unit\'s orphan temps, candidates and stale locks', async t => {

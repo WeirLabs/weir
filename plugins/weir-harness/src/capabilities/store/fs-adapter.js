@@ -18,6 +18,35 @@ import { link, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/pr
  * }} StoreFs
  */
 
+// Directory fsync is a POSIX crash-durability idiom: on Windows the directory
+// handle opens but sync fails EPERM (verified on Node v24, NTFS). The win32
+// store row (SUPPORTED_PLATFORMS in store.js) therefore commits with
+// file-level fsync + atomic rename only — the same platform stance the
+// edit-lock reservation already takes (reservation.js SYNC_SUPPORTED). The
+// durability tradeoff is documented in docs/features/session-capability-manager.md.
+const DIR_SYNC_SUPPORTED = process.platform === 'darwin' || process.platform === 'linux'
+
+// Windows file-locking etiquette: antivirus and the search indexer briefly
+// hold brand-new files, so unlink/rename/link can fail transiently with
+// EPERM/EACCES/EBUSY (observed in the cross-process suite). POSIX rows never
+// see those codes from these operations; the win32 row retries a few times
+// before surfacing the error.
+const WINDOWS = process.platform === 'win32'
+const TRANSIENT_LOCK = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+/** @param {() => Promise<unknown>} op @returns {Promise<void>} */
+async function retryTransientLock(op) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await op()
+      return
+    } catch (error) {
+      if (!WINDOWS || !TRANSIENT_LOCK.has(/** @type {{ code?: string }} */ (error)?.code ?? '') || attempt >= 4) throw error
+      await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+}
+
 /** @returns {StoreFs} */
 export function createNodeFs() {
   return {
@@ -38,14 +67,15 @@ export function createNodeFs() {
         await handle.close()
       }
     },
-    link: (from, to) => link(from, to),
-    rename: (from, to) => rename(from, to),
-    unlink: path => unlink(path),
+    link: (from, to) => retryTransientLock(() => link(from, to)),
+    rename: (from, to) => retryTransientLock(() => rename(from, to)),
+    unlink: path => retryTransientLock(() => unlink(path)),
     readdir: path => readdir(path),
     async mkdirp(path) {
       await mkdir(path, { recursive: true, mode: 0o700 })
     },
     async fsyncDir(path) {
+      if (!DIR_SYNC_SUPPORTED) return
       const handle = await open(path, 'r')
       try {
         await handle.sync()

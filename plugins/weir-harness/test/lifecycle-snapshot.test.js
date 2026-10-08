@@ -100,9 +100,9 @@ test('6.4 root rule: an unreadable record (EISDIR) becomes BLOCKED, never a gues
 })
 
 test('6.1 unsupported platform and missing profileContext are explicit, not silent', () => {
-  expect(createLifecycleSnapshots({ root: base(), platform: 'win32' }).support.supported).toBe(false)
+  expect(createLifecycleSnapshots({ root: base(), platform: 'freebsd' }).support.supported).toBe(false)
   expect(createLifecycleSnapshots({ platform: 'darwin' }).support).toEqual({ supported: false, reason: 'profile-context-unavailable' })
-  const lifecycle = createLifecycleSnapshots({ root: base(), platform: 'win32' })
+  const lifecycle = createLifecycleSnapshots({ root: base(), platform: 'freebsd' })
   assert.throws(() => lifecycle.captureInherited('c1', 'p1'), /unsupported/)
 })
 

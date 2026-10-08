@@ -9,8 +9,13 @@ import { createLockProtocol } from './lock.js'
 import { isFileSegment, isSegment, resolveStoreRoot, unitLayout } from './paths.js'
 import { decodeRecord, digestOf, encodeRecord } from './record.js'
 
-/** Platforms whose rename/fsync/link matrix row is EXECUTED (C-1.10 §6). */
-export const SUPPORTED_PLATFORMS = Object.freeze(['darwin'])
+/**
+ * Platforms whose rename/fsync/link matrix row is EXECUTED (C-1.10 §6 darwin
+ * row; win32 row: openspec windows-platform-adaptation — hard-link EEXIST,
+ * rename-replace, file fsync and kill(pid,0) verified on NTFS with Node v24.
+ * Directory fsync is skipped on win32, see fs-adapter.js).
+ */
+export const SUPPORTED_PLATFORMS = Object.freeze(['darwin', 'win32'])
 
 /**
  * @typedef {import('./paths.js').Unit} Unit
