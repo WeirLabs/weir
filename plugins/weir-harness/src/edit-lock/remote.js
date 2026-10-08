@@ -180,14 +180,25 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
   const all = new Set()
   const never = new AbortController().signal
   let closed = false
-  /** The publisher may not yet have processed an earlier channel's EOF; only
-   * channel establishment is retried, never a call.
+  /** Failure classes are split by WHERE the open failed, never by guessing at
+   * message text (design D3): a transport that never came up — or an open
+   * request that never got an answer — is an unreachable publisher and carries
+   * the reservation hint; an open the publisher answered and refused is a live
+   * publisher rejecting the binding, surfaced with its own guidance after the
+   * duplicate-binding retry budget runs out. Only that answered refusal is
+   * retried: the publisher may not yet have processed (or even seen) the
+   * earlier channel's death. Never a call.
    * @param {any} agent @returns {Promise<Channel>} */
   async function channelFor(agent) {
     for (let attempt = 0; ; attempt++) {
       try { return await openChannel(agent) } catch (error) {
-        if (attempt >= 20 || !/session already bound/.test(String(/** @type {any} */ (error)?.message))) throw error
-        await new Promise(resolve => setTimeout(resolve, 50))
+        if (/** @type {any} */ (error)?.answeredRefusal !== true) throw error
+        if (/session already bound/.test(String(/** @type {any} */ (error)?.message)) && attempt < 20) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+          continue
+        }
+        const reason = String(/** @type {any} */ (error)?.message ?? error)
+        throw new Error(`edit lock duplicate session binding: session ${agent.id} is already active in the DeepSeek Harness window that publishes this project. Use the session in that window, close it there, or quit that Harness process. Do NOT remove the publisher reservation (.weir/.edit-lock.publisher-reservation) while that process is alive — the reservation belongs to it, and removing it would split the edit authority. (publisher answered: ${reason})`)
       }
     }
   }
@@ -205,17 +216,35 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
     })
     channels.set(agent, channel)
     all.add(channel)
+    /** The publisher genuinely did not answer. @param {unknown} cause */
+    const unreachable = cause => new Error(`edit lock publisher unreachable at ${endpoint}: ${/** @type {any} */ (cause)?.message ?? cause}${hooks.unreachableHint ? `. ${hooks.unreachableHint}` : ''}`)
     channel.ready = (async () => {
-      await new Promise((resolve, reject) => {
-        socket.once('connect', resolve)
-        socket.once('error', reject)
-      })
-      const opened = await channel.client.request('open', 'open', { sessionId: agent.id }, never)
+      try {
+        await new Promise((resolve, reject) => {
+          socket.once('connect', resolve)
+          socket.once('error', reject)
+        })
+      } catch (error) {
+        // The transport never came up: the publisher process is not answering.
+        throw unreachable(error)
+      }
+      let opened
+      try {
+        opened = await channel.client.request('open', 'open', { sessionId: agent.id }, never)
+      } catch (error) {
+        const message = String(/** @type {any} */ (error)?.message ?? error)
+        // No answer ever arrived — the channel died mid-open or the request
+        // was never dispatched: the same failure class as a connect error.
+        if (message.startsWith('edit publication outcome UNKNOWN:') || message.startsWith('edit peer unavailable')) throw unreachable(error)
+        // The publisher answered and refused the open. channelFor owns the
+        // retry budget and the final message for answered refusals.
+        throw Object.assign(error instanceof Error ? error : new Error(message), { answeredRefusal: true })
+      }
       if (!channel.closed) channel.state = opened.state
     })()
     try { await channel.ready } catch (error) {
       channel.client.close()
-      throw new Error(`edit lock publisher unreachable at ${endpoint}: ${/** @type {any} */ (error)?.message ?? error}${hooks.unreachableHint ? `. ${hooks.unreachableHint}` : ''}`)
+      throw error
     }
     return channel
   }
