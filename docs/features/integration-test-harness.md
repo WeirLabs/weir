@@ -37,12 +37,23 @@
 | `WEIR_IT_ROOT` | `<仓库或 lane 根>/.weir/it-root` | 从装置自身安装位置推导，与 cwd 无关；显式环境变量原样覆盖。profile/home/ws/trace 全在其下 |
 | `WEIR_IT_NODE` | 捆绑运行时绝对路径（按平台推导） | 启动 profile 的解释器 |
 | `WEIR_IT_PNPM` | 捆绑 pnpm 绝对路径（按平台推导） | 生成 profile 后做 `link:` 安装 |
-| `WEIR_IT_DSH` | POSIX：`/tmp/dsh-src/...`；win32：`%APPDATA%\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | 被启动的 `dsh` CLI 入口 |
+| `WEIR_IT_DSH` | POSIX：`/tmp/dsh-src/...`；win32：桌面应用 `resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js`（见下方运行时选择） | 被启动的 `dsh` CLI 入口 |
 | `WEIR_IT_SCENARIO` | `deepwork` | 场景 id（驱动注入，mock 读取） |
 | `WEIR_IT_TRACE` | `<IT_ROOT>/trace.jsonl` | 该场景的 trace 输出 |
 | `WEIR_IT_FIXTURE` | `<IT_ROOT>/ws/fixture.txt` | `hashline`/`robash` 的磁盘夹具 |
 | `WEIR_IT_TSFIXTURE` | `<IT_ROOT>/ws/probe.ts` | `lsp` 场景的 TS 夹具 |
 | `WEIR_IT_WINDOW` | `128000` | mock 模型上报的上下文窗口（`pressure` 用它把阈值压小） |
+
+**运行时必须与 bundle 的 peer 区间相容（Windows 必读）**：`%APPDATA%\npm` 里那份全局 `dsh` CLI 未必与桌面应用同版本（本机是 0.1.7-rc.2，而 `weir-harness` 声明 `>=0.2.0-rc.2 <0.3.0`）。用它启动时**每一行 `weir-harness/*` 都会被兼容闸门整行禁用**（stderr 一行 `disabling profile plugin row … is incompatible with dsh …`），套件于是以「插件根本没挂上」的形式大面积失败——这类结果没有诊断价值，别当成回归。把工具链指向正在使用的桌面运行时：
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE = '1'   # 让 Electron 以 node 身份跑 CLI
+$env:WEIR_IT_NODE = '…\DeepSeek Harness.exe'
+$env:WEIR_IT_DSH  = '…\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'
+node run.mjs [scenario …]
+```
+
+`resources/runtime/cli/bin/dsh.cmd` 是同一入口的批处理包装；`execFile` 不能直接执行 `.cmd`，所以上面把解释器（`WEIR_IT_NODE`）与入口（`WEIR_IT_DSH`）拆成两个变量。生产 profile（`desktop`）由 Electron 应用独占，headless 不得直接启动它（`dsh: error: profile "desktop" is managed exclusively by the Electron application`）——验证发布产物请另建一个临时 profile。
 
 ## 设计细节
 
