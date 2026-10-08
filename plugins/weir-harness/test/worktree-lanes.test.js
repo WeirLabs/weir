@@ -8,6 +8,7 @@ import { makeRepo, nodeGitRun, sh } from './helpers/worktree-fixtures.js'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager } from '../src/edit-lock/manager.js'
 import { createWorktreeTools } from '../src/worktree/tools.js'
+import { resolveDerivedSetup } from '../src/worktree/pkgmgr.js'
 
 /** Shell runner over child_process with the host runner's result shape. */
 function nodeShellRun({ command, cwd, timeoutMs }) {
@@ -197,10 +198,15 @@ describe('worktree lane service: open', () => {
     const h = harness({
       resolveSetup: async (manager) => {
         calls.push(manager)
-        return {
-          ok: true, source: 'bundled', display: `node ${bundledPnpm} install --frozen-lockfile`,
-          command: `export PATH='${bundledNode.slice(0, bundledNode.lastIndexOf('/'))}':"$PATH"; exec '${bundledNode}' '${bundledPnpm}' install --frozen-lockfile`,
-        }
+        // The REAL resolver, with the platform pinned: the POSIX command text
+        // asserted below must not depend on the test host's platform.
+        return resolveDerivedSetup(manager, {
+          platform: 'darwin',
+          foundOnPath: () => undefined,
+          listDirs: (dir) => (dir === '/ds h/dsh-runtimes' ? ['rt'] : []),
+          isFile: (path) => path === bundledNode || path === bundledPnpm,
+          dshHome: '/ds h',
+        })
       },
       shell: async ({ command }) => ({ code: 0, output: `ran: ${command}`, denied: false, timedOut: false }),
     })
@@ -282,10 +288,16 @@ describe('worktree lane service: open', () => {
   it('a retry after a real setup failure re-resolves instead of replaying the display string', async () => {
     const runs = []
     let attempts = 0
+    const home = '/bundled home'
+    const bundledNode = `${home}/dsh-runtimes/rt/dependencies/node/bin/node`
+    const bundledPnpm = `${home}/dsh-runtimes/rt/dependencies/pnpm/bin/pnpm.mjs`
     const h = harness({
-      resolveSetup: async (manager) => ({
-        ok: true, source: 'bundled', display: `node /bundled/pnpm.mjs install --frozen-lockfile`,
-        command: `export PATH='/bundled node/bin':"$PATH"; exec '/bundled node/bin/node' /bundled/pnpm.mjs install --frozen-lockfile`,
+      resolveSetup: async (manager) => resolveDerivedSetup(manager, {
+        platform: 'darwin',
+        foundOnPath: () => undefined,
+        listDirs: (dir) => (dir === `${home}/dsh-runtimes` ? ['rt'] : []),
+        isFile: (path) => path === bundledNode || path === bundledPnpm,
+        dshHome: home,
       }),
       shell: async ({ command }) => {
         attempts++
@@ -310,8 +322,8 @@ describe('worktree lane service: open', () => {
       expect(attempts).toBe(2)
       // BOTH attempts executed the resolved invocation — never the display.
       for (const command of runs) {
-        expect(command).toContain(`exec '/bundled node/bin/node'`)
-        expect(command).not.toBe('node /bundled/pnpm.mjs install --frozen-lockfile')
+        expect(command).toContain(`exec '${bundledNode}'`)
+        expect(command).not.toBe(`node ${bundledPnpm} install --frozen-lockfile`)
       }
     } finally {
       h.cleanup()

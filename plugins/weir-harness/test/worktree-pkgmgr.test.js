@@ -37,6 +37,7 @@ describe('quoteSh', () => {
 describe('resolveDerivedSetup', () => {
   it("prefers the system tool and injects the resolved NODE directory first, then the manager's", () => {
     const resolution = resolveDerivedSetup('pnpm', {
+      platform: 'darwin',
       foundOnPath: (name) => (name === 'node' ? '/opt/homebrew/bin/node' : '/Users/me/.npm-global/bin/pnpm'),
       listDirs: NO_DIRS, isFile: () => false, dshHome: undefined,
     })
@@ -49,6 +50,7 @@ describe('resolveDerivedSetup', () => {
   it('a system manager whose node is not on PATH falls through to the bundled offer', () => {
     const home = fakeHome('/d')
     const resolution = resolveDerivedSetup('pnpm', {
+      platform: 'darwin',
       foundOnPath: (name) => (name === 'node' ? undefined : '/Users/me/.npm-global/bin/pnpm'),
       ...home,
     })
@@ -59,7 +61,7 @@ describe('resolveDerivedSetup', () => {
 
   it('falls back to the bundled runtime, running pnpm.mjs through the bundled node', () => {
     const home = fakeHome('/ds h')
-    const resolution = resolveDerivedSetup('pnpm', { foundOnPath: NO_SYSTEM, ...home })
+    const resolution = resolveDerivedSetup('pnpm', { platform: 'darwin', foundOnPath: NO_SYSTEM, ...home })
     expect(resolution.ok).toBe(true)
     expect(resolution.source).toBe('bundled')
     const node = '/ds h/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
@@ -69,22 +71,22 @@ describe('resolveDerivedSetup', () => {
   })
 
   it('bundled npm only exists when the bundled node directory contains npm', () => {
-    const withNpm = resolveDerivedSetup('npm', { foundOnPath: NO_SYSTEM, ...fakeHome('/d', { npm: true, pnpm: false }) })
+    const withNpm = resolveDerivedSetup('npm', { platform: 'darwin', foundOnPath: NO_SYSTEM, ...fakeHome('/d', { npm: true, pnpm: false }) })
     expect(withNpm.ok).toBe(true)
     expect(withNpm.command).toContain('dependencies/node/bin/npm')
     expect(withNpm.command).toContain(' ci')
-    const withoutNpm = resolveDerivedSetup('npm', { foundOnPath: NO_SYSTEM, ...fakeHome('/d', { npm: false }) })
+    const withoutNpm = resolveDerivedSetup('npm', { platform: 'darwin', foundOnPath: NO_SYSTEM, ...fakeHome('/d', { npm: false }) })
     expect(withoutNpm.ok).toBe(false)
   })
 
   it('yarn and bun have no bundled offer', () => {
     for (const manager of ['yarn', 'bun']) {
-      expect(resolveDerivedSetup(manager, { foundOnPath: NO_SYSTEM, ...fakeHome('/d') }).ok).toBe(false)
+      expect(resolveDerivedSetup(manager, { platform: 'darwin', foundOnPath: NO_SYSTEM, ...fakeHome('/d') }).ok).toBe(false)
     }
   })
 
   it('reports nothing found when both layers miss, with an actionable reason', () => {
-    const resolution = resolveDerivedSetup('pnpm', { foundOnPath: NO_SYSTEM, listDirs: NO_DIRS, isFile: () => false, dshHome: '/empty' })
+    const resolution = resolveDerivedSetup('pnpm', { platform: 'darwin', foundOnPath: NO_SYSTEM, listDirs: NO_DIRS, isFile: () => false, dshHome: '/empty' })
     expect(resolution).toEqual({ ok: false, manager: 'pnpm' })
     const reason = setupMissingReason('pnpm')
     expect(reason).toContain('setup needs pnpm')
@@ -95,6 +97,7 @@ describe('resolveDerivedSetup', () => {
   it('uses <home>/.dsh when dshHome is unset and tolerates a missing runtimes dir', () => {
     const seen = []
     const resolution = resolveDerivedSetup('pnpm', {
+      platform: 'darwin',
       foundOnPath: NO_SYSTEM,
       dshHome: undefined,
       home: '/u',
@@ -110,11 +113,11 @@ describe('resolveDerivedSetup', () => {
 
   it('keeps frozen-lockfile semantics for every manager', () => {
     for (const manager of ['pnpm', 'yarn', 'bun']) {
-      const resolution = resolveDerivedSetup(manager, { foundOnPath: () => `/sys/${manager === 'node' ? undefined : manager}`, listDirs: NO_DIRS, isFile: () => false })
+      const resolution = resolveDerivedSetup(manager, { platform: 'darwin', foundOnPath: () => `/sys/${manager === 'node' ? undefined : manager}`, listDirs: NO_DIRS, isFile: () => false })
       expect(resolution.command).toContain('install --frozen-lockfile')
     }
     const nodeAndNpm = (name) => `/sys/${name}`
-    expect(resolveDerivedSetup('npm', { foundOnPath: nodeAndNpm, listDirs: NO_DIRS, isFile: () => false }).command).toContain(' ci')
+    expect(resolveDerivedSetup('npm', { platform: 'darwin', foundOnPath: nodeAndNpm, listDirs: NO_DIRS, isFile: () => false }).command).toContain(' ci')
   })
 })
 
@@ -127,6 +130,7 @@ describe('createSetupResolver adapter', () => {
       findExecutable: find({ pnpm: '/Users/me/.npm-global/bin/pnpm', node: '/opt/homebrew/bin/node' }),
       env: {},
       home: '/no-bundled-here',
+      platform: 'darwin',
     })
     const resolution = await resolve('pnpm')
     expect(resolution.ok).toBe(true)
@@ -147,6 +151,7 @@ describe('createSetupResolver adapter', () => {
         subprocess: undefined,
         findExecutable: find({ pnpm: '/Users/me/.npm-global/bin/pnpm', node: undefined }),
         env: { DSH_HOME: home },
+        platform: 'darwin',
       })
       const resolution = await resolve('pnpm')
       expect(resolution.ok).toBe(true)
