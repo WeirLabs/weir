@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-10-09
+
 ### Fixed
 
 - **编辑锁：跨进程重复绑定自愈与报错分流**：client 会话向 publisher 注册遇 `session already bound`（同 sessionId 已有绑定）时，publisher 端点现在主动核验旧通道 socket 活性——已死（`destroyed`/`closed`/`errored`）即按崩溃断连语义回收（撤权+遗忘、绝不释放锁）后接受重绑，重连会话以 `interrupted` 开始需可信 resume；旧通道仍活或状态不明维持拒绝（fail-closed），publisher 本进程的本地绑定永不被远程抢占；同会话并发 open 串行化杜绝双绑竞态。client 侧按失败阶段分流：连接级失败（publisher 真无应答）才附「删预约文件」指引；publisher 已应答的重复绑定拒绝改报独立错误——点名会话已在发布方 Harness 窗口激活、给出正确动作、并明确禁止在对方存活时删除预约文件（此前统一报 "publisher unreachable" 并附删预约指引，照做会双 publisher 脑裂；2026-10-08 实证事故）。证据：新单测 11 项、跨进程 SIGKILL 重绑探针 win32 实测 8/8。详见 [编辑锁特性文档](docs/features/edit-lock.md)。
