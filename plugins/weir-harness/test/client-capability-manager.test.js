@@ -183,3 +183,32 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   expect(findAll(mcp, (node) => node.children === 'Unmanaged')).toHaveLength(1)
   expect(findAll(mcp, (node) => node.__type === 'span' && node.children === 'mounted')).toHaveLength(1)
 })
+
+
+test('same-named rows check independently and Apply carries the exact identity', async () => {
+  const counts = { useState: 0, useEffect: 0 }
+  const react = makeReactStub(counts)
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const a = { scope: 'custom', root: '/a', name: 'same', provenance: null, opaqueId: 'a', portable: false }
+  const b = { ...a, root: '/b', opaqueId: 'b' }
+  let applied
+  const props = {
+    sessionId: 'same-names', model,
+    fetchListing: async () => ({ skills: [a, b].map(identity => ({ name: 'same', scope: 'custom', status: 'parsed', identity })), mcpServers: [] }),
+    fetchReceipt: async () => ({ effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+    fetchConditions: async () => ({ conditions: [] }),
+    applySelection: async (_sessionId, draft) => { applied = draft; return { status: 'missing' } },
+  }
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const first = findAll(render(), node => node.type === 'checkbox')
+  expect(first.map(row => row.checked)).toEqual([false, false])
+  first[0].onChange()
+  const edited = render()
+  expect(findAll(edited, node => node.type === 'checkbox').map(row => row.checked)).toEqual([true, false])
+  expect(findAll(edited, node => node.children === '+1 skills')).toHaveLength(1)
+  findAll(edited, node => node.__type === 'button' && node.children === 'Apply')[0].onClick()
+  expect(applied.skills).toEqual([a])
+})

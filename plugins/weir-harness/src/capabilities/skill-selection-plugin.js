@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import zlib from 'node:zlib'
 import { fileURLToPath } from 'node:url'
+import { createSkillIdentity, skillIdentityKey } from './skill-identity.js'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
@@ -534,6 +535,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                       status: candidate?.status ?? 'unknown',
                       selected: false,
                       conflict: Boolean(candidate?.conflict),
+                      identity: candidate?.identity ?? null,
                     })),
                     mcpServers: payload.mcpServers,
                     selectionError: { error: status.error, reason: status.reason ?? null, hint: status.hint ?? null },
@@ -546,10 +548,9 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (verb.startsWith('apply ')) {
               // The manager editor's commit (12.3): the client sends
-              // {requestId, expectedRevision, skills: [names], mcpServers: [names]}
-              // as JSON text after the verb; names map to identities from the
-              // CURRENT candidates — an unknown name is a visible error, never
-              // silently dropped.
+              // {requestId, expectedRevision, skills: [identities or names], mcpServers: [names]}
+              // as JSON text after the verb; identities match exactly and names
+              // must match one parsed CURRENT candidate, never a silent winner.
               let draft
               try {
                 draft = JSON.parse(rawInput.slice('apply '.length))
@@ -561,13 +562,35 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 // may name any discovered candidate, selected or not.
                 const inventoryResult = await inventory(options)
                 const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
-                const byName = new Map(candidates.map(candidate => [candidate.name, candidate]))
+                const byKey = new Map()
+                const parsedByName = new Map()
+                for (const candidate of candidates) {
+                  if (!candidate.identity) continue
+                  byKey.set(skillIdentityKey(candidate.identity), candidate)
+                  if (candidate.status !== 'parsed') continue
+                  const matches = parsedByName.get(candidate.name) ?? []
+                  matches.push(candidate)
+                  parsedByName.set(candidate.name, matches)
+                }
                 const missing = []
                 const identities = []
-                for (const name of draft.skills ?? []) {
-                  const candidate = byName.get(name)
-                  if (candidate?.identity) identities.push(candidate.identity)
-                  else missing.push(String(name))
+                const admitted = new Set()
+                for (const entry of draft.skills ?? []) {
+                  let candidate
+                  if (typeof entry === 'string') {
+                    const matches = parsedByName.get(entry) ?? []
+                    if (matches.length === 1) candidate = matches[0]
+                    else missing.push(entry)
+                  } else {
+                    const identity = createSkillIdentity(entry)
+                    candidate = byKey.get(skillIdentityKey(identity))
+                    if (!candidate) missing.push(identity.name)
+                  }
+                  if (!candidate) continue
+                  const key = skillIdentityKey(candidate.identity)
+                  if (admitted.has(key)) continue
+                  admitted.add(key)
+                  identities.push(candidate.identity)
                 }
                 // preset-skill-applicability (D2): partition the missing names —
                 // KNOWN-BUT-INAPPLICABLE (resolvable in a profile-supplemental

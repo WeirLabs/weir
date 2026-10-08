@@ -601,7 +601,11 @@ window.__ModuleLoader__.load({
 			// the session's applied set.
 			const stagePreset = (document) => {
 				if (commit?.phase === "submitting") return;
-				setDraft(model.draftFromPreset(document, draft));
+				const resolveName = (name) => {
+					const matches = (listing?.skills ?? []).filter(row => row.status === "parsed" && row.name === name && row.identity);
+					return matches.length === 1 ? matches[0].identity : undefined;
+				};
+				setDraft(model.draftFromPreset(document, draft, resolveName));
 				setCommit(null);
 			};
 			// Managed MCP add form (8.1/8.2): registers a stdio server and mounts
@@ -697,6 +701,7 @@ window.__ModuleLoader__.load({
 			}
 			const partition = model.partitionManagerListing(listing);
 			const skillRows = model.groupSkillRows(model.filterSkillRows(partition.skills, query));
+			const skillKeys = new Set((draft?.skills ?? []).map(model.skillEntryKeyOf));
 			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
 			const selectionDisabled = draft === null || commit?.phase === "submitting";
 			const fieldError = (code) => code === "invalid"
@@ -752,8 +757,8 @@ window.__ModuleLoader__.load({
 						] })
 					] })
 			] }) : null;
-			const skillRow = (skill) => {
-				const selected = draftHas("skills", skill.name);
+			const skillRow = (skill, index) => {
+				const selected = skillKeys.has(model.skillEntryKeyOf(skill.identity ?? skill.name));
 				const rest = selected ? tint(ACCENT, 8) : "transparent";
 				return react_jsx_runtime.jsxs("label", {
 					style: { ...S.row.base, background: rest },
@@ -766,7 +771,7 @@ window.__ModuleLoader__.load({
 							checked: selected,
 							disabled: selectionDisabled,
 							"aria-label": skill.name,
-							onChange: () => toggle("skills", skill.name)
+							onChange: () => toggle("skills", skill.identity ?? skill.name)
 						}),
 						react_jsx_runtime.jsxs("span", { style: S.row.text, children: [
 							react_jsx_runtime.jsxs("span", { style: S.row.nameLine, children: [
@@ -778,7 +783,7 @@ window.__ModuleLoader__.load({
 							skill.description ? react_jsx_runtime.jsx("span", { style: S.row.desc, title: skill.description, children: skill.description }) : null
 						] })
 					]
-				}, skill.name);
+				}, `${model.skillIdentityKeyOf(skill.identity) ?? `${skill.scopeKey}:${skill.name}`}:${index}`);
 			};
 			const mcpRow = (server) => {
 				const name = server.identity ?? server.serverName ?? "unknown";

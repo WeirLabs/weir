@@ -101,8 +101,8 @@ test('/capabilities apply commits through the shared engine and the receipt refl
   try {
     const root = mkdtempSync(join(tmpdir(), 'weir-cmd-apply-'))
     const { mkdirSync, writeFileSync } = await import('node:fs')
-    mkdirSync(join(root, 'skills', 'alpha'), { recursive: true })
-    writeFileSync(join(root, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: apply fixture\n---\nALPHA\n')
+    mkdirSync(join(root, 'custom-skills', 'alpha'), { recursive: true })
+    writeFileSync(join(root, 'custom-skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: apply fixture\n---\nALPHA\n')
     let registeredCommands = []
     let provider
     const ctx = {
@@ -131,7 +131,7 @@ test('/capabilities apply commits through the shared engine and the receipt refl
     createSkillSelectionPlugin()(ctx, {
       machineId: 'weir-it-machine',
       includeDefaultRoots: false,
-      customSkillDirs: [join(root, 'skills')],
+      customSkillDirs: [join(root, 'custom-skills')],
       supplementalSkillDirs: [join(root, 'supplemental')],
       agentsHome: host.agentsHome,
       dshHome: root,
@@ -139,7 +139,8 @@ test('/capabilities apply commits through the shared engine and the receipt refl
     const command = registeredCommands.find(entry => entry.name === 'capabilities')
     const agent = { id: 'sess-apply', session: { id: 'sess-apply', header: { cwd: root } } }
 
-    const applied = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })}` })
+    const alphaIdentity = JSON.parse((await command.handler({ agent, rawInput: 'list' })).text).skills.find(row => row.name === 'alpha').identity
+    const applied = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['alpha', alphaIdentity], mcpServers: [] })}` })
     expect(applied.kind).toBe('success')
     const response = JSON.parse(applied.text)
     expect(response.status).toBe('applied')
@@ -147,7 +148,9 @@ test('/capabilities apply commits through the shared engine and the receipt refl
     const receipt = await command.handler({ agent, rawInput: 'receipt' })
     const payload = JSON.parse(receipt.text)
     expect(payload.effective.skills).toEqual(['alpha'])
+    expect(payload.effective.skillIdentities.map(identity => identity.name)).toEqual(payload.effective.skills)
     expect(payload.revision).toBe(1)
+
 
     // An unknown name is a visible error, never silently dropped.
     const missing = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-2', expectedRevision: 1, skills: ['ghost'], mcpServers: [] })}` })
@@ -177,6 +180,28 @@ test('/capabilities apply commits through the shared engine and the receipt refl
     expect(hardFailPayload.status).toBe('missing')
     expect(hardFailPayload.missing).toEqual(['ghost'])
     expect(hardFailPayload.skipped).toEqual([{ name: 'creative-only', reason: 'not applicable in this agent preset' }])
+
+    // A second root holds the same parsed name: name-only Apply must not pick
+    // the last enumerated row. Exact identity Apply still chooses either row.
+    mkdirSync(join(host.agentsHome, 'skills', 'alpha'), { recursive: true })
+    writeFileSync(join(host.agentsHome, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: second alpha\n---\nSECOND\n')
+    const listing = JSON.parse((await command.handler({ agent, rawInput: 'list' })).text)
+    const alphas = listing.skills.filter(row => row.name === 'alpha')
+    expect(alphas).toHaveLength(2)
+    expect(Object.keys(alphas[0]).at(-1)).toBe('identity')
+    const ambiguous = JSON.parse((await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'ambiguous', expectedRevision: 2, skills: ['alpha'] })}` })).text)
+    expect(ambiguous.status).toBe('missing')
+    expect(ambiguous.missing).toEqual(['alpha'])
+    const absentIdentity = { ...alphas[0].identity, root: '/not-in-inventory' }
+    const absent = JSON.parse((await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'absent-identity', expectedRevision: 2, skills: [absentIdentity] })}` })).text)
+    expect(absent).toEqual({ status: 'missing', missing: ['alpha'] })
+    for (const [index, row] of alphas.entries()) {
+      const exact = JSON.parse((await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: `exact-${index}`, expectedRevision: 2 + index, skills: [row.identity, row.identity] })}` })).text)
+      expect(exact.status).toBe('applied')
+      const receipt = JSON.parse((await command.handler({ agent, rawInput: 'receipt' })).text)
+      expect(receipt.effective.skills).toEqual(['alpha'])
+      expect(receipt.effective.skillIdentities).toEqual([row.identity])
+    }
   } finally {
     host.restore()
   }
@@ -188,8 +213,8 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
     const root = mkdtempSync(join(tmpdir(), 'weir-cmd-list-'))
     const { mkdirSync, writeFileSync } = await import('node:fs')
     for (const name of ['picked', 'unpicked']) {
-      mkdirSync(join(root, 'skills', name), { recursive: true })
-      writeFileSync(join(root, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: list fixture ${name}\n---\n${name}\n`)
+      mkdirSync(join(root, 'custom-skills', name), { recursive: true })
+      writeFileSync(join(root, 'custom-skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: list fixture ${name}\n---\n${name}\n`)
     }
     let registeredCommands = []
     let provider
@@ -217,7 +242,7 @@ test('/capabilities list shows the FULL inventory with selection marks (user-glo
     createSkillSelectionPlugin()(ctx, {
       machineId: 'weir-it-machine',
       includeDefaultRoots: false,
-      customSkillDirs: [join(root, 'skills')],
+      customSkillDirs: [join(root, 'custom-skills')],
       supplementalSkillDirs: [join(root, 'supplemental')],
       agentsHome: host.agentsHome,
       dshHome: root,
@@ -291,6 +316,7 @@ test('/capabilities list under a failed selection view keeps inventory fidelity 
     expect(payload.skills.every(row => row.scope !== 'unknown')).toBe(true)
     const byName = Object.fromEntries(payload.skills.map(row => [row.name, row]))
     expect(byName.picked.scope).toBe('custom')
+    expect(byName.picked.identity.scope).toBe('custom')
     expect(byName.debugging.scope).toBe('weir-builtin')
     // The error state rides along, distinguishable from a successful empty
     // inventory (which carries no selectionError at all).
