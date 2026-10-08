@@ -9,6 +9,8 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
  */
 
 describe('client.chain-editor chunk', () => {
+  /** The picker chunk's exports, as the composition root hands them down. */
+  const PICKER_STUB = { ModelPickerField: (props) => ({ __picker: props }) }
   async function loadEditor() {
     const reactState = []
     let hookCursor = 0
@@ -42,7 +44,6 @@ describe('client.chain-editor chunk', () => {
       if (name === 'react') return reactStub
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Tag: (props) => ({ __tag: props }) }
-      if (name === 'weir-model-picker') return { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: class { render() { return null } } }
       throw new Error(`unexpected require ${name}`)
     }
     const { definition, exports } = await loadClientChunk('lib/client.chain-editor.js', requireStub)
@@ -76,7 +77,7 @@ describe('client.chain-editor chunk', () => {
     const { exports, model, reactStub } = await loadEditor()
     const { ChainEditorField } = exports
     const edited = []
-    const props = { text: '{"deep":[{"provider":"p","model":"m","reasoningEffort":"max"}]}', overridden: false, edit: (field, text) => edited.push({ field, text }), onReset: () => {}, getSession: () => ({}), t: (key) => key, disabled: false, model }
+    const props = { text: '{"deep":[{"provider":"p","model":"m","reasoningEffort":"max"}]}', overridden: false, edit: (field, text) => edited.push({ field, text }), onReset: () => {}, getSession: () => ({}), t: (key) => key, disabled: false, model, modelPicker: PICKER_STUB }
 
     reactStub.reset()
     reactStub.begin()
@@ -119,7 +120,7 @@ describe('client.chain-editor chunk', () => {
     ]
     for (const raw of corpus) {
       const edited = []
-      const props = { text: raw, overridden: false, edit: (field, text) => edited.push({ field, text }), onReset: () => {}, getSession: () => ({}), t: (key) => key, disabled: false, model }
+      const props = { text: raw, overridden: false, edit: (field, text) => edited.push({ field, text }), onReset: () => {}, getSession: () => ({}), t: (key) => key, disabled: false, model, modelPicker: PICKER_STUB }
       reactStub.reset()
       reactStub.begin()
       ChainEditorField(props).children[0].children[1].children[0].onClick() // Edit
@@ -151,6 +152,7 @@ describe('client.chain-editor chunk', () => {
       t: (key) => key,
       disabled: false,
       model,
+      modelPicker: PICKER_STUB,
     }
 
     reactStub.reset()
@@ -179,5 +181,22 @@ describe('client.chain-editor chunk', () => {
     expect(edited).toHaveLength(1)
     expect(edited[0].field).toBe('delegateAgentChains')
     expect(JSON.parse(edited[0].text)).toEqual({ finder: [{ provider: 'p', model: 'm' }] })
+  })
+
+  it('degrades each rung to the dictionary hint when the picker chunk has not arrived', async () => {
+    const { exports, model, reactStub } = await loadEditor()
+    const { ChainEditorField } = exports
+    const props = { text: '{"deep":[{"provider":"p","model":"m"}]}', overridden: false, edit: () => {}, onReset: () => {}, getSession: () => ({}), t: (key) => key, disabled: false, model, modelPicker: undefined }
+    reactStub.reset()
+    reactStub.begin()
+    ChainEditorField(props).children[0].children[1].children[0].onClick() // Edit
+    reactStub.begin()
+    const panel = ChainEditorField(props).children[1]
+    const deepLane = panel.children.filter((child) => child?.key && child.children)[model.CHAIN_CATEGORIES.indexOf('deep')]
+    const rung = deepLane.children[1].children[0]
+    // no picker component, just the hint — and the remove button still works
+    expect(rung.__type).toBe('span')
+    expect(rung.children).toBe('pickerUnavailable')
+    expect(typeof deepLane.children[1].children[1].onClick).toBe('function')
   })
 })

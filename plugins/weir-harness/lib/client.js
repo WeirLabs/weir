@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"66fd9fc5438477d6d7ff156631f810a647ce352612a16051e987e8cd449bc4c9","client.blackboard-panel.js":"f961e0242dad7bf311829a25e265bf091925711b2fb9c19d2141997fbdf792b5","client.capability-badge.js":"4e5805596a9ad34eac03cbd62c956f8b79789527c72279d6a4078f5c9d0eabab","client.capability-manager.js":"c36efbad8bcdb1e6dfee52368b89485127f953e9d04ae7921032740439fffcdd","client.capability-model.js":"34af92420fe4f182ba9bf962dfe6986e8f54c79b147e5981eec3bbfc06cdbc21","client.capability-presets.js":"66aeb7ecde8a73165a3f010bed0dc56b8a8be70812c1e3b56c324f7be095adab","client.chain-editor.js":"c29ae07483a296ef0eac6ec5dcb06fda99236a4a5d7a9f52789220362aea1b0d","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"0559d47df0e8e180eaadfd40b15bcfbf6409ec265902514db37366eb270f8e12","client.edit-lock-panel.js":"deb1d536353c51405b3d1b7b49e4847cb593547a0dfa468a5f39346ad25f745d","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"03b228e12bb191a10e34d3af9fef0acc9d1093cfc2bf0e1a35bc59b57c0af72f","client.worktree-model.js":"761a0f6316a3f3af3f924a7784d61ca4bdbfd3c6b63c81c5681bf3a801280c26","client.worktree-view.js":"c8399f67041061a357e6f11bfed1e40340494d75216b4c10ce4b940a763f0824"}
+// Weir client chunks: {"client.blackboard-model.js":"66fd9fc5438477d6d7ff156631f810a647ce352612a16051e987e8cd449bc4c9","client.blackboard-panel.js":"f961e0242dad7bf311829a25e265bf091925711b2fb9c19d2141997fbdf792b5","client.capability-badge.js":"4e5805596a9ad34eac03cbd62c956f8b79789527c72279d6a4078f5c9d0eabab","client.capability-manager.js":"c36efbad8bcdb1e6dfee52368b89485127f953e9d04ae7921032740439fffcdd","client.capability-model.js":"34af92420fe4f182ba9bf962dfe6986e8f54c79b147e5981eec3bbfc06cdbc21","client.capability-presets.js":"66aeb7ecde8a73165a3f010bed0dc56b8a8be70812c1e3b56c324f7be095adab","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"0559d47df0e8e180eaadfd40b15bcfbf6409ec265902514db37366eb270f8e12","client.edit-lock-panel.js":"deb1d536353c51405b3d1b7b49e4847cb593547a0dfa468a5f39346ad25f745d","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"7520be405d2e67904ed5344aeb09f18ddfc14f209243a86249179cc5930ba46c","client.worktree-model.js":"761a0f6316a3f3af3f924a7784d61ca4bdbfd3c6b63c81c5681bf3a801280c26","client.worktree-view.js":"c8399f67041061a357e6f11bfed1e40340494d75216b4c10ce4b940a763f0824"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -54,6 +54,7 @@ window.__ModuleLoader__.load({
 			catalogFailed: "Provider catalog unavailable; enter provider and model manually.",
 			providerEmpty: "Select a provider",
 			modelEmpty: "Select a model",
+			pickerUnavailable: "Model picker unavailable — reload the settings page to retry.",
 			groupIntent: "Intent",
 			groupDelegate: "Delegation",
 			groupTodo: "Continuation",
@@ -748,6 +749,7 @@ window.__ModuleLoader__.load({
 			catalogFailed: "Provider 目录不可用；可手动填写 provider 与模型。",
 			providerEmpty: "选择 provider",
 			modelEmpty: "选择模型",
+			pickerUnavailable: "模型选择器不可用——请重新加载设置页后重试。",
 			groupIntent: "意图分类",
 			groupDelegate: "委派与模型链",
 			groupTodo: "续推",
@@ -2096,6 +2098,11 @@ window.__ModuleLoader__.load({
 					getSession: () => ctx.remote.session
 				};
 				let arrival = null;
+				// The picker chunk has its own arrival state on purpose: a picker load
+				// failure must degrade only the rows that show a picker, never the card
+				// around them, so it is deliberately NOT a member of the settings-chunk
+				// Promise.all below.
+				const loadModelPickerChunk = lazyChunks(() => require.async("./client.model-picker.js"));
 				const ensureSettingsChunks = () => {
 					if (arrival === null) {
 						arrival = Promise.all([
@@ -2146,8 +2153,9 @@ window.__ModuleLoader__.load({
 				}
 				function SettingsCardWrapper(props) {
 					const cardArrival = useChunkArrival(ensureSettingsChunks);
+					const pickerArrival = useChunkArrival(loadModelPickerChunk);
 					if (cardArrival?.chunks) {
-						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.WeirCard, { ...props, editors: cardArrival.chunks.editors });
+						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.WeirCard, { ...props, editors: cardArrival.chunks.editors, modelPicker: pickerArrival?.chunks });
 					}
 					if (cardArrival?.error) {
 						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(cardArrival.error)}` });

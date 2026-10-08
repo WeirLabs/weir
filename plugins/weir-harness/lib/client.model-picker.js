@@ -1,5 +1,6 @@
 window.__ModuleLoader__.load({
-	id: "weir-model-picker",
+	id: "weir-harness",
+	chunk: "client.model-picker.js",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -12,6 +13,15 @@ window.__ModuleLoader__.load({
 		// (lazy + backoff retries + manual retry) over the caller-provided
 		// session RPC accessor, and a React error boundary so a picker failure
 		// renders the caller's fallback instead of blanking the page.
+		//
+		// Package-local chunk (client-module-chunking): the picker was a
+		// separate `weir-model-picker` package until it turned out to be
+		// undeliverable — a bundle patch can only mount packages the profile can
+		// resolve, that package was private and never published, so every
+		// registry install lost it and the row failed to import. It is now one
+		// more chunk of this package, pulled by the composition root through
+		// `require.async` with its own arrival state, so a picker failure still
+		// degrades only the surfaces that show a picker.
 		const chevron = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")";
 		const triggerStyle = {
 			borderRadius: "var(--dsw-radius-sm)",
@@ -215,10 +225,6 @@ window.__ModuleLoader__.load({
 				return this.state.failed ? this.props.fallback : this.props.children;
 			}
 		};
-		const inject = [];
-		function apply() {}
-		exports.inject = inject;
-		exports.apply = apply;
 		exports.ModelPickerField = ModelPickerField;
 		exports.ModelPickerBoundary = ModelPickerBoundary;
 		return module.exports;

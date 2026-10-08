@@ -9,7 +9,7 @@ describe('load-client-chunk helper', () => {
     // inert objects instead of the default throwing require.
     const requireStub = (name) => {
       if (name === 'react') return { Component: class {} }
-      if (name === 'react/jsx-runtime' || name === '@deepseek-ai/dsh-client-ui-primitives' || name === 'weir-model-picker') return {}
+      if (name === 'react/jsx-runtime' || name === '@deepseek-ai/dsh-client-ui-primitives') return {}
       return throwingRequire(name)
     }
     const { definition, exports } = await loadClientChunk('lib/client.js', requireStub)

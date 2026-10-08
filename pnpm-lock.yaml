@@ -17,8 +17,6 @@ importers:
 
   plugins/weir-harness: {}
 
-  plugins/weir-model-picker: {}
-
   plugins/weir-test-harness: {}
 
 packages:

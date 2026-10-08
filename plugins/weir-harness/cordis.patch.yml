@@ -90,11 +90,6 @@
     # dsh.client manifest).
     - id: ui-weir-settings
       name: 'weir-harness'
-    # Isolated reusable model picker client module (own package + own client
-    # export): the settings page requires it and renders it inside an error
-    # boundary, so a picker failure can never blank the page.
-    - id: ui-weir-model-picker
-      name: 'weir-model-picker'
     - id: preset-weir
       name: '@deepseek-ai/dsh-agent-preset'
       config:

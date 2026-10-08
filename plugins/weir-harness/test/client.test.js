@@ -69,7 +69,6 @@ describe('weir settings client half', () => {
       if (name === 'react') return reactStub
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return {}
-      if (name === 'weir-model-picker') return {}
       throw new Error(`unexpected require ${name}`)
     }
     // sentinel chunk modules behind require.async
@@ -100,6 +99,7 @@ describe('weir settings client half', () => {
     const robashEditorChunk = { RobashListEditorField: (props) => ({ __robashEditor: props }) }
     const disabledCategoriesEditorChunk = { DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }) }
     const lspPanelChunk = { LspManagerField: (props) => ({ __lspPanel: props }) }
+    const modelPickerChunk = { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: (props) => ({ __pickerBoundary: props }) }
     const chainModelChunk = { marker: 'chain-model' }
     const robashModelChunk = { marker: 'robash-model' }
     const lspModelChunk = { marker: 'lsp-model' }
@@ -118,6 +118,7 @@ describe('weir settings client half', () => {
     const worktreeModelChunk = { WORKTREE_PROJECTION_KEY: 'weirWorktree', marker: 'worktree-model' }
     const chunkModules = {
       './client.settings-page.js': settingsPageChunk,
+      './client.model-picker.js': modelPickerChunk,
       './client.chain-editor.js': chainEditorChunk,
       './client.robash-editor.js': robashEditorChunk,
       './client.disabled-categories-editor.js': disabledCategoriesEditorChunk,
@@ -135,9 +136,13 @@ describe('weir settings client half', () => {
       './client.worktree-model.js': worktreeModelChunk,
     }
     let asyncFailure = null
+    // Per-spec failures: the picker chunk must be failable on its own, without
+    // taking the settings chunks down with it (the isolation this design buys).
+    const chunkFailures = new Map()
     requireStub.async = (spec) => {
       asyncCalls.push(spec)
       if (asyncFailure) return Promise.reject(asyncFailure)
+      if (chunkFailures.has(spec)) return Promise.reject(chunkFailures.get(spec))
       const module = chunkModules[spec]
       if (!module) return Promise.reject(new Error(`unexpected chunk ${spec}`))
       return Promise.resolve(module)
@@ -151,6 +156,7 @@ describe('weir settings client half', () => {
       controllerConstructed,
       sentinelSnapshot,
       settingsPageChunk,
+      modelPickerChunk,
       chainEditorChunk,
       disabledCategoriesEditorChunk,
       chainModelChunk,
@@ -161,6 +167,10 @@ describe('weir settings client half', () => {
       worktreeModelChunk,
       setAsyncFailure: (error) => {
         asyncFailure = error
+      },
+      failChunk: (spec, error) => {
+        if (error === undefined) chunkFailures.delete(spec)
+        else chunkFailures.set(spec, error)
       },
     }
   }
@@ -253,6 +263,7 @@ describe('weir settings client half', () => {
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   // apply starts web notification delivery, which requests its own chunk.
   const NOTIFY_WEB_SPEC = './client.notify-web.js'
+  const MODEL_PICKER_SPEC = './client.model-picker.js'
   const SETTINGS_CHUNK_SPECS = [
     './client.settings-page.js',
     './client.chain-editor.js',
@@ -385,8 +396,8 @@ describe('weir settings client half', () => {
     expect(sessionAccesses()).toBe(0)
   })
 
-  it('fans out the 9 settings chunks, constructs the controller on arrival, and renders loading/arrived states', async () => {
-    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
+  it('fans out the settings chunks plus the picker, constructs the controller on arrival, and renders loading/arrived states', async () => {
+    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
@@ -404,11 +415,11 @@ describe('weir settings client half', () => {
     }
     const formProps = { view: 'form', t: (key) => key }
 
-    // loading state: one parallel 7-chunk Promise.all, dictionary copy
+    // loading state: the settings Promise.all plus the picker's own arrival
     const { first, settled } = await settle(formProps)
     expect(first.children).toBe('loading')
     // apply also starts web notification delivery, which pulls its own chunk first
-    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual(SETTINGS_CHUNK_SPECS)
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual([...SETTINGS_CHUNK_SPECS, MODEL_PICKER_SPEC])
 
     // arrived: the settings-page chunk's WeirCard with bound editors
     expect(settled.__type).toBe(settingsPageChunk.WeirCard)
@@ -427,6 +438,9 @@ describe('weir settings client half', () => {
     const boundDisabled = settled.editors.DisabledCategoriesEditorField({ text: 'x' })
     expect(boundDisabled.__type).toBe(disabledCategoriesEditorChunk.DisabledCategoriesEditorField)
     expect(boundDisabled.text).toBe('x')
+    // the picker chunk arrives on its OWN arrival state and reaches the card as
+    // a prop — never through the settings-chunk Promise.all
+    expect(settled.modelPicker).toBe(modelPickerChunk)
 
     // the controller was constructed on arrival with the served scope and the
     // prop-injected deps; the deferred store now serves its snapshot
@@ -484,6 +498,37 @@ describe('weir settings client half', () => {
     setAsyncFailure(null)
     const retried = await settle(formProps)
     expect(retried.settled.__type).toBe(settingsPageChunk.WeirCard)
+  })
+
+  it('a failed picker chunk never blanks the card: the picker prop is simply absent, and re-entry retries', async () => {
+    const { surface, reactStub, failChunk, settingsPageChunk, modelPickerChunk } = await loadEntry()
+    const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
+    surface.apply(ctx)
+    whileServedCalls[0].register(new Set(['weir-settings']))
+    slotInjects[13].fn()
+    const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
+
+    const settle = async (props) => {
+      reactStub.reset()
+      reactStub.begin()
+      const first = component(props)
+      await flush()
+      reactStub.begin()
+      return { first, settled: component(props) }
+    }
+    const formProps = { view: 'form', t: (key) => key }
+
+    // the picker chunk fails (e.g. a stale revision URL) while the settings
+    // chunks arrive: the card renders, only the picker prop is missing
+    failChunk(MODEL_PICKER_SPEC, new Error('picker chunk gone'))
+    const degraded = await settle(formProps)
+    expect(degraded.settled.__type).toBe(settingsPageChunk.WeirCard)
+    expect(degraded.settled.modelPicker).toBeUndefined()
+
+    // the failure is not memoized: a later entry retries the picker chunk
+    failChunk(MODEL_PICKER_SPEC, undefined)
+    const retried = await settle(formProps)
+    expect(retried.settled.modelPicker).toBe(modelPickerChunk)
   })
 
   it('injects the composer-bar switch verbs, drives /lsp via commands, and reads the projection', async () => {

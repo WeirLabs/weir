@@ -8,7 +8,11 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
-		let modelPicker = require("weir-model-picker");
+		// The model picker is a sibling package-local chunk supplied by the
+		// composition root as the `modelPicker` prop (same-package sync require
+		// is impossible here); absent means its chunk is still in flight or its
+		// load failed, which degrades each rung to a hint instead of breaking the
+		// editor's other work.
 		// Model-chains editor with the lane list as a PROP: the category lanes
 		// are the default (no row props → the pre-generalization category
 		// behaviour, byte-identical); the curated-agent lanes pass their own
@@ -49,6 +53,7 @@ window.__ModuleLoader__.load({
 		/** Visual editor for one model-chains map: pick models per lane, JSON synthesized on save. */
 		function ChainEditorField(props) {
 			const model = props.model;
+			const picker = props.modelPicker;
 			// Lane parameterization: which lanes render, which settings field
 			// the synthesized JSON is written to, and which dictionary stems
 			// label the rows — the defaults are exactly the category treatment.
@@ -113,7 +118,7 @@ window.__ModuleLoader__.load({
 								react_jsx_runtime.jsx("span", { style: chainDescStyle, children: props.t(`${rowLabelPrefix}${row}_desc`) })
 							] }),
 							...rungs.map((rung, index) => react_jsx_runtime.jsxs("div", { style: chainRungStyle, key: index, children: [
-								react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
+								picker === void 0 || picker === null ? react_jsx_runtime.jsx("span", { style: hintStyle, children: props.t("pickerUnavailable") }) : react_jsx_runtime.jsx(picker.ModelPickerField, {
 									value: rung,
 									onChange: (selection) => updateRung(row, index, selection),
 									getSession: () => props.getSession(),

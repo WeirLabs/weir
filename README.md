@@ -75,7 +75,7 @@ Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabi
 
 ## 快速开始
 
-1. 在 Harness 会话中通过 `plugin_manager`，以 `plugins/weir-harness` 目录安装 bundle（link 安装，随源码更新）。
+1. 安装 bundle：在 Harness 会话中通过 `plugin_manager` 的 `install_bundle` 装 `weir-harness`（从 npm registry 安装，无需克隆仓库），或 `dsh plugin --profile <profile> add weir-harness`；克隆了仓库的开发者改用 `plugins/weir-harness` 目录做 link 安装（随源码更新）。
 2. 打开 Web GUI 预设选择器，选择 **Weir** 新建会话。开发或调试 DeepSeek Harness 本身时选 **Weir 创造模式**，额外带上运行时检查工具与开发技能。→ [预设打包](docs/features/preset-packaging.md)
 3. 其他预设不受影响。Weir 只在自己的会话内生效，唯一例外是系统通知（作用于 profile 层）。
 
@@ -85,7 +85,7 @@ Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabi
 
 ## 技术概览
 
-- **形态**：bundle 包 `plugins/weir-harness/`（`private: true`，无 npm 依赖），声明预设 `weir`。
+- **形态**：bundle 包 `plugins/weir-harness/`（发布到公共 npm registry，运行时零 npm 依赖），声明预设 `weir`。
 - **运行时**：DeepSeek Harness（Electron 宿主），插件仅通过 `ctx` 使用宿主服务，不静态引用宿主包。
 - **审计**：关键事件写入 `.weir/audit.jsonl`，不污染会话日志。
 - **测试**：单元测试（node:test）、静态检查（tsc checkJs）、基于 mock LLM 的集成测试（`plugins/weir-test-harness/`，仅限开发）。

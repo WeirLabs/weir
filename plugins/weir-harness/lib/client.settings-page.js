@@ -8,7 +8,9 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
-		let modelPicker = require("weir-model-picker");
+		// The model picker is a sibling package-local chunk: the composition root
+		// loads it on its own arrival state and hands it down as `props.modelPicker`
+		// (absent = still in flight or failed; the row degrades to plain fields).
 		// Weir settings page: one form over the `weir-settings` namespace
 		// (the shared SettingsFormModel only addresses flat fields), organized
 		// as card sections with conditional rows (`when`) and nested
@@ -666,13 +668,13 @@ window.__ModuleLoader__.load({
 		// instead of blanking the settings page.
 		function renderModelPickerNode(node, state, props, disabled, t) {
 			const pickerOverridden = state.fields.intentGateProvider.overridden || state.fields.intentGateModel.overridden || state.fields.intentGateReasoningEffort.overridden;
-			const pickerRow = react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
+			const pickerRow = (picker) => react_jsx_runtime.jsxs("div", { style: rowStyle, children: [
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
 					labelWithTag(node, t, labelStyle),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${node.field}Hint`) })
 				] }),
 				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
-					react_jsx_runtime.jsx(modelPicker.ModelPickerField, {
+					react_jsx_runtime.jsx(picker.ModelPickerField, {
 						value: {
 							provider: state.fields.intentGateProvider.text,
 							model: state.fields.intentGateModel.text,
@@ -697,53 +699,56 @@ window.__ModuleLoader__.load({
 					] }) : null
 				] })
 			] });
-			return react_jsx_runtime.jsx(modelPicker.ModelPickerBoundary, {
-				fallback: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
-					react_jsx_runtime.jsx(primitives.SettingsValueField, {
-						id: "plugin-config-fallback-intentGateProvider",
-						label: t("intentGateProvider"),
-						hint: t("intentGateProviderHint"),
-						overriddenLabel: t("overridden"),
-						resetLabel: t("reset"),
-						invalidLabel: t("invalidValue"),
-						disabled,
-						text: state.fields.intentGateProvider.text,
-						invalid: state.fields.intentGateProvider.invalid,
-						overridden: state.fields.intentGateProvider.overridden,
-						onChange: (text) => props.edit("intentGateProvider", text),
-						onReset: () => props.resetField("intentGateProvider")
-					}),
-					react_jsx_runtime.jsx(primitives.SettingsValueField, {
-						id: "plugin-config-fallback-intentGateModel",
-						label: t("intentGateModel"),
-						hint: t("intentGateModelHint"),
-						overriddenLabel: t("overridden"),
-						resetLabel: t("reset"),
-						invalidLabel: t("invalidValue"),
-						disabled,
-						text: state.fields.intentGateModel.text,
-						invalid: state.fields.intentGateModel.invalid,
-						overridden: state.fields.intentGateModel.overridden,
-						onChange: (text) => props.edit("intentGateModel", text),
-						onReset: () => props.resetField("intentGateModel")
-					}),
-					react_jsx_runtime.jsx(primitives.SettingsValueField, {
-						id: "plugin-config-fallback-intentGateReasoningEffort",
-						label: t("intentGateReasoningEffort"),
-						hint: t("intentGateReasoningEffortHint"),
-						overriddenLabel: t("overridden"),
-						resetLabel: t("reset"),
-						invalidLabel: t("invalidValue"),
-						disabled,
-						text: state.fields.intentGateReasoningEffort.text,
-						invalid: state.fields.intentGateReasoningEffort.invalid,
-						overridden: state.fields.intentGateReasoningEffort.overridden,
-						onChange: (text) => props.edit("intentGateReasoningEffort", text),
-						onReset: () => props.resetField("intentGateReasoningEffort")
-					})
-				] }),
-				children: pickerRow
-			});
+			// Manual-entry fallback: what the row renders before the picker chunk
+			// arrives, when its load failed, and what the picker's own error boundary
+			// swaps in when the picker component throws.
+			const manualFallback = react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+				react_jsx_runtime.jsx(primitives.SettingsValueField, {
+					id: "plugin-config-fallback-intentGateProvider",
+					label: t("intentGateProvider"),
+					hint: t("intentGateProviderHint"),
+					overriddenLabel: t("overridden"),
+					resetLabel: t("reset"),
+					invalidLabel: t("invalidValue"),
+					disabled,
+					text: state.fields.intentGateProvider.text,
+					invalid: state.fields.intentGateProvider.invalid,
+					overridden: state.fields.intentGateProvider.overridden,
+					onChange: (text) => props.edit("intentGateProvider", text),
+					onReset: () => props.resetField("intentGateProvider")
+				}),
+				react_jsx_runtime.jsx(primitives.SettingsValueField, {
+					id: "plugin-config-fallback-intentGateModel",
+					label: t("intentGateModel"),
+					hint: t("intentGateModelHint"),
+					overriddenLabel: t("overridden"),
+					resetLabel: t("reset"),
+					invalidLabel: t("invalidValue"),
+					disabled,
+					text: state.fields.intentGateModel.text,
+					invalid: state.fields.intentGateModel.invalid,
+					overridden: state.fields.intentGateModel.overridden,
+					onChange: (text) => props.edit("intentGateModel", text),
+					onReset: () => props.resetField("intentGateModel")
+				}),
+				react_jsx_runtime.jsx(primitives.SettingsValueField, {
+					id: "plugin-config-fallback-intentGateReasoningEffort",
+					label: t("intentGateReasoningEffort"),
+					hint: t("intentGateReasoningEffortHint"),
+					overriddenLabel: t("overridden"),
+					resetLabel: t("reset"),
+					invalidLabel: t("invalidValue"),
+					disabled,
+					text: state.fields.intentGateReasoningEffort.text,
+					invalid: state.fields.intentGateReasoningEffort.invalid,
+					overridden: state.fields.intentGateReasoningEffort.overridden,
+					onChange: (text) => props.edit("intentGateReasoningEffort", text),
+					onReset: () => props.resetField("intentGateReasoningEffort")
+				})
+			] });
+			const picker = props.modelPicker;
+			if (picker === void 0 || picker === null) return manualFallback;
+			return react_jsx_runtime.jsx(picker.ModelPickerBoundary, { fallback: manualFallback, children: pickerRow(picker) });
 		}
 		function WeirCard(props) {
 			const state = props.useWeirSettingsCard((snapshot) => snapshot);
@@ -773,6 +778,7 @@ window.__ModuleLoader__.load({
 					if (node.slot === "chainEditor") {
 						return wrap(react_jsx_runtime.jsx(props.editors.ChainEditorField, {
 							field: "delegateCategoryChains",
+							modelPicker: props.modelPicker,
 							text: state.fields.delegateCategoryChains.text,
 							overridden: state.fields.delegateCategoryChains.overridden,
 							edit: (name, text) => props.edit(name, text),
@@ -787,6 +793,7 @@ window.__ModuleLoader__.load({
 						// visual editor, agent lanes and agent dictionary stems.
 						return wrap(react_jsx_runtime.jsx(props.editors.ChainEditorField, {
 							field: "delegateAgentChains",
+							modelPicker: props.modelPicker,
 							rows: CURATED_AGENT_NAMES,
 							rowLabelPrefix: "chainAgent_",
 							panelHintKey: "chainAgentPanelHint",

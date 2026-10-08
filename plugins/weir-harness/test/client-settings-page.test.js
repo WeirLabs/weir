@@ -6,7 +6,7 @@ import { FIELD_DEFAULTS as SERVER_FIELD_DEFAULTS, RESTART_KEYS } from '../src/se
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
- * primitives/modelPicker stubs per the chunk's require face. The special
+ * primitives stubs per the chunk's require face. The special
  * field editors arrive as sentinel props (composition-root injection).
  * Covers the pure exports (evaluateCondition / resolveEffectiveValue /
  * validateLayout / buildLayout), the env three-state gating, the card/tree
@@ -97,7 +97,6 @@ describe('client.settings-page chunk', () => {
       if (name === 'react') return reactStub
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitivesStub
-      if (name === 'weir-model-picker') return { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: class { constructor(props) { this.props = props } render() { return this.props.children } } }
       throw new Error(`unexpected require ${name}`)
     }
     const { definition, exports } = await loadClientChunk('lib/client.settings-page.js', requireStub)
@@ -141,6 +140,12 @@ describe('client.settings-page chunk', () => {
   // read ON for the Switch AND for the `when` conditions of its children.
   const MIRRORED_ON_BOOLEANS = ['editLockAutoResume', 'editLockStaleSweep', 'notifyEnabled', 'notifyOnComplete', 'notifyOnAttention', 'notifySound']
 
+  /** The picker chunk's exports, as the composition root hands them down. */
+  const PICKER_STUB = {
+    ModelPickerField: (props) => ({ __picker: props }),
+    ModelPickerBoundary: class { constructor(props) { this.props = props } render() { return this.props.children } },
+  }
+
   /** A full fields map at rest (every text the formatted saved value). */
   function makeFields(overrides = {}) {
     const fields = Object.fromEntries(FIELD_NAMES.map((name) => [name, { text: '', invalid: false, overridden: false }]))
@@ -162,6 +167,7 @@ describe('client.settings-page chunk', () => {
       dismissRestartReminder: spies.dismissRestartReminder ?? (() => {}),
       getSession: () => {},
       editors,
+      modelPicker: 'modelPicker' in spies ? spies.modelPicker : PICKER_STUB,
     })
   }
 
@@ -438,6 +444,31 @@ describe('client.settings-page chunk', () => {
     // the folded fields never render a row of their own
     expect(rowKeys(cards, 'intent')).not.toContain('intentGateModel')
     expect(rowKeys(cards, 'intent')).not.toContain('intentGateReasoningEffort')
+  })
+
+  it('falls back to the manual-entry fields when the picker chunk has not arrived', async () => {
+    const { exports, editors } = await loadPage()
+    const llmFields = { intentGateClassifier: { text: 'llm' } }
+    const fallbackIds = (tree) => findAll(tree, (node) => typeof node.id === 'string' && node.id.startsWith('plugin-config-fallback-')).map((node) => node.id)
+
+    // picker present: an error boundary wraps the picker component, and the
+    // manual fields exist only as that boundary's fallback prop
+    const withPicker = renderCard(exports, editors, { fields: makeFields(llmFields), env: { status: 'ready', facts: {} } })
+    const pickerElements = findAll(withPicker.children, (node) => node.__type === PICKER_STUB.ModelPickerField)
+    expect(pickerElements).toHaveLength(1)
+    expect(pickerElements[0].value).toEqual({ provider: '', model: '', reasoningEffort: '' })
+    expect(findAll(withPicker.children, (node) => node.fallback !== undefined)).toHaveLength(1)
+
+    // picker absent (chunk in flight or failed): NO boundary at all — the same
+    // three text fields the boundary would have swapped in, rendered directly
+    const withoutPicker = renderCard(exports, editors, { fields: makeFields(llmFields), env: { status: 'ready', facts: {} } }, { modelPicker: null })
+    expect(findAll(withoutPicker.children, (node) => node.fallback !== undefined)).toHaveLength(0)
+    expect(fallbackIds(withoutPicker.children)).toEqual([
+      'plugin-config-fallback-intentGateProvider',
+      'plugin-config-fallback-intentGateModel',
+      'plugin-config-fallback-intentGateReasoningEffort',
+    ])
+    expect(findAll(withoutPicker.children, (node) => node.__type === PICKER_STUB.ModelPickerField)).toEqual([])
   })
 
   it('renders the always-on restart tag exactly on the visible RESTART_FIELDS rows', async () => {

@@ -11,6 +11,11 @@
 
 - **编辑锁恢复 UX（实验特性）**：维护面板打开即自动只读检查，按「被阻塞 / 前置条件不满足 / 正常」三区渲染，僵持文件行内一键强制释放（同一串行事务结清未决围栏 + 释放锁 + 撤权，一次确认）；前置条件不满足时明说缺什么；`/edit-lock unlock` 围栏拒绝与 steal 协商过期通知自带下一步指引。
 
+### Fixed
+
+- **模型选择器未能激活，设置页的 Weir 分区与模型链编辑器打不开（npm 安装必现）**：模型选择器原先是第二个包 `weir-model-picker`，但它 `private: true` 且从未发布，而 `cordis.patch.yml` 以裸包名挂载它——从 registry 安装的用户永远解析不到它，启动只留一行 `ui-weir-model-picker (weir-model-picker): failed to import`，缺少该客户端模块的设置页 chunk 随之加载失败。现在 picker 并入 `weir-harness` 成为包内 chunk（`lib/client.model-picker.js`），由设置卡用独立到达态加载：picker 自身加载失败只让用到它的行降级（picker 行回退为三个纯文本字段、链编辑器每档显示提示），设置页与其他表面不受影响。新增 `test/patch-rows.test.js` 防线：patch 中每个模块说明符都必须能在发布产物内解析（本包 `exports` + `files` 白名单，或运行时提供的 `@deepseek-ai/*`），并含这条事故形状的反例钉。
+- **独立包与空挂载行已删除**：`plugins/weir-model-picker/` 不再存在，patch 里的 `ui-weir-model-picker` 行随之移除。升级动作 = 重新安装 `weir-harness@1.1.2`（link 安装用 `set_bundle` 先禁后启）；profile 里若留有针对该行 id 的开关覆盖，它会成为一条未命中 patch 的无害告警，可删可留。
+
 ## [1.1.1] - 2026-10-08
 
 ### Added
