@@ -13,7 +13,7 @@ function fixture(t) {
   mkdirSync(fixtures, { recursive: true })
   const root = realpathSync(mkdtempSync(join(fixtures, 'safe-')))
   t.after(() => {
-    assert.ok(root.startsWith(realpathSync(fixtures) + '/safe-'))
+    assert.ok(root.startsWith(join(realpathSync(fixtures), 'safe-')))
     rmSync(root, { recursive: true, force: true })
   })
   return root

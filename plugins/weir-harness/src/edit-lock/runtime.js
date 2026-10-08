@@ -17,6 +17,9 @@ async function writeAuthorityFile(directory, file, bytes) {
   const handle = await open(temporary, 'wx', 0o600)
   try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
   await rename(temporary, join(directory, file))
+  // Directory fsync is POSIX-only (EPERM on win32): the file fsync above and
+  // the atomic rename stand alone there (reservation.js SYNC_SUPPORTED stance).
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return
   const dir = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
   try { await dir.sync() } finally { await dir.close() }
 }

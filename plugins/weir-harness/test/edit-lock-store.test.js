@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 
 async function fixture(t) {
-  const root = await realpath(tmpdir())
+  const root = realpathSync.native(tmpdir())
   const directory = await mkdtemp(join(root, 'weir-edit-lock-store-'))
   t.after(async () => {
     assert.equal(dirname(resolve(directory)), root)
@@ -171,6 +172,9 @@ test('recovery rejects noncanonical, duplicate, corrupt, incompatible and unsafe
     assert.equal(await readFile(target, 'utf8'), bytes)
   }
   for (const kind of ['symlink', 'directory', 'fifo', 'missing']) {
+    // Windows has no filesystem FIFO nodes (and no mkfifo): that rejection
+    // class is exercised on POSIX only.
+    if (kind === 'fifo' && process.platform === 'win32') continue
     const dir = await fixture(t)
     const path = join(dir, 'snapshot.json')
     await writeFile(join(dir, '.snapshot-valid.tmp'), original)

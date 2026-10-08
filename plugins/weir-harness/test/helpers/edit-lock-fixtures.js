@@ -1,5 +1,6 @@
 // Explicit fixture-only dependencies: never discover an enclosing real authority.
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, isAbsolute, sep } from 'node:path'
@@ -8,8 +9,8 @@ import { after } from 'node:test'
 import { managementRootFor, excludeFromGit } from '../../src/edit-lock/domains.js'
 
 function fixtureGit(start, args) {
-  const ceiling = realpathSync(tmpdir())
-  const rel = relative(ceiling, realpathSync(start))
+  const ceiling = realpathSync.native(tmpdir())
+  const rel = relative(ceiling, realpathSync.native(start))
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Git cwd outside fixture ceiling')
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
   try {
@@ -18,19 +19,24 @@ function fixtureGit(start, args) {
   } catch { return undefined }
 }
 export function fixtureRoot(cwd) {
-  return managementRootFor(cwd, { ceiling: realpathSync(tmpdir()), runGit: fixtureGit })
+  return managementRootFor(cwd, { ceiling: realpathSync.native(tmpdir()), runGit: fixtureGit })
 }
 export function fixtureExclude(root) { return excludeFromGit(root, fixtureGit) }
 
 // Unix socket names must fit sockaddr_un. Allocate a private short directory at
 // the checkout root, not outside the lane; production endpoint identity is intact.
-const checkout = realpathSync(fileURLToPath(new URL('../../../../', import.meta.url)))
+const checkout = realpathSync.native(fileURLToPath(new URL('../../../../', import.meta.url)))
 const endpoints = new Map()
 export function fixtureEndpoint(directory) {
-  const key = realpathSync(directory)
+  const key = realpathSync.native(directory)
   if (!endpoints.has(key)) {
-    const root = realpathSync(mkdtempSync(join(checkout, '.s-')))
-    const endpoint = join(root, 'p')
+    const root = realpathSync.native(mkdtempSync(join(checkout, '.s-')))
+    // POSIX: a short private socket path (sockaddr_un budget). win32: a named
+    // pipe (no filesystem node, no length budget) — a plain path would be an
+    // invalid pipe name whose connect hangs instead of failing.
+    const endpoint = process.platform === 'win32'
+      ? `\\\\.\\pipe\\weir-edit-lock-fixture-${createHash('sha256').update(key).digest('hex').slice(0, 16)}`
+      : join(root, 'p')
     if (Buffer.byteLength(endpoint) > 100) throw new Error('fixture socket needs a shorter authorized checkout')
     endpoints.set(key, { root, endpoint })
   }
@@ -39,7 +45,7 @@ export function fixtureEndpoint(directory) {
 after(() => {
   for (const { root } of endpoints.values()) {
     const rel = relative(checkout, root)
-    if (isAbsolute(rel) || rel.startsWith(`..${sep}`) || !rel.startsWith('.s-') || realpathSync(root) !== root) throw new Error('fixture socket cleanup root changed')
+    if (isAbsolute(rel) || rel.startsWith(`..${sep}`) || !rel.startsWith('.s-') || realpathSync.native(root) !== root) throw new Error('fixture socket cleanup root changed')
     rmSync(root, { recursive: true, force: true })
   }
 })

@@ -1,4 +1,12 @@
-import { test } from 'node:test'
+import { test as nodeTest } from 'node:test'
+
+// The fixture suite exercises POSIX path traversal with POSIX-only spellings
+// ('/dev/null', forward-slash resourceId assertions). The win32 row is covered
+// with native spellings in edit-lock-resource-identity-win32.test.js, so on a
+// win32 host every fixture here registers as an explicit skip instead.
+const test = process.platform === 'win32'
+  ? (name, ..._args) => nodeTest(name, { skip: 'POSIX fixture suite; the win32 row has its own file' }, () => {})
+  : nodeTest
 import assert from 'node:assert/strict'
 import { mkdtempSync, realpathSync, lstatSync, rmSync, writeFileSync, mkdirSync, symlinkSync, linkSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -208,9 +216,9 @@ test('unsupported platforms reject explicitly before POSIX traversal', async () 
   const moduleUrl = new URL('../src/edit-lock/resource-identity.js', import.meta.url).href
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict'
-    Object.defineProperty(process, 'platform', { value: 'win32' })
+    Object.defineProperty(process, 'platform', { value: 'freebsd' })
     const { createResourceIdentity } = await import(${JSON.stringify(moduleUrl)})
-    assert.throws(() => createResourceIdentity(), /unsupported platform: win32/)
+    assert.throws(() => createResourceIdentity(), /unsupported platform: freebsd/)
   `], { encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
 })

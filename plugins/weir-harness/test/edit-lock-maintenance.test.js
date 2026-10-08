@@ -1,7 +1,8 @@
 import { it, describe } from './helpers.js'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, realpath, readFile, readdir, writeFile, lstat, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, writeFile, lstat, rm } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
@@ -26,7 +27,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 async function tempRoot(prefix = 'weir-maint-') {
   // realpath: the inspector canonicalizes (macOS /var → /private/var), so the
   // fixture root must be canonical from the start (domainId equality depends).
-  return realpath(await mkdtemp(join(tmpdir(), prefix)))
+  return realpathSync.native(await mkdtemp(join(tmpdir(), prefix)))
 }
 
 /** A real authority at <root>/.weir/edit-lock carrying one genuinely

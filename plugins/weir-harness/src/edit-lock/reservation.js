@@ -48,8 +48,12 @@ function writeOwner(path, doc) {
   renameSync(temporary, join(path, OWNER_FILE))
 }
 
+// fsync on a directory handle is a POSIX crash-durability idiom: on Windows
+// the handle opens but fsync fails EPERM (verified on Node v24, NTFS), so the
+// win32 row skips it — the owner temp+rename stands on NTFS journaling.
 /** @param {string} directory */
 function syncParent(directory) {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return
   const handle = openSync(directory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0))
   try { fsyncSync(handle) } finally { closeSync(handle) }
 }

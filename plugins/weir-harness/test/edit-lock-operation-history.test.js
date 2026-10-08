@@ -1,15 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm, readFile, mkdir, writeFile, lstat } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, mkdir, writeFile, lstat } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { lookupOperation } from '../src/edit-lock/operation-history.js'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 
 async function fixture(t) {
-  const root = await realpath(tmpdir())
+  const root = realpathSync.native(tmpdir())
   const directory = await mkdtemp(join(root, 'weir-operation-history-'))
   t.after(async () => {
     assert.equal(dirname(resolve(directory)), root)
@@ -422,6 +424,7 @@ test('late success retains cancellation classification and never rearms the sess
 async function publisherDriver({ directory, root, channel, stop, retry = false }) {
   const fs = await import('node:fs/promises')
   const { join, dirname } = await import('node:path')
+  const { realpathSync } = await import('node:fs')
   const { createHash } = await import('node:crypto')
   const { openEditLockStore } = await import('../src/edit-lock/store.js')
   const { lookupOperation } = await import('../src/edit-lock/operation-history.js')
@@ -472,10 +475,13 @@ async function publisherDriver({ directory, root, channel, stop, retry = false }
     const file = await fs.open(path, 'r+')
     try { await file.writeFile(payload); await file.truncate(Buffer.byteLength(payload)); await file.sync() } finally { await file.close() }
   }
-  const dir = await fs.open(dirname(path), 'r')
-  try { await dir.sync() } finally { await dir.close() }
+  // Directory fsync is POSIX-only (EPERM on win32, same stance as the store adapters).
+  if (process.platform !== 'win32') {
+    const dir = await fs.open(dirname(path), 'r')
+    try { await dir.sync() } finally { await dir.close() }
+  }
   barrier('published')
-  const resourceId = await fs.realpath(path)
+  const resourceId = realpathSync.native(path)
   op.phase = channel === 'create' ? 'created' : 'updated'
   op.outcome = { kind: op.phase, resourceId, generation: 1, version: sha(await fs.readFile(path)) }
   if (channel === 'create') {
@@ -492,7 +498,7 @@ function runDriver(options) {
   // Resolve relative imports from this test's directory, not the repository root.
   const script = `(${publisherDriver.toString()})(${JSON.stringify(options)}).catch(e => { console.error(e); process.exitCode = 1 })`
   return new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: dirname(new URL(import.meta.url).pathname), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: dirname(fileURLToPath(import.meta.url)), stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = '', stderr = ''
     child.stdout.on('data', b => { stdout += b })
     child.stderr.on('data', b => { stderr += b })
@@ -517,7 +523,11 @@ for (const channel of ['create', 'update']) {
       await record(store, state); await store.close()
       const options = { directory, root: targetRoot, channel, stop }
       const killed = await runDriver(options)
-      assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+      // Windows reports a self-issued SIGKILL as an ordinary abnormal exit
+      // (code 1, no signal): the parent's signal tracking only covers its own
+      // kill() calls.
+      if (process.platform === 'win32') assert.equal(killed.code, 1, killed.stderr)
+      else assert.equal(killed.signal, 'SIGKILL', killed.stderr)
       const recovered = await openEditLockStore({ directory, domainId: 'driver', mode: 'recover' })
       const op = recovered.snapshot().state.operations[0]
       const completed = ['outcome-renamed', 'outcome'].includes(stop)
@@ -705,7 +715,7 @@ test('raw batch cannot credit two created outcomes to one new resource ownership
   await mkdir(dirname(target))
   await writeFile(target, 'one creation', { flag: 'wx' })
   await assert.rejects(writeFile(target, 'one creation', { flag: 'wx' }), { code: 'EEXIST' })
-  const resourceId = await realpath(target)
+  const resourceId = realpathSync.native(target)
   // Historical fixture assertions, not authenticated publisher receipts.
   for (const op of state.operations) Object.assign(op, {
     phase: 'created', outcome: { kind: 'created', resourceId, generation: 1, version: 'v1' },

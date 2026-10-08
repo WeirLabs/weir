@@ -9,7 +9,8 @@
 import { it } from './helpers.js'
 import { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
@@ -37,7 +38,7 @@ async function loadChunk() {
 }
 
 it('panel path: the auto-listed blocked row settles the lock and the fence with one chunk-computed confirmation', async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'weir-recovery-ux-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-recovery-ux-')))
   roots.push(root)
   // The production authority layout, so the maintenance inspector reads it.
   const directory = join(root, '.weir', 'edit-lock')
@@ -121,7 +122,7 @@ it('panel path: the auto-listed blocked row settles the lock and the fence with 
 })
 
 it('panel path: an owner with a live prepared operation is listed with the named failing precondition', async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'weir-recovery-ux-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-recovery-ux-')))
   roots.push(root)
   const directory = join(root, '.weir', 'edit-lock')
   await mkdir(directory, { recursive: true })
@@ -176,7 +177,7 @@ it('panel path: an owner with a live prepared operation is listed with the named
 })
 
 it('/edit-lock unlock fence refusal names the maintenance-panel administrative recovery path', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-recovery-ux-command-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-recovery-ux-command-')))
   roots.push(base)
   const root = join(base, 'work')
   const directory = join(base, 'authority')

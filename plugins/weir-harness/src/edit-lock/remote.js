@@ -7,16 +7,28 @@ import { createEditLockPeer } from './peer.js'
 import { serveEditLockPeer } from './peer-transport.js'
 import { createEditLockPeerClient } from './peer-client.js'
 
-/** Deterministic per-user endpoint for one canonical authority directory. The
- * OS temp directory is user-private on supported hosts; any same-user process
- * that can reach it is inside the cooperative trust boundary, not attested.
- * @param {string} directory */
-export function endpointFor(directory) {
+/** Deterministic per-user endpoint for one canonical authority directory. On
+ * POSIX hosts the OS temp directory is user-private and the endpoint is a
+ * domain-socket file; on Windows it is a named pipe (a kernel object with no
+ * filesystem node, so there is no stale-node sweep and no 100-byte path
+ * budget — only the 256-char pipe-name limit) whose name carries no
+ * backslashes beyond the \\.\pipe\ prefix (verified on Node v24). Any
+ * same-user process that can reach the endpoint is inside the cooperative
+ * trust boundary, not attested.
+ * @param {string} directory @param {string} [platform] */
+export function endpointFor(directory, platform = process.platform) {
   const authority = realpathSync.native(directory)
-  const path = join(tmpdir(), `weir-edit-lock-${createHash('sha256').update(authority).digest('hex').slice(0, 24)}.sock`)
+  const hash = createHash('sha256').update(authority).digest('hex').slice(0, 24)
+  if (platform === 'win32') return `\\\\.\\pipe\\weir-edit-lock-${hash}`
+  const path = join(tmpdir(), `weir-edit-lock-${hash}.sock`)
   if (Buffer.byteLength(path) > 100) throw new Error(`edit lock endpoint path too long: ${path}`)
   return path
 }
+
+/** True for Windows named-pipe endpoints: no filesystem node exists, so the
+ * stale-socket sweep and the close-time unlink are POSIX-only concerns.
+ * @param {string} endpoint */
+const namedPipe = endpoint => endpoint.startsWith('\\\\.\\pipe\\') || endpoint.startsWith('\\\\?\\pipe\\')
 
 /** Publisher side: one session channel per connection. The first frame must be
  * `open {sessionId}`; the channel agent is fixed afterwards and EOF revokes it.
@@ -25,10 +37,12 @@ export function endpointFor(directory) {
  * @param {string} endpoint
  * @param {WeakMap<object, (event: unknown) => void>} sinks remote agent → notice sink */
 export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
-  try {
-    if (!lstatSync(endpoint).isSocket()) throw new Error(`unexpected node at edit lock endpoint ${endpoint}`)
-    unlinkSync(endpoint)
-  } catch (error) { if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error }
+  if (!namedPipe(endpoint)) {
+    try {
+      if (!lstatSync(endpoint).isSocket()) throw new Error(`unexpected node at edit lock endpoint ${endpoint}`)
+      unlinkSync(endpoint)
+    } catch (error) { if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error }
+  }
   /** @type {Set<{close: () => Promise<unknown>}>} */
   const channels = new Set()
   let closed = false
@@ -63,7 +77,9 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
       closed = true
       await new Promise(resolve => server.close(() => resolve(undefined)))
       const results = await Promise.allSettled([...channels].map(channel => channel.close()))
-      try { unlinkSync(endpoint) } catch { /* already gone */ }
+      if (!namedPipe(endpoint)) {
+        try { unlinkSync(endpoint) } catch { /* already gone */ }
+      }
       const errors = results.filter(result => result.status === 'rejected').map(result => /** @type {any} */ (result).reason)
       if (errors.length) throw new AggregateError(errors, 'edit lock endpoint revocation failed')
     },

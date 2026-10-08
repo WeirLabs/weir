@@ -1,4 +1,4 @@
-import { posix } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 /** Candidates describe effects, not merely explicit API arguments. Session-wide
  * operations must enumerate affected ownership at their FIFO position.
@@ -11,9 +11,19 @@ import { posix } from 'node:path'
  * Opaque kernel test IDs remain valid without fences but cannot prove non-overlap.
  * @param {string} resourceId */
 function canonicalResource(resourceId) {
-  return typeof resourceId === 'string' && resourceId.startsWith('/') &&
-    !resourceId.includes('\0') && resourceId !== '/' &&
+  if (typeof resourceId !== 'string' || resourceId.includes('\0')) return false
+  // Shape check only, NOT filesystem proof. The POSIX arm is every POSIX row
+  // plus the platform-neutral synthetic ids historical records may carry; the
+  // win32 arm is the NTFS-native shape the resource-identity win32 row
+  // produces. Real producers emit exactly one shape per platform; relative,
+  // root, trailing-slash and non-normalized spellings stay refused.
+  const posixCanonical = resourceId.startsWith('/') && resourceId !== '/' &&
     !resourceId.endsWith('/') && posix.normalize(resourceId) === resourceId
+  if (process.platform !== 'win32') return posixCanonical
+  return posixCanonical ||
+    (/^[A-Za-z]:\\/.test(resourceId) && resourceId.length > 3 &&
+      !resourceId.endsWith('\\') && !resourceId.includes('/') &&
+      win32.normalize(resourceId) === resourceId)
 }
 
 /** Pure denial check. Historical closeout assertions grant no authority.

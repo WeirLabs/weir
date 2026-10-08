@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
@@ -25,7 +26,7 @@ const identity = (pid, bootNonce = 'boot-1') => ({ pid, host: 'host-a', osStart:
 
 /** @param {(root: string) => Promise<void>} run */
 async function withRoot(prefix, run) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), prefix)))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), prefix)))
   try { await run(root) } finally { await rm(root, { recursive: true, force: true }) }
 }
 

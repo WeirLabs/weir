@@ -6,11 +6,11 @@ import { join, dirname } from 'node:path'
 import { managementRootFor } from '../src/edit-lock/domains.js'
 
 function fixture(t) {
-  const parent = realpathSync(tmpdir())
-  const base = realpathSync(mkdtempSync(join(parent, 'discovery-')))
+  const parent = realpathSync.native(tmpdir())
+  const base = realpathSync.native(mkdtempSync(join(parent, 'discovery-')))
   t.after(() => {
     assert.equal(dirname(base), parent)
-    assert.equal(realpathSync(base), base)
+    assert.equal(realpathSync.native(base), base)
     rmSync(base, { recursive: true, force: true })
   })
   const ceiling = join(base, 'ceiling')

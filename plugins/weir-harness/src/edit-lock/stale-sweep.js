@@ -3,6 +3,7 @@
 // the scheduler's job, clock and timer are injected so the composition and
 // the unit tests share one core.
 import { lstatSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 /** Missing-target classification for one stored canonical resource id. ONLY
  * ENOENT counts: a successful lstat — including of a dangling symlink — is
@@ -16,7 +17,23 @@ export function isMissingTarget(resourceId) {
     lstatSync(resourceId)
     return false
   } catch (error) {
-    return /** @type {any} */ (error)?.code === 'ENOENT'
+    const code = /** @type {any} */ (error)?.code
+    if (code !== 'ENOENT') return false
+    // Windows reports a path through a regular-file component as ENOENT as
+    // well (there is no ENOTDIR): preserve the conservative POSIX
+    // classification by walking up — a non-directory ancestor means the path
+    // is BLOCKED (skip the row), not missing.
+    if (process.platform === 'win32') {
+      for (let parent = dirname(resourceId); parent !== dirname(parent); parent = dirname(parent)) {
+        let stat
+        try { stat = lstatSync(parent) } catch (ancestorError) {
+          if (/** @type {any} */ (ancestorError)?.code === 'ENOENT') continue
+          return false
+        }
+        return stat.isDirectory()
+      }
+    }
+    return true
   }
 }
 

@@ -6,6 +6,11 @@ import { validateOperationTransitions } from './operation-history.js'
 import { canonical, parseSnapshot, validateImage } from './snapshot.js'
 import { validateAdminTransition } from './admin-ledger.js'
 
+// Directory fsync is POSIX-only (EPERM on win32, Node v24 — same stance as
+// reservation.js SYNC_SUPPORTED): the win32 row persists with file fsync +
+// atomic rename and skips the directory sync steps.
+const DIR_SYNC_SUPPORTED = process.platform === 'darwin' || process.platform === 'linux'
+
 /**
  * Unmounted historical Edit Lock snapshot storage, NOT a kernel restore interface.
  * The caller MUST already hold an externally proven exclusive directory lifecycle
@@ -79,11 +84,14 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
       await io('file-sync', async () => { await openedFile.sync() })
       await io('file-close', async () => { await openedFile.close(); file = undefined })
       await io('rename', async () => { renameStarted = true; await rename(temporary, target) })
-      await io('directory-open', async () => { dir = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW) })
-      valid(dir, 'opened directory descriptor')
+      // The directory steps fire on every platform — checkpoint cadence is a
+      // contract; only the real directory fsync is POSIX-only (EPERM on win32,
+      // same stance as reservation.js SYNC_SUPPORTED).
+      await io('directory-open', async () => { dir = DIR_SYNC_SUPPORTED ? await open(directory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0)) : undefined })
+      if (DIR_SYNC_SUPPORTED) valid(dir, 'opened directory descriptor')
       const openedDirectory = dir
-      await io('directory-sync', async () => { await openedDirectory.sync() })
-      await io('directory-close', async () => { await openedDirectory.close(); dir = undefined })
+      await io('directory-sync', async () => { await openedDirectory?.sync() })
+      await io('directory-close', async () => { await openedDirectory?.close(); dir = undefined })
       committedBytes = Buffer.from(bytes, 'utf8')
     } catch (cause) {
       // Never remove/promote a temp or roll back a rename. Once rename was
@@ -108,7 +116,9 @@ export async function openEditLockStore({ directory, domainId, mode, maxSnapshot
     await persist(current)
   } else {
     valid((await lstat(target)).isFile(), 'snapshot must be regular file')
-    const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    // win32: O_NOFOLLOW/O_NONBLOCK are undefined — the lstat above and the post-open
+    // stat below carry the identity checks (same stance as read-authority.js).
+    const file = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
     try {
       valid((await file.stat()).isFile(), 'snapshot must be regular file')
       let bytes

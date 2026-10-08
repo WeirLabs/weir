@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, realpath, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ import { openReservedEditLockRuntime } from '../src/edit-lock/reserved-runtime.j
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
 async function fixture() {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-composition-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-composition-')))
   const root = join(base, 'work')
   const directory = join(base, 'authority')
   await mkdir(root)

@@ -11,7 +11,7 @@ import { createPublisher } from '../src/edit-lock/publisher.js'
 import { createEditLockHost } from '../src/edit-lock/host.js'
 
 async function fixture(backend) {
-  const root = realpathSync(await mkdtemp(join(tmpdir(), 'publisher-stop-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'publisher-stop-')))
   const directory = join(root, '.authority')
   await mkdir(directory)
   await writeFile(join(root, 'target'), 'before')
@@ -128,7 +128,7 @@ test('backend rejection remains unknown; another authenticated live session upda
 
 
 test('Stop during durable publishing intent is revalidated before zero backend invocations', async () => {
-  const root = realpathSync(await mkdtemp(join(tmpdir(), 'publisher-intent-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'publisher-intent-')))
   const directory = join(root, '.authority')
   await mkdir(directory)
   const store = await openEditLockStore({ directory, domainId: 'test', mode: 'create' })

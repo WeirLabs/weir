@@ -4,6 +4,7 @@
 // owner's unknown publication, then stays alive serving channels. Facts are
 // appended as JSON lines to the facts file named in argv.
 import { appendFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { openEditLockRuntime } from '../../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../../src/edit-lock/lifecycle.js'
 import { serveEditLockEndpoint } from '../../src/edit-lock/remote.js'
@@ -20,7 +21,9 @@ await serveEditLockEndpoint(lifecycle, endpoint, new WeakMap())
 await runtime.control.openSession('victim')
 const status = runtime.control.status()
 const execution = { managerIncarnation: status.managerIncarnation, sessionId: 'victim', executionEpoch: 1 }
-const target = `${root}/a.txt`
+// The target must arrive in the publisher's canonical (native) spelling:
+// `${root}/a.txt` mixes separators on win32 and would miss the generations row.
+const target = join(root, 'a.txt')
 const token = await runtime.control.acquire(execution, target)
 const request = { operationId: 'op-peer', tool: 'write', filePath: target, cwd: root, args: {}, content: 'late',
   effectivePolicy: { mode: 'workspace-write' },

@@ -1,7 +1,8 @@
 import { it } from './helpers.js'
 import { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
@@ -19,7 +20,7 @@ const roots = []
 after(async () => { for (const root of roots) await rm(root, { recursive: true, force: true }) })
 
 async function fixture({ interrupt = true, extraPrepared = false } = {}) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'weir-online-recovery-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-online-recovery-')))
   roots.push(root)
   const directory = join(root, 'authority')
   await mkdir(directory, { recursive: true })
@@ -193,7 +194,7 @@ it('idempotent retry returns the committed record without re-releasing or append
 })
 
 it('refuses in a composition without a domain root or backup writer', async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'weir-online-recovery-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-online-recovery-')))
   roots.push(root)
   const directory = join(root, 'authority')
   await mkdir(directory, { recursive: true })
@@ -205,7 +206,7 @@ it('refuses in a composition without a domain root or backup writer', async () =
 })
 
 it('single-process composition probe: a live publisher settles its own unknown online, no restart', async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'weir-online-composition-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-online-composition-')))
   roots.push(root)
   // The production authority layout, so the maintenance inspector reads it.
   const directory = join(root, '.weir', 'edit-lock')

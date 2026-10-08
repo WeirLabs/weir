@@ -9,7 +9,8 @@
 //   E. cross-process — client domain forwarding + publisher peer routing
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, writeFile, symlink, readFile, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, symlink, readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isMissingTarget, createStaleSweepScheduler } from '../src/edit-lock/stale-sweep.js'
@@ -26,7 +27,7 @@ const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: e
 // ---------- A. missing-target classification (real fs) ----------
 
 test('A: only ENOENT marks a target missing — file, dangling symlink and ENOTDIR all skip', async (t) => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-stale-detect-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-stale-detect-')))
   t.after(() => rm(base, { recursive: true, force: true }))
   const file = join(base, 'present.txt')
   await writeFile(file, 'x')
@@ -143,7 +144,7 @@ test('B: expired-cooldown entries are reclaimed on the next pass and close() emp
 // ---------- C. manager.releaseStale ----------
 
 async function managerFixture(run) {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-stale-mgr-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-stale-mgr-')))
   const directory = join(base, 'authority')
   const work = join(base, 'w')
   await mkdir(directory)
@@ -327,7 +328,7 @@ test('C: a duplicated sweep answer is idempotent — already-released rows skip,
 })
 
 test('C: a persistence failure surfaces as a failure, never a skip — and poisons the manager', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-stale-mgr-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-stale-mgr-')))
   const directory = join(base, 'authority')
   const work = join(base, 'w')
   await mkdir(directory)
@@ -369,7 +370,7 @@ test('C: a persistence failure surfaces as a failure, never a skip — and poiso
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
 async function fixture() {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-stale-comp-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-stale-comp-')))
   const root = join(base, 'work')
   const directory = join(base, 'authority')
   await mkdir(root)
@@ -663,7 +664,7 @@ function sweepRuntime(lock, releaseStale) {
 }
 
 test('F: concurrent local and as-if-peer triggers share ONE scan; the cooldown answers without scanning', async (t) => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-stale-life-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-stale-life-')))
   t.after(() => rm(base, { recursive: true, force: true }))
   const missing = join(base, 'gone.txt')  // never created: ENOENT
   let clock = 5000
@@ -706,7 +707,7 @@ test('F: concurrent local and as-if-peer triggers share ONE scan; the cooldown a
 })
 
 test('F: each failure earns exactly one bounded warning; skips stay quiet; releases still audit', async (t) => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-stale-life-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-stale-life-')))
   t.after(() => rm(base, { recursive: true, force: true }))
   const missing = join(base, 'gone.txt')
   const warns = []

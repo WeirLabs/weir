@@ -4,7 +4,8 @@
 // admission lifted. Remounting never re-settles or re-notifies.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, realpath, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createEditLockPlugin } from '../src/edit-lock/index.js'
@@ -20,7 +21,7 @@ const DEAD_PID = 40_000_000
 const deadIdentity = { pid: DEAD_PID, host: hostname(), osStart: null, bootNonce: 'crashed-boot' }
 
 async function fixture() {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-recovery-notice-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-recovery-notice-')))
   const root = join(base, 'work')
   const directory = join(base, 'authority')
   await mkdir(root)

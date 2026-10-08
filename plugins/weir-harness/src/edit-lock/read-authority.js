@@ -72,8 +72,11 @@ export function readSnapshotBytes(authorityDir) {
       return { presence: 'no-snapshot' }
     }
     if (!leaf.isFile() || leaf.isSymbolicLink()) return { presence: 'not-a-file' }
-    if (!constants.O_NOFOLLOW) throw new Error('safe inspection unsupported on this platform')
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    // Windows exposes no O_NOFOLLOW/O_NONBLOCK (constants undefined): the leaf
+    // lstat above already refused a symlink and the post-open fstat identity
+    // check below bounds the swap window (symlink creation needs privilege on
+    // Windows; the residual TOCTOU gap is documented in edit-lock.md).
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
     const opened = fstatSync(fd)
     if (!opened.isFile() || !sameNode(leaf, opened)) throw new Error('opened snapshot identity changed')
     verifyPins(parents)

@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,7 +34,7 @@ async function waitForFact(facts, kind, child, childErr) {
 }
 
 test('two-process probe: a client host settles a live publisher\'s unknown over the peer channel', async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'weir-online-peer-')))
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-online-peer-')))
   // The production authority layout, so the maintenance inspector reads it.
   const directory = join(root, '.weir', 'edit-lock')
   await mkdir(directory, { recursive: true })

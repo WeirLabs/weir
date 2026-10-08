@@ -2,6 +2,7 @@ import { it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, readFile, writeFile, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager, recoverEditLockManager } from '../src/edit-lock/manager.js'
 import { recoverAuthority, recoveryConfirmation } from '../src/edit-lock/admin-recovery.js'
@@ -10,7 +11,7 @@ import { parseSnapshot, validateImage } from '../src/edit-lock/snapshot.js'
 import { administrativeState, digest } from '../src/edit-lock/admin-ledger.js'
 import { registerEditLockMaintenanceEndpoints as registerEditLockMaintenance, createEditLockEvidence, inspectAuthority } from '../src/edit-lock/maintenance.js'
 
-const lane = new URL('../../../', import.meta.url).pathname
+const lane = fileURLToPath(new URL('../../../', import.meta.url))
 const roots = []
 after(async () => {
   for (const root of roots) {

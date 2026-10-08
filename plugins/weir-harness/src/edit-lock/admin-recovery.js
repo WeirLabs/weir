@@ -41,8 +41,9 @@ async function boundedRead(path, pins) {
   verify(pins)
   const before = lstatSync(path)
   check(before.isFile() && !before.isSymbolicLink() && before.nlink === 1 && before.size <= MAX_RECOVERY_BYTES, 'Bounded single-link regular authority file required')
-  check(constants.O_NOFOLLOW && constants.O_NONBLOCK, 'Safe file IO unsupported')
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  // win32: O_NOFOLLOW/O_NONBLOCK are undefined; the lstat above refused a symlink
+  // leaf and the post-open identity check below bounds the swap (read-authority.js).
+  const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
   try {
     const stat = await file.stat()
     check(same(before, stat) && stat.isFile() && stat.nlink === 1 && stat.size <= MAX_RECOVERY_BYTES, 'Opened file identity or bound changed')
@@ -60,6 +61,8 @@ async function boundedRead(path, pins) {
   } finally { await file.close() }
 }
 async function syncDirectory(directory) {
+  // Directory fsync is POSIX-only (EPERM on win32, reservation.js SYNC_SUPPORTED).
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return
   const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
   try { await handle.sync() } finally { await handle.close() }
 }
@@ -123,7 +126,9 @@ export async function recoverAuthority(input, testing = {}) {
     check(savedBackup.equals(bytes), 'Existing backup does not match exact authority bytes')
     parseSnapshot(savedBackup, input.root)
     // Also sync an existing backup when retrying a crash before its first fsync.
-    const backupHandle = await open(join(directory, backup.file), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    // fsync needs a writable handle on Windows (EPERM on O_RDONLY): open the
+    // existing backup read-write there so the re-sync stays a real fsync.
+    const backupHandle = await open(join(directory, backup.file), process.platform === 'win32' ? 'r+' : constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
     try { await backupHandle.sync() } finally { await backupHandle.close() }
     await syncDirectory(directory)
     await testing.checkpoint?.('backup-durable')

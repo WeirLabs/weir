@@ -1,14 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { existsSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openReservedEditLockRuntime } from '../src/edit-lock/reserved-runtime.js'
 import { reservationPathFor } from '../src/edit-lock/reservation.js'
 
 test('characterizes the generic handoff gap: rejected adapter can retain a writer after close and recovery', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-historical-quiescence-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-historical-quiescence-')))
   const directory = join(base, 'authority')
   const target = join(base, 'target.txt')
   const gate = Promise.withResolvers()

@@ -100,7 +100,7 @@ export function validateOperations(state) {
         if (op.binding.target.kind === 'update') valid(op.outcome.resourceId === op.binding.target.resourceId && op.outcome.generation === op.binding.target.generation, 'update outcome binding')
         if (op.phase === 'created' && op.fence?.kind === 'subtree') {
           const suffix = relative(op.fence.ancestor, op.outcome.resourceId)
-          valid(suffix.length > 0 && suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix), 'created containment')
+          valid(suffix.length > 0 && suffix !== '..' && !suffix.startsWith('../') && !suffix.startsWith('..\\') && !isAbsolute(suffix), 'created containment')
         }
       }
     }
@@ -137,7 +137,7 @@ function validateFence(op) {
     else {
       valid(fence.basis === 'conservative-ancestor', 'scope basis')
       const suffix = relative(fence.ancestor, target.ancestor)
-      valid(suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix), 'conservative containment')
+      valid(suffix !== '..' && !suffix.startsWith('../') && !suffix.startsWith('..\\') && !isAbsolute(suffix), 'conservative containment')
     }
   } else {
     shape(fence, ['kind', 'basis'])

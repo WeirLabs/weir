@@ -9,7 +9,8 @@
 // second registration of the same tool name throws, like dsh-scope — so a
 // re-setup that forgot to retire the previous generation's layer fails loudly.
 import { test, expect } from './helpers.js'
-import { mkdtemp, mkdir, writeFile, readFile, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createEditLockPlugin } from '../src/edit-lock/index.js'
@@ -20,7 +21,7 @@ const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: e
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
 async function fixture() {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'weir-self-heal-')))
+  const base = realpathSync.native(await mkdtemp(join(tmpdir(), 'weir-self-heal-')))
   const root = join(base, 'work')
   const directory = join(base, 'authority')
   await mkdir(root)
