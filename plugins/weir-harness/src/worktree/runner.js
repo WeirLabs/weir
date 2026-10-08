@@ -102,10 +102,10 @@ export function createGitRunner(subprocess) {
  * manager first (the LSP module's extended resolver — S21), then the DSH
  * bundled runtime under the deployment's DSH home. Pure decision in
  * pkgmgr.js; this is only the seam wiring.
- * @param {{ subprocess: any, env?: Record<string, string | undefined>, home?: string, findExecutable?: (name: string) => Promise<string | undefined> }} options - `findExecutable` exists so tests can pin the lookup without fighting the host's real PATH scan
+ * @param {{ subprocess: any, env?: Record<string, string | undefined>, home?: string, findExecutable?: (name: string) => Promise<string | undefined>, platform?: string }} options - `findExecutable` exists so tests can pin the lookup without fighting the host's real PATH scan; `platform` defaults to process.platform and exists so tests can pin it
  * @returns {(manager: string) => Promise<ReturnType<typeof resolveDerivedSetup>>}
  */
-export function createSetupResolver({ subprocess, env = process.env, home = homedir(), findExecutable }) {
+export function createSetupResolver({ subprocess, env = process.env, home = homedir(), findExecutable, platform = process.platform }) {
   const find = findExecutable ?? ((name) => resolveExecutable(subprocess, name).catch(() => undefined))
   return async (manager) => {
     // Manager and node are resolved INDEPENDENTLY: the core asks the seam
@@ -130,6 +130,7 @@ export function createSetupResolver({ subprocess, env = process.env, home = home
       },
       dshHome: env.DSH_HOME,
       home,
+      platform,
     })
   }
 }
