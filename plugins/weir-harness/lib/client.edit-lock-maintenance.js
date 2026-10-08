@@ -154,6 +154,101 @@ window.__ModuleLoader__.load({
 			}
 			return candidates;
 		}
+		/** Recovery-UX zone copy (D1/D2). The entry dictionaries (client.js) are
+		 * owned by the entry chunk, so the new zone copy lives HERE as
+		 * template-layer English per the text discipline; file paths, session ids
+		 * and statuses stay dynamic instance content. */
+		const RECOVERY_UX = Object.freeze({
+			blockedHeader: "Blocked files — one-click force release",
+			blockedHint: "Opening the panel ran the read-only inspection automatically. Each row settles the holder's unresolved publication fence (when present) and releases the lock in one operator-confirmed step.",
+			unmetHeader: "Blocked files — recovery preconditions not met",
+			forceRelease: "Force release",
+			holder: "holder",
+			stateFence: "publication fence",
+			stateInterrupted: "interrupted",
+			stateActive: "active",
+			reasonNotInterrupted: "The holding session is not durably interrupted; the online administrative recovery can only override an interrupted historical owner. Stop the session first, or ask it to release the file.",
+			reasonPrepared: "The owner still has a prepared operation; recover to stable unknown history before an administrative override.",
+			reasonPublishing: "The owner still has an operation in the publishing phase; only unknown outcomes can be overridden online.",
+			reasonDisposition: "An administrative recovery is already recorded for this owner; admission for its operations is no longer blocked.",
+			reasonNoUnresolved: "The owner has no unresolved operations; an ordinary unlock may be enough.",
+			reasonUnknownSession: "The owner session is not recorded in this authority image.",
+		});
+		/** The first failing precondition of an ineligible blocking owner, in the
+		 * manager's refusal order (revoked/disposition → owner unknown → not
+		 * interrupted → prepared → publishing → no unresolved operations).
+		 * @param {string} owner @param {any} snapshot @returns {string} */
+		function unmetReason(owner, snapshot) {
+			const unresolved = Array.isArray(snapshot?.unresolved) ? snapshot.unresolved : [];
+			const ownerOps = unresolved.filter((op) => op?.key?.sessionId === owner);
+			const prepared = (Array.isArray(snapshot?.prepared) ? snapshot.prepared : []).filter((op) => op?.key?.sessionId === owner);
+			const session = (Array.isArray(snapshot?.sessions) ? snapshot.sessions : []).find((row) => row?.sessionId === owner);
+			if (ownerOps.some((op) => op?.admissionBlocked === false)) return RECOVERY_UX.reasonDisposition;
+			if (!session) return RECOVERY_UX.reasonUnknownSession;
+			if (session.interrupted !== true) return RECOVERY_UX.reasonNotInterrupted;
+			if (prepared.length > 0) return RECOVERY_UX.reasonPrepared;
+			if (ownerOps.some((op) => op?.phase === "publishing")) return RECOVERY_UX.reasonPublishing;
+			return RECOVERY_UX.reasonNoUnresolved;
+		}
+		/** Recovery-UX diagnosis (D1/D2): the three-zone classification the panel
+		 * renders from one inspection. Eligibility is recoveryCandidates — the
+		 * SAME scope and confirmation algorithm — and every ineligible blocking
+		 * owner carries the named failing precondition. Blocking artifacts are
+		 * retained locks plus still-blocking (admissionBlocked) unresolved
+		 * publications; file-scoped fences become rows, wider fences name their
+		 * scope path in the unmet zone. Pure: no fetch, no state, no clock.
+		 * @param {string} root @param {any} snapshot */
+		function recoveryDiagnosis(root, snapshot) {
+			const candidates = recoveryCandidates(root, snapshot);
+			const candidateByOwner = new Map(candidates.map((candidate) => [candidate.owner, candidate]));
+			const sessions = Array.isArray(snapshot?.sessions) ? snapshot.sessions : [];
+			const interruptedByOwner = new Map(sessions.map((session) => [session.sessionId, session?.interrupted === true]));
+			const retained = Array.isArray(snapshot?.retainedLocks) ? snapshot.retainedLocks : [];
+			/** @type {Map<string, {resourceId: string, owner: string, lockStatus: string|null, fence: boolean, interrupted: boolean}>} */
+			const rowsByResource = new Map();
+			const blockedOwners = new Set();
+			for (const lock of retained) {
+				if (typeof lock?.resourceId !== "string" || typeof lock?.owner !== "string") continue;
+				blockedOwners.add(lock.owner);
+				const row = rowsByResource.get(lock.resourceId) ?? { resourceId: lock.resourceId, owner: lock.owner, lockStatus: null, fence: false, interrupted: interruptedByOwner.get(lock.owner) ?? false };
+				row.lockStatus = row.lockStatus ?? (typeof lock.status === "string" ? lock.status : null);
+				rowsByResource.set(lock.resourceId, row);
+			}
+			/** @type {Map<string, {owner: string, scopePaths: string[]}>} */
+			const fencedOwners = new Map();
+			for (const op of Array.isArray(snapshot?.unresolved) ? snapshot.unresolved : []) {
+				if (op?.admissionBlocked !== true || typeof op?.key?.sessionId !== "string") continue;
+				blockedOwners.add(op.key.sessionId);
+				const scope = op?.scope ?? null;
+				if (scope?.kind === "file" && typeof scope.path === "string") {
+					const existing = rowsByResource.get(scope.path);
+					if (existing) {
+						// Same owner locks AND fences the file (the incident shape): one row.
+						if (existing.owner === op.key.sessionId) existing.fence = true;
+						else {
+							const entry = fencedOwners.get(op.key.sessionId) ?? { owner: op.key.sessionId, scopePaths: /** @type {string[]} */ ([]) };
+							if (!entry.scopePaths.includes(scope.path)) entry.scopePaths.push(scope.path);
+							fencedOwners.set(op.key.sessionId, entry);
+						}
+					} else {
+						rowsByResource.set(scope.path, { resourceId: scope.path, owner: op.key.sessionId, lockStatus: null, fence: true, interrupted: interruptedByOwner.get(op.key.sessionId) ?? false });
+					}
+				} else {
+					const entry = fencedOwners.get(op.key.sessionId) ?? { owner: op.key.sessionId, scopePaths: /** @type {string[]} */ ([]) };
+					if (typeof scope?.path === "string" && !entry.scopePaths.includes(scope.path)) entry.scopePaths.push(scope.path);
+					fencedOwners.set(op.key.sessionId, entry);
+				}
+			}
+			const rows = [...rowsByResource.values()];
+			const blocked = rows.filter((row) => candidateByOwner.has(row.owner));
+			blocked.sort((a, b) => a.resourceId.localeCompare(b.resourceId));
+			const unmet = [];
+			for (const owner of [...blockedOwners].sort()) {
+				if (candidateByOwner.has(owner)) continue;
+				unmet.push({ owner, rows: rows.filter((row) => row.owner === owner), scopePaths: fencedOwners.get(owner)?.scopePaths ?? [], reason: unmetReason(owner, snapshot) });
+			}
+			return { candidates, blocked, unmet };
+		}
 		/** Error boundary isolating the maintenance panel from the settings page. */
 		class EditLockMaintenanceBoundary extends react.Component {
 			constructor(props) {
@@ -220,6 +315,11 @@ window.__ModuleLoader__.load({
 				post("api/weir-edit-lock/maintenance/status")
 					.then((payload) => {
 						setView(payload?.ok ? { status: "ready", value: payload.value } : { status: "error", message: payload?.error?.message ?? "unknown" });
+						// Recovery UX D1: opening the panel auto-runs the read-only
+						// inspection for every server-derived domain root, so the
+						// blocked/unmet zones render without any manual step. The
+						// inspection itself stays read-only (the same endpoint).
+						if (payload?.ok && Array.isArray(payload.value?.domains)) payload.value.domains.forEach((domain) => inspect(domain.root, false));
 					})
 					.catch((error) => setView({ status: "error", message: String(error?.message ?? error) }));
 			};
@@ -229,8 +329,9 @@ window.__ModuleLoader__.load({
 				setExpanded(null);
 				if (next) load();
 			};
-			const inspect = (root) => {
-				setExpanded(root);
+			/** @param {string} root @param {boolean} [expand] manual clicks expand the per-domain detail; the automatic pass does not */
+			const inspect = (root, expand = true) => {
+				if (expand) setExpanded(root);
 				setInspections((previous) => ({ ...previous, [root]: { status: "loading" } }));
 				post("api/weir-edit-lock/maintenance/inspect", { root })
 					.then((payload) => {
@@ -279,6 +380,58 @@ window.__ModuleLoader__.load({
 					}) })
 				], key: recoveryKey(root, candidate.owner) });
 			};
+			/** Row state fragment: lock status / publication fence + session liveness. */
+			const holderStateText = (row) => {
+				const parts = [];
+				if (row.lockStatus) parts.push(row.lockStatus);
+				if (row.fence) parts.push(RECOVERY_UX.stateFence);
+				parts.push(row.interrupted ? RECOVERY_UX.stateInterrupted : RECOVERY_UX.stateActive);
+				return parts.join(" · ");
+			};
+			/** Blocked-zone group for one eligible owner: one row per blocked file
+			 * (file, holder, holder state, one primary force-release action per
+			 * row) plus the FULL scope, risk and computed digest the operator
+			 * accepts with the click — the same confirmation algorithm as the
+			 * offline path, unchanged. */
+			const blockedZoneCard = (root, candidate, rows) => {
+				const state = recoveries[recoveryKey(root, candidate.owner)];
+				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", padding: "8px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)" }, children: [
+					...rows.map((row) => react_jsx_runtime.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+						react_jsx_runtime.jsxs("span", { style: { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }, children: [
+							react_jsx_runtime.jsx("span", { style: monoStyle, children: row.resourceId }),
+							react_jsx_runtime.jsx("span", { style: chainDescStyle, children: `${RECOVERY_UX.holder} ${row.owner} · ${holderStateText(row)}` })
+						] }),
+						react_jsx_runtime.jsx("span", { style: { flex: 1 } }),
+						react_jsx_runtime.jsx("button", {
+							type: "button",
+							style: chainButtonStyle,
+							disabled: state?.status === "busy",
+							onClick: () => recover(root, candidate),
+							children: state?.status === "busy" ? t("editLockMaintRecoverBusy") : RECOVERY_UX.forceRelease
+						})
+					], key: row.resourceId })),
+					react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverRoot")}: ${candidate.scope.root}` }),
+					react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverOwner")}: ${candidate.owner}` }),
+					react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverRevision")}: ${candidate.scope.expectedRevision}` }),
+					react_jsx_runtime.jsxs("div", { style: chainDescStyle, children: [
+						react_jsx_runtime.jsx("div", { children: `${t("editLockMaintRecoverOperations")}:` }),
+						...candidate.scope.operationIds.map((id, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: id }, index))
+					] }),
+					react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverRisk")}: ${LATE_WRITER_RISK}` }),
+					react_jsx_runtime.jsx("div", { style: monoStyle, children: `${t("editLockMaintRecoverDigest")}: ${candidate.confirmation}` }),
+					state?.status === "error"
+						? react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverFailed")} ${state.message}` })
+						: null,
+				], key: recoveryKey(root, candidate.owner) });
+			};
+			/** Unmet-zone row for one ineligible blocking owner: the blocked files
+			 * and the NAMED failing precondition, never a silent missing action. */
+			const unmetZoneRow = (root, entry) => react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", padding: "8px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)" }, children: [
+				react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverOwner")}: ${entry.owner}` }),
+				...entry.rows.map((row, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: `${row.resourceId} · ${RECOVERY_UX.holder} ${row.owner} · ${holderStateText(row)}` }, index)),
+				...entry.scopePaths.map((path, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: path }, index)),
+				react_jsx_runtime.jsx("div", { style: dangerStyle, children: entry.reason })
+			], key: `${root}\n${entry.owner}\nunmet` });
 			const snapshotSection = (/** @type {string} */ root, /** @type {any} */ snapshot) => react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
 				react_jsx_runtime.jsx("div", { style: chainDescStyle, children: t("editLockMaintCounts")
 					.replace("{sessions}", String(snapshot.counts.sessions))
@@ -348,6 +501,27 @@ window.__ModuleLoader__.load({
 				}
 				const value = view.value;
 				const stateKey = STATE_KEYS[value.state] ?? "Unknown";
+				// Recovery UX D1: aggregate the zones from every auto-inspected root.
+				// Blocked rows (with a force-release action) render first, then the
+				// owners whose preconditions fail with the named reason; everything
+				// else is the normal zone (banner, warnings, per-domain detail).
+				const zoneGroups = new Map();
+				const zoneUnmet = [];
+				for (const root of Object.keys(inspections)) {
+					const inspection = inspections[root];
+					if (inspection?.status !== "ready" || inspection.value?.presence !== "valid") continue;
+					const diagnosis = recoveryDiagnosis(root, inspection.value.snapshot);
+					for (const row of diagnosis.blocked) {
+						const candidate = diagnosis.candidates.find((entry) => entry.owner === row.owner);
+						const key = recoveryKey(root, row.owner);
+						const group = zoneGroups.get(key) ?? { root, candidate, rows: [] };
+						group.rows.push(row);
+						zoneGroups.set(key, group);
+					}
+					for (const entry of diagnosis.unmet) zoneUnmet.push({ root, entry });
+				}
+				const blockedGroups = [...zoneGroups.values()];
+				zoneUnmet.sort((a, b) => a.entry.owner.localeCompare(b.entry.owner));
 				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "10px" }, children: [
 					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "2px" }, children: [
 						react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: t(`editLockMaintState${stateKey}`) }),
@@ -360,6 +534,19 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintWarnKeepHistory") }),
 						react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintWarnUnlock") })
 					] }),
+					blockedGroups.length > 0
+						? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+							react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: RECOVERY_UX.blockedHeader }),
+							react_jsx_runtime.jsx("span", { style: chainDescStyle, children: RECOVERY_UX.blockedHint }),
+							...blockedGroups.map((group) => blockedZoneCard(group.root, group.candidate, group.rows))
+						] })
+						: null,
+					zoneUnmet.length > 0
+						? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+							react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: RECOVERY_UX.unmetHeader }),
+							...zoneUnmet.map(({ root, entry }) => unmetZoneRow(root, entry))
+						] })
+						: null,
 					value.blocked.length > 0
 						? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
 							react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: t("editLockMaintBlocked") }),
@@ -391,7 +578,7 @@ window.__ModuleLoader__.load({
 		exports.EditLockMaintenanceBoundary = EditLockMaintenanceBoundary;
 		exports.EditLockMaintenanceField = EditLockMaintenanceField;
 		// Exported for the chunk test's 对拍 against the server-side digest.
-		exports.editLockRecovery = Object.freeze({ canonicalJson, sha256Hex, recoveryConfirmation, recoveryCandidates, recoveryKey, LATE_WRITER_RISK });
+		exports.editLockRecovery = Object.freeze({ canonicalJson, sha256Hex, recoveryConfirmation, recoveryCandidates, recoveryDiagnosis, unmetReason, recoveryKey, LATE_WRITER_RISK, RECOVERY_UX });
 		return module.exports;
 	}
 });

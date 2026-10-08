@@ -48,6 +48,7 @@ import coldView from './editlock-cold-view.js'
 import zombieLane from './zombie-lane.js'
 import blackboard from './blackboard.js'
 import blackboardPromotion from './blackboard-promotion.js'
+import recoveryUx from './editlock-recovery-ux.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
@@ -73,6 +74,7 @@ SCENARIOS.push(zombieLane)
 SCENARIOS.push(laneResumable)
 SCENARIOS.push(blackboard)
 SCENARIOS.push(blackboardPromotion)
+SCENARIOS.push(recoveryUx)
 
 /**
  * Find a scenario entry by id.
