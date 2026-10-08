@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-10-08
+
 ### Added
 
 - **Windows 平台支持（Capabilities 与编辑锁）**：平台矩阵扩展——capability store 由仅 darwin 扩为 **darwin / win32**，编辑锁由 darwin/linux 扩为 **darwin / linux / win32**。Windows 上 Capabilities 面板的 Apply 不再被 `platform-unsupported:win32` 拒绝（此前一切写操作 fail-closed 零写入、菜单恒空）；编辑锁经命名管道（`\\.\pipe\weir-edit-lock-<hash>`）跨进程发布，受管编辑（write/hash_edit/lsp_rename）在 Windows 会话恢复可用（此前 publisher 永不启动、会话报 "publisher unreachable"）。崩溃安全语义不变：硬链接发锁（EEXIST 竞争）、temp+fsync+rename 原子提交、「owner 死亡证明才回收」，跨进程 SIGKILL 竞赛与回收竞赛套件在 NTFS 实测全绿。win32 行的已知差异（已写入特性文档）：目录 fsync 在 Windows 不可用（EPERM），提交确认依赖文件级 fsync + 原子 rename + NTFS 日志；锁 owner 启动时间探测改走 `powershell.exe`（`ps` 在 Windows 不存在）；`O_NOFOLLOW`/`O_NONBLOCK` 缺省，降级为 lstat 前置拒符号链接 + open 后 fstat 身份比对；杀毒/索引器对新文件的瞬态占用经有界重试吸收。未实测平台（capability store 的 linux 行、freebsd 等）依旧 fail-closed 报 unsupported、零写入。
