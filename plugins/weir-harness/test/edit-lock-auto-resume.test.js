@@ -16,6 +16,7 @@ import { createEditLockManager } from '../src/edit-lock/manager.js'
 import { recoverAuthority, recoveryConfirmation } from '../src/edit-lock/admin-recovery.js'
 import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtureExclude as excludeFromGit } from './helpers/edit-lock-fixtures.js'
 const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
+import { withSupervisedEditResume, settleDelegateEditLifecycle } from '../src/shared/delegate-edit-lifecycle.js'
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
@@ -242,6 +243,8 @@ test('a revoked session stays terminal: auto-resume fails warn-only and edits st
   t.after(() => dispose())
   assert.equal(service.blocksContinuation(agent), true)
 
+  await assert.rejects(withSupervisedEditResume(agent, agent.id, async () => {}), /permanently revoked/)
+  assert.equal((await service.describe(agent)).status.revoked, true)
   await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
@@ -251,5 +254,185 @@ test('a revoked session stays terminal: auto-resume fails warn-only and edits st
   assert.match(host.warns[0], /auto-resume failed/)
   assert.match(host.warns[0], /permanently revoked/)
   await assert.rejects(service.acquire({ agent }, { filePath: 'b.txt', cwd: root }), /was stopped/)
+  // A cold activation failure is swallowed by setup for host safety, but the
+  // explicit resume caller still receives the refusal and cannot re-arm it.
+  await host.emit('agent/disposed', { agent })
+  await settleDelegateEditLifecycle(agent, agent.id)
+  let replacement
+  await assert.rejects(withSupervisedEditResume(agent, agent.id, async () => {
+    replacement = host.agent(agent.id)
+    await host.emit('agent/created', { agent: replacement })
+  }), /permanently revoked/)
+  assert.equal(service.blocksContinuation(replacement), true)
+  assert.equal((await service.describe(replacement)).status.revoked, true)
   await dispose()
+})
+
+for (const interruption of ['user', 'restart']) test(`explicit supervised resume restores ${interruption} interruption without confirming files`, async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const first = await boot(host, root, directory)
+  await first.service.acquire({ agent: first.agent }, { filePath: 'a.txt', cwd: root })
+  let current = first
+  if (interruption === 'restart') {
+    await first.dispose()
+    current = await boot(host, root, directory)
+  } else await stopByUser(host, first.agent)
+  t.after(() => current.dispose())
+  const { agent, service } = current
+  await host.injectedMessage(agent)
+  await host.preStep(agent, {}, new AbortController().signal)
+  assert.equal(service.blocksContinuation(agent), true)
+  await withSupervisedEditResume(agent, agent.id, async () => {
+    assert.equal(service.blocksContinuation(agent), false)
+    assert.equal((await service.describe(agent)).status.locks[0].status, 'pending-confirmation')
+  })
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  assert.equal((await service.describe(agent)).status.locks[0].status, 'active')
+})
+
+for (const state of ['active', 'stopped', 'abnormal']) test(`delegate terminal settlement preserves dispose semantics for ${state}`, async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const { dispose, service, agent } = await boot(host, root, directory)
+  t.after(() => dispose())
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  if (state === 'stopped') await stopByUser(host, agent)
+  if (state === 'abnormal') await host.emit('session/event', { id: agent.id }, { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'NETWORK', message: 'provider unavailable' } } } })
+  await host.emit('agent/disposed', { agent })
+  await settleDelegateEditLifecycle(agent, agent.id)
+  await host.emit('agent/disposed', { agent })
+  const other = host.agent('other')
+  await host.emit('agent/created', { agent: other })
+  const locks = await service.locks({ agent: other })
+  if (state === 'active') {
+    assert.deepEqual(locks, [])
+    await service.acquire({ agent: other }, { filePath: 'a.txt', cwd: root })
+  } else {
+    assert.equal(locks.length, 1)
+    assert.equal(locks[0].status, state === 'stopped' ? 'user-interrupted' : 'abnormal')
+  }
+})
+
+test('LlmFailure is abnormal, not user Stop; teardown and cold registration are independent interruption sources', async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const { dispose, service, agent } = await boot(host, root, directory)
+  t.after(() => dispose())
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  await host.emit('session/event', { id: agent.id }, { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'NETWORK', message: 'provider unavailable' } } } })
+  for (let attempt = 0; attempt < 100 && (await service.describe(agent)).status.state === 'active'; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  const status = (await service.describe(agent)).status
+  assert.equal(status.state, 'recovering')
+  assert.equal(status.interrupted, false)
+  assert.equal(status.locks[0].status, 'abnormal')
+  await host.emit('agent/disposed', { agent })
+  await settleDelegateEditLifecycle(agent, agent.id)
+  const replacement = host.agent(agent.id)
+  await host.emit('agent/created', { agent: replacement })
+  assert.equal((await service.describe(replacement)).status.state, 'stopped')
+  await withSupervisedEditResume(replacement, replacement.id, async () => {})
+  assert.equal((await service.describe(replacement)).status.state, 'active')
+})
+
+test('explicit supervised resume covers cold activation only inside its delivery window', async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const { dispose, service, agent: parent } = await boot(host, root, directory, 'parent')
+  t.after(() => dispose())
+  const child = host.agent('cold-child')
+  await host.emit('agent/created', { agent: child })
+  await service.acquire({ agent: child }, { filePath: 'a.txt', cwd: root })
+  await stopByUser(host, child)
+  await host.emit('agent/disposed', { agent: child })
+  await settleDelegateEditLifecycle(parent, child.id)
+  let replacement
+  await withSupervisedEditResume(parent, child.id, async () => {
+    replacement = host.agent(child.id)
+    await host.emit('agent/created', { agent: replacement })
+    assert.equal((await service.describe(replacement)).status.state, 'active')
+    assert.equal((await service.describe(replacement)).status.locks[0].status, 'pending-confirmation')
+  })
+  await host.emit('agent/disposed', { agent: replacement ?? child })
+  await settleDelegateEditLifecycle(parent, child.id)
+  const later = host.agent(child.id)
+  await host.emit('agent/created', { agent: later })
+  assert.equal((await service.describe(later)).status.state, 'stopped')
+})
+
+for (const cold of [false, true]) test(`failed supervised delivery revokes restored authority (${cold ? 'cold' : 'live'})`, async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const { dispose, service, agent: parent } = await boot(host, root, directory, 'parent')
+  t.after(dispose)
+  let child = host.agent('child')
+  await host.emit('agent/created', { agent: child })
+  await service.acquire({ agent: child }, { filePath: 'a.txt', cwd: root })
+  await stopByUser(host, child)
+  if (cold) {
+    await host.emit('agent/disposed', { agent: child })
+    await settleDelegateEditLifecycle(parent, child.id)
+  }
+  await assert.rejects(withSupervisedEditResume(parent, child.id, async () => {
+    if (cold) {
+      child = host.agent(child.id)
+      await host.emit('agent/created', { agent: child })
+    }
+    assert.equal(service.blocksContinuation(child), false)
+    throw new Error('delivery rejected')
+  }), /delivery rejected/)
+  assert.equal(service.blocksContinuation(child), true)
+  assert.equal((await service.describe(child)).status.interrupted, true)
+  await assert.rejects(service.acquire({ agent: child }, { filePath: 'b.txt', cwd: root }), /was stopped/)
+  await host.injectedMessage(child)
+  await host.preStep(child, {}, new AbortController().signal)
+  assert.equal(service.blocksContinuation(child), true)
+  // The failed attempt must also clear the transient delivery window.
+  await withSupervisedEditResume(parent, child.id, async () => {})
+  assert.equal((await service.describe(child)).status.locks[0].status, 'pending-confirmation')
+})
+
+for (const end of ['completed', 'error', 'aborted']) test(`subagent/end uses child id and preserves ${end} classification`, async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const { dispose, service, agent: child } = await boot(host, root, directory, 'child')
+  t.after(dispose)
+  const parent = host.agent('parent')
+  await host.emit('agent/created', { agent: parent })
+  await service.acquire({ agent: child }, { filePath: 'a.txt', cwd: root })
+  await service.acquire({ agent: parent }, { filePath: 'b.txt', cwd: root })
+  if (end === 'aborted') await stopByUser(host, child)
+  // Dispatch classification and terminal notification in the same tick: the
+  // emit event does not await asynchronous listeners in the real host.
+  const classification = host.emit('session/event', { id: child.id }, {
+    type: 'turn/end', data: { reason: end === 'error'
+      ? { kind: 'error', error: { code: 'NETWORK', message: 'offline' } }
+      : end === 'aborted' ? { kind: 'aborted', reason: { kind: 'user' } } : { kind: 'completed' } },
+  })
+  await host.emit('subagent/end', { id: child.id, runId: parent.id, stopReason: end })
+  await classification
+  const before = await service.locks({ agent: parent })
+  await host.emit('agent/disposed', { agent: child })
+  await host.emit('agent/disposed', { agent: child })
+  assert.deepEqual(await service.locks({ agent: parent }), before)
+  assert.equal(before.find(lock => lock.owner === parent.id).status, 'active')
+  if (end === 'completed') {
+    assert.equal(before.some(lock => lock.owner === child.id), false)
+    await service.acquire({ agent: parent }, { filePath: 'a.txt', cwd: root })
+  } else assert.equal(before.find(lock => lock.owner === child.id).status, end === 'error' ? 'abnormal' : 'user-interrupted')
+})
+
+test('a continuable nonterminal turn and unknown terminal notification do not dispose its domain', async (t) => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root)
+  const { dispose, service, agent } = await boot(host, root, directory)
+  t.after(dispose)
+  await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+  await host.emit('session/event', { id: agent.id }, { type: 'turn/end', data: { reason: { kind: 'blocked' } } })
+  await host.emit('subagent/end', { id: agent.id, stopReason: undefined })
+  assert.equal(service.blocksContinuation(agent), false)
+  assert.equal((await service.locks({ agent }))[0].status, 'active')
+  await service.acquire({ agent }, { filePath: 'b.txt', cwd: root })
 })
