@@ -5,15 +5,15 @@
     {
       "id": "zombie-evidence-001",
       "title": "Zombie evidence",
-      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/zombie-evidence-001",
+      "path": "/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-delegate-lifecycle-hyg-106/.weir/it-root/ws/.weir/worktrees/zombie-evidence-001",
       "branch": "weir/zombie-evidence-001",
       "base": {
         "branch": "main",
-        "commit": "35e40fb6a9dc5157ae6f50e4642a8dac34f9f928"
+        "commit": "83adb9c0705c181b933c7134d9b060bb62953843"
       },
       "scope": [],
       "state": "abandoned",
-      "ownerSession": "session-a183c012-2158-4bad-ae2f-aae70c047921",
+      "ownerSession": "session-396d3698-5522-45ac-931f-75dabee5ec46",
       "boundChild": null,
       "baseMoved": false,
       "landableTree": null,
@@ -24,33 +24,33 @@
       "land": null,
       "cleanup": {
         "mode": "all",
-        "at": 1791395267835,
+        "at": 1791563612321,
         "by": "host",
-        "scratch": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/lanes/zombie-evidence-001"
+        "scratch": null
       },
       "reason": "abandoned automatically (auto-clean mode)",
-      "createdAt": 1791395263919,
-      "updatedAt": 1791395267903,
+      "createdAt": 1791563608774,
+      "updatedAt": 1791563612378,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791395263971,
+          "at": 1791563608842,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791395263996,
+          "at": 1791563608878,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791395264093,
+          "at": 1791563608978,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -58,7 +58,7 @@
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791395267810,
+          "at": 1791563612295,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -66,7 +66,7 @@
           "from": "no-commits",
           "to": "abandoned",
           "event": "abandon",
-          "at": 1791395267835,
+          "at": 1791563612322,
           "by": "host",
           "reason": "abandoned automatically (auto-clean mode)"
         }
@@ -75,50 +75,64 @@
     {
       "id": "zombie-rehydrate-002",
       "title": "zombie-rehydrate-002",
-      "state": "no-commits",
-      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/zombie-rehydrate-002",
+      "state": "abandoned",
+      "path": "/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-delegate-lifecycle-hyg-106/.weir/it-root/ws/.weir/worktrees/zombie-rehydrate-002",
       "branch": "weir/zombie-rehydrate-002",
       "base": {
         "branch": "main",
-        "commit": "35e40fb6a9dc5157ae6f50e4642a8dac34f9f928"
+        "commit": "83adb9c0705c181b933c7134d9b060bb62953843"
       },
-      "ownerSession": "session-a183c012-2158-4bad-ae2f-aae70c047921",
+      "ownerSession": "session-396d3698-5522-45ac-931f-75dabee5ec46",
       "boundChild": null,
       "scope": [],
       "setup": {
         "status": "none"
       },
       "landableTree": null,
-      "reason": "no commits ahead of main",
-      "createdAt": 1791308865145,
-      "updatedAt": 1791395265954,
+      "reason": "abandoned automatically (auto-clean mode)",
+      "createdAt": 1791477210002,
+      "updatedAt": 1791563611507,
       "history": [
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791308865145,
+          "at": 1791477210002,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791395265954,
+          "at": 1791563611424,
           "by": "host",
           "reason": "no commits ahead of main"
+        },
+        {
+          "from": "no-commits",
+          "to": "abandoned",
+          "event": "abandon",
+          "at": 1791563611450,
+          "by": "host",
+          "reason": "abandoned automatically (auto-clean mode)"
         }
-      ]
+      ],
+      "cleanup": {
+        "mode": "all",
+        "at": 1791563611450,
+        "by": "host",
+        "scratch": null
+      }
     },
     {
       "id": "zombie-forced-003",
       "title": "zombie-forced-003",
       "state": "abandoned",
-      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/zombie-forced-003",
+      "path": "/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-delegate-lifecycle-hyg-106/.weir/it-root/ws/.weir/worktrees/zombie-forced-003",
       "branch": "weir/zombie-forced-003",
       "base": {
         "branch": "main",
-        "commit": "35e40fb6a9dc5157ae6f50e4642a8dac34f9f928"
+        "commit": "83adb9c0705c181b933c7134d9b060bb62953843"
       },
       "ownerSession": "session-eeeeeeee-dead-dead-dead-eeeeeeeeeeee",
       "boundChild": null,
@@ -128,21 +142,21 @@
       },
       "landableTree": null,
       "reason": "abandoned by the user",
-      "createdAt": 1791308867028,
-      "updatedAt": 1791395268028,
+      "createdAt": 1791477211571,
+      "updatedAt": 1791563612463,
       "history": [
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791308867028,
+          "at": 1791477211571,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791395268026,
+          "at": 1791563612462,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -150,14 +164,14 @@
           "from": "no-commits",
           "to": "abandoned",
           "event": "abandon",
-          "at": 1791395268028,
+          "at": 1791563612463,
           "by": "user",
           "reason": "abandoned by the user"
         }
       ],
       "cleanup": {
         "mode": "keep",
-        "at": 1791395268028,
+        "at": 1791563612463,
         "by": "user"
       }
     }
