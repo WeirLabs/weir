@@ -49,6 +49,7 @@ const PRE_MIGRATION_KEYS = [
   'sawTerminateProbe',
   'rehydrateResumeContextSeen',
   'editLockToolsSeen',
+  'bindingProbeSeen',
   // worktree scenario observations (lane contract, guard refusal, writer)
   'worktreeChild',
   'childSawLaneContract',

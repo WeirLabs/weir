@@ -14,9 +14,10 @@ import { installStopProbe } from './edit-lock-stop-probe.js'
 import { installAutoResumeProbe } from './edit-lock-auto-resume-probe.js'
 import { installStaleSweepProbe } from './edit-lock-stale-sweep-probe.js'
 import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
+import { installBindingProbe } from './edit-lock-binding-probe.js'
 
 const name = 'weir-it-event-tap'
-const inject = ['fs']
+const inject = ['fs', 'agents', 'tools']
 
 // The driver passes WEIR_IT_TRACE explicitly; standalone mounts share its root.
 const TRACE = process.env.WEIR_IT_TRACE ??
@@ -47,6 +48,7 @@ function apply(ctx) {
   installAutoResumeProbe(ctx, tap)
   installStaleSweepProbe(ctx, tap)
   installColdViewProbe(ctx, tap)
+  installBindingProbe(ctx, tap)
   // Cordis audit channel (cold-safe; session logs stay clean).
   for (const type of AUDIT_SUBSCRIPTIONS) {
     ctx.on(`weir/${type}`, (record) => {
