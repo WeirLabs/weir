@@ -46,7 +46,7 @@ export function createEditLockEvidence() {
         failed(error) { if (mounts.has(id)) { row.phase = 'failed'; row.error = String(error) } },
         dispose() { mounts.delete(id) },
         recordDomain(root, info) {
-          if (mounts.has(id) && row.phase !== 'disposing') row.domains.set(root, { root, mode: info.mode ?? null, error: info.error ?? null, mountId: id })
+          if (mounts.has(id) && row.phase !== 'disposing') row.domains.set(root, { root, mode: info.mode ?? null, error: info.error ?? null, mountId: id, readBindings: info.bindings })
         },
         recordSessionFailure(sessionId, reason) {
           if (!mounts.has(id) || row.phase === 'disposing') return
@@ -59,7 +59,10 @@ export function createEditLockEvidence() {
       const rows = [...mounts.values()]
       return {
         mounts: rows.map(({ domains, failures, ...row }) => ({ ...row })),
-        domains: rows.flatMap(row => [...row.domains.values()]),
+        domains: rows.flatMap(row => [...row.domains.values()].map(({ readBindings, ...domain }) => {
+          try { return { ...domain, bindings: readBindings?.() ?? [] } }
+          catch { return { ...domain, bindings: null } }
+        })),
         sessionFailures: rows.flatMap(row => [...row.failures.values()]),
       }
     },
@@ -170,7 +173,10 @@ export function maintenanceStatus(deps) {
   const domains = roots.map(root => {
     const facts = domainFacts(root)
     const seen = evidenceByRoot.get(root)
-    return { root, hasAuthority: facts.hasAuthority, reservation: facts.reservation, mode: seen?.mode ?? null, error: seen?.error ?? facts.error }
+    const bindings = evidence.domains.filter(entry => {
+      try { return realpathSync.native(entry.root) === root } catch { return entry.root === root }
+    }).flatMap(entry => entry.bindings ?? [])
+    return { root, hasAuthority: facts.hasAuthority, reservation: facts.reservation, mode: seen?.mode ?? null, error: seen?.error ?? facts.error, bindings }
   })
   const blocked = [
     ...evidence.mounts.filter(row => row.phase !== 'installed').map(row => ({ kind: 'mount', mountId: row.id, reason: row.error ?? row.phase })),

@@ -155,7 +155,8 @@ test('endpoint: a live channel is refused and keeps its locks; the refused clien
     await assert.rejects(remoteB.channelFor({ id: 'shared-session' }), error => {
       assert.match(error.message, /edit lock duplicate session binding/)
       assert.match(error.message, /shared-session/)
-      assert.match(error.message, /Use the session in that window, close it there, or quit that Harness process/)
+      assert.match(error.message, /same process.*stale runtime incarnation.*Restart DeepSeek Harness/)
+      assert.doesNotMatch(error.message, /window/)
       assert.match(error.message, /Do NOT remove the publisher reservation/)
       assert.doesNotMatch(error.message, /unreachable/)
       assert.doesNotMatch(error.message, /UNREACHABLE-HINT/)
@@ -285,4 +286,65 @@ test('client failure split: a non-duplicate answered refusal is not retried and 
     remote.close()
     await server.close()
   }
+})
+
+for (const source of ['superseded', 'serving', 'unknown', 'unavailable', 'wrong-caller']) {
+  test(`local lifecycle attestation: ${source}`, async () => {
+    const { root, directory } = await fixture()
+    const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+    const old = { id: 's' }, current = { id: 's' }
+    let serving = old
+    const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, {
+      servingRuntime() { if (source === 'unavailable') throw Error('registry unavailable'); return serving },
+    })
+    try {
+      await lifecycle.start(old)
+      await lifecycle.service.acquire({ agent: old }, { filePath: 'a.txt', cwd: root })
+      serving = source === 'superseded' ? current : source === 'unknown' ? undefined : source === 'wrong-caller' ? { id: 's' } : old
+      if (source === 'superseded') {
+        assert.equal(await lifecycle.start(current), 'interrupted')
+        assert.throws(() => lifecycle.status(old), /unknown lifecycle agent/)
+        assert.equal(lifecycle.status(current).locks.length, 1)
+        assert.equal(lifecycle.status(current).locks[0].generation, 1)
+        assert.equal(lifecycle.status(current).locks[0].status, 'user-interrupted')
+      } else {
+        await assert.rejects(lifecycle.start(current), /session already bound/)
+        assert.equal(lifecycle.status(old).state, 'active')
+        assert.equal(lifecycle.status(old).locks.length, 1)
+      }
+    } finally { await lifecycle.close() }
+  })
+}
+
+test('local claimant cannot attest away a remote channel proxy', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const proxy = { id: 's', remote: true }, serving = { id: 's' }
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => serving })
+  try {
+    await lifecycle.start(proxy)
+    await assert.rejects(lifecycle.start(serving), /session already bound/)
+    assert.equal(lifecycle.status(proxy).state, 'active')
+    assert.deepEqual(lifecycle.bindings(), [])
+  } finally { await lifecycle.close() }
+})
+
+test('local reclaim failure retains entry and subsequent concurrent starts admit only once', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const old = { id: 's' }, current = { id: 's' }
+  let serving = old, cancellations = 0
+  const lifecycle = createEditLockLifecycle({ ...runtime, control: { ...runtime.control,
+    cancelSession(id) { if (++cancellations === 1) return Promise.reject(Error('durable failure')); return runtime.control.cancelSession(id) },
+  } }, agent => agent.id, { servingRuntime: () => serving })
+  try {
+    await lifecycle.start(old)
+    serving = current
+    await assert.rejects(lifecycle.start(current), /session already bound/)
+    assert.equal(lifecycle.status(old).state, 'stopped')
+    const results = await Promise.allSettled([lifecycle.start(current), lifecycle.start(current)])
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+    assert.equal(lifecycle.status(current).state, 'stopped')
+    assert.throws(() => lifecycle.status(old), /unknown lifecycle agent/)
+  } finally { await lifecycle.close() }
 })

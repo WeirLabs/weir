@@ -1,3 +1,4 @@
+import { bindingGuidance } from './binding-guidance.js'
 import { createEditLockHost } from './host.js'
 import { createNegotiation } from './negotiation.js'
 import { RECOVERY_LIMITS } from './recovery.js'
@@ -8,7 +9,7 @@ import { isMissingTarget, STALE_SWEEP_COOLDOWN_MS } from './stale-sweep.js'
  * Resume and confirm are trusted human ingress only; never expose them as tools.
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
  * @param {(agent: object) => string | undefined} sessionForAgent
- * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, onAdminRecovery?: (info: {revision: number, idempotent: boolean, record: any, trigger: string | null}) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number}} [options] */
+ * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, onAdminRecovery?: (info: {revision: number, idempotent: boolean, record: any, trigger: string | null}) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number, servingRuntime?: (sessionId: string) => object | undefined}} [options] */
 export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
   /** @typedef {{sessionId:string, state:'starting'|'active'|'recovering'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
@@ -102,13 +103,19 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
   /** Stop, await durable revocation, then forget this agent object. A new
    * agent for the same session starts interrupted. @param {object} agent */
   async function forget(agent) {
-    if (!entries.has(agent)) return
-    // Forget synchronously (admission is already sealed by stop) so a
-    // reconnect for the same session can start interrupted at once.
+    const entry = entries.get(agent)
+    if (!entry) return
+    // Keep the stopped entry until durable revocation succeeds. A failed
+    // disconnect must remain visible and retryable, never admit a replacement.
     const stopping = stop(agent)
-    entries.delete(agent)
     disposing.add(stopping)
-    try { await stopping } finally { disposing.delete(stopping) }
+    try {
+      await stopping
+      if (entries.get(agent) === entry) entries.delete(agent)
+    } catch (error) {
+      if (entry.stop === stopping) entry.stop = undefined
+      throw error
+    } finally { disposing.delete(stopping) }
   }
   /** @param {object} agent */
   function statusOf(agent) {
@@ -162,7 +169,66 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     }
     return result
   }
+  /** Register once before publishing an agent's editing tools. A session the
+   * manager already knows (restart, re-created agent) is never re-armed: it
+   * starts interrupted and needs trusted resume. @param {object} agent
+   * @returns {Promise<'active'|'interrupted'>} */
+  function start(agent) {
+    if (closed) return Promise.reject(new Error('edit lifecycle closed'))
+    if (entries.has(agent)) return Promise.reject(new Error('agent already registered'))
+    const sessionId = sessionForAgent(agent)
+    if (!sessionId) return Promise.reject(new Error('unregistered lifecycle agent'))
+    const prior = [...entries].find(([, entry]) => entry.sessionId === sessionId)
+    if (prior) {
+      let serving
+      try { serving = options.servingRuntime?.(sessionId) } catch { /* unknown: refuse */ }
+      const refusal = () => new Error(`session already bound: ${bindingGuidance(sessionId, /** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown')}`)
+      // Remote entries are channel proxies, NOT runtime identities. Only the
+      // endpoint's nonce attestation may reclaim them (including same-process).
+      if (/** @type {any} */ (prior[0]).remote === true || serving !== agent || prior[0] === serving) return Promise.reject(refusal())
+      // Concurrent claimants re-check after the shared revocation settles;
+      // only the serving runtime can win, and no file lock is released.
+      return forget(prior[0]).then(() => start(agent), () => { throw refusal() })
+    }
+    /** @type {Entry} */
+    const entry = {sessionId, state:'starting', attempt:0, ready:Promise.resolve(/** @type {'active'} */ ('active'))}
+    entries.set(agent, entry)
+    entry.ready = (async () => {
+      let known
+      try { known = sessionStatus(sessionId).session }
+      catch (error) { await revoke(entry).catch(() => {}); throw error }
+      if (known) {
+        await revoke(entry)
+        return /** @type {'interrupted'} */ ('interrupted')
+      }
+      const attempt = entry.attempt
+      try {
+        const execution = await runtime.control.openSession(sessionId)
+        if (closed || entry.state !== 'starting' || entry.attempt !== attempt || sessionForAgent(agent) !== sessionId) {
+          throw new Error('agent stopped during registration')
+        }
+        entry.state = 'active'
+        host.attach(agent, execution)
+        return /** @type {'active'} */ ('active')
+      } catch (error) {
+        // Failed registration never leaves an armed manager session behind.
+        await stop(agent)
+        throw error
+      }
+    })()
+    return entry.ready
+  }
   return Object.freeze({
+    /** Local bindings only; endpoint arbitration reports channel proxies. */
+    bindings() {
+      return [...entries].filter(([agent]) => /** @type {any} */ (agent).remote !== true).map(([agent, entry]) => {
+        let attestation = 'unknown'
+        try {
+          if (options.servingRuntime) attestation = options.servingRuntime(entry.sessionId) === agent ? 'serving' : 'stale'
+        } catch { /* unavailable evidence */ }
+        return { sessionId: entry.sessionId, present: true, holderPid: process.pid, attestable: attestation !== 'unknown', attestation }
+      })
+    },
     // Only this narrowed service belongs in the tool context.
     service: Object.freeze({
       /** @param {any} exec @param {any} request */
@@ -197,44 +263,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       /** @param {{agent: object}} exec */
       pendingRequests(exec) { return negotiation.pending(host.executionFor(exec.agent).sessionId) },
     }),
-    /** Register once before publishing an agent's editing tools. A session the
-     * manager already knows (restart, re-created agent) is never re-armed: it
-     * starts interrupted and needs trusted resume. @param {object} agent
-     * @returns {Promise<'active'|'interrupted'>} */
-    start(agent) {
-      if (closed) return Promise.reject(new Error('edit lifecycle closed'))
-      if (entries.has(agent)) return Promise.reject(new Error('agent already registered'))
-      const sessionId = sessionForAgent(agent)
-      if (!sessionId) return Promise.reject(new Error('unregistered lifecycle agent'))
-      if ([...entries.values()].some(entry => entry.sessionId === sessionId)) return Promise.reject(new Error('session already bound'))
-      /** @type {Entry} */
-      const entry = {sessionId, state:'starting', attempt:0, ready:Promise.resolve(/** @type {'active'} */ ('active'))}
-      entries.set(agent, entry)
-      entry.ready = (async () => {
-        let known
-        try { known = sessionStatus(sessionId).session }
-        catch (error) { await revoke(entry).catch(() => {}); throw error }
-        if (known) {
-          await revoke(entry)
-          return /** @type {'interrupted'} */ ('interrupted')
-        }
-        const attempt = entry.attempt
-        try {
-          const execution = await runtime.control.openSession(sessionId)
-          if (closed || entry.state !== 'starting' || entry.attempt !== attempt || sessionForAgent(agent) !== sessionId) {
-            throw new Error('agent stopped during registration')
-          }
-          entry.state = 'active'
-          host.attach(agent, execution)
-          return /** @type {'active'} */ ('active')
-        } catch (error) {
-          // Failed registration never leaves an armed manager session behind.
-          await stop(agent)
-          throw error
-        }
-      })()
-      return entry.ready
-    },
+    start,
     stop,
     /** Normal end of an agent: an agent that is still active (never stopped,
      * not recovering) can never edit again, so its active locks are released
