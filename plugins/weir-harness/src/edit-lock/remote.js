@@ -3,7 +3,7 @@ import { lstatSync, realpathSync, unlinkSync } from 'node:fs'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bindingGuidance } from './binding-guidance.js'
+import { bindingGuidance, bindingRefusalReason } from './binding-guidance.js'
 import { createEditLockPeer } from './peer.js'
 import { serveEditLockPeer } from './peer-transport.js'
 import { createEditLockPeerClient } from './peer-client.js'
@@ -80,7 +80,7 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
       if (prior) {
         const dead = prior.socket.destroyed === true || prior.socket.closed === true || prior.socket.errored != null
         const attestation = dead ? 'unknown' : verdict(sessionId, prior)
-        const refusal = () => new Error(`session already bound: ${bindingGuidance(sessionId, prior.pid, attestation)}`)
+        const refusal = () => new Error(bindingRefusalReason(prior.pid, attestation))
         if (!dead && attestation !== 'stale') throw refusal()
         try { await prior.peer.disconnect() } catch {
           // Reclaim outcome unknown: stay fail-closed and KEEP the mapping, so
@@ -222,8 +222,8 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
           continue
         }
         const reason = String(/** @type {any} */ (error)?.message ?? error)
-        const guidance = reason.startsWith('session already bound: ') ? reason.slice('session already bound: '.length) : bindingGuidance(agent.id, undefined, 'unknown')
-        throw new Error(`edit lock duplicate session binding: ${guidance} (publisher answered: ${reason.startsWith('session already bound: ') ? 'session already bound' : reason})`)
+        const guidance = bindingGuidance(agent.id, reason)
+        throw new Error(`edit lock duplicate session binding: ${guidance} (publisher answered: ${reason})`)
       }
     }
   }

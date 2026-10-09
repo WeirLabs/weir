@@ -332,6 +332,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - 同进程但无法安全回收：明确 `same process`／pid、`A stale runtime incarnation may still hold its channel`，指引重启，不虚构另一个窗口。
 - 跨进程且 pid 已知：点名 holder pid，指引退出该进程或重启；旧版本无法提供 holder 事实时，只说明无法证明并指引重启。
 - 所有最终拒绝均保留 `Do NOT remove the publisher reservation ... while its process is alive`。publisher 在应答时删除预约会造成双 publisher 脑裂，不是绑定恢复手段。
+- wire 拒绝原因由 publisher 分类为 `session already bound: holder=<serving|same-process-unattestable|cross-process-pid|unknown>[; pid=<pid>]`，不携带完整指引。client 只按该分类渲染一次指引，并在 `(publisher answered: ...)` 中原样保留原因；不以 client 自己的 pid 猜测 holder 与 publisher 是否同进程。本地 lifecycle 无 wire 的拒绝直接渲染同一指引。
 
 **只读绑定报告**：宿主认证的 `POST /api/weir-edit-lock/maintenance/status` 在 `domains[].bindings` 返回每条现存绑定的 `{sessionId, present: true, holderPid, attestable, attestation}`；`holderPid` 未知时为 null，attestation 为 `serving`／`stale`／`unknown`。每次读取重新比较 runtime 身份，合并同根各 mount 的观察，不因后来 client mount 而隐藏 publisher 的旧 holder。不返回 nonce、agent 对象或新增文件系统细节；不执行回收、不写权威镜像、不发模型工具、不增加任何维护动作。现有面板按既有字段渲染，可容忍此附加报告；本批不新增绑定 UI 控件。
 

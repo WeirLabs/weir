@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createChannelBindingArbitration } from '../src/edit-lock/remote.js'
-import { bindingGuidance } from '../src/edit-lock/binding-guidance.js'
+import { bindingGuidance, bindingRefusalReason } from '../src/edit-lock/binding-guidance.js'
 import { createEditLockEvidence, maintenanceStatus, registerEditLockMaintenanceEndpoints } from '../src/edit-lock/maintenance.js'
 
 for (const [label, pid, state, expected, excluded] of [
@@ -13,10 +13,23 @@ for (const [label, pid, state, expected, excluded] of [
   ['cross-process', process.pid + 1, 'unknown', new RegExp(`pid ${process.pid + 1}.*Quit that holder process`), /window/],
   ['old publisher', undefined, 'unknown', /holder cannot be attested.*Restart/, /window/],
 ]) test(`duplicate-binding guidance: ${label}`, () => {
-  const text = bindingGuidance('session-1', pid, state)
+  const reason = bindingRefusalReason(pid, state)
+  assert.doesNotMatch(reason, /Restart|reservation|window/)
+  const text = bindingGuidance('session-1', reason)
   assert.match(text, expected)
   assert.doesNotMatch(text, excluded)
   assert.match(text, /Do NOT remove the publisher reservation.*while its process is alive/)
+})
+
+test('guidance trusts publisher classification, not the rendering process pid', () => {
+  const text = bindingGuidance('s', `session already bound: holder=cross-process-pid; pid=${process.pid}`)
+  assert.match(text, /Quit that holder process/)
+  assert.doesNotMatch(text, /same process/)
+  const same = bindingGuidance('s', 'session already bound: holder=same-process-unattestable; pid=123')
+  assert.match(same, /same process.*pid 123/)
+  for (const reason of ['session already bound', 'session already bound: holder=future', 'session already bound: holder=cross-process-pid; pid=oops']) {
+    assert.match(bindingGuidance('s', reason), /holder cannot be attested/)
+  }
 })
 
 test('maintenance bindings are live read-only host observations, not nonce or filesystem disclosures', async () => {

@@ -23,10 +23,10 @@ async function fixture() {
 }
 
 /** A publisher stack over a real endpoint: runtime + lifecycle + server. */
-async function publisher(directory, root) {
+async function publisher(directory, root, attest) {
   const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
   const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
-  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap())
+  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap(), attest)
   return { runtime, lifecycle, server }
 }
 
@@ -158,6 +158,8 @@ test('endpoint: a live channel is refused and keeps its locks; the refused clien
       assert.match(error.message, /same process.*stale runtime incarnation.*Restart DeepSeek Harness/)
       assert.doesNotMatch(error.message, /window/)
       assert.match(error.message, /Do NOT remove the publisher reservation/)
+      assert.equal(error.message.split('Do NOT remove the publisher reservation').length - 1, 1)
+      assert.ok(error.message.endsWith(`(publisher answered: session already bound: holder=same-process-unattestable; pid=${process.pid})`))
       assert.doesNotMatch(error.message, /unreachable/)
       assert.doesNotMatch(error.message, /UNREACHABLE-HINT/)
       return true
@@ -167,6 +169,29 @@ test('endpoint: a live channel is refused and keeps its locks; the refused clien
     assert.equal(remoteA.state(agentA), 'active')
     assert.equal((await remoteA.call(agentA, 'locks')).length, 1)
     assert.equal(runtime.control.status().locks[0].status, 'active')
+  } finally {
+    remoteA.close()
+    remoteB.close()
+    await server.close()
+    await lifecycle.close()
+  }
+})
+
+test('endpoint: a serving holder keeps window guidance exactly once and the complete publisher reason', async () => {
+  const { root, directory } = await fixture()
+  const { lifecycle, server } = await publisher(directory, root, () => 'serving')
+  const remoteA = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {} })
+  const remoteB = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {} })
+  try {
+    await remoteA.channelFor({ id: 'serving-session' })
+    await assert.rejects(remoteB.channelFor({ id: 'serving-session' }), error => {
+      assert.match(error.message, /Use the session in that window/)
+      assert.doesNotMatch(error.message, /stale runtime incarnation/)
+      assert.equal(error.message.split('Use the session in that window').length - 1, 1)
+      assert.equal(error.message.split('Do NOT remove the publisher reservation').length - 1, 1)
+      assert.ok(error.message.endsWith(`(publisher answered: session already bound: holder=serving; pid=${process.pid})`))
+      return true
+    })
   } finally {
     remoteA.close()
     remoteB.close()
@@ -187,6 +212,9 @@ test('endpoint: a publisher-local session binding is never preempted by a remote
     await assert.rejects(remote.channelFor({ id: 'held-locally' }), error => {
       assert.match(error.message, /edit lock duplicate session binding/)
       assert.match(error.message, /held-locally/)
+      assert.match(error.message, /same process.*stale runtime incarnation/)
+      assert.equal(error.message.split('Do NOT remove the publisher reservation').length - 1, 1)
+      assert.ok(error.message.endsWith(`(publisher answered: session already bound: holder=same-process-unattestable; pid=${process.pid})`))
       assert.doesNotMatch(error.message, /unreachable/)
       assert.doesNotMatch(error.message, /UNREACHABLE-HINT/)
       return true

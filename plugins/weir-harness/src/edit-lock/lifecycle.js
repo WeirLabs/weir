@@ -1,4 +1,4 @@
-import { bindingGuidance } from './binding-guidance.js'
+import { bindingGuidance, bindingRefusalReason } from './binding-guidance.js'
 import { createEditLockHost } from './host.js'
 import { createNegotiation } from './negotiation.js'
 import { RECOVERY_LIMITS } from './recovery.js'
@@ -182,7 +182,11 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     if (prior) {
       let serving
       try { serving = options.servingRuntime?.(sessionId) } catch { /* unknown: refuse */ }
-      const refusal = () => new Error(`session already bound: ${bindingGuidance(sessionId, /** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown')}`)
+      const refusal = () => {
+        const reason = bindingRefusalReason(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown')
+        // Remote callers render after their retry budget; local callers have no wire.
+        return new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`)
+      }
       // Remote entries are channel proxies, NOT runtime identities. Only the
       // endpoint's nonce attestation may reclaim them (including same-process).
       if (/** @type {any} */ (prior[0]).remote === true || serving !== agent || prior[0] === serving) return Promise.reject(refusal())
