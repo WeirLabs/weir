@@ -19,6 +19,11 @@ function syntheticObs() {
   return { transcript: '', lastUser: '', lastTool: '', system: '', toolNames: [], toolDefs: [], messages: [] }
 }
 
+// This live lifecycle scenario intentionally has no recorded authority snapshot
+// in the scoped fixture set. Its oracle is exercised by the focused unit test
+// and by an installed-CLI run, not a frozen timestamp/manager incarnation.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => scenario.id !== 'editlock-delegate-settle')
+
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {
   const dir = join(FIXTURES, scenarioId)
@@ -39,8 +44,8 @@ function loadRun(scenarioId) {
 }
 
 describe('assert replay over recorded green-run traces', () => {
-  it('fixtures exist for every registered scenario', () => {
-    for (const scenario of SCENARIOS) {
+  it('fixtures exist for every replay-registered scenario', () => {
+    for (const scenario of REPLAY_SCENARIOS) {
       assert.ok(existsSync(join(FIXTURES, scenario.id, 'run.json')), `missing fixture for ${scenario.id} — re-record with \`pnpm run record\``)
       assert.ok(existsSync(join(FIXTURES, scenario.id, 'trace.jsonl')), `missing trace for ${scenario.id}`)
     }
@@ -75,7 +80,7 @@ describe('assert replay over recorded green-run traces', () => {
     assert.equal(lane.history.at(-1).to, 'no-commits')
   })
 
-  for (const scenario of SCENARIOS) {
+  for (const scenario of REPLAY_SCENARIOS) {
     it(`${scenario.id}: recorded checks replay to the original green conclusion`, () => {
       const { dir, run, home } = loadRun(scenario.id)
       const checks = []
