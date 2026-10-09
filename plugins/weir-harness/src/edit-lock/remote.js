@@ -3,6 +3,7 @@ import { lstatSync, realpathSync, unlinkSync } from 'node:fs'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindingGuidance, bindingRefusalReason } from './binding-guidance.js'
 import { createEditLockPeer } from './peer.js'
 import { serveEditLockPeer } from './peer-transport.js'
 import { createEditLockPeerClient } from './peer-client.js'
@@ -38,29 +39,36 @@ const namedPipe = endpoint => endpoint.startsWith('\\\\.\\pipe\\') || endpoint.s
  *   `destroyed`, `closed` or `errored` — never an active probe) is reclaimed
  *   through the SAME disconnect path a processed EOF takes (revoke + forget;
  *   no lock is ever released), then the new open proceeds;
- * - a prior binding that is alive — or whose state is in any way unclear — is
- *   refused, fail-closed, and is never disconnected;
+ * - a live-looking same-process holder may also be reclaimed when its nonce
+ *   is host-attested stale; serving, cross-process and unknown holders refuse;
  * - with no prior channel binding, a refusal from `lifecycle.start` itself
  *   (a local agent or another mount generation holds the session) passes
- *   through untouched: a local binding can never be preempted from here.
+ *   through: local runtime identities are adjudicated only by the lifecycle.
  *
  * Opens of one sessionId are serialized through a per-session promise queue,
  * because the reclaim-check-register sequence awaits; different sessionIds
  * stay fully concurrent. Exported for the unit tests; production wiring is
- * the endpoint below. */
-export function createChannelBindingArbitration() {
+ * the endpoint below.
+ * @param {(sessionId: string, nonce: string) => 'serving'|'stale'|'unknown'} [attest] */
+export function createChannelBindingArbitration(attest = () => 'unknown') {
   /** @typedef {{destroyed?: boolean, closed?: boolean, errored?: unknown}} ChannelSocket */
   /** @typedef {{disconnect: () => Promise<unknown>}} ChannelPeer */
-  /** @type {Map<string, {socket: ChannelSocket, peer: ChannelPeer}>} */
+  /** @type {Map<string, {socket: ChannelSocket, peer: ChannelPeer, nonce?: string, pid?: number}>} */
   const bound = new Map()
   /** @type {Map<string, Promise<unknown>>} */
   const opening = new Map()
+  /** @param {string} sessionId @param {{pid?: number, nonce?: string}} holder */
+  function verdict(sessionId, holder) {
+    if (holder.pid !== process.pid || !holder.nonce) return 'unknown'
+    try { return attest(sessionId, holder.nonce) } catch { return 'unknown' }
+  }
   /** @param {string} sessionId
    * @param {ChannelSocket} socket the NEW connection's socket
    * @param {() => Promise<{peer: ChannelPeer}>} bind establish the channel
    * (create the peer and start the lifecycle); its result is returned verbatim
+   * @param {{nonce?: string, pid?: number}} [token] additive optional client identity
    * @returns {Promise<any>} */
-  function open(sessionId, socket, bind) {
+  function open(sessionId, socket, bind, token = {}) {
     const queued = opening.get(sessionId) ?? Promise.resolve()
     const run = queued.then(step, step)
     opening.set(sessionId, run)
@@ -71,12 +79,14 @@ export function createChannelBindingArbitration() {
       const prior = bound.get(sessionId)
       if (prior) {
         const dead = prior.socket.destroyed === true || prior.socket.closed === true || prior.socket.errored != null
-        if (!dead) throw new Error('session already bound')
+        const attestation = dead ? 'unknown' : verdict(sessionId, prior)
+        const refusal = () => new Error(bindingRefusalReason(prior.pid, attestation))
+        if (!dead && attestation !== 'stale') throw refusal()
         try { await prior.peer.disconnect() } catch {
           // Reclaim outcome unknown: stay fail-closed and KEEP the mapping, so
           // the next open retries the reclaim instead of wedging behind a
           // lifecycle-level refusal.
-          throw new Error('session already bound')
+          throw refusal()
         }
         if (bound.get(sessionId) === prior) bound.delete(sessionId)
       }
@@ -84,20 +94,31 @@ export function createChannelBindingArbitration() {
       // Registered even when this socket already died during registration: the
       // transport's own close handling still revokes it, and the next open
       // reclaims the entry — a lost EOF can never wedge the session again.
-      bound.set(sessionId, { socket, peer: established.peer })
+      bound.set(sessionId, { socket, peer: established.peer, nonce: token.nonce, pid: token.pid })
       return established
     }
   }
   /** Index hygiene on transport close: drop the entry only while it still
    * names THIS connection's socket — a reclaimed binding must never be removed
-   * by the late close of the dead socket it replaced. Revocation itself runs
-   * on the transport's own disconnect path, not here.
+   * by the late close of the dead socket it replaced. Await the same cached
+   * disconnect result as the transport before forgetting its mapping.
    * @param {string} sessionId @param {ChannelSocket} socket */
-  function release(sessionId, socket) {
+  async function release(sessionId, socket) {
     const prior = bound.get(sessionId)
-    if (prior && prior.socket === socket) bound.delete(sessionId)
+    if (!prior || prior.socket !== socket) return
+    // EOF and attested reclaim share the durable disconnect result. A failed
+    // EOF must not erase the retryable mapping either.
+    try { await prior.peer.disconnect() } catch { return }
+    if (bound.get(sessionId) === prior) bound.delete(sessionId)
   }
-  return Object.freeze({ open, release })
+  return Object.freeze({ open, release,
+    bindings() {
+      return [...bound].map(([sessionId, holder]) => {
+        const attestation = verdict(sessionId, holder)
+        return { sessionId, present: true, holderPid: holder.pid ?? null, attestable: attestation !== 'unknown', attestation }
+      })
+    },
+  })
 }
 
 /** Publisher side: one session channel per connection. The first frame must be
@@ -105,8 +126,9 @@ export function createChannelBindingArbitration() {
  * Call only while holding the publisher reservation (stale socket removal).
  * @param {ReturnType<typeof import('./lifecycle.js').createEditLockLifecycle>} lifecycle
  * @param {string} endpoint
- * @param {WeakMap<object, (event: unknown) => void>} sinks remote agent → notice sink */
-export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
+ * @param {WeakMap<object, (event: unknown) => void>} sinks remote agent → notice sink
+ * @param {(sessionId: string, nonce: string) => 'serving'|'stale'|'unknown'} [attest] */
+export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest) {
   if (!namedPipe(endpoint)) {
     try {
       if (!lstatSync(endpoint).isSocket()) throw new Error(`unexpected node at edit lock endpoint ${endpoint}`)
@@ -116,7 +138,7 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
   /** @type {Set<{close: () => Promise<unknown>}>} */
   const channels = new Set()
   let closed = false
-  const arbitration = createChannelBindingArbitration()
+  const arbitration = createChannelBindingArbitration(attest)
   const server = createServer(socket => {
     if (closed) { socket.destroy(); return }
     /** @type {ReturnType<typeof createEditLockPeer> | undefined} */
@@ -136,7 +158,8 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
           inner = createEditLockPeer(lifecycle, agent)
           const state = await lifecycle.start(agent)
           return { peer: inner, state }
-        })
+        }, { nonce: typeof message.request.nonce === 'string' && message.request.nonce.length <= 256 ? message.request.nonce : undefined,
+          pid: Number.isSafeInteger(message.request.pid) && message.request.pid > 0 ? message.request.pid : undefined })
         return { state: opened.state }
       },
       disconnect() { return inner ? inner.disconnect() : Promise.resolve() },
@@ -153,6 +176,7 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
     server.listen(endpoint, () => { server.off('error', reject); resolve(undefined) })
   })
   return Object.freeze({
+    bindings: arbitration.bindings,
     /** Seal admission, then revoke every channel; await before lifecycle.close. */
     async close() {
       closed = true
@@ -171,7 +195,7 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks) {
  * agent gets its own session channel; a closed channel is never silently
  * replaced mid-call. Outcomes of interrupted calls are UNKNOWN by contract.
  * @param {string} endpoint
- * @param {{onNotice: (agent: object, event: any) => void, unreachableHint?: string}} hooks */
+ * @param {{onNotice: (agent: object, event: any) => void, unreachableHint?: string, onChannelOpen?: (nonce: string, agent: object, sessionId: string) => (() => void)}} hooks */
 export function createRemoteEditLockDomain(endpoint, hooks) {
   /** @typedef {{client: ReturnType<typeof createEditLockPeerClient>, state: string, closed: boolean, ready: Promise<void>}} Channel */
   /** @type {WeakMap<object, Channel>} */
@@ -198,7 +222,8 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
           continue
         }
         const reason = String(/** @type {any} */ (error)?.message ?? error)
-        throw new Error(`edit lock duplicate session binding: session ${agent.id} is already active in the DeepSeek Harness window that publishes this project. Use the session in that window, close it there, or quit that Harness process. Do NOT remove the publisher reservation (.weir/.edit-lock.publisher-reservation) while that process is alive — the reservation belongs to it, and removing it would split the edit authority. (publisher answered: ${reason})`)
+        const guidance = bindingGuidance(agent.id, reason)
+        throw new Error(`edit lock duplicate session binding: ${guidance} (publisher answered: ${reason})`)
       }
     }
   }
@@ -207,12 +232,15 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
     if (closed) throw new Error('edit lock client closed')
     const existing = channels.get(agent)
     if (existing && !existing.closed) { await existing.ready; return existing }
-    const socket = createConnection(endpoint)
+    const nonce = randomUUID()
+    const unregister = hooks.onChannelOpen?.(nonce, agent, agent.id) ?? (() => {})
+    let socket
+    try { socket = createConnection(endpoint) } catch (error) { unregister(); throw error }
     /** @type {Channel} */
     const channel = /** @type {any} */ ({ state: 'starting', closed: false })
     channel.client = createEditLockPeerClient(socket, {
       onEvent: event => hooks.onNotice(agent, event),
-      onClose: () => { channel.closed = true; channel.state = 'stopped'; all.delete(channel) },
+      onClose: () => { unregister(); channel.closed = true; channel.state = 'stopped'; all.delete(channel) },
     })
     channels.set(agent, channel)
     all.add(channel)
@@ -230,7 +258,7 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
       }
       let opened
       try {
-        opened = await channel.client.request('open', 'open', { sessionId: agent.id }, never)
+        opened = await channel.client.request('open', 'open', { sessionId: agent.id, nonce, pid: process.pid }, never)
       } catch (error) {
         const message = String(/** @type {any} */ (error)?.message ?? error)
         // No answer ever arrived — the channel died mid-open or the request

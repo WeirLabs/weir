@@ -24,6 +24,7 @@ import { isGenuineUserMessage } from '../shared/runtime-messages.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 import { createStaleSweepScheduler } from './stale-sweep.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
+import { registerBindingRuntime, createBindingAttester } from './binding-attestation.js'
 import { localDomain, remoteDomain } from './domain.js'
 import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor } from './domains.js'
 import { createRecoveryDriver } from './recovery.js'
@@ -328,6 +329,14 @@ return (ctx, config = {}) => {
   // Capture the original host filesystem once; the manager is its only writer.
   const fs = ctx.fs
   const audit = createAudit(ctx)
+  /** Successful undefined means no live runtime; missing service means unknown.
+   * @param {string} sessionId */
+  const servingRuntime = sessionId => {
+    const agents = ctx.get?.('agents')
+    if (typeof agents?.get !== 'function') throw new Error('agent registry unavailable')
+    return agents.get(sessionId)
+  }
+  const attestBinding = createBindingAttester(servingRuntime)
   /** Detached stale-lock sweeps, coalesced per management-domain ROOT with a
    * single in-flight sweep and a 60s cooldown (see stale-sweep.js). */
   const sweeps = createStaleSweepScheduler({
@@ -411,6 +420,7 @@ return (ctx, config = {}) => {
         // Another cooperating host publishes: become its client, never a writer.
         const domain = remoteDomain(createRemoteEditLockDomain(endpoint(directory), {
           onNotice: deliverEvent,
+          onChannelOpen: registerBindingRuntime,
           // The only way to reach here without a live publisher is a reservation left
           // by a host that crashed or was killed. Say so, and say what clears it.
           unreachableHint: `Another DeepSeek Harness reserved this project but is not answering. If no other Harness window is open on it, quit DeepSeek Harness, remove ${reservationPathFor(directory)}, and start it again.`,
@@ -419,6 +429,7 @@ return (ctx, config = {}) => {
         return domain
       }
       const lifecycle = createEditLockLifecycle(runtime, sessionOf, {
+        servingRuntime,
         // Bounded failure logging for the sweep: one warning per failed row
         // (skips stay quiet), routed to the host logger.
         warn: message => ctx.logger?.warn?.(message),
@@ -440,10 +451,10 @@ return (ctx, config = {}) => {
         }, { root }),
       })
       let server
-      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks) }
+      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding) }
       catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
       const domain = localDomain(lifecycle, server)
-      try { evidence?.recordDomain?.(root, { mode: domain.mode }) } catch { /* reporting only */ }
+      try { evidence?.recordDomain?.(root, { mode: domain.mode, bindings: () => [...lifecycle.bindings(), ...(server?.bindings() ?? [])] }) } catch { /* reporting only */ }
       return domain
     } catch (error) {
       // A domain that never opened is maintenance-visible as initialization

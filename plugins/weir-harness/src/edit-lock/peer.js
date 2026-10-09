@@ -23,6 +23,8 @@ export function createEditLockPeer(lifecycle, agent) {
     // Connection loss may be a crash: revoke and forget, never release. A
     // clean client end sends 'dispose' first.
     closing = lifecycle.forget ? lifecycle.forget(agent) : lifecycle.stop(agent)
+    const attempt = closing
+    void attempt.catch(() => { if (closing === attempt) closing = undefined })
     return /** @type {Promise<void>} */ (closing)
   }
   return Object.freeze({

@@ -17,7 +17,7 @@
 // right away, and the ledger/authority facts pin the outcomes.
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { IT_ROOT, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'editlock-recovery-ux'
@@ -244,8 +244,12 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
   return { scenario: id, trace, trace2, code: phase2.code, stdout: phase2.stdout, stderr: `${phase1.stderr}\n${foreign.stderr}\n${panel.stderr}\n${unmetChild.stderr}\n${phase2.stderr}` }
 }
 
-function assertRun(run) {
-  const ws = run.ws
+function assertRun(run, { home } = {}) {
+  // Replay supplies the recorded home. Absolute authority identities must be
+  // checked against that run's workspace, not the checkout replaying it.
+  const recordedWs = home ? join(dirname(home), 'ws') : WS
+  const target = join(recordedWs, 'recovery-ux-target.txt')
+  const target2 = join(recordedWs, 'recovery-ux-unmet.txt')
   const foreignFacts = run.records.find((r) => r.kind === 'foreign-facts')
   const panelFacts = run.records2.find((r) => r.kind === 'panel-facts')
   const unmetFacts = run.records2.find((r) => r.kind === 'unmet-facts')
@@ -256,27 +260,27 @@ function assertRun(run) {
   // The panel auto-lists the blocked row without any manual step: the
   // inspection + the REAL chunk classification ran in the child.
   const panel = panelFacts?.value ?? null
-  run.check('the panel classified the blocked row: file, holder, holder state, force-release scope', panelFacts?.childCode === 0 && panel?.blockedRow?.resourceId === TARGET
+  run.check('the panel classified the blocked row: file, holder, holder state, force-release scope', panelFacts?.childCode === 0 && panel?.blockedRow?.resourceId === target
     && panel.blockedRow.owner === 'it-ux-foreign' && panel.blockedRow.lockStatus === 'user-interrupted'
     && panel.blockedRow.fence === true && panel.blockedRow.interrupted === true, JSON.stringify(panel))
   run.check('the force-release scope matches the chunk-computed confirmation byte-for-byte', panel?.confirmationMatches === true
     && panel.candidateScope?.owner === 'it-ux-foreign' && JSON.stringify(panel.candidateScope?.operationIds) === '["it-ux-foreign-op"]', JSON.stringify(panel?.candidateScope))
   run.check('the incident bare refusal was observed before the settle', typeof panel?.unlockRefusal === 'string' && panel.unlockRefusal.includes('unresolved publication fence: retained-ownership'), JSON.stringify(panel?.unlockRefusal))
   run.check('one online administrative transaction settled the fence, released the lock and revoked the owner', panel?.settle?.actor === 'online-administrator'
-    && panel.settle.releasedLocks?.includes(TARGET) === true && panel.settle.idempotent === false, JSON.stringify(panel?.settle))
+    && panel.settle.releasedLocks?.includes(target) === true && panel.settle.idempotent === false, JSON.stringify(panel?.settle))
   run.check('another session acquires the file immediately after the one-click settle', panel?.verifyAcquiredGeneration === 3, JSON.stringify(panel?.verifyAcquiredGeneration))
   run.check('the settled owner leaves no blocked row and no unmet entry', panel?.afterBlocked === 0 && panel?.afterUnmet === 0, JSON.stringify({ afterBlocked: panel?.afterBlocked, afterUnmet: panel?.afterUnmet }))
   // The unmet zone names the failing precondition instead of staying silent.
   const unmet = unmetFacts?.value ?? null
   run.check('the prepared-owner diagnosis names the failing precondition', unmetFacts?.childCode === 0 && unmet?.preparedPhase === 'prepared'
-    && unmet.unmet?.some((entry) => entry.owner === 'it-ux-c' && entry.reason === REASON_PREPARED && entry.rows.some((row) => row.resourceId === TARGET2)) === true, JSON.stringify(unmet))
+    && unmet.unmet?.some((entry) => entry.owner === 'it-ux-c' && entry.reason === REASON_PREPARED && entry.rows.some((row) => row.resourceId === target2)) === true, JSON.stringify(unmet))
   // Phase 2: the file is editable by another session and the ledger is exact.
   run.check('phase 2 edited the settled file immediately', phase2Facts?.targetContent === 'recovered\n', JSON.stringify(phase2Facts?.targetContent))
   run.check('the ledger holds exactly one online administrative recovery for the foreign owner', snapshot?.adminRecoveries?.length === 1
     && snapshot.adminRecoveries[0].actor === 'online-administrator' && snapshot.adminRecoveries[0].owner === 'it-ux-foreign'
     && JSON.stringify(snapshot.adminRecoveries[0].operations) === '["it-ux-foreign-op"]', JSON.stringify(snapshot?.adminRecoveries))
   run.check('the foreign owner holds no lock and stays interrupted; the unmet owner keeps its retained lock', snapshot?.locks?.some((lock) => lock.owner === 'it-ux-foreign') === false
-    && snapshot?.locks?.some((lock) => lock.owner === 'it-ux-c' && lock.resourceId === TARGET2 && lock.status === 'user-interrupted') === true, JSON.stringify(snapshot?.locks))
+    && snapshot?.locks?.some((lock) => lock.owner === 'it-ux-c' && lock.resourceId === target2 && lock.status === 'user-interrupted') === true, JSON.stringify(snapshot?.locks))
   run.check('the unknown outcome stays in history', snapshot?.operations?.some((op) => op.operationId === 'it-ux-foreign-op' && op.phase === 'unknown' && op.outcome === 'unknown') === true, JSON.stringify(snapshot?.operations))
   run.check('the publisher reservation was reclaimed on the fresh boot', phase2Facts?.reservationReleased === true, 'reservation retained')
   run.check('phase 2 exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-600)}`)
