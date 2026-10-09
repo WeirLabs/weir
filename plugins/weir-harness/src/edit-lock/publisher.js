@@ -1,4 +1,5 @@
-import { isAbsolute, join, relative } from 'node:path'
+import { lstatSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { createResourceIdentity } from './resource-identity.js'
 import { canonicalRequestData } from './request-data.js'
 
@@ -32,6 +33,44 @@ export function createPublisher({ manager, fs, root, excluded = [], assertExclus
       if (observation.kind !== 'file') throw new Error('lock target must be an existing regular file')
       contained(observation.resourceId)
       return observation.resourceId
+    },
+    /** Release observations are subtractive only; never publication authority.
+     * @param {string} path @param {string} cwd */
+    releaseResource(path, cwd) {
+      assertExclusive()
+      const observation = identity.resolve(path, { cwd })
+      const resourceId = observation.kind === 'file' ? observation.resourceId : resolvePath(cwd, path)
+      contained(resourceId)
+      if (observation.kind === 'missing' &&
+          (path.split(/[\\/]/).includes('..') || resourceId !== join(observation.ancestor, observation.suffix) || !missingTarget(resourceId))) {
+        throw new Error('Edit Lock release refused: missing target is not proven')
+      }
+      return { resourceId, observation }
+    },
+    /** Explicit owner release: preserve ordinary admission, but recheck missing
+     * evidence inside the manager FIFO rather than trusting a preflight scan.
+     * @param {import('./state.js').Ownership} token
+     * @param {ReturnType<typeof identity.resolve>} observation */
+    async release(token, observation) {
+      assertExclusive()
+      token = { ...token }
+      if (observation.kind === 'file') return manager.release(token)
+      const status = manager.status()
+      if (token.managerIncarnation !== status.managerIncarnation) throw new Error('stale incarnation')
+      const lock = status.locks.find(item => item.resourceId === token.resourceId)
+      if (!lock || lock.owner !== token.sessionId) throw new Error('lock not owned by this session')
+      const result = await manager.releaseStale([{
+        resourceId: token.resourceId, owner: token.sessionId, generation: token.generation,
+        executionEpoch: token.executionEpoch, status: lock.status,
+      }], resourceId => {
+        assertExclusive()
+        identity.revalidate(observation)
+        return missingTarget(resourceId)
+      })
+      const refusal = [...result.skipped, ...result.failed]
+      if (refusal.length || result.released.length !== 1) {
+        throw new Error(`Edit Lock release refused: ${refusal.map(item => item.reason).join('; ') || 'release not confirmed'}`)
+      }
     },
     /** Resolve the entire existing-file set before atomic ownership acquisition.
      * @param {import('./state.js').Execution} execution
@@ -132,4 +171,21 @@ export function createPublisher({ manager, fs, root, excluded = [], assertExclus
       finally { listeners.get(submission)?.(); listeners.delete(submission) }
     },
   })
+}
+
+/** ENOENT alone is insufficient through a symlink or non-directory ancestor.
+ * Walk every surviving component without following links; all ambiguity refuses.
+ * @param {string} resourceId */
+function missingTarget(resourceId) {
+  try { lstatSync(resourceId); return false } catch (error) {
+    if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error
+  }
+  for (let parent = dirname(resourceId); ; parent = dirname(parent)) {
+    try {
+      if (!lstatSync(parent).isDirectory()) return false
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== 'ENOENT' || parent === dirname(parent)) throw error
+    }
+    if (parent === dirname(parent)) return true
+  }
 }

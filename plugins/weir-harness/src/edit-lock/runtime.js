@@ -109,6 +109,14 @@ export async function openEditLockRuntime(options) {
           if (closing) throw new Error('edit lock runtime closing')
           return publisher.resource(path, cwd)
         },
+        /** @param {string} path @param {string} cwd */
+        releaseResource(path, cwd) {
+          if (closing) throw new Error('edit lock runtime closing')
+          return publisher.releaseResource(path, cwd)
+        },
+        /** @param {Parameters<typeof publisher.release>[0]} token
+         * @param {Parameters<typeof publisher.release>[1]} observation */
+        release(token, observation) { return run(() => publisher.release(token, observation)) },
         /** @param {Parameters<typeof publisher.prepare>[0]} execution
          * @param {Parameters<typeof publisher.prepare>[1]} request
          * @param {AbortSignal} signal */

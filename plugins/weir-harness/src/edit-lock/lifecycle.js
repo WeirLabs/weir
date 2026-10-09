@@ -246,8 +246,8 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       async release(exec, request) {
         const entry = entries.get(exec?.agent)
         if (!entry || sessionForAgent(exec.agent) !== entry.sessionId) throw new Error('agent has no authenticated edit execution')
-        const resourceId = runtime.requests.resource(request.filePath, request.cwd)
-        await runtime.control.release(cleanupToken(entry, resourceId))
+        const { resourceId, observation } = runtime.requests.releaseResource(request.filePath, request.cwd)
+        await runtime.requests.release(cleanupToken(entry, resourceId), observation)
         return { resourceId, released: true }
       },
       /** Read-only observation; available in every lifecycle state. @param {any} exec */
