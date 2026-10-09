@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **会话能力管理器：同名 Skill 勾选联动与 Apply 静默选错项**：管理器草稿与复选框此前按**显示名**寻址——同名候选（如 user 与 project 各一份同名 Skill）共享一个键，勾选其中一项另一项也显示勾选；且 `/capabilities apply` 用按名覆盖的 Map 解析，同名时被后枚举者静默顶掉，提交的根本不是勾选项。修复后选择全程按 **Skill identity** 寻址：listing 每行末尾携带 `identity`、receipt 新增 `effective.skillIdentities`（名称数组保留供 Badge 计数与旧客户端回退）；客户端草稿以 identity key 判定成员与净增减，同名各项独立勾选；apply 接受混合条目——identity 对象按完整 key 精确匹配当前库存，名称字符串仅在唯一 parsed 匹配时绑定，歧义名称进入 `missing` 显式报错、绝不按枚举顺序静默选胜。附带修复：预设载入 staging 时 identity 对象被 `String()` 损坏为 "[object Object]"（from:'applied' 保存的预设载入后 Apply 必报 missing）；preset/default 的 `from:'draft'` 保存自此落盘为精确 identity 而非名字串。证据：同名独立勾选与精确 Apply 的组件级回归、apply 歧义拒绝与精确命中的命令级测试、identity key 客户端镜像与服务端 parity 测试；单测全绿，能力相关集成子集 169/169。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ## [1.1.4] - 2026-10-09
 
 ### Fixed
