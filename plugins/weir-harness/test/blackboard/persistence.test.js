@@ -258,7 +258,7 @@ test('late mount catches up existing root; disposal and remount keep durable ent
   const { createBlackboardPlugin } = await import('../../src/blackboard/index.js')
   const f = await fixture(t)
   const session = { id: ID, header: { id: ID, cwd: f.cwd, version: 4, delegationDepth: 0 } }
-  const agent = { id: ID, session }
+  let agent = { id: ID, session }
   const handlers = new Map(), provided = new Map()
   let flushes = 0
   const ctx = {
@@ -285,7 +285,7 @@ test('late mount catches up existing root; disposal and remount keep durable ent
   const service = provided.get('weirBlackboard')
   await service.write({ agent }, entry)
   await service.apply({ agent }, entry.key)
-  handlers.get('agent/disposed')({ agent })
+  await handlers.get('agent/disposed')({ agent })
   await service.releaseHolder(ID)
   assert.deepEqual(await service.tokensOf(ID), [])
   // The host process remains alive, but its final board participant is gone:
@@ -295,10 +295,11 @@ test('late mount catches up existing root; disposal and remount keep durable ent
   const outcome = await new Promise((resolve, reject) => execFile(process.execPath, [fileURLToPath(new URL('./worker.js', import.meta.url)), f.home, 'handoff'], (error, out) => error ? reject(error) : resolve(JSON.parse(out.trim()))))
   assert.equal(outcome.ok, true, JSON.stringify(outcome))
   assert.equal((await service.entriesOf(ID)).find(row => row.key === entry.key).content, entry.content)
-  dispose()
+  await dispose()
+  agent = { id: ID, session } // a disposed incarnation cannot be re-admitted
   const disposeAgain = mount(ctx)
   assert.equal((await provided.get('weirBlackboard').read({ agent }, [entry.key])).found[0].content, entry.content)
-  disposeAgain()
+  await disposeAgain()
 })
 
 
@@ -345,4 +346,141 @@ test('unsafe generation numbers and relative header cwd cannot select a write ta
   await fs.writeFile(join(f.dir, 'session.v9007199254740993.jsonl'), '{}')
   await assert.rejects(f.board.list(ID), /generation number/)
   await assert.rejects(fs.stat(f.side), { code: 'ENOENT' })
+})
+
+async function mountedFixture(t) {
+  const { createBlackboardPlugin } = await import('../../src/blackboard/index.js')
+  const { runtimeBlackboard } = await import('../../src/blackboard/durable.js')
+  const f = await fixture(t)
+  const agents = new Map()
+  const agent = { id: ID, session: { header: { id: ID, cwd: f.cwd, delegationDepth: 0 } } }
+  agents.set(ID, agent)
+  function mount() {
+    const handlers = new Map(), provided = new Map()
+    const ctx = {
+      get(name) {
+        if (name === 'profileContext') return { home: f.home }
+        if (name === 'agents') return { get: id => agents.get(id), list: () => [] }
+        if (name === 'sessionPersistence') return { stat: async () => true }
+        if (name === 'sessions') return { flush: async () => true }
+      },
+      tools: { register() {} }, systemPrompt: { section: () => () => {}, variable: () => () => {} },
+      reflect: { provide: (name, value) => provided.set(name, value) },
+      on: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name) },
+      logger: { warn() {} }, emit() {}, effect() {},
+    }
+    const dispose = createBlackboardPlugin()(ctx)
+    const runtime = runtimeBlackboard(ctx)
+    t.after(async () => { await dispose(); await runtime.kernel.clearRuntime(ID, { releaseWriter: true }) })
+    return { dispose, handlers, runtime, service: provided.get('weirBlackboard') }
+  }
+  return { ...f, agents, agent, mount }
+}
+async function secondHost(home) {
+  const { execFile } = await import('node:child_process')
+  const { fileURLToPath } = await import('node:url')
+  return new Promise((resolve, reject) => execFile(process.execPath, [fileURLToPath(new URL('./worker.js', import.meta.url)), home, 'handoff'], (error, out) => error ? reject(error) : resolve(JSON.parse(out.trim()))))
+}
+
+test('unmount before Agent disposal releases final writer for second host', async t => {
+  const f = await mountedFixture(t), m = f.mount()
+  await m.service.write({ agent: f.agent }, entry)
+  await m.dispose()
+  f.agents.delete(ID)
+  m.handlers.get('agent/disposed')?.({ agent: f.agent })
+  assert.equal((await secondHost(f.home)).ok, true)
+})
+
+test('unmount does not revoke another mounted participant of the same Agent', async t => {
+  const f = await mountedFixture(t), a = f.mount(), b = f.mount()
+  await a.service.apply({ agent: f.agent }, entry.key)
+  await b.service.apply({ agent: f.agent }, entry.key)
+  await a.dispose()
+  assert.equal((await b.service.tokensOf(ID))[0].holder, ID)
+  assert.equal((await secondHost(f.home)).ok, false)
+  await b.dispose()
+  assert.equal((await secondHost(f.home)).ok, true)
+})
+
+for (const face of ['tool', 'remote']) test(`${face} apply paused in ensure cannot grant after disposal`, async t => {
+  const f = await mountedFixture(t), m = f.mount()
+  let resume, reached
+  const gate = new Promise(resolve => { resume = resolve })
+  const paused = new Promise(resolve => { reached = resolve })
+  const ensure = m.runtime.kernel.ensure
+  m.runtime.kernel.ensure = async id => { await ensure(id); reached(); await gate }
+  const pending = face === 'tool' ? m.service.apply({ agent: f.agent }, entry.key) : createBlackboardRemoteService().apply(f.agent, { key: entry.key })
+  const rejected = assert.rejects(pending, /disposed|inactive/)
+  await paused
+  f.agents.delete(ID)
+  const disposal = m.handlers.get('agent/disposed')({ agent: f.agent })
+  resume()
+  await rejected
+  await disposal
+  assert.deepEqual(await m.service.tokensOf(ID), [])
+  assert.equal((await secondHost(f.home)).ok, true)
+  m.runtime.kernel.ensure = ensure
+  const replacement = { ...f.agent }
+  f.agents.set(ID, replacement)
+  assert.equal((await m.service.apply({ agent: replacement }, entry.key)).status, 'granted')
+  assert.equal((await m.service.tokensOf(ID))[0].holder, ID)
+})
+
+test('unmount during ensure fences pending calls and drains writer before remount', async t => {
+  const f = await mountedFixture(t), a = f.mount()
+  let resume, reached
+  const gate = new Promise(resolve => { resume = resolve })
+  const paused = new Promise(resolve => { reached = resolve })
+  const ensure = a.runtime.kernel.ensure
+  a.runtime.kernel.ensure = async id => { await ensure(id); reached(); await gate }
+  const rejected = assert.rejects(a.service.apply({ agent: f.agent }, entry.key), /inactive/)
+  await paused
+  const closing = a.dispose()
+  const b = f.mount()
+  const replacement = b.service.apply({ agent: f.agent }, 'replacement')
+  resume()
+  await rejected; await closing
+  assert.equal((await replacement).status, 'granted')
+  assert.deepEqual((await b.service.tokensOf(ID)).map(row => row.key), ['replacement'])
+  a.runtime.kernel.ensure = ensure
+  assert.equal((await secondHost(f.home)).ok, false)
+  await b.dispose()
+  assert.equal((await secondHost(f.home)).ok, true)
+})
+
+test('distinct mounted child survives root mount removal and stale disposal', async t => {
+  const f = await mountedFixture(t), a = f.mount(), b = f.mount()
+  const child = { id: 'child', session: { header: { id: 'child', cwd: f.cwd, delegationDepth: 1, parentSession: ID } } }
+  f.agents.set(child.id, child)
+  await a.service.apply({ agent: f.agent }, 'root-key')
+  await b.service.apply({ agent: child }, 'child-key')
+  await a.dispose()
+  assert.deepEqual((await b.service.tokensOf(ID)).map(row => row.holder), ['child'])
+  assert.equal((await secondHost(f.home)).ok, false)
+  const replacement = { ...child }
+  f.agents.set(child.id, replacement)
+  await b.service.apply({ agent: replacement }, 'replacement')
+  await b.handlers.get('agent/disposed')({ agent: child })
+  assert.deepEqual((await b.service.tokensOf(ID)).map(row => row.key), ['replacement'])
+  await b.dispose()
+  assert.equal((await secondHost(f.home)).ok, true)
+})
+
+for (const face of ['tool', 'remote']) test(`${face} disposal while apply is in flight rejects result and drains authority`, async t => {
+  const f = await mountedFixture(t), m = f.mount()
+  let resume, reached
+  const gate = new Promise(resolve => { resume = resolve })
+  const paused = new Promise(resolve => { reached = resolve })
+  const apply = m.runtime.kernel.apply
+  m.runtime.kernel.apply = async (...args) => { reached(); await gate; return apply(...args) }
+  const pending = face === 'tool' ? m.service.apply({ agent: f.agent }, entry.key) : createBlackboardRemoteService().apply(f.agent, { key: entry.key })
+  const rejected = assert.rejects(pending, /disposed/)
+  await paused
+  f.agents.delete(ID)
+  const disposed = m.handlers.get('agent/disposed')({ agent: f.agent })
+  resume()
+  await rejected; await disposed
+  assert.deepEqual(await m.service.tokensOf(ID), [])
+  assert.equal((await secondHost(f.home)).ok, true)
+  m.runtime.kernel.apply = apply
 })

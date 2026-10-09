@@ -93,7 +93,66 @@ export function runtimeBlackboard(ctx) {
   return runtime
 }
 
-export async function resolveDurableRoot(ctx, agent, runtime) {
+// Lifecycle admission covers ancestry/ensure AND the ensuing operation. Closing
+// an incarnation fences it synchronously; cleanup waits behind admitted work.
+// The host-wide gate also prevents a remount racing the final writer release.
+export function lifecycleSerial(runtime, action) {
+  const task = (runtime.lifecycleTail ?? Promise.resolve()).catch(() => {}).then(action)
+  runtime.lifecycleTail = task.catch(() => {})
+  return task
+}
+
+export function createRuntimeMount(ctx, runtime) {
+  const mount = { active: true }
+  runtime.revoked ??= new WeakSet()
+  function check(agent) {
+    if (!mount.active || runtime.revoked.has(agent) || ctx.get?.('agents')?.get?.(agent.id) !== agent) {
+      throw new Error('blackboard: Agent disposed or mount inactive')
+    }
+  }
+  const run = (agent, action) => lifecycleSerial(runtime, async () => {
+    check(agent)
+    const previous = runtime.members.get(agent.id)
+    if (previous && previous.agent !== agent) await detach(previous.agent)
+    check(agent)
+    const root = await resolveDurableRoot(ctx, agent, runtime, mount)
+    check(agent)
+    const result = await action(root)
+    check(agent)
+    return result
+  })
+  async function detach(agent, unmount = false) {
+    const member = runtime.members.get(agent.id)
+    if (!member || member.agent !== agent) return
+    if (unmount) {
+      member.mounts?.delete(mount)
+      if (member.mounts?.size) return
+    }
+    runtime.members.delete(agent.id)
+    await runtime.kernel.releaseHolder(agent.id)
+    if (unmount || (agent.session?.header?.delegationDepth ?? 0) === 0) await runtime.kernel.unsubscribeHolder(agent.id)
+    if (![...runtime.members.values()].some(other => other.root === member.root)) {
+      await runtime.kernel.clearRuntime(member.root, { releaseWriter: true })
+    }
+  }
+  return {
+    run,
+    disposed(agent) {
+      runtime.revoked.add(agent)
+      return lifecycleSerial(runtime, () => detach(agent))
+    },
+    close() {
+      mount.active = false
+      return lifecycleSerial(runtime, async () => {
+        for (const member of [...runtime.members.values()]) {
+          if (member.mounts?.has(mount)) await detach(member.agent, true)
+        }
+      })
+    },
+  }
+}
+
+export async function resolveDurableRoot(ctx, agent, runtime, mount = undefined) {
   let id = sessionId(agent?.id)
   const wasLive = ctx.get?.('agents')?.get?.(id) === agent
   let session = agent?.session
@@ -122,10 +181,14 @@ export async function resolveDurableRoot(ctx, agent, runtime) {
       if (wasLive && ctx.get?.('agents')?.get?.(agent.id) !== agent) throw new Error('blackboard: Agent disposed while resolving its root')
       if (ctx.get?.('agents')?.get?.(agent.id) === agent) {
         runtime.members ??= new Map()
-        runtime.members.set(agent.id, { agent, root: id })
+        const previous = runtime.members.get(agent.id)
+        const mounts = previous?.agent === agent ? previous.mounts ?? new Set() : new Set()
+        if (mount) mounts.add(mount)
+        runtime.members.set(agent.id, { agent, root: id, mounts })
       }
       runtime.kernel.bind(id, where.header.cwd)
       await runtime.kernel.ensure(id)
+      if (wasLive && (runtime.revoked?.has(agent) || ctx.get?.('agents')?.get?.(agent.id) !== agent)) throw new Error('blackboard: Agent disposed while resolving its root')
       return id
     }
     id = sessionId(header.parentSession)
