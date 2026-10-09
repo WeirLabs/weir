@@ -2,9 +2,8 @@
 //  1. extract() is a pure function producing the observation base;
 //  2. planRequest calls extract exactly once per request (DI counting) and
 //     every consumer (decide + observe + record) shares that one pass;
-//  3. the union of per-scenario trace-record keys equals the pre-registry
-//     47-key superset exactly — no field was renamed or orphaned in the
-//     migration into per-scenario observe();
+//  3. the union of per-scenario trace-record keys includes the original
+//     pre-registry superset plus the explicitly reviewed new scenario keys;
 //  4. the strict-provider schema gate throws its verbatim error before any
 //     scenario logic runs.
 import { describe, it } from 'node:test'
@@ -207,6 +206,14 @@ const PRE_MIGRATION_KEYS = [
   'keepLaneLanded',
 ]
 
+// Additional observation fields introduced by the one-shot child settlement
+// scenario (the original pre-registry key set above must remain unchanged).
+const DELEGATE_SETTLE_KEYS = [
+  'lockRole', 'refused', 'childResultSeen', 'acquiredSeen', 'releasedSeen',
+  'readSeen', 'updatedSeen', 'settleNoticeSeen', 'observedAt',
+  'authorityLock', 'authoritySession', 'managerIncarnation', 'targetContent',
+]
+
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']
 
 /** A synthetic obs good enough to enumerate a scenario's observe() keys. */
@@ -274,12 +281,12 @@ describe('planRequest single extraction', () => {
 })
 
 describe('trace record key migration', () => {
-  it('the union of per-scenario record keys equals the pre-migration superset', () => {
+  it('the union keeps the pre-migration superset and exactly the new delegate lifecycle keys', () => {
     const union = new Set(GENERIC_KEYS)
     for (const scenario of SCENARIOS) {
       for (const key of Object.keys(scenario.observe?.(syntheticObs()) ?? {})) union.add(key)
     }
-    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS].sort())
+    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, ...DELEGATE_SETTLE_KEYS, 'authorityLocks', 'authoritySessions', 'freshContent', 'resumed'].sort())
   })
 
   it('every scenario emits at least one observation key (no silent gap)', () => {

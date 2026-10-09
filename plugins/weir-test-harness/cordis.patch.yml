@@ -217,6 +217,19 @@
             # the auto-resume family (a second boot must reopen the same one).
             root: !!js "(process.env.WEIR_IT_STOP_BOUNDARY || process.env.WEIR_IT_AUTO_RESUME || process.env.WEIR_IT_EDIT_LOCK === '1') ? process.env.WEIR_IT_ROOT + '/ws' : undefined"
             authorityDirectory: !!js "process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined))"
+        # Dev-only trusted reservation for editlock-delegate-settle: the real
+        # child's managed write happened earlier. The serial stopping hook
+        # records the hold ACK before turn/end; no owner tool is exposed.
+        - id: weir-it-edit-lock-delegate-settle-probe
+          name: 'weir-test-harness/edit-lock-delegate-settle-probe'
+          disabled: !!js process.env.WEIR_IT_SCENARIO !== 'editlock-delegate-settle'
+          config:
+            enabled: !!js process.env.WEIR_IT_SCENARIO === 'editlock-delegate-settle'
+        - id: weir-it-edit-lock-delegate-resume-probe
+          name: 'weir-test-harness/edit-lock-delegate-resume-probe'
+          disabled: !!js process.env.WEIR_IT_SCENARIO !== 'editlock-delegate-resume'
+          config:
+            enabled: !!js process.env.WEIR_IT_SCENARIO === 'editlock-delegate-resume'
         - id: weir-it-hashline-edit
           name: 'weir-harness/hashline-edit'
           config:

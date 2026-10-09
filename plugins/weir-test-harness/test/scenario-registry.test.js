@@ -37,6 +37,8 @@ EXPECTED_ORDER.push('blackboard')
 EXPECTED_ORDER.push('blackboard-promotion')
 EXPECTED_ORDER.push('editlock-recovery-ux')
 EXPECTED_ORDER.push('editlock-binding-reclaim')
+EXPECTED_ORDER.push('editlock-delegate-settle')
+EXPECTED_ORDER.push('editlock-delegate-resume')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

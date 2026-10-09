@@ -10,6 +10,7 @@ import { auditFilePathOf, readAuditTail, readChildFinalText } from './audit-read
 import { AUDIT_TYPES } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { contentText } from '../shared/content-text.js'
+import { withSupervisedEditResume, settleDelegateEditLifecycle } from '../shared/delegate-edit-lifecycle.js'
 
 /**
  * Mount the supervision subsystem on the plugin ctx.
@@ -25,6 +26,31 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
   // Supervised group coordinators, one per parent session.
   /** @type {Map<string, { coordinator: object, parent: object }>} */
   const coordinators = new Map()
+  // STATUS/turn-end is a bookkeeping fact, never proof the driver stopped.
+  // This gate exists even when Edit Lock is disabled in the composition.
+  const quiescence = new Map()
+  const handoffs = new Set()
+  const endedRuns = new Set()
+  function runtimeFor(id, agent = ctx.get?.('agents')?.get?.(id)) {
+    let record = quiescence.get(id)
+    if (!record || (agent && record.agent && agent !== record.agent)) {
+      record = { ...Promise.withResolvers(), agent }
+      quiescence.set(id, record)
+    }
+    if (!record.agent) record.agent = agent
+    return record
+  }
+  ctx.on('agent/created', ({ agent }) => { runtimeFor(agent.id, agent) })
+  ctx.on('agent/disposed', ({ agent }) => {
+    const record = quiescence.get(agent.id)
+    if (record?.agent && record.agent !== agent) return
+    runtimeFor(agent.id, agent).resolve()
+  })
+  ctx.on('subagent/end', ({ id, runId }) => {
+    if (runId && endedRuns.has(runId)) return
+    if (runId) endedRuns.add(runId)
+    runtimeFor(id).resolve()
+  })
   async function coordinatorFor(parent) {
     let entry = coordinators.get(parent.id)
     if (!entry) {
@@ -33,6 +59,8 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
           sendTo: async (childId, text) => {
             await ctx.subagents.sendMessage(parent, childId, [{ type: 'text', text }], { signal: new AbortController().signal })
           },
+          resumeTo: (childId, text) => withSupervisedEditResume(parent, childId, () =>
+            ctx.subagents.sendMessage(parent, childId, [{ type: 'text', text }], { signal: new AbortController().signal })),
           interruptChild: (childId) => {
             ctx.subagents.interrupt(childId, { kind: 'ancestor', agent: parent })
           },
@@ -51,8 +79,19 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
             // must survive; the blocked fact still rides the audit channel.
             // Deferred: never run lane work inside the fact.
             const settlesLane = fact.kind === 'terminate' || (fact.kind === 'settle' && isTerminalStatus(fact.status))
-            if (settlesLane && onChildSettled) {
-              void Promise.resolve().then(() => onChildSettled(fact.childId, parent))
+            if (settlesLane && !handoffs.has(fact.childId)) {
+              handoffs.add(fact.childId)
+              const runtime = runtimeFor(fact.childId)
+              // No observed quiescence means no automatic handoff, including
+              // a cold bookkeeping fact. Lane reconciliation owns that case.
+              const disposition = settleDelegateEditLifecycle(parent, fact.childId, runtime.agent)
+              void Promise.all([runtime.promise, disposition])
+                .then(() => onChildSettled?.(fact.childId, parent))
+                .catch(error => {
+                  const note = `child ${fact.childId}: terminal handoff failed; lane remains bound: ${error?.message ?? error}`
+                  ctx.logger?.warn?.(note)
+                  audit(parent.session, AUDIT_TYPES.supervision, { note })
+                })
             }
           },
           notifyParent: (text) => {

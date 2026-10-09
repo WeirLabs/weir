@@ -84,6 +84,7 @@ export function untrackedCatalogEntries(entries, isTracked) {
  * Effectors are injected so the state machine stays testable:
  * @param {object} deps
  * @param {(childId: string, text: string) => Promise<void>} deps.sendTo - deliver a user message to a child (sendMessage)
+ * @param {(childId: string, text: string) => Promise<void>} [deps.resumeTo] - explicit supervised resume; never used by automatic retries
  * @param {(childId: string) => void} deps.interruptChild - interrupt a running child
  * @param {(delayMs: number, fn: () => void) => void} deps.schedule - delayed retry scheduler
  * @param {(reason: string) => void} [deps.onAudit]
@@ -354,7 +355,7 @@ export function createGroupCoordinator(deps, config = {}) {
     child.status = 'running'
     deps.onFact?.({ kind: 'resume', childId: child.id })
     try {
-      await deps.sendTo(child.id, renderResumeMessage(context))
+      await (deps.resumeTo ?? deps.sendTo)(child.id, renderResumeMessage(context))
     } catch (error) {
       child.status = 'blocked'
       deps.onAudit?.(`child ${child.name}: resume delivery failed`)

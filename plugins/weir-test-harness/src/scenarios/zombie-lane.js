@@ -1,20 +1,18 @@
 // Scenario: zombie-lane — stale lane-binding reclamation end to end
-// (worktree-zombie-lane-reclamation). Three boots on one workspace:
-//   phase 1 (session A): worktree_open + a supervised lane worker that settles
-//     healthily — leaving a REAL settle fact in the audit log;
-//   phase 2 (session A adopted in a fresh process): a hand-crafted zombie lane
-//     bound to that settled child is freed by the hydrate re-emission alone
-//     (D3, root cause) — no abandon call involved;
-//   phase 3 (a NEW session, owner process long gone): lane A re-zombified with
-//     the real settle fact is released by worktree_abandon's liveness
-//     reconciliation (D1), and a second zombie with NO terminal evidence only
-//     moves after the user force-reclaims on the disputed card (D4).
+// (worktree-zombie-lane-reclamation). Three phases on one workspace:
+//   phase 1: a supervised lane worker settles, leaving a REAL audit fact;
+//   phase 2 (adopted owner): cold re-emission cannot prove current runtime
+//     quiescence or Edit Lock disposition, so lane C must remain bound;
+//   phase 3 (fresh sessions after owner exit): explicit abandon reconciles C,
+//     then A with terminal evidence, and B only after user force-reclaim.
+// Phase 3 uses two boots: reclaim C before re-zombifying A with the same
+// child, preserving the one-lane-per-child binding invariant.
 // The zombie ledger rows are hand-crafted exactly like the investigation's
 // pinned fixture (investigate-zombie-lane-binding 1.2); every signal under
 // test — settle facts, re-emission, reconciliation, cards, audits — is the
 // real product path.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { IT_ROOT, lastOfRole, textChunks, toolCallChunks, transcript, waitForMarker } from '../mock-kit.js'
 import { parseJsonlLines, readJsonl } from '../jsonl.js'
@@ -24,9 +22,10 @@ const id = 'zombie-lane'
 const prompt = 'zombie-lane-probe'
 const REHYDRATE_PROMPT = 'zombie-rehydrate-probe'
 const ABANDON_PROMPT = 'zombie-abandon-probe'
+const COLD_ABANDON_PROMPT = 'zombie-cold-abandon-probe'
 const WS = join(IT_ROOT, 'ws')
 const LANE_A = 'zombie-evidence-001' // worktree_open({ title: 'Zombie evidence' })
-const LANE_C = 'zombie-rehydrate-002' // hand-crafted: freed by hydrate re-emission
+const LANE_C = 'zombie-rehydrate-002' // cold fact only: explicit reconciliation required
 const LANE_B = 'zombie-forced-003' // hand-crafted: no evidence, force-reclaim only
 const FAKE_CHILD = 'child-ffffffff-dead-dead-dead-ffffffffffff'
 const DEAD_OWNER = 'session-eeeeeeee-dead-dead-dead-eeeeeeeeeeee'
@@ -37,6 +36,11 @@ const AUDIT = join(WS, '.weir', 'audit.jsonl')
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
   const lastTool = lastOfRole(options, 'tool')
+  if (history.includes(COLD_ABANDON_PROMPT)) {
+    if (lastTool.includes(`lane ${LANE_C}: abandoned`)) return textChunks('COLD_ZOMBIE_RECONCILED')
+    if (lastTool === '') return toolCallChunks('worktree_abandon', { lane: LANE_C })
+    return textChunks(`unhandled cold abandon: ${lastTool.slice(0, 160)}`)
+  }
   // Phase 3 (fresh session): abandon the evidence zombie, then the disputed one.
   if (history.includes(ABANDON_PROMPT)) {
     if (lastTool.includes(`lane ${LANE_B}: abandoned`)) return textChunks('ZOMBIE_PROBE_DONE')
@@ -44,16 +48,11 @@ function decide(options, obs) {
     if (lastTool === '') return toolCallChunks('worktree_abandon', { lane: LANE_A })
     return textChunks(`unhandled zombie-abandon turn: ${lastTool.slice(0, 160)}`)
   }
-  // Phase 2 (adopted session A): one registry read drives the rebuild; the
-  // recovered settlement then frees lane C and notifies this (live) owner.
+  // Phase 2: rebuild bookkeeping once; never wait for a forbidden handoff.
   if (history.includes(REHYDRATE_PROMPT)) {
-    if (history.includes(`[worktree] lane ${LANE_C}`)) return textChunks('phase2 observed the recovered lane settlement')
-    // The adopted log's phase-1 tool results make lastTool non-empty, so the
-    // status call is gated on its own result marker, never on lastTool.
+    // The adopted phase-1 log already has tool results, but no registry read.
     if (!history.includes('Supervised registry of this session')) return toolCallChunks('supervised_status', {})
-    const verdict = waitForMarker(history, `[worktree] lane ${LANE_C}`)
-    if (verdict.state === 'wait') return verdict.chunks
-    return textChunks('phase2 settlement wait exhausted')
+    return textChunks('phase2 cold lane remains bound pending explicit reconciliation')
   }
   // Phase 1 child (supervised lane worker): report and settle.
   if (history.includes('ZOMBIE_WORKER') && !history.includes(prompt)) {
@@ -146,20 +145,34 @@ async function run(ctx) {
   // the worker is keyed by this scenario's unique report text, not by order.
   const childId = readJsonl(AUDIT).find((record) => record?.type === 'weir/supervision/settle' && record?.session === sessionA && record?.data?.report === 'zombie evidence worker done')?.data?.childId ?? null
 
-  // Phase 2: lane C zombie (bound to the REALLY settled child, owner session A)
-  // is freed by the restart rebuild's settlement re-emission alone.
+  // Phase 2: cold recovery preserves C's binding despite its terminal fact.
   let p2 = null
   const trace2 = join(ctx.IT_ROOT, 'trace-zombie-lane-phase2.jsonl')
   if (sessionA && childId) {
     zombify(LANE_C, { child: childId, owner: sessionA, create: true })
     p2 = await ctx.spawnHeadless(['weir-it', '--session-id', sessionA, REHYDRATE_PROMPT], ctx.scenarioEnv(id, trace2))
+    // Capture before any phase-3 mutation; final ledger state cannot prove safety.
+    appendFileSync(trace2, JSON.stringify({
+      kind: 'zombie-phase2-snapshot', code: p2.code, stdout: p2.stdout,
+      lane: JSON.parse(readFileSync(LEDGER, 'utf8')).lanes.find(entry => entry.id === LANE_C),
+    }) + '\n')
   }
 
-  // Phase 3: lane A re-zombified with the same real settle fact (owner process
-  // gone), lane B with a child that never existed (no evidence anywhere).
+  // Phase 3: reclaim C first. Only then re-zombify A with the same child;
+  // two simultaneous lane bindings would violate childSettled's lookup invariant.
   let p3 = null
   const trace3 = join(ctx.IT_ROOT, 'trace-zombie-lane-phase3.jsonl')
   if (sessionA && childId) {
+    const coldTrace = join(ctx.IT_ROOT, 'trace-zombie-lane-cold-abandon.jsonl')
+    const cold = await ctx.spawnHeadless(['weir-it', COLD_ABANDON_PROMPT], ctx.scenarioEnv(id, coldTrace, { WEIR_IT_ZOMBIE_LANE: '1' }))
+    appendFileSync(trace2, JSON.stringify({
+      kind: 'zombie-cold-abandon', code: cold.code, stdout: cold.stdout,
+      requests: readJsonl(coldTrace).filter(record => Array.isArray(record.emitted)),
+    }) + '\n')
+    const coldLane = JSON.parse(readFileSync(LEDGER, 'utf8')).lanes.find(entry => entry.id === LANE_C)
+    if (coldLane?.boundChild !== null || coldLane?.state !== 'abandoned') {
+      return { scenario: id, trace: coldTrace, trace2, sessionId: sessionA, ...cold }
+    }
     zombify(LANE_A, { child: childId, owner: sessionA })
     zombify(LANE_B, { child: FAKE_CHILD, owner: DEAD_OWNER, create: true })
     p3 = await ctx.spawnHeadless(['weir-it', ABANDON_PROMPT], ctx.scenarioEnv(id, trace3, { WEIR_IT_ZOMBIE_LANE: '1' }))
@@ -176,17 +189,22 @@ function assert(view) {
   const audit = readJsonl(join(view.ws, '.weir', 'audit.jsonl'))
   // Shared audit log (suite run and recorded fixture alike): key the worker
   // by this scenario's unique report text, never by record order.
-  const childId = audit.find((record) => record?.type === 'weir/supervision/settle' && record?.data?.report === 'zombie evidence worker done')?.data?.childId ?? null
+  const childId = audit.find((record) => record?.type === 'weir/supervision/settle' && record?.session === view.sessionId && record?.data?.report === 'zombie evidence worker done')?.data?.childId ?? null
   const reconciles = audit.filter((record) => record?.type === 'weir/worktree/reconcile-binding')
-  const forLane = (laneId) => reconciles.find((record) => record?.data?.lane === laneId)
+  const forLane = (laneId) => reconciles.find((record) => record?.data?.lane === laneId && record?.data?.ownerSession === (laneId === LANE_B ? DEAD_OWNER : view.sessionId))
+  const phase2 = view.records2.find(record => record.kind === 'zombie-phase2-snapshot')
+  const cold = view.records2.find(record => record.kind === 'zombie-cold-abandon')
 
   view.check('phase 1 bound and settled a real supervised lane worker', typeof view.sessionId === 'string' && typeof childId === 'string', `session=${view.sessionId} child=${childId}`)
-  view.check('phase 2 hydrate re-emission freed the zombie lane with no abandon call', laneC?.boundChild === null && laneC?.state === 'no-commits', JSON.stringify(laneC))
+  view.check('phase 2 cold recovery kept the lane working and bound', phase2?.lane?.boundChild === childId && typeof childId === 'string' && phase2?.lane?.ownerSession === view.sessionId && phase2?.lane?.state === 'working' && phase2?.lane?.history?.every(entry => entry.event === 'bind'), JSON.stringify(phase2))
+  view.check('phase 2 queried status once without waiting for lane settlement', view.requests2.filter(record => record.emittedNames?.includes('supervised_status')).length === 1 && !view.requests2.some(record => record.emittedNames?.some(name => !['supervised_status', 'text'].includes(name))) && phase2?.stdout?.includes('phase2 cold lane remains bound') && phase2?.code === 0, JSON.stringify(phase2))
   view.check(
     'phase 2 audit carries the re-emitted settle fact (recovered)',
-    audit.some((record) => record?.type === 'weir/supervision/settle' && record?.data?.recovered === true && record?.data?.childId === childId),
+    view.records2.some((record) => record?.type === 'weir/supervision/settle' && record?.session === view.sessionId && record?.data?.recovered === true && record?.data?.childId === childId),
     JSON.stringify(audit.filter((record) => record?.type === 'weir/supervision/settle').map((record) => record?.data)),
   )
+  view.check('phase 3 explicitly abandoned the cold lane after owner exit', cold?.code === 0 && cold?.stdout?.includes('COLD_ZOMBIE_RECONCILED') && cold?.requests?.some(record => record.emittedNames?.includes('worktree_abandon')) && laneC?.state === 'abandoned' && laneC?.boundChild === null, JSON.stringify({ cold, laneC }))
+  view.check('lane C reconciliation used terminal audit evidence and dead sides, not force', forLane(LANE_C)?.data?.forced === false && forLane(LANE_C)?.data?.child === childId && forLane(LANE_C)?.data?.evidence?.source === 'audit' && forLane(LANE_C)?.data?.childAlive === false && forLane(LANE_C)?.data?.ownerAlive === false, JSON.stringify(forLane(LANE_C)))
   view.check('phase 3 abandon released the evidence zombie', laneA?.state === 'abandoned' && laneA?.boundChild === null, JSON.stringify(laneA))
   view.check(
     'lane A reconciliation was audited with its terminal evidence (not forced)',
@@ -199,7 +217,7 @@ function assert(view) {
     forLane(LANE_B)?.data?.forced === true && forLane(LANE_B)?.data?.child === FAKE_CHILD,
     JSON.stringify(forLane(LANE_B)),
   )
-  view.check('phase 3 finished after both abandons', view.stdout.includes('ZOMBIE_PROBE_DONE'), view.stdout.slice(-400))
+  view.check('phase 3 finished after all three abandons', cold?.stdout?.includes('COLD_ZOMBIE_RECONCILED') && view.stdout.includes('ZOMBIE_PROBE_DONE'), view.stdout.slice(-400))
   view.check('headless run exited cleanly', view.code === 0 || view.code === null, `code=${view.code} stderr=${view.stderr.slice(-400)}`)
 }
 

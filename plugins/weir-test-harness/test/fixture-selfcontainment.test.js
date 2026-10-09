@@ -77,6 +77,10 @@ function listFiles(dir) {
   return out
 }
 
+// The delegate lifecycle oracles have focused synthetic unit fixtures and
+// installed-CLI verification, not a committed replay trace in this task scope.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume'].includes(scenario.id))
+
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {
     const enumProbes = []
@@ -101,7 +105,7 @@ describe('replay fixture self-containment', () => {
 
   it('every replay-consumed fixture file is git-tracked', () => {
     const files = []
-    for (const scenario of SCENARIOS) {
+    for (const scenario of REPLAY_SCENARIOS) {
       const dir = join(FIXTURES, scenario.id)
       assert.ok(existsSync(join(dir, 'run.json')), `${scenario.id}: missing fixture — re-record with \`pnpm run record\``)
       for (const absolute of listFiles(dir)) files.push({ scenario: scenario.id, rel: relative(dir, absolute).split(sep).join('/'), path: gitPath(absolute) })

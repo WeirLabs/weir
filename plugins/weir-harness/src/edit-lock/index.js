@@ -33,6 +33,7 @@ import { editLockLimits } from '../settings/sections.js'
 import { buildColdView, buildView, unavailableView } from './view.js'
 import { parseSnapshot } from './snapshot.js'
 import { readSnapshotBytes, errorMessage } from './read-authority.js'
+import { registerDelegateEditLifecycle } from '../shared/delegate-edit-lifecycle.js'
 
 const name = 'weir-edit-lock'
 const inject = ['tools', 'fs', 'agents']
@@ -513,7 +514,7 @@ return (ctx, config = {}) => {
   const route = method => async (/** @type {any} */ exec, /** @type {any} */ request) => /** @type {any} */ ((await domainFor(exec.agent)).service)[method](exec, request)
   const recovery = createRecoveryDriver({
     domainFor: agent => settled.get(agent),
-    followup: (agent, text) => /** @type {any} */ (agent).followup(userTextMessage(text, 'weir-edit-lock-recovery')),
+    followup: (agent, text) => { if (!disposedAgents.has(agent)) /** @type {any} */ (agent).followup(userTextMessage(text, 'weir-edit-lock-recovery')) },
     notify: deliverLocal,
     warn: message => ctx.logger?.warn?.(message),
   })
@@ -545,7 +546,7 @@ return (ctx, config = {}) => {
    * `completed` enters here; the error and stop paths keep their own handling. */
   const settle = createSettlementDriver({
     domainFor: agent => settled.get(agent),
-    followup: (agent, text) => /** @type {any} */ (agent).followup(userTextMessage(text, 'weir-edit-lock-settle')),
+    followup: (agent, text) => { if (!disposedAgents.has(agent)) /** @type {any} */ (agent).followup(userTextMessage(text, 'weir-edit-lock-settle')) },
     notify: deliverLocal,
     limits,
     warn: message => ctx.logger?.warn?.(message),
@@ -652,7 +653,23 @@ return (ctx, config = {}) => {
     if (failure) return { kind: 'deny', reason: `${exec.name} refused: this session has no Edit Lock domain under the current preset generation (setup failed: ${failure}); an automatic re-bind was attempted and did not recover it. Recovery: restart DeepSeek Harness or start a new conversation.` }
     return { kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` }
   })
-
+  const delegateResumes = new Map()
+  const boundAgents = new Map()
+  const turnClassifications = new WeakMap()
+  // Keep the latest incarnation joinable even after synchronous binding cleanup.
+  // Exact-handle waiters retain their own record when a session activates again.
+  const dispositions = new Map()
+  const agentDispositions = new WeakMap()
+  function dispositionFor(agent) {
+    let record = agentDispositions.get(agent)
+    if (!record) {
+      record = Promise.withResolvers()
+      record.promise.catch(() => {}) // emit initiators have no awaiting caller
+      agentDispositions.set(agent, record)
+      dispositions.set(agent.id, record)
+    }
+    return record
+  }
   /** Per-agent Edit Lock setup, shared by the creation listener, the
    * preset-switch re-bind, the late-mount catch-up and the guard/acquire lazy
    * re-bind, so the paths can never diverge. Idempotent per mount generation:
@@ -695,6 +712,9 @@ return (ctx, config = {}) => {
       const domain = await domainOf(agent)
       await domain.start(agent)
       settled.set(agent, domain)
+      boundAgents.set(agent.id, agent)
+      dispositionFor(agent)
+      await delegateResumes.get(agent.id)?.resume(agent, domain)
     } catch (error) {
       // Kept so the panel can say WHY editing is unavailable instead of
       // showing "starting" forever; the notice aligns this catch with the
@@ -742,6 +762,58 @@ return (ctx, config = {}) => {
       try { return presets.serviceFor(agent, 'weirEditLock') === service } catch { return false }
     }
     : () => true
+  const offDelegateLifecycle = registerDelegateEditLifecycle({
+    owns: ownAgent,
+    async resume(childId) {
+      const requestId = `supervised-resume:${crypto.randomUUID()}`
+      if (delegateResumes.has(childId)) throw new Error('supervised resume already in progress')
+      const resumed = new Map()
+      const pending = new Set()
+      let failure
+      const intent = {
+        resume(agent, domain) {
+          const task = (async () => {
+            if (!domain.blocks(agent)) return
+            await domain.resume(agent, requestId)
+            resumed.set(agent, domain)
+          })()
+          pending.add(task)
+          return task.catch(error => { failure = error; throw error })
+        },
+      }
+      delegateResumes.set(childId, intent)
+      const finish = async delivered => {
+        delegateResumes.delete(childId)
+        await Promise.allSettled(pending)
+        // Failed delivery must not leave authority armed, including a child
+        // activated inside sendMessage. Stop uses the existing epoch fence.
+        if (!delivered || failure) {
+          await Promise.all([...resumed].map(([agent, domain]) => domain.stop(agent)))
+        }
+        if (failure) throw failure
+      }
+      try {
+        const agent = boundAgents.get(childId)
+        const domain = agent && settled.get(agent)
+        if (domain) await intent.resume(agent, domain)
+      } catch (error) { await finish(false); throw error }
+      return finish
+    },
+    async settle(childId, agent) {
+      const record = agent ? agentDispositions.get(agent) : dispositions.get(childId)
+      await record?.promise
+    },
+  })
+  const endedRuns = new Set()
+  ctx.on('subagent/end', ({ id, runId, stopReason }) => {
+    // id is the exact child SessionId, not runId. Only published terminal
+    // outcomes enter here; ordinary continuable turn ends do not dispose.
+    if (!['completed', 'aborted', 'error', 'max-tokens', 'refusal'].includes(stopReason)) return
+    if (runId && endedRuns.has(runId)) return
+    if (runId) endedRuns.add(runId)
+    const agent = boundAgents.get(id)
+    if (agent) return disposeAgent(agent).catch(error => ctx.logger?.warn?.(`edit lock delegate settlement failed: ${error?.message ?? error}`))
+  })
   try {
     for (const agent of ctx.get?.('agents')?.roots?.() ?? []) {
       if ((agent?.session?.header?.delegationDepth ?? 0) !== 0) continue
@@ -865,9 +937,10 @@ return (ctx, config = {}) => {
     const agent = ctx.get?.('agents')?.get?.(session?.id)
     const domain = agent && settled.get(agent)
     if (!domain) return
-    void recovery.onTurnEnd(agent, event.data?.reason).catch((/** @type {any} */ error) => {
+    const classification = recovery.onTurnEnd(agent, event.data?.reason).catch((/** @type {any} */ error) => {
       ctx.logger?.warn?.(`edit lock recovery classification failed: ${error?.message ?? error}`)
     })
+    turnClassifications.set(agent, classification)
     const reason = event.data?.reason
     if (reason?.kind !== 'completed') return
     // A reservation that ran out during the turn is released here (the turn is
@@ -886,8 +959,10 @@ return (ctx, config = {}) => {
 
   // A reply tool may only disappear at a turn boundary, never mid-turn.
   ctx.on('agent/turn-stopping', (/** @type {any} */ { agent }) => { retireReplyTool(agent) })
-
-  ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
+  const disposalTasks = new WeakMap()
+  function disposeAgent(agent) {
+    if (disposedAgents.has(agent)) return disposalTasks.get(agent) ?? Promise.resolve()
+    if (boundAgents.get(agent.id) === agent) boundAgents.delete(agent.id)
     // Undispatched sweep work armed by this agent cancels here (an in-flight
     // authority transaction is never cancelled or reinterpreted).
     disposedAgents.add(agent)
@@ -902,8 +977,15 @@ return (ctx, config = {}) => {
     settle.settled(agent)
     const domain = settled.get(agent)
     settled.delete(agent)
-    if (domain) void Promise.resolve(domain.dispose(agent)).catch(() => {})
-  })
+    // The emit hook must cancel timers/scopes/sweeps synchronously. Only the
+    // final authority disposal waits for durable abnormal classification.
+    const record = dispositionFor(agent)
+    const task = Promise.resolve(turnClassifications.get(agent)).then(() => domain?.dispose(agent))
+    task.then(record.resolve, record.reject)
+    disposalTasks.set(agent, record.promise)
+    return record.promise
+  }
+  ctx.on('agent/disposed', ({ agent }) => disposeAgent(agent).catch(() => {}))
 
   /** Cold-read fallback for the status view (design D1/D2): a session with no
    * live agent is observed cold through sessionQuery (never activated), its
@@ -1085,6 +1167,7 @@ return (ctx, config = {}) => {
   return async () => {
     if (closed) return
     closed = true
+    offDelegateLifecycle()
     evidence?.disposing()
     try {
       // Cancel undispatched sweeps first; an already-running sweep's authority

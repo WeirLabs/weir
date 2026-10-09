@@ -463,8 +463,8 @@ describe('rebuild re-emission (D3): pure layer', () => {
   })
 })
 
-describe('restart rebuild (D3): re-emitted settlement frees the zombie lane', () => {
-  it('a lane bound to a recovered-terminal child clears exactly as a live settle', async () => {
+describe('restart rebuild (D3): cold terminal facts do not prove runtime quiescence', () => {
+  it('a lane bound to a recovered-terminal child remains bound without host end', async () => {
     const h = harness()
     try {
       // Zombie lane: bound to child c1 whose settle fact was never delivered.
@@ -500,17 +500,14 @@ describe('restart rebuild (D3): re-emitted settlement frees the zombie lane', ()
         },
       })
       await mount.coordinatorFor(parent)
-      // The re-emitted settle fact rides a microtask before reaching the lane,
-      // and the settle-triggered host check is async: wait for the full
-      // post-settle state, not just the cleared binding.
-      const deadline = Date.now() + 10_000
-      let recovered = await laneOf(h, zombieId)
-      while ((recovered.boundChild !== null || recovered.state === 'working') && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 20))
-        recovered = await laneOf(h, zombieId)
-      }
-      assert.equal(recovered.boundChild, null)
-      assert.equal(recovered.state, control.state)
+      // A recovered STATUS is bookkeeping only. With no host-observed end or
+      // edit-disposition ACK, the lane remains bound for explicit reconciliation.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      const recovered = await laneOf(h, zombieId)
+      assert.equal(recovered.boundChild, 'c1')
+      assert.equal(recovered.state, 'working')
+      assert.equal(control.boundChild, null)
+      assert.equal(control.state, 'no-commits')
       // The recovery promotion closed its audit trail: a settle fact exists.
       assert.ok(audits.some((entry) => entry.type === 'supervision/settle' && entry.payload?.childId === 'c1'))
       mount.dispose()
@@ -543,7 +540,8 @@ describe('resumable lane workers (resumable-lane-workers D1/D2): terminal-only l
       },
     })
     const feed = (session, event) => handlers.get('session/event')(session, event)
-    return { mount, parent, audits, feed }
+    const endChild = childId => handlers.get('subagent/end')({ id: childId, runId: `run-${childId}` })
+    return { mount, parent, audits, feed, endChild }
   }
 
   async function statusTurn(feed, childId, status) {
@@ -578,7 +576,7 @@ describe('resumable lane workers (resumable-lane-workers D1/D2): terminal-only l
   it('blocked keeps the lane working and bound (no host check), rebind stays LANE_BUSY; resume -> completed frees and checks it', async () => {
     const h = harness()
     try {
-      const { laneId, coordinator, mount, feed, audits } = await runningMember(h)
+      const { laneId, coordinator, mount, feed, endChild, audits } = await runningMember(h)
 
       await statusTurn(feed, 'child-1', 'blocked')
       // The blocked settle fact is audited, but the lane is untouched: still
@@ -599,6 +597,10 @@ describe('resumable lane workers (resumable-lane-workers D1/D2): terminal-only l
       const resumed = await coordinator.resume('child-1', 'blocker cleared')
       assert.equal(resumed.status, 'running')
       await statusTurn(feed, 'child-1', 'completed')
+      // STATUS/turn-end is not host quiescence: only the real end event opens
+      // the edit-disposition/lane-handoff gate.
+      assert.equal((await laneOf(h, laneId)).boundChild, 'child-1')
+      endChild('child-1')
       lane = await awaitSettled(h, laneId)
       assert.equal(lane.boundChild, null)
       assert.equal(lane.state, 'no-commits')
@@ -608,14 +610,16 @@ describe('resumable lane workers (resumable-lane-workers D1/D2): terminal-only l
     }
   })
 
-  it('terminating a blocked member frees the lane and runs the host check (regression)', async () => {
+  it('terminating a blocked member frees the lane after the host end event', async () => {
     const h = harness()
     try {
-      const { laneId, coordinator, mount, feed } = await runningMember(h)
+      const { laneId, coordinator, mount, feed, endChild } = await runningMember(h)
       await statusTurn(feed, 'child-1', 'blocked')
       assert.equal((await laneOf(h, laneId)).boundChild, 'child-1')
 
       coordinator.terminate('child-1', 'redirected elsewhere')
+      assert.equal((await laneOf(h, laneId)).boundChild, 'child-1')
+      endChild('child-1')
       const lane = await awaitSettled(h, laneId)
       assert.equal(lane.boundChild, null)
       assert.equal(lane.state, 'no-commits')

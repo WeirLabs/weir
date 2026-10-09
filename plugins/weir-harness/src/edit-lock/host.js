@@ -130,10 +130,10 @@ export function createEditLockHost(runtime, isRegisteredAgent) {
       live()
       const execution = executions.get(exec.agent)
       if (!execution || !isRegisteredAgent(exec.agent)) throw new Error('agent has no authenticated edit execution')
-      const resourceId = runtime.requests.resource(request.filePath, request.cwd)
+      const { resourceId, observation } = runtime.requests.releaseResource(request.filePath, request.cwd)
       const lock = runtime.control.status().locks.find(/** @param {any} item */ item => item.resourceId === resourceId)
       if (!lock || lock.owner !== execution.sessionId) throw new Error('lock not owned by this session')
-      await runtime.control.release({ ...execution, resourceId, generation: lock.generation })
+      await runtime.requests.release({ ...execution, resourceId, generation: lock.generation }, observation)
       return { resourceId, released: true }
     },
     /** Effective lock observation for one admitted agent; grants nothing.
