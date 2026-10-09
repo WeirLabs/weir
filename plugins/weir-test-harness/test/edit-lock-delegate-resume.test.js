@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import scenario, { target, freshTarget } from '../src/scenarios/editlock-delegate-resume.js'
+import scenario, { firstTarget, freshTarget } from '../src/scenarios/editlock-delegate-resume.js'
 import { apply, inject } from '../src/edit-lock-delegate-resume-probe.js'
 
-const lock = status => ({ resourceId: target, owner: 'child', status, generation: 1 })
+// The interrupted first managed write is scenario-private: the probe, the assert
+// and the child's creation all key on it, never on a fixture another scenario rewrote.
+const lock = (resource, status) => ({ resourceId: resource, owner: 'child', status, generation: 1 })
 const session = (executionEpoch, interrupted) => ({ sessionId: 'child', executionEpoch, interrupted })
 const tool = (name, fields = {}) => ({ kind: 'resume-tool-result', session: 'parent', name, isError: false, ...fields })
 const request = fields => ({ purpose: 'main', tools: ['read', 'write'], authorityLocks: [], authoritySessions: [], ...fields })
@@ -11,18 +13,18 @@ function trace() {
   return [
     { kind: 'agent-created', session: 'child', origin: 'subagent' },
     tool('delegate'),
-    { kind: 'resume-interrupt-before', session: 'child', lock: lock('active'), authoritySession: session(1, false), continuationBlocked: false },
+    { kind: 'resume-interrupt-before', session: 'child', lock: lock(firstTarget, 'active'), authoritySession: session(1, false), continuationBlocked: false },
     { kind: 'resume-interrupt-issued', session: 'child' },
     { kind: 'resume-child-turn-end', reason: { kind: 'aborted', reason: { kind: 'user' } } },
     { type: 'weir/supervision/settle', data: { childId: 'child', status: 'blocked' } },
     { source: 'subagent-settled', text: 'Background subagent child was stopped before it finished.' },
-    request({ lockRole: 'parent', authorityLocks: [lock('user-interrupted')], authoritySessions: [session(2, true)] }),
+    request({ lockRole: 'parent', authorityLocks: [lock(firstTarget, 'user-interrupted')], authoritySessions: [session(2, true)] }),
     tool('supervised_status', { text: 'Supervised registry: r2-child — blocked —' }),
     { type: 'weir/supervision/resume', data: { childId: 'child' } },
     // Same durable child, replacement Agent incarnation is legitimate.
     { kind: 'agent-created', session: 'child', origin: 'subagent' },
     tool('resume_agent'),
-    request({ lockRole: 'child', resumed: true, authorityLocks: [lock('pending-confirmation')], authoritySessions: [session(3, false)] }),
+    request({ lockRole: 'child', resumed: true, authorityLocks: [lock(firstTarget, 'pending-confirmation')], authoritySessions: [session(3, false)] }),
     tool('write', { session: 'child', args: { file_path: freshTarget }, text: `Created file: ${freshTarget}` }),
     request({ lockRole: 'child', freshContent: 'same child resumed managed write\n' }),
     { type: 'weir/supervision/settle', data: { childId: 'child', status: 'completed', report: 'R2_RESUMED_WRITE_DONE' } },
@@ -48,7 +50,10 @@ describe('supervised Edit Lock resume reproduction', () => {
       rows => { rows[13].session = 'other-child' },
       rows => { rows[13].text = `Updated file: ${freshTarget}` },
       rows => { rows[12].authoritySessions = [session(2, true)] },
-      rows => { rows[12].authorityLocks = [lock('active')] },
+      rows => { rows[12].authorityLocks = [lock(firstTarget, 'active')] },
+      // The file interrupted in epoch 1 must be the very resource that stays
+      // pending confirmation after the explicit resume.
+      rows => { rows[12].authorityLocks = [lock(freshTarget, 'pending-confirmation')] },
       rows => { rows[11].name = 'send_message' },
       rows => { rows.push(rows.splice(8, 1)[0]) },
       rows => { rows.push({ kind: 'agent-created', session: 'other-child', origin: 'subagent' }) },

@@ -4,7 +4,7 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { IT_ROOT } from './mock-kit.js'
 import { textOf } from './message-text.js'
-import { childPrompt, firstContent, target } from './scenarios/editlock-delegate-resume.js'
+import { childPrompt, firstContent, firstTarget } from './scenarios/editlock-delegate-resume.js'
 
 export const name = 'weir-it-edit-lock-delegate-resume-probe'
 export const inject = ['subagents', 'weirEditLock']
@@ -23,11 +23,11 @@ export function apply(ctx, config = {}) {
     // A cold resume replaces the Agent handle, not the durable child session.
     if (!exec.agent || (exec.agent.id !== child?.id && exec.agent !== parent)) return
     tap({ kind: 'resume-tool-result', session: exec.agent.id, name: exec.name, args: exec.arguments, isError: result.isError, text: textOf(result) })
-    if (fired || exec.agent !== child || exec.name !== 'write' || result.isError || exec.arguments?.file_path !== target) return
+    if (fired || exec.agent !== child || exec.name !== 'write' || result.isError || exec.arguments?.file_path !== firstTarget) return
     const before = snapshot()
-    const lock = before.locks.find(row => row.resourceId === target)
+    const lock = before.locks.find(row => row.resourceId === firstTarget)
     const session = before.sessions.find(row => row.sessionId === child.id)
-    if (lock?.owner !== child.id || lock.status !== 'active' || session?.interrupted !== false || readFileSync(target, 'utf8') !== firstContent) return
+    if (lock?.owner !== child.id || lock.status !== 'active' || session?.interrupted !== false || readFileSync(firstTarget, 'utf8') !== firstContent) return
     fired = true
     tap({ kind: 'resume-interrupt-before', session: child.id, parent: parent.id, lock, authoritySession: session, continuationBlocked: ctx.weirEditLock.blocksContinuation(child) })
     // Deliberately synchronous: emit ignores promises, so no awaited observation
