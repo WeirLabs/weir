@@ -16,7 +16,7 @@
 // kernel + board resolution + TTL so the host-layer typert remote row can
 // serve the future side panel against the same arbitration kernel.
 
-import { runtimeBlackboard, resolveDurableRoot } from './durable.js'
+import { runtimeBlackboard, createRuntimeMount } from './durable.js'
 import { ENTRY_TYPES, PROMOTION_DESTINATIONS } from './kernel.js'
 import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_SECTION_NAME, BLACKBOARD_SECTION_ORDER_OFFSET, BLACKBOARD_VARIABLE_NAME, BLACKBOARD_WORKER_SECTION_NAME, BLACKBOARD_WORKER_SECTION_ORDER, BLACKBOARD_WORKER_VARIABLE_NAME, BLACKBOARD_WRITE_CONTRACT } from './contracts.js'
 import { createReleaseNotifier } from './notify.js'
@@ -219,6 +219,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
   return (ctx, _config = {}) => {
     const runtime = kernel ? null : runtimeBlackboard(ctx)
     const kernelInstance = kernel ? kernel() : runtime.kernel
+    const lifecycle = runtime ? createRuntimeMount(ctx, runtime) : null
 
     // Release delivery (design D3): every release with waiters becomes (a) a
     // cordis event in the audit-channel shape (no disk mirror, no session
@@ -321,7 +322,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
      * @returns {string | undefined}
      */
     const boardOf = agent => {
-      if (runtime) return resolveDurableRoot(ctx, agent, runtime)
+      if (lifecycle) return lifecycle.run(agent, root => root)
       const session = agent?.session
       const header = session?.header
       const ownId = typeof agent?.id === 'string' && agent.id.length > 0 ? agent.id : undefined
@@ -346,6 +347,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
     }
 
     const call = (exec, action) => {
+      if (lifecycle) return lifecycle.run(exec?.agent, root => { exec?.signal?.throwIfAborted?.(); return action(root) })
       const id = boardOf(exec?.agent)
       const run = root => { exec?.signal?.throwIfAborted?.(); return action(root) }
       return id instanceof Promise ? id.then(run) : run(id)
@@ -380,7 +382,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
       resolveMainAgent: agent => agent,
       logger: ctx.logger,
     })
-    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, ttlMs, requestPromotion: async (/** @type {any} */ agent) => {
+    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, run: lifecycle?.run, ttlMs, requestPromotion: async (/** @type {any} */ agent) => {
       const root = await boardOf(agent)
       const main = root === agent.id ? agent : ctx.get?.('agents')?.get?.(root)
       if (!main) throw new Error('blackboard: root Agent is not live for promotion')
@@ -402,20 +404,13 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
     const offDisposed = ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
       const id = agent?.id
       if (typeof id !== 'string' || id.length === 0) return
-      const member = runtime?.members?.get(id)
-      if (member && member.agent !== agent) return // stale incarnation disposal
-      runtime?.members?.delete(id)
+      if (lifecycle) return lifecycle.disposed(agent).catch(error => ctx.logger?.warn?.(String(error)))
       void Promise.resolve(service.releaseHolder(id)).catch(error => ctx.logger?.warn?.(String(error)))
       // Dispose releases authority, never durable entries.
       // A child is evicted between turns, not terminated: keep its subscription
       // for parent-forwarded delivery. A root close or explicit termination
       // releases that holder's subscriptions, never another child's tokens.
       if ((agent?.session?.header?.delegationDepth ?? 0) === 0) void Promise.resolve(kernelInstance.unsubscribeHolder(id)).catch(error => ctx.logger?.warn?.(String(error)))
-      // Release our own writer only after the final attached board participant
-      // leaves; another host may then legitimately adopt the durable root.
-      if (member && ![...runtime.members.values()].some(other => other.root === member.root)) {
-        void kernelInstance.clearRuntime(member.root, { releaseWriter: true }).catch(error => ctx.logger?.warn?.(String(error)))
-      }
     })
     const ensureRoot = async ({ agent }) => {
       if (!runtime || (agent?.session?.header?.delegationDepth ?? 0) !== 0) return
@@ -423,7 +418,12 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
     }
     const offCreated = ctx.on('agent/created', ensureRoot)
     if (runtime) for (const agent of ctx.get?.('agents')?.list?.() ?? []) void ensureRoot({ agent })
-    return () => { offCreated?.(); offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.() }
+    return () => {
+      // Fence pending calls before removing the only disposal observer.
+      const closed = lifecycle?.close()
+      offCreated?.(); offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.()
+      return closed?.catch(error => ctx.logger?.warn?.(String(error)))
+    }
   }
 }
 

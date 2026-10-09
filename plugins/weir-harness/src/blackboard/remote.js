@@ -161,6 +161,14 @@ export function createBlackboardRemoteService(dependencies = {}) {
     if (!faces) throw new BlackboardRemoteError('bridge-absent', 'blackboard remote is not offered (non-Weir preset or unmounted bridge)')
     const sessionId = typeof agent?.id === 'string' && agent.id.length > 0 ? agent.id : undefined
     if (sessionId === undefined) throw new BlackboardRemoteError('unknown-session', 'blackboard remote: the acting session identity is unavailable')
+    if (faces.run) {
+      // Keep admission and the eventual kernel operation in one lifecycle gate;
+      // resolving a root alone is not a transferable authority across awaits.
+      const kernel = Object.fromEntries(['list', 'read', 'apply', 'write', 'deleteKey', 'markPromoted'].map(method => [method,
+        (_boardId, ...args) => faces.run(agent, root => faces.kernel[method](root, ...args)),
+      ]))
+      return { sessionId, boardId: undefined, faces: { ...faces, kernel } }
+    }
     const boardId = await faces.boardOf(agent)
     return { sessionId, boardId, faces }
   }
