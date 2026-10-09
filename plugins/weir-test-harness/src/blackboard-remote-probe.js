@@ -36,7 +36,7 @@ function apply(ctx, config = {}) {
           // Slice 3: the panel button's request over the SAME pinned remote
           // service — the delivery of the evaluation brief into the main
           // agent happens timer-deferred, so the agent's next request sees it.
-          const result = service.requestPromotion(agent, {})
+          const result = (await service.requestPromotion(agent, {}))
           report.requested = result.ok === true
           report.promotionError = result.ok === false ? result.error : null
           report.completed = true
@@ -46,43 +46,43 @@ function apply(ctx, config = {}) {
           // Post-marking read-only verification: the promoted marker rides
           // list/read rows, every authority-bearing mutation refuses, and a
           // second mark reports the existing marker.
-          const marked = service.list(agent, {}).entries.find((entry) => entry.key === 'promote.key')
+          const marked = (await service.list(agent, {})).entries.find((entry) => entry.key === 'promote.key')
           report.promotedMarker = marked?.promoted?.destination ?? null
-          const promotedWrite = service.write(agent, { key: 'promote.key', entryType: 'map', summary: 'x', content: 'no token anyway' })
+          const promotedWrite = (await service.write(agent, { key: 'promote.key', entryType: 'map', summary: 'x', content: 'no token anyway' }))
           report.writeRefused = promotedWrite?.ok === false && /promoted/.test(promotedWrite.error)
-          const promotedRemove = service.remove(agent, { key: 'promote.key' })
+          const promotedRemove = (await service.remove(agent, { key: 'promote.key' }))
           report.removeRefused = promotedRemove?.ok === false && /promoted/.test(promotedRemove.error)
-          const promotedApply = service.apply(agent, { key: 'promote.key' })
+          const promotedApply = (await service.apply(agent, { key: 'promote.key' }))
           report.applyRefused = promotedApply?.acquired === false && promotedApply?.promoted === true
-          const remarked = service.markPromoted(agent, { key: 'promote.key', destination: 'runtime-map' })
+          const remarked = (await service.markPromoted(agent, { key: 'promote.key', destination: 'runtime-map' }))
           report.alreadyMarked = remarked?.ok === true && remarked?.alreadyPromoted === true
-          report.listCount = service.list(agent, {}).entries.length
+          report.listCount = (await service.list(agent, {})).entries.length
           report.completed = true
           return report
         }
         // The board at probe time holds writer.key and contend.key (scenario state).
-        const listed = service.list(agent, {})
-        const read = service.read(agent, { keys: ['writer.key'] })
+        const listed = (await service.list(agent, {}))
+        const read = (await service.read(agent, { keys: ['writer.key'] }))
         report.listEntries = listed.entries.length
         report.rowShape = listed.entries[0] ? Object.keys(listed.entries[0]).sort() : []
         report.readContent = read.entries[0]?.content ?? null
         report.updatedAtNumber = typeof read.entries[0]?.updatedAt === 'number'
         // Full panel write path: apply → write → (one-shot consumed) → apply → remove.
-        const applied = service.apply(agent, { key: 'panel.key' })
+        const applied = (await service.apply(agent, { key: 'panel.key' }))
         report.acquired = applied.acquired
         report.tokenString = typeof applied.token === 'string'
         report.expiresAtNumber = typeof applied.expiresAt === 'number'
-        const written = service.write(agent, { key: 'panel.key', entryType: 'map', summary: 'panel probe (one probe; re-verify: blackboard_list panel.key)', content: 'panel payload' })
+        const written = (await service.write(agent, { key: 'panel.key', entryType: 'map', summary: 'panel probe (one probe; re-verify: blackboard_list panel.key)', content: 'panel payload' }))
         report.writeRevision = written?.revision ?? null
         // Arbitration parity: the write consumed the one-shot token, so the
         // next write on the EXISTING entry must fail without a fresh apply.
-        const blocked = service.write(agent, { key: 'panel.key', entryType: 'map', summary: 'x', content: 'no token' })
+        const blocked = (await service.write(agent, { key: 'panel.key', entryType: 'map', summary: 'x', content: 'no token' }))
         report.blockedWithoutAuthority = blocked?.ok === false
-        const reapplied = service.apply(agent, { key: 'panel.key' })
-        const removed = service.remove(agent, { key: 'panel.key' })
+        const reapplied = (await service.apply(agent, { key: 'panel.key' }))
+        const removed = (await service.remove(agent, { key: 'panel.key' }))
         report.removeOk = removed?.ok === true
         report.reapplyOk = reapplied?.acquired === true
-        report.entriesAfter = service.list(agent, {}).entries.length
+        report.entriesAfter = (await service.list(agent, {})).entries.length
         report.completed = true
         return report
       } catch (cause) {

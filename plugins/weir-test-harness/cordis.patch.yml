@@ -22,6 +22,10 @@
     mode: workspace-write
     workspaceRoot: !!js (process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/outside'
 - insert:
+    # Desktop/web archive provider, only for the durable blackboard probe.
+    - id: weir-it-blackboard-workspace
+      name: '@deepseek-ai/dsh-workspace'
+      disabled: !!js "!process.env.WEIR_IT_BB_PHASE"
     - id: weir-it-mock-llm
       name: 'weir-test-harness/mock-llm'
     - id: weir-skill-selection

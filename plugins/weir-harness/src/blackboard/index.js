@@ -3,10 +3,8 @@
 // agent contracts (orchestrator retrieval section and the child write
 // contract, both registered here), subscription delivery, the remote-service
 // bridge feed, and the lifecycle hooks — an agent's
-// termination releases its tokens, and the root agent's disposal drops the
-// whole conversation board (volatile, session-capped). Plain ESM, ctx-only;
-// blackboard state never touches the session log (cold-read red line S13)
-// and never touches disk (design D1).
+// termination releases volatile authority; durable entries live beside the
+// root Session log. Never append custom Session events (S13).
 //
 // The kernel instance is shared module-level (the capability-bridge pattern):
 // a preset switch remounts the row but must not lose a conversation's board.
@@ -18,7 +16,8 @@
 // kernel + board resolution + TTL so the host-layer typert remote row can
 // serve the future side panel against the same arbitration kernel.
 
-import { createBlackboardKernel, ENTRY_TYPES, PROMOTION_DESTINATIONS } from './kernel.js'
+import { runtimeBlackboard, resolveDurableRoot } from './durable.js'
+import { ENTRY_TYPES, PROMOTION_DESTINATIONS } from './kernel.js'
 import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_SECTION_NAME, BLACKBOARD_SECTION_ORDER_OFFSET, BLACKBOARD_VARIABLE_NAME, BLACKBOARD_WORKER_SECTION_NAME, BLACKBOARD_WORKER_SECTION_ORDER, BLACKBOARD_WORKER_VARIABLE_NAME, BLACKBOARD_WRITE_CONTRACT } from './contracts.js'
 import { createReleaseNotifier } from './notify.js'
 import { createPromotionRequester } from './promote.js'
@@ -49,13 +48,6 @@ export function resolveWriteTokenTtlMinutes(section) {
   if (value === undefined) return DEFAULT_WRITE_TOKEN_TTL_MINUTES
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
   throw new Error('weir-settings: blackboardWriteTokenTtlMinutes must be a positive number')
-}
-
-/** One kernel per module instance, shared by every mount (see header). */
-let sharedKernelInstance = null
-function sharedKernel() {
-  if (!sharedKernelInstance) sharedKernelInstance = createBlackboardKernel()
-  return sharedKernelInstance
 }
 
 /**
@@ -99,7 +91,7 @@ function registerTools(ctx, service) {
       },
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
-        const rows = service.list(exec, { query: args?.query, entryType: args?.entryType })
+        const rows = await service.list(exec, { query: args?.query, entryType: args?.entryType })
         const lines = rows.map((/** @type {any} */ row) => `- ${row.key} (${row.entryType}) reads=${row.readCount} subs=${row.subscribeCount} | ${row.summary}`)
         return { entries: rows, message: lines.length ? lines.join('\n') : 'The board is empty.' }
       },
@@ -116,7 +108,7 @@ function registerTools(ctx, service) {
       },
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
-        const result = service.read(exec, args?.keys)
+        const result = await service.read(exec, args?.keys)
         const blocks = result.found.map((/** @type {any} */ entry) => `## ${entry.key} [${entry.entryType}]\nSummary: ${entry.summary}\n\nContent:\n${entry.content}`)
         if (result.missing.length > 0) blocks.push(`Missing keys (not on the board): ${result.missing.join(', ')}`)
         return { ...result, message: blocks.length ? blocks.join('\n\n') : 'The board is empty.' }
@@ -134,7 +126,8 @@ function registerTools(ctx, service) {
       },
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
-        const result = service.apply(exec, args?.key)
+        const result = await service.apply(exec, args?.key)
+        if (result.status === 'promoted') throw new Error(`Blackboard key "${result.key}" is promoted (${result.destination}) and read-only.`)
         if (result.status === 'contended') {
           throw new Error(`Write authority for "${result.key}" is held by another agent until ${new Date(result.expiresAt).toISOString()}. You are subscribed to this key and will be notified when it is released, deleted or expires.`)
         }
@@ -160,7 +153,8 @@ function registerTools(ctx, service) {
       },
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
-        const result = service.write(exec, args ?? {})
+        const result = await service.write(exec, args ?? {})
+        if (result.status === 'promoted') throw new Error(`Blackboard key "${result.key}" is promoted (${result.destination}) and read-only.`)
         if (result.status === 'contended') {
           throw new Error(`Creating "${result.key}" failed: the key's write authority is held by another agent until ${new Date(result.expiresAt).toISOString()}. You are subscribed to this key and will be notified when it is released.`)
         }
@@ -183,7 +177,8 @@ function registerTools(ctx, service) {
       },
       output: text('message'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
-        const result = service.deleteKey(exec, args?.key)
+        const result = await service.deleteKey(exec, args?.key)
+        if (result.status === 'promoted') throw new Error(`Blackboard key "${result.key}" is promoted (${result.destination}) and read-only.`)
         if (result.status === 'missing') throw new Error(`Blackboard key "${result.key}" does not exist.`)
         if (result.status === 'no-authority') {
           const held = result.holder ? `; it is currently held by another agent until ${new Date(result.expiresAt).toISOString()}` : ''
@@ -208,7 +203,7 @@ function registerTools(ctx, service) {
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const depth = exec?.agent?.session?.header?.delegationDepth ?? 0
         if (depth !== 0) throw new Error('blackboard_mark_promoted is reserved for the conversation main agent: promotion is adjudicated by the user, not by delegated children')
-        const result = service.markPromoted(exec, { key: args?.key, destination: args?.destination })
+        const result = await service.markPromoted(exec, { key: args?.key, destination: args?.destination })
         if (result.status === 'missing') throw new Error(`Blackboard key "${result.key}" does not exist.`)
         if (result.status === 'already-promoted') {
           return { ...result, message: `Entry "${result.key}" was already promoted to ${result.destination} (marked at ${new Date(result.promotedAt).toISOString()}).` }
@@ -220,9 +215,10 @@ function registerTools(ctx, service) {
 }
 
 /** Composition dependencies, not persisted settings. @param {{ kernel?: () => any, resolveTtl?: typeof resolveWriteTokenTtlMinutes }} [dependencies] */
-export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = resolveWriteTokenTtlMinutes } = {}) {
+export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenTtlMinutes } = {}) {
   return (ctx, _config = {}) => {
-    const kernelInstance = kernel()
+    const runtime = kernel ? null : runtimeBlackboard(ctx)
+    const kernelInstance = kernel ? kernel() : runtime.kernel
 
     // Release delivery (design D3): every release with waiters becomes (a) a
     // cordis event in the audit-channel shape (no disk mirror, no session
@@ -325,6 +321,7 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
      * @returns {string | undefined}
      */
     const boardOf = agent => {
+      if (runtime) return resolveDurableRoot(ctx, agent, runtime)
       const session = agent?.session
       const header = session?.header
       const ownId = typeof agent?.id === 'string' && agent.id.length > 0 ? agent.id : undefined
@@ -348,19 +345,24 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
       return id
     }
 
+    const call = (exec, action) => {
+      const id = boardOf(exec?.agent)
+      const run = root => { exec?.signal?.throwIfAborted?.(); return action(root) }
+      return id instanceof Promise ? id.then(run) : run(id)
+    }
     const service = Object.freeze({
-      list: (/** @type {any} */ exec, /** @type {any} */ filter) => kernelInstance.list(boardOf(exec?.agent), filter ?? {}),
-      read: (/** @type {any} */ exec, /** @type {any} */ keys) => kernelInstance.read(boardOf(exec?.agent), keys),
-      apply: (/** @type {any} */ exec, /** @type {any} */ key) => kernelInstance.apply(boardOf(exec?.agent), { holderId: exec?.agent?.id, key, ttlMs: ttlMs() }),
-      write: (/** @type {any} */ exec, /** @type {any} */ payload) => kernelInstance.write(boardOf(exec?.agent), { holderId: exec?.agent?.id, key: payload.key, entryType: payload.entryType, summary: payload.summary, content: payload.content, ttlMs: ttlMs() }),
-      deleteKey: (/** @type {any} */ exec, /** @type {any} */ key) => kernelInstance.deleteKey(boardOf(exec?.agent), { holderId: exec?.agent?.id, key }),
-      markPromoted: (/** @type {any} */ exec, /** @type {any} */ payload) => kernelInstance.markPromoted(boardOf(exec?.agent), { key: payload.key, destination: payload.destination }),
+      list: (/** @type {any} */ exec, /** @type {any} */ filter) => call(exec, id => kernelInstance.list(id, filter ?? {})),
+      read: (/** @type {any} */ exec, /** @type {any} */ keys) => call(exec, id => kernelInstance.read(id, keys)),
+      apply: (/** @type {any} */ exec, /** @type {any} */ key) => call(exec, id => kernelInstance.apply(id, { holderId: exec?.agent?.id, key, ttlMs: ttlMs() })),
+      write: (/** @type {any} */ exec, /** @type {any} */ payload) => call(exec, id => kernelInstance.write(id, { holderId: exec?.agent?.id, key: payload.key, entryType: payload.entryType, summary: payload.summary, content: payload.content, ttlMs: ttlMs() })),
+      deleteKey: (/** @type {any} */ exec, /** @type {any} */ key) => call(exec, id => kernelInstance.deleteKey(id, { holderId: exec?.agent?.id, key })),
+      markPromoted: (/** @type {any} */ exec, /** @type {any} */ payload) => call(exec, id => kernelInstance.markPromoted(id, { key: payload.key, destination: payload.destination })),
       boardOf,
       entriesOf: (/** @type {string} */ boardId) => kernelInstance.entriesOf(boardId),
       tokensOf: (/** @type {string} */ boardId) => kernelInstance.tokensOf(boardId),
       subscriptionsOf: (/** @type {string} */ boardId) => kernelInstance.subscriptionsOf(boardId),
       releaseHolder: (/** @type {string} */ holderId) => kernelInstance.releaseHolder(holderId),
-      dropBoard: (/** @type {string} */ boardId) => kernelInstance.dropBoard(boardId),
+      dropBoard: (/** @type {string} */ boardId) => runtime ? kernelInstance.clearRuntime(boardId) : kernelInstance.dropBoard(boardId),
     })
     ctx.reflect.provide('weirBlackboard', service)
 
@@ -375,35 +377,53 @@ export function createBlackboardPlugin({ kernel = sharedKernel, resolveTtl = res
     // agents registry via the same boardOf walk — and defers the brief
     // delivery (./promote.js, timer-deferred, steer/followup, bounded retry).
     const promotionRequester = createPromotionRequester({
-      resolveMainAgent: (agent) => {
-        if ((agent?.session?.header?.delegationDepth ?? 0) === 0) return agent
-        const boardId = boardOf(agent)
-        if (typeof boardId !== 'string' || boardId.length === 0) return undefined
-        let agents
-        try { agents = ctx.get?.('agents') } catch { agents = undefined }
-        return agents?.get?.(boardId)
-      },
+      resolveMainAgent: agent => agent,
       logger: ctx.logger,
     })
-    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, ttlMs, requestPromotion: (/** @type {any} */ agent) => promotionRequester(agent) })
+    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, ttlMs, requestPromotion: async (/** @type {any} */ agent) => {
+      const root = await boardOf(agent)
+      const main = root === agent.id ? agent : ctx.get?.('agents')?.get?.(root)
+      if (!main) throw new Error('blackboard: root Agent is not live for promotion')
+      return promotionRequester(main)
+    } })
 
     // Terminate path (design D3): the supervision terminate fact names the
     // child, and its tokens die with it. TTL stays the backstop for abnormal
     // deaths. The record rides the audit-channel shape (time/session/type/data).
     const offTerminate = ctx.on('weir/supervision/terminate', (/** @type {any} */ record) => {
       const childId = record?.data?.childId
-      if (typeof childId === 'string' && childId.length > 0) service.releaseHolder(childId)
+      if (typeof childId === 'string' && childId.length > 0) {
+        void Promise.resolve(service.releaseHolder(childId)).catch(error => ctx.logger?.warn?.(String(error)))
+        void Promise.resolve(kernelInstance.unsubscribeHolder(childId)).catch(error => ctx.logger?.warn?.(String(error)))
+      }
     })
     // An agent that is gone can never write again: release its tokens. The
-    // root agent's disposal ends the conversation, so the whole board clears
-    // (volatile semantics: noise is capped by the session's own lifetime).
+    // durable board outlives the Agent; no lifecycle callback deletes it.
     const offDisposed = ctx.on('agent/disposed', (/** @type {any} */ { agent }) => {
       const id = agent?.id
       if (typeof id !== 'string' || id.length === 0) return
-      service.releaseHolder(id)
-      if ((agent?.session?.header?.delegationDepth ?? 0) === 0) service.dropBoard(id)
+      const member = runtime?.members?.get(id)
+      if (member && member.agent !== agent) return // stale incarnation disposal
+      runtime?.members?.delete(id)
+      void Promise.resolve(service.releaseHolder(id)).catch(error => ctx.logger?.warn?.(String(error)))
+      // Dispose releases authority, never durable entries.
+      // A child is evicted between turns, not terminated: keep its subscription
+      // for parent-forwarded delivery. A root close or explicit termination
+      // releases that holder's subscriptions, never another child's tokens.
+      if ((agent?.session?.header?.delegationDepth ?? 0) === 0) void Promise.resolve(kernelInstance.unsubscribeHolder(id)).catch(error => ctx.logger?.warn?.(String(error)))
+      // Release our own writer only after the final attached board participant
+      // leaves; another host may then legitimately adopt the durable root.
+      if (member && ![...runtime.members.values()].some(other => other.root === member.root)) {
+        void kernelInstance.clearRuntime(member.root, { releaseWriter: true }).catch(error => ctx.logger?.warn?.(String(error)))
+      }
     })
-    return () => { offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.() }
+    const ensureRoot = async ({ agent }) => {
+      if (!runtime || (agent?.session?.header?.delegationDepth ?? 0) !== 0) return
+      try { await boardOf(agent) } catch (error) { ctx.logger?.warn?.(`blackboard initialization failed: ${String(error)}`) }
+    }
+    const offCreated = ctx.on('agent/created', ensureRoot)
+    if (runtime) for (const agent of ctx.get?.('agents')?.list?.() ?? []) void ensureRoot({ agent })
+    return () => { offCreated?.(); offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.() }
   }
 }
 

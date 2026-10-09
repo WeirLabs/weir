@@ -3,6 +3,7 @@
 // discriminators and the search-before-create discipline), the service
 // surface, board identity across the delegation tree, the settings-driven
 // TTL, and the terminate/dispose lifecycle hooks. Stub ctx — no cordis.
+import assert from 'node:assert/strict'
 import { describe, expect, it } from '../helpers.js'
 import { createBlackboardKernel } from '../../src/blackboard/kernel.js'
 import { createBlackboardPlugin, DEFAULT_WRITE_TOKEN_TTL_MINUTES, resolveWriteTokenTtlMinutes } from '../../src/blackboard/index.js'
@@ -10,7 +11,7 @@ import { createBlackboardPlugin, DEFAULT_WRITE_TOKEN_TTL_MINUTES, resolveWriteTo
 const TTL = 60_000
 
 /** @param {{ settings?: object, sessions?: Map<string, object>, toolsView?: (agent: any) => { visible: Set<string> } }} [options] */
-function mountStub({ settings = {}, sessions = new Map(), toolsView } = {}) {
+function mountStub({ settings = {}, sessions = new Map(), toolsView, kernel = createBlackboardKernel } = {}) {
   /** @type {any[]} */
   const registered = []
   /** @type {Map<string, Function>} */
@@ -45,7 +46,7 @@ function mountStub({ settings = {}, sessions = new Map(), toolsView } = {}) {
     logger: { warn: (/** @type {string} */ message) => warnings.push(message) },
     effect: (/** @type {Function} */ fn) => fn(),
   }
-  const apply = createBlackboardPlugin({ kernel: () => createBlackboardKernel() })
+  const apply = createBlackboardPlugin({ kernel })
   const dispose = apply(ctx, {})
   return { ctx, registered, handlers, provided, emitted, warnings, sections, variables, dispose }
 }
@@ -253,7 +254,7 @@ describe('tool execution: the shared-board flow', () => {
     expect(bad.warnings.join('\n')).toContain('blackboardWriteTokenTtlMinutes')
   })
 
-  it('agent disposal releases a child token and drops the root board', () => {
+  it('agent disposal releases authority but preserves the root board', () => {
     const mount = mountStub()
     const service = mount.provided.get('weirBlackboard')
     service.write(rootExec('root'), { key: 'k', entryType: 'map', summary: 'f', content: 'c' })
@@ -263,7 +264,7 @@ describe('tool execution: the shared-board flow', () => {
     expect(service.tokensOf('root')).toEqual([])
     expect(service.entriesOf('root')).toHaveLength(1)
     mount.handlers.get('agent/disposed')({ agent: rootExec('root').agent })
-    expect(service.entriesOf('root')).toEqual([])
+    expect(service.entriesOf('root')).toHaveLength(1)
   })
 
   it('unmount removes the listeners without breaking the kernel', () => {
@@ -333,7 +334,7 @@ describe('agent contracts (design D7) and the remote bridge feed', () => {
     const delivered = []
     const root = { id: 'root', session: { id: 'root', header: { delegationDepth: 0 } }, status: 'idle', steer: (/** @type {any} */ m) => { delivered.push(m) }, followup: (/** @type {any} */ m) => { delivered.push(m) } }
     const faces = blackboardRemoteBridge()
-    const request = faces.requestPromotion(root)
+    const request = await faces.requestPromotion(root)
     expect(request).toEqual({ requested: true, channel: 'followup' })
     expect(delivered).toHaveLength(0)
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -343,4 +344,16 @@ describe('agent contracts (design D7) and the remote bridge feed', () => {
     expect(delivered[0].content[0].text.startsWith('Blackboard promotion request')).toBe(true)
     mount.dispose()
   })
+})
+
+
+it('agent tools await delayed disk rejection instead of returning success', async () => {
+  const real = createBlackboardKernel()
+  const mount = mountStub({ kernel: () => ({ ...real, write: async () => { await Promise.resolve(); throw new Error('disk denied') } }) })
+  await assert.rejects(tool(mount, 'blackboard_write').execute({ key: 'x', entryType: 'map', summary: 'x', content: 'x' }, rootExec('root')), /disk denied/)
+  mount.dispose()
+})
+
+it('a production mount without profileContext fails explicitly, never memory fallback', () => {
+  assert.throws(() => createBlackboardPlugin()({ get: () => undefined }), /profileContext/)
 })
