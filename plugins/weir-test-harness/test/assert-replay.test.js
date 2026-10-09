@@ -19,10 +19,10 @@ function syntheticObs() {
   return { transcript: '', lastUser: '', lastTool: '', system: '', toolNames: [], toolDefs: [], messages: [] }
 }
 
-// This live lifecycle scenario intentionally has no recorded authority snapshot
+// These live lifecycle scenarios intentionally have no recorded authority snapshot
 // in the scoped fixture set. Its oracle is exercised by the focused unit test
 // and by an installed-CLI run, not a frozen timestamp/manager incarnation.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => scenario.id !== 'editlock-delegate-settle')
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {

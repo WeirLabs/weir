@@ -225,6 +225,11 @@
           disabled: !!js process.env.WEIR_IT_SCENARIO !== 'editlock-delegate-settle'
           config:
             enabled: !!js process.env.WEIR_IT_SCENARIO === 'editlock-delegate-settle'
+        - id: weir-it-edit-lock-delegate-resume-probe
+          name: 'weir-test-harness/edit-lock-delegate-resume-probe'
+          disabled: !!js process.env.WEIR_IT_SCENARIO !== 'editlock-delegate-resume'
+          config:
+            enabled: !!js process.env.WEIR_IT_SCENARIO === 'editlock-delegate-resume'
         - id: weir-it-hashline-edit
           name: 'weir-harness/hashline-edit'
           config:

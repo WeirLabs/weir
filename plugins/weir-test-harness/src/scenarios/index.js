@@ -51,6 +51,7 @@ import blackboardPromotion from './blackboard-promotion.js'
 import recoveryUx from './editlock-recovery-ux.js'
 import bindingReclaim from './editlock-binding-reclaim.js'
 import delegateSettle from './editlock-delegate-settle.js'
+import delegateResume from './editlock-delegate-resume.js'
 
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
@@ -79,6 +80,7 @@ SCENARIOS.push(blackboardPromotion)
 SCENARIOS.push(recoveryUx)
 SCENARIOS.push(bindingReclaim)
 SCENARIOS.push(delegateSettle)
+SCENARIOS.push(delegateResume)
 
 /**
  * Find a scenario entry by id.

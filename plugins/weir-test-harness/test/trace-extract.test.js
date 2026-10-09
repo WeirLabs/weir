@@ -281,12 +281,12 @@ describe('planRequest single extraction', () => {
 })
 
 describe('trace record key migration', () => {
-  it('the union keeps the pre-migration superset and exactly the new settlement keys', () => {
+  it('the union keeps the pre-migration superset and exactly the new delegate lifecycle keys', () => {
     const union = new Set(GENERIC_KEYS)
     for (const scenario of SCENARIOS) {
       for (const key of Object.keys(scenario.observe?.(syntheticObs()) ?? {})) union.add(key)
     }
-    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, ...DELEGATE_SETTLE_KEYS].sort())
+    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, ...DELEGATE_SETTLE_KEYS, 'authorityLocks', 'authoritySessions', 'freshContent', 'resumed'].sort())
   })
 
   it('every scenario emits at least one observation key (no silent gap)', () => {

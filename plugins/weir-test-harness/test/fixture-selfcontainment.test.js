@@ -77,9 +77,9 @@ function listFiles(dir) {
   return out
 }
 
-// The new stopping-boundary oracle has a focused synthetic unit fixture and
+// The delegate lifecycle oracles have focused synthetic unit fixtures and
 // installed-CLI verification, not a committed replay trace in this task scope.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => scenario.id !== 'editlock-delegate-settle')
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume'].includes(scenario.id))
 
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {
