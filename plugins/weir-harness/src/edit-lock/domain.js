@@ -82,9 +82,12 @@ export function remoteDomain(remote) {
     stop: async agent => { const status = await remote.call(agent, 'stop'); remote.setState(agent, 'stopped'); return status },
     /** @param {object} agent */
     dispose: async agent => {
-      // Clean end: let the publisher release this agent's active locks first.
-      try { await remote.call(agent, 'dispose') } catch { /* EOF below still revokes */ }
-      remote.drop(agent)
+      // The publisher releases this agent's active locks and acknowledges with
+      // the response; the channel close below is the transport-level fallback
+      // (EOF also revokes). An unacknowledged disposition must reach the
+      // awaiting caller: this method rejects with the request's own failure
+      // while the channel is still dropped exactly once.
+      try { await remote.call(agent, 'dispose') } finally { remote.drop(agent) }
     },
     /** @param {object} agent @param {string} requestId */
     resume: async (agent, requestId) => {
