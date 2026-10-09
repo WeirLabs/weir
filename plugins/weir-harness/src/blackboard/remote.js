@@ -155,20 +155,20 @@ export function createBlackboardRemoteService(dependencies = {}) {
    * @param {any} agent
    * @returns {{ sessionId: string, boardId: string, faces: { kernel: any, boardOf: Function, ttlMs: Function } }}
    */
-  function resolve(agent) {
+  async function resolve(agent) {
     if (!ensure()) throw new BlackboardRemoteError('channel-unavailable', 'blackboard remote is not registered with the gateway')
     const faces = bridgeFor()
     if (!faces) throw new BlackboardRemoteError('bridge-absent', 'blackboard remote is not offered (non-Weir preset or unmounted bridge)')
     const sessionId = typeof agent?.id === 'string' && agent.id.length > 0 ? agent.id : undefined
     if (sessionId === undefined) throw new BlackboardRemoteError('unknown-session', 'blackboard remote: the acting session identity is unavailable')
-    const boardId = faces.boardOf(agent)
+    const boardId = await faces.boardOf(agent)
     return { sessionId, boardId, faces }
   }
 
   /** Wrap a face failure uniformly; typed errors pass through untouched. */
-  function payloadWrap(action, build) {
+  async function payloadWrap(action, build) {
     try {
-      return build()
+      return await build()
     } catch (cause) {
       if (cause instanceof BlackboardRemoteError) throw cause
       throw new BlackboardRemoteError('payload-failed', `blackboard remote ${action} failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
@@ -177,10 +177,10 @@ export function createBlackboardRemoteService(dependencies = {}) {
 
   return {
     /** Aggregate rows: key + entryType + summary + counts, never content. */
-    list(agent, args) {
-      return payloadWrap('list', () => {
-        const { boardId, faces } = resolve(agent)
-        const rows = faces.kernel.list(boardId, { entryType: args?.type, query: args?.query })
+    async list(agent, args) {
+      return payloadWrap('list', async () => {
+        const { boardId, faces } = await resolve(agent)
+        const rows = await faces.kernel.list(boardId, { entryType: args?.type, query: args?.query })
         return { entries: rows.map((/** @type {any} */ entry) => wireEntry(entry)) }
       })
     },
@@ -188,19 +188,19 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Batch content read; unknown keys are values, not errors. Audit reads
      * through this remote (the panel) never move read counts — counting is
      * the agent-tool path's reuse evidence, not a page-view metric. */
-    read(agent, args) {
-      return payloadWrap('read', () => {
-        const { boardId, faces } = resolve(agent)
-        const result = faces.kernel.read(boardId, args?.keys ?? [], { count: false })
+    async read(agent, args) {
+      return payloadWrap('read', async () => {
+        const { boardId, faces } = await resolve(agent)
+        const result = await faces.kernel.read(boardId, args?.keys ?? [], { count: false })
         return { entries: result.found.map((/** @type {any} */ entry) => wireEntry(entry, { content: true })) }
       })
     },
 
     /** Acquire the one-shot write authority for one key (auto-subscribes on contention; a promoted key refuses explicitly). */
-    apply(agent, args) {
-      return payloadWrap('apply', () => {
-        const { sessionId, boardId, faces } = resolve(agent)
-        const result = faces.kernel.apply(boardId, { holderId: sessionId, key: args?.key, ttlMs: faces.ttlMs() })
+    async apply(agent, args) {
+      return payloadWrap('apply', async () => {
+        const { sessionId, boardId, faces } = await resolve(agent)
+        const result = await faces.kernel.apply(boardId, { holderId: sessionId, key: args?.key, ttlMs: faces.ttlMs() })
         if (result.status === 'contended') return { acquired: false, holder: result.holder, subscribed: true }
         if (result.status === 'promoted') return { acquired: false, promoted: true, destination: result.destination }
         return { acquired: true, token: freshToken(), expiresAt: result.expiresAt }
@@ -208,10 +208,10 @@ export function createBlackboardRemoteService(dependencies = {}) {
     },
 
     /** Create or update one entry under the acting session's live write authority. */
-    write(agent, args) {
+    async write(agent, args) {
       try {
-        const { sessionId, boardId, faces } = resolve(agent)
-        const result = faces.kernel.write(boardId, {
+        const { sessionId, boardId, faces } = await resolve(agent)
+        const result = await faces.kernel.write(boardId, {
           holderId: sessionId,
           key: args?.key,
           entryType: args?.entryType,
@@ -239,10 +239,10 @@ export function createBlackboardRemoteService(dependencies = {}) {
     },
 
     /** Delete one entry under the acting session's live write authority. */
-    remove(agent, args) {
+    async remove(agent, args) {
       try {
-        const { sessionId, boardId, faces } = resolve(agent)
-        const result = faces.kernel.deleteKey(boardId, { holderId: sessionId, key: args?.key })
+        const { sessionId, boardId, faces } = await resolve(agent)
+        const result = await faces.kernel.deleteKey(boardId, { holderId: sessionId, key: args?.key })
         if (result.status === 'missing') return { ok: false, error: `blackboard key "${result.key}" does not exist` }
         if (result.status === 'promoted') {
           return { ok: false, error: `entry "${result.key}" is promoted (${result.destination}) and read-only; promoted entries can never be deleted` }
@@ -261,13 +261,13 @@ export function createBlackboardRemoteService(dependencies = {}) {
     },
 
     /** Request the promotion-evaluation brief into the session's main agent (slice 3). Folds failures like the mutations. */
-    requestPromotion(agent, args) {
+    async requestPromotion(agent, args) {
       try {
-        const { faces } = resolve(agent)
+        const { faces } = await resolve(agent)
         if (typeof faces.requestPromotion !== 'function') {
           return { ok: false, error: 'the blackboard bridge does not offer promotion requests' }
         }
-        faces.requestPromotion(agent)
+        await faces.requestPromotion(agent)
         return { ok: true }
       } catch (cause) {
         const error = cause instanceof BlackboardRemoteError
@@ -278,10 +278,10 @@ export function createBlackboardRemoteService(dependencies = {}) {
     },
 
     /** Mark one entry promoted under the user-adjudicated destination (slice 3); marking is an annotation, not a payload mutation. */
-    markPromoted(agent, args) {
+    async markPromoted(agent, args) {
       try {
-        const { boardId, faces } = resolve(agent)
-        const result = faces.kernel.markPromoted(boardId, { key: args?.key, destination: args?.destination })
+        const { boardId, faces } = await resolve(agent)
+        const result = await faces.kernel.markPromoted(boardId, { key: args?.key, destination: args?.destination })
         if (result.status === 'missing') return { ok: false, error: `blackboard key "${result.key}" does not exist` }
         if (result.status === 'already-promoted') return { ok: true, destination: result.destination, alreadyPromoted: true }
         return { ok: true, destination: result.destination }

@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
+import { createBlackboardStorage } from '../../weir-harness/src/blackboard/storage.js'
 
 async function waitFor(file) {
   const deadline = Date.now() + 60_000
@@ -36,7 +37,7 @@ export function installBlackboardPersistenceProbe(ctx, tap) {
       tap({ kind: 'blackboard-flush', participated, home, id: agent.id, header: agent.session.header, matches })
       if (matches.length !== 1) throw new Error('Expected exactly one isolated canonical log')
       const match = matches[0]
-      writeFileSync(join(match.dir, match.file + '_bb'), '{}\n', { mode: 0o600 })
+      if (!process.env.WEIR_IT_BB_PHASE) writeFileSync(join(match.dir, match.file + '_bb'), '{}\n', { mode: 0o600 })
       const listed = await persistence.list()
       tap({ kind: 'blackboard-listing', id: agent.id, present: listed.some(row => row.header.id === agent.id) })
       if (mode === 'owner') {
@@ -70,10 +71,15 @@ export function installBlackboardPersistenceProbe(ctx, tap) {
           await handle.close()
           writeOpen = 'opened'
         } catch (error) { writeOpen = error.name }
+        const side = owner.target + '_bb'
+        const before = readFileSync(side)
+        let productRefused = false
+        try { await createBlackboardStorage({ home }).transact(owner.id, undefined, () => { throw new Error('must not reach candidate') }) } catch (error) { productRefused = /log unavailable/.test(String(error)) }
+        const sidecarPreserved = readFileSync(side).equals(before)
         const second = await persistence.stat(owner.id)
         let ownerProcessAlive = true
         try { process.kill(owner.pid, 0) } catch { ownerProcessAlive = false }
-        const report = { owner, ownerProcessAlive, firstAbsent: first === undefined, secondAbsent: second === undefined, listed: listed.some(row => row.header.id === owner.id), writeOpen, localSessionAbsent: sessions.get(owner.id) === undefined }
+        const report = { productRefused, sidecarPreserved, owner, ownerProcessAlive, firstAbsent: first === undefined, secondAbsent: second === undefined, listed: listed.some(row => row.header.id === owner.id), writeOpen, localSessionAbsent: sessions.get(owner.id) === undefined }
         writeFileSync(join(ws, 'blackboard-orphan-observed.json'), JSON.stringify(report))
         tap({ kind: 'blackboard-orphan-observer', ...report })
       }

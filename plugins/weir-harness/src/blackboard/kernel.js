@@ -421,6 +421,13 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       return released
     },
 
+    unsubscribeHolder(holderId) {
+      for (const state of boards.values()) for (const [key, subscribers] of state.subscribers) {
+        subscribers.delete(holderId)
+        if (!subscribers.size) state.subscribers.delete(key)
+      }
+    },
+
     /** The conversation ended: clear the board and disarm every timer. @param {string} boardId */
     dropBoard(boardId) {
       const state = boards.get(boardId)
@@ -429,10 +436,22 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
       boards.delete(boardId)
     },
 
+    // Internal transaction seam. Only entries are durable; authority comes
+    // exclusively from the owning runtime's snapshot, never from disk.
+    restore(boardId, entries, runtime = { tokens: [], subscriptions: [] }) {
+      const state = board(boardId)
+      state.entries = new Map(entries.map(entry => [entry.key, structuredClone(entry)]))
+      state.tokens = new Map(runtime.tokens.map(token => [token.key, { ...token }]))
+      state.subscribers = new Map(runtime.subscriptions.map(row => [row.key, new Set(row.subscriberIds)]))
+    },
+
+    expire(boardId, at = now()) {
+      for (const key of board(boardId).tokens.keys()) settle(boardId, key, at)
+    },
     /** Full entries incl. content and counts (panel/promotion views, slice 2/3). @param {string} boardId */
     entriesOf(boardId) {
       const state = boards.get(boardId)
-      return state ? [...state.entries.values()].map(entry => ({ ...entry, summary: { ...entry.summary } })) : []
+      return state ? [...state.entries.values()].map(entry => structuredClone(entry)) : []
     },
 
     /** Live tokens: { key, holder, expiresAt }. @param {string} boardId */
