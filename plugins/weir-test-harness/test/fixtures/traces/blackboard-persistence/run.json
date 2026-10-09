@@ -1,0 +1,8 @@
+{
+  "scenario": "blackboard-persistence",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/session-blackboard-persistence-107/.weir/it-root/home",
+  "code": 0,
+  "stdout": "blackboard persistence contract probe done\n",
+  "stderr": "",
+  "sessionId": "session-f721adb9-c6eb-4242-9274-10426f28da63"
+}

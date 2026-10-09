@@ -182,7 +182,7 @@ function recordRun(run) {
     // apply-transaction.json: the Apply-transaction probe report (task 4.7);
     // cold-session-*.json/txt: the cold-session probe reports and the captured
     // contender writer-held failure (task 5.5).
-    for (const file of ['fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'cold-session-seed.json', 'cold-session-open.json', 'cold-session-held-error.txt', 'lifecycle-report.json', 'lifecycle-catalog.json', 'mcp-gateway-report.json', 'capability-remote-log.json', 'mcp-calls.jsonl', 'mcp-server-log.jsonl', 'preset-defaults-report.json', 'preset-boot2-outcome.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', 'docs/spikes.md', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
+    for (const file of ['blackboard-orphan-owner.json', 'blackboard-orphan-observed.json', 'fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'cold-session-seed.json', 'cold-session-open.json', 'cold-session-held-error.txt', 'lifecycle-report.json', 'lifecycle-catalog.json', 'mcp-gateway-report.json', 'capability-remote-log.json', 'mcp-calls.jsonl', 'mcp-server-log.jsonl', 'preset-defaults-report.json', 'preset-boot2-outcome.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', 'docs/spikes.md', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
       const source = join(WS, file)
       if (existsSync(source)) {
         // The blackboard-promotion scenario lands a nested durable doc.

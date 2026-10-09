@@ -15,6 +15,7 @@ import { installAutoResumeProbe } from './edit-lock-auto-resume-probe.js'
 import { installStaleSweepProbe } from './edit-lock-stale-sweep-probe.js'
 import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
 import { installBindingProbe } from './edit-lock-binding-probe.js'
+import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
 
 const name = 'weir-it-event-tap'
 const inject = ['fs', 'agents', 'tools']
@@ -44,6 +45,7 @@ function tap(record) {
 
 
 function apply(ctx) {
+  installBlackboardPersistenceProbe(ctx, tap)
   installStopProbe(ctx, tap)
   installAutoResumeProbe(ctx, tap)
   installStaleSweepProbe(ctx, tap)
