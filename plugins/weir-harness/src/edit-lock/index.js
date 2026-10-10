@@ -1149,7 +1149,7 @@ return (ctx, config = {}) => {
           if (owning && typeof owning.describe === 'function') {
             try {
               const described = await owning.describe(agent)
-              return reply({ ok: true, value: buildView({ status: described.status, locks: described.locks, cwd: agent?.session?.header?.cwd, root: described.root, mode: described.mode, now: Date.now() }) })
+              return reply({ ok: true, value: buildView({ status: described.status, locks: described.locks, recoveryState: described.recovery, cwd: agent?.session?.header?.cwd, root: described.root, mode: described.mode, now: Date.now() }) })
             } catch (error) {
               // Failure loudening (design D3): a failed binding names its
               // reason; a reasonless "starting" is reserved for a genuinely
@@ -1165,7 +1165,7 @@ return (ctx, config = {}) => {
         if (!domain) return reply({ ok: true, value: await coldStatusView(sessionId) })
         try {
           const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
-          return reply({ ok: true, value: buildView({ status, locks, cwd: agent?.session?.header?.cwd, root: registry.rootOf(agent), mode: domain.mode, now: Date.now() }) })
+          return reply({ ok: true, value: buildView({ status, locks, recoveryState: recovery.state(agent), cwd: agent?.session?.header?.cwd, root: registry.rootOf(agent), mode: domain.mode, now: Date.now() }) })
         } catch (error) {
           return reply({ ok: false, error: { code: 'weir-edit-lock/internal', message: /** @type {any} */ (error)?.message ?? String(error) } }, 500)
         }

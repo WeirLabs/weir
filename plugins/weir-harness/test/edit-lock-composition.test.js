@@ -736,6 +736,58 @@ function coldHost(root, { observeSession } = {}) {
   return { ...host, agents, stats, read }
 }
 
+test('view routes live pause deadlines to the owning mount and uses only local recovery in fallback', async () => {
+  const localFixture = await fixture(), foreignFixture = await fixture()
+  const local = coldHost(localFixture.root), foreign = coldHost(foreignFixture.root)
+  let lookup = agent => agent === localAgent ? localService : foreignService
+  local.provided.set('agentPresets', { serviceFor: agent => lookup(agent) })
+  const disposeLocal = apply(local.ctx, { enabled: true, root: localFixture.root, authorityDirectory: localFixture.directory })
+  const disposeForeign = apply(foreign.ctx, { enabled: true, root: foreignFixture.root, authorityDirectory: foreignFixture.directory })
+  const localService = local.provided.get('weirEditLock'), foreignService = foreign.provided.get('weirEditLock')
+  const localAgent = local.agent('local'), foreignAgent = foreign.agent('foreign')
+  try {
+    for (const [host, agent, service, root, minutes] of [
+      [local, localAgent, localService, localFixture.root, 1],
+      [foreign, foreignAgent, foreignService, foreignFixture.root, 2],
+    ]) {
+      host.agents.set(agent.id, agent)
+      await host.emit('agent/created', { agent })
+      await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })
+      await host.emit('session/event', { id: agent.id }, { type: 'turn/end', data: { reason: { kind: 'error' } } })
+      // The event starts asynchronous durable classification; describe observes it.
+      for (let i = 0; i < 100 && !(await service.describe(agent)).recovery; i++) await new Promise(resolve => setTimeout(resolve, 10))
+      await service.pause({ agent }, minutes)
+    }
+    local.agents.set(foreignAgent.id, foreignAgent)
+    const localDeadline = (await localService.describe(localAgent)).recovery.pausedUntil
+    const foreignDeadline = (await foreignService.describe(foreignAgent)).recovery.pausedUntil
+    assert.ok(foreignDeadline > localDeadline)
+    const routed = (await local.read({ sessionId: 'foreign' })).value
+    assert.equal(routed.pausedUntil, foreignDeadline)
+    assert.equal(routed.technical.root, foreignFixture.root)
+    assert.equal(routed.cleanupOnly, true)
+    assert.equal(routed.files[0].action, 'release')
+    assert.equal(foreignService.blocksContinuation(foreignAgent), true)
+    for (const fallback of [() => null, () => { throw new Error('registry unavailable') }]) {
+      lookup = fallback
+      const view = (await local.read({ sessionId: 'local' })).value
+      assert.equal(view.pausedUntil, localDeadline)
+      assert.equal(view.recovery.pauseMinutes, 1)
+      assert.equal((await local.read({ sessionId: 'foreign' })).value.state, 'unavailable')
+    }
+    assert.equal((await local.command().handler({ agent: localAgent, rawInput: 'stop', commandId: 'stop-paused' })).kind, 'success')
+    const stopped = (await local.read({ sessionId: 'local' })).value
+    assert.equal(stopped.state, 'stopped')
+    assert.equal(stopped.pausedUntil, null)
+    assert.equal(stopped.recovery.pauseMinutes, 1)
+    local.agents.delete('local')
+    const cold = (await local.read({ sessionId: 'local' })).value
+    assert.equal(cold.cold, true)
+    assert.equal(cold.pausedUntil, null)
+    assert.equal(cold.recovery.pauseMinutes, 1)
+  } finally { disposeLocal(); disposeForeign() }
+})
+
 test('the view endpoint answers a cold session its true recorded state, read-only', async () => {
   const { root, directory } = await fixture()
   const host = coldHost(root, { observeSession: (sessionId) => sessionId === 's' ? { header: { cwd: root } } : undefined })
