@@ -22,6 +22,19 @@ import { fixtureRoot, fixtureEndpoint, fixtureExclude } from './helpers/edit-loc
 const applySettings = createSettingsPlugin({ resolveRoot: fixtureRoot })
 const applyEditLock = createEditLockPlugin({ resolveRoot: fixtureRoot, endpoint: fixtureEndpoint, exclude: fixtureExclude })
 
+it('successful binding clears only its own mount generation failure', () => {
+  const evidence = createEditLockEvidence()
+  const first = evidence.recordMount({ enabled: true }), second = evidence.recordMount({ enabled: true })
+  first.recordSessionFailure('s', 'old failure')
+  second.recordSessionFailure('s', 'new failure')
+  first.clearSessionFailure('s')
+  assert.deepEqual(evidence.snapshot().sessionFailures.map(row => row.reason), ['new failure'])
+  first.dispose()
+  first.clearSessionFailure('s')
+  assert.equal(evidence.snapshot().sessionFailures.length, 1)
+  second.clearSessionFailure('s')
+  assert.deepEqual(evidence.snapshot().sessionFailures, [])
+})
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
 async function tempRoot(prefix = 'weir-maint-') {

@@ -25,3 +25,19 @@ export function bindingGuidance(sessionId, reason) {
   }
   return `${holder} Do NOT remove the publisher reservation (.weir/.edit-lock.publisher-reservation) while its process is alive — removing it would split the edit authority.`
 }
+
+/** Structured publisher fact; never classify a retry from prose.
+ * @param {number | undefined} pid @param {string} attestation
+ * @param {boolean} [revocationFailed] */
+export function bindingFailure(pid, attestation, revocationFailed = false) {
+  return { code: 'binding-duplicate', retryable: true,
+    holderKind: revocationFailed ? 'revocation-failed' : attestation === 'serving' ? 'serving'
+      : pid !== undefined && pid !== process.pid ? 'cross-process' : 'unknown',
+    holderPid: pid ?? null }
+}
+/** @param {number | undefined} pid @param {string} attestation @param {boolean} [revocationFailed] */
+export function bindingRefusal(pid, attestation, revocationFailed = false) {
+  const reason = bindingRefusalReason(pid, attestation)
+  return Object.assign(new Error(revocationFailed ? `${reason}; durable revocation was not acknowledged. Inspect authority; no replacement was admitted.` : reason),
+    { bindingFailure: bindingFailure(pid, attestation, revocationFailed) })
+}

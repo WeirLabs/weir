@@ -16,6 +16,9 @@ import { join } from 'node:path'
 import { createEditLockPlugin } from '../src/edit-lock/index.js'
 import { writeScopesFor, disposeWriteScope } from '../src/edit-lock/write-scopes.js'
 import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtureExclude as excludeFromGit } from './helpers/edit-lock-fixtures.js'
+import assert from 'node:assert/strict'
+import { createRemoteEditLockDomain } from '../src/edit-lock/remote.js'
+import { registerBindingRuntime } from '../src/edit-lock/binding-attestation.js'
 const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
@@ -412,4 +415,49 @@ test('concurrent setup entry points share one in-flight setup: the write scope i
   expect(host.warns).toHaveLength(0)
   expect((await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })).generation).toBe(1)
   await dispose()
+})
+
+test('explicit retry recovers the original failed Agent without reinstalling writers or resuming authority', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root, { agents: true })
+  const { dispose, service } = mount(host, root, directory)
+  let token, unregister = () => {}
+  const remote = createRemoteEditLockDomain(endpointFor(directory), { onNotice() {}, onChannelOpen(nonce) { token = nonce; return () => unregister() } })
+  try {
+    const other = host.agent('other')
+    await host.emit('agent/created', { agent: other })
+    const old = { id: 's' }
+    await remote.channelFor(old)
+    await remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root })
+    const agent = host.agent('s')
+    await host.emit('agent/created', { agent })
+    assert.equal(service.blocksContinuation(agent), true)
+    const writer = agent.visible.get('write')
+    const retry = () => host.command().handler({ agent, rawInput: 'retry', commandId: crypto.randomUUID() })
+    assert.equal((await retry()).kind, 'error')
+    unregister = registerBindingRuntime(token, old, old.id)
+    const replies = await Promise.all([retry(), retry()])
+    assert.deepEqual(replies.map(reply => reply.kind), ['success', 'success'], JSON.stringify(replies))
+    assert.equal(agent.visible.get('write'), writer)
+    assert.equal(agent.ctx.tools.registrations, 1)
+    const actual = await service.describe(agent)
+    assert.equal(actual.status.state, 'stopped')
+    assert.equal(actual.status.locks[0].generation, 1)
+    await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /stopped/)
+    assert.equal(service.blocksContinuation(agent), true)
+  } finally { remote.close(); await dispose() }
+})
+
+test('retry never joins an unrelated initial setup without a classified binding failure', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root, { agents: true })
+  const { dispose } = mount(host, root, directory)
+  try {
+    const agent = host.agent('s')
+    const initial = host.emit('agent/created', { agent })
+    const result = await host.command().handler({ agent, rawInput: 'retry', commandId: 'no-failure' })
+    await initial
+    assert.equal(result.kind, 'error')
+    assert.match(result.text, /not eligible/)
+  } finally { await dispose() }
 })

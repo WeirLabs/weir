@@ -403,3 +403,16 @@ test('publisher-local startup reclaims an attested stale remote holder without r
     assert.equal((await local.status(current)).locks.length, 1)
   } finally { remote.close(); await local.close() }
 })
+
+test('binding retry refuses permanently revoked owner before registering an interrupted replacement', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  await runtime.control.openSession('revoked')
+  const lifecycle = createEditLockLifecycle({ ...runtime, control: { ...runtime.control,
+    status() { const state = runtime.control.status(); return { ...state, sessions: state.sessions.map(s => ({ ...s, revoked: true })) } },
+  } }, agent => agent.id)
+  try {
+    await assert.rejects(localDomain(lifecycle, undefined).retryStart({ id: 'revoked' }), /permanently revoked/)
+    assert.deepEqual(lifecycle.bindings(), [])
+  } finally { await lifecycle.close() }
+})

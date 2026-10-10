@@ -20,6 +20,8 @@
 
 **同会话跨模式绑定**：publisher-local 启动与远端 `open` 共用逐 Session 仲裁队列。旧 remote proxy 只有同步 socket 死证，或同进程 nonce 登记＋宿主实时 Agent 身份证明已经失效时，才封闭旧 peer 入口并等待持久撤权 ACK；随后复核本地申请者仍属当前挂载且是宿主的精确 live Agent，再以 interrupted 绑定。裸 lifecycle 仍拒绝自行回收 remote proxy。该流程不释放文件锁、不结清未决围栏、不替换 manager incarnation 或 publisher reservation；迟到 EOF 不能删除后继绑定。其它会话不等待这条 Session 队列；活 holder、无 token、跨进程活通道与撤权失败始终保守拒绝。
 
+**本地绑定失败后重试**：根目录已登记不等于编辑域已启动。当前挂载收到结构化 `binding-duplicate` 拒绝时，原 Agent 可经受信命令 `/edit-lock retry` 重试；并发命令合并为同一启动，不重装编辑工具，不重复原失败写入。成功清除本挂载代次的启动失败及维护副本，仍须另行 Continue 才恢复编辑。外预设、已消亡 Agent、其它安装失败、坏管理器或永久撤权不能借此取得权限；状态读取和模型工具不会派生绑定重试。
+
 ## 用户可见行为
 
 启用后（设置页「编辑锁（实验）」并重启），同一项目里的会话轮流编辑文件，而不是相互覆盖：

@@ -2,13 +2,18 @@
  * Every method is trusted host ingress; only `service` reaches tools. */
 
 /** @param {ReturnType<typeof import('./lifecycle.js').createEditLockLifecycle>} lifecycle
- * @param {{close: () => Promise<void>, startLocal?: (agent: object) => Promise<any>} | undefined} endpoint */
+ * @param {{close: () => Promise<void>, startLocal?: (agent: object, retry?: boolean) => Promise<any>} | undefined} endpoint */
 export function localDomain(lifecycle, endpoint) {
   return Object.freeze({
     mode: 'publisher',
     service: lifecycle.service,
     /** @param {object} agent */
     start: agent => endpoint?.startLocal ? endpoint.startLocal(agent) : lifecycle.start(agent),
+    /** Trusted binding retry; never reopens permanently revoked authority. @param {object} agent */
+    retryStart: async agent => {
+      lifecycle.assertStartable(agent)
+      return endpoint?.startLocal ? endpoint.startLocal(agent, true) : lifecycle.start(agent)
+    },
     /** Synchronous admission fence for an aborted turn. @param {object} agent */
     latch: agent => { lifecycle.stop(agent).catch(() => {}) },
     /** @param {object} agent */

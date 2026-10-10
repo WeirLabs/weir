@@ -48,6 +48,9 @@ export function createEditLockEvidence() {
         recordDomain(root, info) {
           if (mounts.has(id) && row.phase !== 'disposing') row.domains.set(root, { root, mode: info.mode ?? null, error: info.error ?? null, mountId: id, readBindings: info.bindings })
         },
+        clearSessionFailure(sessionId) {
+          if (mounts.has(id) && row.phase !== 'disposing') row.failures.delete(sessionId)
+        },
         recordSessionFailure(sessionId, reason) {
           if (!mounts.has(id) || row.phase === 'disposing') return
           if (row.failures.size >= 50) row.failures.delete(row.failures.keys().next().value)

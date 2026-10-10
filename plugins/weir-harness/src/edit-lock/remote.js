@@ -3,7 +3,7 @@ import { lstatSync, realpathSync, unlinkSync } from 'node:fs'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bindingGuidance, bindingRefusalReason } from './binding-guidance.js'
+import { bindingGuidance, bindingRefusal } from './binding-guidance.js'
 import { createEditLockPeer } from './peer.js'
 import { serveEditLockPeer } from './peer-transport.js'
 import { createEditLockPeerClient } from './peer-client.js'
@@ -78,9 +78,9 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
   }
   /** Local and remote startup share this queue; the trusted callback rechecks
    * exact claimant identity after the durable revoke barrier.
-   * @param {string} sessionId @param {(reclaimed: boolean) => Promise<any>} bind */
-  function openLocal(sessionId, bind) {
-    return enqueue(sessionId, async () => { const reclaimed = await reclaim(sessionId); return bind(reclaimed) })
+   * @param {string} sessionId @param {(reclaimed: boolean) => Promise<any>} bind @param {() => void} [validate] */
+  function openLocal(sessionId, bind, validate = () => {}) {
+    return enqueue(sessionId, async () => { validate(); const reclaimed = await reclaim(sessionId); validate(); return bind(reclaimed) })
   }
   /** @param {string} sessionId @param {() => Promise<any>} step */
   function enqueue(sessionId, step) {
@@ -93,21 +93,21 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
   }
   /** @param {string} sessionId */
   async function reclaim(sessionId) {
-      const prior = bound.get(sessionId)
-      if (prior) {
-        const dead = prior.socket.destroyed === true || prior.socket.closed === true || prior.socket.errored != null
-        const attestation = dead ? 'unknown' : verdict(sessionId, prior)
-        const refusal = () => new Error(bindingRefusalReason(prior.pid, attestation))
-        if (!dead && attestation !== 'stale') throw refusal()
-        try { await prior.peer.disconnect() } catch {
-          // Reclaim outcome unknown: stay fail-closed and KEEP the mapping, so
-          // the next open retries the reclaim instead of wedging behind a
-          // lifecycle-level refusal.
-          throw refusal()
-        }
-        if (bound.get(sessionId) === prior) bound.delete(sessionId)
+    const prior = bound.get(sessionId)
+    if (prior) {
+      const dead = prior.socket.destroyed === true || prior.socket.closed === true || prior.socket.errored != null
+      const attestation = dead ? 'unknown' : verdict(sessionId, prior)
+      const refusal = () => bindingRefusal(prior.pid, attestation)
+      if (!dead && attestation !== 'stale') throw refusal()
+      try { await prior.peer.disconnect() } catch {
+        // Reclaim outcome unknown: stay fail-closed and KEEP the mapping, so
+        // the next open retries the reclaim instead of wedging behind a
+        // lifecycle-level refusal.
+        throw bindingRefusal(prior.pid, attestation, true)
       }
-      return prior !== undefined
+      if (bound.get(sessionId) === prior) bound.delete(sessionId)
+    }
+    return prior !== undefined
   }
   /** Index hygiene on transport close: drop the entry only while it still
    * names THIS connection's socket — a reclaimed binding must never be removed
@@ -189,12 +189,12 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, 
   })
   return Object.freeze({
     bindings: arbitration.bindings,
-    /** @param {any} agent */
-    startLocal(agent) {
+    /** @param {any} agent @param {boolean} [retry] */
+    startLocal(agent, retry = false) {
       return arbitration.openLocal(agent.id, async reclaimed => {
         if (closed || (reclaimed && !isCurrentLocal(agent))) throw new Error('local edit binding claimant is no longer current')
         return lifecycle.start(agent)
-      })
+      }, () => { if (retry) lifecycle.assertStartable(agent) })
     },
     /** Seal admission, then revoke every channel; await before lifecycle.close. */
     async close() {
