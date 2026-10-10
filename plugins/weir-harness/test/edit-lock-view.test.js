@@ -73,6 +73,19 @@ it('reports a reservation as minutes and an expiry, and recovery only when it ra
   expect(failing.recovery).toEqual({ attempts: 2, elapsedSeconds: 31, pauseMinutes: 0 })
 })
 
+it('projects cleanup-only restrictions even before the first recovery attempt, without inventing a pause state', () => {
+  const result = view(base({ state: 'recovering', locks: [lock('/w/a', 's1', 'pending-confirmation')], recovery: { attempts: 0, elapsedMs: 0, pauseMs: 0 } }))
+  expect(result.state).toBe('attention')
+  expect(result.cleanupOnly).toBe(true)
+  expect(result.files[0].action).toBe('release')
+  expect(result.recovery).toEqual({ attempts: 0, elapsedSeconds: 0, pauseMinutes: 0 })
+  const historical = view(base({ recovery: { attempts: 2, elapsedMs: 31_000, pauseMs: 900_000 } }))
+  expect(historical.state).toBe('idle')
+  expect(historical.cleanupOnly).toBe(false)
+  expect(historical.recovery).toEqual({ attempts: 2, elapsedSeconds: 31, pauseMinutes: 15 })
+  expect(historical.recovery.pausedUntil).toBe(undefined)
+})
+
 it('an unresolvable session renders as an action-free unavailable view', () => {
   const result = unavailableView()
   expect(result.state).toBe('unavailable')

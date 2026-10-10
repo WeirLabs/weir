@@ -53,6 +53,8 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
   const retention = status.retention ?? null
   const recovery = status.recovery ?? null
   const held = Boolean(retention?.held && retention.remainingMs > 0)
+  // This is the existing lifecycle restriction, not an inferred driver/timer state.
+  const cleanupOnly = status.state === 'recovering' && status.revoked !== true
   /** @type {typeof VIEW_STATES[number]} */
   let state
   // Revoked wins over everything: administrative revocation is terminal and
@@ -72,7 +74,7 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
       mine,
       status: lock.status,
       reason: lock.reason ?? null,
-      action: rowAction(lock, mine),
+      action: mine && cleanupOnly ? 'release' : rowAction(lock, mine),
       detail: { path: lock.resourceId, owner: lock.owner, generation: lock.generation },
     }
   })
@@ -82,11 +84,13 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
 
   return {
     state,
+    cleanupOnly,
     files: rows,
     ownCount: own.length,
     pendingCount: own.filter(lock => lock.status === 'pending-confirmation').length,
     hold: held ? { until: retention.holdUntil, remainingMinutes: Math.ceil(retention.remainingMs / 60_000), usedMinutes: Math.round(retention.holdCumulativeMs / 60_000) } : null,
-    recovery: recovery && (recovery.attempts || recovery.elapsedMs || recovery.pauseMs)
+    // Usage is cumulative history: pauseMs cannot establish a current pause.
+    recovery: recovery && (cleanupOnly || recovery.attempts || recovery.elapsedMs || recovery.pauseMs)
       ? { attempts: recovery.attempts, elapsedSeconds: Math.round(recovery.elapsedMs / 1000), pauseMinutes: Math.round(recovery.pauseMs / 60_000) }
       : null,
     technical: { sessionId: status.sessionId, executionEpoch: status.executionEpoch, root: root ?? null, mode: mode ?? null, at: now },

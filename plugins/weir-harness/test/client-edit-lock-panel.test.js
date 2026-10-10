@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 import { readFileSync } from 'node:fs'
+import { buildView } from '../src/edit-lock/view.js'
 
 /** client.edit-lock-panel.js: gated on the `edit-lock` command, every action is
  * an explicit /edit-lock run, and the dot colour follows the reported state. */
@@ -110,6 +111,57 @@ describe('client.edit-lock-panel chunk', () => {
     const { exports } = await load()
     expect(exports.primaryOf('unavailable', viewOf('unavailable', [], { reason: 'retry connection' }))).toBe(null)
     expect(exports.primaryOf('unavailable', viewOf('unavailable', [], { bindingFailure: { code: 'binding-duplicate', retryable: true, inFlight: true } }))).toBe(null)
+  })
+
+  for (const state of ['idle', 'stopped', 'attention']) {
+    it(`recovery usage in ${state} is history, not evidence of an active cleanup or pause`, async () => {
+      const { render } = await mounted([viewOf(state, [], { recovery: { attempts: 3, elapsedSeconds: 300, pauseMinutes: 30 } })])
+      find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+      const tree = render()
+      expect(find(tree, node => node['data-weir-edit-lock-recovery'] === '').children).toBe('Recorded recovery: 3 attempts · 300s elapsed · 30 min pause used.')
+      expect(find(tree, node => node['data-weir-edit-lock-cleanup'] === '')).toBe(undefined)
+      expect(JSON.stringify(tree)).not.toContain('editLockRecovery')
+      expect(byAction(tree, 'primary')?.children).toBe(state === 'stopped' ? 'editLockResume' : undefined)
+    })
+  }
+
+  it('retained rename locks describe ownership only and direct users to the separate tool outcome', async () => {
+    // publishBatch retains all batch ownership on failure: these same rows can
+    // accompany written, not-written, or uncertain outcomes. Only the tool error
+    // has those lists; the panel must not classify bytes from lock status.
+    const locks = ['written.ts', 'uncertain.ts', 'not-written.ts'].map(name => ({ resourceId: `/w/${name}`, owner: 's1', generation: 3, status: 'active' }))
+    const projected = buildView({ status: { sessionId: 's1', state: 'active', interrupted: false, executionEpoch: 2, locks }, locks, cwd: '/w', now: 0 })
+    const { render, runs } = await mounted([projected])
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, node => node['data-weir-edit-lock-ownership-hint'] === '').children).toBe('Locks show ownership, not write outcomes. For failed edits, inspect the tool result; releasing locks does not undo changes.')
+    expect(find(tree, node => node['data-weir-edit-lock-summary'] === '').children).toBe('editLockState_editing')
+    for (const name of ['written.ts', 'uncertain.ts', 'not-written.ts']) {
+      expect(byAction(tree, `release:/w/${name}`).children).toBe('editLockRow_release')
+    }
+    expect(byAction(tree, 'primary')).toBe(undefined)
+    expect(find(tree, node => node['data-weir-edit-lock-error'] === '')).toBe(undefined)
+    expect(JSON.stringify(tree)).not.toContain('filesAlreadyWritten')
+    expect(JSON.stringify(tree)).not.toContain('filesNotWritten')
+    expect(JSON.stringify(tree)).not.toContain('filesUncertain')
+    expect(runs).toEqual([])
+  })
+
+  it('renders cleanup restrictions, visible abnormal reasons and cumulative pause usage without claiming a live pause', async () => {
+    const file = { ...own('very-long-file-name.ts', 'abnormal'), reason: 'provider-error: connection lost' }
+    const { runs, render } = await mounted([viewOf('attention', [file], { cleanupOnly: true, recovery: { attempts: 2, elapsedSeconds: 31, pauseMinutes: 15 } })])
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, node => node['data-weir-edit-lock-summary'] === '').children).toBe('editLockState_attention')
+    expect(find(tree, node => node['data-weir-edit-lock-cleanup'] === '').children).toBe('Cleanup only: business edits and new ownership are blocked. Release files you no longer need; inspect the tool result before retrying edits.')
+    expect(find(tree, node => node['data-weir-edit-lock-file-reason'] === '/w/very-long-file-name.ts').children).toBe('provider-error: connection lost')
+    expect(find(tree, node => node['data-weir-edit-lock-recovery'] === '').children).toBe('Recorded recovery: 2 attempts · 31s elapsed · 15 min pause used.')
+    expect(find(tree, node => node['data-weir-edit-lock-pause'] === '').children).toBe('Pause usage is cumulative, not a live timer. Pause expiry re-checks recovery; it does not release locks or restore editing.')
+    expect(byAction(tree, 'primary')).toBe(undefined)
+    expect(byAction(tree, 'confirm:/w/very-long-file-name.ts')).toBe(undefined)
+    expect(byAction(tree, 'release:/w/very-long-file-name.ts').children).toBe('editLockRow_release')
+    expect(JSON.stringify(tree)).not.toContain('editLockRecovery')
+    expect(runs).toEqual([])
   })
   it('a healthy session offers no primary action; own files offer release', async () => {
     const { runs, render } = await mounted([viewOf('editing', [own('a.txt')])])
@@ -289,6 +341,7 @@ describe('client.edit-lock-panel chunk', () => {
     const source = readFileSync(new URL('../lib/client.edit-lock-panel.js', import.meta.url), 'utf8')
     // The theme's documented popover surface; an undefined token renders transparent.
     expect(source).toContain('background: "var(--dsw-alias-bg-overlay)"')
+    expect(/rgba?\(|#[0-9a-f]{3,8}\b/i.test(source)).toBe(false)
     // Tokens verified against dsh-client-ui-theme 0.2.0-rc.2 definitions.
     const DEFINED = new Set(['--dsw-alias-bg-overlay', '--dsw-alias-border-l2', '--dsw-alias-label-primary', '--dsw-alias-label-secondary',
       '--dsw-alias-label-tertiary', '--dsw-alias-state-business-primary', '--dsw-alias-state-error-primary', '--dsw-alias-state-warn-primary',
