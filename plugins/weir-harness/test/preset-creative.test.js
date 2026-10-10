@@ -25,18 +25,10 @@ function presetBlock(rowId) {
   return lines.slice(start, end).join('\n')
 }
 
-/** Ordered top-level `- id:` row sequence inside a preset's plugins list. */
-function topLevelRowIds(block) {
-  const lines = block.split('\n')
-  const pluginsLine = lines.findIndex((line) => line.trim() === 'plugins:')
-  const indent = lines[pluginsLine + 1].search(/\S/)
-  const ids = []
-  for (let i = pluginsLine + 1; i < lines.length; i++) {
-    if (lines[i].trim() === '') continue
-    if (lines[i].search(/\S/) !== indent || !lines[i].trim().startsWith('- id:')) break
-    ids.push(lines[i].trim().slice('- id:'.length).trim())
-  }
-  return ids
+/** Ordered plugin rows, including nested groups (skip the declaration row). */
+function pluginRowIds(block) {
+  const plugins = block.slice(block.indexOf('plugins:'))
+  return [...plugins.matchAll(/^\s*- id: (\S+)$/gm)].map(match => match[1])
 }
 
 const weir = presetBlock('preset-weir')
@@ -51,6 +43,20 @@ describe('weir-creative preset declaration', () => {
     expect(creative).toContain('order: 6')
     expect(weir).not.toContain('id: weir-creative')
   })
+
+  for (const [id, block] of [['weir', weir], ['weir-creative', creative]]) {
+    it(`${id} has one task-spawn entry and preserves child controls`, () => {
+      const ids = pluginRowIds(block)
+      for (const removed of ['tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow']) {
+        expect(ids, `${id} must not mount ${removed}`).not.toContain(removed)
+      }
+      expect(block).not.toContain('workflowEngine:')
+      for (const retained of ['delegate', 'tool-subagent-control', 'tool-subagent-list-agents']) {
+        expect(ids, `${id} must retain ${retained}`).toContain(retained)
+      }
+      expect(block).toMatch(/- id: tool-ralph\s+name: '@deepseek-ai\/dsh-tool-ralph'\s+disabled: true/)
+    })
+  }
 
   it('creative delta 1: tool-cordis row is present', () => {
     expect(creative).toContain("- id: tool-cordis")
@@ -77,8 +83,9 @@ describe('weir-creative preset declaration', () => {
   })
 
   it('the two presets share the same row sequence except the creative-only insertions', () => {
-    const shared = topLevelRowIds(weir)
-    const mirrored = topLevelRowIds(creative).filter((id) => id !== 'tool-cordis' && id !== 'creative-guide')
+    const shared = pluginRowIds(weir)
+    const mirrored = pluginRowIds(creative).filter((id) => id !== 'tool-cordis' && id !== 'creative-guide')
+    expect(shared).toContain('delegate')
     expect(mirrored).toEqual(shared)
   })
 
@@ -89,7 +96,7 @@ describe('weir-creative preset declaration', () => {
   })
 
   it('the shared groups keep identical isolate tables', () => {
-    for (const service of ['weirMcpGate', 'weirMcpManager', 'planMode', 'compaction', 'toolResultPruner', 'workflowEngine', 'weirEditLock', 'weirWorktreeLanes']) {
+    for (const service of ['weirMcpGate', 'weirMcpManager', 'planMode', 'compaction', 'toolResultPruner', 'weirEditLock', 'weirWorktreeLanes', 'weirBlackboard']) {
       const marker = `${service}: true`
       expect(creative.includes(marker), `creative lost isolated service ${service}`).toBe(weir.includes(marker))
     }

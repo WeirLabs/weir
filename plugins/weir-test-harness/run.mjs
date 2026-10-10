@@ -158,8 +158,40 @@ function runScenario(scenario) {
   }))
 }
 
+// A separate profile boots the actual product bundle, never the host-mounted
+// test mirror. Disable host delegation rows as Web does, including controls so
+// positive catalog assertions cannot be rescued by dsh-base registrations.
+async function runPresetDelegationSurface(scenario, preset) {
+  const profileName = `weir-it-${preset}`
+  const profile = join(HOME, 'profiles', profileName)
+  mkdirSync(profile, { recursive: true })
+  const manifest = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8'))
+  manifest.name = `dsh-profile-${profileName}`
+  manifest.dsh.profile.bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', 'weir-harness']
+  writeFileSync(join(profile, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
+  writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
+  const disabled = ['tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow', 'tool-subagent-control', 'tool-subagent-list-agents', 'weir-notify']
+  const patch = disabled.map(id => ({ id, disabled: true }))
+  patch.push({ id: 'agent-default-model', config: { provider: 'mock', model: 'mock-1' } })
+  patch.push({ insert: [
+    { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
+    { id: 'cordis-inspect-providers', name: '@deepseek-ai/dsh-tool-cordis/host' },
+    { id: 'weir-it-agent-presets', name: '@deepseek-ai/dsh-agent-preset-registry', config: { default: preset } },
+    { id: 'weir-it-mock-llm', name: 'weir-test-harness/mock-llm' },
+    { id: 'weir-it-event-tap', name: 'weir-test-harness/event-tap' },
+    { id: 'weir-it-preset-delegation-surface-probe', name: join(HERE, 'src/preset-delegation-surface-probe.js') },
+  ] })
+  // JSON is a YAML subset; production !!js expressions remain in the product
+  // bundle and are interpreted by Loader, not copied or evaluated by this test.
+  writeFileSync(join(profile, 'cordis.patch.yml'), JSON.stringify(patch, null, 2) + '\n')
+  execFileSync(NODE, [PNPM, 'install', '--reporter', 'silent'], { cwd: profile, stdio: 'inherit' })
+  const trace = join(RUN_ROOT, `trace-${scenario.id}-${preset}.jsonl`)
+  const outcome = await spawnHeadless([profileName, scenario.prompt], scenarioEnv(scenario.id, trace, { WEIR_IT_DELEGATION_PRESET: preset }))
+  return { scenario: scenario.id, trace, ...outcome }
+}
+
 /** The context handed to a scenario's optional run override (rehydrate). */
-const driverCtx = { IT_ROOT: RUN_ROOT, spawnHeadless, scenarioEnv }
+const driverCtx = { IT_ROOT: RUN_ROOT, spawnHeadless, scenarioEnv, runPresetDelegationSurface }
 
 // ---------- assertion collection ----------
 
