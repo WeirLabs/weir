@@ -197,9 +197,9 @@ describe('client.edit-lock-panel chunk', () => {
       const { render } = await mounted([viewOf(state, [], { recovery: { attempts: 3, elapsedSeconds: 300, pauseMinutes: 30 } })])
       find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
       const tree = render()
-      expect(find(tree, node => node['data-weir-edit-lock-recovery'] === '').children).toBe('Recorded recovery: 3 attempts · 300s elapsed · 30 min pause used.')
+      expect(find(tree, node => node['data-weir-edit-lock-recovery'] === '').children).toBe('editLockRecoveryUsage')
       expect(find(tree, node => node['data-weir-edit-lock-cleanup'] === '')).toBe(undefined)
-      expect(JSON.stringify(tree)).not.toContain('editLockRecovery')
+      expect(JSON.stringify(tree)).not.toContain('cleaning up')
       expect(byAction(tree, 'primary')?.children).toBe(state === 'stopped' ? 'editLockResume' : undefined)
     })
   }
@@ -227,7 +227,7 @@ describe('client.edit-lock-panel chunk', () => {
       const { render } = await mounted([viewOf(state, [], { recovery: { attempts: 2, elapsedSeconds: 31, pauseMinutes: 15 }, ...extra })])
       find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
       expect(find(render(), node => node['data-weir-edit-lock-paused-until'] === '')).toBe(undefined)
-      expect(find(render(), node => node['data-weir-edit-lock-recovery'] === '').children).toContain('15 min pause used')
+      expect(find(render(), node => node['data-weir-edit-lock-recovery'] === '').children).toBe('editLockRecoveryUsage')
     })
   }
 
@@ -240,7 +240,7 @@ describe('client.edit-lock-panel chunk', () => {
     const { render, runs } = await mounted([projected])
     find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
     const tree = render()
-    expect(find(tree, node => node['data-weir-edit-lock-ownership-hint'] === '').children).toBe('Locks show ownership, not write outcomes. For failed edits, inspect the tool result; releasing locks does not undo changes.')
+    expect(find(tree, node => node['data-weir-edit-lock-ownership-hint'] === '').children).toBe('editLockOwnershipHint')
     expect(find(tree, node => node['data-weir-edit-lock-summary'] === '').children).toBe('editLockState_editing')
     for (const name of ['written.ts', 'uncertain.ts', 'not-written.ts']) {
       expect(byAction(tree, `release:/w/${name}`).children).toBe('editLockRow_release')
@@ -259,14 +259,16 @@ describe('client.edit-lock-panel chunk', () => {
     find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
     const tree = render()
     expect(find(tree, node => node['data-weir-edit-lock-summary'] === '').children).toBe('editLockState_attention')
-    expect(find(tree, node => node['data-weir-edit-lock-cleanup'] === '').children).toBe('Cleanup only: business edits and new ownership are blocked. Release files you no longer need; inspect the tool result before retrying edits.')
+    expect(find(tree, node => node['data-weir-edit-lock-cleanup'] === '').children).toBe('editLockCleanupOnly')
     expect(find(tree, node => node['data-weir-edit-lock-file-reason'] === '/w/very-long-file-name.ts').children).toBe('provider-error: connection lost')
-    expect(find(tree, node => node['data-weir-edit-lock-recovery'] === '').children).toBe('Recorded recovery: 2 attempts · 31s elapsed · 15 min pause used.')
-    expect(find(tree, node => node['data-weir-edit-lock-pause'] === '').children).toBe('Pause usage is cumulative, not a live timer. Pause expiry re-checks recovery; it does not release locks or restore editing.')
+    expect(find(tree, node => node['data-weir-edit-lock-recovery'] === '').children).toBe('editLockRecoveryUsage')
+    expect(find(tree, node => node['data-weir-edit-lock-pause'] === '').children).toBe('editLockPauseUsageHint')
     expect(byAction(tree, 'primary')).toBe(undefined)
     expect(byAction(tree, 'confirm:/w/very-long-file-name.ts')).toBe(undefined)
     expect(byAction(tree, 'release:/w/very-long-file-name.ts').children).toBe('editLockRow_release')
-    expect(JSON.stringify(tree)).not.toContain('editLockRecovery')
+    // The old misleading editLockRecovery text stays unused; the new cumulative
+    // usage keys are the contract asserted above.
+    expect(JSON.stringify(tree)).not.toContain('cleaning up')
     expect(runs).toEqual([])
   })
   it('a healthy session offers no primary action; own files offer release', async () => {

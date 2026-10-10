@@ -302,6 +302,11 @@ describe('weir settings client half', () => {
     expect(localeRegistrations[0].dicts.en.loadFailed).toBe('Weir settings could not be loaded:')
     expect(localeRegistrations[0].dicts.zh.loading).toBe('正在加载 Weir 设置…')
     expect(localeRegistrations[0].dicts.zh.loadFailed).toBe('Weir 设置加载失败：')
+    // Edit Lock panel locale keys resolve in both dictionaries (templates in English)
+    for (const key of ['editLockCleanupOnly', 'editLockRecoveryUsage', 'editLockPauseUsageHint', 'editLockPausedUntil', 'editLockOwnershipHint']) {
+      expect(typeof localeRegistrations[0].dicts.en[key]).toBe('string')
+      expect(typeof localeRegistrations[0].dicts.zh[key]).toBe('string')
+    }
     expect(whileServedCalls).toHaveLength(1)
     expect(whileServedCalls[0].namespaces).toEqual(['weir-settings'])
 

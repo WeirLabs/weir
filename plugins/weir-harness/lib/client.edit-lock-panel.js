@@ -214,12 +214,12 @@ window.__ModuleLoader__.load({
 				// Usage is historical; only the live driver's explicit deadline signals a pause.
 				// Follow-up locale keys: editLockCleanupOnly, editLockRecoveryUsage,
 				// editLockPauseUsageHint. Template-layer fallback stays English.
-				view?.cleanupOnly ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cleanup": "", children: "Cleanup only: business edits and new ownership are blocked. Release files you no longer need; inspect the tool result before retrying edits." }, "cleanup") : null,
+				view?.cleanupOnly ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cleanup": "", children: t("editLockCleanupOnly") }, "cleanup") : null,
 				// Follow-up locale key: editLockPausedUntil, with {time}. Absolute clock,
 				// not a countdown or a promise to release locks/restore editing at expiry.
 				!cold && state === "attention" && view?.cleanupOnly && Number.isFinite(view.pausedUntil) && view.pausedUntil > Date.now() ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-paused-until": "", children: t("editLockPausedUntil").replace("{time}", clock(view.pausedUntil)) }, "paused-until") : null,
-				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-recovery": "", children: `Recorded recovery: ${view.recovery.attempts} attempts · ${view.recovery.elapsedSeconds}s elapsed · ${view.recovery.pauseMinutes} min pause used.` }, "recovery") : null,
-				view?.recovery?.pauseMinutes > 0 ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-pause": "", children: "Pause usage is cumulative, not a live timer. Pause expiry re-checks recovery; it does not release locks or restore editing." }, "pause") : null,
+				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-recovery": "", children: t("editLockRecoveryUsage").replace("{attempts}", String(view.recovery.attempts)).replace("{elapsed}", String(view.recovery.elapsedSeconds)).replace("{pause}", String(view.recovery.pauseMinutes)) }, "recovery") : null,
+				view?.recovery?.pauseMinutes > 0 ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-pause": "", children: t("editLockPauseUsageHint") }, "pause") : null,
 				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,
 				files.length ? jsx("div", { style: { marginTop: "8px" }, "data-weir-edit-lock-files": "", children: files.map((file) => jsxs("div", {
 					style: { padding: "4px 0", borderTop: "1px solid var(--dsw-alias-border-l2)" },
@@ -238,7 +238,7 @@ window.__ModuleLoader__.load({
 				}, file.detail.path)) }, "files") : null,
 				// Follow-up locale key: editLockOwnershipHint. Outcomes remain in the
 				// adjacent tool result; lock rows do not establish a publication result.
-				files.length ? jsx("div", { style: { ...mutedStyle, marginTop: "6px" }, "data-weir-edit-lock-ownership-hint": "", children: "Locks show ownership, not write outcomes. For failed edits, inspect the tool result; releasing locks does not undo changes." }, "ownership-hint") : null,
+				files.length ? jsx("div", { style: { ...mutedStyle, marginTop: "6px" }, "data-weir-edit-lock-ownership-hint": "", children: t("editLockOwnershipHint") }, "ownership-hint") : null,
 				error && !duplicateError ? jsx("div", { style: errorStyle, "data-weir-edit-lock-error": "", children: error }, "error") : null,
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "10px" }, children: [
 					canRevoke ? (armedRevoke
