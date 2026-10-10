@@ -1,0 +1,8 @@
+{
+  "scenario": "preset-delegation-surface",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/prune-native-delegation-tools-109/.weir/it-root/home",
+  "code": 0,
+  "stdout": "parent observed both continuable settlements\n\nparent observed both continuable settlements\n",
+  "stderr": "\n",
+  "sessionId": null
+}

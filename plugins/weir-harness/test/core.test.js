@@ -79,6 +79,14 @@ describe('weir-core', () => {
     expect(DOCTRINE).not.toContain('oracle')
   })
 
+  it('topology guidance recommends delegate rather than removed native tools', () => {
+    for (const removed of ['workflow', 'subagent', 'subagent_fork', 'list_subagent_models']) {
+      expect(DOCTRINE).not.toContain(`\`${removed}\``)
+    }
+    expect(DOCTRINE).toContain('batch `delegate`')
+    expect(DOCTRINE).toContain('sequence `delegate`')
+  })
+
   it('doctrine scopes the follow-up promise to continuable children', () => {
     // The unscoped promise "a child gets exactly one follow-up" predated the
     // continuable lane and promised what a one-shot child can never receive;

@@ -14,6 +14,7 @@ Weir 的全部能力以一个 bundle 包（`plugins/weir-harness/`，包名 `wei
 - Weir 会话自带技能目录（10 项），经 `skill` 工具加载。
 - bundle 代码或组合更新后，新创建的 agent 使用新版本；进行中的 agent 保持原组合直到结束。
 - Weir 不会抢占默认预设，除非用户显式把它设为默认。
+- **BREAKING：单一任务派遣入口**：两个预设都只通过 `delegate` 派任务，不再提供 `subagent`、`subagent_fork`、`list_subagent_models`、`workflow`。保留 `send_message`、`interrupt_agent`、`list_agents` 与 `resume_agent`、`terminate_agent`、`supervised_status`。批量/分组委派不等价于 JavaScript workflow 的可编程流水线或结构化脚本能力，旧 workflow 脚本不自动迁移（见 [分类委派](category-delegation.md)）。
 
 ### Weir 创造模式（weir-creative）
 
@@ -39,20 +40,23 @@ bundle 另在 profile 层插入 `weir-harness/settings` 行：以 schemastery �
 ## 设计细节
 
 - bundle 为 `private: true` 的 npm 风格包，清单经 `dsh.bundle.patch` 指向 Cordis patch 文件；**不声明任何 `@deepseek-ai/*` 运行时依赖**——这些在运行时由安装环境解析（link 安装下静态 import 不可解析，插件代码一律走 `ctx`）。
-- 预设组合包含：标准工具面（fs/搜索/bash 或 pwsh/jobs/todo/web/ask-user/present/skills）、计划模式组、压缩组、委派组（原生 subagent/workflow + 七个自有模块行：`core`、`intent-gate`、`delegate`、`todo-driver`、`bg-notify`、`context-guard`、`hashline-edit`）。预设刻意排除 DSH 的 goal 行（`command-goal`/`tool-goal`）：goal 驱动的续推与 Weir 事件驱动的多 Agent 编排相冲突。
+- 预设组合包含：标准工具面（fs/搜索/bash 或 pwsh/jobs/todo/web/ask-user/present/skills）、计划模式组、压缩组、Weir 自有委派模块与 DSH 子代理控制行。两个 `delegation` 组均不再挂载 `tool-subagent`、`tool-subagent-fork`、`workflow-ptc`、`tool-workflow`，也不再 isolate `workflowEngine`；保留 `tool-subagent-control` / `tool-subagent-list-agents`，`tool-ralph` 继续禁用。宿主 `subagents` 服务及 spawn/fork providers 不变。预设刻意排除 DSH 的 goal 行（`command-goal`/`tool-goal`）：goal 驱动的续推与 Weir 事件驱动的多 Agent 编排相冲突。
 - 技能经预设内**选择 provider**（`weir-skill-selection` 行，`src/capabilities/skill-selection-plugin.js`）挂载：bundle 自带目录由 provider 枚举并标注为 Weir 内置（原 `skill-filesystem` 行及其 `customSkillDirs` 已移除；宿主层 `skill-filesystem`/`tool-skill` 由 patch 行显式 `disabled: true`），预设保留 stock `tool-skill` 作为 catalog 与 loader。自带目录：`deep-work`、`research`、`review-work`、`debugging`、`git-master`、`refactor`、`programming`（含分语言 references/）、`remove-ai-slops`、`work-with-pr`、`remove-deadcode`。结构纪律：frontmatter `name`==目录名、`description` 一行、正文英文（`test/skills.test.js` 机器强制）。详见 [会话能力管理器](session-capability-manager.md)「库存、身份与选择 provider」。
 - 服务隔离纪律：被 `isolate` 的服务（如压缩组），其消费者插件行必须与提供者同组，否则预设加载永久等待（历史事故，已修复并镜像进集成测试）。
 - **预设库与用户预设的组合关系**：cordis patch 声明的是 Weir 预设自身的静态组合（本节）；**用户预设**（团队能力集合）由会话能力管理器的预设库承载——`global`／`workspace` 两个 namespace 存在 Weir 自管存储里（稳定 ID 与显示名分离、同域重名显式决策、CAS 冲突显式化），可移植导出文档只含无凭据引用（详见 [会话能力管理器](session-capability-manager.md)「预设与默认值」）。用户预设的加载绝不改变宿主组合，只作用于会话选择。
 - 重复安装同一路径被幂等拒绝；改动经"禁用→启用"循环重应用。
-- **双预设同步纪律**：`weir-creative` 的 `config.plugins` 是 `weir` 组合的全量副本加三个有文档的增量（tool-cordis 行、plugin-manager 启用表达式、skill-selection 的 customSkillDirs + baselineScopes）。**修改 `weir` 预设组合时必须同步修改 `weir-creative`**；`test/preset-creative.test.js` 钉住顶层行序列（除 tool-cordis 插入外逐一相同）与各组 isolate 表的一致性。
+- **双预设同步纪律**：`weir-creative` 的 `config.plugins` 是 `weir` 组合的全量副本加上述创造增量。**修改 `weir` 预设组合时必须同步修改 `weir-creative`**；`test/preset-creative.test.js` 钉住全部插件行序列（含嵌套组；除 tool-cordis / creative-guide 插入外逐一相同）与各组 isolate 表的一致性。
 
 ## 边界与失败语义
 
 - 预设行激活失败（如服务依赖未满足）会在激活审计中具名报告，不会静默半残。
 - bundle 未安装/未启用时，任何会话都不会出现 Weir 痕迹。
 - **保证**：预设隔离——Weir 的工具与提示词段落在非 Weir 会话中永不出现（有回归测试证据）。
+- 目录精简适用于 Web 宿主组合中新建的 Weir / Weir 创造模式会话；bundle 重应用不回溯改写既有会话保留的预设版本。验收必须新建会话，不能把旧会话目录当新版证据。
 
 ## 测试
 
-- 单元测试：`test/preset-creative.test.js`（双预设行序列与 isolate 表同步、三个创造增量的文本扫描）；`test/skill-baseline-scopes.test.js`（`baselineSkillIdentities` 纯函数）；`test/skill-composition.test.js`（post-migration 不变量，creative 行例外显式化）。
-- 集成测试：`plugins/weir-test-harness` 以镜像的预设组合（含隔离结构）跑全部场景，隔离回归在开发会话工具目录核查中佐证。
+- 单元测试：`test/preset-creative.test.js`（双预设行序列与 isolate 表同步、创造增量，以及直派/脚本行缺席、`delegate`/控制行在场、ralph 仍禁用）；`test/core.test.js`（不推荐退役工具）；`test/skill-baseline-scopes.test.js` 与 `test/skill-composition.test.js` 保持能力组合防线。
+- 真预设集成：`preset-delegation-surface` 使用独立临时 profile，直接加载生产 bundle 的两份完整声明（不复制委派行），禁用 dsh-base 的原生直派/脚本及控制工具行以对齐 Web 委派面，再检查真实模型请求目录的正负名单。每个预设都执行一次性 `delegate` 和 continuable `delegate` → `send_message`，验证子代保留原上下文、父会话收到两轮结果；创造模式补齐宿主 Cordis 检查服务，生产预设不打补丁。
+- 装置单测重放两份真实请求 trace，并逐一删除必需工具、注入退役工具/宿主控制工具、删去第二轮子代结果，证明运行时断言能对这些回归报红。
+- 常规 headless 组合与既有原生 spawn/fork、MCP、继承场景保持不变，不用它们的宿主工具目录替代真预设验收。正式 GUI 重应用后还需新建两种会话核对活目录，并确认 standard 不变。

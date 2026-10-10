@@ -40,6 +40,7 @@ EXPECTED_ORDER.push('editlock-binding-reclaim')
 EXPECTED_ORDER.push('editlock-delegate-settle')
 EXPECTED_ORDER.push('editlock-delegate-resume')
 EXPECTED_ORDER.push('blackboard-persistence')
+EXPECTED_ORDER.push('preset-delegation-surface')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -78,6 +79,7 @@ describe('scenario registry', () => {
   // Scenarios whose preconditions need driver-side work: rehydrate boots twice
   // with one session id; worktree initializes a git repository in the workspace.
   const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'editlock-stale-sweep', 'editlock-stale-sweep-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'editlock-crash-recovery', 'editlock-cold-view', 'zombie-lane', 'lane-resumable', 'editlock-recovery-ux']
+  RUN_OVERRIDE.push('preset-delegation-surface')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

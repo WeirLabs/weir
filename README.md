@@ -43,6 +43,8 @@ flowchart LR
 - **后台委派**：耗时任务后台运行，完成只推一条简短通知；支持任务分组、续聊式子任务，重启不丢。
 - **会话黑板**：子代理的发现写入共享黑板，同一会话重启或重装后仍保留，经你裁决后可晋升为跨会话文档。→ [会话黑板](docs/features/blackboard.md)
 
+**兼容性变更**：Weir 与创造模式统一用 `delegate` 派任务，不再提供 `subagent`、`subagent_fork`、`list_subagent_models`、`workflow`。批量/分组委派不是 JavaScript workflow 脚本编排的等价替代；续聊追问和子代理控制仍保留。→ [分类委派](docs/features/category-delegation.md)
+
 ### 工程执行
 - **锚点编辑**：读取自带锚点，逐锚校验，任何一处对不上就整体拒绝；编辑以逐行着色 diff 呈现，更准也更省 token。
 - **语义级代码理解**：接入 LSP 后，跳转定义、查找引用、跨文件重命名都由语言服务器给出真实答案；可一键安装缺失的语言服务器（13 种语言）。
