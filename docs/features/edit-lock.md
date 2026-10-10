@@ -254,6 +254,8 @@
 
 平台与失败语义：darwin/linux/win32（Linux 与 win32 行经代码路径与单元/跨进程套件验证，Linux 未实机验证；win32 行经 NTFS 实测），其余平台 factory 直接抛错；目录、dangling symlink、symlink 环、特殊文件、`nlink > 1`、`missing/..`、相对 cwd、空路径与含 NUL 路径全部拒绝，不做本地无锁后备。
 
+有效启用时，预设挂载在任何权威目录、publisher 预约或写者作用域出现之前，复用资源身份工厂做无文件系统副作用的平台预检。未支持的平台给出命名拒绝并保留拒写服务：五种受管编辑调用仍不能退回普通无锁发布，存活及冷会话都可读取失败原因；真正保存关闭的 profile 不进入预检，普通写入行为不变。安装版两个 Weir 预设镜像以注入的 FreeBSD 条件验证了这些路径（`e08cd04`）；这**不**等于在 FreeBSD 实机验收，也不代替 Linux/Windows 双 GUI 门槛。
+
 ### 历史镜像与 operation history
 
 `src/edit-lock/store.js` 提供 `openEditLockStore({ directory, domainId, mode: 'create' | 'recover' })` → `snapshot()` / `record({ expectedRevision, nextState })` / `close()`，是**持久化历史，不是授权来源**：
