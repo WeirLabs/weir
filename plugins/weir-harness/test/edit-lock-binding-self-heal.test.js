@@ -474,3 +474,38 @@ test('retry never joins an unrelated initial setup without a classified binding 
     assert.match(result.text, /not eligible/)
   } finally { await dispose() }
 })
+
+test('retry cannot carry a failed-binding user message into a later injected wake', async () => {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root, { agents: true, presets: true })
+  const { dispose, service } = mount(host, root, directory)
+  let nonce, unregister = () => {}
+  const remote = createRemoteEditLockDomain(endpointFor(directory), { onNotice() {}, onChannelOpen(token) { nonce = token; return () => unregister() } })
+  try {
+    const publisherAgent = host.own(host.agent('publisher'))
+    await host.emit('agent/created', { agent: publisherAgent })
+    const old = { id: 's' }
+    await remote.channelFor(old)
+    await remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root })
+    const agent = host.own(host.agent('s'))
+    await host.emit('agent/created', { agent })
+    assert.equal(service.blocksContinuation(agent), true)
+    await host.emit('agent/inbox/inserted', { agent, message: { id: 'u-before', role: 'user', content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } } })
+    await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+    await host.emit('session/event', { id: 's' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    unregister = registerBindingRuntime(nonce, old, old.id)
+    const retried = await host.command().handler({ agent, rawInput: 'retry', commandId: 'retry-after-failed-turn' })
+    assert.equal(retried.kind, 'success', retried.text)
+    const before = (await service.describe(agent)).status
+    assert.equal(before.state, 'stopped')
+    await host.emit('agent/inbox/inserted', { agent, message: { id: 'injected', role: 'user', content: [{ type: 'text', text: 'background' }], source: { kind: 'weir-todo-driver' } } })
+    await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+    const after = (await service.describe(agent)).status
+    assert.equal(after.state, 'stopped')
+    assert.equal(after.executionEpoch, before.executionEpoch)
+    assert.equal(after.locks[0].status, 'user-interrupted')
+    await host.emit('agent/inbox/inserted', { agent, message: { id: 'u-after', role: 'user', content: [{ type: 'text', text: 'continue now' }], source: { kind: 'user' } } })
+    await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+    assert.equal((await service.describe(agent)).status.state, 'active')
+  } finally { remote.close(); await dispose() }
+})

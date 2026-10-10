@@ -750,6 +750,9 @@ return (ctx, config = {}) => {
       startFailures.delete(agent)
       bindingFailures.delete(agent)
       try { evidence?.clearSessionFailure?.(sessionOf(agent)) } catch { /* reporting cannot undo a successful bind */ }
+      // A genuine message from a turn that ran while binding was unavailable
+      // is not a Continue receipt for a later injected wake after connection retry.
+      if (retry) pendingAutoResume.delete(agent)
       settled.set(agent, domain)
       boundAgents.set(agent.id, agent)
       dispositionFor(agent)
