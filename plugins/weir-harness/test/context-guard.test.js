@@ -167,6 +167,15 @@ describe('context-guard plugin', () => {
     expect(injected).toHaveLength(0)
   })
 
+  it('does not attempt manual compaction inside the turn/end publication', async () => {
+    const { handlers, registered, compactions, session, agent } = harness(0.5)
+    const tool = registered.find((entry) => entry.name === 'compact_context')
+    const result = await tool.execute({}, { agent, concludeTurn() {} })
+    expect(result.queued).toBe(true)
+    expect(compactions).toHaveLength(0)
+    await handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    expect(compactions).toHaveLength(0)
+  })
   it('forces compaction at a turn boundary over the hard threshold', async () => {
     const { handlers, compactions, followups, session } = harness(0.9)
     await handlers['session/event'](session, { type: 'turn/end', data: {} })
