@@ -83,7 +83,7 @@ test('open wire adds unique per-channel token; drop and close prune registration
     for (const message of messages) {
       assert.deepEqual(Object.keys(message).sort(), ['callId', 'kind', 'request'])
       assert.equal(message.kind, 'open')
-      assert.deepEqual(Object.keys(message.request).sort(), ['nonce', 'pid', 'sessionId'])
+      assert.deepEqual(Object.keys(message.request).sort(), ['bindingFailures', 'nonce', 'pid', 'retry', 'sessionId'])
       assert.equal(message.request.pid, process.pid)
       assert.equal(typeof message.request.nonce, 'string')
       assert.equal(bindingRuntime(message.request.nonce).sessionId, message.request.sessionId)
@@ -107,7 +107,11 @@ test('old-client open without token succeeds and is never attested away', async 
   try {
     assert.deepEqual(await client.request('open', 'open', { sessionId: 'old' }, new AbortController().signal), { state: 'active' })
     assert.deepEqual(server.bindings(), [{ sessionId: 'old', present: true, holderPid: null, attestable: false, attestation: 'unknown' }])
-    await assert.rejects(remote.channelFor({ id: 'old' }), /holder cannot be attested/)
+    await assert.rejects(remote.channelFor({ id: 'old' }), error => {
+      assert.equal(error.bindingFailure?.code, 'binding-duplicate')
+      assert.equal(error.bindingFailure.holderKind, 'unknown')
+      return /holder cannot be attested/.test(error.message)
+    })
     assert.equal(starts, 1)
     assert.equal(attestations, 0)
   } finally { client.close(); remote.close(); await server.close() }

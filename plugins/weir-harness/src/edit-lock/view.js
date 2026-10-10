@@ -95,10 +95,11 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
 
 /** View for a session the host cannot resolve right now. Without a reason it is
  * still starting; with one, registration failed and the reason is shown, because
- * a permanent "starting" hides a fail-closed workspace. Action-free either way.
- * @param {string | null} [reason] */
-export function unavailableView(reason = null) {
-  return { state: 'unavailable', reason: reason ?? null, files: [], ownCount: 0, pendingCount: 0, hold: null, recovery: null, technical: null }
+ * a permanent "starting" hides a fail-closed workspace. Only a trusted live
+ * binding diagnostic can enable connection retry; never editing authority.
+ * @param {string | null} [reason] @param {any} [bindingFailure] */
+export function unavailableView(reason = null, bindingFailure = null) {
+  return { state: 'unavailable', reason: reason ?? null, ...(bindingFailure ? { bindingFailure } : {}), files: [], ownCount: 0, pendingCount: 0, hold: null, recovery: null, technical: null }
 }
 
 /**

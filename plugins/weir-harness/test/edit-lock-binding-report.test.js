@@ -7,11 +7,17 @@ import { createChannelBindingArbitration } from '../src/edit-lock/remote.js'
 import { bindingGuidance, bindingRefusalReason } from '../src/edit-lock/binding-guidance.js'
 import { createEditLockEvidence, maintenanceStatus, registerEditLockMaintenanceEndpoints } from '../src/edit-lock/maintenance.js'
 
+test('binding guidance names holder-side proof and explicit retry rather than requiring restart', () => {
+  const text = bindingGuidance('s', bindingRefusalReason(process.pid, 'unknown'))
+  assert.match(text, /original holder.*disconnect/)
+  assert.match(text, /edit-lock retry/)
+  assert.doesNotMatch(text, /Restart DeepSeek Harness to recover/)
+})
 for (const [label, pid, state, expected, excluded] of [
   ['serving', process.pid, 'serving', /active in the DeepSeek Harness window.*Use the session in that window/, /stale runtime/],
-  ['same-process unknown', process.pid, 'unknown', /same process.*stale runtime incarnation.*Restart/, /window/],
+  ['same-process unknown', process.pid, 'unknown', /same process.*stale runtime incarnation.*edit-lock retry/, /window/],
   ['cross-process', process.pid + 1, 'unknown', new RegExp(`pid ${process.pid + 1}.*Quit that holder process`), /window/],
-  ['old publisher', undefined, 'unknown', /holder cannot be attested.*Restart/, /window/],
+  ['old publisher', undefined, 'unknown', /holder cannot be attested.*edit-lock retry/, /window/],
 ]) test(`duplicate-binding guidance: ${label}`, () => {
   const reason = bindingRefusalReason(pid, state)
   assert.doesNotMatch(reason, /Restart|reservation|window/)

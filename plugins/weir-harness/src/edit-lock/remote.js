@@ -67,10 +67,13 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
    * @param {() => Promise<{peer: ChannelPeer}>} bind establish the channel
    * (create the peer and start the lifecycle); its result is returned verbatim
    * @param {{nonce?: string, pid?: number}} [token] additive optional client identity
+   * @param {() => void} [validate]
    * @returns {Promise<any>} */
-  function open(sessionId, socket, bind, token = {}) {
+  function open(sessionId, socket, bind, token = {}, validate = () => {}) {
     return enqueue(sessionId, async () => {
+      validate()
       await reclaim(sessionId)
+      validate()
       const established = await bind()
       bound.set(sessionId, { socket, peer: established.peer, nonce: token.nonce, pid: token.pid })
       return established
@@ -139,8 +142,8 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
  * @param {string} endpoint
  * @param {WeakMap<object, (event: unknown) => void>} sinks remote agent → notice sink
  * @param {(sessionId: string, nonce: string) => 'serving'|'stale'|'unknown'} [attest]
- * @param {(agent: any) => boolean} [isCurrentLocal] */
-export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, isCurrentLocal = () => false) {
+ * @param {(agent: any, requireProof: boolean) => boolean} [isCurrentLocal] */
+export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, isCurrentLocal) {
   if (!namedPipe(endpoint)) {
     try {
       if (!lstatSync(endpoint).isSocket()) throw new Error(`unexpected node at edit lock endpoint ${endpoint}`)
@@ -164,15 +167,22 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, 
         const sessionId = message?.request?.sessionId
         if (message?.kind !== 'open' || typeof sessionId !== 'string' || !sessionId || sessionId.length > 256) throw new Error('channel must open a session first')
         openedSessionId = sessionId
-        const opened = await arbitration.open(sessionId, socket, async () => {
-          const agent = Object.freeze({ id: sessionId, remote: true })
-          sinks.set(agent, event => transport.notify(event))
-          inner = createEditLockPeer(lifecycle, agent)
-          const state = await lifecycle.start(agent)
-          return { peer: inner, state }
-        }, { nonce: typeof message.request.nonce === 'string' && message.request.nonce.length <= 256 ? message.request.nonce : undefined,
-          pid: Number.isSafeInteger(message.request.pid) && message.request.pid > 0 ? message.request.pid : undefined })
-        return { state: opened.state }
+        try {
+          const opened = await arbitration.open(sessionId, socket, async () => {
+            const agent = Object.freeze({ id: sessionId, remote: true })
+            sinks.set(agent, event => transport.notify(event))
+            inner = createEditLockPeer(lifecycle, agent)
+            const state = await lifecycle.start(agent)
+            return { peer: inner, state }
+          }, { nonce: typeof message.request.nonce === 'string' && message.request.nonce.length <= 256 ? message.request.nonce : undefined,
+            pid: Number.isSafeInteger(message.request.pid) && message.request.pid > 0 ? message.request.pid : undefined },
+            () => { if (message.request.retry === true) lifecycle.assertStartable({ id: sessionId, remote: true }) })
+          return { state: opened.state }
+        } catch (error) {
+          const failure = /** @type {any} */ (error)?.bindingFailure
+          if (message.request.bindingFailures === true && failure?.code === 'binding-duplicate') return { state: 'unavailable', bindingFailure: failure, reason: String(/** @type {any} */ (error).message) }
+          throw error
+        }
       },
       disconnect() { return inner ? inner.disconnect() : Promise.resolve() },
     }
@@ -192,8 +202,18 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, 
     /** @param {any} agent @param {boolean} [retry] */
     startLocal(agent, retry = false) {
       return arbitration.openLocal(agent.id, async reclaimed => {
-        if (closed || (reclaimed && !isCurrentLocal(agent))) throw new Error('local edit binding claimant is no longer current')
-        return lifecycle.start(agent)
+        const current = () => {
+          try { return !closed && (isCurrentLocal ? isCurrentLocal(agent, reclaimed || retry) : !(reclaimed || retry)) } catch { return false }
+        }
+        if (!current()) throw new Error('local edit binding claimant is no longer current')
+        const state = await lifecycle.start(agent)
+        if (!current()) {
+          // A stopped entry still has subtractive cleanup authority. Forget it
+          // only after durable revocation; never dispose (which releases locks).
+          await lifecycle.forget(agent)
+          throw new Error('local edit binding claimant is no longer current')
+        }
+        return state
       }, () => { if (retry) lifecycle.assertStartable(agent) })
     },
     /** Seal admission, then revoke every channel; await before lifecycle.close. */
@@ -231,23 +251,23 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
    * duplicate-binding retry budget runs out. Only that answered refusal is
    * retried: the publisher may not yet have processed (or even seen) the
    * earlier channel's death. Never a call.
-   * @param {any} agent @returns {Promise<Channel>} */
-  async function channelFor(agent) {
+   * @param {any} agent @param {boolean} [retry] @returns {Promise<Channel>} */
+  async function channelFor(agent, retry = false) {
     for (let attempt = 0; ; attempt++) {
-      try { return await openChannel(agent) } catch (error) {
+      try { return await openChannel(agent, retry) } catch (error) {
         if (/** @type {any} */ (error)?.answeredRefusal !== true) throw error
-        if (/session already bound/.test(String(/** @type {any} */ (error)?.message)) && attempt < 20) {
+        if (!retry && /session already bound/.test(String(/** @type {any} */ (error)?.message)) && attempt < 20) {
           await new Promise(resolve => setTimeout(resolve, 50))
           continue
         }
         const reason = String(/** @type {any} */ (error)?.message ?? error)
         const guidance = bindingGuidance(agent.id, reason)
-        throw new Error(`edit lock duplicate session binding: ${guidance} (publisher answered: ${reason})`)
+        throw Object.assign(new Error(`edit lock duplicate session binding: ${guidance} (publisher answered: ${reason})`), { bindingFailure: /** @type {any} */ (error)?.bindingFailure })
       }
     }
   }
-  /** @param {any} agent @returns {Promise<Channel>} */
-  async function openChannel(agent) {
+  /** @param {any} agent @param {boolean} retry @returns {Promise<Channel>} */
+  async function openChannel(agent, retry) {
     if (closed) throw new Error('edit lock client closed')
     const existing = channels.get(agent)
     if (existing && !existing.closed) { await existing.ready; return existing }
@@ -277,7 +297,8 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
       }
       let opened
       try {
-        opened = await channel.client.request('open', 'open', { sessionId: agent.id, nonce, pid: process.pid }, never)
+        opened = await channel.client.request('open', 'open', { sessionId: agent.id, nonce, pid: process.pid, bindingFailures: true, retry }, never)
+        if (opened?.state === 'unavailable' && opened.bindingFailure?.code === 'binding-duplicate') throw Object.assign(new Error(opened.reason), { bindingFailure: opened.bindingFailure })
       } catch (error) {
         const message = String(/** @type {any} */ (error)?.message ?? error)
         // No answer ever arrived — the channel died mid-open or the request

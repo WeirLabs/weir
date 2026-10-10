@@ -20,6 +20,8 @@ export function localDomain(lifecycle, endpoint) {
     stop: async agent => { await lifecycle.stop(agent); return lifecycle.status(agent) },
     /** @param {object} agent */
     dispose: agent => lifecycle.dispose(agent),
+    /** Revoke and remove all ingress, retaining locks. @param {object} agent */
+    forget: agent => lifecycle.forget(agent),
     /** @param {object} agent @param {string} requestId */
     resume: (agent, requestId) => lifecycle.resume(agent, requestId),
     /** @param {object} agent @param {string} resourceId */
@@ -81,6 +83,10 @@ export function remoteDomain(remote) {
     }),
     /** @param {object} agent */
     start: async agent => (await remote.channelFor(agent)).state,
+    /** @param {object} agent */
+    retryStart: async agent => (await remote.channelFor(agent, true)).state,
+    /** @param {object} agent */
+    forget: async agent => { try { await remote.call(agent, 'stop') } finally { remote.drop(agent) } },
     /** Closing the channel makes the publisher revoke on EOF. @param {object} agent */
     latch: agent => remote.drop(agent),
     /** Awaits the publisher's durable revocation. @param {object} agent */

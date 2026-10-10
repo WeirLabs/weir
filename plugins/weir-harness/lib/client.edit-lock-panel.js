@@ -84,6 +84,7 @@ window.__ModuleLoader__.load({
 		}
 		/** The one primary action of a state, or null when nothing is needed. */
 		function primaryOf(state, view) {
+			if (state === "unavailable" && view.bindingFailure?.code === "binding-duplicate" && view.bindingFailure.retryable === true && view.bindingFailure.inFlight !== true) return { verb: "retry", label: "editLockRetry" };
 			// Continue editing is one human action: restore authority, then confirm the
 			// retained files (each through the ordinary per-file check).
 			// confirm --all only when something waits, so no empty "Confirmed 0 of 0" is recorded.
@@ -107,7 +108,11 @@ window.__ModuleLoader__.load({
 			const [details, setDetails] = react.useState(false);
 			const refresh = () => Promise.resolve(props.fetchView?.()).then(
 				(next) => { if (next) setView(next); },
-				(reason) => setError(reason instanceof Error ? reason.message : String(reason))
+				(reason) => {
+					const message = reason instanceof Error ? reason.message : String(reason);
+					setError(message);
+					setView({ state: "unavailable", reason: message, files: [] });
+				}
 			);
 			react.useEffect(() => {
 				if (!sessionId) {
@@ -175,6 +180,7 @@ window.__ModuleLoader__.load({
 			}, key);
 			const summary = (() => {
 				if (!view) return t("editLockLoading");
+				if (state === "unavailable" && view.bindingFailure?.inFlight === true) return t("editLockRetryPending");
 				if (state === "unavailable" && view.reason) return t("editLockState_failed");
 				const base = t(`editLockState_${state}`);
 				if (state === "holding" && view.hold) return `${base} ${t("editLockHoldUntil").replace("{time}", clock(view.hold.until))}`;
@@ -194,6 +200,7 @@ window.__ModuleLoader__.load({
 					jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => refresh(), "data-weir-edit-lock-action": "refresh", title: t("editLockRefresh"), children: "\u21bb" })
 				] }, "head"),
 				view?.reason ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-weir-edit-lock-reason": "", children: view.reason }, "reason") : null,
+				view?.bindingFailure ? jsx("div", { style: mutedStyle, "data-weir-edit-lock-binding": "", children: t(`editLockBinding_${view.bindingFailure.holderKind ?? "unknown"}`) }, "binding") : null,
 				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
 				cold && state === "stopped" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdResumeManual" : "editLockColdResumeAuto") }, "cold") : null,
 				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, children: t("editLockRecovery").replace("{n}", String(view.recovery.attempts)) }, "recovery") : null,

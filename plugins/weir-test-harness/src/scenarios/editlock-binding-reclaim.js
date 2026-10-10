@@ -3,7 +3,7 @@ import { textChunks, toolCallChunks } from '../mock-kit.js'
 export default {
   id: 'editlock-binding-reclaim',
   prompt: 'Run the isolated binding regression.',
-  env: { WEIR_IT_BINDING_PROBE: '1' },
+  env: { WEIR_IT_BINDING_PROBE: '1', WEIR_IT_EDIT_LOCK: '1' },
   observe: obs => ({ bindingProbeSeen: obs.toolNames.includes('edit_lock_binding_probe') }),
   decide(options) {
     return options.messages?.some(message => message.role === 'tool')
@@ -18,5 +18,9 @@ export default {
     run.check('serving holder is never preempted', report?.servingRefused === true, JSON.stringify(report))
     run.check('reclaim preserves file ownership and generation', report?.locksRetained === true, JSON.stringify(report))
     run.check('managed publication works after trusted resume', report?.editingRestored === true, JSON.stringify(report))
+    run.check('initial and unknown bindings refuse with read-only status', report?.initialRefused === true && report?.unknownRefused === true && report?.readOnlyFailure === true, JSON.stringify(report))
+    run.check('retry preserves tool scope and starts interrupted without authority', report?.writerUnchanged === true && report?.secondState === 'interrupted' && report?.retryDidNotResume === true, JSON.stringify(report))
+    run.check('publisher reservation and manager incarnation stay unchanged', report?.reservationUnchanged === true && report?.managerUnchanged === true, JSON.stringify(report))
+    run.check('stale failure clears; late EOF and another session remain safe', report?.failureCleared === true && report?.continued === true && report?.otherSessionUsable === true, JSON.stringify(report))
   },
 }

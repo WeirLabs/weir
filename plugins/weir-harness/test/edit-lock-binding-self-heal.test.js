@@ -47,6 +47,7 @@ function fakeHost(root, { host: hostKey = {}, agents: withAgents = false, preset
   const warns = []
   const emitted = []
   const sessionFailures = []
+  const toolDefinitions = new Map()
   let command
   const ctx = {
     root: hostKey,
@@ -64,7 +65,7 @@ function fakeHost(root, { host: hostKey = {}, agents: withAgents = false, preset
       }
       return provided.get(name)
     },
-    tools: { get(name, agent) { return agent.visible.get(name) }, register() { return () => {} } },
+    tools: { get(name, agent) { return agent.visible.get(name) }, register(definition) { toolDefinitions.set(definition.name, definition); return () => toolDefinitions.delete(definition.name) } },
   }
   if (withPresets) {
     // Identity comparison, exactly like agentPresets.serviceFor in production:
@@ -103,7 +104,7 @@ function fakeHost(root, { host: hostKey = {}, agents: withAgents = false, preset
     return result
   }
   const own = candidate => { ownAgents.add(candidate); return candidate }
-  return { ctx, provided, agent, own, emit, warns, emitted, sessionFailures, command: () => command }
+  return { ctx, provided, agent, own, emit, warns, emitted, sessionFailures, toolDefinitions, command: () => command }
 }
 
 function mount(host, root, directory) {
@@ -419,22 +420,34 @@ test('concurrent setup entry points share one in-flight setup: the write scope i
 
 test('explicit retry recovers the original failed Agent without reinstalling writers or resuming authority', async () => {
   const { root, directory } = await fixture()
-  const host = fakeHost(root, { agents: true })
+  const host = fakeHost(root, { agents: true, presets: true })
   const { dispose, service } = mount(host, root, directory)
   let token, unregister = () => {}
   const remote = createRemoteEditLockDomain(endpointFor(directory), { onNotice() {}, onChannelOpen(nonce) { token = nonce; return () => unregister() } })
   try {
-    const other = host.agent('other')
+    const other = host.own(host.agent('other'))
     await host.emit('agent/created', { agent: other })
     const old = { id: 's' }
     await remote.channelFor(old)
     await remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root })
-    const agent = host.agent('s')
+    const agent = host.own(host.agent('s'))
     await host.emit('agent/created', { agent })
     assert.equal(service.blocksContinuation(agent), true)
+    const diagnostic = await host.toolDefinitions.get('edit_lock_status').execute({}, { agent })
+    assert.equal(diagnostic.state, 'unavailable')
+    assert.equal(diagnostic.bindingFailure.code, 'binding-duplicate')
+    assert.equal(diagnostic.bindingFailure.retryable, true)
+    assert.match(diagnostic.message, /edit-lock retry/)
+    assert.equal(diagnostic.locks, undefined)
+    await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /edit-lock retry/)
     const writer = agent.visible.get('write')
     const retry = () => host.command().handler({ agent, rawInput: 'retry', commandId: crypto.randomUUID() })
     assert.equal((await retry()).kind, 'error')
+    const presets = host.provided.get('agentPresets'), serviceFor = presets.serviceFor
+    presets.serviceFor = () => undefined
+    assert.match((await retry()).text, /current live Agent/)
+    assert.equal((await remote.call(old, 'status')).state, 'active')
+    presets.serviceFor = serviceFor
     unregister = registerBindingRuntime(token, old, old.id)
     const replies = await Promise.all([retry(), retry()])
     assert.deepEqual(replies.map(reply => reply.kind), ['success', 'success'], JSON.stringify(replies))

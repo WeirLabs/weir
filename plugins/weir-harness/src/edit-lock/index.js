@@ -257,6 +257,8 @@ function registerLockTools(ctx, service) {
       parameters: { type: 'object', properties: {}, required: [] },
       output: text('message'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
+        const unavailable = service.startupFailure(exec.agent)
+        if (unavailable) return { ...unavailable, message: `Edit Lock unavailable: ${unavailable.reason}. ${unavailable.bindingFailure?.retryable ? 'The user can run /edit-lock retry to retry the connection; this does not resume editing.' : 'Inspect Edit Lock maintenance before continuing.'}` }
         const locks = await service.locks(exec)
         const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status} generation=${lock.generation}${lock.reason ? ` reason=${lock.reason}` : ''}`)
         // The reservation is part of what the holder needs to know: without it the
@@ -455,7 +457,20 @@ return (ctx, config = {}) => {
       })
       let server
       try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding,
-        agent => !closed && !disposedAgents.has(agent) && ownAgent(agent) && servingRuntime(agent.id) === agent) }
+        (agent, requireProof) => {
+          if (closed || disposedAgents.has(agent)) return false
+          const agents = ctx.get?.('agents')
+          if (typeof agents?.get === 'function') {
+            if (agents.get(agent.id) !== agent) return false
+          } else if (requireProof) return false
+          // Fresh creation keeps the established missing/throwing-registry
+          // fallback. A reclaim or retry never uses that fallback as proof.
+          if (typeof presets?.serviceFor === 'function') {
+            try { return presets.serviceFor(agent, 'weirEditLock') === service }
+            catch { return !requireProof }
+          }
+          return true
+        }) }
       catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
       const domain = localDomain(lifecycle, server)
       try { evidence?.recordDomain?.(root, { mode: domain.mode, bindings: () => [...lifecycle.bindings(), ...(server?.bindings() ?? [])] }) } catch { /* reporting only */ }
@@ -484,8 +499,10 @@ return (ctx, config = {}) => {
    * call actually arrives. @param {any} agent */
   async function domainFor(agent) {
     if (!registry.rootOf(agent) && !closed && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) await setupAgent(agent)
-    if (registry.rootOf(agent)) return registry.forAgent(agent)
+    await setupInFlight.get(agent)
+    if (settled.has(agent)) return settled.get(agent)
     const failure = startFailures.get(agent)
+    if (failure && bindingFailures.has(agent)) throw new Error(`Edit Lock binding is unavailable (${failure}). The user can run /edit-lock retry after the holder evidence changes. Retry connects only; do not replay the failed edit or remove a live publisher reservation.`)
     if (failure) throw new Error(`this session has no Edit Lock domain: setup failed under the current preset generation (${failure}); the automatic re-bind was already attempted. Recovery: restart DeepSeek Harness or start a new conversation.`)
     // No fence match (foreign preset) or unmount: keep the stock refusal.
     return registry.forAgent(agent)
@@ -583,7 +600,18 @@ return (ctx, config = {}) => {
       state.timer?.unref?.()
     }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry arm failed: ${error?.message ?? error}`))
   }
+  /** Only this live Agent's diagnostic; no domain reads or startup side effects. @param {any} agent */
+  function startupFailure(agent) {
+    if (!agent || settled.has(agent) || !startFailures.has(agent)) return null
+    let eligible = false
+    try { eligible = !closed && !disposedAgents.has(agent) && ownAgent(agent) && servingRuntime(agent.id) === agent } catch { /* no trusted live identity */ }
+    if (!eligible) return null
+    const failure = bindingFailures.get(agent)
+    return { state: 'unavailable', reason: startFailures.get(agent),
+      bindingFailure: failure ? { ...failure, inFlight: setupInFlight.has(agent) } : null }
+  }
   const service = Object.freeze({
+    startupFailure,
     publish: route('publish'),
     publishBatch: route('publishBatch'),
     acquire: route('acquire'),
@@ -628,6 +656,8 @@ return (ctx, config = {}) => {
     },
     /** Trusted UI observation for one agent; grants nothing. @param {any} agent */
     async describe(agent) {
+      const failure = startupFailure(agent)
+      if (failure) throw Object.assign(new Error(failure.reason), { bindingFailure: failure.bindingFailure })
       const domain = await domainFor(agent)
       return { root: registry.rootOf(agent), mode: domain.mode, status: await domain.status(agent), locks: await domain.locks(agent), recovery: recovery.state(agent) }
     },
@@ -714,7 +744,7 @@ return (ctx, config = {}) => {
       if (retry) await domain.retryStart(agent)
       else await domain.start(agent)
       if (closed || disposedAgents.has(agent) || (retry && (!ownAgent(agent) || servingRuntime(agent.id) !== agent))) {
-        await domain.stop(agent)
+        await domain.forget(agent)
         throw new Error('Edit Lock mount changed during binding')
       }
       startFailures.delete(agent)
@@ -734,7 +764,7 @@ return (ctx, config = {}) => {
       if (failure?.code === 'binding-duplicate') bindingFailures.set(agent, failure)
       else bindingFailures.delete(agent)
       try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
-      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is unavailable. Recovery: restart DeepSeek Harness or start a new conversation.`) } catch { /* the panel record remains */ }
+      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is unavailable. ${failure?.code === 'binding-duplicate' ? 'Recovery: use /edit-lock retry after the original holder disconnects or its process shutdown is confirmed. Retry does not resume editing; never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`) } catch { /* the panel record remains */ }
       ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${reason}`)
     }
   }
@@ -1104,14 +1134,14 @@ return (ctx, config = {}) => {
               // Failure loudening (design D3): a failed binding names its
               // reason; a reasonless "starting" is reserved for a genuinely
               // in-flight setup (describe's await absorbs that window).
-              return reply({ ok: true, value: unavailableView(String(/** @type {any} */ (error)?.message ?? error)) })
+              return reply({ ok: true, value: unavailableView(String(/** @type {any} */ (error)?.message ?? error), /** @type {any} */ (error)?.bindingFailure) })
             }
           }
         }
         const domain = agent && settled.get(agent)
         // A live agent whose domain is still starting (or failed to start)
         // keeps the old answer; only a session with NO live agent cold-reads.
-        if (agent && !domain) return reply({ ok: true, value: unavailableView(startFailures.get(agent) ?? null) })
+        if (agent && !domain) return reply({ ok: true, value: unavailableView(startFailures.get(agent) ?? null, startupFailure(agent)?.bindingFailure) })
         if (!domain) return reply({ ok: true, value: await coldStatusView(sessionId) })
         try {
           const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
@@ -1173,8 +1203,8 @@ return (ctx, config = {}) => {
   const commands = ctx.get?.('commands')
   const offCommand = commands?.register({
     name: 'edit-lock',
-    description: 'Edit Lock: status, locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue), confirm <path> | --all, unlock <path> <generation>.',
-    input: { hint: 'status | locks | hold [minutes] | release <path> | stop | resume | confirm <path> | unlock <path> <generation>' },
+    description: 'Edit Lock: status, retry (connection only; not Continue), locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue), confirm <path> | --all, unlock <path> <generation>.',
+    input: { hint: 'status | retry | locks | hold [minutes] | release <path> | stop | resume | confirm <path> | unlock <path> <generation>' },
     handler: async (/** @type {any} */ invocation) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }

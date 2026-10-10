@@ -157,7 +157,7 @@ test('endpoint: a live channel is refused and keeps its locks; the refused clien
     await assert.rejects(remoteB.channelFor({ id: 'shared-session' }), error => {
       assert.match(error.message, /edit lock duplicate session binding/)
       assert.match(error.message, /shared-session/)
-      assert.match(error.message, /same process.*stale runtime incarnation.*Restart DeepSeek Harness/)
+      assert.match(error.message, /same process.*stale runtime incarnation.*edit-lock retry/)
       assert.doesNotMatch(error.message, /window/)
       assert.match(error.message, /Do NOT remove the publisher reservation/)
       assert.equal(error.message.split('Do NOT remove the publisher reservation').length - 1, 1)
@@ -415,4 +415,42 @@ test('binding retry refuses permanently revoked owner before registering an inte
     await assert.rejects(localDomain(lifecycle, undefined).retryStart({ id: 'revoked' }), /permanently revoked/)
     assert.deepEqual(lifecycle.bindings(), [])
   } finally { await lifecycle.close() }
+})
+
+for (const prior of ['remote', 'already-forgotten']) test(`supersession during final local start removes cleanup authority (${prior})`, async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const old = { id: 's' }, claimant = { id: 's' }, successor = { id: 's' }
+  let serving = old, cancels = 0
+  const entered = Promise.withResolvers(), barrier = Promise.withResolvers()
+  const lifecycle = createEditLockLifecycle({ ...runtime, control: { ...runtime.control,
+    async cancelSession(id) {
+      const result = await runtime.control.cancelSession(id)
+      if (++cancels === 2) { entered.resolve(); await barrier.promise }
+      return result
+    },
+  } }, agent => agent.id, { servingRuntime: () => serving })
+  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap(), createBindingAttester(() => serving), agent => serving === agent)
+  const local = localDomain(lifecycle, server)
+  const remote = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {}, onChannelOpen: registerBindingRuntime })
+  try {
+    if (prior === 'remote') {
+      await remote.channelFor(old)
+      await remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root })
+    } else {
+      await lifecycle.start(old)
+      await lifecycle.service.acquire({ agent: old }, { filePath: 'a.txt', cwd: root })
+      await lifecycle.forget(old)
+    }
+    serving = claimant
+    const start = local.start(claimant)
+    await entered.promise
+    serving = successor
+    barrier.resolve()
+    await assert.rejects(start, /no longer current/)
+    await assert.rejects(local.service.release({ agent: claimant }, { filePath: 'a.txt', cwd: root }), /authenticated/)
+    assert.equal(runtime.control.status().locks[0].generation, 1)
+    assert.equal(await local.start(successor), 'interrupted')
+    assert.equal((await local.status(successor)).locks.length, 1)
+  } finally { barrier.resolve(); remote.close(); await local.close() }
 })
