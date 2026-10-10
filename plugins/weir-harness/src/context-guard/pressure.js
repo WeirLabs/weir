@@ -9,6 +9,15 @@ export const PRESSURE_DEFAULTS = {
   hardThreshold: 0.88,
 }
 
+/** Validate the live guard policy before any measurement or saved config lands. */
+export function guardOptions(options = {}) {
+  const value = { ...PRESSURE_DEFAULTS, ...options }
+  if (!Number.isFinite(value.softThreshold) || !Number.isFinite(value.hardThreshold) || !(0 < value.softThreshold && value.softThreshold < value.hardThreshold && value.hardThreshold < 1)) {
+    throw new Error('guardSoftThreshold and guardHardThreshold require finite values with 0 < soft < hard < 1')
+  }
+  return value
+}
+
 /**
  * @param {number | undefined} totalTokens
  * @param {number | undefined} contextWindow
@@ -24,7 +33,7 @@ export function computePressure(totalTokens, contextWindow) {
  * @param {Partial<typeof PRESSURE_DEFAULTS>} options
  */
 export function createPressureState(options = {}) {
-  const opts = { ...PRESSURE_DEFAULTS, ...options }
+  const opts = guardOptions(options)
   const state = {
     advised: false,
     forced: false,
@@ -42,7 +51,7 @@ export function createPressureState(options = {}) {
      * Evaluate one pressure reading at a boundary.
      * @param {number | undefined} pressure
      * @param {'step' | 'turn'} boundary - step boundaries advise; only turn
-     *   boundaries force a compaction (the agent is idle there).
+     *   boundaries request maintenance (the agent is still running there).
      * @returns {{ kind: 'advise' | 'force' | 'none' }}
      */
     evaluate(pressure, boundary = 'turn') {
@@ -75,7 +84,7 @@ export function createPressureState(options = {}) {
 export function renderAdvisory(pressure) {
   const percent = Math.round(pressure * 100)
   return `<context_pressure>
-Context pressure is at ${percent}%. Finish the current subtask, persist key state (plan, findings, evidence paths), then call compact_context. You choose the timing; compaction runs at the turn boundary and the task continues afterwards.
+Context pressure is at ${percent}%. Finish the current subtask and persist key state (plan, findings, evidence paths), then request compact_context. Queued is not completed: only a confirmed native summary permits summary-based continuation. If maintenance is busy or another wake wins, the request is blocked without background retry; genuine user input is needed before a new request. Native automatic compaction may occur independently.
 </context_pressure>`
 }
 

@@ -45,6 +45,7 @@ function assert(run) {
     run.check(`${preset}: bare host cannot rescue delegation tools`, Array.isArray(selected?.hostTools) && [...REQUIRED, ...REMOVED].every(name => !selected.hostTools.includes(name)))
     run.check(`${preset}: parent model request observed`, parents.length > 0)
     for (const name of REQUIRED) run.check(`${preset}: exposes ${name}`, parents.length > 0 && parents.every(record => record.tools.includes(name)))
+    for (const name of ['compact_context', 'stop_continuation']) run.check(`${preset}: coordinated realm exposes ${name}`, parents.length > 0 && parents.every(record => record.tools.includes(name)))
     for (const name of REMOVED) run.check(`${preset}: excludes ${name}`, parents.length > 0 && parents.every(record => !record.tools.includes(name)))
     run.check(`${preset}: no retired tool guidance`, parents.length > 0 && parents.every(record => !record.retiredGuidance))
     run.check(`${preset}: one-shot delegate returned its child result`, parents.some(record => record.oneShotResultSeen))

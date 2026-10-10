@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { computePressure, createPressureState, PRESSURE_DEFAULTS, renderAdvisory, RESUME_AFTER_COMPACTION } from './pressure.js'
 import { classifyCompactionOutcome } from './compaction-outcome.js'
+import { unconfirmedRequest } from './recovery.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { isGenuineUserMessage, overlayConfig } from '../shared/runtime-messages.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
@@ -23,6 +24,13 @@ function apply(ctx, config = {}) {
     }
     return state
   }
+  function restore(agent) {
+    if (!unconfirmedRequest(agent.session.snapshotEvents?.() ?? [])) return
+    const state = stateOf(agent)
+    state.blocked = true
+    state.notice = 'A previous planned compaction request is unconfirmed: no matching native summary/checkpoint settlement was found. Inspect the history and request a new attempt if needed; no background retry was restored.'
+  }
+  ctx.on('agent/created', ({ agent }) => restore(agent))
   const live = (agent) => !disposed && ctx.agents.get(agent.id) === agent
   const pending = (request) => request && ['requested', 'waiting-boundary', 'attempting'].includes(request.kind)
   function record(agent, request, kind, details = {}) {
@@ -30,9 +38,9 @@ function apply(ctx, config = {}) {
   }
   function settle(agent, state, kind, details = {}) {
     const request = state.request
-    if (!pending(request)) return
+    if (!pending(request) && !(kind === 'cancelled' && request?.kind === 'applied' && !request.delivered)) return
     request.kind = kind
-    request.detach?.()
+    if (kind !== 'applied') { request.detach?.(); request.detachMaintenance?.() }
     if (kind !== 'applied') {
       request.controller.abort({ kind: 'hook', reason: `planned compaction ${kind}` })
       state.blocked = true
@@ -59,7 +67,8 @@ function apply(ctx, config = {}) {
   }
   function bindAbort(agent, state, signal) {
     if (!signal) return () => {}
-    const abort = () => settle(agent, state, 'cancelled', { reason: 'Active work was interrupted.' })
+    const captured = state.request
+    const abort = () => { if (state.request === captured) settle(agent, state, 'cancelled', { reason: 'Active work was interrupted.' }) }
     if (signal.aborted) abort()
     else signal.addEventListener('abort', abort, { once: true })
     return () => signal.removeEventListener('abort', abort)
@@ -85,7 +94,10 @@ function apply(ctx, config = {}) {
     const generation = agent.session.surface?.replaceGeneration
     const tokens = ctx.tokenMeter.measure(agent.session).totalTokens
     let window = route.contextWindow
-    if (!window && route.provider && route.model) window = (await ctx.llm.resolveModelInfo(route.provider, route.model))?.context?.contextWindow
+    if (!window && route.provider && route.model) {
+      try { window = (await ctx.llm.resolveModelInfo(route.provider, route.model))?.context?.contextWindow }
+      catch (error) { ctx.logger?.warn?.(`context-guard: context window unavailable: ${error}`); return }
+    }
     fresh(agent)
     if (!live(agent) || version !== state.version || measurement !== state.measurement || generation !== agent.session.surface?.replaceGeneration || signal?.aborted) return
     const pressure = computePressure(tokens, window)
@@ -95,22 +107,30 @@ function apply(ctx, config = {}) {
     if (decision.kind === 'advise' && !pending(state.request)) return renderAdvisory(pressure)
   }
   async function evaluateBoundary(agent, signal) {
-    await evaluate(agent, 'turn', signal)
+    const advisory = await evaluate(agent, 'turn', signal)
     const state = stateOf(agent)
     if (pending(state.request) && state.request.kind === 'requested') state.request.kind = 'waiting-boundary'
+    if (advisory && live(agent) && !signal?.aborted && !pending(state.request) && !state.blocked) {
+      agent.inject(userTextMessage(advisory, 'weir-context-guard'))
+    }
   }
   function deliver(agent, state) {
     const request = state.request
     if (!live(agent) || request?.kind !== 'applied' || request.delivered) return
     fresh(agent)
-    if (request.controller.signal.aborted || ctx.get?.('weirEditLock')?.blocksContinuation?.(agent)) {
+    if (request.kind !== 'applied' || request.controller.signal.aborted || ctx.get?.('weirEditLock')?.blocksContinuation?.(agent)) {
       state.blocked = true
       request.delivered = true
       record(agent, request, 'resume-blocked')
       return
     }
     request.delivered = true // Before publication, which may reenter hooks.
-    try { agent.followup(userTextMessage(RESUME_AFTER_COMPACTION, 'weir-context-guard')) }
+    request.detach?.(); request.detachMaintenance?.()
+    try {
+      const message = userTextMessage(RESUME_AFTER_COMPACTION, 'weir-context-guard')
+      if (agent.status === 'running') agent.inject(message)
+      else agent.followup(message)
+    }
     catch (error) {
       state.blocked = true
       state.notice = 'Compaction produced a summary, but continuation delivery was unconfirmed. Inspect the summary and continue manually; compaction will not be repeated.'
@@ -129,8 +149,8 @@ function apply(ctx, config = {}) {
         session: agent.session,
         options: { provider: route.provider, model: route.model },
         runMaintenance: (job) => agent.runMaintenance(async (signal) => {
-          const detach = bindAbort(agent, state, signal)
-          try { return await job(signal) } finally { detach() }
+          current.detachMaintenance = bindAbort(agent, state, signal)
+          return await job(signal)
         }),
       }, current.controller.signal)
     } catch (error) { failed(error); return }
@@ -158,7 +178,12 @@ function apply(ctx, config = {}) {
     blocksContinuation: (agent) => { const { state } = fresh(agent); return state.blocked || !!pending(state.request) },
   })
   ctx.on('agent/turn-stopping', ({ agent, signal }) => evaluateBoundary(agent, signal))
-  ctx.on('agent/status', ({ agent, status }) => { if (status === 'idle') attempt(agent) })
+  ctx.on('agent/status', ({ agent, status }) => {
+    if (status !== 'idle') return
+    const state = stateOf(agent)
+    if (state.request?.kind === 'applied') deliver(agent, state)
+    else attempt(agent)
+  })
   ctx.on('agent/pre-step', async ({ agent, messages, signal }, next) => {
     const state = stateOf(agent)
     let notice
@@ -170,7 +195,14 @@ function apply(ctx, config = {}) {
     const advisory = await evaluate(agent, 'step', signal)
     const decision = await next()
     if (decision.kind !== 'enter') return decision
-    const text = notice ?? advisory
+    let resume
+    const current = state.request
+    if (current?.kind === 'applied' && !current.delivered && !signal?.aborted && !ctx.get?.('weirEditLock')?.blocksContinuation?.(agent)) {
+      current.delivered = true
+      current.detach?.(); current.detachMaintenance?.()
+      resume = RESUME_AFTER_COMPACTION
+    }
+    const text = notice ?? resume ?? advisory
     return text ? { ...decision, messages: [...decision.messages, userTextMessage(text, 'weir-context-guard')] } : decision
   })
   ctx.on('session/event', (session, event) => {
@@ -178,6 +210,18 @@ function apply(ctx, config = {}) {
     if (!agent || agent.session !== session) return
     const state = stateOf(agent), current = state.request
     if (!pending(current)) return
+    // Own manual work settles only from compactNow's returned result (which
+    // includes durability). External native work needs the whole commit chain.
+    if (current.kind !== 'attempting' && event.seq >= current.acceptedSeq) {
+      if (event.type === 'compaction/start') current.native = { id: event.data.compactionId, startSeq: event.seq }
+      const native = current.native
+      if (native && event.type === 'compaction/summary' && event.data.compactionId === native.id) native.summarySeq = event.seq
+      if (native && event.type === 'user/message' && event.surfaceOp?.op === 'replace' && event.sourceEventSeqs?.includes(native.startSeq) && event.sourceEventSeqs?.includes(native.summarySeq)) native.checkpoint = true
+      if (native && event.type === 'compaction/end' && event.data.compactionId === native.id && !event.data.error && native.checkpoint && agent.session.surface?.replaceGeneration > current.generation) {
+        settle(agent, state, 'applied', { summarySeq: native.summarySeq, compactionId: native.id, origin: 'native' })
+        return // No followup or append inside the publication feed.
+      }
+    }
     if (event.type === 'turn/end') {
       if (event.data?.reason?.kind === 'aborted') settle(agent, state, 'cancelled', { reason: 'Turn interrupted.' })
       else current.ended = true

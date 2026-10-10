@@ -156,7 +156,7 @@ describe('context-guard plugin', () => {
       for (let i = 0; i < 10; i++) await Promise.resolve()
     }
     const preStep = async (messages = []) => handlers['agent/pre-step']?.({ agent, turn: 2, step: 1, messages, signal: turnAbort.signal }, async () => ({ kind: 'enter', messages }))
-    return { handlers, services, settings, injected, followups, compactions, audits, warns, session, agent, dispose, event, stopping, idle, preStep, turnAbort, maintenanceAbort,
+    return { ctx, handlers, services, settings, injected, followups, compactions, audits, warns, session, agent, dispose, event, stopping, idle, preStep, turnAbort, maintenanceAbort,
       tokens: (value) => { tokens = value },
       tool: registered.find((tool) => tool.name === 'compact_context'),
       request: () => registered.find((tool) => tool.name === 'compact_context').execute({}, { agent, signal: turnAbort.signal, concludeTurn() {} }),
@@ -263,6 +263,79 @@ describe('context-guard plugin', () => {
     await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
     expect(h.compactions).toHaveLength(0)
     expect((await h.request()).queued).toBe(false)
+  })
+
+  it('coalesces a verified native summary and replacement without manual compaction', async () => {
+    const h = harness()
+    await h.request()
+    await h.event('compaction/start', { compactionId: 'native' })
+    await h.event('compaction/summary', { compactionId: 'native', summary: [{ type: 'text', text: 'summary' }] })
+    h.session.surface.replaceGeneration++
+    h.handlers['session/event'](h.session, { type: 'user/message', seq: 12, data: { source: { kind: 'compact-checkpoint', compactionId: 'native' } }, surfaceOp: { op: 'replace' }, sourceEventSeqs: [10, 11] })
+    await h.event('compaction/end', { compactionId: 'native' })
+    const step = await h.preStep()
+    expect(step.messages.some((m) => m.content?.some((b) => b.text?.includes('Resume the task')))).toBe(true)
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    expect(h.followups).toHaveLength(0)
+  })
+
+  it('summary without a committed replacement does not count as native success', async () => {
+    const h = harness()
+    await h.request()
+    await h.event('compaction/start', { compactionId: 'native' })
+    await h.event('compaction/summary', { compactionId: 'native' })
+    await h.event('compaction/end', { compactionId: 'native', error: ['commit failed'] })
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(1)
+  })
+
+  it('cold queued evidence blocks without inventing a queue or a summary', async () => {
+    const h = harness()
+    h.session.snapshotEvents = () => [
+      { seq: 1, type: 'tool/call', data: { name: 'compact_context', callId: 'old' } },
+      { seq: 2, type: 'tool/result', data: { message: { toolCallId: 'old', content: [{ type: 'text', text: 'Compaction request old queued, not completed.' }] } } },
+    ]
+    await h.handlers['agent/created']?.({ agent: h.agent, source: 'resume' })
+    expect(h.services.weirCompactionCoordinator.blocksContinuation(h.agent)).toBe(true)
+    await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    const step = await h.preStep([{ source: { kind: 'user' }, content: [] }])
+    expect(step.messages.some((m) => m.content?.some((b) => b.text?.includes('unconfirmed')))).toBe(true)
+  })
+
+  it('rejects a stale asynchronous route measurement after settings change', async () => {
+    const h = harness(0.95)
+    let resolve
+    h.session.requestContext = () => ({ provider: 'mock', model: 'unknown' })
+    h.ctx.llm.resolveModelInfo = () => new Promise((done) => { resolve = done })
+    const measurement = h.stopping()
+    h.settings.hardThreshold = 0.99
+    resolve({ context: { contextWindow: 100000 } })
+    await measurement
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+  })
+
+  it('publishes a stopping-boundary soft advisory exactly once when no request is pending', async () => {
+    const h = harness(0.75)
+    await h.stopping(); await h.stopping()
+    expect(h.injected).toHaveLength(1)
+    expect(h.injected[0].content[0].text).toContain('75%')
+    await h.request(); await h.stopping()
+    expect(h.injected).toHaveLength(1)
+  })
+
+  it('a wake entering after maintenance receives a non-waking resume, not another turn', async () => {
+    const h = harness()
+    const compact = h.ctx.compaction.compactNow
+    h.ctx.compaction.compactNow = (...args) => compact(...args).then((result) => {
+      Object.defineProperty(h.agent, 'status', { value: 'running' })
+      return result
+    })
+    await h.request(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.followups).toHaveLength(0)
+    expect(h.injected).toHaveLength(1)
   })
 
   it('live thresholds affect the next stopping decision', async () => {

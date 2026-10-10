@@ -1,0 +1,4 @@
+{"time":1791666551953,"session":"session-25b691ee-468b-4692-8510-d8469f6d9111","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666552123,"session":"session-ba6849d6-020d-4ed2-b5ac-52bdc96724d4","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666552245,"session":"session-ba6849d6-020d-4ed2-b5ac-52bdc96724d4","type":"weir/compaction","data":{"requestId":"6e6db1b6-d00b-423d-bb59-bc5f84e7ce6e","sources":["model"],"kind":"requested"}}
+{"time":1791666552254,"session":"session-ba6849d6-020d-4ed2-b5ac-52bdc96724d4","type":"weir/compaction","data":{"requestId":"6e6db1b6-d00b-423d-bb59-bc5f84e7ce6e","sources":["model"],"kind":"noop","reason":"DSH found no safe useful range; no summary was created."}}

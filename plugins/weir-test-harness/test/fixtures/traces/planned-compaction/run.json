@@ -1,0 +1,8 @@
+{
+  "scenario": "planned-compaction",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/fix-planned-compaction-boundarie-111/.weir/it-root/home",
+  "code": 0,
+  "stdout": "planned-parent-finished\n",
+  "stderr": "",
+  "sessionId": null
+}

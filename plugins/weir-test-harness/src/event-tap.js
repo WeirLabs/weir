@@ -17,6 +17,7 @@ import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
 import { installBindingProbe } from './edit-lock-binding-probe.js'
 import { installBlackboardColdProbe } from './blackboard-cold-probe.js'
 import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
+import { installPlannedCompactionProbe } from './scenarios/planned-compaction-probe.mjs'
 
 const name = 'weir-it-event-tap'
 const inject = ['fs', 'agents', 'tools']
@@ -46,6 +47,7 @@ function tap(record) {
 
 
 function apply(ctx) {
+  installPlannedCompactionProbe(ctx, tap)
   installBlackboardPersistenceProbe(ctx, tap)
   installBlackboardColdProbe(ctx, tap)
   installStopProbe(ctx, tap)
@@ -88,6 +90,7 @@ function apply(ctx) {
     if (type === 'tool/result') {
       const message = event.data?.message
       const text = textOf(message, { limit: 600 })
+      if (text.startsWith('Compaction request ')) tap({ kind: 'session-event', session: session.id, type, eventSeq: event.seq, plannedCompaction: true, text })
       if (text.startsWith('hash_edit applied') || text.startsWith('>>> mismatch')) {
         tap({ kind: 'session-event', session: session.id, type, hashEdit: true, isError: message?.isError === true, meta: event.data?.meta ?? null })
       }

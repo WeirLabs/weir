@@ -28,6 +28,14 @@
 - `pnpm --filter weir-test-harness run record` 重录断言回放夹具（一次绿跑后把 `trace-<scenario>.jsonl` 拷入 `test/fixtures/traces/`，入库）。
 - 每次运行会把测试根目录整体删除重建（持有咨询锁时锁文件本身除外，见「并发运行隔离」）；默认产物位于当前仓库或 lane 的 `.weir/it-root/`（已忽略、不入库）。lane 清理时该 scratch 随 `.weir/` 归档到主仓库的 `.weir/lanes/<lane-id>/`。
 
+### 计划压缩回归
+
+`planned-compaction` 通过开发专用父工具维持真实运行区间，避免 headless 在受测 Agent 首次 idle 时提前退出。受测 Agent 使用真实模型工具派发：未完成 todo → 充分历史 → `compact_context` → 工具结果 → `turn/end` → 原生 `compaction/start/summary`、replacement checkpoint、`compaction/end` → 下一次模型请求实际消费摘要和续推 → 完成 todo。窗口设为 1,000,000，低于原生 auto 阈值；不以单纯 inbox 插入代替恢复证据，不 mock 压缩服务。父工具有 15 秒失败 watchdog，并始终 dispose 受测 Agent。
+
+同族 `-busy` 使用真实竞争 maintenance，`-wake` 让已有运行时消息抢先，`-cancel` 在原生压缩开始时中断，`-hard` 验证硬阈值。`-noop` 在模型工具结果之后的 serial stopping 边界，用带完整 `sourceEventSeqs` 的原生 `user/message` replacement 制造只剩一个不可拆节点的表面；这是显式外部改写夹具，随后由真实 DSH selector 返回 null，不是 mock 压缩结果。busy/wake 还实际调用 idle Stop 并投递后台通知，断言没有 Weir todo 自动续推。
+
+首轮工具定义成本用同一真实请求 header、仅替换旧/新 `compact_context` schema 交给 DSH tokenMeter：当前记录为 **13,762 → 13,746（−16）估算 token**。这是宿主启发式估算，不是供应商计费或 tokenizer 精确值。
+
 ### 原会话绑定恢复回归
 
 `node plugins/weir-test-harness/run.mjs editlock-binding-reclaim`（从仓库根运行；macOS 设 `WEIR_IT_DSH_EXEC="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"`）启用测试组合中的真实 Edit Lock 行与开发专用探针。探针在真实 AgentFactory 的 setup 阶段先建立远程通道，故意延迟 nonce 登记与旧通道清理；随后 dispose/resume 同 Session ID，使 publisher-local 挂载先失败、状态工具只读报告，再补充宿主旧身份并经真实 `/edit-lock retry` → `/edit-lock resume` → 受管 `write` 恢复。
@@ -83,7 +91,7 @@ profile 的 patch 层把部署级 `workspaceRoot` 钉到 `<IT_ROOT>/outside`，�
 
 ### 与预设 realm 结构的镜像
 
-patch 层把 compaction provider 与 context-guard 消费者放进同一个 `isolate` 组，复现正式预设的分组形态。AGENTS.md §6.4 要求：改 cordis 分组时必须同步镜像到本 patch 层，否则集成测试会对"preset-load 失败类"缺陷失明。
+patch 层把 compaction 子组嵌入 editing 组，在外层统一 isolate `compaction`、`toolResultPruner`、`weirCompactionCoordinator` 与 `weirEditLock`，让压缩提供者、guard 与 todo-driver 同 realm。两种生产预设相应嵌入 delegation。AGENTS.md §6.4 要求生产与镜像同步；真实预设另以 `preset-delegation-surface` 新会话验证，不能仅信 host 镜像。
 
 ## 边界与失败语义
 

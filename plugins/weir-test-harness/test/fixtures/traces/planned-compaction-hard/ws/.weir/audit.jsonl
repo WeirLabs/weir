@@ -1,0 +1,23 @@
+{"time":1791666282410,"session":"session-58ae5a78-39de-4aeb-8310-f286f92dcb20","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666282667,"session":"session-461e9fa5-472f-4650-906a-f3d0341c797b","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666282908,"session":"session-461e9fa5-472f-4650-906a-f3d0341c797b","type":"weir/compaction","data":{"requestId":"bffc6d7d-52d8-4b47-b724-205860a7b235","sources":["model"],"kind":"requested"}}
+{"time":1791666282932,"session":"session-461e9fa5-472f-4650-906a-f3d0341c797b","type":"weir/compaction","data":{"requestId":"bffc6d7d-52d8-4b47-b724-205860a7b235","sources":["model"],"kind":"applied","summarySeq":35,"compactionId":"e0d7c98d-2aa4-466f-ba06-437b221e7f7f"}}
+{"time":1791666285112,"session":"session-a96d7651-93f4-454d-b8ed-3196b308fd5a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666285585,"session":"session-1e0430fd-3044-4957-8e77-fdb0e361d73e","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666285985,"session":"session-1e0430fd-3044-4957-8e77-fdb0e361d73e","type":"weir/compaction","data":{"requestId":"4e32774f-f667-4514-9173-d2ec5d10ec4a","sources":["model"],"kind":"requested"}}
+{"time":1791666285995,"session":"session-1e0430fd-3044-4957-8e77-fdb0e361d73e","type":"weir/compaction","data":{"requestId":"4e32774f-f667-4514-9173-d2ec5d10ec4a","sources":["model"],"kind":"blocked","reason":"DSH maintenance was busy; the request remains unfinished."}}
+{"time":1791666288220,"session":"session-0601a162-3c5c-463d-8135-e9d4f2f6392c","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666288576,"session":"session-dc0f7e94-1e51-44bf-a289-b6b9bb1945ae","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666288911,"session":"session-dc0f7e94-1e51-44bf-a289-b6b9bb1945ae","type":"weir/compaction","data":{"requestId":"b15a2423-ca57-44b4-98b7-23ee9717deb6","sources":["model"],"kind":"requested"}}
+{"time":1791666288926,"session":"session-dc0f7e94-1e51-44bf-a289-b6b9bb1945ae","type":"weir/compaction","data":{"requestId":"b15a2423-ca57-44b4-98b7-23ee9717deb6","sources":["model"],"kind":"blocked","reason":"Another wake reached the next turn before maintenance."}}
+{"time":1791666291192,"session":"session-794f0217-aea8-4e4d-a6de-83495a8f890a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666291505,"session":"session-efc4862b-21d5-4be7-b460-081efdb4185d","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666291762,"session":"session-efc4862b-21d5-4be7-b460-081efdb4185d","type":"weir/compaction","data":{"requestId":"05e92b2a-989c-48e8-b0aa-19662b594987","sources":["model"],"kind":"requested"}}
+{"time":1791666291768,"session":"session-efc4862b-21d5-4be7-b460-081efdb4185d","type":"weir/compaction","data":{"requestId":"05e92b2a-989c-48e8-b0aa-19662b594987","sources":["model"],"kind":"cancelled","reason":"Active work was interrupted."}}
+{"time":1791666293344,"session":"session-c55d846d-d514-4498-9ac5-c7eb283cff4d","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666294777,"session":"session-5751e277-db74-4fb8-97f9-f04910e4aa4a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666294885,"session":"session-0ffeead0-e858-4f2b-b7d7-e4c27e1c1d11","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791666294967,"session":"session-0ffeead0-e858-4f2b-b7d7-e4c27e1c1d11","type":"weir/compaction","data":{"requestId":"32a70a68-691e-49fb-9417-c0b3b8bc6761","sources":["hard"],"kind":"requested"}}
+{"time":1791666294984,"session":"session-0ffeead0-e858-4f2b-b7d7-e4c27e1c1d11","type":"weir/compaction","data":{"requestId":"32a70a68-691e-49fb-9417-c0b3b8bc6761","sources":["hard"],"kind":"applied","summarySeq":28,"compactionId":"a32c7e65-bedd-4e8d-b521-eeb028d91b7b"}}
+{"time":1791666295052,"session":"session-5751e277-db74-4fb8-97f9-f04910e4aa4a","type":"weir/compaction","data":{"requestId":"90a383fe-5494-4b9c-a3c5-d8b7cea94c37","sources":["hard"],"kind":"requested"}}
+{"time":1791666295071,"session":"session-5751e277-db74-4fb8-97f9-f04910e4aa4a","type":"weir/compaction","data":{"requestId":"90a383fe-5494-4b9c-a3c5-d8b7cea94c37","sources":["hard"],"kind":"applied","summarySeq":28,"compactionId":"99ca5219-3c62-4ddb-bf1c-8e44e4bf9a1e"}}
