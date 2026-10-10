@@ -18,6 +18,7 @@ import { installBindingProbe } from './edit-lock-binding-probe.js'
 import { installBlackboardColdProbe } from './blackboard-cold-probe.js'
 import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
 import { installPlannedCompactionProbe } from './scenarios/planned-compaction-probe.mjs'
+import { installJobsAwareTodoProbe } from './scenarios/jobs-aware-todo-probe.mjs'
 
 const name = 'weir-it-event-tap'
 const inject = ['fs', 'agents', 'tools']
@@ -48,6 +49,7 @@ function tap(record) {
 
 function apply(ctx) {
   installPlannedCompactionProbe(ctx, tap)
+  installJobsAwareTodoProbe(ctx, tap)
   installBlackboardPersistenceProbe(ctx, tap)
   installBlackboardColdProbe(ctx, tap)
   installStopProbe(ctx, tap)

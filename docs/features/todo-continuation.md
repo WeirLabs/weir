@@ -54,4 +54,4 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 - 集成测试：`deepwork` 场景——续推消息进入会话日志并到达模型。
 - jobs 单测：`running` / `stopping`、计数不增不重置与结算后恢复、session owner、缺席 / 抛错降级，以及 retry fire 重查、不重排、不改变错误计数。
 - 压缩协作单测：先评估再消费预算，等待十二次后仍保留八次额度；已经排好的 provider retry 遇到压缩禁令不发送。
-- 集成场景：`jobs-aware-todo` 留一个未完成 todo 后委派后台子代理；断言父回合在子 job 运行中结束且会话日志全程无 `<todo_continuation>`（headless 在回合结束即 quiescence-exit，不等运行中 job——S10.6，故结算后恢复半段由 jobs 单测覆盖）。该断言对旧驱动必然失败（续推会把回合吊活到结算之后），构成防回归。
+- 集成场景：`jobs-aware-todo` 留一个未完成 todo 后委派后台子代理；开发专用外层 owner 先证明被测父回合 completed、子 job 实际 running、日志/inbox/model 全程无 `<todo_continuation>`，再等待原生 job 正常完成，保留 clean exit 断言（详见[集成测试装置](integration-test-harness.md)）。移除 jobs-aware 守卫的反证仍会因续推出现而失败；结算后普通恢复半段由 jobs 单测覆盖。

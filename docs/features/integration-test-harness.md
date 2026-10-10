@@ -36,6 +36,12 @@
 
 首轮工具定义成本用同一真实请求 header、仅替换旧/新 `compact_context` schema 交给 DSH tokenMeter：当前记录为 **13,762 → 13,746（−16）估算 token**。这是宿主启发式估算，不是供应商计费或 tokenizer 精确值。
 
+### jobs-aware-todo 生命周期回归
+
+`jobs-aware-todo` 使用开发专用外层 owner R 的前台工具创建受测父 P；P 仍按原流程写 pending todo、委派后台子 C、结束自己的回合。R 在 `P.whenIdle()` 返回后先读取 P 原生日志，确认 completed 回合、pending todo、无续推，再用 `jobs.get(id, P.session.id)` 确认 C 实际仍为 running；P 的日志、inbox 和模型请求三个通道都必须无 todo continuation。只有此后 R 才调用 `jobs.wait(id, 15000, P.session.id)`，并要求真实 completed；超时仍为 running 绝不算成功。结算必须是 producer、awaited，父回合 seq 不变，随后 R 清洁退出。
+
+这修复了旧场景根 P 先 idle 导致 headless 提前 teardown、取消 C 时退出码 1 的装置问题，不修改 DSH 或产品续推代码。原有五项行为与 `run.code === 0` 均保留/加强，另加四项原生观测，共 10 项。移除产品 stopping 决策的 jobs-aware 守卫作反证时，clean exit 仍通过，但日志/inbox/model 的续推禁令和父先结束条件失败（4/10、退出码 1）；恢复后 10/10。录制夹具与 `jobs-aware-todo.test.js` 另验证缺证据、提前完成、等待超时、非 producer/非 awaited 结算和非零退出码都不能通过。后台结算后普通 todo 恢复仍由产品单测覆盖，本探针以 awaited settlement 避免另一条原生唤醒。
+
 ### 原会话绑定恢复回归
 
 `node plugins/weir-test-harness/run.mjs editlock-binding-reclaim`（从仓库根运行；macOS 设 `WEIR_IT_DSH_EXEC="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"`）启用测试组合中的真实 Edit Lock 行与开发专用探针。探针在真实 AgentFactory 的 setup 阶段先建立远程通道，故意延迟 nonce 登记与旧通道清理；随后 dispose/resume 同 Session ID，使 publisher-local 挂载先失败、状态工具只读报告，再补充宿主旧身份并经真实 `/edit-lock retry` → `/edit-lock resume` → 受管 `write` 恢复。
