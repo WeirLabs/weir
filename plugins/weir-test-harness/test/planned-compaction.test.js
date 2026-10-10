@@ -24,3 +24,12 @@ for (const type of ['tool/result', 'turn/end', 'compaction/start', 'compaction/s
   it(`rejects absent ${type} from the commit chain`, () => assert.ok(replay('success', (records) => records.filter((r) => r.type !== type)).length > 0))
 }
 it('rejects an absent replacement checkpoint', () => assert.ok(replay('success', (records) => records.filter((r) => r.source !== 'compact-checkpoint')).length > 0))
+
+it('subject dispatch ignores a parent marker present only in the runtime-context path', () => {
+  const markerPath = '/workspace/qa-planned-compaction-parent-20261011-001/ws'
+  const subject = { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'planned-compaction-subject' }] }
+  const runtime = { role: 'user', source: { kind: 'runtime-context' }, content: [{ type: 'text', text: `Workspace: ${markerPath}` }] }
+  const observation = { messages: [subject, runtime], transcript: `user:\nplanned-compaction-subject\n---\nuser:\nWorkspace: ${markerPath}` }
+  const emitted = [...plannedCase().decide({}, observation)].filter((chunk) => chunk.type === 'block-end').map((chunk) => chunk.block?.name)
+  assert.deepEqual(emitted, ['todo_write'])
+})

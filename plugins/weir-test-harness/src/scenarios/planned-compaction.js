@@ -1,4 +1,4 @@
-import { textChunks, toolCallChunks } from '../mock-kit.js'
+import { blockText, textChunks, toolCallChunks } from '../mock-kit.js'
 
 export function plannedCase(mode = 'success') {
   return {
@@ -7,7 +7,7 @@ export function plannedCase(mode = 'success') {
     env: { WEIR_IT_PLANNED_COMPACTION: '1', WEIR_IT_COMPACTION_MODE: mode, WEIR_IT_WINDOW: mode === 'hard' ? '2000' : '1000000' },
     decide(_options, obs) {
       const history = obs.transcript
-      if (history.includes('planned-compaction-parent')) {
+      if (obs.messages.some((m) => m.role === 'user' && m.source?.kind === 'user' && blockText(m) === 'planned-compaction-parent')) {
         return history.includes('planned-probe-finished') ? textChunks('planned-parent-finished') : toolCallChunks('planned_compaction_probe', {})
       }
       if (history.includes('planned-background-notice')) return textChunks('planned-background-observed')
