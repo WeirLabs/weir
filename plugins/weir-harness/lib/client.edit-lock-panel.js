@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
 			background: "var(--dsw-alias-bg-overlay)",
 			border: "1px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-md, 8px)",
-			boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
+			boxShadow: "0 6px 24px var(--dsw-alias-border-l2)",
 			padding: "10px 12px",
 			color: "var(--dsw-alias-label-primary)",
 			fontSize: "12px",
@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
 		};
 		const mutedStyle = { color: "var(--dsw-alias-label-secondary)" };
 		const errorStyle = { color: "var(--dsw-alias-state-error-primary)", marginTop: "6px" };
-		const rowStyle = { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0", borderTop: "1px solid var(--dsw-alias-border-l2)" };
+		const rowStyle = { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" };
 		const nameStyle = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" };
 		const dot = (state) => jsx("span", { "aria-hidden": true, style: { display: "inline-block", width: "7px", height: "7px", borderRadius: "50%", background: dotColor[state], flex: "none" } });
 		/** Clock time for a reservation expiry, in the user's locale. */
@@ -203,20 +203,32 @@ window.__ModuleLoader__.load({
 				view?.bindingFailure ? jsx("div", { style: mutedStyle, "data-weir-edit-lock-binding": "", children: t(`editLockBinding_${view.bindingFailure.holderKind ?? "unknown"}`) }, "binding") : null,
 				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
 				cold && state === "stopped" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdResumeManual" : "editLockColdResumeAuto") }, "cold") : null,
-				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, children: t("editLockRecovery").replace("{n}", String(view.recovery.attempts)) }, "recovery") : null,
+				// The host projects cumulative usage, not whether the cleanup driver is
+				// running or paused. Do not reuse editLockRecovery's "cleaning up" claim.
+				// Follow-up locale keys: editLockCleanupOnly, editLockRecoveryUsage,
+				// editLockPauseUsageHint. Template-layer fallback stays English.
+				view?.cleanupOnly ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cleanup": "", children: "Cleanup only: business edits and new ownership are blocked. Release files you no longer need; inspect the tool result before retrying edits." }, "cleanup") : null,
+				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-recovery": "", children: `Recorded recovery: ${view.recovery.attempts} attempts · ${view.recovery.elapsedSeconds}s elapsed · ${view.recovery.pauseMinutes} min pause used.` }, "recovery") : null,
+				view?.recovery?.pauseMinutes > 0 ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-pause": "", children: "Pause usage is cumulative, not a live timer. Pause expiry re-checks recovery; it does not release locks or restore editing." }, "pause") : null,
 				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,
 				files.length ? jsx("div", { style: { marginTop: "8px" }, "data-weir-edit-lock-files": "", children: files.map((file) => jsxs("div", {
-					style: rowStyle,
+					style: { padding: "4px 0", borderTop: "1px solid var(--dsw-alias-border-l2)" },
 					"data-weir-edit-lock-file": file.detail.path,
 					children: [
-						jsx("span", { style: nameStyle, title: file.detail.path, children: file.name }),
-						jsx("span", { style: mutedStyle, children: file.mine ? t(`editLockStatus_${file.status}`) : t("editLockOwnerOther") }),
-						cold || !rowCommand(file) ? null
-							: file.action === "unlock" && armedUnlock !== file.detail.path
-								? action(`arm-unlock:${file.detail.path}`, t("editLockRow_unlock"), () => setArmedUnlock(file.detail.path))
-								: action(`${file.action}:${file.detail.path}`, t(file.action === "unlock" ? "editLockRow_unlockConfirm" : `editLockRow_${file.action}`), () => run(rowCommand(file)), file.action === "unlock" ? dangerStyle : buttonStyle)
+						jsxs("div", { style: rowStyle, children: [
+							jsx("span", { style: nameStyle, title: file.detail.path, children: file.name }),
+							jsx("span", { style: mutedStyle, children: file.mine ? t(`editLockStatus_${file.status}`) : `${t("editLockOwnerOther")} · ${t(`editLockStatus_${file.status}`)}` }),
+							cold || !rowCommand(file) ? null
+								: file.action === "unlock" && armedUnlock !== file.detail.path
+									? action(`arm-unlock:${file.detail.path}`, t("editLockRow_unlock"), () => setArmedUnlock(file.detail.path))
+									: action(`${file.action}:${file.detail.path}`, t(file.action === "unlock" ? "editLockRow_unlockConfirm" : `editLockRow_${file.action}`), () => run(rowCommand(file)), file.action === "unlock" ? dangerStyle : buttonStyle)
+						] }),
+						file.reason ? jsx("div", { style: { ...mutedStyle, overflowWrap: "anywhere" }, "data-weir-edit-lock-file-reason": file.detail.path, children: file.reason }) : null
 					]
 				}, file.detail.path)) }, "files") : null,
+				// Follow-up locale key: editLockOwnershipHint. Outcomes remain in the
+				// adjacent tool result; lock rows do not establish a publication result.
+				files.length ? jsx("div", { style: { ...mutedStyle, marginTop: "6px" }, "data-weir-edit-lock-ownership-hint": "", children: "Locks show ownership, not write outcomes. For failed edits, inspect the tool result; releasing locks does not undo changes." }, "ownership-hint") : null,
 				error ? jsx("div", { style: errorStyle, "data-weir-edit-lock-error": "", children: error }, "error") : null,
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "10px" }, children: [
 					canRevoke ? (armedRevoke
