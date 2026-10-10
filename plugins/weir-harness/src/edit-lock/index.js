@@ -311,8 +311,8 @@ function describe(status) {
 }
 
 /** Composition dependencies, not persisted settings. Defaults are the host paths.
- * @param {{ resolveRoot?: typeof managementRootFor, endpoint?: typeof endpointFor, exclude?: typeof excludeFromGit }} [dependencies] */
-export function createEditLockPlugin({ resolveRoot = managementRootFor, endpoint = endpointFor, exclude = excludeFromGit } = {}) {
+ * @param {{ platform?: string, resolveRoot?: typeof managementRootFor, endpoint?: typeof endpointFor, exclude?: typeof excludeFromGit }} [dependencies] */
+export function createEditLockPlugin({ platform = process.platform, resolveRoot = managementRootFor, endpoint = endpointFor, exclude = excludeFromGit } = {}) {
 /** Arrow on purpose: cordis constructs prototype-bearing callbacks with `new`
  * and then drops their returned disposer, which would leak the reservation.
  * @param {any} ctx @param {unknown} config */
@@ -325,6 +325,16 @@ return (ctx, config = {}) => {
     fixed: options?.fixed != null, phase: options ? 'installing' : 'installed',
   })
   if (!options) return evidence ? () => evidence.dispose() : undefined
+  // Resource identity is the narrowest supported envelope (Darwin/Linux/Win32;
+  // each has a local endpoint). Its factory performs no filesystem operations.
+  // Keep the provider mounted on failure: absence would select unlocked editors.
+  // This mount-time decision never follows a later saved-off setting.
+  let platformFailure = null
+  try { createResourceIdentity({ platform }) } catch (error) {
+    platformFailure = Object.assign(new Error(`Edit Lock ${errorMessage(error)}; managed editing is unavailable. Supported platforms: darwin, linux, win32.`), { code: 'weir-edit-lock/unsupported-platform' })
+    evidence?.failed(platformFailure)
+    ctx.logger?.warn?.(platformFailure.message)
+  }
   try {
   /** @type {any} */
   let sandboxPolicyRef = null
@@ -498,6 +508,7 @@ return (ctx, config = {}) => {
    * `ownAgent`/`setupAgent` are declared below and only dereferenced when a
    * call actually arrives. @param {any} agent */
   async function domainFor(agent) {
+    if (platformFailure) throw platformFailure
     if (!registry.rootOf(agent) && !closed && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) await setupAgent(agent)
     await setupInFlight.get(agent)
     if (settled.has(agent)) return settled.get(agent)
@@ -602,6 +613,7 @@ return (ctx, config = {}) => {
   }
   /** Only this live Agent's diagnostic; no domain reads or startup side effects. @param {any} agent */
   function startupFailure(agent) {
+    if (platformFailure) return { state: 'unavailable', reason: platformFailure.message, bindingFailure: null }
     if (!agent || settled.has(agent) || !startFailures.has(agent)) return null
     let eligible = false
     try { eligible = !closed && !disposedAgents.has(agent) && ownAgent(agent) && servingRuntime(agent.id) === agent } catch { /* no trusted live identity */ }
@@ -668,6 +680,7 @@ return (ctx, config = {}) => {
 
   ctx.on('tools/pre-execute', async (/** @type {any} */ exec, /** @type {() => Promise<any>} */ next) => {
     if (!GUARDED_TOOLS.includes(exec?.name)) return next()
+    if (platformFailure) return { kind: 'deny', reason: platformFailure.message, info: { name: 'EditLockPlatformError', code: platformFailure.code } }
     const admitted = () => {
       const definition = ctx.tools.get(exec.name, exec.agent)
       return typeof definition?.execute === 'function' && managed.has(definition.execute)
@@ -711,6 +724,9 @@ return (ctx, config = {}) => {
    * @param {any} agent */
   async function setupAgentOnce(agent, retry = false) {
     if (closed || settled.has(agent)) return
+    // No writer scope, root resolution, directory, reservation or session
+    // authority may be installed when the mount preflight failed.
+    if (platformFailure) return
     if (!registry.rootOf(agent)) try {
       // A previous generation's managed write survives in the agent's own
       // scope layer (a preset rebind never disposes own-layer registrations);
@@ -1058,6 +1074,7 @@ return (ctx, config = {}) => {
    * never a reasonless "starting" for a session that cannot be starting.
    * @param {string} sessionId */
   async function coldStatusView(sessionId) {
+    if (platformFailure) return unavailableView(platformFailure.message)
     let observation
     try { observation = await ctx.get?.('sessionQuery')?.observeSession?.(sessionId) } catch { observation = undefined }
     if (!observation) return unavailableView('session is not live in this process and could not be cold-read')
@@ -1144,7 +1161,7 @@ return (ctx, config = {}) => {
         const domain = agent && settled.get(agent)
         // A live agent whose domain is still starting (or failed to start)
         // keeps the old answer; only a session with NO live agent cold-reads.
-        if (agent && !domain) return reply({ ok: true, value: unavailableView(startFailures.get(agent) ?? null, startupFailure(agent)?.bindingFailure) })
+        if (agent && !domain) return reply({ ok: true, value: unavailableView(platformFailure?.message ?? startFailures.get(agent) ?? null, startupFailure(agent)?.bindingFailure) })
         if (!domain) return reply({ ok: true, value: await coldStatusView(sessionId) })
         try {
           const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
@@ -1225,7 +1242,7 @@ return (ctx, config = {}) => {
     },
   })
 
-  evidence?.installed()
+  if (!platformFailure) evidence?.installed()
   return async () => {
     if (closed) return
     closed = true
