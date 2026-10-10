@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- **会话黑板：重启与 Weir 重装后保留知识**：条目、读/订阅计数和晋升标记改为与根 Session 日志同目录的 `_bb` 旁置文件持久化；子 Agent 共用根板，归档、Agent 销毁不再清空，旧写入权不会跨重启恢复。写盘失败明确报错而非假成功。删除整个会话目录时黑板随之消失；仅删除日志时为避免误删活跃会话，孤儿 `_bb` 保留至用户确认所有宿主离线后人工清理。内置 Session ZIP 暂不包含黑板。详见 [会话黑板](docs/features/blackboard.md)。
 - **编辑锁：子代理结算、恢复与缺失文件残留**：正常结束的一次性子代理现在通过标准结束代理路径释放仍占用的文件锁；委派结果与车道交接等待运行真正静止及处置确认，异常、中断和未决围栏继续按原规则保留，冷重建仅凭终态记录不会提前放行。显式 `resume_agent` 可让未被撤权的受监督子代理恢复编辑，旧锁仍需确认；普通注入消息不会恢复。锁的拥有者可直接 Release 已移走文件的自身残留，非拥有者、目标重现或未决围栏仍明确拒绝。安装版 R1 修复前 7/12 红、修复后 12/12 绿，R2 10/10 绿；全量集成其余 19 项 Office 清单失败已在未改动主分支同环境复现，与本次修复无关。详见 [编辑锁](docs/features/edit-lock.md) 与 [Worktree 车道](docs/features/git-worktree.md)。
 
 - **会话能力管理器：同名 Skill 勾选联动与 Apply 静默选错项**：管理器草稿与复选框此前按**显示名**寻址——同名候选（如 user 与 project 各一份同名 Skill）共享一个键，勾选其中一项另一项也显示勾选；且 `/capabilities apply` 用按名覆盖的 Map 解析，同名时被后枚举者静默顶掉，提交的根本不是勾选项。修复后选择全程按 **Skill identity** 寻址：listing 每行末尾携带 `identity`、receipt 新增 `effective.skillIdentities`（名称数组保留供 Badge 计数与旧客户端回退）；客户端草稿以 identity key 判定成员与净增减，同名各项独立勾选；apply 接受混合条目——identity 对象按完整 key 精确匹配当前库存，名称字符串仅在唯一 parsed 匹配时绑定，歧义名称进入 `missing` 显式报错、绝不按枚举顺序静默选胜。附带修复：预设载入 staging 时 identity 对象被 `String()` 损坏为 "[object Object]"（from:'applied' 保存的预设载入后 Apply 必报 missing）；preset/default 的 `from:'draft'` 保存自此落盘为精确 identity 而非名字串。证据：同名独立勾选与精确 Apply 的组件级回归、apply 歧义拒绝与精确命中的命令级测试、identity key 客户端镜像与服务端 parity 测试；单测全绿，能力相关集成子集 169/169。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
@@ -70,7 +71,7 @@
 
 ### Changed
 
-- **产品更名：Orrery → Weir（BREAKING）**：产品、预设与全部标识符统一更名。GUI 预设选择器显示名改为 **Weir** 与 **Weir 创造模式**（预设 id `weir` / `weir-creative`）；bundle 包名改为 `weir-harness`（仓库目录 `plugins/weir-harness/`，测试装置 `weir-test-harness`，模型选择器 `weir-model-picker`）；设置页分区显示为「Weir」。运行时目录 `.orrery/` 改为 `.weir/`（车道、审计、编辑锁、黑板数据随目录迁移），车道分支前缀 `orrery/<lane>` 改为 `weir/<lane>`，集成测试环境变量 `ORRERY_IT_ROOT`/`ORRERY_IT_DSH_EXEC` 改为 `WEIR_IT_ROOT`/`WEIR_IT_DSH_EXEC`。升级动作：重新以 link 安装 `plugins/weir-harness`（旧的 `orrery-harness` 条目需移除），profile 中的默认预设选择 `selectedDefault: orrery` 改为 `weir`，设置覆盖行 id `orrery-settings` 改为 `weir-settings`（行内已保存的设置值原样保留）。绑定旧 `orrery` 预设的历史会话不能在新名称下恢复，请新建 Weir 会话。
+- **产品更名：Orrery → Weir（BREAKING）**：产品、预设与全部标识符统一更名。GUI 预设选择器显示名改为 **Weir** 与 **Weir 创造模式**（预设 id `weir` / `weir-creative`）；bundle 包名改为 `weir-harness`（仓库目录 `plugins/weir-harness/`，测试装置 `weir-test-harness`，模型选择器 `weir-model-picker`）；设置页分区显示为「Weir」。运行时目录 `.orrery/` 改为 `.weir/`（车道、审计、编辑锁等已有文件随目录迁移；当时的黑板仅存在进程内存，并无可迁移的数据文件），车道分支前缀 `orrery/<lane>` 改为 `weir/<lane>`，集成测试环境变量 `ORRERY_IT_ROOT`/`ORRERY_IT_DSH_EXEC` 改为 `WEIR_IT_ROOT`/`WEIR_IT_DSH_EXEC`。升级动作：重新以 link 安装 `plugins/weir-harness`（旧的 `orrery-harness` 条目需移除），profile 中的默认预设选择 `selectedDefault: orrery` 改为 `weir`，设置覆盖行 id `orrery-settings` 改为 `weir-settings`（行内已保存的设置值原样保留）。绑定旧 `orrery` 预设的历史会话不能在新名称下恢复，请新建 Weir 会话。
 
 
 ## [0.9.9] - 2026-10-08
