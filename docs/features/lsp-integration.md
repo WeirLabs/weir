@@ -79,10 +79,17 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 
 ## 与编辑锁的关系
 
-[Edit Lock 编辑锁仲裁](edit-lock.md) 开启时（实验特性、默认关闭），`lsp_rename` 与 `write`／`hash_edit` 一样经锁发布：**整批目标文件在写入前一次性原子获取**，任何冲突都意味着零写入、也不新增任何锁；缺失目标直接拒绝整批（rename 从不创建文件）。写入中途失败仍按既有语义即停并精确报告已写与未写的文件清单，不宣称跨文件回滚。
+[Edit Lock 编辑锁仲裁](edit-lock.md) 开启时（实验特性、默认关闭），`lsp_rename` 与 `write`／`hash_edit` 一样经锁发布：**整批目标文件在写入前一次性原子获取**（`acquireBatch`/`acquireMany`），任何冲突都意味着零写入、也不新增任何锁；缺失目标直接拒绝整批（rename 从不创建文件）。写入中途失败仍按既有语义即停并精确报告已写与未写的文件清单，不宣称跨文件回滚。
+
+锁开启后的行为细节（安装版运行时集成场景 `editlock-lsp-rename` 实证，见「测试」）：
+
+- **成功路径**：整批目标一次性原子获取，逐文件发布——每个目标在 authority 里落一条 `["lsp_rename",…,索引]` 操作记录（phase `updated`）；成功后临时锁原子释放（批次不占有任何残留锁），锁代际（generation）按资源单调递增。
+- **整批拒绝路径（全部零写入、零新锁）**：批次内任一目标被其他会话持有（`resource owned`）；或多个 WorkspaceEdit 条目归一化到同一 canonical 资源（`duplicate canonical rename target`）——注意这把锁关闭时的同名隐患**前移**了：锁关闭时同一文件别名条目表现为写一半后 `FS_STALE_VERSION` 的部分失败（见 `lsp` 场景的 staleProbe 探针），锁开启时该形态在获取阶段即被整批拒绝，不可能造成部分写入。
+- **中途失败**（例如回合在第一个文件落盘后被中止）：即停。已写文件**不回滚**——新内容保留在磁盘与 durable 历史中（phase `updated`）；未写文件没有任何发布记录（从未派发）；整批临时锁**保留**（错误信息明确标注 `ownership retained (no rollback)`）；报告精确列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 三份清单。`filesUncertain` 非空需要派发中途崩溃/持久化失败，只能在组件级故障注入下产生（`weir-harness/test/edit-lock-host.test.js` 钉住该报告形状），集成场景无法在不 mock 的前提下触发。
 
 ## 测试
 
 - 单元测试：`test/lsp-client.test.js`（帧编解码、握手、路由、通知、超时、关停；注册表语言映射、平台安装命令解析）与 `test/lsp.test.js`（门闸开/关、settings 覆盖优先、命令 on/off/坏参/无 agent、投影折叠、agent/created 恢复、实时翻转、实时调参、五工具链路、安装指引、类型拒绝、用后关停）；`test/lsp-admin.test.js`（status/install/版本探测/退出码归一化/超时终止/HTTP 接线/缺席降级）与 `test/lsp-admin-probe.test.js`（探测超时结算后不留下已武装的定时器）。
 - 平台可移植语料：`test/lsp-executable-win32.test.js`（win32 绝对路径形态、`%APPDATA%\npm` 与 `~/.npm-global` 扫描、PATHEXT 探测、无扩展名同名文件不算可执行、PATH 分号拼接、npm 前缀、子环境变量）与 `test/lsp-spawn-argv.test.js`（三类真实 shim 拆包（含 npm 自带的 `%NODE_EXE%`/`%NPM_CLI_JS%` 链与**无扩展名目标**）、含空格路径、拆包失败时 `cmd /d /c` 回退且**不含 `/s`**、不安全形状明确拒绝、`.ps1` → powershell、`.exe` 直启、POSIX 不变）。既有 POSIX 语料改为显式传平台（`{ platform: 'darwin' }`）并用跨平台可执行夹具（拷贝当前解释器），使其在 Windows 上同样可跑。已知语言限制：语料中的 corepack fixture 只建模 `IF EXIST "%~dp0\node.exe"` 那一支（真实 `pnpm.CMD` 最后一行 `%*` 属该支；`ELSE` 的裸 `node` 支未被覆盖，因测试的 `existsFile` 接缝使其不可达）。
 - 真实 GUI 验收：设置开 → 会话头开关出现 → 点亮 → 四工具可见 → 熄灭 → 消失 → 设置关 → 开关消失（用户桌面验收）。
+- **Edit Lock 下的真实重命名**：集成场景 `editlock-lsp-rename`（`WEIR_IT_EDIT_LOCK=1`，六次顺序 headless 启动共用同一 authority `<ws>/.weir/edit-lock`，协议夹具服务器走真实 LSP rename 链路）：freeze（foreign 锁经 bounded hold 跨进程保留为 user-interrupted）→ conflict（撞上 foreign 锁，整批拒绝、零写入、零新锁、报告诚实列出两份清单且不宣称回滚）→ thaw（消息驱动 auto-resume 确证保留锁后释放）→ apply（跨文件重命名成功：两目标原子获取、逐文件发布、临时锁释放、代际 pinned、CRLF 保留）→ duplicate（同文件别名条目在写入前整批拒绝）→ midbatch（第一文件落盘后回合中止：已写不回滚、第二文件零记录、两临时锁保留、headless 退出码 1）。运行：`WEIR_IT_DSH_EXEC=<安装版 CLI> node run.mjs editlock-lsp-rename`（35/35）。缺失目标的 WorkspaceEdit 条目无法由协议夹具服务器产生（它从磁盘实况计算改动，缺失文件根本不进 changes），其预检零写入语义由单测钉住。

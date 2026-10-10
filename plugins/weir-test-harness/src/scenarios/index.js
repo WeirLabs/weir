@@ -56,6 +56,7 @@ import delegateResume from './editlock-delegate-resume.js'
 import blackboardPersistence from './blackboard-persistence.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
 
+import editlockLspRename from './editlock-lsp-rename.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
 SCENARIOS.push(applyTransaction)
@@ -88,6 +89,7 @@ SCENARIOS.push(blackboardPersistence)
 SCENARIOS.push(presetDelegationSurface)
 SCENARIOS.push(plannedCompaction)
 SCENARIOS.push(plannedCase('busy'), plannedCase('wake'), plannedCase('cancel'), plannedCase('noop'), plannedCase('hard'))
+SCENARIOS.push(editlockLspRename)
 
 /**
  * Find a scenario entry by id.
