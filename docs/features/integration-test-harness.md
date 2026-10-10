@@ -28,6 +28,12 @@
 - `pnpm --filter weir-test-harness run record` 重录断言回放夹具（一次绿跑后把 `trace-<scenario>.jsonl` 拷入 `test/fixtures/traces/`，入库）。
 - 每次运行会把测试根目录整体删除重建（持有咨询锁时锁文件本身除外，见「并发运行隔离」）；默认产物位于当前仓库或 lane 的 `.weir/it-root/`（已忽略、不入库）。lane 清理时该 scratch 随 `.weir/` 归档到主仓库的 `.weir/lanes/<lane-id>/`。
 
+### 原会话绑定恢复回归
+
+`node plugins/weir-test-harness/run.mjs editlock-binding-reclaim`（从仓库根运行；macOS 设 `WEIR_IT_DSH_EXEC="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"`）启用测试组合中的真实 Edit Lock 行与开发专用探针。探针在真实 AgentFactory 的 setup 阶段先建立远程通道，故意延迟 nonce 登记与旧通道清理；随后 dispose/resume 同 Session ID，使 publisher-local 挂载先失败、状态工具只读报告，再补充宿主旧身份并经真实 `/edit-lock retry` → `/edit-lock resume` → 受管 `write` 恢复。
+
+10 项断言包含：两代真实 Agent、serving/unknown 拒绝、原对象工具不重装、绑定后仍 interrupted、失败诊断清除、锁/generation/manager incarnation/publisher reservation 不变、迟到 EOF 与第三会话可用。旧产品路径上为红（`agent has no authenticated edit execution`，2/10），新实现为绿（10/10）；回放证据收在 `test/fixtures/traces/editlock-binding-reclaim/`。组件级补充 `edit-lock-cross-mode-safety.test.js`、duplicate-binding/attestation 套件，覆盖延迟/失败 durable ACK、未决围栏与恢复/保留预算、poisoned manager、跨进程/无 token，以及最终 start await 后申请者失效：必须 revoke＋forget，不能残留 release 清理权限。此场景不是 GUI 人工验收，也不把超时或管理员 override 当作静止证明。
+
 ## 配置
 
 装置的输入全部是环境变量，由 `run.mjs` 在派生 headless 进程时设置；单独调用时以下变量有平台默认值。

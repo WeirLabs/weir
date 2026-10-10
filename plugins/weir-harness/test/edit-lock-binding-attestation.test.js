@@ -83,7 +83,7 @@ test('open wire adds unique per-channel token; drop and close prune registration
     for (const message of messages) {
       assert.deepEqual(Object.keys(message).sort(), ['callId', 'kind', 'request'])
       assert.equal(message.kind, 'open')
-      assert.deepEqual(Object.keys(message.request).sort(), ['nonce', 'pid', 'sessionId'])
+      assert.deepEqual(Object.keys(message.request).sort(), ['bindingFailures', 'nonce', 'pid', 'retry', 'sessionId'])
       assert.equal(message.request.pid, process.pid)
       assert.equal(typeof message.request.nonce, 'string')
       assert.equal(bindingRuntime(message.request.nonce).sessionId, message.request.sessionId)
@@ -107,7 +107,11 @@ test('old-client open without token succeeds and is never attested away', async 
   try {
     assert.deepEqual(await client.request('open', 'open', { sessionId: 'old' }, new AbortController().signal), { state: 'active' })
     assert.deepEqual(server.bindings(), [{ sessionId: 'old', present: true, holderPid: null, attestable: false, attestation: 'unknown' }])
-    await assert.rejects(remote.channelFor({ id: 'old' }), /holder cannot be attested/)
+    await assert.rejects(remote.channelFor({ id: 'old' }), error => {
+      assert.equal(error.bindingFailure?.code, 'binding-duplicate')
+      assert.equal(error.bindingFailure.holderKind, 'unknown')
+      return /holder cannot be attested/.test(error.message)
+    })
     assert.equal(starts, 1)
     assert.equal(attestations, 0)
   } finally { client.close(); remote.close(); await server.close() }
@@ -121,4 +125,42 @@ test('production peer retries failed revocation but never reopens its ingress', 
   await peer.disconnect()
   await peer.disconnect()
   assert.equal(calls, 2)
+})
+
+for (const [holder, verdict, token] of [
+  ['serving', 'serving', { nonce: 'n', pid: process.pid }],
+  ['unattestable', 'unknown', { nonce: 'n', pid: process.pid }],
+  ['old client', 'stale', {}],
+  ['cross process', 'stale', { nonce: 'n', pid: process.pid + 1 }],
+]) test(`local arbitration refuses ${holder} without touching its authority`, async () => {
+  const arbitration = createChannelBindingArbitration(() => verdict)
+  let revoked = 0, started = 0
+  await arbitration.open('s', socket(), async () => ({ peer: { async disconnect() { revoked++ } } }), token)
+  await assert.rejects(arbitration.openLocal('s', async () => { started++ }), /session already bound/)
+  assert.equal(revoked, 0)
+  assert.equal(started, 0)
+})
+
+test('local and remote startup await the same revoke ACK while other sessions progress; late EOF cannot erase successor', async () => {
+  const arbitration = createChannelBindingArbitration(() => 'stale')
+  const gate = Promise.withResolvers(), entered = Promise.withResolvers()
+  const old = socket(), successor = socket()
+  let localBound = false
+  await arbitration.open('s', old, async () => ({ peer: { disconnect() { entered.resolve(); return gate.promise } } }), { nonce: 'n', pid: process.pid })
+  const local = arbitration.openLocal('s', async () => { localBound = true; return 'interrupted' })
+  await entered.promise
+  const remote = arbitration.open('s', successor, async () => {
+    if (localBound) throw Error('session already bound locally')
+    return bind()
+  })
+  const refusal = assert.rejects(remote, /bound locally/)
+  await arbitration.open('other', socket(), bind)
+  assert.equal(localBound, false)
+  gate.resolve()
+  assert.equal(await local, 'interrupted')
+  await refusal
+  await arbitration.release('s', old)
+  await arbitration.open('s', successor, bind)
+  await arbitration.release('s', old)
+  assert.equal(arbitration.bindings().some(row => row.sessionId === 's'), true)
 })

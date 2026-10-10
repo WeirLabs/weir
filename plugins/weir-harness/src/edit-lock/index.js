@@ -257,6 +257,8 @@ function registerLockTools(ctx, service) {
       parameters: { type: 'object', properties: {}, required: [] },
       output: text('message'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
+        const unavailable = service.startupFailure(exec.agent)
+        if (unavailable) return { ...unavailable, message: `Edit Lock unavailable: ${unavailable.reason}. ${unavailable.bindingFailure?.retryable ? 'The user can run /edit-lock retry to retry the connection; this does not resume editing.' : 'Inspect Edit Lock maintenance before continuing.'}` }
         const locks = await service.locks(exec)
         const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status} generation=${lock.generation}${lock.reason ? ` reason=${lock.reason}` : ''}`)
         // The reservation is part of what the holder needs to know: without it the
@@ -370,6 +372,8 @@ return (ctx, config = {}) => {
   const sinks = new WeakMap()
   /** Why registration failed for an agent, for the panel. @type {WeakMap<object, string>} */
   const startFailures = new WeakMap()
+  /** Publisher-classified failures, never inferred from text. @type {WeakMap<object, any>} */
+  const bindingFailures = new WeakMap()
   /** Settled domain per bound agent, for synchronous gates. @type {WeakMap<object, any>} */
   const settled = new WeakMap()
   /** In-flight setup per agent, shared by every entry point (creation,
@@ -452,7 +456,21 @@ return (ctx, config = {}) => {
         }, { root }),
       })
       let server
-      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding) }
+      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding,
+        (agent, requireProof) => {
+          if (closed || disposedAgents.has(agent)) return false
+          const agents = ctx.get?.('agents')
+          if (typeof agents?.get === 'function') {
+            if (agents.get(agent.id) !== agent) return false
+          } else if (requireProof) return false
+          // Fresh creation keeps the established missing/throwing-registry
+          // fallback. A reclaim or retry never uses that fallback as proof.
+          if (typeof presets?.serviceFor === 'function') {
+            try { return presets.serviceFor(agent, 'weirEditLock') === service }
+            catch { return !requireProof }
+          }
+          return true
+        }) }
       catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
       const domain = localDomain(lifecycle, server)
       try { evidence?.recordDomain?.(root, { mode: domain.mode, bindings: () => [...lifecycle.bindings(), ...(server?.bindings() ?? [])] }) } catch { /* reporting only */ }
@@ -481,8 +499,10 @@ return (ctx, config = {}) => {
    * call actually arrives. @param {any} agent */
   async function domainFor(agent) {
     if (!registry.rootOf(agent) && !closed && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) await setupAgent(agent)
-    if (registry.rootOf(agent)) return registry.forAgent(agent)
+    await setupInFlight.get(agent)
+    if (settled.has(agent)) return settled.get(agent)
     const failure = startFailures.get(agent)
+    if (failure && bindingFailures.has(agent)) throw new Error(`Edit Lock binding is unavailable (${failure}). The user can run /edit-lock retry after the holder evidence changes. Retry connects only; do not replay the failed edit or remove a live publisher reservation.`)
     if (failure) throw new Error(`this session has no Edit Lock domain: setup failed under the current preset generation (${failure}); the automatic re-bind was already attempted. Recovery: restart DeepSeek Harness or start a new conversation.`)
     // No fence match (foreign preset) or unmount: keep the stock refusal.
     return registry.forAgent(agent)
@@ -580,7 +600,18 @@ return (ctx, config = {}) => {
       state.timer?.unref?.()
     }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry arm failed: ${error?.message ?? error}`))
   }
+  /** Only this live Agent's diagnostic; no domain reads or startup side effects. @param {any} agent */
+  function startupFailure(agent) {
+    if (!agent || settled.has(agent) || !startFailures.has(agent)) return null
+    let eligible = false
+    try { eligible = !closed && !disposedAgents.has(agent) && ownAgent(agent) && servingRuntime(agent.id) === agent } catch { /* no trusted live identity */ }
+    if (!eligible) return null
+    const failure = bindingFailures.get(agent)
+    return { state: 'unavailable', reason: startFailures.get(agent),
+      bindingFailure: failure ? { ...failure, inFlight: setupInFlight.has(agent) } : null }
+  }
   const service = Object.freeze({
+    startupFailure,
     publish: route('publish'),
     publishBatch: route('publishBatch'),
     acquire: route('acquire'),
@@ -625,6 +656,8 @@ return (ctx, config = {}) => {
     },
     /** Trusted UI observation for one agent; grants nothing. @param {any} agent */
     async describe(agent) {
+      const failure = startupFailure(agent)
+      if (failure) throw Object.assign(new Error(failure.reason), { bindingFailure: failure.bindingFailure })
       const domain = await domainFor(agent)
       return { root: registry.rootOf(agent), mode: domain.mode, status: await domain.status(agent), locks: await domain.locks(agent), recovery: recovery.state(agent) }
     },
@@ -672,15 +705,13 @@ return (ctx, config = {}) => {
   }
   /** Per-agent Edit Lock setup, shared by the creation listener, the
    * preset-switch re-bind, the late-mount catch-up and the guard/acquire lazy
-   * re-bind, so the paths can never diverge. Idempotent per mount generation:
-   * an agent whose root is already bound is left untouched — no second tool
-   * scope, no second bind, no second domain.start — and concurrent entrants
-   * share one in-flight setup so a second caller never double-registers.
+   * re-bind, so the paths can never diverge. Root selection and successful
+   * startup are separate: explicit binding retry reuses the existing scope
+   * and root, while ordinary entry points never repeat a failed startup.
    * @param {any} agent */
-  async function setupAgentOnce(agent) {
-    if (closed) return
-    if (registry.rootOf(agent)) return
-    try {
+  async function setupAgentOnce(agent, retry = false) {
+    if (closed || settled.has(agent)) return
+    if (!registry.rootOf(agent)) try {
       // A previous generation's managed write survives in the agent's own
       // scope layer (a preset rebind never disposes own-layer registrations);
       // retire it first or the scope registry throws duplicate-registration
@@ -710,19 +741,33 @@ return (ctx, config = {}) => {
     }
     try {
       const domain = await domainOf(agent)
-      await domain.start(agent)
+      if (retry) await domain.retryStart(agent)
+      else await domain.start(agent)
+      if (closed || disposedAgents.has(agent) || (retry && (!ownAgent(agent) || servingRuntime(agent.id) !== agent))) {
+        await domain.forget(agent)
+        throw new Error('Edit Lock mount changed during binding')
+      }
+      startFailures.delete(agent)
+      bindingFailures.delete(agent)
+      try { evidence?.clearSessionFailure?.(sessionOf(agent)) } catch { /* reporting cannot undo a successful bind */ }
+      // A genuine message from a turn that ran while binding was unavailable
+      // is not a Continue receipt for a later injected wake after connection retry.
+      if (retry) pendingAutoResume.delete(agent)
       settled.set(agent, domain)
       boundAgents.set(agent.id, agent)
       dispositionFor(agent)
-      await delegateResumes.get(agent.id)?.resume(agent, domain)
+      if (!retry) await delegateResumes.get(agent.id)?.resume(agent, domain)
     } catch (error) {
       // Kept so the panel can say WHY editing is unavailable instead of
       // showing "starting" forever; the notice aligns this catch with the
       // write-scope failure above.
       const reason = String(/** @type {any} */ (error)?.message ?? error)
       startFailures.set(agent, reason)
+      const failure = /** @type {any} */ (error)?.bindingFailure
+      if (failure?.code === 'binding-duplicate') bindingFailures.set(agent, failure)
+      else bindingFailures.delete(agent)
       try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
-      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is unavailable. Recovery: restart DeepSeek Harness or start a new conversation.`) } catch { /* the panel record remains */ }
+      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is unavailable. ${failure?.code === 'binding-duplicate' ? 'Recovery: use /edit-lock retry after the original holder disconnects or its process shutdown is confirmed. Retry does not resume editing; never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`) } catch { /* the panel record remains */ }
       ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${reason}`)
     }
   }
@@ -730,13 +775,29 @@ return (ctx, config = {}) => {
    * share one in-flight setup per agent; a completed setup short-circuits on
    * the root binding. @param {any} agent @returns {Promise<void>} */
   function setupAgent(agent) {
-    if (closed || registry.rootOf(agent)) return Promise.resolve()
     const pending = setupInFlight.get(agent)
     if (pending) return pending
+    if (closed || settled.has(agent) || registry.rootOf(agent)) return Promise.resolve()
     const inner = setupAgentOnce(agent)
     const task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
     setupInFlight.set(agent, task)
     return task
+  }
+  /** Trusted command ingress only. Same Agent/root/mount; no writer reinstallation.
+   * @param {any} agent */
+  async function retryBinding(agent) {
+    if (closed || disposedAgents.has(agent) || !ownAgent(agent) || servingRuntime(agent.id) !== agent) throw new Error('Edit Lock retry requires the current live Agent of this mount')
+    if (!registry.rootOf(agent) || bindingFailures.get(agent)?.code !== 'binding-duplicate') throw new Error('Edit Lock startup failure is not eligible for binding retry')
+    let task = setupInFlight.get(agent)
+    if (!task) {
+      const inner = setupAgentOnce(agent, true)
+      task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
+      setupInFlight.set(agent, task)
+    }
+    await task
+    const failure = startFailures.get(agent)
+    if (failure || !settled.has(agent)) throw new Error(failure ?? 'Edit Lock binding remains unavailable')
+    return 'Edit Lock connection recovered. Editing remains interrupted; use Continue editing when ready. No failed edit was replayed.'
   }
   ctx.on('agent/created', (/** @type {any} */ { agent }) => setupAgent(agent))
 
@@ -1076,14 +1137,14 @@ return (ctx, config = {}) => {
               // Failure loudening (design D3): a failed binding names its
               // reason; a reasonless "starting" is reserved for a genuinely
               // in-flight setup (describe's await absorbs that window).
-              return reply({ ok: true, value: unavailableView(String(/** @type {any} */ (error)?.message ?? error)) })
+              return reply({ ok: true, value: unavailableView(String(/** @type {any} */ (error)?.message ?? error), /** @type {any} */ (error)?.bindingFailure) })
             }
           }
         }
         const domain = agent && settled.get(agent)
         // A live agent whose domain is still starting (or failed to start)
         // keeps the old answer; only a session with NO live agent cold-reads.
-        if (agent && !domain) return reply({ ok: true, value: unavailableView(startFailures.get(agent) ?? null) })
+        if (agent && !domain) return reply({ ok: true, value: unavailableView(startFailures.get(agent) ?? null, startupFailure(agent)?.bindingFailure) })
         if (!domain) return reply({ ok: true, value: await coldStatusView(sessionId) })
         try {
           const [status, locks] = await Promise.all([domain.status(agent), domain.locks(agent)])
@@ -1145,14 +1206,15 @@ return (ctx, config = {}) => {
   const commands = ctx.get?.('commands')
   const offCommand = commands?.register({
     name: 'edit-lock',
-    description: 'Edit Lock: status, locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue), confirm <path> | --all, unlock <path> <generation>.',
-    input: { hint: 'status | locks | hold [minutes] | release <path> | stop | resume | confirm <path> | unlock <path> <generation>' },
+    description: 'Edit Lock: status, retry (connection only; not Continue), locks, hold [minutes], release <path>, stop (durable revoke), resume (explicit Continue), confirm <path> | --all, unlock <path> <generation>.',
+    input: { hint: 'status | retry | locks | hold [minutes] | release <path> | stop | resume | confirm <path> | unlock <path> <generation>' },
     handler: async (/** @type {any} */ invocation) => {
       const agent = invocation?.agent
       if (!agent) return { kind: 'error', text: 'edit-lock: requires an owning agent session' }
       try {
-        const domain = await domainFor(agent)
         const raw = String(invocation.rawInput ?? '')
+        if (raw.trim() === 'retry') return { kind: 'success', text: await retryBinding(agent) }
+        const domain = await domainFor(agent)
         // Only the hold verb depends on the retention settings being coherent.
         const policy = /^\s*hold\b/.test(raw) ? strictLimits() : limits()
         const text = await runCommand(domain, agent, raw, String(invocation.commandId), policy)

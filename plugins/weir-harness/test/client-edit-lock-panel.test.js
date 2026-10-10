@@ -87,6 +87,30 @@ describe('client.edit-lock-panel chunk', () => {
     expect(runs).toEqual([])
   })
 
+  it('a failed status refresh withdraws stale editing state and actions', async () => {
+    const { render, props } = await mounted([viewOf('editing', [own('a.txt')])])
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    props.fetchView = async () => { throw Error('connection unavailable') }
+    byAction(render(), 'refresh').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, node => node['data-weir-edit-lock-state'] !== undefined)['data-weir-edit-lock-state']).toBe('unavailable')
+    expect(byAction(tree, 'release:/w/a.txt')).toBe(undefined)
+    expect(byAction(tree, 'primary')).toBe(undefined)
+  })
+  it('retryable unavailable offers connection retry only, then refreshes without Continue', async () => {
+    const failure = viewOf('unavailable', [], { reason: 'holder unknown', bindingFailure: { code: 'binding-duplicate', retryable: true, inFlight: false } })
+    const { runs, render } = await mounted([failure, failure, viewOf('stopped')])
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    expect(byAction(render(), 'primary').children).toBe('editLockRetry')
+    byAction(render(), 'primary').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['retry'])
+    expect(byAction(render(), 'primary').children).toBe('editLockResume')
+  })
+  it('unavailable prose alone and an in-flight binding never offer a retry action', async () => {
+    const { exports } = await load()
+    expect(exports.primaryOf('unavailable', viewOf('unavailable', [], { reason: 'retry connection' }))).toBe(null)
+    expect(exports.primaryOf('unavailable', viewOf('unavailable', [], { bindingFailure: { code: 'binding-duplicate', retryable: true, inFlight: true } }))).toBe(null)
+  })
   it('a healthy session offers no primary action; own files offer release', async () => {
     const { runs, render } = await mounted([viewOf('editing', [own('a.txt')])])
     find(render(), (node) => node['data-weir-edit-lock'] === '').onClick(); await flush()

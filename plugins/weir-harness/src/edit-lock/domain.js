@@ -2,19 +2,26 @@
  * Every method is trusted host ingress; only `service` reaches tools. */
 
 /** @param {ReturnType<typeof import('./lifecycle.js').createEditLockLifecycle>} lifecycle
- * @param {{close: () => Promise<void>} | undefined} endpoint */
+ * @param {{close: () => Promise<void>, startLocal?: (agent: object, retry?: boolean) => Promise<any>} | undefined} endpoint */
 export function localDomain(lifecycle, endpoint) {
   return Object.freeze({
     mode: 'publisher',
     service: lifecycle.service,
     /** @param {object} agent */
-    start: agent => lifecycle.start(agent),
+    start: agent => endpoint?.startLocal ? endpoint.startLocal(agent) : lifecycle.start(agent),
+    /** Trusted binding retry; never reopens permanently revoked authority. @param {object} agent */
+    retryStart: async agent => {
+      lifecycle.assertStartable(agent)
+      return endpoint?.startLocal ? endpoint.startLocal(agent, true) : lifecycle.start(agent)
+    },
     /** Synchronous admission fence for an aborted turn. @param {object} agent */
     latch: agent => { lifecycle.stop(agent).catch(() => {}) },
     /** @param {object} agent */
     stop: async agent => { await lifecycle.stop(agent); return lifecycle.status(agent) },
     /** @param {object} agent */
     dispose: agent => lifecycle.dispose(agent),
+    /** Revoke and remove all ingress, retaining locks. @param {object} agent */
+    forget: agent => lifecycle.forget(agent),
     /** @param {object} agent @param {string} requestId */
     resume: (agent, requestId) => lifecycle.resume(agent, requestId),
     /** @param {object} agent @param {string} resourceId */
@@ -76,6 +83,10 @@ export function remoteDomain(remote) {
     }),
     /** @param {object} agent */
     start: async agent => (await remote.channelFor(agent)).state,
+    /** @param {object} agent */
+    retryStart: async agent => (await remote.channelFor(agent, true)).state,
+    /** @param {object} agent */
+    forget: async agent => { try { await remote.call(agent, 'stop') } finally { remote.drop(agent) } },
     /** Closing the channel makes the publisher revoke on EOF. @param {object} agent */
     latch: agent => remote.drop(agent),
     /** Awaits the publisher's durable revocation. @param {object} agent */

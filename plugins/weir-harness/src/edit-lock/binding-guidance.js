@@ -17,11 +17,27 @@ export function bindingGuidance(sessionId, reason) {
   if (classification === 'serving') {
     holder = `session ${sessionId} is already active in the DeepSeek Harness window that publishes this project. Use the session in that window, close it there, or quit that Harness process.`
   } else if (classification === 'same-process-unattestable' && pid !== undefined) {
-    holder = `session ${sessionId} has a binding in this same process (pid ${pid}) that cannot be safely reclaimed. A stale runtime incarnation may still hold its channel. Restart DeepSeek Harness to recover.`
+    holder = `session ${sessionId} has a binding in this same process (pid ${pid}) that cannot be safely reclaimed. A stale runtime incarnation may still hold its channel. Wait for the original holder to disconnect or for confirmed process shutdown.`
   } else if (classification === 'cross-process-pid' && pid !== undefined) {
-    holder = `session ${sessionId} has a binding held by process pid ${pid}. Quit that holder process, or restart DeepSeek Harness to recover.`
+    holder = `session ${sessionId} has a binding held by process pid ${pid}. Quit that holder process or disconnect the original holder, and wait for confirmation.`
   } else {
-    holder = `session ${sessionId} has a binding whose holder cannot be attested. Restart DeepSeek Harness to recover.`
+    holder = `session ${sessionId} has a binding whose holder cannot be attested. Wait for the original holder to disconnect or for confirmed process shutdown.`
   }
-  return `${holder} Do NOT remove the publisher reservation (.weir/.edit-lock.publisher-reservation) while its process is alive — removing it would split the edit authority.`
+  return `${holder} Then use /edit-lock retry in the original session when available; retry does not Continue editing. Do NOT remove the publisher reservation (.weir/.edit-lock.publisher-reservation) while its process is alive — removing it would split the edit authority.`
+}
+
+/** Structured publisher fact; never classify a retry from prose.
+ * @param {number | undefined} pid @param {string} attestation
+ * @param {boolean} [revocationFailed] */
+export function bindingFailure(pid, attestation, revocationFailed = false) {
+  return { code: 'binding-duplicate', retryable: true,
+    holderKind: revocationFailed ? 'revocation-failed' : attestation === 'serving' ? 'serving'
+      : pid !== undefined && pid !== process.pid ? 'cross-process' : 'unknown',
+    holderPid: pid ?? null }
+}
+/** @param {number | undefined} pid @param {string} attestation @param {boolean} [revocationFailed] */
+export function bindingRefusal(pid, attestation, revocationFailed = false) {
+  const reason = bindingRefusalReason(pid, attestation)
+  return Object.assign(new Error(revocationFailed ? `${reason}; durable revocation was not acknowledged. Inspect authority; no replacement was admitted.` : reason),
+    { bindingFailure: bindingFailure(pid, attestation, revocationFailed) })
 }

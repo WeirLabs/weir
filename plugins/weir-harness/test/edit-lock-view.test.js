@@ -9,6 +9,14 @@ const base = (over = {}) => ({ sessionId: 's1', state: 'active', interrupted: fa
 const lock = (resourceId, owner = 's1', status = 'active', extra = {}) => ({ resourceId, owner, generation: 3, status, ...extra })
 const view = (status, locks = status.locks) => buildView({ status, locks, cwd: '/w', root: '/w', mode: 'publisher', now: 1 })
 
+it('unavailable view carries structured binding recovery without claiming authority', () => {
+  const failure = { code: 'binding-duplicate', retryable: true, holderKind: 'unknown', holderPid: 42, inFlight: false }
+  const result = unavailableView('holder unknown', failure)
+  expect(result.bindingFailure).toEqual(failure)
+  expect(result.state).toBe('unavailable')
+  expect(result.files).toEqual([])
+  expect(result.technical).toBe(null)
+})
 it('names files relative to the work directory and leaves outside paths whole', () => {
   expect(shortName('/w/src/a.ts', '/w')).toBe('src/a.ts')
   expect(shortName('/elsewhere/b.ts', '/w')).toBe('/elsewhere/b.ts')

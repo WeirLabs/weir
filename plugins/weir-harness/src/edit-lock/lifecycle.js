@@ -1,4 +1,4 @@
-import { bindingGuidance, bindingRefusalReason } from './binding-guidance.js'
+import { bindingGuidance, bindingRefusalReason, bindingFailure } from './binding-guidance.js'
 import { createEditLockHost } from './host.js'
 import { createNegotiation } from './negotiation.js'
 import { RECOVERY_LIMITS } from './recovery.js'
@@ -169,6 +169,14 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     }
     return result
   }
+  /** Read-only startup admission; revoked owners remain terminal.
+   * @param {object} agent */
+  function assertStartable(agent) {
+    if (closed) throw new Error('edit lifecycle closed')
+    const sessionId = sessionForAgent(agent)
+    if (!sessionId) throw new Error('unregistered lifecycle agent')
+    if (sessionStatus(sessionId).session?.revoked) throw new Error('Edit Lock: this session was permanently revoked; binding retry cannot restore authority.')
+  }
   /** Register once before publishing an agent's editing tools. A session the
    * manager already knows (restart, re-created agent) is never re-armed: it
    * starts interrupted and needs trusted resume. @param {object} agent
@@ -185,7 +193,8 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       const refusal = () => {
         const reason = bindingRefusalReason(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown')
         // Remote callers render after their retry budget; local callers have no wire.
-        return new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`)
+        return Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`),
+          { bindingFailure: bindingFailure(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown') })
       }
       // Remote entries are channel proxies, NOT runtime identities. Only the
       // endpoint's nonce attestation may reclaim them (including same-process).
@@ -223,6 +232,7 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     return entry.ready
   }
   return Object.freeze({
+    assertStartable,
     /** Local bindings only; endpoint arbitration reports channel proxies. */
     bindings() {
       return [...entries].filter(([agent]) => /** @type {any} */ (agent).remote !== true).map(([agent, entry]) => {
