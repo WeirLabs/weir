@@ -113,6 +113,85 @@ describe('client.edit-lock-panel chunk', () => {
     expect(exports.primaryOf('unavailable', viewOf('unavailable', [], { bindingFailure: { code: 'binding-duplicate', retryable: true, inFlight: true } }))).toBe(null)
   })
 
+  for (const text of ['publisher connection lost', 'edit-lock: binding refused; durable revocation failed']) {
+    it(`preserves a distinct Retry error inline: ${text}`, async () => {
+      const failure = viewOf('unavailable', [], { reason: 'binding refused', bindingFailure: { code: 'binding-duplicate', holderKind: 'serving', retryable: true } })
+      const { render, props } = await mounted([failure])
+      props.runEditLock = async () => ({ kind: 'error', text })
+      find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+      byAction(render(), 'primary').onClick(); await flush(); await flush()
+      expect(find(render(), node => node['data-weir-edit-lock-error'] === '').children).toBe(text)
+      expect(find(render(), node => node['data-weir-edit-lock-reason'] === '')).toBe(undefined)
+      byAction(render(), 'details').onClick()
+      const details = find(render(), node => node['data-weir-edit-lock-details'] === '').children
+      expect(details).toContain('binding refused')
+      expect(details).toContain('session s1 · epoch 2')
+      expect(details).toContain('root /w (publisher)')
+    })
+  }
+
+  it('deduplicates an exact unwrapped refusal but restores it inline if the refreshed reason differs', async () => {
+    const failure = viewOf('unavailable', [], { reason: 'original binding refusal', bindingFailure: { code: 'binding-duplicate', retryable: true } })
+    const { render, props } = await mounted([failure])
+    props.runEditLock = async () => ({ kind: 'error', text: failure.reason })
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    byAction(render(), 'primary').onClick(); await flush(); await flush()
+    expect(find(render(), node => node['data-weir-edit-lock-error'] === '')).toBe(undefined)
+    props.fetchView = async () => ({ ...failure, reason: 'different binding refusal' })
+    byAction(render(), 'refresh').onClick(); await flush()
+    expect(find(render(), node => node['data-weir-edit-lock-error'] === '').children).toBe(failure.reason)
+  })
+
+  it('keeps a refresh failure inline without structured binding evidence even when it repeats the reason', async () => {
+    const { render, props } = await mounted([viewOf('idle')])
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    props.fetchView = async () => { throw Error('publisher connection lost') }
+    byAction(render(), 'refresh').onClick(); await flush()
+    expect(find(render(), node => node['data-weir-edit-lock-error'] === '').children).toBe('publisher connection lost')
+    expect(find(render(), node => node['data-weir-edit-lock-reason'] === '').children).toBe('publisher connection lost')
+    expect(byAction(render(), 'primary')).toBe(undefined)
+  })
+
+  for (const bindingFailure of [null, { code: 'other', retryable: true }, { code: 'binding-duplicate', retryable: false }, { code: 'binding-duplicate' }, { code: 'binding-duplicate', retryable: true, inFlight: true }]) {
+    it(`renders no Retry without eligible structured evidence: ${JSON.stringify(bindingFailure)}`, async () => {
+      const { render, runs } = await mounted([viewOf('unavailable', [], { reason: 'retry this binding', bindingFailure })])
+      find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+      expect(byAction(render(), 'primary')).toBe(undefined)
+      expect(runs).toEqual([])
+    })
+  }
+
+  for (const holderKind of ['cross-process', 'serving', 'unknown']) {
+    it(`${holderKind} binding refusal stays localized after Retry and exposes the full reason on demand`, async () => {
+      const reason = 'edit lock duplicate session binding: session s1 has a binding held by process pid 71998. Do NOT remove the publisher reservation while its process is alive.'
+      const failure = viewOf('unavailable', [], { reason, technical: null, bindingFailure: { code: 'binding-duplicate', holderKind, holderPid: 71998, retryable: true } })
+      const { render, props, runs } = await mounted([failure])
+      const guidance = {
+        'cross-process': '原持有者位于另一进程。请先断开原连接或确认其进程已退出，再重试。',
+        serving: '原持有者仍在服务。请先在原会话断开，再重试；重试不等于继续编辑。',
+        unknown: '无法核实原持有者。请等待原连接断开或确认其进程已退出，再重试；勿删除存活 publisher 的预约。',
+      }
+      props.t = key => ({ editLockState_failed: '编辑锁不可用，编辑会被拒绝', editLockRetry: '重试连接', editLockDetails: '技术细节', [`editLockBinding_${holderKind}`]: guidance[holderKind] })[key] ?? key
+      props.runEditLock = async verb => { runs.push(verb); return { kind: 'error', text: `edit-lock: ${reason}` } }
+      find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+      expect(find(render(), node => node['data-weir-edit-lock-summary'] === '').children).toBe('编辑锁不可用，编辑会被拒绝')
+      expect(find(render(), node => node['data-weir-edit-lock-binding'] === '').children).toBe(guidance[holderKind])
+      expect(JSON.stringify(render())).not.toContain(reason)
+      expect(byAction(render(), 'primary').children).toBe('重试连接')
+      byAction(render(), 'primary').onClick(); await flush(); await flush()
+      expect(runs).toEqual(['retry'])
+      expect(byAction(render(), 'primary').disabled).toBe(false)
+      expect(find(render(), node => node['data-weir-edit-lock-error'] === '')).toBe(undefined)
+      expect(JSON.stringify(render())).not.toContain(reason)
+      expect(byAction(render(), 'details').children).toBe('技术细节')
+      byAction(render(), 'details').onClick()
+      expect(find(render(), node => node['data-weir-edit-lock-details'] === '').children).toContain(reason)
+      byAction(render(), 'details').onClick()
+      expect(JSON.stringify(render())).not.toContain(reason)
+      expect(runs).toEqual(['retry'])
+    })
+  }
+
   for (const state of ['idle', 'stopped', 'attention']) {
     it(`recovery usage in ${state} is history, not evidence of an active cleanup or pause`, async () => {
       const { render } = await mounted([viewOf(state, [], { recovery: { attempts: 3, elapsedSeconds: 300, pauseMinutes: 30 } })])
