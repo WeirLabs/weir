@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -187,6 +187,55 @@ test('disabled composition provides nothing and registers no listener', () => {
   assert.equal(apply(host.ctx, {}), undefined)
   assert.equal(host.provided.size, 0)
   assert.equal(host.listeners.size, 0)
+})
+
+test('unsupported effective-on mount reports its cause before editing and never opens an authority', async () => {
+  const { root } = await fixture()
+  const directory = join(root, 'authority-not-created')
+  const host = coldHost(root)
+  const warnings = []
+  host.ctx.logger.warn = message => warnings.push(message)
+  const mounts = []
+  const saved = { enabled: true }
+  host.provided.set('weirSettings', {
+    get: () => saved,
+    editLockEvidence: { recordMount: value => {
+      mounts.push(value)
+      return { failed: error => mounts.push({ failure: error.message }), installed: () => mounts.push({ installed: true }), dispose() {}, disposing() {} }
+    } },
+  })
+  const unsupported = createEditLockPlugin({ platform: 'freebsd', resolveRoot() { throw new Error('must not resolve a root') } })
+  const dispose = unsupported(host.ctx, { root, authorityDirectory: directory })
+  try {
+    assert.match(warnings.join('\n'), /unsupported platform: freebsd/)
+    assert.equal(mounts.some(item => /unsupported platform: freebsd/.test(item.failure)), true)
+    assert.equal(mounts.some(item => item.installed), false)
+    const agent = host.agent('unsupported')
+    host.agents.set(agent.id, agent)
+    await host.emit('agent/created', { agent })
+    const service = host.provided.get('weirEditLock')
+    for (const name of ['write', 'edit', 'hash_edit', 'lsp_rename', 'str_replace_editor']) {
+      const definition = { name, execute() { throw new Error('must not execute') } }
+      agent.visible.set(name, definition)
+      service.claim(definition)
+      const decision = await host.emit('tools/pre-execute', { name, agent })
+      assert.equal(decision.kind, 'deny', name)
+      assert.match(decision.reason, /unsupported platform: freebsd/)
+    }
+    saved.enabled = false // Save-off does not change this mount's admission.
+    assert.equal((await host.emit('tools/pre-execute', { name: 'write', agent })).kind, 'deny')
+    assert.equal((await host.emit('tools/pre-execute', { name: 'read', agent })).kind, 'allow')
+    assert.equal(service.blocksContinuation(agent), true)
+    await assert.rejects(service.publish({ agent }, {}), /unsupported platform: freebsd/)
+    await assert.rejects(service.acquire({ agent }, {}), /unsupported platform: freebsd/)
+    assert.match(service.startupFailure(agent).reason, /unsupported platform: freebsd/)
+    assert.match((await host.read({ sessionId: agent.id })).value.reason, /unsupported platform: freebsd/)
+    assert.match((await host.read({ sessionId: 'cold' })).value.reason, /unsupported platform: freebsd/)
+    assert.match((await host.command().handler({ agent, rawInput: 'status' })).text, /unsupported platform: freebsd/)
+    assert.equal(existsSync(directory), false)
+    assert.equal(existsSync(join(root, '.authority-not-created.publisher-reservation')), false)
+    assert.equal(existsSync(join(root, '.weir')), false)
+  } finally { await dispose() }
 })
 
 test('enabled composition guards unclaimed editors, latches stop and resumes only by command', async () => {
