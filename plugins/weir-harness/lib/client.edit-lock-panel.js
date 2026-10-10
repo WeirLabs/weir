@@ -193,13 +193,21 @@ window.__ModuleLoader__.load({
 			const primary = view && !cold ? primaryOf(state, view) : null;
 			const files = view?.files ?? [];
 			const canRevoke = !cold && state !== "stopped" && state !== "unavailable" && state !== "revoked";
+			// Structured binding refusals have localized guidance; retain the complete
+			// diagnostic on demand, even when no session technical view exists yet.
+			const bindingRefusal = state === "unavailable" && view?.bindingFailure?.code === "binding-duplicate";
+			const detailReason = bindingRefusal ? view.reason : null;
+			const hasDetails = Boolean(view?.technical || detailReason);
+			// Only the exact reason (or the command's fixed wrapper) is redundant.
+			// Never infer failure identity or retry eligibility from prose.
+			const duplicateError = detailReason && (error === detailReason || error === `edit-lock: ${detailReason}`);
 			const children = [
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
 					dot(state),
 					jsx("span", { style: { flex: 1, fontWeight: 600 }, "data-weir-edit-lock-summary": "", children: summary }),
 					jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => refresh(), "data-weir-edit-lock-action": "refresh", title: t("editLockRefresh"), children: "\u21bb" })
 				] }, "head"),
-				view?.reason ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-weir-edit-lock-reason": "", children: view.reason }, "reason") : null,
+				view?.reason && !bindingRefusal ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-weir-edit-lock-reason": "", children: view.reason }, "reason") : null,
 				view?.bindingFailure ? jsx("div", { style: mutedStyle, "data-weir-edit-lock-binding": "", children: t(`editLockBinding_${view.bindingFailure.holderKind ?? "unknown"}`) }, "binding") : null,
 				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
 				cold && state === "stopped" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdResumeManual" : "editLockColdResumeAuto") }, "cold") : null,
@@ -231,20 +239,23 @@ window.__ModuleLoader__.load({
 				// Follow-up locale key: editLockOwnershipHint. Outcomes remain in the
 				// adjacent tool result; lock rows do not establish a publication result.
 				files.length ? jsx("div", { style: { ...mutedStyle, marginTop: "6px" }, "data-weir-edit-lock-ownership-hint": "", children: "Locks show ownership, not write outcomes. For failed edits, inspect the tool result; releasing locks does not undo changes." }, "ownership-hint") : null,
-				error ? jsx("div", { style: errorStyle, "data-weir-edit-lock-error": "", children: error }, "error") : null,
+				error && !duplicateError ? jsx("div", { style: errorStyle, "data-weir-edit-lock-error": "", children: error }, "error") : null,
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "10px" }, children: [
 					canRevoke ? (armedRevoke
 						? action("stop", t("editLockRevokeConfirm"), () => run("stop"), dangerStyle)
 						: jsx("button", { type: "button", style: linkStyle, disabled: pending, onClick: () => setArmedRevoke(true), "data-weir-edit-lock-action": "arm-stop", children: t("editLockStop") })) : null,
 					jsx("span", { style: { flex: 1 } }),
-					view?.technical ? jsx("button", { type: "button", style: linkStyle, onClick: () => setDetails(!details), "data-weir-edit-lock-action": "details", children: t("editLockDetails") }) : null
+					hasDetails ? jsx("button", { type: "button", style: linkStyle, onClick: () => setDetails(!details), "aria-expanded": details, "data-weir-edit-lock-action": "details", children: t("editLockDetails") }) : null
 				] }, "foot"),
-				details && view?.technical ? jsx("pre", {
+				details && hasDetails ? jsx("pre", {
 					style: { ...mutedStyle, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "6px 0 0", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" },
 					"data-weir-edit-lock-details": "",
 					children: [
-						`session ${view.technical.sessionId} \u00b7 epoch ${view.technical.executionEpoch ?? "-"}`,
-						`root ${view.technical.root ?? "-"} (${view.technical.mode ?? "-"})`,
+						...(detailReason ? [detailReason] : []),
+						...(view?.technical ? [
+							`session ${view.technical.sessionId} \u00b7 epoch ${view.technical.executionEpoch ?? "-"}`,
+							`root ${view.technical.root ?? "-"} (${view.technical.mode ?? "-"})`
+						] : []),
 						...files.map((file) => `${file.detail.path} \u00b7 ${file.detail.owner} \u00b7 generation ${file.detail.generation}${file.reason ? ` \u00b7 ${file.reason}` : ""}`)
 					].join("\n")
 				}, "details") : null
