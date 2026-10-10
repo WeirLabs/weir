@@ -1,6 +1,7 @@
 import { describe, expect, it } from '../test/helpers.js'
 import { apply, inject, name } from '../src/core/index.js'
 import { DOCTRINE, DOCTRINE_SECTION_NAME, DOCTRINE_SECTION_ORDER, DOCTRINE_VARIABLE_NAME } from '../src/core/doctrine.js'
+import { readFileSync } from 'node:fs'
 
 function fakeCtx() {
   const registrations = []
@@ -94,5 +95,14 @@ describe('weir-core', () => {
     expect(DOCTRINE).toContain('Pick the delegation mode')
     expect(DOCTRINE).toContain('Default to one-shot')
     expect(DOCTRINE).not.toContain('answers with an ack only, gets exactly one follow-up')
+  })
+  it('planned compaction prompts distinguish queued from confirmed results', () => {
+    const skill = readFileSync(new URL('../skills/deep-work/SKILL.md', import.meta.url), 'utf8')
+    for (const text of [DOCTRINE, skill]) {
+      expect(text).toContain('queued')
+      expect(text).toContain('blocked')
+      expect(text).toContain('genuine user input')
+      expect(text).not.toContain('Never let a provider hard-truncate')
+    }
   })
 })

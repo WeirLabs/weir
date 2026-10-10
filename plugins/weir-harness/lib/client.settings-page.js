@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
 		// scatter). test/client-settings-page.test.js pins this list to
 		// RESTART_KEYS from src/settings/sections.js, so a declaration
 		// change on either side cannot drift the two sides.
-		const RESTART_FIELDS = ["intentGateClassifier", "intentGateProvider", "intentGateModel", "intentGateReasoningEffort", "intentGateTimeoutMs", "jevEndpoint", "jevModel", "jevApiKeyEnv", "todoEnabled", "todoMaxConsecutive", "todoErrorRetryMax", "todoErrorBackoffBaseMs", "todoErrorBackoffCapMs", "guardEnabled", "guardSoftThreshold", "guardHardThreshold", "hashlineHideStockEdit", "editLockEnabled"];
+		const RESTART_FIELDS = ["intentGateClassifier", "intentGateProvider", "intentGateModel", "intentGateReasoningEffort", "intentGateTimeoutMs", "jevEndpoint", "jevModel", "jevApiKeyEnv", "todoEnabled", "todoMaxConsecutive", "todoErrorRetryMax", "todoErrorBackoffBaseMs", "todoErrorBackoffCapMs", "hashlineHideStockEdit", "editLockEnabled"];
 		// ---- condition declaration shorthands (frozen pure data, D2) ----
 		const enabledWhen = (key) => Object.freeze({ key, equals: true });
 		const CLASSIFIER_LLM = Object.freeze({ key: "intentGateClassifier", equals: "llm" });

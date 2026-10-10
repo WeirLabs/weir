@@ -242,7 +242,6 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
     'intentGateClassifier', 'intentGateProvider', 'intentGateModel', 'intentGateReasoningEffort',
     'intentGateTimeoutMs', 'jevEndpoint', 'jevModel', 'jevApiKeyEnv',
     'todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
-    'guardEnabled', 'guardSoftThreshold', 'guardHardThreshold',
     'hashlineHideStockEdit', 'editLockEnabled',
   ]
 

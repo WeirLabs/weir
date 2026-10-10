@@ -479,20 +479,20 @@ describe('client.settings-page chunk', () => {
     })
     // the value rows carry their tags eagerly in the label prop (the
     // ChoiceField component tree only materializes when invoked — covered
-    // below): timeout + todo 4 + guard 2
+    // below): timeout + todo 4; guard thresholds are live
     const tags = findAll(rendered.children, (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
-    expect(tags).toHaveLength(7)
+    expect(tags).toHaveLength(5)
     expect(tags.every((tag) => tag.tone === 'neutral')).toBe(true)
     // no other Tag elements on the page (nothing overridden by default)
     const allTags = findAll(rendered.children, (node) => node.__type === primitivesStub.Tag)
-    expect(allTags).toHaveLength(7)
+    expect(allTags).toHaveLength(5)
     // choice rows: invoking the ChoiceField element materializes the tag
     const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
     const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
     const choiceTag = (name) => findAll(choiceByName[name].__type(choiceByName[name]), (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
     expect(choiceTag('intentGateClassifier')).toHaveLength(1)
     expect(choiceTag('todoEnabled')).toHaveLength(1)
-    expect(choiceTag('guardEnabled')).toHaveLength(1)
+    expect(choiceTag('guardEnabled')).toHaveLength(0)
     expect(choiceTag('hashlineHideStockEdit')).toHaveLength(1)
     expect(choiceTag('editLockEnabled')).toHaveLength(1)
     // non-restart choice rows carry no tag
@@ -504,8 +504,8 @@ describe('client.settings-page chunk', () => {
       env: { status: 'ready', facts: { platform: 'darwin' } },
     })
     const llmTags = findAll(llm.children, (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
-    // value rows 7 + the picker carrier = 8
-    expect(llmTags).toHaveLength(8)
+    // value rows 5 + the picker carrier = 6
+    expect(llmTags).toHaveLength(6)
   })
 
   it('renders the restart reminder as a centered modal when the state carries one', async () => {
@@ -1062,6 +1062,7 @@ describe('client.settings-page chunk', () => {
       { field: 'editLockEnabled', op: { op: 'set', path: ['editLockEnabled'], value: true } },
       { field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } },
       { field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } },
+      { field: 'guardHardThreshold', op: { op: 'set', path: ['guardHardThreshold'], value: 0.9 } },
     ]
     await face.save()
     expect(notifications).toEqual(['bump'])
@@ -1073,7 +1074,7 @@ describe('client.settings-page chunk', () => {
 
   it('save flow: a landed save touching only live keys raises no reminder', async () => {
     const { controller, notifications, face } = await makeController()
-    controller.form.planItems = [{ field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } }]
+    controller.form.planItems = ['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'].map(field => ({ field, op: { op: 'set', path: [field], value: field === 'guardEnabled' ? false : field === 'guardSoftThreshold' ? 0.65 : 0.85 } }))
     await face.save()
     expect(controller.restartReminder).toBe(null)
     expect(notifications).toEqual(['bump'])
@@ -1109,17 +1110,17 @@ describe('client.settings-page chunk', () => {
     controller.form.planItems = [{ field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } }]
     await face.save()
     expect(controller.restartReminder).toEqual(['todoEnabled'])
-    controller.form.planItems = [{ field: 'guardHardThreshold', op: { op: 'set', path: ['guardHardThreshold'], value: 0.9 } }]
+    controller.form.planItems = [{ field: 'todoMaxConsecutive', op: { op: 'set', path: ['todoMaxConsecutive'], value: 9 } }]
     await face.save()
-    expect(controller.restartReminder).toEqual(['guardHardThreshold'])
+    expect(controller.restartReminder).toEqual(['todoMaxConsecutive'])
     expect(controller.form.publishCount).toBe(3)
   })
 
   it('save flow: dismiss clears the reminder and re-publishes', async () => {
     const { controller, face } = await makeController()
-    controller.form.planItems = [{ field: 'guardEnabled', op: { op: 'set', path: ['guardEnabled'], value: false } }]
+    controller.form.planItems = [{ field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } }]
     await face.save()
-    expect(controller.restartReminder).toEqual(['guardEnabled'])
+    expect(controller.restartReminder).toEqual(['todoEnabled'])
     face.dismissRestartReminder()
     expect(controller.restartReminder).toBe(null)
     expect(controller.projection().restartReminder).toBe(null)

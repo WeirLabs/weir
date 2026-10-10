@@ -50,6 +50,15 @@ describe('settings Config schema', () => {
     expect(validate({ hashlineHideStockEdit: 'yes' }).issues).not.toBe(undefined)
   })
 
+  it('rejects invalid guard threshold saves through the Loader standard validator', () => {
+    for (const fields of [
+      { guardSoftThreshold: 0 }, { guardHardThreshold: 1 },
+      { guardSoftThreshold: 0.9, guardHardThreshold: 0.8 },
+      { guardSoftThreshold: NaN }, { guardHardThreshold: Infinity },
+    ]) expect(validate(fields).issues?.length > 0).toBe(true)
+    expect(validate({ guardSoftThreshold: 0.5, guardHardThreshold: 0.6 }).issues).toBe(undefined)
+  })
+
   it('validates lspServers JSON structure (fail loud)', () => {
     expect(computeSections({ lspServers: '{"zig":{"command":"zls"}}' }).lsp.servers).toEqual({ zig: { command: 'zls' } })
     expect(() => computeSections({ lspServers: 'not-json' })).toThrow()

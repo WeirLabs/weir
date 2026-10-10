@@ -57,7 +57,7 @@ Register every step before starting it, transition it on completion immediately 
 
 ## Context pressure
 
-When a context-pressure advisory arrives, finish the current subtask, persist key state (plan, findings), then call \`compact_context\`. After compaction, resume from the summary — do not restart completed work.
+When a context-pressure advisory arrives, finish the current subtask and persist key state before requesting \`compact_context\`. A queued result is not a summary. Resume from confirmed native compaction evidence, not from acceptance text. A busy or competing wake leaves the request blocked without background retry; wait for genuine user input before requesting again. Native automatic compaction is independent; no summary is guaranteed lossless.
 
 ## Edit with anchors
 
