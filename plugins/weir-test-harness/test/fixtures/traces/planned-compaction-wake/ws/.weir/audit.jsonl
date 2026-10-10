@@ -1,0 +1,12 @@
+{"time":1791671590333,"session":"session-b3109ae1-d384-4ead-83b6-2c28a75553be","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791671590447,"session":"session-39caab9a-3d0f-4025-a3dc-f7f02104d0f2","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791671590562,"session":"session-39caab9a-3d0f-4025-a3dc-f7f02104d0f2","type":"weir/compaction","data":{"requestId":"8ca65ae2-e7d6-469d-99e6-4f89962062c9","sources":["model"],"kind":"requested"}}
+{"time":1791671590582,"session":"session-39caab9a-3d0f-4025-a3dc-f7f02104d0f2","type":"weir/compaction","data":{"requestId":"8ca65ae2-e7d6-469d-99e6-4f89962062c9","sources":["model"],"kind":"applied","summarySeq":35,"compactionId":"03c10d7c-62c9-4c92-a8ae-feca5125b850"}}
+{"time":1791671591675,"session":"session-a9ae78a1-0f89-4658-b806-2dab86e61e05","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791671591790,"session":"session-66f4bb8c-db44-40bc-bbef-6d7c3a6c6da5","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791671591911,"session":"session-66f4bb8c-db44-40bc-bbef-6d7c3a6c6da5","type":"weir/compaction","data":{"requestId":"9cad8329-e9fa-469e-8f71-e4c1b79697f7","sources":["model"],"kind":"requested"}}
+{"time":1791671591915,"session":"session-66f4bb8c-db44-40bc-bbef-6d7c3a6c6da5","type":"weir/compaction","data":{"requestId":"9cad8329-e9fa-469e-8f71-e4c1b79697f7","sources":["model"],"kind":"blocked","reason":"DSH maintenance was busy; the request remains unfinished."}}
+{"time":1791671592883,"session":"session-87b3585c-bbcb-4e14-b048-679429e6b523","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791671592971,"session":"session-3d77451c-5200-428c-ac7f-d69986033f76","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791671593062,"session":"session-3d77451c-5200-428c-ac7f-d69986033f76","type":"weir/compaction","data":{"requestId":"cd1da74c-42af-4b15-a6ac-ff662a03b09f","sources":["model"],"kind":"requested"}}
+{"time":1791671593065,"session":"session-3d77451c-5200-428c-ac7f-d69986033f76","type":"weir/compaction","data":{"requestId":"cd1da74c-42af-4b15-a6ac-ff662a03b09f","sources":["model"],"kind":"blocked","reason":"Another wake reached the next turn before maintenance."}}

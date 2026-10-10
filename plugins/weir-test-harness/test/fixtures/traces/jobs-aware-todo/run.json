@@ -1,8 +1,8 @@
 {
   "scenario": "jobs-aware-todo",
-  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/complete-planned-compaction-bind-112/.weir/it-root/home",
   "code": 0,
-  "stdout": "Waiting for the background job settlement notice.\n",
+  "stdout": "jobs-aware-outer-finished\n",
   "stderr": "",
   "sessionId": null
 }

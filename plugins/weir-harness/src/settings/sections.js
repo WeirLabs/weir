@@ -6,6 +6,7 @@
 // module stays inside the jsconfig pure-module curation rule.
 import z from '../vendor/schemastery.js'
 import { flattenConfig } from './volatile.js'
+import { guardOptions } from '../context-guard/pressure.js'
 
 /**
  * The single declaration of every flat settings key.
@@ -35,9 +36,9 @@ const FIELDS = [
   { key: 'todoErrorRetryMax', section: 'todoDriver', field: 'errorRetryMax', type: 'number', description: 'Provider-error retry cap', restart: true },
   { key: 'todoErrorBackoffBaseMs', section: 'todoDriver', field: 'errorBackoffBaseMs', type: 'number', description: 'Provider-error retry initial backoff (ms)', restart: true },
   { key: 'todoErrorBackoffCapMs', section: 'todoDriver', field: 'errorBackoffCapMs', type: 'number', description: 'Provider-error retry backoff cap (ms)', restart: true },
-  { key: 'guardEnabled', section: 'contextGuard', field: 'enabled', type: 'boolean', description: 'Context pressure guard switch', restart: true },
-  { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (advisory)', restart: true },
-  { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (forced compaction)', restart: true },
+  { key: 'guardEnabled', section: 'contextGuard', field: 'enabled', type: 'boolean', description: 'Context pressure guard switch (live)' },
+  { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (live advisory; 0 < soft < hard < 1)' },
+  { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (live maintenance request; not a completion guarantee)' },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)', restart: true },
   { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (experimental, default off; applies after restart)', restart: true },
   // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
@@ -206,6 +207,25 @@ function fieldSchema(type) {
 export const Config = zs.object(
   Object.fromEntries(FIELDS.map(({ key, type, description }) => [key, fieldSchema(type).volatile().description(description)])),
 )
+// Preserve the fixed object-path volatile schema for Settings projection.
+// A transform/intersect would make volatile paths invalid in the DSH fork.
+// Cordis resolveConfig and the config editor use this Standard Schema gate.
+const standardConfig = Config['~standard']
+Object.defineProperty(Config, '~standard', { value: {
+  ...standardConfig,
+  validate(raw) {
+    const result = standardConfig.validate(raw)
+    if (result.issues) return result
+    try {
+      const flat = flattenConfig(raw)
+      guardOptions({
+        ...(flat.guardSoftThreshold === undefined ? {} : { softThreshold: flat.guardSoftThreshold }),
+        ...(flat.guardHardThreshold === undefined ? {} : { hardThreshold: flat.guardHardThreshold }),
+      })
+      return result
+    } catch (error) { return { issues: [{ message: error instanceof Error ? error.message : String(error), path: ['guardSoftThreshold'] }] } }
+  },
+} })
 
 /** Flat field names per section key (the service regroups them). */
 export const SECTIONS = FIELDS.reduce((acc, { key, section, field }) => {
@@ -362,6 +382,7 @@ export function computeSections(config, { readDefaults } = {}) {
         }
       }
     }
+    if (key === 'contextGuard') guardOptions(out)
     if (key === 'lsp' && typeof out.servers === 'string' && out.servers.trim().length > 0) {
       out.servers = parseJsonField(validateLspServers, out.servers)
     }

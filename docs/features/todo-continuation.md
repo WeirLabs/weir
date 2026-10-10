@@ -10,6 +10,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 
 - 回合结束、todo 未完且本会话没有未结算后台 job → 自动续推一条列出剩余项的消息（英文模板；todo 条目文本保持原语言），agent 在新的一步继续。
 - 本会话拥有 `running` / `stopping` 后台 job → 不续推，等待 job 结算通知唤醒；等待不增加也不重置连续续推计数。最后一个 job 结算后的唤醒回合若仍有未完成 todo，按原有 armed / cap 规则恢复续推。
+- 已接受的计划压缩 → 暂停普通续推和延迟 provider retry，不增加或清零预算。busy/竞争唤醒导致 blocked 后禁令继续保留；后台通知不能解禁，只有下一条真实用户输入可以重新决策。
 - 你中途打断 → 不会续推，直到你再发消息（你的打断永远被当作有意为之）。
 - 供应商错误（如 429/5xx/断网）→ 不立即重试，按退避策略延迟续推（默认 30s 起步、翻倍至 5 分钟封顶），连续失败计数到上限（默认 5）即放弃并记录阻塞。
 - 任意成功回合或你的新消息 → 失败计数归零。
@@ -25,7 +26,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 | 连续失败上限 | 5 | 耗尽即停止续推并记录阻塞 |
 | 连续续推上限 | 8 | 无用户输入时的自动续推总上限 |
 
-均为 volatile config，在线编辑即刻生效。
+这些 todo 设置当前属于重启生效项；压力守卫的三项设置则单独支持即时生效。
 
 ## 设计细节
 
@@ -36,6 +37,7 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 - 续推消息为完整 UserMessage 对象（`src/shared/user-message.js`），重新武装只认 `source.kind === 'user'` 的真实用户输入——自身注入、子代理结算通知（`subagent-settled`）、上下文压力提醒等运行时注入消息一律不触发 rearm。
 - jobs 查询留在 `index.js`，通过 host-plane 服务 `ctx.get('jobs')?.list(agent.session.id)` 只检查本会话持有的 job，不跨会话聚合。纯状态机接收 `jobsRunning` 布尔输入，在 `consecutive` 递增前抑制。
 - provider-error 延迟重试在 timer fire 时与 remaining / armed 一起重查 jobs；若仍未结算，直接放弃这次注入，不重排 timer、不改变 `errorStreak`（既有 `turn/end` 错误计数仍保留）。后续唤醒依赖 job 结算通知，不新增轮询。
+- 计划压缩使用同 realm 的 `weirCompactionCoordinator`：先等待 `evaluateBoundary` 再判断 `blocksContinuation`，不依赖两个监听器的先后顺序。`turn/end` 中等待/阻塞不改变计数，但 aborted 的中断记账仍优先；timer fire 再查压缩禁令。
 
 ## 边界与失败语义
 
@@ -51,4 +53,5 @@ agent 回合正常结束但 todo 清单还有未完成项时，续推驱动器�
 - 单元测试：`test/` 覆盖续推 steer、完成静默、用户打断 disarm、供应商错误退避与计数、逃生舱、用户消息复位、注入豁免（自身注入/结算通知/其他插件注入均不 rearm）；`classifyTurnOutcome` 为表驱动套件（11 行真值全表 + durable-priority 与 signal-before-error 两条顺序不变量）。
 - 集成测试：`deepwork` 场景——续推消息进入会话日志并到达模型。
 - jobs 单测：`running` / `stopping`、计数不增不重置与结算后恢复、session owner、缺席 / 抛错降级，以及 retry fire 重查、不重排、不改变错误计数。
-- 集成场景：`jobs-aware-todo` 留一个未完成 todo 后委派后台子代理；断言父回合在子 job 运行中结束且会话日志全程无 `<todo_continuation>`（headless 在回合结束即 quiescence-exit，不等运行中 job——S10.6，故结算后恢复半段由 jobs 单测覆盖）。该断言对旧驱动必然失败（续推会把回合吊活到结算之后），构成防回归。
+- 压缩协作单测：先评估再消费预算，等待十二次后仍保留八次额度；已经排好的 provider retry 遇到压缩禁令不发送。
+- 集成场景：`jobs-aware-todo` 留一个未完成 todo 后委派后台子代理；开发专用外层 owner 先证明被测父回合 completed、子 job 实际 running、日志/inbox/model 全程无 `<todo_continuation>`，再等待原生 job 正常完成，保留 clean exit 断言（详见[集成测试装置](integration-test-harness.md)）。移除 jobs-aware 守卫的反证仍会因续推出现而失败；结算后普通恢复半段由 jobs 单测覆盖。

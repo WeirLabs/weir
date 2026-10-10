@@ -17,6 +17,8 @@ import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
 import { installBindingProbe } from './edit-lock-binding-probe.js'
 import { installBlackboardColdProbe } from './blackboard-cold-probe.js'
 import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
+import { installPlannedCompactionProbe } from './scenarios/planned-compaction-probe.mjs'
+import { installJobsAwareTodoProbe } from './scenarios/jobs-aware-todo-probe.mjs'
 
 const name = 'weir-it-event-tap'
 const inject = ['fs', 'agents', 'tools']
@@ -46,6 +48,8 @@ function tap(record) {
 
 
 function apply(ctx) {
+  installPlannedCompactionProbe(ctx, tap)
+  installJobsAwareTodoProbe(ctx, tap)
   installBlackboardPersistenceProbe(ctx, tap)
   installBlackboardColdProbe(ctx, tap)
   installStopProbe(ctx, tap)
@@ -78,16 +82,17 @@ function apply(ctx) {
     const type = event?.type
     if (typeof type !== 'string') return
     if (type.startsWith('compaction/') || type === 'todo/write') {
-      tap({ kind: 'session-event', session: session.id, type, data: event.data ?? null })
+      tap({ kind: 'session-event', session: session.id, type, eventSeq: event.seq, data: event.data ?? null })
       return
     }
     if (type === 'turn/end') {
-      tap({ kind: 'session-event', session: session.id, type, reason: event.data?.reason?.kind })
+      tap({ kind: 'session-event', session: session.id, type, eventSeq: event.seq, reason: event.data?.reason?.kind })
       return
     }
     if (type === 'tool/result') {
       const message = event.data?.message
       const text = textOf(message, { limit: 600 })
+      if (text.startsWith('Compaction request ')) tap({ kind: 'session-event', session: session.id, type, eventSeq: event.seq, plannedCompaction: true, text })
       if (text.startsWith('hash_edit applied') || text.startsWith('>>> mismatch')) {
         tap({ kind: 'session-event', session: session.id, type, hashEdit: true, isError: message?.isError === true, meta: event.data?.meta ?? null })
       }
@@ -98,7 +103,12 @@ function apply(ctx) {
         kind: 'session-event',
         session: session.id,
         type,
+        eventSeq: event.seq,
+        messageId: event.data?.id,
+        surfaceOp: event.surfaceOp,
+        sourceEventSeqs: event.sourceEventSeqs,
         source: event.data?.source?.kind,
+        compactionId: event.data?.source?.compactionId,
         text: textOf(event.data, { limit: 600 }),
       })
     }

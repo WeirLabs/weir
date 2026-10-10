@@ -179,32 +179,13 @@
                     Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
 
                     When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
-          - id: compaction
+          - id: delegation
             name: cordis:group
             group: true
             isolate:
               compaction: true
               toolResultPruner: true
-            config:
-              - id: compaction-basic
-                name: '@deepseek-ai/dsh-compaction-basic'
-              - id: command-compact
-                name: '@deepseek-ai/dsh-command-compact'
-              - id: tool-result-pruner
-                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
-                config:
-                  thresholdChars: 8192
-                  headChars: 4096
-                  tailChars: 1024
-              # F6 自动压缩：上下文压力阈值 + 模型择时压缩 + 边界强制 + 压缩后续推。
-              # `compaction` 服务被本组 isolate：消费者必须与提供者同 realm（否则
-              # inject 永久等待，预设加载失败）。
-              - id: context-guard
-                name: 'weir-harness/context-guard'
-          - id: delegation
-            name: cordis:group
-            group: true
-            isolate:
+              weirCompactionCoordinator: true
               # 编辑锁服务：提供者 edit-lock 与消费者 todo-driver / hashline-edit /
               # lsp 同在本组。预设服务必须 isolate，否则预设加载以
               # "Preset services require isolate realms" 失败。
@@ -216,6 +197,25 @@
               # delegate write-contract consumer (slice 2) share this realm.
               weirBlackboard: true
             config:
+              - id: compaction
+                name: cordis:group
+                group: true
+                config:
+                  - id: compaction-basic
+                    name: '@deepseek-ai/dsh-compaction-basic'
+                  - id: command-compact
+                    name: '@deepseek-ai/dsh-command-compact'
+                  - id: tool-result-pruner
+                    name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                    config:
+                      thresholdChars: 8192
+                      headChars: 4096
+                      tailChars: 1024
+                  # F6 自动压缩：上下文压力阈值 + 模型择时压缩 + 边界强制 + 压缩后续推。
+                  # `compaction` 服务被本组 isolate：消费者必须与提供者同 realm（否则
+                  # inject 永久等待，预设加载失败）。
+                  - id: context-guard
+                    name: 'weir-harness/context-guard'
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
               - id: tool-subagent-list-agents
@@ -372,33 +372,33 @@
                     Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
 
                     When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
-          - id: compaction
+          - id: delegation
             name: cordis:group
             group: true
             isolate:
               compaction: true
               toolResultPruner: true
-            config:
-              - id: compaction-basic
-                name: '@deepseek-ai/dsh-compaction-basic'
-              - id: command-compact
-                name: '@deepseek-ai/dsh-command-compact'
-              - id: tool-result-pruner
-                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
-                config:
-                  thresholdChars: 8192
-                  headChars: 4096
-                  tailChars: 1024
-              - id: context-guard
-                name: 'weir-harness/context-guard'
-          - id: delegation
-            name: cordis:group
-            group: true
-            isolate:
+              weirCompactionCoordinator: true
               weirEditLock: true
               weirWorktreeLanes: true
               weirBlackboard: true
             config:
+              - id: compaction
+                name: cordis:group
+                group: true
+                config:
+                  - id: compaction-basic
+                    name: '@deepseek-ai/dsh-compaction-basic'
+                  - id: command-compact
+                    name: '@deepseek-ai/dsh-command-compact'
+                  - id: tool-result-pruner
+                    name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                    config:
+                      thresholdChars: 8192
+                      headChars: 4096
+                      tailChars: 1024
+                  - id: context-guard
+                    name: 'weir-harness/context-guard'
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
               - id: tool-subagent-list-agents

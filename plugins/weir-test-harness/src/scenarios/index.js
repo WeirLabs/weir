@@ -6,6 +6,7 @@ import deepwork from './deepwork.js'
 import delegate from './delegate.js'
 import hashline from './hashline.js'
 import pressure from './pressure.js'
+import plannedCompaction, { plannedCase } from './planned-compaction.js'
 import robash from './robash.js'
 import semantic from './semantic.js'
 import grouped from './grouped.js'
@@ -85,6 +86,8 @@ SCENARIOS.push(delegateSettle)
 SCENARIOS.push(delegateResume)
 SCENARIOS.push(blackboardPersistence)
 SCENARIOS.push(presetDelegationSurface)
+SCENARIOS.push(plannedCompaction)
+SCENARIOS.push(plannedCase('busy'), plannedCase('wake'), plannedCase('cancel'), plannedCase('noop'), plannedCase('hard'))
 
 /**
  * Find a scenario entry by id.

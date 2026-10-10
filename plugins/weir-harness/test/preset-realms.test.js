@@ -113,3 +113,13 @@ describe('host-layer composition for the capability read remote', () => {
     expect(row < PATCH.indexOf('- id: preset-weir-creative')).toBe(true)
   })
 })
+
+describe('planned compaction realm', () => {
+  it('both presets put the retained compaction group inside delegation', () => {
+    expect(PATCH.match(/              weirCompactionCoordinator: true/g) ?? []).toHaveLength(2)
+    expect(PATCH.match(/              - id: compaction\n                name: cordis:group\n                group: true\n                config:/g) ?? []).toHaveLength(2)
+    expect(PATCH.match(/                  - id: context-guard/g) ?? []).toHaveLength(2)
+    expect(PATCH.match(/              compaction: true/g) ?? []).toHaveLength(2)
+    expect(PATCH.match(/              toolResultPruner: true/g) ?? []).toHaveLength(2)
+  })
+})

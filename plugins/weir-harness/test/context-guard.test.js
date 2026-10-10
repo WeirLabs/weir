@@ -107,108 +107,242 @@ describe('templates', () => {
 })
 
 describe('context-guard plugin', () => {
-  function harness(pressure, options = {}) {
-    const handlers = {}
-    const registered = []
-    const injected = []
-    const followups = []
-    const compactions = []
-    const warns = []
-    const agents = new Map()
-    const totalTokens = 100_000
-    const contextWindow = Math.round(totalTokens / pressure)
+  function harness(pressure = 0.5, options = {}) {
+    const handlers = {}, services = {}, registered = [], injected = [], followups = [], compactions = [], audits = [], warns = []
+    const settings = { enabled: true, softThreshold: 0.72, hardThreshold: 0.88 }
+    let tokens = pressure * 100000, publishing = false, phase = 'running'
+    const turnAbort = new AbortController(), maintenanceAbort = new AbortController()
     const session = {
-      id: 's1',
-      requestContext: () => ({ provider: 'deepseek', model: 'deepseek-chat', contextWindow }),
-      append: () => {},
+      id: 's1', seq: 10, surface: { replaceGeneration: 0 },
+      requestContext: () => ({ provider: 'mock', model: 'test', contextWindow: 100000 }),
+      snapshotEvents: () => [],
+      append() { throw new Error('custom session append forbidden') },
     }
     const agent = {
-      id: 's1',
-      session,
-      inject: (blocks) => injected.push(blocks),
-      followup: (blocks) => followups.push(blocks),
-      runMaintenance: (job) => job(new AbortController().signal),
+      id: 's1', session, get status() { return phase === 'maintenance' ? 'idle' : phase },
+      inject(message) { if (publishing) throw new Error('append reentry'); injected.push(message) },
+      followup(message) { if (publishing) throw new Error('append reentry'); followups.push(message) },
+      runMaintenance(job) {
+        if (phase !== 'idle') throw Object.assign(new Error('not idle'), { code: 'busy' })
+        phase = 'maintenance'
+        return Promise.resolve(job(maintenanceAbort.signal)).finally(() => { phase = 'idle' })
+      },
     }
-    agents.set('s1', agent)
     const ctx = {
-      tools: { register: (tool) => registered.push(tool) },
-      agents: { get: (id) => agents.get(id) },
-      tokenMeter: { measure: () => ({ totalTokens }) },
-      compaction: {
-        compactNow: async (agentCtx) => {
-          compactions.push(agentCtx)
-          if (options.compactNowError) throw options.compactNowError
-          return { kind: 'ok' }
-        },
-      },
-      llm: {},
-      on: (event, handler) => {
-        handlers[event] = handler
-      },
-      logger: { warn: (message) => warns.push(message) },
+      reflect: { provide: (key, value) => { services[key] = value } },
+      get: (key) => key === 'weirSettings' ? { get: () => settings } : services[key],
+      tools: { register: (tool) => registered.push(tool) }, agents: { get: () => agent },
+      tokenMeter: { measure: () => ({ totalTokens: tokens }) }, llm: {},
+      compaction: { compactNow(agentCtx, signal) {
+        compactions.push({ agentCtx, signal, phase, publishing })
+        if (options.error) return Promise.reject(options.error)
+        return agentCtx.runMaintenance(async () => options.run ? options.run() : ('result' in options ? options.result : { summarySeq: 12, compactionId: 'c1' }))
+      } },
+      emit: (_type, record) => audits.push(record.data),
+      on: (event, handler) => { handlers[event] = handler },
+      logger: { warn: (text) => warns.push(text) },
     }
-    apply(ctx, {})
-    return { handlers, registered, injected, followups, compactions, warns, session, agent }
+    const dispose = apply(ctx, {})
+    const event = async (type, data = {}) => {
+      publishing = true
+      let result
+      try { result = handlers['session/event'](session, { type, data, seq: session.seq++ }) } finally { publishing = false }
+      await result
+    }
+    const stopping = () => handlers['agent/turn-stopping']?.({ agent, turn: 1, signal: turnAbort.signal })
+    const idle = async () => {
+      phase = 'idle'
+      await handlers['agent/status']?.({ agent, status: 'idle' })
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    }
+    const preStep = async (messages = []) => handlers['agent/pre-step']?.({ agent, turn: 2, step: 1, messages, signal: turnAbort.signal }, async () => ({ kind: 'enter', messages }))
+    return { ctx, handlers, services, settings, injected, followups, compactions, audits, warns, session, agent, dispose, event, stopping, idle, preStep, turnAbort, maintenanceAbort,
+      tokens: (value) => { tokens = value },
+      tool: registered.find((tool) => tool.name === 'compact_context'),
+      request: () => registered.find((tool) => tool.name === 'compact_context').execute({}, { agent, signal: turnAbort.signal, concludeTurn() {} }),
+    }
   }
 
-  it('advises mid-turn at step boundaries over the soft threshold', async () => {
-    const { handlers, injected, session } = harness(0.75)
-    await handlers['session/event'](session, { type: 'step/end', data: {} })
-    expect(injected).toHaveLength(1)
-    expect(injected[0].content[0].text).toContain('75%')
-    await handlers['session/event'](session, { type: 'step/end', data: {} })
-    expect(injected).toHaveLength(1) // once per crossing
-  })
-
-  it('stays quiet below the soft threshold', async () => {
-    const { handlers, injected, session } = harness(0.5)
-    await handlers['session/event'](session, { type: 'step/end', data: {} })
-    await handlers['session/event'](session, { type: 'turn/end', data: {} })
-    expect(injected).toHaveLength(0)
-  })
-
-  it('forces compaction at a turn boundary over the hard threshold', async () => {
-    const { handlers, compactions, followups, session } = harness(0.9)
-    await handlers['session/event'](session, { type: 'turn/end', data: {} })
-    expect(compactions).toHaveLength(1)
-    expect(followups).toHaveLength(1) // resume continuation
-    expect(followups[0].content[0].text).toContain('Resume the task')
-  })
-
-  it('compact_context queues compaction and concludes the turn', async () => {
-    const { handlers, registered, compactions, session, agent } = harness(0.5)
-    const tool = registered.find((t) => t.name === 'compact_context')
-    let concluded = false
-    const exec = { agent, concludeTurn: () => { concluded = true } }
-    const result = await tool.execute({}, exec)
+  it('does not attempt manual compaction inside the turn/end publication', async () => {
+    const h = harness()
+    const result = await h.request()
     expect(result.queued).toBe(true)
-    expect(concluded).toBe(true)
-    await handlers['session/event'](session, { type: 'turn/end', data: {} })
-    expect(compactions).toHaveLength(1)
-    expect(compactions[0].session.id).toBe('s1')
+    expect(h.compactions).toHaveLength(0)
+    await h.event('turn/end', { reason: { kind: 'completed' } })
+    expect(h.compactions).toHaveLength(0)
+    await h.idle()
+    expect(h.compactions).toHaveLength(1)
+    expect(h.compactions[0].publishing).toBe(false)
+    expect(h.followups).toHaveLength(1)
+    expect(h.followups[0].role).toBe('user')
+    expect(h.followups[0].source.kind).toBe('weir-context-guard')
   })
 
-  it('passes the current route to compaction options', async () => {
-    const { handlers, registered, compactions, session, agent } = harness(0.5)
-    const tool = registered.find((t) => t.name === 'compact_context')
-    await tool.execute({}, { agent, concludeTurn: () => {} })
-    await handlers['session/event'](session, { type: 'turn/end', data: {} })
-    expect(compactions[0].options.provider).toBe('deepseek')
-    expect(compactions[0].options.model).toBe('deepseek-chat')
+  it('coalesces model and hard requests and resumes at most once', async () => {
+    const h = harness(0.95)
+    const first = await h.request(), second = await h.request()
+    expect(typeof first.requestId).toBe('string')
+    expect(second.requestId).toBe(first.requestId)
+    await h.stopping()
+    await h.event('turn/end', { reason: { kind: 'completed' } })
+    await h.idle(); await h.idle()
+    expect(h.compactions).toHaveLength(1)
+    expect(h.followups).toHaveLength(1)
+    expect(h.compactions[0].agentCtx.options).toEqual({ provider: 'mock', model: 'test' })
+    await h.stopping(); await h.idle()
+    expect(h.compactions).toHaveLength(1) // summary did not lower measured pressure
   })
 
-  it('re-queues a busy compaction at the next boundary without warning', async () => {
-    // The host's real busy wording matches none of the legacy regex words;
-    // only the structured code classifies it.
-    const busy = { code: 'busy', message: 'manual compaction requires an idle agent with no waking queued work' }
-    const { handlers, registered, compactions, warns, session, agent } = harness(0.5, { compactNowError: busy })
-    const tool = registered.find((t) => t.name === 'compact_context')
-    await tool.execute({}, { agent, concludeTurn: () => {} })
-    await handlers['session/event'](session, { type: 'turn/end', data: {} })
-    expect(compactions).toHaveLength(1)
-    expect(warns).toHaveLength(0) // busy stays queued; no failed warn
-    await handlers['session/event'](session, { type: 'turn/end', data: {} })
-    expect(compactions).toHaveLength(2) // retried at the next boundary
-    expect(warns).toHaveLength(0)
+  for (const error of [{ code: 'busy', message: 'no waking queued work' }, { message: 'already active' }]) {
+    it(`busy becomes blocked without retry or idle-Stop wake: ${JSON.stringify(error)}`, async () => {
+      const h = harness(0.95, { error })
+      await h.request(); await h.stopping(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+      expect(h.audits.some((a) => a.kind === 'blocked')).toBe(true)
+      expect(h.services.weirCompactionCoordinator.blocksContinuation(h.agent)).toBe(true)
+      await h.idle(); await h.stopping(); await h.idle()
+      expect(h.compactions).toHaveLength(1)
+      expect(h.followups).toHaveLength(0)
+      expect(h.warns).toHaveLength(0)
+      await h.preStep([{ source: { kind: 'jobs' } }])
+      expect(h.services.weirCompactionCoordinator.blocksContinuation(h.agent)).toBe(true)
+      const next = await h.preStep([{ role: 'user', source: { kind: 'user' }, content: [] }])
+      expect(next.messages.some((m) => m.content?.some((b) => b.text?.includes('blocked')))).toBe(true)
+      expect(h.services.weirCompactionCoordinator.blocksContinuation(h.agent)).toBe(false)
+      expect(h.followups).toHaveLength(0)
+    })
+  }
+
+  it('a competing next turn blocks the queued request instead of attempting late', async () => {
+    const h = harness()
+    await h.request(); await h.event('turn/end', { reason: { kind: 'completed' } })
+    await h.event('turn/start', { turn: 2 }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    expect(h.services.weirCompactionCoordinator.blocksContinuation(h.agent)).toBe(true)
+  })
+
+  for (const result of [null, undefined]) {
+    it(`does not claim a summary for ${result}`, async () => {
+      const h = harness(0.95, { result })
+      await h.request(); await h.stopping(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+      expect(h.followups).toHaveLength(0)
+      expect(h.audits.some((a) => a.kind === 'noop')).toBe(true)
+      await h.stopping(); await h.idle()
+      expect(h.compactions).toHaveLength(1)
+    })
+  }
+
+  it('structured commit failure remains failed and uncertain, never busy', async () => {
+    const h = harness(0.5, { error: { code: 'commit', message: 'active commit failed' } })
+    await h.request(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle(); await h.idle()
+    expect(h.compactions).toHaveLength(1)
+    expect(h.followups).toHaveLength(0)
+    expect(h.audits.some((a) => a.kind === 'failed' && a.uncertain === true)).toBe(true)
+  })
+
+  it('observable turn cancellation suppresses pending work', async () => {
+    const h = harness()
+    await h.request()
+    h.turnAbort.abort({ kind: 'user' })
+    await h.event('turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    expect(h.followups).toHaveLength(0)
+  })
+
+  it('maintenance cancellation suppresses a late successful result', async () => {
+    let resolve
+    const h = harness(0.5, { run: () => new Promise((done) => { resolve = done }) })
+    await h.request(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    h.maintenanceAbort.abort({ kind: 'user' })
+    resolve({ summarySeq: 12, compactionId: 'c1' }); await h.idle()
+    expect(h.followups).toHaveLength(0)
+  })
+
+  it('live disabling invalidates an accepted request before idle', async () => {
+    const h = harness()
+    await h.request(); h.settings.enabled = false
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    expect((await h.request()).queued).toBe(false)
+  })
+
+  it('coalesces a verified native summary and replacement without manual compaction', async () => {
+    const h = harness()
+    await h.request()
+    await h.event('compaction/start', { compactionId: 'native' })
+    await h.event('compaction/summary', { compactionId: 'native', summary: [{ type: 'text', text: 'summary' }] })
+    h.session.surface.replaceGeneration++
+    h.handlers['session/event'](h.session, { type: 'user/message', seq: 12, data: { source: { kind: 'compact-checkpoint', compactionId: 'native' } }, surfaceOp: { op: 'replace' }, sourceEventSeqs: [10, 11] })
+    await h.event('compaction/end', { compactionId: 'native' })
+    const step = await h.preStep()
+    expect(step.messages.some((m) => m.content?.some((b) => b.text?.includes('Resume the task')))).toBe(true)
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    expect(h.followups).toHaveLength(0)
+  })
+
+  it('summary without a committed replacement does not count as native success', async () => {
+    const h = harness()
+    await h.request()
+    await h.event('compaction/start', { compactionId: 'native' })
+    await h.event('compaction/summary', { compactionId: 'native' })
+    await h.event('compaction/end', { compactionId: 'native', error: ['commit failed'] })
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(1)
+  })
+
+  it('cold queued evidence blocks without inventing a queue or a summary', async () => {
+    const h = harness()
+    h.session.snapshotEvents = () => [
+      { seq: 1, type: 'tool/call', data: { name: 'compact_context', callId: 'old' } },
+      { seq: 2, type: 'tool/result', data: { message: { toolCallId: 'old', content: [{ type: 'text', text: 'Compaction request old queued, not completed.' }] } } },
+    ]
+    await h.handlers['agent/created']?.({ agent: h.agent, source: 'resume' })
+    expect(h.services.weirCompactionCoordinator.blocksContinuation(h.agent)).toBe(true)
+    await h.idle()
+    expect(h.compactions).toHaveLength(0)
+    const step = await h.preStep([{ source: { kind: 'user' }, content: [] }])
+    expect(step.messages.some((m) => m.content?.some((b) => b.text?.includes('unconfirmed')))).toBe(true)
+  })
+
+  it('rejects a stale asynchronous route measurement after settings change', async () => {
+    const h = harness(0.95)
+    let resolve
+    h.session.requestContext = () => ({ provider: 'mock', model: 'unknown' })
+    h.ctx.llm.resolveModelInfo = () => new Promise((done) => { resolve = done })
+    const measurement = h.stopping()
+    h.settings.hardThreshold = 0.99
+    resolve({ context: { contextWindow: 100000 } })
+    await measurement
+    await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(0)
+  })
+
+  it('publishes a stopping-boundary soft advisory exactly once when no request is pending', async () => {
+    const h = harness(0.75)
+    await h.stopping(); await h.stopping()
+    expect(h.injected).toHaveLength(1)
+    expect(h.injected[0].content[0].text).toContain('75%')
+    await h.request(); await h.stopping()
+    expect(h.injected).toHaveLength(1)
+  })
+
+  it('a wake entering after maintenance receives a non-waking resume, not another turn', async () => {
+    const h = harness()
+    const compact = h.ctx.compaction.compactNow
+    h.ctx.compaction.compactNow = (...args) => compact(...args).then((result) => {
+      Object.defineProperty(h.agent, 'status', { value: 'running' })
+      return result
+    })
+    await h.request(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.followups).toHaveLength(0)
+    expect(h.injected).toHaveLength(1)
+  })
+
+  it('live thresholds affect the next stopping decision', async () => {
+    const h = harness(0.65)
+    await h.stopping(); expect(h.compactions).toHaveLength(0)
+    h.settings.softThreshold = 0.5; h.settings.hardThreshold = 0.6
+    await h.stopping(); await h.event('turn/end', { reason: { kind: 'completed' } }); await h.idle()
+    expect(h.compactions).toHaveLength(1)
   })
 })

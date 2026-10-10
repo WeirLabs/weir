@@ -22,14 +22,15 @@ Weir 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把
 
 ## 配置
 
-本特性无新增配置项。重启生效的 18 个键（`FIELDS` 中以 `restart: true` 标记）：
+本特性无新增配置项。重启生效的 15 个键（`FIELDS` 中以 `restart: true` 标记）：
 
 | 分组 | 键 |
 |---|---|
 | 意图分类 | `intentGateClassifier`、`intentGateProvider`、`intentGateModel`、`intentGateReasoningEffort`、`intentGateTimeoutMs`、`jevEndpoint`、`jevModel`、`jevApiKeyEnv` |
 | 续推 | `todoEnabled`、`todoMaxConsecutive`、`todoErrorRetryMax`、`todoErrorBackoffBaseMs`、`todoErrorBackoffCapMs` |
-| 上下文压力 | `guardEnabled`、`guardSoftThreshold`、`guardHardThreshold` |
 | 编辑 | `hashlineHideStockEdit`、`editLockEnabled` |
+
+`guardEnabled`、`guardSoftThreshold`、`guardHardThreshold` 是即时生效项：保存后影响下一次 Weir 压力决策，取消旧配置下的待执行请求；不显示需重启标记，混合保存的弹窗只列其他真正需重启键。阈值有限且满足 `0 < soft < hard < 1`，非法组合在宿主 Standard Schema 校验中拒绝，保留原配置和草稿。原生 DSH auto 的静态策略不随这三项重配。
 
 条件与层级的落地方案（`GROUPS` 声明）：各功能细调参数收为其总开关的子项并以其开启为显示条件（`todo*` → `todoEnabled`、`guard*` → `guardEnabled`、`editLock*`（含维护面板）→ `editLockEnabled`、`worktree*` → `worktreeEnabled`、`robash*` → `robashEnabled`、`lsp*`（含 LSP 管理器）→ `lspEnabled`、`notify*` → `notifyEnabled`，`notifyMinTurnSeconds` 再收为 `notifyOnComplete` 的子项）；`robashPwshAllow/Deny` 追加 `{ env: 'platform', in: ['win32'] }`；`intentGateProvider`（模型选择器行，含 folded 的 `intentGateModel`/`intentGateReasoningEffort`）条件 `classifier == 'llm'`，`jev*` 条件 `== 'jev'`。委派分组字段与总开关本身无条件。
 
@@ -61,4 +62,4 @@ Weir 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把
 - 单元测试 `plugins/weir-harness/test/client-settings-page.test.js`：`evaluateCondition`（key/env 谓词、all/any/not、严格成员、未知键）、`resolveEffectiveValue`（D3 全部分支，含各 kind 的具体产品默认）、`validateLayout`（未知父/跨组父/环/未知条件键/未知 env 名/重复字段/畸形条件，错误命名与键名钉住）、`buildLayout`（声明顺序无关的归位与 depth、DFS 序）、真实 `LAYOUT` 结构（两级嵌套用例）；渲染用例——逐组默认可见集合快照、开关草稿即时显隐、枚举条件、env 三态门控、父隐则子隐、隐藏不产生写入、缩进引导线与分隔线结构、特殊编辑器归一（含模型选择器合并行与 folded 语义）、常驻重启标记恰好出现在可见 RESTART 行、Switch 显示与条件共用 helper；默认值显示（unset 数字/文本/枚举显示默认值、草稿与已保存值优先、清空回到默认、不覆盖不写值、unset 分类器的条件按 `regex` 求值）；chunk `FIELD_DEFAULTS` ↔ 服务端声明、`BOOLEAN_DEFAULTS` 派生恰为 14 个开关默认；`RESTART_FIELDS` ↔ `RESTART_KEYS`、`CURATED_AGENT_NAMES`、`CATEGORY_NAMES` 漂移守护；字典完整性（含 `restartRequired`）；保存流程七例（时序、提醒、消除、失败语义）不回归；控制器 env 获取（ready 重投影、failed 警告一次）。
 - 单元测试 `plugins/weir-harness/test/client.test.js`：组合断言——不再注册 `plugins.item`，`settings.section`/`settings.weir.item` 保留，inject 面不变。
 - 单元测试 `plugins/weir-harness/test/settings-env-admin.test.js`：env 端点契约（注入 platform 的应答形状、无 connection 时警告且不注册、`wireEnvAdmin` 接线与幂等 dispose）。
-- 单元测试 `plugins/weir-harness/test/settings-fields.test.js`：`RESTART_KEYS` 内容全量对拍（18 键、声明顺序、冻结性）；`FIELD_DEFAULTS` 四层对拍——声明本体（当前 41 键、冻结、unset 有语义的键无条目）、↔ 可导入的模块常量（intent-gate/supervision/todo/guard/edit-lock/lsp/worktree/notify 源头）、↔ 客户端 chunk 逐字镜像（键集+值+冻结字面量）、↔ patch 行（当前 32 个行键为其子集且值相等，布尔子集恰 14 键）。
+- 单元测试 `plugins/weir-harness/test/settings-fields.test.js`：`RESTART_KEYS` 内容全量对拍（15 键、声明顺序、冻结性）；`FIELD_DEFAULTS` 四层对拍——声明本体（当前 41 键、冻结、unset 有语义的键无条目）、↔ 可导入的模块常量（intent-gate/supervision/todo/guard/edit-lock/lsp/worktree/notify 源头）、↔ 客户端 chunk 逐字镜像（键集+值+冻结字面量）、↔ patch 行（当前 32 个行键为其子集且值相等，布尔子集恰 14 键）。`settings.test.js` 验证阈值交叉约束；`context-guard.test.js` 验证同进程 live 修改与旧测量失效；客户端保存用例覆盖仅 guard 键无提醒、混合保存仅列重启键。

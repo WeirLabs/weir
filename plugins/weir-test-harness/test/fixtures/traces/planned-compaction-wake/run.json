@@ -1,0 +1,8 @@
+{
+  "scenario": "planned-compaction-wake",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/complete-planned-compaction-bind-112/.weir/qa-oracle-neutral-002/home",
+  "code": 0,
+  "stdout": "planned-parent-finished\n",
+  "stderr": "",
+  "sessionId": null
+}

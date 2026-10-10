@@ -201,7 +201,18 @@
       group: true
       isolate:
         weirEditLock: true
+        compaction: true
+        toolResultPruner: true
+        weirCompactionCoordinator: true
       config:
+        - id: weir-it-compaction
+          name: cordis:group
+          group: true
+          config:
+            - id: weir-it-compaction-basic
+              name: '@deepseek-ai/dsh-compaction-basic'
+            - id: weir-it-context-guard
+              name: 'weir-harness/context-guard'
         - id: weir-it-todo-driver
           name: 'weir-harness/todo-driver'
         # Capability-store probe inside an isolated realm: proves the host
@@ -253,21 +264,6 @@
                 command: !!js process.execPath
                 args: [!!js (process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/ws/mock-lsp-server.js']
                 installHint: 'not-needed-in-tests'
-    # Mirror the real preset's realm structure: the compaction provider and the
-    # context-guard consumer co-isolated in one group. This reproduces the
-    # "waiting for compaction" preset-load failure class headlessly.
-    - id: weir-it-compaction
-      name: cordis:group
-      group: true
-      isolate:
-        compaction: true
-        toolResultPruner: true
-      config:
-        - id: weir-it-compaction-basic
-          name: '@deepseek-ai/dsh-compaction-basic'
-        - id: weir-it-context-guard
-          name: 'weir-harness/context-guard'
-
     # Mirror the preset realm structure for the session blackboard service:
     # the provider row sits in its own isolated group exactly like the
     # preset's delegation group. Mounted only for the blackboard scenario

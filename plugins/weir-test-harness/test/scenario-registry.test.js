@@ -41,6 +41,8 @@ EXPECTED_ORDER.push('editlock-delegate-settle')
 EXPECTED_ORDER.push('editlock-delegate-resume')
 EXPECTED_ORDER.push('blackboard-persistence')
 EXPECTED_ORDER.push('preset-delegation-surface')
+EXPECTED_ORDER.push('planned-compaction')
+EXPECTED_ORDER.push('planned-compaction-busy', 'planned-compaction-wake', 'planned-compaction-cancel', 'planned-compaction-noop', 'planned-compaction-hard')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

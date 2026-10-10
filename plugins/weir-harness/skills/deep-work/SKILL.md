@@ -149,9 +149,13 @@ for unanchored single-spot changes only.
 
 # Context pressure
 
-When a context-pressure advisory arrives: finish the current subtask, make
-sure the notepad is current, call `compact_context`, and resume from the
-compaction summary. Never let a provider hard-truncate the task.
+When a context-pressure advisory arrives, finish the subtask, update the
+notepad, and request `compact_context`. Its queued result does not prove a
+summary exists. Resume only from confirmed native compaction evidence.
+Busy or competing work leaves the request blocked without background retry;
+wait for genuine user input before requesting again. Native auto compaction
+is independent. Preserve essential state: summaries are not lossless and
+compaction cannot prevent every provider overflow.
 
 # Output discipline
 
