@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **Weir 系预设的 DSH 原生直派工具（BREAKING）**：新建 Weir 与 Weir 创造模式会话不再暴露 `subagent`、`subagent_fork`、`list_subagent_models`、`workflow`；派工统一经 Weir 的 `delegate`。保留 `send_message`、`interrupt_agent`、`list_agents` 和 Weir 的受监督控制工具，现有可续聊功能不变。原生 `workflow` 的脚本化流水线没有等价替代，后续由 Weir 自行设计；其他 DSH 预设不受影响。详见 [预设打包](docs/features/preset-packaging.md)。
+
 ### Fixed
 
 - **会话黑板：重启与 Weir 重装后保留知识**：条目、读/订阅计数和晋升标记改为与根 Session 日志同目录的 `_bb` 旁置文件持久化；子 Agent 共用根板，归档、Agent 销毁不再清空，旧写入权不会跨重启恢复。写盘失败明确报错而非假成功。删除整个会话目录时黑板随之消失；仅删除日志时为避免误删活跃会话，孤儿 `_bb` 保留至用户确认所有宿主离线后人工清理。内置 Session ZIP 暂不包含黑板。详见 [会话黑板](docs/features/blackboard.md)。
