@@ -1,44 +1,48 @@
 # 上下文压力守卫（context-pressure-guard）
 
-> 上下文将满时助手自行择时整理记忆；逼近极限时自动压缩——重要信息永不被生硬截断。
+> 在合适的收尾时机请求整理历史；以原生摘要结果为准，不把排队当成功。
 
 ## 概述
 
-守卫实时计算会话的**上下文压力**（已用 token 数 ÷ 当前路由的上下文窗口），用两级阈值驱动安全的压缩时机：软阈值提醒模型"收尾当前子任务后自行压缩"，硬阈值在回合边界强制执行。压缩完成后自动续推任务，从摘要处继续工作。
+压力 = 已用 token ÷ 当前路由上下文窗口。默认 0.72 提醒模型持久化关键状态后请求压缩，0.88 在可等待的停止边界申请一次维护机会。摘要与历史替换全部由 DSH 原生服务执行，Weir 不复制摘要算法，也不伪造供应商溢出。
 
 ## 用户可见行为
 
-- 压力越过软阈值（0.72）→ 注入一条提示（每次越线仅一条，回落至阈值下再越线才重新提示），模型自己决定何时调用 `compact_context`。
-- 模型调用 `compact_context`：空闲时立即压缩；忙碌或已有压缩进行时**不报错**，报告"已排队到下一边界"。
-- 压缩完成 → 自动注入续推指令，任务从压缩摘要处继续，不丢线索。
-- 压力越过硬阈值（0.88）→ 下一回合边界强制压缩一次，抢在供应商硬截断之前；无可安全压缩区间时记录该结果而不是反复尝试。
+- `compact_context` 只接受或合并请求，返回 `queued` 和 request id，并结束工具回合；这不是摘要完成的证明。
+- 工具结果与回合提交后，首次 idle 机会调用原生 `compactNow`。只有确认 summarySeq 后，才发送至多一条完整续推消息。
+- busy 或其他唤醒先进入下一回合：立即结算 blocked/未完成。**没有后台重试、定时压缩或自动唤醒**。todo 普通续推与延迟重试继续让路，后台通知不能解禁。
+- 下一条真实用户消息唤醒后，在该步上下文说明未完成原因；模型可提出新请求，旧请求不会自行复活。
+- `null` 是 no-op，没有虚构摘要；失败独立记录。两者可显式阻塞等待用户决定，不承诺一定自动继续。
 
 ## 配置
 
-| 键 | 默认值 | 说明 |
+| 设置键 | 默认 | 作用 |
 |---|---|---|
-| 软阈值 | `0.72` | 越线提示一次（带滞回，不重复轰炸） |
-| 硬阈值 | `0.88` | 回合边界强制压缩 |
-| 启用开关 | 开 | 可整体停用守卫 |
+| `guardEnabled` | `true` | Weir 压力守卫开关 |
+| `guardSoftThreshold` | `0.72` | 每次越线提醒一次 |
+| `guardHardThreshold` | `0.88` | 停止边界申请维护 |
 
-均为 volatile config，在线编辑即刻生效。
+后续决策读取最新设置；阈值须满足有限数值及 `0 < soft < hard < 1`。配置或路由变化使旧测量和待执行请求失效。Weir 设置不重新配置 DSH 原生自动策略。
 
 ## 设计细节
 
-- 模块：`weir-harness/context-guard`。
-- 压力来源：`tokenMeter.measure(session)` 的 `totalTokens`（确定性测量，无模型调用）÷ 上下文窗口（`session.requestContext()`，缺省时经模型信息解析兜底，带缓存）。
-- 压缩走 `ctx.compaction.compactNow`（绑定 agent 的维护例程，idle-only）；忙碌/进行中/span 变更等抛出结构化错误 → 工具返回"排队到下一边界重试"语义而非失败。结果分类的唯一实现是纯函数 `classifyCompactionOutcome(error) → 'busy' | 'failed'`（`src/context-guard/compaction-outcome.js`）：宿主 `ManualCompactionError` 的稳定 `code` 字段优先——`code === 'busy'` 判 busy、其他任何 string code 判 failed 且**消息文本永不参与**（防止非 busy 错误的措辞碰巧含 "active" 而被无限重排）；无 string code 时遗留消息正则兼底。此前版本只对消息文本做正则匹配，实测把宿主两个真实 busy 变体（"already has an open turn" / "requires an idle agent"）误牲为 failed → **排队压缩被静默丢弃**，该缺陷已随结构化分类修复（红绿证据见测试）。
-- 完成后续推经 `agent.followup` 注入英文模板指令。
-- 术语纪律：全模板与文档统一称 "context pressure"。
-- realm 纪律：本模块与压缩服务提供者同组部署（隔离服务的消费者必须同 realm，历史事故已固化进集成测试结构）。
+协调器按 Agent 对象身份隔离，记录 request id、来源、接受位置、配置版本与摘要结果；同一 incarnation 的模型/硬阈值请求合并。`turn/end` 只记事实，绝不在同步 append 发布中压缩或 followup。维护权由 `runMaintenance` 决定，公开 idle 状态并不是锁。
+
+生产两种预设保留 `delegation`/`compaction` 行 id，将 compaction 嵌入 delegation，共享 `compaction`、`toolResultPruner`、`weirCompactionCoordinator` 与编辑锁隔离域；测试镜像同一结构。todo 在决定及消费预算前检查协调器，在 provider retry 定时器执行时重新检查。
+
+`classifyCompactionOutcome` 保持结构化 code 优先：`busy` 才判 busy，其他 string code 一律 failed；仅缺少 string code 才使用遗留消息匹配。busy 的分类不意味着重试。审计走 cordis + `.weir/audit.jsonl`，不写自定义 Session 事件。
 
 ## 边界与失败语义
 
-- 压缩中的会话**不会**被第二次压缩请求打断（排队语义）。
-- 硬阈值触发但无安全可压缩区间 → 记录一次 no-op 结果，不循环重试。
-- **保证**：压缩后必有续推指令，任务不会停在摘要处无人继续。
+- DSH 原生 auto 与真实供应商溢出恢复独立开启，可能早于 Weir 软阈值。不能把它们说成模型主动请求的压缩。
+- 外部唤醒可能先到；不保证下一模型请求之前压缩，不保证每次溢出都可修复，也不保证摘要无损。重要状态应先持久化。
+- 活动 turn/maintenance 的 abort、禁用、disposal 与编辑锁禁令压过成功续推。真正 idle 的 Stop 没有 DSH 取消事件；安全性来自 blocked 后没有后台唤醒义务，**不是观察到了该 Stop**。
+- `commit`/`persistence` 失败可能已改变历史，需检查；不能断言回滚或完全未变。
+- 成功也不直接重置高压滞回；实测降至软阈值以下后才开始新 episode。
+- 续推投递不确定时显式阻塞，不重新压缩。跨进程不承诺 exactly-once；缺少可确认原生结算的旧请求必须人工核对，不能凭审计或 queued 结果宣布成功。
 
 ## 测试
 
-- 单元测试：`test/` 覆盖压力计算、软阈值一次性提示与滞回、排队语义、硬阈值边界触发、失败记录；`classifyCompactionOutcome` 为表驱动套件（全部级联行 + 非 busy code 含 busy 词的反例 + 宿主真实措辞），另有插件级 busy → 下一边界重排队的闭环用例（首次 turn/end 无 warn、第二次边界再次触发 compactNow）。
-- 集成测试：`pressure` 场景——压力提示或强制压缩触发、压缩事件入持久日志、摘要模型调用被服务、压缩后续推恢复任务。
+聚焦 `context-guard.test.js`：工具排队、发布期间禁止压缩、真实 idle admission 替身、模型/硬压力合并、busy→blocked、真实用户输入披露、no-op、结构化失败、活动取消、live 设置及高压滞回。`todo-driver.test.js` 验证停止边界与 delayed retry 让路；`preset-realms.test.js` 与 creative parity 固定生产组合。
+
+集成成功证据必须包含原生摘要/检查点及后续模型请求实际消费摘要；仅 inbox 插入不算通过。GUI 验证须使用包含该实现的新预设修订，主树旧会话不能替代 lane 验收。

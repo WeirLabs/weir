@@ -71,6 +71,7 @@ function apply(ctx, config = {}) {
   // Edit Lock (when enabled) owns session interruption: only its trusted
   // resume re-arms editing work, never an ordinary user message or retry.
   const editLockBlocks = (agent) => ctx.get?.('weirEditLock')?.blocksContinuation?.(agent) === true
+  const compactionBlocks = (agent) => agent && ctx.get?.('weirCompactionCoordinator')?.blocksContinuation(agent) === true
   /** Delayed followup continuation for the provider-error path. */
   function scheduleRetry(session, delayMs) {
     const fire = () => {
@@ -82,6 +83,7 @@ function apply(ctx, config = {}) {
       if (!stateOf(session.id).armed) return
       if (jobsRunningOf(agent.session)) return
       if (editLockBlocks(agent)) return
+      if (compactionBlocks(agent)) return
       injectOrWarn(ctx, `todo-driver: could not queue continuation for "${session.id}"`, () => {
         agent.followup(userTextMessage(renderContinuation(remaining), 'weir-todo-driver'))
       })
@@ -92,7 +94,8 @@ function apply(ctx, config = {}) {
   }
 
   // The sanctioned continuation boundary: steer and the turn runs on.
-  ctx.on('agent/turn-stopping', ({ agent, signal }) => {
+  function continueAtBoundary({ agent, signal }) {
+    if (compactionBlocks(agent) || editLockBlocks(agent)) return
     if (!opts.enabled) return
     const state = stateOf(agent.id)
     const remaining = remainingTodos(agent.session)
@@ -107,6 +110,13 @@ function apply(ctx, config = {}) {
     injectOrWarn(ctx, `todo-driver: could not steer continuation for "${agent.id}"`, () => {
       agent.steer(userTextMessage(renderContinuation(remaining), 'weir-todo-driver'))
     })
+  }
+  ctx.on('agent/turn-stopping', (payload) => {
+    const coordinator = ctx.get?.('weirCompactionCoordinator')
+    if (!coordinator) return continueAtBoundary(payload)
+    // Evaluate before spending any budget, independently of listener order.
+    return Promise.resolve(coordinator.evaluateBoundary(payload.agent, payload.signal))
+      .then(() => continueAtBoundary(payload))
   })
 
   // Mark provider failures as they happen; the turn boundary owns the retry.
@@ -128,6 +138,11 @@ function apply(ctx, config = {}) {
     if (event.type !== 'turn/end') return
     if (!opts.enabled) return
     const reason = event.data?.reason
+    // Cancellation bookkeeping wins; all other counters freeze while yielding.
+    if (reason?.kind !== 'aborted' && compactionBlocks(ctx.agents.get(session.id))) {
+      cancelTimer(session.id)
+      return
+    }
     const state = stateOf(session.id)
     const decision = state.decideTurnEnd(reason, remainingTodos(session).length > 0)
     if (reason?.kind !== 'error') providerErrorPending.delete(session.id)

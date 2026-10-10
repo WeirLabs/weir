@@ -406,6 +406,32 @@ describe('todo-driver plugin', () => {
     })
   }
 
+  it('yields to compaction before evaluating or spending the continuation cap', async () => {
+    const { ctx, handlers, agent, steers } = setup()
+    let blocked = true, evaluations = 0
+    ctx.get = (name) => name === 'weirCompactionCoordinator' ? {
+      evaluateBoundary: async () => { evaluations++ }, blocksContinuation: () => blocked,
+    } : undefined
+    for (let i = 0; i < 12; i++) await handlers['agent/turn-stopping']({ agent })
+    expect(steers).toHaveLength(0)
+    expect(evaluations).toBe(12)
+    blocked = false
+    for (let i = 0; i < 9; i++) await handlers['agent/turn-stopping']({ agent })
+    expect(steers).toHaveLength(8)
+  })
+
+  it('suppresses an already scheduled provider retry when compaction blocks', () => {
+    const { ctx, handlers, session, followups, dispose } = setup()
+    let fire, blocked = false
+    ctx.setTimeout = (callback) => { fire = callback; return 1 }
+    ctx.get = (name) => name === 'weirCompactionCoordinator' ? { blocksContinuation: () => blocked } : undefined
+    handlers['session/event'](session, { type: 'turn/end', data: { reason: { kind: 'error', error: { status: 503 } } } })
+    blocked = true
+    fire()
+    expect(followups).toHaveLength(0)
+    dispose()
+  })
+
   // Plugin-level behavior assertion: the driver's own injected continuation
   // never rearms it. The full injection-source exemption matrix lives in
   // test/runtime-messages.test.js.

@@ -20,6 +20,7 @@ export const AUDIT_TYPES = Object.freeze({
   intentClassify: 'intent-classify',
   continuationBlocked: 'continuation-blocked',
   continuationStop: 'continuation-stop',
+  compaction: 'compaction',
   supervision: 'supervision',
   worktree: 'worktree',
   editLockMaintenance: 'edit-lock-maintenance',
