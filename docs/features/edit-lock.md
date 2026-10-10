@@ -346,12 +346,12 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 **绑定失败的错误分流**：connect 失败或 open 无应答仍报 `edit lock publisher unreachable`；publisher 已应答但拒绝时，保留 20×50ms 重试预算，最终报 `edit lock duplicate session binding`，按 publisher 所知提供指引：
 
 - `serving`：保留 `active in the DeepSeek Harness window that publishes this project`，使用或关闭该窗口中的会话。
-- 同进程但无法安全回收：明确 `same process`／pid、`A stale runtime incarnation may still hold its channel`，指引重启，不虚构另一个窗口。
-- 跨进程且 pid 已知：点名 holder pid，指引退出该进程或重启；旧版本无法提供 holder 事实时，只说明无法证明并指引重启。
+- 同进程但无法安全回收：点名 `same process`／pid；旧持有者断开或得到死亡／过时证明后，原会话用面板「重试连接」或 `/edit-lock retry` 重新核验，不把重启作为唯一指引。
+- 跨进程且 pid 已知：点名 holder pid；活通道不被抢占，待原持有进程退出且通道死证成立后重试。旧版本缺证明时明确说明不能自动接管，而非猜测另一个窗口。
 - 所有最终拒绝均保留 `Do NOT remove the publisher reservation ... while its process is alive`。publisher 在应答时删除预约会造成双 publisher 脑裂，不是绑定恢复手段。
-- wire 拒绝原因由 publisher 分类为 `session already bound: holder=<serving|same-process-unattestable|cross-process-pid|unknown>[; pid=<pid>]`，不携带完整指引。client 只按该分类渲染一次指引，并在 `(publisher answered: ...)` 中原样保留原因；不以 client 自己的 pid 猜测 holder 与 publisher 是否同进程。本地 lifecycle 无 wire 的拒绝直接渲染同一指引。
+- wire 拒绝原因由 publisher 分类为 `session already bound: holder=<serving|same-process-unattestable|cross-process-pid|unknown>[; pid=<pid>]`。新客户端声明 `bindingFailures` 时可接收结构化拒绝供会话面板决定是否显示 Retry；旧客户端仍走原错误帧。client 按 publisher 事实渲染指引，不以自己的 pid 猜 holder；纯文本或本地 lifecycle 无证明时绝不猜测可重试资格。
 
-**只读绑定报告**：宿主认证的 `POST /api/weir-edit-lock/maintenance/status` 在 `domains[].bindings` 返回每条现存绑定的 `{sessionId, present: true, holderPid, attestable, attestation}`；`holderPid` 未知时为 null，attestation 为 `serving`／`stale`／`unknown`。每次读取重新比较 runtime 身份，合并同根各 mount 的观察，不因后来 client mount 而隐藏 publisher 的旧 holder。不返回 nonce、agent 对象或新增文件系统细节；不执行回收、不写权威镜像、不发模型工具、不增加任何维护动作。现有面板按既有字段渲染，可容忍此附加报告；本批不新增绑定 UI 控件。
+**只读绑定报告**：宿主认证的 `POST /api/weir-edit-lock/maintenance/status` 在 `domains[].bindings` 返回每条现存绑定的 `{sessionId, present: true, holderPid, attestable, attestation}`；`holderPid` 未知时为 null，attestation 为 `serving`／`stale`／`unknown`。每次读取重新比较 runtime 身份，合并同根各 mount 的观察，不因后来 client mount 而隐藏 publisher 的旧 holder。不返回 nonce、agent 对象或新增文件系统细节；不执行回收、不写权威镜像、不发模型工具、不增加维护面的绑定操作。**会话面板**在结构化且可重试的绑定失败时另提供「重试连接」；维护报告本身仍是只读观察。
 
 ### 停止、协商与恢复
 
