@@ -49,6 +49,7 @@
 - **模型可调用的工具**：`edit_lock_acquire`（显式占用既有文件；resume 后对 pending-confirmation 文件逐个调用即确认）、`edit_lock_release`、`edit_lock_hold`、`edit_lock_try_steal`（立即返回 pending requestId，从不等待持有者）、`edit_lock_pause`（只在仅清理恢复期间可用，单次 ≤15 分钟、累计 ≤30 分钟）与只读的 `edit_lock_status`。持有者有待答请求时才会临时多出 `edit_lock_reply`（`release`／`keep`），并在回合边界注销。
   - 若本 Agent 绑定启动失败但未取得编辑认证，`edit_lock_status` 返回自身的 unavailable、结构化失败及 `/edit-lock retry` 指引，不访问其它会话锁、不假报零锁。状态工具没有重试或恢复授权能力；重试只在受信用户命令/面板通道可用。
 - 编辑工具的锚点校验、版本护栏、沙箱策略与 diff 输出不变；shell 与外部编辑器的写入不在保护范围内。
+  - **多文件批量失败的诚实呈现**：`lsp_rename` 等批量调用在中途失败时，错误消息精确列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 三份清单，并明确 `ownership retained (no rollback)`——已派发的字节不会因取消或失败自动撤销，未决发布的归属与围栏按既有规则保守保留，不设「全部回滚」的假象。会话面板只显示锁归属，不把锁行解读为写入结果；查看具体成功/失败/未决列表以工具结果为准。结构化绑定拒绝（`binding-duplicate`）在面板以本地化短文案呈现，完整原始原因收在「技术细节」里；无关错误不会被折叠掉。
 - **设置页维护控件（不依赖管理器是否运行）**。设置页「编辑」组在编辑锁设置下方多出「编辑锁维护」面板，任何时候都能打开——即使编辑锁已停用、管理器没挂上或已中毒：
   - **区分「已保存」与「实际挂载」**：面板给出 `强制执行中`（保存开，全部已安装行均启用）、`已请求停用——需要重启`（保存关，运行行仍启用）、`强制执行已停用`（保存关，全部已安装行均停用）、`已请求启用——需要重启`（保存开，运行行仍停用）及 `未知`。无挂载证据、多行决定不一致、安装/卸载未完成或失败一律未知；不把「没有证据」当成停用。开关对整个 profile 生效。
   - **初始化受阻可见**：管理器已挂载但某个域打开失败、或某个会话注册失败时，面板列出「初始化受阻」及原因，而不是只见开关。
@@ -460,6 +461,10 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 - **人工 GUI 验收（用户桌面，单会话与跨会话）**：开关与预设加载、新建会话与会话恢复；受控占用与拒绝（拒绝信息点名当前持有者）；`try_steal` 的 keep／release 两条结局；Stop 后拒写与 `/edit-lock resume` + 逐文件确认；按 generation 解锁（错误 generation 被拒，面板解锁需第二次点击）；`hold` 与 `hold N`；空闲到期自动释放；提醒次数用尽后按兜底释放（默认 2 次提醒）；面板颜色与主动作；关闭开关并重启后完全复原（工具清单里不再有任何 `edit_lock_*`，`hash_edit` 直接成功）。
 - **独立评审**：一轮独立复核发现并由修复收口四个缺陷——回合末提醒无限循环（提醒自身回合不再重置计数）、`/edit-lock hold <minutes>` 忽略输入分钟数、跨进程客户端会话的保留永不到期、保存了互相矛盾的保留设置导致整个编辑锁失灵。
 
+### macOS 双完整 GUI 稳定化验收（阶段性）
+
+两个独立启动的 DSH 0.2.0-rc.2 Web 进程（独立 DSH_HOME/profile/浏览器，loopback 端口）共用同一仓库外工作区：publisher/client 仲裁成立；跨进程 `binding-duplicate` 的 Retry 被正确拒绝；真实 `edit_lock_acquire` 冲突持锁，文件哈希不变；测试 publisher 遭 SIGKILL 后存活的 client 变 `unavailable` 拒写；原 profile 重启后产品自行回收死预约，generation 2 的锁保留为 `user-interrupted`，经显式 Continue 恢复为 active、epoch 递增；正常释放后按 generation 3 交接。报告与 8 张截图在 `.weir/qa/stable-dual-gui/`。锁下真实 `lsp_rename` 回合、版本/CAS/sandbox、异常/恢复/暂停/部分写入的 GUI 呈现、明暗主题，以及 Linux/Win32 双 GUI 仍未验收。
+
 ### 更早的组件级证据
 
 开发期还留下了若干**组件级**证据（`.weir/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
@@ -468,7 +473,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 本特性以**实验特性、默认关闭**的形态发布，下列场景没有证据，不构成任何保证：
 
-- **两个完整 GUI Harness 应用并发**：跨进程只验证过两个安装版 runtime 进程（共用 authority 目录、经可信 spawn 连接），不是两个真实 GUI 应用并排运行；单实例仲裁在 GUI 下的表现未验证。
+- **两个完整 GUI Harness 应用并发**：macOS 已有一轮阶段性验收（见上节）；Linux 与 Windows 的双完整 GUI 并排验收仍未执行，不构成本机之外的保证。
 - **真实回合里的 `lsp_rename`**：批量原子获取与逐文件发布有单测与组合探针覆盖，但没有在真实会话里跑完整一回合的跨文件改名。
 - **Linux**：仅经代码路径允许（`resource-identity.js` 在 darwin/linux/win32 下构造），未在 Linux 实机验证。
 - **Windows 的 GUI 实机验收**：win32 行（NTFS dev/ino 资源身份、`\\.\pipe\weir-edit-lock-<hash>` 命名管道跨进程、降级打开标志、目录 fsync 跳过）有单元与跨进程 SIGKILL 套件实测，但未经两个真实 GUI 应用并排的实机验收。
