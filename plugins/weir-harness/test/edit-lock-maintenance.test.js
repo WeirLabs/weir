@@ -50,7 +50,11 @@ async function authorityWithUnknown(t) {
   const directory = join(root, '.weir', 'edit-lock')
   await mkdir(directory, { recursive: true })
   const store = await openEditLockStore({ directory, domainId: root, mode: 'create' })
-  t.after(async () => { await rm(root, { recursive: true, force: true }) })
+  t.after(async () => {
+    await store.close()
+    assert.equal(realpathSync.native(root), root)
+    await rm(root, { recursive: true, force: true })
+  })
   const manager = createEditLockManager({ store, managerIncarnation: 'm' })
   const child = await manager.openSession('child')
   const token = await manager.acquire(child, '/w/child.txt')
@@ -414,6 +418,55 @@ describe('settings row maintenance wiring', () => {
     assert.equal(service.get('editLock').enabled, true)
   })
 
+  it('reads retained unknown history across saved-off and effective-off without settling it', async (t) => {
+    const { root, directory } = await authorityWithUnknown(t)
+    const before = await readFile(join(directory, 'snapshot.json'))
+    const config = { editLockEnabled: true }
+    // Roots are server-derived from a real external fixture agent, not supplied
+    // by the inspector client and not invented by a disabled mount.
+    const harness = settingsHarness(config, { agents: { roots: () => [{ session: { header: { cwd: root } } }] } })
+    const { connection, call, routes } = fakeConnection()
+    harness.injections.find(entry => entry.names.join(',') === 'connection').callback({ connection })
+    const enabled = harness.service.editLockEvidence.recordMount({ enabled: true })
+    try {
+      config.editLockEnabled = false
+      harness.handlers.get('loader/volatile-update')()
+      const requested = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
+      assert.equal(requested.saved, false)
+      assert.equal(requested.state, 'disable-requested')
+      assert.equal(requested.restartRequired, true)
+      const old = (await call('/api/weir-edit-lock/maintenance/inspect', { root })).payload.value
+      assert.equal(old.snapshot.counts.unresolved, 1)
+      assert.equal(old.snapshot.unresolved[0].admissionBlocked, true)
+
+      enabled.dispose()
+      // An actual disabled plugin row records effective-off without opening the
+      // old authority. No editor/manager service is supplied by this mount.
+      const provided = new Map()
+      const disposeOff = applyEditLock({
+        get: key => key === 'weirSettings' ? harness.service : provided.get(key),
+        reflect: { provide: (key, value) => provided.set(key, value) },
+      }, {})
+      try {
+        const disabled = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
+        assert.equal(disabled.state, 'disabled')
+        assert.equal(disabled.saved, false)
+        assert.equal(disabled.restartRequired, false)
+        assert.equal(provided.has('weirEditLock'), false)
+        const stillOld = (await call('/api/weir-edit-lock/maintenance/inspect', { root })).payload.value
+        assert.deepEqual(stillOld.snapshot, old.snapshot)
+        assert.deepEqual(await readFile(join(directory, 'snapshot.json')), before)
+        config.editLockEnabled = true
+        harness.handlers.get('loader/volatile-update')()
+        const requestedOn = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
+        assert.equal(requestedOn.state, 'enable-requested')
+        assert.equal(requestedOn.restartRequired, true)
+        assert.equal(provided.has('weirEditLock'), false)
+      } finally { disposeOff() }
+    } finally { enabled.dispose(); harness.dispose() }
+    assert.equal(routes.size, 0)
+    assert.deepEqual(await readFile(join(directory, 'snapshot.json')), before)
+  })
   it('serves status reflecting saved value and row-reported mount evidence; disposes cleanly', async () => {
     const config = { editLockEnabled: true }
     const { connection, call, routes } = fakeConnection()
@@ -492,11 +545,15 @@ describe('edit-lock row mount evidence', () => {
   it('an enabled row records the mount and the fixed domain mode, and clears on dispose', async (t) => {
     const evidence = createEditLockEvidence()
     const root = await tempRoot()
-    t.after(() => rm(root, { recursive: true, force: true }))
     const directory = join(root, 'authority')
     await mkdir(directory, { recursive: true })
     const { ctx, agentCreated } = rowHost(evidence)
     const dispose = applyEditLock(ctx, { enabled: true, root, authorityDirectory: directory })
+    t.after(async () => {
+      await dispose()
+      assert.equal(realpathSync.native(root), root)
+      await rm(root, { recursive: true, force: true })
+    })
     assert.equal(evidence.snapshot().mounts[0].enabled, true)
     assert.equal(evidence.snapshot().mounts[0].pinned, true)
     assert.equal(evidence.snapshot().mounts[0].fixed, true)
@@ -513,14 +570,17 @@ describe('edit-lock row mount evidence', () => {
   it('a failed registration records the session failure and the domain-open error', async (t) => {
     const evidence = createEditLockEvidence()
     const root = await tempRoot()
-    t.after(() => rm(root, { recursive: true, force: true }))
     const directory = join(root, 'authority')
     await mkdir(directory, { recursive: true })
     // junk in the authority directory: storeMode refuses → the domain never opens
     await writeFile(join(directory, 'stray'), 'x')
     const { ctx, agentCreated } = rowHost(evidence)
     const dispose = applyEditLock(ctx, { enabled: true, root, authorityDirectory: directory })
-    t.after(dispose)
+    t.after(async () => {
+      await dispose()
+      assert.equal(realpathSync.native(root), root)
+      await rm(root, { recursive: true, force: true })
+    })
     await agentCreated(fakeAgent('sess-y', root))
     const snapshot = evidence.snapshot()
     assert.equal(snapshot.domains[0].root, root)
