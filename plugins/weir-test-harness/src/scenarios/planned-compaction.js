@@ -23,8 +23,10 @@ export function plannedCase(mode = 'success') {
     },
     observe(obs) {
       return {
+        sessionId: obs.sessionId,
         plannedSummaryRead: obs.messages.some((m) => m.source?.kind === 'compact-checkpoint' && (m.content ?? []).some((b) => b.text?.includes('<compacted-summary>'))),
-        plannedResumeRead: obs.transcript.includes('Resume the task from the compaction summary'),
+        plannedCheckpointIds: obs.messages.filter((m) => m.source?.kind === 'compact-checkpoint' && blockText(m).includes('<compacted-summary>')).map((m) => m.id),
+        plannedResumeRead: obs.messages.some((m) => m.role === 'user' && m.source?.kind === 'weir-context-guard' && blockText(m).includes('Resume the task from the compaction summary')),
       }
     },
     assert(run) {
@@ -39,8 +41,26 @@ export function plannedCase(mode = 'success') {
       const close = events.findIndex((e) => e.type === 'compaction/end')
       if (mode !== 'hard') run.check('model dispatched compact_context', queued >= 0 && requests.some((r) => r.emittedNames?.includes('compact_context')))
       if (['success', 'hard'].includes(mode)) {
-        run.check('turn end precedes native commit chain', end >= 0 && end < start && start < summary && summary < checkpoint && checkpoint < close, JSON.stringify({ queued, end, start, summary, checkpoint, close }))
-        run.check('subsequent main model request actually reads native summary and resume', requests.some((r) => r.purpose === 'main' && r.plannedSummaryRead && r.plannedResumeRead))
+        const chain = [end, start, summary, checkpoint, close].map((i) => events[i])
+        const ordered = end >= 0 && end < start && start < summary && summary < checkpoint && checkpoint < close
+          && chain.every((e, i) => Number.isInteger(e?.eventSeq) && (i === 0 || chain[i - 1].eventSeq < e.eventSeq))
+        const nativeId = events[start]?.data?.compactionId
+        const replacement = events[checkpoint]
+        const span = events[summary]?.data?.shadowedRange
+        const nativeCommit = ordered && typeof nativeId === 'string' && nativeId.length > 0
+          && events[summary]?.data?.compactionId === nativeId && events[close]?.data?.compactionId === nativeId
+          && replacement?.compactionId === nativeId
+          && replacement?.surfaceOp?.op === 'replace'
+          && Number.isInteger(span?.start) && Number.isInteger(span?.end) && span.start <= span.end
+          && replacement.surfaceOp.startSeq === span.start && replacement.surfaceOp.endSeq === span.end
+          && [events[start].eventSeq, events[summary].eventSeq].every((seq) => replacement.sourceEventSeqs?.includes(seq))
+        run.check('turn end precedes native commit chain', nativeCommit, JSON.stringify({ queued, end, start, summary, checkpoint, close }))
+        // JSONL record order links the post-commit feed to adapter dispatch; the
+        // adapter's call counter is not comparable to native session event seqs.
+        run.check('subsequent main model request actually reads native summary and resume', nativeCommit && requests.some((r) =>
+          r.sessionId === subject && r.purpose === 'main' && r.plannedSummaryRead && r.plannedResumeRead
+          && typeof replacement.messageId === 'string' && r.plannedCheckpointIds?.includes(replacement.messageId)
+          && run.records.indexOf(r) > run.records.indexOf(events[close])))
         run.check('exactly one native compaction', events.filter((e) => e.type === 'compaction/start').length === 1)
       } else {
         const expected = mode === 'cancel' ? 'cancelled' : mode === 'noop' ? 'noop' : 'blocked'
@@ -48,7 +68,7 @@ export function plannedCase(mode = 'success') {
         run.check('no fictional summary or success wake', summary < 0 && !run.inboxInserted.some((r) => r.session === subject && r.text.includes('Compaction completed')))
         run.check('no todo steer after blocked outcome', !run.inboxInserted.some((r) => r.session === subject && r.text.includes('<todo_continuation>') && events.some((e) => e.type === 'weir/compaction' && e.data.kind === 'blocked') && run.records.indexOf(r) > run.records.findIndex((e) => e.type === 'weir/compaction' && e.session === subject && e.data.kind === 'blocked')))
       }
-      run.check('subject completed through live parent interval', run.stdout.includes('planned-parent-finished') && !run.records.some((r) => r.kind === 'planned-probe-error'))
+      run.check('subject completed through live parent interval', run.code === 0 && run.stdout.includes('planned-parent-finished') && !run.records.some((r) => r.kind === 'planned-probe-error'))
     },
   }
 }

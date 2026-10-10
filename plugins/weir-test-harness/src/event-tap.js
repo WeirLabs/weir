@@ -82,11 +82,11 @@ function apply(ctx) {
     const type = event?.type
     if (typeof type !== 'string') return
     if (type.startsWith('compaction/') || type === 'todo/write') {
-      tap({ kind: 'session-event', session: session.id, type, data: event.data ?? null })
+      tap({ kind: 'session-event', session: session.id, type, eventSeq: event.seq, data: event.data ?? null })
       return
     }
     if (type === 'turn/end') {
-      tap({ kind: 'session-event', session: session.id, type, reason: event.data?.reason?.kind })
+      tap({ kind: 'session-event', session: session.id, type, eventSeq: event.seq, reason: event.data?.reason?.kind })
       return
     }
     if (type === 'tool/result') {
@@ -103,7 +103,12 @@ function apply(ctx) {
         kind: 'session-event',
         session: session.id,
         type,
+        eventSeq: event.seq,
+        messageId: event.data?.id,
+        surfaceOp: event.surfaceOp,
+        sourceEventSeqs: event.sourceEventSeqs,
         source: event.data?.source?.kind,
+        compactionId: event.data?.source?.compactionId,
         text: textOf(event.data, { limit: 600 }),
       })
     }

@@ -229,6 +229,7 @@ describe('extract', () => {
   it('builds the observation base from one options pass', () => {
     const options = {
       system: 'the system prompt',
+      sessionId: 'session-native-request',
       tools: [{ name: 'read', parameters: { type: 'object' } }, { name: 'bash' }],
       messages: [
         { role: 'user', content: [{ type: 'text', text: 'hello' }] },
@@ -238,6 +239,7 @@ describe('extract', () => {
     }
     const obs = extract(options)
     assert.equal(obs.system, 'the system prompt')
+    assert.equal(obs.sessionId, options.sessionId)
     assert.deepEqual(obs.toolNames, ['read', 'bash'])
     assert.equal(obs.toolDefs, options.tools)
     assert.equal(obs.messages, options.messages)
@@ -286,7 +288,7 @@ describe('trace record key migration', () => {
     for (const scenario of SCENARIOS) {
       for (const key of Object.keys(scenario.observe?.(syntheticObs()) ?? {})) union.add(key)
     }
-    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, ...DELEGATE_SETTLE_KEYS, 'authorityLocks', 'authoritySessions', 'freshContent', 'resumed', 'oneShotResultSeen', 'retiredGuidance', 'plannedSummaryRead', 'plannedResumeRead'].sort())
+    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, ...DELEGATE_SETTLE_KEYS, 'authorityLocks', 'authoritySessions', 'freshContent', 'resumed', 'oneShotResultSeen', 'retiredGuidance', 'plannedSummaryRead', 'plannedResumeRead', 'plannedCheckpointIds', 'sessionId'].sort())
   })
 
   it('every scenario emits at least one observation key (no silent gap)', () => {

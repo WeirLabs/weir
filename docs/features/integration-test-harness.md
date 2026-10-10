@@ -32,6 +32,8 @@
 
 `planned-compaction` 通过开发专用父工具维持真实运行区间，避免 headless 在受测 Agent 首次 idle 时提前退出。受测 Agent 使用真实模型工具派发：未完成 todo → 充分历史 → `compact_context` → 工具结果 → `turn/end` → 原生 `compaction/start/summary`、replacement checkpoint、`compaction/end` → 下一次模型请求实际消费摘要和续推 → 完成 todo。窗口设为 1,000,000，低于原生 auto 阈值；不以单纯 inbox 插入代替恢复证据，不 mock 压缩服务。父工具有 15 秒失败 watchdog，并始终 dispose 受测 Agent。
 
+成功闸门同时核对同一 subject 的原生 `event.seq` 顺序、start/summary/checkpoint/end 的同一 `compactionId`、checkpoint 的 `surfaceOp.op === 'replace'` 与 summary shadowed range 一致，且 `sourceEventSeqs` 包含 start 和 summary。消费证据必须是 trace 中位于原生 end 之后、由 DSH `GenerateOptions.sessionId` 标识为该 subject 的 main 请求，并包含该 replacement 的 message id 与 context-guard 生成的恢复消息；append-only checkpoint、提前请求或其他会话的消费均不能通过。父区间完成还要求退出码为 0，不能用绿色行为掩盖异常退出。
+
 同族 `-busy` 使用真实竞争 maintenance，`-wake` 让已有运行时消息抢先，`-cancel` 在原生压缩开始时中断，`-hard` 验证硬阈值。`-noop` 在模型工具结果之后的 serial stopping 边界，用带完整 `sourceEventSeqs` 的原生 `user/message` replacement 制造只剩一个不可拆节点的表面；这是显式外部改写夹具，随后由真实 DSH selector 返回 null，不是 mock 压缩结果。busy/wake 还实际调用 idle Stop 并投递后台通知，断言没有 Weir todo 自动续推。
 
 首轮工具定义成本用同一真实请求 header、仅替换旧/新 `compact_context` schema 交给 DSH tokenMeter：当前记录为 **13,762 → 13,746（−16）估算 token**。这是宿主启发式估算，不是供应商计费或 tokenizer 精确值。
