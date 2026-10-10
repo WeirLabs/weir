@@ -395,6 +395,10 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 `test/edit-lock-publisher-stop.test.js` 覆盖 preabort、publishing intent 持久化期间取消的零 dispatch、invoked 后正常更新及中断归属、旧版本拒绝与 unknown 围栏、历史不重放、runtime close 等待，以及同一存活 runtime 中另一个经 host registry 认证的 active session 更新无关既有文件。安装版 `editlock-stop-update` 使用真实 read 获得版本，在精确目标的 `inspectTemp` 暂停点执行 parent.cancel；断言原始父子 signal 都 abort、backend 仅调用一次、字节更新、updated 历史及 interrupted 归属。cold continuation 另作观测，不冒充同 runtime 隔离证明。
 
+### 稳定化协商与暂停边界（组件级，未代替 GUI 验收）
+
+`test/edit-lock-negotiation-regressions.test.js` 与 `test/edit-lock-pause-expiry.test.js` 新增五例：忙碌持有者只注入提醒、不强行唤醒；空闲持有者可安全唤醒；持有者通知投递异常后请求仍待答，120 秒超时不转交归属；忙碌持有者沉默超时仍持原 generation、请求方零锁。仅清理恢复的 15 分钟暂停到期只重新检查异常归属，不释放、不延长；单次 15／累计 30 分钟预算在重启后不退还，异常锁已由人释放时只结束恢复、不启动业务回合。聚焦测试与全量产品单测在 `9cc8939` 合入后通过（产品 2589 pass、11 skip、0 fail）；这些是组件/单测证据，真实跨进程协商及暂停面板的明暗主题验收仍属稳定版门槛。
+
 ### 未决发布隔离的有界回归
 
 `test/edit-lock-quarantine.test.js` 使用临时 store 和可控 publisher，覆盖：已调用后抛错留下 unknown，父会话无关既有文件仍可获取并发布；相同资源、未证明的 subtree／缺失目标及 domain 拒绝；批量与会话级操作不部分改写归属；历史同参不重放；恢复后围栏不变；撤权与持久化失败仍封闭权限。实现前新增用例中 9 个失败于旧全局围栏，另 1 个保守拒绝用例已通过。本轮证据限后端单测与 checkJs，不代表本机 GUI、跨进程运行时或人工结清验收；下表是此前发布记录。
