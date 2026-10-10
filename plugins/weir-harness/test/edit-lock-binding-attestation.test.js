@@ -122,3 +122,41 @@ test('production peer retries failed revocation but never reopens its ingress', 
   await peer.disconnect()
   assert.equal(calls, 2)
 })
+
+for (const [holder, verdict, token] of [
+  ['serving', 'serving', { nonce: 'n', pid: process.pid }],
+  ['unattestable', 'unknown', { nonce: 'n', pid: process.pid }],
+  ['old client', 'stale', {}],
+  ['cross process', 'stale', { nonce: 'n', pid: process.pid + 1 }],
+]) test(`local arbitration refuses ${holder} without touching its authority`, async () => {
+  const arbitration = createChannelBindingArbitration(() => verdict)
+  let revoked = 0, started = 0
+  await arbitration.open('s', socket(), async () => ({ peer: { async disconnect() { revoked++ } } }), token)
+  await assert.rejects(arbitration.openLocal('s', async () => { started++ }), /session already bound/)
+  assert.equal(revoked, 0)
+  assert.equal(started, 0)
+})
+
+test('local and remote startup await the same revoke ACK while other sessions progress; late EOF cannot erase successor', async () => {
+  const arbitration = createChannelBindingArbitration(() => 'stale')
+  const gate = Promise.withResolvers(), entered = Promise.withResolvers()
+  const old = socket(), successor = socket()
+  let localBound = false
+  await arbitration.open('s', old, async () => ({ peer: { disconnect() { entered.resolve(); return gate.promise } } }), { nonce: 'n', pid: process.pid })
+  const local = arbitration.openLocal('s', async () => { localBound = true; return 'interrupted' })
+  await entered.promise
+  const remote = arbitration.open('s', successor, async () => {
+    if (localBound) throw Error('session already bound locally')
+    return bind()
+  })
+  const refusal = assert.rejects(remote, /bound locally/)
+  await arbitration.open('other', socket(), bind)
+  assert.equal(localBound, false)
+  gate.resolve()
+  assert.equal(await local, 'interrupted')
+  await refusal
+  await arbitration.release('s', old)
+  await arbitration.open('s', successor, bind)
+  await arbitration.release('s', old)
+  assert.equal(arbitration.bindings().some(row => row.sessionId === 's'), true)
+})

@@ -18,6 +18,8 @@
 
 **管理域**：每个 agent 在创建时按会话工作目录绑定一次管理根——位于 git 仓库内取仓库顶层（`git rev-parse --show-toplevel`），否则取工作目录本身；若某个上级目录已存在 `.weir/edit-lock`，则并入该外层域，保证嵌套目录的会话共用一把锁。权威状态在 `<根>/.weir/edit-lock/`（空目录新建，含 `snapshot.json` 则恢复，其余内容拒绝），预约在 `<根>/.weir/.edit-lock.publisher-reservation`。git 仓库内首次打开时把这两项追加到仓库自身的 `.git/info/exclude`（worktree 感知，幂等），不改动任何受版本控制的文件。受控 write／hash_edit／lsp_rename 一律拒绝写入这两处（`Edit Lock authority files are not editable`）；shell 不在保证内，`git clean -fdx` 或手动删除 `.weir/` 会丢失锁历史与未决发布围栏，下次启动按全新域处理。同一进程可同时持有多个根的域，按需打开。开发组合仍可用行配置 `{root, authorityDirectory}` 固定单一域。iCloud／Dropbox／网络盘不在支持范围。
 
+**同会话跨模式绑定**：publisher-local 启动与远端 `open` 共用逐 Session 仲裁队列。旧 remote proxy 只有同步 socket 死证，或同进程 nonce 登记＋宿主实时 Agent 身份证明已经失效时，才封闭旧 peer 入口并等待持久撤权 ACK；随后复核本地申请者仍属当前挂载且是宿主的精确 live Agent，再以 interrupted 绑定。裸 lifecycle 仍拒绝自行回收 remote proxy。该流程不释放文件锁、不结清未决围栏、不替换 manager incarnation 或 publisher reservation；迟到 EOF 不能删除后继绑定。其它会话不等待这条 Session 队列；活 holder、无 token、跨进程活通道与撤权失败始终保守拒绝。
+
 ## 用户可见行为
 
 启用后（设置页「编辑锁（实验）」并重启），同一项目里的会话轮流编辑文件，而不是相互覆盖：

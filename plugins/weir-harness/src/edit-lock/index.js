@@ -452,7 +452,8 @@ return (ctx, config = {}) => {
         }, { root }),
       })
       let server
-      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding) }
+      try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding,
+        agent => !closed && !disposedAgents.has(agent) && ownAgent(agent) && servingRuntime(agent.id) === agent) }
       catch (error) { ctx.logger?.warn?.(`edit lock endpoint unavailable; other hosts fail closed: ${/** @type {any} */ (error)?.message ?? error}`) }
       const domain = localDomain(lifecycle, server)
       try { evidence?.recordDomain?.(root, { mode: domain.mode, bindings: () => [...lifecycle.bindings(), ...(server?.bindings() ?? [])] }) } catch { /* reporting only */ }

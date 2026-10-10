@@ -69,13 +69,30 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
    * @param {{nonce?: string, pid?: number}} [token] additive optional client identity
    * @returns {Promise<any>} */
   function open(sessionId, socket, bind, token = {}) {
+    return enqueue(sessionId, async () => {
+      await reclaim(sessionId)
+      const established = await bind()
+      bound.set(sessionId, { socket, peer: established.peer, nonce: token.nonce, pid: token.pid })
+      return established
+    })
+  }
+  /** Local and remote startup share this queue; the trusted callback rechecks
+   * exact claimant identity after the durable revoke barrier.
+   * @param {string} sessionId @param {(reclaimed: boolean) => Promise<any>} bind */
+  function openLocal(sessionId, bind) {
+    return enqueue(sessionId, async () => { const reclaimed = await reclaim(sessionId); return bind(reclaimed) })
+  }
+  /** @param {string} sessionId @param {() => Promise<any>} step */
+  function enqueue(sessionId, step) {
     const queued = opening.get(sessionId) ?? Promise.resolve()
     const run = queued.then(step, step)
     opening.set(sessionId, run)
     const settled = () => { if (opening.get(sessionId) === run) opening.delete(sessionId) }
     run.then(settled, settled)
     return run
-    async function step() {
+  }
+  /** @param {string} sessionId */
+  async function reclaim(sessionId) {
       const prior = bound.get(sessionId)
       if (prior) {
         const dead = prior.socket.destroyed === true || prior.socket.closed === true || prior.socket.errored != null
@@ -90,13 +107,7 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
         }
         if (bound.get(sessionId) === prior) bound.delete(sessionId)
       }
-      const established = await bind()
-      // Registered even when this socket already died during registration: the
-      // transport's own close handling still revokes it, and the next open
-      // reclaims the entry — a lost EOF can never wedge the session again.
-      bound.set(sessionId, { socket, peer: established.peer, nonce: token.nonce, pid: token.pid })
-      return established
-    }
+      return prior !== undefined
   }
   /** Index hygiene on transport close: drop the entry only while it still
    * names THIS connection's socket — a reclaimed binding must never be removed
@@ -111,7 +122,7 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
     try { await prior.peer.disconnect() } catch { return }
     if (bound.get(sessionId) === prior) bound.delete(sessionId)
   }
-  return Object.freeze({ open, release,
+  return Object.freeze({ open, openLocal, release,
     bindings() {
       return [...bound].map(([sessionId, holder]) => {
         const attestation = verdict(sessionId, holder)
@@ -127,8 +138,9 @@ export function createChannelBindingArbitration(attest = () => 'unknown') {
  * @param {ReturnType<typeof import('./lifecycle.js').createEditLockLifecycle>} lifecycle
  * @param {string} endpoint
  * @param {WeakMap<object, (event: unknown) => void>} sinks remote agent → notice sink
- * @param {(sessionId: string, nonce: string) => 'serving'|'stale'|'unknown'} [attest] */
-export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest) {
+ * @param {(sessionId: string, nonce: string) => 'serving'|'stale'|'unknown'} [attest]
+ * @param {(agent: any) => boolean} [isCurrentLocal] */
+export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, isCurrentLocal = () => false) {
   if (!namedPipe(endpoint)) {
     try {
       if (!lstatSync(endpoint).isSocket()) throw new Error(`unexpected node at edit lock endpoint ${endpoint}`)
@@ -177,6 +189,13 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest) 
   })
   return Object.freeze({
     bindings: arbitration.bindings,
+    /** @param {any} agent */
+    startLocal(agent) {
+      return arbitration.openLocal(agent.id, async reclaimed => {
+        if (closed || (reclaimed && !isCurrentLocal(agent))) throw new Error('local edit binding claimant is no longer current')
+        return lifecycle.start(agent)
+      })
+    },
     /** Seal admission, then revoke every channel; await before lifecycle.close. */
     async close() {
       closed = true

@@ -9,6 +9,8 @@ import { createChannelBindingArbitration, createRemoteEditLockDomain, serveEditL
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { fixtureEndpoint } from './helpers/edit-lock-fixtures.js'
+import { localDomain } from '../src/edit-lock/domain.js'
+import { registerBindingRuntime, createBindingAttester } from '../src/edit-lock/binding-attestation.js'
 
 const stubFs = { async resolve() { throw new Error('unused') }, async writeText() { throw new Error('unused') } }
 
@@ -26,7 +28,7 @@ async function fixture() {
 async function publisher(directory, root, attest) {
   const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
   const lifecycle = createEditLockLifecycle(runtime, agent => agent.id)
-  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap(), attest)
+  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap(), attest, agent => typeof agent.id === 'string')
   return { runtime, lifecycle, server }
 }
 
@@ -375,4 +377,29 @@ test('local reclaim failure retains entry and subsequent concurrent starts admit
     assert.equal(lifecycle.status(current).state, 'stopped')
     assert.throws(() => lifecycle.status(old), /unknown lifecycle agent/)
   } finally { await lifecycle.close() }
+})
+
+test('publisher-local startup reclaims an attested stale remote holder without releasing its locks', async () => {
+  const { root, directory } = await fixture()
+  const old = { id: 'cross-mode' }, current = { id: 'cross-mode' }
+  let serving = old
+  const { runtime, lifecycle, server } = await publisher(directory, root, createBindingAttester(() => serving))
+  const remote = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {}, onChannelOpen: registerBindingRuntime })
+  const local = localDomain(lifecycle, server)
+  try {
+    await remote.channelFor(old)
+    await remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root })
+    await assert.rejects(local.start(current), /session already bound/)
+    serving = current
+    assert.equal(await local.start(current), 'interrupted')
+    const lock = runtime.control.status().locks[0]
+    assert.equal(lock.owner, 'cross-mode')
+    assert.equal(lock.generation, 1)
+    assert.equal(lock.status, 'user-interrupted')
+    await assert.rejects(remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root }), /disconnected/)
+    await assert.rejects(local.service.acquire({ agent: current }, { filePath: 'a.txt', cwd: root }), /stopped/)
+    remote.drop(old)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal((await local.status(current)).locks.length, 1)
+  } finally { remote.close(); await local.close() }
 })

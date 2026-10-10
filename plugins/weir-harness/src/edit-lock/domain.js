@@ -2,13 +2,13 @@
  * Every method is trusted host ingress; only `service` reaches tools. */
 
 /** @param {ReturnType<typeof import('./lifecycle.js').createEditLockLifecycle>} lifecycle
- * @param {{close: () => Promise<void>} | undefined} endpoint */
+ * @param {{close: () => Promise<void>, startLocal?: (agent: object) => Promise<any>} | undefined} endpoint */
 export function localDomain(lifecycle, endpoint) {
   return Object.freeze({
     mode: 'publisher',
     service: lifecycle.service,
     /** @param {object} agent */
-    start: agent => lifecycle.start(agent),
+    start: agent => endpoint?.startLocal ? endpoint.startLocal(agent) : lifecycle.start(agent),
     /** Synchronous admission fence for an aborted turn. @param {object} agent */
     latch: agent => { lifecycle.stop(agent).catch(() => {}) },
     /** @param {object} agent */
