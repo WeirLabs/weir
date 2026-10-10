@@ -42,19 +42,25 @@ function rowAction(lock, mine) {
  * @param {{
  *   status: { sessionId: string, state: string, interrupted: boolean|null, revoked?: boolean|null, executionEpoch: number|null, locks: any[], recovery?: any, retention?: any },
  *   locks: any[],
+ *   recoveryState?: { pausedUntil?: number|null }|null,
  *   cwd?: string,
  *   root?: string,
  *   mode?: string,
  *   now: number,
  * }} input
  */
-export function buildView({ status, locks, cwd, root, mode, now }) {
+export function buildView({ status, locks, recoveryState, cwd, root, mode, now }) {
   const own = status.locks ?? []
   const retention = status.retention ?? null
   const recovery = status.recovery ?? null
   const held = Boolean(retention?.held && retention.remainingMs > 0)
   // This is the existing lifecycle restriction, not an inferred driver/timer state.
   const cleanupOnly = status.state === 'recovering' && status.revoked !== true
+  // Only the owning live driver's future deadline establishes a pause.
+  // Cumulative usage survives expiry and cold reads; it grants no live state.
+  const pausedUntil = cleanupOnly && typeof recoveryState?.pausedUntil === 'number'
+    && Number.isFinite(recoveryState.pausedUntil) && recoveryState.pausedUntil > now
+    ? recoveryState.pausedUntil : null
   /** @type {typeof VIEW_STATES[number]} */
   let state
   // Revoked wins over everything: administrative revocation is terminal and
@@ -85,6 +91,7 @@ export function buildView({ status, locks, cwd, root, mode, now }) {
   return {
     state,
     cleanupOnly,
+    pausedUntil,
     files: rows,
     ownCount: own.length,
     pendingCount: own.filter(lock => lock.status === 'pending-confirmation').length,

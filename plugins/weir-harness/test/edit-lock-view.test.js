@@ -86,6 +86,27 @@ it('projects cleanup-only restrictions even before the first recovery attempt, w
   expect(historical.recovery.pausedUntil).toBe(undefined)
 })
 
+it('projects only a future live recovery deadline, independently of cumulative pause usage', () => {
+  const project = (state, pausedUntil, extra = {}) => buildView({
+    status: base({ state, recovery: { attempts: 2, elapsedMs: 31_000, pauseMs: 900_000 }, ...extra }),
+    locks: [], recoveryState: { pausedUntil }, now: 1_000,
+  })
+  expect(project('recovering', 2_000).pausedUntil).toBe(2_000)
+  for (const deadline of [null, undefined, 0, 999, 1_000, NaN, Infinity, '2000']) {
+    expect(project('recovering', deadline).pausedUntil).toBe(null)
+  }
+  for (const state of ['active', 'idle', 'stopped', 'resuming']) expect(project(state, 2_000).pausedUntil).toBe(null)
+  expect(project('recovering', 2_000, { revoked: true }).pausedUntil).toBe(null)
+  expect(project('recovering', 2_000, { recovery: null }).pausedUntil).toBe(2_000)
+  expect(view(base({ state: 'recovering', recovery: { attempts: 2, elapsedMs: 31_000, pauseMs: 900_000 } })).pausedUntil).toBe(null)
+})
+
+it('never reconstructs a live pause from a cold authority image', () => {
+  const result = coldView(imageOf({ recovery: [{ sessionId: 's1', attempts: 2, elapsedMs: 31_000, pauseMs: 900_000, pausedUntil: 2_000 }] }))
+  expect(result.pausedUntil).toBe(null)
+  expect(result.recovery.pauseMinutes).toBe(15)
+})
+
 it('an unresolvable session renders as an action-free unavailable view', () => {
   const result = unavailableView()
   expect(result.state).toBe('unavailable')

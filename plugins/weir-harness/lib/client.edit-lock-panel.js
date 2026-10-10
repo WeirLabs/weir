@@ -203,11 +203,13 @@ window.__ModuleLoader__.load({
 				view?.bindingFailure ? jsx("div", { style: mutedStyle, "data-weir-edit-lock-binding": "", children: t(`editLockBinding_${view.bindingFailure.holderKind ?? "unknown"}`) }, "binding") : null,
 				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
 				cold && state === "stopped" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdResumeManual" : "editLockColdResumeAuto") }, "cold") : null,
-				// The host projects cumulative usage, not whether the cleanup driver is
-				// running or paused. Do not reuse editLockRecovery's "cleaning up" claim.
+				// Usage is historical; only the live driver's explicit deadline signals a pause.
 				// Follow-up locale keys: editLockCleanupOnly, editLockRecoveryUsage,
 				// editLockPauseUsageHint. Template-layer fallback stays English.
 				view?.cleanupOnly ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cleanup": "", children: "Cleanup only: business edits and new ownership are blocked. Release files you no longer need; inspect the tool result before retrying edits." }, "cleanup") : null,
+				// Follow-up locale key: editLockPausedUntil, with {time}. Absolute clock,
+				// not a countdown or a promise to release locks/restore editing at expiry.
+				!cold && state === "attention" && view?.cleanupOnly && Number.isFinite(view.pausedUntil) && view.pausedUntil > Date.now() ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-paused-until": "", children: t("editLockPausedUntil").replace("{time}", clock(view.pausedUntil)) }, "paused-until") : null,
 				view?.recovery ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-recovery": "", children: `Recorded recovery: ${view.recovery.attempts} attempts · ${view.recovery.elapsedSeconds}s elapsed · ${view.recovery.pauseMinutes} min pause used.` }, "recovery") : null,
 				view?.recovery?.pauseMinutes > 0 ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-pause": "", children: "Pause usage is cumulative, not a live timer. Pause expiry re-checks recovery; it does not release locks or restore editing." }, "pause") : null,
 				primary ? jsx("div", { style: { marginTop: "8px" }, children: action("primary", t(primary.label), () => run(primary.verbs ?? primary.verb), primaryStyle) }, "primary") : null,

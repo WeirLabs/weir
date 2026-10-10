@@ -125,6 +125,33 @@ describe('client.edit-lock-panel chunk', () => {
     })
   }
 
+  it('renders the live pause as a localized absolute deadline without changing cleanup actions', async () => {
+    const pausedUntil = Date.UTC(2099, 0, 1, 9, 30)
+    const { render, runs, props } = await mounted([viewOf('attention', [own('a.txt', 'abnormal')], { cleanupOnly: true, pausedUntil })])
+    props.t = key => key === 'editLockPausedUntil' ? 'Recovery paused until {time}.' : key
+    find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+    const tree = render()
+    expect(find(tree, node => node['data-weir-edit-lock-paused-until'] === '').children).toBe(`Recovery paused until ${new Date(pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`)
+    expect(byAction(tree, 'primary')).toBe(undefined)
+    expect(byAction(tree, 'release:/w/a.txt').children).toBe('editLockRow_release')
+    expect(runs).toEqual([])
+  })
+
+  for (const [label, state, extra] of [
+    ['expired', 'attention', { cleanupOnly: true, pausedUntil: 1 }],
+    ['historical', 'attention', { cleanupOnly: true }],
+    ['stopped', 'stopped', { pausedUntil: Date.UTC(2099, 0, 1) }],
+    ['idle', 'idle', { pausedUntil: Date.UTC(2099, 0, 1) }],
+    ['cold', 'attention', { cleanupOnly: true, cold: true, pausedUntil: Date.UTC(2099, 0, 1) }],
+  ]) {
+    it(`does not label ${label} cumulative pause usage as a live pause`, async () => {
+      const { render } = await mounted([viewOf(state, [], { recovery: { attempts: 2, elapsedSeconds: 31, pauseMinutes: 15 }, ...extra })])
+      find(render(), node => node['data-weir-edit-lock'] === '').onClick(); await flush()
+      expect(find(render(), node => node['data-weir-edit-lock-paused-until'] === '')).toBe(undefined)
+      expect(find(render(), node => node['data-weir-edit-lock-recovery'] === '').children).toContain('15 min pause used')
+    })
+  }
+
   it('retained rename locks describe ownership only and direct users to the separate tool outcome', async () => {
     // publishBatch retains all batch ownership on failure: these same rows can
     // accompany written, not-written, or uncertain outcomes. Only the tool error
