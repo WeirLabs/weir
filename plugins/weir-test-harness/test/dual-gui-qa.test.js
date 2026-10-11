@@ -43,6 +43,8 @@ import {
   assertEndpoint,
   assertPhaseExceptions,
   verifyPanelShots,
+  verifyOptOutShots,
+  assertFreshRestart,
   writeReport,
 } from '../src/dual-gui-qa.mjs'
 
@@ -189,6 +191,11 @@ describe('resolveConfig', () => {
     assert.equal(byFlag.matrix, 'heavy')
     assert.equal(byEnv.matrix, 'heavy')
   })
+  it('selects the opt-out matrix only when explicitly requested', () => {
+    const config = resolveConfig({ argv: ['--opt-out'], env, fileExists })
+    tmpdirs.push(config.root)
+    assert.equal(config.matrix, 'opt-out')
+  })
   it('rejects a missing weir-harness bundle', () => {
     // The stub must recognize the missing bundle under EITHER path separator:
     // on a win32 host path.join turns '/missing-weir-bundle' into
@@ -295,6 +302,14 @@ describe('fixtureSources', () => {
     assert.ok(index.includes('split(/\\s+/)'), 'whitespace split survived codegen')
     assert.ok(index.includes('QA midbatch fault'), 'deterministic second-file fault')
   })
+  it('arms a single post-write acknowledgement loss on a separate unknown fixture', () => {
+    const source = fixtureSources({ workspace: '/qa/root/ws', homes: [] })['index.js']
+    assert.ok(source.includes('write-unknown'))
+    assert.ok(source.includes('await writeText.call(this, target, ...rest)'))
+    assert.ok(source.includes('QA publisher acknowledgement lost AFTER the write'))
+    assert.ok(source.includes(`const UNKNOWN_FILE = ${JSON.stringify(path.join('/qa/root/ws', 'qa-unknown.ts'))}`))
+    assert.equal(renameFixtureSources()['qa-unknown.ts'], 'export const unknown = 1\n')
+  })
   it('rejects non-bare file arguments inside the fixture', () => {
     const index = fixtureSources({ workspace: '/qa/root/ws', homes: [] })['index.js']
     assert.ok(index.includes('Only bare fixture file names are allowed'))
@@ -325,6 +340,19 @@ describe('settingsPatchSource', () => {
     const patch = settingsPatchSource()
     assert.ok(!patch.includes('lspServers'))
   })
+  it('keeps the settings namespace writable for the opt-out matrix', () => {
+    const patch = settingsPatchSource({ workspace: '/qa/ws', editable: true })
+    assert.ok(!patch.includes('id: weir-settings'))
+    assert.ok(patch.includes('ui-settings-general'))
+  })
+})
+
+describe('saved-off acceptance contract', () => {
+  it('requires actual shutdown and fresh PID rather than treating recomposition as restart', () => {
+    assert.throws(() => assertFreshRestart({ previousPid: 101, nextPid: 101, exitCode: null, signalCode: null }), /different process/)
+    assert.throws(() => assertFreshRestart({ previousPid: 101, nextPid: 102, exitCode: null, signalCode: null }), /exit/)
+    assert.doesNotThrow(() => assertFreshRestart({ previousPid: 101, nextPid: 102, exitCode: 0, signalCode: null }))
+  })
 })
 
 describe('PAGE_HELPERS_SOURCE', () => {
@@ -336,6 +364,11 @@ describe('PAGE_HELPERS_SOURCE', () => {
   })
   it('exposes the theme and panel-marker helpers for the panel-states phases', () => {
     for (const name of ['theme', 'panelMarkers', 'pausedClockMatches', 'data-weir-edit-lock-paused-until', 'data-weir-edit-lock-cleanup', 'data-weir-edit-lock-ownership-hint']) {
+      assert.ok(PAGE_HELPERS_SOURCE.includes(name), name)
+    }
+  })
+  it('requires switch warning, maintenance state and screenshot framing helpers', () => {
+    for (const name of ['settingsStep', 'frameOptOut', 'data-group="editing"', 'role="alert"', 'scrollIntoView']) {
       assert.ok(PAGE_HELPERS_SOURCE.includes(name), name)
     }
   })
@@ -675,5 +708,14 @@ describe('auditable GUI evidence', () => {
     assert.equal(verifyPanelShots(root).length, 8)
     fs.writeFileSync(path.join(root, 'panel-partial-write-light.png'), '')
     assert.throws(() => verifyPanelShots(root), /panel-partial-write-light/)
+  })
+  it('requires saved-off and effective-off screenshots in BOTH themes', () => {
+    const root = mkTmp()
+    const names = ['saved-off', 'effective-off'].flatMap((state) => ['dark', 'light'].map((theme) => `opt-out-${state}-${theme}`))
+    assert.throws(() => verifyOptOutShots(root), /opt-out-saved-off-dark/)
+    for (const name of names) fs.writeFileSync(path.join(root, `${name}.png`), Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(32)]))
+    assert.equal(verifyOptOutShots(root).length, 4)
+    fs.writeFileSync(path.join(root, 'opt-out-effective-off-light.png'), '')
+    assert.throws(() => verifyOptOutShots(root), /opt-out-effective-off-light/)
   })
 })
