@@ -246,12 +246,30 @@ describe('client.capability-presets chunk', () => {
     expect(findAll(tree, (node) => node.__type === 'textarea' && node.value === JSON.stringify(V2_DOC))).toHaveLength(1)
   })
 
+  it('create collision confirms the exact named ID and revision rather than creating a second ID', async () => {
+    const { view, reactStub } = await loadView()
+    const calls = []
+    const { props } = makeProps({ presets: [{ scope: 'workspace', presetId: 'old-1', name: 'Shared', revision: 3, counts: {} }] })
+    props.presetSave = async (sid, spec) => { calls.push(spec); return calls.length === 1 ? { status: 'name-conflict', with: 'old-1', withRevision: 3 } : { status: 'edited', presetId: 'old-1', revision: 4 } }
+    reactStub.begin(); view(props); await flush()
+    reactStub.begin(); let tree = view(props)
+    findButton(tree, 'Save as preset…').onClick()
+    reactStub.begin(); tree = view(props)
+    findAll(tree, node => node.__type === 'input' && node.placeholder === 'Preset name')[0].onChange({ target: { value: 'Shared' } })
+    reactStub.begin(); tree = view(props)
+    findButton(tree, 'Save preset').onClick(); await flush()
+    reactStub.begin(); tree = view(props)
+    expect(findAll(tree, node => String(node.children).includes('old-1'))).toHaveLength(1)
+    findButton(tree, 'Replace it').onClick(); await flush()
+    expect(calls[1]).toEqual({ scope: 'workspace', name: 'Shared', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [], onNameConflict: 'replace', replaceTarget: { presetId: 'old-1', expectedRevision: 3, name: 'Shared' } })
+  })
+
   it('a name-conflict on confirm keeps the summary and retries with onNameConflict replace', async () => {
     const { view, reactStub } = await loadView()
     const dryRun = { status: 'dry-run', install: [{ targetScope: 'project', name: 'alpha', fileCount: 3, targetRoot: '/ws/skills' }], collisions: [], unresolved: [] }
-    const nameConflict = { status: 'name-conflict', with: 'Travel Pack!' }
-    const created = { status: 'created', presetId: 'travel-pack', bound: { mcpServers: 0, unresolvedRefs: 0 }, installed: [{ targetScope: 'project', name: 'alpha', target: 'alpha', fileCount: 3, status: 'installed' }], collisions: [], unresolved: [] }
-    const { calls, props } = makeProps({ importResponses: [dryRun, nameConflict, created] })
+    const nameConflict = { status: 'name-conflict', with: 'pack-legacy', withRevision: 7 }
+    const edited = { status: 'edited', presetId: 'pack-legacy', bound: { mcpServers: 0, unresolvedRefs: 0 }, installed: [{ targetScope: 'project', name: 'alpha', target: 'alpha', fileCount: 3, status: 'installed' }], collisions: [], unresolved: [] }
+    const { calls, props } = makeProps({ importResponses: [dryRun, nameConflict, edited] })
 
     let tree = await submitDocument(view, reactStub, props, V2_DOC)
     findButton(tree, 'Confirm import').onClick()
@@ -261,15 +279,16 @@ describe('client.capability-presets chunk', () => {
     // The summary stays up and offers the name-conflict decision row.
     const summaryBox = findAll(tree, (node) => node['data-weir-import-summary'] !== undefined)[0]
     expect(summaryBox).toBeTruthy()
-    expect(findAll(summaryBox.children, (node) => node.children === 'A preset with this name already exists here.')).toHaveLength(1)
+    expect(findAll(summaryBox.children, (node) => node.children === 'Replace preset ID pack-legacy at revision 7 in workspace?')).toHaveLength(1)
 
     findButton(summaryBox.children, 'Replace it').onClick()
     await flush()
     reactStub.begin()
     tree = view(props)
     expect(calls.presetImport).toHaveLength(3)
-    expect(calls.presetImport[2]).toEqual({ document: V2_DOC, scope: 'workspace', onCollision: 'cancel', onNameConflict: 'replace' })
+    expect(calls.presetImport[2]).toEqual({ document: V2_DOC, scope: 'workspace', onCollision: 'cancel', onNameConflict: 'replace', replaceTarget: { presetId: 'pack-legacy', expectedRevision: 7, name: 'Travel Pack!' } })
     expect(findAll(tree, (node) => node['data-weir-import-result'] !== undefined)).toHaveLength(1)
+    expect(findAll(tree, node => node.children === 'Replaced the confirmed preset under ID pack-legacy; no second preset was created.')).toHaveLength(1)
   })
 
   it('an install failure renders the rollback note and does not refresh the preset list', async () => {
@@ -422,5 +441,84 @@ describe('client.capability-presets chunk', () => {
     // The workspace-default section is its own labeled card.
     const defaultTitle = findAll(tree, (node) => node.children === 'Workspace default for new sessions')[0]
     expect(defaultTitle).toBeTruthy()
+  })
+})
+
+// Public seam: rendered Presets row and the command verbs passed to the chunk.
+describe('safe preset row edits', () => {
+  const row = { scope: 'workspace', presetId: 'pack-01', name: 'Travel Pack!', revision: 4, counts: { skills: 2, mcpServers: 1, unresolvedRefs: 1 } }
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+  it('renames the saved row by identity without sending selection or touching the draft; cancel is inert', async () => {
+    const reactStub = makeReactStub()
+    const { exports } = await loadClientChunk('lib/client.capability-presets.js', requireStubFor(reactStub))
+    const calls = []
+    const props = { sessionId: 's1', model: loadModel(), draft: { skills: ['a'], mcpServers: ['docs'], applied: { skills: [], mcpServers: [] } },
+      fetchPresets: async () => ({ workspaceKey: 'ws', presets: [row] }), defaultGet: async () => ({ status: 'absent' }),
+      presetRename: async (sid, spec) => { calls.push({ sid, spec }); return { status: 'edited', presetId: row.presetId, revision: 5 } } }
+    reactStub.begin(); exports.CapabilityPresetsView(props); await flush()
+    reactStub.begin(); let tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Rename preset…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findAll(tree, node => node.__type === 'input' && node.value === row.name && node['aria-label'] === 'New preset name')).toHaveLength(1)
+    findButton(tree, 'Cancel').onClick()
+    expect(calls).toHaveLength(0)
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Rename preset…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findAll(tree, node => node.__type === 'input' && node['aria-label'] === 'New preset name')[0].onChange({ target: { value: 'Revised' } })
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Save new name').onClick(); await flush()
+    expect(calls).toEqual([{ sid: 's1', spec: { scope: 'workspace', presetId: 'pack-01', expectedRevision: 4, name: 'Revised' } }])
+    expect(props.draft.skills).toEqual(['a'])
+  })
+  it('re-saves a complete draft snapshot or server-authoritative applied source after explicit confirmation', async () => {
+    const reactStub = makeReactStub()
+    const { exports } = await loadClientChunk('lib/client.capability-presets.js', requireStubFor(reactStub))
+    const calls = []
+    const props = { sessionId: 's1', model: loadModel(), draft: { skills: ['draft-a', 'draft-b'], mcpServers: ['docs'], unresolvedRefs: ['lost'], revision: 8, applied: { skills: ['live'], mcpServers: [], unresolvedRefs: [] } },
+      fetchPresets: async () => ({ workspaceKey: 'ws', presets: [row] }), defaultGet: async () => ({ status: 'absent' }),
+      presetResave: async (sid, spec) => { calls.push({ sid, spec }); return { status: 'edited', presetId: 'pack-01', revision: 5 } } }
+    reactStub.begin(); exports.CapabilityPresetsView(props); await flush()
+    reactStub.begin(); let tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Re-save…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findAll(tree, node => String(node.children).includes('2 Skills · 1 MCP · 1 unresolved'))).toHaveLength(1)
+    expect(calls).toHaveLength(0)
+    findButton(tree, 'Confirm re-save').onClick(); await flush()
+    expect(calls).toEqual([{ sid: 's1', spec: { scope: 'workspace', presetId: 'pack-01', expectedRevision: 4, from: 'draft', skills: ['draft-a', 'draft-b'], mcpServers: ['docs'], unresolvedRefs: ['lost'] } }])
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Re-save…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findAll(tree, node => node.__type === 'select' && node.value === 'draft')[0].onChange({ target: { value: 'applied' } })
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findAll(tree, node => String(node.children).includes('1 Skills · 0 MCP · 0 unresolved'))).toHaveLength(1)
+    findButton(tree, 'Confirm re-save').onClick(); await flush()
+    expect(calls[1]).toEqual({ sid: 's1', spec: { scope: 'workspace', presetId: 'pack-01', expectedRevision: 4, from: 'applied', expectedSelectionRevision: 8 } })
+    expect(props.draft.skills).toEqual(['draft-a', 'draft-b'])
+  })
+  it('locks a failed edit until re-opened and announces the exact recovery; tombstones never stage', async () => {
+    const reactStub = makeReactStub()
+    const { exports } = await loadClientChunk('lib/client.capability-presets.js', requireStubFor(reactStub))
+    const calls = []
+    const staged = []
+    const props = { sessionId: 's1', model: loadModel(), draft: { skills: [], mcpServers: [], unresolvedRefs: [], applied: { skills: [], mcpServers: [] }, revision: 2 },
+      fetchPresets: async () => ({ workspaceKey: 'ws', presets: [row] }), defaultGet: async () => ({ status: 'absent' }),
+      presetRename: async () => { calls.push('rename'); return { status: 'locked' } },
+      presetLoad: async () => ({ status: 'ok', document: { deleted: true, selection: { skills: [], mcpServers: [], unresolvedRefs: [] } } }), stagePreset: doc => staged.push(doc) }
+    reactStub.begin(); exports.CapabilityPresetsView(props); await flush()
+    reactStub.begin(); let tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Rename preset…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Save new name').onClick(); await flush()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findButton(tree, 'Save new name').disabled).toBe(true)
+    expect(findAll(tree, node => node.role === 'alert' && String(node.children).includes('busy'))).toHaveLength(1)
+    findButton(tree, 'Save new name').onClick()
+    expect(calls).toHaveLength(1)
+    const input = findAll(tree, node => node['aria-label'] === 'New preset name')[0]
+    input.onKeyDown({ key: 'Escape' })
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Load').onClick(); await flush()
+    expect(staged).toHaveLength(0)
   })
 })

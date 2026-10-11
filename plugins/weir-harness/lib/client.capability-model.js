@@ -136,7 +136,9 @@ window.__ModuleLoader__.load({
 			return {
 				skills: sortSkills(skills),
 				mcpServers: [...mcpServers].sort(),
-				applied: { skills: sortSkills(skills), mcpServers: [...mcpServers].sort() },
+				applied: { skills: sortSkills(skills), mcpServers: [...mcpServers].sort(), unresolvedRefs: Array.isArray(receipt?.effective?.unresolvedRefs) ? [...receipt.effective.unresolvedRefs] : [] },
+				unresolvedRefs: Array.isArray(receipt?.effective?.unresolvedRefs) ? [...receipt.effective.unresolvedRefs] : [],
+				...(typeof receipt?.effective?.digest === "string" ? { appliedDigest: receipt.effective.digest } : {}),
 				revision: Number.isSafeInteger(receipt?.revision) ? receipt.revision : 0,
 				dirty: false,
 			};
@@ -336,6 +338,12 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		/** A tombstone or incomplete document cannot be staged as an empty draft. */
+		function loadablePresetOf(response) {
+			const document = response?.document;
+			return response?.status === "ok" && document && document.deleted !== true && document.tombstone !== true
+				&& Array.isArray(document.selection?.skills) && Array.isArray(document.selection?.mcpServers) && Array.isArray(document.selection?.unresolvedRefs);
+		}
 		/** Preset listing grouped by namespace, sorted by display name. */
 		function groupPresets(payload) {
 			const rows = (Array.isArray(payload?.presets) ? payload.presets : []).map(presetRowOf);
@@ -353,7 +361,8 @@ window.__ModuleLoader__.load({
 			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
 			if (response.status === "created" || response.status === "edited") return { kind: response.status, presetId: response.presetId ?? null, revision: response.revision ?? null };
 			if (response.status === "deleted") return { kind: "deleted", revision: response.revision ?? null };
-			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null };
+			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null, ...(Number.isSafeInteger(response.withRevision) && response.withRevision > 0 ? { withRevision: response.withRevision } : {}) };
+			if (["locked", "unreadable", "unsupported", "source-changed", "absent", "deleted", "confirmation-required", "indeterminate"].includes(response.status)) return { kind: response.status };
 			if (response.status === "revision-conflict") return { kind: "revision-conflict" };
 			if (response.status === "exists") return { kind: "exists", presetId: response.presetId ?? null };
 			if (response.status === "no-workspace") return { kind: "no-workspace" };
@@ -365,15 +374,16 @@ window.__ModuleLoader__.load({
 		 * failure. */
 		function importFeedbackOf(response) {
 			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
-			if (response.status === "created") {
+			if (response.status === "created" || response.status === "edited") {
 				return {
-					kind: "created",
+					kind: response.status,
 					presetId: response.presetId ?? null,
 					bound: Number.isSafeInteger(response.bound?.mcpServers) ? response.bound.mcpServers : 0,
 					unresolved: Number.isSafeInteger(response.bound?.unresolvedRefs) ? response.bound.unresolvedRefs : 0,
 				};
 			}
-			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null };
+			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null, ...(Number.isSafeInteger(response.withRevision) && response.withRevision > 0 ? { withRevision: response.withRevision } : {}) };
+			if (["locked", "unreadable", "unsupported", "revision-conflict", "confirmation-required", "indeterminate"].includes(response.status)) return { kind: response.status };
 			if (response.status === "rejected") return { kind: "rejected", reason: String(response.reason ?? "rejected") };
 			if (response.status === "no-workspace") return { kind: "no-workspace" };
 			return { kind: "error", status: response.status ?? "unknown" };
@@ -497,10 +507,10 @@ window.__ModuleLoader__.load({
 		 * root. */
 		function importConfirmOutcomeOf(response) {
 			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
-			if (response.status === "created") {
+			if (response.status === "created" || response.status === "edited") {
 				const scopeOf = (value) => (typeof value === "string" && value !== "" ? value : "project");
 				return {
-					kind: "created",
+					kind: response.status,
 					presetId: response.presetId ?? null,
 					bound: Number.isSafeInteger(response.bound?.mcpServers) ? response.bound.mcpServers : 0,
 					unresolved: Number.isSafeInteger(response.bound?.unresolvedRefs)
@@ -525,7 +535,8 @@ window.__ModuleLoader__.load({
 				return { kind: "install-failed", reason: String(response.reason ?? "install-failed"), rolledBack: Number.isSafeInteger(response.rolledBack) && response.rolledBack >= 0 ? response.rolledBack : 0 };
 			}
 			if (response.status === "no-target-root") return { kind: "no-target-root", targetScope: String(response.targetScope ?? "unknown") };
-			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null };
+			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null, ...(Number.isSafeInteger(response.withRevision) && response.withRevision > 0 ? { withRevision: response.withRevision } : {}) };
+			if (["locked", "unreadable", "unsupported", "revision-conflict", "confirmation-required", "indeterminate", "commit-failed"].includes(response.status)) return { kind: response.status, installed: Array.isArray(response.installed) ? response.installed : [] };
 			if (response.status === "no-workspace") return { kind: "no-workspace" };
 			if (response.status === "rejected") return { kind: "rejected", reason: String(response.reason ?? "rejected") };
 			return { kind: "error", status: response.status ?? "unknown" };
@@ -567,6 +578,7 @@ window.__ModuleLoader__.load({
 		exports.draftFromPreset = draftFromPreset;
 		exports.presetRowOf = presetRowOf;
 		exports.groupPresets = groupPresets;
+		exports.loadablePresetOf = loadablePresetOf;
 		exports.presetWriteOutcomeOf = presetWriteOutcomeOf;
 		exports.importFeedbackOf = importFeedbackOf;
 		exports.presetExportTextOf = presetExportTextOf;
