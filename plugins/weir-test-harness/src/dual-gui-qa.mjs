@@ -14,6 +14,8 @@
 //     -> generation handoff (release -> next generation acquire)
 //     -> graceful teardown (ports closed, reservation naturally absent)
 //   heavy (DUAL_GUI_MATRIX=heavy or --heavy), adds:
+//     -> nested client GUI under the same management root: real version/CAS
+//        and fs sandbox-backend refusals, byte/authority deltas and screenshots
 //     -> SIGKILL the verified publisher PID (owner.json checked first)
 //     -> surviving client fail-closed (view unavailable, no authority gain)
 //     -> restart same profile: reservation reclaimed, generation retained,
@@ -298,6 +300,28 @@ export function sha256File(file) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
+/** Compare durable authority, not a fabricated view, around one dispatched refusal. */
+export function authorityState(root) {
+  return JSON.parse(fs.readFileSync(path.join(root, AUTHORITY_DIR, 'snapshot.json'), 'utf8')).payload.state
+}
+export function assertRefusalDelta({ before, after, target, sessionId, cwd, beforeBytes }) {
+  if (!fs.readFileSync(target).equals(beforeBytes)) throw new Error(`refusal changed target bytes: ${target}`)
+  if (after.operations.length !== before.operations.length + 1 ||
+      JSON.stringify(after.operations.slice(0, -1)) !== JSON.stringify(before.operations)) throw new Error('refusal did not append exactly one operation without changing history')
+  const op = after.operations.at(-1)
+  if (op.phase !== 'unknown' || op.fence?.kind !== 'resource' || op.fence.resourceId !== target || op.binding?.cwd !== cwd || op.sessionId !== sessionId) {
+    throw new Error(`refusal was not a dispatched unknown/resource fence in the nested session: ${JSON.stringify(op)}`)
+  }
+  const lock = after.locks.find((row) => row.resourceId === target && row.owner === sessionId)
+  const previous = before.locks.find((row) => row.resourceId === target)
+  if (!lock || !Number.isSafeInteger(lock.generation) ||
+      (previous && (previous.owner !== sessionId || previous.generation !== lock.generation)) ||
+      !before.locks.filter((row) => row.resourceId !== target).every((row) => after.locks.some((next) => JSON.stringify(next) === JSON.stringify(row)))) {
+    throw new Error(`refusal did not retain ownership and previous locks: ${JSON.stringify(after.locks)}`)
+  }
+  return { generation: lock.generation }
+}
+
 /** Assert the platform's real Edit Lock endpoint; no tmpdir-name guessing. */
 export function assertEndpoint(authorityDir, platform = process.platform, resolve = endpointFor) {
   const endpoint = resolve(authorityDir, platform)
@@ -358,6 +382,11 @@ const HASH_ANCHORS = ${JSON.stringify({ initial: anchorFor(1, 'export const shar
 const UNKNOWN_FILE = ${JSON.stringify(path.join(workspace, 'qa-unknown.ts'))}
 const UNKNOWN_ANCHOR = ${JSON.stringify(anchorFor(1, 'export const unknown = 1'))}
 
+const CAS_FILE = ${JSON.stringify(path.join(workspace, 'narrow', 'cas-target.ts'))}
+const SANDBOX_FILE = ${JSON.stringify(path.join(workspace, 'sandbox-target.ts'))}
+const CAS_ANCHOR = ${JSON.stringify(anchorFor(1, 'export const cas = 1'))}
+const SANDBOX_ANCHOR = ${JSON.stringify(anchorFor(1, 'export const sandbox = 1'))}
+const NARROW = ${JSON.stringify(path.join(workspace, 'narrow'))}
 export function apply(ctx) {
   if (process.env.WEIR_QA_FIXTURE !== '1' ||
       !QA_HOMES.includes(process.env.DSH_HOME) ||
@@ -395,19 +424,19 @@ export function apply(ctx) {
   const off = ctx.commands.register({
     name: 'qa-edit',
     description: 'QA-only user action exercising actual managed editors on one disposable workspace.',
-    input: { hint: 'acquire [file] | read | write | hash-edit [initial|written|after] | write-unknown | release [file] | status | pause [min] | rename-midbatch' },
+    input: { hint: 'acquire [file] | read [file] | write | hash-edit [initial|written|after] | cas-hash-edit | cas-write | sandbox-hash-edit | write-unknown | release [file] | status | pause [min] | rename-midbatch' },
     async handler(invocation) {
       try {
         const agent = invocation.agent
         if (!agent || ctx.agents.get(agent.id) !== agent ||
-            realpathSync.native(agent.session?.header?.cwd) !== ROOT) {
+            ![ROOT, NARROW].includes(realpathSync.native(agent.session?.header?.cwd))) {
           throw new Error('QA command requires an exact live agent in the external workspace')
         }
         const [verb, ...rest] = String(invocation.rawInput ?? '').trim().split(/\\s+/).filter(Boolean)
         // File arguments are bare fixture basenames only — no separators, no
         // escapes from the disposable workspace.
         const file = rest[0]
-        if (file !== undefined && !/^[A-Za-z0-9._-]+$/.test(file)) throw new Error('Only bare fixture file names are allowed')
+        if (file !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) throw new Error('Only bare fixture file names are allowed')
         if (verb === 'pause') {
           const minutes = file === undefined ? 10 : Number(file)
           const result = await run(agent, invocation, 'edit_lock_pause', { minutes })
@@ -442,6 +471,19 @@ export function apply(ctx) {
               : { kind: 'success', text: 'QA unknown publication unexpectedly acknowledged' }
           } finally { unknownArmed = false }
         }
+         if (verb === 'cas-hash-edit' || verb === 'cas-write' || verb === 'sandbox-hash-edit') {
+           if (realpathSync.native(agent.session.header.cwd) !== NARROW || rest.length) throw new Error('QA refusal probes require the exact nested session and no arguments')
+           const name = verb === 'cas-write' ? 'write' : 'hash_edit'
+           const args = verb === 'cas-write'
+             ? { file_path: CAS_FILE, content: 'export const cas = 3\\n' }
+             : { file_path: verb === 'cas-hash-edit' ? CAS_FILE : SANDBOX_FILE, edits: [{ op: 'replace', pos: verb === 'cas-hash-edit' ? CAS_ANCHOR : SANDBOX_ANCHOR, text: verb === 'cas-hash-edit' ? 'export const cas = 2' : 'SHOULD_NEVER_LAND' }] }
+           const result = await run(agent, invocation, name, args)
+           return result.isError
+             ? { kind: 'error', text: verb === 'cas-hash-edit'
+               ? \`QA \${verb} refused: \${result.error?.message ?? 'unknown'}\`
+               : \`QA \${verb} refused:\\n\${result.error?.message ?? 'unknown'}\` }
+             : { kind: 'success', text: \`QA \${verb} succeeded: \${JSON.stringify(result.value ?? {})}\` }
+         }
         if (verb === 'hash-edit') {
           const stage = rest[0] ?? 'written'
           if (!Object.hasOwn(HASH_ANCHORS, stage)) throw new Error('unknown hash-edit stage')
@@ -595,6 +637,21 @@ export const PAGE_HELPERS_SOURCE = `(() => {
       if (!button) return 'no-adopt-button'
       button.click()
       return 'adopt-clicked'
+    },
+    // Read ONLY the genuine rendered command lifecycle node. The gateway
+    // response and Edit Lock panel are not substitutes for conversation proof.
+    commandEvidence(sessionId, exactResult, focus = false) {
+      const selected = document.querySelector('[data-row-key="session:' + sessionId + '"]')?.getAttribute('aria-selected') === 'true'
+      const nodes = [...document.querySelectorAll('[data-chat-flow-kind="command"]')]
+      const match = nodes.find((node) => node.textContent?.includes(exactResult))
+      if (focus && match) {
+        match.querySelector('[aria-expanded="false"]')?.click()
+        match.scrollIntoView({ block: 'center' })
+      }
+      const detail = match?.querySelector('pre')
+      const rect = detail?.getBoundingClientRect()
+      const visible = Boolean(rect && rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight && getComputedStyle(detail).visibility !== 'hidden')
+      return { selected, commandCount: nodes.length, matched: Boolean(match), visible, detail: Boolean(detail?.textContent?.includes(exactResult)), error: Boolean(match?.querySelector('[data-state="error"]')), text: detail?.textContent?.slice(0, 600) ?? match?.textContent?.slice(0, 600) ?? null }
     },
     // Theme state. The GUI's theme switch is Settings > General > Appearance
     // (three cubes calling theme.setTheme, persisted as the ui-theme config
@@ -1134,7 +1191,10 @@ export function prepareQaRoot(config) {
     root: config.root,
     ws: path.join(config.root, 'ws'),
     fixture: path.join(config.root, 'fixture'),
-    shots: path.join(config.root, 'shots'),
+     narrow: path.join(config.root, 'ws', 'narrow'),
+     casFile: path.join(config.root, 'ws', 'narrow', 'cas-target.ts'),
+     sandboxFile: path.join(config.root, 'ws', 'sandbox-target.ts'),
+     shots: path.join(config.root, 'shots'),
     logs: path.join(config.root, 'logs'),
     settingsPatch: path.join(config.root, 'edit-lock-on.patch.yml'),
     sharedFile: path.join(config.root, 'ws', 'qa-shared.ts'),
@@ -1143,6 +1203,9 @@ export function prepareQaRoot(config) {
     probeOtherFile: path.join(config.root, 'ws', 'probe-other.ts'),
   }
   fs.mkdirSync(paths.ws, { recursive: true })
+   fs.mkdirSync(paths.narrow, { recursive: true })
+   fs.writeFileSync(paths.casFile, 'export const cas = 1\n')
+   fs.writeFileSync(paths.sandboxFile, 'export const sandbox = 1\n')
   fs.mkdirSync(paths.fixture, { recursive: true })
   fs.mkdirSync(paths.shots, { recursive: true })
   fs.mkdirSync(paths.logs, { recursive: true })
@@ -1159,6 +1222,8 @@ export function prepareQaRoot(config) {
   if (root !== fs.realpathSync.native(paths.ws)) {
     throw new Error(`workspace management root escapes the disposable directory: ${root} !== ${paths.ws} — pick a DUAL_GUI_ROOT outside any git checkout`)
   }
+   // The ancestor authority is created by role detection before a nested
+   // session is bound. Do not invent a root override or a second authority.
   const homes = [path.join(config.root, 'home-a'), path.join(config.root, 'home-b')]
   const fixture = fixtureSources({ workspace: paths.ws, homes })
   for (const [name, content] of Object.entries(fixture)) fs.writeFileSync(path.join(paths.fixture, name), content)
@@ -1221,6 +1286,16 @@ async function waitPanelMarkers(instance, label, predicate, timeouts) {
   return result
 }
 
+/** Fail loudly unless the selected session's real command/done error is visible. */
+export async function waitGuiCommand(instance, sessionId, resultText, timeouts) {
+  let last = null
+  try {
+    return await waitFor(`${instance.name} visible command refusal`, async () => {
+      last = await instance.cdp.evaluate(`window.__dualGuiQa.commandEvidence(${JSON.stringify(sessionId)}, ${JSON.stringify(resultText)}, true)`)
+      return last?.selected && last?.matched && last?.visible && last?.detail && last?.error ? last : null
+    }, { timeoutMs: timeouts.phaseMs, intervalMs: 500 })
+  } catch (error) { throw new Error(`${error.message}; last DOM evidence=${JSON.stringify(last)}`) }
+}
 /** Screenshot the current view in dark theme, then light, then restore dark.
  * Theme switching rides the GUI's genuine system-preference path (see the
  * theme() page helper for the mechanism); each flip is proven by the body
@@ -1478,6 +1553,58 @@ async function runMatrix(config, paths, a, b, matrix) {
     if (sha256File(paths.sharedFile) !== state.initialSha) throw new Error('shared file bytes changed during handoff')
     return 'A released generation 1; B2 holds generation 2'
   })
+
+   await phase('version-cas-refusal', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+     if (managementRootFor(paths.narrow) !== paths.ws) throw new Error('nested session does not share the live management root')
+     const nested = await b.rpc('workspace/create', { request: { path: paths.narrow } })
+     if (nested.ok !== true || !nested.value?.workspace?.workspaceId) throw new Error(`nested workspace/create: ${JSON.stringify(nested)}`)
+     state.narrowWorkspaceId = nested.value.workspace.workspaceId
+     state.narrowSession = await createSession(b, state.narrowWorkspaceId, 'weir', 'QA nested CAS and sandbox')
+     const view = await waitView(b, state.narrowSession, 'nested shared domain', (v) => v?.technical?.mode === 'client' && v.technical.root === paths.ws, timeouts)
+     // Blank-session hero hides command flow nodes. A real zero-lock turn
+     // makes the nested conversation durable before managed editor commands.
+     const warm = await b.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId: state.narrowSession, mode: 'queue', content: [{ type: 'text', text: 'QA: make nested refusal commands visible in this conversation' }] } })
+     if (warm.ok !== true) throw new Error(`nested warm prompt rejected: ${JSON.stringify(warm.error ?? warm)}`)
+     await waitFor('nested warm turn settled', async () => {
+       const list = await b.rpc('session/list', { _request: {} }).catch(() => null)
+       const row = list?.value?.items?.find((item) => item.sessionId === state.narrowSession)
+       return row && row.blank === false && row.running === false ? row : null
+     }, { timeoutMs: timeouts.phaseMs })
+     const owner = readReservationOwner(paths.ws)
+     if (!owner || owner.pid !== state.publisher.serverPid) throw new Error('CAS publisher reservation changed')
+     const observed = await qaEdit(b, state.narrowSession, 'read cas-target.ts')
+     if (observed.kind !== 'success') throw new Error(`CAS read did not observe version: ${observed.text}`)
+     const changed = await qaEdit(b, state.narrowSession, 'cas-hash-edit')
+     if (changed.kind !== 'success' || fs.readFileSync(paths.casFile, 'utf8') !== 'export const cas = 2\n') throw new Error(`positive CAS hash edit failed: ${changed.text}`)
+     const beforeBytes = fs.readFileSync(paths.casFile)
+     const before = authorityState(paths.ws)
+     const refused = await qaEdit(b, state.narrowSession, 'cas-write')
+     if (refused.kind !== 'error' || !/file changed since it was read/.test(refused.text)) throw new Error(`expected real FS_STALE_VERSION: ${JSON.stringify(refused)}`)
+     const delta = assertRefusalDelta({ before, after: authorityState(paths.ws), target: paths.casFile, sessionId: state.narrowSession, cwd: paths.narrow, beforeBytes })
+     await openSessionInGui(b, state.narrowSession, timeouts, state.narrowWorkspaceId)
+     await waitPanelMarkers(b, 'CAS fenced file visible', (m) => m.files.some((row) => row.path === paths.casFile), timeouts)
+     const dom = await waitGuiCommand(b, state.narrowSession, refused.text, timeouts)
+     if (!(await b.cdp.evaluate('window.__dualGuiQa.panelState()'))?.panel) throw new Error('CAS command visible but panel closed before screenshot')
+     await b.shot('version-cas-refused')
+     return `pid=${owner.pid}; root=${view.technical.root}; generation=${delta.generation}; command=${refused.text}; DOM selected=${dom.selected} visible command/done error=${dom.error}; bytes sha256=${sha256File(paths.casFile)} unchanged; authority operations +1 unknown/resource fence, locks retained`
+   })
+
+   await phase('sandbox-backend-refusal', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+     const owner = readReservationOwner(paths.ws)
+     if (!owner || owner.pid !== state.publisher.serverPid || managementRootFor(paths.narrow) !== paths.ws) throw new Error('sandbox target no longer in shared publisher domain')
+     if (path.dirname(paths.sandboxFile) !== paths.ws || paths.sandboxFile.startsWith(`${paths.narrow}${path.sep}`)) throw new Error('sandbox target is not outside the narrow session root')
+     const beforeBytes = fs.readFileSync(paths.sandboxFile)
+     const before = authorityState(paths.ws)
+     const refused = await qaEdit(b, state.narrowSession, 'sandbox-hash-edit')
+     if (refused.kind !== 'error' || !/^QA sandbox-hash-edit refused:\ncannot write ".+": file access denied under workspace-write mode$/.test(refused.text) || refused.text.includes('outside management domain') || refused.text.includes('[sandbox:')) throw new Error(`expected raw fs sandbox backend refusal, not a domain denial or synthesized marker: ${JSON.stringify(refused)}`)
+     const delta = assertRefusalDelta({ before, after: authorityState(paths.ws), target: paths.sandboxFile, sessionId: state.narrowSession, cwd: paths.narrow, beforeBytes })
+     await openSessionInGui(b, state.narrowSession, timeouts, state.narrowWorkspaceId)
+     await waitPanelMarkers(b, 'sandbox fenced file visible', (m) => m.files.some((row) => row.path === paths.sandboxFile), timeouts)
+     const dom = await waitGuiCommand(b, state.narrowSession, refused.text, timeouts)
+     if (!(await b.cdp.evaluate('window.__dualGuiQa.panelState()'))?.panel) throw new Error('sandbox command visible but panel closed before screenshot')
+     await b.shot('sandbox-backend-refused')
+     return `pid=${owner.pid}; root=${paths.ws}; sandboxRoot=${paths.narrow}; generation=${delta.generation}; command=${refused.text}; DOM selected=${dom.selected} visible command/done error=${dom.error}; bytes sha256=${sha256File(paths.sandboxFile)} unchanged; authority operations +1 unknown/resource fence, locks retained`
+   })
 
   // -------------------------------------------------------------------
   // Panel-state acceptance (heavy only): the abnormal/attention, recovering,
@@ -1942,7 +2069,7 @@ export function writeReport(config, paths, matrix, extra = {}) {
     '',
     '| phase | verdict | detail |',
     '|---|---|---|',
-    ...matrix.rows.map((row) => `| ${row.name} | ${row.status} | ${String(row.detail).replaceAll('|', '\\|').slice(0, 400)} |`),
+    ...matrix.rows.map((row) => `| ${row.name} | ${row.status} | ${String(row.detail).replaceAll('|', '\\|').replaceAll('\n', '<br>').slice(0, ['version-cas-refusal', 'sandbox-backend-refusal'].includes(row.name) ? 1200 : 400)} |`),
     '',
   ]
   const file = path.join(paths.root, 'dual-gui-report.md')
@@ -1983,7 +2110,8 @@ async function main() {
     endpoint = state.endpoint
     if (config.matrix !== 'core') {
       panelShots = verifyPanelShots(paths.shots)
-      matrix.record('panel-screenshot-evidence', 'PASS', '8/8 targeted PNG screenshots verified')
+      panelShots.push(...verifyPanelShots(paths.shots, ['version-cas-refused', 'sandbox-backend-refused']))
+      matrix.record('panel-screenshot-evidence', 'PASS', '8/8 panel and 2/2 refusal PNG screenshots verified')
     } else matrix.record('panel-screenshot-evidence', 'SKIP', 'heavy only')
     if (config.matrix === 'opt-out') {
       panelShots.push(...verifyOptOutShots(paths.shots))

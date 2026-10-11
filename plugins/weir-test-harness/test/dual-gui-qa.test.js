@@ -13,6 +13,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import {
   allocateFreePorts,
   buildChromeArgs,
@@ -46,7 +47,10 @@ import {
   verifyOptOutShots,
   assertFreshRestart,
   writeReport,
+  assertRefusalDelta,
+  waitGuiCommand,
 } from '../src/dual-gui-qa.mjs'
+import { managementRootFor } from '../../weir-harness/src/edit-lock/domains.js'
 
 const tmpdirs = []
 function mkTmp() {
@@ -272,6 +276,24 @@ describe('sha256File', () => {
   })
 })
 
+describe('dispatched refusal evidence', () => {
+  it('rejects a domain/pre-dispatch denial or changed bytes as a false positive', () => {
+    const cwd = mkTmp(), target = path.join(cwd, 'target.ts'), sessionId = 'session-1'
+    fs.writeFileSync(target, 'stable\n')
+    const beforeBytes = fs.readFileSync(target)
+    const before = { locks: [], operations: [{ phase: 'created' }] }
+    const lock = { resourceId: target, owner: sessionId, generation: 1 }
+    const op = { phase: 'unknown', sessionId, binding: { cwd }, fence: { kind: 'resource', resourceId: target } }
+    const input = { before, after: { locks: [lock], operations: [...before.operations, op] }, target, sessionId, cwd, beforeBytes }
+    assert.deepEqual(assertRefusalDelta(input), { generation: 1 })
+    assert.throws(() => assertRefusalDelta({ ...input, after: { ...input.after, operations: [...before.operations, { ...op, phase: 'not-published' }] } }), /dispatched unknown/)
+    assert.throws(() => assertRefusalDelta({ ...input, after: { ...input.after, operations: [...before.operations, { ...op, fence: null }] } }), /resource fence/)
+    assert.throws(() => assertRefusalDelta({ ...input, after: { ...input.after, locks: [] } }), /retain ownership/)
+    fs.writeFileSync(target, 'changed\n')
+    assert.throws(() => assertRefusalDelta(input), /changed target bytes/)
+  })
+})
+
 describe('fixtureSources', () => {
   it('bakes the workspace and homes in as literals and self-refuses elsewhere', () => {
     const sources = fixtureSources({ workspace: '/qa/root/ws', homes: ['/qa/root/home-a', '/qa/root/home-b'] })
@@ -313,6 +335,21 @@ describe('fixtureSources', () => {
   it('rejects non-bare file arguments inside the fixture', () => {
     const index = fixtureSources({ workspace: '/qa/root/ws', homes: [] })['index.js']
     assert.ok(index.includes('Only bare fixture file names are allowed'))
+    const literal = index.match(/\^\[A-Za-z0-9\].*?\*\$/)?.[0]
+    assert.ok(literal, 'the fixture name gate must be anchored')
+    const bare = new RegExp(literal)
+    assert.equal(bare.test('cas-target.ts'), true)
+    assert.equal(bare.test('..'), false)
+    assert.equal(bare.test('../escape'), false)
+  })
+  it('passes through raw backend refusal without inventing a stock-tool marker', () => {
+    const fixture = fixtureSources({ workspace: '/qa/root/ws', homes: [] })['index.js']
+    assert.ok(fixture.includes("result.error?.message ?? 'unknown'"))
+    assert.ok(!fixture.includes('[sandbox: file access denied under workspace-write mode]'))
+    const driver = fs.readFileSync(fileURLToPath(new URL('../src/dual-gui-qa.mjs', import.meta.url)), 'utf8')
+    assert.ok(driver.includes('refused.text.includes(\'[sandbox:\')'))
+    assert.ok(driver.includes('outside management domain'))
+    assert.ok(driver.includes('file access denied under workspace-write mode$'))
   })
 })
 
@@ -371,6 +408,44 @@ describe('PAGE_HELPERS_SOURCE', () => {
     for (const name of ['settingsStep', 'frameOptOut', 'data-group="editing"', 'role="alert"', 'scrollIntoView']) {
       assert.ok(PAGE_HELPERS_SOURCE.includes(name), name)
     }
+  })
+  it('requires selected nested session and a visible real command error node', async () => {
+    const text = 'QA sandbox-hash-edit refused:\ncannot write "target": file access denied under workspace-write mode'
+    let selected = false, visible = true, error = true, expanded = false, scrolls = 0
+    const detail = {
+      textContent: text,
+      getBoundingClientRect() { return { width: 400, height: 60, top: visible ? 200 : -100, bottom: visible ? 260 : -40 } },
+    }
+    const node = {
+      textContent: `qa-edit ${text}`,
+      scrollIntoView() { scrolls += 1 },
+      querySelector(selector) {
+        if (selector === '[data-state="error"]') return error ? {} : null
+        if (selector === '[aria-expanded="false"]') return expanded ? null : { click() { expanded = true } }
+        return selector === 'pre' && expanded ? detail : null
+      },
+    }
+    const document = {
+      querySelector(selector) { return selector === '[data-row-key="session:nested"]' ? { getAttribute: () => selected ? 'true' : 'false' } : null },
+      querySelectorAll(selector) { return selector === '[data-chat-flow-kind="command"]' ? [node] : [] },
+    }
+    const window = {}
+    runInNewContext(PAGE_HELPERS_SOURCE, { window, document, innerHeight: 900, getComputedStyle: () => ({ visibility: 'visible' }) })
+    const probe = (value = text) => window.__dualGuiQa.commandEvidence('nested', value, true)
+    assert.equal(probe().selected, false)
+    selected = true
+    assert.equal(probe('a different result').matched, false)
+    visible = false
+    assert.equal(probe().visible, false)
+    visible = true; error = false
+    assert.equal(probe().error, false)
+    error = true
+    assert.equal(probe().matched && probe().visible && probe().detail && probe().error, true)
+    assert.ok(scrolls > 0)
+    const instance = { name: 'b', cdp: { evaluate: async () => probe() } }
+    assert.equal((await waitGuiCommand(instance, 'nested', text, { phaseMs: 50 })).selected, true)
+    selected = false
+    await assert.rejects(waitGuiCommand(instance, 'nested', text, { phaseMs: 1 }), /last DOM evidence=.*selected.*false/)
   })
 })
 
@@ -440,6 +515,20 @@ describe('prepareQaRoot', () => {
     execFileSync('git', ['init', '-q', root])
     const paths = { root }
     assert.throws(() => prepareQaRoot(paths), /management root escapes/)
+  })
+  it('nested session retains the shared domain while its sandbox root is narrower', () => {
+    const root = mkTmp()
+    const paths = prepareQaRoot({ root })
+    fs.mkdirSync(path.join(paths.ws, '.weir', 'edit-lock'), { recursive: true })
+    assert.equal(managementRootFor(paths.narrow), paths.ws)
+    assert.equal(path.dirname(paths.sandboxFile), paths.ws)
+    assert.equal(path.dirname(paths.casFile), paths.narrow)
+    const source = fs.readFileSync(path.join(paths.fixture, 'index.js'), 'utf8')
+    assert.match(source, /QA command requires an exact live agent/)
+    assert.match(source, /cas-hash-edit/)
+    assert.match(source, /cas-write/)
+    assert.match(source, /sandbox-hash-edit/)
+    assert.match(source, /realpathSync\.native\(agent\.session\?\.header\?\.cwd\)/)
   })
 })
 
@@ -684,6 +773,13 @@ describe('auditable GUI evidence', () => {
     assert.match(text, /phase counts: 1 PASS, 0 FAIL, 1 SKIP/)
     assert.ok(!text.includes('SENSITIVE'))
   })
+  it('retains full refusal command and authority delta in the report', () => {
+    const root = mkTmp(), matrix = createMatrix()
+    const detail = `pid=7; root=/qa/ws; generation=1; command=QA sandbox-hash-edit refused:\n${'x'.repeat(390)}; bytes unchanged; authority operations +1 unknown/resource fence, locks retained`
+    matrix.record('sandbox-backend-refusal', 'PASS', detail)
+    const file = writeReport({ matrix: 'heavy' }, { root, ws: path.join(root, 'ws') }, matrix)
+    assert.ok(fs.readFileSync(file, 'utf8').includes(detail.replaceAll('\n', '<br>')))
+  })
   it('keeps every launch token redacted after a publisher restart', () => {
     const instance = new GuiInstance('a', {})
     instance.setToken('first-token')
@@ -708,6 +804,15 @@ describe('auditable GUI evidence', () => {
     assert.equal(verifyPanelShots(root).length, 8)
     fs.writeFileSync(path.join(root, 'panel-partial-write-light.png'), '')
     assert.throws(() => verifyPanelShots(root), /panel-partial-write-light/)
+  })
+  it('requires both real refusal screenshots, independently of panel images', () => {
+    const root = mkTmp()
+    const names = ['version-cas-refused', 'sandbox-backend-refused']
+    assert.throws(() => verifyPanelShots(root, names), /version-cas-refused/)
+    fs.writeFileSync(path.join(root, `${names[0]}.png`), Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(32)]))
+    assert.throws(() => verifyPanelShots(root, names), /sandbox-backend-refused/)
+    fs.writeFileSync(path.join(root, `${names[1]}.png`), Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(32)]))
+    assert.equal(verifyPanelShots(root, names).length, 2)
   })
   it('requires saved-off and effective-off screenshots in BOTH themes', () => {
     const root = mkTmp()
