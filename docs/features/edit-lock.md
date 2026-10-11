@@ -463,7 +463,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### macOS 双完整 GUI 稳定化验收（阶段性）
 
-两个独立启动的 DSH 0.2.0-rc.2 Web 进程（独立 DSH_HOME/profile/浏览器，loopback 端口）共用同一仓库外工作区：publisher/client 仲裁成立；跨进程 `binding-duplicate` 的 Retry 被正确拒绝；真实 `edit_lock_acquire` 冲突持锁，文件哈希不变；测试 publisher 遭 SIGKILL 后存活的 client 变 `unavailable` 拒写；原 profile 重启后产品自行回收死预约，generation 2 的锁保留为 `user-interrupted`，经显式 Continue 恢复为 active、epoch 递增；正常释放后按 generation 3 交接。报告与 8 张截图在 `.weir/qa/stable-dual-gui/`。锁下真实 `lsp_rename` 回合、版本/CAS/sandbox、异常/恢复/暂停/部分写入的 GUI 呈现、明暗主题，以及 Linux/Win32 双 GUI 仍未验收。
+两个独立启动的 DSH 0.2.0-rc.2 Web 进程（独立 DSH_HOME/profile/浏览器，loopback 端口）共用同一仓库外工作区：publisher/client 仲裁成立；跨进程 `binding-duplicate` 的 Retry 被正确拒绝；真实 `edit_lock_acquire` 冲突持锁，文件哈希不变；测试 publisher 遭 SIGKILL 后存活的 client 变 `unavailable` 拒写；原 profile 重启后产品自行回收死预约，generation 2 的锁保留为 `user-interrupted`，经显式 Continue 恢复为 active、epoch 递增；正常释放后按 generation 3 交接。该**阶段性**报告与 8 张截图在 `.weir/qa/stable-dual-gui/`；当时尚未覆盖的三平台双 GUI 与锁下重命名已有后续 CI 证据（见下节），版本/CAS/sandbox 双 GUI 拒绝及状态面板双主题仍待验收。该手工运行的 console 日志有 4 条未处理异常，不得据此声称界面无异常。
 
 ### 可复用双 GUI QA 驱动（跨平台验收入口）
 
@@ -471,18 +471,17 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### 三平台实机验收（GitHub Actions，run 38110139730）
 
-同一驱动与锁下 `lsp_rename` 场景在三平台全部通过：macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（重型双 GUI 矩阵）＋ 35 PASS/0 FAIL（锁下重命名）；Windows 为命名管道与 TerminateProcess 语义，Linux 为 Unix socket 与 SIGKILL 恢复，均含真实 PID/预约/哈希断言与截图工件。运行历史中的红灯均为驱动/管线层修正（租约等待顺序、模态框竞态、shell 语法、路径分隔符），非产品缺陷；报告与证据工件保留在 run 页面（draft PR #1，分支 `qa/edit-lock-dual-gui-ci`）。
+同一驱动与锁下 `lsp_rename` 场景在三平台全部通过：[Actions run 38110139730](https://github.com/WeirLabs/weir/actions/runs/38110139730) 的 macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（重型双 GUI 矩阵）＋ 35 PASS/0 FAIL（**另一个 headless** 锁下重命名步骤）。驱动核对真实 publisher PID、预约、generation 与文件哈希；Linux 断连错误显示短 Unix socket，Windows 显示命名管道，但驱动尚未以端点类型断言管道。截图为尽力捕获，缺失本身不会使矩阵失败。先前红灯由 QA 驱动及 CI 管线修正（租约等待顺序、模态框竞态、shell 语法、路径分隔符），并非已证实的产品缺陷；尚未覆盖的门槛见下。
 
 ### 更早的组件级证据
 
 开发期还留下了若干**组件级**证据（`.weir/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
 
-### 未覆盖的验证
+### 尚未完成的稳定化验收
 
-本特性以**实验特性、默认关闭**的形态发布，下列场景没有证据，不构成任何保证：
+本特性仍为**实验特性、默认关闭**。已有三平台双 GUI 仲裁和独立 headless 锁下重命名证据，但以下要求**尚未满足**；不得由上述绿色作业推断稳定版已可发布：
 
-- **两个完整 GUI Harness 应用并发**：三平台（macOS/Ubuntu/Windows）重型双 GUI 矩阵在 CI 全绿（run 38110139730，9 PASS/0 FAIL/1 SKIP 每平台）。
-- **真实回合里的 `lsp_rename`**：锁下跨文件改名已由安装版场景 `editlock-lsp-rename` 在三平台各 35 PASS/0 FAIL 验证（原子获取、冲突整批拒绝、中途取消的诚实报告）。
-- **Linux**：ubuntu-latest runner 双 GUI 与锁下重命名均已实测通过（run 38110139730）。
-- **Windows 的 GUI 实机验收**：windows-latest runner 双 GUI 并排验收已通过（命名管道跨进程、TerminateProcess 清理、SIGKILL 恢复）。
-- **面板的异常、恢复中、暂停与部分写入状态（真实 GUI＋明暗主题）**：已有渲染层单测与 macOS 深色截图；浅色主题与 Linux/Win32 的面板呈现检查仍在稳定化收尾任务中。
+- **双 GUI 的版本/CAS 与真正沙箱拒绝**：当前 GUI 矩阵只执行 acquire/release/status，未用两个 GUI 证明该类编辑拒绝；锁下 headless 负例的“outside management domain”不能充作沙箱后端拒绝。
+- **重命名缺失／混合目标与非空 uncertain**：真实场景证明成功、冲突、别名拒绝与已写/未写的中途失败；缺失目标的预检分支尚无直接回归，非空 uncertain 仅有泛化组件桩。
+- **面板状态和主题**：异常／恢复中／暂停／部分写入的真实浏览器呈现、明暗主题与 console 零未处理异常尚未三平台过闸；阶段性 macOS 人工验收曾记录 4 条未处理异常。截图捕获目前为 best-effort，尚未作为验收硬断言。
+- **CI 证据清单**：runner 镜像版本、进程退出码及 Windows 管道类型尚未纳入驱动报告的硬断言；已完成的 Actions 作业及工件须按 run ID 留存，不能用 job-level 绿色代替上述空缺。
