@@ -331,6 +331,8 @@ window.__ModuleLoader__.load({
 					case "name-conflict": return t("capability.presets.renameCollision", "That name belongs to another preset. Choose another name.");
 					case "revision-conflict": return t("capability.presets.editConflict", "The preset changed. Review the refreshed row and confirm again.");
 					case "source-changed": return t("capability.presets.sourceChanged", "The applied selection changed. Review it and confirm again.");
+					case "source-unavailable": return t("capability.presets.sourceUnavailable", "Applied source unavailable{missing}. Restore the missing Skills, refresh the receipt, and confirm again.")
+						.replace("{missing}", outcome.missing?.length ? ": " + outcome.missing.join(", ") : "");
 					case "locked": return t("capability.presets.locked", "Preset storage is busy. Wait, then refresh and decide again.");
 					case "unreadable": return t("capability.presets.unreadable", "Preset storage cannot be read safely. Check the storage before retrying.");
 					case "unsupported": return t("capability.presets.unsupported", "This preset version is unsupported. Update the client or host before editing.");
@@ -340,6 +342,9 @@ window.__ModuleLoader__.load({
 				}
 			};
 			const rowIdentity = (row) => ({ scope: row.scope, presetId: row.presetId, expectedRevision: row.revision });
+			const appliedSourceIssue = () => props.draft?.appliedSourceIssue === "unavailable" ? t("capability.presets.appliedUnavailable", "The applied source has unavailable entries. Restore them and refresh the session receipt before re-saving.")
+				: props.draft?.appliedSourceIssue !== null || !Number.isSafeInteger(props.draft?.revision) || props.draft.revision < 0 || !/^[a-f0-9]{64}$/.test(props.draft?.appliedDigest ?? "")
+					? t("capability.presets.appliedReceiptMissing", "The applied source cannot be verified from this receipt. Refresh the session receipt before re-saving; the current draft is still available.") : null;
 			const openRowEdit = (row, kind) => { setEditAlert(null); setRowAction({ ...rowIdentity(row), kind, name: row.name, from: "draft", busy: false, error: null, stale: false }); };
 			const submitRowEdit = (row) => {
 				if (!rowAction || rowAction.busy || rowAction.stale || !props.draft || !Number.isSafeInteger(row.revision) || row.revision < 1) return;
@@ -377,9 +382,10 @@ window.__ModuleLoader__.load({
 						spec.mcpServers = structuredClone(props.draft.mcpServers);
 						spec.unresolvedRefs = structuredClone(props.draft.unresolvedRefs);
 					} else {
-						if (!Number.isSafeInteger(props.draft.revision)) { setRowAction({ ...rowAction, error: t("capability.presets.needsReceipt", "Unavailable until the session receipt loads.") }); return; }
+						const issue = appliedSourceIssue();
+						if (issue) { setRowAction({ ...rowAction, error: issue }); return; }
 						spec.expectedSelectionRevision = props.draft.revision;
-						if (typeof props.draft.appliedDigest === "string") spec.expectedSelectionDigest = props.draft.appliedDigest;
+						spec.expectedSelectionDigest = props.draft.appliedDigest;
 					}
 				}
 				setRowAction({ ...rowAction, busy: true, error: null });
@@ -700,11 +706,12 @@ window.__ModuleLoader__.load({
 										.replace("{mcp}", String((rowAction.from === "draft" ? props.draft?.mcpServers : props.draft?.applied?.mcpServers)?.length ?? 0))
 										.replace("{unresolved}", String((rowAction.from === "draft" ? props.draft?.unresolvedRefs : props.draft?.applied?.unresolvedRefs)?.length ?? 0)) }) : null,
 									react_jsx_runtime.jsxs("div", { style: S.buttonRow, children: [
-										react_jsx_runtime.jsx("button", { type: "button", style: (rowAction.busy || rowAction.stale) ? { ...S.primary, ...S.disabled } : S.primary, ...ring,
-											disabled: rowAction.busy || rowAction.stale, onClick: () => submitRowEdit(row), children: rowAction.kind === "rename" ? t("capability.presets.renameSubmit", "Save new name") : t("capability.presets.resaveSubmit", "Confirm re-save") }),
+									react_jsx_runtime.jsx("button", { type: "button", style: (rowAction.busy || rowAction.stale || (rowAction.kind === "resave" && rowAction.from === "applied" && appliedSourceIssue())) ? { ...S.primary, ...S.disabled } : S.primary, ...ring,
+											disabled: Boolean(rowAction.busy || rowAction.stale || (rowAction.kind === "resave" && rowAction.from === "applied" && appliedSourceIssue())), onClick: () => submitRowEdit(row), children: rowAction.kind === "rename" ? t("capability.presets.renameSubmit", "Save new name") : t("capability.presets.resaveSubmit", "Confirm re-save") }),
 										react_jsx_runtime.jsx("button", { type: "button", style: rowAction.busy ? { ...S.button, ...S.disabled } : S.button, ...ring,
 											disabled: rowAction.busy, onClick: () => setRowAction(null), children: t("capability.presets.cancel", "Cancel") }) ] }),
-									rowAction.error ? react_jsx_runtime.jsx("span", { role: rowAction.stale ? "status" : "alert", style: S.warn, children: rowAction.error }) : null
+									rowAction.error ? react_jsx_runtime.jsx("span", { role: rowAction.stale ? "status" : "alert", style: S.warn, children: rowAction.error }) : null,
+									rowAction.kind === "resave" && rowAction.from === "applied" && appliedSourceIssue() ? react_jsx_runtime.jsx("span", { role: "alert", style: S.warn, children: appliedSourceIssue() }) : null
 								]
 							}) : null,
 						active && rowAction.kind === "load" && rowAction.error

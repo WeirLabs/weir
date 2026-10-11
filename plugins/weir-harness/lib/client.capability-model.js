@@ -133,12 +133,18 @@ window.__ModuleLoader__.load({
 			const skills = Array.isArray(receipt?.effective?.skillIdentities) ? [...receipt.effective.skillIdentities]
 				: Array.isArray(receipt?.effective?.skills) ? [...receipt.effective.skills] : [];
 			const mcpServers = Array.isArray(receipt?.effective?.mcpServers) ? [...receipt.effective.mcpServers] : [];
+			const warnings = Array.isArray(receipt?.warnings) ? receipt.warnings.filter(Boolean).map(String) : [];
+			const digest = receipt?.effective?.digest;
+			const provable = receipt?.status === "applied" && Number.isSafeInteger(receipt.revision) && receipt.revision >= 0
+				&& Array.isArray(receipt.effective.skillIdentities) && Array.isArray(receipt.effective.mcpServers)
+				&& typeof digest === "string" && /^[a-f0-9]{64}$/.test(digest);
 			return {
 				skills: sortSkills(skills),
 				mcpServers: [...mcpServers].sort(),
 				applied: { skills: sortSkills(skills), mcpServers: [...mcpServers].sort(), unresolvedRefs: Array.isArray(receipt?.effective?.unresolvedRefs) ? [...receipt.effective.unresolvedRefs] : [] },
 				unresolvedRefs: Array.isArray(receipt?.effective?.unresolvedRefs) ? [...receipt.effective.unresolvedRefs] : [],
-				...(typeof receipt?.effective?.digest === "string" ? { appliedDigest: receipt.effective.digest } : {}),
+				...(provable ? { appliedDigest: digest } : {}),
+				appliedSourceIssue: warnings.length ? "unavailable" : provable ? null : "receipt",
 				revision: Number.isSafeInteger(receipt?.revision) ? receipt.revision : 0,
 				dirty: false,
 			};
@@ -315,6 +321,8 @@ window.__ModuleLoader__.load({
 				mcpServers,
 				applied,
 				revision: Number.isSafeInteger(current?.revision) ? current.revision : 0,
+				...(typeof current?.appliedDigest === "string" ? { appliedDigest: current.appliedDigest } : {}),
+				appliedSourceIssue: current?.appliedSourceIssue === null ? null : current?.appliedSourceIssue ?? "receipt",
 				unresolvedRefs,
 				dirty: !same(skills.map(skillEntryKeyOf), sortSkills(applied.skills).map(skillEntryKeyOf)) || !same(mcpServers, [...applied.mcpServers].sort()),
 			};
@@ -362,6 +370,7 @@ window.__ModuleLoader__.load({
 			if (response.status === "created" || response.status === "edited") return { kind: response.status, presetId: response.presetId ?? null, revision: response.revision ?? null };
 			if (response.status === "deleted") return { kind: "deleted", revision: response.revision ?? null };
 			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null, ...(Number.isSafeInteger(response.withRevision) && response.withRevision > 0 ? { withRevision: response.withRevision } : {}) };
+			if (response.status === "source-unavailable") return { kind: "source-unavailable", missing: Array.isArray(response.missing) ? response.missing.filter(name => typeof name === "string") : [] };
 			if (["locked", "unreadable", "unsupported", "source-changed", "absent", "deleted", "confirmation-required", "indeterminate"].includes(response.status)) return { kind: response.status };
 			if (response.status === "revision-conflict") return { kind: "revision-conflict" };
 			if (response.status === "exists") return { kind: "exists", presetId: response.presetId ?? null };
