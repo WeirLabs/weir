@@ -7,7 +7,7 @@ import { renderBoard, renderNext } from './prompts.js'
 import { APPROVE_MODES } from './projection.js'
 
 export const WORKTREE_COMMAND = 'worktree'
-export const COMMAND_USAGE = '[--json] | on | off | approve manual|auto-keep|auto-clean | init [show|write <json>] | setup <lane> [--skip] | check <lane> | land <lane> | clean <lane> worktree|all|keep | abandon <lane> [keep|worktree|all] | reconcile [--rebuild]'
+export const COMMAND_USAGE = '[--json] | on | off | approve manual|auto-keep|auto-clean | init [show|write <json>] | setup <lane> [--skip] | check <lane> | land <lane> | clean <lane> worktree|all|keep [--force] | abandon <lane> [keep|worktree|all] [--force] | reconcile [--rebuild]'
 
 /**
  * @param {any} service
@@ -88,12 +88,16 @@ export function createWorktreeCommand(service, deps) {
             return ok(describe(value))
           }
           case 'clean': {
-            if (!['keep', 'worktree', 'all'].includes(extra ?? '')) return { kind: 'error', text: 'Usage: /worktree clean <lane> keep|worktree|all' }
-            return ok(describe(await service.cleanup(session, required(lane), /** @type {any} */ (extra), { by: 'user' })))
+            // The trailing `--force` (any position among the tail words) is
+            // the user's explicit typed override; unknown extras stay Usage.
+            const tail = parseModeTail(words.slice(2), { modeRequired: true })
+            if (!tail) return { kind: 'error', text: 'Usage: /worktree clean <lane> keep|worktree|all [--force]' }
+            return ok(describe(await service.cleanup(session, required(lane), /** @type {any} */ (tail.mode), { by: 'user', force: tail.force })))
           }
           case 'abandon': {
-            const mode = extra && ['keep', 'worktree', 'all'].includes(extra) ? /** @type {any} */ (extra) : undefined
-            return ok(describe(await service.abandon(agent, required(lane), { mode })))
+            const tail = parseModeTail(words.slice(2), { modeRequired: false })
+            if (!tail) return { kind: 'error', text: 'Usage: /worktree abandon <lane> [keep|worktree|all] [--force]' }
+            return ok(describe(await service.abandon(agent, required(lane), { mode: /** @type {any} */ (tail.mode), force: tail.force })))
           }
           case 'reconcile': {
             const outcome = await service.reconcile(session, { rebuild: lane === '--rebuild' })
@@ -113,4 +117,24 @@ export function createWorktreeCommand(service, deps) {
 function required(lane) {
   if (!lane) throw new Error('a lane id is required')
   return lane
+}
+
+/**
+ * The trailing words of `clean` / `abandon`: one cleanup-mode word and an
+ * optional `--force`, position-independent. Any other word (or a duplicate)
+ * is invalid — the caller falls back to the Usage error.
+ * @param {string[]} tail @param {{ modeRequired: boolean }} options
+ * @returns {{ mode: string | undefined, force: boolean } | null}
+ */
+function parseModeTail(tail, { modeRequired }) {
+  /** @type {string | undefined} */
+  let mode
+  let force = false
+  for (const word of tail) {
+    if (word === '--force' && !force) { force = true; continue }
+    if (['keep', 'worktree', 'all'].includes(word) && mode === undefined) { mode = word; continue }
+    return null
+  }
+  if (modeRequired && mode === undefined) return null
+  return { mode, force }
 }
