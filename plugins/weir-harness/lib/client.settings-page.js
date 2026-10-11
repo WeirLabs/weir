@@ -106,7 +106,8 @@ window.__ModuleLoader__.load({
 				{ field: "editLockHoldCumulativeMaxMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
 				{ field: "editLockNudgeAttempts", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
 				{ field: "editLockNudgeFallback", kind: "text", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ kind: "custom", slot: "editLockMaintenance", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") }
+				// Diagnostics must remain reachable when enforcement is off.
+				{ kind: "custom", slot: "editLockMaintenance" }
 			] },
 			{ id: "worktree", fields: [
 				{ field: "worktreeEnabled", kind: "boolean" },
@@ -581,6 +582,7 @@ window.__ModuleLoader__.load({
 		const childLabelStyle = { ...labelStyle, fontSize: "13px" };
 		const labelTextStyle = { display: "inline-flex", alignItems: "center", gap: "6px" };
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const optOutStyle = { ...hintStyle, color: "var(--dsw-alias-state-business-warning, #b25f00)", borderLeft: "2px solid var(--dsw-alias-state-business-warning, #b25f00)", paddingLeft: "8px", marginTop: "4px" };
 		// Card-based group sections (design D7): layered background, l1 border,
 		// radius, the group title inside the card top, hairline l2 separators
 		// between rows. Colors only from theme tokens; geometry hardcoded.
@@ -619,7 +621,10 @@ window.__ModuleLoader__.load({
 			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
 					labelWithTag(descriptor, t, depth > 0 ? childLabelStyle : labelStyle),
-					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) })
+					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) }),
+					descriptor.field === "editLockEnabled" && resolveEffectiveValue(descriptor, field, field?.saved) !== true
+						? react_jsx_runtime.jsx("span", { style: optOutStyle, role: "alert", children: t("editLockOptOutWarning") })
+						: null
 				] }),
 				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
