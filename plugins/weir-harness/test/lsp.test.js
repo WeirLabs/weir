@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { apply, foldLspState, LSP_PROJECTION_KEY } from '../src/lsp/index.js'
+import { createEditLockHost } from '../src/edit-lock/host.js'
 
 /** Scripted fake LSP server over PassThrough pipes (auto-handshakes). */
 function fakeSubprocess(options = {}) {
@@ -683,6 +684,73 @@ describe('lsp_rename tool', () => {
     expect(ctx2.fs.writes).toHaveLength(0)
   })
 
+  it('missing and mixed existing-plus-missing targets abort preflight without publishing any file', async () => {
+    for (const mixed of [false, true]) {
+      const ctx = fakeCtx(fakeSubprocess({
+        capabilities: { renameProvider: true },
+        renameResponder: () => ({ changes: {
+          ...(mixed ? { 'file:///ws/a.ts': [renameEdit(0, 6, 0, 13, 'betaFn')] } : {}),
+          'file:///ws/absent.ts': [renameEdit(0, 0, 0, 7, 'betaFn')],
+        } }),
+      }), { enabled: true })
+      ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+      apply(ctx, { enabled: true })
+      const agent = fakeAgent()
+      const rename = await renameTool(ctx, agent)
+      await expect(async () => rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, { agent, signal: undefined })).rejects.toThrow(/no regular file at \/ws\/absent.ts.*no files were written/)
+      expect(ctx.fs.writes).toEqual([])
+      expect(Buffer.from(ctx.fs.files['/ws/a.ts'].text).equals(Buffer.from('const alphaFn = () => 1\n'))).toBe(true)
+      expect(ctx.fs.files['/ws/absent.ts']).toBe(undefined)
+    }
+  })
+  it('lock-on lsp_rename reports a genuinely unknown second publication, not an empty uncertain list', async () => {
+    const ctx = fakeCtx(fakeSubprocess({
+      capabilities: { renameProvider: true },
+      renameResponder: () => ({ changes: {
+        'file:///ws/a.ts': [renameEdit(0, 6, 0, 13, 'betaFn')],
+        'file:///ws/b.ts': [renameEdit(0, 9, 0, 16, 'betaFn')],
+      } }),
+    }), { enabled: true })
+    ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
+    ctx.fs.files['/ws/b.ts'] = { text: 'import { alphaFn } from "./a"\n', version: 'v9' }
+    const agent = fakeAgent()
+    const history = new Map()
+    const published = []
+    const released = []
+    const runtime = {
+      control: { history: (_owner, id) => history.get(id), releaseMany: async tokens => released.push(...tokens) },
+      requests: {
+        acquireBatch: async () => ({ ordered: [{ resourceId: '/ws/a.ts' }, { resourceId: '/ws/b.ts' }], temporary: [{ resourceId: '/ws/a.ts' }, { resourceId: '/ws/b.ts' }] }),
+        prepare: async (_execution, request) => {
+          published.push(request.filePath)
+          const operation = { phase: published.length === 1 ? 'updated' : 'unknown', outcome: { version: 'v2' } }
+          history.set(request.operationId, operation)
+          return { kind: 'history', operation }
+        },
+      },
+      async close() {},
+    }
+    const host = createEditLockHost(runtime, candidate => candidate === agent)
+    host.attach(agent, { sessionId: 'owner', managerIncarnation: 'manager', executionEpoch: 1 })
+    const get = ctx.get
+    ctx.get = name => name === 'weirEditLock' ? host : get(name)
+    ctx.inject = (_keys, callback) => callback({ sandboxPolicy: { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/ws' }) } })
+    apply(ctx, { enabled: true })
+    const rename = await renameTool(ctx, agent)
+    const exec = { agent, callId: 'rename-unknown', signal: new AbortController().signal }
+    let failure
+    try { await rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, exec) }
+    catch (error) { failure = error }
+    expect(failure?.message).toContain('filesAlreadyWritten: ["/ws/a.ts"]')
+    expect(failure?.message).toContain('filesNotWritten: []')
+    expect(failure?.message).toContain('filesUncertain: ["/ws/b.ts"]')
+    expect(failure?.message).toContain('ownership retained (no rollback)')
+    expect(published).toEqual(['/ws/a.ts', '/ws/b.ts'])
+    expect([...history.values()].map(op => op.phase)).toEqual(['updated', 'unknown'])
+    expect(released).toEqual([])
+    expect(ctx.fs.writes).toEqual([]) // authority owns publication, not the tool's fs
+    await host.close()
+  })
   it('a stale version mid-write stops immediately and names written/not-written files', async () => {
     const subprocess = fakeSubprocess({
       capabilities: { renameProvider: true },

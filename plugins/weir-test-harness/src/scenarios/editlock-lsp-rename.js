@@ -1,6 +1,6 @@
 // Scenario: editlock-lsp-rename — REAL multi-file lsp_rename turns with Edit
 // Lock enabled (WEIR_IT_EDIT_LOCK=1, shared authority <ws>/.weir/edit-lock),
-// driven over six sequential headless boots against the protocol-fixture LSP
+// driven over eight sequential headless boots against the protocol-fixture LSP
 // server (the same mock-lsp-server.js the lsp scenario uses: a real stdio
 // JSON-RPC server speaking LSP, not a simulated rename adapter — the rename
 // path under test is the production client → server → WorkspaceEdit →
@@ -12,6 +12,9 @@
 //              batch is refused atomically — zero writes, zero new locks.
 //   thaw       Session A is adopted (--session-id); the message-driven
 //              auto-resume confirms the retained lock, then release frees it.
+//   missing    WorkspaceEdit names only an absent target; preflight refuses.
+//   mixed      Valid existing targets precede an absent target; the entire
+//              batch still refuses without any publication or new ownership.
 //   apply      Session C's rename fixtureSymbol → renamedSymbol succeeds: both
 //              targets published through one batch, temporary locks released.
 //   duplicate  Session E's rename renamedSymbol → staleProbe carries the mock
@@ -55,7 +58,7 @@ export function baseName(resourceId) {
   return parts.length ? parts[parts.length - 1] : null
 }
 
-const BOOTS = ['freeze', 'conflict', 'thaw', 'apply', 'duplicate', 'midbatch']
+const BOOTS = ['freeze', 'conflict', 'thaw', 'missing', 'mixed', 'apply', 'duplicate', 'midbatch']
 
 const ORIGINAL_TS = 'export const fixtureSymbol = 1\n'
 const ORIGINAL_OTHER = 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n'
@@ -93,6 +96,12 @@ function decide(options, obs) {
   }
   if (history.includes(`${id}-conflict`)) {
     return lspRenameFlow(history, toolResults, 'conflictProbe', 'rename stopped', 'conflict refused')
+  }
+  if (history.includes(`${id}-missing`)) {
+    return lspRenameFlow(history, toolResults, 'missingProbe', 'no regular file', 'missing refused')
+  }
+  if (history.includes(`${id}-mixed`)) {
+    return lspRenameFlow(history, toolResults, 'mixedProbe', 'no regular file', 'mixed refused')
   }
   if (history.includes(`${id}-apply`)) {
     return lspRenameFlow(history, toolResults, 'renamedSymbol', 'across 2 file(s)', 'applied')
@@ -158,6 +167,7 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
   const trace = join(root, `trace-${id}.jsonl`)
   const boots = []
   const readWs = (name) => (existsSync(join(root, 'ws', name)) ? readFileSync(join(root, 'ws', name), 'utf8') : null)
+  const readBytes = (name) => (existsSync(join(root, 'ws', name)) ? readFileSync(join(root, 'ws', name)).toString('base64') : null)
   const boot = async (label, args, extra = {}) => {
     const outcome = await spawnHeadless(args, scenarioEnv(id, trace, { ...env, ...extra }))
     appendFileSync(trace, JSON.stringify({
@@ -167,7 +177,8 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
     appendFileSync(trace, JSON.stringify({
       kind: 'editlock-lsp-rename-detail', boot: label,
       tools: toolStream(outcome.stdout),
-      files: { probeTs: readWs('probe.ts'), probeOther: readWs('probe-other.ts') },
+      files: { probeTs: readWs('probe.ts'), probeOther: readWs('probe-other.ts'), absent: readWs('probe-absent.ts') },
+      bytes: { probeTs: readBytes('probe.ts'), probeOther: readBytes('probe-other.ts'), absent: readBytes('probe-absent.ts') },
     }) + '\n')
     appendFileSync(trace, JSON.stringify({ kind: 'editlock-lsp-rename-snapshot', boot: label, state: snapshotState(root) }) + '\n')
     boots.push({ label, ...outcome })
@@ -182,6 +193,8 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
   } else {
     appendFileSync(trace, JSON.stringify({ kind: 'editlock-lsp-rename-boot', boot: 'thaw', code: null, sessionId: null, skipped: 'no session id from freeze' }) + '\n')
   }
+  await boot('missing', ['weir-it', '--json', `${id}-missing`])
+  await boot('mixed', ['weir-it', '--json', `${id}-mixed`])
   await boot('apply', ['weir-it', '--json', `${id}-apply`])
   await boot('duplicate', ['weir-it', '--json', `${id}-duplicate`])
   // The shipped auto-resume probe doubles as a deterministic mid-batch abort:
@@ -219,6 +232,7 @@ function assert(run) {
   const readWs = (name) => (existsSync(join(run.ws, name)) ? readFileSync(join(run.ws, name), 'utf8') : '<missing>')
   const renameResult = (label) => detail(label)?.tools?.find((tool) => tool.tool === 'lsp_rename')?.result ?? ''
   const filesAfter = (label) => detail(label)?.files ?? {}
+  const bytesAfter = (label) => detail(label)?.bytes ?? {}
   const locksFor = (state, owner) => (state?.locks ?? []).filter((lock) => lock.owner === owner)
   const generationOf = (state, name) => state?.generations?.find((g) => baseName(g.resourceId) === baseName(name))?.generation ?? null
 
@@ -249,6 +263,14 @@ function assert(run) {
   run.check('thaw: message-driven auto-resume minted a server requestId', snap('thaw')?.issuedRequests?.some((r) => r.sessionId === sessionA && typeof r.requestId === 'string' && r.requestId.startsWith('auto:user-message:')) === true, JSON.stringify(snap('thaw')?.issuedRequests))
   run.check('thaw: authority holds no locks afterwards', (snap('thaw')?.locks ?? []).length === 0, JSON.stringify(snap('thaw')?.locks))
 
+  // ---- missing target: server supplies a nonexistent WorkspaceEdit target ----
+  for (const label of ['missing', 'mixed']) {
+    const result = renameResult(label)
+    run.check(`${label}: missing target rejected by lsp_rename preflight`, result.includes('no regular file') && result.includes('probe-absent.ts') && result.includes('preflight failed, no files were written'), result)
+    run.check(`${label}: existing fixture bytes unchanged and absent target not created`, bytesAfter(label).probeTs === Buffer.from(ORIGINAL_TS).toString('base64') && bytesAfter(label).probeOther === Buffer.from(ORIGINAL_OTHER).toString('base64') && bytesAfter(label).absent === null, JSON.stringify(bytesAfter(label)))
+    run.check(`${label}: no locks acquired or durable operations published`, (snap(label)?.locks ?? []).length === 0 && (snap(label)?.operations ?? []).filter(o => o.sessionId === bootRec(label)?.sessionId).length === 0, JSON.stringify(snap(label)))
+    run.check(`${label}: rename was invoked and turn settled cleanly`, detail(label)?.tools?.some(t => t.tool === 'lsp_rename') && bootRec(label)?.code === 0, JSON.stringify(bootRec(label)))
+  }
   // ---- apply: atomic acquire + per-file publish, temp locks released --------
   const applyResult = renameResult('apply')
   run.check('apply: cross-file rename summary rendered', applyResult.includes('3 edit(s) across 2 file(s)'), applyResult.slice(-400))
