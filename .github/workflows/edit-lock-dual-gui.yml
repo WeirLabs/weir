@@ -81,6 +81,11 @@ jobs:
           DUAL_GUI_BOOT_TIMEOUT_MS: '300000'
           DUAL_GUI_PHASE_TIMEOUT_MS: '90000'
         run: node plugins/weir-test-harness/src/dual-gui-qa.mjs run
+        # Explicit scheduler surface: Windows launches this Node entry through
+        # PowerShell (not a bash shim); Node then spawns node + bin.js directly.
+        # ImageOS/ImageVersion come from the GitHub runner environment and the
+        # driver records their actual values in its sanitized report.
+        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
 
       # The lock-guarded multi-file rename acceptance must also run on the same
       # runner OS (tasks 3.3/3.4): the installed-runtime scenario drives a real
@@ -115,4 +120,4 @@ jobs:
         with:
           name: dual-gui-qa-${{ matrix.os }}-${{ matrix.matrix }}
           path: ${{ runner.temp }}/dual-gui-qa
-          if-no-files-found: warn
+          if-no-files-found: error

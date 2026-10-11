@@ -39,6 +39,11 @@ import {
   teardown,
   waitForPortClosed,
   PAGE_HELPERS_SOURCE,
+  GuiInstance,
+  assertEndpoint,
+  assertPhaseExceptions,
+  verifyPanelShots,
+  writeReport,
 } from '../src/dual-gui-qa.mjs'
 
 const tmpdirs = []
@@ -306,8 +311,15 @@ describe('settingsPatchSource', () => {
     const patch = settingsPatchSource({ workspace: '/qa/root/ws' })
     assert.ok(patch.includes('lspEnabled: true'), 'capability gate on')
     assert.ok(patch.includes('lspServers: !!js'), 'server map evaluated in the server process')
-    assert.ok(patch.includes('/qa/root/ws/mock-lsp-server.js'), 'mock server path baked in')
+    assert.ok(patch.includes(JSON.stringify(path.join('/qa/root/ws', 'mock-lsp-server.js'))), 'native mock server path baked in')
     assert.ok(patch.includes('process.execPath'), 'runtime node launches the mock')
+  })
+  it('escapes a Windows mock-server path into a valid loader JavaScript expression', () => {
+    const winPath = 'C:\\qa\\root\\ws'
+    const expected = path.win32.join(winPath, 'mock-lsp-server.js')
+    const patch = settingsPatchSource({ workspace: winPath, platform: 'win32' })
+    assert.ok(patch.includes(JSON.stringify(expected)), 'literal path must survive JS string parsing on win32')
+    assert.equal(JSON.parse(Function(`return JSON.stringify(${patch.match(/JSON.stringify\((.*)\)/)?.[1]})`)()).typescript.args[0], expected)
   })
   it('keeps the LSP overlay out when no workspace is given', () => {
     const patch = settingsPatchSource()
@@ -595,5 +607,73 @@ describe('teardown', () => {
     } finally {
       one.child.kill('SIGKILL')
     }
+  })
+})
+
+describe('auditable GUI evidence', () => {
+  it('refuses missing, empty and invalid PNG screenshots rather than returning a path', async () => {
+    const root = mkTmp()
+    const instance = new GuiInstance('a', { paths: { shots: root } })
+    instance.cdp = { evaluate: async () => 0, screenshot: async (file) => fs.writeFileSync(file, '') }
+    await assert.rejects(instance.shot('panel-attention-dark'), /screenshot|PNG/i)
+    instance.cdp.screenshot = async (file) => fs.writeFileSync(file, 'not a png')
+    await assert.rejects(instance.shot('panel-attention-dark'), /screenshot|PNG/i)
+    instance.cdp.screenshot = async () => {}
+    await assert.rejects(instance.shot('panel-absent'), /screenshot|PNG/i)
+  })
+  it('checks Windows pipe versus short POSIX socket at the actual endpoint', () => {
+    const root = mkTmp()
+    const authority = path.join(root, '.weir', 'edit-lock')
+    fs.mkdirSync(authority, { recursive: true })
+    assert.match(assertEndpoint(authority, 'win32'), /^\\\\\.\\pipe\\weir-edit-lock-[a-f0-9]{24}$/)
+    const socket = assertEndpoint(authority, process.platform === 'win32' ? 'win32' : process.platform)
+    if (process.platform !== 'win32') {
+      assert.ok(Buffer.byteLength(socket) <= 100)
+      assert.match(socket, /weir-edit-lock-[a-f0-9]{24}\.sock$/)
+    }
+    assert.throws(() => assertEndpoint(authority, 'win32', () => '/tmp/not-a-pipe'), /named pipe/)
+    assert.throws(() => assertEndpoint(authority, 'linux', () => '\\\\.\\pipe\\wrong'), /Unix socket/)
+  })
+  it('reports actual process exits and per-phase counts without secrets', () => {
+    const root = mkTmp()
+    const matrix = createMatrix()
+    matrix.record('role-detection', 'PASS', 'token=SENSITIVE')
+    matrix.record('panel-attention-abnormal', 'SKIP', 'heavy only')
+    const file = writeReport({ matrix: 'core', platform: 'darwin', dsh: { description: '/dsh' }, runner: { image: 'macos-15', version: '20261010.1' } }, { root, ws: path.join(root, 'ws') }, matrix, {
+      processes: [{ name: 'a server', pid: 42, exitCode: null, signalCode: 'SIGKILL' }],
+      sha: 'f'.repeat(64), secrets: ['SENSITIVE'],
+    })
+    const text = fs.readFileSync(file, 'utf8')
+    assert.match(text, /runner image: macos-15/)
+    assert.match(text, /runner version: 20261010\.1/)
+    assert.match(text, /a server.*pid=42.*exit=null.*signal=SIGKILL/)
+    assert.match(text, /sha256: f{64}/)
+    assert.match(text, /phase counts: 1 PASS, 0 FAIL, 1 SKIP/)
+    assert.ok(!text.includes('SENSITIVE'))
+  })
+  it('keeps every launch token redacted after a publisher restart', () => {
+    const instance = new GuiInstance('a', {})
+    instance.setToken('first-token')
+    instance.setToken('second-token')
+    assert.equal(sanitizeText('first-token second-token', instance.secrets), 'REDACTED_TOKEN REDACTED_TOKEN')
+  })
+  it('gates exceptions in either browser, not only the publisher', () => {
+    const browsers = [{ name: 'a', exceptions: 0, eventsFile: 'a.jsonl' }, { name: 'b', exceptions: 0, eventsFile: 'b.jsonl' }]
+    const baseline = [0, 0]
+    assert.doesNotThrow(() => assertPhaseExceptions(browsers, baseline, 'measured'))
+    browsers[1].exceptions = 1
+    assert.throws(() => assertPhaseExceptions(browsers, baseline, 'measured'), /b.*Runtime\.exceptionThrown/)
+    browsers[1].exceptions = 0
+    browsers[0].exceptions = 1
+    assert.throws(() => assertPhaseExceptions(browsers, baseline, 'measured'), /a.*Runtime\.exceptionThrown/)
+  })
+  it('requires every one of the eight named nonempty PNGs', () => {
+    const root = mkTmp()
+    const names = ['attention', 'recovering', 'paused', 'partial-write'].flatMap((state) => ['dark', 'light'].map((theme) => `panel-${state}-${theme}`))
+    assert.throws(() => verifyPanelShots(root), /panel-attention-dark/)
+    for (const name of names) fs.writeFileSync(path.join(root, `${name}.png`), Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(32)]))
+    assert.equal(verifyPanelShots(root).length, 8)
+    fs.writeFileSync(path.join(root, 'panel-partial-write-light.png'), '')
+    assert.throws(() => verifyPanelShots(root), /panel-partial-write-light/)
   })
 })
