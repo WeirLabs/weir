@@ -476,6 +476,8 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 首轮完整三平台绿灯为 [run 38110139730](https://github.com/WeirLabs/weir/actions/runs/38110139730)：macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（双 GUI 重型矩阵）＋ 35/35（**单独 headless** 锁下重命名）。增强后的 [run 38142263705](https://github.com/WeirLabs/weir/actions/runs/38142263705) 三平台各 **15 PASS/0 FAIL/1 SKIP**（新增真实异常／清理恢复／暂停／部分写入状态）＋ **43/43**（锁下重命名的缺失／混合目标）。其报告逐一记录 runner 镜像版本、publisher PID/退出状态、短 Unix socket 或 Win32 命名管道、8 张明暗主题面板截图的非空 PNG/SHA，以及两浏览器每阶段 `Runtime.exceptionThrown A=0 B=0`；截图缺失现在判失败。下载证据存于 `.weir/stable-gate/ci-artifacts-38142263705/`（Windows 工件首次下载 EOF 后重试于 `windows-retry/`）。这些绿色作业**未证明**两个 GUI 内的版本/CAS/sandbox 拒绝，也未证明用户在浏览器里能展开查看部分写入三清单：独立复审仍拒绝关闭 3.5（下述缺口）。
 
+后续本机安装版 **macOS** 双 GUI 驱动 `f3e5f48` 以两个独立 Web 进程在同一外部根中新增真实版本 CAS 与域内沙箱后端拒绝：`--heavy` **17 PASS/0 FAIL/1 SKIP**、`--opt-out` **22 PASS/0 FAIL/1 SKIP**。嵌套会话 cwd 位于同一管理域的 `narrow/`，被拒的沙箱目标在管理域内却在会话可写根外；CAS 与沙箱都是后端已派发、文件字节不变、权威新增 `unknown`/资源围栏并保留锁，**不能**称为写前零操作。浏览器确实选中目标 Session 并展开红色用户命令行显示原生的裸后端错误（该远端调用不携带 stock 工具的 `[sandbox: …]` 方括号标记；QA 不得补造）；权威/PID/字节及两张截图保留在 `.weir/stable-gate/dual-gui-cas-sandbox-mac-20261011/`。独立复审对本次 **macOS Web 3.2** 给出 APPROVE；Linux/Win32 的新增两阶段尚待最终 QA 分支 CI，不从旧 run 推断它们已通过。
+
 ### 更早的组件级证据
 
 开发期还留下了若干**组件级**证据（`.weir/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
@@ -484,6 +486,6 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 本特性仍为**实验特性、默认关闭**。已有三平台双 GUI 仲裁和独立 headless 锁下重命名证据，但以下要求**尚未满足**；不得由上述绿色作业推断稳定版已可发布：
 
-- **双 GUI 的版本/CAS 与真正沙箱拒绝**：当前已落地的 GUI 矩阵尚未用两个 GUI 实测该类编辑拒绝；另一个锁下 headless 场景 24/24 确认了真实沙箱后端标记，但不能代替浏览器态的双进程准入与呈现。
+- **Linux/Win32 双 GUI 的版本/CAS 与沙箱拒绝**：macOS 新双 GUI 阶段已真实通过并经独立审查；早先三平台绿色 CI 只覆盖旧矩阵，没有这两项。必须用最终 QA 分支在 Linux/Win32 runner 真正复跑新阶段、核对原生错误可见性、字节/权威围栏、进程及截图，任何红灯均阻塞稳定标签。
 - **面板状态的完整可见性**：三平台已录入八图/平台、双主题及两浏览器逐阶段零 `Runtime.exceptionThrown`，但 3.5 独立复审仍 REJECT：页面 DOM 尚未断言恢复尝试次数确实从零变化；部分写入三份结果只从 QA RPC 读取，截图中的单行命令卡被省略且原先不可展开。产品已把真实批量错误分行使宿主具备原生展开入口，**浏览器点击并核对完整清单/重拍截图**尚未验收。
 - **最终版本与 Desktop 表面**：上述结论只针对安装版 `dsh web` 上的当前 QA 分支；全量集成另有历史 Office 环境基线失败，须在最终 SHA 对照归因。Mac 停用/重启行为、维护面板自身警示与历史标签经独立第二轮审查 APPROVE（安装版双 Web 20/20，组件 47/47），但 Web 不等于 Electron Desktop 包装。本机安装版 Electron 0.2.0-rc.2 在选择 profile 前即取单实例锁且 Desktop Host 端口固定 19387，单设 DSH_HOME 无法安全并行启动第二 Desktop；用户选择保留 Desktop-host smoke 为**转稳定前硬门槛**，须待其安排现有应用的受控维护窗口，绝不擅动当前 GUI。
