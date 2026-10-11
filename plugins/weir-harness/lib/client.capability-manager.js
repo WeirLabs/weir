@@ -570,10 +570,11 @@ window.__ModuleLoader__.load({
 				return () => { alive = false; };
 			}, [props.sessionId]);
 			const toggle = (kind, name) => {
-				if (draft && commit?.phase !== "submitting") setDraft(model.draftToggle(draft, kind, name));
+				if (draft && commit?.phase !== "submitting") { setDraft(model.draftToggle(draft, kind, name)); setCommit(null); }
 			};
 			const applyDraft = () => {
-				if (!draft || !draft.dirty || typeof props.applySelection !== "function") return;
+				const check = model.skillDraftConflicts(draft, listing);
+				if (!draft || !draft.dirty || check.selected.length || check.unresolved.some(item => item.state === "ambiguous") || typeof props.applySelection !== "function") return;
 				const requestId = crypto.randomUUID();
 				setCommit({ phase: "submitting", requestId });
 				props.applySelection(props.sessionId, {
@@ -593,7 +594,7 @@ window.__ModuleLoader__.load({
 				}).catch(() => setCommit({ phase: "failed", error: "apply request failed", draftKept: true }));
 			};
 			const discardDraft = () => {
-				if (draft) setDraft({ ...draft, skills: [...draft.applied.skills], mcpServers: [...draft.applied.mcpServers], dirty: false });
+				if (draft) setDraft({ ...draft, skills: [...draft.applied.skills], mcpServers: [...draft.applied.mcpServers], unresolvedRefs: [], dirty: false });
 				setCommit(null);
 			};
 			// Load-into-draft staging (preset view): only the preset's resolved
@@ -674,7 +675,9 @@ window.__ModuleLoader__.load({
 						icon: "warn",
 						color: DANGER,
 						title: t("capability.error", "Capabilities unavailable for this session."),
-						description: t("capability.state.errorDesc", "The capability listing could not be loaded.")
+						description: (draft?.skills ?? []).some(entry => typeof entry === "string")
+							? t("capability.inventoryUnavailableName", "The listing is unavailable; legacy names remain unresolved in the draft. Retry later; no source was selected.")
+							: t("capability.state.errorDesc", "The capability listing could not be loaded.")
 					})
 				});
 			}
@@ -702,6 +705,21 @@ window.__ModuleLoader__.load({
 			const partition = model.partitionManagerListing(listing);
 			const skillRows = model.groupSkillRows(model.filterSkillRows(partition.skills, query));
 			const skillKeys = new Set((draft?.skills ?? []).map(model.skillEntryKeyOf));
+			const check = model.skillDraftConflicts(draft, listing);
+			const sourceLabels = model.skillSourceLabels(partition.skills);
+			const sourceOf = identity => (sourceLabels[model.skillIdentityKeyOf(identity)] ?? t("capability.sourceUnknown", "unknown source"))
+				.replace(" · source ", t("capability.sourceNumber", " · source "));
+			const selectedKeys = new Set(check.selected.flatMap(item => item.identities.map(model.skillEntryKeyOf)));
+			const ambiguous = check.unresolved.filter(item => item.state === "ambiguous");
+			const unknown = check.unresolved.filter(item => item.state === "unknown");
+			const replaceName = (name, identity) => { if (commit?.phase !== "submitting") { setDraft(model.resolveSkillName(draft, name, identity)); setCommit(null); } };
+			const warningText = [
+				...check.selected.map(item => t("capability.sameNameWarning", "{name}: only one source can be enabled in this session. Uncheck one: {sources}.")
+					.replace("{name}", item.name).replace("{sources}", item.identities.map(sourceOf).join(", "))),
+				...ambiguous.map(item => t("capability.unresolvedNameWarning", "{name}: legacy name has no chosen source. Choose an exact source or remove the name: {sources}.")
+					.replace("{name}", item.name).replace("{sources}", item.candidates.map(sourceOf).join(", "))),
+				...unknown.map(item => t("capability.unknownLegacyName", "{name}: no matching Skill in the current listing. Refresh the listing or remove this legacy name.").replace("{name}", item.name))
+			];
 			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
 			const selectionDisabled = draft === null || commit?.phase === "submitting";
 			const fieldError = (code) => code === "invalid"
@@ -759,6 +777,8 @@ window.__ModuleLoader__.load({
 			] }) : null;
 			const skillRow = (skill, index) => {
 				const selected = skillKeys.has(model.skillEntryKeyOf(skill.identity ?? skill.name));
+				const selectedConflict = selectedKeys.has(model.skillEntryKeyOf(skill.identity));
+				const source = skill.identity ? sourceOf(skill.identity) : skill.source;
 				const rest = selected ? tint(ACCENT, 8) : "transparent";
 				return react_jsx_runtime.jsxs("label", {
 					style: { ...S.row.base, background: rest },
@@ -770,14 +790,15 @@ window.__ModuleLoader__.load({
 							style: S.row.checkbox,
 							checked: selected,
 							disabled: selectionDisabled,
-							"aria-label": skill.name,
+							"aria-label": `${skill.name} — ${source}`,
+							"aria-invalid": selectedConflict || undefined,
 							onChange: () => toggle("skills", skill.identity ?? skill.name)
 						}),
 						react_jsx_runtime.jsxs("span", { style: S.row.text, children: [
 							react_jsx_runtime.jsxs("span", { style: S.row.nameLine, children: [
 								react_jsx_runtime.jsx("span", { style: S.row.name, title: skill.name, children: skill.name }),
-								react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.scope(skill.scopeKey) }, children: skill.source }),
-								skill.conflict ? react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.warn }, children: t("capability.conflict", "conflict") }) : null,
+								react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.scope(skill.scopeKey) }, children: source }),
+								selectedConflict || skill.conflict ? react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.warn }, children: t("capability.conflict", "conflict") }) : null,
 								skill.missing ? react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.danger }, title: skill.status, children: t("capability.missing", "missing") }) : null
 							] }),
 							skill.description ? react_jsx_runtime.jsx("span", { style: S.row.desc, title: skill.description, children: skill.description }) : null
@@ -824,11 +845,16 @@ window.__ModuleLoader__.load({
 					]
 				}, name);
 			};
+			const legacyActions = [...ambiguous, ...unknown].map(item => react_jsx_runtime.jsxs("div", { style: S.list.card, children: [
+				react_jsx_runtime.jsx("div", { style: S.form.title, children: t("capability.unresolvedNameTitle", "Choose a source for legacy name {name}").replace("{name}", item.name) }),
+				react_jsx_runtime.jsxs("div", { style: S.form.actions, children: [
+					...item.candidates.map(identity => react_jsx_runtime.jsx("button", { type: "button", style: S.form.ghost, ...ring, disabled: selectionDisabled, onClick: () => replaceName(item.name, identity), children: t("capability.replaceName", "Replace {name} with {source}").replace("{name}", item.name).replace("{source}", sourceOf(identity)) }, model.skillIdentityKeyOf(identity))),
+					react_jsx_runtime.jsx("button", { type: "button", style: S.form.ghost, ...ring, disabled: selectionDisabled, onClick: () => replaceName(item.name, null), children: t("capability.removeName", "Remove legacy name {name}").replace("{name}", item.name) })
+				] })
+			] }, item.name));
 			const body = tab === "skills"
-				? (skillRows.length === 0
-					? react_jsx_runtime.jsx(StatePanel, { icon: "search", title: t("capability.noSkills", "No skills match.") })
-					: react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
-						children: skillRows.map((group) => react_jsx_runtime.jsxs("div", {
+				? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
+						children: [...(skillRows.length === 0 ? [react_jsx_runtime.jsx(StatePanel, { icon: "search", title: t("capability.noSkills", "No skills match.") })] : skillRows.map((group) => react_jsx_runtime.jsxs("div", {
 							style: S.list.group,
 							children: [
 								react_jsx_runtime.jsxs("div", {
@@ -840,8 +866,8 @@ window.__ModuleLoader__.load({
 								}),
 								...group.rows.map(skillRow)
 							]
-						}, group.key))
-					}))
+						}, group.key))), ...legacyActions]
+					})
 				: tab === "mcp"
 					? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
 						children: [
@@ -908,7 +934,7 @@ window.__ModuleLoader__.load({
 					diff.mcpRemoved > 0 ? { added: false, text: t("capability.diff.removeMcp", "−{n} MCP").replace("{n}", String(diff.mcpRemoved)) } : null
 				].filter(Boolean)
 				: null;
-			const applyDisabled = !draft || !draft.dirty || commit?.phase === "submitting";
+			const applyDisabled = !draft || !draft.dirty || commit?.phase === "submitting" || check.selected.length > 0 || ambiguous.length > 0;
 			// Session state summary (sidebar header only): the APPLIED counts,
 			// same template the composer Badge renders.
 			const appliedSummary = draft !== null
@@ -951,6 +977,7 @@ window.__ModuleLoader__.load({
 					: [addBlock, body]),
 				draft !== null ? react_jsx_runtime.jsxs("div", { style: S.footer.bar, children: [
 					diffParts ? react_jsx_runtime.jsx("span", { style: S.footer.diff, "data-weir-capability-diff": "", children: diffParts.map((part, index) => react_jsx_runtime.jsx("span", { style: S.footer.diffBadge(part.added), children: part.text }, index)) }) : null,
+					warningText.length ? react_jsx_runtime.jsx("div", { role: "alert", "aria-live": "assertive", style: { width: "100%", color: WARN_TEXT, lineHeight: "16px" }, children: warningText.join(" ") }) : null,
 					react_jsx_runtime.jsx("button", {
 						type: "button",
 						style: applyDisabled ? { ...S.footer.apply, ...S.footer.disabled } : S.footer.apply,
@@ -965,7 +992,9 @@ window.__ModuleLoader__.load({
 					commit?.phase === "applied" && Array.isArray(commit.skipped) && commit.skipped.length > 0
 						? react_jsx_runtime.jsx("span", { style: S.footer.chip(WARN), title: commit.skipped.map(entry => `${entry.name} — ${entry.reason}`).join("\n"), children: t("capability.appliedSkipped", "skipped {n} (not applicable here)").replace("{n}", String(commit.skipped.length)) })
 						: null,
-					commit?.phase === "failed" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(DANGER), title: commit.error, children: t("capability.failed", "Failed — draft kept") }) : null,
+					commit?.phase === "failed" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(DANGER), role: "alert", children: t("capability.failed", "Failed — draft kept") }) : null,
+					commit?.phase === "same-name-conflict" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(DANGER), role: "alert", children: t("capability.serverSameName", "Server rejected same-name Skill {names}. Uncheck one source, or refresh the listing; draft kept.").replace("{names}", commit.names.join(", ") || t("capability.unknownName", "unknown name")) }) : null,
+					commit?.phase === "missing" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(WARN), role: "alert", children: t("capability.serverMissing", "Server could not resolve {names}. Refresh the listing and choose an exact source or remove the name; draft kept.").replace("{names}", commit.names.join(", ") || t("capability.unknownName", "unknown name")) }) : null,
 					commit?.phase === "revision-conflict" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(WARN), children: t("capability.conflictState", "Changed elsewhere — review current state") }) : null,
 					commit?.phase === "install-or-configure" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(ACCENT), title: (commit.missing ?? []).join(", "), children: t("capability.missingAction", "Missing items need install/configure") }) : null,
 					commit?.phase === "indeterminate" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(MUTED), children: t("capability.pending", "Result pending — query the receipt") }) : null

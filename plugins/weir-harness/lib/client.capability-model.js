@@ -159,12 +159,57 @@ window.__ModuleLoader__.load({
 			next.dirty = !same(next.skills.map(skillEntryKeyOf), draft.applied.skills.map(skillEntryKeyOf)) || !same(next.mcpServers, draft.applied.mcpServers);
 			return next;
 		}
+		/** Preflight the complete draft against the unfiltered inventory. Strings are not identities. */
+		function skillDraftConflicts(draft, listing) {
+			const byName = new Map(), names = new Set();
+			for (const entry of Array.isArray(draft?.skills) ? draft.skills : []) {
+				if (typeof entry === "string") { if (entry) names.add(entry); continue; }
+				const key = skillIdentityKeyOf(entry);
+				if (key === null) continue;
+				if (!byName.has(entry.name)) byName.set(entry.name, new Map());
+				byName.get(entry.name).set(key, entry);
+			}
+			const selected = [...byName].filter(([, group]) => group.size > 1).map(([name, group]) => ({ name, identities: [...group.values()] }));
+			const rows = Array.isArray(listing?.skills) ? listing.skills : null;
+			const unresolved = [...names].map(name => {
+				if (!rows) return { name, state: "unavailable", candidates: [] };
+				const candidates = [...new Map(rows.filter(row => row?.status === "parsed" && row.name === name && skillIdentityKeyOf(row.identity) !== null)
+					.map(row => [skillIdentityKeyOf(row.identity), row.identity])).values()];
+				return { name, state: candidates.length > 1 ? "ambiguous" : candidates.length === 1 ? "unique" : "unknown", candidates };
+			});
+			return { selected, unresolved };
+		}
 
+		/** Explicit legacy-name recovery never consumes any other entry or CAS metadata. */
+		function resolveSkillName(draft, name, identity) {
+			if (!draft || typeof name !== "string" || !name || !draft.skills?.includes(name) || (identity !== null && (skillIdentityKeyOf(identity) === null || identity.name !== name))) return draft;
+			const entries = draft.skills.filter(entry => entry !== name);
+			if (identity && !entries.some(entry => skillEntryKeyOf(entry) === skillEntryKeyOf(identity))) entries.push(identity);
+			const next = { ...draft, skills: sortSkills(entries) };
+			next.dirty = draftDiffOf(next).any;
+			return next;
+		}
+
+		/** Scoped ordinal distinguishes same-scope roots without displaying paths or IDs. */
+		function skillSourceLabels(rows) {
+			const labels = new Map(), totals = new Map();
+			for (const row of Array.isArray(rows) ? rows : []) {
+				const key = skillIdentityKeyOf(row.identity);
+				if (key === null || labels.has(key)) continue;
+				const scope = SOURCE_LABELS[row.scopeKey ?? row.scope] ?? row.scopeKey ?? row.scope ?? "unknown";
+				const group = `${row.name}:${scope}`;
+				const number = (totals.get(group) ?? 0) + 1;
+				totals.set(group, number);
+				labels.set(key, { scope, group, number });
+			}
+			for (const [key, item] of labels) labels.set(key, totals.get(item.group) > 1 ? `${item.scope} · source ${item.number}` : item.scope);
+			return Object.fromEntries(labels);
+		}
 		/**
 		 * Map the engine response onto the commit state machine (12.3): applied
 		 * refreshes; revision-conflict shows the current state for re-pick;
-		 * indeterminate stays queryable; missing names surface as
-		 * install/configure; anything else keeps the draft.
+		 * indeterminate stays queryable; structured rejections preserve names;
+		 * anything else keeps the draft.
 		 */
 		function commitOutcomeOf(response) {
 			if (!response || typeof response !== "object") return { phase: "failed", error: "no response", draftKept: true };
@@ -177,7 +222,8 @@ window.__ModuleLoader__.load({
 			if (response.status === "applied") return { phase: "applied", revision: response.revision ?? null, skipped };
 			if (response.status === "revision-conflict") return { phase: "revision-conflict", current: response.current ?? null, draftKept: true };
 			if (response.status === "indeterminate") return { phase: "indeterminate", requestId: response.receipt?.requestId ?? null, queryable: true };
-			if (response.status === "missing") return { phase: "install-or-configure", missing: Array.isArray(response.missing) ? response.missing : [] };
+			if (response.status === "missing") return { phase: "missing", names: Array.isArray(response.missing) ? response.missing.filter(name => typeof name === "string") : [], draftKept: true };
+			if (response.status === "rejected" && response.reason === "same-name-conflict") return { phase: "same-name-conflict", names: Array.isArray(response.conflicts) ? response.conflicts.map(item => item?.name).filter(name => typeof name === "string") : [], draftKept: true };
 			return { phase: "failed", error: String(response.reason ?? response.status ?? "unknown"), draftKept: true };
 		}
 
@@ -510,6 +556,9 @@ window.__ModuleLoader__.load({
 		exports.draftFromReceipt = draftFromReceipt;
 		exports.draftToggle = draftToggle;
 		exports.commitOutcomeOf = commitOutcomeOf;
+		exports.skillDraftConflicts = skillDraftConflicts;
+		exports.resolveSkillName = resolveSkillName;
+		exports.skillSourceLabels = skillSourceLabels;
 		exports.convergenceHintOf = convergenceHintOf;
 		exports.groupSkillRows = groupSkillRows;
 		exports.filterSkillRows = filterSkillRows;

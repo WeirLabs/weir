@@ -19,8 +19,9 @@ function loadModel() {
 function makeReactStub(counts) {
   const reactState = []
   let hookCursor = 0
+  let effectRan = false
   return {
-    reset() { reactState.length = 0 },
+    reset() { reactState.length = 0; effectRan = false },
     begin() { hookCursor = 0 },
     useState(initial) {
       counts.useState += 1
@@ -28,7 +29,7 @@ function makeReactStub(counts) {
       if (!(at in reactState)) reactState[at] = [initial, (next) => { reactState[at][0] = next }]
       return reactState[at]
     },
-    useEffect(fn) { counts.useEffect += 1; fn(); return undefined },
+    useEffect(fn) { counts.useEffect += 1; if (!effectRan) { effectRan = true; fn() } return undefined },
     useCallback(fn) { return fn },
     useRef(initial) {
       const at = hookCursor++
@@ -165,7 +166,7 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
 
   // Skill rows keep the real checkbox and gain the scope-colored source tag
   // (user → success family hue) plus the painted hover/focus handlers.
-  const skillCheckbox = findAll(loaded, (node) => node.__type === 'input' && node.type === 'checkbox' && node['aria-label'] === 'a')[0]
+  const skillCheckbox = findAll(loaded, (node) => node.__type === 'input' && node.type === 'checkbox' && node['aria-label'] === 'a — user')[0]
   expect(skillCheckbox).toBeTruthy()
   expect(skillCheckbox.checked).toBe(true)
   const sourceTag = findAll(loaded, (node) => node.__type === 'span' && node.children === 'user' && node.style && typeof node.style.border === 'string' && node.style.border.includes('--dsw-alias-state-success-primary'))
@@ -211,4 +212,109 @@ test('same-named rows check independently and Apply carries the exact identity',
   expect(findAll(edited, node => node.children === '+1 skills')).toHaveLength(1)
   findAll(edited, node => node.__type === 'button' && node.children === 'Apply')[0].onClick()
   expect(applied.skills).toEqual([a])
+})
+
+test('both manager shells block full-draft same-name conflicts despite search and preserve applied count', async () => {
+  for (const shell of ['sidebar', 'popover']) {
+    const react = makeReactStub({ useState: 0, useEffect: 0 })
+    const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+    const model = loadModel()
+    const a = { scope: 'custom', root: '/private/a', name: 'same', opaqueId: 'secret-a' }
+    const b = { scope: 'custom', root: '/private/b', name: 'same', opaqueId: 'secret-b' }
+    let calls = 0
+    const props = { shell, sessionId: 's', model, fetchConditions: async () => ({ conditions: [] }),
+      fetchListing: async () => ({ skills: [a, b].map(identity => ({ name: 'same', scope: 'custom', status: 'parsed', identity, description: identity === a ? 'one' : 'two' })), mcpServers: [] }),
+      fetchReceipt: async () => ({ revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+      applySelection: async () => { calls++; return { status: 'applied' } } }
+    const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+    render(); await new Promise(resolve => setTimeout(resolve, 0))
+    let tree = render()
+    let boxes = findAll(tree, node => node.type === 'checkbox')
+    expect(boxes.map(box => box['aria-label'])).toEqual(['same — custom · source 1', 'same — custom · source 2'])
+    boxes[0].onChange(); tree = render()
+    findAll(tree, node => node.type === 'checkbox')[1].onChange(); tree = render()
+    expect(findAll(tree, node => node.type === 'checkbox').map(box => box.checked)).toEqual([true, true])
+    expect(findAll(tree, node => node.type === 'checkbox').every(box => box['aria-invalid'] === true)).toBe(true)
+    const apply = findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0]
+    expect(apply.disabled).toBe(true); apply.onClick(); expect(calls).toBe(0)
+    const warning = findAll(tree, node => node.role === 'alert')[0]
+    expect(warning['aria-live']).toBe('assertive')
+    expect(warning.children).toContain('custom · source 1, custom · source 2')
+    expect(warning.children.includes('secret')).toBe(false)
+    expect(findAll(tree, node => node.__type === 'button' && node.children === 'Discard')).toHaveLength(1)
+    expect(findAll(tree, node => node.children === '0 skills · 0 MCP').length).toBe(shell === 'sidebar' ? 1 : 0)
+    findAll(tree, node => node.__type === 'input' && node.placeholder === 'Search')[0].onChange({ target: { value: 'one' } })
+    tree = render(); expect(findAll(tree, node => node.type === 'checkbox')).toHaveLength(1)
+    expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(true)
+    findAll(tree, node => node.type === 'checkbox')[0].onChange(); tree = render()
+    expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(false)
+  }
+})
+
+test('legacy name needs an explicit exact-source action; checkbox does not consume it', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const a = { scope: 'user', root: '/a', name: 'same' }, b = { scope: 'project', root: '/b', name: 'same' }
+  const props = { sessionId: 's', model, fetchConditions: async () => ({ conditions: [] }),
+    fetchListing: async () => ({ skills: [a, b].map(identity => ({ name: 'same', scope: identity.scope, status: 'parsed', identity })), mcpServers: [{ identity: 'docs', state: 'mounted' }] }),
+    fetchReceipt: async () => ({ revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+    applySelection: async () => ({ status: 'missing', missing: ['same'] }) }
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await new Promise(resolve => setTimeout(resolve, 0))
+  let tree = render()
+  tree.children[0].children[2].onClick() // Presets tab, stage the legacy document via child props
+  tree = render()
+  const preset = findAll(tree, node => typeof node.__type === 'function' && node.stagePreset)[0]
+  preset.stagePreset({ selection: { skills: ['same'], mcpServers: ['docs'] } })
+  tree = render()
+  expect(findAll(tree, node => node.role === 'alert')[0].children).toContain('legacy name')
+  tree.children[0].children[0].onClick(); tree = render()
+  expect(findAll(tree, node => node.type === 'checkbox').map(box => box.checked)).toEqual([false, false])
+  findAll(tree, node => node.type === 'checkbox')[0].onChange(); tree = render()
+  expect(findAll(tree, node => node.role === 'alert')[0].children).toContain('legacy name')
+  const buttons = findAll(tree, node => node.__type === 'button' && String(node.children).startsWith('Replace same'))
+  expect(buttons).toHaveLength(2)
+  buttons[1].onClick(); tree = render()
+  expect(findAll(tree, node => node.role === 'alert')[0].children).toContain('only one source')
+  expect(findAll(tree, node => node.type === 'checkbox').map(box => box.checked)).toEqual([true, true])
+  expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(true)
+  findAll(tree, node => node.type === 'checkbox')[0].onChange(); tree = render()
+  expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(false)
+  tree.children[0].children[2].onClick(); tree = render()
+  findAll(tree, node => typeof node.__type === 'function' && node.stagePreset)[0].stagePreset({ selection: { skills: ['same'], mcpServers: ['docs'] } })
+  tree.children[0].children[0].onClick(); tree = render()
+  findAll(tree, node => node.__type === 'button' && node.children === 'Remove legacy name same')[0].onClick()
+  tree = render()
+  expect(findAll(tree, node => node.role === 'alert')).toHaveLength(0)
+  expect(findAll(tree, node => node.type === 'checkbox').map(box => box.checked)).toEqual([false, false])
+  tree.children[0].children[1].onClick(); tree = render()
+  expect(findAll(tree, node => node.type === 'checkbox')[0].checked).toBe(true)
+})
+
+test('stale server conflict and missing replies show named accessible guidance while retaining the draft', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const a = { scope: 'user', root: '/a', name: 'alpha' }
+  let response = { status: 'rejected', reason: 'same-name-conflict', conflicts: [{ name: 'alpha', root: '/private' }] }
+  const props = { sessionId: 's', model, fetchConditions: async () => ({ conditions: [] }),
+    fetchListing: async () => ({ skills: [{ name: 'alpha', scope: 'user', status: 'parsed', identity: a }], mcpServers: [] }),
+    fetchReceipt: async () => ({ revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+    applySelection: async () => response }
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await new Promise(resolve => setTimeout(resolve, 0))
+  findAll(render(), node => node.type === 'checkbox')[0].onChange()
+  findAll(render(), node => node.__type === 'button' && node.children === 'Apply')[0].onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  let tree = render()
+  expect(findAll(tree, node => node.role === 'alert')[0].children).toContain('alpha')
+  expect(findAll(tree, node => node.role === 'alert')[0].children.includes('/private')).toBe(false)
+  expect(findAll(tree, node => node.type === 'checkbox')[0].checked).toBe(true)
+  response = { status: 'missing', missing: ['alpha'] }
+  findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  tree = render()
+  expect(findAll(tree, node => node.role === 'alert')[0].children).toContain('could not resolve alpha')
+  expect(findAll(tree, node => node.type === 'checkbox')[0].checked).toBe(true)
 })
