@@ -22,7 +22,8 @@ Lanes are isolated git worktrees the host owns (state, checks, merge). You suppl
 - worktree_land({ lane }) asks the user to approve the merge. Only the user approves; never claim a lane is merged before the result says so.
 - worktree_watch({ lane, states }) subscribes YOU to conclusion states of any lane in this repository — including lanes another session opened. You get exactly one notification when the lane reaches a watched state (or when the watch times out); do not poll worktree_check while a watch is pending.
 - Every worktree result and notice carries "next". Do exactly that next step; when it is waitFor, end your turn.
-- Cleanup and abandoning are the user's decision (worktree_cleanup / worktree_abandon ask them).`
+- Cleanup and abandoning are the user's decision (worktree_cleanup / worktree_abandon ask them).
+- Worktree removal is never forced silently: when a removal is blocked by uncommitted content, only the user can force it — ask them to run /worktree clean <lane> <mode> --force.`
 
 /** @param {{ tool?: string, args?: object, waitFor?: string, hint?: string } | null} next */
 export function renderNext(next) {

@@ -5,7 +5,7 @@ import { describe, expect, it } from './helpers.js'
 import { decideLaneCall, decideModeCall, isLaneQuery, laneGitViolation, maskLaneQueries, tokenize } from '../src/worktree/guard.js'
 import { APPROVE_MODES, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView } from '../src/worktree/projection.js'
 import { createWorktreeTools, renderResult } from '../src/worktree/tools.js'
-import { createWorktreeCommand } from '../src/worktree/command.js'
+import { COMMAND_USAGE, createWorktreeCommand } from '../src/worktree/command.js'
 import { WorktreeError } from '../src/worktree/errors.js'
 import { LANES_CONTEXT_NAME, LANES_SECTION_NAME, LANES_SECTION_TEXT, LANES_VARIABLE_NAME, renderBoard, renderChildContract, renderNotice, renderWatchHit } from '../src/worktree/prompts.js'
 import { apply, worktreeSettings } from '../src/worktree/index.js'
@@ -286,6 +286,56 @@ describe('worktree tools and command', () => {
     expect(switched.text).toContain('Lanes work without this mode; it is optional discipline.')
     const refusing = createWorktreeCommand(service, { modeAvailable: async () => 'not inside a git repository' })
     expect((await refusing.handler({ agent, rawInput: 'on' })).text).toContain('not inside a git repository')
+  })
+
+  it('the command maps a trailing --force on clean and abandon, and rejects unknown extras', async () => {
+    const calls = []
+    const service = fakeService({
+      cleanup: async (_session, id, mode, options) => { calls.push(['clean', id, mode, options]); return { ...lane, state: 'cleaned' } },
+      abandon: async (_agent, id, options) => { calls.push(['abandon', id, options]); return { ...lane, state: 'abandoned' } },
+    })
+    const command = createWorktreeCommand(service, { modeAvailable: async () => null })
+    const agent = { session: { id: 's', header: { cwd: '/r' } } }
+    // without the flag: never forced
+    expect((await command.handler({ agent, rawInput: 'clean a-001 all' })).kind).toBe('success')
+    expect(calls.at(-1)).toEqual(['clean', 'a-001', 'all', { by: 'user', force: false }])
+    // the typed override, position-independent among the trailing words
+    expect((await command.handler({ agent, rawInput: 'clean a-001 worktree --force' })).kind).toBe('success')
+    expect(calls.at(-1)).toEqual(['clean', 'a-001', 'worktree', { by: 'user', force: true }])
+    expect((await command.handler({ agent, rawInput: 'clean a-001 --force all' })).kind).toBe('success')
+    expect(calls.at(-1)).toEqual(['clean', 'a-001', 'all', { by: 'user', force: true }])
+    expect((await command.handler({ agent, rawInput: 'abandon a-001 --force' })).kind).toBe('success')
+    expect(calls.at(-1)).toEqual(['abandon', 'a-001', { mode: undefined, force: true }])
+    expect((await command.handler({ agent, rawInput: 'abandon a-001 --force all' })).kind).toBe('success')
+    expect(calls.at(-1)).toEqual(['abandon', 'a-001', { mode: 'all', force: true }])
+    // unknown extras and a missing mode still fall to Usage
+    expect((await command.handler({ agent, rawInput: 'clean a-001 all bogus' })).text).toContain('Usage: /worktree clean <lane> keep|worktree|all [--force]')
+    expect((await command.handler({ agent, rawInput: 'clean a-001 --force' })).text).toContain('Usage: /worktree clean')
+    expect((await command.handler({ agent, rawInput: 'clean a-001 --force --force' })).text).toContain('Usage: /worktree clean')
+    expect((await command.handler({ agent, rawInput: 'abandon a-001 bogus --force' })).text).toContain('Usage: /worktree abandon <lane> [keep|worktree|all] [--force]')
+    // the usage string names the override on both verbs
+    expect(COMMAND_USAGE).toContain('clean <lane> worktree|all|keep [--force]')
+    expect(COMMAND_USAGE).toContain('abandon <lane> [keep|worktree|all] [--force]')
+  })
+
+  it('the command renders a blocked removal concisely with its next hint (no raw git output)', async () => {
+    const service = fakeService({
+      cleanup: async () => {
+        throw new WorktreeError('REMOVE_BLOCKED', 'removal blocked: the worktree contains modified or untracked files (0 modified, 1 untracked)', {
+          lane: 'a-001',
+          next: { waitFor: 'user', hint: 'the user retries with the explicit force override: /worktree clean a-001 worktree --force' },
+        })
+      },
+    })
+    const command = createWorktreeCommand(service, { modeAvailable: async () => null })
+    const agent = { session: { id: 's', header: { cwd: '/r' } } }
+    const out = await command.handler({ agent, rawInput: 'clean a-001 worktree' })
+    expect(out.kind).toBe('error')
+    expect(out.text).toContain('REMOVE_BLOCKED')
+    expect(out.text).toContain('modified or untracked')
+    expect(out.text).toContain('next: wait for user')
+    expect(out.text).toContain('/worktree clean a-001 worktree --force')
+    expect(out.text).not.toContain('fatal:')
   })
 
   it('the command skips the cleanup card when land() already cleaned up (auto path)', async () => {

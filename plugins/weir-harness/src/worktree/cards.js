@@ -21,6 +21,13 @@ export function displayPath(path, root) {
   const base = root.replace(/\\/g, '/').replace(/\/+$/, '')
   return normalized.startsWith(`${base}/`) ? normalized.slice(base.length + 1) : normalized
 }
+/**
+ * Does a dirtyCounts probe result disclose uncommitted content on a card?
+ * @param {{ modified: number, untracked: number } | null | undefined} dirty
+ */
+export function hasDirtyContent(dirty) {
+  return dirty != null && (dirty.modified > 0 || dirty.untracked > 0)
+}
 
 const COPY = {
   en: {
@@ -38,6 +45,12 @@ const COPY = {
     removeWorktree: 'Remove worktree',
     removeAll: 'Remove worktree and branch',
     cleanupDescriptions: { keep: 'Leave the worktree and branch in place', worktree: 'Remove the worktree, keep the branch', all: 'Remove the worktree and delete the merged branch' },
+    // Dirty variants of the destructive descriptions: used only while the
+    // card discloses the dirty counts, they name the permanent destruction.
+    cleanupDescriptionsDirty: {
+      worktree: 'Remove the worktree (its uncommitted content is destroyed), keep the branch',
+      all: 'Remove the worktree (its uncommitted content is destroyed) and delete the merged branch',
+    },
     abandonHeader: 'Abandon lane',
     abandonQuestion: (/** @type {string} */ title) => `Abandon lane "${title}"?`,
     cancel: 'Cancel',
@@ -46,6 +59,10 @@ const COPY = {
       worktree: 'Abandon and remove the worktree, keep the branch',
       all: (/** @type {number} */ unmerged) => (unmerged > 0 ? `Abandon and delete everything, including ${unmerged} unmerged commit(s)` : 'Abandon and delete the worktree and branch'),
       cancel: 'Keep the lane active',
+    },
+    abandonDescriptionsDirty: {
+      worktree: 'Abandon and remove the worktree (its uncommitted content is destroyed), keep the branch',
+      all: (/** @type {number} */ unmerged) => (unmerged > 0 ? `Abandon and delete everything, including ${unmerged} unmerged commit(s) and the worktree's uncommitted content` : 'Abandon and delete the worktree (its uncommitted content destroyed) and the branch'),
     },
     lane: 'Lane', branch: 'Branch', changes: 'Changes', files: 'file(s)', precheck: 'Conflict precheck', clean: 'clean',
     verification: 'Verification', verificationOff: 'Verification: not enabled for this repository', commits: 'Commits',
@@ -60,6 +77,12 @@ const COPY = {
       if (residue.operations > 0) parts.push(`${residue.operations} unresolved Edit Lock operation(s)`)
       if (residue.locks > 0) parts.push(`${residue.locks} Edit Lock lock(s)`)
       return `⚠️ **Edit Lock residue**: this lane's session left ${parts.join(' and ')} in the Edit Lock authority. Locks are reclaimed automatically by the stale-lock sweep; unresolved publications settle via crash self-heal (dead process) or one-click recovery in the Edit Lock maintenance panel (Settings → Editing). This is a warning only — cleanup still proceeds.`
+    },
+    dirtyWarning: (/** @type {{ modified: number, untracked: number }} */ dirty) => {
+      const parts = []
+      if (dirty.modified > 0) parts.push(`${dirty.modified} modified`)
+      if (dirty.untracked > 0) parts.push(`${dirty.untracked} untracked`)
+      return `⚠️ **Uncommitted content**: this worktree contains ${parts.join(' and ')} entries; the destructive choices below delete it permanently.`
     },
     forceReclaim: 'Force-reclaim the binding',
     forceReclaimDescription: 'Settle the disputed worker binding on your explicit decision (audited as forced), then choose what to remove',
@@ -88,6 +111,11 @@ const COPY = {
     removeWorktree: '清理 worktree',
     removeAll: '清理 worktree 和分支',
     cleanupDescriptions: { keep: '保留 worktree 与分支', worktree: '删除 worktree，保留分支', all: '删除 worktree 并删除已合并的分支' },
+    // 脏内容下的破坏选项描述：只在卡片披露脏计数时选用，明确销毁语义。
+    cleanupDescriptionsDirty: {
+      worktree: '删除 worktree（未提交内容一并销毁），保留分支',
+      all: '删除 worktree（未提交内容一并销毁）并删除已合并的分支',
+    },
     abandonHeader: '放弃车道',
     abandonQuestion: (/** @type {string} */ title) => `放弃车道「${title}」？`,
     cancel: '取消',
@@ -96,6 +124,10 @@ const COPY = {
       worktree: '放弃并删除 worktree，保留分支',
       all: (/** @type {number} */ unmerged) => (unmerged > 0 ? `放弃并全部删除，包括 ${unmerged} 个未合并提交` : '放弃并删除 worktree 与分支'),
       cancel: '保持车道活跃',
+    },
+    abandonDescriptionsDirty: {
+      worktree: '放弃并删除 worktree（未提交内容一并销毁），保留分支',
+      all: (/** @type {number} */ unmerged) => (unmerged > 0 ? `放弃并全部删除，包括 ${unmerged} 个未合并提交以及 worktree 中的未提交内容` : '放弃并删除 worktree（未提交内容一并销毁）与分支'),
     },
     lane: '车道', branch: '分支', changes: '改动', files: '个文件', precheck: '冲突预检', clean: '无冲突',
     verification: '验证', verificationOff: '验证：本仓库未启用', commits: '提交',
@@ -110,6 +142,12 @@ const COPY = {
       if (residue.operations > 0) parts.push(`${residue.operations} 个未决 Edit Lock 操作`)
       if (residue.locks > 0) parts.push(`${residue.locks} 把 Edit Lock 锁`)
       return `⚠️ **Edit Lock 残留**：该车道的会话在 Edit Lock 权威中留有 ${parts.join(' 和 ')}。锁会由 stale-lock 自动清扫回收；未决发布会由崩溃自愈（进程死亡时）或 Edit Lock 维护面板（设置 → 编辑）的一键恢复结清。此仅为警示——清理仍会进行。`
+    },
+    dirtyWarning: (/** @type {{ modified: number, untracked: number }} */ dirty) => {
+      const parts = []
+      if (dirty.modified > 0) parts.push(`${dirty.modified} 个已修改`)
+      if (dirty.untracked > 0) parts.push(`${dirty.untracked} 个未跟踪`)
+      return `⚠️ **未提交内容**：该 worktree 含有 ${parts.join('、')}条目，下方的破坏选项将**永久删除**这些内容。`
     },
     forceReclaim: '强制回收绑定',
     forceReclaimDescription: '按你的明确决定结清存在争议的车道绑定（审计记录为强制），随后选择清理方式',
@@ -154,13 +192,17 @@ export function cardCopy(locale) {
         `*${copy.fullDiff}*`,
       ].join('\n')
     },
-    /** @param {any} lane @param {{ files: number, added: number, removed: number }} stat @param {string} [root] @param {{ operations: number, locks: number } | null} [residue] */
-    cleanupDetail(lane, stat, root, residue = null) {
+    /**
+     * @param {any} lane @param {{ files: number, added: number, removed: number }} stat @param {string} [root] @param {{ operations: number, locks: number } | null} [residue]
+     * @param {{ modified: number, untracked: number } | null} [dirty] - dirty-content probe; disclosed as its own warning paragraph when non-zero
+     */
+    cleanupDetail(lane, stat, root, residue = null, dirty = null) {
       return [
         `- ${copy.merged(lane.branch, lane.base.branch)} (${stat.files} ${copy.files}, +${stat.added} −${stat.removed}).`,
         `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
         `- ${copy.scratch}`,
         ...(residue ? ['', copy.residueWarning(residue)] : []),
+        ...(hasDirtyContent(dirty) ? ['', copy.dirtyWarning(/** @type {any} */ (dirty))] : []),
       ].join('\n')
     },
     /**
@@ -176,8 +218,9 @@ export function cardCopy(locale) {
     /**
      * @param {any} lane @param {number} unmerged @param {string} [root] @param {{ operations: number, locks: number } | null} [residue]
      * @param {{ child: string, forced: boolean } | null} [reclaimed] - a binding this abandon already settled (design D1/D4), disclosed on the card
+     * @param {{ modified: number, untracked: number } | null} [dirty] - dirty-content probe; disclosed as its own warning paragraph when non-zero
      */
-    abandonDetail(lane, unmerged, root, residue = null, reclaimed = null) {
+    abandonDetail(lane, unmerged, root, residue = null, reclaimed = null, dirty = null) {
       return [
         `- ${copy.abandonLine(lane.id, lane.title, lane.state)}`,
         `- ${copy.worktree}: \`${displayPath(lane.path, root)}\``,
@@ -186,6 +229,7 @@ export function cardCopy(locale) {
         unmerged > 0 ? copy.unmergedLost(unmerged, lane.branch) : copy.noUnmerged(lane.branch),
         ...(reclaimed ? ['', copy.reconciledNote(reclaimed.child, reclaimed.forced)] : []),
         ...(residue ? ['', copy.residueWarning(residue)] : []),
+        ...(hasDirtyContent(dirty) ? ['', copy.dirtyWarning(/** @type {any} */ (dirty))] : []),
       ].join('\n')
     },
     /**

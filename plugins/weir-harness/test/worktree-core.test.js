@@ -352,16 +352,23 @@ describe('worktree local exclude (real git)', () => {
 })
 
 describe('worktree git wrapper', () => {
-  it('never forces worktree removal and only uses -D on an explicit force', async () => {
+  it('never forces worktree removal silently: --force only on an explicit force: true (对拍 argv)', async () => {
     const calls = []
     const git = createGit(async (argv) => {
       calls.push(argv.join(' '))
       return { code: 0, stdout: '', stderr: '' }
     })
     await git.worktreeRemove('/r', '/r/x')
+    await git.worktreeRemove('/r', '/r/y', {})
+    await git.worktreeRemove('/r', '/r/z', { force: false })
+    await git.worktreeRemove('/r', '/r/w', { force: true })
     await git.branchDelete('/r', 'weir/x')
     await git.branchDelete('/r', 'weir/y', { force: true })
-    expect(calls.some((call) => call.includes('--force'))).toBe(false)
+    expect(calls).toContain('git worktree remove /r/x')
+    expect(calls).toContain('git worktree remove /r/y')
+    expect(calls).toContain('git worktree remove /r/z')
+    expect(calls).toContain('git worktree remove --force /r/w')
+    expect(calls.filter((call) => call.includes('--force'))).toEqual(['git worktree remove --force /r/w'])
     expect(calls).toContain('git branch -d weir/x')
     expect(calls).toContain('git branch -D weir/y')
   })
@@ -389,6 +396,40 @@ describe('worktree git wrapper', () => {
       () => expect('resolved').toBe('rejected'),
       (error) => expect(error.code).toBe('REMOVE_BLOCKED'),
     )
+  })
+
+  it('dirtyCounts counts modified vs untracked entries and never counts ignored files (real git)', async () => {
+    const { repo, cleanup } = makeRepo()
+    try {
+      const git = createGit(nodeGitRun)
+      expect(await git.dirtyCounts(repo)).toEqual({ modified: 0, untracked: 0 })
+      writeFileSync(join(repo, 'a.txt'), 'changed\n') // tracked, modified
+      writeFileSync(join(repo, 'new.txt'), 'new\n') // untracked
+      // ignored via .git/info/exclude: never listed by the probe, never counted
+      writeFileSync(join(repo, '.git', 'info', 'exclude'), 'ignored.txt\n')
+      writeFileSync(join(repo, 'ignored.txt'), 'ignored\n')
+      expect(await git.dirtyCounts(repo)).toEqual({ modified: 1, untracked: 1 })
+      sh(repo, 'add', 'new.txt')
+      expect(await git.dirtyCounts(repo)).toEqual({ modified: 2, untracked: 0 })
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('dirtyCounts never throws: missing directories, non-zero exits and malformed output all read as clean', async () => {
+    const failing = createGit(async () => ({ code: 1, stdout: '', stderr: 'not a git repo' }))
+    expect(await failing.dirtyCounts('/r/x')).toEqual({ modified: 0, untracked: 0 })
+    const malformed = createGit(async () => ({ code: 0, stdout: 'garbage line\n', stderr: '' }))
+    expect(await malformed.dirtyCounts('/r/x')).toEqual({ modified: 0, untracked: 0 })
+    const counts = createGit(async () => ({ code: 0, stdout: ' M a.txt\n?? b.txt\n', stderr: '' }))
+    expect(await counts.dirtyCounts('/r/x')).toEqual({ modified: 1, untracked: 1 })
+    // a real missing directory: the runner itself fails, the probe stays silent
+    const { repo, cleanup } = makeRepo()
+    try {
+      expect(await createGit(nodeGitRun).dirtyCounts(join(repo, 'no-such-dir'))).toEqual({ modified: 0, untracked: 0 })
+    } finally {
+      cleanup()
+    }
   })
 
   it('drives a real repository: add, inspect, precheck, merge, remove', async () => {

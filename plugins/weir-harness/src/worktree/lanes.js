@@ -16,7 +16,7 @@ import { reconcile } from './reconcile.js'
 import { createLedger } from './ledger.js'
 import { ensureExclude, hasExclude } from './exclude.js'
 import { renderBoard, renderChildContract, renderNotice, renderWatchExpired, renderWatchHit } from './prompts.js'
-import { cardCopy, cardLocale } from './cards.js'
+import { cardCopy, cardLocale, hasDirtyContent } from './cards.js'
 import { authorityResidue } from './authority.js'
 
 export const CONFIG_FILE = '.config.json'
@@ -991,16 +991,18 @@ export function createLaneService(deps) {
     }
     // Auto cleanup after the merge (design D3): auto-keep → mode worktree,
     // auto-clean → mode all. The existing cleanup() body runs unchanged —
-    // scratch sync first, never --force, the Edit Lock residue probe feeding
-    // the summary. A blocked removal stays `landed` and the blocking path is
-    // reported instead of a false success (the user can clean up later).
+    // scratch sync first, never --force on an auto path, the Edit Lock residue
+    // probe feeding the summary. A blocked removal stays `landed` and is
+    // reported concisely with the typed --force retry instead of a false
+    // success (the user can clean up later).
     const cleanupMode = approveMode === 'auto-keep' ? 'worktree' : 'all'
     try {
       const cleaned = await cleanup(session, laneId, /** @type {'worktree' | 'all'} */ (cleanupMode), { by: 'host', auto: true, approveMode })
       return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup (mode ${cleanupMode}): ${cleaned.summary}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { state: cleaned.state, summary: cleaned.summary }, next: cleaned.next })
     } catch (error) {
       const message = String(/** @type {any} */ (error)?.message ?? error)
-      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup blocked: ${message}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { error: message } })
+      const next = /** @type {any} */ (error)?.next ?? null
+      return result(landed, `merged ${lane.branch} into ${lane.base.branch} as ${merged.commit?.slice(0, 7)}; auto cleanup blocked: ${message}`, { merge: { commit: merged.commit, stat }, diff, cleanup: { error: message, ...(next ? { next } : {}) } })
     }
   }
 
@@ -1014,6 +1016,10 @@ export function createLaneService(deps) {
     const lane = laneOf(repo, laneId)
     if (lane.state !== 'landed') return null
     const copy = cardCopy(cardLocale(deps.localeOf?.(agent.session?.id)))
+    // Read-only dirty probe BEFORE the card: the card discloses the counts and
+    // a destructive choice is then the user's informed explicit force removal.
+    const dirty = existsSync(lane.path) ? await git.dirtyCounts(lane.path) : null
+    const dirtyCard = hasDirtyContent(dirty)
     /** @type {any} */
     let answer
     try {
@@ -1021,11 +1027,11 @@ export function createLaneService(deps) {
         id: 'cleanup',
         header: copy.cleanupHeader,
         question: copy.cleanupQuestion(lane.title),
-        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot, residueOf(repo, lane)),
+        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot, residueOf(repo, lane), dirtyCard ? dirty : null),
         options: [
           { label: copy.choices.keep, description: copy.cleanupDescriptions.keep },
-          { label: copy.choices.worktree, description: copy.cleanupDescriptions.worktree },
-          { label: copy.choices.all, description: copy.cleanupDescriptions.all },
+          { label: copy.choices.worktree, description: dirtyCard ? copy.cleanupDescriptionsDirty.worktree : copy.cleanupDescriptions.worktree },
+          { label: copy.choices.all, description: dirtyCard ? copy.cleanupDescriptionsDirty.all : copy.cleanupDescriptions.all },
         ],
       }], signal)
     } catch {
@@ -1034,7 +1040,7 @@ export function createLaneService(deps) {
     const choice = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'cleanup')?.selected?.[0]
     const mode = Object.entries(copy.choices).find(([, label]) => label === choice)?.[0]
     if (!mode) return null
-    return cleanup(agent.session, laneId, /** @type {'keep' | 'worktree' | 'all'} */ (mode), { by: 'user' })
+    return cleanup(agent.session, laneId, /** @type {'keep' | 'worktree' | 'all'} */ (mode), { by: 'user', ...(mode !== 'keep' && dirtyCard ? { force: true } : {}) })
   }
 
   // ─── cleanup / abandon ────────────────────────────────────────────────
@@ -1050,11 +1056,32 @@ export function createLaneService(deps) {
   }
 
   /**
+   * Concise blocked-removal error: the reason names the dirty counts when the
+   * probe sees them (never the raw git `fatal:` output), and `next` names the
+   * exact typed `--force` retry — the in-product escape for a lane that cannot
+   * be removed. Force stays the USER's privilege, so the hint directs whoever
+   * reads it (the model included) to the user's typed command.
+   * @param {any} lane @param {string} mode
+   */
+  async function blockedRemovalError(lane, mode) {
+    const dirty = existsSync(lane.path) ? await git.dirtyCounts(lane.path) : { modified: 0, untracked: 0 }
+    const reason = dirty.modified + dirty.untracked > 0
+      ? `removal blocked: the worktree contains modified or untracked files (${dirty.modified} modified, ${dirty.untracked} untracked)`
+      : 'removal blocked: git refused to remove the worktree (it may be locked)'
+    return new WorktreeError(WORKTREE_CODES.REMOVE_BLOCKED, reason, {
+      lane: lane.id,
+      next: { waitFor: 'user', hint: `the user retries with the explicit force override: /worktree clean ${lane.id} ${mode} --force` },
+    })
+  }
+
+  /**
    * Auto paths (design D3) reuse this exact body with `{ by: 'host', auto: true,
-   * approveMode }`: the scratch sync, the never-forced removal, the residue
-   * warning and the blocked-removal semantics are identical; only the audit
-   * payload gains the auto marker.
-   * @param {any} session @param {string} laneId @param {'keep' | 'worktree' | 'all'} mode @param {{ by?: string, auto?: boolean, approveMode?: string }} [options]
+   * approveMode }`: the scratch sync, the removal (forced ONLY behind the
+   * user's informed explicit choice — a disclosed card choice or a typed
+   * `--force`, never an auto/model path), the residue warning and the
+   * blocked-removal semantics are identical; only the audit payload gains the
+   * auto marker.
+   * @param {any} session @param {string} laneId @param {'keep' | 'worktree' | 'all'} mode @param {{ by?: string, auto?: boolean, approveMode?: string, force?: boolean }} [options]
    */
   async function cleanup(session, laneId, mode, options = {}) {
     if (!['keep', 'worktree', 'all'].includes(mode)) throw new Error('cleanup mode must be keep, worktree, or all')
@@ -1073,7 +1100,22 @@ export function createLaneService(deps) {
     // warning only, never a gate, and it never mutates the authority.
     const residue = residueOf(repo, lane)
     const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
-    if (existsSync(lane.path)) await git.worktreeRemove(repo.mainRoot, lane.path)
+    // `force` reaches git only from an informed explicit user choice (a
+    // disclosed card choice via askCleanup, or the typed `--force`); auto and
+    // model paths never force.
+    const force = options.force === true && options.auto !== true
+    if (existsSync(lane.path)) {
+      try {
+        await git.worktreeRemove(repo.mainRoot, lane.path, { force })
+      } catch (error) {
+        if (!(error instanceof WorktreeError) || error.code !== WORKTREE_CODES.REMOVE_BLOCKED) throw error
+        // State unchanged: the blocked removal is recorded on the lane (so it
+        // stays retryable) and reported concisely with the --force escape.
+        const blocked = await blockedRemovalError(lane, mode)
+        await patchLane(repo, laneId, (current) => ({ cleanup: { ...(current.cleanup ?? {}), blocked: blocked.reason } }))
+        throw blocked
+      }
+    }
     let branchNote = ''
     if (mode === 'all' && (await git.branchExists(repo.mainRoot, lane.branch))) {
       try {
@@ -1087,13 +1129,13 @@ export function createLaneService(deps) {
     const next = lane.state === 'abandoned'
       ? await patchLane(repo, laneId, () => ({ cleanup: record }))
       : await apply(repo, laneId, { type: 'clean', by, patch: { cleanup: record } })
-    deps.audit('cleanup', { lane: laneId, mode, by, scratch, ...(options.auto === true ? { auto: true, approveMode: options.approveMode ?? null } : {}) }, repo.mainRoot, lane.ownerSession)
+    deps.audit('cleanup', { lane: laneId, mode, by, scratch, ...(force ? { forced: true } : {}), ...(options.auto === true ? { auto: true, approveMode: options.approveMode ?? null } : {}) }, repo.mainRoot, lane.ownerSession)
     return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}${residue ? `; ${residueNote(residue)}` : ''}`)
   }
 
   /**
    * @param {any} agent @param {string} laneId
-   * @param {{ mode?: 'keep' | 'worktree' | 'all', signal?: AbortSignal }} [options] - a mode is the user's typed choice (command path)
+   * @param {{ mode?: 'keep' | 'worktree' | 'all', force?: boolean, signal?: AbortSignal }} [options] - a mode is the user's typed choice (command path); `force` is the typed `--force` override
    */
   async function abandon(agent, laneId, options = {}) {
     const repo = await repoFor(cwdOf(agent?.session))
@@ -1121,6 +1163,10 @@ export function createLaneService(deps) {
     const auto = !mode && approveMode !== 'manual' && !lane.boundChild
     if (auto) mode = approveMode === 'auto-keep' ? 'worktree' : 'all'
     const copy = cardCopy(cardLocale(deps.localeOf?.(agent?.session?.id)))
+    // Card-path facts: whether a destructive card choice is the user's informed
+    // explicit force removal (the card disclosed the dirty counts).
+    let cardChoice = false
+    let dirtyCard = false
     if (!mode) {
       if (!deps.ask) throw new WorktreeError(WORKTREE_CODES.MAIN_AGENT_ONLY, 'abandoning needs the user\'s confirmation and no answerer is available')
       // A binding the reconciliation would not clear is the user's call
@@ -1133,6 +1179,10 @@ export function createLaneService(deps) {
         lane = laneOf(repo, laneId)
         if (lane.boundChild) throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} is still bound to ${lane.boundChild}; the force-reclaim could not settle it`, { lane: laneId })
       }
+      // Read-only dirty probe BEFORE the card: the card discloses the counts
+      // and the destructive options name the permanent destruction.
+      const dirty = existsSync(lane.path) ? await git.dirtyCounts(lane.path) : null
+      dirtyCard = hasDirtyContent(dirty)
       /** @type {any} */
       let answer
       try {
@@ -1140,11 +1190,11 @@ export function createLaneService(deps) {
           id: 'abandon',
           header: copy.abandonHeader,
           question: copy.abandonQuestion(lane.title),
-          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane), reconciliation?.settled ? { child: reconciliation.childId, forced: reconciliation.forced } : null),
+          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane), reconciliation?.settled ? { child: reconciliation.childId, forced: reconciliation.forced } : null, dirtyCard ? dirty : null),
           options: [
             { label: copy.choices.keep, description: copy.abandonDescriptions.keep },
-            { label: copy.choices.worktree, description: copy.abandonDescriptions.worktree },
-            { label: copy.choices.all, description: copy.abandonDescriptions.all(unmerged) },
+            { label: copy.choices.worktree, description: dirtyCard ? copy.abandonDescriptionsDirty.worktree : copy.abandonDescriptions.worktree },
+            { label: copy.choices.all, description: (dirtyCard ? copy.abandonDescriptionsDirty.all : copy.abandonDescriptions.all)(unmerged) },
             { label: copy.cancel, description: copy.abandonDescriptions.cancel },
           ],
         }], options.signal)
@@ -1154,12 +1204,18 @@ export function createLaneService(deps) {
       const choice = answer?.answers?.find((/** @type {any} */ entry) => entry.id === 'abandon')?.selected?.[0]
       mode = /** @type {any} */ (Object.entries(copy.choices).find(([, label]) => label === choice)?.[0])
       if (!mode) return result(lane, 'not abandoned: the user cancelled')
+      cardChoice = true
     }
     if (lane.boundChild) {
       const detail = reconciliation?.verdict ? ` (binding reconciliation: ${reconcileNote(reconciliation.verdict)}; call worktree_abandon without a mode and use the card's force-reclaim)` : ''
       throw new WorktreeError(WORKTREE_CODES.LANE_BUSY, `lane ${laneId} has a running worker; stop it first${detail}`, { lane: laneId })
     }
-    const abandoned = await apply(repo, laneId, { type: 'abandon', by: auto ? 'host' : 'user', reason: auto ? `abandoned automatically (${approveMode} mode)` : 'abandoned by the user', audit: auto ? { auto: true, approveMode } : undefined, patch: { cleanup: { mode, at: now(), by: auto ? 'host' : 'user' } } })
+    // Removal is forced ONLY behind the user's informed explicit choice: a
+    // destructive choice on the dirty-disclosing card, or the typed `--force`.
+    // Typed-mode and auto paths (auto never reaches the card) never force.
+    const force = (options.force === true && !auto) || (cardChoice && dirtyCard)
+    const auditExtra = { ...(auto ? { auto: true, approveMode } : {}), ...(force ? { forced: true } : {}) }
+    const abandoned = await apply(repo, laneId, { type: 'abandon', by: auto ? 'host' : 'user', reason: auto ? `abandoned automatically (${approveMode} mode)` : 'abandoned by the user', audit: Object.keys(auditExtra).length > 0 ? auditExtra : undefined, patch: { cleanup: { mode, at: now(), by: auto ? 'host' : 'user' } } })
     if (mode === 'keep') return result(abandoned, `abandoned; ${abandoned.path} and ${abandoned.branch} are kept`)
     // Read-only residue probe BEFORE anything is removed (design D5): a
     // warning only, never a gate, and it never mutates the authority. The
@@ -1168,12 +1224,14 @@ export function createLaneService(deps) {
     const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
     if (existsSync(lane.path)) {
       try {
-        await git.worktreeRemove(repo.mainRoot, lane.path)
+        await git.worktreeRemove(repo.mainRoot, lane.path, { force })
       } catch (error) {
-        // Abandoned, but the worktree stays: record it as kept so a later
-        // cleanup can retry once the blocking files are dealt with.
-        await patchLane(repo, laneId, (current) => ({ cleanup: { ...current.cleanup, mode: 'keep', blocked: String(/** @type {any} */ (error)?.message ?? error) } }))
-        throw error
+        if (!(error instanceof WorktreeError) || error.code !== WORKTREE_CODES.REMOVE_BLOCKED) throw error
+        // Abandoned, but the worktree stays: recorded as kept+blocked so a
+        // later cleanup retries once the user types the explicit override.
+        const blocked = await blockedRemovalError(lane, mode)
+        await patchLane(repo, laneId, (current) => ({ cleanup: { ...current.cleanup, mode: 'keep', blocked: blocked.reason } }))
+        throw blocked
       }
     }
     let branchNote = ''

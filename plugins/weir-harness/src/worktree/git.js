@@ -1,8 +1,9 @@
 // Git access for worktree lanes: the ONLY module that runs git. Every call is
 // an explicit argv (no shell, no interpolation) through an injected runner, so
 // unit tests drive it with a fake and the host drives it with ctx.subprocess.
-// Nothing here ever passes --force; branch -D exists only behind an explicit
-// `force: true` that the abandon flow sets after the user chose it.
+// Nothing here ever passes --force silently: `worktree remove --force` and
+// `branch -D` exist only behind an explicit `force: true` that the lane flows
+// set after the user's informed choice (a disclosed card or a typed --force).
 import { WORKTREE_CODES, WorktreeError } from './errors.js'
 import { gitAtLeast, parseGitVersion, parseMergeTree, parseStatus, parseWorktreeList } from './rules.js'
 
@@ -72,11 +73,44 @@ export function createGit(run) {
     async worktreeList(cwd) {
       return parseWorktreeList(out(await git(cwd, ['worktree', 'list', '--porcelain'])))
     },
-    /** Never forced: a blocked removal is reported, not overridden. @param {string} cwd @param {string} path */
-    async worktreeRemove(cwd, path) {
-      const result = await run(['git', 'worktree', 'remove', path], { cwd })
+    /**
+     * Never forced silently: `--force` is appended only on an explicit
+     * `force: true` (same contract as branchDelete). A blocked removal throws
+     * REMOVE_BLOCKED; callers report it concisely, never override it quietly.
+     * @param {string} cwd @param {string} path @param {{ force?: boolean }} [options]
+     */
+    async worktreeRemove(cwd, path, options = {}) {
+      const result = await run(['git', 'worktree', 'remove', ...(options.force === true ? ['--force'] : []), path], { cwd })
       if (result.code !== 0) throw new WorktreeError(WORKTREE_CODES.REMOVE_BLOCKED, `git worktree remove ${path}: ${(result.stderr || result.stdout).trim()}`)
       await run(['git', 'worktree', 'prune'], { cwd })
+    },
+    /**
+     * Read-only dirty probe of a lane worktree: bounded `git status --porcelain`
+     * counts (untracked = `??` entries, modified = any other entry; ignored
+     * files are not listed and never counted). NEVER throws — a missing or
+     * non-git directory, a non-zero exit, or malformed output all read as clean.
+     * @param {string} lanePath @returns {Promise<{ modified: number, untracked: number }>}
+     */
+    async dirtyCounts(lanePath) {
+      const clean = { modified: 0, untracked: 0 }
+      let result
+      try {
+        result = await run(['git', '-C', lanePath, 'status', '--porcelain'], { cwd: lanePath })
+      } catch {
+        return clean
+      }
+      if (result.code !== 0) return clean
+      let modified = 0
+      let untracked = 0
+      for (const line of result.stdout.split(/\r?\n/)) {
+        if (line === '') continue
+        // Porcelain v1: two status columns, a space, then the path. Anything
+        // else is malformed output — the whole probe reads as clean.
+        if (!/^.{2} /u.test(line)) return clean
+        if (line.startsWith('??')) untracked += 1
+        else modified += 1
+      }
+      return { modified, untracked }
     },
     /** @param {string} cwd */
     async status(cwd) {
