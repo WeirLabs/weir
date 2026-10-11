@@ -46,6 +46,38 @@ test('9.1 a same-namespace collision needs a target ID and current revision', as
   expect((await library.load('global', 'new-one')).kind).toBe('absent')
 })
 
+test('applied create and exact replace keep selection locked through target CAS', async () => {
+  const store = storeOf(base())
+  const library = createPresetLibrary({ store })
+  await library.create({ scope: 'global', presetId: 'target', document: doc('Target') })
+  for (const mode of ['create', 'replace']) {
+    let entered
+    const atCommit = new Promise(resolve => { entered = resolve })
+    let release
+    const barrier = new Promise(resolve => { release = resolve })
+    const guarded = createPresetLibrary({ store: { ...store,
+      async commit(unit, revision, mutate) {
+        if (unit.kind === 'preset') { entered(); await barrier }
+        return store.commit(unit, revision, mutate)
+      },
+    } })
+    const input = { scope: 'global', document: doc(mode === 'create' ? 'Fresh' : 'Target'),
+      ...(mode === 'replace' ? { onNameConflict: 'replace', replaceTarget: { presetId: 'target', expectedRevision: 1, name: 'Target' } } : {}),
+      withSource: commit => store.withSelectionSnapshot('source', async () => commit()) }
+    const saving = guarded.create(input)
+    await atCommit
+    let applyFinished = false
+    const applying = store.commit({ kind: 'selection', sessionId: 'source' }, mode === 'create' ? 0 : 1, () => ({ skills: [], mcpServers: [] })).then(() => { applyFinished = true })
+    // The lock is held while the target commit is suspended; Apply cannot publish.
+    await new Promise(resolve => setTimeout(resolve, 15))
+    expect(applyFinished).toBe(false)
+    release()
+    expect((await saving).status).toBe(mode === 'create' ? 'created' : 'edited')
+    await applying
+    expect(applyFinished).toBe(true)
+  }
+})
+
 test('9.1 two clients editing one preset: the fresh state holds, the stale request conflicts and overwrites nothing', async () => {
   const root = base()
   const store = storeOf(root)
