@@ -135,12 +135,41 @@ jobs:
         run: node run.mjs editlock-lsp-rename
         working-directory: plugins/weir-test-harness
 
-      # Screenshots, sanitized server logs, console events and the PASS
-      # matrix report; kept on failure AND success for cross-platform diffs.
+      # Only named evidence files, never the QA root: Chrome profiles include
+      # token-bearing History. The driver writes the report through sanitizeText,
+      # gates server logs until the token is known, and sanitizes provision and
+      # console-event logs. Screenshots are individually verified PNGs on success;
+      # on failure, upload only whichever named files already exist. No fallback
+      # to a directory if the report or any screenshot was not produced.
       - name: upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dual-gui-qa-${{ matrix.os }}-${{ matrix.matrix }}
-          path: ${{ runner.temp }}/dual-gui-qa
+          path: |
+            ${{ runner.temp }}/dual-gui-qa/dual-gui-report.md
+            ${{ runner.temp }}/dual-gui-qa/logs/init-a.log
+            ${{ runner.temp }}/dual-gui-qa/logs/install-weir-a.log
+            ${{ runner.temp }}/dual-gui-qa/logs/install-fixture-a.log
+            ${{ runner.temp }}/dual-gui-qa/logs/server-a.log
+            ${{ runner.temp }}/dual-gui-qa/logs/console-events-a.jsonl
+            ${{ runner.temp }}/dual-gui-qa/logs/init-b.log
+            ${{ runner.temp }}/dual-gui-qa/logs/install-weir-b.log
+            ${{ runner.temp }}/dual-gui-qa/logs/install-fixture-b.log
+            ${{ runner.temp }}/dual-gui-qa/logs/server-b.log
+            ${{ runner.temp }}/dual-gui-qa/logs/console-events-b.jsonl
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-attention-dark.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-attention-light.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-recovering-dark.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-recovering-light.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-paused-dark.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-paused-light.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-partial-write-dark.png
+            ${{ runner.temp }}/dual-gui-qa/shots/panel-partial-write-light.png
+            ${{ runner.temp }}/dual-gui-qa/shots/version-cas-refused.png
+            ${{ runner.temp }}/dual-gui-qa/shots/sandbox-backend-refused.png
+            ${{ runner.temp }}/dual-gui-qa/shots/opt-out-saved-off-dark.png
+            ${{ runner.temp }}/dual-gui-qa/shots/opt-out-saved-off-light.png
+            ${{ runner.temp }}/dual-gui-qa/shots/opt-out-effective-off-dark.png
+            ${{ runner.temp }}/dual-gui-qa/shots/opt-out-effective-off-light.png
           if-no-files-found: error
