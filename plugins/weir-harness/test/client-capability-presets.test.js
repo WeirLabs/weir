@@ -475,7 +475,10 @@ describe('safe preset row edits', () => {
     const reactStub = makeReactStub()
     const { exports } = await loadClientChunk('lib/client.capability-presets.js', requireStubFor(reactStub))
     const calls = []
-    const props = { sessionId: 's1', model: loadModel(), draft: { skills: ['draft-a', 'draft-b'], mcpServers: ['docs'], unresolvedRefs: ['lost'], revision: 8, applied: { skills: ['live'], mcpServers: [], unresolvedRefs: [] } },
+    const digest = 'b'.repeat(64)
+    const model = loadModel()
+    const applied = model.draftFromReceipt({ status: 'applied', revision: 8, effective: { skillIdentities: [], mcpServers: [], digest }, warnings: [] })
+    const props = { sessionId: 's1', model, draft: { ...applied, skills: ['draft-a', 'draft-b'], mcpServers: ['docs'], unresolvedRefs: ['lost'], applied: { skills: ['live'], mcpServers: [], unresolvedRefs: [] } },
       fetchPresets: async () => ({ workspaceKey: 'ws', presets: [row] }), defaultGet: async () => ({ status: 'absent' }),
       presetResave: async (sid, spec) => { calls.push({ sid, spec }); return { status: 'edited', presetId: 'pack-01', revision: 5 } } }
     reactStub.begin(); exports.CapabilityPresetsView(props); await flush()
@@ -493,8 +496,61 @@ describe('safe preset row edits', () => {
     reactStub.begin(); tree = exports.CapabilityPresetsView(props)
     expect(findAll(tree, node => String(node.children).includes('1 Skills · 0 MCP · 0 unresolved'))).toHaveLength(1)
     findButton(tree, 'Confirm re-save').onClick(); await flush()
-    expect(calls[1]).toEqual({ sid: 's1', spec: { scope: 'workspace', presetId: 'pack-01', expectedRevision: 4, from: 'applied', expectedSelectionRevision: 8 } })
+    expect(calls[1]).toEqual({ sid: 's1', spec: { scope: 'workspace', presetId: 'pack-01', expectedRevision: 4, from: 'applied', expectedSelectionRevision: 8, expectedSelectionDigest: digest } })
     expect(props.draft.skills).toEqual(['draft-a', 'draft-b'])
+  })
+  it('blocks unprovable applied source but forwards the receipt digest and revision exactly when available', async () => {
+    const reactStub = makeReactStub()
+    const { exports } = await loadClientChunk('lib/client.capability-presets.js', requireStubFor(reactStub))
+    const calls = []
+    const digest = 'a'.repeat(64)
+    const props = { sessionId: 's1', model: loadModel(), draft: null,
+      fetchPresets: async () => ({ workspaceKey: 'ws', presets: [row] }), defaultGet: async () => ({ status: 'absent' }),
+      presetResave: async (sid, spec) => { calls.push({ sid, spec }); return { status: 'edited', presetId: row.presetId, revision: 5 } } }
+    const receipt = (proof, warnings = []) => ({ status: 'applied', revision: 0, effective: { skillIdentities: [], mcpServers: [], ...(proof ? { digest: proof } : {}) }, warnings })
+    props.draft = props.model.draftFromReceipt(receipt(null))
+    reactStub.begin(); exports.CapabilityPresetsView(props); await flush()
+    reactStub.begin(); let tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Re-save…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findAll(tree, node => node.__type === 'select' && node.value === 'draft')[0].onChange({ target: { value: 'applied' } })
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findButton(tree, 'Confirm re-save').disabled).toBe(true)
+    expect(findAll(tree, node => node.role === 'alert' && String(node.children).includes('receipt'))).toHaveLength(1)
+    findButton(tree, 'Confirm re-save').onClick(); await flush()
+    expect(calls).toHaveLength(0)
+    props.draft = props.model.draftFromReceipt(receipt(digest, ['fixture-a-unavailable']))
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findButton(tree, 'Confirm re-save').disabled).toBe(true)
+    expect(findAll(tree, node => node.role === 'alert' && String(node.children).includes('unavailable'))).toHaveLength(1)
+    findButton(tree, 'Confirm re-save').onClick(); await flush()
+    expect(calls).toHaveLength(0)
+    props.draft = props.model.draftFromReceipt(receipt(digest))
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(findButton(tree, 'Confirm re-save').disabled).toBe(false)
+    findButton(tree, 'Confirm re-save').onClick(); await flush()
+    expect(calls).toEqual([{ sid: 's1', spec: { scope: 'workspace', presetId: row.presetId, expectedRevision: 4, from: 'applied', expectedSelectionRevision: 0, expectedSelectionDigest: digest } }])
+  })
+  it('names an unavailable server source without claiming a successful save or retrying', async () => {
+    const reactStub = makeReactStub()
+    const { exports } = await loadClientChunk('lib/client.capability-presets.js', requireStubFor(reactStub))
+    const calls = []
+    const props = { sessionId: 's1', model: loadModel(), draft: loadModel().draftFromReceipt({ status: 'applied', revision: 0, effective: { skillIdentities: [], mcpServers: [], digest: 'd'.repeat(64) }, warnings: [] }),
+      fetchPresets: async () => ({ workspaceKey: 'ws', presets: [row] }), defaultGet: async () => ({ status: 'absent' }),
+      presetLoad: async () => ({ status: 'ok', revision: 4 }),
+      presetResave: async (sid, spec) => { calls.push(spec); return { status: 'source-unavailable', missing: ['gone-skill'] } } }
+    reactStub.begin(); exports.CapabilityPresetsView(props); await flush()
+    reactStub.begin(); let tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Re-save…').onClick()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findAll(tree, node => node.__type === 'select' && node.value === 'draft')[0].onChange({ target: { value: 'applied' } })
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    findButton(tree, 'Confirm re-save').onClick(); await flush(); await flush()
+    reactStub.begin(); tree = exports.CapabilityPresetsView(props)
+    expect(calls).toHaveLength(1)
+    expect(findAll(tree, node => node.role === 'status' && String(node.children).includes('gone-skill'))).toHaveLength(1)
+    expect(findButton(tree, 'Confirm re-save').disabled).toBe(true)
+    expect(findAll(tree, node => String(node.children).includes('Preset re-saved'))).toHaveLength(0)
   })
   it('locks a failed edit until re-opened and announces the exact recovery; tombstones never stage', async () => {
     const reactStub = makeReactStub()

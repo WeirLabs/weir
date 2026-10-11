@@ -99,6 +99,20 @@ test('12.3 the draft seeds from the receipt with the CAS revision and toggles re
   expect(added.dirty).toBe(true)
 })
 
+test('applied proof comes only from a complete receipt and survives local draft staging', () => {
+  const receipt = { status: 'applied', revision: 0, effective: { skillIdentities: [], mcpServers: [], digest: 'c'.repeat(64) }, warnings: [] }
+  const base = model.draftFromReceipt(receipt)
+  expect(base.appliedDigest).toBe(receipt.effective.digest)
+  expect(base.appliedSourceIssue).toBeNull()
+  const staged = model.draftFromPreset({ selection: { skills: ['new'], mcpServers: [], unresolvedRefs: [] } }, base)
+  expect(staged.appliedDigest).toBe(receipt.effective.digest)
+  expect(staged.appliedSourceIssue).toBeNull()
+  expect(model.draftFromReceipt({ ...receipt, effective: { skillIdentities: [], mcpServers: [] } }).appliedSourceIssue).toBe('receipt')
+  expect(model.draftFromReceipt({ ...receipt, warnings: ['provider-unavailable'] }).appliedSourceIssue).toBe('unavailable')
+  expect(model.draftFromReceipt({ ...receipt, effective: { mcpServers: [], digest: receipt.effective.digest } }).appliedSourceIssue).toBe('receipt')
+  expect(model.presetWriteOutcomeOf({ status: 'source-unavailable', missing: ['gone'] })).toEqual({ kind: 'source-unavailable', missing: ['gone'] })
+})
+
 test('12.3 engine responses map onto the commit states', () => {
   expect(model.commitOutcomeOf({ status: 'applied', revision: 5 })).toEqual({ phase: 'applied', revision: 5, skipped: [] })
   // preset-skill-applicability: an applied commit carries the skipped report through.
