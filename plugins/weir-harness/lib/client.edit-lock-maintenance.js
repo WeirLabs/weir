@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
 		// semantics) plus read-only authority inspection per server-derived
 		// domain root, over raw fetch ("/api/weir-edit-lock/maintenance/*").
 		// The panel never sends a path the server did not list first, and it
-		// offers no mutation: the switch itself stays an ordinary settings
+		// offers recovery only while the manager is mounted. The switch itself
 		// field. Style constants are verbatim copies of the settings-page
 		// constants this panel uses (same-package sync require is impossible
 		// in the ModuleLoader).
@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
 		const labelStyle = { fontSize: "14px", fontWeight: 500, lineHeight: "20px" };
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const warnStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-business-warning, #b25f00)" };
+		const warnStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-warn-primary)" };
 		const dangerStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-business-danger, #d64545)" };
 		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)", marginTop: "8px" };
 		const chainCategoryStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px" };
@@ -267,6 +267,7 @@ window.__ModuleLoader__.load({
 		}
 		/** Switch-state banner keys (state names contain hyphens). */
 		const STATE_KEYS = { enforced: "Enforced", "disable-requested": "DisableRequested", "enable-requested": "EnableRequested", disabled: "Disabled", unknown: "Unknown" };
+		const onlineRecoveryAvailable = (state) => state === "enforced" || state === "disable-requested";
 		const post = (url, body) => fetch(url, {
 			method: "POST",
 			credentials: "include",
@@ -290,6 +291,7 @@ window.__ModuleLoader__.load({
 			 * A refusal is shown next to a freshly reloaded scope.
 			 * @param {string} root @param {ReturnType<typeof recoveryCandidates>[number]} candidate */
 			const recover = (root, candidate) => {
+				if (view?.status !== "ready" || !onlineRecoveryAvailable(view.value.state)) return;
 				setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: { status: "busy" } }));
 				post("api/weir-edit-lock/maintenance/recover-online", {
 					root,
@@ -451,13 +453,12 @@ window.__ModuleLoader__.load({
 						...snapshot.retainedLocks.map((lock, index) => react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${lock.resourceId} · ${lock.owner} · ${lock.status}${lock.reason ? `: ${lock.reason}` : ""} · gen ${lock.generation}` }, index))
 					] })
 					: null,
-				recoveryCandidates(root, snapshot).length === 0
-					? null
-					: react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
+				onlineRecoveryAvailable(view?.status === "ready" ? view.value.state : null) && recoveryCandidates(root, snapshot).length > 0
+					? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
 						react_jsx_runtime.jsx("div", { style: chainCategoryStyle, children: t("editLockMaintRecoveries") }),
 						react_jsx_runtime.jsx("div", { style: chainDescStyle, children: t("editLockMaintRecoverHint") }),
 						...recoveryCandidates(root, snapshot).map((candidate) => recoveryCard(root, candidate))
-					] })
+					] }) : null
 			] });
 			const inspectionBody = (root) => {
 				const inspection = inspections[root];
@@ -501,10 +502,8 @@ window.__ModuleLoader__.load({
 				}
 				const value = view.value;
 				const stateKey = STATE_KEYS[value.state] ?? "Unknown";
-				// Recovery UX D1: aggregate the zones from every auto-inspected root.
-				// Blocked rows (with a force-release action) render first, then the
-				// owners whose preconditions fail with the named reason; everything
-				// else is the normal zone (banner, warnings, per-domain detail).
+				// Retained authority is history, not a current block, without a mounted manager.
+				const online = onlineRecoveryAvailable(value.state);
 				const zoneGroups = new Map();
 				const zoneUnmet = [];
 				for (const root of Object.keys(inspections)) {
@@ -522,6 +521,15 @@ window.__ModuleLoader__.load({
 				}
 				const blockedGroups = [...zoneGroups.values()];
 				zoneUnmet.sort((a, b) => a.entry.owner.localeCompare(b.entry.owner));
+				const historyRows = [...blockedGroups.flatMap((group) => group.rows), ...zoneUnmet.flatMap(({ entry }) => entry.rows)];
+				const historyScopes = zoneUnmet.flatMap(({ entry }) => entry.scopePaths);
+				for (const root of Object.keys(inspections)) {
+					const inspection = inspections[root];
+					if (inspection?.status !== "ready" || inspection.value?.presence !== "valid") continue;
+					for (const op of inspection.value.snapshot.unresolved) {
+						if (op.scope?.kind !== "file" && typeof op.scope?.path === "string" && !historyScopes.includes(op.scope.path)) historyScopes.push(op.scope.path);
+					}
+				}
 				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "10px" }, children: [
 					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "2px" }, children: [
 						react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: t(`editLockMaintState${stateKey}`) }),
@@ -530,18 +538,25 @@ window.__ModuleLoader__.load({
 						value.pinned ? react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintPinned") }) : null,
 						react_jsx_runtime.jsx("span", { style: chainDescStyle, children: t("editLockMaintScopeNote") })
 					] }),
+					!online ? react_jsx_runtime.jsx("div", { role: "alert", style: warnStyle, children: t(value.state === "unknown" ? "editLockMaintUnknownRisk" : "editLockMaintOffRisk") }) : null,
+					!online ? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
+						react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: t(value.state === "unknown" ? "editLockMaintUnknownHistory" : "editLockMaintHistory") }),
+						react_jsx_runtime.jsx("span", { style: chainDescStyle, children: t(value.state === "unknown" ? "editLockMaintUnknownHistoryHint" : "editLockMaintHistoryHint") }),
+						...historyRows.map((row, index) => react_jsx_runtime.jsx("span", { style: monoStyle, children: `${row.resourceId} · ${row.owner}${row.lockStatus ? ` · ${row.lockStatus}` : ""}${row.fence ? ` · ${RECOVERY_UX.stateFence}` : ""}` }, index)),
+						...historyScopes.map((path, index) => react_jsx_runtime.jsx("span", { style: monoStyle, children: path }, `scope-${index}`))
+					] }) : null,
 					react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "2px" }, children: [
 						react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintWarnKeepHistory") }),
 						react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintWarnUnlock") })
 					] }),
-					blockedGroups.length > 0
+					online && blockedGroups.length > 0
 						? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
 							react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: RECOVERY_UX.blockedHeader }),
 							react_jsx_runtime.jsx("span", { style: chainDescStyle, children: RECOVERY_UX.blockedHint }),
 							...blockedGroups.map((group) => blockedZoneCard(group.root, group.candidate, group.rows))
 						] })
 						: null,
-					zoneUnmet.length > 0
+					online && zoneUnmet.length > 0
 						? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
 							react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: RECOVERY_UX.unmetHeader }),
 							...zoneUnmet.map(({ root, entry }) => unmetZoneRow(root, entry))

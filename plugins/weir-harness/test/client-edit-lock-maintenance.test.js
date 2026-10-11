@@ -267,6 +267,8 @@ describe('client.edit-lock-maintenance chunk', () => {
       'editLockMaintStateUnknown', 'editLockMaintStateUnknownHint',
       'editLockMaintRestart', 'editLockMaintPinned', 'editLockMaintScopeNote',
       'editLockMaintWarnKeepHistory', 'editLockMaintWarnUnlock',
+      'editLockMaintOffRisk', 'editLockMaintUnknownRisk', 'editLockMaintHistory', 'editLockMaintHistoryHint',
+      'editLockMaintUnknownHistory', 'editLockMaintUnknownHistoryHint',
       'editLockMaintBlocked', 'editLockMaintDomains', 'editLockMaintNoDomains',
       'editLockMaintAuthorityYes', 'editLockMaintAuthorityNo', 'editLockMaintReservation',
       'editLockMaintPresenceNone', 'editLockMaintPresenceEmpty', 'editLockMaintPresenceJunk',
@@ -442,6 +444,76 @@ describe('client.edit-lock-maintenance chunk', () => {
     }
   })
 
+  it('shows retained eligible fences as history without online recovery while effective off, but saved-off remains actionable', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { en, zh } = await (async () => {
+      const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('dictionary only')) }))
+      const registrations = []
+      entry.apply({ locale: { bind: () => (key) => key, register: (_ns, dicts) => registrations.push(dicts) }, effect: (fn) => { fn(); return () => {} }, slots: { inject: () => () => {} }, configForms: { whileServed: () => () => {} }, remote: {} })
+      return registrations[0]
+    })()
+    const eligible = { ...INSPECT, snapshot: { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] } }
+    const originalFetch = globalThis.fetch
+    const calls = []
+    let state
+    globalThis.fetch = (url, init) => {
+      calls.push({ url, init })
+      if (url.endsWith('/status')) return Promise.resolve({ json: async () => ({ ok: true, value: { ...STATUS, ...state } }) })
+      if (url.endsWith('/inspect')) return Promise.resolve({ json: async () => ({ ok: true, value: eligible }) })
+      if (url.endsWith('/recover-online')) return Promise.resolve({ json: async () => ({ ok: true, value: { revision: 13 } }) })
+      throw new Error(`unexpected ${url}`)
+    }
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    try {
+      for (const locale of [en, zh]) {
+        for (const [name, patch, online] of [
+          ['disabled', { state: 'disabled', saved: false, mounted: false }, false],
+          ['enable-requested', { state: 'enable-requested', saved: true, mounted: false, restartRequired: true }, false],
+          ['unknown', { state: 'unknown', saved: false, mounted: null }, false],
+          ['disable-requested', { state: 'disable-requested', saved: false, mounted: true, restartRequired: true }, true],
+          ['enforced', { state: 'enforced', saved: true, mounted: true }, true],
+        ]) {
+          reactStub.reset()
+          state = patch
+          const render = () => { reactStub.begin(); return renderTree(exports.EditLockMaintenanceField({ t: (key) => locale[key] ?? key })) }
+          render().children[0].children[1].onClick()
+          await flush()
+          let tree = render()
+          expect(calls.some((call) => call.url.endsWith('/inspect')), `${name} inspection`).toBe(true)
+          const text = JSON.stringify(tree)
+          if (!online) {
+            expect(text.includes(name === 'unknown' ? locale.editLockMaintUnknownRisk : locale.editLockMaintOffRisk), `${name} unprotected warning`).toBe(true)
+            const warning = collect(tree, (node) => node.role === 'alert')
+            expect(warning).toHaveLength(1)
+            expect(warning[0].style.color).toBe('var(--dsw-alias-state-warn-primary)')
+            const historyLabel = name === 'unknown' ? locale.editLockMaintUnknownHistory : locale.editLockMaintHistory
+            expect(text.includes(historyLabel), `${name} history label`).toBe(true)
+            expect(locale.editLockMaintOffRisk).toContain(locale === en ? 'UNPROTECTED' : '不受保护')
+            expect(locale.editLockMaintOffRisk).toContain(locale === en ? 'overwrite' : '覆盖')
+            expect(locale.editLockMaintHistoryHint).toContain(locale === en ? 'do not block' : '不会阻止')
+            expect(locale.editLockMaintHistoryHint).toContain(locale === en ? 'offline administrator' : '离线管理员')
+            expect(text.includes('/work/repo/a.txt'), `${name} retained file`).toBe(true)
+            expect(text.includes('Blocked files'), `${name} no blocking claim`).toBe(false)
+            expect(collect(tree, (node) => node.__type === 'button' && /Force release|强制释放/.test(node.children))).toHaveLength(0)
+            expect(collect(tree, (node) => node.__type === 'button' && typeof node.children === 'string' && node.children === locale.editLockMaintRecoverConfirm)).toHaveLength(0)
+            const inspect = collect(tree, (node) => node.children === locale.editLockMaintInspect && typeof node.onClick === 'function')[0]
+            inspect.onClick()
+            await flush()
+            tree = render()
+            expect(JSON.stringify(tree).includes(historyLabel)).toBe(true)
+            expect(collect(tree, (node) => node.children === locale.editLockMaintRecoverConfirm)).toHaveLength(0)
+            expect(calls.filter((call) => call.url.endsWith('/recover-online'))).toHaveLength(0)
+          } else {
+            expect(collect(tree, (node) => node.children === 'Force release' && typeof node.onClick === 'function')).toHaveLength(1)
+            collect(tree, (node) => node.children === 'Force release')[0].onClick()
+            await flush()
+            expect(calls.filter((call) => call.url.endsWith('/recover-online')).length).toBeGreaterThan(0)
+          }
+          calls.length = 0
+        }
+      }
+    } finally { globalThis.fetch = originalFetch }
+  })
   it('chunk confirmation algorithm matches the server byte-for-byte, and eligibility mirrors the manager', async () => {
     const { exports } = await loadPanel()
     const { editLockRecovery } = exports
