@@ -11,7 +11,7 @@ import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-
 const tmp = () => mkdtempSync(join(tmpdir(), 'weir-verbs-'))
 
 /** Mount the plugin with hermetic roots; returns the command + agent stubs. */
-const mountCapabilities = (root, config = {}, profileContext) => {
+const mountCapabilities = (root, config = {}, profileContext, dependencies = {}) => {
   const registeredCommands = []
   let provider
   const ctx = {
@@ -29,7 +29,7 @@ const mountCapabilities = (root, config = {}, profileContext) => {
       return undefined
     },
   }
-  createSkillSelectionPlugin()(ctx, {
+  createSkillSelectionPlugin(dependencies)(ctx, {
     machineId: 'weir-it-machine',
     customSkillDirs: [],
     agentsHome: join(root, 'agents-home'),
@@ -95,17 +95,19 @@ test('preset-save: create success; name collision is zero-write unless replaced;
   expect(conflict.payload.with).toBe('my-preset')
   expect((await callJson('presets')).payload.presets).toHaveLength(1)
 
-  // explicitly confirmed replace creates under a fresh id
-  const replaced = await callJson('preset-save', { ...spec, onNameConflict: 'replace' })
-  expect(replaced.payload.status).toBe('created')
-  expect(replaced.payload.presetId).toBe('my-preset-2')
-  expect((await callJson('presets')).payload.presets).toHaveLength(2)
+  // A bare legacy replace is not authorization; exact target CAS edits in place.
+  const legacy = await callJson('preset-save', { ...spec, onNameConflict: 'replace' })
+  expect(legacy.payload.status).toBe('confirmation-required')
+  const replaced = await callJson('preset-save', { ...spec, onNameConflict: 'replace', replaceTarget: { presetId: 'my-preset', expectedRevision: 1, name: 'My Preset' } })
+  expect(replaced.payload.status).toBe('edited')
+  expect(replaced.payload.presetId).toBe('my-preset')
+  expect((await callJson('presets')).payload.presets).toHaveLength(1)
 
   // edit with a stale expectedRevision is a conflict, never a silent overwrite
   const stale = await callJson('preset-save', { ...spec, presetId: 'my-preset', name: 'Renamed', expectedRevision: 5 })
   expect(stale.payload.status).toBe('revision-conflict')
   // edit with the current revision commits
-  const edited = await callJson('preset-save', { ...spec, presetId: 'my-preset', name: 'Renamed', expectedRevision: 1 })
+  const edited = await callJson('preset-save', { ...spec, presetId: 'my-preset', name: 'Renamed', expectedRevision: 2 })
   expect(edited.payload.status).toBe('edited')
 
   // rejections
@@ -261,8 +263,11 @@ test('preset-import v1: binds configured MCP only; poison documents reject with 
   const conflict = await callJson('preset-import', { document: { ...document, presetId: 'shared-2' }, scope: 'global' })
   expect(conflict.payload.status).toBe('name-conflict')
   expect((await callJson('presets')).payload.presets).toHaveLength(1)
-  const replaced = await callJson('preset-import', { document: { ...document, presetId: 'shared-2' }, scope: 'global', onNameConflict: 'replace' })
-  expect(replaced.payload.status).toBe('created')
+  const legacy = await callJson('preset-import', { document: { ...document, presetId: 'shared-2' }, scope: 'global', onNameConflict: 'replace' })
+  expect(legacy.payload.status).toBe('confirmation-required')
+  const replaced = await callJson('preset-import', { document: { ...document, presetId: 'shared-2' }, scope: 'global', onNameConflict: 'replace', replaceTarget: { presetId: 'shared', expectedRevision: 1, name: 'Shared' } })
+  expect(replaced.payload.status).toBe('edited')
+  expect(replaced.payload.presetId).toBe('shared')
 
   // poison: unknown version / unknown field — atomic rejection, zero writes
   const unknown = await callJson('preset-import', { document: { ...document, version: 99, presetId: 'poison-1' }, scope: 'global' })
@@ -273,7 +278,7 @@ test('preset-import v1: binds configured MCP only; poison documents reject with 
   expect(rogue.kind).toBe('error')
   expect(rogue.payload.status).toBe('rejected')
   expect(rogue.payload.reason).toContain('unknown-field')
-  expect((await callJson('presets')).payload.presets).toHaveLength(2)
+  expect((await callJson('presets')).payload.presets).toHaveLength(1)
   // a v2-shaped document does NOT take the v1 path
   const v2 = await callJson('preset-import', {
     document: { version: 2, name: 'V2', selection: { skills: [], mcpServers: [], unresolvedRefs: [] }, builtin: [], bundled: [], warnings: [] },
@@ -349,4 +354,115 @@ test('save → export package → dryRun → confirmed import round-trips betwee
   expect(readFileSync(join(rootB, 'skills', 'alpha', 'SKILL.md'), 'utf8')).toContain('name: alpha')
   const loaded = await machineB.callJson('preset-load', { scope: 'global', presetId: 'travel' })
   expect(loaded.payload.document.selection.skills.map(identity => identity.name)).toEqual(['alpha'])
+})
+
+
+test('preset-rename and preset-resave preserve ID, name and three sets respectively; stale and deleted edits refuse', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const { callJson } = mountCapabilities(root)
+  const initial = { scope: 'global', name: 'First', from: 'draft', skills: [identityFixture()], mcpServers: ['docs'], unresolvedRefs: [{ kind: 'skill', ref: 'missing' }] }
+  await callJson('preset-save', initial)
+  const renamed = await callJson('preset-rename', { scope: 'global', presetId: 'first', expectedRevision: 1, name: 'Second' })
+  expect(renamed.payload.status).toBe('edited')
+  expect(renamed.payload.presetId).toBe('first')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'first' })).payload.document.selection).toEqual({ skills: initial.skills, mcpServers: initial.mcpServers, unresolvedRefs: initial.unresolvedRefs })
+  expect((await callJson('preset-resave', { scope: 'global', presetId: 'first', expectedRevision: 2, from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })).payload.status).toBe('edited')
+  const loaded = await callJson('preset-load', { scope: 'global', presetId: 'first' })
+  expect(loaded.payload.document.name).toBe('Second')
+  expect(loaded.payload.document.selection).toEqual({ skills: [], mcpServers: [], unresolvedRefs: [] })
+  expect((await callJson('preset-resave', { scope: 'global', presetId: 'first', expectedRevision: 3, from: 'draft', skills: [] })).kind).toBe('error')
+  expect((await callJson('preset-save', { ...initial, presetId: 'first', expectedRevision: 3, mcpServers: undefined })).kind).toBe('error')
+  expect((await callJson('preset-rename', { scope: 'global', presetId: 'first', expectedRevision: 2, name: 'Stale' })).payload.status).toBe('revision-conflict')
+  await callJson('preset-delete', { scope: 'global', presetId: 'first', expectedRevision: 3 })
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'first' })).payload.status).toBe('deleted')
+  expect((await callJson('preset-rename', { scope: 'global', presetId: 'first', expectedRevision: 4, name: 'Gone' })).payload.status).toBe('deleted')
+})
+
+test('preset-resave applied reads accepted store and checks the confirmed source revision', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
+  writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: fixture\n---\nALPHA\n')
+  const { callJson } = mountCapabilities(root, { customSkillDirs: [join(root, 'custom')] })
+  await callJson('preset-save', { scope: 'global', name: 'Saved', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
+  await callJson('apply', { requestId: 'r1', expectedRevision: 0, skills: ['alpha'], mcpServers: ['docs'] })
+  const target = { scope: 'global', presetId: 'saved', expectedRevision: 1, from: 'applied', skills: ['untrusted'], mcpServers: ['untrusted'], unresolvedRefs: ['untrusted'] }
+  expect((await callJson('preset-resave', { ...target, expectedSelectionRevision: 0 })).payload.status).toBe('source-changed')
+  const saved = await callJson('preset-resave', { ...target, expectedSelectionRevision: 1 })
+  expect(saved.payload.status).toBe('edited')
+  const loaded = (await callJson('preset-load', { scope: 'global', presetId: 'saved' })).payload.document
+  expect(loaded.selection.skills.map(skill => skill.name)).toEqual(['alpha'])
+  expect(loaded.selection.mcpServers).toEqual(['docs'])
+  expect(loaded.selection.unresolvedRefs).toEqual([])
+  expect((await callJson('receipt')).payload.revision).toBe(1)
+})
+
+test('v2 name conflict and old replace refuse before bundled Skill installation', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const { callJson } = mountCapabilities(root)
+  await callJson('preset-save', { scope: 'global', name: 'Collision', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
+  const document = { version: 2, name: 'Collision', selection: { skills: [], mcpServers: [], unresolvedRefs: [] }, builtin: [], warnings: [],
+    bundled: [{ targetScope: 'user', name: 'sample', description: 'sample', files: [{ path: 'SKILL.md', content: '---\nname: sample\ndescription: sample\n---\nSample\n' }] }] }
+  const path = join(root, 'skills', 'sample', 'SKILL.md')
+  const dry = await callJson('preset-import', { scope: 'global', document, dryRun: true })
+  expect(dry.payload.status).toBe('dry-run')
+  expect(dry.payload.presetConflict).toEqual({ with: 'collision', withRevision: 1, duplicates: false })
+  const conflict = await callJson('preset-import', { scope: 'global', document })
+  expect(conflict.payload.status).toBe('name-conflict')
+  expect(conflict.payload.withRevision).toBe(1)
+  expect(existsSync(path)).toBe(false)
+  expect((await callJson('preset-import', { scope: 'global', document, onNameConflict: 'replace' })).payload.status).toBe('confirmation-required')
+  expect(existsSync(path)).toBe(false)
+  const accepted = await callJson('preset-import', { scope: 'global', document, onNameConflict: 'replace', replaceTarget: { presetId: 'collision', expectedRevision: 1, name: 'Collision' } })
+  expect(accepted.payload.status).toBe('edited')
+  expect(accepted.payload.presetId).toBe('collision')
+  expect(existsSync(path)).toBe(true)
+  expect((await callJson('presets')).payload.presets).toHaveLength(1)
+})
+
+
+test('v2 import refuses unknown preset schema before any Skill file write', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const { callJson } = mountCapabilities(root)
+  const dir = join(root, 'weir', 'profiles', 'it', 'capabilities', 'presets', 'global')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'unknown.json'), JSON.stringify({ schemaVersion: 99 }))
+  const document = { version: 2, name: 'Fresh', selection: { skills: [], mcpServers: [], unresolvedRefs: [] }, builtin: [], warnings: [],
+    bundled: [{ targetScope: 'user', name: 'test-skill', description: 'test', files: [{ path: 'SKILL.md', content: '---\nname: test-skill\ndescription: test\n---\nTEST\n' }] }] }
+  expect((await callJson('preset-import', { scope: 'global', document, dryRun: true })).payload.status).toBe('unreadable')
+  expect((await callJson('preset-import', { scope: 'global', document })).payload.status).toBe('unreadable')
+  expect(existsSync(join(root, 'skills', 'test-skill', 'SKILL.md'))).toBe(false)
+})
+
+
+test('post-install preset storage failure reports installed files and unconfirmed preset', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  let inventoryCalls = 0
+  const { callJson } = mountCapabilities(root, {}, undefined, { inventory: async () => {
+    inventoryCalls++
+    if (inventoryCalls === 2) {
+      const path = join(root, 'weir', 'profiles', 'it', 'capabilities', 'presets', 'global', 'late.json')
+      mkdirSync(path, { recursive: true }) // late hostile record makes the unit CAS unreadable
+    }
+    return { complete: true, candidates: [] }
+  } })
+  const document = { version: 2, name: 'Late', selection: { skills: [], mcpServers: [], unresolvedRefs: [] }, builtin: [], warnings: [],
+    bundled: [{ targetScope: 'user', name: 'side-effect', description: 'sample', files: [{ path: 'SKILL.md', content: '---\nname: side-effect\ndescription: sample\n---\nSample\n' }] }] }
+  const result = await callJson('preset-import', { scope: 'global', document })
+  expect(result.payload.status).toBe('preset-unconfirmed')
+  expect(result.payload.presetStatus).toBe('unconfirmed')
+  expect(result.payload.installed).toHaveLength(1)
+  expect(existsSync(join(root, 'skills', 'side-effect', 'SKILL.md'))).toBe(true)
+})
+
+
+test('v2 import without an ID skips an occupied tombstone rather than reviving it', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const { callJson } = mountCapabilities(root)
+  await callJson('preset-save', { scope: 'global', name: 'Archived', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
+  await callJson('preset-delete', { scope: 'global', presetId: 'archived', expectedRevision: 1 })
+  const document = { version: 2, name: 'Archived', selection: { skills: [], mcpServers: [], unresolvedRefs: [] }, builtin: [], bundled: [], warnings: [] }
+  const result = await callJson('preset-import', { scope: 'global', document })
+  expect(result.payload.status).toBe('created')
+  expect(result.payload.presetId).toBe('archived-2')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'archived' })).payload.status).toBe('deleted')
 })

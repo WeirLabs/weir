@@ -34,13 +34,16 @@ test('9.1 create/load/edit/delete lifecycle across two namespaces, workspace pre
   expect((await library.remove({ scope: 'workspace', presetId: 'ws-p', workspaceKey: workspaceKeyOf({ cwd: '/ws/a' }), expectedRevision: revision })).status).toBe('deleted')
 })
 
-test('9.1 a display-name collision needs an explicit decision; unconfirmed replace is rejected', async () => {
+test('9.1 a same-namespace collision needs a target ID and current revision', async () => {
   const library = createPresetLibrary({ store: storeOf(base()) })
-  const names = new Map([['other', 'Team']])
-  const allDisplayNames = async () => names
-  expect((await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team'), allDisplayNames })).status).toBe('name-conflict')
-  expect((await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team'), onNameConflict: 'rename', allDisplayNames })).status).toBe('rename-required')
-  expect((await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team'), onNameConflict: 'replace', allDisplayNames })).status).toBe('created')
+  await library.create({ scope: 'global', presetId: 'other', document: doc('Team') })
+  expect((await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team') })).status).toBe('name-conflict')
+  expect((await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team'), onNameConflict: 'rename' })).status).toBe('rename-required')
+  expect((await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team'), onNameConflict: 'replace' })).status).toBe('confirmation-required')
+  const result = await library.create({ scope: 'global', presetId: 'new-one', document: doc('Team'), onNameConflict: 'replace', replaceTarget: { presetId: 'other', expectedRevision: 1, name: 'Team' } })
+  expect(result.status).toBe('edited')
+  expect(result.presetId).toBe('other')
+  expect((await library.load('global', 'new-one')).kind).toBe('absent')
 })
 
 test('9.1 two clients editing one preset: the fresh state holds, the stale request conflicts and overwrites nothing', async () => {

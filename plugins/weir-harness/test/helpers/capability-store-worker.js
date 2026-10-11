@@ -7,7 +7,7 @@ import { createLiveness } from '../../src/capabilities/store/liveness.js'
 import { createLockProtocol } from '../../src/capabilities/store/lock.js'
 import { openCapabilityStore } from '../../src/capabilities/store/store.js'
 
-const { role, root, unit, expected, id, point, leaseMs, dir, deadlineMs } = JSON.parse(process.argv[2])
+const { role, root, unit, expected, id, point, leaseMs, dir, deadlineMs, workspaceKey } = JSON.parse(process.argv[2])
 const line = (/** @type {string} */ text) => writeSync(1, `${text}\n`)
 /** Crash-point suffix checks compare forward-slash spellings; win32 adapter args arrive backslashed. */
 const slash = (/** @type {string} */ path) => path.replace(/\\/g, '/')
@@ -91,6 +91,22 @@ if (role === 'commit') {
     await until('RELEASE')
     await lock.release(dir, 'selection', result.token)
   }
+  line('DONE')
+} else if (role === 'preset-claim') {
+  const { createPresetLibrary } = await import('../../src/capabilities/preset-library.js')
+  const library = createPresetLibrary({ store: openCapabilityStore({ root, platform: 'darwin', deadlineMs: deadlineMs ?? 1000, leaseMs: leaseMs ?? 100 }) })
+  line('READY')
+  await until('GO')
+  const result = await library.create({ scope: workspaceKey ? 'workspace' : 'global', workspaceKey, presetId: id,
+    document: { name: 'Shared', selection: { skills: [], mcpServers: [], unresolvedRefs: [] } } })
+  line(JSON.stringify({ id, status: result.status }))
+} else if (role === 'preset-holder') {
+  const store = openCapabilityStore({ root, platform: 'darwin', deadlineMs: deadlineMs ?? 100, leaseMs: leaseMs ?? 100 })
+  await store.withPresetNamespace(workspaceKey ? 'workspace' : 'global', workspaceKey, async () => {
+    line('HELD')
+    await until('RELEASE')
+    return { status: 'done' }
+  })
   line('DONE')
 } else {
   throw new Error(`unknown role ${role}`)
