@@ -62,14 +62,15 @@
 //
 // Exit code: 0 iff every executed matrix row is PASS and teardown is clean.
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { managementRootFor } from '../../weir-harness/src/edit-lock/domains.js'
+import { AUTHORITY_DIR, managementRootFor } from '../../weir-harness/src/edit-lock/domains.js'
+import { endpointFor } from '../../weir-harness/src/edit-lock/remote.js'
 import { RESERVATION_LEASE_MS } from '../../weir-harness/src/edit-lock/reservation.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -289,6 +290,28 @@ export function sha256File(file) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
+/** Assert the platform's real Edit Lock endpoint; no tmpdir-name guessing. */
+export function assertEndpoint(authorityDir, platform = process.platform, resolve = endpointFor) {
+  const endpoint = resolve(authorityDir, platform)
+  if (platform === 'win32') {
+    if (!/^\\\\\.\\pipe\\weir-edit-lock-[a-f0-9]{24}$/.test(endpoint)) throw new Error(`expected win32 named pipe, got ${endpoint}`)
+  } else if (!endpoint.endsWith('.sock') || !path.basename(endpoint).match(/^weir-edit-lock-[a-f0-9]{24}\.sock$/) || Buffer.byteLength(endpoint) > 100) {
+    throw new Error(`expected short Unix socket, got ${endpoint}`)
+  }
+  return endpoint
+}
+
+const PANEL_SHOTS = ['attention', 'recovering', 'paused', 'partial-write'].flatMap((state) => ['dark', 'light'].map((theme) => `panel-${state}-${theme}`))
+/** Verify all eight independently captured panel images, never just a directory. */
+export function verifyPanelShots(shotsDir) {
+  return PANEL_SHOTS.map((name) => {
+    const file = path.join(shotsDir, `${name}.png`)
+    const bytes = fs.readFileSync(file)
+    if (bytes.length <= 24 || !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) throw new Error(`screenshot ${name} missing, empty or not PNG`)
+    return { name, bytes: bytes.length, sha256: sha256File(file) }
+  })
+}
+
 /** The QA-only user-command fixture, generated per run so the workspace root
  * and profile homes are baked in as literals. Self-refuses outside the
  * throwaway homes/root (never install into a formal profile). */
@@ -417,8 +440,8 @@ export function apply(ctx) {
  * protocol server copied into the workspace (the same fixture the
  * editlock-lsp-rename scenario uses — the GUI panel-states phases drive the
  * real client → server → WorkspaceEdit → publishBatch chain). */
-export function settingsPatchSource({ workspace } = {}) {
-  const mockServer = workspace ? path.join(workspace, 'mock-lsp-server.js') : null
+export function settingsPatchSource({ workspace, platform = process.platform } = {}) {
+  const mockServer = workspace ? joinFor(platform)(workspace, 'mock-lsp-server.js') : null
   const lspOverlay = mockServer
     // Folded block scalar: the expression carries `: ` pairs that would break
     // a plain YAML scalar (boot failure: "bad indentation of a mapping entry").
@@ -426,7 +449,7 @@ export function settingsPatchSource({ workspace } = {}) {
     # !!js evaluates in the server process: process.execPath is the DSH runtime
     # node, so the mock server launches on any platform without a hardcoded path.
     lspServers: !!js >-
-      JSON.stringify({ typescript: { command: process.execPath, args: ['${mockServer}'], installHint: 'qa-fixture' } })
+      JSON.stringify({ typescript: { command: process.execPath, args: [${JSON.stringify(mockServer)}], installHint: 'qa-fixture' } })
 `
     : ''
   return `# Test-only overlay. Never load in the user's desktop profile.
@@ -751,6 +774,7 @@ export class GuiInstance {
     this.stdoutBuffer = ''
     this.serverPid = null
     this.secretList = []
+    this.processes = []
     // Runtime.exceptionThrown events observed since boot; panel-states phases
     // assert a zero delta per phase (console exceptions are a gate, not noise).
     this.exceptions = 0
@@ -760,7 +784,7 @@ export class GuiInstance {
 
   /** The launch token is memory-only; registering it here arms redaction for
    * every log sink that reads the list lazily. */
-  setToken(token) { this.token = token; this.secretList = token ? [token] : [] }
+  setToken(token) { this.token = token; if (token && !this.secretList.includes(token)) this.secretList.push(token) }
 
   get serverLogFile() { return path.join(this.config.paths.logs, `server-${this.name}.log`) }
 
@@ -820,6 +844,7 @@ export class GuiInstance {
     this.stdoutBuffer = ''
     this.server = spawn(dsh.command, args, { env: this.processEnv(), cwd: paths.root })
     this.serverPid = this.server.pid
+    this.processes.push({ name: `${this.name} server`, child: this.server })
     // Token safety: stdout is buffered in memory until the launch token is
     // parsed; only then does the (now redaction-armed) log receive the
     // backlog and start streaming. A token can never reach the log file.
@@ -858,6 +883,7 @@ export class GuiInstance {
     const userDataDir = path.join(paths.root, `chrome-${this.name}`)
     fs.mkdirSync(userDataDir, { recursive: true })
     this.chrome = spawn(chrome, buildChromeArgs({ cdpPort: this.ports.cdp, userDataDir }), { stdio: ['ignore', 'ignore', 'pipe'] })
+    this.processes.push({ name: `${this.name} chrome`, child: this.chrome })
     this.chrome.stderr.on('data', () => { /* chrome chatter is not evidence */ })
     const list = await waitFor(`${this.name} cdp`, async () => {
       try {
@@ -918,10 +944,12 @@ export class GuiInstance {
 
   async shot(name) {
     const file = path.join(this.config.paths.shots, `${name}.png`)
-    try {
-      await this.cdp.evaluate('window.__dualGuiQa.dismissModals()').catch(() => 0)
-      await this.cdp.screenshot(file)
-    } catch { /* screenshots are evidence aids, never gates */ }
+    await this.cdp.evaluate('window.__dualGuiQa.dismissModals()').catch(() => 0)
+    await this.cdp.screenshot(file)
+    const bytes = fs.readFileSync(file)
+    if (bytes.length <= 24 || !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
+      throw new Error(`${this.name}: screenshot ${name} is missing, empty or not PNG`)
+    }
     return file
   }
 
@@ -1118,11 +1146,14 @@ async function shotBothThemes(instance, name) {
   await instance.setColorScheme('dark')
 }
 
-/** Gate: zero page exceptions inside one phase's window. */
+/** Gate: zero Runtime.exceptionThrown events inside one phase's window. */
 function assertNoNewExceptions(instance, since, label) {
   if (instance.exceptions !== since) {
-    throw new Error(`${label}: ${instance.exceptions - since} console exception(s) during the phase (see ${instance.eventsFile})`)
+    throw new Error(`${label}: ${instance.name} saw ${instance.exceptions - since} Runtime.exceptionThrown event(s) (see ${instance.eventsFile})`)
   }
+}
+export function assertPhaseExceptions(browsers, baselines, label) {
+  for (let i = 0; i < browsers.length; i += 1) assertNoNewExceptions(browsers[i], baselines[i], label)
 }
 
 /** Poll the live view until `predicate` holds; returns the matching view. */
@@ -1172,9 +1203,12 @@ async function runMatrix(config, paths, a, b, matrix) {
   const state = { initialSha: sha256File(paths.sharedFile) }
   const phase = async (name, skipped, fn) => {
     if (skipped) { matrix.record(name, 'SKIP', skipped === true ? 'not in this matrix' : skipped); return }
+    const beforeA = a.exceptions
+    const beforeB = b.exceptions
     try {
       const detail = await fn()
-      matrix.record(name, 'PASS', detail ?? '')
+      assertPhaseExceptions([a, b], [beforeA, beforeB], name)
+      matrix.record(name, 'PASS', `${detail ?? ''}; Runtime.exceptionThrown A=0 B=0`)
     } catch (error) {
       matrix.record(name, 'FAIL', sanitizeText(String(error?.stack ?? error), [...a.secrets, ...b.secrets]))
       throw error
@@ -1213,6 +1247,16 @@ async function runMatrix(config, paths, a, b, matrix) {
     if (aView.technical.root !== wsReal || bView.technical.root !== wsReal) {
       throw new Error(`management roots diverge from the shared workspace: A=${aView.technical.root} B=${bView.technical.root} ws=${wsReal}`)
     }
+    const endpoint = assertEndpoint(path.join(wsReal, AUTHORITY_DIR), config.platform)
+    if (config.platform !== 'win32' && !fs.statSync(endpoint).isSocket()) throw new Error(`Edit Lock endpoint is not a Unix socket: ${endpoint}`)
+    // Named pipes have no filesystem node: connect to prove the live endpoint.
+    await new Promise((resolve, reject) => {
+      const socket = net.connect(endpoint)
+      socket.once('connect', () => { socket.destroy(); resolve() })
+      socket.once('error', reject)
+      socket.setTimeout(5000, () => { socket.destroy(); reject(new Error(`endpoint connection timed out: ${endpoint}`)) })
+    })
+    state.endpoint = endpoint
     state.publisher = a
     state.client = b
     await a.shot('role-publisher')
@@ -1598,16 +1642,25 @@ export async function teardown(instances, config, paths, matrix) {
   return problems
 }
 
-function writeReport(config, paths, matrix, extra = {}) {
+export function writeReport(config, paths, matrix, extra = {}) {
+  const counts = { PASS: matrix.passed.length, FAIL: matrix.failed.length, SKIP: matrix.rows.filter((row) => row.status === 'SKIP').length }
   const lines = [
     '# Dual-GUI Edit Lock acceptance report',
     '',
     `date: ${new Date().toISOString()}`,
-    `platform: ${process.platform} ${process.arch}, node ${process.version}`,
+    `platform: ${config.platform ?? process.platform} ${process.arch}, node ${process.version}`,
+    `runner image: ${config.runner?.image ?? 'local (not a CI image)'}`,
+    `runner version: ${config.runner?.version ?? 'local (not a CI image)'}`,
+    `dsh invocation: ${config.dsh?.description ?? 'unknown'}`,
+    `dsh version: ${extra.dshVersion ?? 'not measured'}`,
     `matrix: ${config.matrix}`,
     `qa root: ${paths.root}`,
     `workspace: ${paths.ws}`,
-    ...Object.entries(extra).map(([key, value]) => `${key}: ${value}`),
+    `shared file sha256: ${extra.sha ?? 'not measured'}`,
+    `endpoint: ${extra.endpoint ?? 'not measured'}`,
+    `phase counts: ${counts.PASS} PASS, ${counts.FAIL} FAIL, ${counts.SKIP} SKIP`,
+    ...((extra.processes ?? []).map((proc) => `process ${proc.name}: pid=${proc.pid ?? 'not started'} exit=${proc.exitCode ?? 'null'} signal=${proc.signalCode ?? 'null'}`)),
+    ...((extra.panelShots ?? []).map((shot) => `screenshot ${shot.name}: ${shot.bytes} bytes sha256=${shot.sha256}`)),
     '',
     '| phase | verdict | detail |',
     '|---|---|---|',
@@ -1615,7 +1668,7 @@ function writeReport(config, paths, matrix, extra = {}) {
     '',
   ]
   const file = path.join(paths.root, 'dual-gui-report.md')
-  fs.writeFileSync(file, `${lines.join('\n')}\n`)
+  fs.writeFileSync(file, `${sanitizeText(lines.join('\n'), extra.secrets ?? [])}\n`)
   return file
 }
 
@@ -1627,6 +1680,10 @@ async function main() {
     return
   }
   const config = resolveConfig({ argv: argv.slice(1) })
+  config.runner = { image: process.env.ImageOS ?? 'local (not a CI image)', version: process.env.ImageVersion ?? 'local (not a CI image)' }
+  const version = spawnSync(config.dsh.command, [...config.dsh.prefixArgs, '--version'], { encoding: 'utf8', timeout: 15000 })
+  if (version.error || version.status !== 0 || !version.stdout.trim()) throw new Error(`DSH CLI version probe failed: ${version.error?.message ?? version.status}`)
+  const dshVersion = version.stdout.trim()
   const paths = prepareQaRoot(config)
   const ports = await allocateFreePorts(4)
   const makeInstance = (name, webPort, cdpPort) => {
@@ -1641,18 +1698,26 @@ async function main() {
   console.log(`dual-gui-qa: root ${paths.root}`)
   console.log(`dual-gui-qa: matrix ${config.matrix}; dsh: ${config.dsh.description}; chrome: ${config.chrome}`)
   let failure = null
+  let endpoint = null
+  let panelShots = []
   try {
     const state = await runMatrix(config, paths, a, b, matrix)
-    secrets.push(...a.secrets, ...b.secrets)
-    void state
+    endpoint = state.endpoint
+    if (config.matrix === 'heavy') {
+      panelShots = verifyPanelShots(paths.shots)
+      matrix.record('panel-screenshot-evidence', 'PASS', '8/8 targeted PNG screenshots verified')
+    } else matrix.record('panel-screenshot-evidence', 'SKIP', 'heavy only')
   } catch (error) {
     failure = error
-    secrets.push(...a.secrets, ...b.secrets)
+    if (config.matrix === 'heavy' && matrix.failed.length === 0) matrix.record('panel-screenshot-evidence', 'FAIL', String(error?.message ?? error))
   }
+  secrets.push(...a.secrets, ...b.secrets)
   // Teardown ALWAYS runs, green or red.
   try { await teardown([a, b], config, paths, matrix) } catch (error) { matrix.record('teardown', 'FAIL', String(error?.message ?? error)) }
+  const processes = [...a.processes, ...b.processes].map(({ name, child }) => ({ name, pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }))
+  for (const proc of processes) if (proc.exitCode === null && proc.signalCode === null) matrix.record('process-exit', 'FAIL', `${proc.name} pid ${proc.pid} did not exit`)
   const report = writeReport(config, paths, matrix, {
-    'shared file sha256': sha256File(paths.sharedFile),
+    sha: sha256File(paths.sharedFile), endpoint, dshVersion, processes, panelShots, secrets,
   })
   for (const row of matrix.rows) console.log(`${row.status === 'PASS' ? 'PASS' : row.status} ${row.name}${row.detail ? ` — ${sanitizeText(row.detail, secrets)}` : ''}`)
   console.log(`dual-gui-qa: report ${report}`)
