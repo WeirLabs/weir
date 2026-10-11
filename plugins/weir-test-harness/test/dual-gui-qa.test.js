@@ -49,6 +49,8 @@ import {
   writeReport,
   assertRefusalDelta,
   waitGuiCommand,
+  assertRecoveryLine,
+  assertPartialWriteDom,
 } from '../src/dual-gui-qa.mjs'
 import { managementRootFor } from '../../weir-harness/src/edit-lock/domains.js'
 
@@ -446,6 +448,50 @@ describe('PAGE_HELPERS_SOURCE', () => {
     assert.equal((await waitGuiCommand(instance, 'nested', text, { phaseMs: 50 })).selected, true)
     selected = false
     await assert.rejects(waitGuiCommand(instance, 'nested', text, { phaseMs: 1 }), /last DOM evidence=.*selected.*false/)
+  })
+})
+
+describe('visible recovery and partial-write evidence', () => {
+  it('rejects unchanged or wrong-count recovery lines and accepts both locales', () => {
+    assert.throws(() => assertRecoveryLine('Recorded recovery: 0 attempts · 0s elapsed', 'Recorded recovery: 0 attempts · 0s elapsed', 1), /changed/)
+    assert.throws(() => assertRecoveryLine('Recorded recovery: 0 attempts', 'Recorded recovery: 0 attempts · 16s elapsed', 1), /attempt count/)
+    assert.doesNotThrow(() => assertRecoveryLine('已记录恢复：0 次 · 已用 0 秒', '已记录恢复：1 次 · 已用 16 秒', 1))
+    assert.doesNotThrow(() => assertRecoveryLine('Recorded recovery: 0 attempts', 'Recorded recovery: 2 attempts · 30s elapsed', 2))
+  })
+  it('rejects collapsed, hidden or missing categories in actual command detail', () => {
+    const written = '/ws/probe.ts', other = '/ws/probe-other.ts'
+    const body = `rename stopped: Error;\nfilesAlreadyWritten: [${JSON.stringify(written)}];\nfilesNotWritten: [];\nfilesUncertain: [${JSON.stringify(other)}];\n` + 'ownership retained (no rollback)'
+    const evidence = { selected: true, matched: true, expanded: true, visible: true, error: true, text: body, panel: true }
+    assert.doesNotThrow(() => assertPartialWriteDom(evidence, { written, other }))
+    for (const patch of [{ expanded: false }, { visible: false }, { panel: false }, { text: body.replace('filesUncertain: [', 'filesUncertain: []\nignored: [') }]) {
+      assert.throws(() => assertPartialWriteDom({ ...evidence, ...patch }, { written, other }))
+    }
+  })
+  it('clicks the native disclosure and reads only the visible error pre', () => {
+    const body = 'QA rename refused:\nfilesAlreadyWritten: ["/ws/probe.ts"]'
+    let expanded = false, visible = true
+    const disclosure = { getAttribute: () => expanded ? 'true' : 'false', click() { expanded = true } }
+    const pre = { textContent: body, getBoundingClientRect: () => ({ width: 420, height: visible ? 100 : 0, top: 200, bottom: 300 }) }
+    const node = { textContent: body, scrollIntoView() {}, querySelector(selector) {
+      if (selector === '[aria-expanded]') return disclosure
+      if (selector === 'pre[data-error]') return expanded ? pre : null
+      if (selector === '[data-state="error"]') return {}
+      return null
+    } }
+    const document = { querySelector(selector) {
+      if (selector === '[data-weir-edit-lock-panel]') return {}
+      if (selector === '[data-row-key="session:real"]') return { getAttribute: () => 'true' }
+      return null
+    }, querySelectorAll: () => [node] }
+    const window = {}
+    runInNewContext(PAGE_HELPERS_SOURCE, { window, document, innerHeight: 900, getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) })
+    assert.equal(window.__dualGuiQa.partialWriteEvidence('real').expanded, false)
+    const opened = window.__dualGuiQa.partialWriteEvidence('real', true)
+    assert.equal(opened.expanded, true)
+    assert.equal(opened.visible, true)
+    assert.equal(opened.text, body)
+    visible = false
+    assert.equal(window.__dualGuiQa.partialWriteEvidence('real').visible, false)
   })
 })
 
