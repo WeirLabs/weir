@@ -619,17 +619,16 @@ test('preset-import v2: a package needing an unresolvable root fails before any 
   expect(summary.install.find(entry => entry.name === 'ws-tool').targetRoot).toBeNull()
 })
 
-test('preset-import v2: a preset name conflict leaves the confirmed install in place and reports both', { skip: storePlatformSkip }, async () => {
+test('preset-import v2: a preset name conflict refuses before any bundled Skill install', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { command, agent } = mountCapabilities(root)
   await command.handler({ agent, rawInput: `preset-save ${JSON.stringify({ scope: 'global', name: 'Bundle', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })}` })
   const result = await command.handler({ agent, rawInput: `preset-import ${JSON.stringify({ document: packageFixture(), scope: 'global', presetId: 'other-id' })}` })
   expect(result.kind).toBe('success')
   const payload = JSON.parse(result.text)
-  // the preset RECORD conflict is its own outcome — the explicitly confirmed
-  // install was already the import's main effect and stays in place
   expect(payload.status).toBe('name-conflict')
-  expect(payload.installed).toHaveLength(2)
-  expect(readFileSync(join(root, '.dsh', 'skills', 'ws-tool', 'SKILL.md'), 'utf8')).toContain('name: ws-tool')
+  expect(payload.withRevision).toBe(1)
+  expect(existsSync(join(root, '.dsh', 'skills', 'ws-tool', 'SKILL.md'))).toBe(false)
+  expect(existsSync(join(root, 'skills', 'user-tool', 'SKILL.md'))).toBe(false)
   expect(JSON.parse((await command.handler({ agent, rawInput: 'presets' })).text).presets).toHaveLength(1)
 })

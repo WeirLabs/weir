@@ -19,7 +19,7 @@ import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
 import { createDefaultsTransaction } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 import { bindImportedSelection, validatePortableDocument } from './portable-refs.js'
-import { enumeratePresetUnits } from './store/enumerate.js'
+import { inspectPresetNamespace } from './store/enumerate.js'
 import { bindPackageSelection, packPresetPackage, planPackageInstall, validatePresetPackage } from './preset-package.js'
 import { installBundledSkills } from './preset-package-install.js'
 import { isSegment } from './store/paths.js'
@@ -299,7 +299,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       if (commands) {
         ctx.effect(() => commands.register({
           name: 'capabilities',
-          description: 'Session capability surface for the Weir Badge and manager (receipt | list | conditions | presets | preset-save | preset-load | preset-delete | preset-export | preset-import | default-get | default-save | default-clear).',
+          description: 'Session capability surface for the Weir Badge and manager (receipt | list | conditions | presets | preset-save | preset-rename | preset-resave | preset-load | preset-delete | preset-export | preset-import | default-get | default-save | default-clear).',
           handler: async (invocation) => {
             const agent = invocation?.agent
             if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
@@ -337,31 +337,6 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 mcpServers: Array.isArray(spec.mcpServers) ? spec.mcpServers : [],
                 unresolvedRefs: Array.isArray(spec.unresolvedRefs) ? spec.unresolvedRefs : [],
               }
-            }
-            /**
-             * Display names of one preset namespace for the collision check.
-             * The check is part of the write contract, so an unavailable
-             * listing propagates its explicit kind instead of degrading the
-             * save to a blind write.
-             */
-            const presetNamesOf = async (store, scope, workspaceKey) => {
-              const listed = await enumeratePresetUnits(store, { workspaceKey: isSegment(workspaceKey) ? workspaceKey : undefined })
-              if (listed.kind !== 'ok') return listed
-              const names = new Map()
-              for (const preset of listed.presets) {
-                if (preset.scope !== scope) continue
-                const document = preset.document
-                if (document !== null && typeof document === 'object' && !Array.isArray(document)
-                  && typeof /** @type {Record<string, unknown>} */ (document).name === 'string') {
-                  names.set(preset.presetId, /** @type {Record<string, unknown>} */ (document).name)
-                }
-              }
-              return { kind: 'ok', names }
-            }
-            /** Derive a stable, segment-safe preset id from a display name. */
-            const presetSlugOf = name => {
-              const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 96)
-              return isSegment(slug) ? slug : 'preset'
             }
             /** Shared scope validation for the preset verbs. */
             const presetScopeError = spec => (spec?.scope !== 'global' && spec?.scope !== 'workspace')
@@ -419,7 +394,12 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 ...missingBuiltin.map(name => ({ kind: 'skill', ref: { name, source: 'builtin' } })),
               ]
               if (spec.dryRun === true) {
-                return { kind: 'success', text: JSON.stringify({ status: 'dry-run', install: plan.install, unresolved: carried, collisions: plan.collisions }) }
+                const view = await inspectPresetNamespace(store, spec.scope, workspaceKey)
+                if (view.status !== 'ok') return { kind: 'error', text: JSON.stringify(view) }
+                const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
+                const conflicts = view.names.get(name) ?? []
+                const presetConflict = conflicts.length ? { with: conflicts[0], withRevision: view.activeById.get(conflicts[0]).revision, duplicates: conflicts.length > 1 } : null
+                return { kind: 'success', text: JSON.stringify({ status: 'dry-run', install: plan.install, unresolved: carried, collisions: plan.collisions, presetConflict }) }
               }
               // Confirmed: the install is this import's explicit main effect.
               const neededScopes = [...new Set(pkg.bundled.map(entry => entry.targetScope))]
@@ -427,63 +407,72 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               if (missingRoot !== undefined) {
                 return { kind: 'error', text: JSON.stringify({ status: 'no-target-root', targetScope: missingRoot }) }
               }
-              const install = await installBundledSkills(pkg.bundled, { roots: targetRoots, onCollision }, {
-                audit: data => audit(agent.session, AUDIT_TYPES.capabilityPresetImport, data),
-              })
-              if (!install.ok) {
-                // installBundledSkills already rolled back what it wrote.
-                return { kind: 'error', text: JSON.stringify({ status: 'install-failed', reason: install.reason, rolledBack: install.rolledBack }) }
-              }
-              // Resolve what is now local (installed bundled Skills, present
-              // builtin names) against a FRESH inventory: the preset record
-              // names real identities; everything else stays unresolved.
-              const afterResult = await inventory(options)
-              const afterCandidates = Array.isArray(afterResult?.candidates) ? afterResult.candidates : []
-              const resolveLocal = (scope, name) => {
-                const matches = []
-                for (const candidate of afterCandidates) {
-                  const identity = /** @type {Record<string, any>} */ (candidate)?.identity
-                  if (identity?.scope === scope && identity.name === name) matches.push(identity)
-                }
-                // An ambiguous name stays unresolved rather than guessing.
-                return matches.length === 1 ? matches[0] : null
-              }
-              const resolvedSkills = []
-              const unresolvedRefs = [...carried]
-              for (const entry of install.installed) {
-                const identity = resolveLocal(entry.targetScope === 'project' ? 'project' : 'user', entry.target)
-                if (identity) resolvedSkills.push(identity)
-                else unresolvedRefs.push({ kind: 'skill', ref: { name: entry.target, targetScope: entry.targetScope, source: 'bundled' } })
-              }
-              for (const entry of install.collisions) {
-                unresolvedRefs.push({ kind: 'skill', ref: { name: entry.name, targetScope: entry.targetScope, source: 'bundled', collision: entry.decision } })
-              }
-              for (const name of pkg.builtin) {
-                if (missingBuiltin.includes(name)) continue
-                const identity = resolveLocal('weir-builtin', name)
-                if (identity) resolvedSkills.push(identity)
-                else unresolvedRefs.push({ kind: 'skill', ref: { name, source: 'builtin' } })
-              }
               const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
-              const presetId = spec.presetId ?? presetSlugOf(name)
-              if (!isSegment(presetId)) return { kind: 'error', text: `capabilities preset-import: invalid presetId ${JSON.stringify(presetId)}` }
-              const names = await presetNamesOf(store, spec.scope, workspaceKey)
-              if (names.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: names.kind, reason: names.reason }) }
+              const requestedId = spec.presetId
+              if (requestedId !== undefined && requestedId !== null && !isSegment(requestedId)) return { kind: 'error', text: `capabilities preset-import: invalid presetId ${JSON.stringify(requestedId)}` }
               const library = createPresetLibrary({ store })
-              const document = { name, selection: { skills: resolvedSkills, mcpServers: bound.mcpServers, unresolvedRefs } }
-              const result = await library.create({
-                scope: spec.scope, presetId, workspaceKey, document,
-                onNameConflict: spec.onNameConflict ?? 'cancel',
-                allDisplayNames: async () => names.names,
+              const guardedResult = await library.withNamespace(spec.scope, workspaceKey, async guarded => {
+                const request = { scope: spec.scope, presetId: requestedId, workspaceKey,
+                  document: { name, selection: { skills: [], mcpServers: [], unresolvedRefs: [] } },
+                  onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget }
+                const admission = await guarded.checkCreate(request)
+                if (admission.status !== 'ready') return { kind: 'success', text: JSON.stringify(admission) }
+                let install
+                try {
+                  install = await installBundledSkills(pkg.bundled, { roots: targetRoots, onCollision }, {
+                    audit: data => audit(agent.session, AUDIT_TYPES.capabilityPresetImport, data),
+                  })
+                  if (!install.ok) {
+                    // installBundledSkills already rolled back what it wrote.
+                    return { kind: 'error', text: JSON.stringify({ status: 'install-failed', reason: install.reason, rolledBack: install.rolledBack }) }
+                  }
+                  // Resolve what is now local (installed bundled Skills, present
+                  // builtin names) against a FRESH inventory: the preset record
+                  // names real identities; everything else stays unresolved.
+                  const afterResult = await inventory(options)
+                  const afterCandidates = Array.isArray(afterResult?.candidates) ? afterResult.candidates : []
+                  const resolveLocal = (scope, name) => {
+                    const matches = []
+                    for (const candidate of afterCandidates) {
+                      const identity = /** @type {Record<string, any>} */ (candidate)?.identity
+                      if (identity?.scope === scope && identity.name === name) matches.push(identity)
+                    }
+                    // An ambiguous name stays unresolved rather than guessing.
+                    return matches.length === 1 ? matches[0] : null
+                  }
+                  const resolvedSkills = []
+                  const unresolvedRefs = [...carried]
+                  for (const entry of install.installed) {
+                    const identity = resolveLocal(entry.targetScope === 'project' ? 'project' : 'user', entry.target)
+                    if (identity) resolvedSkills.push(identity)
+                    else unresolvedRefs.push({ kind: 'skill', ref: { name: entry.target, targetScope: entry.targetScope, source: 'bundled' } })
+                  }
+                  for (const entry of install.collisions) {
+                    unresolvedRefs.push({ kind: 'skill', ref: { name: entry.name, targetScope: entry.targetScope, source: 'bundled', collision: entry.decision } })
+                  }
+                  for (const name of pkg.builtin) {
+                    if (missingBuiltin.includes(name)) continue
+                    const identity = resolveLocal('weir-builtin', name)
+                    if (identity) resolvedSkills.push(identity)
+                    else unresolvedRefs.push({ kind: 'skill', ref: { name, source: 'builtin' } })
+                  }
+                  const document = { name, selection: { skills: resolvedSkills, mcpServers: bound.mcpServers, unresolvedRefs } }
+                  const result = await guarded.create({ ...request, document })
+                  return { kind: 'success', text: JSON.stringify({
+                    ...result,
+                    bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: unresolvedRefs.length },
+                    installed: install.installed,
+                    collisions: install.collisions,
+                    unresolved: unresolvedRefs,
+                    ...(result.status !== 'created' && result.status !== 'edited' ? { presetStatus: 'unconfirmed' } : {}),
+                  }) }
+                } catch (cause) {
+                  return { kind: 'error', text: JSON.stringify({ status: 'preset-unconfirmed',
+                    presetStatus: 'unconfirmed', installed: install?.installed ?? [], reason: cause instanceof Error ? cause.message : String(cause) }) }
+                }
               })
-              return { kind: 'success', text: JSON.stringify({
-                ...result,
-                presetId,
-                bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: unresolvedRefs.length },
-                installed: install.installed,
-                collisions: install.collisions,
-                unresolved: unresolvedRefs,
-              }) }
+              return guardedResult?.kind === 'success' || guardedResult?.kind === 'error'
+                ? guardedResult : { kind: 'success', text: JSON.stringify(guardedResult) }
             }
             if (verb === 'receipt') {
               try {
@@ -669,69 +658,65 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 return { kind: 'error', text: `capabilities presets failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
-            if (verb.startsWith('preset-save ')) {
-              // Save the draft or the applied selection as a named preset.
-              // Create vs edit is decided by the presence of expectedRevision;
-              // a display-name collision inside the namespace writes nothing
-              // unless the caller confirmed onNameConflict:'replace'.
+            if (verb.startsWith('preset-save ') || verb.startsWith('preset-rename ') || verb.startsWith('preset-resave ')) {
+              const action = rawInput.split(' ', 1)[0].toLowerCase()
               let spec
-              try {
-                spec = JSON.parse(rawInput.slice('preset-save '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-save <json {scope,name,presetId?,from:"draft"|"applied",skills?,mcpServers?,unresolvedRefs?,expectedRevision?,onNameConflict?}>' }
-              }
+              try { spec = JSON.parse(rawInput.slice(action.length + 1)) }
+              catch { return { kind: 'error', text: `Usage: /capabilities ${action} <json>` } }
               try {
                 const scopeError = presetScopeError(spec)
                 if (scopeError) return scopeError
-                if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'capabilities preset-save: from must be "draft" | "applied"' }
-                if (typeof spec.name !== 'string' || spec.name.length === 0) return { kind: 'error', text: 'capabilities preset-save: name must be a non-empty string' }
-                const onNameConflict = spec.onNameConflict ?? 'cancel'
-                if (onNameConflict !== 'rename' && onNameConflict !== 'replace' && onNameConflict !== 'cancel') {
-                  return { kind: 'error', text: 'capabilities preset-save: onNameConflict must be "rename" | "replace" | "cancel"' }
-                }
                 const workspaceKey = sessionWorkspaceKey()
                 if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-                const store = capabilityStore()
-                const names = await presetNamesOf(store, spec.scope, workspaceKey)
-                if (names.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: names.kind, reason: names.reason }) }
+                const library = createPresetLibrary({ store: capabilityStore() })
+                if (action === 'preset-rename' || action === 'preset-resave') {
+                  if (!isSegment(spec.presetId)) return { kind: 'error', text: `${action}: invalid presetId` }
+                  if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 1) return { kind: 'error', text: `${action}: expectedRevision must be positive` }
+                  if (action === 'preset-rename') {
+                    const result = await library.rename({ scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision, name: spec.name })
+                    return { kind: 'success', text: JSON.stringify(result) }
+                  }
+                  if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-resave: from must be draft or applied' }
+                  if (spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
+                    return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
+                  }
+                  const store = capabilityStore()
+                  const source = spec.from === 'applied' ? await store.read({ kind: 'selection', sessionId: agent.id }) : null
+                  if (source && source.kind !== 'ok' && source.kind !== 'absent') return { kind: 'success', text: JSON.stringify({ status: 'unreadable', kind: source.kind }) }
+                  if (source && (!Number.isSafeInteger(spec.expectedSelectionRevision) || spec.expectedSelectionRevision !== source.revision
+                    || (spec.expectedSelectionDigest !== undefined && spec.expectedSelectionDigest !== (source.kind === 'ok' ? source.digest : null)))) {
+                    return { kind: 'success', text: JSON.stringify({ status: 'source-changed', revision: source.revision }) }
+                  }
+                  const sets = spec.from === 'applied' && source?.kind === 'ok'
+                    ? { skills: source.payload.skills, mcpServers: source.payload.mcpServers, unresolvedRefs: [] }
+                    : await selectionSetsOf(spec)
+                  const result = await library.resave({
+                    scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
+                    selection: sets,
+                    withSource: source ? commit => store.withSelectionSnapshot(agent.id, current =>
+                      current.kind === source.kind && current.revision === source.revision && current.digest === source.digest
+                        ? commit() : { status: 'source-changed', revision: current.revision }) : undefined,
+                  })
+                  return { kind: 'success', text: JSON.stringify(result) }
+                }
+                if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-save: from must be draft or applied' }
+                if (typeof spec.name !== 'string' || !spec.name.length) return { kind: 'error', text: 'preset-save: name must be non-empty' }
+                if (spec.expectedRevision !== undefined && spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
+                  return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
+                }
                 const sets = await selectionSetsOf(spec)
                 const selection = { skills: sets.skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs }
-                const library = createPresetLibrary({ store })
                 if (spec.expectedRevision !== undefined) {
-                  // Edit path: whole-document replacement under CAS.
-                  if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-save: edit needs a valid presetId' }
-                  if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 0) {
-                    return { kind: 'error', text: 'capabilities preset-save: expectedRevision must be a non-negative integer' }
-                  }
-                  for (const [otherId, otherName] of names.names) {
-                    if (otherId !== spec.presetId && otherName === spec.name && onNameConflict !== 'replace') {
-                      return { kind: 'success', text: JSON.stringify({ status: onNameConflict === 'rename' ? 'rename-required' : 'name-conflict', with: otherId }) }
-                    }
-                  }
-                  const result = await library.edit({
-                    scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
-                    mutate: () => ({ name: spec.name, selection }),
-                  })
-                  return { kind: 'success', text: JSON.stringify({ ...result, presetId: spec.presetId }) }
+                  if (!isSegment(spec.presetId)) return { kind: 'error', text: 'preset-save: edit needs presetId' }
+                  const result = await library.edit({ scope: spec.scope, presetId: spec.presetId, workspaceKey,
+                    expectedRevision: spec.expectedRevision, mutate: () => ({ name: spec.name, selection }) })
+                  return { kind: 'success', text: JSON.stringify(result) }
                 }
-                // Create path: an absent presetId is derived from the display
-                // name and made unique inside the namespace.
-                let presetId = spec.presetId
-                if (presetId === undefined || presetId === null || presetId === '') {
-                  const base = presetSlugOf(spec.name)
-                  presetId = base
-                  for (let suffix = 2; names.names.has(presetId); suffix += 1) presetId = `${base}-${suffix}`
-                }
-                if (!isSegment(presetId)) return { kind: 'error', text: `capabilities preset-save: invalid presetId ${JSON.stringify(presetId)}` }
-                const result = await library.create({
-                  scope: spec.scope, presetId, workspaceKey,
-                  document: { name: spec.name, selection },
-                  onNameConflict,
-                  allDisplayNames: async () => names.names,
-                })
-                return { kind: 'success', text: JSON.stringify({ ...result, presetId }) }
+                const result = await library.create({ scope: spec.scope, presetId: spec.presetId, workspaceKey,
+                  document: { name: spec.name, selection }, onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget })
+                return { kind: 'success', text: JSON.stringify(result) }
               } catch (cause) {
-                return { kind: 'error', text: `capabilities preset-save failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+                return { kind: 'error', text: `capabilities ${action} failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }
             }
             if (verb.startsWith('preset-load ')) {
@@ -862,8 +847,6 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 if (!isSegment(presetId)) return { kind: 'error', text: 'capabilities preset-import: presetId must be a valid store segment' }
                 const name = typeof spec.name === 'string' && spec.name.length ? spec.name : spec.document.name
                 const store = capabilityStore()
-                const names = await presetNamesOf(store, spec.scope, workspaceKey)
-                if (names.kind !== 'ok') return { kind: 'error', text: JSON.stringify({ status: names.kind, reason: names.reason }) }
                 const registry = createMcpRegistry({ store })
                 const record = await registry.read()
                 const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
@@ -881,12 +864,9 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                   },
                 }
                 const library = createPresetLibrary({ store })
-                const result = await library.create({
-                  scope: spec.scope, presetId, workspaceKey, document,
-                  onNameConflict: spec.onNameConflict ?? 'cancel',
-                  allDisplayNames: async () => names.names,
-                })
-                return { kind: 'success', text: JSON.stringify({ ...result, presetId, bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: bound.unresolvedRefs.length } }) }
+                const result = await library.create({ scope: spec.scope, presetId, workspaceKey, document,
+                  onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget })
+                return { kind: 'success', text: JSON.stringify({ ...result, bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: bound.unresolvedRefs.length } }) }
               } catch (cause) {
                 return { kind: 'error', text: `capabilities preset-import failed: ${cause instanceof Error ? cause.message : String(cause)}` }
               }

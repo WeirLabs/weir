@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { createNodeFs } from './fs-adapter.js'
 import { createLiveness } from './liveness.js'
 import { createLockProtocol } from './lock.js'
+import { validPresetPayload } from './enumerate.js'
 import { isFileSegment, isSegment, resolveStoreRoot, unitLayout } from './paths.js'
 import { decodeRecord, digestOf, encodeRecord } from './record.js'
 
@@ -103,6 +104,90 @@ export function openCapabilityStore(options) {
     return readRecord(record)
   }
 
+  /** Hold the accepted-selection unit lock during the preset CAS. Apply takes
+   * this same lock, so its revision cannot change between confirmation and
+   * publication. Called only under namespace guard (namespace → selection → preset).
+   * @param {string} sessionId @param {(record: RecordRead) => Promise<any>} task
+   */
+  async function withSelectionSnapshot(sessionId, task) {
+    const { layout, dir, record } = locate({ kind: 'selection', sessionId })
+    if (!support.supported) return { status: 'unsupported', reason: support.reason }
+    return serialize(layout.key, async () => {
+      await fs.mkdirp(dir)
+      const acquired = await lock.acquire(dir, layout.name)
+      if (!acquired.ok) return { status: acquired.reason.includes('unreadable') || acquired.reason.includes('unknown-schema') ? 'unreadable' : 'locked', reason: acquired.reason }
+      try {
+        await lock.cleanup(dir, layout.name, acquired.token)
+        let current
+        try { current = await readRecord(record) }
+        catch (error) { return { status: 'unreadable', reason: String(error) } }
+        if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unreadable', kind: current.kind }
+        return await task(current)
+      } finally {
+        await lock.release(dir, layout.name, acquired.token).catch(() => {})
+      }
+    })
+  }
+  /** Serialize a preset namespace before touching any per-ID lock. The reserved
+   * .namespace directory cannot be a legal preset ID or a JSON record stem.
+   * @param {'global'|'workspace'} scope @param {string|undefined} workspaceKey
+   * @param {(view: { scan: () => Promise<any> }) => Promise<any>} task
+   */
+  async function withPresetNamespace(scope, workspaceKey, task) {
+    const layout = unitLayout(scope === 'global'
+      ? { kind: 'preset', scope, presetId: 'probe' }
+      : { kind: 'preset', scope, workspaceKey, presetId: 'probe' })
+    if (!support.supported) return { status: 'unsupported', reason: support.reason }
+    const dir = join(support.root, ...layout.segments)
+    const guardDir = join(dir, '.namespace')
+    return serialize(`${layout.segments.join('/')}/.namespace`, async () => {
+      let taskStarted = false
+      try {
+        await fs.mkdirp(guardDir)
+        const acquired = await lock.acquire(guardDir, 'writer')
+        if (!acquired.ok) return { status: acquired.reason.includes('unreadable') || acquired.reason.includes('unknown-schema') ? 'unreadable' : 'locked', reason: acquired.reason }
+        try {
+          await lock.cleanup(guardDir, 'writer', acquired.token)
+          const scan = async () => {
+            const activeById = new Map()
+            const names = new Map()
+            const occupiedIds = new Set()
+            let entries
+            try { entries = await fs.readdir(dir) }
+            catch (error) { return { status: 'unreadable', reason: String(error) } }
+            for (const entry of entries) {
+              const match = /^([A-Za-z0-9][A-Za-z0-9_-]{0,127})\.json$/.exec(entry)
+              if (!match) continue
+              const presetId = match[1]
+              occupiedIds.add(presetId)
+              // ENOENT is not an empty record: only a completed deletion is a
+              // tombstone. An external mutation during the scan fails closed.
+              let text
+              try { text = await fs.readText(join(dir, entry)) }
+              catch (error) { return { status: 'unreadable', presetId, reason: String(error) } }
+              const record = decodeRecord(text)
+              if (record.kind !== 'ok') return { status: 'unreadable', presetId, kind: record.kind }
+              const doc = record.payload
+              if (doc && typeof doc === 'object' && !Array.isArray(doc) && doc.deleted === true) continue
+              if (!validPresetPayload(doc)) return { status: 'unreadable', presetId, kind: 'invalid-preset' }
+              activeById.set(presetId, { revision: record.revision, document: doc })
+              const ids = names.get(doc.name) ?? []
+              ids.push(presetId)
+              names.set(doc.name, ids)
+            }
+            return { status: 'ok', activeById, names, occupiedIds }
+          }
+          taskStarted = true
+          return await task({ scan })
+        } finally {
+          await lock.release(guardDir, 'writer', acquired.token).catch(() => {})
+        }
+      } catch (error) {
+        if (taskStarted) throw error
+        return { status: 'unreadable', reason: String(error) }
+      }
+    })
+  }
   /**
    * @param {Unit} unit
    * @param {number} expectedRevision
@@ -217,5 +302,5 @@ export function openCapabilityStore(options) {
     return serialize(layout.key, () => lock.clear(dir, layout.name, which, ownerToken))
   }
 
-  return { support, read, commit, publishPointer, inspect, clear }
+  return { support, read, commit, publishPointer, inspect, clear, withPresetNamespace, withSelectionSnapshot }
 }

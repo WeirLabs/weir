@@ -88,3 +88,49 @@ export async function enumeratePresetUnits(store, options = {}) {
   }
   return { kind: 'ok', presets }
 }
+
+/** A read-only strict view for package dry-run. It never obtains a writer lock
+ * or creates directories; a confirmed import rechecks under the namespace guard. */
+export async function inspectPresetNamespace(store, scope, workspaceKey) {
+  const support = store?.support ?? {}
+  if (support.supported !== true || typeof support.root !== 'string') return { status: 'unsupported', reason: support.reason ?? 'store-root-unavailable' }
+  if (scope !== 'global' && (scope !== 'workspace' || !isSegment(workspaceKey))) return { status: 'unsupported', reason: 'invalid-namespace' }
+  const dir = scope === 'global' ? join(support.root, 'presets', 'global') : join(support.root, 'presets', 'workspace', workspaceKey)
+  let entries
+  try { entries = await readdir(dir) }
+  catch (error) {
+    if (codeOf(error) === 'ENOENT') entries = []
+    else return { status: 'unreadable', reason: String(error) }
+  }
+  const activeById = new Map()
+  const names = new Map()
+  const occupiedIds = new Set()
+  for (const entry of entries) {
+    const match = RECORD_FILE.exec(entry)
+    if (!match) continue
+    const presetId = match[1]
+    occupiedIds.add(presetId)
+    let text
+    try { text = await readFile(join(dir, entry), 'utf8') }
+    catch (error) { return { status: 'unreadable', presetId, reason: String(error) } }
+    const record = decodeRecord(text)
+    if (record.kind !== 'ok') return { status: 'unreadable', presetId, kind: record.kind }
+    const doc = record.payload
+    if (doc && typeof doc === 'object' && !Array.isArray(doc) && doc.deleted === true) continue
+    if (!validPresetPayload(doc)) return { status: 'unreadable', presetId, kind: 'invalid-preset' }
+    activeById.set(presetId, { revision: record.revision, document: doc })
+    const ids = names.get(doc.name) ?? []
+    ids.push(presetId)
+    names.set(doc.name, ids)
+  }
+  return { status: 'ok', activeById, names, occupiedIds }
+}
+
+/** @param {unknown} doc @returns {doc is { name: string, selection: { skills: unknown[], mcpServers: unknown[], unresolvedRefs: unknown[] } }} */
+export const validPresetPayload = doc => {
+  const value = /** @type {any} */ (doc)
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.name === 'string' && value.name.length
+    && value.selection && Array.isArray(value.selection.skills)
+    && Array.isArray(value.selection.mcpServers) && Array.isArray(value.selection.unresolvedRefs))
+}

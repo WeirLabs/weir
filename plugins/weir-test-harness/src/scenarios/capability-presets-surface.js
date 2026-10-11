@@ -67,6 +67,12 @@ function decide(options, obs) {
   if (!history.includes('done files-replaced')) {
     return toolCallChunks('surface_probe', { op: 'fileState', checks: [{ key: 'edited', path: USER_SKILL_2, text: 'LOCAL-EDIT' }, { key: 'restored', path: USER_SKILL_2, text: 'CONTENT_LOCAL' }], _marker: 'files-replaced' })
   }
+  if (!history.includes('done rename-travel')) return cap(`preset-rename ${JSON.stringify({ scope: 'global', presetId: 'travel', expectedRevision: 1, name: 'Travel Renamed' })}`, 'rename-travel')
+  if (!history.includes('done resave-travel')) return cap(`preset-resave ${JSON.stringify({ scope: 'global', presetId: 'travel', expectedRevision: 2, from: 'applied', expectedSelectionRevision: 1, skills: ['bogus'], mcpServers: ['bogus'] })}`, 'resave-travel')
+  if (!history.includes('done load-resaved')) return cap(`preset-load ${JSON.stringify({ scope: 'global', presetId: 'travel' })}`, 'load-resaved')
+  if (!history.includes('done legacy-replace')) return cap(`preset-save ${JSON.stringify({ scope: 'global', presetId: 'new-id', name: 'Travel Renamed', from: 'draft', skills: [], mcpServers: [], onNameConflict: 'replace' })}`, 'legacy-replace')
+  if (!history.includes('done confirmed-replace')) return cap(`preset-save ${JSON.stringify({ scope: 'global', presetId: 'new-id', name: 'Travel Renamed', from: 'draft', skills: [], mcpServers: [], onNameConflict: 'replace', replaceTarget: { presetId: 'travel', expectedRevision: 3, name: 'Travel Renamed' } })}`, 'confirmed-replace')
+  if (!history.includes('done list-replaced')) return toolCallChunks('surface_probe', { op: 'presetsSummary', _marker: 'list-replaced' })
   return textChunks('capability presets surface done')
 }
 
@@ -95,7 +101,15 @@ function observe(obs) {
     dryOrigCollision: /done dry-orig:.*"collisions":\[{/.test(history),
     cancelReported: /done import-cancel:.*"collisions":\[{/.test(history),
     origIntact: /done files-orig:.*"projOrig":{"exists":true,"hasMarker":true}/.test(history) && /done files-orig:.*"localOrig":{"exists":true,"hasMarker":true}/.test(history),
-    replaced: /done files-replaced:.*"edited":{"exists":true,"hasMarker":false}/.test(history) && /done files-replaced:.*"restored":{"exists":true,"hasMarker":true}/.test(history),
+    replaced: /done files-replaced:.*"edited":{"exists":true,"hasMarker":false}/.test(history) && /done files-replaced:.*"restored":{"exists":true,"hasMarker":true}/.test(history)
+      && (!history.includes('done rename-travel') || (
+        /done rename-travel:.*"status":"edited".*"presetId":"travel"/.test(history)
+        && /done resave-travel:.*"status":"edited".*"presetId":"travel"/.test(history)
+        && /done load-resaved:.*"status":"ok".*"revision":3/.test(history)
+        && /done legacy-replace:.*"status":"confirmation-required"/.test(history)
+        && /done confirmed-replace:.*"status":"edited".*"presetId":"travel"/.test(history)
+        && /done list-replaced:[^\n]*global\/travel"/.test(history)
+        && !/done list-replaced:[^\n]*global\/new-id"/.test(history))),
     halted: history.includes('probe halted'),
   }
 }

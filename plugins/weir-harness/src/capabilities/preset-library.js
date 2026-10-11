@@ -1,142 +1,168 @@
-// Task 9.1 of the session-capability-manager change: the preset library.
-// Two namespaces — `global` (this installation) and `workspace` (one stable
-// workspace identity, visible only there); a stable preset ID is always
-// separate from its display name; a display-name collision inside one
-// namespace requires an explicit rename / replace / cancel decision and
-// never silently shadows the other namespace. Every write and import goes
-// through the group-2 store with expected-revision CAS — a stale revision
-// is a visible conflict, never a silent overwrite.
+// Preset namespace mutations are serialized before a per-ID CAS. Read listing
+// stays tolerant; the guarded writer scan fails closed on every unknown record.
 import { createHash } from 'node:crypto'
-import { isSegment } from './store/paths.js'
 import { realpathSync } from 'node:fs'
+import { isSegment } from './store/paths.js'
 
 export const PRESET_SCHEMA_VERSION = 1
 
-const message = error => (error instanceof Error ? error.message : String(error))
-
-/**
- * The workspace identity bindings resolve against (9.4/9.1): the canonical
- * workspace root PATH, never its display name — renaming the workspace does
- * not change the binding. An explicit session workspace field wins; the
- * session cwd is the fallback, canonicalized.
- * @param {unknown} options - { scope?: { session?: { workspaceKey?: unknown, header?: { cwd?: unknown } } }, cwd?: unknown }
- */
 export function workspaceKeyOf(options, deps = {}) {
   const explicit = options?.scope?.session?.workspaceKey
   if (typeof explicit === 'string' && isSegment(explicit)) return explicit
   const cwd = options?.scope?.session?.header?.cwd ?? options?.cwd
   if (typeof cwd !== 'string' || cwd.length === 0) return null
-  const canonicalize = deps.realpath ?? realpathSync
   let canonical
-  try {
-    canonical = canonicalize(cwd)
-  } catch {
-    canonical = cwd
-  }
-  // Store segments ban path characters: the binding key is the canonical
-  // path's digest — stable across renames, segment-safe, never the display
-  // name.
+  try { canonical = (deps.realpath ?? realpathSync)(cwd) } catch { canonical = cwd }
   return `ws-${createHash('sha256').update(canonical).digest('hex').slice(0, 24)}`
 }
 
-/** @param {unknown} id */
 export const validatePresetId = id => {
   if (!isSegment(id)) throw new TypeError(`invalid preset id: ${JSON.stringify(id)}`)
 }
 
 const validateDocument = document => {
-  if (document === null || typeof document !== 'object' || Array.isArray(document)) throw new TypeError('preset document must be an object')
-  if (typeof document.name !== 'string' || document.name.length === 0) throw new TypeError('preset document needs a non-empty display name')
+  if (!document || typeof document !== 'object' || Array.isArray(document)) throw new TypeError('preset document must be an object')
+  if (typeof document.name !== 'string' || !document.name.length) throw new TypeError('preset document needs a non-empty display name')
   const selection = document.selection
-  if (selection === null || typeof selection !== 'object' || Array.isArray(selection)) throw new TypeError('preset document needs a selection object')
-  if (!Array.isArray(selection.skills) || !Array.isArray(selection.mcpServers) || !Array.isArray(selection.unresolvedRefs)) {
+  if (!selection || typeof selection !== 'object' || Array.isArray(selection)
+    || !Array.isArray(selection.skills) || !Array.isArray(selection.mcpServers) || !Array.isArray(selection.unresolvedRefs)) {
     throw new TypeError('preset selection needs skills, mcpServers and unresolvedRefs arrays')
   }
 }
+const validRevision = value => Number.isSafeInteger(value) && value > 0
+const duplicateNames = view => [...view.names.entries()].filter(([, ids]) => ids.length > 1).map(([name, ids]) => ({ name, ids }))
+const slugOf = name => {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 96)
+  return isSegment(slug) ? slug : 'preset'
+}
 
-/**
- * @param {{ store: { read(unit: unknown): Promise<any>, commit(unit: unknown, expectedRevision: number, mutate: (payload: unknown) => unknown, request?: unknown): Promise<any> } }} options
- */
+/** @param {{ store: { read(unit: unknown): Promise<any>, commit(unit: unknown, expectedRevision: number, mutate: (payload: unknown) => unknown): Promise<any>, withPresetNamespace(scope: string, workspaceKey: string|undefined, task: (guard: any) => Promise<any>): Promise<any> } }} options */
 export function createPresetLibrary({ store }) {
   const unitOf = (scope, presetId, workspaceKey) => {
     validatePresetId(presetId)
     if (scope === 'global') return { kind: 'preset', scope: 'global', presetId }
-    if (scope === 'workspace') {
-      if (typeof workspaceKey !== 'string' || !workspaceKey.length) throw new TypeError('workspace presets need a workspace key')
-      return { kind: 'preset', scope: 'workspace', workspaceKey, presetId }
-    }
-    throw new TypeError(`invalid preset scope: ${JSON.stringify(scope)}`)
+    if (scope === 'workspace' && isSegment(workspaceKey)) return { kind: 'preset', scope: 'workspace', workspaceKey, presetId }
+    throw new TypeError(`invalid preset scope or workspace key: ${JSON.stringify(scope)}`)
   }
+  const inNamespace = (scope, workspaceKey, task) => {
+    unitOf(scope, 'probe', workspaceKey)
+    return store.withPresetNamespace(scope, workspaceKey, async guard => {
+      const view = await guard.scan()
+      return view.status === 'ok' ? task(view, guard) : view
+    })
+  }
+  const resultOf = (result, success, presetId) => result.status === 'committed'
+    ? { status: success, presetId, revision: result.revision }
+    : { status: result.status, ...(result.revision !== undefined ? { revision: result.revision } : {}),
+      ...(result.reason || result.error ? { reason: String(result.reason ?? result.error) } : {}) }
 
-  /** @returns {Promise<{ kind: 'absent' } | { kind: 'ok', revision: number, document: unknown } | { kind: string }>} */
   async function load(scope, presetId, workspaceKey) {
     const record = await store.read(unitOf(scope, presetId, workspaceKey))
     if (record.kind === 'absent') return { kind: 'absent' }
     if (record.kind !== 'ok') return { kind: record.kind }
+    if (record.payload?.deleted === true) return { kind: 'deleted', revision: record.revision }
+    try { validateDocument(record.payload) } catch { return { kind: 'unreadable' } }
     return { kind: 'ok', revision: record.revision, document: record.payload }
   }
 
-  /**
-   * Create a new preset. A display-name collision inside the SAME namespace
-   * is the caller's explicit choice: 'rename' (the caller must pass a
-   * different display name), 'replace' (the caller confirmed overwriting
-   * that other preset) or 'cancel' (the default — reject, write nothing).
-   * A same display name in the OTHER namespace never shadows or conflicts.
-   * @param {{ scope: 'global'|'workspace', presetId: string, document: unknown,
-   *   onNameConflict?: 'rename'|'replace'|'cancel', allDisplayNames?: (scope: string, workspaceKey?: string) => Promise<Map<string, string>> }} input
-   */
-  async function create({ scope, presetId, workspaceKey, document, onNameConflict = 'cancel', allDisplayNames }) {
+  /** A caller holding this namespace guard may prepare external side effects and
+   * then call the bound create, without releasing the name reservation. */
+  const withNamespace = (scope, workspaceKey, task) => inNamespace(scope, workspaceKey, (view, guard) => task({
+    view,
+    create: input => createLocked(input, view),
+    checkCreate: input => createLocked({ ...input, dryRun: true }, view),
+  }))
+
+  async function createLocked(input, view) {
+    const { scope, workspaceKey, document, onNameConflict = 'cancel', replaceTarget } = input
     validateDocument(document)
-    if (onNameConflict !== 'rename' && onNameConflict !== 'replace' && onNameConflict !== 'cancel') {
-      throw new TypeError(`invalid name-conflict decision: ${JSON.stringify(onNameConflict)}`)
+    if (!['cancel', 'rename', 'replace'].includes(onNameConflict)) throw new TypeError('invalid name-conflict decision')
+    if (onNameConflict === 'replace' && (!replaceTarget || !isSegment(replaceTarget.presetId)
+      || !validRevision(replaceTarget.expectedRevision) || replaceTarget.name !== document.name)) return { status: 'confirmation-required' }
+    if (duplicateNames(view).length) return { status: 'duplicate-names', groups: duplicateNames(view) }
+    const matches = view.names.get(document.name) ?? []
+    if (onNameConflict === 'replace') {
+      const target = replaceTarget.presetId
+      const current = view.activeById.get(target)
+      if (!current) return { status: view.occupiedIds.has(target) ? 'deleted' : 'absent' }
+      if (current.revision !== replaceTarget.expectedRevision) return { status: 'revision-conflict', revision: current.revision }
+      if (current.document.name !== replaceTarget.name || matches.length !== 1 || matches[0] !== target) return { status: 'confirmation-required' }
+      if (input.dryRun) return { status: 'ready', presetId: target }
+      const result = await store.commit(unitOf(scope, target, workspaceKey), current.revision, () => document)
+      return resultOf(result, 'edited', target)
     }
-    if (typeof allDisplayNames === 'function') {
-      const taken = await allDisplayNames(scope, workspaceKey)
-      for (const [otherId, otherName] of taken) {
-        if (otherId !== presetId && otherName === document.name) {
-          if (onNameConflict === 'cancel') return { status: 'name-conflict', with: otherId }
-          if (onNameConflict === 'rename') return { status: 'rename-required', with: otherId }
-          // 'replace' confirmed by the caller: proceed.
+    if (matches.length) {
+      const target = matches[0]
+      return { status: onNameConflict === 'rename' ? 'rename-required' : 'name-conflict', with: target, withRevision: view.activeById.get(target).revision }
+    }
+    let presetId = input.presetId
+    if (presetId === undefined || presetId === null || presetId === '') {
+      const base = slugOf(document.name)
+      presetId = base
+      for (let suffix = 2; view.occupiedIds.has(presetId); suffix++) presetId = `${base}-${suffix}`
+    }
+    validatePresetId(presetId)
+    if (view.occupiedIds.has(presetId)) return { status: 'exists', presetId }
+    if (input.dryRun) return { status: 'ready', presetId }
+    const result = await store.commit(unitOf(scope, presetId, workspaceKey), 0, () => document)
+    return resultOf(result, 'created', presetId)
+  }
+  const create = input => inNamespace(input.scope, input.workspaceKey, view => createLocked(input, view))
+
+  async function change({ scope, presetId, workspaceKey, expectedRevision, name, selection, mutate, mode, withSource }) {
+    const unit = unitOf(scope, presetId, workspaceKey)
+    if (!validRevision(expectedRevision)) return { status: 'invalid-revision' }
+    return inNamespace(scope, workspaceKey, async view => {
+      const current = view.activeById.get(presetId)
+      if (!current) return { status: view.occupiedIds.has(presetId) ? 'deleted' : 'absent' }
+      if (current.revision !== expectedRevision) return { status: 'revision-conflict', revision: current.revision }
+      const before = current.document
+      let next
+      if (mode === 'rename') {
+        if (typeof name !== 'string' || !name.length) return { status: 'invalid-name' }
+        next = { ...before, name }
+      } else if (mode === 'resave') {
+        if (!selection || !Array.isArray(selection.skills) || !Array.isArray(selection.mcpServers) || !Array.isArray(selection.unresolvedRefs)) return { status: 'invalid-selection' }
+        next = { ...before, selection }
+      } else {
+        next = mutate(before)
+      }
+      try { validateDocument(next) } catch { return { status: 'invalid-selection' } }
+      const duplicates = duplicateNames(view)
+      if (duplicates.length) {
+        const oldGroup = view.names.get(before.name) ?? []
+        if (mode !== 'rename' || oldGroup.length < 2 || next.name === before.name || (view.names.get(next.name) ?? []).length) {
+          return { status: 'duplicate-names', groups: duplicates }
         }
       }
-    }
-    const unit = unitOf(scope, presetId, workspaceKey)
-    const current = await store.read(unit)
-    if (current.kind !== 'absent') return { status: 'exists', presetId }
-    const result = await store.commit(unit, 0, () => document)
-    return result.status === 'committed' ? { status: 'created', revision: result.revision } : { status: result.status }
-  }
-
-  /**
-   * Edit an existing preset's document (whole-document replacement under CAS).
-   * @param {{ scope: string, presetId: string, workspaceKey?: string, expectedRevision: number,
-   *   mutate: (document: unknown) => unknown }} input
-   */
-  async function edit({ scope, presetId, workspaceKey, expectedRevision, mutate }) {
-    const unit = unitOf(scope, presetId, workspaceKey)
-    const result = await store.commit(unit, expectedRevision, payload => {
-      const next = mutate(payload)
-      validateDocument(next)
-      return next
+      const collision = (view.names.get(next.name) ?? []).find(id => id !== presetId)
+      if (collision) return { status: 'name-conflict', with: collision, withRevision: view.activeById.get(collision).revision }
+      const commit = async () => resultOf(await store.commit(unit, expectedRevision, () => next), 'edited', presetId)
+      return withSource ? withSource(commit) : commit()
     })
-    return result.status === 'committed' ? { status: 'edited', revision: result.revision } : { status: result.status }
   }
+  const rename = input => change({ ...input, mode: 'rename' })
+  const resave = input => change({ ...input, mode: 'resave' })
+  const edit = input => change({ ...input, mode: 'edit' })
 
-  /** @param {{ scope: string, presetId: string, workspaceKey?: string, expectedRevision: number }} input */
   async function remove({ scope, presetId, workspaceKey, expectedRevision }) {
-    const result = await store.commit(unitOf(scope, presetId, workspaceKey), expectedRevision, () => ({ deleted: true }))
-    return result.status === 'committed' ? { status: 'deleted', revision: result.revision } : { status: result.status }
+    const unit = unitOf(scope, presetId, workspaceKey)
+    if (!validRevision(expectedRevision)) return { status: 'invalid-revision' }
+    return inNamespace(scope, workspaceKey, async view => {
+      const current = view.activeById.get(presetId)
+      if (!current) return { status: view.occupiedIds.has(presetId) ? 'deleted' : 'absent' }
+      if (current.revision !== expectedRevision) return { status: 'revision-conflict', revision: current.revision }
+      const duplicates = duplicateNames(view)
+      if (duplicates.length && (view.names.get(current.document.name) ?? []).length < 2) return { status: 'duplicate-names', groups: duplicates }
+      const result = await store.commit(unit, expectedRevision, () => ({ deleted: true }))
+      return resultOf(result, 'deleted', presetId)
+    })
   }
 
-  /**
-   * Export a preset as a portable document (the payload verbatim plus the
-   * stable id and namespace — display names travel, secrets never do).
-   */
   async function exportPreset(scope, presetId, workspaceKey) {
     const loaded = await load(scope, presetId, workspaceKey)
     if (loaded.kind !== 'ok') return { status: loaded.kind }
     return { status: 'ok', document: { version: PRESET_SCHEMA_VERSION, scope, presetId, ...loaded.document } }
   }
-
-  return { load, create, edit, remove, exportPreset, unitOf, message }
+  return { load, create, edit, rename, resave, remove, exportPreset, withNamespace, unitOf }
 }
