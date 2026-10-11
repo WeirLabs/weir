@@ -55,7 +55,19 @@ test('batch success releases only temporary locks; unknown failure retains and r
       plans:[{filePath:'/work/a',content:'a',version:'v1'},{filePath:'/work/b',content:'b',version:'v1'}],
     })
     if (fail) {
-      await assert.rejects(action, error => /filesAlreadyWritten: \["\/work\/a"\]/.test(error.message) && /filesUncertain: \["\/work\/b"\]/.test(error.message))
+      await assert.rejects(action, error => {
+        assert.deepEqual(error.message.split('\n'), [
+          'rename stopped: Error: publication not acknowledged: unknown;',
+          'filesAlreadyWritten: ["/work/a"];',
+          'filesNotWritten: [];',
+          'filesUncertain: ["/work/b"];',
+          'ownership retained (no rollback)',
+        ])
+        assert.equal(error.message.replaceAll('\n', ' '),
+          'rename stopped: Error: publication not acknowledged: unknown; filesAlreadyWritten: ["/work/a"]; filesNotWritten: []; filesUncertain: ["/work/b"]; ownership retained (no rollback)')
+        assert.equal(error.cause?.message, 'publication not acknowledged: unknown')
+        return true
+      })
       assert.deepEqual(released, [])
     } else {
       assert.deepEqual((await action).written, ['/work/a','/work/b'])

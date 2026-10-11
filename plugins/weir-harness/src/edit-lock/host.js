@@ -107,7 +107,7 @@ export function createEditLockHost(runtime, isRegisteredAgent) {
           } catch { uncertain = [request.plans[index].filePath] }
         }
         const notWritten = request.plans.slice(index).map(plan => plan.filePath).filter(path => !uncertain.includes(path))
-        throw new Error(`rename stopped: ${String(error)}; filesAlreadyWritten: ${JSON.stringify(written)}; filesNotWritten: ${JSON.stringify(notWritten)}; filesUncertain: ${JSON.stringify(uncertain)}; ownership retained (no rollback)`, {cause: error})
+        throw new Error(`rename stopped: ${String(error)};\nfilesAlreadyWritten: ${JSON.stringify(written)};\nfilesNotWritten: ${JSON.stringify(notWritten)};\nfilesUncertain: ${JSON.stringify(uncertain)};\nownership retained (no rollback)`, {cause: error})
       } finally {
         activeBatches.delete(batchKey)
         exec.signal.removeEventListener('abort', abort)
