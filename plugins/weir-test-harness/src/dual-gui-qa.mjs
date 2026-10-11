@@ -30,6 +30,12 @@
 //        locks). Theme flips ride the GUI's system-preference sensing via
 //        CDP Emulation.setEmulatedMedia, proven by body[data-ds-dark-theme].
 //
+//   opt-out (--opt-out), runs heavy unchanged, then saves off in the RUNNING
+//     enabled processes, restarts both real Web processes into effective-off,
+//     proves ordinary managed write/hash_edit against retained old owner and
+//     unresolved publication without changing authority bytes, screenshots
+//     warning + maintenance in both themes, then re-enables and denies again.
+//
 // Hard invariants (learned from .weir/qa/stable-dual-gui, do not relax):
 //   * managementRootFor(workspace) === realpath(workspace) before any boot;
 //     a workspace inside a git checkout silently binds to the repo's own
@@ -45,7 +51,7 @@
 //     never inferred from boot order or port numbers.
 //
 // Usage:
-//   node plugins/weir-test-harness/src/dual-gui-qa.mjs run [--heavy] [--root <dir>] [--keep]
+//   node plugins/weir-test-harness/src/dual-gui-qa.mjs run [--heavy | --opt-out] [--root <dir>] [--keep]
 //
 // Environment:
 //   DUAL_GUI_DSH_EXEC   self-contained CLI launcher (macOS app runtime/cli/bin/dsh)
@@ -57,7 +63,7 @@
 //   DUAL_GUI_WEIR       weir-harness checkout to link-install (default: sibling
 //                       of this package)
 //   DUAL_GUI_ROOT       QA root (default: fresh mkdtemp under os.tmpdir())
-//   DUAL_GUI_MATRIX     'core' (default) | 'heavy'
+//   DUAL_GUI_MATRIX     'core' (default) | 'heavy' | 'opt-out'
 //   DUAL_GUI_KEEP       '1' keeps the QA root even after a green run
 //
 // Exit code: 0 iff every executed matrix row is PASS and teardown is clean.
@@ -72,6 +78,8 @@ import { fileURLToPath } from 'node:url'
 import { AUTHORITY_DIR, managementRootFor } from '../../weir-harness/src/edit-lock/domains.js'
 import { endpointFor } from '../../weir-harness/src/edit-lock/remote.js'
 import { RESERVATION_LEASE_MS } from '../../weir-harness/src/edit-lock/reservation.js'
+import { anchorFor } from '../../weir-harness/src/hashline-edit/anchors.js'
+import { inspectAuthority } from '../../weir-harness/src/edit-lock/maintenance.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PACKAGE_ROOT = path.join(HERE, '..')
@@ -302,15 +310,18 @@ export function assertEndpoint(authorityDir, platform = process.platform, resolv
 }
 
 const PANEL_SHOTS = ['attention', 'recovering', 'paused', 'partial-write'].flatMap((state) => ['dark', 'light'].map((theme) => `panel-${state}-${theme}`))
+const OPT_OUT_SHOTS = ['saved-off', 'effective-off'].flatMap((state) => ['dark', 'light'].map((theme) => `opt-out-${state}-${theme}`))
 /** Verify all eight independently captured panel images, never just a directory. */
-export function verifyPanelShots(shotsDir) {
-  return PANEL_SHOTS.map((name) => {
+export function verifyPanelShots(shotsDir, names = PANEL_SHOTS) {
+  return names.map((name) => {
     const file = path.join(shotsDir, `${name}.png`)
     const bytes = fs.readFileSync(file)
     if (bytes.length <= 24 || !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) throw new Error(`screenshot ${name} missing, empty or not PNG`)
     return { name, bytes: bytes.length, sha256: sha256File(file) }
   })
 }
+
+export function verifyOptOutShots(shotsDir) { return verifyPanelShots(shotsDir, OPT_OUT_SHOTS) }
 
 /** The QA-only user-command fixture, generated per run so the workspace root
  * and profile homes are baked in as literals. Self-refuses outside the
@@ -343,6 +354,9 @@ const QA_HOMES = ${JSON.stringify(homes)}
 // the REAL ctx.fs.writeText, fail the second fixture-file write of an armed
 // batch — the first write genuinely lands, the second is never completed).
 const MIDBATCH_FILES = ${JSON.stringify(midbatchFiles)}
+const HASH_ANCHORS = ${JSON.stringify({ initial: anchorFor(1, 'export const shared = 1'), written: anchorFor(1, 'export const shared = 2'), after: anchorFor(1, 'export const shared = 3') })}
+const UNKNOWN_FILE = ${JSON.stringify(path.join(workspace, 'qa-unknown.ts'))}
+const UNKNOWN_ANCHOR = ${JSON.stringify(anchorFor(1, 'export const unknown = 1'))}
 
 export function apply(ctx) {
   if (process.env.WEIR_QA_FIXTURE !== '1' ||
@@ -352,10 +366,16 @@ export function apply(ctx) {
   }
   // One-shot midbatch fault, armed only by the rename-midbatch verb.
   let midbatch = null
+  let unknownArmed = false
   const writeText = ctx.fs?.writeText
   if (typeof writeText !== 'function') throw new Error('QA fixture requires the host filesystem writeText')
   ctx.fs.writeText = async function (target, ...rest) {
     const key = target?.targetKey
+    if (unknownArmed && key === UNKNOWN_FILE) {
+      unknownArmed = false
+      await writeText.call(this, target, ...rest)
+      throw new Error('QA publisher acknowledgement lost AFTER the write')
+    }
     if (midbatch && typeof key === 'string' && MIDBATCH_FILES.includes(key)) {
       midbatch.count += 1
       if (midbatch.count >= 2) {
@@ -375,7 +395,7 @@ export function apply(ctx) {
   const off = ctx.commands.register({
     name: 'qa-edit',
     description: 'QA-only user action exercising actual managed editors on one disposable workspace.',
-    input: { hint: 'acquire [file] | write | release [file] | status | pause [min] | rename-midbatch' },
+    input: { hint: 'acquire [file] | read | write | hash-edit [initial|written|after] | write-unknown | release [file] | status | pause [min] | rename-midbatch' },
     async handler(invocation) {
       try {
         const agent = invocation.agent
@@ -413,9 +433,26 @@ export function apply(ctx) {
             if (midbatch && midbatch.count === 0) midbatch = null
           }
         }
-        const names = { acquire: 'edit_lock_acquire', write: 'write', release: 'edit_lock_release', status: 'edit_lock_status' }
+        if (verb === 'write-unknown') {
+          unknownArmed = true
+          try {
+            const result = await run(agent, invocation, 'hash_edit', { file_path: 'qa-unknown.ts', edits: [{ op: 'replace', pos: UNKNOWN_ANCHOR, text: 'export const unknown = 2' }] })
+            return result.isError
+              ? { kind: 'error', text: \`QA unknown publication: \${result.error?.message ?? 'unknown'}\` }
+              : { kind: 'success', text: 'QA unknown publication unexpectedly acknowledged' }
+          } finally { unknownArmed = false }
+        }
+        if (verb === 'hash-edit') {
+          const stage = rest[0] ?? 'written'
+          if (!Object.hasOwn(HASH_ANCHORS, stage)) throw new Error('unknown hash-edit stage')
+          const result = await run(agent, invocation, 'hash_edit', { file_path: 'qa-shared.ts', edits: [{ op: 'replace', pos: HASH_ANCHORS[stage], text: 'export const shared = 3' }] })
+          return result.isError
+            ? { kind: 'error', text: \`QA hash-edit refused: \${result.error?.message ?? 'unknown'}\` }
+            : { kind: 'success', text: \`QA hash-edit succeeded: \${JSON.stringify(result.value ?? {})}\` }
+        }
+        const names = { acquire: 'edit_lock_acquire', read: 'read', write: 'write', release: 'edit_lock_release', status: 'edit_lock_status' }
         const tool = names[verb]
-        if (!tool) throw new Error(\`Only acquire, write, release, status, pause or rename-midbatch are allowed (verb \${JSON.stringify(verb)})\`)
+        if (!tool) throw new Error(\`Only acquire, read, write, hash-edit, write-unknown, release, status, pause or rename-midbatch are allowed (verb \${JSON.stringify(verb)})\`)
         const target = file ?? 'qa-shared.ts'
         const argumentsValue = verb === 'status' ? {} : verb === 'write'
           ? { file_path: 'qa-shared.ts', content: 'export const shared = 2\\n' }
@@ -440,7 +477,14 @@ export function apply(ctx) {
  * protocol server copied into the workspace (the same fixture the
  * editlock-lsp-rename scenario uses — the GUI panel-states phases drive the
  * real client → server → WorkspaceEdit → publishBatch chain). */
-export function settingsPatchSource({ workspace, platform = process.platform } = {}) {
+export function settingsPatchSource({ workspace, platform = process.platform, editable = false } = {}) {
+  // A command-line override makes settings/mutate reject the entire namespace.
+  // The opt-out flow uses genuine writable saved settings, not an overlay.
+  if (editable) return `- id: ui-settings-general
+  name: '@deepseek-ai/dsh-client-ui-settings-general'
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+`
   const mockServer = workspace ? joinFor(platform)(workspace, 'mock-lsp-server.js') : null
   const lspOverlay = mockServer
     // Folded block scalar: the expression carries `: ` pairs that would break
@@ -494,6 +538,10 @@ export const PAGE_HELPERS_SOURCE = `(() => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sessionId }),
       })
+      return res.json()
+    },
+    async maintenance() {
+      const res = await fetch('/api/weir-edit-lock/maintenance/status', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: '{}' })
       return res.json()
     },
     panelState() {
@@ -617,6 +665,38 @@ export const PAGE_HELPERS_SOURCE = `(() => {
       const heroButtons = [...document.querySelectorAll('main button, [role="main"] button')].map((el) => (el.textContent || '').trim()).filter(Boolean).slice(0, 20)
       return { keys, panels, heroButtons, text: (document.body?.innerText || '').slice(0, 500) }
     },
+    settingsStep() {
+      const group = document.querySelector('[data-group="editing"]')
+      if (group) {
+        group.scrollIntoView({ block: 'center' })
+        const warning = group.querySelector('[role="alert"]')
+        const buttons = [...group.querySelectorAll('button')]
+        const maintenance = buttons.find((button) => /^(编辑|Edit|查看|View)$/.test((button.textContent || '').trim()))
+        if (maintenance) maintenance.click()
+        return { group: true, warning: warning?.textContent?.trim() ?? null, text: group.textContent?.slice(0, 1400), buttons: buttons.map((button) => button.textContent?.trim()) }
+      }
+      const buttons = [...document.querySelectorAll('button, [role="button"]')]
+      const weir = buttons.find((button) => /^(Weir|WEIR)$/.test((button.textContent || '').trim() || button.getAttribute('aria-label') || ''))
+      if (weir) { weir.click(); return { clicked: 'weir' } }
+      const settings = buttons.find((button) => /^(设置|Settings)$/.test((button.textContent || '').trim() || button.getAttribute('aria-label') || ''))
+      if (settings) { settings.click(); return { clicked: 'settings' } }
+      return { clicked: null, buttons: buttons.map((button) => (button.textContent || '').trim() || button.getAttribute('aria-label')).filter(Boolean).slice(0, 60), text: document.body?.innerText?.slice(0, 500) }
+    },
+    frameOptOut(state) {
+      const group = document.querySelector('[data-group="editing"]')
+      const warning = group?.querySelector('[role="alert"]')
+      if (!warning) return { visible: false, reason: 'warning absent' }
+      // Frame the switch AND its adjacent warning, not only the alert text;
+      // the maintenance state must fit below in the same captured viewport.
+      group.scrollIntoView({ block: 'start' })
+      const label = state === 'saved-off' ? /^(已请求停用——需要重启|Disable requested — restart required)$/ : /^(强制执行已停用|Enforcement disabled)$/
+      const status = [...group.querySelectorAll('span, div')].find((el) => label.test((el.textContent || '').trim()))
+      const dialog = warning.closest('[role="dialog"]')
+      const bounds = dialog?.getBoundingClientRect() ?? { top: 0, bottom: innerHeight }
+      const switchControl = [...group.querySelectorAll('[role="switch"]')].at(-1)
+      const inFrame = (el) => { const rect = el?.getBoundingClientRect(); return Boolean(rect && rect.top >= bounds.top + 35 && rect.bottom <= bounds.bottom - 10) }
+      return { visible: inFrame(warning) && inFrame(status) && inFrame(switchControl), warningTop: warning.getBoundingClientRect().top, switchTop: switchControl?.getBoundingClientRect().top ?? null, statusTop: status?.getBoundingClientRect().top ?? null, dialogTop: bounds.top, dialogBottom: bounds.bottom }
+    },
   }
   return true
 })()`
@@ -663,6 +743,12 @@ export async function stopChild(child, { platform = process.platform, graceMs = 
 }
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** A restart witness must be a dead old process and a distinct new PID. */
+export function assertFreshRestart({ previousPid, nextPid, exitCode, signalCode }) {
+  if (!Number.isSafeInteger(previousPid) || !Number.isSafeInteger(nextPid) || previousPid === nextPid) throw new Error('restart requires a different process PID')
+  if (exitCode === null && signalCode === null) throw new Error('previous process did not exit before restart')
+}
 
 // ---------------------------------------------------------------------------
 // Orchestration (side effects live below this line)
@@ -999,7 +1085,7 @@ export function resolveConfig({ argv = [], env = process.env, platform = process
     const index = argv.indexOf(name)
     return index >= 0 ? argv[index + 1] : undefined
   }
-  const matrix = flag('--heavy') ? 'heavy' : (env.DUAL_GUI_MATRIX === 'heavy' ? 'heavy' : 'core')
+  const matrix = flag('--opt-out') ? 'opt-out' : (flag('--heavy') ? 'heavy' : (env.DUAL_GUI_MATRIX === 'opt-out' ? 'opt-out' : env.DUAL_GUI_MATRIX === 'heavy' ? 'heavy' : 'core'))
   const weirBundle = env.DUAL_GUI_WEIR ?? path.join(REPO_ROOT, 'plugins', 'weir-harness')
   if (!fileExists(path.join(weirBundle, 'cordis.patch.yml'))) {
     throw new Error(`weir-harness bundle not found at ${weirBundle} (set DUAL_GUI_WEIR)`)
@@ -1037,6 +1123,7 @@ export function renameFixtureSources() {
     'probe.ts': 'export const fixtureSymbol = 1\n',
     'probe-other.ts': 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n',
     'qa-attention.ts': 'export const attention = 1\n',
+    'qa-unknown.ts': 'export const unknown = 1\n',
     'package.json': '{"name":"dual-gui-qa-ws","private":true}\n',
     'tsconfig.json': '{}\n',
   }
@@ -1075,7 +1162,7 @@ export function prepareQaRoot(config) {
   const homes = [path.join(config.root, 'home-a'), path.join(config.root, 'home-b')]
   const fixture = fixtureSources({ workspace: paths.ws, homes })
   for (const [name, content] of Object.entries(fixture)) fs.writeFileSync(path.join(paths.fixture, name), content)
-  fs.writeFileSync(paths.settingsPatch, settingsPatchSource({ workspace: paths.ws }))
+  fs.writeFileSync(paths.settingsPatch, settingsPatchSource({ workspace: paths.ws, editable: config.matrix === 'opt-out' }))
   return paths
 }
 
@@ -1196,9 +1283,36 @@ export async function createSession(instance, workspaceId, agentPreset, title) {
   return sessionId
 }
 
+/** Save the profile switch through the same authenticated settings Remote used
+ * by the GUI; the running preset mount MUST NOT be hot-disposed by this save. */
+async function saveEditLockSwitch(instance, enabled, extra = {}) {
+  const described = await instance.rpc('settings/describe', {})
+  if (described.ok !== true) throw new Error(`${instance.name}: settings/describe: ${JSON.stringify(described.error ?? described)}`)
+  const candidates = described.value?.namespaces?.filter((row) => JSON.stringify(row.schema).includes('editLockEnabled')) ?? []
+  if (candidates.length !== 1) throw new Error(`${instance.name}: expected one Edit Lock settings namespace; got ${candidates.map((row) => row.ns).join(', ')}`)
+  const row = candidates[0]
+  const ops = Object.entries({ editLockEnabled: enabled, ...extra }).map(([key, value]) => ({ op: 'set', path: [key], value }))
+  const saved = await instance.rpc('settings/mutate', { ns: row.ns, ops, expectedRevision: row.revision })
+  if (saved.ok !== true) throw new Error(`${instance.name}: settings/mutate: ${JSON.stringify(saved.error ?? saved)}`)
+  if (saved.value?.user?.editLockEnabled !== enabled) throw new Error(`${instance.name}: switch save did not persist ${enabled}: ${JSON.stringify(saved.value?.user)}`)
+  return { ns: row.ns, revision: saved.value.revision }
+}
+
+async function showOptOutSettings(instance, label, timeouts) {
+  let last
+  try {
+    return await waitFor(`${instance.name} ${label} warning and maintenance`, async () => {
+      last = await instance.cdp.evaluate('window.__dualGuiQa.settingsStep()')
+      const state = label === 'saved-off' ? /已请求停用|Disable requested/ : /强制执行已停用|Enforcement disabled/
+      return last?.group && /UNPROTECTED|不受保护/.test(last.warning ?? '') && /重新启用|re-enable/i.test(last.warning)
+        && /维护|Maintenance/i.test(last.text ?? '') && state.test(last.text ?? '') ? last : null
+    }, { timeoutMs: timeouts.phaseMs })
+  } catch (error) { throw new Error(`${error.message}; last UI=${JSON.stringify(last)}`) }
+}
+
 /** The acceptance matrix. Phases mutate `state`; every row lands in `matrix`. */
 async function runMatrix(config, paths, a, b, matrix) {
-  const heavy = config.matrix === 'heavy'
+  const heavy = config.matrix !== 'core'
   const timeouts = config.timeouts
   const state = { initialSha: sha256File(paths.sharedFile) }
   const phase = async (name, skipped, fn) => {
@@ -1224,6 +1338,33 @@ async function runMatrix(config, paths, a, b, matrix) {
     await b.startBrowser()
     await a.openApp()
     await b.openApp()
+    if (config.matrix === 'opt-out') {
+      // The normal heavy matrix overlays weir-settings and makes the whole
+      // namespace read-only. Here, save enabled and the LSP fixture into each
+      // genuinely writable disposable profile, then RESTART both processes
+      // before any session binds. No publisher exists yet at this stage.
+      const lspServers = JSON.stringify({ typescript: { command: resolveNodeBinary(), args: [path.join(paths.ws, 'mock-lsp-server.js')], installHint: 'qa-fixture' } })
+      const extra = { editLockAutoResume: false, notifyEnabled: false, worktreeEnabled: false, intentGateClassifier: 'regex', lspEnabled: true, lspServers }
+      await saveEditLockSwitch(a, true, extra)
+      await saveEditLockSwitch(b, true, extra)
+      const old = [a.server, b.server]
+      // A live browser observes the intentional connection outage as a React
+      // exception. Close both CDP pages before shutdown and start fresh pages
+      // after boot: zero-exception gates still apply to every running GUI.
+      await a.stopBrowser()
+      await b.stopBrowser()
+      await b.stopServer()
+      await a.stopServer()
+      if (!(await waitForPortClosed(a.ports.web)) || !(await waitForPortClosed(b.ports.web))) throw new Error('initial config restart left a live Web port')
+      await a.startServer()
+      await b.startServer()
+      assertFreshRestart({ previousPid: old[0].pid, nextPid: a.serverPid, exitCode: old[0].exitCode, signalCode: old[0].signalCode })
+      assertFreshRestart({ previousPid: old[1].pid, nextPid: b.serverPid, exitCode: old[1].exitCode, signalCode: old[1].signalCode })
+      await a.startBrowser()
+      await b.startBrowser()
+      await a.openApp()
+      await b.openApp()
+    }
     return `web ${a.ports.web}/${b.ports.web}, cdp ${a.ports.cdp}/${b.ports.cdp}`
   })
 
@@ -1236,6 +1377,16 @@ async function runMatrix(config, paths, a, b, matrix) {
     state.wsIdA = wsA.value.workspace.workspaceId
     state.wsIdB = wsB.value.workspace.workspaceId
     state.aSession = await createSession(a, state.wsIdA, 'weir', 'QA dual-gui A')
+    // The restart opens this original session through the sidebar. A blank
+    // session disappears when newer blanks exist; complete a real providerless
+    // turn now so it remains a durable, addressable row after restart.
+    const warm = await a.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId: state.aSession, mode: 'queue', content: [{ type: 'text', text: 'QA: keep the original session addressable after restart' }] } })
+    if (warm.ok !== true) throw new Error(`A warm prompt rejected: ${JSON.stringify(warm.error ?? warm)}`)
+    await waitFor('original A warm turn settled', async () => {
+      const list = await a.rpc('session/list', { _request: {} }).catch(() => null)
+      const row = list?.value?.items?.find((item) => item.sessionId === state.aSession)
+      return row && row.blank === false && row.running === false ? row : null
+    }, { timeoutMs: timeouts.phaseMs })
     const aView = await waitView(a, state.aSession, 'publisher mode', (view) => view?.technical?.mode === 'publisher', timeouts)
     state.bSession = await createSession(b, state.wsIdB, 'weir-creative', 'QA dual-gui B')
     const bView = await waitView(b, state.bSession, 'client mode', (view) => view?.technical?.mode === 'client', timeouts)
@@ -1477,6 +1628,11 @@ async function runMatrix(config, paths, a, b, matrix) {
     if (!owner || owner.pid !== state.publisher.serverPid) {
       throw new Error(`owner.json pid ${owner?.pid} != publisher pid ${state.publisher.serverPid}; refusing SIGKILL`)
     }
+    // The publisher's page has no acceptance role during the outage. Close it
+    // before its Host is killed: otherwise React can throw while reconnecting
+    // ('session-maybe' adapter unavailable), an actual console-exception FAIL.
+    // Keep B's browser live to prove the surviving client's fail-closed UI.
+    await state.publisher.stopBrowser()
     state.publisher.server.kill('SIGKILL')
     await waitFor('publisher exit', () => (state.publisher.server.exitCode !== null || state.publisher.server.signalCode ? true : null), { timeoutMs: 15000 })
     const lost = await waitView(state.client, state.b2Session, 'fail-closed', (view) => view?.state === 'unavailable', timeouts)
@@ -1509,6 +1665,7 @@ async function runMatrix(config, paths, a, b, matrix) {
     const leaseWaitMs = Math.max(0, deadOwner.leaseUntil + 5000 - Date.now())
     if (leaseWaitMs > 0) await sleep(Math.min(leaseWaitMs, RESERVATION_LEASE_MS + 15000))
     await state.publisher.startServer() // same profile, same port: fresh token
+    await state.publisher.startBrowser()
     await state.publisher.openApp()
     const restartedPid = state.publisher.serverPid
     // Reclaim needs a fresh bind attempt on the expired lease: nobody reserves
@@ -1601,6 +1758,127 @@ async function runMatrix(config, paths, a, b, matrix) {
     return 'B2 released generation 2; bytes unchanged'
   })
 
+  if (config.matrix === 'opt-out') await phase('opt-out-saved-off-running', false, async () => {
+    const owner = readReservationOwner(paths.ws)
+    if (!owner || owner.pid !== a.serverPid) throw new Error(`unexpected publisher reservation before opt-out: ${JSON.stringify(owner)}`)
+    state.oldOwner = await createSession(a, state.wsIdA, 'weir', 'QA retained owner before opt-out')
+    const acquired = await qaEdit(a, state.oldOwner, 'acquire')
+    if (acquired.kind !== 'success') throw new Error(`old owner acquire: ${acquired.text}`)
+    // The earlier midbatch uncertainty was correctly settled after SIGKILL
+    // (proven-dead publisher). Seed a NEW lost acknowledgement now while this
+    // publisher lives, so the off restart inherits a genuine unknown fence.
+    state.unknownOwner = await createSession(a, state.wsIdA, 'weir', 'QA unknown publisher outcome')
+    const unknown = await qaEdit(a, state.unknownOwner, 'write-unknown')
+    if (unknown.kind !== 'error' || !/acknowledgement lost AFTER/.test(unknown.text) || fs.readFileSync(path.join(paths.ws, 'qa-unknown.ts'), 'utf8') !== 'export const unknown = 2\n') throw new Error(`unknown publication fixture did not dispatch: ${unknown.text}`)
+    const savedA = await saveEditLockSwitch(a, false)
+    const savedB = await saveEditLockSwitch(b, false)
+    const status = await a.cdp.evaluate('window.__dualGuiQa.maintenance()')
+    if (status?.ok !== true || status.value?.state !== 'disable-requested' || status.value.restartRequired !== true) throw new Error(`save-off was not pending restart: ${JSON.stringify(status)}`)
+    const observed = await qaEdit(b, state.b2Session, 'read')
+    if (observed.kind !== 'success') throw new Error(`client pre-write read refused: ${observed.text}`)
+    const refusedWrite = await qaEdit(b, state.b2Session, 'write')
+    const refusedHash = await qaEdit(b, state.b2Session, 'hash-edit initial')
+    if (refusedWrite.kind !== 'error' || !refusedWrite.text.includes(state.oldOwner) || refusedHash.kind !== 'error' || !refusedHash.text.includes(state.oldOwner) || sha256File(paths.sharedFile) !== state.initialSha) throw new Error(`running process lost ownership protection: ${JSON.stringify({ refusedWrite, refusedHash })}`)
+    state.authorityFile = path.join(paths.ws, AUTHORITY_DIR, 'snapshot.json')
+    state.authorityBefore = fs.readFileSync(state.authorityFile)
+    const history = inspectAuthority(paths.ws)
+    const activeOwner = JSON.parse(state.authorityBefore.toString('utf8')).payload.state.locks.some((lock) => lock.owner === state.oldOwner)
+    const unknownFence = history.snapshot?.unresolved.some((op) => op.key.sessionId === state.unknownOwner && op.admissionBlocked === true)
+    if (history.presence !== 'valid' || !activeOwner || !unknownFence) throw new Error(`active owner and unresolved fenced unknown not durable before restart: ${JSON.stringify(history.snapshot?.counts)}`)
+    const ui = await showOptOutSettings(a, 'saved-off', timeouts)
+    await a.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1500, deviceScaleFactor: 1, mobile: false })
+    const frame = await a.cdp.evaluate('window.__dualGuiQa.frameOptOut("saved-off")')
+    if (frame?.visible !== true) throw new Error(`saved-off screenshot would clip warning or maintenance: ${JSON.stringify(frame)}`)
+    await shotBothThemes(a, 'opt-out-saved-off')
+    if (!/已请求停用|Disable requested/.test(ui.text)) throw new Error('saved-off maintenance state not visibly rendered')
+    return `settings saved off A=${savedA.revision} B=${savedB.revision}; still protected in pid ${owner.pid}; authority sha256=${sha256File(state.authorityFile)}`
+  })
+
+  if (config.matrix === 'opt-out') await phase('opt-out-real-restart', false, async () => {
+    const previous = [a.server, b.server]
+    const owner = readReservationOwner(paths.ws)
+    if (!owner || owner.pid !== a.serverPid) throw new Error('publisher owner changed before graceful restart')
+    await a.stopBrowser()
+    await b.stopBrowser()
+    const bStop = await b.stopServer()
+    const aStop = await a.stopServer()
+    if (!bStop.graceful || !aStop.graceful) throw new Error('opt-out restart requires graceful process exits')
+    if (!(await waitForPortClosed(a.ports.web)) || !(await waitForPortClosed(b.ports.web))) throw new Error('old Web process port remains live')
+    if (readReservationOwner(paths.ws) !== null) throw new Error('reservation remained after graceful shutdown; never delete it')
+    // Graceful shutdown may persist interrupted status/revision. Pin the exact
+    // image AFTER the old processes exit; off boots/edits must not alter it.
+    state.authorityBefore = fs.readFileSync(state.authorityFile)
+    const history = inspectAuthority(paths.ws)
+    if (history.presence !== 'valid' || !history.snapshot.retainedLocks.some((lock) => lock.owner === state.oldOwner) || !history.snapshot.unresolved.some((op) => op.key.sessionId === state.unknownOwner && op.admissionBlocked === true)) throw new Error('shutdown lost retained owner/unknown fence')
+    await a.startServer()
+    await b.startServer()
+    assertFreshRestart({ previousPid: previous[0].pid, nextPid: a.serverPid, exitCode: previous[0].exitCode, signalCode: previous[0].signalCode })
+    assertFreshRestart({ previousPid: previous[1].pid, nextPid: b.serverPid, exitCode: previous[1].exitCode, signalCode: previous[1].signalCode })
+    await a.startBrowser()
+    await b.startBrowser()
+    await a.openApp()
+    await b.openApp()
+    const status = await a.cdp.evaluate('window.__dualGuiQa.maintenance()')
+    if (status?.ok !== true || status.value?.state !== 'disabled' || status.value.restartRequired !== false) throw new Error(`effective-off restart not observed: ${JSON.stringify(status)}`)
+    if (!fs.readFileSync(state.authorityFile).equals(state.authorityBefore)) throw new Error('restart changed durable authority bytes')
+    state.offSession = await createSession(a, state.wsIdA, 'weir', 'QA ordinary off editor')
+    return `A ${previous[0].pid}->${a.serverPid}; B ${previous[1].pid}->${b.serverPid}; effective-off; old snapshot unchanged; reservation naturally absent`
+  })
+
+  if (config.matrix === 'opt-out') await phase('opt-out-gui-and-editing', false, async () => {
+    const before = fs.readFileSync(state.authorityFile)
+    const observed = await qaEdit(a, state.offSession, 'read')
+    if (observed.kind !== 'success') throw new Error(`off-period pre-write read refused: ${observed.text}`)
+    const offWrite = await qaEdit(a, state.offSession, 'write')
+    if (offWrite.kind !== 'success' || fs.readFileSync(paths.sharedFile, 'utf8') !== 'export const shared = 2\n') throw new Error(`ordinary off write failed: ${offWrite.text}`)
+    const offHash = await qaEdit(a, state.offSession, 'hash-edit')
+    if (offHash.kind !== 'success' || fs.readFileSync(paths.sharedFile, 'utf8') !== 'export const shared = 3\n') throw new Error(`ordinary off hash_edit failed: ${offHash.text}`)
+    if (!fs.readFileSync(state.authorityFile).equals(before)) throw new Error('off-period edits modified durable authority snapshot')
+    if (readReservationOwner(paths.ws) !== null) throw new Error('effective-off unexpectedly acquired a reservation')
+    const ui = await showOptOutSettings(a, 'effective-off', timeouts)
+    await a.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1500, deviceScaleFactor: 1, mobile: false })
+    const frame = await a.cdp.evaluate('window.__dualGuiQa.frameOptOut("effective-off")')
+    if (frame?.visible !== true) throw new Error(`effective-off screenshot would clip warning or maintenance: ${JSON.stringify(frame)}`)
+    await shotBothThemes(a, 'opt-out-effective-off')
+    return `write + hash_edit succeeded; sha256=${sha256File(paths.sharedFile)}; authority unchanged; warning=${ui.warning}`
+  })
+
+  if (config.matrix === 'opt-out') await phase('opt-out-reenable-fail-closed', false, async () => {
+    const before = sha256File(paths.sharedFile)
+    await saveEditLockSwitch(a, true)
+    await saveEditLockSwitch(b, true)
+    const old = [a.server, b.server]
+    const owner = readReservationOwner(paths.ws)
+    if (owner !== null) throw new Error(`unexpected reservation before re-enable: ${JSON.stringify(owner)}`)
+    await a.stopBrowser()
+    await b.stopBrowser()
+    const bStop = await b.stopServer(), aStop = await a.stopServer()
+    if (!bStop.graceful || !aStop.graceful || readReservationOwner(paths.ws) !== null) throw new Error('re-enable shutdown did not naturally release reservation')
+    await a.startServer()
+    await b.startServer()
+    assertFreshRestart({ previousPid: old[0].pid, nextPid: a.serverPid, exitCode: old[0].exitCode, signalCode: old[0].signalCode })
+    assertFreshRestart({ previousPid: old[1].pid, nextPid: b.serverPid, exitCode: old[1].exitCode, signalCode: old[1].signalCode })
+    await a.startBrowser()
+    await b.startBrowser()
+    await a.openApp()
+    await b.openApp()
+    state.newOwner = await createSession(a, state.wsIdA, 'weir', 'QA reenabled newcomer')
+    await waitView(a, state.newOwner, 're-enabled publisher', (view) => view?.technical?.mode === 'publisher', timeouts)
+    const observed = await qaEdit(a, state.newOwner, 'read')
+    if (observed.kind !== 'success') throw new Error(`re-enabled pre-write read refused: ${observed.text}`)
+    const owned = await qaEdit(a, state.newOwner, 'write')
+    const hashRefusal = await qaEdit(a, state.newOwner, 'hash-edit after')
+    if (owned.kind !== 'error' || !owned.text.includes(state.oldOwner) || hashRefusal.kind !== 'error' || !hashRefusal.text.includes(state.oldOwner)) throw new Error(`re-enable did not block old owner: ${JSON.stringify({ owned, hashRefusal })}`)
+    const history = inspectAuthority(paths.ws)
+    const unknown = history.snapshot?.unresolved.find((op) => op.key.sessionId === state.unknownOwner)
+    const recovery = history.snapshot?.adminRecoveries.find((row) => row.owner === state.unknownOwner)
+    // A proven-dead former publisher is automatically recovered on enabled
+    // startup. This does NOT erase its unknown outcome from history; don't
+    // pretend its fence still blocks after the manager has safely settled it.
+    if (history.presence !== 'valid' || !unknown || unknown.admissionBlocked !== false || !recovery || !/proven dead/.test(recovery.reason)) throw new Error(`unknown outcome missing or settled without proven-dead recovery: ${JSON.stringify({ unknown, recovery })}`)
+    if (sha256File(paths.sharedFile) !== before) throw new Error('re-enable refusal changed file bytes')
+    return `old owner ${state.oldOwner} blocks write/hash_edit; unknown history retained with proven-dead recovery; sha256 unchanged`
+  })
   return state
 }
 
@@ -1675,7 +1953,7 @@ export function writeReport(config, paths, matrix, extra = {}) {
 async function main() {
   const argv = process.argv.slice(2)
   if (argv[0] !== 'run') {
-    console.error('usage: dual-gui-qa.mjs run [--heavy] [--root <dir>] [--keep]')
+    console.error('usage: dual-gui-qa.mjs run [--heavy | --opt-out] [--root <dir>] [--keep]')
     process.exitCode = 2
     return
   }
@@ -1703,13 +1981,17 @@ async function main() {
   try {
     const state = await runMatrix(config, paths, a, b, matrix)
     endpoint = state.endpoint
-    if (config.matrix === 'heavy') {
+    if (config.matrix !== 'core') {
       panelShots = verifyPanelShots(paths.shots)
       matrix.record('panel-screenshot-evidence', 'PASS', '8/8 targeted PNG screenshots verified')
     } else matrix.record('panel-screenshot-evidence', 'SKIP', 'heavy only')
+    if (config.matrix === 'opt-out') {
+      panelShots.push(...verifyOptOutShots(paths.shots))
+      matrix.record('opt-out-screenshot-evidence', 'PASS', '4/4 saved-off/effective-off dark/light PNG screenshots verified')
+    }
   } catch (error) {
     failure = error
-    if (config.matrix === 'heavy' && matrix.failed.length === 0) matrix.record('panel-screenshot-evidence', 'FAIL', String(error?.message ?? error))
+    if (config.matrix !== 'core' && matrix.failed.length === 0) matrix.record('panel-screenshot-evidence', 'FAIL', String(error?.message ?? error))
   }
   secrets.push(...a.secrets, ...b.secrets)
   // Teardown ALWAYS runs, green or red.
