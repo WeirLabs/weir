@@ -455,12 +455,20 @@ window.__ModuleLoader__.load({
 			const groups = model.groupLanes(view?.lanes ?? []);
 			const runLine = (line) => {
 				if (busy) return Promise.resolve();
+				// Fail closed: an unconstructable command line (null/blank) is
+				// never dispatched — template-string coercion would turn it into
+				// a literal "null" verb and the command layer would answer with
+				// its raw usage dump.
+				if (model.lineProblem(line)) { setError(t("actionFailed")); return Promise.resolve(); }
 				setBusy(true);
 				setError(null);
 				return Promise.resolve(props.runWorktree(line)).then(
 					(outcome) => {
 						setBusy(false);
-						if (outcome && outcome.kind !== "success") { setError(outcome.text ?? "action failed"); return; }
+						// The command layer's usage dump is correct feedback for
+						// hand-typed input; the panel shows the same concise
+						// localized error instead.
+						if (outcome && outcome.kind !== "success") { setError(model.isUsageDump(outcome.text) ? t("actionFailed") : outcome.text ?? "action failed"); return; }
 						reload();
 					},
 					(reason) => { setBusy(false); setError(reason instanceof Error ? reason.message : String(reason)); }

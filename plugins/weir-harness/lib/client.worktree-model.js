@@ -150,9 +150,26 @@ window.__ModuleLoader__.load({
 				case "land": return `land ${id}`;
 				case "setup": return option === "skip" ? `setup ${id} --skip` : `setup ${id}`;
 				case "clean": return ["keep", "worktree", "all"].includes(option) ? `clean ${id} ${option}` : null;
-				case "abandon": return ["keep", "worktree", "all"].includes(option) ? `abandon ${id} ${option}` : null;
+				// Bare abandon (no cleanup mode) is a valid command: the host
+				// answers with the abandon decision card and the mode is chosen
+				// there. Only an invalid non-empty mode is not a command.
+				case "abandon":
+					if (option === undefined || option === null || option === "") return `abandon ${id}`;
+					return ["keep", "worktree", "all"].includes(option) ? `abandon ${id} ${option}` : null;
 				default: return null;
 			}
+		}
+		/** A panel command line that must never be dispatched: null, non-string,
+		 * or blank (template-string coercion would turn those into a literal
+		 * "null"/"undefined" verb). */
+		function lineProblem(line) {
+			return typeof line !== "string" || line.trim() === "";
+		}
+		/** The command layer answers an unknown verb with its full usage dump —
+		 * correct feedback for hand-typed input, but the panel maps it to one
+		 * concise localized error instead of showing the raw English dump. */
+		function isUsageDump(text) {
+			return typeof text === "string" && text.startsWith("Usage: /worktree");
 		}
 		/** Actions that change something irreversibly need a second click. */
 		function needsConfirm(action, option) {
@@ -248,6 +265,8 @@ window.__ModuleLoader__.load({
 		exports.summaryOf = summaryOf;
 		exports.needsPolling = needsPolling;
 		exports.commandFor = commandFor;
+		exports.lineProblem = lineProblem;
+		exports.isUsageDump = isUsageDump;
 		exports.needsConfirm = needsConfirm;
 		exports.nextText = nextText;
 		exports.narrowToolMeta = narrowToolMeta;
