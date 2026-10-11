@@ -258,6 +258,17 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
   })
 })
 
+describe('Edit Lock stable opt-in Settings declaration', () => {
+  it('describes optional, default-off, restart-applied ownership without an experiment label', () => {
+    const row = FIELDS.find(({ key }) => key === 'editLockEnabled')
+    expect(row.description).toBe('Edit Lock cross-session file ownership (optional, default off; applies after restart)')
+    expect(row.restart).toBe(true)
+    expect(FIELD_DEFAULTS.editLockEnabled).toBe(false)
+    expect(patchRowEntries().get('editLockEnabled')).toBe('false')
+    expect(chunkFieldDefaults().get('editLockEnabled')).toBe(false)
+  })
+})
+
 describe('editLockAutoResume (message-driven auto-resume switch)', () => {
   // D5: the row is declared once in FIELDS; the runtime judges the section per
   // message as `autoResume !== false`, so a missing key (old profile, or the
