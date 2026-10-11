@@ -97,7 +97,9 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 
 ### 预设与默认值
 
-**预设库**（[preset-library.js](<../../plugins/weir-harness/src/capabilities/preset-library.js>)）：`global` 与 `workspace` 两个 namespace（第 2 组存储的既有单元）；稳定 preset ID 与显示名分离——同 namespace 内显示名冲突必须显式 rename／replace／cancel（未确认替换即拒绝），跨 namespace 同名互不遮蔽；workspace 预设只在本工作区可见。所有写入与导入经 expected-revision CAS：stale revision 是显式冲突，绝不静默覆盖（两客户端改同一预设时新状态保持、旧请求收到冲突）。
+**预设库**（[preset-library.js](<../../plugins/weir-harness/src/capabilities/preset-library.js>)）：`global` 与每个 `workspace` 是独立命名空间，稳定 preset ID 与显示名分离；每个预设文件有自己的 revision，所有写者另按**命名空间 → 预设单元**获取跨进程锁，并在锁内严格检查名称，避免不同 ID 并发写入重名。只读列表可容忍坏记录，写入时坏记录／未知 schema 则拒绝而不猜测名称空缺。同 namespace 内改名撞名直接拒绝；新建／导入确认替换必须点名已有预设的 ID 和 revision，真正更新该 ID，旧版只传 `onNameConflict:'replace'` 的命令现报 `confirmation-required`（内部行为 BREAKING），绝不再新增第二份同名项。旧版本已经生成的同名记录仍按各自 ID 列出，用户须通过精确改名／删除逐项化解，系统绝不代删；跨 namespace 同名合法，workspace 预设只在本工作区可见。stale revision 是显式冲突，已删除的 ID 不可由编辑复活；新建可在另一空闲 ID 上复用其旧显示名。
+
+**预设原位编辑（safe-preset-rename-resave）**：预设列表每行分别提供「重命名」与「重新保存」。重命名仅改显示名称，不重建预设 ID、不读取当前会话草稿覆盖原内容；重新保存明确选择当前草稿（默认）或已应用集合，在确认页点名目标 namespace／名称及 Skill、MCP、未解析引用数量，覆盖该预设的选择内容但保留名称和 ID。**所有**从已应用来源保存的路径（重新保存、另存为新预设、旧编辑与精确确认替换）均须与用户确认时所见的有效身份集合一致：回执携带有效集合摘要，提交时与来源 revision 一并在来源锁下复核；若有失效 Skill、来源不完整或确认后变化（包括无持久选择记录的 revision 0 会话），先拒绝并提示修复／重新确认，既不保存隐藏的旧身份，也不悄悄按 0 项清空。旧客户端缺摘要的已应用保存会被拒绝，须刷新页面重新确认；草稿来源仍可独立保存。重命名、重新保存和另存为均不触发当前会话的 Apply；删除、修订冲突、锁忙或结果无法确认时保留现状并要求重新核对，绝不把失败显示为已保存。
 
 **可移植文档与导入安全**（[portable-refs.js](<../../plugins/weir-harness/src/capabilities/portable-refs.js>)）：Skill ref 白名单 = source kind + 无凭据 canonical repository + requested ref + subpath + logical name／target scope + 可选已解析 commit／digest；MCP ref 只含 Weir 管理的逻辑 binding identity + 显示 label——URL、凭据、命令、参数、headers、环境值一律拒收。导入校验原子化（object-rooted schema：version、文档 ≤ 1 MiB、条目 ≤ 1000、字段 ≤ 4 KiB，未知字段与未知版本整体拒绝、零写入）。导入只**绑定**本机已配置的 identity：不创建、不启动、不接受连接内容。
 
@@ -106,6 +108,8 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 
 **工作区默认值**（[defaults-transaction.js](<../../plugins/weir-harness/src/capabilities/defaults-transaction.js>)）：「保存为工作区新会话默认值」是独立事务——确认面点名记录的精确能力与 scope、逐项警告无法解析项；记录的是 resolved sets + unresolved refs 的**拷贝快照**（保存后草稿独立演化）：`from:'draft'` 保存时 identity 对象逐字保留、遗留草稿名字在服务端解析为精确 SkillIdentity 再落盘（唯一库存匹配直接定；重名时以会话已应用选择消歧；无法解析/仍歧义则显式 `missing`/`ambiguous` 报错、零写入），`from:'applied'` 行为不变；读侧对存量名字串记录的唯一名绑定（`bindDefaultSkillNames`）为遗留容忍。不需要先 Apply、也绝不改变当前会话；显式空集是可保存的真实选择，而**清除 = 不存在**（新会话回到内置基线）；绑定工作区稳定身份（canonical 根路径摘要，工作区改名不影响绑定）；保存／清除经 CAS，并发保存显式冲突。
 **打包导出与两阶段导入**（[preset-package.js](<../../plugins/weir-harness/src/capabilities/preset-package.js>) + [preset-package-install.js](<../../plugins/weir-harness/src/capabilities/preset-package-install.js>)）：`preset-export` 默认产出 **version-2 打包文档**（`format:'document'` 为 v1 检视/备份格式）。导出按 Skill 来源三分：**远程来源**（有 portable provenance）只写合规 portable ref（链接，不带内容）；**工作区安装**（project scope）与**本地全局**（user/custom 且 `portable:false`）打包 UTF-8 文件集随文档旅行（entry path 相对、逐段 segment、禁 `..`/绝对路径；包 ≤ 8 MiB、单文件 ≤ 512 KiB、每 Skill ≤ 256 文件，未知字段/版本原子拒收零写入）；**Weir 内置**按名称引用（任何装了 bundle 的机器可解析，缺失列入 warnings）。导入两阶段：`dryRun:true` 只回摘要（每个 Skill 的目标根/文件数/冲突、unresolved refs）零写入；确认调用携带 `onCollision`（默认 cancel——同名未决策零写入，replace/coexist 需显式，coexist 派生 `<name>-2` 并改写 frontmatter 名称）执行安装：project 包装入**当前工作区** project Skill 根、user 包装入目标机 user Skill 根，逐文件临时名→rename，任一失败回滚已写文件且不建档，安装与冲突决策经 `capability-preset-import` 审计类型落审计。安装是**导入动作本身的显式主效应**：零网络、零 server 启动；远程 ref 保持 unresolved（安装仍走 skill-distribution 的独立动作）；装入的 Skill 不自动勾选（仍须草稿选择 + Apply）。
+
+**导入与预设名称冲突的边界**：version-2 导入的 dry-run 仍零写；确认导入时先在命名空间写锁内校验预设名称和精确替换目标，再安装包携带的 Skill，因此名称撞车／旧版裸 `replace` 在安装之前拒绝。Skill 安装和预设落库**不是**一个跨文件系统的崩溃原子事务：若安装已经完成而后续预设提交失败或结果不确定，回执与导入确认界面必须保留已安装项清单、标明预设结果尚待核查并提示检查预设列表与已安装 Skill；不能宣称文件已全部回滚，也不能用通用失败消息吞掉安装结果。只有安装过程自身失败的清理才按安装器证据报告。
 
 ### MCP 会话级关闭
 

@@ -74,7 +74,7 @@ flowchart LR
 | `work-with-pr` | PR 全流程：独立 worktree、证据化验证、可读的 PR 描述 |
 | `remove-deadcode` | 验证后原子提交式删除死代码 |
 
-Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；能力集合可存为预设、导入导出，第三方技能支持检查更新（需你确认后发布）。→ [会话能力管理器](docs/features/session-capability-manager.md)、[Skill 分发](docs/features/skill-distribution.md)
+Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；能力集合可存为预设、日后改名或重新保存，也可导入导出，第三方技能支持检查更新（需你确认后发布）。→ [会话能力管理器](docs/features/session-capability-manager.md)、[Skill 分发](docs/features/skill-distribution.md)
 
 ## 快速开始
 
