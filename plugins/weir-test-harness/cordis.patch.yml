@@ -222,6 +222,10 @@
           config:
             label: realm
             enabled: !!js process.env.WEIR_IT_CAPSTORE === '1'
+        # QA fault must mount before edit-lock captures fs.writeText.bind(fs).
+        - id: weir-it-edit-lock-unknown-probe
+          name: './src/edit-lock-unknown-probe.js'
+          disabled: !!js process.env.WEIR_IT_LSP_UNCERTAIN !== '1'
         # Edit Lock row in preset order (before hashline-edit). Enabled only for
         # the editlock scenario so every other scenario keeps today's behavior.
         - id: weir-it-edit-lock
@@ -232,8 +236,8 @@
             # the auto-resume family (a second boot must reopen the same one).
             # The narrowed-sandbox scenario alone gets a child domain: full
             # suites leave other lock-on sessions' fenced history in shared /ws.
-            root: !!js "process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives' : ((process.env.WEIR_IT_STOP_BOUNDARY || process.env.WEIR_IT_AUTO_RESUME || process.env.WEIR_IT_EDIT_LOCK === '1') ? process.env.WEIR_IT_ROOT + '/ws' : undefined)"
-            authorityDirectory: !!js "process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives/.weir/edit-lock' : (process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined)))"
+            root: !!js "process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives' : ((process.env.WEIR_IT_STOP_BOUNDARY || process.env.WEIR_IT_AUTO_RESUME || process.env.WEIR_IT_EDIT_LOCK === '1') ? process.env.WEIR_IT_ROOT + '/ws' : undefined))"
+            authorityDirectory: !!js "process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain/.weir/edit-lock' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives/.weir/edit-lock' : (process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined))))"
         # Dev-only trusted reservation for editlock-delegate-settle: the real
         # child's managed write happened earlier. The serial stopping hook
         # records the hold ACK before turn/end; no owner tool is exposed.
@@ -264,7 +268,7 @@
                 # process.execPath = the interpreter that booted this profile, so the
                 # mock server launches on any platform without a hardcoded path.
                 command: !!js process.execPath
-                args: [!!js (process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/ws/mock-lsp-server.js']
+                args: !!js "[(process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/ws/' + (process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? 'editlock-lsp-uncertain/' : '') + 'mock-lsp-server.js']"
                 installHint: 'not-needed-in-tests'
     # Mirror the preset realm structure for the session blackboard service:
     # the provider row sits in its own isolated group exactly like the

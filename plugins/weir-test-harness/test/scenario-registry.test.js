@@ -46,6 +46,7 @@ EXPECTED_ORDER.push('preset-delegation-surface')
 EXPECTED_ORDER.push('planned-compaction')
 EXPECTED_ORDER.push('planned-compaction-busy', 'planned-compaction-wake', 'planned-compaction-cancel', 'planned-compaction-noop', 'planned-compaction-hard')
 EXPECTED_ORDER.push('editlock-lsp-rename')
+EXPECTED_ORDER.push('editlock-lsp-uncertain')
 EXPECTED_ORDER.push('editlock-hashline-negatives')
 EXPECTED_ORDER.push('editlock-negotiation')
 
@@ -105,7 +106,7 @@ describe('scenario registry', () => {
   // with one session id; worktree initializes a git repository in the workspace.
   const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'editlock-stale-sweep', 'editlock-stale-sweep-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'editlock-crash-recovery', 'editlock-cold-view', 'zombie-lane', 'lane-resumable', 'editlock-recovery-ux']
   RUN_OVERRIDE.push('preset-delegation-surface')
-  RUN_OVERRIDE.push('editlock-lsp-rename')
+  RUN_OVERRIDE.push('editlock-lsp-rename', 'editlock-lsp-uncertain')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {
@@ -128,9 +129,9 @@ describe('scenario registry', () => {
     const after = emit(prior + '\n[sandbox: file access denied under workspace-write mode]')
     assert.equal(after.find((chunk) => chunk.type === 'block-end').block.name, 'write')
     const driver = readFileSync(fileURLToPath(new URL('../run.mjs', import.meta.url)), 'utf8')
-    assert.match(driver, /cwd: env\.WEIR_IT_SANDBOX_NARROW === '1' \? join\(WS, 'editlock-hashline-negatives', 'narrow'\) : WS/)
+    assert.match(driver, /env\.WEIR_IT_LSP_UNCERTAIN === '1' \? join\(WS, 'editlock-lsp-uncertain'\) : \(env\.WEIR_IT_SANDBOX_NARROW === '1' \? join\(WS, 'editlock-hashline-negatives', 'narrow'\) : WS\)/)
     const patch = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
-    assert.match(patch, /root: !!js "process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives'/)
-    assert.match(patch, /authorityDirectory: !!js "process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives\/\.weir\/edit-lock'/)
+    assert.match(patch, /root: !!js "process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives'/)
+    assert.match(patch, /authorityDirectory: !!js "process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain\/\.weir\/edit-lock' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives\/\.weir\/edit-lock'/)
   })
 })

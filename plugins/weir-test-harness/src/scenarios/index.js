@@ -57,6 +57,7 @@ import blackboardPersistence from './blackboard-persistence.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
+import editlockLspUncertain from './editlock-lsp-uncertain.js'
 import editlockHashlineNegatives from './editlock-hashline-negatives.js'
 import editlockNegotiation from './editlock-negotiation.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
@@ -92,6 +93,7 @@ SCENARIOS.push(presetDelegationSurface)
 SCENARIOS.push(plannedCompaction)
 SCENARIOS.push(plannedCase('busy'), plannedCase('wake'), plannedCase('cancel'), plannedCase('noop'), plannedCase('hard'))
 SCENARIOS.push(editlockLspRename)
+SCENARIOS.push(editlockLspUncertain)
 SCENARIOS.push(editlockHashlineNegatives)
 SCENARIOS.push(editlockNegotiation)
 

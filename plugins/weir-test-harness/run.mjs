@@ -109,6 +109,11 @@ function setup() {
   writeFileSync(join(WS, 'probe.ts'), 'export const fixtureSymbol = 1\n')
   writeFileSync(join(WS, 'probe-other.ts'), 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n')
   writeFileSync(join(WS, 'mock-lsp-server.js'), readFileSync(join(HERE, 'src', 'mock-lsp-server.js'), 'utf8'))
+  // Independent management root and protocol server: earlier shared-root LSP
+  // mutations and retained locks cannot contaminate the lost-ack scenario.
+  const uncertain = join(WS, 'editlock-lsp-uncertain')
+  mkdirSync(uncertain, { recursive: true })
+  for (const name of ['probe.ts', 'probe-other.ts', 'mock-lsp-server.js']) copyFileSync(join(WS, name), join(uncertain, name))
 }
 
 // Generated ONLY for editlock-negotiation, under this invocation's disposable
@@ -218,7 +223,7 @@ function spawnHeadless(args, env) {
     execFile(
       DSH_EXEC ?? NODE,
       DSH_EXEC ? args : [DSH_BIN, ...args],
-      { cwd: env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS, env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+      { cwd: env.WEIR_IT_LSP_UNCERTAIN === '1' ? join(WS, 'editlock-lsp-uncertain') : (env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS), env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
         resolvePromise({ code: error?.code ?? 0, stdout, stderr })
       },
