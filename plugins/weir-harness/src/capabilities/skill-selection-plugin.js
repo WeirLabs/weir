@@ -680,23 +680,59 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                   if (spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
                     return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
                   }
-                  const store = capabilityStore()
-                  const source = spec.from === 'applied' ? await store.read({ kind: 'selection', sessionId: agent.id }) : null
-                  if (source && source.kind !== 'ok' && source.kind !== 'absent') return { kind: 'success', text: JSON.stringify({ status: 'unreadable', kind: source.kind }) }
-                  if (source && (!Number.isSafeInteger(spec.expectedSelectionRevision) || spec.expectedSelectionRevision !== source.revision
-                    || (spec.expectedSelectionDigest !== undefined && spec.expectedSelectionDigest !== (source.kind === 'ok' ? source.digest : null)))) {
-                    return { kind: 'success', text: JSON.stringify({ status: 'source-changed', revision: source.revision }) }
-                  }
-                  const sets = spec.from === 'applied' && source?.kind === 'ok'
-                    ? { skills: source.payload.skills, mcpServers: source.payload.mcpServers, unresolvedRefs: [] }
-                    : await selectionSetsOf(spec)
-                  const result = await library.resave({
-                    scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
-                    selection: sets,
-                    withSource: source ? commit => store.withSelectionSnapshot(agent.id, current =>
-                      current.kind === source.kind && current.revision === source.revision && current.digest === source.digest
-                        ? commit() : { status: 'source-changed', revision: current.revision }) : undefined,
-                  })
+                   const store = capabilityStore()
+                   // The namespace guard in library.resave owns the order:
+                   // namespace → accepted selection → target preset CAS. The
+                   // selection is populated only while that source lock is held.
+                   const sets = spec.from === 'applied'
+                     ? { skills: [], mcpServers: [], unresolvedRefs: [] }
+                     : await selectionSetsOf(spec)
+                   const withSource = spec.from === 'applied' ? commit => store.withSelectionSnapshot(agent.id, async current => {
+                     if (!Number.isSafeInteger(spec.expectedSelectionRevision) || spec.expectedSelectionRevision < 0
+                       || typeof spec.expectedSelectionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(spec.expectedSelectionDigest)
+                       || current.revision !== spec.expectedSelectionRevision) {
+                       return { status: 'source-changed', revision: current.revision }
+                     }
+                     const receipt = await buildReceiptPayload({ provider, lifecycle, store }, options)
+                     const effective = receipt.effective
+                     const selected = effective.skillIdentities
+                     const raw = current.kind === 'ok' ? current.payload?.skills : null
+                     if (current.kind === 'ok') {
+                       const rawKeys = new Set()
+                       const effectiveKeys = new Set(selected.map(skillIdentityKey))
+                       const missing = []
+                       for (const identity of Array.isArray(raw) ? raw : []) {
+                         try {
+                           const key = skillIdentityKey(createSkillIdentity(identity))
+                           rawKeys.add(key)
+                           if (!effectiveKeys.has(key)) missing.push(identity.name)
+                         } catch { missing.push(String(identity?.name ?? identity ?? 'unknown')) }
+                       }
+                       if (!Array.isArray(raw) || missing.length || rawKeys.size !== selected.length || receipt.warnings.length) {
+                         return { status: 'source-unavailable', missing, reason: receipt.warnings[0] ?? 'Selected Skills are not completely available' }
+                       }
+                       if (!Array.isArray(current.payload?.mcpServers)
+                         || JSON.stringify(current.payload.mcpServers) !== JSON.stringify(effective.mcpServers)) {
+                         return { status: 'source-unavailable', missing: [], reason: 'Applied MCP snapshot is unavailable' }
+                       }
+                     } else if (receipt.warnings.length) {
+                       return { status: 'source-unavailable', missing: [], reason: receipt.warnings[0] }
+                     }
+                      // Even a genuinely empty baseline needs a complete inventory:
+                      // the provider may short-circuit enumeration for zero Skills.
+                      const observed = await inventory(options)
+                      if (observed?.complete !== true) return { status: 'source-unavailable', missing: [], reason: 'Skill inventory is incomplete' }
+                     if (effective.digest !== spec.expectedSelectionDigest || receipt.revision !== current.revision) {
+                       return { status: 'source-changed', revision: current.revision }
+                     }
+                     sets.skills.push(...selected)
+                     sets.mcpServers.push(...effective.mcpServers)
+                     return commit()
+                   }) : undefined
+                   const result = await library.resave({
+                     scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
+                     selection: sets, withSource,
+                   })
                   return { kind: 'success', text: JSON.stringify(result) }
                 }
                 if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-save: from must be draft or applied' }

@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
+import { effectiveSelectionDigest } from '../src/capabilities/read-payloads.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'weir-verbs-'))
 
@@ -47,6 +48,14 @@ const mountCapabilities = (root, config = {}, profileContext, dependencies = {})
 
 const identityFixture = (name = 'alpha') => ({ scope: 'custom', root: '/skills', name, opaqueId: `id-${name}`, portable: false })
 
+test('effective receipt digest canonicalizes Skill identities and MCP names without ignoring changes', () => {
+  const alpha = identityFixture('alpha')
+  const beta = identityFixture('beta')
+  const digest = effectiveSelectionDigest([alpha, beta], ['one', 'two'])
+  expect(effectiveSelectionDigest([beta, alpha], ['two', 'one'])).toBe(digest)
+  expect(effectiveSelectionDigest([alpha], ['one', 'two']) === digest).toBe(false)
+  expect(effectiveSelectionDigest([alpha, beta], ['one']) === digest).toBe(false)
+})
 // ---- presets ---------------------------------------------------------------
 
 test('presets: lists both namespaces with counts; an unsupported store fails closed', { skip: storePlatformSkip }, async () => {
@@ -386,14 +395,66 @@ test('preset-resave applied reads accepted store and checks the confirmed source
   await callJson('preset-save', { scope: 'global', name: 'Saved', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
   await callJson('apply', { requestId: 'r1', expectedRevision: 0, skills: ['alpha'], mcpServers: ['docs'] })
   const target = { scope: 'global', presetId: 'saved', expectedRevision: 1, from: 'applied', skills: ['untrusted'], mcpServers: ['untrusted'], unresolvedRefs: ['untrusted'] }
-  expect((await callJson('preset-resave', { ...target, expectedSelectionRevision: 0 })).payload.status).toBe('source-changed')
-  const saved = await callJson('preset-resave', { ...target, expectedSelectionRevision: 1 })
+  const confirmation = (await callJson('receipt')).payload
+  expect(confirmation.effective.digest).toMatch(/^[0-9a-f]{64}$/)
+  expect((await callJson('preset-resave', { ...target, expectedSelectionRevision: 1 })).payload.status).toBe('source-changed')
+  expect((await callJson('preset-resave', { ...target, expectedSelectionRevision: 0, expectedSelectionDigest: confirmation.effective.digest })).payload.status).toBe('source-changed')
+  const saved = await callJson('preset-resave', { ...target, expectedSelectionRevision: 1, expectedSelectionDigest: confirmation.effective.digest })
   expect(saved.payload.status).toBe('edited')
   const loaded = (await callJson('preset-load', { scope: 'global', presetId: 'saved' })).payload.document
   expect(loaded.selection.skills.map(skill => skill.name)).toEqual(['alpha'])
   expect(loaded.selection.mcpServers).toEqual(['docs'])
   expect(loaded.selection.unresolvedRefs).toEqual([])
   expect((await callJson('receipt')).payload.revision).toBe(1)
+})
+
+test('applied Re-save refuses a selected Skill hidden by a degraded receipt', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const skill = join(root, 'custom', 'alpha', 'SKILL.md')
+  mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
+  writeFileSync(skill, '---\nname: alpha\ndescription: fixture\n---\nALPHA\n')
+  const config = { customSkillDirs: [join(root, 'custom')] }
+  const first = mountCapabilities(root, config)
+  await first.callJson('preset-save', { scope: 'global', name: 'Saved', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
+  await first.callJson('apply', { requestId: 'selected-alpha', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })
+  const confirmed = (await first.callJson('receipt')).payload
+  expect(confirmed.effective.skills).toEqual(['alpha'])
+  const { rmSync } = await import('node:fs')
+  rmSync(skill)
+  const second = mountCapabilities(root, config)
+  const degraded = (await second.callJson('receipt')).payload
+  expect(degraded.effective.skillIdentities).toEqual([])
+  const result = await second.callJson('preset-resave', { scope: 'global', presetId: 'saved', expectedRevision: 1,
+    from: 'applied', expectedSelectionRevision: confirmed.revision, expectedSelectionDigest: confirmed.effective.digest })
+  expect(result.payload.status).toBe('source-unavailable')
+  expect(result.payload.missing).toEqual(['alpha'])
+  const hidden = await second.callJson('preset-resave', { scope: 'global', presetId: 'saved', expectedRevision: 1,
+    from: 'applied', expectedSelectionRevision: degraded.revision, expectedSelectionDigest: degraded.effective.digest })
+  expect(hidden.payload.status).toBe('source-unavailable')
+  expect(hidden.payload.missing).toEqual(['alpha'])
+  const target = (await second.callJson('preset-load', { scope: 'global', presetId: 'saved' })).payload
+  expect(target.revision).toBe(1)
+  expect(target.document.selection.skills).toEqual([])
+})
+
+test('record-less applied Re-save rejects effective baseline drift at revision zero', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const config = { customSkillDirs: [join(root, 'custom')], baselineScopes: ['custom'] }
+  const first = mountCapabilities(root, config)
+  await first.callJson('preset-save', { scope: 'global', name: 'Saved', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] })
+  const confirmed = (await first.callJson('receipt')).payload
+  expect(confirmed.revision).toBe(0)
+  expect(confirmed.effective.skillIdentities).toEqual([])
+  expect(confirmed.effective.digest).toBe('643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726')
+  expect((await first.callJson('preset-resave', { scope: 'global', presetId: 'saved', expectedRevision: 1,
+    from: 'applied', expectedSelectionRevision: 0, expectedSelectionDigest: '0'.repeat(64) })).payload.status).toBe('source-changed')
+  mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
+  writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: fixture\n---\nALPHA\n')
+  const second = mountCapabilities(root, config)
+  const result = await second.callJson('preset-resave', { scope: 'global', presetId: 'saved', expectedRevision: 1,
+    from: 'applied', expectedSelectionRevision: 0, expectedSelectionDigest: confirmed.effective.digest })
+  expect(result.payload.status).toBe('source-changed')
+  expect((await second.callJson('preset-load', { scope: 'global', presetId: 'saved' })).payload.revision).toBe(1)
 })
 
 test('v2 name conflict and old replace refuse before bundled Skill installation', { skip: storePlatformSkip }, async () => {

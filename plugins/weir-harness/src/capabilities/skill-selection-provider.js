@@ -109,6 +109,13 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
   const provider = {
     name: SELECTION_PROVIDER,
     list: (options = {}) => collect(stateOf(options)),
+    // A receipt/confirmed source must observe the current inventory, not a
+    // provider result cached before an external Skill directory changed.
+    fresh(options = {}) {
+      const state = stateOf(options)
+      clear(state)
+      return collect(state)
+    },
     async get(candidate, options = {}) {
       const state = stateOf(options)
       try {
