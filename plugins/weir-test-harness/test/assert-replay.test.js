@@ -22,7 +22,9 @@ function syntheticObs() {
 // These live lifecycle scenarios intentionally have no recorded authority snapshot
 // in the scoped fixture set. Its oracle is exercised by the focused unit test
 // and by an installed-CLI run, not a frozen timestamp/manager incarnation.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename'].includes(scenario.id))
+// editlock-hashline-negatives likewise asserts a live authority snapshot and
+// post-run bytes, so it has no committed replay fixture (precedent 62c0ee2).
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-hashline-negatives'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {

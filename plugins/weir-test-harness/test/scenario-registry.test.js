@@ -44,6 +44,7 @@ EXPECTED_ORDER.push('preset-delegation-surface')
 EXPECTED_ORDER.push('planned-compaction')
 EXPECTED_ORDER.push('planned-compaction-busy', 'planned-compaction-wake', 'planned-compaction-cancel', 'planned-compaction-noop', 'planned-compaction-hard')
 EXPECTED_ORDER.push('editlock-lsp-rename')
+EXPECTED_ORDER.push('editlock-hashline-negatives')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
