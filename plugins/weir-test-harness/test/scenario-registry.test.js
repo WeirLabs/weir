@@ -4,11 +4,12 @@
 // silently); the order matches the former run.mjs SCENARIOS list.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
 import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
+import hashlineNegatives from '../src/scenarios/editlock-hashline-negatives.js'
 
 const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets', 'editlock', 'worktree', 'capstore']
 EXPECTED_ORDER.push('editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update')
@@ -110,5 +111,25 @@ describe('scenario registry', () => {
       if (RUN_OVERRIDE.includes(scenario.id)) assert.equal(typeof scenario.run, 'function', `${scenario.id} must override run`)
       else assert.equal(scenario.run, undefined, `${scenario.id} unexpectedly overrides run`)
     }
+  })
+  it('lock-on sandbox case targets an in-domain file through the narrowed real session policy', () => {
+    assert.deepEqual(hashlineNegatives.env, { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_SANDBOX_NARROW: '1' })
+    const prior = [hashlineNegatives.prompt, 'Created file: /ws/narrow/cas-target.txt', 'hash_edit applied',
+      'Created file: /ws/narrow/mismatch.txt', 'hash_edit refused the call', 'Released',
+      'no regular file', 'outside management domain'].join('\n')
+    const emit = (history) => [...hashlineNegatives.decide({ messages: [] }, { transcript: history })]
+    const first = emit(prior)
+    const readCall = first.find((chunk) => chunk.type === 'block-end').block
+    assert.equal(readCall.name, 'read')
+    const target = JSON.parse(readCall.arguments).file_path
+    assert.equal(basename(target), 'sandbox-target.txt')
+    assert.equal(basename(dirname(target)), hashlineNegatives.id)
+    const after = emit(prior + '\n[sandbox: file access denied under workspace-write mode]')
+    assert.equal(after.find((chunk) => chunk.type === 'block-end').block.name, 'write')
+    const driver = readFileSync(fileURLToPath(new URL('../run.mjs', import.meta.url)), 'utf8')
+    assert.match(driver, /cwd: env\.WEIR_IT_SANDBOX_NARROW === '1' \? join\(WS, 'editlock-hashline-negatives', 'narrow'\) : WS/)
+    const patch = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
+    assert.match(patch, /root: !!js "process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives'/)
+    assert.match(patch, /authorityDirectory: !!js "process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives\/\.weir\/edit-lock'/)
   })
 })

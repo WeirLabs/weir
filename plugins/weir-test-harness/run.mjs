@@ -123,7 +123,7 @@ function spawnHeadless(args, env) {
     execFile(
       DSH_EXEC ?? NODE,
       DSH_EXEC ? args : [DSH_BIN, ...args],
-      { cwd: WS, env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+      { cwd: env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS, env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
         resolvePromise({ code: error?.code ?? 0, stdout, stderr })
       },
@@ -146,6 +146,13 @@ function scenarioEnv(scenarioId, trace, extra = {}) {
 
 /** The generic one-boot scenario run: prompt + env come from the registry entry. */
 function runScenario(scenario) {
+  if (scenario.env?.WEIR_IT_SANDBOX_NARROW === '1') {
+    // This scenario alone owns a fresh nested management root: earlier lock-on
+    // scenarios in a full run may leave fenced locks in the shared <ws> root.
+    const domain = join(WS, 'editlock-hashline-negatives')
+    mkdirSync(join(domain, 'narrow'), { recursive: true })
+    writeFileSync(join(domain, 'sandbox-target.txt'), 'sandbox one\nsandbox two\n')
+  }
   const trace = join(RUN_ROOT, `trace-${scenario.id}.jsonl`)
   const hostControl = scenario.env?.WEIR_IT_SKILL_COMPOSITION === 'HOST'
   writeFileSync(join(PROFILE, 'cordis.patch.yml'), hostControl

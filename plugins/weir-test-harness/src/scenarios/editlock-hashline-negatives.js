@@ -1,47 +1,28 @@
-// Scenario: editlock-hashline-negatives — with Edit Lock enabled
-// (WEIR_IT_EDIT_LOCK=1, shared authority <ws>/.weir/edit-lock), the four
-// negative edit classes fail BEFORE any byte is written, while a positive
-// managed write + hash_edit still publishes through the lock:
-//
-//   positive   write creates cas-target.txt, hash_edit rewrites it through
-//              the lock (durable operations created/updated).
-//   mismatch   hash_edit with line 2's anchor id at line 1 is refused with
-//              the >>> mismatch report before publish — zero writes; the
-//              refused edit leaves no operation in the authority image (only
-//              the target's earlier managed create is recorded).
-//   nonregular hash_edit on the <ws>/.weir directory is refused at stat
-//              ('no regular file') before publish.
-//   boundary   hash_edit on the out-of-domain <root>/home/denied.txt passes
-//              anchor validation and is then refused by the Edit Lock domain
-//              boundary ('outside management domain') — with the lock on, the
-//              refusal happens BEFORE the sandbox backend is consulted (the
-//              management domain coincides with the session's writable root,
-//              so the lock-off [sandbox: ...] marker is unreachable here);
-//              the denied file stays byte-identical.
-//   cas        hash_edit does not emit fs/observed, so the next managed write
-//              carries the stale read-time version guard: the backend's
-//              replaceIfVersion CAS rejects it (FS_STALE_VERSION 'file changed
-//              since it was read'), the operation settles unknown with a
-//              resource fence, the lock is retained, and the published bytes
-//              stay exactly what hash_edit wrote.
-//
-// The session ends holding the fenced cas-target lock; both turn-end settling
-// notices are answered with plain text so the bounded fallback runs, and the
-// retained lock + unknown operation are asserted from the authority snapshot.
-// No committed replay fixtures (live authority snapshot, like
-// editlock-lsp-rename) — excluded from assert-replay/selfcontainment.
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+// Lock-on editor negatives. A disposable headless profile pins a dedicated
+// Edit Lock management root at <ws>/editlock-hashline-negatives, while this
+// session starts in its narrow/ child: the sandbox root is strictly narrower.
+// Anchor mismatch, directory and out-of-domain refusals occur before dispatch.
+// An in-domain/out-of-sandbox hash_edit reaches the real fs backend and is
+// denied there; its dispatched operation is conservatively unknown/fenced,
+// not mislabeled as a pre-dispatch refusal. The stale-version CAS similarly
+// fails after dispatch. Both rejected attempts leave target bytes unchanged.
+// The session ends with both fenced locks retained. No committed replay fixture
+// (live authority snapshot, as with editlock-lsp-rename).
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { IT_ROOT, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'editlock-hashline-negatives'
 const prompt = `${id}-probe`
 
-const WS = join(IT_ROOT, 'ws')
-const CAS = join(WS, 'cas-target.txt')
-const MISMATCH = join(WS, 'mismatch.txt')
+const WS = join(IT_ROOT, 'ws', 'editlock-hashline-negatives')
+const NARROW = join(WS, 'narrow')
+const CAS = join(NARROW, 'cas-target.txt')
+const MISMATCH = join(NARROW, 'mismatch.txt')
 const DIRECTORY = join(WS, '.weir')
 const DENIED = join(IT_ROOT, 'home', 'denied.txt')
+const SANDBOX = join(WS, 'sandbox-target.txt')
+const CHECKPOINT = join(IT_ROOT, 'sandbox-before.json')
 
 const ANCHOR_ID = '[ZPMQVRWSNKTXJBYH]{2}'
 
@@ -96,6 +77,17 @@ function decide(options, obs) {
     if (anchor) return toolCallChunks('hash_edit', { file_path: DENIED, edits: [{ op: 'replace', pos: `1#${anchor[1]}`, text: 'DENIED_EDIT_TRIED' }] })
     return toolCallChunks('read', { file_path: DENIED })
   }
+  // In-domain target, outside the narrower per-session workspace-write root.
+  // Unlike DENIED this passes the Edit Lock domain boundary; only the real
+  // SandboxedFileSystem backend may produce the shared sandbox marker.
+  if (!history.includes('[sandbox: file access denied under workspace-write mode]')) {
+    const anchor = new RegExp(`1#(${ANCHOR_ID})\\| sandbox one`).exec(history)
+    if (anchor) {
+      if (!existsSync(CHECKPOINT)) writeFileSync(CHECKPOINT, JSON.stringify({ bytes: readFileSync(SANDBOX).toString('base64'), authority: snapshotState(WS) }))
+      return toolCallChunks('hash_edit', { file_path: SANDBOX, edits: [{ op: 'replace', pos: `1#${anchor[1]}`, text: 'SHOULD_NEVER_LAND' }] })
+    }
+    return toolCallChunks('read', { file_path: SANDBOX })
+  }
 
   // ---- negative 4: version CAS rejection ------------------------------------
   // The observation gate still holds the read-time version of cas-target.txt
@@ -132,9 +124,11 @@ function assert(run) {
   // every marker gated on below sits well inside that window).
   const text = run.requests.map((r) => `${r.lastTool ?? ''}\n${r.lastUser ?? ''}`)
   const tools = run.requests.flatMap((r) => r.tools ?? [])
-  const readWs = (name) => (existsSync(join(run.ws, name)) ? readFileSync(join(run.ws, name), 'utf8') : '<missing>')
+  const domain = join(run.ws, 'editlock-hashline-negatives')
+  const readWs = (name) => (existsSync(join(domain, 'narrow', name)) ? readFileSync(join(domain, 'narrow', name), 'utf8') : '<missing>')
   const deniedPath = join(run.ws, '..', 'home', 'denied.txt')
-  const snap = snapshotState(run.ws)
+  const snap = snapshotState(domain)
+  const before = existsSync(CHECKPOINT) ? JSON.parse(readFileSync(CHECKPOINT, 'utf8')) : null
 
   run.check('edit lock owner tools advertised (lock-on composition)', run.requests.some((r) => r.editLockToolsSeen) && ['edit_lock_acquire', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal'].every((name) => tools.includes(name)), JSON.stringify([...new Set(tools)]))
   run.check('stock edit hidden, managed write and hash_edit present', !tools.includes('edit') && tools.includes('write') && tools.includes('hash_edit'))
@@ -149,34 +143,39 @@ function assert(run) {
 
   // Negative 2: non-regular node refused at stat, before publish.
   run.check('non-regular: directory refused before any write', text.some((t) => t.includes('no regular file')), text.join('\n').slice(-600))
-  run.check('non-regular: target is still a directory', statSync(join(run.ws, '.weir')).isDirectory())
+  run.check('non-regular: target is still a directory', existsSync(join(domain, '.weir')) && statSync(join(domain, '.weir')).isDirectory())
 
   // Negative 3: out-of-domain edit refused at the Edit Lock boundary before
   // the sandbox backend is consulted; the denied file is byte-identical.
   run.check('boundary: out-of-domain hash_edit refused before any write', text.some((t) => t.includes('outside management domain')), text.join('\n').slice(-600))
   run.check('boundary: denied file bytes unchanged', existsSync(deniedPath) && readFileSync(deniedPath, 'utf8') === 'outside one\noutside two\n', existsSync(deniedPath) ? readFileSync(deniedPath, 'utf8') : 'missing')
 
-  // Negative 4: stale observed version rejected by the backend CAS guard.
+  // The session policy is workspace-write at <domain>/narrow. The existing
+  // target is inside the dedicated management root but outside this sandbox
+  // root. The backend marker (not the domain error) proves the distinction.
+  const sandboxPath = join(domain, 'sandbox-target.txt')
+  const sandboxOp = (snap?.operations ?? []).find((o) => o.summary.includes('sandbox-target.txt'))
+  run.check('sandbox: in-domain hash_edit reached the backend denial marker', text.some((t) => t.includes('[sandbox: file access denied under workspace-write mode]')), text.join('\n').slice(-600))
+  run.check('sandbox: target lies within management root, outside session workspace', dirname(sandboxPath) === domain && dirname(sandboxPath) !== join(domain, 'narrow') && (sandboxOp ? JSON.parse(sandboxOp.summary).binding.cwd === join(domain, 'narrow') : false), sandboxOp?.summary ?? '<none>')
+  run.check('sandbox: bytes before and after the denied publication match', !!before && before.bytes === readFileSync(sandboxPath).toString('base64'), 'checkpoint missing or bytes changed')
+  run.check('sandbox: authority had no target operation or lock before dispatch', !!before && before.authority?.operations?.length === 3 && before.authority.operations.every((o) => !o.summary.includes('sandbox-target.txt')) && before.authority.locks.every((lock) => lock.resourceId !== sandboxPath), JSON.stringify(before?.authority))
+  run.check('sandbox: dispatched denial is unknown with resource fence, not pre-dispatch', sandboxOp?.phase === 'unknown' && sandboxOp.fence?.kind === 'resource' && sandboxOp.fence.resourceId === sandboxPath, sandboxOp?.summary ?? '<none>')
+  run.check('sandbox: previous authority operations survive unchanged', !!before && JSON.stringify(snap?.operations?.slice(0, 3)) === JSON.stringify(before.authority?.operations), JSON.stringify(snap?.operations?.map((o) => o.phase)))
+
+  // Stale observed version reaches the backend CAS guard AFTER dispatch;
+  // neither CAS nor sandbox rejection can be classified as pre-write.
   run.check('cas: stale-version write rejected (FS_STALE_VERSION)', text.some((t) => t.includes('file changed since it was read')), text.join('\n').slice(-600))
   run.check('cas: published bytes are exactly what hash_edit wrote (the rejected write never landed)', readWs('cas-target.txt') === 'revised\n', readWs('cas-target.txt'))
 
-  // Authority footprint: exactly the four publication operations in
-  // chronological order — create cas-target, hash_edit cas-target, create
-  // mismatch-target, rejected cas-target write. The mismatch/directory/denied
-  // refusals left no operation history at all (zero-write proof at the
-  // authority level).
   const phases = (snap?.operations ?? []).map((o) => o.phase)
-  run.check('authority: exactly the four operations in order (created/updated/created/unknown)', JSON.stringify(phases) === JSON.stringify(['created', 'updated', 'created', 'unknown']), JSON.stringify(phases))
-  const unknownOp = (snap?.operations ?? []).find((o) => o.phase === 'unknown')
-  run.check('authority: the rejected write settled unknown with a resource fence on cas-target', !!unknownOp && unknownOp.fence?.kind === 'resource' && unknownOp.summary.includes('cas-target.txt'), unknownOp?.summary ?? '<none>')
-  run.check('authority: the only mismatch-target operation is its creation; the denied target has none', (snap?.operations ?? []).every((o) => !o.summary.includes('denied.txt') && (!o.summary.includes('mismatch.txt') || o.phase === 'created')), JSON.stringify(snap?.operations?.map((o) => o.phase)))
-
-  // The fenced lock was retained (never silently released) — the settling
-  // notices fired and the fallback could not free fence-required ownership.
-  run.check('authority: the fenced cas-target lock was retained', (snap?.locks ?? []).length === 1 && snap.locks[0].resourceId.endsWith('cas-target.txt'), JSON.stringify(snap?.locks))
-  run.check('settle: the turn-end notice reached the model for the retained lock', text.some((t) => t.includes('the turn ended while this session still held')), text.join('\n').slice(-600))
+  run.check('authority: exactly five operations (created/updated/created/unknown/unknown)', JSON.stringify(phases) === JSON.stringify(['created', 'updated', 'created', 'unknown', 'unknown']), JSON.stringify(phases))
+  const casOp = (snap?.operations ?? []).find((o) => o.phase === 'unknown' && o.summary.includes('cas-target.txt'))
+  run.check('authority: the rejected CAS write settled unknown with a resource fence', casOp?.fence?.kind === 'resource' && casOp.fence.resourceId === join(domain, 'narrow', 'cas-target.txt'), casOp?.summary ?? '<none>')
+  run.check('authority: mismatch/directory/domain refusals left no operation', (snap?.operations ?? []).every((o) => !o.summary.includes('denied.txt') && (!o.summary.includes('mismatch.txt') || o.phase === 'created')), JSON.stringify(phases))
+  run.check('authority: both post-dispatch fenced locks retained', (snap?.locks ?? []).length === 2 && [sandboxPath, join(domain, 'narrow', 'cas-target.txt')].every((path) => snap.locks.some((lock) => lock.resourceId === path)), JSON.stringify(snap?.locks))
+  run.check('settle: the turn-end notice reached the model for retained locks', text.some((t) => t.includes('the turn ended while this session still held')), text.join('\n').slice(-600))
 
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
-export default { id, prompt, env: { WEIR_IT_EDIT_LOCK: '1' }, decide, observe, assert }
+export default { id, prompt, env: { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_SANDBOX_NARROW: '1' }, decide, observe, assert }
