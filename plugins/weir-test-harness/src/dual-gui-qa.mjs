@@ -653,6 +653,23 @@ export const PAGE_HELPERS_SOURCE = `(() => {
       const visible = Boolean(rect && rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight && getComputedStyle(detail).visibility !== 'hidden')
       return { selected, commandCount: nodes.length, matched: Boolean(match), visible, detail: Boolean(detail?.textContent?.includes(exactResult)), error: Boolean(match?.querySelector('[data-state="error"]')), text: detail?.textContent?.slice(0, 600) ?? match?.textContent?.slice(0, 600) ?? null }
     },
+    partialWriteEvidence(sessionId, focus = false) {
+      const selected = document.querySelector('[data-row-key="session:' + sessionId + '"]')?.getAttribute('aria-selected') === 'true'
+      const nodes = [...document.querySelectorAll('[data-chat-flow-kind="command"]')]
+      const match = nodes.find((node) => node.textContent?.includes('QA rename refused:') && node.textContent?.includes('filesAlreadyWritten:'))
+      const disclosure = match?.querySelector('[aria-expanded]')
+      if (focus && disclosure?.getAttribute('aria-expanded') === 'false') disclosure.click()
+      if (focus && match) match.scrollIntoView({ block: 'center' })
+      const detail = match?.querySelector('pre[data-error]')
+      const rect = detail?.getBoundingClientRect()
+      return {
+        selected, matched: Boolean(match), expanded: disclosure?.getAttribute('aria-expanded') === 'true',
+        visible: Boolean(rect && rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight && getComputedStyle(detail).visibility !== 'hidden' && getComputedStyle(detail).display !== 'none'),
+        error: Boolean(match?.querySelector('[data-state="error"]')),
+        panel: Boolean(document.querySelector('[data-weir-edit-lock-panel]')),
+        text: detail?.textContent ?? null,
+      }
+    },
     // Theme state. The GUI's theme switch is Settings > General > Appearance
     // (three cubes calling theme.setTheme, persisted as the ui-theme config
     // form's preference field: light | dark | system, default 'system').
@@ -1296,14 +1313,51 @@ export async function waitGuiCommand(instance, sessionId, resultText, timeouts) 
     }, { timeoutMs: timeouts.phaseMs, intervalMs: 500 })
   } catch (error) { throw new Error(`${error.message}; last DOM evidence=${JSON.stringify(last)}`) }
 }
+
+export function assertRecoveryLine(before, after, attempts) {
+  if (typeof before !== 'string' || typeof after !== 'string' || before === after) throw new Error(`visible recovery line has not changed: ${JSON.stringify({ before, after })}`)
+  const match = /(?:Recorded recovery:\s*(\d+)\s*attempts|已记录恢复[：:]\s*(\d+)\s*次)/.exec(after)
+  if (!match || Number(match[1] ?? match[2]) !== attempts) throw new Error(`visible recovery attempt count differs from authority ${attempts}: ${after}`)
+}
+
+export function assertPartialWriteDom(dom, { written, other }) {
+  if (!dom?.selected || !dom.matched || !dom.expanded || !dom.visible || !dom.error || !dom.panel) throw new Error(`partial-write command disclosure or ownership panel not visible: ${JSON.stringify(dom)}`)
+  const text = dom.text ?? ''
+  const lines = text.split('\n').map((line) => line.trim())
+  const category = (name) => {
+    const line = lines.find((item) => item.startsWith(`${name}: `))
+    if (!line) throw new Error(`visible command missing ${name}: ${text}`)
+    try { return JSON.parse(line.slice(name.length + 2).replace(/;$/, '')) } catch { throw new Error(`visible command has invalid ${name}: ${line}`) }
+  }
+  const actual = ['filesAlreadyWritten', 'filesNotWritten', 'filesUncertain'].map(category)
+  if (JSON.stringify(actual[0]) !== JSON.stringify([written]) ||
+      !((JSON.stringify(actual[1]) === JSON.stringify([other]) && JSON.stringify(actual[2]) === '[]') ||
+        (JSON.stringify(actual[1]) === '[]' && JSON.stringify(actual[2]) === JSON.stringify([other])))) {
+    throw new Error(`visible command batch categories differ from targets: ${text}`)
+  }
+  if (!lines.includes('ownership retained (no rollback)')) throw new Error(`visible command missing retained ownership: ${text}`)
+  return dom
+}
+
+export async function waitPartialWriteDom(instance, sessionId, targets, timeouts) {
+  let last = null
+  try {
+    return await waitFor(`${instance.name} expanded partial-write command`, async () => {
+      last = await instance.cdp.evaluate(`window.__dualGuiQa.partialWriteEvidence(${JSON.stringify(sessionId)}, true)`)
+      try { return assertPartialWriteDom(last, targets) } catch { return null }
+    }, { timeoutMs: timeouts.phaseMs, intervalMs: 500 })
+  } catch (error) { throw new Error(`${error.message}; last DOM evidence=${JSON.stringify(last)}`) }
+}
 /** Screenshot the current view in dark theme, then light, then restore dark.
  * Theme switching rides the GUI's genuine system-preference path (see the
  * theme() page helper for the mechanism); each flip is proven by the body
  * palette attribute before the shutter fires. */
-async function shotBothThemes(instance, name) {
+async function shotBothThemes(instance, name, verify = async () => {}) {
   await instance.setColorScheme('dark')
+  await verify('dark')
   await instance.shot(`${name}-dark`)
   await instance.setColorScheme('light')
+  await verify('light')
   await instance.shot(`${name}-light`)
   await instance.setColorScheme('dark')
 }
@@ -1647,6 +1701,9 @@ async function runMatrix(config, paths, a, b, matrix) {
     const markers = await waitPanelMarkers(state.publisher, 'attention markers', (m) =>
       m.state === 'attention' && typeof m.cleanup === 'string' && m.cleanup.length > 0
         && m.files.some((file) => file.path === paths.attentionFile), timeouts)
+    const beforeAttempt = await state.publisher.view(state.a3Session)
+    if (beforeAttempt?.value?.recovery?.attempts !== 0 || typeof markers.recovery !== 'string') throw new Error(`no visible pre-retry recovery baseline: ${JSON.stringify({ attempts: beforeAttempt?.value?.recovery?.attempts, line: markers.recovery })}`)
+    state.recoveryBefore = markers.recovery
     const row = markers.files.find((file) => file.path === paths.attentionFile)
     await shotBothThemes(state.publisher, 'panel-attention')
     assertNoNewExceptions(state.publisher, exBase, 'panel-attention-abnormal')
@@ -1661,12 +1718,16 @@ async function runMatrix(config, paths, a, b, matrix) {
     // proves the automatic recovery genuinely ran before any user action.
     const recovering = await waitView(state.publisher, state.a3Session, 'recovery attempt charged', (view) =>
       view?.state === 'attention' && view?.cleanupOnly === true && (view?.recovery?.attempts ?? 0) >= 1, timeouts)
-    const markers = await waitPanelMarkers(state.publisher, 'recovering markers', (m) =>
-      m.state === 'attention' && typeof m.cleanup === 'string' && m.cleanup.length > 0
-        && typeof m.recovery === 'string' && m.recovery.length > 0, timeouts)
-    await shotBothThemes(state.publisher, 'panel-recovering')
+    const markers = await waitPanelMarkers(state.publisher, 'recovering markers', (m) => {
+      try { assertRecoveryLine(state.recoveryBefore, m.recovery, recovering.recovery.attempts); return m.state === 'attention' && typeof m.cleanup === 'string' && m.cleanup.length > 0 } catch { return false }
+    }, timeouts)
+    await shotBothThemes(state.publisher, 'panel-recovering', async () => {
+      const current = await state.publisher.view(state.a3Session)
+      const line = (await state.publisher.markers()).recovery
+      assertRecoveryLine(state.recoveryBefore, line, current.value.recovery.attempts)
+    })
     assertNoNewExceptions(state.publisher, exBase, 'panel-recovering')
-    return `cleanup-only recovery visible: attempts=${recovering.recovery.attempts}, elapsed=${recovering.recovery.elapsedSeconds}s; panel recovery line rendered`
+    return `visible recovery changed from ${JSON.stringify(state.recoveryBefore)} to ${JSON.stringify(markers.recovery)}; authority attempts=${recovering.recovery.attempts}`
   })
 
   await phase('panel-paused', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
@@ -1731,7 +1792,14 @@ async function runMatrix(config, paths, a, b, matrix) {
     const markers = await waitPanelMarkers(state.publisher, 'partial-write markers', (m) =>
       [paths.probeFile, paths.probeOtherFile].every((file) => m.files.some((row) => row.path === file))
         && typeof m.ownershipHint === 'string' && m.ownershipHint.length > 0, timeouts)
-    await shotBothThemes(state.publisher, 'panel-partial-write')
+    const targets = { written: paths.probeFile, other: paths.probeOtherFile }
+    await waitPartialWriteDom(state.publisher, state.a4Session, targets, timeouts)
+    await shotBothThemes(state.publisher, 'panel-partial-write', async () => {
+      const dom = await state.publisher.cdp.evaluate(`window.__dualGuiQa.partialWriteEvidence(${JSON.stringify(state.a4Session)}, true)`)
+      assertPartialWriteDom(dom, targets)
+      const panel = await state.publisher.markers()
+      if (![paths.probeFile, paths.probeOtherFile].every((file) => panel.files.some((row) => row.path === file))) throw new Error('expanded command displaced ownership rows')
+    })
     // Honest aftermath: the cleanly-written file's lock releases normally,
     // while the UNCERTAIN file's lock is fenced — a plain release is refused
     // ('unresolved publication fence') because the byte outcome is unknown;
