@@ -465,15 +465,15 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### macOS 双完整 GUI 稳定化验收（阶段性）
 
-两个独立启动的 DSH 0.2.0-rc.2 Web 进程（独立 DSH_HOME/profile/浏览器，loopback 端口）共用同一仓库外工作区：publisher/client 仲裁成立；跨进程 `binding-duplicate` 的 Retry 被正确拒绝；真实 `edit_lock_acquire` 冲突持锁，文件哈希不变；测试 publisher 遭 SIGKILL 后存活的 client 变 `unavailable` 拒写；原 profile 重启后产品自行回收死预约，generation 2 的锁保留为 `user-interrupted`，经显式 Continue 恢复为 active、epoch 递增；正常释放后按 generation 3 交接。该**阶段性**报告与 8 张截图在 `.weir/qa/stable-dual-gui/`；当时尚未覆盖的三平台双 GUI 与锁下重命名已有后续 CI 证据（见下节），版本/CAS/sandbox 双 GUI 拒绝及状态面板双主题仍待验收。该手工运行的 console 日志有 4 条未处理异常，不得据此声称界面无异常。
+两个独立启动的 DSH 0.2.0-rc.2 Web 进程（独立 DSH_HOME/profile/浏览器，loopback 端口）共用同一仓库外工作区：publisher/client 仲裁成立；跨进程 `binding-duplicate` 的 Retry 被正确拒绝；真实 `edit_lock_acquire` 冲突持锁，文件哈希不变；测试 publisher 遭 SIGKILL 后存活的 client 变 `unavailable` 拒写；原 profile 重启后产品自行回收死预约，generation 2 的锁保留为 `user-interrupted`，经显式 Continue 恢复为 active、epoch 递增；正常释放后按 generation 3 交接。该**阶段性**报告与 8 张截图在 `.weir/qa/stable-dual-gui/`；当时尚未覆盖的三平台双 GUI、锁下重命名及双主题面板已有后续 CI 证据（见下节），但版本/CAS/sandbox 的**双 GUI**拒绝与页面结果完整可见性仍待验收。该较早手工运行的 console 日志有 4 条未处理异常，不能拿它声称无异常。
 
 ### 可复用双 GUI QA 驱动（跨平台验收入口）
 
 `plugins/weir-test-harness/src/dual-gui-qa.mjs`（手动分发/PR 触发 workflow `edit-lock-dual-gui.yml`）把上述 macOS 流程固化为跨平台可复用驱动：两独立 `dsh web` 进程（各自 DSH_HOME/profile/loopback 端口/headless Chrome），经真实 CDP 操作，核心矩阵（同域仲裁、重复绑定 Retry 拒绝、真实归属冲突、优雅清理）本机 7 PASS/0 FAIL/3 SKIP，重型矩阵（SIGKILL fail-closed、租约过期＋证明死亡后回收、generation 2 保留＋显式 Continue、generation 3 交接）本机 9 PASS/0 FAIL/1 SKIP；token 全程脱敏，测试结束后无残留进程或预约。
 
-### 三平台实机验收（GitHub Actions，run 38110139730）
+### 三平台实机验收（GitHub Actions，run 38110139730／38142263705）
 
-同一驱动与锁下 `lsp_rename` 场景在三平台全部通过：[Actions run 38110139730](https://github.com/WeirLabs/weir/actions/runs/38110139730) 的 macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（重型双 GUI 矩阵）＋ 35 PASS/0 FAIL（**另一个 headless** 锁下重命名步骤）。驱动核对真实 publisher PID、预约、generation 与文件哈希；Linux 断连错误显示短 Unix socket，Windows 显示命名管道，但驱动尚未以端点类型断言管道。截图为尽力捕获，缺失本身不会使矩阵失败。先前红灯由 QA 驱动及 CI 管线修正（租约等待顺序、模态框竞态、shell 语法、路径分隔符），并非已证实的产品缺陷；尚未覆盖的门槛见下。
+首轮完整三平台绿灯为 [run 38110139730](https://github.com/WeirLabs/weir/actions/runs/38110139730)：macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（双 GUI 重型矩阵）＋ 35/35（**单独 headless** 锁下重命名）。增强后的 [run 38142263705](https://github.com/WeirLabs/weir/actions/runs/38142263705) 三平台各 **15 PASS/0 FAIL/1 SKIP**（新增真实异常／清理恢复／暂停／部分写入状态）＋ **43/43**（锁下重命名的缺失／混合目标）。其报告逐一记录 runner 镜像版本、publisher PID/退出状态、短 Unix socket 或 Win32 命名管道、8 张明暗主题面板截图的非空 PNG/SHA，以及两浏览器每阶段 `Runtime.exceptionThrown A=0 B=0`；截图缺失现在判失败。下载证据存于 `.weir/stable-gate/ci-artifacts-38142263705/`（Windows 工件首次下载 EOF 后重试于 `windows-retry/`）。这些绿色作业**未证明**两个 GUI 内的版本/CAS/sandbox 拒绝，也未证明用户在浏览器里能展开查看部分写入三清单：独立复审仍拒绝关闭 3.5（下述缺口）。
 
 ### 更早的组件级证据
 
@@ -483,7 +483,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 本特性仍为**实验特性、默认关闭**。已有三平台双 GUI 仲裁和独立 headless 锁下重命名证据，但以下要求**尚未满足**；不得由上述绿色作业推断稳定版已可发布：
 
-- **双 GUI 的版本/CAS 与真正沙箱拒绝**：当前 GUI 矩阵只执行 acquire/release/status，未用两个 GUI 证明该类编辑拒绝；锁下 headless 负例的“outside management domain”不能充作沙箱后端拒绝。
-- **重命名缺失／混合目标与非空 uncertain**：真实场景证明成功、冲突、别名拒绝与已写/未写的中途失败；缺失目标的预检分支尚无直接回归，非空 uncertain 仅有泛化组件桩。
-- **面板状态和主题**：异常／恢复中／暂停／部分写入的真实浏览器呈现、明暗主题与 console 零未处理异常尚未三平台过闸；阶段性 macOS 人工验收曾记录 4 条未处理异常。截图捕获目前为 best-effort，尚未作为验收硬断言。
-- **CI 证据清单**：runner 镜像版本、进程退出码及 Windows 管道类型尚未纳入驱动报告的硬断言；已完成的 Actions 作业及工件须按 run ID 留存，不能用 job-level 绿色代替上述空缺。
+- **双 GUI 的版本/CAS 与真正沙箱拒绝**：当前已落地的 GUI 矩阵尚未用两个 GUI 实测该类编辑拒绝；另一个锁下 headless 场景 24/24 确认了真实沙箱后端标记，但不能代替浏览器态的双进程准入与呈现。
+- **停用时维护呈现误导**：macOS 双 Web 进程 `--opt-out` 20/20 已证实停用后普通编辑在保留旧锁/`unknown` 时可写，但维护面板仍把旧围栏称为“Blocked files”、提供有效停用时不可用的在线 Force release，且面板自身缺少“普通编辑不受保护、可能覆盖他人”的警示；独立复审已 REJECT，待维护 UI 修复与真实 GUI 复验。
+- **面板状态的完整可见性**：三平台已录入八图/平台、双主题及两浏览器逐阶段零 `Runtime.exceptionThrown`，但 3.5 独立复审仍 REJECT：页面 DOM 尚未断言恢复尝试次数确实从零变化；部分写入三份结果只从 QA RPC 读取，截图中的单行命令卡被省略且原先不可展开。产品已把真实批量错误分行使宿主具备原生展开入口，**浏览器点击并核对完整清单/重拍截图**尚未验收。
+- **最终版本与 Desktop 表面**：上述结论只针对发布版 `dsh web` 上的当前 QA 分支；CI 仓库中尚有历史 Office 环境基线失败，须在最终 SHA 对照归因。Web 通过不等于 Electron Desktop 包装通过；本机有安装版时仍需独立 Desktop-host smoke，不得将其抹为已完成。
