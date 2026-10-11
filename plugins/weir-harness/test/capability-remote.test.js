@@ -78,7 +78,11 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
     expect(JSON.stringify(remoteReceipt)).toBe(commandReceipt.text)
     expect(remoteReceipt.status).toBe('applied')
     expect(remoteReceipt.effective.skillIdentities.map(identity => identity.name)).toEqual(remoteReceipt.effective.skills)
-    expect(Object.keys(remoteReceipt.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers'])
+    // The effective selection digest is a required receipt field (backend corrective
+    // lane): the applied preset resave flow takes it from the receipt back to the
+    // server, so the exact key list and the sha256 hex shape are wire contract.
+    expect(Object.keys(remoteReceipt.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers', 'digest'])
+    expect(remoteReceipt.effective.digest).toMatch(/^[0-9a-f]{64}$/)
 
     const remoteList = await service.list('sess-remote')
     const commandList = await command.handler({ agent, rawInput: 'list' })
