@@ -56,7 +56,106 @@ import {
   assertPartialWriteDom,
 } from '../src/dual-gui-qa.mjs'
 import { managementRootFor } from '../../weir-harness/src/edit-lock/domains.js'
+// Read the upload-artifact step's YAML block, not an incidental comment or a
+// similarly named path elsewhere. This deliberately supports only the literal
+// workflow syntax used here; unsupported YAML fails closed instead of silently
+// blessing an upload policy that the test cannot interpret.
+const workflowFile = fileURLToPath(new URL('../../../.github/workflows/edit-lock-dual-gui.yml', import.meta.url))
+const qaPrefix = '${{ runner.temp }}/dual-gui-qa/'
+const safeEvidence = [
+  'dual-gui-report.md',
+  ...['a', 'b'].flatMap((side) => [
+    `logs/init-${side}.log`, `logs/install-weir-${side}.log`,
+    `logs/install-fixture-${side}.log`, `logs/server-${side}.log`,
+    `logs/console-events-${side}.jsonl`,
+  ]),
+  ...['attention', 'recovering', 'paused', 'partial-write'].flatMap((state) =>
+    ['dark', 'light'].map((theme) => `shots/panel-${state}-${theme}.png`)),
+  'shots/version-cas-refused.png', 'shots/sandbox-backend-refused.png',
+  ...['saved-off', 'effective-off'].flatMap((state) =>
+    ['dark', 'light'].map((theme) => `shots/opt-out-${state}-${theme}.png`)),
+]
 
+function uploadEvidencePaths(yaml) {
+  const lines = yaml.replaceAll('\r\n', '\n').split('\n')
+  const steps = []
+  let step = null
+  for (const line of lines) {
+    if (/^      - (?:uses|name|run):/.test(line)) {
+      step = { lines: [line] }
+      steps.push(step)
+    } else if (step) step.lines.push(line)
+  }
+  const uploads = steps.filter(({ lines: body }) => body.some((line) => /^        uses: .*upload-artifact@/.test(line)))
+  assert.equal(uploads.length, 1, 'exactly one upload-artifact step')
+  assert.ok(uploads[0].lines.some((line) => /^        uses: actions\/upload-artifact@v4\s*$/.test(line)), 'recognized upload action version')
+  const body = uploads[0].lines
+  assert.ok(body.some((line) => /^        if: always\(\)\s*$/.test(line)), 'retain failure evidence')
+  assert.ok(body.some((line) => /^          if-no-files-found: error\s*$/.test(line)), 'missing all evidence must fail')
+  const pathLines = body.filter((line) => /^          path:/.test(line))
+  assert.equal(pathLines.length, 1, 'exactly one upload path key')
+  const at = body.indexOf(pathLines[0])
+  const scalar = body[at].match(/^          path: (.*)$/)?.[1]
+  assert.ok(scalar, 'path must be a supported scalar or literal block')
+  if (scalar !== '|') return [scalar.trim().replace(/^['"]|['"]$/g, '')]
+  const entries = []
+  for (const line of body.slice(at + 1)) {
+    if (/^            \S/.test(line)) entries.push(line.slice(12).trim())
+    else if (!/^\s*(?:#.*)?$/.test(line)) break
+  }
+  assert.ok(entries.length, 'literal path block must contain entries')
+  return entries
+}
+
+function assertSafeUpload(entries, root) {
+  assert.deepEqual(entries, safeEvidence.map((relative) => `${qaPrefix}${relative}`), 'only individually named, known-sanitized evidence is uploadable')
+  // Actions' @actions/glob expands a literal file path to that file alone;
+  // wildcard/directory inputs are rejected above rather than approximated.
+  const selected = entries.map((entry) => path.join(root, entry.slice(qaPrefix.length))).filter((file) => fs.existsSync(file))
+  assert.ok(!selected.includes(path.join(root, 'chrome-a', 'Default', 'History')))
+  assert.ok(selected.every((file) => fs.statSync(file).isFile()), 'never select a directory')
+  return selected
+}
+
+describe('CI upload evidence boundary', () => {
+  it('selects only explicit safe files on both POSIX and Windows runner path spellings', () => {
+    const root = mkTmp()
+    const history = path.join(root, 'chrome-a', 'Default', 'History')
+    fs.mkdirSync(path.dirname(history), { recursive: true })
+    fs.writeFileSync(history, 'token=DO_NOT_UPLOAD_CREDENTIAL_SENTINEL')
+    fs.mkdirSync(path.join(root, 'logs'))
+    fs.mkdirSync(path.join(root, 'shots'))
+    fs.writeFileSync(path.join(root, 'dual-gui-report.md'), 'safe report')
+    fs.writeFileSync(path.join(root, 'logs', 'server-a.log'), 'REDACTED_TOKEN')
+    fs.writeFileSync(path.join(root, 'shots', 'panel-attention-dark.png'), 'PNG evidence')
+    const yaml = fs.readFileSync(workflowFile, 'utf8')
+    const entries = uploadEvidencePaths(yaml)
+    const selected = assertSafeUpload(entries, root)
+    assert.ok(selected.includes(path.join(root, 'dual-gui-report.md')))
+    assert.ok(selected.includes(path.join(root, 'logs', 'server-a.log')))
+    assert.ok(selected.includes(path.join(root, 'shots', 'panel-attention-dark.png')))
+    assert.ok(selected.every((file) => !fs.readFileSync(file, 'utf8').includes('DO_NOT_UPLOAD_CREDENTIAL_SENTINEL')))
+    assert.deepEqual(uploadEvidencePaths(yaml.replaceAll('\n', '\r\n')), entries, 'CRLF YAML on Windows parses identically')
+    for (const osRoot of ['/runner/_temp/dual-gui-qa', 'C:\\Users\\runner\\AppData\\Local\\Temp\\dual-gui-qa']) {
+      assert.ok(entries.every((entry) => entry.startsWith(qaPrefix) && !/[\\*?\[\]{}]/.test(entry.slice(qaPrefix.length))))
+      assert.ok(entries.map((entry) => path.win32.join(osRoot, ...entry.slice(qaPrefix.length).split('/')))
+        .includes(path.win32.join(osRoot, 'shots', 'panel-attention-dark.png')))
+    }
+  })
+  it('uploads no Chrome History when report and screenshots are absent after early failure', () => {
+    const root = mkTmp()
+    const history = path.join(root, 'chrome-b', 'Default', 'History')
+    fs.mkdirSync(path.dirname(history), { recursive: true })
+    fs.writeFileSync(history, 'token=DO_NOT_UPLOAD_CREDENTIAL_SENTINEL')
+    assert.deepEqual(assertSafeUpload(uploadEvidencePaths(fs.readFileSync(workflowFile, 'utf8')), root), [])
+  })
+  it('rejects root, nested directories, broad globs, and unknown files even alongside safe entries', () => {
+    const entries = safeEvidence.map((relative) => `${qaPrefix}${relative}`)
+    for (const unsafe of ['${{ runner.temp }}/dual-gui-qa', `${qaPrefix}chrome-a`, `${qaPrefix}logs`, `${qaPrefix}**/*.png`, `${qaPrefix}shots/*.png`, `${qaPrefix}chrome-a/Default/History`]) {
+      assert.throws(() => assertSafeUpload([...entries, unsafe], mkTmp()), /only individually named/)
+    }
+  })
+})
 const tmpdirs = []
 function mkTmp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dual-gui-qa-test-'))
