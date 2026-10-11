@@ -42,7 +42,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['seedParent', 'corruptRecord', 'agentCreated', 'incarnationView', 'saveTravel', 'cap', 'presetsSummary', 'receiptSummary', 'exportPack', 'craftRename', 'importPack', 'fileState', 'mutateAppend'] },
+        op: { type: 'string', enum: ['seedParent', 'corruptRecord', 'agentCreated', 'incarnationView', 'saveTravel', 'cap', 'presetsSummary', 'receiptSummary', 'loadSummary', 'exportPack', 'craftRename', 'importPack', 'fileState', 'mutateAppend'] },
         line: { type: 'string' },
         scope: { type: 'string' },
         presetId: { type: 'string' },
@@ -192,6 +192,21 @@ function apply(ctx, config = {}) {
             revision: Number.isSafeInteger(receipt.revision) ? receipt.revision : null,
             skills: Array.isArray(receipt.effective?.skills) ? [...receipt.effective.skills].sort() : [],
             mcpServers: Array.isArray(receipt.effective?.mcpServers) ? [...receipt.effective.mcpServers] : [],
+            digest: receipt.effective?.digest ?? null,
+          }
+          report.completed = true
+          return report
+        }
+        if (args.op === 'loadSummary') {
+          const result = await cap(`preset-load ${JSON.stringify({ scope: args.scope ?? 'global', presetId: args.presetId })}`)
+          const selection = result.payload?.document?.selection
+          report.loaded = {
+            kind: result.kind,
+            status: result.payload?.status ?? null,
+            revision: result.payload?.revision ?? null,
+            skills: Array.isArray(selection?.skills) ? selection.skills.map(identity => identity.name) : null,
+            mcpServers: selection?.mcpServers ?? null,
+            unresolvedRefs: selection?.unresolvedRefs ?? null,
           }
           report.completed = true
           return report
