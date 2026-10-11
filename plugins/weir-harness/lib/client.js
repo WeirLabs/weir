@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"66fd9fc5438477d6d7ff156631f810a647ce352612a16051e987e8cd449bc4c9","client.blackboard-panel.js":"f961e0242dad7bf311829a25e265bf091925711b2fb9c19d2141997fbdf792b5","client.capability-badge.js":"4e5805596a9ad34eac03cbd62c956f8b79789527c72279d6a4078f5c9d0eabab","client.capability-manager.js":"a5b16c1a6f5f2d4116926e10e993a8f7eafb1184cea82f823cc6374b420679e9","client.capability-model.js":"60b4fdd20b856961793d7b791adc343b2d196c0186a910c95d1112d12bda6f44","client.capability-presets.js":"66aeb7ecde8a73165a3f010bed0dc56b8a8be70812c1e3b56c324f7be095adab","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"f5dca1a7658e2f536b52d265c49ab37bb5d2df6bcd6cf21826b843c9554311a8","client.edit-lock-panel.js":"3889bcb48de6ff185d0b8d2ee457f51269710e8a748fa5de85fb9983a3ad5655","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"00132abab438796cfcf3362c3b7f64afa0bc36ff44d02e7eb172e642b89cb530","client.worktree-model.js":"819f1b00650aa0bb01140690b29b4a1f09b9d26e6bb73adc7efbb3a08e215766","client.worktree-view.js":"4cf79e1231c8f0eab6692c986c11ef4e363b2f5968458f3c14e396a3aade7ee3"}
+// Weir client chunks: {"client.blackboard-model.js":"66fd9fc5438477d6d7ff156631f810a647ce352612a16051e987e8cd449bc4c9","client.blackboard-panel.js":"f961e0242dad7bf311829a25e265bf091925711b2fb9c19d2141997fbdf792b5","client.capability-badge.js":"4e5805596a9ad34eac03cbd62c956f8b79789527c72279d6a4078f5c9d0eabab","client.capability-manager.js":"65f8ee601188467c16d8aa41f46eb261c878b44cdd9ca47b1917a0f126dfa5a4","client.capability-model.js":"0409768513178e0ed033a1482a5cfdf1846c0aa5a31f196196b7a74a7e9f21c2","client.capability-presets.js":"66aeb7ecde8a73165a3f010bed0dc56b8a8be70812c1e3b56c324f7be095adab","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"f5dca1a7658e2f536b52d265c49ab37bb5d2df6bcd6cf21826b843c9554311a8","client.edit-lock-panel.js":"3889bcb48de6ff185d0b8d2ee457f51269710e8a748fa5de85fb9983a3ad5655","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"00132abab438796cfcf3362c3b7f64afa0bc36ff44d02e7eb172e642b89cb530","client.worktree-model.js":"819f1b00650aa0bb01140690b29b4a1f09b9d26e6bb73adc7efbb3a08e215766","client.worktree-view.js":"4cf79e1231c8f0eab6692c986c11ef4e363b2f5968458f3c14e396a3aade7ee3"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -551,6 +551,18 @@ window.__ModuleLoader__.load({
 			"capability.search": "Search",
 			"capability.close": "Close",
 			"capability.conflict": "conflict",
+			"capability.sourceUnknown": "unknown source",
+			"capability.sourceNumber": " · source ",
+			"capability.sameNameWarning": "{name}: only one source can be enabled in this session. Uncheck one: {sources}.",
+			"capability.unresolvedNameWarning": "{name}: legacy name has no chosen source. Choose an exact source or remove the name: {sources}.",
+			"capability.unknownLegacyName": "{name}: no matching Skill in the current listing. Refresh the listing or remove this legacy name.",
+			"capability.inventoryUnavailableName": "The listing is unavailable; legacy names remain unresolved in the draft. Retry later; no source was selected.",
+			"capability.unresolvedNameTitle": "Choose a source for legacy name {name}",
+			"capability.replaceName": "Replace {name} with {source}",
+			"capability.removeName": "Remove legacy name {name}",
+			"capability.serverSameName": "Server rejected same-name Skill {names}. Uncheck one source, or refresh the listing; draft kept.",
+			"capability.serverMissing": "Server could not resolve {names}. Refresh the listing and choose an exact source or remove the name; draft kept.",
+			"capability.unknownName": "unknown name",
 			"capability.missing": "missing",
 			"capability.noSkills": "No skills match.",
 			"capability.mcp.groupManaged": "Weir managed",
@@ -1263,6 +1275,18 @@ window.__ModuleLoader__.load({
 			"capability.search": "搜索",
 			"capability.close": "关闭",
 			"capability.conflict": "冲突",
+			"capability.sourceUnknown": "未知来源",
+			"capability.sourceNumber": " · 候选 ",
+			"capability.sameNameWarning": "{name}：本会话只能启用一个来源。请取消其中一项：{sources}。",
+			"capability.unresolvedNameWarning": "{name}：旧名称尚未选定来源。请选择精确来源或移除该名称：{sources}。",
+			"capability.unknownLegacyName": "{name}：当前清单中没有匹配的技能。请刷新清单或移除这个旧名称。",
+			"capability.inventoryUnavailableName": "清单暂不可读；旧名称在草稿中保持未解析。请稍后重试；未选择任何来源。",
+			"capability.unresolvedNameTitle": "为旧名称 {name} 选择来源",
+			"capability.replaceName": "将 {name} 替换为 {source}",
+			"capability.removeName": "移除旧名称 {name}",
+			"capability.serverSameName": "服务端拒绝同名技能 {names}。请取消一个来源或刷新清单；草稿已保留。",
+			"capability.serverMissing": "服务端无法解析 {names}。请刷新清单并选择精确来源或移除该名称；草稿已保留。",
+			"capability.unknownName": "未知名称",
 			"capability.missing": "缺失",
 			"capability.noSkills": "没有匹配的技能。",
 			"capability.mcp.groupManaged": "Weir 管理",
@@ -1962,7 +1986,7 @@ window.__ModuleLoader__.load({
 				},
 				// The panel distinguishes loading (promise pending) from failure
 				// (explicit error surface) — a null payload maps to the error state.
-				applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`),
+				applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`, true),
 				mcpAdd: (sid, spec) => capabilityPayload(sid, `/capabilities mcp-add ${JSON.stringify(spec)}`),
 				fetchListing: (sid) => capabilityRead("list", sid, { error: true }),
 				fetchConditions: (sid) => capabilityRead("conditions", sid, { error: true }),

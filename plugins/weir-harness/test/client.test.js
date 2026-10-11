@@ -997,6 +997,26 @@ describe('weir settings client half', () => {
     expect(await verbs.fetchConditions('s1')).toEqual({ error: true })
   })
 
+  it('Apply verb preserves structured error JSON and honestly degrades non-JSON transport errors', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, executed, localeRegistrations } = makeCtx()
+    ctx.remote.commands.execute = async (sid, input) => {
+      executed.push({ sid, input })
+      return { ok: true, value: { result: { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: 'same-name-conflict', conflicts: [{ name: 'research' }] }) } } }
+    }
+    surface.apply(ctx)
+    slotInjects[11].fn()
+    const badge = slotRegistrations.find(item => item.definition.id === 'weir-capability-badge')
+    const verbs = badge.definition.inject('s1')
+    expect(await verbs.applySelection('s1', { skills: ['research'] })).toEqual({ status: 'rejected', reason: 'same-name-conflict', conflicts: [{ name: 'research' }] })
+    expect(executed[0].input).toContain('/capabilities apply ')
+    ctx.remote.commands.execute = async () => ({ ok: true, value: { kind: 'error', text: JSON.stringify({ status: 'missing', missing: ['research'] }) } })
+    expect(await verbs.applySelection('s1', {})).toEqual({ status: 'missing', missing: ['research'] })
+    ctx.remote.commands.execute = async () => ({ ok: true, value: { kind: 'error', text: 'not JSON' } })
+    expect(await verbs.applySelection('s1', {})).toBeNull()
+    expect(localeRegistrations[0].dicts.en['capability.serverSameName']).toContain('{names}')
+    expect(localeRegistrations[0].dicts.zh['capability.serverMissing']).toContain('{names}')
+  })
   it('build binds the entry to every chunk digest', () => {
     // Content binding is the red line: the entry header pins each chunk's
     // sha256, so a chunk edit without `pnpm build` fails here

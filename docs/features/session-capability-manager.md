@@ -50,6 +50,10 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 
 `/capabilities apply` 的 `skills` 接受混合条目：identity 对象按完整 key 精确匹配当前库存并采用库存 identity；名称字符串仅在 parsed 候选唯一匹配时绑定。未知或歧义名称进入 `missing` 分区，**绝不按枚举顺序静默选胜者**；既有 supplemental-known → `skipped` 分区不变（[skill-selection-plugin.js](<../../plugins/weir-harness/src/capabilities/skill-selection-plugin.js#L549>)）。
 
+**同名 Skill 的管理器反馈**：完整库存中若两个不同 identity 共享调用名称（例如 `user/research` 与 `weir-builtin/research`），两行仍独立可勾选；草稿允许暂存双选，但行内标记与底栏即时点明名称和两个来源，Apply 可见但禁用，取消任一项后恢复（其余草稿与 Discard 保留）。判断使用完整 listing 与草稿，搜索隐藏一行也不解除阻塞。同行来源相同的不同根用界面内候选序号区分；可访问复选框名称包含技能名与来源，不向提示输出 opaqueId、绝对根路径或凭据。Badge 和面板头的已应用计数只看旧服务端回执，不将冲突草稿视为生效。当前宿主按 Skill 名称寻址（包括模型 `skill({name})` 和 slash），无法同时启用两个同名内容；若需要并用，必须将一份合法改为不同名称，而不是按目录排序选择胜者。
+
+**旧预设纯名称**：载入时仅在完整 listing 恰有一个 parsed 候选时绑定 identity。多个候选时保留旧字符串为“尚未选定来源”，与双 identity 冲突分开提示，Skills 视图提供每个候选的“替换为指定来源”和“移除旧名称”按钮；单独勾选候选不会消费旧字符串。移除/替换仅改变该字符串对应的草稿条目，不更改其余 Skill、MCP、unresolved refs、已应用集合与 CAS revision；歧义未解时 Apply 禁用。当前清单没有匹配则说明“没有匹配”并提供移除；清单读取失败说明“暂不可读”，保留草稿且不猜来源。服务端对过期客户端仍会在写入前拒绝双选；结构化 `same-name-conflict` 和 `missing` 回执在底栏点名并指导取消/刷新/选择/移除，非 JSON 或未知错误仍诚实报告失败、保留草稿，不把已知歧义说成仅仅未安装。两种外壳（右栏与 Badge 弹层）共用该组件树及可读的动态告警。
+
 选择编辑先进入**草稿**（[selection-draft.js](<../../plugins/weir-harness/src/capabilities/selection-draft.js>)）：以 `baseSelectionRevision` 为基线维护规范化启用集合、unresolved requested refs 与局部筛选/布局；Apply 仅在规范化 enabled set 有实质变化时可用（还原、排序、搜索、元数据、安装、更新与身份不变的 content refresh 都不算变更）；显式空集不等于缺失；草稿是纯管理器侧状态，模型与工具读不到。
 
 确认后走**六步事务**（[apply-engine.js](<../../plugins/weir-harness/src/capabilities/apply-engine.js>)）：
@@ -151,6 +155,8 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 - Apply 冲突与并发：同 expected revision 的并发 Apply 恰一胜，败者得到 `revision-conflict`、receipt 不被确认，旧 authority 与草稿保留。
 
 ## 测试
+
+- 客户端回归：`client-capability-model.test.js` 覆盖同名草稿完整预检、字符串歧义/未知、精确替换与移除、身份/dirty/安全标签；`client-capability-manager.test.js` 覆盖双外壳、搜索隐藏、可访问告警、旧名称恢复按钮与 stale 回执；`client.test.js` 覆盖真实 Apply 命令包装的 `kind:'error'` JSON 解包与 chunk 内容绑定。自动测试不等于现有 desktop GUI 验收；须经合入、按用户允许重应用 bundle 后刷新页面观察。
 
 - 单元测试：`plugins/weir-harness/test/capability-store.test.js`（17 例：路径解析与隔离、单元布局、fail-closed 解码、CAS 与幂等回执、锁获取／回收／手动恢复、平台桩零写入、win32 行真实提交、代次指针原子切换）。
 - 多进程与故障注入：`plugins/weir-harness/test/capability-store-race.test.js`（真实子进程：两进程同 revision 恰一胜、两回收者竞争已死锁恰一个新 owner 且活锁零移除、SIGKILL 发布点循环只见完整旧/新记录）。

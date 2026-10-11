@@ -109,7 +109,7 @@ test('12.3 engine responses map onto the commit states', () => {
   expect(conflict.phase).toBe('revision-conflict')
   expect(conflict.draftKept).toBe(true)
   expect(model.commitOutcomeOf({ status: 'indeterminate', receipt: { requestId: 'r-9' } })).toEqual({ phase: 'indeterminate', requestId: 'r-9', queryable: true })
-  expect(model.commitOutcomeOf({ status: 'missing', missing: ['x'] })).toEqual({ phase: 'install-or-configure', missing: ['x'] })
+  expect(model.commitOutcomeOf({ status: 'missing', missing: ['x'] })).toEqual({ phase: 'missing', names: ['x'], draftKept: true })
   expect(model.commitOutcomeOf({ status: 'rejected', reason: 'unauthenticated:x' }).phase).toBe('failed')
   expect(model.commitOutcomeOf(null).draftKept).toBe(true)
 })
@@ -434,4 +434,47 @@ test('preset staging preserves identity objects and resolves only known names', 
   const withMcp = model.draftToggle(stagedSame, 'mcpServers', 'docs')
   expect(model.draftToggle(withMcp, 'mcpServers', 'docs').dirty).toBe(false)
   expect(loadModel().draftFromPreset({ selection: { skills: [a] } }, current).skills[0]).toBe(a)
+})
+
+test('same-name preflight distinguishes selected identities from unresolved legacy names', () => {
+  const a = identity('/a'), b = identity('/b')
+  const listing = { skills: [a, b].map(identity => ({ name: 'same', status: 'parsed', identity })) }
+  const check = model.skillDraftConflicts({ skills: [a, b, a, 'same'] }, listing)
+  expect(check.selected).toHaveLength(1)
+  expect(check.selected[0].name).toBe('same')
+  expect(check.selected[0].identities).toHaveLength(2)
+  expect(check.unresolved[0].state).toBe('ambiguous')
+  expect(model.skillDraftConflicts({ skills: [a] }, listing).selected).toHaveLength(0)
+  const otherScope = { ...b, scope: 'user' }
+  expect(model.skillDraftConflicts({ skills: [a, otherScope] }, listing).selected[0].identities).toHaveLength(2)
+  expect(model.skillDraftConflicts({ skills: ['same', a] }, listing).selected).toHaveLength(0)
+  expect(model.skillDraftConflicts({ skills: ['same'] }, { skills: [] }).unresolved[0].state).toBe('unknown')
+  expect(model.skillDraftConflicts({ skills: ['same'] }, null).unresolved[0].state).toBe('unavailable')
+})
+
+test('legacy name replacement and removal edit only the named reference', () => {
+  const a = identity('/a'), b = identity('/b')
+  const draft = model.draftFromPreset({ selection: { skills: ['same', b], mcpServers: ['docs'], unresolvedRefs: ['remote'] } }, model.draftFromReceipt({ revision: 7, effective: { skillIdentities: [b], mcpServers: [] } }))
+  const replaced = model.resolveSkillName(draft, 'same', a)
+  expect(replaced.skills).toEqual([a, b])
+  expect(replaced.revision).toBe(7)
+  expect(replaced.mcpServers).toEqual(['docs'])
+  expect(replaced.unresolvedRefs).toEqual(['remote'])
+  expect(draft.skills).toContain('same')
+  expect(model.resolveSkillName(draft, 'same', null).skills).toEqual([b])
+  expect(model.resolveSkillName(draft, '', a)).toEqual(draft)
+})
+
+test('structured server rejection retains safe conflict and missing names', () => {
+  expect(model.commitOutcomeOf({ status: 'rejected', reason: 'same-name-conflict', conflicts: [{ name: 'same', identities: [{ root: '/secret' }] }] }))
+    .toEqual({ phase: 'same-name-conflict', names: ['same'], draftKept: true })
+  expect(model.commitOutcomeOf({ status: 'missing', missing: ['same'] })).toEqual({ phase: 'missing', names: ['same'], draftKept: true })
+})
+
+test('source labels distinguish same-scope roots without disclosing paths or opaque IDs', () => {
+  const a = identity('/secret/credential/a'), b = identity('/other/credential/b')
+  const rows = [a, b].map(identity => ({ name: 'same', scope: 'custom', identity }))
+  const labels = model.skillSourceLabels(rows)
+  expect(Object.values(labels)).toEqual(['custom · source 1', 'custom · source 2'])
+  expect(Object.values(labels).join(' ').includes('credential')).toBe(false)
 })
