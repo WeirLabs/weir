@@ -68,8 +68,13 @@ function decide(options, obs) {
     return toolCallChunks('surface_probe', { op: 'fileState', checks: [{ key: 'edited', path: USER_SKILL_2, text: 'LOCAL-EDIT' }, { key: 'restored', path: USER_SKILL_2, text: 'CONTENT_LOCAL' }], _marker: 'files-replaced' })
   }
   if (!history.includes('done rename-travel')) return cap(`preset-rename ${JSON.stringify({ scope: 'global', presetId: 'travel', expectedRevision: 1, name: 'Travel Renamed' })}`, 'rename-travel')
-  if (!history.includes('done resave-travel')) return cap(`preset-resave ${JSON.stringify({ scope: 'global', presetId: 'travel', expectedRevision: 2, from: 'applied', expectedSelectionRevision: 1, skills: ['bogus'], mcpServers: ['bogus'] })}`, 'resave-travel')
-  if (!history.includes('done load-resaved')) return cap(`preset-load ${JSON.stringify({ scope: 'global', presetId: 'travel' })}`, 'load-resaved')
+  if (!history.includes('done receipt-4')) return toolCallChunks('surface_probe', { op: 'receiptSummary', _marker: 'receipt-4' })
+  if (!history.includes('done resave-travel')) {
+    const receipt = JSON.parse(lastTool.slice(lastTool.indexOf('{')))?.receipt
+    if (receipt?.status !== 'applied' || receipt.revision !== 1 || !/^[a-f0-9]{64}$/.test(receipt.digest)) return textChunks('probe halted: applied receipt proof missing or invalid')
+    return cap(`preset-resave ${JSON.stringify({ scope: 'global', presetId: 'travel', expectedRevision: 2, from: 'applied', expectedSelectionRevision: receipt.revision, expectedSelectionDigest: receipt.digest, skills: ['bogus'], mcpServers: ['bogus'] })}`, 'resave-travel')
+  }
+  if (!history.includes('done load-resaved')) return toolCallChunks('surface_probe', { op: 'loadSummary', scope: 'global', presetId: 'travel', _marker: 'load-resaved' })
   if (!history.includes('done legacy-replace')) return cap(`preset-save ${JSON.stringify({ scope: 'global', presetId: 'new-id', name: 'Travel Renamed', from: 'draft', skills: [], mcpServers: [], onNameConflict: 'replace' })}`, 'legacy-replace')
   if (!history.includes('done confirmed-replace')) return cap(`preset-save ${JSON.stringify({ scope: 'global', presetId: 'new-id', name: 'Travel Renamed', from: 'draft', skills: [], mcpServers: [], onNameConflict: 'replace', replaceTarget: { presetId: 'travel', expectedRevision: 3, name: 'Travel Renamed' } })}`, 'confirmed-replace')
   if (!history.includes('done list-replaced')) return toolCallChunks('surface_probe', { op: 'presetsSummary', _marker: 'list-replaced' })
@@ -102,14 +107,14 @@ function observe(obs) {
     cancelReported: /done import-cancel:.*"collisions":\[{/.test(history),
     origIntact: /done files-orig:.*"projOrig":{"exists":true,"hasMarker":true}/.test(history) && /done files-orig:.*"localOrig":{"exists":true,"hasMarker":true}/.test(history),
     replaced: /done files-replaced:.*"edited":{"exists":true,"hasMarker":false}/.test(history) && /done files-replaced:.*"restored":{"exists":true,"hasMarker":true}/.test(history)
-      && (!history.includes('done rename-travel') || (
-        /done rename-travel:.*"status":"edited".*"presetId":"travel"/.test(history)
-        && /done resave-travel:.*"status":"edited".*"presetId":"travel"/.test(history)
-        && /done load-resaved:.*"status":"ok".*"revision":3/.test(history)
-        && /done legacy-replace:.*"status":"confirmation-required"/.test(history)
-        && /done confirmed-replace:.*"status":"edited".*"presetId":"travel"/.test(history)
-        && /done list-replaced:[^\n]*global\/travel"/.test(history)
-        && !/done list-replaced:[^\n]*global\/new-id"/.test(history))),
+      && /done receipt-4:[^\n]*"status":"applied","revision":1[^\n]*"digest":"[a-f0-9]{64}"/.test(history)
+      && /done rename-travel:.*"status":"edited".*"presetId":"travel"/.test(history)
+      && /done resave-travel:.*"status":"edited".*"presetId":"travel"/.test(history)
+      && /done load-resaved:.*"status":"ok","revision":3,"skills":\["fixture-a"\],"mcpServers":\[\],"unresolvedRefs":\[\]/.test(history)
+      && /done legacy-replace:.*"status":"confirmation-required"/.test(history)
+      && /done confirmed-replace:.*"status":"edited".*"presetId":"travel"/.test(history)
+      && /done list-replaced:[^\n]*global\/travel"/.test(history)
+      && !/done list-replaced:[^\n]*global\/new-id"/.test(history),
     halted: history.includes('probe halted'),
   }
 }
@@ -162,7 +167,7 @@ function assert(run) {
   run.check('installed skills were never auto-enabled (receipt stable)', any('receiptStable'), JSON.stringify(final).slice(0, 200))
   run.check('the original-name import dry-run flagged both collisions', any('dryOrigCollision'), '')
   run.check('cancel without a collision decision wrote nothing (originals intact)', any('cancelReported') && any('origIntact'), '')
-  run.check('replace with an explicit decision overwrote the local edit', any('replaced'), '')
+  run.check('replace with an explicit decision overwrote the local edit and preserved the applied re-save chain', final.replaced, '')
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
