@@ -325,6 +325,52 @@ describe('client.capability-presets chunk', () => {
       expect(findAll(tree, node => node.children === 'Imported: 1 Skill(s) installed, 0 MCP binding(s), 0 unresolved ref(s).')).toHaveLength(0)
     }
   })
+
+  // Reads the string literal of `key` from both dictionary blocks of the entry.
+  const clientDictionaryValues = (key) => {
+    const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+    return [...source.matchAll(new RegExp(`"${key}": "((?:[^"\\\\]|\\\\.)*)"`, 'g'))].map(match => match[1])
+  }
+
+  it('an unconfirmed preset with an empty installed list names no Skill in either locale', async () => {
+    // Both locales spell out the no-Skill placeholder — the English template
+    // must not leak into the Chinese UI when nothing was reported.
+    const noneKnown = clientDictionaryValues('capability.presets.noneKnown')
+    expect(noneKnown[0]).toBe('none reported')
+    expect(noneKnown[1]).toBe('无已报告项')
+    for (const chinese of [false, true]) {
+      const { view, reactStub } = await loadView()
+      const dryRun = { status: 'dry-run', install: [], collisions: [], unresolved: [] }
+      const { props } = makeProps({ importResponses: [dryRun, { status: 'preset-unconfirmed', installed: [], presetStatus: 'unconfirmed' }] })
+      // The component's own lookup runs over the registered dictionary: the key
+      // is registered (pinned above), so the placeholder comes from it and only
+      // the surrounding template falls back to the in-code English text.
+      if (chinese) props.t = key => ({
+        'capability.presets.importPartial': '已安装的技能：{names}。预设状态尚未确认。请检查已安装文件并刷新预设，再决定如何恢复。',
+        'capability.presets.noneKnown': noneKnown[1],
+      })[key]
+      let tree = await submitDocument(view, reactStub, props, V2_DOC)
+      findButton(tree, 'Confirm import').onClick(); await flush()
+      reactStub.begin(); tree = view(props)
+      const alerts = findAll(tree, node => node.role === 'alert')
+      expect(alerts).toHaveLength(1)
+      const alert = String(alerts[0].children)
+      // The no-Skill wording is spelled out per locale — never the raw key and
+      // never the English fallback under a Chinese UI.
+      expect(alert).toBe(chinese
+        ? '已安装的技能：无已报告项。预设状态尚未确认。请检查已安装文件并刷新预设，再决定如何恢复。'
+        : 'Installed Skills: none reported. Preset status is unconfirmed. Inspect the installed files and refresh the preset before deciding how to recover.')
+      expect(alert).not.toContain('noneKnown')
+      // Under Chinese the alert must not fall back to the English template.
+      if (chinese) expect(alert).not.toContain('none reported')
+      // An unconfirmed preset is not a failure: the alert must never claim a
+      // rollback, and the install-failed surface must not be reused.
+      expect(alert).not.toContain('rolled back')
+      expect(alert).not.toContain('no preset was created')
+      expect(alert).not.toContain('已回滚')
+    }
+  })
+
   it('a name-conflict on confirm keeps the summary and retries with onNameConflict replace', async () => {
     const { view, reactStub } = await loadView()
     const dryRun = { status: 'dry-run', install: [{ targetScope: 'project', name: 'alpha', fileCount: 3, targetRoot: '/ws/skills' }], collisions: [], unresolved: [] }
