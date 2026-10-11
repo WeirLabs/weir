@@ -24,7 +24,9 @@ import {
   fixtureSources,
   generationOf,
   createTokenGate,
+  isUnderAnyRoot,
   isPortListening,
+  systemTempRootFor,
   parseLaunchUrl,
   prepareQaRoot,
   readReservationOwner,
@@ -181,10 +183,123 @@ describe('argument vectors', () => {
   })
 })
 
+// The DSH workspace-write sandbox grants os.tmpdir() and the POSIX /tmp
+// unconditionally (docs/spikes.md S23), so a QA root there can NEVER prove a
+// sandbox refusal: heavy/opt-out would report a FALSE sandbox success
+// (blackboard dual-gui-sandbox-regression-140 — two /tmp runs falsely allowed
+// the in-domain AND the out-of-narrow-root write, while the same driver under
+// /Users/young reported heavy 17 PASS/0 FAIL/1 SKIP).
+describe('system temp root safety', () => {
+  const env = { DUAL_GUI_DSH_EXEC: '/cli/dsh', DUAL_GUI_CHROME: '/bin/chrome', DUAL_GUI_NODE: '/bin/node' }
+  const fileExists = () => true
+  const unsafeRoot = () => {
+    const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dual-gui-qa-unsafe-default-repro-')))
+    tmpdirs.push(dir)
+    return dir
+  }
+  const homeRoot = (prefix) => {
+    const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(fs.realpathSync.native(os.homedir()), prefix)))
+    tmpdirs.push(dir)
+    return dir
+  }
+
+  it('names the OS temp dir and, on POSIX, /tmp as unconditional sandbox roots', () => {
+    assert.equal(systemTempRootFor(fs.realpathSync.native(os.tmpdir())), fs.realpathSync.native(os.tmpdir()))
+    if (process.platform !== 'win32') {
+      assert.equal(systemTempRootFor('/tmp'), systemTempRootFor(fs.realpathSync.native('/tmp')))
+      assert.equal(systemTempRootFor('/tmp/weir-dual-gui-qa-x'), systemTempRootFor('/tmp'))
+      assert.equal(systemTempRootFor('/tmpfoo'), null)
+    }
+  })
+
+  it('POSIX containment is byte-exact: a shared prefix is not inside the root', () => {
+    assert.equal(isUnderAnyRoot('/tmp', ['/tmp'], 'linux'), true)
+    assert.equal(isUnderAnyRoot('/tmp/', ['/tmp'], 'linux'), true)
+    assert.equal(isUnderAnyRoot('/tmp/weir-dual-gui-qa-x', ['/tmp'], 'linux'), true)
+    assert.equal(isUnderAnyRoot('/tmpfoo', ['/tmp'], 'linux'), false)
+    assert.equal(isUnderAnyRoot('/tmp/../tmpfoo', ['/tmp'], 'linux'), false)
+    assert.equal(isUnderAnyRoot('/tmp/weir-x/../other', ['/tmp'], 'linux'), true)
+    assert.equal(isUnderAnyRoot('/var/folders/x/T', ['/var/folders/x/T2'], 'linux'), false)
+  })
+
+  it('win32 containment folds separators and case, never a shared prefix', () => {
+    const temp = 'C:\\Users\\qa\\AppData\\Local\\Temp'
+    assert.equal(isUnderAnyRoot(temp, [temp], 'win32'), true)
+    assert.equal(isUnderAnyRoot('c:/users/QA/appdata/local/temp/weir-dual-gui-qa-1', [temp], 'win32'), true)
+    assert.equal(isUnderAnyRoot('C:\\Users\\qa\\AppData\\Local\\TempX', [temp], 'win32'), false)
+    assert.equal(isUnderAnyRoot(temp, [`${temp}X`], 'win32'), false)
+    // The containment logic is pinned with an identity realpath: the win32
+    // spelling must not depend on the HOST's filesystem (8.3 temp names).
+    const identity = (value) => value
+    assert.equal(systemTempRootFor(`${temp}\\weir-dual-gui-qa-1`, { platform: 'win32', osTmpdir: temp, realpath: identity }), temp)
+    assert.equal(systemTempRootFor(`${temp}X\\weir-dual-gui-qa-1`, { platform: 'win32', osTmpdir: temp, realpath: identity }), null)
+    // The DSH policy's literal /tmp lands on the current drive on win32.
+    assert.equal(systemTempRootFor('C:\\tmp\\weir-dual-gui-qa-1', { platform: 'win32', osTmpdir: temp, realpath: identity }), 'C:\\tmp')
+    assert.equal(isUnderAnyRoot('C:\\tmpfoo', ['C:\\tmp'], 'win32'), false)
+    assert.equal(isUnderAnyRoot('C:\\tmpx', ['C:\\tmp'], 'win32'), false)
+  })
+
+  it('defaults to a fresh realpath-verified root OUTSIDE every system temp root', () => {
+    const config = resolveConfig({ argv: ['--heavy'], env, fileExists })
+    tmpdirs.push(config.root)
+    assert.ok(fs.existsSync(config.root))
+    assert.equal(config.root, fs.realpathSync.native(config.root))
+    assert.equal(systemTempRootFor(config.root), null, `${config.root} must not be a system temp root`)
+    assert.ok(config.root.startsWith(`${fs.realpathSync.native(os.homedir())}${path.sep}`), `default root ${config.root} must live under the home directory`)
+    assert.ok(path.basename(config.root).startsWith('weir-dual-gui-qa-'))
+    const second = resolveConfig({ argv: ['--heavy'], env, fileExists })
+    tmpdirs.push(second.root)
+    assert.notEqual(second.root, config.root)
+  })
+
+  it('refuses an explicit system-temp --root/DUAL_GUI_ROOT for heavy and opt-out before any boot', () => {
+    const unsafe = unsafeRoot()
+    for (const argv of [['--heavy', '--root', unsafe], ['--opt-out', '--root', unsafe]]) {
+      assert.throws(() => resolveConfig({ argv, env, fileExists }), (error) => {
+        assert.match(error.message, /sandbox-root-not-provable/)
+        assert.match(error.message, /system temp/)
+        assert.ok(error.message.includes(unsafe), `error must name the offending root: ${error.message}`)
+        return true
+      }, `${argv[0]} must refuse a system-temp root`)
+    }
+    assert.throws(() => resolveConfig({ argv: ['--heavy'], env: { ...env, DUAL_GUI_ROOT: unsafe }, fileExists }), /sandbox-root-not-provable/)
+    assert.throws(() => resolveConfig({ argv: [], env: { ...env, DUAL_GUI_MATRIX: 'opt-out', DUAL_GUI_ROOT: unsafe }, fileExists }), /sandbox-root-not-provable/)
+  })
+
+  it('refuses before creating anything under a system-temp root', () => {
+    const never = path.join(fs.realpathSync.native(os.tmpdir()), `dual-gui-qa-never-created-${Math.random().toString(36).slice(2)}`)
+    assert.equal(fs.existsSync(never), false)
+    assert.throws(() => resolveConfig({ argv: ['--heavy', '--root', never], env, fileExists }), /sandbox-root-not-provable/)
+    assert.equal(fs.existsSync(never), false, 'a refused system-temp root must not be created')
+  })
+
+  it('catches a temp root reached through a symlink, because the check resolves realpaths first', () => {
+    const unsafe = unsafeRoot()
+    const link = path.join(mkTmp(), 'link-root')
+    if (process.platform === 'win32') fs.symlinkSync(unsafe, link, 'junction')
+    else fs.symlinkSync(unsafe, link, 'dir')
+    assert.throws(() => resolveConfig({ argv: ['--heavy', '--root', link], env, fileExists }), /sandbox-root-not-provable/)
+  })
+
+  it('still honors an explicit non-temp root for heavy, from the flag and from the env', () => {
+    const root = homeRoot('weir-dual-gui-qa-explicit-')
+    const byFlag = resolveConfig({ argv: ['--heavy', '--root', root], env, fileExists })
+    const byEnv = resolveConfig({ argv: ['--heavy'], env: { ...env, DUAL_GUI_ROOT: root }, fileExists })
+    assert.equal(byFlag.root, root)
+    assert.equal(byEnv.root, root)
+    assert.equal(systemTempRootFor(root), null)
+  })
+
+  it('keeps a system-temp root legal for core, which makes no sandbox claim', () => {
+    const unsafe = unsafeRoot()
+    assert.equal(resolveConfig({ argv: ['--root', unsafe], env, fileExists }).root, unsafe)
+  })
+})
+
 describe('resolveConfig', () => {
   const env = { DUAL_GUI_DSH_EXEC: '/cli/dsh', DUAL_GUI_CHROME: '/bin/chrome', DUAL_GUI_NODE: '/bin/node' }
   const fileExists = () => true
-  it('defaults to the core matrix under a fresh temp root', () => {
+  it('defaults to the core matrix under a fresh home root', () => {
     const config = resolveConfig({ argv: [], env, fileExists })
     assert.equal(config.matrix, 'core')
     assert.ok(fs.existsSync(config.root))
