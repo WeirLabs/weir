@@ -69,7 +69,7 @@ jobs:
       # `node lib/bin.js` directly — .cmd shims cannot be spawned without a
       # shell on Windows.
       - name: install dsh CLI
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@0.2.0-rc.2
+        run: npm install --prefix "${{ runner.temp }}/dsh-cli" @deepseek-ai/dsh@0.2.0-rc.2
 
       - name: dual-GUI acceptance matrix
         env:
