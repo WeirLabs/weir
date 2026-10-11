@@ -229,7 +229,7 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(cards, 'delegate')).toEqual(['delegateCategoryChains', 'delegateAgentChains', 'delegateDisabledCategories', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
     expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs'])
     expect(rowKeys(cards, 'guard')).toEqual(['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'])
-    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled'])
+    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled', 'editLockMaintenance'])
     expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes', 'worktreeAutoApprove'])
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
@@ -239,6 +239,36 @@ describe('client.settings-page chunk', () => {
     const todoRows = cards.todo.children.slice(1)
     expect(todoRows[0].style.borderTop).toBe('none')
     for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('1px solid var(--dsw-alias-border-l2)')
+  })
+
+  it('keeps opt-out risk at the switch and diagnostics reachable in off, saved-off, and on states in both locales', async () => {
+    const { exports, editors } = await loadPage()
+    const dicts = await loadDictionaries()
+    for (const locale of ['en', 'zh']) {
+      const t = (key) => dicts[locale][key] ?? key
+      for (const [name, patch, warning] of [
+        ['default-off', {}, true],
+        ['saved-off', { text: 'false', saved: false, overridden: true }, true],
+        ['disable-requested', { text: 'false', saved: true }, true],
+        ['on', { text: 'true', saved: true }, false],
+      ]) {
+        const tree = renderCard(exports, editors, { fields: makeFields({ editLockEnabled: patch }), env: { status: 'ready', facts: {} } })
+        const rows = rowKeys(cardsOf(tree), 'editing')
+        expect(rows, name).toContain('editLockMaintenance')
+        const maintenance = findAll(tree.children, (node) => node.__type === editors.EditLockMaintenanceField)
+        expect(maintenance, name).toHaveLength(1)
+        const choice = findAll(tree.children, (node) => node.descriptor?.field === 'editLockEnabled')[0]
+        const rendered = choice.__type({ ...choice, t })
+        const text = JSON.stringify(rendered)
+        expect(text.includes(t('editLockOptOutWarning')), `${locale}/${name} warning`).toBe(warning)
+        if (warning) {
+          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'UNPROTECTED' : '不受保护')
+          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'overwrite' : '覆盖')
+          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'restart' : '重启')
+          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 're-enable' : '重新启用')
+        }
+      }
+    }
   })
 
   it('indents child rows with a guide line scaled by depth, including the two-level case', async () => {
@@ -964,7 +994,7 @@ describe('client.settings-page chunk', () => {
     expect(notify.indexOf(notify.find((row) => row.key === 'notifyMinTurnSeconds')))
       .toBe(notify.indexOf(notify.find((row) => row.key === 'notifyOnComplete')) + 1)
     const editing = flatten(byId.editing)
-    expect(editing.find((row) => row.key === 'editLockMaintenance').depth).toBe(1)
+    expect(editing.find((row) => row.key === 'editLockMaintenance').depth).toBe(0)
   })
 
   // ---- controller: inject face, env fetch, save flow ----
