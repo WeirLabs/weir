@@ -88,8 +88,8 @@ export function createPresetLibrary({ store }) {
       if (current.revision !== replaceTarget.expectedRevision) return { status: 'revision-conflict', revision: current.revision }
       if (current.document.name !== replaceTarget.name || matches.length !== 1 || matches[0] !== target) return { status: 'confirmation-required' }
       if (input.dryRun) return { status: 'ready', presetId: target }
-      const result = await store.commit(unitOf(scope, target, workspaceKey), current.revision, () => document)
-      return resultOf(result, 'edited', target)
+      const commit = async () => resultOf(await store.commit(unitOf(scope, target, workspaceKey), current.revision, () => document), 'edited', target)
+      return input.withSource ? input.withSource(commit) : commit()
     }
     if (matches.length) {
       const target = matches[0]
@@ -104,8 +104,8 @@ export function createPresetLibrary({ store }) {
     validatePresetId(presetId)
     if (view.occupiedIds.has(presetId)) return { status: 'exists', presetId }
     if (input.dryRun) return { status: 'ready', presetId }
-    const result = await store.commit(unitOf(scope, presetId, workspaceKey), 0, () => document)
-    return resultOf(result, 'created', presetId)
+    const commit = async () => resultOf(await store.commit(unitOf(scope, presetId, workspaceKey), 0, () => document), 'created', presetId)
+    return input.withSource ? input.withSource(commit) : commit()
   }
   const create = input => inNamespace(input.scope, input.workspaceKey, view => createLocked(input, view))
 

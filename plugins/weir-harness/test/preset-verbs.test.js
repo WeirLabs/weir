@@ -145,9 +145,11 @@ test('preset-save from:applied is server-authoritative — client-sent sets are 
   const { callJson } = mountCapabilities(root, { customSkillDirs: [join(root, 'custom')] })
   const applied = await callJson('apply', { requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })
   expect(applied.payload.status).toBe('applied')
+  const confirmation = (await callJson('receipt')).payload
 
   const saved = await callJson('preset-save', {
     scope: 'global', name: 'Applied', from: 'applied',
+    expectedSelectionRevision: confirmation.revision, expectedSelectionDigest: confirmation.effective.digest,
     skills: ['bogus'], mcpServers: ['bogus'], unresolvedRefs: [{ kind: 'skill', ref: 'bogus' }],
   })
   expect(saved.payload.status).toBe('created')
@@ -158,6 +160,51 @@ test('preset-save from:applied is server-authoritative — client-sent sets are 
   expect(loaded.payload.document.selection.skills[0].scope).toBe('custom')
   expect(loaded.payload.document.selection.mcpServers).toEqual([])
   expect(loaded.payload.document.selection.unresolvedRefs).toEqual([])
+})
+
+test('preset-save applied create, edit and exact replace require the effective receipt proof', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
+  writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: fixture\n---\nALPHA\n')
+  const { callJson } = mountCapabilities(root, { customSkillDirs: [join(root, 'custom')] })
+  const empty = { scope: 'global', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] }
+  await callJson('preset-save', { ...empty, name: 'Target' })
+  const receipt = (await callJson('receipt')).payload
+  const proof = { expectedSelectionRevision: receipt.revision, expectedSelectionDigest: receipt.effective.digest }
+  const applied = { scope: 'global', name: 'New', from: 'applied', skills: ['spoofed'], mcpServers: ['spoofed'], unresolvedRefs: ['spoofed'] }
+  expect((await callJson('preset-save', applied)).payload.status).toBe('source-changed')
+  expect((await callJson('preset-save', { ...applied, ...proof, expectedSelectionDigest: '0'.repeat(64) })).payload.status).toBe('source-changed')
+  expect((await callJson('preset-save', { ...applied, ...proof, expectedSelectionRevision: 1 })).payload.status).toBe('source-changed')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'new' })).payload.status).toBe('absent')
+  const created = await callJson('preset-save', { ...applied, ...proof })
+  expect(created.payload.status).toBe('created')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'new' })).payload.document.selection).toEqual({ skills: receipt.effective.skillIdentities, mcpServers: receipt.effective.mcpServers, unresolvedRefs: [] })
+  const edit = { ...applied, name: 'Edited', presetId: 'target', expectedRevision: 1 }
+  expect((await callJson('preset-save', edit)).payload.status).toBe('source-changed')
+  expect((await callJson('preset-save', { ...edit, ...proof })).payload.status).toBe('edited')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'target' })).payload.document.name).toBe('Edited')
+  const replace = { ...applied, name: 'New', onNameConflict: 'replace', replaceTarget: { presetId: 'new', expectedRevision: 1, name: 'New' } }
+  expect((await callJson('preset-save', replace)).payload.status).toBe('source-changed')
+  expect((await callJson('preset-save', { ...replace, ...proof })).payload.status).toBe('edited')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'new' })).payload.revision).toBe(2)
+  await callJson('apply', { requestId: 'selected-alpha', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })
+  expect((await callJson('preset-save', { ...applied, name: 'Stale', ...proof })).payload.status).toBe('source-changed')
+  expect((await callJson('preset-load', { scope: 'global', presetId: 'stale' })).payload.status).toBe('absent')
+})
+
+test('record-less applied Save-as rejects baseline drift at revision zero', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  const config = { customSkillDirs: [join(root, 'custom')], baselineScopes: ['custom'] }
+  const first = mountCapabilities(root, config)
+  const confirmed = (await first.callJson('receipt')).payload
+  expect(confirmed.revision).toBe(0)
+  mkdirSync(join(root, 'custom', 'alpha'), { recursive: true })
+  writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: fixture\n---\nALPHA\n')
+  const second = mountCapabilities(root, config)
+  const stale = await second.callJson('preset-save', { scope: 'global', name: 'Drifted', from: 'applied',
+    expectedSelectionRevision: 0, expectedSelectionDigest: confirmed.effective.digest })
+  expect(stale.payload.status).toBe('source-changed')
+  expect((await second.callJson('preset-load', { scope: 'global', presetId: 'drifted' })).payload.status).toBe('absent')
 })
 
 // ---- preset-load -------------------------------------------------------------
@@ -226,7 +273,9 @@ test('preset-export package round-trips the applied selection through the live i
   writeFileSync(join(root, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: alpha fixture\n---\nALPHA\n')
   const { callJson } = mountCapabilities(root, { customSkillDirs: [join(root, 'custom')] })
   await callJson('apply', { requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })
-  await callJson('preset-save', { scope: 'global', name: 'Round', from: 'applied' })
+  const confirmation = (await callJson('receipt')).payload
+  await callJson('preset-save', { scope: 'global', name: 'Round', from: 'applied',
+    expectedSelectionRevision: confirmation.revision, expectedSelectionDigest: confirmation.effective.digest })
   const exported = await callJson('preset-export', { scope: 'global', presetId: 'round' })
   expect(exported.payload.status).toBe('ok')
   const pkg = exported.payload.document
@@ -343,7 +392,9 @@ test('save → export package → dryRun → confirmed import round-trips betwee
   writeFileSync(join(rootA, 'custom', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: alpha fixture\n---\nALPHA\n')
   const machineA = mountCapabilities(rootA, { customSkillDirs: [join(rootA, 'custom')] })
   await machineA.callJson('apply', { requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: [] })
-  await machineA.callJson('preset-save', { scope: 'global', name: 'Travel', from: 'applied' })
+  const confirmation = (await machineA.callJson('receipt')).payload
+  await machineA.callJson('preset-save', { scope: 'global', name: 'Travel', from: 'applied',
+    expectedSelectionRevision: confirmation.revision, expectedSelectionDigest: confirmation.effective.digest })
   const exported = await machineA.callJson('preset-export', { scope: 'global', presetId: 'travel' })
   expect(exported.payload.status).toBe('ok')
 
@@ -424,6 +475,16 @@ test('applied Re-save refuses a selected Skill hidden by a degraded receipt', { 
   const second = mountCapabilities(root, config)
   const degraded = (await second.callJson('receipt')).payload
   expect(degraded.effective.skillIdentities).toEqual([])
+  const bypass = await second.callJson('preset-save', { scope: 'global', name: 'Saved', from: 'applied',
+    onNameConflict: 'replace', replaceTarget: { presetId: 'saved', expectedRevision: 1, name: 'Saved' },
+    expectedSelectionRevision: degraded.revision, expectedSelectionDigest: degraded.effective.digest })
+  expect(bypass.payload.status).toBe('source-unavailable')
+  expect(bypass.payload.missing).toEqual(['alpha'])
+  const source = { from: 'applied', expectedSelectionRevision: degraded.revision, expectedSelectionDigest: degraded.effective.digest }
+  expect((await second.callJson('preset-save', { scope: 'global', name: 'New', ...source })).payload.status).toBe('source-unavailable')
+  expect((await second.callJson('preset-load', { scope: 'global', presetId: 'new' })).payload.status).toBe('absent')
+  expect((await second.callJson('preset-save', { scope: 'global', name: 'Edited', presetId: 'saved', expectedRevision: 1, ...source })).payload.status).toBe('source-unavailable')
+  expect((await second.callJson('preset-load', { scope: 'global', presetId: 'saved' })).payload.revision).toBe(1)
   const result = await second.callJson('preset-resave', { scope: 'global', presetId: 'saved', expectedRevision: 1,
     from: 'applied', expectedSelectionRevision: confirmed.revision, expectedSelectionDigest: confirmed.effective.digest })
   expect(result.payload.status).toBe('source-unavailable')
