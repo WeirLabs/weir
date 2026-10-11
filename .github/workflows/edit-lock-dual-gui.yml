@@ -86,13 +86,14 @@ jobs:
       # runner OS (tasks 3.3/3.4): the installed-runtime scenario drives a real
       # LSP protocol fixture with WEIR_IT_EDIT_LOCK=1. WEIR_IT_DSH names the
       # bin.js entry; run.mjs spawns NODE + that path (never a .cmd shim).
-      # run.mjs invokes NODE + PNPM script directly; the action-setup standalone
-      # layout carries pnpm.mjs beside the shim under PNPM_HOME. Resolve it once
-      # and fail loudly when the layout changes rather than passing a shim name
-      # to node.
+      # run.mjs invokes NODE + PNPM script directly. Resolve the real pnpm.mjs
+      # through npm (present with every actions/setup-node install, every OS),
+      # never through the action-setup shim layout (which varies).
       - name: resolve pnpm script
         id: pnpm-script
-        run: node -e "const fs=require('node:fs'); const home=process.env.PNPM_HOME; for (const p of [home+'/pnpm.mjs', home+'/dist/pnpm.mjs', home+'/pnpm/bin/pnpm.mjs']) { if (fs.existsSync(p)) { console.log('path='+p); process.exit(0) } } console.error('pnpm.mjs not found under PNPM_HOME=' + home); process.exit(1)" >> $GITHUB_OUTPUT
+        run: |
+          npm install --prefix "${{ runner.temp }}/pnpm-pkg" pnpm@11 >/dev/null 2>&1
+          echo "path=${{ runner.temp }}/pnpm-pkg/node_modules/pnpm/bin/pnpm.mjs" >> "$GITHUB_OUTPUT"
         shell: bash
       - name: lock-guarded lsp_rename acceptance
         env:
