@@ -694,16 +694,72 @@ describe('worktree lane service: cleanup and abandon', () => {
     }
   })
 
-  it('a blocked removal is not forced and keeps the state', async () => {
+  it('a blocked cleanup is not forced, is recorded concisely, and the typed --force retry clears the dirty lane', async () => {
     const h = harness({ ask: pick('Merge into main (--no-ff)') })
     try {
       const lane = await workedLane(h)
       await h.service.land(h.agent, lane)
       const { path } = await laneOf(h, lane)
       writeFileSync(join(path, 'stray.txt'), 'untracked')
-      await h.service.cleanup(h.session, lane, 'worktree').then(() => expect(1).toBe(0), (error) => expect(error.code).toBe('REMOVE_BLOCKED'))
-      expect((await laneOf(h, lane)).state).toBe('landed')
+      await h.service.cleanup(h.session, lane, 'worktree').then(
+        () => expect('resolved').toBe('rejected'),
+        (error) => {
+          expect(error.code).toBe('REMOVE_BLOCKED')
+          // concise reason, never the raw git fatal: text
+          expect(error.message).not.toContain('fatal')
+          expect(error.message).toContain('removal blocked: the worktree contains modified or untracked files (0 modified, 1 untracked)')
+          expect(error.next).toEqual({ waitFor: 'user', hint: `the user retries with the explicit force override: /worktree clean ${lane} worktree --force` })
+        },
+      )
+      // state unchanged, the blocked removal recorded, the worktree intact
+      const record = await laneOf(h, lane)
+      expect(record.state).toBe('landed')
+      expect(record.cleanup.blocked).toContain('modified or untracked')
       expect(existsSync(path)).toBe(true)
+      // the typed --force override is the user's escape door
+      const forced = await h.service.cleanup(h.session, lane, 'worktree', { by: 'user', force: true })
+      expect(forced.state).toBe('cleaned')
+      expect(existsSync(path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `weir/${lane}`)).toContain(`weir/${lane}`)
+      expect(h.audits.filter((entry) => entry.type === 'cleanup').at(-1).data.forced).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('the cleanup card discloses dirty content and its destructive choice force-removes the dirty lane (对拍 clean)', async () => {
+    const askBoth = (questions) => ({ answers: [{ id: questions[0].id, selected: [questions[0].id === 'merge' ? 'Merge into main (--no-ff)' : 'Remove worktree'] }] })
+    const h = harness({ ask: askBoth })
+    try {
+      const lane = await workedLane(h)
+      await h.service.land(h.agent, lane)
+      const { path } = await laneOf(h, lane)
+      writeFileSync(join(path, 'stray.txt'), 'untracked')
+      const cleaned = await h.service.askCleanup(h.agent, lane)
+      expect(cleaned.state).toBe('cleaned')
+      const card = h.asked.at(-1)[0]
+      expect(card.id).toBe('cleanup')
+      expect(card.detail).toContain('⚠️ **Uncommitted content**')
+      expect(card.detail).toContain('1 untracked')
+      expect(card.options[1].description).toContain('destroyed')
+      // the removal would have been BLOCKED without the informed force
+      expect(existsSync(path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `weir/${lane}`)).toContain(`weir/${lane}`)
+      expect(h.audits.filter((entry) => entry.type === 'cleanup').at(-1).data.forced).toBe(true)
+      // a clean lane: no disclosure block, plain descriptions, no forced audit
+      const h2 = harness({ ask: askBoth })
+      try {
+        const lane2 = await workedLane(h2, 'Clean lane')
+        await h2.service.land(h2.agent, lane2)
+        const cleaned2 = await h2.service.askCleanup(h2.agent, lane2)
+        expect(cleaned2.state).toBe('cleaned')
+        const card2 = h2.asked.at(-1)[0]
+        expect(card2.detail).not.toContain('Uncommitted content')
+        expect(card2.options[1].description).not.toContain('destroyed')
+        expect(h2.audits.filter((entry) => entry.type === 'cleanup').at(-1).data.forced).toBe(undefined)
+      } finally {
+        h2.cleanup()
+      }
     } finally {
       h.cleanup()
     }
@@ -724,6 +780,94 @@ describe('worktree lane service: cleanup and abandon', () => {
       } finally {
         h2.cleanup()
       }
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('the abandon card discloses dirty content and a destructive choice force-removes the dirty lane', async () => {
+    const h = harness({ ask: pick('Remove worktree and branch') })
+    try {
+      const lane = await workedLane(h)
+      const { path } = await laneOf(h, lane)
+      writeFileSync(join(path, 'stray.txt'), 'untracked')
+      const abandoned = await h.service.abandon(h.agent, lane)
+      expect(abandoned.state).toBe('abandoned')
+      const card = h.asked[0][0]
+      expect(card.detail).toContain('⚠️ **Uncommitted content**')
+      expect(card.detail).toContain('1 untracked')
+      expect(card.options[2].description).toContain('uncommitted content')
+      // the removal would have been BLOCKED without the informed force
+      expect(existsSync(path)).toBe(false)
+      expect(sh(h.repo, 'branch', '--list', `weir/${lane}`)).toBe('')
+      expect(h.audits.filter((entry) => entry.type === 'abandon').at(-1).data.forced).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a typed-mode abandon on a dirty lane is blocked and never forced', async () => {
+    const h = harness()
+    try {
+      const lane = await workedLane(h)
+      const { path } = await laneOf(h, lane)
+      writeFileSync(join(path, 'stray.txt'), 'untracked')
+      await h.service.abandon(h.agent, lane, { mode: 'worktree' }).then(
+        () => expect('resolved').toBe('rejected'),
+        (error) => {
+          expect(error.code).toBe('REMOVE_BLOCKED')
+          expect(error.message).not.toContain('fatal')
+          expect(error.message).toContain('modified or untracked')
+          expect(error.next.hint).toContain(`/worktree clean ${lane} worktree --force`)
+        },
+      )
+      expect(h.asked).toHaveLength(0) // the typed path never shows a card
+      const record = await laneOf(h, lane)
+      expect(record.state).toBe('abandoned')
+      expect(record.cleanup.mode).toBe('keep')
+      expect(record.cleanup.blocked).toContain('modified or untracked')
+      expect(existsSync(path)).toBe(true)
+      expect(sh(h.repo, 'branch', '--list', `weir/${lane}`)).toContain(`weir/${lane}`)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('an auto-approved abandon blocked by dirty content is only recorded and reported; clean --force clears it (the it-lane-087 shape)', async () => {
+    const h = harness({ approveMode: 'auto-clean', ask: () => { throw new Error('must not ask in auto mode') } })
+    try {
+      const lane = await workedLane(h)
+      const { path } = await laneOf(h, lane)
+      writeFileSync(join(path, 'stray.txt'), 'untracked')
+      await h.service.abandon(h.agent, lane).then(
+        () => expect('resolved').toBe('rejected'),
+        (error) => {
+          expect(error.code).toBe('REMOVE_BLOCKED')
+          expect(error.message).not.toContain('fatal')
+          expect(error.next.hint).toContain(`/worktree clean ${lane} all --force`)
+        },
+      )
+      expect(h.asked).toHaveLength(0)
+      // automatic removal is never forced: abandoned + keep + blocked
+      const record = await laneOf(h, lane)
+      expect(record.state).toBe('abandoned')
+      expect(record.cleanup.mode).toBe('keep')
+      expect(record.cleanup.blocked).toContain('modified or untracked')
+      expect(existsSync(path)).toBe(true)
+      expect(h.audits.filter((entry) => entry.type === 'abandon').at(-1).data.forced).toBe(undefined)
+      // the typed --force retry is the escape door; the unmerged branch is
+      // still protected by the safe `branch -d` (unchanged semantics)
+      const cleaned = await h.service.cleanup(h.session, lane, 'all', { by: 'user', force: true })
+      // an abandoned lane stays `abandoned` (existing semantics): the cleanup
+      // record flips to the chosen mode and the worktree is gone
+      expect(cleaned.state).toBe('abandoned')
+      expect(cleaned.summary).toContain('removed')
+      const cleared = await laneOf(h, lane)
+      expect(cleared.cleanup.mode).toBe('all')
+      expect(cleared.cleanup.blocked).toBe(undefined)
+      expect(existsSync(path)).toBe(false)
+      expect(cleaned.summary).toContain(`kept weir/${lane}`)
+      expect(sh(h.repo, 'branch', '--list', `weir/${lane}`)).toContain(`weir/${lane}`)
     } finally {
       h.cleanup()
     }
@@ -1219,6 +1363,12 @@ describe('worktree lane service: auto-approve modes', () => {
       const landed = await h.service.land(h.agent, lane)
       expect(landed.state).toBe('landed')
       expect(landed.cleanup.error).toContain('REMOVE_BLOCKED')
+      // the auto path never forces; the concise reason names the dirty content
+      // and the recorded next names the exact typed --force retry
+      expect(landed.cleanup.error).not.toContain('fatal')
+      expect(landed.cleanup.error).toContain('modified or untracked')
+      expect(landed.cleanup.next).toEqual({ waitFor: 'user', hint: `the user retries with the explicit force override: /worktree clean ${lane} all --force` })
+      expect((await laneOf(h, lane)).cleanup.blocked).toContain('modified or untracked')
       expect((await laneOf(h, lane)).state).toBe('landed')
       expect(existsSync(path)).toBe(true)
       expect(sh(h.repo, 'branch', '--list', `weir/${lane}`)).toContain(`weir/${lane}`)
