@@ -45,6 +45,12 @@
 //   * The publisher reservation (.weir/.edit-lock.publisher-reservation) is
 //     NEVER deleted by this driver — teardown only ASSERTS its absence after
 //     a graceful stop.
+//   * The QA root is NEVER under the system temp directory (os.tmpdir(), the
+//     POSIX /tmp): the DSH workspace-write sandbox grants those unconditionally
+//     (docs/spikes.md S23), so the heavy/opt-out sandbox-backend refusal would
+//     pass FALSELY (blackboard dual-gui-sandbox-regression-140). resolveConfig
+//     creates the default root under the home dir and refuses an explicit
+//     system-temp root for those matrices before any boot.
 //   * Launch tokens/cookies live only in process memory: every byte written
 //     to a log file, the report, or stdout passes through the sanitizer.
 //   * The QA command fixture only ever installs into the throwaway profiles
@@ -64,7 +70,8 @@
 //   DUAL_GUI_CHROME     Chrome/Chromium binary (default: per-platform candidates)
 //   DUAL_GUI_WEIR       weir-harness checkout to link-install (default: sibling
 //                       of this package)
-//   DUAL_GUI_ROOT       QA root (default: fresh mkdtemp under os.tmpdir())
+//   DUAL_GUI_ROOT       QA root (default: fresh mkdtemp under the home dir;
+//                       never under the system temp dir — see the invariant)
 //   DUAL_GUI_MATRIX     'core' (default) | 'heavy' | 'opt-out'
 //   DUAL_GUI_KEEP       '1' keeps the QA root even after a green run
 //
@@ -120,6 +127,76 @@ const joinFor = (platform) => (platform === 'win32' ? path.win32.join : path.pos
 function homeFor(platform, env) {
   if (platform === 'win32') return env.USERPROFILE ?? os.homedir()
   return env.HOME ?? os.homedir()
+}
+
+/** realpath that tolerates a path that does not exist yet: an explicit
+ * DUAL_GUI_ROOT may be checked before it is created, and a target-platform path
+ * cannot be resolved at all on the host (tests configure win32 from POSIX). The
+ * deepest EXISTING ancestor is resolved instead, so a path below a symlinked
+ * root (macOS /tmp -> /private/tmp) still compares in canonical spelling. */
+function realpathDeep(target, realpath = (value) => fs.realpathSync.native(value)) {
+  try { return realpath(target) } catch { /* fall through to the ancestor walk */ }
+  const tail = []
+  let current = target
+  for (;;) {
+    const parent = path.dirname(current)
+    if (parent === '' || parent === '.' || parent === current) return target
+    tail.unshift(path.basename(current))
+    current = parent
+    try { return path.join(realpath(current), ...tail) } catch { /* keep walking up */ }
+  }
+}
+
+/** Separator/case-folded containment test. Win32 paths compare folded (the
+ * platform is case-insensitive and accepts both separators) but a shared prefix
+ * still does NOT count; POSIX paths stay byte-exact, so /tmpfoo is not /tmp. */
+export function isUnderAnyRoot(candidate, roots, platform = process.platform) {
+  if (typeof candidate !== 'string' || candidate.length === 0) return false
+  const fold = (value) => {
+    const normalized = platform === 'win32' ? path.win32.normalize(value).toLowerCase() : path.posix.normalize(value)
+    return normalized.length > 1 ? normalized.replace(/[\\/]+$/, '') : normalized
+  }
+  const target = fold(candidate)
+  const separator = platform === 'win32' ? '\\' : '/'
+  return roots.some((root) => {
+    if (typeof root !== 'string' || root.length === 0) return false
+    const base = fold(root)
+    return target === base || target.startsWith(base === separator ? base : `${base}${separator}`)
+  })
+}
+
+/** The REAL system-temp roots of the target platform: the OS temp directory
+ * plus the literal /tmp of the DSH policy (/private/tmp is its macOS realpath;
+ * on win32 that literal lands on the current drive, <drive>:\tmp). Every one of
+ * them is an unconditional writable root of the DSH workspace-write sandbox
+ * (docs/spikes.md S23). */
+export function systemTempRoots({ platform = process.platform, osTmpdir = os.tmpdir(), realpath } = {}) {
+  const candidates = []
+  if (typeof osTmpdir === 'string' && osTmpdir.length > 0) {
+    candidates.push(osTmpdir)
+    if (platform === 'win32') {
+      const drive = path.win32.parse(osTmpdir).root
+      if (drive) candidates.push(path.win32.join(drive, 'tmp'))
+    }
+  }
+  if (platform !== 'win32') candidates.push('/tmp', '/private/tmp')
+  const roots = []
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || candidate.length === 0) continue
+    const real = realpathDeep(candidate, realpath)
+    if (!roots.includes(real)) roots.push(real)
+  }
+  return roots
+}
+
+/** The system-temp root that contains `candidate`, or null. The candidate is
+ * realpath-resolved FIRST (through its deepest existing ancestor), so neither a
+ * symlink into the temp tree nor a not-yet-created path can smuggle a root
+ * past the caller. */
+export function systemTempRootFor(candidate, options = {}) {
+  const { platform = process.platform } = options
+  const real = realpathDeep(String(candidate), options.realpath)
+  return systemTempRoots({ ...options, platform }).find((root) => isUnderAnyRoot(real, [root], platform)) ?? null
 }
 /** Default node binary used to run a lib/bin.js style CLI entry. */
 export function resolveNodeBinary({ env = process.env, platform = process.platform, fileExists = fs.existsSync } = {}) {
@@ -1164,12 +1241,37 @@ export function resolveConfig({ argv = [], env = process.env, platform = process
   if (!fileExists(path.join(weirBundle, 'cordis.patch.yml'))) {
     throw new Error(`weir-harness bundle not found at ${weirBundle} (set DUAL_GUI_WEIR)`)
   }
+  // Fail early with guidance instead of reporting a sandbox PASS/refusal that
+  // the location cannot produce: heavy and opt-out assert a REAL fs sandbox
+  // denial, which only a root outside every system temp root can deliver. The
+  // requested spelling is checked BEFORE anything is created and the realpath is
+  // checked again after, so a symlink into the temp tree cannot smuggle a root
+  // past it either.
+  const refuseSystemTempRoot = (candidate) => {
+    if (matrix === 'core') return
+    const tempRoot = systemTempRootFor(candidate, { platform })
+    if (!tempRoot) return
+    throw new Error(`sandbox-root-not-provable: --root/DUAL_GUI_ROOT ${candidate} is under the system temp directory ${tempRoot}, which the DSH workspace-write sandbox always allows (docs/spikes.md S23), so the ${matrix} matrix would report a false sandbox success/refusal; pass --root/DUAL_GUI_ROOT outside every system temp directory (the default is a fresh mkdtemp under ${homeFor(platform, env)})`)
+  }
   let root = option('--root') ?? env.DUAL_GUI_ROOT
   if (root) {
+    refuseSystemTempRoot(root)
     fs.mkdirSync(root, { recursive: true })
     root = fs.realpathSync.native(root)
+    refuseSystemTempRoot(root)
   } else {
-    root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'weir-dual-gui-')))
+    // The default root is a fresh mkdtemp UNDER THE HOME DIRECTORY, never
+    // os.tmpdir(): the DSH workspace-write sandbox grants the system temp
+    // directory unconditionally (docs/spikes.md S23), so the heavy/opt-out
+    // sandbox-backend phase would report a FALSE success there — proven in
+    // blackboard dual-gui-sandbox-regression-140 (two /tmp runs falsely allowed
+    // both the in-domain and the out-of-narrow-root write).
+    const home = homeFor(platform, env)
+    // A home directory inside the temp tree (containers with HOME=/tmp) cannot
+    // host a root that proves a refusal: refuse it before creating anything.
+    refuseSystemTempRoot(home)
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(home, 'weir-dual-gui-qa-')))
+    refuseSystemTempRoot(root)
   }
   return {
     matrix,
