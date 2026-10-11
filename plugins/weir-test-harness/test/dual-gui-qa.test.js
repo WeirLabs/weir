@@ -7,7 +7,7 @@
 // processes: every spawned child is killed inside its test's finally.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -29,6 +29,7 @@ import {
   systemTempRootFor,
   parseLaunchUrl,
   prepareQaRoot,
+  cleanQaRoot,
   readReservationOwner,
   renameFixtureSources,
   resolveConfig,
@@ -677,6 +678,54 @@ describe('prepareQaRoot', () => {
     const paths = { root }
     assert.throws(() => prepareQaRoot(paths), /management root escapes/)
   })
+  it('rejects an unowned nonempty root before changing existing fixture bytes', () => {
+    const root = mkTmp(), probe = path.join(root, 'ws', 'probe.ts')
+    fs.mkdirSync(path.dirname(probe))
+    fs.writeFileSync(probe, 'export const fixtureSymbol = "USER_DATA";\n')
+    const before = fs.readFileSync(probe)
+    assert.throws(() => prepareQaRoot({ root }), /empty|disposable|unowned/i)
+    assert.deepEqual(fs.readFileSync(probe), before)
+  })
+  it('rejects an enclosing Git authority before writing any fixture, even when the root is empty', () => {
+    const parent = mkTmp(), root = path.join(parent, 'qa')
+    execFileSync('git', ['init', '-q', parent])
+    fs.mkdirSync(root)
+    assert.throws(() => prepareQaRoot({ root }), /management root escapes/)
+    assert.deepEqual(fs.readdirSync(root), [])
+  })
+  it('preserves sentinel bytes when the Git repository itself contains the supplied root', () => {
+    const root = mkTmp(), probe = path.join(root, 'ws', 'probe.ts')
+    execFileSync('git', ['init', '-q', root])
+    fs.mkdirSync(path.dirname(probe))
+    const sentinel = Buffer.from('export const fixtureSymbol = "USER_DATA";\n')
+    fs.writeFileSync(probe, sentinel)
+    assert.throws(() => prepareQaRoot({ root }), /management root escapes/)
+    assert.deepEqual(fs.readFileSync(probe), sentinel)
+  })
+  it('a fresh explicit CI root works once but rejects rerun in place', () => {
+    const parent = mkTmp(), root = path.join(parent, 'dual-gui-qa')
+    const env = { DUAL_GUI_ROOT: root, DUAL_GUI_DSH_EXEC: '/cli/dsh', DUAL_GUI_CHROME: '/bin/chrome', DUAL_GUI_NODE: '/bin/node' }
+    const config = resolveConfig({ argv: [], env, fileExists: () => true })
+    assert.equal(config.root, fs.realpathSync.native(root))
+    prepareQaRoot(config)
+    assert.throws(() => prepareQaRoot(config), /empty|unowned/)
+  })
+  it('cleanup refuses unproven roots and roots replaced by symlinks', () => {
+    const root = mkTmp(), paths = prepareQaRoot({ root })
+    assert.throws(() => cleanQaRoot({ ...paths }), /not proven disposable/)
+    const parent = path.dirname(root), replacement = path.join(parent, `${path.basename(root)}-replacement`)
+    fs.renameSync(root, replacement)
+    tmpdirs.push(replacement)
+    fs.symlinkSync(replacement, root, process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(() => cleanQaRoot(paths), /changed since preparation|symbolic link/i)
+    assert.ok(fs.existsSync(path.join(replacement, 'ws', 'probe.ts')))
+  })
+  it('rejects a symlink root before writing to its target', () => {
+    const parent = mkTmp(), target = mkTmp(), link = path.join(parent, 'link')
+    fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(() => prepareQaRoot({ root: link }), /symlink|disposable/i)
+    assert.deepEqual(fs.readdirSync(target), [])
+  })
   it('nested session retains the shared domain while its sandbox root is narrower', () => {
     const root = mkTmp()
     const paths = prepareQaRoot({ root })
@@ -690,6 +739,43 @@ describe('prepareQaRoot', () => {
     assert.match(source, /cas-write/)
     assert.match(source, /sandbox-hash-edit/)
     assert.match(source, /realpathSync\.native\(agent\.session\?\.header\?\.cwd\)/)
+  })
+})
+
+describe('failed child startup', () => {
+  it('rejects server and browser spawn errors through await and permits teardown', async () => {
+    const root = mkTmp()
+    const paths = prepareQaRoot({ root })
+    const missing = path.join(root, 'token=SECRET_NONEXISTENT_EXEC')
+    const instance = new GuiInstance('a', { paths, dsh: { command: missing, prefixArgs: [] }, chrome: missing, timeouts: { bootMs: 1000, stopGraceMs: 50 } })
+    instance.ports = { web: 0, cdp: 0 }
+    try {
+      for (const start of [() => instance.startServer(), () => instance.startBrowser()]) {
+        await assert.rejects(start(), (error) => {
+          assert.match(error.message, /ENOENT|spawn/)
+          assert.ok(!error.message.includes('SECRET_NONEXISTENT_EXEC'), 'spawn failure must not carry unregistered secrets into the report')
+          return true
+        })
+      }
+      assert.deepEqual(await teardown([instance], { portTimeoutMs: 100 }, paths, createMatrix()), [])
+    } finally { await instance.stop().catch(() => {}) }
+  })
+  it('CLI fatal output cannot expose a token in a configuration error', () => {
+    const script = fileURLToPath(new URL('../src/dual-gui-qa.mjs', import.meta.url))
+    const token = 'SENSITIVE_FATAL_TOKEN'
+    const result = spawnSync(process.execPath, [script, 'run'], {
+      env: { ...process.env, DUAL_GUI_DSH_EXEC: `/not-found/token=${token}`, DUAL_GUI_CHROME: '/not-found/chrome' }, encoding: 'utf8', timeout: 5000,
+    })
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /fatal/)
+    assert.ok(!result.stderr.includes(token), result.stderr)
+  })
+  it('never cleans a refused nonempty root even with DUAL_GUI_CLEAN requested', () => {
+    const root = mkTmp(), sentinel = path.join(root, 'probe.ts')
+    fs.writeFileSync(sentinel, 'USER_DATA')
+    assert.throws(() => prepareQaRoot({ root }), /empty|unowned/)
+    assert.throws(() => cleanQaRoot({ root }), /not proven disposable/)
+    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'USER_DATA')
   })
 })
 
