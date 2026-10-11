@@ -478,3 +478,16 @@ test('source labels distinguish same-scope roots without disclosing paths or opa
   expect(Object.values(labels)).toEqual(['custom · source 1', 'custom · source 2'])
   expect(Object.values(labels).join(' ').includes('credential')).toBe(false)
 })
+
+test('safe preset edits preserve exact conflict target, failure statuses and reject tombstones', () => {
+  expect(model.presetWriteOutcomeOf({ status: 'name-conflict', with: 'p1', withRevision: 9 })).toEqual({ kind: 'name-conflict', with: 'p1', withRevision: 9 })
+  for (const status of ['locked', 'unreadable', 'unsupported', 'source-changed', 'absent', 'confirmation-required', 'indeterminate']) {
+    expect(model.presetWriteOutcomeOf({ status }).kind).toBe(status)
+  }
+  expect(model.importConfirmOutcomeOf({ status: 'edited', presetId: 'p1' }).kind).toBe('edited')
+  expect(model.importConfirmOutcomeOf({ status: 'commit-failed', installed: [{ name: 'alpha' }] }).installed).toEqual([{ name: 'alpha' }])
+  expect(model.loadablePresetOf({ status: 'ok', document: { deleted: true, selection: { skills: [], mcpServers: [], unresolvedRefs: [] } } })).toBe(false)
+  expect(model.loadablePresetOf({ status: 'ok', document: { selection: { skills: [], mcpServers: [] } } })).toBe(false)
+  expect(model.loadablePresetOf({ status: 'ok', document: { selection: { skills: [], mcpServers: [], unresolvedRefs: [] } } })).toBe(true)
+  expect(model.draftFromReceipt({ revision: 3, effective: { skills: [], mcpServers: [] } }).unresolvedRefs).toEqual([])
+})

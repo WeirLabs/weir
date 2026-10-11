@@ -253,6 +253,7 @@ window.__ModuleLoader__.load({
 			const [rowAction, setRowAction] = react.useState(null);
 			const [defaultBox, setDefaultBox] = react.useState({ confirm: null, from: "draft", busy: false, error: null });
 			const [notice, setNotice] = react.useState(null);
+			const [editAlert, setEditAlert] = react.useState(null);
 			const presetListOf = (payload) => (payload && !payload.error && Array.isArray(payload.presets) ? model.groupPresets(payload) : { error: true });
 			const refreshPresets = () => {
 				if (typeof props.fetchPresets !== "function") { setList({ error: true }); return; }
@@ -297,7 +298,12 @@ window.__ModuleLoader__.load({
 					spec.mcpServers = Array.isArray(props.draft?.mcpServers) ? props.draft.mcpServers : [];
 					spec.unresolvedRefs = Array.isArray(props.draft?.unresolvedRefs) ? props.draft.unresolvedRefs : [];
 				}
-				if (onNameConflict) spec.onNameConflict = onNameConflict;
+				if (onNameConflict === "replace") {
+					const target = saveForm.conflict;
+					if (!target || typeof target.with !== "string" || !Number.isSafeInteger(target.withRevision) || target.name !== name || target.scope !== saveForm.scope) return;
+					spec.onNameConflict = "replace";
+					spec.replaceTarget = { presetId: target.with, expectedRevision: target.withRevision, name };
+				}
 				setSaveForm({ ...saveForm, busy: true, error: null });
 				props.presetSave(props.sessionId, spec).then((response) => {
 					const outcome = model.presetWriteOutcomeOf(response);
@@ -306,23 +312,93 @@ window.__ModuleLoader__.load({
 						setNotice(t("capability.presets.saved", "Preset saved."));
 						refreshPresets();
 					} else if (outcome.kind === "name-conflict") {
-						setSaveForm({ ...saveForm, busy: false, error: null, conflict: { with: outcome.with } });
+						setSaveForm({ ...saveForm, busy: false, error: null, conflict: { with: outcome.with, withRevision: outcome.withRevision, name, scope: saveForm.scope } });
 					} else if (outcome.kind === "revision-conflict") {
 						setSaveForm({ ...saveForm, busy: false, error: t("capability.presets.revisionConflict", "Changed elsewhere — the list was refreshed."), conflict: null });
 						refreshPresets();
 					} else if (outcome.kind === "no-workspace") {
 						setSaveForm({ ...saveForm, busy: false, error: t("capability.presets.noWorkspace", "This session has no workspace."), conflict: null });
 					} else {
-						setSaveForm({ ...saveForm, busy: false, error: t("capability.presets.saveFailed", "The preset could not be saved."), conflict: null });
+						setSaveForm({ ...saveForm, busy: false, error: editMessage(outcome), conflict: null });
+						refreshPresets();
 					}
-				}).catch(() => setSaveForm({ ...saveForm, busy: false, error: t("capability.presets.saveFailed", "The preset could not be saved.") }));
+				}).catch(() => { setSaveForm({ ...saveForm, busy: false, error: editMessage({ kind: "error" }), conflict: null }); refreshPresets(); });
+			};
+			// Row edits use the listed revision as a one-shot CAS. A failed or
+			// indeterminate edit requires a fresh user decision, never auto-retry.
+			const editMessage = (outcome) => {
+				switch (outcome.kind) {
+					case "name-conflict": return t("capability.presets.renameCollision", "That name belongs to another preset. Choose another name.");
+					case "revision-conflict": return t("capability.presets.editConflict", "The preset changed. Review the refreshed row and confirm again.");
+					case "source-changed": return t("capability.presets.sourceChanged", "The applied selection changed. Review it and confirm again.");
+					case "locked": return t("capability.presets.locked", "Preset storage is busy. Wait, then refresh and decide again.");
+					case "unreadable": return t("capability.presets.unreadable", "Preset storage cannot be read safely. Check the storage before retrying.");
+					case "unsupported": return t("capability.presets.unsupported", "This preset version is unsupported. Update the client or host before editing.");
+					case "absent": case "deleted": return t("capability.presets.gone", "This preset was deleted or is missing. Refresh the list; it was not recreated.");
+					case "confirmation-required": return t("capability.presets.confirmAgain", "The replacement target changed. Refresh and confirm its identity again.");
+					default: return t("capability.presets.uncertain", "Result unknown. Refresh and inspect the preset before deciding whether to retry.");
+				}
+			};
+			const rowIdentity = (row) => ({ scope: row.scope, presetId: row.presetId, expectedRevision: row.revision });
+			const openRowEdit = (row, kind) => { setEditAlert(null); setRowAction({ ...rowIdentity(row), kind, name: row.name, from: "draft", busy: false, error: null, stale: false }); };
+			const submitRowEdit = (row) => {
+				if (!rowAction || rowAction.busy || rowAction.stale || !props.draft || !Number.isSafeInteger(row.revision) || row.revision < 1) return;
+				const rename = rowAction.kind === "rename";
+				const name = rowAction.name.trim();
+				if (rename && !name) { setRowAction({ ...rowAction, error: t("capability.presets.errorName", "Enter a name.") }); return; }
+				const inspectCurrent = (outcome) => {
+					const base = { ...rowAction, busy: false, stale: outcome.kind !== "name-conflict", error: editMessage(outcome) };
+					setRowAction(base);
+					setNotice(null);
+					if (outcome.kind !== "name-conflict") setEditAlert(editMessage(outcome));
+					refreshPresets();
+					if (outcome.kind === "name-conflict" || typeof props.presetLoad !== "function") return;
+					// Read the exact ID without staging it. A read failure remains uncertain.
+					Promise.resolve().then(() => props.presetLoad(props.sessionId, { scope: row.scope, presetId: row.presetId })).then((current) => {
+						const detail = current?.status === "ok" && Number.isSafeInteger(current.revision)
+							? t("capability.presets.currentRevision", " Current stored revision: {revision}.").replace("{revision}", String(current.revision))
+							: current?.status === "absent" || current?.status === "deleted"
+								? " " + t("capability.presets.gone", "This preset was deleted or is missing. Refresh the list; it was not recreated.") : "";
+						setRowAction({ ...base, error: base.error + detail });
+					}).catch(() => {});
+				};
+				const verb = rename ? props.presetRename : props.presetResave;
+				if (typeof verb !== "function") return;
+				const spec = { ...rowIdentity(row) };
+				if (rename) spec.name = name;
+				else {
+					spec.from = rowAction.from;
+					if (spec.from === "draft") {
+						// Snapshot all three arrays together at confirmation time.
+						if (![props.draft.skills, props.draft.mcpServers, props.draft.unresolvedRefs].every(Array.isArray)) {
+							setRowAction({ ...rowAction, error: t("capability.presets.missingSelection", "The draft selection is incomplete. Refresh before saving.") }); return;
+						}
+						spec.skills = structuredClone(props.draft.skills);
+						spec.mcpServers = structuredClone(props.draft.mcpServers);
+						spec.unresolvedRefs = structuredClone(props.draft.unresolvedRefs);
+					} else {
+						if (!Number.isSafeInteger(props.draft.revision)) { setRowAction({ ...rowAction, error: t("capability.presets.needsReceipt", "Unavailable until the session receipt loads.") }); return; }
+						spec.expectedSelectionRevision = props.draft.revision;
+						if (typeof props.draft.appliedDigest === "string") spec.expectedSelectionDigest = props.draft.appliedDigest;
+					}
+				}
+				setRowAction({ ...rowAction, busy: true, error: null });
+				Promise.resolve().then(() => verb(props.sessionId, spec)).then((response) => {
+					const outcome = model.presetWriteOutcomeOf(response);
+					if (outcome.kind === "edited" && outcome.presetId === row.presetId) {
+						setRowAction(null);
+						setEditAlert(null);
+						setNotice(rename ? t("capability.presets.renamed", "Preset renamed; current draft and applied selection unchanged.") : t("capability.presets.resaved", "Preset re-saved; current draft and applied selection unchanged."));
+					} else inspectCurrent(outcome);
+					if (outcome.kind === "edited" && outcome.presetId === row.presetId) refreshPresets();
+				}).catch(() => inspectCurrent({ kind: "error" }));
 			};
 			// ---- Load into the local draft (never the applied set) ----
 			const loadPreset = (row) => {
 				if (typeof props.presetLoad !== "function" || rowAction?.busy) return;
 				setRowAction({ presetId: row.presetId, scope: row.scope, kind: "load", busy: true, error: null });
 				props.presetLoad(props.sessionId, { scope: row.scope, presetId: row.presetId }).then((response) => {
-					if (response && !response.error && response.status === "ok" && response.document && typeof response.document === "object") {
+					if (model.loadablePresetOf(response)) {
 						if (typeof props.stagePreset === "function") props.stagePreset(response.document);
 						const unresolved = Array.isArray(response.document.selection?.unresolvedRefs) ? response.document.selection.unresolvedRefs : [];
 						setNotice(unresolved.length > 0
@@ -421,7 +497,12 @@ window.__ModuleLoader__.load({
 					}
 				}
 				const spec = { document, scope: importBox.scope };
-				if (onNameConflict) spec.onNameConflict = onNameConflict;
+				if (onNameConflict === "replace") {
+					const target = importBox.feedback;
+					if (!target || typeof target.with !== "string" || !Number.isSafeInteger(target.withRevision) || target.name !== document?.name || target.scope !== importBox.scope) return;
+					spec.onNameConflict = "replace";
+					spec.replaceTarget = { presetId: target.with, expectedRevision: target.withRevision, name: document.name };
+				}
 				// D6 phase one: a version-2 package NEVER installs on the first call —
 				// the dry-run summarizes targets/counts/collisions with zero writes.
 				if (model.packageVersionOf(document) === 2) spec.dryRun = true;
@@ -438,17 +519,18 @@ window.__ModuleLoader__.load({
 						return;
 					}
 					const feedback = model.importFeedbackOf(response);
-					if (feedback.kind === "created") {
+					if (feedback.kind === "created" || feedback.kind === "edited") {
 						setImportBox({ open: false, text: "", scope: importBox.scope, busy: false, feedback: null, document: null, summary: null, decision: "cancel", result: null });
-						setNotice(t("capability.presets.imported", "Imported: {bound} MCP binding(s), {unresolved} unresolved ref(s).")
-							.replace("{bound}", String(feedback.bound))
-							.replace("{unresolved}", String(feedback.unresolved)));
+						setNotice(feedback.kind === "edited"
+							? t("capability.presets.replaced", "Replaced the confirmed preset under ID {id}; no second preset was created.").replace("{id}", String(feedback.presetId))
+							: t("capability.presets.imported", "Imported: {bound} MCP binding(s), {unresolved} unresolved ref(s).")
+								.replace("{bound}", String(feedback.bound)).replace("{unresolved}", String(feedback.unresolved)));
 						refreshPresets();
 					} else {
-						setImportBox({ ...importBox, busy: false, feedback });
-						if (feedback.kind === "error") refreshPresets();
+						setImportBox({ ...importBox, busy: false, feedback: feedback.kind === "name-conflict" ? { ...feedback, name: document?.name, scope: importBox.scope } : { ...feedback, message: editMessage(feedback) } });
+						if (feedback.kind !== "name-conflict") refreshPresets();
 					}
-				}).catch(() => setImportBox({ ...importBox, busy: false, feedback: { kind: "error" } }));
+				}).catch(() => { setImportBox({ ...importBox, busy: false, feedback: { kind: "error", message: editMessage({ kind: "error" }) } }); refreshPresets(); });
 			};
 			// D6 phase two: the explicit confirm — installation is this call's
 			// main effect, carrying the collision decision from the summary.
@@ -456,28 +538,35 @@ window.__ModuleLoader__.load({
 				if (typeof props.presetImport !== "function" || importBox.busy || !importBox.summary) return;
 				if (!model.importConfirmReadyOf(importBox.summary, importBox.decision)) return;
 				const spec = { document: importBox.document, scope: importBox.scope, onCollision: importBox.decision };
-				if (onNameConflict) spec.onNameConflict = onNameConflict;
+				if (onNameConflict === "replace") {
+					const target = importBox.feedback;
+					if (!target || typeof target.with !== "string" || !Number.isSafeInteger(target.withRevision) || target.name !== importBox.document?.name || target.scope !== importBox.scope) return;
+					spec.onNameConflict = "replace";
+					spec.replaceTarget = { presetId: target.with, expectedRevision: target.withRevision, name: target.name };
+				}
 				setImportBox({ ...importBox, busy: true, feedback: null });
 				props.presetImport(props.sessionId, spec).then((response) => {
 					const outcome = model.importConfirmOutcomeOf(response);
-					if (outcome.kind === "created") {
+					if (outcome.kind === "created" || outcome.kind === "edited") {
 						setImportBox({ ...importBox, busy: false, feedback: null, summary: null, result: outcome });
-						setNotice(t("capability.presets.importedPackage", "Imported: {installed} Skill(s) installed, {bound} MCP binding(s), {unresolved} unresolved ref(s).")
-							.replace("{installed}", String(outcome.installed.length))
-							.replace("{bound}", String(outcome.bound))
-							.replace("{unresolved}", String(outcome.unresolved)));
+						setNotice(outcome.kind === "edited"
+							? t("capability.presets.replaced", "Replaced the confirmed preset under ID {id}; no second preset was created.").replace("{id}", String(outcome.presetId))
+							: t("capability.presets.importedPackage", "Imported: {installed} Skill(s) installed, {bound} MCP binding(s), {unresolved} unresolved ref(s).")
+								.replace("{installed}", String(outcome.installed.length)).replace("{bound}", String(outcome.bound)).replace("{unresolved}", String(outcome.unresolved)));
 						refreshPresets();
 					} else if (outcome.kind === "name-conflict") {
 						// The summary stays up; the decision row offers replace/cancel.
-						setImportBox({ ...importBox, busy: false, feedback: { kind: "name-conflict", with: outcome.with } });
+						setImportBox({ ...importBox, busy: false, feedback: { kind: "name-conflict", with: outcome.with, withRevision: outcome.withRevision, name: importBox.document?.name, scope: importBox.scope } });
 					} else if (outcome.kind === "error") {
-						setImportBox({ ...importBox, busy: false, feedback: { kind: "error" } });
+						setImportBox({ ...importBox, busy: false, feedback: { kind: "error", message: editMessage(outcome) }, summary: null });
+						refreshPresets();
 					} else {
 						// install-failed (with the rollback count), no-target-root,
 						// rejected, no-workspace: the result surface names them.
 						setImportBox({ ...importBox, busy: false, feedback: null, summary: null, result: outcome });
+						if (outcome.kind !== "install-failed" && outcome.kind !== "no-target-root") refreshPresets();
 					}
-				}).catch(() => setImportBox({ ...importBox, busy: false, feedback: { kind: "error" } }));
+				}).catch(() => { setImportBox({ ...importBox, busy: false, feedback: { kind: "error", message: editMessage({ kind: "error" }) }, summary: null }); refreshPresets(); });
 			};
 			// Cancel after the summary: only the dry-run ran, so nothing was
 			// written; the pasted text stays for editing.
@@ -570,6 +659,16 @@ window.__ModuleLoader__.load({
 									children: t("capability.presets.export", "Export")
 								}),
 								react_jsx_runtime.jsx("button", {
+									type: "button", style: (!props.draft || typeof props.presetRename !== "function" || (active && rowAction.busy)) ? { ...S.button, ...S.disabled } : S.button,
+									...ring, disabled: !props.draft || typeof props.presetRename !== "function" || (active && rowAction.busy),
+									onClick: () => openRowEdit(row, "rename"), children: t("capability.presets.renameRow", "Rename preset…")
+								}),
+								react_jsx_runtime.jsx("button", {
+									type: "button", style: (!props.draft || typeof props.presetResave !== "function" || (active && rowAction.busy)) ? { ...S.button, ...S.disabled } : S.button,
+									...ring, disabled: !props.draft || typeof props.presetResave !== "function" || (active && rowAction.busy),
+									onClick: () => openRowEdit(row, "resave"), children: t("capability.presets.resaveRow", "Re-save…")
+								}),
+								react_jsx_runtime.jsx("button", {
 									type: "button",
 									style: active && rowAction.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
 									...ring,
@@ -580,6 +679,34 @@ window.__ModuleLoader__.load({
 								})
 							]
 						}),
+						active && (rowAction.kind === "rename" || rowAction.kind === "resave")
+							? react_jsx_runtime.jsxs("div", {
+								style: S.strip, "data-weir-preset-edit": rowAction.kind, children: [
+									react_jsx_runtime.jsx("span", { children: t("capability.presets.editTarget", "Target: {name} · {scope} · ID {id} · revision {revision}")
+										.replace("{name}", row.name).replace("{scope}", row.scope).replace("{id}", row.presetId).replace("{revision}", String(row.revision)) }),
+									rowAction.kind === "rename" ? react_jsx_runtime.jsx("input", {
+										style: S.input, ...ring, "aria-label": t("capability.presets.newName", "New preset name"),
+										value: rowAction.name, onChange: (event) => setRowAction({ ...rowAction, name: event.target.value, error: null }),
+										onKeyDown: (event) => { if (event.key === "Escape" && !rowAction.busy) setRowAction(null); if (event.key === "Enter") submitRowEdit(row); }
+									}) : react_jsx_runtime.jsxs("label", { style: S.label, children: [
+										t("capability.presets.source", "From"), react_jsx_runtime.jsxs("select", { style: S.select, ...ring, value: rowAction.from,
+											onChange: (event) => setRowAction({ ...rowAction, from: event.target.value, error: null }), children: [
+												react_jsx_runtime.jsx("option", { value: "draft", children: t("capability.presets.fromDraft", "current draft") }),
+												react_jsx_runtime.jsx("option", { value: "applied", children: t("capability.presets.fromApplied", "applied selection") })
+											] }) ] }),
+									rowAction.kind === "resave" ? react_jsx_runtime.jsx("span", { children: t("capability.presets.resaveConfirm", "Overwrite this preset from {source}: {skills} Skills · {mcp} MCP · {unresolved} unresolved. Current session stays unchanged.")
+										.replace("{source}", rowAction.from === "draft" ? t("capability.presets.fromDraft", "current draft") : t("capability.presets.fromApplied", "applied selection"))
+										.replace("{skills}", String((rowAction.from === "draft" ? props.draft?.skills : props.draft?.applied?.skills)?.length ?? 0))
+										.replace("{mcp}", String((rowAction.from === "draft" ? props.draft?.mcpServers : props.draft?.applied?.mcpServers)?.length ?? 0))
+										.replace("{unresolved}", String((rowAction.from === "draft" ? props.draft?.unresolvedRefs : props.draft?.applied?.unresolvedRefs)?.length ?? 0)) }) : null,
+									react_jsx_runtime.jsxs("div", { style: S.buttonRow, children: [
+										react_jsx_runtime.jsx("button", { type: "button", style: (rowAction.busy || rowAction.stale) ? { ...S.primary, ...S.disabled } : S.primary, ...ring,
+											disabled: rowAction.busy || rowAction.stale, onClick: () => submitRowEdit(row), children: rowAction.kind === "rename" ? t("capability.presets.renameSubmit", "Save new name") : t("capability.presets.resaveSubmit", "Confirm re-save") }),
+										react_jsx_runtime.jsx("button", { type: "button", style: rowAction.busy ? { ...S.button, ...S.disabled } : S.button, ...ring,
+											disabled: rowAction.busy, onClick: () => setRowAction(null), children: t("capability.presets.cancel", "Cancel") }) ] }),
+									rowAction.error ? react_jsx_runtime.jsx("span", { role: rowAction.stale ? "status" : "alert", style: S.warn, children: rowAction.error }) : null
+								]
+							}) : null,
 						active && rowAction.kind === "load" && rowAction.error
 							? react_jsx_runtime.jsx("div", { style: S.warn, children: rowAction.error })
 							: null,
@@ -738,15 +865,15 @@ window.__ModuleLoader__.load({
 						? react_jsx_runtime.jsxs("div", {
 							style: S.strip,
 							children: [
-								react_jsx_runtime.jsx("span", { children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
+									react_jsx_runtime.jsx("span", { children: t("capability.presets.replaceTarget", "Replace preset ID {id} at revision {revision} in {scope}?").replace("{id}", String(importFeedback.with)).replace("{revision}", String(importFeedback.withRevision ?? "?")).replace("{scope}", importBox.scope) }),
 								react_jsx_runtime.jsxs("div", {
 									style: S.buttonRow,
 									children: [
 										react_jsx_runtime.jsx("button", {
 											type: "button",
-											style: importBox.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+										style: (importBox.busy || !Number.isSafeInteger(importFeedback.withRevision)) ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
 											...ring,
-											disabled: importBox.busy,
+										disabled: importBox.busy || !Number.isSafeInteger(importFeedback.withRevision),
 											onClick: () => confirmImport("replace"),
 											children: t("capability.presets.replace", "Replace it")
 										}),
@@ -792,16 +919,18 @@ window.__ModuleLoader__.load({
 			// stay UNSELECTED until a draft pick + Apply), collision decisions,
 			// or the failure with its rollback note.
 			const importResultChildren = (result) => {
-				if (result.kind !== "created") {
+				if (result.kind !== "created" && result.kind !== "edited") {
 					const text = result.kind === "install-failed"
 						? t("capability.presets.importInstallFailed", "Installation failed: {reason} — rolled back {n} file(s); no preset was created.").replace("{reason}", result.reason).replace("{n}", String(result.rolledBack))
 						: result.kind === "no-target-root"
 							? t("capability.presets.importNoTargetRoot", "No {scope} Skill root is available on this host — nothing was installed.").replace("{scope}", result.targetScope)
 							: result.kind === "rejected"
 								? t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", result.reason)
-								: t("capability.presets.noWorkspace", "This session has no workspace.");
+								: result.kind === "commit-failed" || (result.installed?.length > 0)
+									? t("capability.presets.importPartial", "{n} Skill(s) may be installed; preset status is unconfirmed. Inspect the installed files and refresh the preset before deciding what to do.").replace("{n}", String(result.installed?.length ?? 0))
+									: editMessage(result);
 					return [
-						react_jsx_runtime.jsx("div", { style: S.warn, children: text }),
+						react_jsx_runtime.jsx("div", { role: "alert", style: S.warn, children: text }),
 						react_jsx_runtime.jsx("div", {
 							style: S.buttonRow,
 							children: react_jsx_runtime.jsx("button", {
@@ -874,7 +1003,8 @@ window.__ModuleLoader__.load({
 							})
 						]
 					}),
-					notice ? react_jsx_runtime.jsx("div", { style: S.notice, children: notice }) : null,
+					notice ? react_jsx_runtime.jsx("div", { role: "status", "aria-live": "polite", style: S.notice, children: notice }) : null,
+					editAlert ? react_jsx_runtime.jsx("div", { role: "alert", style: S.warn, children: editAlert }) : null,
 					saveForm.open
 						? react_jsx_runtime.jsxs("div", {
 							style: S.card,
@@ -928,7 +1058,7 @@ window.__ModuleLoader__.load({
 									? react_jsx_runtime.jsxs("div", {
 										style: S.strip,
 										children: [
-											react_jsx_runtime.jsx("span", { children: t("capability.presets.nameConflict", "A preset named \"{name}\" already exists in this namespace.").replace("{name}", saveForm.name.trim()) }),
+										react_jsx_runtime.jsx("span", { children: t("capability.presets.replaceTarget", "Replace preset ID {id} at revision {revision} in {scope}?").replace("{id}", String(saveForm.conflict.with)).replace("{revision}", String(saveForm.conflict.withRevision ?? "?")).replace("{scope}", saveForm.scope) }),
 											react_jsx_runtime.jsxs("div", {
 												style: S.buttonRow,
 												children: [
@@ -943,9 +1073,9 @@ window.__ModuleLoader__.load({
 													}),
 													react_jsx_runtime.jsx("button", {
 														type: "button",
-														style: saveForm.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+												style: (saveForm.busy || !Number.isSafeInteger(saveForm.conflict.withRevision)) ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
 														...ring,
-														disabled: saveForm.busy,
+												disabled: saveForm.busy || !Number.isSafeInteger(saveForm.conflict.withRevision),
 														onClick: () => submitSave("replace"),
 														children: t("capability.presets.replace", "Replace it")
 													}),
@@ -1041,15 +1171,15 @@ window.__ModuleLoader__.load({
 											? react_jsx_runtime.jsxs("div", {
 												style: S.strip,
 												children: [
-													react_jsx_runtime.jsx("span", { children: t("capability.presets.importNameConflict", "A preset with this name already exists here.") }),
+																react_jsx_runtime.jsx("span", { children: t("capability.presets.replaceTarget", "Replace preset ID {id} at revision {revision} in {scope}?").replace("{id}", String(importFeedback.with)).replace("{revision}", String(importFeedback.withRevision ?? "?")).replace("{scope}", importBox.scope) }),
 													react_jsx_runtime.jsxs("div", {
 														style: S.buttonRow,
 														children: [
 															react_jsx_runtime.jsx("button", {
 																type: "button",
-																style: importBox.busy ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+																style: (importBox.busy || !Number.isSafeInteger(importFeedback.withRevision)) ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
 																...ring,
-																disabled: importBox.busy,
+																disabled: importBox.busy || !Number.isSafeInteger(importFeedback.withRevision),
 																onClick: () => submitImport("replace"),
 																children: t("capability.presets.replace", "Replace it")
 															}),
@@ -1071,7 +1201,7 @@ window.__ModuleLoader__.load({
 											? react_jsx_runtime.jsx("div", { style: S.warn, children: t("capability.presets.noWorkspace", "This session has no workspace.") })
 											: null,
 										importFeedback && importFeedback.kind === "error"
-											? react_jsx_runtime.jsx("div", { style: S.warn, children: t("capability.presets.importFailed", "Import failed — nothing was written.") })
+											? react_jsx_runtime.jsx("div", { role: "alert", style: S.warn, children: importFeedback.message ?? t("capability.presets.uncertain", "Result unknown. Refresh and inspect the preset before deciding whether to retry.") })
 											: null
 									]
 						})

@@ -116,7 +116,9 @@ describe('weir settings client half', () => {
       WorktreeToolRow: (props) => ({ __worktreeTool: props }),
     }
     const worktreeModelChunk = { WORKTREE_PROJECTION_KEY: 'weirWorktree', marker: 'worktree-model' }
+    const presetChunk = { CapabilityPresetsView: () => null }
     const chunkModules = {
+      './client.capability-presets.js': presetChunk,
       './client.settings-page.js': settingsPageChunk,
       './client.model-picker.js': modelPickerChunk,
       './client.chain-editor.js': chainEditorChunk,
@@ -165,6 +167,7 @@ describe('weir settings client half', () => {
       hashEditModelChunk,
       worktreeViewChunk,
       worktreeModelChunk,
+      presetChunk,
       setAsyncFailure: (error) => {
         asyncFailure = error
       },
@@ -887,6 +890,25 @@ describe('weir settings client half', () => {
 
     // S17: even the sidebar registration never dereferences remote.session
     expect(sessionAccesses()).toBe(0)
+  })
+
+  it('lazy Presets wrapper carries rename/re-save commands without staging or Apply', async () => {
+    const { surface, presetChunk } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
+    surface.apply(ctx)
+    slotInjects[11].fn()
+    const badge = slotRegistrations.find(row => row.definition.id === 'weir-capability-badge')
+    const verbs = badge.definition.inject('s7')
+    const module = await verbs.loadPresets()
+    const element = module.CapabilityPresetsView({ sessionId: 's7' })
+    expect(element.__type).toBe(presetChunk.CapabilityPresetsView)
+    const id = { scope: 'workspace', presetId: 'p', expectedRevision: 3 }
+    await element.presetRename('s7', { ...id, name: 'New' })
+    await element.presetResave('s7', { ...id, from: 'applied', expectedSelectionRevision: 2 })
+    expect(executed.map(call => call.input)).toEqual([
+      '/capabilities preset-rename {"scope":"workspace","presetId":"p","expectedRevision":3,"name":"New"}',
+      '/capabilities preset-resave {"scope":"workspace","presetId":"p","expectedRevision":3,"from":"applied","expectedSelectionRevision":2}',
+    ])
   })
 
   it('registers ZERO capability sidebar surface when the sidebar package is absent', async () => {
