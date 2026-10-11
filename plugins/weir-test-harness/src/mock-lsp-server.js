@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const RENAME_FILES = ['probe.ts', 'probe-other.ts']
 const STALE_PROBE_NAME = 'staleProbe'
+const MISSING_PROBE_NAMES = new Set(['missingProbe', 'mixedProbe'])
 
 let buffer = Buffer.alloc(0)
 
@@ -104,6 +105,13 @@ function renameResult(params) {
     }
     const edits = occurrencesOf(content, symbol, params.newName)
     if (edits.length > 0) changes[`file://${filePath}`] = edits
+  }
+  if (MISSING_PROBE_NAMES.has(params.newName)) {
+    // Explicit protocol-negative fixture: the absent file is deliberately NOT
+    // read from disk. mixedProbe puts a valid existing target first so an
+    // incremental writer would violate whole-batch preflight atomicity.
+    if (params.newName === 'missingProbe') for (const key of Object.keys(changes)) delete changes[key]
+    changes[`file://${join(HERE, 'probe-absent.ts')}`] = occurrencesOf(synced, symbol, params.newName)
   }
   if (params.newName === STALE_PROBE_NAME) {
     // See the header comment: deterministic mid-write stale injection via a
