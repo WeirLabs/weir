@@ -741,6 +741,16 @@ describe('lsp_rename tool', () => {
     let failure
     try { await rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, exec) }
     catch (error) { failure = error }
+    expect(failure?.message.split('\n')).toEqual([
+      'rename stopped: Error: publication not acknowledged: unknown;',
+      'filesAlreadyWritten: ["/ws/a.ts"];',
+      'filesNotWritten: [];',
+      'filesUncertain: ["/ws/b.ts"];',
+      'ownership retained (no rollback)',
+    ])
+    expect(failure?.message.replaceAll('\n', ' ')).toBe(
+      'rename stopped: Error: publication not acknowledged: unknown; filesAlreadyWritten: ["/ws/a.ts"]; filesNotWritten: []; filesUncertain: ["/ws/b.ts"]; ownership retained (no rollback)')
+    expect(failure?.cause?.message).toBe('publication not acknowledged: unknown')
     expect(failure?.message).toContain('filesAlreadyWritten: ["/ws/a.ts"]')
     expect(failure?.message).toContain('filesNotWritten: []')
     expect(failure?.message).toContain('filesUncertain: ["/ws/b.ts"]')
