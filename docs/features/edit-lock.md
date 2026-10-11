@@ -467,7 +467,11 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### 可复用双 GUI QA 驱动（跨平台验收入口）
 
-`plugins/weir-test-harness/src/dual-gui-qa.mjs`（手动分发 workflow `edit-lock-dual-gui.yml`）把上述 macOS 流程固化为跨平台可复用驱动：两独立 `dsh web` 进程（各自 DSH_HOME/profile/loopback 端口/headless Chrome），经真实 CDP 操作，核心矩阵（同域仲裁、重复绑定 Retry 拒绝、真实归属冲突、优雅清理）本机 7 PASS/0 FAIL/3 SKIP，重型矩阵（SIGKILL fail-closed、租约过期＋证明死亡后回收、generation 2 保留＋显式 Continue、generation 3 交接）本机 9 PASS/0 FAIL/1 SKIP；token 全程脱敏，测试结束后无残留进程或预约。Linux/Win32 同一驱动待实机 CI 运行，不构成其验收。
+`plugins/weir-test-harness/src/dual-gui-qa.mjs`（手动分发/PR 触发 workflow `edit-lock-dual-gui.yml`）把上述 macOS 流程固化为跨平台可复用驱动：两独立 `dsh web` 进程（各自 DSH_HOME/profile/loopback 端口/headless Chrome），经真实 CDP 操作，核心矩阵（同域仲裁、重复绑定 Retry 拒绝、真实归属冲突、优雅清理）本机 7 PASS/0 FAIL/3 SKIP，重型矩阵（SIGKILL fail-closed、租约过期＋证明死亡后回收、generation 2 保留＋显式 Continue、generation 3 交接）本机 9 PASS/0 FAIL/1 SKIP；token 全程脱敏，测试结束后无残留进程或预约。
+
+### 三平台实机验收（GitHub Actions，run 38110139730）
+
+同一驱动与锁下 `lsp_rename` 场景在三平台全部通过：macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（重型双 GUI 矩阵）＋ 35 PASS/0 FAIL（锁下重命名）；Windows 为命名管道与 TerminateProcess 语义，Linux 为 Unix socket 与 SIGKILL 恢复，均含真实 PID/预约/哈希断言与截图工件。运行历史中的红灯均为驱动/管线层修正（租约等待顺序、模态框竞态、shell 语法、路径分隔符），非产品缺陷；报告与证据工件保留在 run 页面（draft PR #1，分支 `qa/edit-lock-dual-gui-ci`）。
 
 ### 更早的组件级证据
 
@@ -477,8 +481,8 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 本特性以**实验特性、默认关闭**的形态发布，下列场景没有证据，不构成任何保证：
 
-- **两个完整 GUI Harness 应用并发**：macOS 已有一轮阶段性验收（见上节）；Linux 与 Windows 的双完整 GUI 并排验收仍未执行，不构成本机之外的保证。
-- **真实回合里的 `lsp_rename`**：批量原子获取与逐文件发布有单测与组合探针覆盖，但没有在真实会话里跑完整一回合的跨文件改名。
-- **Linux**：仅经代码路径允许（`resource-identity.js` 在 darwin/linux/win32 下构造），未在 Linux 实机验证。
-- **Windows 的 GUI 实机验收**：win32 行（NTFS dev/ino 资源身份、`\\.\pipe\weir-edit-lock-<hash>` 命名管道跨进程、降级打开标志、目录 fsync 跳过）有单元与跨进程 SIGKILL 套件实测，但未经两个真实 GUI 应用并排的实机验收。
-- **面板的异常、恢复中、暂停与部分写入状态**：常态、已停止、待确认与保留中已经人工 GUI 验收，异常／恢复中／暂停的画面与跨文件部分写入的呈现没有 GUI 验证。
+- **两个完整 GUI Harness 应用并发**：三平台（macOS/Ubuntu/Windows）重型双 GUI 矩阵在 CI 全绿（run 38110139730，9 PASS/0 FAIL/1 SKIP 每平台）。
+- **真实回合里的 `lsp_rename`**：锁下跨文件改名已由安装版场景 `editlock-lsp-rename` 在三平台各 35 PASS/0 FAIL 验证（原子获取、冲突整批拒绝、中途取消的诚实报告）。
+- **Linux**：ubuntu-latest runner 双 GUI 与锁下重命名均已实测通过（run 38110139730）。
+- **Windows 的 GUI 实机验收**：windows-latest runner 双 GUI 并排验收已通过（命名管道跨进程、TerminateProcess 清理、SIGKILL 恢复）。
+- **面板的异常、恢复中、暂停与部分写入状态（真实 GUI＋明暗主题）**：已有渲染层单测与 macOS 深色截图；浅色主题与 Linux/Win32 的面板呈现检查仍在稳定化收尾任务中。
