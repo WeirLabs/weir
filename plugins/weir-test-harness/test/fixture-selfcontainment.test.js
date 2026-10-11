@@ -81,7 +81,9 @@ function listFiles(dir) {
 // installed-CLI verification, not a committed replay trace in this task scope.
 // editlock-hashline-negatives has no committed fixture either: its oracle is a
 // live authority snapshot plus post-run bytes (precedent 62c0ee2).
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-hashline-negatives'].includes(scenario.id))
+// editlock-negotiation runs its actual 120s timeout with a disposable Host
+// delivery fault and likewise has no committed replay fixture.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-hashline-negatives', 'editlock-negotiation'].includes(scenario.id))
 
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {

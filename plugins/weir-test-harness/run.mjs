@@ -111,6 +111,101 @@ function setup() {
   writeFileSync(join(WS, 'mock-lsp-server.js'), readFileSync(join(HERE, 'src', 'mock-lsp-server.js'), 'utf8'))
 }
 
+// Generated ONLY for editlock-negotiation, under this invocation's disposable
+// IT root. This is controlled Host delivery injection, NOT a network outage.
+// Patch the exact live holder instance for one notice and restore both methods
+// before the QA tool returns (and again on plugin dispose if a run aborts).
+const NEGOTIATION_FIXTURE = String.raw`import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+export const name = 'weir-it-controlled-host-delivery-injection'
+export const inject = ['agents', 'tools']
+export function apply(ctx) {
+  const root = process.env.WEIR_IT_ROOT
+  const file = join(root, 'ws', 'negotiation-target.txt')
+  const snapshotFile = join(root, 'ws', '.weir', 'edit-lock', 'snapshot.json')
+  const reservation = join(root, 'ws', '.weir', '.edit-lock.publisher-reservation')
+  const trace = process.env.WEIR_IT_TRACE
+  let restore = () => {}
+  ctx.on('dispose', () => restore())
+  ctx.tools.register({
+    name: 'qa_editlock_negotiation',
+    description: 'QA only: exercise real try_steal with one controlled Host delivery injection and its full timeout.',
+    parameters: { type: 'object', properties: {}, required: [] },
+    output: { schema: { type: 'object' }, render: (_args, result) => [{ type: 'text', text: result.message }] },
+    timeoutMs: 150000,
+    async execute(_args, exec) {
+      const holder = exec.agent
+      const before = JSON.parse(readFileSync(snapshotFile, 'utf8')).payload.state
+      const bytesBefore = readFileSync(file, 'utf8')
+      const reservationBefore = existsSync(reservation)
+      const descriptors = new Map(['inject', 'followup'].map(method => [method, Object.getOwnPropertyDescriptor(holder, method)]))
+      const originals = new Map(['inject', 'followup'].map(method => [method, holder[method]]))
+      let attempts = 0, triggerCount = 0, method = null, busyStatus = null, expiryNotice = null, replyDelivered = false
+      let restored = false
+      restore = () => {
+        if (restored) return
+        for (const [key, descriptor] of descriptors) {
+          if (descriptor) Object.defineProperty(holder, key, descriptor)
+          else delete holder[key]
+        }
+        restored = holder.inject === originals.get('inject') && holder.followup === originals.get('followup')
+      }
+      const onInbox = payload => {
+        if (payload?.agent?.id === requester?.agent?.id) {
+          const text = JSON.stringify(payload.message)
+          if (text.includes('expired without a holder reply')) expiryNotice = text
+        }
+        if (payload?.agent === holder && JSON.stringify(payload.message).includes('Call edit_lock_reply')) replyDelivered = true
+      }
+      let requester
+      const offInbox = ctx.on('agent/inbox/inserted', onInbox)
+      try {
+        for (const key of ['inject', 'followup']) {
+          Object.defineProperty(holder, key, { configurable: true, writable: true, value: function (message, ...rest) {
+            const text = JSON.stringify(message)
+            if (text.includes('Edit Lock: session ') && text.includes('requests ownership of ') && text.includes('Call edit_lock_reply') && text.includes(file)) {
+              attempts++
+              method = key
+              busyStatus = holder.status
+              if (process.env.WEIR_IT_DELIVERY_FAULT !== 'off' && attempts === 1) {
+                triggerCount++
+                throw new Error('QA_CONTROLLED_HOST_DELIVERY_INJECTION')
+              }
+            }
+            return originals.get(key).call(this, message, ...rest)
+          } })
+        }
+        requester = await ctx.agents.create({ sessionId: randomUUID(), meta: { cwd: holder.session.header.cwd } })
+        const started = Date.now()
+        const outcome = await ctx.tools.execute({ name: 'edit_lock_try_steal', callId: randomUUID(), arguments: { file_path: file }, agent: requester.agent, signal: new AbortController().signal })
+        const pending = JSON.parse(readFileSync(snapshotFile, 'utf8')).payload.state
+        const bytesPending = readFileSync(file, 'utf8')
+        const reservationPending = existsSync(reservation)
+        // The production timer is 120_000 ms; this independent referenced wait
+        // merely keeps the headless Host alive until its real expiry notice lands.
+        await new Promise(resolve => setTimeout(resolve, 123000))
+        const after = JSON.parse(readFileSync(snapshotFile, 'utf8')).payload.state
+        const report = { kind: 'qa-editlock-negotiation', requester: requester.agent.id,
+          requestId: outcome.value?.requestId ?? null, toolError: outcome.isError ? outcome.error : null,
+          holder: outcome.value?.holder ?? null, holderStatus: outcome.value?.holderStatus ?? null,
+          attempts, triggerCount, method, busyStatus, expiryNotice, replyDelivered,
+          elapsedMs: Date.now() - started, before, pending, after, bytesBefore, bytesPending,
+          bytesAfter: readFileSync(file, 'utf8'), reservationBefore, reservationPending,
+          reservationAfter: existsSync(reservation), holderStillLive: ctx.agents.get(holder.id) === holder }
+        restore()
+        report.restored = restored
+        appendFileSync(trace, JSON.stringify(report) + '\n')
+        return { message: 'QA_NEGOTIATION_FINISHED' }
+      } finally {
+        restore()
+        offInbox()
+        if (requester) await requester.dispose()
+      }
+    },
+  })
+}
+`
 // ---------- spawn skeleton ----------
 
 /** Boot one headless run of the CLI; resolves with { code, stdout, stderr }. */
@@ -155,9 +250,11 @@ function runScenario(scenario) {
   }
   const trace = join(RUN_ROOT, `trace-${scenario.id}.jsonl`)
   const hostControl = scenario.env?.WEIR_IT_SKILL_COMPOSITION === 'HOST'
+  const negotiation = scenario.id === 'editlock-negotiation'
+  if (negotiation) writeFileSync(join(RUN_ROOT, 'editlock-negotiation-fault.mjs'), NEGOTIATION_FIXTURE)
   writeFileSync(join(PROFILE, 'cordis.patch.yml'), hostControl
     ? `- id: skill-filesystem\n  disabled: false\n  config:\n    customSkillDirs:\n      - ${JSON.stringify(join(WS, 'skill-roots'))}\n- id: tool-skill\n  disabled: false\n- id: weir-it-tool-skill\n  disabled: true\n`
-    : '[]\n')
+    : negotiation ? JSON.stringify([{ insert: [{ id: 'weir-it-controlled-host-delivery-injection', name: join(RUN_ROOT, 'editlock-negotiation-fault.mjs') }] }]) + '\n' : '[]\n')
   return spawnHeadless(['weir-it', scenario.prompt], scenarioEnv(scenario.id, trace, scenario.env)).then((outcome) => ({
     scenario: scenario.id,
     trace,
