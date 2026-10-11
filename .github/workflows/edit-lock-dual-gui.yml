@@ -82,6 +82,30 @@ jobs:
           DUAL_GUI_PHASE_TIMEOUT_MS: '90000'
         run: node plugins/weir-test-harness/src/dual-gui-qa.mjs run
 
+      # The lock-guarded multi-file rename acceptance must also run on the same
+      # runner OS (tasks 3.3/3.4): the installed-runtime scenario drives a real
+      # LSP protocol fixture with WEIR_IT_EDIT_LOCK=1. WEIR_IT_DSH names the
+      # bin.js entry; run.mjs spawns NODE + that path (never a .cmd shim).
+      # run.mjs invokes NODE + PNPM script directly; the action-setup standalone
+      # layout carries pnpm.mjs beside the shim under PNPM_HOME. Resolve it once
+      # and fail loudly when the layout changes rather than passing a shim name
+      # to node.
+      - name: resolve pnpm script
+        id: pnpm-script
+        run: node -e "const fs=require('node:fs'); const home=process.env.PNPM_HOME; for (const p of [home+'/pnpm.mjs', home+'/dist/pnpm.mjs', home+'/pnpm/bin/pnpm.mjs']) { if (fs.existsSync(p)) { console.log('path='+p); process.exit(0) } } console.error('pnpm.mjs not found under PNPM_HOME=' + home); process.exit(1)" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: lock-guarded lsp_rename acceptance
+        env:
+          WEIR_IT_DSH: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
+          WEIR_IT_ROOT: ${{ runner.temp }}/it-lsp-rename
+          # run.mjs defaults its toolchain to the desktop bundled runtime paths;
+          # on a runner they do not exist, so point at the runner's own node
+          # and the pnpm/action-setup shim explicitly.
+          WEIR_IT_NODE: node
+          WEIR_IT_PNPM: ${{ steps.pnpm-script.outputs.path }}
+        run: node plugins/weir-test-harness/run.mjs editlock-lsp-rename
+        working-directory: plugins/weir-test-harness
+
       # Screenshots, sanitized server logs, console events and the PASS
       # matrix report; kept on failure AND success for cross-platform diffs.
       - name: upload evidence
