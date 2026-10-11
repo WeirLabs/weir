@@ -465,6 +465,10 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 两个独立启动的 DSH 0.2.0-rc.2 Web 进程（独立 DSH_HOME/profile/浏览器，loopback 端口）共用同一仓库外工作区：publisher/client 仲裁成立；跨进程 `binding-duplicate` 的 Retry 被正确拒绝；真实 `edit_lock_acquire` 冲突持锁，文件哈希不变；测试 publisher 遭 SIGKILL 后存活的 client 变 `unavailable` 拒写；原 profile 重启后产品自行回收死预约，generation 2 的锁保留为 `user-interrupted`，经显式 Continue 恢复为 active、epoch 递增；正常释放后按 generation 3 交接。报告与 8 张截图在 `.weir/qa/stable-dual-gui/`。锁下真实 `lsp_rename` 回合、版本/CAS/sandbox、异常/恢复/暂停/部分写入的 GUI 呈现、明暗主题，以及 Linux/Win32 双 GUI 仍未验收。
 
+### 可复用双 GUI QA 驱动（跨平台验收入口）
+
+`plugins/weir-test-harness/src/dual-gui-qa.mjs`（手动分发 workflow `edit-lock-dual-gui.yml`）把上述 macOS 流程固化为跨平台可复用驱动：两独立 `dsh web` 进程（各自 DSH_HOME/profile/loopback 端口/headless Chrome），经真实 CDP 操作，核心矩阵（同域仲裁、重复绑定 Retry 拒绝、真实归属冲突、优雅清理）本机 7 PASS/0 FAIL/3 SKIP，重型矩阵（SIGKILL fail-closed、租约过期＋证明死亡后回收、generation 2 保留＋显式 Continue、generation 3 交接）本机 9 PASS/0 FAIL/1 SKIP；token 全程脱敏，测试结束后无残留进程或预约。Linux/Win32 同一驱动待实机 CI 运行，不构成其验收。
+
 ### 更早的组件级证据
 
 开发期还留下了若干**组件级**证据（`.weir/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
