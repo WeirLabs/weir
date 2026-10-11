@@ -261,7 +261,11 @@ describe('client.settings-page chunk', () => {
         const rendered = choice.__type({ ...choice, t })
         const text = JSON.stringify(rendered)
         expect(text.includes(t('editLockOptOutWarning')), `${locale}/${name} warning`).toBe(warning)
+        const alerts = findAll(rendered, (node) => node.role === 'alert')
+        expect(alerts, `${locale}/${name} alert count`).toHaveLength(warning ? 1 : 0)
         if (warning) {
+          expect(alerts[0].style.color).toBe('var(--dsw-alias-state-warn-primary)')
+          expect(alerts[0].style.borderLeft).toBe('2px solid var(--dsw-alias-state-warn-primary)')
           expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'UNPROTECTED' : '不受保护')
           expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'overwrite' : '覆盖')
           expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'restart' : '重启')

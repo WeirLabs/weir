@@ -582,7 +582,7 @@ window.__ModuleLoader__.load({
 		const childLabelStyle = { ...labelStyle, fontSize: "13px" };
 		const labelTextStyle = { display: "inline-flex", alignItems: "center", gap: "6px" };
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const optOutStyle = { ...hintStyle, color: "var(--dsw-alias-state-business-warning, #b25f00)", borderLeft: "2px solid var(--dsw-alias-state-business-warning, #b25f00)", paddingLeft: "8px", marginTop: "4px" };
+		const optOutStyle = { ...hintStyle, color: "var(--dsw-alias-state-warn-primary)", borderLeft: "2px solid var(--dsw-alias-state-warn-primary)", paddingLeft: "8px", marginTop: "4px" };
 		// Card-based group sections (design D7): layered background, l1 border,
 		// radius, the group title inside the card top, hairline l2 separators
 		// between rows. Colors only from theme tokens; geometry hardcoded.
