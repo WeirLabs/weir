@@ -114,6 +114,13 @@ function setup() {
   const uncertain = join(WS, 'editlock-lsp-uncertain')
   mkdirSync(uncertain, { recursive: true })
   for (const name of ['probe.ts', 'probe-other.ts', 'mock-lsp-server.js']) copyFileSync(join(WS, name), join(uncertain, name))
+  // The eight-boot rename case owns a separate management domain. Seed from
+  // literals and source, never from shared /ws fixtures mutated by earlier LSP.
+  const rename = join(WS, 'editlock-lsp-rename')
+  mkdirSync(rename, { recursive: true })
+  writeFileSync(join(rename, 'probe.ts'), 'export const fixtureSymbol = 1\n')
+  writeFileSync(join(rename, 'probe-other.ts'), 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n')
+  copyFileSync(join(HERE, 'src', 'mock-lsp-server.js'), join(rename, 'mock-lsp-server.js'))
 }
 
 // Generated ONLY for editlock-negotiation, under this invocation's disposable
@@ -223,7 +230,7 @@ function spawnHeadless(args, env) {
     execFile(
       DSH_EXEC ?? NODE,
       DSH_EXEC ? args : [DSH_BIN, ...args],
-      { cwd: env.WEIR_IT_LSP_UNCERTAIN === '1' ? join(WS, 'editlock-lsp-uncertain') : (env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS), env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+      { cwd: env.WEIR_IT_LSP_RENAME === '1' ? join(WS, 'editlock-lsp-rename') : (env.WEIR_IT_LSP_UNCERTAIN === '1' ? join(WS, 'editlock-lsp-uncertain') : (env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS)), env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
         resolvePromise({ code: error?.code ?? 0, stdout, stderr })
       },
@@ -350,7 +357,9 @@ function recordRun(run) {
             const boundary = run.scenario.slice('editlock-stop-'.length)
             return [join('.weir', `edit-lock-${boundary}`, 'snapshot.json'), join(`stop-${boundary}`, 'stop-target.txt'), `unrelated-${boundary}.txt`].map(path => [path, path])
           })()
-          : []
+          : run.scenario === 'editlock-lsp-rename'
+            ? ['probe.ts', 'probe-other.ts'].map(name => [join(run.scenario, name), join(run.scenario, name)])
+            : []
     for (const [relative, stored] of extras) {
       const source = join(WS, relative)
       if (!existsSync(source)) continue
