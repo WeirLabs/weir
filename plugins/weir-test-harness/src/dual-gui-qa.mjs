@@ -51,6 +51,9 @@
 //     pass FALSELY (blackboard dual-gui-sandbox-regression-140). resolveConfig
 //     creates the default root under the home dir and refuses an explicit
 //     system-temp root for those matrices before any boot.
+//   * Only a fresh empty, non-symlink root outside an enclosing Git domain is
+//     prepared. Rerun-in-place is refused; clean requires this process's proof
+//     of preparation and a second canonical identity/authority check.
 //   * Launch tokens/cookies live only in process memory: every byte written
 //     to a log file, the report, or stdout passes through the sanitizer.
 //   * The QA command fixture only ever installs into the throwaway profiles
@@ -71,7 +74,8 @@
 //   DUAL_GUI_WEIR       weir-harness checkout to link-install (default: sibling
 //                       of this package)
 //   DUAL_GUI_ROOT       QA root (default: fresh mkdtemp under the home dir;
-//                       never under the system temp dir — see the invariant)
+//                       explicit roots must be absent/empty and are single-use;
+//                       never under system temp for heavy/opt-out)
 //   DUAL_GUI_MATRIX     'core' (default) | 'heavy' | 'opt-out'
 //   DUAL_GUI_KEEP       '1' keeps the QA root even after a green run
 //
@@ -873,7 +877,7 @@ export function createMatrix() {
  * reported as not-applicable instead of silently deleted (which is forbidden).
  */
 export async function stopChild(child, { platform = process.platform, graceMs = 10000, label = 'process', kill = (c, s) => c.kill(s) } = {}) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return { graceful: true, alreadyExited: true }
+  if (!child || ('pid' in child && !child.pid) || child.exitCode !== null || child.signalCode !== null) return { graceful: true, alreadyExited: true }
   const waitExit = (ms) => new Promise((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve(true)
     const timer = setTimeout(() => resolve(false), ms)
@@ -915,6 +919,37 @@ function createLog(file, secrets) {
     write(text) { stream.write(`${sanitizeText(text, current())}\n`) },
     end() { stream.end() },
   }
+}
+
+/** Await child startup without allowing an EventEmitter error to escape the
+ * async caller. The next poll is scheduled only while pending. */
+function waitForSpawnReady(child, label, probe, { timeoutMs, intervalMs = 200 }) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs
+    let timer, settled = false
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.off('exit', onExit)
+      // Keep the error listener: a late spawn failure must not become uncaught.
+      error ? reject(error) : resolve(value)
+    }
+    const onExit = (code) => finish(new Error(`${label}: exited (${code}) before readiness`))
+    child.on('error', (error) => finish(new Error(`${label}: spawn failed (${error.code ?? 'unknown'})`)))
+    child.on('exit', onExit)
+    const poll = async () => {
+      if (settled) return
+      try {
+        const value = await probe()
+        if (settled) return
+        if (value) return finish(null, value)
+      } catch (error) { return finish(error) }
+      if (Date.now() >= deadline) return finish(new Error(`${label}: readiness timed out after ${timeoutMs}ms`))
+      timer = setTimeout(poll, intervalMs)
+    }
+    void poll()
+  })
 }
 
 /** Gate that holds log chunks in memory until `arm()` is called (after the
@@ -1093,25 +1128,15 @@ export class GuiInstance {
     }
     this.server.stdout.on('data', onChunk)
     this.server.stderr.on('data', onChunk)
-    const ready = new Promise((resolve, reject) => {
-      const deadline = Date.now() + this.config.timeouts.bootMs
-      const poll = () => {
-        try {
-          const { url, token } = parseLaunchUrl(this.stdoutBuffer)
-          this.launchUrl = url
-          this.setToken(token)
-          gate.arm()
-          resolve()
-        } catch {
-          if (Date.now() > deadline) return reject(new Error(`${this.name}: server did not print a launch URL within ${this.config.timeouts.bootMs}ms`))
-          if (this.server.exitCode !== null) return reject(new Error(`${this.name}: server exited (${this.server.exitCode}) before readiness`))
-          setTimeout(poll, 200)
-        }
-      }
-      poll()
-    })
-    this.server.on('error', (error) => { throw error })
-    await ready
+    await waitForSpawnReady(this.server, `${this.name}: server`, () => {
+      try {
+        const { url, token } = parseLaunchUrl(this.stdoutBuffer)
+        this.launchUrl = url
+        this.setToken(token)
+        gate.arm()
+        return true
+      } catch { return false }
+    }, { timeoutMs: this.config.timeouts.bootMs })
   }
 
   /** Boot the dedicated headless Chrome and connect CDP to its page. */
@@ -1122,14 +1147,14 @@ export class GuiInstance {
     this.chrome = spawn(chrome, buildChromeArgs({ cdpPort: this.ports.cdp, userDataDir }), { stdio: ['ignore', 'ignore', 'pipe'] })
     this.processes.push({ name: `${this.name} chrome`, child: this.chrome })
     this.chrome.stderr.on('data', () => { /* chrome chatter is not evidence */ })
-    const list = await waitFor(`${this.name} cdp`, async () => {
+    const list = await waitForSpawnReady(this.chrome, `${this.name}: cdp`, async () => {
       try {
         const res = await fetch(`http://127.0.0.1:${this.ports.cdp}/json/list`)
         if (!res.ok) return null
         const targets = await res.json()
         return targets.find((target) => target.type === 'page') ?? null
       } catch { return null }
-    }, { timeoutMs: this.config.timeouts.bootMs })
+    }, { timeoutMs: this.config.timeouts.bootMs, intervalMs: 400 })
     this.cdp = new Cdp(list.webSocketDebuggerUrl, (method, params) => {
       if (method === 'Runtime.consoleAPICalled') {
         this.logEvent('console', { type: params.type, args: (params.args ?? []).map((a) => a.value ?? a.description ?? a.type) })
@@ -1256,6 +1281,9 @@ export function resolveConfig({ argv = [], env = process.env, platform = process
   let root = option('--root') ?? env.DUAL_GUI_ROOT
   if (root) {
     refuseSystemTempRoot(root)
+    // Never resolve away a symlink supplied as the target itself. Parents may
+    // be symlinks, but the chosen root must be a real directory.
+    if (fs.existsSync(root) && fs.lstatSync(root).isSymbolicLink()) throw new Error('QA root must not be a symlink')
     fs.mkdirSync(root, { recursive: true })
     root = fs.realpathSync.native(root)
     refuseSystemTempRoot(root)
@@ -1304,6 +1332,35 @@ export function renameFixtureSources() {
     'tsconfig.json': '{}\n',
   }
 }
+// Fresh-only contract: no rerun in place, even if a previous QA run created
+// the directory. Explicit initially absent/empty CI roots are supported.
+// A successful preparation alone grants in-process authority for optional clean.
+const preparedRoots = new WeakMap()
+function assertFreshQaRoot(root) {
+  if (typeof root !== 'string' || !path.isAbsolute(root) || fs.realpathSync.native(root) !== root || !fs.lstatSync(root).isDirectory()) {
+    throw new Error('QA root must be an absolute, real, non-symlink disposable directory')
+  }
+  const management = managementRootFor(root)
+  if (management !== root || fs.existsSync(path.join(root, '.git'))) {
+    throw new Error(`workspace management root escapes the disposable directory: ${management} — pick a QA root outside any git checkout`)
+  }
+  if (fs.readdirSync(root).length !== 0) throw new Error('QA root must be empty and unowned; use a fresh directory (rerun-in-place is not supported)')
+  const { dev, ino } = fs.lstatSync(root)
+  return { root, dev, ino }
+}
+
+/** Delete only a root prepared by this process, after canonical identity and
+ * authority are checked again. A refused or substituted root is never cleanable. */
+export function cleanQaRoot(paths) {
+  const proof = preparedRoots.get(paths)
+  if (!proof || paths.root !== proof.root) throw new Error('QA root was not proven disposable; refusing cleanup')
+  const stat = fs.lstatSync(proof.root)
+  if (!stat.isDirectory() || stat.dev !== proof.dev || stat.ino !== proof.ino || fs.realpathSync.native(proof.root) !== proof.root || managementRootFor(proof.root) !== proof.root) {
+    throw new Error('QA root changed since preparation; refusing cleanup')
+  }
+  preparedRoots.delete(paths)
+  fs.rmSync(proof.root, { recursive: true })
+}
 /** Materialize the QA root: shared workspace, fixture, settings patch, dirs. */
 export function prepareQaRoot(config) {
   const paths = {
@@ -1321,6 +1378,7 @@ export function prepareQaRoot(config) {
     probeFile: path.join(config.root, 'ws', 'probe.ts'),
     probeOtherFile: path.join(config.root, 'ws', 'probe-other.ts'),
   }
+  const proof = assertFreshQaRoot(paths.root)
   fs.mkdirSync(paths.ws, { recursive: true })
    fs.mkdirSync(paths.narrow, { recursive: true })
    fs.writeFileSync(paths.casFile, 'export const cas = 1\n')
@@ -1328,10 +1386,8 @@ export function prepareQaRoot(config) {
   fs.mkdirSync(paths.fixture, { recursive: true })
   fs.mkdirSync(paths.shots, { recursive: true })
   fs.mkdirSync(paths.logs, { recursive: true })
-  if (!fs.existsSync(paths.sharedFile)) fs.writeFileSync(paths.sharedFile, 'export const shared = 1\n')
-  // Rename fixtures + mock LSP server live INSIDE the workspace (the mock reads
-  // its fixture files as siblings of the script). Rewritten every run: the
-  // partial-write phase mutates probe.ts, so a reused --root must restart clean.
+  fs.writeFileSync(paths.sharedFile, 'export const shared = 1\n')
+  // Rename fixtures + mock LSP server live inside this fresh workspace.
   for (const [name, content] of Object.entries(renameFixtureSources())) fs.writeFileSync(path.join(paths.ws, name), content)
   fs.copyFileSync(path.join(HERE, 'mock-lsp-server.js'), path.join(paths.ws, 'mock-lsp-server.js'))
   // Isolation gate: the workspace must be its own management root, otherwise
@@ -1347,6 +1403,7 @@ export function prepareQaRoot(config) {
   const fixture = fixtureSources({ workspace: paths.ws, homes })
   for (const [name, content] of Object.entries(fixture)) fs.writeFileSync(path.join(paths.fixture, name), content)
   fs.writeFileSync(paths.settingsPatch, settingsPatchSource({ workspace: paths.ws, editable: config.matrix === 'opt-out' }))
+  preparedRoots.set(paths, proof)
   return paths
 }
 
@@ -2295,7 +2352,7 @@ async function main() {
   // Teardown ALWAYS runs, green or red.
   try { await teardown([a, b], config, paths, matrix) } catch (error) { matrix.record('teardown', 'FAIL', String(error?.message ?? error)) }
   const processes = [...a.processes, ...b.processes].map(({ name, child }) => ({ name, pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }))
-  for (const proc of processes) if (proc.exitCode === null && proc.signalCode === null) matrix.record('process-exit', 'FAIL', `${proc.name} pid ${proc.pid} did not exit`)
+  for (const proc of processes) if (proc.pid && proc.exitCode === null && proc.signalCode === null) matrix.record('process-exit', 'FAIL', `${proc.name} pid ${proc.pid} did not exit`)
   const report = writeReport(config, paths, matrix, {
     sha: sha256File(paths.sharedFile), endpoint, dshVersion, processes, panelShots, secrets,
   })
@@ -2306,7 +2363,7 @@ async function main() {
   if (process.exitCode !== 1 && !config.keep && process.env.DUAL_GUI_KEEP !== '1') {
     // Evidence is the deliverable: default keeps everything; only an explicit
     // DUAL_GUI_CLEAN=1 removes a green root.
-    if (process.env.DUAL_GUI_CLEAN === '1') fs.rmSync(paths.root, { recursive: true, force: true })
+    if (process.env.DUAL_GUI_CLEAN === '1') cleanQaRoot(paths)
   }
   // A CLI driver must not linger on half-closed CDP sockets: everything
   // evidence-shaped is already written synchronously, so exit explicitly.
@@ -2315,8 +2372,10 @@ async function main() {
 
 const invokedAsScript = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (invokedAsScript) {
-  main().catch((error) => {
-    console.error(`dual-gui-qa: fatal: ${String(error?.stack ?? error)}`)
+  main().catch(() => {
+    // Setup errors can contain unparsed launch URLs, cookies or caller-supplied
+    // paths. Never print an unsanitized stack/message before token discovery.
+    console.error('dual-gui-qa: fatal: QA setup failed; inspect sanitized QA report/logs if available')
     process.exitCode = 1
   })
 }
