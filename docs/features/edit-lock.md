@@ -472,11 +472,13 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 `plugins/weir-test-harness/src/dual-gui-qa.mjs`（手动分发/PR 触发 workflow `edit-lock-dual-gui.yml`）把上述 macOS 流程固化为跨平台可复用驱动：两独立 `dsh web` 进程（各自 DSH_HOME/profile/loopback 端口/headless Chrome），经真实 CDP 操作，核心矩阵（同域仲裁、重复绑定 Retry 拒绝、真实归属冲突、优雅清理）本机 7 PASS/0 FAIL/3 SKIP，重型矩阵（SIGKILL fail-closed、租约过期＋证明死亡后回收、generation 2 保留＋显式 Continue、generation 3 交接）本机 9 PASS/0 FAIL/1 SKIP；token 全程脱敏，测试结束后无残留进程或预约。
 
-### 三平台实机验收（GitHub Actions，run 38110139730／38142263705）
+### 三平台实机验收（GitHub Actions，runs 38110139730／38142263705／38151998556）
 
 首轮完整三平台绿灯为 [run 38110139730](https://github.com/WeirLabs/weir/actions/runs/38110139730)：macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（双 GUI 重型矩阵）＋ 35/35（**单独 headless** 锁下重命名）。增强后的 [run 38142263705](https://github.com/WeirLabs/weir/actions/runs/38142263705) 三平台各 **15 PASS/0 FAIL/1 SKIP**（新增真实异常／清理恢复／暂停／部分写入状态）＋ **43/43**（锁下重命名的缺失／混合目标）。其报告逐一记录 runner 镜像版本、publisher PID/退出状态、短 Unix socket 或 Win32 命名管道、8 张明暗主题面板截图的非空 PNG/SHA，以及两浏览器每阶段 `Runtime.exceptionThrown A=0 B=0`；截图缺失现在判失败。下载证据存于 `.weir/stable-gate/ci-artifacts-38142263705/`（Windows 工件首次下载 EOF 后重试于 `windows-retry/`）。这些绿色作业**未证明**两个 GUI 内的版本/CAS/sandbox 拒绝，也未证明用户在浏览器里能展开查看部分写入三清单：独立复审仍拒绝关闭 3.5（下述缺口）。
 
 后续本机安装版 **macOS** 双 GUI 驱动 `f3e5f48` 以两个独立 Web 进程在同一外部根中新增真实版本 CAS 与域内沙箱后端拒绝：`--heavy` **17 PASS/0 FAIL/1 SKIP**、`--opt-out` **22 PASS/0 FAIL/1 SKIP**。嵌套会话 cwd 位于同一管理域的 `narrow/`，被拒的沙箱目标在管理域内却在会话可写根外；CAS 与沙箱都是后端已派发、文件字节不变、权威新增 `unknown`/资源围栏并保留锁，**不能**称为写前零操作。浏览器确实选中目标 Session 并展开红色用户命令行显示原生的裸后端错误（该远端调用不携带 stock 工具的 `[sandbox: …]` 方括号标记；QA 不得补造）；权威/PID/字节及两张截图保留在 `.weir/stable-gate/dual-gui-cas-sandbox-mac-20261011/`。独立复审对本次 **macOS Web 3.2** 给出 APPROVE；Linux/Win32 的新增两阶段尚待最终 QA 分支 CI，不从旧 run 推断它们已通过。
+
+最终 QA 分支 SHA `8030cb4` 的 [run 38151998556](https://github.com/WeirLabs/weir/actions/runs/38151998556) **macOS／Ubuntu／Windows 各 17 PASS/0 FAIL/1 SKIP**，独立安装版锁下重命名各 **43/43**，同 SHA 仓库 `ci` 成功。真实双 GUI CAS 和同域窄沙箱后端拒绝均在对应浏览器会话展开原生裸错误，字节不变且已派发操作按 `unknown`/资源围栏保留；恢复阶段页面文字由 `0 attempts` 变为 `1 attempts` 并与权威次数匹配；部分写入原生命令卡在**深浅双主题**下展开完整 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 与 `ownership retained (no rollback)`，锁归属面板同时可见。每平台各 8 张状态双主题＋2 张拒绝截图，下载工件 `.weir/stable-gate/ci-artifacts-38151998556/{macos,ubuntu,windows}/` 的 30 张 PNG 长度与 SHA-256 逐一核对；报告记录 runner 版本、PID/退出、短 Unix socket 或 Win32 命名管道、两浏览器逐阶段零 `Runtime.exceptionThrown` 与无泄露启动 token。主会话目视抽查每平台恢复和部分写入图；3.3–3.5 的**独立二轮复审尚未返回**，故在其给出结论前不称门槛已关闭。
 
 ### 更早的组件级证据
 
@@ -486,6 +488,5 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 本特性仍为**实验特性、默认关闭**。已有三平台双 GUI 仲裁和独立 headless 锁下重命名证据，但以下要求**尚未满足**；不得由上述绿色作业推断稳定版已可发布：
 
-- **Linux/Win32 双 GUI 的版本/CAS 与沙箱拒绝**：macOS 新双 GUI 阶段已真实通过并经独立审查；早先三平台绿色 CI 只覆盖旧矩阵，没有这两项。必须用最终 QA 分支在 Linux/Win32 runner 真正复跑新阶段、核对原生错误可见性、字节/权威围栏、进程及截图，任何红灯均阻塞稳定标签。
-- **面板状态的完整可见性**：三平台已录入八图/平台、双主题及两浏览器逐阶段零 `Runtime.exceptionThrown`，但 3.5 独立复审仍 REJECT：页面 DOM 尚未断言恢复尝试次数确实从零变化；部分写入三份结果只从 QA RPC 读取，截图中的单行命令卡被省略且原先不可展开。产品已把真实批量错误分行使宿主具备原生展开入口，**浏览器点击并核对完整清单/重拍截图**尚未验收。
-- **最终版本与 Desktop 表面**：上述结论只针对安装版 `dsh web` 上的当前 QA 分支；全量集成另有历史 Office 环境基线失败，须在最终 SHA 对照归因。Mac 停用/重启行为、维护面板自身警示与历史标签经独立第二轮审查 APPROVE（安装版双 Web 20/20，组件 47/47），但 Web 不等于 Electron Desktop 包装。本机安装版 Electron 0.2.0-rc.2 在选择 profile 前即取单实例锁且 Desktop Host 端口固定 19387，单设 DSH_HOME 无法安全并行启动第二 Desktop；用户选择保留 Desktop-host smoke 为**转稳定前硬门槛**，须待其安排现有应用的受控维护窗口，绝不擅动当前 GUI。
+- **独立最终复审未结**：上述最终 QA run 已补齐 Linux/Win32 的真实 CAS／沙箱拒绝及三平台页面可见恢复/部分写入矩阵，旧 run 38142263705 对 3.5 的 REJECT 只针对旧 SHA；当前 SHA 的证据须经独立二轮 APPROVE 后才勾选 3.3–3.5，不能只以 GitHub job-level 绿色代替裁决。
+- **最终版本与 Desktop 表面**：安装版全量集成在 SHA `8030cb4` 为 **778/797**，退出 1；19 项全部是同版本已单独复现的 `skill-composition-office` 缺失 `office-docx` 原始候选，`editlock-lsp-rename` 43/43、uncertain 8/8、编辑负例 24/24、协商 7/7，不能宣称整套绿。产品 2650 pass/11 skip、装置 431/431、checkJs、239 文件无泄露的 pack dry-run 均通过。用户已重启实际 Electron 0.2.0-rc.2 Desktop 并确认日常功能正常；只读核实其进程占 19387、Weir 1.1.4 bundle 链接当前仓库且设置 Slot 活跃。此仅证明 Desktop 装载，不是已开启编辑锁的 Desktop 操作验收；用户正在用独立临时工作区手动测试，尚未回报结果。Desktop 单实例锁/固定 19387 仍阻止安全并行第二宿主；绝不擅动正式 profile。Desktop 烟测与独立安全终审未过前，继续**实验、默认关闭**。
