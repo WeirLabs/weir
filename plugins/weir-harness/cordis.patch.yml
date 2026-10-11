@@ -242,7 +242,7 @@
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'weir-harness/todo-driver'
-              # 编辑锁（实验，默认关）：设置 editLockEnabled 开启并重启后生效。
+              # 编辑锁（可选，默认关）：设置 editLockEnabled 开启并重启后生效。
               # 必须排在 hashline-edit / lsp 之前，二者在挂载时捕获锁服务。
               - id: edit-lock
                 name: 'weir-harness/edit-lock'

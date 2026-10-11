@@ -40,7 +40,7 @@ const FIELDS = [
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (live advisory; 0 < soft < hard < 1)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (live maintenance request; not a completion guarantee)' },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)', restart: true },
-  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (experimental, default off; applies after restart)', restart: true },
+  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (optional, default off; applies after restart)', restart: true },
   // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
   // session reads one expiry instead of N countdowns. These keys are policy, not
   // mechanism: the kernel never sees them, the lifecycle resolves them per call.
