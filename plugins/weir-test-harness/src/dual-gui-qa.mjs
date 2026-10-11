@@ -434,6 +434,12 @@ export const PAGE_HELPERS_SOURCE = `(() => {
       if (!workspaceId) return 'not-found'
       const group = document.querySelector('[data-row-key="workspace:' + workspaceId + '"]')
       if (!group) return 'no-workspace-row'
+      // After a restart the group may render collapsed: its session rows (the
+      // target among them) only mount once expanded. Expand before adopting.
+      if (group.getAttribute('aria-expanded') === 'false') {
+        (group.querySelector('button[aria-expanded]') ?? group).click()
+        return 'expanded-workspace'
+      }
       const button = group.querySelector('button[aria-keyshortcuts]') ?? [...group.querySelectorAll('button')].pop()
       if (!button) return 'no-adopt-button'
       button.click()
@@ -876,8 +882,15 @@ export function prepareQaRoot(config) {
 /** Open a session in the conversation view: expand workspace groups, click the
  * session row (stable data-row-key), wait for the Edit Lock entry. */
 async function openSessionInGui(instance, sessionId, timeouts, workspaceId) {
+  // A restarted app re-shows onboarding modals, which cover the sidebar rows.
+  // Keep dismissing while hunting for the row: the API-key dialog can re-render
+  // after the first dismissal (async mount), so a one-shot click is not enough.
+  // Safe: dismissModals never touches the Edit Lock panel's state-changing
+  // buttons.
+  await instance.cdp.evaluate('window.__dualGuiQa.dismissModals()').catch(() => 0)
   try {
     await waitFor(`${instance.name} session row`, async () => {
+      await instance.cdp.evaluate('window.__dualGuiQa.dismissModals()').catch(() => 0)
       const outcome = await instance.cdp.evaluate(`window.__dualGuiQa.openSessionRow(${JSON.stringify(sessionId)}, ${JSON.stringify(workspaceId ?? null)})`)
       return outcome === 'clicked-row' ? true : null
     }, { timeoutMs: timeouts.phaseMs })
@@ -1085,25 +1098,28 @@ async function runMatrix(config, paths, a, b, matrix) {
 
   await phase('restart-reclaim-continue', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
     const deadPid = state.publisher.serverPid
-    // The dead owner's recorded lease is the deterministic reclaim clock. A
-    // bind attempted before leaseUntil parks the restarted process as a
-    // fail-closed client for its whole lifetime (ordinary entry points never
-    // repeat a failed startup), so the wait anchors to the owner document,
-    // not to a flat sleep from an arbitrary point in the phase.
     const deadOwner = readReservationOwner(paths.ws)
     if (!deadOwner || deadOwner.pid !== deadPid || !Number.isFinite(deadOwner.leaseUntil)) {
       throw new Error(`dead owner doc missing/rewritten before restart (pid ${deadOwner?.pid} != ${deadPid}); refusing to drive a reclaim`)
     }
+    // The dead owner's recorded lease is the deterministic reclaim clock, and
+    // it must run out BEFORE the restarted server exists: the reserve attempt
+    // fires during boot/session activation (creation listener / late-mount
+    // catch-up), not at the driver's cue, and an early bind against a
+    // still-current lease parks the process as a fail-closed client for its
+    // whole lifetime (setupAgent never retries a non-duplicate startup
+    // failure; retryBinding only handles binding-duplicate). Evidence: CI run
+    // 38106848992 — restarted pid parked as client ('publisher unreachable'),
+    // owner doc still the dead pid. So: wait first, restart second.
+    const leaseWaitMs = Math.max(0, deadOwner.leaseUntil + 5000 - Date.now())
+    if (leaseWaitMs > 0) await sleep(Math.min(leaseWaitMs, RESERVATION_LEASE_MS + 15000))
     await state.publisher.startServer() // same profile, same port: fresh token
     await state.publisher.openApp()
     const restartedPid = state.publisher.serverPid
-    // Reclaim needs BOTH an expired lease and a fresh bind attempt: nobody
-    // reserves until a session activates. Wait out the recorded lease (+5s
-    // margin for clock/probe slack), then open A's original session in the
-    // restarted GUI (the activation binds the domain, finds the dead owner
-    // provably gone, and takes over).
-    const leaseWaitMs = Math.max(0, deadOwner.leaseUntil + 5000 - Date.now())
-    if (leaseWaitMs > 0) await sleep(Math.min(leaseWaitMs, RESERVATION_LEASE_MS + 15000))
+    // Reclaim needs a fresh bind attempt on the expired lease: nobody reserves
+    // until a session activates, so open A's original session in the restarted
+    // GUI (the activation binds the domain, finds the dead owner provably
+    // gone, and takes over).
     await openSessionInGui(state.publisher, state.aSession, timeouts, state.wsIdA)
     // Deterministic bind trigger: a real edit-lock tool call in A's session
     // drives the shared setupAgent/lazy re-bind path even when the sidebar
