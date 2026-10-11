@@ -37,7 +37,26 @@ jobs:
   dual-gui:
     strategy:
       fail-fast: false
-      matrix: ${{ github.event_name == 'pull_request' && fromJSON('{"os":["ubuntu-latest","windows-latest","macos-latest"],"matrix":["heavy"]}') || fromJSON('{"os":[inputs.os],"matrix":[inputs.matrix]}') }}
+      # PR arm: literal, statically parseable JSON (unchanged; proven by run 38142263705).
+      # Manual arm: format() builds the JSON TEXT at evaluation time, then fromJSON
+      # parses it. A quoted expression string is NEVER substituted -- GitHub does not
+      # interpolate inside string literals -- so the previous
+      # fromJSON('{"os":[inputs.os],...}') handed fromJSON the literal text
+      # `inputs.os` and failed with invalid JSON (actionlint flags exactly that).
+      #
+      # Braces: format() treats {N} as a placeholder, so every LITERAL JSON brace is
+      # doubled. Per actions/runner Format.cs an escaped `{{` emits text through ONE
+      # brace then skips TWO input chars, so `{{`/`}}` collapse to a single brace --
+      # matching the documented format('{{Hello {0}!}}','Mona') -> '{Hello Mona!}'.
+      # Undoubled braces are a trap: `{"os"` happens to be tolerated (it is not a
+      # placeholder), but `{"0":` would parse as placeholder {0} plus junk and yield
+      # malformed JSON instead of throwing. Doubling is the documented, robust form.
+      #
+      # Values sit inside JSON string literals, and both inputs are `choice`-constrained
+      # to bare tokens (ubuntu/windows/macos-latest, core/heavy): no quote, backslash or
+      # control character can terminate the literal, so no escaping of the value is
+      # needed. Any future choice option must satisfy that same constraint.
+      matrix: ${{ github.event_name == 'pull_request' && fromJSON('{"os":["ubuntu-latest","windows-latest","macos-latest"],"matrix":["heavy"]}') || fromJSON(format('{{"os":["{0}"],"matrix":["{1}"]}}', inputs.os, inputs.matrix)) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
