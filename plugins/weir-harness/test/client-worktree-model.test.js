@@ -102,13 +102,40 @@ describe('worktree view model', () => {
     expect(model.commandFor('setup', { id: 'a-001' }, 'skip')).toBe('setup a-001 --skip')
     expect(model.commandFor('clean', { id: 'a-001' }, 'all')).toBe('clean a-001 all')
     expect(model.commandFor('clean', { id: 'a-001' }, 'nuke')).toBe(null)
+    expect(model.commandFor('abandon', { id: 'a-001' })).toBe('abandon a-001')
+    expect(model.commandFor('abandon', { id: 'a-001' }, null)).toBe('abandon a-001')
+    expect(model.commandFor('abandon', { id: 'a-001' }, '')).toBe('abandon a-001')
     expect(model.commandFor('abandon', { id: 'a-001' }, 'keep')).toBe('abandon a-001 keep')
+    expect(model.commandFor('abandon', { id: 'a-001' }, 'worktree')).toBe('abandon a-001 worktree')
+    expect(model.commandFor('abandon', { id: 'a-001' }, 'all')).toBe('abandon a-001 all')
+    expect(model.commandFor('abandon', { id: 'a-001' }, 'nuke')).toBe(null)
+    expect(model.commandFor('clean', { id: 'a-001' })).toBe(null)
     expect(model.commandFor('diff', { id: 'a-001' })).toBe(null)
     expect(model.needsConfirm('land')).toBe(true)
     expect(model.needsConfirm('clean', 'all')).toBe(true)
     expect(model.needsConfirm('clean', 'worktree')).toBe(false)
     expect(model.needsConfirm('abandon', 'keep')).toBe(false)
     expect(model.needsConfirm('check')).toBe(false)
+  })
+
+  it('flags undispatchable command lines and command-layer usage dumps', () => {
+    // lineProblem: anything that is not a non-blank string must be refused
+    // before dispatch (template-string coercion would emit a "null" verb).
+    expect(model.lineProblem(null)).toBe(true)
+    expect(model.lineProblem(undefined)).toBe(true)
+    expect(model.lineProblem(42)).toBe(true)
+    expect(model.lineProblem('')).toBe(true)
+    expect(model.lineProblem('   ')).toBe(true)
+    expect(model.lineProblem('abandon a-001')).toBe(false)
+    expect(model.lineProblem(' on ')).toBe(false)
+    // isUsageDump: only the command layer's usage preamble is mapped; a
+    // normal error text must pass through untouched.
+    expect(model.isUsageDump('Usage: /worktree <command> [options]\n  open <title>')).toBe(true)
+    expect(model.isUsageDump('lane not found: a-001')).toBe(false)
+    expect(model.isUsageDump(' Usage: /worktree')).toBe(false)
+    expect(model.isUsageDump(null)).toBe(false)
+    expect(model.isUsageDump(undefined)).toBe(false)
+    expect(model.isUsageDump(7)).toBe(false)
   })
 
   it('renders next hints for people', () => {
