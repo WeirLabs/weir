@@ -24,14 +24,22 @@ on:
         options:
           - core
           - heavy
+  # PR trigger: GitHub only registers workflow_dispatch workflows from the
+  # default branch, so pre-release acceptance runs as a draft PR check with an
+  # explicit three-OS matrix. Heavy acceptance is the default there because the
+  # matrix exists to block the stable label, not to gate every PR.
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
   dual-gui:
-    runs-on: ${{ inputs.os }}
-    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ github.event_name == 'pull_request' && fromJSON('{"os":["ubuntu-latest","windows-latest","macos-latest"],"matrix":["heavy"]}') || fromJSON('{"os":[inputs.os],"matrix":[inputs.matrix]}') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +68,7 @@ jobs:
         env:
           DUAL_GUI_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
           DUAL_GUI_ROOT: ${{ runner.temp }}/dual-gui-qa
-          DUAL_GUI_MATRIX: ${{ inputs.matrix }}
+          DUAL_GUI_MATRIX: ${{ matrix.matrix }}
           # Cold profile creation + first boot can exceed the dev-machine
           # budget on a shared runner.
           DUAL_GUI_BOOT_TIMEOUT_MS: '300000'
@@ -73,6 +81,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dual-gui-qa-${{ inputs.os }}-${{ inputs.matrix }}
+          name: dual-gui-qa-${{ matrix.os }}-${{ matrix.matrix }}
           path: ${{ runner.temp }}/dual-gui-qa
           if-no-files-found: warn
