@@ -24,7 +24,9 @@ function syntheticObs() {
 // and by an installed-CLI run, not a frozen timestamp/manager incarnation.
 // editlock-hashline-negatives likewise asserts a live authority snapshot and
 // post-run bytes, so it has no committed replay fixture (precedent 62c0ee2).
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-hashline-negatives'].includes(scenario.id))
+// editlock-negotiation needs an actual 120s Host timeout and disposable fault
+// fixture; a frozen trace cannot establish delivery failure or holder liveness.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-hashline-negatives', 'editlock-negotiation'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {
