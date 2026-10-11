@@ -27,6 +27,7 @@ import {
   parseLaunchUrl,
   prepareQaRoot,
   readReservationOwner,
+  renameFixtureSources,
   resolveConfig,
   resolveChromePath,
   resolveDshInvocation,
@@ -275,6 +276,24 @@ describe('fixtureSources', () => {
     fs.writeFileSync(file, sources['index.js'])
     execFileSync(process.execPath, ['--check', file])
   })
+  it('carries the pause and midbatch-rename verbs plus the armed writeText fault', () => {
+    const sources = fixtureSources({ workspace: '/qa/root/ws', homes: [] })
+    const index = sources['index.js']
+    assert.ok(index.includes('edit_lock_pause'), 'pause verb')
+    assert.ok(index.includes('rename-midbatch'), 'rename-midbatch verb')
+    assert.ok(index.includes('lsp_rename'), 'real lsp_rename tool call')
+    assert.ok(index.includes('lsp_symbols'), 'document outline precedes the rename')
+    assert.ok(index.includes('MIDBATCH_FILES'), 'midbatch fault targets baked in')
+    assert.ok(index.includes('ctx.fs.writeText'), 'wraps the real host writeText')
+    assert.ok(index.includes("inject = ['agents', 'commands', 'tools', 'fs']"), 'fs service injected')
+    // The verb splitter regex must survive template escaping (\s, not s).
+    assert.ok(index.includes('split(/\\s+/)'), 'whitespace split survived codegen')
+    assert.ok(index.includes('QA midbatch fault'), 'deterministic second-file fault')
+  })
+  it('rejects non-bare file arguments inside the fixture', () => {
+    const index = fixtureSources({ workspace: '/qa/root/ws', homes: [] })['index.js']
+    assert.ok(index.includes('Only bare fixture file names are allowed'))
+  })
 })
 
 describe('settingsPatchSource', () => {
@@ -282,6 +301,17 @@ describe('settingsPatchSource', () => {
     const patch = settingsPatchSource()
     assert.ok(patch.includes('editLockEnabled: true'))
     assert.ok(patch.includes('editLockAutoResume: false'))
+  })
+  it('points the typescript family at the workspace mock LSP server when given one', () => {
+    const patch = settingsPatchSource({ workspace: '/qa/root/ws' })
+    assert.ok(patch.includes('lspEnabled: true'), 'capability gate on')
+    assert.ok(patch.includes('lspServers: !!js'), 'server map evaluated in the server process')
+    assert.ok(patch.includes('/qa/root/ws/mock-lsp-server.js'), 'mock server path baked in')
+    assert.ok(patch.includes('process.execPath'), 'runtime node launches the mock')
+  })
+  it('keeps the LSP overlay out when no workspace is given', () => {
+    const patch = settingsPatchSource()
+    assert.ok(!patch.includes('lspServers'))
   })
 })
 
@@ -291,6 +321,11 @@ describe('PAGE_HELPERS_SOURCE', () => {
       assert.ok(PAGE_HELPERS_SOURCE.includes(name), name)
     }
     assert.ok(!PAGE_HELPERS_SOURCE.includes('token='))
+  })
+  it('exposes the theme and panel-marker helpers for the panel-states phases', () => {
+    for (const name of ['theme', 'panelMarkers', 'pausedClockMatches', 'data-weir-edit-lock-paused-until', 'data-weir-edit-lock-cleanup', 'data-weir-edit-lock-ownership-hint']) {
+      assert.ok(PAGE_HELPERS_SOURCE.includes(name), name)
+    }
   })
 })
 
@@ -331,6 +366,16 @@ describe('createTokenGate', () => {
     gate.arm()
     gate.push('x')
     assert.deepEqual(written, ['x'])
+  })
+})
+
+describe('renameFixtureSources', () => {
+  it('pins the editlock-lsp-rename fixture bytes and workspace manifests', () => {
+    const files = renameFixtureSources()
+    assert.equal(files['probe.ts'], 'export const fixtureSymbol = 1\n')
+    assert.equal(files['probe-other.ts'], 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n')
+    assert.ok('package.json' in files && 'tsconfig.json' in files, 'typescript family manifests')
+    assert.ok('qa-attention.ts' in files, 'attention fixture file')
   })
 })
 

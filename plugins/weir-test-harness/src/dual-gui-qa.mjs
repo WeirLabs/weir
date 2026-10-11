@@ -19,6 +19,16 @@
 //     -> restart same profile: reservation reclaimed, generation retained,
 //        real Continue editing click restores the same session
 //     -> old client rebinds stopped, still denied until release -> gen N+1
+//     -> panel-states: real-browser presentation acceptance, each state in
+//        dark AND light theme with DOM marker assertions and a zero-console-
+//        exception gate per phase:
+//        attention/abnormal (a genuine provider-error turn while holding a
+//        lock), recovering (the cleanup-only driver's first real attempt),
+//        paused (real edit_lock_pause, absolute deadline rendered), and
+//        partial-write (real lsp_rename batch with the shipped writeText
+//        midbatch-fault probe: written/not-written/uncertain + retained
+//        locks). Theme flips ride the GUI's system-preference sensing via
+//        CDP Emulation.setEmulatedMedia, proven by body[data-ds-dark-theme].
 //
 // Hard invariants (learned from .weir/qa/stable-dual-gui, do not relax):
 //   * managementRootFor(workspace) === realpath(workspace) before any boot;
@@ -283,6 +293,7 @@ export function sha256File(file) {
  * and profile homes are baked in as literals. Self-refuses outside the
  * throwaway homes/root (never install into a formal profile). */
 export function fixtureSources({ workspace, homes }) {
+  const midbatchFiles = ['probe.ts', 'probe-other.ts'].map((name) => path.join(workspace, name))
   const manifest = {
     name: 'weir-dual-gui-qa-command-fixture',
     version: '0.0.1',
@@ -301,10 +312,14 @@ import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 
 export const name = 'weir-dual-gui-qa-command'
-export const inject = ['agents', 'commands', 'tools']
+export const inject = ['agents', 'commands', 'tools', 'fs']
 
 const ROOT = ${JSON.stringify(workspace)}
 const QA_HOMES = ${JSON.stringify(homes)}
+// Midbatch-rename fault targets (the editlock-lsp-rename probe approach: wrap
+// the REAL ctx.fs.writeText, fail the second fixture-file write of an armed
+// batch — the first write genuinely lands, the second is never completed).
+const MIDBATCH_FILES = ${JSON.stringify(midbatchFiles)}
 
 export function apply(ctx) {
   if (process.env.WEIR_QA_FIXTURE !== '1' ||
@@ -312,10 +327,32 @@ export function apply(ctx) {
       realpathSync.native(ROOT) !== ROOT) {
     throw new Error('QA command refuses a non-isolated profile or workspace')
   }
+  // One-shot midbatch fault, armed only by the rename-midbatch verb.
+  let midbatch = null
+  const writeText = ctx.fs?.writeText
+  if (typeof writeText !== 'function') throw new Error('QA fixture requires the host filesystem writeText')
+  ctx.fs.writeText = async function (target, ...rest) {
+    const key = target?.targetKey
+    if (midbatch && typeof key === 'string' && MIDBATCH_FILES.includes(key)) {
+      midbatch.count += 1
+      if (midbatch.count >= 2) {
+        midbatch = null
+        throw new Error('QA midbatch fault: simulated I/O failure on the second batch file')
+      }
+    }
+    return writeText.call(this, target, ...rest)
+  }
+  const run = (agent, invocation, name, args) => ctx.agents.withInitiator(agent, () => ctx.tools.execute({
+    name,
+    arguments: args,
+    callId: \`qa-\${randomUUID()}\`,
+    agent,
+    signal: invocation.signal,
+  }))
   const off = ctx.commands.register({
     name: 'qa-edit',
-    description: 'QA-only user action exercising actual managed editors on one disposable file.',
-    input: { hint: 'acquire | write | release | status' },
+    description: 'QA-only user action exercising actual managed editors on one disposable workspace.',
+    input: { hint: 'acquire [file] | write | release [file] | status | pause [min] | rename-midbatch' },
     async handler(invocation) {
       try {
         const agent = invocation.agent
@@ -323,20 +360,44 @@ export function apply(ctx) {
             realpathSync.native(agent.session?.header?.cwd) !== ROOT) {
           throw new Error('QA command requires an exact live agent in the external workspace')
         }
-        const verb = String(invocation.rawInput ?? '').trim()
+        const [verb, ...rest] = String(invocation.rawInput ?? '').trim().split(/\\s+/).filter(Boolean)
+        // File arguments are bare fixture basenames only — no separators, no
+        // escapes from the disposable workspace.
+        const file = rest[0]
+        if (file !== undefined && !/^[A-Za-z0-9._-]+$/.test(file)) throw new Error('Only bare fixture file names are allowed')
+        if (verb === 'pause') {
+          const minutes = file === undefined ? 10 : Number(file)
+          const result = await run(agent, invocation, 'edit_lock_pause', { minutes })
+          return result.isError
+            ? { kind: 'error', text: \`QA pause refused: \${result.error?.message ?? 'unknown'}\` }
+            : { kind: 'success', text: \`QA pause succeeded: \${JSON.stringify(result.value ?? {})}\` }
+        }
+        if (verb === 'rename-midbatch') {
+          // Same genuine chain as the editlock-lsp-rename scenario: outline the
+          // document (opens it), arm the one-shot fault, then run the real
+          // lsp_rename — the batch fails on the SECOND file's write.
+          const outline = await run(agent, invocation, 'lsp_symbols', { file_path: 'probe.ts' })
+          if (outline.isError) return { kind: 'error', text: \`QA symbols refused: \${outline.error?.message ?? 'unknown'}\` }
+          midbatch = { count: 0 }
+          try {
+            const result = await run(agent, invocation, 'lsp_rename', { file_path: 'probe.ts', line: 1, character: 14, new_name: 'qaMidBatch' })
+            return result.isError
+              ? { kind: 'error', text: \`QA rename refused: \${result.error?.message ?? 'unknown'}\` }
+              : { kind: 'success', text: \`QA rename succeeded: \${JSON.stringify(result.value ?? {})}\` }
+          } finally {
+            // A fault that never fired (batch refused pre-write) must not leak
+            // into a later phase.
+            if (midbatch && midbatch.count === 0) midbatch = null
+          }
+        }
         const names = { acquire: 'edit_lock_acquire', write: 'write', release: 'edit_lock_release', status: 'edit_lock_status' }
         const tool = names[verb]
-        if (!tool) throw new Error('Only acquire, write, release or status are allowed')
+        if (!tool) throw new Error(\`Only acquire, write, release, status, pause or rename-midbatch are allowed (verb \${JSON.stringify(verb)})\`)
+        const target = file ?? 'qa-shared.ts'
         const argumentsValue = verb === 'status' ? {} : verb === 'write'
           ? { file_path: 'qa-shared.ts', content: 'export const shared = 2\\n' }
-          : { file_path: 'qa-shared.ts' }
-        const result = await ctx.agents.withInitiator(agent, () => ctx.tools.execute({
-          name: tool,
-          arguments: argumentsValue,
-          callId: \`qa-\${randomUUID()}\`,
-          agent,
-          signal: invocation.signal,
-        }))
+          : { file_path: target }
+        const result = await run(agent, invocation, tool, argumentsValue)
         return result.isError
           ? { kind: 'error', text: \`QA \${verb} refused: \${result.error?.message ?? 'unknown'}\` }
           : { kind: 'success', text: \`QA \${verb} succeeded: \${JSON.stringify(result.value ?? {})}\` }
@@ -345,14 +406,29 @@ export function apply(ctx) {
       }
     },
   })
-  return () => { off() }
+  return () => { off(); ctx.fs.writeText = writeText }
 }
 `
   return { 'package.json': `${JSON.stringify(manifest, null, 2)}\n`, 'cordis.patch.yml': patch, 'index.js': index }
 }
 
-/** Settings overlay: edit lock on, auto-resume off, side features quiet. */
-export function settingsPatchSource() {
+/** Settings overlay: edit lock on, auto-resume off, side features quiet, and
+ * the LSP capability gate open with the typescript family pointed at the mock
+ * protocol server copied into the workspace (the same fixture the
+ * editlock-lsp-rename scenario uses — the GUI panel-states phases drive the
+ * real client → server → WorkspaceEdit → publishBatch chain). */
+export function settingsPatchSource({ workspace } = {}) {
+  const mockServer = workspace ? path.join(workspace, 'mock-lsp-server.js') : null
+  const lspOverlay = mockServer
+    // Folded block scalar: the expression carries `: ` pairs that would break
+    // a plain YAML scalar (boot failure: "bad indentation of a mapping entry").
+    ? `    lspEnabled: true
+    # !!js evaluates in the server process: process.execPath is the DSH runtime
+    # node, so the mock server launches on any platform without a hardcoded path.
+    lspServers: !!js >-
+      JSON.stringify({ typescript: { command: process.execPath, args: ['${mockServer}'], installHint: 'qa-fixture' } })
+`
+    : ''
   return `# Test-only overlay. Never load in the user's desktop profile.
 - id: weir-settings
   name: 'weir-harness/settings'
@@ -362,7 +438,7 @@ export function settingsPatchSource() {
     notifyEnabled: false
     worktreeEnabled: false
     intentGateClassifier: regex
-# Mark the preview welcome notice as seen so its modal never covers the panel
+${lspOverlay}# Mark the preview welcome notice as seen so its modal never covers the panel
 # in screenshots (same suppression the manual QA profiles carried).
 - id: ui-settings-general
   name: '@deepseek-ai/dsh-client-ui-settings-general'
@@ -411,8 +487,12 @@ export const PAGE_HELPERS_SOURCE = `(() => {
     openPanel() {
       const entry = document.querySelector('[data-weir-edit-lock]')
       if (!entry) return 'no-entry'
-      if (entry.getAttribute('aria-expanded') !== 'true') entry.click()
-      return 'clicked'
+      if (entry.getAttribute('aria-expanded') !== 'true') { entry.click(); return 'clicked' }
+      // Already open: the popover only re-reads the view on toggle/action, so
+      // a phase that changed the authority state must nudge the refresh button
+      // or the panel keeps rendering the PREVIOUS state (panel-paused miss).
+      document.querySelector('[data-weir-edit-lock-action="refresh"]')?.click()
+      return 'refreshed'
     },
     clickPrimary() {
       const btn = document.querySelector('[data-weir-edit-lock-action="primary"]')
@@ -444,6 +524,53 @@ export const PAGE_HELPERS_SOURCE = `(() => {
       if (!button) return 'no-adopt-button'
       button.click()
       return 'adopt-clicked'
+    },
+    // Theme state. The GUI's theme switch is Settings > General > Appearance
+    // (three cubes calling theme.setTheme, persisted as the ui-theme config
+    // form's preference field: light | dark | system, default 'system').
+    // With no override the throwaway profile follows the OS via the runtime's
+    // prefers-color-scheme matchMedia sensing — the driver flips THAT genuine
+    // path with CDP Emulation.setEmulatedMedia, and these markers prove the
+    // palette actually applied: body[data-ds-dark-theme] selects the dark
+    // token set, html[data-ds-theme-source] publishes the preference source.
+    theme() {
+      return {
+        dark: document.body?.hasAttribute('data-ds-dark-theme') === true,
+        source: document.documentElement.getAttribute('data-ds-theme-source'),
+      }
+    },
+    // Full panel marker read: structured state + every localized text block
+    // the panel can render (cleanup-only, paused deadline, recovery usage,
+    // ownership honesty hint, per-file rows with status and reason).
+    panelMarkers() {
+      const text = (sel) => document.querySelector(sel)?.textContent?.trim() ?? null
+      const entry = document.querySelector('[data-weir-edit-lock]')
+      return {
+        state: entry?.getAttribute('data-weir-edit-lock-state') ?? null,
+        open: entry?.getAttribute('aria-expanded') === 'true',
+        panel: Boolean(document.querySelector('[data-weir-edit-lock-panel]')),
+        summary: text('[data-weir-edit-lock-summary]'),
+        cleanup: text('[data-weir-edit-lock-cleanup]'),
+        pausedUntil: text('[data-weir-edit-lock-paused-until]'),
+        recovery: text('[data-weir-edit-lock-recovery]'),
+        pauseHint: text('[data-weir-edit-lock-pause]'),
+        ownershipHint: text('[data-weir-edit-lock-ownership-hint]'),
+        error: text('[data-weir-edit-lock-error]'),
+        files: [...document.querySelectorAll('[data-weir-edit-lock-file]')].map((el) => ({
+          path: el.getAttribute('data-weir-edit-lock-file'),
+          text: (el.textContent || '').trim(),
+          reason: el.querySelector('[data-weir-edit-lock-file-reason]')?.textContent ?? null,
+        })),
+      }
+    },
+    // The paused deadline must render as an absolute clock in the page's own
+    // locale (the panel formats with toLocaleTimeString hour/minute).
+    pausedClockMatches(ts) {
+      const el = document.querySelector('[data-weir-edit-lock-paused-until]')
+      if (!el || !Number.isFinite(ts)) return false
+      let clock = ''
+      try { clock = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } catch { return false }
+      return clock.length > 0 && (el.textContent || '').includes(clock)
     },
     dismissModals() {
       // Best-effort: fresh profiles greet with a welcome/API-key modal that
@@ -612,7 +739,7 @@ class Cdp {
 }
 
 /** One dual-GUI instance: server process + dedicated headless Chrome. */
-class GuiInstance {
+export class GuiInstance {
   constructor(name, config) {
     this.name = name
     this.config = config
@@ -624,6 +751,9 @@ class GuiInstance {
     this.stdoutBuffer = ''
     this.serverPid = null
     this.secretList = []
+    // Runtime.exceptionThrown events observed since boot; panel-states phases
+    // assert a zero delta per phase (console exceptions are a gate, not noise).
+    this.exceptions = 0
   }
 
   get secrets() { return this.secretList }
@@ -741,6 +871,7 @@ class GuiInstance {
       if (method === 'Runtime.consoleAPICalled') {
         this.logEvent('console', { type: params.type, args: (params.args ?? []).map((a) => a.value ?? a.description ?? a.type) })
       } else if (method === 'Runtime.exceptionThrown') {
+        this.exceptions += 1
         const d = params.exceptionDetails ?? {}
         this.logEvent('exception', { text: d.text, description: d.exception?.description ?? null, url: d.url, line: d.lineNumber })
       }
@@ -792,6 +923,25 @@ class GuiInstance {
       await this.cdp.screenshot(file)
     } catch { /* screenshots are evidence aids, never gates */ }
     return file
+  }
+
+  /** Read the structured panel markers (state attr + every localized block). */
+  async markers() {
+    const value = await this.cdp.evaluate('window.__dualGuiQa.panelMarkers()')
+    if (!value || typeof value !== 'object') throw new Error(`${this.name}: panelMarkers returned no payload`)
+    return value
+  }
+
+  /** Flip the OS color scheme the GUI's system-theme preference genuinely
+   * follows (see the theme() helper's note for the full mechanism), and prove
+   * the palette applied by waiting for the body palette attribute. */
+  async setColorScheme(scheme) {
+    if (scheme !== 'dark' && scheme !== 'light') throw new Error(`unknown scheme ${scheme}`)
+    await this.cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] })
+    return waitFor(`${this.name} ${scheme} theme`, async () => {
+      const theme = await this.cdp.evaluate('window.__dualGuiQa.theme()')
+      return theme?.dark === (scheme === 'dark') ? theme : null
+    }, { timeoutMs: this.config.timeouts.phaseMs })
   }
 
   /** Stop the browser half first (cheap, no authority state). */
@@ -849,6 +999,20 @@ export function resolveConfig({ argv = [], env = process.env, platform = process
   }
 }
 
+/** Rename-fixture files the panel-states phases need inside the workspace:
+ * the mock LSP protocol server (copied from this package; it reads its two
+ * fixture files as siblings of the script) plus the documents it edits and
+ * the manifests the typescript server family key on. Content matches the
+ * editlock-lsp-rename scenario fixtures byte for byte. */
+export function renameFixtureSources() {
+  return {
+    'probe.ts': 'export const fixtureSymbol = 1\n',
+    'probe-other.ts': 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n',
+    'qa-attention.ts': 'export const attention = 1\n',
+    'package.json': '{"name":"dual-gui-qa-ws","private":true}\n',
+    'tsconfig.json': '{}\n',
+  }
+}
 /** Materialize the QA root: shared workspace, fixture, settings patch, dirs. */
 export function prepareQaRoot(config) {
   const paths = {
@@ -859,12 +1023,20 @@ export function prepareQaRoot(config) {
     logs: path.join(config.root, 'logs'),
     settingsPatch: path.join(config.root, 'edit-lock-on.patch.yml'),
     sharedFile: path.join(config.root, 'ws', 'qa-shared.ts'),
+    attentionFile: path.join(config.root, 'ws', 'qa-attention.ts'),
+    probeFile: path.join(config.root, 'ws', 'probe.ts'),
+    probeOtherFile: path.join(config.root, 'ws', 'probe-other.ts'),
   }
   fs.mkdirSync(paths.ws, { recursive: true })
   fs.mkdirSync(paths.fixture, { recursive: true })
   fs.mkdirSync(paths.shots, { recursive: true })
   fs.mkdirSync(paths.logs, { recursive: true })
   if (!fs.existsSync(paths.sharedFile)) fs.writeFileSync(paths.sharedFile, 'export const shared = 1\n')
+  // Rename fixtures + mock LSP server live INSIDE the workspace (the mock reads
+  // its fixture files as siblings of the script). Rewritten every run: the
+  // partial-write phase mutates probe.ts, so a reused --root must restart clean.
+  for (const [name, content] of Object.entries(renameFixtureSources())) fs.writeFileSync(path.join(paths.ws, name), content)
+  fs.copyFileSync(path.join(HERE, 'mock-lsp-server.js'), path.join(paths.ws, 'mock-lsp-server.js'))
   // Isolation gate: the workspace must be its own management root, otherwise
   // the sessions would bind to an enclosing repository's authority and the
   // whole dual-GUI run would be a false isolation.
@@ -875,13 +1047,13 @@ export function prepareQaRoot(config) {
   const homes = [path.join(config.root, 'home-a'), path.join(config.root, 'home-b')]
   const fixture = fixtureSources({ workspace: paths.ws, homes })
   for (const [name, content] of Object.entries(fixture)) fs.writeFileSync(path.join(paths.fixture, name), content)
-  fs.writeFileSync(paths.settingsPatch, settingsPatchSource())
+  fs.writeFileSync(paths.settingsPatch, settingsPatchSource({ workspace: paths.ws }))
   return paths
 }
 
 /** Open a session in the conversation view: expand workspace groups, click the
  * session row (stable data-row-key), wait for the Edit Lock entry. */
-async function openSessionInGui(instance, sessionId, timeouts, workspaceId) {
+export async function openSessionInGui(instance, sessionId, timeouts, workspaceId) {
   // A restarted app re-shows onboarding modals, which cover the sidebar rows.
   // Keep dismissing while hunting for the row: the API-key dialog can re-render
   // after the first dismissal (async mount), so a one-shot click is not enough.
@@ -915,9 +1087,46 @@ async function clickPrimaryAction(instance, timeouts) {
   }, { timeoutMs: timeouts.phaseMs })
   await instance.cdp.evaluate('window.__dualGuiQa.clickPrimary()')
 }
+/** Open the panel popover (refreshing an already-open one), then poll the
+ * panel markers until `predicate` holds. The popover re-reads the view only on
+ * toggle/action and the refresh lands asynchronously, so marker assertions
+ * must POLL — a single read races the refresh and sees the previous state
+ * (panel-paused missed its paused-until line exactly this way). */
+async function waitPanelMarkers(instance, label, predicate, timeouts) {
+  await instance.cdp.evaluate('window.__dualGuiQa.openPanel()')
+  let last = null
+  const result = await waitFor(`${instance.name} ${label}`, async () => {
+    await instance.cdp.evaluate('window.__dualGuiQa.openPanel()').catch(() => null)
+    const markers = await instance.markers()
+    last = markers
+    return markers?.panel === true && predicate(markers) ? markers : null
+  }, { timeoutMs: timeouts.phaseMs, intervalMs: 500 }).catch((error) => {
+    throw new Error(`${error.message}; last markers=${JSON.stringify(last)}`)
+  })
+  return result
+}
+
+/** Screenshot the current view in dark theme, then light, then restore dark.
+ * Theme switching rides the GUI's genuine system-preference path (see the
+ * theme() page helper for the mechanism); each flip is proven by the body
+ * palette attribute before the shutter fires. */
+async function shotBothThemes(instance, name) {
+  await instance.setColorScheme('dark')
+  await instance.shot(`${name}-dark`)
+  await instance.setColorScheme('light')
+  await instance.shot(`${name}-light`)
+  await instance.setColorScheme('dark')
+}
+
+/** Gate: zero page exceptions inside one phase's window. */
+function assertNoNewExceptions(instance, since, label) {
+  if (instance.exceptions !== since) {
+    throw new Error(`${label}: ${instance.exceptions - since} console exception(s) during the phase (see ${instance.eventsFile})`)
+  }
+}
 
 /** Poll the live view until `predicate` holds; returns the matching view. */
-async function waitView(instance, sessionId, label, predicate, timeouts) {
+export async function waitView(instance, sessionId, label, predicate, timeouts) {
   return waitFor(`${instance.name} ${label}`, async () => {
     const payload = await instance.view(sessionId)
     if (payload?.ok !== true) return null
@@ -934,7 +1143,7 @@ export function generationOf(text) {
   return match ? Number(match[1]) : null
 }
 /** Run one QA fixture command in a session; returns { kind, text }. */
-async function qaEdit(instance, sessionId, verb) {
+export async function qaEdit(instance, sessionId, verb) {
   const result = await instance.rpc('commands/execute', { agentId: sessionId, line: `/qa-edit ${verb}`, submittedAttachments: [] })
   if (result.ok !== true) throw new Error(`${instance.name}: /qa-edit ${verb} rpc failed: ${JSON.stringify(result.error ?? result)}`)
   const commandResult = result.value?.result ?? result.value
@@ -945,7 +1154,7 @@ async function qaEdit(instance, sessionId, verb) {
 }
 
 /** Create the workspace (idempotent) and one titled session in a GUI. */
-async function createSession(instance, workspaceId, agentPreset, title) {
+export async function createSession(instance, workspaceId, agentPreset, title) {
   const created = await instance.rpc('session/create', { request: { workspaceId, agentPreset } })
   if (created.ok !== true || typeof created.value?.sessionId !== 'string') {
     throw new Error(`${instance.name}: session/create failed: ${JSON.stringify(created.error ?? created)}`)
@@ -1073,6 +1282,148 @@ async function runMatrix(config, paths, a, b, matrix) {
     }
     if (sha256File(paths.sharedFile) !== state.initialSha) throw new Error('shared file bytes changed during handoff')
     return 'A released generation 1; B2 holds generation 2'
+  })
+
+  // -------------------------------------------------------------------
+  // Panel-state acceptance (heavy only): the abnormal/attention, recovering,
+  // paused and partial-write presentations produced through REAL authority
+  // flows (a genuine provider-error turn, the real edit_lock_pause tool, the
+  // real lsp_rename batch chain with the shipped writeText-fault probe
+  // approach) — never injected view data. Each state is screenshotted in dark
+  // AND light theme and asserted through locale-independent DOM markers.
+  // Theme mechanism: the GUI's own switch is Settings > General > Appearance
+  // (theme.setTheme persists ui-theme.preference light|dark|system, default
+  // 'system'); the throwaway profiles carry no override, so the runtime's
+  // prefers-color-scheme sensing decides — the driver flips that genuine path
+  // with CDP Emulation.setEmulatedMedia and proves application via
+  // body[data-ds-dark-theme] before every screenshot.
+  // -------------------------------------------------------------------
+
+  await phase('panel-states-setup', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+    // A third session in the PUBLISHER process: the recovery driver and the
+    // paused-until projection are owning-mount, in-memory state, so the
+    // abnormal/paused states are only visible where the session lives.
+    state.a3Session = await createSession(state.publisher, state.wsIdA, 'weir', 'QA panel states A3')
+    const acquire = await qaEdit(state.publisher, state.a3Session, 'acquire qa-attention.ts')
+    if (acquire.kind !== 'success') throw new Error(`A3 acquire refused: ${acquire.text}`)
+    await openSessionInGui(state.publisher, state.a3Session, timeouts, state.wsIdA)
+    return `A3 holds qa-attention.ts (generation 1) in publisher pid ${state.publisher.serverPid}`
+  })
+
+  await phase('panel-attention-abnormal', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+    const exBase = state.publisher.exceptions
+    // Genuine provider error: the throwaway profile has no LLM credential, so
+    // a real user prompt runs a real turn that ends error{LlmFailure} while
+    // A3 holds the file — the durable turn/end classification (recovery.js
+    // onTurnEnd, kind 'error') marks the lock abnormal. No view injection.
+    const prompt = await state.publisher.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId: state.a3Session, mode: 'queue', content: [{ type: 'text', text: 'QA: provoke a provider error while holding a lock' }] } })
+    if (prompt.ok !== true) throw new Error(`session/prompt rejected: ${JSON.stringify(prompt.error ?? prompt)}`)
+    await waitView(state.publisher, state.a3Session, 'attention after provider error', (view) =>
+      view?.state === 'attention' && view?.cleanupOnly === true
+        && view?.files?.some((file) => file.mine === true && file.status === 'abnormal' && file.detail?.path === paths.attentionFile), timeouts)
+    await openSessionInGui(state.publisher, state.a3Session, timeouts, state.wsIdA)
+    const markers = await waitPanelMarkers(state.publisher, 'attention markers', (m) =>
+      m.state === 'attention' && typeof m.cleanup === 'string' && m.cleanup.length > 0
+        && m.files.some((file) => file.path === paths.attentionFile), timeouts)
+    const row = markers.files.find((file) => file.path === paths.attentionFile)
+    await shotBothThemes(state.publisher, 'panel-attention')
+    assertNoNewExceptions(state.publisher, exBase, 'panel-attention-abnormal')
+    return `attention + cleanup-only via genuine provider error; abnormal row: ${row.text.slice(0, 80)}`
+  })
+
+  await phase('panel-recovering', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+    const exBase = state.publisher.exceptions
+    // Immediately after classification the cleanup-only recovery driver owns
+    // the session: its first attempt fires after the 15s backoff and fails
+    // again (still no provider), charging attempts durably. attempts >= 1
+    // proves the automatic recovery genuinely ran before any user action.
+    const recovering = await waitView(state.publisher, state.a3Session, 'recovery attempt charged', (view) =>
+      view?.state === 'attention' && view?.cleanupOnly === true && (view?.recovery?.attempts ?? 0) >= 1, timeouts)
+    const markers = await waitPanelMarkers(state.publisher, 'recovering markers', (m) =>
+      m.state === 'attention' && typeof m.cleanup === 'string' && m.cleanup.length > 0
+        && typeof m.recovery === 'string' && m.recovery.length > 0, timeouts)
+    await shotBothThemes(state.publisher, 'panel-recovering')
+    assertNoNewExceptions(state.publisher, exBase, 'panel-recovering')
+    return `cleanup-only recovery visible: attempts=${recovering.recovery.attempts}, elapsed=${recovering.recovery.elapsedSeconds}s; panel recovery line rendered`
+  })
+
+  await phase('panel-paused', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+    const exBase = state.publisher.exceptions
+    // edit_lock_pause through the real tool path while the recovery driver is
+    // active: the owning mount projects an ABSOLUTE pausedUntil deadline.
+    const pause = await qaEdit(state.publisher, state.a3Session, 'pause 10')
+    if (pause.kind !== 'success' || !pause.text.includes('Paused for')) throw new Error(`pause refused: ${pause.text}`)
+    const paused = await waitView(state.publisher, state.a3Session, 'pausedUntil projected', (view) =>
+      view?.state === 'attention' && Number.isFinite(view?.pausedUntil) && view.pausedUntil > Date.now(), timeouts)
+    const aheadMs = paused.pausedUntil - Date.now()
+    if (aheadMs < 8 * 60_000 || aheadMs > 11 * 60_000) throw new Error(`pausedUntil is not the ~10 minute absolute deadline: ${aheadMs}ms ahead`)
+    const markers = await waitPanelMarkers(state.publisher, 'paused markers', (m) =>
+      m.state === 'attention' && typeof m.pausedUntil === 'string' && m.pausedUntil.length > 0, timeouts)
+    const clockOk = await state.publisher.cdp.evaluate(`window.__dualGuiQa.pausedClockMatches(${JSON.stringify(paused.pausedUntil)})`)
+    if (clockOk !== true) throw new Error(`panel paused line does not carry the absolute deadline clock: ${markers.pausedUntil}`)
+    await shotBothThemes(state.publisher, 'panel-paused')
+    assertNoNewExceptions(state.publisher, exBase, 'panel-paused')
+    return `paused until ${new Date(paused.pausedUntil).toISOString()}; panel renders the absolute clock in both themes`
+  })
+
+  await phase('panel-partial-write', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
+    const exBase = state.publisher.exceptions
+    // The editlock-lsp-rename midbatch approach in a real GUI session: real
+    // /lsp on command, real protocol-fixture server, real lsp_rename batch —
+    // with the shipped probe approach (wrap the real ctx.fs.writeText, fault
+    // the second fixture-file write) armed by the QA command.
+    state.a4Session = await createSession(state.publisher, state.wsIdA, 'weir', 'QA panel states A4')
+    // A4 must not stay blank: the post-restart reclaim opens aSession through
+    // the workspace's adopt-NEWEST-blank button, and a blank A4 (created later
+    // than aSession) would hijack that path — openSessionInGui then times out
+    // because aSession's row never renders. One real (providerless, failing)
+    // turn with ZERO held locks flips the durable blank bit without any
+    // edit-lock classification; wait for the turn to fully settle so the
+    // command-driven rename below never races a running turn.
+    const warm = await state.publisher.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId: state.a4Session, mode: 'queue', content: [{ type: 'text', text: 'QA: warm this session so it is no longer blank' }] } })
+    if (warm.ok !== true) throw new Error(`A4 warm prompt rejected: ${JSON.stringify(warm.error ?? warm)}`)
+    await waitFor('A4 warm turn settled', async () => {
+      // The optional request is wire-named _request (gateway/arguments-invalid
+      // otherwise); the summary's durable blank bit flips at first turn start.
+      const list = await state.publisher.rpc('session/list', { _request: {} }).catch(() => null)
+      const row = list?.value?.items?.find((item) => item.sessionId === state.a4Session)
+      return row && row.blank === false && row.running === false ? row : null
+    }, { timeoutMs: timeouts.phaseMs })
+    const lspOn = await state.publisher.rpc('commands/execute', { agentId: state.a4Session, line: '/lsp on', submittedAttachments: [] })
+    const lspResult = lspOn.value?.result ?? lspOn.value
+    if (lspOn.ok !== true || lspResult?.kind !== 'success') throw new Error(`/lsp on refused: ${JSON.stringify(lspResult ?? lspOn)}`)
+    const rename = await qaEdit(state.publisher, state.a4Session, 'rename-midbatch')
+    if (rename.kind !== 'error') throw new Error(`rename unexpectedly succeeded: ${rename.text}`)
+    // Ownership-vs-outcome honesty: exactly the first file reported written,
+    // the second reported not-written or uncertain, ownership retained, and
+    // never a rollback claim.
+    if (!/filesAlreadyWritten: \[[^\]]*probe\.ts/.test(rename.text)) throw new Error(`report does not name probe.ts as written: ${rename.text}`)
+    if (!/files(NotWritten|Uncertain): \[[^\]]*probe-other\.ts/.test(rename.text)) throw new Error(`report does not name probe-other.ts as not-written/uncertain: ${rename.text}`)
+    if (!rename.text.includes('ownership retained (no rollback)')) throw new Error(`report lacks the retained-ownership honesty line: ${rename.text}`)
+    if (fs.readFileSync(paths.probeFile, 'utf8') !== 'export const qaMidBatch = 1\n') throw new Error('probe.ts does not carry the published rename (no rollback expected)')
+    if (fs.readFileSync(paths.probeOtherFile, 'utf8') !== renameFixtureSources()['probe-other.ts']) throw new Error('probe-other.ts changed despite the aborted batch')
+    await waitView(state.publisher, state.a4Session, 'retained batch locks', (view) =>
+      [paths.probeFile, paths.probeOtherFile].every((file) =>
+        view?.files?.some((row) => row.mine === true && row.detail?.path === file)), timeouts)
+    await openSessionInGui(state.publisher, state.a4Session, timeouts, state.wsIdA)
+    const markers = await waitPanelMarkers(state.publisher, 'partial-write markers', (m) =>
+      [paths.probeFile, paths.probeOtherFile].every((file) => m.files.some((row) => row.path === file))
+        && typeof m.ownershipHint === 'string' && m.ownershipHint.length > 0, timeouts)
+    await shotBothThemes(state.publisher, 'panel-partial-write')
+    // Honest aftermath: the cleanly-written file's lock releases normally,
+    // while the UNCERTAIN file's lock is fenced — a plain release is refused
+    // ('unresolved publication fence') because the byte outcome is unknown;
+    // only the administrative recovery settles it. That refusal is part of the
+    // acceptance, so the fenced lock stays retained into the SIGKILL phase
+    // (which already tolerates retained locks on unrelated files).
+    const releaseWritten = await qaEdit(state.publisher, state.a4Session, 'release probe.ts')
+    if (releaseWritten.kind !== 'success') throw new Error(`written file release refused: ${releaseWritten.text}`)
+    const releaseUncertain = await qaEdit(state.publisher, state.a4Session, 'release probe-other.ts')
+    const uncertainFenced = releaseUncertain.kind !== 'success' && /unresolved publication fence/.test(releaseUncertain.text)
+    const uncertainReleased = releaseUncertain.kind === 'success'
+    if (!uncertainFenced && !uncertainReleased) throw new Error(`uncertain file release outcome unexpected: ${releaseUncertain.text}`)
+    assertNoNewExceptions(state.publisher, exBase, 'panel-partial-write')
+    return `midbatch fault: probe.ts written (lock released), probe-other.ts ${uncertainFenced ? 'uncertain and fence-refused on plain release' : 'released'}; bytes verified on disk`
   })
 
   await phase('sigkill-publisher-fail-closed', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
