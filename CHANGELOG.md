@@ -7,12 +7,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Capabilities 预设原位编辑**：预设保存后可直接重命名，或明确确认后用当前草稿／已应用能力集合重新保存（默认草稿）；原预设 ID、命名空间及其他预设不变，操作不会自动应用到当前会话。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ### Removed
 
 - **Weir 系预设的 DSH 原生直派工具（BREAKING）**：新建 Weir 与 Weir 创造模式会话不再暴露 `subagent`、`subagent_fork`、`list_subagent_models`、`workflow`；派工统一经 Weir 的 `delegate`。保留 `send_message`、`interrupt_agent`、`list_agents` 和 Weir 的受监督控制工具，现有可续聊功能不变。原生 `workflow` 的脚本化流水线没有等价替代，后续由 Weir 自行设计；其他 DSH 预设不受影响。详见 [预设打包](docs/features/preset-packaging.md)。
 
 ### Fixed
 
+- **Worktree 车道：知情显式 force 移除，脏车道不再无逃生门**：车道 worktree 含修改/未跟踪文件时 `git worktree remove` 拒绝删除，而此前每一条产品内移除路径（放弃卡、收尾卡、自动授权、命令行、面板）都永不 `--force`——受阻后车道记为 `abandoned`+`keep`，重试撞同一堵墙，只能手动删文件，且错误以 git `fatal:` 原文裸显。修复后契约细化为「永不静默强制」：放弃卡与收尾卡在脏内容时披露修改/未跟踪计数与永久删除警示，卡上破坏选项即知情显式放行；命令行新增尾部 `--force` 显式覆盖（`/worktree clean <lane> <mode> --force`、`/worktree abandon <lane> [mode] --force`）；自动授权与模型工具路径永不强制。受阻删除统一记录于车道、报告简洁原因（含脏内容计数）与精确的 `--force` 重试 `next` 指引，不再裸显 `fatal:` 原文。详见 [Worktree 车道](docs/features/git-worktree.md)。
+
+- **预设同名替换与并发保护**：修复“替换同名预设”实际上生成第二份同名项，以及两个窗口跨预设改名可同时通过无锁检查的问题；确认替换锁定具体预设与修订，改名撞名时明确拒绝，导入先确认预设名称再安装技能。**BREAKING（内部命令）**：仅携带旧 `onNameConflict:'replace'`、没有目标身份和修订信息的调用现在拒绝，需刷新页面重新确认。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **Capabilities 同名 Skill 冲突提示**：管理器双选不同来源的同名 Skill 时标出冲突项与来源、保留草稿并阻止无效应用；取消其中一项即可继续。旧预设中仅记录名称的歧义项可选择具体来源或从草稿移除，应用回执显示具体原因，不再只给笼统失败。服务端仍拒绝同名双选，不按发现顺序静默选择；当前宿主如需并用两份内容，必须为其中一份使用不同 Skill 名称。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **Worktree 面板「放弃」按钮修复与命令完整性收口**：面板放弃确认此前下发的是 `/worktree null`——`commandFor` 把无清理档位视为「不是命令」返回 `null`，被模板字符串拼成字面 `null` 动词，命令层回以整段英文 Usage 原文裸显在面板上；放弃是用户唯一的车道逃生门（含僵尸绑定的 force-reclaim 卡），面板路径必断。修复后无档位放弃下发裸命令 `abandon <id>`，清理档位在服务端弹出的放弃确认卡上选择（与文档化行为一致）；面板命令构造对启用动作是全的——不可构造的命令行（`null`/空白）fail-closed 绝不下发，命令层的 Usage 原文永不裸显，均映射为一条简洁的中英本地化错误。详见 [Worktree 车道](docs/features/git-worktree.md)。
 
