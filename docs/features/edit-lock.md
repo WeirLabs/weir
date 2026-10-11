@@ -400,7 +400,9 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 ### 稳定化协商与暂停边界（组件级，未代替 GUI 验收）
 
-`test/edit-lock-negotiation-regressions.test.js` 与 `test/edit-lock-pause-expiry.test.js` 新增五例：忙碌持有者只注入提醒、不强行唤醒；空闲持有者可安全唤醒；持有者通知投递异常后请求仍待答，120 秒超时不转交归属；忙碌持有者沉默超时仍持原 generation、请求方零锁。仅清理恢复的 15 分钟暂停到期只重新检查异常归属，不释放、不延长；单次 15／累计 30 分钟预算在重启后不退还，异常锁已由人释放时只结束恢复、不启动业务回合。聚焦测试与全量产品单测在 `9cc8939` 合入后通过（产品 2589 pass、11 skip、0 fail）；这些是组件/单测证据，真实跨进程协商及暂停面板的明暗主题验收仍属稳定版门槛。
+`test/edit-lock-negotiation-regressions.test.js` 与 `test/edit-lock-pause-expiry.test.js` 的组件回归：忙碌持有者只注入提醒、不强行唤醒；空闲持有者可安全唤醒；持有者通知投递异常后请求仍待答，120 秒超时不转交归属；忙碌持有者沉默超时仍持原 generation、请求方零锁。仅清理恢复的 15 分钟暂停到期只重新检查异常归属，不释放、不延长；单次 15／累计 30 分钟预算在重启后不退还，异常锁已由人释放时只结束恢复、不启动业务回合。上述组件层测试不能独自代替安装版或 GUI 验收；暂停面板的三平台明暗主题证据另见双 GUI 验收。
+
+新增安装版 `editlock-negotiation` 场景 7/7（DSH 0.2.0-rc.2）：真实 owner 正在运行时，第二个真实 Agent 通过 `edit_lock_try_steal` 获得 pending requestId；仅在**隔离测试 profile** 里对这位 holder 的 Host `agent.inject` 投递植入一次可控 throw，绝不伪称网络故障。生产 120 秒超时照常运行，测试 Host 为等到原超时保留 123 秒；投递失败、未答、超时前后 owner/generation/epoch/文件字节不变、请求者零锁，预约未删除，注入的方法在结束时恢复。关闭故障注入的反证 6/7（仅预期的触发计数失败，通知能投递）。双 GUI 实况已证明存活 holder 拒绝与 publisher 死亡后恢复；跨进程**网络传输故障**尚无自然实况证明，不能把上述可控 Host 注入冒充该故障。
 
 ### 未决发布隔离的有界回归
 
