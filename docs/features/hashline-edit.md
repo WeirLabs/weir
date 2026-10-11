@@ -38,6 +38,8 @@ volatile config，在线编辑即刻生效。
 ## 边界与失败语义
 
 - **Edit Lock 接入（仅当开发组合启用 [edit-lock](edit-lock.md) 时）**：`hash_edit` 把合成内容交给锁服务发布；服务可在挂载时或稍后经 inject 出现（cordis 兄弟行服务延迟可见），一旦受管即向服务 `claim` 定义，服务移除后拒绝而不回退直写。未启用时行为不变。
+- **Edit Lock 开启时的写入前拒绝（集成证据 `editlock-hashline-negatives`）**：四类负例都在任何字节落盘前失败——①锚点失配：`>>> mismatch` 整体拒绝，文件字节不变，权威镜像不留任何操作记录；②非常规节点（目录）：`stat` 阶段拒绝（`no regular file`），不进入发布；③域外目标：锚点校验通过后由 Edit Lock 域边界拒绝（`outside management domain`）——锁开启时管理域与会话沙箱可写根一致，域外写入在锁边界先于沙箱后端被拒，锁关闭时的共享 `[sandbox: file access denied under …]` 标记在该组合中不可达，但「零字节写入」保证在更早的边界成立；④版本 CAS：见下条。
+- **观察版本护栏与 hash_edit 的交互（CAS 拒绝）**：受管 `write` 的版本护栏取自宿主观察策略的读时版本（`fs/write-intent`），刻意不重新 stat；`hash_edit` 发布成功不发送 `fs/observed`，不刷新该观察。因此 `hash_edit` 成功之后的受管 `write` 携带过期版本，被后端 `replaceIfVersion` CAS 拒绝（`FS_STALE_VERSION`「file changed since it was read」），操作落为 `unknown` 并保留资源围栏与锁（围栏保护的归属不能被普通 release 移除）；重新读取后再写即可恢复。这是既有保守设计（fail-closed、不用新 stat 覆盖旧观察），不是缺陷。
 - 锚点过期/篡改/拼写错误 → 整体拒绝 + mismatch 报告，**保证**文件字节级不变（零写入）。
 - 多操作调用中仅一个锚点失效 → 同样整体拒绝（原子性）。
 - 内容形状错误（`text` 缺失或非字符串、`edits` 不是非空数组）→ **先于任何锚点校验**整体拒绝，错误点名违规字段、说明要求形状并指示按正确形状重新调用（与锚点错配的「重读文件」建议相区分），文件零写入。
@@ -51,3 +53,4 @@ volatile config，在线编辑即刻生效。
 
 - 单元测试：`test/` 覆盖锚点确定性、三类操作、多操作原子性、mismatch 报告、diff 输出（含 `diffFragments` 结构化 hunk 与 `presentationMeta` 持久化/拒绝无元数据）、`text` 切分规则（尾部空元素/内部空行/空串）、空串删除的字节断言、缺失/错类型 `text` 先于锚点校验的拒绝顺序与自纠措辞、schema 单通道形状（`required: ['op','pos','text']`、无 `lines`、无 `oneOf`）、工具描述内容锁定（`\n` 示例 / invalid-JSON 整轮警告 / 空串删除说明 / mismatch 段不变 / 无数组通道 / 长度上限）、`hideStockEdit` 逐 agent 机制（逐 agent 限制 / 存在性检查的 agent 视角 / 无 stock edit 豁免）。`test/hashline-planned-fragments.test.js` 覆盖计划预览契约三节（src 单测 / chunk↔src 等价钉 / planned↔applied 对账）。`test/sandbox.test.js` 锁定升权词汇文本、严格更宽表、参数配对、审批四结局、缺服务/缺 agent，并新增 `probeEscalation` 能力两态与 `resolveCallPolicy` 全链路钉（无参时 policy 与 standing 引用相等、`resolve({session})` 入参形状、门控先于审批的顺序、合并形状、`advertisedFields` 同源）；`test/hashline-edit.test.js` 覆盖 schema 门控两态、升权成功路径的 writeText 策略断言（S23 五参形态）、malformed 前置失败、拒绝标记与提示、非拒绝错误透传。
 - 集成测试：`hashline` 场景——读取结果带锚点到达模型、`hash_edit` 成功改写目标行、经 `text` 通道的大段 append 字节级落盘、模型工具目录中 stock `edit` 缺席且 `hash_edit` 在场、schema 广告升权字段、成功调用持久化 `meta.diffs` 片段而失败调用无 diff 元数据、真实编辑工作区外文件被拒且错误携带共享标记与升权提示。测试装置镜像了沙箱语义（部署回退根故意不含测试工作区、工作区置于 /tmp 之外），无 per-call policy 的写入会像 desktop 实况一样被拒（S23 回归）。
+- 集成测试：`editlock-hashline-negatives` 场景（Edit Lock 开启，`WEIR_IT_EDIT_LOCK=1`）——正控（受管 `write` 创建 + `hash_edit` 经锁发布）与四类负例的写入前拒绝：锚点失配零写入且权威镜像无操作记录、目录在 `stat` 阶段拒绝、域外目标在锁边界拒绝且被拒文件字节不变、过期观察版本的受管 `write` 被后端 CAS 拒绝并落为 `unknown` + 资源围栏 + 锁保留；逐例断言目标字节不变，并核对权威镜像的操作序列（created/updated/created/unknown）与围栏锁保留。该场景无入库回放 fixture（活权威快照 + 运行后字节为神谕，先例 62c0ee2）。

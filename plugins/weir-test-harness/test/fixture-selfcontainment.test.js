@@ -79,7 +79,9 @@ function listFiles(dir) {
 
 // The delegate lifecycle oracles have focused synthetic unit fixtures and
 // installed-CLI verification, not a committed replay trace in this task scope.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename'].includes(scenario.id))
+// editlock-hashline-negatives has no committed fixture either: its oracle is a
+// live authority snapshot plus post-run bytes (precedent 62c0ee2).
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-hashline-negatives'].includes(scenario.id))
 
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {
