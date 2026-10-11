@@ -8,6 +8,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
+import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
 
 const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets', 'editlock', 'worktree', 'capstore']
 EXPECTED_ORDER.push('editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update')
@@ -78,6 +79,24 @@ describe('scenario registry', () => {
       assert.equal(byId(scenario.id), scenario)
     }
     assert.equal(byId('no-such-scenario'), undefined)
+  })
+
+  // Windows regression seam: the editlock-lsp-rename assert compares authority
+  // resourceIds through this helper, because the authority stores native
+  // absolute paths (CI run 38109746915: 'D:\\a\\_temp\\...\\probe.ts' failed
+  // the former endsWith('/probe.ts') forms on windows-latest while
+  // macOS/Ubuntu passed).
+  it('editlock-lsp-rename compares resourceIds separator-portably, without suffix false matches', () => {
+    const win = 'D:\\a\\_temp\\it-lsp-rename\\ws\\'
+    assert.equal(baseName(`${win}probe.ts`), 'probe.ts')
+    assert.equal(baseName(`${win}probe-other.ts`), 'probe-other.ts')
+    assert.equal(baseName('/tmp/it-lsp-rename/ws/probe.ts'), 'probe.ts')
+    // 'probe-other.ts' must never satisfy a probe.ts assertion (the bare-suffix
+    // endsWith form would have matched it once the leading '/' was dropped).
+    assert.notEqual(baseName(`${win}probe-other.ts`), 'probe.ts')
+    assert.notEqual(baseName(`${win}probe.ts`), 'probe-other.ts')
+    assert.equal(baseName(undefined), null)
+    assert.equal(baseName(null), null)
   })
 
   // Scenarios whose preconditions need driver-side work: rehydrate boots twice

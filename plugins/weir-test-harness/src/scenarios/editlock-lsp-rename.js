@@ -43,6 +43,18 @@ const WS = join(IT_ROOT, 'ws')
 const PROBE_TS = join(WS, 'probe.ts')
 const PROBE_OTHER = join(WS, 'probe-other.ts')
 
+// resourceId assertions compare basenames, never separators: the authority
+// stores platform-native absolute paths (POSIX '/' vs Windows '\\'), so the
+// former endsWith('/probe.ts') forms failed on windows-latest (CI 38109746915)
+// while macOS/Ubuntu passed. Separators are folded first because node:path's
+// basename is platform-specific. The comparison is a whole-basename equality:
+// a bare suffix test like endsWith('probe.ts') would false-match 'xprobe.ts'.
+export function baseName(resourceId) {
+  if (typeof resourceId !== 'string') return null
+  const parts = resourceId.split(/[\\/]+/).filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : null
+}
+
 const BOOTS = ['freeze', 'conflict', 'thaw', 'apply', 'duplicate', 'midbatch']
 
 const ORIGINAL_TS = 'export const fixtureSymbol = 1\n'
@@ -208,7 +220,7 @@ function assert(run) {
   const renameResult = (label) => detail(label)?.tools?.find((tool) => tool.tool === 'lsp_rename')?.result ?? ''
   const filesAfter = (label) => detail(label)?.files ?? {}
   const locksFor = (state, owner) => (state?.locks ?? []).filter((lock) => lock.owner === owner)
-  const generationOf = (state, suffix) => state?.generations?.find((g) => g.resourceId?.endsWith(suffix))?.generation ?? null
+  const generationOf = (state, name) => state?.generations?.find((g) => baseName(g.resourceId) === baseName(name))?.generation ?? null
 
   const sessionA = bootRec('freeze')?.sessionId ?? null
   const sessionD = bootRec('midbatch')?.sessionId ?? null
@@ -218,7 +230,7 @@ function assert(run) {
   run.check('freeze: acquire and bounded hold went through the real owner tools', sliceText('freeze').includes('Acquired') && sliceText('freeze').includes('Keeping 1 file'), sliceText('freeze').slice(-600))
   run.check('freeze: clean exit', bootRec('freeze')?.code === 0, JSON.stringify(bootRec('freeze')))
   const freezeLock = locksFor(snap('freeze'), sessionA)
-  run.check('freeze: probe-other.ts lock retained after process exit', freezeLock.length === 1 && freezeLock[0].resourceId.endsWith('probe-other.ts') && freezeLock[0].status === 'user-interrupted', JSON.stringify(snap('freeze')?.locks))
+  run.check('freeze: probe-other.ts lock retained after process exit', freezeLock.length === 1 && baseName(freezeLock[0].resourceId) === 'probe-other.ts' && freezeLock[0].status === 'user-interrupted', JSON.stringify(snap('freeze')?.locks))
 
   // ---- conflict: whole batch refused, zero writes ---------------------------
   const conflictResult = renameResult('conflict')
@@ -243,7 +255,7 @@ function assert(run) {
   run.check('apply: both fixtures rewritten on disk', filesAfter('apply').probeTs === RENAMED_TS && filesAfter('apply').probeOther === RENAMED_OTHER, JSON.stringify(filesAfter('apply')))
   run.check('apply: CRLF fixture kept its line-ending style', (filesAfter('apply').probeOther ?? '').includes('\r\n') && (filesAfter('apply').probeOther ?? '').split('\r\n').every((line) => !line.includes('\n')), JSON.stringify(filesAfter('apply').probeOther))
   const applyOps = (snap('apply')?.operations ?? []).filter((o) => o.sessionId === bootRec('apply')?.sessionId)
-  run.check('apply: two durable operations, one per target, both updated', applyOps.length === 2 && applyOps.every((o) => o.phase === 'updated') && applyOps.some((o) => o.resourceId?.endsWith('/probe.ts')) && applyOps.some((o) => o.resourceId?.endsWith('/probe-other.ts')), JSON.stringify(applyOps))
+  run.check('apply: two durable operations, one per target, both updated', applyOps.length === 2 && applyOps.every((o) => o.phase === 'updated') && applyOps.some((o) => baseName(o.resourceId) === 'probe.ts') && applyOps.some((o) => baseName(o.resourceId) === 'probe-other.ts'), JSON.stringify(applyOps))
   run.check('apply: batch operation ids carry the lsp_rename marker', applyOps.every((o) => typeof o.operationId === 'string' && o.operationId.startsWith('["lsp_rename"')), JSON.stringify(applyOps))
   run.check('apply: temporary batch locks released on success', (snap('apply')?.locks ?? []).length === 0, JSON.stringify(snap('apply')?.locks))
   run.check('apply: lock generations advanced exactly once per target', generationOf(snap('apply'), '/probe.ts') === 1 && generationOf(snap('apply'), '/probe-other.ts') === 2, JSON.stringify(snap('apply')?.generations))
@@ -269,8 +281,8 @@ function assert(run) {
   run.check('midbatch: file two never written', readWs('probe-other.ts') === RENAMED_OTHER && !readWs('probe-other.ts').includes('midBatch'), JSON.stringify(readWs('probe-other.ts')))
   const midOps = (snap('midbatch')?.operations ?? []).filter((o) => o.sessionId === sessionD)
   const midWritten = midOps.filter((o) => o.phase === 'updated')
-  const midOther = midOps.filter((o) => o.resourceId?.endsWith('/probe-other.ts'))
-  run.check('midbatch: durable history records exactly the written file as updated', midWritten.length === 1 && midWritten[0].resourceId?.endsWith('/probe.ts'), JSON.stringify(midOps))
+  const midOther = midOps.filter((o) => baseName(o.resourceId) === 'probe-other.ts')
+  run.check('midbatch: durable history records exactly the written file as updated', midWritten.length === 1 && baseName(midWritten[0].resourceId) === 'probe.ts', JSON.stringify(midOps))
   run.check('midbatch: file two has no updated/unknown operation (never dispatched)', midOther.every((o) => o.phase === 'not-published'), JSON.stringify(midOther))
   const midLocks = locksFor(snap('midbatch'), sessionD)
   run.check('midbatch: failed batch retained both temporary locks', midLocks.length === 2 && midLocks.every((lock) => lock.status === 'user-interrupted'), JSON.stringify(snap('midbatch')?.locks))
