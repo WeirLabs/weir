@@ -104,7 +104,7 @@ jobs:
           # and the pnpm/action-setup shim explicitly.
           WEIR_IT_NODE: node
           WEIR_IT_PNPM: ${{ steps.pnpm-script.outputs.path }}
-        run: node plugins/weir-test-harness/run.mjs editlock-lsp-rename
+        run: node run.mjs editlock-lsp-rename
         working-directory: plugins/weir-test-harness
 
       # Screenshots, sanitized server logs, console events and the PASS
