@@ -4,12 +4,21 @@
 // surfaces) and the plugin-owned typert read remote build byte-identical
 // payloads from one implementation. Plain functions with explicit deps — no
 // ctx, no singletons.
+import { createHash } from 'node:crypto'
 import { skillIdentityKey } from './skill-identity.js'
 import { workspaceKeyOf } from './preset-library.js'
 import { createDefaultsTransaction } from './defaults-transaction.js'
 import { enumeratePresetUnits } from './store/enumerate.js'
 import { isSegment } from './store/paths.js'
 
+// Canonical wire snapshot: identity keys and MCP names are sorted independently;
+// changing order alone cannot invalidate a confirmation. Keep this shared by the
+// receipt and the guarded command instead of digesting a store record.
+export function effectiveSelectionDigest(skillIdentities, mcpServers) {
+  const skills = skillIdentities.map(skillIdentityKey).sort()
+  const mcp = [...mcpServers].sort()
+  return createHash('sha256').update(JSON.stringify([skills, mcp])).digest('hex')
+}
 /**
  * The receipt payload: provider status + the provider's selected candidates
  * + the lifecycle snapshot's MCP set + the persisted selection revision.
@@ -23,22 +32,28 @@ import { isSegment } from './store/paths.js'
  */
 export async function buildReceiptPayload(deps, options) {
   const sessionId = options?.scope?.session?.id
-  const status = deps.provider.status(options)
+  // Preserve status failures while refreshing, then sample the final status.
+  deps.provider.status(options)
   // provider.list returns { candidates, complete } — never a bare array.
-  const result = await deps.provider.list(options)
+  const result = await (deps.provider.fresh?.(options) ?? deps.provider.list(options))
+  const status = deps.provider.status(options)
   const candidates = Array.isArray(result?.candidates) ? result.candidates : []
   const selected = candidates.filter(candidate => candidate.selected)
   const snapshot = deps.lifecycle?.snapshotFor?.(sessionId)
   const record = await deps.store.read({ kind: 'selection', scope: 'session', sessionId })
+  const skillIdentities = selected.filter(candidate => candidate.identity).map(candidate => candidate.identity)
+  const mcpServers = Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : []
   return {
     status: 'applied',
     revision: record.kind === 'ok' ? record.revision : 0,
     effective: {
       skills: selected.map(candidate => candidate.name),
-      skillIdentities: selected.filter(candidate => candidate.identity).map(candidate => candidate.identity),
-      mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [],
+      skillIdentities,
+      mcpServers,
+      digest: effectiveSelectionDigest(skillIdentities, mcpServers),
     },
-    warnings: (status?.error ?? null) ? [String(status.reason ?? 'selection-unavailable')] : [],
+    warnings: result?.complete === false || status?.error
+      ? [String(status?.reason ?? 'selection-unavailable')] : [],
   }
 }
 
