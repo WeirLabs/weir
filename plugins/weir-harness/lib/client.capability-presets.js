@@ -293,6 +293,12 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				const spec = { scope: saveForm.scope, name, from: saveForm.from };
+				if (saveForm.from === "applied") {
+					const issue = appliedSourceIssue();
+					if (issue) { setSaveForm({ ...saveForm, error: issue }); return; }
+					spec.expectedSelectionRevision = props.draft.revision;
+					spec.expectedSelectionDigest = props.draft.appliedDigest;
+				}
 				if (saveForm.from === "draft") {
 					spec.skills = Array.isArray(props.draft?.skills) ? props.draft.skills : [];
 					spec.mcpServers = Array.isArray(props.draft?.mcpServers) ? props.draft.mcpServers : [];
@@ -563,6 +569,9 @@ window.__ModuleLoader__.load({
 					} else if (outcome.kind === "name-conflict") {
 						// The summary stays up; the decision row offers replace/cancel.
 						setImportBox({ ...importBox, busy: false, feedback: { kind: "name-conflict", with: outcome.with, withRevision: outcome.withRevision, name: importBox.document?.name, scope: importBox.scope } });
+					} else if (outcome.installed?.length > 0 || outcome.kind === "preset-unconfirmed" || outcome.kind === "write-failed" || outcome.kind === "commit-failed") {
+						setImportBox({ ...importBox, busy: false, feedback: null, summary: null, result: outcome });
+						refreshPresets();
 					} else if (outcome.kind === "error") {
 						setImportBox({ ...importBox, busy: false, feedback: { kind: "error", message: editMessage(outcome) }, summary: null });
 						refreshPresets();
@@ -933,8 +942,9 @@ window.__ModuleLoader__.load({
 							? t("capability.presets.importNoTargetRoot", "No {scope} Skill root is available on this host — nothing was installed.").replace("{scope}", result.targetScope)
 							: result.kind === "rejected"
 								? t("capability.presets.importRejected", "Rejected: {reason} — nothing was written.").replace("{reason}", result.reason)
-								: result.kind === "commit-failed" || (result.installed?.length > 0)
-									? t("capability.presets.importPartial", "{n} Skill(s) may be installed; preset status is unconfirmed. Inspect the installed files and refresh the preset before deciding what to do.").replace("{n}", String(result.installed?.length ?? 0))
+								: result.kind === "preset-unconfirmed" || result.installed?.length > 0 || result.kind === "commit-failed" || result.kind === "write-failed"
+									? t("capability.presets.importPartial", "Installed Skills: {names}. Preset status is unconfirmed. Inspect the installed files and refresh the preset before deciding how to recover.")
+										.replace("{names}", result.installed?.length ? result.installed.map(row => row.target || row.name || "unknown").join(", ") : t("capability.presets.noneKnown", "none reported"))
 									: editMessage(result);
 					return [
 						react_jsx_runtime.jsx("div", { role: "alert", style: S.warn, children: text }),
@@ -1080,9 +1090,9 @@ window.__ModuleLoader__.load({
 													}),
 													react_jsx_runtime.jsx("button", {
 														type: "button",
-												style: (saveForm.busy || !Number.isSafeInteger(saveForm.conflict.withRevision)) ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
+												style: (saveForm.busy || !Number.isSafeInteger(saveForm.conflict.withRevision) || (saveForm.from === "applied" && appliedSourceIssue())) ? { ...S.dangerOutline, ...S.disabled } : S.dangerOutline,
 														...ring,
-												disabled: saveForm.busy || !Number.isSafeInteger(saveForm.conflict.withRevision),
+												disabled: Boolean(saveForm.busy || !Number.isSafeInteger(saveForm.conflict.withRevision) || (saveForm.from === "applied" && appliedSourceIssue())),
 														onClick: () => submitSave("replace"),
 														children: t("capability.presets.replace", "Replace it")
 													}),
@@ -1105,14 +1115,15 @@ window.__ModuleLoader__.load({
 									children: [
 										react_jsx_runtime.jsx("button", {
 											type: "button",
-											style: saveForm.busy ? { ...S.primary, ...S.disabled } : S.primary,
+											style: (saveForm.busy || (saveForm.from === "applied" && appliedSourceIssue())) ? { ...S.primary, ...S.disabled } : S.primary,
 											...ring,
 											...(saveForm.busy ? {} : hover(ACCENT_HOVER, ACCENT)),
-											disabled: saveForm.busy,
+											disabled: Boolean(saveForm.busy || (saveForm.from === "applied" && appliedSourceIssue())),
 											onClick: () => submitSave(undefined),
 											children: saveForm.busy ? t("capability.presets.saving", "Saving…") : t("capability.presets.save", "Save preset")
 										}),
-										saveForm.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: saveForm.error }) : null
+										saveForm.error ? react_jsx_runtime.jsx("span", { style: S.warn, children: saveForm.error }) : null,
+										saveForm.from === "applied" && appliedSourceIssue() ? react_jsx_runtime.jsx("span", { role: "alert", style: S.warn, children: appliedSourceIssue() }) : null
 									]
 								})
 							]

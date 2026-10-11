@@ -264,6 +264,67 @@ describe('client.capability-presets chunk', () => {
     expect(calls[1]).toEqual({ scope: 'workspace', name: 'Shared', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [], onNameConflict: 'replace', replaceTarget: { presetId: 'old-1', expectedRevision: 3, name: 'Shared' } })
   })
 
+  it('pins Save-as applied create and exact replacement; blocks missing or warned proof while draft remains usable', async () => {
+    const { view, reactStub } = await loadView()
+    const digest = 'a'.repeat(64)
+    const calls = []
+    const { props } = makeProps()
+    props.draft = props.model.draftFromReceipt({ status: 'applied', revision: 0, effective: { skillIdentities: [], mcpServers: [], digest }, warnings: [] })
+    props.presetSave = async (sid, spec) => { calls.push(spec); return calls.length === 1 ? { status: 'name-conflict', with: 'old-1', withRevision: 3 } : { status: 'edited', presetId: 'old-1', revision: 4 } }
+    reactStub.begin(); view(props); await flush()
+    reactStub.begin(); let tree = view(props)
+    findButton(tree, 'Save as preset…').onClick()
+    reactStub.begin(); tree = view(props)
+    findAll(tree, node => node.__type === 'input' && node.placeholder === 'Preset name')[0].onChange({ target: { value: 'Shared' } })
+    reactStub.begin(); tree = view(props)
+    findAll(tree, node => node.__type === 'select' && node.value === 'draft')[0].onChange({ target: { value: 'applied' } })
+    reactStub.begin(); tree = view(props)
+    findButton(tree, 'Save preset').onClick(); await flush()
+    expect(calls[0]).toEqual({ scope: 'workspace', name: 'Shared', from: 'applied', expectedSelectionRevision: 0, expectedSelectionDigest: digest })
+    reactStub.begin(); tree = view(props)
+    findButton(tree, 'Replace it').onClick(); await flush()
+    expect(calls[1]).toEqual({ scope: 'workspace', name: 'Shared', from: 'applied', expectedSelectionRevision: 0, expectedSelectionDigest: digest, onNameConflict: 'replace', replaceTarget: { presetId: 'old-1', expectedRevision: 3, name: 'Shared' } })
+    // No receipt or warnings must prevent BOTH initial Save and replacement, even if invoked directly.
+    for (const bad of [{ ...props.draft, appliedDigest: undefined, appliedSourceIssue: 'receipt' }, { ...props.draft, appliedSourceIssue: 'unavailable' }]) {
+      reactStub.reset(); props.draft = bad; calls.length = 0
+      reactStub.begin(); view(props); await flush()
+      reactStub.begin(); tree = view(props); findButton(tree, 'Save as preset…').onClick()
+      reactStub.begin(); tree = view(props)
+      findAll(tree, node => node.__type === 'input' && node.placeholder === 'Preset name')[0].onChange({ target: { value: 'Shared' } })
+      reactStub.begin(); tree = view(props)
+      findAll(tree, node => node.__type === 'select' && node.value === 'draft')[0].onChange({ target: { value: 'applied' } })
+      reactStub.begin(); tree = view(props)
+      expect(findButton(tree, 'Save preset').disabled).toBe(true)
+      findButton(tree, 'Save preset').onClick(); await flush()
+      expect(calls).toHaveLength(0)
+      reactStub.begin(); tree = view(props)
+      expect(findAll(tree, node => node.role === 'alert')).toHaveLength(1)
+      findAll(tree, node => node.__type === 'select' && node.value === 'applied')[0].onChange({ target: { value: 'draft' } })
+      reactStub.begin(); tree = view(props)
+      expect(findButton(tree, 'Save preset').disabled).toBe(false)
+      findButton(tree, 'Cancel').onClick()
+      reactStub.begin(); tree = view(props)
+      expect(findButton(tree, 'Save as preset…')).toBeTruthy()
+      expect(calls).toHaveLength(0)
+    }
+  })
+
+  it('shows confirmed import publication failure with actual installed Skill and unconfirmed preset in English and Chinese', async () => {
+    for (const chinese of [false, true]) {
+      const { view, reactStub } = await loadView()
+      const dryRun = { status: 'dry-run', install: [], collisions: [], unresolved: [] }
+      const { props } = makeProps({ importResponses: [dryRun, { status: 'preset-unconfirmed', installed: [{ name: 'alpha', targetScope: 'project' }], presetStatus: 'unconfirmed' }] })
+      if (chinese) props.t = key => ({ 'capability.presets.importPartial': '已安装的 Skill：{names}；预设状态未确认。检查已安装文件并刷新预设，再决定如何恢复。' })[key] ?? key
+      let tree = await submitDocument(view, reactStub, props, V2_DOC)
+      findButton(tree, 'Confirm import').onClick(); await flush()
+      reactStub.begin(); tree = view(props)
+      const alert = findAll(tree, node => node.role === 'alert').map(node => node.children).join(' ')
+      expect(alert).toContain('alpha')
+      expect(alert).toContain(chinese ? '未确认' : 'unconfirmed')
+      expect(alert).toContain(chinese ? '检查' : 'Inspect')
+      expect(findAll(tree, node => node.children === 'Imported: 1 Skill(s) installed, 0 MCP binding(s), 0 unresolved ref(s).')).toHaveLength(0)
+    }
+  })
   it('a name-conflict on confirm keeps the summary and retries with onNameConflict replace', async () => {
     const { view, reactStub } = await loadView()
     const dryRun = { status: 'dry-run', install: [{ targetScope: 'project', name: 'alpha', fileCount: 3, targetRoot: '/ws/skills' }], collisions: [], unresolved: [] }
