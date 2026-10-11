@@ -1,8 +1,8 @@
 // Scenario: editlock-lsp-rename — REAL multi-file lsp_rename turns with Edit
-// Lock enabled (WEIR_IT_EDIT_LOCK=1, shared authority <ws>/.weir/edit-lock),
-// driven over eight sequential headless boots against the protocol-fixture LSP
-// server (the same mock-lsp-server.js the lsp scenario uses: a real stdio
-// JSON-RPC server speaking LSP, not a simulated rename adapter — the rename
+// Lock enabled (WEIR_IT_EDIT_LOCK=1) in its own disposable management domain
+// <ws>/editlock-lsp-rename, driven over eight sequential headless boots against
+// the protocol-fixture LSP server (same mock-lsp-server.js used by lsp: a real
+// stdio JSON-RPC server, not a simulated rename adapter — the rename
 // path under test is the production client → server → WorkspaceEdit →
 // edit-lock publishBatch → host fs writeText chain).
 //
@@ -42,7 +42,7 @@ import { parseJsonlLines } from '../jsonl.js'
 const id = 'editlock-lsp-rename'
 const prompt = `${id}-freeze`
 
-const WS = join(IT_ROOT, 'ws')
+const WS = join(IT_ROOT, 'ws', id)
 const PROBE_TS = join(WS, 'probe.ts')
 const PROBE_OTHER = join(WS, 'probe-other.ts')
 
@@ -132,9 +132,9 @@ function observe(obs) {
   }
 }
 
-/** Durable authority image (<ws>/.weir/edit-lock/snapshot.json), reduced. */
+/** Durable authority image (<ws>/editlock-lsp-rename/.weir/edit-lock/snapshot.json), reduced. */
 function snapshotState(root) {
-  const path = join(root, 'ws', '.weir', 'edit-lock', 'snapshot.json')
+  const path = join(root, 'ws', id, '.weir', 'edit-lock', 'snapshot.json')
   if (!existsSync(path)) return null
   const state = JSON.parse(readFileSync(path, 'utf8'))?.payload?.state ?? null
   return state && {
@@ -166,8 +166,8 @@ function toolStream(stdout) {
 async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
   const trace = join(root, `trace-${id}.jsonl`)
   const boots = []
-  const readWs = (name) => (existsSync(join(root, 'ws', name)) ? readFileSync(join(root, 'ws', name), 'utf8') : null)
-  const readBytes = (name) => (existsSync(join(root, 'ws', name)) ? readFileSync(join(root, 'ws', name)).toString('base64') : null)
+  const readWs = (name) => (existsSync(join(root, 'ws', id, name)) ? readFileSync(join(root, 'ws', id, name), 'utf8') : null)
+  const readBytes = (name) => (existsSync(join(root, 'ws', id, name)) ? readFileSync(join(root, 'ws', id, name)).toString('base64') : null)
   const boot = async (label, args, extra = {}) => {
     const outcome = await spawnHeadless(args, scenarioEnv(id, trace, { ...env, ...extra }))
     appendFileSync(trace, JSON.stringify({
@@ -201,7 +201,7 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
   // armed only here, it cancels the turn the moment probe.ts's write lands.
   const midbatch = await boot('midbatch', ['weir-it', '--json', `${id}-midbatch`], {
     WEIR_IT_AUTO_RESUME_PROBE: '1',
-    WEIR_IT_AUTO_RESUME_TARGET: 'probe.ts',
+    WEIR_IT_AUTO_RESUME_TARGET: `${id}/probe.ts`,
   })
   return {
     scenario: id, trace, code: midbatch.code,
@@ -211,7 +211,7 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
   }
 }
 
-const env = { WEIR_IT_EDIT_LOCK: '1' }
+const env = { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_LSP_RENAME: '1' }
 
 function assert(run) {
   const records = run.records
@@ -229,7 +229,7 @@ function assert(run) {
     .filter((r) => Array.isArray(r.emitted))
     .map((r) => `${r.lastUser ?? ''}\n${r.lastTool ?? ''}`)
     .join('\n')
-  const readWs = (name) => (existsSync(join(run.ws, name)) ? readFileSync(join(run.ws, name), 'utf8') : '<missing>')
+  const readWs = (name) => (existsSync(join(run.ws, id, name)) ? readFileSync(join(run.ws, id, name), 'utf8') : '<missing>')
   const renameResult = (label) => detail(label)?.tools?.find((tool) => tool.tool === 'lsp_rename')?.result ?? ''
   const filesAfter = (label) => detail(label)?.files ?? {}
   const bytesAfter = (label) => detail(label)?.bytes ?? {}

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
 import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
 import hashlineNegatives from '../src/scenarios/editlock-hashline-negatives.js'
+import lspRename from '../src/scenarios/editlock-lsp-rename.js'
 
 const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets', 'editlock', 'worktree', 'capstore']
 EXPECTED_ORDER.push('editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update')
@@ -114,6 +115,26 @@ describe('scenario registry', () => {
       else assert.equal(scenario.run, undefined, `${scenario.id} unexpectedly overrides run`)
     }
   })
+  it('editlock-lsp-rename alone uses a nested management domain and fresh protocol fixtures', () => {
+    assert.deepEqual(lspRename.env, { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_LSP_RENAME: '1' })
+    const call = [...lspRename.decide({ messages: [] }, { transcript: `${lspRename.id}-conflict\nLSP semantic tools enabled` })]
+      .find((chunk) => chunk.type === 'block-end').block
+    assert.equal(call.name, 'lsp_symbols')
+    const target = JSON.parse(call.arguments).file_path
+    assert.equal(basename(target), 'probe.ts')
+    assert.equal(basename(dirname(target)), lspRename.id)
+    const scenarioSource = readFileSync(fileURLToPath(new URL('../src/scenarios/editlock-lsp-rename.js', import.meta.url)), 'utf8')
+    assert.match(scenarioSource, /WEIR_IT_AUTO_RESUME_TARGET: `\$\{id\}\/probe\.ts`/)
+    const driver = readFileSync(fileURLToPath(new URL('../run.mjs', import.meta.url)), 'utf8')
+    assert.match(driver, /join\(WS, 'editlock-lsp-rename'\)/)
+    assert.match(driver, /writeFileSync\(join\(rename, 'probe.ts'\), 'export const fixtureSymbol = 1\\n'\)/)
+    assert.match(driver, /writeFileSync\(join\(rename, 'probe-other.ts'\), 'import \{ fixtureSymbol \} from "\.\/probe"\\r\\nexport const useIt = fixtureSymbol \+ 1\\r\\n'\)/)
+    assert.match(driver, /copyFileSync\(join\(HERE, 'src', 'mock-lsp-server.js'\), join\(rename, 'mock-lsp-server.js'\)\)/)
+    const patch = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
+    assert.match(patch, /WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename'/)
+    assert.match(patch, /WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename\/\.weir\/edit-lock'/)
+    assert.match(patch, /WEIR_IT_LSP_RENAME === '1' \? 'editlock-lsp-rename\/'/)
+  })
   it('lock-on sandbox case targets an in-domain file through the narrowed real session policy', () => {
     assert.deepEqual(hashlineNegatives.env, { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_SANDBOX_NARROW: '1' })
     const prior = [hashlineNegatives.prompt, 'Created file: /ws/narrow/cas-target.txt', 'hash_edit applied',
@@ -131,7 +152,7 @@ describe('scenario registry', () => {
     const driver = readFileSync(fileURLToPath(new URL('../run.mjs', import.meta.url)), 'utf8')
     assert.match(driver, /env\.WEIR_IT_LSP_UNCERTAIN === '1' \? join\(WS, 'editlock-lsp-uncertain'\) : \(env\.WEIR_IT_SANDBOX_NARROW === '1' \? join\(WS, 'editlock-hashline-negatives', 'narrow'\) : WS\)/)
     const patch = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
-    assert.match(patch, /root: !!js "process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives'/)
-    assert.match(patch, /authorityDirectory: !!js "process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain\/\.weir\/edit-lock' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives\/\.weir\/edit-lock'/)
+    assert.match(patch, /root: !!js "process\.env\.WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename' : \(process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives'/)
+    assert.match(patch, /authorityDirectory: !!js "process\.env\.WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename\/\.weir\/edit-lock' : \(process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain\/\.weir\/edit-lock' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives\/\.weir\/edit-lock'/)
   })
 })
