@@ -33,6 +33,7 @@
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
     "test:integration": "node run.mjs",
-    "record": "node test/record-fixtures.mjs"
+    "record": "node test/record-fixtures.mjs",
+    "qa:dual-gui": "node src/dual-gui-qa.mjs run"
   }
 }

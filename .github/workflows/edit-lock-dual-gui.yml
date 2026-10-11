@@ -1,0 +1,78 @@
+name: edit-lock-dual-gui
+
+# Manual-dispatch dual-GUI Edit Lock acceptance: two independent dsh web
+# processes (separate DSH_HOME/profile/port/browser) over one disposable
+# workspace, driven through real headless-Chrome CDP controls by
+# plugins/weir-test-harness/src/dual-gui-qa.mjs. Not part of the PR gate — the
+# matrix boots real browsers and is meant for pre-release verification.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Runner OS
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+      matrix:
+        description: Acceptance matrix depth
+        type: choice
+        default: core
+        options:
+          - core
+          - heavy
+
+permissions:
+  contents: read
+
+jobs:
+  dual-gui:
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # pnpm-workspace.yaml pins autoInstallPeers: false, so the declared
+      # @deepseek-ai/dsh peer is never fetched into this workspace.
+      - run: pnpm install --frozen-lockfile
+
+      # The driver self-checks: no GUI boot, no network, no stray processes.
+      - run: pnpm --filter weir-test-harness test
+
+      # The CLI under test comes from the public registry: the same
+      # @deepseek-ai/dsh@0.2.0-rc.2 the desktop app ships. The driver spawns
+      # `node lib/bin.js` directly — .cmd shims cannot be spawned without a
+      # shell on Windows.
+      - name: install dsh CLI
+        run: npm install --prefix "$RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@0.2.0-rc.2
+
+      - name: dual-GUI acceptance matrix
+        env:
+          DUAL_GUI_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
+          DUAL_GUI_ROOT: ${{ runner.temp }}/dual-gui-qa
+          DUAL_GUI_MATRIX: ${{ inputs.matrix }}
+          # Cold profile creation + first boot can exceed the dev-machine
+          # budget on a shared runner.
+          DUAL_GUI_BOOT_TIMEOUT_MS: '300000'
+          DUAL_GUI_PHASE_TIMEOUT_MS: '90000'
+        run: node plugins/weir-test-harness/src/dual-gui-qa.mjs run
+
+      # Screenshots, sanitized server logs, console events and the PASS
+      # matrix report; kept on failure AND success for cross-platform diffs.
+      - name: upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dual-gui-qa-${{ inputs.os }}-${{ inputs.matrix }}
+          path: ${{ runner.temp }}/dual-gui-qa
+          if-no-files-found: warn
