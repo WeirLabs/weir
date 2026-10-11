@@ -55,7 +55,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # The driver self-checks: no GUI boot, no network, no stray processes.
-      - run: pnpm --filter weir-test-harness test
+      # Scoped to the driver's OWN suite: the full weir-test-harness suite
+      # carries replay-oracle fixtures with committed absolute macOS paths
+      # (assert-replay: rehydrate/capstore/editlock-recovery-ux) and POSIX-only
+      # temp-path assumptions (git-repo) whose portability is a separate fix;
+      # on windows-latest they failed BEFORE this workflow's subject (the
+      # driver + matrix) ever ran — run 38104930194. No other workflow runs
+      # the harness suite on CI, so nothing is silently un-gated here.
+      - run: node --test plugins/weir-test-harness/test/dual-gui-qa.test.js
 
       # The CLI under test comes from the public registry: the same
       # @deepseek-ai/dsh@0.2.0-rc.2 the desktop app ships. The driver spawns

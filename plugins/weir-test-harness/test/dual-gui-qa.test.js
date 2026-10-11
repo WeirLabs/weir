@@ -184,7 +184,11 @@ describe('resolveConfig', () => {
     assert.equal(byEnv.matrix, 'heavy')
   })
   it('rejects a missing weir-harness bundle', () => {
-    assert.throws(() => resolveConfig({ argv: [], env: { ...env, DUAL_GUI_WEIR: '/nope' }, fileExists: (p) => !p.startsWith('/nope') }), /weir-harness bundle not found/)
+    // The stub must recognize the missing bundle under EITHER path separator:
+    // on a win32 host path.join turns '/missing-weir-bundle' into
+    // '\\missing-weir-bundle\\cordis.patch.yml', and a startsWith('/...')
+    // predicate would silently report it present (run 38104930194).
+    assert.throws(() => resolveConfig({ argv: [], env: { ...env, DUAL_GUI_WEIR: '/missing-weir-bundle' }, fileExists: (p) => !p.includes('missing-weir-bundle') }), /weir-harness bundle not found/)
   })
 })
 
@@ -370,11 +374,20 @@ async function spawnListener() {
 }
 
 describe('stopChild', () => {
-  it('stops a cooperative child gracefully with SIGINT', async () => {
+  it('stops a cooperative child gracefully (SIGINT on POSIX, TerminateProcess on win32)', async () => {
     const { child } = await spawnListener()
+    const sent = []
     try {
-      const result = await stopChild(child, { graceMs: 5000 })
-      assert.equal(result.graceful, true)
+      const result = await stopChild(child, { graceMs: 5000, kill: (c, s) => { sent.push(s); c.kill(s) } })
+      if (process.platform === 'win32') {
+        // No POSIX signals exist on win32: SIGTERM maps to TerminateProcess,
+        // which is an immediate kill, so the stop is reported non-graceful.
+        assert.deepEqual(sent, ['SIGTERM'])
+        assert.equal(result.graceful, false)
+      } else {
+        assert.deepEqual(sent, ['SIGINT'])
+        assert.equal(result.graceful, true)
+      }
       assert.equal(child.exitCode !== null || child.signalCode !== null, true)
     } finally {
       child.kill('SIGKILL')
@@ -402,7 +415,7 @@ describe('stopChild', () => {
       child.kill('SIGKILL')
     }
   })
-  it('escalates to SIGKILL when a child ignores graceful signals', async () => {
+  it('escalates to SIGKILL when a child ignores graceful signals', { skip: process.platform === 'win32' ? 'TerminateProcess cannot be ignored on win32; the win32 escalation branch is covered deterministically below' : false }, async () => {
     const portProbe = net.createServer()
     await new Promise((resolve) => portProbe.listen(0, '127.0.0.1', resolve))
     const port = portProbe.address().port
@@ -422,6 +435,24 @@ describe('stopChild', () => {
     } finally {
       child.kill('SIGKILL')
     }
+  })
+  // Escalation timing without a real process: a fake child that never exits
+  // makes the kill sequence deterministic on every host (a win32 child cannot
+  // ignore TerminateProcess, so a real-process win32 variant cannot exist).
+  const neverExits = () => ({ exitCode: null, signalCode: null, once() { return this } })
+  it('escalates SIGINT -> SIGTERM -> SIGKILL for a stuck child on POSIX', async () => {
+    const sent = []
+    const result = await stopChild(neverExits(), { platform: 'linux', graceMs: 50, kill: (c, s) => { sent.push(s) } })
+    assert.deepEqual(sent, ['SIGINT', 'SIGTERM', 'SIGKILL'])
+    assert.equal(result.forced, true)
+    assert.equal(result.graceful, false)
+  })
+  it('escalates SIGTERM -> SIGKILL for a stuck child on win32 (never SIGINT)', async () => {
+    const sent = []
+    const result = await stopChild(neverExits(), { platform: 'win32', graceMs: 50, kill: (c, s) => { sent.push(s) } })
+    assert.deepEqual(sent, ['SIGTERM', 'SIGKILL'])
+    assert.equal(result.forced, true)
+    assert.equal(result.graceful, false)
   })
 })
 
@@ -457,8 +488,13 @@ describe('teardown', () => {
     fs.writeFileSync(path.join(reservation, 'owner.json'), JSON.stringify({ pid: 424242 }))
     const one = await spawnListener()
     const matrix = createMatrix()
+    // Gracefulness is an injected seam here, not a host signal property: the
+    // child is really stopped (ports must close), but the reported result is
+    // pinned graceful so the reservation-absence assertion runs on EVERY
+    // host. On win32 a real stopChild reports graceful:false (TerminateProcess
+    // cannot drain), which would silently skip the red leftover verdict.
     const instances = [
-      { name: 'a', ports: { web: one.port, cdp: one.port }, stop: () => stopChild(one.child, { graceMs: 5000 }) },
+      { name: 'a', ports: { web: one.port, cdp: one.port }, stop: async () => { await stopChild(one.child, { graceMs: 5000 }); return { graceful: true } } },
     ]
     try {
       const problems = await teardown(instances, { portTimeoutMs: 2000 }, fakePaths(root), matrix)
@@ -466,6 +502,32 @@ describe('teardown', () => {
       assert.match(problems[0], /reservation still present/)
       assert.equal(matrix.rows.at(-1).status, 'FAIL')
       // The hard invariant: teardown observed the leftover, it did not remove it.
+      assert.ok(fs.existsSync(path.join(reservation, 'owner.json')))
+    } finally {
+      one.child.kill('SIGKILL')
+    }
+  })
+
+  it('never deletes a leftover reservation after a forced stop (win32 contract)', async () => {
+    const root = mkTmp()
+    const reservation = path.join(fakePaths(root).ws, '.weir', '.edit-lock.publisher-reservation')
+    fs.mkdirSync(reservation, { recursive: true })
+    fs.writeFileSync(path.join(reservation, 'owner.json'), JSON.stringify({ pid: 424242 }))
+    const one = await spawnListener()
+    const matrix = createMatrix()
+    // The forced-stop contract: TerminateProcess (win32) or an escalated
+    // SIGKILL (POSIX) legitimately strands the reservation, so the absence
+    // assertion is reported not-applicable — but the leftover is STILL never
+    // deleted, on any platform.
+    const instances = [
+      { name: 'a', ports: { web: one.port, cdp: one.port }, stop: async () => { await stopChild(one.child, { graceMs: 5000 }); return { graceful: false } } },
+    ]
+    try {
+      const problems = await teardown(instances, { portTimeoutMs: 2000, platform: 'win32' }, fakePaths(root), matrix)
+      assert.deepEqual(problems, [])
+      assert.equal(matrix.rows.at(-1).status, 'PASS')
+      assert.match(matrix.rows.at(-1).detail, /forced stop \(win32\)/)
+      assert.match(matrix.rows.at(-1).detail, /never deleted/)
       assert.ok(fs.existsSync(path.join(reservation, 'owner.json')))
     } finally {
       one.child.kill('SIGKILL')

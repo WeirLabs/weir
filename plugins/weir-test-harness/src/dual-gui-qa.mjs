@@ -839,6 +839,7 @@ export function resolveConfig({ argv = [], env = process.env, platform = process
       phaseMs: Number(env.DUAL_GUI_PHASE_TIMEOUT_MS ?? 45000),
       stopGraceMs: Number(env.DUAL_GUI_STOP_GRACE_MS ?? 10000),
     },
+    platform,
   }
 }
 
@@ -1084,18 +1085,56 @@ async function runMatrix(config, paths, a, b, matrix) {
 
   await phase('restart-reclaim-continue', heavy ? null : 'heavy only (set DUAL_GUI_MATRIX=heavy)', async () => {
     const deadPid = state.publisher.serverPid
+    // The dead owner's recorded lease is the deterministic reclaim clock. A
+    // bind attempted before leaseUntil parks the restarted process as a
+    // fail-closed client for its whole lifetime (ordinary entry points never
+    // repeat a failed startup), so the wait anchors to the owner document,
+    // not to a flat sleep from an arbitrary point in the phase.
+    const deadOwner = readReservationOwner(paths.ws)
+    if (!deadOwner || deadOwner.pid !== deadPid || !Number.isFinite(deadOwner.leaseUntil)) {
+      throw new Error(`dead owner doc missing/rewritten before restart (pid ${deadOwner?.pid} != ${deadPid}); refusing to drive a reclaim`)
+    }
     await state.publisher.startServer() // same profile, same port: fresh token
     await state.publisher.openApp()
+    const restartedPid = state.publisher.serverPid
     // Reclaim needs BOTH an expired lease and a fresh bind attempt: nobody
-    // reserves until a session activates, so wait out the lease, then open
-    // A's original session in the restarted GUI (the activation binds the
-    // domain, finds the dead owner provably gone, and takes over).
-    await sleep(RESERVATION_LEASE_MS + 5000)
+    // reserves until a session activates. Wait out the recorded lease (+5s
+    // margin for clock/probe slack), then open A's original session in the
+    // restarted GUI (the activation binds the domain, finds the dead owner
+    // provably gone, and takes over).
+    const leaseWaitMs = Math.max(0, deadOwner.leaseUntil + 5000 - Date.now())
+    if (leaseWaitMs > 0) await sleep(Math.min(leaseWaitMs, RESERVATION_LEASE_MS + 15000))
     await openSessionInGui(state.publisher, state.aSession, timeouts, state.wsIdA)
-    const owner = await waitFor('reservation reclaimed', () => {
-      const doc = readReservationOwner(paths.ws)
-      return doc && doc.pid === state.publisher.serverPid ? doc : null
-    }, { timeoutMs: timeouts.phaseMs })
+    // Deterministic bind trigger: a real edit-lock tool call in A's session
+    // drives the shared setupAgent/lazy re-bind path even when the sidebar
+    // click's activation lost a rendering race (the panel renders cold views
+    // for non-live sessions, so an entry on screen proves nothing). The
+    // result is diagnostic-only: a refused status still names why.
+    const nudge = await qaEdit(state.publisher, state.aSession, 'status')
+      .catch((error) => ({ kind: 'error', text: String(error?.message ?? error) }))
+    // Poll the owner document with full diagnostics: a timeout must say what
+    // the restarted publisher actually did (last observed doc, nudge result,
+    // live view), and a reclaim by ANY third pid fails fast instead of
+    // timing out silently on a pid-shape mismatch.
+    const deadline = Date.now() + timeouts.phaseMs
+    let owner = null
+    let lastDoc = null
+    let unexpected = null
+    while (Date.now() < deadline) {
+      try { lastDoc = readReservationOwner(paths.ws) } catch { lastDoc = undefined }
+      if (lastDoc) {
+        if (lastDoc.pid === restartedPid) { owner = lastDoc; break }
+        if (lastDoc.pid !== deadPid) { unexpected = lastDoc; break }
+      }
+      await sleep(500)
+    }
+    if (unexpected) {
+      throw new Error(`reservation reclaimed by unexpected pid ${unexpected.pid} (dead ${deadPid}, restarted ${restartedPid}): ${JSON.stringify(unexpected)}`)
+    }
+    if (!owner) {
+      const view = await state.publisher.view(state.aSession).catch((error) => ({ viewError: String(error?.message ?? error) }))
+      throw new Error(`timeout waiting for reservation reclaimed; restarted pid ${restartedPid} (dead ${deadPid}); last owner doc=${JSON.stringify(lastDoc ?? null)}; status nudge=${nudge.kind}: ${nudge.text}; publisher view=${JSON.stringify(view?.value ?? view ?? null)?.slice(0, 400)}`)
+    }
     if (owner.pid === deadPid) throw new Error('reservation was not reclaimed by the restarted publisher')
     // B2's retained generation survives the publisher's death as stopped.
     const stopped = await waitView(state.client, state.b2Session, 'B2 stopped with retained lock', (view) =>
@@ -1184,7 +1223,11 @@ export async function teardown(instances, config, paths, matrix) {
       problems.push('publisher reservation still present after graceful stop (left untouched on purpose)')
     }
   }
-  matrix.record('teardown', problems.length === 0 ? 'PASS' : 'FAIL', problems.join('; ') || (allGraceful ? 'ports closed; reservation naturally absent' : 'forced stop on win32: port checks only'))
+  // A forced stop (win32 TerminateProcess by design, or an escalated SIGKILL
+  // on POSIX) legitimately strands the reservation: report the absence check
+  // as not-applicable with the actual platform instead of a win32 literal.
+  const forcedDetail = `forced stop (${config.platform ?? process.platform}): port checks only; reservation-absence assertion not applicable (never deleted)`
+  matrix.record('teardown', problems.length === 0 ? 'PASS' : 'FAIL', problems.join('; ') || (allGraceful ? 'ports closed; reservation naturally absent' : forcedDetail))
   return problems
 }
 
