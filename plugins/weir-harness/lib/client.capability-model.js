@@ -515,7 +515,8 @@ window.__ModuleLoader__.load({
 		 * rollback count (no preset record was created), or a missing target
 		 * root. */
 		function importConfirmOutcomeOf(response) {
-			if (!response || typeof response !== "object" || response.error === true) return { kind: "error" };
+			if (!response || typeof response !== "object") return { kind: "error" };
+			if (response.error === true) return { kind: "error", ...(Array.isArray(response.installed) ? { installed: response.installed } : {}), ...(response.presetStatus === "unconfirmed" ? { presetStatus: "unconfirmed" } : {}) };
 			if (response.status === "created" || response.status === "edited") {
 				const scopeOf = (value) => (typeof value === "string" && value !== "" ? value : "project");
 				return {
@@ -545,10 +546,10 @@ window.__ModuleLoader__.load({
 			}
 			if (response.status === "no-target-root") return { kind: "no-target-root", targetScope: String(response.targetScope ?? "unknown") };
 			if (response.status === "name-conflict" || response.status === "rename-required") return { kind: "name-conflict", with: response.with ?? null, ...(Number.isSafeInteger(response.withRevision) && response.withRevision > 0 ? { withRevision: response.withRevision } : {}) };
-			if (["locked", "unreadable", "unsupported", "revision-conflict", "confirmation-required", "indeterminate", "commit-failed"].includes(response.status)) return { kind: response.status, installed: Array.isArray(response.installed) ? response.installed : [] };
+			if (["locked", "unreadable", "unsupported", "revision-conflict", "confirmation-required", "indeterminate", "commit-failed", "write-failed", "preset-unconfirmed"].includes(response.status)) return { kind: response.status, installed: Array.isArray(response.installed) ? response.installed : [], ...(response.presetStatus === "unconfirmed" ? { presetStatus: "unconfirmed" } : {}) };
 			if (response.status === "no-workspace") return { kind: "no-workspace" };
 			if (response.status === "rejected") return { kind: "rejected", reason: String(response.reason ?? "rejected") };
-			return { kind: "error", status: response.status ?? "unknown" };
+			return { kind: "error", status: response.status ?? "unknown", ...(Array.isArray(response.installed) ? { installed: response.installed } : {}), ...(response.presetStatus === "unconfirmed" ? { presetStatus: "unconfirmed" } : {}) };
 		}
 
 		/** Download filename for the exported package JSON: derived from the

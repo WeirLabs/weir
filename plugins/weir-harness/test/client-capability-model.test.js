@@ -362,6 +362,15 @@ test('6.4 importConfirmOutcomeOf renders installed rows with the final on-disk n
   expect(model.importConfirmOutcomeOf({ status: 'created', unresolved: ['a'] }).unresolved).toBe(1)
 })
 
+test('6.4 import confirmation preserves installed side effects and unconfirmed preset status on failed publication', () => {
+  expect(model.importConfirmOutcomeOf({ status: 'preset-unconfirmed', installed: [{ name: 'alpha' }], presetStatus: 'unconfirmed' }))
+    .toEqual({ kind: 'preset-unconfirmed', installed: [{ name: 'alpha' }], presetStatus: 'unconfirmed' })
+  expect(model.importConfirmOutcomeOf({ status: 'write-failed', installed: [{ name: 'alpha' }], presetStatus: 'unconfirmed' }))
+    .toEqual({ kind: 'write-failed', installed: [{ name: 'alpha' }], presetStatus: 'unconfirmed' })
+  expect(model.importConfirmOutcomeOf({ error: true, installed: [{ name: 'alpha' }], presetStatus: 'unconfirmed' }))
+    .toEqual({ kind: 'error', installed: [{ name: 'alpha' }], presetStatus: 'unconfirmed' })
+})
+
 test('6.4 importConfirmOutcomeOf names install-failed with the rollback count, missing roots and conflicts', () => {
   expect(model.importConfirmOutcomeOf({ status: 'install-failed', reason: 'disk full', rolledBack: 5 }))
     .toEqual({ kind: 'install-failed', reason: 'disk full', rolledBack: 5 })
