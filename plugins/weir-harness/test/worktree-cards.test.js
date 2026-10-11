@@ -103,4 +103,35 @@ describe('worktree decision-card copy', () => {
       expect(locksOnly.includes(locale === 'zh' ? '个未决 Edit Lock 操作' : 'operation(s)')).toBe(false)
     }
   })
+
+  it('discloses dirty content on cleanup and abandon cards in both languages, and stays silent when clean (对拍)', () => {
+    const lane = { id: 'a-001', title: 'Fix login', state: 'working', branch: 'weir/a-001', base: { branch: 'main' }, path: '/r/.weir/worktrees/a-001' }
+    const dirty = { modified: 2, untracked: 5 }
+    for (const locale of ['en', 'zh']) {
+      const copy = cardCopy(locale)
+      // clean worktree (null probe OR zero counts): no disclosure block
+      expect(copy.cleanupDetail(lane, { files: 1, added: 2, removed: 1 }, '/r')).not.toContain('⚠️')
+      expect(copy.abandonDetail(lane, 0, '/r')).not.toContain('⚠️')
+      expect(copy.cleanupDetail(lane, { files: 1, added: 2, removed: 1 }, '/r', null, { modified: 0, untracked: 0 })).not.toContain('⚠️')
+      expect(copy.abandonDetail(lane, 0, '/r', null, null, { modified: 0, untracked: 0 })).not.toContain('⚠️')
+      // dirty worktree: counts + permanent-deletion warning as its own paragraph
+      for (const detail of [copy.cleanupDetail(lane, { files: 1, added: 2, removed: 1 }, '/r', null, dirty), copy.abandonDetail(lane, 0, '/r', null, null, dirty)]) {
+        const warning = detail.split('\n\n').at(-1)
+        expect(warning.startsWith('⚠️')).toBe(true)
+        expect(warning).toContain('2')
+        expect(warning).toContain('5')
+        expect(warning.includes(locale === 'zh' ? '永久删除' : 'delete it permanently')).toBe(true)
+      }
+      // destructive option descriptions name the destruction only in the dirty variants
+      expect(copy.cleanupDescriptionsDirty.worktree.includes(locale === 'zh' ? '销毁' : 'destroyed')).toBe(true)
+      expect(copy.cleanupDescriptionsDirty.all.includes(locale === 'zh' ? '销毁' : 'destroyed')).toBe(true)
+      expect(copy.abandonDescriptionsDirty.worktree.includes(locale === 'zh' ? '销毁' : 'destroyed')).toBe(true)
+      expect(copy.abandonDescriptionsDirty.all(3)).toContain('3')
+      expect(copy.abandonDescriptionsDirty.all(3).includes(locale === 'zh' ? '未提交内容' : 'uncommitted content')).toBe(true)
+      expect(copy.abandonDescriptionsDirty.all(0).includes(locale === 'zh' ? '销毁' : 'destroyed')).toBe(true)
+      // the clean-state descriptions never claim destruction
+      expect(copy.cleanupDescriptions.worktree.includes(locale === 'zh' ? '销毁' : 'destroyed')).toBe(false)
+      expect(copy.abandonDescriptions.all(0).includes(locale === 'zh' ? '销毁' : 'destroyed')).toBe(false)
+    }
+  })
 })
