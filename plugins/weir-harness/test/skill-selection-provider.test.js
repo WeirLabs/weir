@@ -131,3 +131,28 @@ test('in-flight enumeration cannot republish a selection revoked by Apply', asyn
   expect((await pending).candidates).toEqual([])
   expect((await provider.list()).candidates).toEqual([])
 })
+
+test('concurrent fresh reads share the in-flight collect instead of degrading each other', async () => {
+  // 2026-10-12 live diagnosis (audit weir/capability-read): the Badge and the
+  // manager panel fetch the receipt concurrently; the old fresh() cleared the
+  // epoch again for the second caller, so the shared in-flight collect failed
+  // its stale-epoch guard and BOTH receipts returned complete:false with no
+  // error — the permanent "accepted but unverifiable" Badge state.
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  let scans = 0
+  const { provider } = setup({ inventory: async () => { scans++; await gate; return { complete: true, candidates: [project, user] } } })
+  const first = provider.fresh()
+  const second = provider.fresh()
+  release()
+  const [a, b] = await Promise.all([first, second])
+  expect(a.complete).toBe(true)
+  expect(b.complete).toBe(true)
+  expect(a.candidates.length).toBe(1)
+  expect(scans).toBe(1)
+  expect(provider.status().error).toBe(null)
+  // A later fresh read still re-enumerates (no stale cache).
+  const third = await provider.fresh()
+  expect(third.complete).toBe(true)
+  expect(scans).toBe(2)
+})

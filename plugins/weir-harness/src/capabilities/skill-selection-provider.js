@@ -113,6 +113,12 @@ export function createSkillSelectionProvider({ control, readSelection, inventory
     // provider result cached before an external Skill directory changed.
     fresh(options = {}) {
       const state = stateOf(options)
+      // A collect already in flight IS the freshest answer available: clearing
+      // and starting a second one trips the first collect's stale-epoch guard,
+      // degrading BOTH callers to a complete:false receipt with no error (the
+      // Badge and the manager panel fetch concurrently — 2026-10-12 live
+      // diagnosis, audit channel `weir/capability-read`).
+      if (state.pending) return state.pending
       clear(state)
       return collect(state)
     },
