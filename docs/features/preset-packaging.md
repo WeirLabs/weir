@@ -14,6 +14,7 @@ Weir 的全部能力以一个 bundle 包（`plugins/weir-harness/`，包名 `wei
 - Weir 会话自带技能目录（10 项），经 `skill` 工具加载。
 - bundle 代码或组合更新后，新创建的 agent 使用新版本；进行中的 agent 保持原组合直到结束。
 - Weir 不会抢占默认预设，除非用户显式把它设为默认。
+- 插件管理器中的 `weir-harness` bundle 卡片/详情/行显示 Weir 品牌图标：`package.json` 顶层 `icon` 字段指向包内 `icon.svg`（品牌资产 `docs/assets/brand/weir-icon.svg` 的副本，已加入 `files` 发布清单）。
 - **BREAKING：单一任务派遣入口**：两个预设都只通过 `delegate` 派任务，不再提供 `subagent`、`subagent_fork`、`list_subagent_models`、`workflow`。保留 `send_message`、`interrupt_agent`、`list_agents` 与 `resume_agent`、`terminate_agent`、`supervised_status`。批量/分组委派不等价于 JavaScript workflow 的可编程流水线或结构化脚本能力，旧 workflow 脚本不自动迁移（见 [分类委派](category-delegation.md)）。
 
 ### Weir 创造模式（weir-creative）
@@ -46,6 +47,7 @@ bundle 另在 profile 层插入 `weir-harness/settings` 行：以 schemastery �
 - **预设库与用户预设的组合关系**：cordis patch 声明的是 Weir 预设自身的静态组合（本节）；**用户预设**（团队能力集合）由会话能力管理器的预设库承载——`global`／`workspace` 两个 namespace 存在 Weir 自管存储里（稳定 ID 与显示名分离、同域重名显式决策、CAS 冲突显式化），可移植导出文档只含无凭据引用（详见 [会话能力管理器](session-capability-manager.md)「预设与默认值」）。用户预设的加载绝不改变宿主组合，只作用于会话选择。
 - 重复安装同一路径被幂等拒绝；改动经"禁用→启用"循环重应用。
 - **双预设同步纪律**：`weir-creative` 的 `config.plugins` 是 `weir` 组合的全量副本加上述创造增量。**修改 `weir` 预设组合时必须同步修改 `weir-creative`**；`test/preset-creative.test.js` 钉住全部插件行序列（含嵌套组；除 tool-cordis / creative-guide 插入外逐一相同）与各组 isolate 表的一致性。
+- **插件显示图标**：宿主（`dsh-app-boot`）读取导出 `package.json` 的 `icon` 字段——必须是相对路径、解析后留在包目录内、扩展名为 SVG/PNG/JPEG/WebP、≤256 KiB；插件管理器以 `<img src>` 渲染。`icon.svg` 是品牌资产的**副本**而非符号链接（npm pack/link 安装下符号链接解析不可靠），`scripts/release.mjs` 打版编排不受影响。
 
 ## 边界与失败语义
 
