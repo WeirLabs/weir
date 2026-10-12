@@ -1,6 +1,6 @@
 # Edit Lock 编辑锁仲裁（edit-lock）
 
-> **实验特性，默认关闭**：`weir-harness/edit-lock` 已加入 `weir` 预设（排在 hashline-edit／lsp 之前），只有在 Weir 设置页打开「编辑锁（实验）」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时不安装编辑保护服务、工具或监听器。设置页只读维护面板独立保留。
+> **稳定可选，默认关闭**：`weir-harness/edit-lock` 已加入 `weir` 预设（排在 hashline-edit／lsp 之前），只有在 Weir 设置页打开「编辑锁」（`editLockEnabled`）并**重启 DeepSeek Harness** 后才生效；未开启时不安装编辑保护服务、工具或监听器。设置页只读维护面板独立保留。
 > **关闭语义**：保存关闭后、重启前旧编辑锁仍在执行；重启真正关闭后，`write`／`hash_edit`／`lsp_rename` 等受管编辑恢复普通无锁行为，即使旧权威还留有锁或未知发布，也**不能再防止相互覆盖**。关闭不会清除权威镜像、未决围栏或历史；再次打开会重新读取这些状态，可能要求人工恢复。切勿为让关闭“生效”而删除存活 publisher 的预约。
 >
 > **版本**：特性分支 `dev/edit-lock` 单独维护版本号，已发布 `edit-lock-v0.1.0`（2026-10-02）与 `edit-lock-v0.2.0`（2026-10-03，UX 改版：回合末收尾、有期限保留、面板重做），见 [CHANGELOG.md](../../CHANGELOG.md)。两个版本都已完成人工验收（单会话与跨会话、状态面板与命令入口），并以实验特性形态随主分支 `0.7.0` 合入。
@@ -26,7 +26,7 @@
 
 ## 用户可见行为
 
-启用后（设置页「编辑锁（实验）」并重启），同一项目里的会话轮流编辑文件，而不是相互覆盖：
+启用后（设置页打开「编辑锁」并重启），同一项目里的会话轮流编辑文件，而不是相互覆盖：
 
 - **编辑即占用**。助手改一个文件时自动占用它；其他会话改这个文件会被拒绝，可以请求对方转交（`edit_lock_try_steal`）。
 - **回合结束要收尾**。回合正常结束（`turn/end` 为 `completed`）而助手仍占着文件时，会被续推一次，要求它对每个文件二选一：改完了就释放（`edit_lock_release`），还要用就申请**有期限的保留**（`edit_lock_hold`）。提醒次数用尽仍未处理的，按设置自动释放（默认）或转为需要你处理。出错（`error`）走仅清理恢复，你按下停止（`aborted`）则不续推，二者都不进入此路径。
@@ -132,7 +132,7 @@
 
 | 设置键 | 默认 | 说明 |
 |---|---|---|
-| `editLockEnabled`（设置页「编辑」组「编辑锁（实验）」） | `false` | 保存开关后重启才生效；关闭后普通编辑不受锁保护，旧权威历史仍保留 |
+| `editLockEnabled`（设置页「编辑」组「编辑锁」） | `false` | 保存开关后重启才生效；关闭后普通编辑不受锁保护，旧权威历史仍保留 |
 | `editLockHoldDefaultMinutes` | `30` | 助手申请保留而未给时长时使用 |
 | `editLockHoldSingleMaxMinutes` | `30` | 单次保留上限（从现在起的窗口） |
 | `editLockHoldCumulativeMaxMinutes` | `120` | 一批文件的累计保留上限，须不小于单次上限 |
@@ -476,7 +476,7 @@ publisher 捕获原始 `fs.resolve/writeText`，保留五参数调用（目标�
 
 首轮完整三平台绿灯为 [run 38110139730](https://github.com/WeirLabs/weir/actions/runs/38110139730)：macos-latest / ubuntu-latest / windows-latest 各 9 PASS/0 FAIL/1 SKIP（双 GUI 重型矩阵）＋ 35/35（**单独 headless** 锁下重命名）。增强后的 [run 38142263705](https://github.com/WeirLabs/weir/actions/runs/38142263705) 三平台各 **15 PASS/0 FAIL/1 SKIP**（新增真实异常／清理恢复／暂停／部分写入状态）＋ **43/43**（锁下重命名的缺失／混合目标）。其报告记录 runner 版本、PID/退出、短 Unix socket 或 Win32 命名管道、8 张明暗主题面板图与两浏览器每阶段 `Runtime.exceptionThrown A=0 B=0`；安全筛选后的本地报告／截图现存 `.weir/stable-gate/ci-safe-artifacts-38142263705/`。该**旧 SHA** 的绿色作业未证明双 GUI 版本/CAS/sandbox 拒绝，也未证明浏览器能展开三清单，独立复审当时 REJECT 3.5；后续 run 补证行为，不追溯修改旧结论。原始下载工件曾含浏览器历史，现已按用户授权删除远端与本地原始目录，不能把行为 PASS 当工件安全 PASS。
 
-随后本机安装版 **macOS** 双 GUI 驱动 `f3e5f48` 以两个独立 Web 进程在同一外部根中新增真实版本 CAS 与域内沙箱后端拒绝：`--heavy` **17 PASS/0 FAIL/1 SKIP**、`--opt-out` **22 PASS/0 FAIL/1 SKIP**。嵌套会话 cwd 位于同一管理域的 `narrow/`，被拒的沙箱目标在管理域内却在会话可写根外；CAS 与沙箱都是后端已派发、文件字节不变、权威新增 `unknown`/资源围栏并保留锁，**不能**称为写前零操作。浏览器确实选中目标 Session 并展开红色用户命令行显示原生的裸后端错误（该远端调用不携带 stock 工具的 `[sandbox: …]` 方括号标记；QA 不得补造）；权威/PID/字节及两张截图保留在 `.weir/stable-gate/dual-gui-cas-sandbox-mac-20261011/`。独立复审对本次 **macOS Web 3.2** 给出 APPROVE；Linux/Win32 当时仍未运行新增阶段，随后最终 run 独立补齐。
+随后本机安装版 **macOS** 双 GUI 驱动 `f3e5f48` 以两个独立 Web 进程在同一外部根中新增真实版本 CAS 与域内沙箱后端拒绝：`--heavy` **17 PASS/0 FAIL/1 SKIP**；后续默认关维护补证的独立 `--opt-out` 复验 **20 PASS/0 FAIL/1 SKIP**（`.weir/stable-gate/optout-maintenance-recheck.log`）。嵌套会话 cwd 位于同一管理域的 `narrow/`，被拒的沙箱目标在管理域内却在会话可写根外；CAS 与沙箱都是后端已派发、文件字节不变、权威新增 `unknown`/资源围栏并保留锁，**不能**称为写前零操作。浏览器确实选中目标 Session 并展开红色用户命令行显示原生的裸后端错误（该远端调用不携带 stock 工具的 `[sandbox: …]` 方括号标记；QA 不得补造）；权威/PID/字节及两张截图保留在 `.weir/stable-gate/dual-gui-cas-sandbox-mac-20261011/`。独立复审对本次 **macOS Web 3.2** 给出 APPROVE；Linux/Win32 当时仍未运行新增阶段，随后最终 run 独立补齐。
 
 QA 分支 SHA `8030cb4` 的 [run 38151998556](https://github.com/WeirLabs/weir/actions/runs/38151998556) **macOS／Ubuntu／Windows 各 17 PASS/0 FAIL/1 SKIP**，安装版锁下重命名各 **43/43**。真实双 GUI CAS 和同域窄沙箱后端拒绝均在对应浏览器会话展开原生裸错误，字节不变且已派发操作按 `unknown`/资源围栏保留；恢复文字 `0 attempts→1 attempts` 与权威次数匹配；部分写入原生命令卡在明暗主题下展开三份清单和 `ownership retained (no rollback)`，锁归属面板同屏。安全筛选后的 `.weir/stable-gate/ci-safe-artifacts-38151998556/` 保留每平台 8 张状态双主题＋2 张拒绝截图，原报告 30 张 PNG 长度与 SHA-256 曾逐一核对；runner 报告记录版本、PID/退出、端点与双浏览器逐阶段零 `Runtime.exceptionThrown`。主会话目视抽查恢复和部分写入图；独立只读复审对行为门槛 3.3／3.4／3.5 分别 APPROVE。注意这**不是**工件脱敏结论：当时只检查了文本日志，公开原始工件连 Chrome History 一起上传，后续终审发现未脱敏隔离 Web token，已获用户授权删除原始工件。
 
@@ -484,17 +484,18 @@ QA 失败路径的第一轮安全修复 `a097c1a` 合入后，代码 SHA `39fb0f
 
 ### 公开 QA 工件安全补救（2026-10-12）
 
-独立整体复审在代码 SHA `edaaf82` **REJECT 4.2**：旧工作流把整个 `${{ runner.temp }}/dual-gui-qa` 上传到公开仓库工件，Chrome `Default/History` 保存 token-bearing Web URL；三平台六份浏览器历史只读布尔扫描均有未脱敏的**隔离 QA 本地 Web token** 标记（未读取或输出 token 值，**不是正式 Desktop 的凭据**）。单独脱敏文本日志不能替代工件 allowlist。用户明确授权先留无凭据证据再删旧公开工件：逐件核对后 **35/35 远端删除成功**，当时 GitHub 旧 QA 工件清单为 0；另获授权保留历次 15 份安全报告／174 张 PNG 后删除本机 6 个原始下载目录，本地 `.weir/stable-gate/` 无 Chrome History。`89e851b` 修复工作流为 25 条具体证据路径，代码 SHA `5f5f24a` 的 [新三平台 run 38180837286](https://github.com/WeirLabs/weir/actions/runs/38180837286) 各 17 PASS/0 FAIL/1 SKIP、重命名各 43/43；实际新上传工件每平台仅 1 份报告、8 份脱敏日志、10 张 PNG，30 张截图哈希相符，全部常规白名单文件、无 Chrome 目录／symlink／未脱敏 token 标记。原独立安全审查者据此 **APPROVE 3.1 工件修复**；现在 GitHub 仅保有该新 run 的 3 份已检安全工件。4.2 仍须以随后合入的最终代码 SHA 全量重测并获独立整体 APPROVE，实验标签保留。
+独立整体复审在代码 SHA `edaaf82` **REJECT 4.2**：旧工作流把整个 `${{ runner.temp }}/dual-gui-qa` 上传到公开仓库工件，Chrome `Default/History` 保存 token-bearing Web URL；三平台六份浏览器历史只读布尔扫描均有未脱敏的**隔离 QA 本地 Web token** 标记（未读取或输出 token 值，**不是正式 Desktop 的凭据**）。单独脱敏文本日志不能替代工件 allowlist。用户明确授权先留无凭据证据再删旧公开工件：逐件核对后 **35/35 远端删除成功**，当时 GitHub 旧 QA 工件清单为 0；另获授权保留历次 15 份安全报告／174 张 PNG 后删除本机 6 个原始下载目录，本地 `.weir/stable-gate/` 无 Chrome History。`89e851b` 修复工作流为 25 条具体证据路径，代码 SHA `5f5f24a` 的 [新三平台 run 38180837286](https://github.com/WeirLabs/weir/actions/runs/38180837286) 各 17 PASS/0 FAIL/1 SKIP、重命名各 43/43；实际新上传工件每平台仅 1 份报告、8 份脱敏日志、10 张 PNG，30 张截图哈希相符，全部常规白名单文件、无 Chrome 目录／symlink／未脱敏 token 标记。原独立安全审查者据此 **APPROVE 3.1 工件修复**；此阶段 GitHub 仅保有该新 run 的 3 份已检安全工件。**当时**尚须以随后合入的最终代码 SHA 全量重测并获独立整体 APPROVE，因此实验标签仍保留；后续冻结树的 4.2 APPROVE 与稳定文案见下。
 
 ### 更早的组件级证据
 
 开发期还留下了若干**组件级**证据（`.weir/edit-lock-verification/`：`store-review/`、`operation-history-review/`、`resource-review/` 的独立装置测试，`current-dispatch/`、`current-agent/`、`current-ipc/` 的安装版报告，`adapter/VERDICT.md` 与 `installed-gate-status.md` 的早期结论）。它们覆盖的是单个模块或有界组件，**不等于**产品验收：其中身份与 policy 传输使用 fixture、singleton 只是同目录独占 mkdir、版本标签有的是旧提取物 `0.1.7-rc.2`。本轮门槛以上表为准。
 
-### 尚未完成的稳定化验收
+### 稳定版验收证据与已知边界
 
-本特性仍为**实验特性、默认关闭**。三平台双 GUI Web/CLI 与 Desktop 锁开启手工 smoke 已分别取得证据，但最终代码 SHA 全量验证、独立整体复审和发布顺序闸门**尚未全部满足**；不得由单项绿色作业推断稳定版已可发布：
+本特性现以**稳定可选、默认关闭**提供；开启或保存关闭后都需要重启才切换实际执行代次。三平台双 GUI、Desktop 锁开启烟测、冻结代码树全量验证与独立整体复审已经通过；以下记录边界与历史证据。稳定标签不会把停用期普通编辑变成受保护写入，也不会默认启用编辑锁。远端 main 合并、OpenSpec 归档与公开发布仍需用户分别批准：
 
 - **分阶段复审，不是发布批准**：SHA `8030cb4` 的 run 38151998556 对 Linux/Win32 CAS／沙箱拒绝及三平台页面可见恢复/部分写入矩阵取得 3.3／3.4／3.5 独立 APPROVE；旧 run 38142263705 对 3.5 的 REJECT 仅针对旧 SHA。审查者因只读工具限制无法亲自拉取实时 Actions 或解码 PNG，主会话抽看画面并核对报告/DOM/哈希。另一次独立安全终审曾 REJECT QA 失败路径：显式已有根下先覆写夹具才拒绝、server spawn 异常绕过 teardown、fatal 栈有泄露风险；`a097c1a` 修复为仅新鲜空根、管理根写前预检、spawn 受控拒绝及有限清理证明，组件 99/99、装置 440/440，原审查者二轮对 3.1 修复 APPROVE；修复后的三平台 run 38177353721 再次实跑通过。这些单项审查均不是包括新 Desktop 实况与当前代码 SHA 的**最终整体** APPROVE。
-- **工件安全修复（3.1 已 APPROVE，4.2 仍待整体闸门）**：旧工作流公开全根归档使 Chrome 历史与未脱敏隔离 Web token 一起上传；按用户授权已删除 35 份旧远端工件和本机 6 个原始下载目录，只保留报告/截图安全副本。`89e851b` 改为 25 条具名上传路径，负例拒绝根目录、通配符和提前失败时的 Chrome 文件。新 SHA `5f5f24a` 的三平台 run 38180837286 逐个平台实跑 17 PASS/0 FAIL/1 SKIP＋独立锁下重命名 43/43；下载的每份真实 ZIP 仅 19 个白名单常规文件（报告 1、日志 8、PNG 10），无浏览器目录/未脱敏 token 标记，30 张 PNG 长度和 SHA-256 与报告一致；原独立安全审查者 **APPROVE 3.1**。随后并行合入了与编辑锁无关的模块，固定待发布代码 SHA 的本地全量与最终整体复审未完成，4.2／稳定标签仍未批准。
-- **全量与打包**：旧 SHA `8030cb4` 的安装版全量集成 **778/797**、退出 1，19 项均因隔离测试运行时未提供捆绑 Office 服务要求的 `WEIR_IT_NODE`／`WEIR_IT_OFFICE_CLI` 而缺失 `office-docx` 原始候选，非编辑锁回归；向仅限开发的隔离 profile 补齐已有捆绑路径后 Office 单项 **23/23**，代码 SHA `39fb0f8` 的安装版全量集成两次 **797/797**、退出 0，最终运行首末 SHA 一致（`.weir/stable-gate/integration-full-final-head-39fb0f8.log`）。产品全单测、装置 440/440、checkJs 与同 SHA 仓库 pack smoke 通过；未修改正式 Desktop profile 或放宽 Office 断言。此后仓库另有与编辑锁无关的并行代码合入，最终整体闸门须以实际待发布代码 SHA 重新核验，不能把旧成功样本冒称为新提交的运行结果。
-- **已安装 Desktop-host 锁开启 smoke（子闸门 PASS）**：用户在原本就启用编辑锁的正式 Electron Desktop 0.2.0-rc.2（macOS 15.8 arm64、PID 30453、现有单实例端口 19387）中，以外部工作区 `/Users/young/WeirDesktopSmoke-IMViJUJU` 的两个会话完成 A gen1 `hash_edit` → B 的 `edit_lock_acquire`／受管 `write` 均因活 owner 拒绝且字节未变 → A 正常 release → B gen2 受管 `write` 成功 → B release；最终 `ws/probe.txt` 是 `desktop=3`。经用户授权仅只读核对两份原生 Session 日志与父目录真实权威：revision 21、两条 confirmed updated、锁 0、unresolved 0、无管理员恢复；详情见本地 `.weir/stable-gate/desktop-smoke-20261012.md`。用户确认原设置本来开启且选择保持开启；存活预约绝不可手动删除。这是 Desktop 手工操作证据，**不替代**三平台双 Web 矩阵，也不直接批准移除实验标签；最终 SHA 验证与独立整体复审仍待完成。
+- **公开 QA 工件安全修复（3.1 APPROVE）**：旧工作流公开全根归档使 Chrome 历史与未脱敏隔离 Web token 一起上传；用户授权删除 35 份旧远端工件和本机 6 个原始下载目录，仅留报告/截图安全副本。`89e851b` 将上传限制为 25 条具名路径，负例拒根目录、通配符与提前失败时的 Chrome 文件。SHA `5f5f24a` 的三平台 [run 38180837286](https://github.com/WeirLabs/weir/actions/runs/38180837286) 各 17 PASS/0 FAIL/1 SKIP、独立锁下重命名 43/43；实际每份 ZIP 仅 19 个白名单常规文件（报告 1、日志 8、PNG 10），无浏览器目录／未脱敏 token 标记、30 张图长度与 SHA-256 相符；原安全审查者对 3.1 APPROVE。冻结 HEAD `34bd386` 上的最终完整本地验证及独立整体 **APPROVE 4.2** 见下；本次 4.1 只改变标签与说明，三处 `false` 默认值、重启提示和停用覆盖风险警示均不变。
+- **冻结代码树全量与打包（4.2 APPROVE）**：旧 SHA `8030cb4` 的安装版全量 778/797 中 19 项 Office 环境红灯，是隔离测试运行时未提供已捆绑服务要求的 `WEIR_IT_NODE`／`WEIR_IT_OFFICE_CLI`，非编辑锁回归；只补环境变量、不改断言，Office 单项 23/23。冻结 HEAD `34bd386` 所指产品树 `02d4b9b`／装置树 `d2bb0cd`／安全工件工作流 blob `5d30f241` 在验证首末一致：checkJs 退出 0；产品 **2707 pass/11 skip/0 fail**、装置 **443/443**、隔离安装版全量 **797/797**，非发布 pack dry-run **239 文件／unsafe=[]／零 tarball／无产品 diff**，OpenSpec 严格校验有效（`.weir/stable-gate/product-check-freeze2-02d4b9b.log`、`product-unit-freeze2-02d4b9b.log`、`harness-unit-freeze2-d2bb0cd.log`、`integration-freeze2-34bd386.log`、`pack-freeze2-02d4b9b.log`）。同一独立审查者对该固定快照明确 **OVERALL APPROVE 4.2**；本次 4.1 仅改用户标签/说明，默认关和停用风险不变。整体批准不是远端合并／归档／发布许可。
+- **已安装 Desktop-host 锁开启 smoke（4.2 子闸门 PASS）**：用户在原本就开启编辑锁的正式 Electron Desktop 0.2.0-rc.2（macOS 15.8 arm64、PID 30453、单实例端口 19387）中，以外部工作区 `/Users/young/WeirDesktopSmoke-IMViJUJU` 的两个会话完成 A gen1 `hash_edit` → B 的 `edit_lock_acquire`／受管 `write` 因活 owner 双拒且字节不变 → A 正常 release → B gen2 受管 `write` 成功 → B release，最终 `ws/probe.txt` 为 `desktop=3`。经用户授权仅只读核对两份原生 Session 日志与父目录真实权威：revision 21、两条 confirmed updated、锁 0、unresolved 0、无管理员恢复；详见 `.weir/stable-gate/desktop-smoke-20261012.md`。用户选择保持原本开启的设置；存活预约不可手动删除。Desktop 证据与三平台 Web 各自独立，并已纳入 4.2 整体 APPROVE。标签代码变更不会自动重启或重配现有正式 Desktop profile；旧窗口若未重新载入可能仍显示旧文案，不据此推断锁未执行。
+- **稳定标签的隔离 GUI 核验（4.1）**：合入标签代码后的 HEAD `96c6ffb` 在已安装 DSH 0.2.0-rc.2 上用两独立 macOS Web 进程复验 `--opt-out`，报告 **22 PASS/0 FAIL/1 SKIP**；深／浅主题各两张设置页图可见「编辑锁」而非「编辑锁（实验）」、重启提示及关闭期间覆盖风险（`.weir/stable-gate/stable-label-gui-safe-96c6ffb/`）。这不是新的 Linux/Win32 或正式 Electron Desktop UI 截图；正式 profile 未重新应用或重启。
