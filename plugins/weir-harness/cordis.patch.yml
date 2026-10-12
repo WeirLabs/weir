@@ -40,7 +40,7 @@
         worktreeAutoSetup: true
         worktreeWatchTimeoutMinutes: 360
         worktreeAutoApprove: auto-clean
-        editLockEnabled: false
+        editLockEnabled: true
         # Message-driven auto-resume (edit-lock-auto-resume-on-message): a genuine
         # user message resumes a stopped session and confirms its retained files.
         # Read live per message, so toggling applies without a restart.
@@ -242,8 +242,8 @@
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'weir-harness/todo-driver'
-              # 编辑锁（可选，默认关）：设置 editLockEnabled 开启并重启后生效。
-              # 必须排在 hashline-edit / lsp 之前，二者在挂载时捕获锁服务。
+              # 编辑锁（默认开）：显式保存 false 后重启才关闭；须在 hashline-edit / lsp 前挂载。
+              # 两个消费者挂载时捕获隔离组内的锁服务。
               - id: edit-lock
                 name: 'weir-harness/edit-lock'
               # F7 锚点编辑：read 锚点增强 + fail-closed hash_edit 工具

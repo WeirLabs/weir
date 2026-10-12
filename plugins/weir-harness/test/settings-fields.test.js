@@ -258,14 +258,21 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
   })
 })
 
-describe('Edit Lock stable opt-in Settings declaration', () => {
-  it('describes optional, default-off, restart-applied ownership without an experiment label', () => {
+describe('Edit Lock effective Settings for unsaved and saved profiles', () => {
+  it('enables a never-saved or legacy omitted field, but retains an explicit saved false', () => {
+    expect(computeSections({}).editLock.enabled).toBe(true)
+    expect(computeSections({ todoEnabled: true }).editLock.enabled).toBe(true)
+    expect(computeSections({ editLockEnabled: false }).editLock.enabled).toBe(false)
+  })
+})
+describe('Edit Lock default-on Settings declaration', () => {
+  it('describes default-on, restart-applied ownership without an experiment label', () => {
     const row = FIELDS.find(({ key }) => key === 'editLockEnabled')
-    expect(row.description).toBe('Edit Lock cross-session file ownership (optional, default off; applies after restart)')
+    expect(row.description).toBe('Edit Lock cross-session file ownership (default on; explicit off applies after restart)')
     expect(row.restart).toBe(true)
-    expect(FIELD_DEFAULTS.editLockEnabled).toBe(false)
-    expect(patchRowEntries().get('editLockEnabled')).toBe('false')
-    expect(chunkFieldDefaults().get('editLockEnabled')).toBe(false)
+    expect(FIELD_DEFAULTS.editLockEnabled).toBe(true)
+    expect(patchRowEntries().get('editLockEnabled')).toBe('true')
+    expect(chunkFieldDefaults().get('editLockEnabled')).toBe(true)
   })
 })
 

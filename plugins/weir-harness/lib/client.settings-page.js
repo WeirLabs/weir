@@ -187,7 +187,7 @@ window.__ModuleLoader__.load({
 			guardSoftThreshold: 0.72,
 			guardHardThreshold: 0.88,
 			hashlineHideStockEdit: true,
-			editLockEnabled: false,
+			editLockEnabled: true,
 			editLockHoldDefaultMinutes: 30,
 			editLockHoldSingleMaxMinutes: 30,
 			editLockHoldCumulativeMaxMinutes: 120,
