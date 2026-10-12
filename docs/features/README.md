@@ -25,7 +25,7 @@
 | 共享 runtime 消息助手 | [runtime-message-helpers.md](runtime-message-helpers.md) | `weir-harness/shared`（被 intent-gate / todo-driver / context-guard 复用） |
 | Windows 沙箱 shell 约束 | [windows-sandbox-shell-constraint.md](windows-sandbox-shell-constraint.md) | 平台约束（DSH 桌面宿主） |
 | 集成测试装置 | [integration-test-harness.md](integration-test-harness.md) | `plugins/weir-test-harness`（开发专用） |
-| Edit Lock 编辑锁仲裁 | [edit-lock.md](edit-lock.md) | `weir-harness/edit-lock`（稳定可选，默认关闭，设置 `editLockEnabled` 并重启） |
+| Edit Lock 编辑锁仲裁 | [edit-lock.md](edit-lock.md) | `weir-harness/edit-lock`（稳定、默认开启；显式关闭须重启） |
 | Worktree 车道 | [git-worktree.md](git-worktree.md) | `weir-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
 | 系统通知 | [notify.md](notify.md) | `weir-harness/notify`（profile 级，设置 `notify*`） |
 | 会话能力管理器 | [session-capability-manager.md](session-capability-manager.md) | `weir-harness/capabilities`（实施中，已落地持久化存储层） |
