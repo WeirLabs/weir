@@ -70,13 +70,12 @@
     - id: weir-notify
       name: 'weir-harness/notify'
     # Capability read channel (silent-capability-reads): the plugin-owned
-    # typert remote serving the Badge/manager READ verbs (receipt / list /
-    # conditions) so reads never touch the session log. Host layer by
-    # necessity: the typert gateway resolves the service from the host root
-    # (S27); the preset-layer skill-selection feeds its faces through the
-    # module-level bridge. Inert with a warning when typert is absent.
+    # typert remote serving all five Badge/manager reads without session-log
+    # writes. The host gateway resolves this service from the root (S27);
+    # preset feeds are labeled and routed by the sessionQuery projection.
     - id: weir-capability-remote
       name: 'weir-harness/capability-remote'
+      inject: [typert, sessionQuery]
     # Session blackboard panel data channel (design D8): plugin-owned typert
     # remote serving list/read/apply/write/remove so panel reads never touch
     # the session log. Host layer for the same S27 reason as the capability
@@ -146,6 +145,7 @@
               - id: weir-skill-selection
                 name: 'weir-harness/skill-selection'
                 config:
+                  readPresetId: weir
                   # preset-skill-applicability (D2): profile-supplemental roots
                   # used ONLY to classify apply-missing names as known-but-
                   # inapplicable (skip with report) vs genuinely unknown — the
@@ -336,6 +336,7 @@
               - id: weir-skill-selection
                 name: 'weir-harness/skill-selection'
                 config:
+                  readPresetId: weir-creative
                   supplementalSkillDirs:
                     - !!js (() => { try { const p = process.getBuiltinModule('node:path'); return p.join(p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills') } catch { return process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:os').tmpdir(), 'dsh-agent-preset-skills-unavailable') } })()
                   customSkillDirs:

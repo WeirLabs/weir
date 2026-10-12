@@ -66,8 +66,6 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     /** Task 6.5 initialization reports per session (manager surface). */
     let initialReports = new Map()
     let lifecycle = null
-    /** Capability read remote (2.2): sessionId → header.cwd cache for the host-layer read service. */
-    const sessionCwds = new Map()
     try {
       ctx.skills.registerProvider(control => {
         const readSelection = dependencies.readSelection ?? (async options => {
@@ -224,15 +222,6 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       })
       const readiness = lifecycle
       ctx.on('agent/created', payload => { readiness.agentCreated(payload) })
-      // Capability read remote (silent-capability-reads 2.2): the per-session
-      // cwd cache the host-layer read service resolves options from — the
-      // same observation point the /capabilities handler uses
-      // (agent.session?.header?.cwd). Returns undefined on every path so the
-      // serial agent/created dispatch is never bailed.
-      ctx.on('agent/created', payload => {
-        const id = payload?.agent?.id
-        if (typeof id === 'string' && id.length) sessionCwds.set(id, payload?.agent?.session?.header?.cwd)
-      })
       // Task 6.1: preload known sessions' accepted selections into memory at
       // plugin apply. Fire-and-forget: a memory miss is served by the
       // listener's blocking synchronous disk read, so a slow or failed
@@ -1043,21 +1032,17 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     }
     mounted.set(ctx, face)
     processFace = face
-    // Capability read remote (silent-capability-reads 2.2): feed the
-    // module-level bridge the host-layer read service resolves its faces
-    // from AT CALL TIME (preset-realm services are invisible to the host-root
-    // typert gateway, S27 — same module-instance pattern as the MCP facade
-    // realm bridge). ctx.effect unregisters the feed with this plugin's own
-    // lifecycle; a feed failure leaves the bridge absent, which the service
-    // surfaces as an explicit typed error, never a guessed payload.
+    // The Host remote can see only this explicitly labeled preset's faces.
+    // Its sessionQuery observation, not any creation-time cwd cache, owns routing.
     try {
+      if (!['weir', 'weir-creative'].includes(config.readPresetId)) throw new Error('readPresetId must identify a supported Weir preset')
       ctx.effect(() => feedCapabilityReadBridge({
+        readPresetId: config.readPresetId,
         provider,
         inventory: (options, previous) => inventory(options, previous),
         lifecycle,
         mcpManager: () => ctx.get?.('weirMcpManager'),
         profileContext: () => ctx.get?.('profileContext'),
-        sessionCwd: sessionId => resolveSessionCwd(sessionCwds, ctx.get?.('agents'), sessionId, { home: ctx.get?.('profileContext')?.home }),
       }), 'weir-capability-read-bridge')
     } catch (cause) {
       ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)

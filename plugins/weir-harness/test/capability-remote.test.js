@@ -21,14 +21,16 @@ import {
   createCapabilityReadService,
   feedCapabilityReadBridge,
 } from '../src/capabilities/capability-remote.js'
-import { buildReceiptPayload } from '../src/capabilities/read-payloads.js'
+import { buildReceiptPayload, buildListPayload, buildConditionsPayload, buildPresetsPayload, buildDefaultGetPayload } from '../src/capabilities/read-payloads.js'
 
-/** Mock ctx mounting the real skill-selection plugin; listeners are captured so agent/created can be fired. */
+/** Mock ctx mounting the real skill-selection plugin and a read-only sessionQuery observation. */
 function makePluginCtx(root) {
   let provider
   const listeners = new Map()
   const registeredCommands = []
   const effects = []
+  const sessions = new Map()
+  const observations = []
   const ctx = {
     skills: {
       registerProvider(create) { provider = create({ invalidate() {} }) },
@@ -44,6 +46,11 @@ function makePluginCtx(root) {
     emit() {},
     logger: { warn() {} },
     get(name) {
+      if (name === 'sessionQuery') return { observeSession: async id => {
+        const session = sessions.get(id)
+        if (!session) throw new Error('session not found')
+        return { header: { id, cwd: session.header.cwd, agentPreset: session.header.agentPreset }, projections: { values: { agentPreset: session.presetId } }, events: session.events ?? [], dispose() { observations.push(id) } }
+      } }
       if (name === 'profileContext') return { home: root, name: 'it' }
       if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
       return undefined
@@ -53,7 +60,8 @@ function makePluginCtx(root) {
     ctx,
     effects,
     command: () => registeredCommands.find(entry => entry.name === 'capabilities'),
-    fireCreated: payload => { for (const fn of listeners.get('agent/created') ?? []) fn(payload) },
+    fireCreated: payload => { sessions.set(payload.agent.id, { header: payload.agent.session.header, presetId: payload.agent.session.header.agentPreset ?? 'weir' }); for (const fn of listeners.get('agent/created') ?? []) fn(payload) },
+    observations,
   }
 }
 
@@ -61,18 +69,18 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
   // Hermetic roots: the mounted plugin resolves agentsHome/dshHome — pin the
   // host-dependent env so a runner with user-global skills never leaks in.
   const host = pinHermeticHostRoots()
+  const root = mkdtempSync(join(tmpdir(), 'weir-remote-'))
+  const harness = makePluginCtx(root)
   try {
-    const root = mkdtempSync(join(tmpdir(), 'weir-remote-'))
-    const harness = makePluginCtx(root)
-    createSkillSelectionPlugin()(harness.ctx, { machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [], agentsHome: host.agentsHome, dshHome: root })
+    createSkillSelectionPlugin()(harness.ctx, { readPresetId: 'weir', machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [], agentsHome: host.agentsHome, dshHome: root })
     const command = harness.command()
     expect(typeof command?.handler).toBe('function')
     // The bridge is fed by the plugin apply (ctx.effect ran synchronously).
-    expect(capabilityReadBridge()).toBeTruthy()
+    expect(capabilityReadBridge('weir')).toBeTruthy()
     const agent = { id: 'sess-remote', session: { id: 'sess-remote', header: { cwd: root } } }
     harness.fireCreated({ agent })
 
-    const service = createCapabilityReadService()
+    const service = createCapabilityReadService({ sessionQuery: () => harness.ctx.get('sessionQuery') })
     const remoteReceipt = await service.receipt('sess-remote')
     const commandReceipt = await command.handler({ agent, rawInput: 'receipt' })
     expect(commandReceipt.kind).toBe('success')
@@ -120,6 +128,7 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
     expect(commandNoWorkspace.kind).toBe('error')
     expect(JSON.stringify(remoteNoWorkspace)).toBe(commandNoWorkspace.text)
   } finally {
+    for (const dispose of harness.effects.reverse()) dispose()
     host.restore()
   }
 })
@@ -127,8 +136,8 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
 test('unknown session and missing bridge are explicit typed errors', async () => {
   const root = mkdtempSync(join(tmpdir(), 'weir-remote-err-'))
   const harness = makePluginCtx(root)
-  createSkillSelectionPlugin()(harness.ctx, { machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [] })
-  const service = createCapabilityReadService()
+   createSkillSelectionPlugin()(harness.ctx, { readPresetId: 'weir', machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [] })
+   const service = createCapabilityReadService({ sessionQuery: () => harness.ctx.get('sessionQuery') })
 
   // The bridge is fed but this session never fired agent/created.
   const unknown = await service.receipt('sess-never-created').then(() => null, cause => cause)
@@ -138,27 +147,30 @@ test('unknown session and missing bridge are explicit typed errors', async () =>
   const unknownList = await service.list('sess-never-created').then(() => null, cause => cause)
   expect(unknownList.code).toBe('unknown-session')
 
-  // Bridge absent (non-Weir preset / unmounted): typed, never a guess.
-  const absent = createCapabilityReadService({ bridge: () => null })
-  for (const method of CAPABILITY_READ_METHODS) {
-    const cause = await absent[method]('sess-remote').then(() => null, error => error)
-    expect(cause).toBeInstanceOf(CapabilityReadError)
-    expect(cause.code).toBe('bridge-absent')
-  }
+   // A valid observation without a matching feed cannot borrow another preset.
+   const absent = createCapabilityReadService({ sessionQuery: () => harness.ctx.get('sessionQuery'), bridge: () => null })
+   harness.fireCreated({ agent: { id: 'sess-remote', session: { header: { cwd: root } } } })
+   for (const method of CAPABILITY_READ_METHODS) {
+     const cause = await absent[method]('sess-remote').then(() => null, error => error)
+     expect(cause).toBeInstanceOf(CapabilityReadError)
+     expect(cause.code).toBe('bridge-absent')
+   }
 
   // A payload failure (here: a throwing provider face) chains its cause.
-  const faces = capabilityReadBridge()
+   const faces = capabilityReadBridge('weir')
   const broken = createCapabilityReadService({
     bridge: () => ({
       ...faces,
       sessionCwd: () => ({ found: true, cwd: '/tmp' }),
-      provider: { status: () => { throw new Error('provider down') } },
+       provider: { status: () => { throw new Error('provider down') } },
     }),
+     sessionQuery: () => harness.ctx.get('sessionQuery'),
   })
   const failed = await broken.receipt('sess-remote').then(() => null, cause => cause)
   expect(failed).toBeInstanceOf(CapabilityReadError)
   expect(failed.code).toBe('payload-failed')
   expect(failed.cause instanceof Error && failed.cause.message).toBe('provider down')
+  for (const dispose of harness.effects.reverse()) dispose()
 })
 
 // Deliberately model the host's *current* preset observation, not the session
@@ -201,11 +213,14 @@ function twoPresetFixture() {
     { provider: faces(presetId).provider, store },
     { cwd, scope: { session: { id: sessionId } } },
   )
-  const observeSession = async sessionId => {
-    const presetId = owners.get(sessionId)
-    return presetId ? { presetId, cwd, selectionSeq: sessionId === 'creative-session' ? 2 : 1, release() {} } : null
-  }
-  return { owners, faces, store, observeSession, owningCommandReceipt }
+   const observations = []
+   const events = new Map([['creative-session', [{ type: 'agent-preset/selected', seq: 2, data: { agentPreset: 'weir-creative' } }]]])
+   const observeSession = async sessionId => {
+     const presetId = owners.get(sessionId)
+     if (!presetId) throw new Error('session not found')
+     return { header: { id: sessionId, cwd, agentPreset: 'weir' }, projections: { values: { agentPreset: presetId } }, events: events.get(sessionId) ?? [], dispose() { observations.push(sessionId) } }
+   }
+   return { owners, faces, store, observeSession, owningCommandReceipt, observations, events }
 }
 
 for (const order of [['weir-creative', 'weir'], ['weir', 'weir-creative']]) {
@@ -268,6 +283,153 @@ test('ambiguous, absent and unobservable preset owners fail closed rather than b
   }
 })
 
+test('all five reads observe the cold current owner and dispose both leases', async () => {
+  const fixture = twoPresetFixture()
+  const calls = []
+  const creative = fixture.faces('weir-creative')
+  creative.profileContext = () => 'creative-context'
+  creative.inventory = async options => {
+    calls.push(['inventory', options.scope.session.id, options.cwd])
+    return { candidates: [{ name: 'creative-skill', identity: { scope: 'project', root: '/fixture/creative', name: 'creative-skill', provenance: { kind: 'fixture' } } }], complete: true }
+  }
+  const disposeNormal = feedCapabilityReadBridge(fixture.faces('weir'))
+  const disposeCreative = feedCapabilityReadBridge(creative)
+  const store = context => {
+    calls.push(['store', context])
+    return { ...fixture.store, support: { supported: false, reason: 'fixture-unavailable' } }
+  }
+  const service = createCapabilityReadService({ observeSession: fixture.observeSession, store })
+  try {
+    const options = { cwd: '/fixture/shared-workspace', scope: { session: { id: 'creative-session' } } }
+    const expected = {
+      receipt: () => buildReceiptPayload({ provider: creative.provider, store: store('creative-context') }, options),
+      list: () => buildListPayload({ inventory: creative.inventory, provider: creative.provider }, options),
+      conditions: () => buildConditionsPayload(),
+      presets: () => buildPresetsPayload({ store: store('creative-context') }, options),
+      defaultGet: () => buildDefaultGetPayload({ store: store('creative-context') }, options),
+    }
+    for (const method of CAPABILITY_READ_METHODS) {
+      const value = await service[method]('creative-session')
+      expect(value).toEqual(await expected[method]())
+      expect(fixture.observations.filter(id => id === 'creative-session')).toHaveLength(2 * (CAPABILITY_READ_METHODS.indexOf(method) + 1))
+    }
+    expect(calls.some(call => JSON.stringify(call) === JSON.stringify(['inventory', 'creative-session', '/fixture/shared-workspace']))).toBe(true)
+    expect(calls.filter(call => call[0] === 'store').every(call => call[1] === 'creative-context')).toBe(true)
+    // The header still claims normal Weir, whereas the committed projection is Creative.
+    expect(fixture.events.get('creative-session')[0].seq).toBe(2)
+  } finally { disposeNormal(); disposeCreative() }
+})
+
+test('unlabeled and foreign preset feeds are rejected before registration', () => {
+  expect(() => feedCapabilityReadBridge({})).toThrow(/readPresetId/)
+  expect(() => feedCapabilityReadBridge({ readPresetId: 'standard' })).toThrow(/readPresetId/)
+  expect(capabilityReadBridge('standard')).toBe(null)
+})
+
+test('read-only observation never appends to or resumes its target session', async () => {
+  const fixture = twoPresetFixture()
+  const original = fixture.observeSession
+  let observed = 0
+  const observeSession = async id => {
+    observed++
+    return { ...(await original(id)), session: { append() { throw new Error('read appended') } }, agent: { resume() { throw new Error('read resumed agent') } } }
+  }
+  const dispose = feedCapabilityReadBridge(fixture.faces('weir'))
+  try {
+    const service = createCapabilityReadService({ observeSession, store: () => fixture.store })
+    for (const method of CAPABILITY_READ_METHODS) await service[method]('normal-session')
+    expect(observed).toBe(2 * CAPABILITY_READ_METHODS.length)
+  } finally { dispose() }
+})
+test('stale feed tokens cannot unregister replacements and overlap refuses every read', async () => {
+  const fixture = twoPresetFixture()
+  const old = feedCapabilityReadBridge(fixture.faces('weir'))
+  const next = feedCapabilityReadBridge(fixture.faces('weir'))
+  const service = createCapabilityReadService({ observeSession: fixture.observeSession, store: () => fixture.store })
+  try {
+    for (const method of CAPABILITY_READ_METHODS) {
+      const error = await service[method]('normal-session').then(() => null, cause => cause)
+      expect(error.code).toBe('owner-ambiguous')
+    }
+    old()
+    expect((await service.receipt('normal-session')).effective.skills).toEqual(['normal-skill'])
+    old() // exact token disposal is idempotent and cannot erase the new generation
+    expect((await service.receipt('normal-session')).effective.skills).toEqual(['normal-skill'])
+    next()
+    const absent = await service.receipt('normal-session').then(() => null, cause => cause)
+    expect(absent.code).toBe('bridge-absent')
+  } finally { old(); next() }
+})
+
+test('in-flight preset switch, ABA selection and feed replacement reject stale results, not chat events', async () => {
+  for (const mutation of ['switch', 'aba', 'dispose', 'replacement', 'overlap', 'chat']) {
+    const fixture = twoPresetFixture()
+    let unblock
+    const waiting = new Promise(resolve => { unblock = resolve })
+    let entered
+    const begun = new Promise(resolve => { entered = resolve })
+    const faces = fixture.faces('weir')
+    const list = faces.provider.list
+    faces.provider.list = async options => { entered(); await waiting; return list(options) }
+    const dispose = feedCapabilityReadBridge(faces)
+    let replacement
+    const service = createCapabilityReadService({ observeSession: fixture.observeSession, store: () => fixture.store })
+    try {
+      const result = service.receipt('normal-session').then(value => value, cause => cause)
+      await begun
+      if (mutation === 'switch') { fixture.owners.set('normal-session', 'weir-creative'); fixture.events.set('normal-session', [{ type: 'agent-preset/selected', seq: 8 }]) }
+      if (mutation === 'aba') fixture.events.set('normal-session', [{ type: 'agent-preset/selected', seq: 8 }, { type: 'agent-preset/selected', seq: 9 }])
+      if (mutation === 'dispose') dispose()
+      if (mutation === 'replacement') { dispose(); replacement = feedCapabilityReadBridge(fixture.faces('weir')) }
+      if (mutation === 'overlap') replacement = feedCapabilityReadBridge(fixture.faces('weir'))
+      if (mutation === 'chat') fixture.events.set('normal-session', [{ type: 'user/message', seq: 8 }])
+      unblock()
+      const value = await result
+      if (mutation === 'chat') expect(value.status).toBe('applied')
+      else { expect(value).toBeInstanceOf(CapabilityReadError); expect(value.code).not.toBe('payload-failed') }
+      expect(fixture.observations).toHaveLength(2)
+    } finally { dispose(); replacement?.(); unblock() }
+  }
+})
+
+test('missing projection, missing query, and wrong observation identity fail closed and release leases', async () => {
+  let released = 0
+  for (const observation of [
+    { header: { id: 's', agentPreset: 'weir' }, events: [] },
+    { header: { id: 'foreign' }, projections: { values: { agentPreset: 'weir' } }, events: [] },
+    { header: { id: 's' }, projections: { values: { agentPreset: 'weir' } } },
+  ]) {
+    const service = createCapabilityReadService({ observeSession: async () => ({ ...observation, dispose() { released++ } }) })
+    for (const method of CAPABILITY_READ_METHODS) {
+      const error = await service[method]('s').then(() => null, cause => cause)
+      expect(error).toBeInstanceOf(CapabilityReadError)
+      expect(error.code).not.toBe('payload-failed')
+    }
+  }
+  expect(released).toBe(3 * CAPABILITY_READ_METHODS.length)
+  const missing = createCapabilityReadService({ sessionQuery: () => undefined })
+  expect((await missing.receipt('s').then(() => null, cause => cause)).code).toBe('owner-unavailable')
+})
+test('first observation lease closes on payload and second-observation failures', async () => {
+  const fixture = twoPresetFixture()
+  const dispose = feedCapabilityReadBridge(fixture.faces('weir'))
+  let observed = 0
+  const broken = createCapabilityReadService({
+    observeSession: async id => { if (++observed === 2) throw new Error('second observation unavailable'); return fixture.observeSession(id) },
+    store: () => fixture.store,
+  })
+  try {
+    const error = await broken.receipt('normal-session').then(() => null, cause => cause)
+    expect(error).toBeInstanceOf(CapabilityReadError)
+    expect(fixture.observations).toEqual(['normal-session'])
+    const throwing = createCapabilityReadService({
+      observeSession: fixture.observeSession,
+      store: () => ({ read() { throw new Error('store failed') } }),
+    })
+    expect((await throwing.receipt('normal-session').then(() => null, cause => cause)).code).toBe('payload-failed')
+    expect(fixture.observations).toEqual(['normal-session', 'normal-session'])
+  } finally { dispose() }
+})
 test('host apply publishes the frozen binding and registers the hand-written contribution', () => {
   const provided = []
   const registered = []
@@ -462,13 +624,12 @@ test('the read channel self-heals a withdrawn typert registration', () => {
     if (live) return true
     try { typert.register(capabilityReadContribution()); return true } catch { return live }
   }
-  const faces = {
-    provider: { status: () => ({}), list: async () => ({ candidates: [], complete: true }) },
-    lifecycle: null,
-    sessionCwd: () => ({ found: true, cwd: '/tmp' }),
-    profileContext: () => undefined,
-  }
-  const service = createCapabilityReadService({ bridge: () => faces, ensureRegistered })
+   const faces = {
+     provider: { status: () => ({}), list: async () => ({ candidates: [], complete: true }) },
+     lifecycle: null,
+     profileContext: () => undefined,
+   }
+   const service = createCapabilityReadService({ bridge: () => faces, ensureRegistered, observeSession: async id => ({ header: { id, cwd: '/tmp' }, projections: { values: { agentPreset: 'weir' } }, events: [], dispose() {} }) })
   // First read: definition absent → ensure() re-registers.
   return service.receipt('s1').then(async (first) => {
     expect(first.status).toBe('applied')

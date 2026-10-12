@@ -36,3 +36,11 @@ test('fixture uses the exact product selection provider entry', () => {
   const bridge = readFileSync(new URL('../../weir-test-harness/src/skill-selection.js', import.meta.url), 'utf8')
   assert.match(bridge, /export \{ name, inject, apply \} from '..\/..\/weir-harness\/src\/capabilities\/skill-selection-plugin.js'/)
 })
+
+test('production presets label the exact read owner and Host waits for sessionQuery', () => {
+  const normal = patch.split('\n    - id: preset-weir-creative')[0]
+  const creative = patch.split('\n    - id: preset-weir-creative')[1]
+  assert.match(normal, /- id: weir-skill-selection\n\s+name: 'weir-harness\/skill-selection'\n\s+config:\n\s+readPresetId: weir\n/)
+  assert.match(creative, /- id: weir-skill-selection\n\s+name: 'weir-harness\/skill-selection'\n\s+config:\n\s+readPresetId: weir-creative\n/)
+  assert.match(patch, /- id: weir-capability-remote\n\s+name: 'weir-harness\/capability-remote'\n\s+inject: \[typert, sessionQuery\]/)
+})
