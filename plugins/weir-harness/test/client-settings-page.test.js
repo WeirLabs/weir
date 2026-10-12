@@ -505,6 +505,51 @@ describe('client.settings-page chunk', () => {
     expect(findAll(withoutPicker.children, (node) => node.__type === PICKER_STUB.ModelPickerField)).toEqual([])
   })
 
+  it('wires every SettingsValueField edit callback per the host onEdit contract — a keystroke reaches the draft', async () => {
+    const { exports, editors, primitivesStub } = await loadPage()
+    const edits = []
+    // picker chunk absent → the manual fallback rows render alongside the
+    // generic value rows
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: 'llm' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }, { edit: (name, text) => edits.push([name, text]), modelPicker: null })
+    // Every SettingsValueField element IS the props object the host component
+    // receives. The installed host contract
+    // (@deepseek-ai/dsh-client-ui-primitives/lib/index.js, SettingsValueField)
+    // reports edits via props.onEdit(event.target.value) — onChange is never
+    // read — so the keystroke simulation below goes through onEdit exactly
+    // the way the host input's change handler drives it. (The old code
+    // passed onChange: every keystroke in the real GUI threw
+    // `TypeError: props.onEdit is not a function` and was dropped.)
+    const valueFields = findAll(rendered.children, (node) => node.__type === primitivesStub.SettingsValueField)
+    expect(valueFields.length).toBeGreaterThan(0)
+    for (const el of valueFields) {
+      expect(typeof el.onEdit, `${el.id} must pass onEdit (host SettingsValueField contract)`).toBe('function')
+      expect(el.onChange, `${el.id} must not pass the dead onChange prop`).toBeUndefined()
+    }
+    const byId = Object.fromEntries(valueFields.map((el) => [el.id, el]))
+    // the host input's change handler: (event) => props.onEdit(event.target.value)
+    const hostKeystroke = (el, text) => el.onEdit(text)
+    // the generic value row: a keystroke reaches the draft edit path
+    expect(byId['plugin-config-weir-settings-intentGateTimeoutMs'], 'generic value row must render').toBeTruthy()
+    hostKeystroke(byId['plugin-config-weir-settings-intentGateTimeoutMs'], '2500')
+    // the three picker-fallback rows
+    for (const [id, text] of [
+      ['plugin-config-fallback-intentGateProvider', 'deepseek'],
+      ['plugin-config-fallback-intentGateModel', 'deepseek-chat'],
+      ['plugin-config-fallback-intentGateReasoningEffort', 'high'],
+    ]) {
+      expect(byId[id], `${id} must render`).toBeTruthy()
+      hostKeystroke(byId[id], text)
+    }
+    expect(edits).toEqual([
+      ['intentGateTimeoutMs', '2500'],
+      ['intentGateProvider', 'deepseek'],
+      ['intentGateModel', 'deepseek-chat'],
+      ['intentGateReasoningEffort', 'high'],
+    ])
+  })
   it('renders the always-on restart tag exactly on the visible RESTART_FIELDS rows', async () => {
     const { exports, editors, primitivesStub } = await loadPage()
     const rendered = renderCard(exports, editors, {
