@@ -50,6 +50,7 @@ Weir 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把
 ## 边界与失败语义
 
 - 环境事实未到达（pending）或端点失败（failed）：依赖 env 的条目保持不渲染，其余条目不受影响；失败控制台警告一次（chunk 生命周期内）。
+- **宿主值字段 prop 契约（onEdit）**：文本/数字输入行（通用输入行 + 模型选择器手动回退三行）的编辑回调必须按宿主 `@deepseek-ai/dsh-client-ui-primitives` 的 `SettingsValueField` 当前契约传 `onEdit`——宿主输入框的 change 处理器以 `props.onEdit(event.target.value)` 上抛，从不读取 `onChange`（`Switch`/`SegmentedControl`/原生 `select` 各自的 `onChange` 是它们自己的契约，不受影响）。回调名漂移没有编译期信号：运行时每次按键抛 `TypeError: ...onEdit is not a function` 且输入被静默丢弃（本页曾因此全部输入框失效）。组件级契约测试钉住该 prop 面，漂移即红。
 - 草稿不可解析：条件按已保存值求值（无抖动）；表单自身契约不变（保存按钮禁用、程序化保存被拒绝）。
 - 已保存的 `lspServers` 是坏 JSON：管理器行显示错误提示，面板以空自定义列表打开；增删后保存覆盖坏值，字段永不被卡死。
 - 隐藏条目：保存值与暂存草稿均保留；隐藏本身不产生任何写入。
@@ -59,7 +60,7 @@ Weir 设置页（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把
 
 ## 测试
 
-- 单元测试 `plugins/weir-harness/test/client-settings-page.test.js`：`evaluateCondition`（key/env 谓词、all/any/not、严格成员、未知键）、`resolveEffectiveValue`（D3 全部分支，含各 kind 的具体产品默认）、`validateLayout`（未知父/跨组父/环/未知条件键/未知 env 名/重复字段/畸形条件，错误命名与键名钉住）、`buildLayout`（声明顺序无关的归位与 depth、DFS 序）、真实 `LAYOUT` 结构（两级嵌套用例）；渲染用例——逐组默认可见集合快照、开关草稿即时显隐、枚举条件、env 三态门控、父隐则子隐、隐藏不产生写入、缩进引导线与分隔线结构、特殊编辑器归一（含模型选择器合并行与 folded 语义）、常驻重启标记恰好出现在可见 RESTART 行、Switch 显示与条件共用 helper；默认值显示（unset 数字/文本/枚举显示默认值、草稿与已保存值优先、清空回到默认、不覆盖不写值、unset 分类器的条件按 `regex` 求值）；chunk `FIELD_DEFAULTS` ↔ 服务端声明、`BOOLEAN_DEFAULTS` 派生恰为 14 个开关默认；`RESTART_FIELDS` ↔ `RESTART_KEYS`、`CURATED_AGENT_NAMES`、`CATEGORY_NAMES` 漂移守护；字典完整性（含 `restartRequired`）；保存流程七例（时序、提醒、消除、失败语义）不回归；控制器 env 获取（ready 重投影、failed 警告一次）。
+- 单元测试 `plugins/weir-harness/test/client-settings-page.test.js`：`evaluateCondition`（key/env 谓词、all/any/not、严格成员、未知键）、`resolveEffectiveValue`（D3 全部分支，含各 kind 的具体产品默认）、`validateLayout`（未知父/跨组父/环/未知条件键/未知 env 名/重复字段/畸形条件，错误命名与键名钉住）、`buildLayout`（声明顺序无关的归位与 depth、DFS 序）、真实 `LAYOUT` 结构（两级嵌套用例）；渲染用例——逐组默认可见集合快照、开关草稿即时显隐、枚举条件、env 三态门控、父隐则子隐、隐藏不产生写入、缩进引导线与分隔线结构、特殊编辑器归一（含模型选择器合并行与 folded 语义）、常驻重启标记恰好出现在可见 RESTART 行、Switch 显示与条件共用 helper；默认值显示（unset 数字/文本/枚举显示默认值、草稿与已保存值优先、清空回到默认、不覆盖不写值、unset 分类器的条件按 `regex` 求值）；**宿主 `SettingsValueField` prop 契约**（通用行与 picker 回退三行均传函数型 `onEdit`、无残留 `onChange` prop、按宿主 change 处理器语义模拟键入经 `edit` 路径进入草稿——旧代码传 `onChange` 时该用例红）；chunk `FIELD_DEFAULTS` ↔ 服务端声明、`BOOLEAN_DEFAULTS` 派生恰为 14 个开关默认；`RESTART_FIELDS` ↔ `RESTART_KEYS`、`CURATED_AGENT_NAMES`、`CATEGORY_NAMES` 漂移守护；字典完整性（含 `restartRequired`）；保存流程七例（时序、提醒、消除、失败语义）不回归；控制器 env 获取（ready 重投影、failed 警告一次）。
 - 单元测试 `plugins/weir-harness/test/client.test.js`：组合断言——不再注册 `plugins.item`，`settings.section`/`settings.weir.item` 保留，inject 面不变。
 - 单元测试 `plugins/weir-harness/test/settings-env-admin.test.js`：env 端点契约（注入 platform 的应答形状、无 connection 时警告且不注册、`wireEnvAdmin` 接线与幂等 dispose）。
 - 单元测试 `plugins/weir-harness/test/settings-fields.test.js`：`RESTART_KEYS` 内容全量对拍（15 键、声明顺序、冻结性）；`FIELD_DEFAULTS` 四层对拍——声明本体（当前 41 键、冻结、unset 有语义的键无条目）、↔ 可导入的模块常量（intent-gate/supervision/todo/guard/edit-lock/lsp/worktree/notify 源头）、↔ 客户端 chunk 逐字镜像（键集+值+冻结字面量）、↔ patch 行（当前 32 个行键为其子集且值相等，布尔子集恰 14 键）。`settings.test.js` 验证阈值交叉约束；`context-guard.test.js` 验证同进程 live 修改与旧测量失效；客户端保存用例覆盖仅 guard 键无提醒、混合保存仅列重启键。

@@ -719,7 +719,7 @@ window.__ModuleLoader__.load({
 					text: state.fields.intentGateProvider.text,
 					invalid: state.fields.intentGateProvider.invalid,
 					overridden: state.fields.intentGateProvider.overridden,
-					onChange: (text) => props.edit("intentGateProvider", text),
+					onEdit: (text) => props.edit("intentGateProvider", text),
 					onReset: () => props.resetField("intentGateProvider")
 				}),
 				react_jsx_runtime.jsx(primitives.SettingsValueField, {
@@ -733,7 +733,7 @@ window.__ModuleLoader__.load({
 					text: state.fields.intentGateModel.text,
 					invalid: state.fields.intentGateModel.invalid,
 					overridden: state.fields.intentGateModel.overridden,
-					onChange: (text) => props.edit("intentGateModel", text),
+					onEdit: (text) => props.edit("intentGateModel", text),
 					onReset: () => props.resetField("intentGateModel")
 				}),
 				react_jsx_runtime.jsx(primitives.SettingsValueField, {
@@ -747,7 +747,7 @@ window.__ModuleLoader__.load({
 					text: state.fields.intentGateReasoningEffort.text,
 					invalid: state.fields.intentGateReasoningEffort.invalid,
 					overridden: state.fields.intentGateReasoningEffort.overridden,
-					onChange: (text) => props.edit("intentGateReasoningEffort", text),
+					onEdit: (text) => props.edit("intentGateReasoningEffort", text),
 					onReset: () => props.resetField("intentGateReasoningEffort")
 				})
 			] });
@@ -886,7 +886,7 @@ window.__ModuleLoader__.load({
 					text: displayText(node, field),
 					invalid: field.invalid,
 					overridden: field.overridden,
-					onChange: (text) => props.edit(node.field, text),
+					onEdit: (text) => props.edit(node.field, text),
 					onReset: () => props.resetField(node.field)
 				}));
 			};
