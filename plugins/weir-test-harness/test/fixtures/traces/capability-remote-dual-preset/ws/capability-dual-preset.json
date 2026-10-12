@@ -1,0 +1,298 @@
+{
+  "orders": [
+    {
+      "order": [
+        "weir",
+        "weir-creative"
+      ],
+      "owners": [
+        {
+          "id": "weir",
+          "commandAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir"
+              ]
+            },
+            "warnings": []
+          },
+          "remoteAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir"
+              ]
+            },
+            "warnings": []
+          },
+          "listAfterBoth": {
+            "skills": [
+              {
+                "name": "only-weir",
+                "selected": true
+              }
+            ]
+          },
+          "conditionsAfterBoth": {
+            "conditions": []
+          },
+          "presetsAfterBoth": {
+            "presets": [],
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "defaultAfterBoth": {
+            "status": "absent",
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "commandEventsAfter": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "commandEventsFinal": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "projectionLive": {
+            "source": "live",
+            "headerPreset": "weir",
+            "projectedPreset": "weir"
+          }
+        },
+        {
+          "id": "weir-creative",
+          "commandAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir-creative"
+              ]
+            },
+            "warnings": []
+          },
+          "remoteAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir-creative"
+              ]
+            },
+            "warnings": []
+          },
+          "listAfterBoth": {
+            "skills": [
+              {
+                "name": "only-weir-creative",
+                "selected": true
+              }
+            ]
+          },
+          "conditionsAfterBoth": {
+            "conditions": []
+          },
+          "presetsAfterBoth": {
+            "presets": [],
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "defaultAfterBoth": {
+            "status": "absent",
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "commandEventsAfter": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "commandEventsFinal": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "projectionLive": {
+            "source": "live",
+            "headerPreset": "weir-creative",
+            "projectedPreset": "weir-creative"
+          }
+        }
+      ]
+    },
+    {
+      "order": [
+        "weir-creative",
+        "weir"
+      ],
+      "owners": [
+        {
+          "id": "weir",
+          "commandAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir"
+              ]
+            },
+            "warnings": []
+          },
+          "remoteAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir"
+              ]
+            },
+            "warnings": []
+          },
+          "listAfterBoth": {
+            "skills": [
+              {
+                "name": "only-weir",
+                "selected": true
+              }
+            ]
+          },
+          "conditionsAfterBoth": {
+            "conditions": []
+          },
+          "presetsAfterBoth": {
+            "presets": [],
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "defaultAfterBoth": {
+            "status": "absent",
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "commandEventsAfter": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "commandEventsFinal": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "projectionLive": {
+            "source": "live",
+            "headerPreset": "weir",
+            "projectedPreset": "weir"
+          }
+        },
+        {
+          "id": "weir-creative",
+          "commandAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir-creative"
+              ]
+            },
+            "warnings": []
+          },
+          "remoteAfterBoth": {
+            "status": "applied",
+            "revision": 1,
+            "effective": {
+              "skills": [
+                "only-weir-creative"
+              ]
+            },
+            "warnings": []
+          },
+          "listAfterBoth": {
+            "skills": [
+              {
+                "name": "only-weir-creative",
+                "selected": true
+              }
+            ]
+          },
+          "conditionsAfterBoth": {
+            "conditions": []
+          },
+          "presetsAfterBoth": {
+            "presets": [],
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "defaultAfterBoth": {
+            "status": "absent",
+            "workspaceKey": "ws-6a4ef27228e2da5ea3b4ec27"
+          },
+          "commandEventsAfter": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "commandEventsFinal": [
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done",
+            "command/run",
+            "command/done"
+          ],
+          "projectionLive": {
+            "source": "live",
+            "headerPreset": "weir-creative",
+            "projectedPreset": "weir-creative"
+          }
+        }
+      ]
+    }
+  ],
+  "projection": {
+    "beforeSelect": {
+      "projectedPreset": "weir"
+    },
+    "afterSelect": {
+      "headerPreset": "weir",
+      "projectedPreset": "weir-creative"
+    },
+    "remoteAfterSelect": {
+      "status": "applied",
+      "effective": {
+        "skills": []
+      }
+    },
+    "coldRemote": {
+      "status": "applied",
+      "effective": {
+        "skills": []
+      }
+    },
+    "liveLong": {
+      "eventCount": 2010
+    },
+    "coldLong": {
+      "eventCount": 2010,
+      "source": "prepared",
+      "headerPreset": "weir",
+      "projectedPreset": "weir-creative"
+    },
+    "coldRepeat": {
+      "source": "prepared"
+    }
+  },
+  "leasesReleased": 9
+}

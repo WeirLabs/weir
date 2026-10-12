@@ -1,0 +1,8 @@
+{
+  "scenario": "capability-remote-dual-preset",
+  "home": null,
+  "code": 0,
+  "stdout": "dual preset probe done\n",
+  "stderr": "",
+  "sessionId": null
+}
