@@ -601,7 +601,7 @@ test('preset-import v2: a bad dryRun or onCollision value is an explicit rejecti
   expect(existsSync(join(root, '.dsh', 'skills'))).toBe(false)
 })
 
-test('preset-import v2: a package needing an unresolvable root fails before any write', async () => {
+test('preset-import v2: a package needing an unresolvable root fails before any write', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { command } = mountCapabilities(root)
   // an agent without a cwd has no workspace → no project Skill root
