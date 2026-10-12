@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Weir \u2014 orchestrator-centric DSH agent preset: intent gate, category delegation, todo driver, pull-based background jobs, auto-compaction, hashline edit.",
   "license": "MIT",
+  "icon": "icon.svg",
   "author": "Lim-Young",
   "homepage": "https://github.com/WeirLabs/weir#readme",
   "bugs": "https://github.com/WeirLabs/weir/issues",
@@ -24,7 +25,8 @@
     "lib",
     "skills",
     "cordis.patch.yml",
-    "whitelist-defaults.json"
+    "whitelist-defaults.json",
+    "icon.svg"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0"
