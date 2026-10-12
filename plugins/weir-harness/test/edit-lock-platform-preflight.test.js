@@ -32,13 +32,14 @@ for (const platform of ['darwin', 'linux', 'win32']) {
   })
 }
 
-// Opt-in installed-runtime acceptance: no formal profile is modified. The full
-// shipped patch (including both preset trees and every realm) is mirrored, with
-// ONLY the edit-lock module replaced by its platform-injected factory adapter.
-// WEIR_IT_DSH_EXEC must name the installed self-contained DSH CLI launcher.
+// Installed-runtime regression: the production preset must resolve an omitted
+// Edit Lock setting to on; explicit on/off remain controls. No formal profile
+// is modified. The full shipped patch (both preset trees and every realm) is
+// mirrored with only the edit-lock module replaced by a platform adapter.
 const launcher = process.env.WEIR_IT_DSH_EXEC
-for (const preset of ['weir', 'weir-creative']) for (const enabled of [true, false]) {
-  test(`installed ${preset}: freebsd requested-${enabled ? 'on denies' : 'off permits'} editing`, { skip: !launcher, timeout: 120_000 }, () => {
+for (const preset of ['weir', 'weir-creative']) for (const enabled of [undefined, true, false]) {
+  const choice = enabled === undefined ? 'default-on' : (enabled ? 'explicit-on' : 'explicit-off')
+  test(`installed ${preset}: freebsd ${choice} ${enabled === false ? 'permits' : 'denies'} editing`, { skip: !launcher, timeout: 120_000 }, () => {
     const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'weir-platform-')))
     const home = join(base, 'home')
     const profile = join(home, 'profiles', 'preflight')
@@ -94,7 +95,7 @@ export function apply(ctx) {
 `)
     writeFileSync(join(profile, 'package.json'), JSON.stringify({ name: 'platform-profile', private: true, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', 'weir-platform-mirror'] } } }))
     writeFileSync(join(profile, 'cordis.patch.yml'), JSON.stringify([
-      { id: 'weir-settings', config: { editLockEnabled: enabled, lspEnabled: true, hashlineHideStockEdit: true, notifyEnabled: false } },
+      { id: 'weir-settings', config: { ...(enabled === undefined ? {} : { editLockEnabled: enabled }), lspEnabled: true, hashlineHideStockEdit: true, notifyEnabled: false } },
       { id: 'weir-notify', disabled: true },
       { insert: [
         { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
@@ -112,10 +113,10 @@ export function apply(ctx) {
     const observed = JSON.parse(readFileSync(report, 'utf8'))
     assert.equal(observed.failure, undefined)
     assert.equal(observed.preset, preset)
-    assert.equal(observed.provider, enabled)
+    assert.equal(observed.provider, enabled !== false)
     assert.equal(observed.lsp.isError, false, JSON.stringify(observed.lsp))
     assert.equal(observed.results.read.isError, false)
-    if (enabled) {
+    if (enabled !== false) {
       assert.match(observed.before.reason, /unsupported platform: freebsd/)
       for (const name of ['write', 'hash_edit', 'lsp_rename', 'edit', 'str_replace_editor']) {
         assert.equal(observed.results[name].isError, true, name)
