@@ -1,20 +1,33 @@
-// Capability-remote integration probe (silent-capability-reads task 2.4):
-// mirrors the plugin-owned read remote as a DIRECT call (the headless
-// composition has no typert gateway — design doc risk table). The IT
-// composition's own weir-skill-selection row already mounts the real plugin
-// (which feeds the module-level read bridge) — exactly like production, where
-// the preset row mounts it and the host-layer remote row never does. The
-// probe drives createCapabilityReadService against a live session: receipt /
-// list / conditions, the unknown-session typed error, payload parity with the
-// deliberate `/capabilities receipt` command, and the in-band command/run +
-// command/done counts proving the reads never touched the session log.
-// Enabled only when WEIR_IT_CAPABILITY_REMOTE=1. Dev-only.
+// Single-preset counterpart to the dual-owner probe. Registry.register mounts
+// the actual selection plugin in a preset revision; the probe addresses its
+// exact child session, not the host-level CLI session. Calls remain direct
+// mirrors: headless has no authenticated Typert Web gateway.
 import { createCapabilityReadService } from '../../weir-harness/src/capabilities/capability-remote.js'
+import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 const compact = report => JSON.stringify(report).slice(0, 560)
 
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
+  let owned
+  const ownedAgent = async exec => {
+    if (owned) return owned.handle.agent
+    const registry = ctx.get('agentPresets')
+    if (!registry) throw new Error('real preset registry unavailable')
+    const id = 'weir-it-selection'
+    const unregister = await registry.register({ id, plugins: [
+      { id: 'weir-selection', name: fileURLToPath(new URL('./skill-composition-probe.js', import.meta.url)), config: { selection: id } },
+      { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
+    ] })
+    try {
+      const handle = await ctx.agents.create({ sessionId: randomUUID(), meta: { cwd: exec.agent.session.header.cwd, agentPreset: id },
+        setup: agentCtx => registry.mount(agentCtx, id).then(() => undefined) })
+      owned = { handle, unregister }
+      return handle.agent
+    } catch (error) { await unregister(); throw error }
+  }
+  ctx.on('dispose', async () => { await owned?.handle.dispose(); await owned?.unregister() })
   // In-band session-log observation: command lifecycle events per session.
   // Reads over the remote must never move these counters; only the deliberate
   // parity command may.
@@ -48,9 +61,9 @@ function apply(ctx, config = {}) {
     async execute(args, exec) {
       const report = { completed: false, op: args?.op ?? null }
       try {
-        const sessionId = exec.agent?.session?.id
-        if (typeof sessionId !== 'string') throw new Error('probe session unavailable')
-        const service = createCapabilityReadService()
+        const agent = await ownedAgent(exec)
+        const sessionId = agent.session.id
+        const service = createCapabilityReadService({ sessionQuery: ctx.get('sessionQuery') })
 
         if (args.op === 'reads') {
           const receipt = await service.receipt(sessionId)
@@ -105,7 +118,7 @@ function apply(ctx, config = {}) {
           const commands = ctx.get('commands')
           if (!commands) throw new Error('commands service unavailable from the probe ctx')
           const remoteReceipt = await service.receipt(sessionId)
-          const settled = await commands.execute(exec.agent, '/capabilities receipt', [], new AbortController().signal)
+          const settled = await commands.execute(agent, '/capabilities receipt', [], new AbortController().signal)
           const value = settled?.result !== undefined ? settled.result : settled
           let commandPayload = null
           if (typeof value?.text === 'string') { try { commandPayload = JSON.parse(value.text) } catch { commandPayload = null } }
@@ -118,12 +131,12 @@ function apply(ctx, config = {}) {
           // silent-preset-reads: the other two deliberate user-visible
           // invocations (these two may also log lifecycle events).
           const remotePresets = await service.presets(sessionId)
-          const presetsSettled = await commands.execute(exec.agent, '/capabilities presets', [], new AbortController().signal)
+          const presetsSettled = await commands.execute(agent, '/capabilities presets', [], new AbortController().signal)
           const presetsValue = presetsSettled?.result !== undefined ? presetsSettled.result : presetsSettled
           let presetsCommandPayload = null
           if (typeof presetsValue?.text === 'string') { try { presetsCommandPayload = JSON.parse(presetsValue.text) } catch { presetsCommandPayload = null } }
           const remoteDefaultGet = await service.defaultGet(sessionId)
-          const defaultSettled = await commands.execute(exec.agent, '/capabilities default-get', [], new AbortController().signal)
+          const defaultSettled = await commands.execute(agent, '/capabilities default-get', [], new AbortController().signal)
           const defaultValue = defaultSettled?.result !== undefined ? defaultSettled.result : defaultSettled
           let defaultCommandPayload = null
           if (typeof defaultValue?.text === 'string') { try { defaultCommandPayload = JSON.parse(defaultValue.text) } catch { defaultCommandPayload = null } }
@@ -144,5 +157,5 @@ function apply(ctx, config = {}) {
 }
 
 export const name = 'weir-it-capability-remote-probe'
-export const inject = ['tools', 'skills']
+export const inject = ['tools', 'skills', 'agents']
 export { apply }
