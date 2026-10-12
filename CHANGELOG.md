@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **侧栏功能图标与黑板快捷入口**：Worktrees／Capabilities／黑板三个右侧栏页签在向导页胶囊与标签 chip 两处都显示专属图标（替代默认占位 cube 与纯文字）；会话头部新增黑板快捷按钮，一键直达本会话黑板面板，无需再经向导页；插件管理器中 weir-harness 卡片显示 Weir 品牌图标（`package.json.icon`）。详见 [会话黑板](docs/features/blackboard.md)、[Worktree 车道](docs/features/git-worktree.md)、[预设打包](docs/features/preset-packaging.md)。
+
 ## [1.1.5] - 2026-10-12
 
 ### Added
