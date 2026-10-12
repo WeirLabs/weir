@@ -97,10 +97,10 @@ export function createCapabilityReadService(dependencies = {}) {
     let lease
     try {
       lease = await observeSession(sessionId)
-      if (!lease || typeof lease.dispose !== 'function') throw new CapabilityReadError('owner-unavailable', 'capability read: session observation is unavailable')
+      if (!lease || typeof lease[Symbol.dispose] !== 'function') throw new CapabilityReadError('owner-unavailable', 'capability read: session observation is unavailable')
       return { lease, owner: ownership(lease, sessionId) }
     } catch (cause) {
-      lease?.dispose?.()
+      lease?.[Symbol.dispose]?.()
       if (cause instanceof CapabilityReadError) throw cause
       throw new CapabilityReadError('unknown-session', `capability read: cannot observe session ${JSON.stringify(sessionId)}`, { cause })
     }
@@ -128,10 +128,10 @@ export function createCapabilityReadService(dependencies = {}) {
         }
         return payload
       } finally {
-        second.lease.dispose()
+        second.lease[Symbol.dispose]()
       }
     } finally {
-      first.lease.dispose()
+      first.lease[Symbol.dispose]()
     }
   }
   return {

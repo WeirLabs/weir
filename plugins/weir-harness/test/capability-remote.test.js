@@ -49,7 +49,7 @@ function makePluginCtx(root) {
       if (name === 'sessionQuery') return { observeSession: async id => {
         const session = sessions.get(id)
         if (!session) throw new Error('session not found')
-        return { header: { id, cwd: session.header.cwd, agentPreset: session.header.agentPreset }, projections: { values: { agentPreset: session.presetId } }, events: session.events ?? [], dispose() { observations.push(id) } }
+        return { header: { id, cwd: session.header.cwd, agentPreset: session.header.agentPreset }, projections: { values: { agentPreset: session.presetId } }, events: session.events ?? [], [Symbol.dispose]() { observations.push(id) } }
       } }
       if (name === 'profileContext') return { home: root, name: 'it' }
       if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
@@ -213,14 +213,14 @@ function twoPresetFixture() {
     { provider: faces(presetId).provider, store },
     { cwd, scope: { session: { id: sessionId } } },
   )
-   const observations = []
-   const events = new Map([['creative-session', [{ type: 'agent-preset/selected', seq: 2, data: { agentPreset: 'weir-creative' } }]]])
-   const observeSession = async sessionId => {
-     const presetId = owners.get(sessionId)
-     if (!presetId) throw new Error('session not found')
-     return { header: { id: sessionId, cwd, agentPreset: 'weir' }, projections: { values: { agentPreset: presetId } }, events: events.get(sessionId) ?? [], dispose() { observations.push(sessionId) } }
-   }
-   return { owners, faces, store, observeSession, owningCommandReceipt, observations, events }
+  const observations = []
+  const events = new Map([['creative-session', [{ type: 'agent-preset/selected', seq: 2, data: { agentPreset: 'weir-creative' } }]]])
+  const observeSession = async sessionId => {
+    const presetId = owners.get(sessionId)
+    if (!presetId) throw new Error('session not found')
+    return { source: sessionId === 'creative-session' ? 'prepared' : 'live', header: { id: sessionId, cwd, agentPreset: 'weir' }, projections: { values: { agentPreset: presetId } }, events: events.get(sessionId) ?? [], [Symbol.dispose]() { observations.push(sessionId) } }
+  }
+  return { owners, faces, store, observeSession, owningCommandReceipt, observations, events }
 }
 
 for (const order of [['weir-creative', 'weir'], ['weir', 'weir-creative']]) {
@@ -270,6 +270,7 @@ test('ambiguous, absent and unobservable preset owners fail closed rather than b
   }
   try {
     await unavailable('normal-session') // Two active generations claim 'weir'.
+    expect(fixture.observations).toHaveLength(CAPABILITY_READ_METHODS.length) // one first lease per ambiguous read
     unregisterDuplicate()
     unregisterNormal()
     await unavailable('normal-session') // Creative feed must not replace a missing normal feed.
@@ -399,7 +400,7 @@ test('missing projection, missing query, and wrong observation identity fail clo
     { header: { id: 'foreign' }, projections: { values: { agentPreset: 'weir' } }, events: [] },
     { header: { id: 's' }, projections: { values: { agentPreset: 'weir' } } },
   ]) {
-    const service = createCapabilityReadService({ observeSession: async () => ({ ...observation, dispose() { released++ } }) })
+    const service = createCapabilityReadService({ observeSession: async () => ({ ...observation, [Symbol.dispose]() { released++ } }) })
     for (const method of CAPABILITY_READ_METHODS) {
       const error = await service[method]('s').then(() => null, cause => cause)
       expect(error).toBeInstanceOf(CapabilityReadError)
@@ -409,6 +410,17 @@ test('missing projection, missing query, and wrong observation identity fail clo
   expect(released).toBe(3 * CAPABILITY_READ_METHODS.length)
   const missing = createCapabilityReadService({ sessionQuery: () => undefined })
   expect((await missing.receipt('s').then(() => null, cause => cause)).code).toBe('owner-unavailable')
+})
+test('a lease without Symbol.dispose fails closed, even when it offers a legacy dispose method', async () => {
+  let legacyCalls = 0
+  const service = createCapabilityReadService({ observeSession: async id => ({
+    header: { id, cwd: '/fixture' }, projections: { values: { agentPreset: 'weir' } }, events: [],
+    dispose() { legacyCalls++ },
+  }) })
+  const error = await service.conditions('s').then(() => null, cause => cause)
+  expect(error).toBeInstanceOf(CapabilityReadError)
+  expect(error.code).toBe('owner-unavailable')
+  expect(legacyCalls).toBe(0)
 })
 test('first observation lease closes on payload and second-observation failures', async () => {
   const fixture = twoPresetFixture()
@@ -429,6 +441,24 @@ test('first observation lease closes on payload and second-observation failures'
     expect((await throwing.receipt('normal-session').then(() => null, cause => cause)).code).toBe('payload-failed')
     expect(fixture.observations).toEqual(['normal-session', 'normal-session'])
   } finally { dispose() }
+})
+test('second observation with invalid owner disposes both leases exactly once', async () => {
+  const fixture = twoPresetFixture()
+  const release = feedCapabilityReadBridge(fixture.faces('weir'))
+  let observed = 0
+  const service = createCapabilityReadService({
+    observeSession: async id => {
+      const lease = await fixture.observeSession(id)
+      return ++observed === 2 ? { ...lease, projections: { values: {} } } : lease
+    },
+    store: () => fixture.store,
+  })
+  try {
+    const error = await service.conditions('normal-session').then(() => null, cause => cause)
+    expect(error).toBeInstanceOf(CapabilityReadError)
+    expect(error.code).toBe('owner-unavailable')
+    expect(fixture.observations).toEqual(['normal-session', 'normal-session'])
+  } finally { release() }
 })
 test('host apply publishes the frozen binding and registers the hand-written contribution', () => {
   const provided = []
@@ -629,7 +659,7 @@ test('the read channel self-heals a withdrawn typert registration', () => {
      lifecycle: null,
      profileContext: () => undefined,
    }
-   const service = createCapabilityReadService({ bridge: () => faces, ensureRegistered, observeSession: async id => ({ header: { id, cwd: '/tmp' }, projections: { values: { agentPreset: 'weir' } }, events: [], dispose() {} }) })
+   const service = createCapabilityReadService({ bridge: () => faces, ensureRegistered, observeSession: async id => ({ header: { id, cwd: '/tmp' }, projections: { values: { agentPreset: 'weir' } }, events: [], [Symbol.dispose]() {} }) })
   // First read: definition absent → ensure() re-registers.
   return service.receipt('s1').then(async (first) => {
     expect(first.status).toBe('applied')
