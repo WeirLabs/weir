@@ -138,7 +138,7 @@ async function runDualPresetProbe(ctx) {
   const query = ctx.get('sessionQuery')
   const commands = ctx.get('commands')
   if (!registry || !query || !commands) throw new Error('installed preset/sessionQuery/commands services required')
-  const service = createCapabilityReadService({ sessionQuery: query })
+  const service = createCapabilityReadService({ sessionQuery: () => query })
   const report = { orders: [], projection: null, leasesReleased: 0 }
   const cwd = join(IT_ROOT, 'ws')
   const names = ['weir', 'weir-creative']
@@ -204,6 +204,10 @@ async function runDualPresetProbe(ctx) {
       // this is the discriminator for the old single-slot bridge.
       for (const owner of outcome.owners) {
         owner.remoteAfterBoth = await service.receipt(owner.sessionId)
+        owner.listAfterBoth = await service.list(owner.sessionId)
+        owner.conditionsAfterBoth = await service.conditions(owner.sessionId)
+        owner.presetsAfterBoth = await service.presets(owner.sessionId)
+        owner.defaultAfterBoth = await service.defaultGet(owner.sessionId)
         const agent = handles.find(h => h.agent.id === owner.sessionId).agent
         owner.commandAfterBoth = await commandReceipt(agent)
         owner.commandEventsFinal = agent.session.snapshotEvents().filter(e => e.type === 'command/run' || e.type === 'command/done').map(e => e.type)
@@ -215,6 +219,7 @@ async function runDualPresetProbe(ctx) {
         report.projection = { beforeSelect: await observe(agent.id) }
         report.projection.selected = await registry.select(agent, 'weir-creative')
         report.projection.afterSelect = await observe(agent.id)
+        report.projection.remoteAfterSelect = await service.receipt(agent.id)
         // Replay-valid native selection events; request/context outside an open
         // turn corrupts cold logs and is deliberately NOT used for this probe.
         const selectedEvent = agent.session.snapshotEvents().findLast(event => event.type === 'agent-preset/selected')
@@ -225,6 +230,7 @@ async function runDualPresetProbe(ctx) {
         handles.shift()
         report.projection.coldLong = await observe(agent.id)
         report.projection.coldRepeat = await observe(agent.id)
+        report.projection.coldRemote = await service.receipt(agent.id)
       }
     } catch (error) { outcome.error = error.stack ?? String(error) }
     finally {

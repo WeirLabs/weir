@@ -15,7 +15,7 @@ function apply(ctx, config = {}) {
     if (owned) return owned.handle.agent
     const registry = ctx.get('agentPresets')
     if (!registry) throw new Error('real preset registry unavailable')
-    const id = 'weir-it-selection'
+    const id = 'weir'
     const unregister = await registry.register({ id, plugins: [
       { id: 'weir-selection', name: fileURLToPath(new URL('./skill-composition-probe.js', import.meta.url)), config: { selection: id } },
       { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
@@ -63,7 +63,7 @@ function apply(ctx, config = {}) {
       try {
         const agent = await ownedAgent(exec)
         const sessionId = agent.session.id
-        const service = createCapabilityReadService({ sessionQuery: ctx.get('sessionQuery') })
+        const service = createCapabilityReadService({ sessionQuery: () => ctx.get('sessionQuery') })
 
         if (args.op === 'reads') {
           const receipt = await service.receipt(sessionId)
@@ -83,6 +83,10 @@ function apply(ctx, config = {}) {
             mcpServers: Array.isArray(listing.mcpServers) ? listing.mcpServers.length : -1,
           }
           report.conditions = conditions
+          const observation = await ctx.get('sessionQuery').observeSession(sessionId)
+          try {
+            report.owner = { headerPreset: observation.header.agentPreset, projectedPreset: observation.projections?.values?.agentPreset }
+          } finally { observation[Symbol.dispose]() }
           report.completed = true
           return report
         }
