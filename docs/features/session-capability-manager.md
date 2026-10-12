@@ -11,6 +11,7 @@
 ## 用户可见行为
 
 - **可见性变化（自选择 provider 落地起）**：Weir 会话只看到**已选** Skill；未选中的第三方 Skill 不再自动出现在模型目录、`skill` 加载与 slash 列表中。选择记录尚不存在的会话看到空目录与可见的状态提示（fail closed，绝不回退为全量发现）；工作区默认值、管理器界面与 Apply 流程交付后，选择集合由用户显式编辑产生。
+- **管理器入口与页签图标**：Capabilities 面板经右侧栏页签 `weir-capabilities` 打开（点击输入框 Badge 直达，或从向导页胶囊进入）；页签在向导胶囊与标签 chip 两层都显示专属滑块图标（16×16 stroke glyph，`currentColor`），chip 为「图标 + 标题」。
 
 ## 配置
 
