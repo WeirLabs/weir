@@ -29,7 +29,8 @@ function observe(obs) {
   return {
     readsOk: /done reads:.*"receipt":\{"status":"applied"/.test(history)
       && /done reads:.*"listing":\{"skills":\d+,"selected":\d+,"mcpServers":\d+\}/.test(history)
-      && /done reads:.*"conditions":\{"conditions":\[\]\}/.test(history),
+      && /done reads:.*"conditions":\{"conditions":\[\]\}/.test(history)
+      && /done reads:.*"owner":\{"headerPreset":"weir","projectedPreset":"weir"\}/.test(history),
     presetReadsOk: /done presetReads:.*"presetsIsList":true/.test(history)
       && /done presetReads:.*"defaultStatus":"[a-z-]+"/.test(history),
     presetParityOk: /done parity:.*"presetsEqual":true/.test(history)
