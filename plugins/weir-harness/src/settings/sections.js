@@ -40,7 +40,7 @@ const FIELDS = [
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (live advisory; 0 < soft < hard < 1)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (live maintenance request; not a completion guarantee)' },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)', restart: true },
-  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (optional, default off; applies after restart)', restart: true },
+  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (default on; explicit off applies after restart)', restart: true },
   // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
   // session reads one expiry instead of N countdowns. These keys are policy, not
   // mechanism: the kernel never sees them, the lifecycle resolves them per call.
@@ -112,7 +112,7 @@ export const FIELD_DEFAULTS = Object.freeze({
   guardSoftThreshold: 0.72,
   guardHardThreshold: 0.88,
   hashlineHideStockEdit: true,
-  editLockEnabled: false,
+  editLockEnabled: true,
   editLockHoldDefaultMinutes: 30,
   editLockHoldSingleMaxMinutes: 30,
   editLockHoldCumulativeMaxMinutes: 120,
@@ -382,6 +382,9 @@ export function computeSections(config, { readDefaults } = {}) {
         }
       }
     }
+    // A saved profile row replaces the bundle row wholesale. An omitted key
+    // must still activate protection; a saved false remains an explicit opt-out.
+    if (key === 'editLock' && out.enabled === undefined) out.enabled = FIELD_DEFAULTS.editLockEnabled
     if (key === 'contextGuard') guardOptions(out)
     if (key === 'lsp' && typeof out.servers === 'string' && out.servers.trim().length > 0) {
       out.servers = parseJsonField(validateLspServers, out.servers)

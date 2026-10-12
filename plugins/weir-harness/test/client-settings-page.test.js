@@ -224,12 +224,12 @@ describe('client.settings-page chunk', () => {
       expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
     // the default visible set (product defaults: todo/guard/worktree/robash/
-    // notify on; editLock/lsp off; classifier regex; platform darwin)
+    // notify and Edit Lock on; LSP off; classifier regex; platform darwin)
     expect(rowKeys(cards, 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
     expect(rowKeys(cards, 'delegate')).toEqual(['delegateCategoryChains', 'delegateAgentChains', 'delegateDisabledCategories', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
     expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs'])
     expect(rowKeys(cards, 'guard')).toEqual(['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'])
-    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled', 'editLockMaintenance'])
+    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled', 'editLockAutoResume', 'editLockStaleSweep', 'editLockHoldDefaultMinutes', 'editLockHoldSingleMaxMinutes', 'editLockHoldCumulativeMaxMinutes', 'editLockNudgeAttempts', 'editLockNudgeFallback', 'editLockMaintenance'])
     expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes', 'worktreeAutoApprove'])
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
@@ -247,7 +247,7 @@ describe('client.settings-page chunk', () => {
     for (const locale of ['en', 'zh']) {
       const t = (key) => dicts[locale][key] ?? key
       for (const [name, patch, warning] of [
-        ['default-off', {}, true],
+        ['default-on', {}, false],
         ['saved-off', { text: 'false', saved: false, overridden: true }, true],
         ['disable-requested', { text: 'false', saved: true }, true],
         ['on', { text: 'true', saved: true }, false],
@@ -583,9 +583,9 @@ describe('client.settings-page chunk', () => {
     const renderChoice = (name) => choiceByName[name].__type(choiceByName[name])
     const switchOf = (name) => findAll(renderChoice(name), (node) => node.__type === primitivesStub.Switch)[0]
     // product defaults through the SAME helper the conditions use:
-    // todoEnabled on, editLockEnabled off (unset texts)
+    // todoEnabled and editLockEnabled on (unset texts)
     expect(switchOf('todoEnabled').checked).toBe(true)
-    expect(switchOf('editLockEnabled').checked).toBe(false)
+    expect(switchOf('editLockEnabled').checked).toBe(true)
     expect(switchOf('lspEnabled').checked).toBe(false)
     expect(switchOf('worktreeEnabled').checked).toBe(true)
     // a staged draft flips the display the same way it flips the conditions
@@ -669,7 +669,7 @@ describe('client.settings-page chunk', () => {
       todoEnabled: true,
       guardEnabled: true,
       hashlineHideStockEdit: true,
-      editLockEnabled: false,
+      editLockEnabled: true,
       editLockAutoResume: true,
       editLockStaleSweep: true,
       worktreeEnabled: true,
@@ -777,12 +777,10 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(cardsOf(rendered), 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
   })
 
-  it('renders the six mirrored switches ON with their children visible when the profile never saved them', async () => {
+  it('renders the mirrored switches ON with their children visible when the profile never saved them', async () => {
     const { exports, editors, primitivesStub } = await loadPage()
     const rendered = renderCard(exports, editors, {
-      // editLockEnabled is a false product default, so its two late children
-      // are staged into view; the whole notify family is ON with no staging
-      fields: makeFields({ editLockEnabled: { text: 'true' } }),
+      fields: makeFields(),
       env: { status: 'ready', facts: { platform: 'darwin' } },
     })
     const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
@@ -854,7 +852,7 @@ describe('client.settings-page chunk', () => {
     const { exports } = await loadPage()
     const { resolveEffectiveValue } = exports
     const boolean = { field: 'todoEnabled', kind: 'boolean' }
-    const offBoolean = { field: 'editLockEnabled', kind: 'boolean' }
+    const lockBoolean = { field: 'editLockEnabled', kind: 'boolean' }
     const number = { field: 'todoMaxConsecutive', kind: 'number' }
     const text = { field: 'worktreeRoot', kind: 'text' }
     const enumField = { field: 'intentGateClassifier', kind: 'enum', values: ['regex', 'llm', 'jev'] }
@@ -865,7 +863,7 @@ describe('client.settings-page chunk', () => {
     expect(resolveEffectiveValue(text, { text: 'custom/dir' }, 'old')).toBe('custom/dir')
     // empty draft is the clear gesture → product default
     expect(resolveEffectiveValue(boolean, { text: '' }, false)).toBe(true)
-    expect(resolveEffectiveValue(offBoolean, { text: '' }, true)).toBe(false)
+    expect(resolveEffectiveValue(lockBoolean, { text: '' }, false)).toBe(true)
     expect(resolveEffectiveValue(number, { text: '' }, 4)).toBe(8)
     expect(resolveEffectiveValue(enumField, { text: '' }, 'llm')).toBe('regex')
     // unparseable draft falls back to the saved value (no visibility flicker)
@@ -879,7 +877,7 @@ describe('client.settings-page chunk', () => {
     // never set: every kind takes its concrete product default (booleans
     // via the derived BOOLEAN_DEFAULTS subset)
     expect(resolveEffectiveValue(boolean, { text: '' }, undefined)).toBe(true)
-    expect(resolveEffectiveValue(offBoolean, { text: '' }, undefined)).toBe(false)
+    expect(resolveEffectiveValue(lockBoolean, { text: '' }, undefined)).toBe(true)
     expect(resolveEffectiveValue(number, { text: '' }, undefined)).toBe(8)
     expect(resolveEffectiveValue(enumField, { text: '' }, undefined)).toBe('regex')
     expect(resolveEffectiveValue(text, { text: '' }, undefined)).toBe('.weir/worktrees')
