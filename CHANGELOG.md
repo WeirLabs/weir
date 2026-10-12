@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-10-12
+
 ### Added
 
 - **Capabilities 预设原位编辑**：预设保存后可直接重命名，或明确确认后用当前草稿／已应用能力集合重新保存（默认草稿）；原预设 ID、命名空间及其他预设不变，操作不会自动应用到当前会话。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
