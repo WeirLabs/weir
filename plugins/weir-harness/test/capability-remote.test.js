@@ -21,6 +21,7 @@ import {
   createCapabilityReadService,
   feedCapabilityReadBridge,
 } from '../src/capabilities/capability-remote.js'
+import { buildReceiptPayload } from '../src/capabilities/read-payloads.js'
 
 /** Mock ctx mounting the real skill-selection plugin; listeners are captured so agent/created can be fired. */
 function makePluginCtx(root) {
@@ -160,18 +161,111 @@ test('unknown session and missing bridge are explicit typed errors', async () =>
   expect(failed.cause instanceof Error && failed.cause.message).toBe('provider down')
 })
 
-test('bridge feed registers, unregisters, and a stale handle keeps the newer feed', () => {
-  const facesA = { marker: 'A' }
-  const facesB = { marker: 'B' }
-  const unregisterA = feedCapabilityReadBridge(facesA)
-  expect(capabilityReadBridge()).toBe(facesA)
-  const unregisterB = feedCapabilityReadBridge(facesB)
-  expect(capabilityReadBridge()).toBe(facesB)
-  // Disposing the OLDER feed must not strip the newer one.
-  unregisterA()
-  expect(capabilityReadBridge()).toBe(facesB)
-  unregisterB()
-  expect(capabilityReadBridge()).toBe(null)
+// Deliberately model the host's *current* preset observation, not the session
+// creation header. The Creative session started as 'weir' and was subsequently
+// selected into 'weir-creative'; both sessions share one cwd. The production
+// implementation may adapt this test seam to sessionQuery.observeSession.
+function twoPresetFixture() {
+  const cwd = '/fixture/shared-workspace'
+  const owners = new Map([
+    ['normal-session', 'weir'],
+    ['creative-session', 'weir-creative'],
+  ])
+  const identities = new Map([
+    ['weir', { scope: 'project', root: '/fixture/normal', name: 'normal-skill', provenance: { kind: 'fixture' } }],
+    ['weir-creative', { scope: 'project', root: '/fixture/creative', name: 'creative-skill', provenance: { kind: 'fixture' } }],
+  ])
+  const store = { read: async ({ sessionId }) => ({
+    kind: 'ok', revision: 10,
+    payload: { skills: [identities.get(owners.get(sessionId))], mcpServers: [] },
+  }) }
+  const faces = presetId => ({
+    readPresetId: presetId,
+    sessionCwd: () => ({ found: true, cwd }), // Old bridge wrongly accepts either same-cwd session.
+    provider: {
+      status: () => ({}),
+      list: async options => {
+        const owns = owners.get(options.scope.session.id) === presetId
+        return {
+          candidates: owns ? [{ name: identities.get(presetId).name, identity: identities.get(presetId), selected: true }] : [],
+          complete: owns,
+        }
+      },
+    },
+    inventory: async () => ({ candidates: [], complete: true }),
+    profileContext: () => undefined,
+  })
+  // This is the shared builder used by the owning /capabilities receipt verb;
+  // the existing parity test above checks the mounted command against remote.
+  const owningCommandReceipt = (presetId, sessionId) => buildReceiptPayload(
+    { provider: faces(presetId).provider, store },
+    { cwd, scope: { session: { id: sessionId } } },
+  )
+  const observeSession = async sessionId => {
+    const presetId = owners.get(sessionId)
+    return presetId ? { presetId, cwd, selectionSeq: sessionId === 'creative-session' ? 2 : 1, release() {} } : null
+  }
+  return { owners, faces, store, observeSession, owningCommandReceipt }
+}
+
+for (const order of [['weir-creative', 'weir'], ['weir', 'weir-creative']]) {
+  test(`same-cwd sessions read their exact current preset, not the last feed (${order.join(' then ')})`, async () => {
+    const fixture = twoPresetFixture()
+    const unregister = order.map(presetId => feedCapabilityReadBridge(fixture.faces(presetId)))
+    try {
+      const service = createCapabilityReadService({ observeSession: fixture.observeSession, store: () => fixture.store })
+      const victim = order[0] === 'weir-creative' ? 'creative-session' : 'normal-session'
+      const owner = fixture.owners.get(victim)
+      const command = await fixture.owningCommandReceipt(owner, victim)
+      expect(command.status).toBe('applied')
+      expect(command.revision).toBe(10)
+      expect(command.effective.skills).toEqual([`${owner === 'weir' ? 'normal' : 'creative'}-skill`])
+      // Pre-fix witness: later wrong feed reports a false applied/0 at the same
+      // accepted revision, plus an incomplete-inventory warning.
+      const remote = await service.receipt(victim)
+      if (remote.effective.skills.length === 0) {
+        expect(remote.status).toBe('applied')
+        expect(remote.revision).toBe(10)
+        expect(remote.warnings).toHaveLength(1)
+      }
+      // RED on old code; post-fix remote must use the owning feed even when
+      // header preset 'weir' differs from the committed Creative selection.
+      expect(remote).toEqual(command)
+      const other = order[0] === 'weir' ? 'creative-session' : 'normal-session'
+      expect(await service.receipt(other)).toEqual(await fixture.owningCommandReceipt(fixture.owners.get(other), other))
+    } finally {
+      for (const dispose of unregister.reverse()) dispose()
+    }
+  })
+}
+
+test('ambiguous, absent and unobservable preset owners fail closed rather than borrowing another feed', async () => {
+  const fixture = twoPresetFixture()
+  const unregisterNormal = feedCapabilityReadBridge(fixture.faces('weir'))
+  const unregisterCreative = feedCapabilityReadBridge(fixture.faces('weir-creative'))
+  const unregisterDuplicate = feedCapabilityReadBridge(fixture.faces('weir'))
+  const service = createCapabilityReadService({ observeSession: fixture.observeSession, store: () => fixture.store })
+  const unavailable = async (sessionId) => {
+    for (const method of CAPABILITY_READ_METHODS) {
+      const error = await service[method](sessionId).then(() => null, cause => cause)
+      expect(error).toBeInstanceOf(CapabilityReadError)
+      expect(typeof error.code).toBe('string')
+      expect(error.code).not.toBe('payload-failed')
+    }
+  }
+  try {
+    await unavailable('normal-session') // Two active generations claim 'weir'.
+    unregisterDuplicate()
+    unregisterNormal()
+    await unavailable('normal-session') // Creative feed must not replace a missing normal feed.
+    fixture.owners.set('foreign-session', 'other-preset')
+    await unavailable('foreign-session') // No supported owner.
+    await unavailable('never-observed') // No observation: never trust a cached/header-only fallback.
+  } finally {
+    unregisterDuplicate()
+    unregisterNormal()
+    unregisterCreative()
+  }
 })
 
 test('host apply publishes the frozen binding and registers the hand-written contribution', () => {
