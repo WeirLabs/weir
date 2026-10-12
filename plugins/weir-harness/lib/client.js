@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"66fd9fc5438477d6d7ff156631f810a647ce352612a16051e987e8cd449bc4c9","client.blackboard-panel.js":"f961e0242dad7bf311829a25e265bf091925711b2fb9c19d2141997fbdf792b5","client.capability-badge.js":"4e5805596a9ad34eac03cbd62c956f8b79789527c72279d6a4078f5c9d0eabab","client.capability-manager.js":"65f8ee601188467c16d8aa41f46eb261c878b44cdd9ca47b1917a0f126dfa5a4","client.capability-model.js":"9383e7d06b7d6fcf06df114f039cef9e18cf4e6f697a0cc2e2acf30b6bddaeb3","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"f5dca1a7658e2f536b52d265c49ab37bb5d2df6bcd6cf21826b843c9554311a8","client.edit-lock-panel.js":"3889bcb48de6ff185d0b8d2ee457f51269710e8a748fa5de85fb9983a3ad5655","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"3f33da4ce1676721e38e5437653a2d706948ddb3f2afc6507e03d79a596339b9","client.worktree-model.js":"819f1b00650aa0bb01140690b29b4a1f09b9d26e6bb73adc7efbb3a08e215766","client.worktree-view.js":"4cf79e1231c8f0eab6692c986c11ef4e363b2f5968458f3c14e396a3aade7ee3"}
+// Weir client chunks: {"client.blackboard-model.js":"66fd9fc5438477d6d7ff156631f810a647ce352612a16051e987e8cd449bc4c9","client.blackboard-panel.js":"f961e0242dad7bf311829a25e265bf091925711b2fb9c19d2141997fbdf792b5","client.capability-badge.js":"6ffd703f498e0aa5cc8ac78f244402ec4ceee56d22d2a0e74c246799565776cc","client.capability-manager.js":"d8d1076e1b624c1dfc0834ad393c05fd7d9ee35004cd2fb34e5e5ba83f44c902","client.capability-model.js":"d0ad248c4a6defbc90f79c8c0e7904639779d47927874b8663c15c6cecb9d54a","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"f5dca1a7658e2f536b52d265c49ab37bb5d2df6bcd6cf21826b843c9554311a8","client.edit-lock-panel.js":"3889bcb48de6ff185d0b8d2ee457f51269710e8a748fa5de85fb9983a3ad5655","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"3f33da4ce1676721e38e5437653a2d706948ddb3f2afc6507e03d79a596339b9","client.worktree-model.js":"819f1b00650aa0bb01140690b29b4a1f09b9d26e6bb73adc7efbb3a08e215766","client.worktree-view.js":"4cf79e1231c8f0eab6692c986c11ef4e363b2f5968458f3c14e396a3aade7ee3"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -541,6 +541,11 @@ window.__ModuleLoader__.load({
 			capabilityGuideDescription: "Skills, MCP servers, and presets for this session.",
 			"capability.badge": "{skills} skills · {mcp} MCP",
 			"capability.unavailable.short": "Capabilities n/a",
+			"capability.effectiveUnknown": "Applied count unknown — refresh and check Skill sources",
+			"capability.effectiveUnknownShort": "Skills ? · MCP ?",
+			"capability.effectiveUnknownDetail": "Accepted revision; effective capabilities cannot be verified. Refresh and check Skill sources. Draft kept; only Apply changes the session.",
+			"capability.unknownOverwriteRisk": "Previous selection is unknown. Applying this draft may replace other accepted Skills and MCP servers. Review the full selection before confirming.",
+			"capability.confirmUnknownOverwrite": "Confirm replacing unknown selection",
 			"capability.loading": "Loading capabilities…",
 			"capability.error": "Capabilities unavailable for this session.",
 			"capability.unavailable": "Capabilities are unavailable in this session.",
@@ -590,6 +595,7 @@ window.__ModuleLoader__.load({
 			"capability.applying": "Applying…",
 			"capability.discard": "Discard",
 			"capability.applied": "Applied",
+			"capability.acceptedUnknown": "Accepted · effective count unknown",
 			"capability.appliedSkipped": "skipped {n} (not applicable here)",
 			"capability.failed": "Failed — draft kept",
 			"capability.conflictState": "Changed elsewhere — review current state",
@@ -1292,6 +1298,11 @@ window.__ModuleLoader__.load({
 			capabilityGuideDescription: "此会话的技能、MCP server 与预设。",
 			"capability.badge": "{skills} 个技能 · {mcp} 个 MCP",
 			"capability.unavailable.short": "能力不可用",
+			"capability.effectiveUnknown": "已应用数量未知——请刷新并检查技能来源",
+			"capability.effectiveUnknownShort": "技能 ? · MCP ?",
+			"capability.effectiveUnknownDetail": "修订已接受，但有效能力暂无法核实。请刷新并检查技能来源。草稿已保留；只有手动应用才会更改会话。",
+			"capability.unknownOverwriteRisk": "原有选择未知。应用此草稿可能覆盖其他已接受的技能与 MCP server。确认前请核对完整选择。",
+			"capability.confirmUnknownOverwrite": "确认替换未知选择",
 			"capability.loading": "正在加载能力…",
 			"capability.error": "此会话的能力不可用。",
 			"capability.unavailable": "能力在此会话中不可用。",
@@ -1341,6 +1352,7 @@ window.__ModuleLoader__.load({
 			"capability.applying": "正在应用…",
 			"capability.discard": "放弃",
 			"capability.applied": "已应用",
+			"capability.acceptedUnknown": "已接受 · 有效数量未知",
 			"capability.appliedSkipped": "已跳过 {n} 项（当前预设不适用）",
 			"capability.failed": "失败——草稿已保留",
 			"capability.conflictState": "已在别处变更——请核对当前状态",

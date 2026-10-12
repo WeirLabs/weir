@@ -120,32 +120,35 @@ window.__ModuleLoader__.load({
 			const [panelOpen, setPanelOpen] = react.useState(false);
 			const [convergence, setConvergence] = react.useState(null);
 			const aliveRef = react.useRef(false);
+			const requestRef = react.useRef(0);
 			const refresh = react.useCallback(() => {
 				if (!sessionId || typeof props.fetchReceipt !== "function") return Promise.resolve();
+				const request = ++requestRef.current;
 				return props.fetchReceipt(sessionId).then((receipt) => {
-					if (aliveRef.current) { setState(model.badgeStateOf(receipt, null)); setSettled(true); }
-				}).catch(() => { if (aliveRef.current) setSettled(true); });
+					if (aliveRef.current && request === requestRef.current) { setState(model.badgeStateOf(receipt, null)); setSettled(true); }
+				}).catch(() => {
+					if (aliveRef.current && request === requestRef.current) { setState(null); setSettled(true); }
+				});
 			}, [sessionId]);
 			react.useEffect(() => {
+				++requestRef.current;
+				setState(null);
 				if (!sessionId || typeof props.fetchReceipt !== "function") {
-					setState(null);
 					setSettled(false);
 					return undefined;
 				}
 				aliveRef.current = true;
 				setSettled(false);
 				refresh();
-				// 12.5: a same-session frame refreshes this window's Badge; a
-				// missing subscription degrades to an explicit refresh hint.
 				if (typeof props.subscribeFrames === "function") {
 					setConvergence(model.convergenceHintOf({ subscribed: true }));
 					const stop = props.subscribeFrames((frame) => {
 						if (model.frameRefreshesSession(frame, sessionId)) refresh();
 					});
-					return () => { aliveRef.current = false; if (typeof stop === "function") stop(); };
+					return () => { aliveRef.current = false; ++requestRef.current; if (typeof stop === "function") stop(); };
 				}
 				setConvergence(model.convergenceHintOf({ subscribed: false }));
-				return () => { aliveRef.current = false; };
+				return () => { aliveRef.current = false; ++requestRef.current; };
 			}, [sessionId, refresh]);
 			// Close on outside click (edit-lock panel pattern): any pointerdown
 			// outside this entry's wrapper dismisses the panel. Clicks INSIDE
@@ -168,15 +171,12 @@ window.__ModuleLoader__.load({
 			const known = Boolean(state && state.known);
 			const label = known
 				? t("capability.badge", "{skills} skills · {mcp} MCP").replace("{skills}", String(state.applied.skills)).replace("{mcp}", String(state.applied.mcpServers))
-				: settled
-					// The receipt fetch settled without a receipt: this session's
-					// composition has no capability command (a non-Weir preset)
-					// or it failed — an explicit n/a, never a perpetual spinner.
-					? t("capability.unavailable.short", "Capabilities n/a")
-					: t("capability.loading", "Capabilities…");
-			const compactLabel = known ? `${state.applied.skills} · ${state.applied.mcpServers}` : label;
-			const hasWarning = Boolean(state && state.unavailable && state.unavailable.length > 0);
-			const title = hasWarning ? state.unavailable.join("; ") : (convergence ?? (known ? label : undefined));
+				: settled && state?.degraded
+					? t("capability.effectiveUnknown", "Applied count unknown — refresh and check Skill sources")
+					: settled ? t("capability.unavailable.short", "Capabilities n/a") : t("capability.loading", "Capabilities…");
+			const compactLabel = known ? `${state.applied.skills} · ${state.applied.mcpServers}` : state?.degraded ? t("capability.effectiveUnknownShort", "Skills ? · MCP ?") : label;
+			const hasWarning = Boolean(state?.degraded);
+			const title = hasWarning ? `${label}: ${state.warnings.join("; ")}` : (convergence ?? (known ? label : undefined));
 			// D4: with the composition root's openPanel verb (a shell with a right
 			// sidebar) activation opens the dedicated panel and closes any open
 			// popover; without it the existing popover path runs unchanged.

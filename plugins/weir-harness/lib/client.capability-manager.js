@@ -539,6 +539,9 @@ window.__ModuleLoader__.load({
 			// recompute dirty, Apply goes through /capabilities apply with the
 			// draft's CAS revision and a fresh request ID.
 			const [draft, setDraft] = react.useState(null);
+			const [receiptState, setReceiptState] = react.useState(null);
+			const receiptRequest = react.useRef(0);
+			const applying = react.useRef(false);
 			const [commit, setCommit] = react.useState(null);
 			// Managed MCP add form (8.1/8.2): per-field errors are derived by the
 			// pure model (mcpAddErrorsOf) and shown after the first submit
@@ -546,13 +549,25 @@ window.__ModuleLoader__.load({
 			// return crashes with React #310.
 			const [addForm, setAddForm] = react.useState({ open: false, identity: "", label: "", command: "", args: "", showErrors: false, error: null, busy: false });
 
+			const refreshReceipt = () => {
+				if (typeof props.fetchReceipt !== "function") return;
+				const request = ++receiptRequest.current;
+				props.fetchReceipt(props.sessionId).then((receipt) => {
+					if (request !== receiptRequest.current) return;
+					setReceiptState(model.badgeStateOf(receipt, null));
+					setDraft(current => model.draftAfterRefresh(current, receipt));
+				}).catch(() => {
+					if (request === receiptRequest.current) {
+						setReceiptState(null);
+						setDraft(current => model.draftAfterRefresh(current, null));
+					}
+				});
+			};
 			const refreshAll = () => {
 				if (typeof props.fetchListing === "function") {
 					props.fetchListing(props.sessionId).then((data) => setListing(data ?? { error: true })).catch(() => setListing({ error: true }));
 				}
-				if (typeof props.fetchReceipt === "function") {
-					props.fetchReceipt(props.sessionId).then((receipt) => setDraft(receipt ? model.draftFromReceipt(receipt) : null)).catch(() => {});
-				}
+				refreshReceipt();
 			};
 			react.useEffect(() => {
 				let alive = true;
@@ -564,17 +579,16 @@ window.__ModuleLoader__.load({
 				if (typeof props.fetchConditions === "function") {
 					props.fetchConditions(props.sessionId).then((data) => { if (alive) setConditions(data); }).catch(() => {});
 				}
-				if (typeof props.fetchReceipt === "function") {
-					props.fetchReceipt(props.sessionId).then((receipt) => { if (alive) setDraft(receipt ? model.draftFromReceipt(receipt) : null); }).catch(() => {});
-				}
-				return () => { alive = false; };
+				refreshReceipt();
+				return () => { alive = false; ++receiptRequest.current; };
 			}, [props.sessionId]);
 			const toggle = (kind, name) => {
 				if (draft && commit?.phase !== "submitting") { setDraft(model.draftToggle(draft, kind, name)); setCommit(null); }
 			};
 			const applyDraft = () => {
 				const check = model.skillDraftConflicts(draft, listing);
-				if (!draft || !draft.dirty || check.selected.length || check.unresolved.some(item => item.state === "ambiguous") || typeof props.applySelection !== "function") return;
+				if (applying.current || !draft || !draft.dirty || (draft.unknownBaseline && !draft.overwriteConfirmed) || check.selected.length || check.unresolved.some(item => item.state === "ambiguous") || typeof props.applySelection !== "function") return;
+				applying.current = true;
 				const requestId = crypto.randomUUID();
 				setCommit({ phase: "submitting", requestId });
 				props.applySelection(props.sessionId, {
@@ -583,15 +597,15 @@ window.__ModuleLoader__.load({
 					skills: draft.skills,
 					mcpServers: draft.mcpServers,
 				}).then((response) => {
+					applying.current = false;
 					const outcome = model.commitOutcomeOf(response);
 					setCommit(outcome);
 					if (outcome.phase === "applied") {
+						setDraft(current => current ? { ...current, applied: { skills: [...current.skills], mcpServers: [...current.mcpServers], unresolvedRefs: [...current.unresolvedRefs] }, revision: outcome.revision, dirty: false, appliedDigest: undefined, appliedSourceIssue: "receipt" } : null);
 						refreshAll();
-						// The Badge holds its own receipt state — tell it to re-pull
-						// so the composer counts follow the Apply immediately.
 						if (typeof props.onApplied === "function") props.onApplied();
 					}
-				}).catch(() => setCommit({ phase: "failed", error: "apply request failed", draftKept: true }));
+				}).catch(() => { applying.current = false; setCommit({ phase: "failed", error: "apply request failed", draftKept: true }); });
 			};
 			const discardDraft = () => {
 				if (draft) setDraft({ ...draft, skills: [...draft.applied.skills], mcpServers: [...draft.applied.mcpServers], unresolvedRefs: [], dirty: false });
@@ -926,7 +940,7 @@ window.__ModuleLoader__.load({
 			// Footer commit bar (12.3): the dirty diff summary (+n/−m) ahead of
 			// the same Apply/Discard/commit-phase semantics as before.
 			const diff = draft ? model.draftDiffOf(draft) : null;
-			const diffParts = diff && diff.any
+			const diffParts = diff && diff.any && !draft?.unknownBaseline
 				? [
 					diff.skillsAdded > 0 ? { added: true, text: t("capability.diff.addSkills", "+{n} skills").replace("{n}", String(diff.skillsAdded)) } : null,
 					diff.skillsRemoved > 0 ? { added: false, text: t("capability.diff.removeSkills", "−{n} skills").replace("{n}", String(diff.skillsRemoved)) } : null,
@@ -934,19 +948,19 @@ window.__ModuleLoader__.load({
 					diff.mcpRemoved > 0 ? { added: false, text: t("capability.diff.removeMcp", "−{n} MCP").replace("{n}", String(diff.mcpRemoved)) } : null
 				].filter(Boolean)
 				: null;
-			const applyDisabled = !draft || !draft.dirty || commit?.phase === "submitting" || check.selected.length > 0 || ambiguous.length > 0;
+			const applyDisabled = !draft || !draft.dirty || (draft.unknownBaseline && !draft.overwriteConfirmed) || commit?.phase === "submitting" || check.selected.length > 0 || ambiguous.length > 0;
 			// Session state summary (sidebar header only): the APPLIED counts,
 			// same template the composer Badge renders.
-			const appliedSummary = draft !== null
-				? t("capability.badge", "{skills} skills · {mcp} MCP").replace("{skills}", String(draft.applied.skills.length)).replace("{mcp}", String(draft.applied.mcpServers.length))
-				: null;
+			const appliedSummary = receiptState?.known
+				? t("capability.badge", "{skills} skills · {mcp} MCP").replace("{skills}", String(receiptState.applied.skills)).replace("{mcp}", String(receiptState.applied.mcpServers))
+				: receiptState?.degraded ? t("capability.effectiveUnknownShort", "Skills ? · MCP ?") : null;
 			return react_jsx_runtime.jsxs("div", { style: frameStyle, children: [
 				react_jsx_runtime.jsxs("div", { style: S.header.row, children: [
 					react_jsx_runtime.jsx("button", { type: "button", style: S.tabs.segment(tab === "skills", "first"), ...ring, onClick: () => setTab("skills"), "aria-pressed": tab === "skills", children: t("capability.tab.skills", "Skills") }),
 					react_jsx_runtime.jsx("button", { type: "button", style: S.tabs.segment(tab === "mcp", "middle"), ...ring, onClick: () => setTab("mcp"), "aria-pressed": tab === "mcp", children: t("capability.tab.mcp", "MCP") }),
 					react_jsx_runtime.jsx("button", { type: "button", style: S.tabs.segment(tab === "presets", "last"), ...ring, onClick: () => setTab("presets"), "aria-pressed": tab === "presets", children: t("capability.tab.presets", "Presets") }),
 					props.shell === "sidebar" && appliedSummary
-						? react_jsx_runtime.jsx("span", { style: S.header.summary, children: appliedSummary })
+						? react_jsx_runtime.jsx("span", { style: S.header.summary, title: receiptState?.degraded ? t("capability.effectiveUnknown", "Applied count unknown — refresh and check Skill sources") : undefined, children: appliedSummary })
 						: null,
 					react_jsx_runtime.jsxs("span", {
 						style: S.search.wrap,
@@ -975,9 +989,12 @@ window.__ModuleLoader__.load({
 				...(props.shell === "sidebar"
 					? [react_jsx_runtime.jsxs("div", { style: S.list.scroll, children: [addBlock, body] })]
 					: [addBlock, body]),
+				receiptState?.degraded ? react_jsx_runtime.jsx("div", { role: "status", "aria-live": "polite", style: { color: WARN_TEXT, lineHeight: "16px", padding: "6px" }, children: t("capability.effectiveUnknownDetail", "Accepted revision; effective capabilities cannot be verified. Refresh and check Skill sources. Draft kept; only Apply changes the session.") }) : null,
 				draft !== null ? react_jsx_runtime.jsxs("div", { style: S.footer.bar, children: [
 					diffParts ? react_jsx_runtime.jsx("span", { style: S.footer.diff, "data-weir-capability-diff": "", children: diffParts.map((part, index) => react_jsx_runtime.jsx("span", { style: S.footer.diffBadge(part.added), children: part.text }, index)) }) : null,
 					warningText.length ? react_jsx_runtime.jsx("div", { role: "alert", "aria-live": "assertive", style: { width: "100%", color: WARN_TEXT, lineHeight: "16px" }, children: warningText.join(" ") }) : null,
+					draft.unknownBaseline ? react_jsx_runtime.jsx("div", { role: "alert", style: { width: "100%", color: WARN_TEXT, lineHeight: "16px" }, children: t("capability.unknownOverwriteRisk", "Previous selection is unknown. Applying this draft may replace other accepted Skills and MCP servers. Review the full selection before confirming.") }) : null,
+					draft.unknownBaseline && draft.dirty && !draft.overwriteConfirmed ? react_jsx_runtime.jsx("button", { type: "button", style: S.footer.discard, ...ring, disabled: commit?.phase === "submitting", onClick: () => setDraft(current => current ? { ...current, overwriteConfirmed: true } : null), children: t("capability.confirmUnknownOverwrite", "Confirm replacing unknown selection") }) : null,
 					react_jsx_runtime.jsx("button", {
 						type: "button",
 						style: applyDisabled ? { ...S.footer.apply, ...S.footer.disabled } : S.footer.apply,
@@ -988,7 +1005,7 @@ window.__ModuleLoader__.load({
 						children: commit?.phase === "submitting" ? t("capability.applying", "Applying…") : t("capability.apply", "Apply")
 					}),
 					draft.dirty ? react_jsx_runtime.jsx("button", { type: "button", style: S.footer.discard, ...ring, ...hover(HOVER_BG, "none"), onClick: discardDraft, children: t("capability.discard", "Discard") }) : null,
-					commit?.phase === "applied" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(SUCCESS), children: t("capability.applied", "Applied") }) : null,
+					commit?.phase === "applied" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(receiptState?.degraded ? WARN : SUCCESS), children: receiptState?.degraded ? t("capability.acceptedUnknown", "Accepted · effective count unknown") : t("capability.applied", "Applied") }) : null,
 					commit?.phase === "applied" && Array.isArray(commit.skipped) && commit.skipped.length > 0
 						? react_jsx_runtime.jsx("span", { style: S.footer.chip(WARN), title: commit.skipped.map(entry => `${entry.name} — ${entry.reason}`).join("\n"), children: t("capability.appliedSkipped", "skipped {n} (not applicable here)").replace("{n}", String(commit.skipped.length)) })
 						: null,

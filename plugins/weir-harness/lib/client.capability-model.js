@@ -30,20 +30,18 @@ window.__ModuleLoader__.load({
 			return left < right ? -1 : left > right ? 1 : 0;
 		});
 
-		/** Applied counts come from the SERVER receipt, never the optimistic draft (12.2). */
+		/** Only a complete, warning-free effective receipt proves applied counts. */
 		function badgeStateOf(receipt, draft) {
-			const applied = receipt && receipt.status === "applied"
-				? { skills: Array.isArray(receipt.effective?.skills) ? receipt.effective.skills.length : 0, mcpServers: Array.isArray(receipt.effective?.mcpServers) ? receipt.effective.mcpServers.length : 0 }
-				: { skills: 0, mcpServers: 0 };
 			const warnings = Array.isArray(receipt?.warnings) ? [...receipt.warnings] : [];
-			const draftDirty = Boolean(draft && draft.dirty);
+			const known = receipt?.status === "applied" && warnings.length === 0
+				&& Array.isArray(receipt?.effective?.skills) && Array.isArray(receipt?.effective?.mcpServers);
 			return {
-				applied,
+				applied: known ? { skills: receipt.effective.skills.length, mcpServers: receipt.effective.mcpServers.length } : null,
 				warnings,
 				unavailable: warnings.filter((warning) => typeof warning === "string" && warning.includes("unavailable")),
-				draftDirty,
-				// Distinct from a fresh/loading state (12.2): receipt absent ≠ applied zero.
-				known: Boolean(receipt && receipt.status === "applied"),
+				draftDirty: Boolean(draft && draft.dirty),
+				known,
+				degraded: receipt?.status === "applied" && !known,
 			};
 		}
 
@@ -135,8 +133,8 @@ window.__ModuleLoader__.load({
 			const mcpServers = Array.isArray(receipt?.effective?.mcpServers) ? [...receipt.effective.mcpServers] : [];
 			const warnings = Array.isArray(receipt?.warnings) ? receipt.warnings.filter(Boolean).map(String) : [];
 			const digest = receipt?.effective?.digest;
-			const provable = receipt?.status === "applied" && Number.isSafeInteger(receipt.revision) && receipt.revision >= 0
-				&& Array.isArray(receipt.effective.skillIdentities) && Array.isArray(receipt.effective.mcpServers)
+			const provable = receipt?.status === "applied" && warnings.length === 0 && Number.isSafeInteger(receipt.revision) && receipt.revision >= 0
+				&& Array.isArray(receipt?.effective?.skillIdentities) && Array.isArray(receipt?.effective?.mcpServers)
 				&& typeof digest === "string" && /^[a-f0-9]{64}$/.test(digest);
 			return {
 				skills: sortSkills(skills),
@@ -149,6 +147,22 @@ window.__ModuleLoader__.load({
 				dirty: false,
 			};
 		}
+		/** A degraded read is not permission to overwrite a user's staged selection.
+		 * Keep the last CAS base (the server will reject a stale revision) and
+		 * revoke applied-source proof until a complete refresh arrives. */
+		function draftAfterRefresh(current, receipt) {
+			if (!badgeStateOf(receipt, null).known) {
+				if (current) return { ...current, unknownBaseline: true, overwriteConfirmed: false, appliedSourceIssue: "unavailable", appliedDigest: undefined };
+				return receipt?.status === "applied" && Number.isSafeInteger(receipt.revision) && receipt.revision >= 0
+					? { ...draftFromReceipt(receipt), unknownBaseline: true, overwriteConfirmed: false } : null;
+			}
+			const fresh = draftFromReceipt(receipt);
+			if (!current?.dirty) return fresh;
+			const sameBase = current.revision === fresh.revision
+				&& JSON.stringify(current.applied.skills.map(skillEntryKeyOf)) === JSON.stringify(fresh.applied.skills.map(skillEntryKeyOf))
+				&& JSON.stringify(current.applied.mcpServers) === JSON.stringify(fresh.applied.mcpServers);
+			return { ...current, unknownBaseline: current.unknownBaseline === true && !sameBase, overwriteConfirmed: false, appliedSourceIssue: sameBase ? fresh.appliedSourceIssue : "receipt", appliedDigest: sameBase ? fresh.appliedDigest : undefined };
+		}
 
 		/** Toggle one entry in the draft; skills compare by identity, MCP by name. */
 		function draftToggle(draft, kind, name) {
@@ -156,13 +170,13 @@ window.__ModuleLoader__.load({
 				const key = skillEntryKeyOf(name);
 				const list = new Map(draft.skills.map(entry => [skillEntryKeyOf(entry), entry]));
 				if (list.has(key)) list.delete(key); else list.set(key, name);
-				const next = { ...draft, skills: sortSkills([...list.values()]) };
+				const next = { ...draft, overwriteConfirmed: false, skills: sortSkills([...list.values()]) };
 				next.dirty = draftDiffOf(next).any;
 				return next;
 			}
 			const list = new Set(draft[kind]);
 			if (list.has(name)) list.delete(name); else list.add(name);
-			const next = { ...draft, [kind]: [...list].sort() };
+			const next = { ...draft, overwriteConfirmed: false, [kind]: [...list].sort() };
 			const same = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
 			next.dirty = !same(next.skills.map(skillEntryKeyOf), draft.applied.skills.map(skillEntryKeyOf)) || !same(next.mcpServers, draft.applied.mcpServers);
 			return next;
@@ -193,7 +207,7 @@ window.__ModuleLoader__.load({
 			if (!draft || typeof name !== "string" || !name || !draft.skills?.includes(name) || (identity !== null && (skillIdentityKeyOf(identity) === null || identity.name !== name))) return draft;
 			const entries = draft.skills.filter(entry => entry !== name);
 			if (identity && !entries.some(entry => skillEntryKeyOf(entry) === skillEntryKeyOf(identity))) entries.push(identity);
-			const next = { ...draft, skills: sortSkills(entries) };
+			const next = { ...draft, overwriteConfirmed: false, skills: sortSkills(entries) };
 			next.dirty = draftDiffOf(next).any;
 			return next;
 		}
@@ -321,6 +335,8 @@ window.__ModuleLoader__.load({
 				mcpServers,
 				applied,
 				revision: Number.isSafeInteger(current?.revision) ? current.revision : 0,
+				unknownBaseline: current?.unknownBaseline === true,
+				overwriteConfirmed: false,
 				...(typeof current?.appliedDigest === "string" ? { appliedDigest: current.appliedDigest } : {}),
 				appliedSourceIssue: current?.appliedSourceIssue === null ? null : current?.appliedSourceIssue ?? "receipt",
 				unresolvedRefs,
@@ -575,6 +591,7 @@ window.__ModuleLoader__.load({
 		exports.closeDirtyDraft = closeDirtyDraft;
 		exports.frameRefreshesSession = frameRefreshesSession;
 		exports.draftFromReceipt = draftFromReceipt;
+		exports.draftAfterRefresh = draftAfterRefresh;
 		exports.draftToggle = draftToggle;
 		exports.commitOutcomeOf = commitOutcomeOf;
 		exports.skillDraftConflicts = skillDraftConflicts;

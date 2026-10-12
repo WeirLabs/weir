@@ -18,21 +18,24 @@ describe('client.capability-badge chunk', () => {
   async function loadBadge() {
     const reactState = []
     let hookCursor = 0
+    let memo = null
     const reactStub = {
-      reset() { reactState.length = 0 },
+      reset() { reactState.length = 0; memo = null },
       begin() { hookCursor = 0 },
       useState(initial) {
         const at = hookCursor++
         if (!(at in reactState)) reactState[at] = [initial, (next) => { reactState[at][0] = next }]
         return reactState[at]
       },
-      useEffect(fn) {
+      useEffect(fn, deps) {
         const at = hookCursor++
-        if (!(at in reactState)) reactState[at] = { cleanup: fn() }
-        else reactState[at] = { cleanup: fn() }
+        if (!(at in reactState) || deps.some((value, i) => !Object.is(value, reactState[at].deps[i]))) {
+          reactState[at]?.cleanup?.()
+          reactState[at] = { deps, cleanup: fn() }
+        }
         return undefined
       },
-      useCallback(fn) { return fn },
+      useCallback(fn, deps) { if (!memo || deps.some((value, i) => !Object.is(value, memo.deps[i]))) memo = { fn, deps }; return memo.fn },
       Component: class {
         constructor(props) { this.props = props; this.state = {} }
         render() { return this.props?.children }
@@ -178,7 +181,7 @@ describe('client.capability-badge chunk', () => {
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
     const { props } = baseProps()
     props.model = {
-      badgeStateOf: () => ({ known: true, applied: { skills: 10, mcpServers: 0 }, unavailable: ['fixture-a-unavailable'] }),
+      badgeStateOf: () => ({ known: false, degraded: true, applied: null, warnings: ['fixture-a-unavailable'], unavailable: ['fixture-a-unavailable'] }),
       convergenceHintOf: () => null,
       frameRefreshesSession: () => false,
     }
@@ -193,13 +196,13 @@ describe('client.capability-badge chunk', () => {
     // The pinned contract holds: children[0] stays the toggle button with the
     // full-count aria-label.
     expect(button.__type).toBe('button')
-    expect(button['aria-label']).toBe('10 skills · 0 MCP')
+    expect(button['aria-label']).toBe('Applied count unknown — refresh and check Skill sources')
     // The visible label is the compact pair next to the blocks icon.
-    expect(button.children).toContain('10 · 0')
+    expect(button.children).toContain('Skills ? · MCP ?')
     // A session with warnings paints the warn dot and lists them in the tooltip.
     const dot = button.children.find((child) => child && child.style && child.style.borderRadius === '50%')
     expect(dot).toBeTruthy()
-    expect(button.title).toBe('fixture-a-unavailable')
+    expect(button.title).toContain('fixture-a-unavailable')
     // Inline-style chunks paint focus/hover affordances via handlers (no
     // stylesheets, no extra hooks): the toggle carries them.
     expect(typeof button.onFocus).toBe('function')
@@ -225,6 +228,34 @@ describe('client.capability-badge chunk', () => {
     // The affordance transitions stay inside the 120-160ms hover/selection budget.
     expect(button.style.transition).toContain('120ms')
   })
+  it('ignores an older asynchronous receipt after a degraded newer one and recovers on complete empty', async () => {
+    const { exports, reactStub } = await loadBadge()
+    const { exports: model } = await loadClientChunk('lib/client.capability-model.js', () => { throw new Error('zero-dependency chunk') })
+    const { props } = baseProps()
+    props.model = model
+    const pending = []
+    let notify
+    props.fetchReceipt = () => new Promise(resolve => pending.push(resolve))
+    props.subscribeFrames = callback => { notify = callback; return () => {} }
+    const render = () => { reactStub.begin(); return exports.CapabilityBadge(props).children[0] }
+    reactStub.reset(); render()
+    notify({ sessionId: 'sess-1' })
+    pending[1]({ status: 'applied', revision: 10, effective: { skills: [], mcpServers: [] }, warnings: ['selection-unavailable'] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    let button = render()
+    expect(button['aria-label']).toBe('Applied count unknown — refresh and check Skill sources')
+    expect(button.children).toContain('Skills ? · MCP ?')
+    expect(button.children.includes('0 · 0')).toBe(false)
+    pending[0]({ status: 'applied', revision: 9, effective: { skills: [], mcpServers: [] }, warnings: [] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(render()['aria-label']).toBe('Applied count unknown — refresh and check Skill sources')
+    notify({ sessionId: 'sess-1' })
+    pending[2]({ status: 'applied', revision: 10, effective: { skills: [], mcpServers: [] }, warnings: [] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    button = render()
+    expect(button['aria-label']).toBe('0 skills · 0 MCP')
+    expect(button.children.includes('0 · 0')).toBe(true)
+  })
 })
 
 describe('capability chunks locale contract (2026-10-05 badge slot crash)', () => {
@@ -239,5 +270,24 @@ describe('capability chunks locale contract (2026-10-05 badge slot crash)', () =
       expect(source.includes('props.t(key, fallback)')).toBe(false)
       expect(source.includes('props.t(key)')).toBe(true)
     }
+  })
+  it('registers matching English and Chinese unknown-count recovery labels', () => {
+    const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+    for (const key of ['capability.effectiveUnknown', 'capability.effectiveUnknownShort', 'capability.effectiveUnknownDetail']) {
+      const values = [...source.matchAll(new RegExp('"' + key + '": "([^"]+)"', 'g'))].map(match => match[1])
+      expect(values).toHaveLength(2)
+      expect(values[0].toLowerCase()).toContain(key.endsWith('Short') ? '?' : 'refresh')
+      expect(values[1]).toContain(key.endsWith('Short') ? '?' : '刷新')
+    }
+    for (const key of ['capability.unknownOverwriteRisk', 'capability.confirmUnknownOverwrite']) {
+      const values = [...source.matchAll(new RegExp('"' + key + '": "([^"]+)"', 'g'))].map(match => match[1])
+      expect(values).toHaveLength(2)
+      expect(values[0]).toContain(key.endsWith('Risk') ? 'replace' : 'Confirm')
+      expect(values[1]).toContain(key.endsWith('Risk') ? '覆盖' : '确认')
+    }
+    const accepted = [...source.matchAll(/"capability.acceptedUnknown": "([^"]+)"/g)].map(match => match[1])
+    expect(accepted).toHaveLength(2)
+    expect(accepted[0]).toContain('unknown')
+    expect(accepted[1]).toContain('未知')
   })
 })
