@@ -318,24 +318,61 @@ function check(scenario, label, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} [${scenario}] ${label}${ok ? '' : ` — ${detail}`}`)
 }
 
+// The dual-preset replay needs only request shapes and assert-consumed Host facts.
+// In particular, do not freeze runtime-context messages or the full skills
+// catalog (which may include unrelated private skill descriptions).
+function minimalDualReport(report) {
+  const receipt = value => ({ status: value.status, revision: value.revision, effective: { skills: value.effective.skills }, warnings: value.warnings })
+  const owner = value => ({
+    id: value.id, commandAfterBoth: receipt(value.commandAfterBoth), remoteAfterBoth: receipt(value.remoteAfterBoth),
+    listAfterBoth: { skills: value.listAfterBoth.skills.map(skill => ({ name: skill.name, selected: skill.selected }))
+      .filter(skill => skill.selected || skill.name === `only-${value.id === 'weir' ? 'weir-creative' : 'weir'}`) },
+    conditionsAfterBoth: value.conditionsAfterBoth, presetsAfterBoth: value.presetsAfterBoth, defaultAfterBoth: value.defaultAfterBoth,
+    commandEventsAfter: value.commandEventsAfter, commandEventsFinal: value.commandEventsFinal,
+    projectionLive: { source: value.projectionLive.source, headerPreset: value.projectionLive.headerPreset, projectedPreset: value.projectionLive.projectedPreset },
+  })
+  const p = report.projection
+  return {
+    orders: report.orders.map(order => ({ order: order.order, owners: order.owners.map(owner) })),
+    projection: {
+      beforeSelect: { projectedPreset: p.beforeSelect.projectedPreset },
+      afterSelect: { headerPreset: p.afterSelect.headerPreset, projectedPreset: p.afterSelect.projectedPreset },
+      remoteAfterSelect: { status: p.remoteAfterSelect.status, effective: { skills: p.remoteAfterSelect.effective.skills } },
+      coldRemote: { status: p.coldRemote.status, effective: { skills: p.coldRemote.effective.skills } },
+      liveLong: { eventCount: p.liveLong.eventCount },
+      coldLong: { eventCount: p.coldLong.eventCount, source: p.coldLong.source, headerPreset: p.coldLong.headerPreset, projectedPreset: p.coldLong.projectedPreset },
+      coldRepeat: { source: p.coldRepeat.source },
+    },
+    leasesReleased: report.leasesReleased,
+  }
+}
 /** Copy one scenario's replay fixture (trace + run meta + post-run ws files). */
 function recordRun(run) {
   if (!RECORD_DIR) return
   try {
     const dir = join(RECORD_DIR, run.scenario)
     mkdirSync(join(dir, 'ws'), { recursive: true })
-    if (existsSync(run.trace)) copyFileSync(run.trace, join(dir, 'trace.jsonl'))
+    if (existsSync(run.trace)) {
+      if (run.scenario === 'capability-remote-dual-preset') {
+        const requests = readFileSync(run.trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(row => Array.isArray(row.emitted))
+        writeFileSync(join(dir, 'trace.jsonl'), requests.map(row => JSON.stringify(row)).join('\n') + '\n')
+      } else copyFileSync(run.trace, join(dir, 'trace.jsonl'))
+    }
     if (run.trace2 && existsSync(run.trace2)) copyFileSync(run.trace2, join(dir, 'trace2.jsonl'))
     // capstore-*.json: the capability-store probe reports (capstore scenario);
     // apply-transaction.json: the Apply-transaction probe report (task 4.7);
     // cold-session-*.json/txt: the cold-session probe reports and the captured
     // contender writer-held failure (task 5.5).
-    for (const file of ['blackboard-orphan-owner.json', 'blackboard-orphan-observed.json', 'fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'cold-session-seed.json', 'cold-session-open.json', 'cold-session-held-error.txt', 'lifecycle-report.json', 'lifecycle-catalog.json', 'mcp-gateway-report.json', 'capability-remote-log.json', 'mcp-calls.jsonl', 'mcp-server-log.jsonl', 'preset-defaults-report.json', 'preset-boot2-outcome.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', 'docs/spikes.md', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
+    for (const file of run.scenario === 'capability-remote-dual-preset'
+      ? ['capability-dual-preset.json']
+      : ['blackboard-orphan-owner.json', 'blackboard-orphan-observed.json', 'fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'cold-session-seed.json', 'cold-session-open.json', 'cold-session-held-error.txt', 'lifecycle-report.json', 'lifecycle-catalog.json', 'mcp-gateway-report.json', 'capability-remote-log.json', 'mcp-calls.jsonl', 'mcp-server-log.jsonl', 'preset-defaults-report.json', 'preset-boot2-outcome.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', 'docs/spikes.md', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
       const source = join(WS, file)
       if (existsSync(source)) {
         // The blackboard-promotion scenario lands a nested durable doc.
         mkdirSync(dirname(join(dir, 'ws', file)), { recursive: true })
-        copyFileSync(source, join(dir, 'ws', file))
+        if (run.scenario === 'capability-remote-dual-preset') {
+          writeFileSync(join(dir, 'ws', file), JSON.stringify(minimalDualReport(JSON.parse(readFileSync(source, 'utf8'))), null, 2) + '\n')
+        } else copyFileSync(source, join(dir, 'ws', file))
       }
     }
     // Worktree scenario facts the assertion reads back on replay (only that
@@ -367,13 +404,13 @@ function recordRun(run) {
       copyFileSync(source, join(dir, 'ws', stored))
     }
     const auditLog = join(WS, '.weir', 'audit.jsonl')
-    if (existsSync(auditLog)) {
+    if (run.scenario !== 'capability-remote-dual-preset' && existsSync(auditLog)) {
       mkdirSync(join(dir, 'ws', '.weir'), { recursive: true })
       copyFileSync(auditLog, join(dir, 'ws', '.weir', 'audit.jsonl'))
     }
     writeFileSync(
       join(dir, 'run.json'),
-      JSON.stringify({ scenario: run.scenario, home: HOME, code: run.code, stdout: run.stdout, stderr: run.stderr, sessionId: run.sessionId ?? null }, null, 2) + '\n',
+      JSON.stringify({ scenario: run.scenario, home: run.scenario === 'capability-remote-dual-preset' ? null : HOME, code: run.code, stdout: run.stdout, stderr: run.stderr, sessionId: run.sessionId ?? null }, null, 2) + '\n',
     )
   } catch (error) {
     console.log(`[record:${run.scenario}] ${String(error?.message ?? error)}`)
