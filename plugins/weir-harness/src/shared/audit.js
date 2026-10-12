@@ -30,6 +30,11 @@ export const AUDIT_TYPES = Object.freeze({
   // capability-manager-ux (D6): one record per confirmed v2 package import
   // (install outcome + collision decisions); never commit evidence by itself.
   capabilityPresetImport: 'capability-preset-import',
+  // Capability silent-read degraded diagnostics (live routing follow-up): one
+  // record per delivered read whose payload carries warnings — observed owner
+  // identity, feed census and provider status, never skill names; the receipt
+  // itself stays the only effective-state authority.
+  capabilityRead: 'capability-read',
   // Session blackboard release facts (design D3): one record per key release
   // that had waiting subscribers; the emission lives in the blackboard plugin
   // and never touches a session log.

@@ -20,6 +20,7 @@
 import { openCapabilityStore } from './store/store.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload, buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 import { PRESET_SELECTED_EVENT } from './preset-invalidation.js'
+import { createAudit } from '../shared/audit.js'
 
 /** The host-root service key the typert gateway resolves (S27: ctx.get from the host root). */
 export const CAPABILITY_READ_SERVICE_KEY = 'weirCapabilityRead'
@@ -59,6 +60,11 @@ export function feedCapabilityReadBridge(faces) {
   }
 }
 
+/** Feed counts per supported preset, for degraded-read diagnostics (no faces content). */
+function feedCensus() {
+  return { weir: bridgeFeeds.get('weir')?.size ?? 0, weirCreative: bridgeFeeds.get('weir-creative')?.size ?? 0 }
+}
+
 /** Return the sole generation for an exact preset; no implicit/default owner. */
 export function capabilityReadBridge(presetId) {
   const feeds = bridgeFeeds.get(presetId)
@@ -84,7 +90,7 @@ function ownership(observation, sessionId) {
   const events = observation.events
   if (!Array.isArray(events)) throw new CapabilityReadError('owner-unavailable', 'capability read: session selection history is unavailable')
   const selectionSeq = events.reduce((seq, event) => event?.type === PRESET_SELECTED_EVENT && typeof event.seq === 'number' ? Math.max(seq, event.seq) : seq, -1)
-  return { presetId, cwd: observation.header.cwd, selectionSeq }
+  return { presetId, headerPreset: observation.header.agentPreset ?? null, cwd: observation.header.cwd, selectionSeq }
 }
 
 /** Create the host read service. Observations are caller-owned leases, always disposed. */
@@ -92,6 +98,7 @@ export function createCapabilityReadService(dependencies = {}) {
   const bridgeFor = dependencies.bridge ?? soleFeed
   const storeFor = dependencies.store ?? (profileContext => openCapabilityStore({ profileContext }))
   const ensure = dependencies.ensureRegistered ?? (() => true)
+  const onDegraded = dependencies.onDegraded ?? (() => {})
   const observeSession = dependencies.observeSession ?? (sessionId => dependencies.sessionQuery?.()?.observeSession(sessionId))
   const observe = async sessionId => {
     let lease
@@ -105,7 +112,7 @@ export function createCapabilityReadService(dependencies = {}) {
       throw new CapabilityReadError('unknown-session', `capability read: cannot observe session ${JSON.stringify(sessionId)}`, { cause })
     }
   }
-  const read = async (sessionId, build) => {
+  const read = async (sessionId, method, build) => {
     if (!ensure()) throw new CapabilityReadError('channel-unavailable', 'capability read channel is not registered with the gateway')
     const first = await observe(sessionId)
     try {
@@ -121,6 +128,25 @@ export function createCapabilityReadService(dependencies = {}) {
         if (cause instanceof CapabilityReadError) throw cause
         throw new CapabilityReadError('payload-failed', `capability read failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
       }
+      // Degraded-receipt diagnostic: a delivered payload with warnings proves
+      // the read reached ONE unambiguous owner, but the wire shape cannot say
+      // WHICH owner or why the provider degraded. Record the observed identity,
+      // header vs projected preset, feed census and the provider's own status so
+      // a live "accepted but unverifiable" report is diagnosable without
+      // cookies, session-log writes, or skill names.
+      if (Array.isArray(payload?.warnings) && payload.warnings.length > 0) {
+        try {
+          const status = faces.provider?.status?.(options)
+          onDegraded({
+            method, sessionId, presetId, headerPreset: first.owner.headerPreset,
+            source: first.lease?.source ?? null, selectionSeq, cwd,
+            warnings: [...payload.warnings],
+            providerError: typeof status?.error === 'string' ? status.error : null,
+            providerReason: typeof status?.reason === 'string' ? status.reason : null,
+            feeds: feedCensus(),
+          })
+        } catch { /* diagnostics never break a read */ }
+      }
       const second = await observe(sessionId)
       try {
         if (second.owner.presetId !== presetId || second.owner.cwd !== cwd || second.owner.selectionSeq !== selectionSeq || bridgeFor(presetId) !== feed) {
@@ -135,25 +161,25 @@ export function createCapabilityReadService(dependencies = {}) {
     }
   }
   return {
-    receipt: sessionId => read(sessionId, (faces, options) => buildReceiptPayload({
+    receipt: sessionId => read(sessionId, 'receipt', (faces, options) => buildReceiptPayload({
       provider: faces.provider,
       lifecycle: faces.lifecycle,
       store: storeFor(faces.profileContext?.()),
     }, options)),
-    list: sessionId => read(sessionId, (faces, options) => buildListPayload({
+    list: sessionId => read(sessionId, 'list', (faces, options) => buildListPayload({
       inventory: faces.inventory,
       provider: faces.provider,
       mcpManager: faces.mcpManager?.(),
     }, options)),
-    conditions: sessionId => read(sessionId, () => buildConditionsPayload()),
+    conditions: sessionId => read(sessionId, 'conditions', () => buildConditionsPayload()),
     // Presets view reads (silent-preset-reads): the preset listing and the
     // workspace-default inspection. Domain statuses ({status:'no-workspace'},
     // a store-level listing failure) are VALUES the panel categorizes — only
     // infrastructure failures become CapabilityReadError.
-    presets: sessionId => read(sessionId, (faces, options) => buildPresetsPayload({
+    presets: sessionId => read(sessionId, 'presets', (faces, options) => buildPresetsPayload({
       store: storeFor(faces.profileContext?.()),
     }, options)),
-    defaultGet: sessionId => read(sessionId, (faces, options) => buildDefaultGetPayload({
+    defaultGet: sessionId => read(sessionId, 'defaultGet', (faces, options) => buildDefaultGetPayload({
       store: storeFor(faces.profileContext?.()),
     }, options)),
   }
@@ -232,7 +258,12 @@ export function apply(ctx) {
     }
   }
   try {
-    const service = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery') })
+    const audit = createAudit(ctx)
+    const onDegraded = facts => {
+      warn(`weir capability read degraded: method=${facts.method} session=${facts.sessionId} preset=${facts.presetId} header=${facts.headerPreset} source=${facts.source} warnings=${facts.warnings.join(';')} provider=${facts.providerReason ?? '-'}: ${facts.providerError ?? '-'}`)
+      audit({ id: facts.sessionId, header: { cwd: facts.cwd } }, 'capability-read', facts)
+    }
+    const service = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), onDegraded })
     // The exact frozen binding validateBinding requires (S27): { service,
     // serviceKey, namespace } — built by hand, no protocol import.
     service.typertRemote = Object.freeze({

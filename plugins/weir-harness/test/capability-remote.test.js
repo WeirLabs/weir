@@ -254,6 +254,58 @@ for (const order of [['weir-creative', 'weir'], ['weir', 'weir-creative']]) {
   })
 }
 
+test('degraded receipts record the observed owner and provider status for live diagnosis', async () => {
+  const fixture = twoPresetFixture()
+  const creativeFaces = fixture.faces('weir-creative')
+  creativeFaces.provider = {
+    status: () => ({ error: 'Selected skill inventory is missing, ambiguous or incomplete', reason: 'selection-unavailable' }),
+    list: async () => ({ candidates: [], complete: false }),
+  }
+  const unregister = feedCapabilityReadBridge(creativeFaces)
+  const degraded = []
+  const service = createCapabilityReadService({
+    observeSession: fixture.observeSession,
+    store: () => fixture.store,
+    onDegraded: facts => degraded.push(facts),
+  })
+  try {
+    const receipt = await service.receipt('creative-session')
+    expect(receipt.status).toBe('applied')
+    expect(receipt.warnings).toEqual(['selection-unavailable'])
+    expect(degraded).toHaveLength(1)
+    const facts = degraded[0]
+    expect(facts.method).toBe('receipt')
+    expect(facts.sessionId).toBe('creative-session')
+    expect(facts.presetId).toBe('weir-creative')
+    expect(facts.headerPreset).toBe('weir') // creation header stays visible next to the projection
+    expect(facts.source).toBe('prepared')
+    expect(facts.selectionSeq).toBe(2)
+    expect(facts.cwd).toBe('/fixture/shared-workspace')
+    expect(facts.warnings).toEqual(['selection-unavailable'])
+    expect(facts.providerReason).toBe('selection-unavailable')
+    expect(facts.providerError).toContain('inventory')
+    expect(facts.feeds).toEqual({ weir: 0, weirCreative: 1 })
+
+    // Clean payload: no diagnostic record.
+    creativeFaces.provider = {
+      status: () => ({}),
+      list: async options => ({
+        candidates: [{ name: 'creative-skill', identity: { scope: 'project', root: '/fixture/creative', name: 'creative-skill', provenance: { kind: 'fixture' } }, selected: true }],
+        complete: true,
+      }),
+    }
+    const clean = await service.receipt('creative-session')
+    expect(clean.warnings).toEqual([])
+    expect(degraded).toHaveLength(1)
+
+    // Owner/transport failures never reach the payload diagnostic.
+    await service.receipt('never-observed').then(() => { throw new Error('must reject') }, cause => expect(cause).toBeInstanceOf(CapabilityReadError))
+    expect(degraded).toHaveLength(1)
+  } finally {
+    unregister()
+  }
+})
+
 test('ambiguous, absent and unobservable preset owners fail closed rather than borrowing another feed', async () => {
   const fixture = twoPresetFixture()
   const unregisterNormal = feedCapabilityReadBridge(fixture.faces('weir'))
