@@ -18,14 +18,15 @@ function loadModel() {
 const realmless = (value) => JSON.parse(JSON.stringify(value))
 const model = Object.fromEntries(Object.entries(loadModel()).map(([key, fn]) => [key, (...args) => realmless(fn(...args))]))
 
-test('12.2 the Badge reports applied counts from the server receipt, warnings separate, draft never optimistic', () => {
-  const receipt = { status: 'applied', effective: { skills: ['a', 'b'], mcpServers: ['docs'] }, warnings: ['fixture-a-unavailable'] }
+test('12.2 warning/incomplete receipts cannot prove counts; complete empty receipt is zero', () => {
+  const receipt = { status: 'applied', revision: 10, effective: { skills: [], mcpServers: [] }, warnings: ['selection-unavailable'] }
   const state = model.badgeStateOf(receipt, { dirty: true })
-  expect(state.applied).toEqual({ skills: 2, mcpServers: 1 })
-  expect(state.unavailable).toEqual(['fixture-a-unavailable'])
+  expect(state.known).toBe(false)
+  expect(state.unavailable).toEqual(['selection-unavailable'])
   expect(state.draftDirty).toBe(true)
-  expect(state.known).toBe(true)
-  // A blank session (no receipt yet) is distinct from an applied-zero session.
+  expect(model.badgeStateOf({ ...receipt, warnings: [] }, null).known).toBe(true)
+  expect(model.badgeStateOf({ ...receipt, warnings: [] }, null).applied).toEqual({ skills: 0, mcpServers: 0 })
+  expect(model.badgeStateOf({ status: 'applied', effective: { skills: [] }, warnings: [] }, null).known).toBe(false)
   expect(model.badgeStateOf(null, null).known).toBe(false)
 })
 
@@ -111,6 +112,32 @@ test('applied proof comes only from a complete receipt and survives local draft 
   expect(model.draftFromReceipt({ ...receipt, warnings: ['provider-unavailable'] }).appliedSourceIssue).toBe('unavailable')
   expect(model.draftFromReceipt({ ...receipt, effective: { mcpServers: [], digest: receipt.effective.digest } }).appliedSourceIssue).toBe('receipt')
   expect(model.presetWriteOutcomeOf({ status: 'source-unavailable', missing: ['gone'] })).toEqual({ kind: 'source-unavailable', missing: ['gone'] })
+})
+
+test('degraded refresh retains the staged draft and revokes applied-source proof', () => {
+  const complete = { status: 'applied', revision: 9, effective: { skills: [], skillIdentities: [], mcpServers: [], digest: 'a'.repeat(64) }, warnings: [] }
+  const staged = model.draftFromPreset({ selection: { skills: ['keep'], mcpServers: [], unresolvedRefs: [] } }, model.draftFromReceipt(complete))
+  const degraded = { status: 'applied', revision: 10, effective: { skills: [], skillIdentities: [], mcpServers: [], digest: 'b'.repeat(64) }, warnings: ['selection-unavailable'] }
+  const kept = model.draftAfterRefresh(staged, degraded)
+  expect(kept.skills).toEqual(['keep'])
+  expect(kept.revision).toBe(9)
+  expect(kept.appliedSourceIssue).toBe('unavailable')
+  expect(kept.appliedDigest).toBeUndefined()
+  expect(kept.unknownBaseline).toBe(true)
+  expect(kept.overwriteConfirmed).toBe(false)
+  const initial = model.draftAfterRefresh(null, degraded)
+  expect(initial.revision).toBe(10)
+  expect(initial.unknownBaseline).toBe(true)
+  expect(initial.appliedSourceIssue).toBe('unavailable')
+  expect(model.draftToggle(initial, 'skills', 'new').overwriteConfirmed).toBe(false)
+  expect(model.draftAfterRefresh(null, complete).revision).toBe(9)
+  const recovered = model.draftAfterRefresh(kept, complete)
+  expect(recovered.skills).toEqual(['keep'])
+  expect(recovered.appliedSourceIssue).toBeNull()
+  expect(recovered.appliedDigest).toBe(complete.effective.digest)
+  const changedBase = { ...complete, effective: { ...complete.effective, skills: ['other'], skillIdentities: ['other'] } }
+  expect(model.draftAfterRefresh(staged, changedBase).appliedSourceIssue).toBe('receipt')
+  expect(model.draftAfterRefresh(staged, changedBase).appliedDigest).toBeUndefined()
 })
 
 test('12.3 engine responses map onto the commit states', () => {

@@ -26,7 +26,7 @@ function makeReactStub(counts) {
     useState(initial) {
       counts.useState += 1
       const at = hookCursor++
-      if (!(at in reactState)) reactState[at] = [initial, (next) => { reactState[at][0] = next }]
+      if (!(at in reactState)) reactState[at] = [initial, (next) => { reactState[at][0] = typeof next === 'function' ? next(reactState[at][0]) : next }]
       return reactState[at]
     },
     useEffect(fn) { counts.useEffect += 1; if (!effectRan) { effectRan = true; fn() } return undefined },
@@ -86,7 +86,7 @@ test('the panel keeps an identical hook count across the loading→loaded→mcp-
   renderOnce()
   const hookCounts = renders.map(render => `${render.useState}/${render.useEffect}`)
   expect(new Set(hookCounts).size).toBe(1)
-  expect(hookCounts[0]).toBe('7/1')
+  expect(hookCounts[0]).toBe('8/1')
 })
 
 // Visual polish (capabilities-panel-visual-polish): additive structural
@@ -197,7 +197,7 @@ test('same-named rows check independently and Apply carries the exact identity',
   const props = {
     sessionId: 'same-names', model,
     fetchListing: async () => ({ skills: [a, b].map(identity => ({ name: 'same', scope: 'custom', status: 'parsed', identity })), mcpServers: [] }),
-    fetchReceipt: async () => ({ effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] }, warnings: [] }),
     fetchConditions: async () => ({ conditions: [] }),
     applySelection: async (_sessionId, draft) => { applied = draft; return { status: 'missing' } },
   }
@@ -224,7 +224,7 @@ test('both manager shells block full-draft same-name conflicts despite search an
     let calls = 0
     const props = { shell, sessionId: 's', model, fetchConditions: async () => ({ conditions: [] }),
       fetchListing: async () => ({ skills: [a, b].map(identity => ({ name: 'same', scope: 'custom', status: 'parsed', identity, description: identity === a ? 'one' : 'two' })), mcpServers: [] }),
-      fetchReceipt: async () => ({ revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+      fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] }, warnings: [] }),
       applySelection: async () => { calls++; return { status: 'applied' } } }
     const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
     render(); await new Promise(resolve => setTimeout(resolve, 0))
@@ -300,7 +300,7 @@ test('stale server conflict and missing replies show named accessible guidance w
   let response = { status: 'rejected', reason: 'same-name-conflict', conflicts: [{ name: 'alpha', root: '/private' }] }
   const props = { sessionId: 's', model, fetchConditions: async () => ({ conditions: [] }),
     fetchListing: async () => ({ skills: [{ name: 'alpha', scope: 'user', status: 'parsed', identity: a }], mcpServers: [] }),
-    fetchReceipt: async () => ({ revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] }, warnings: [] }),
     applySelection: async () => response }
   const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
   render(); await new Promise(resolve => setTimeout(resolve, 0))
@@ -317,4 +317,129 @@ test('stale server conflict and missing replies show named accessible guidance w
   tree = render()
   expect(findAll(tree, node => node.role === 'alert')[0].children).toContain('could not resolve alpha')
   expect(findAll(tree, node => node.type === 'checkbox')[0].checked).toBe(true)
+})
+
+test('accepted Apply with degraded refresh keeps the selection, marks counts unknown and never double submits', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const identity = { scope: 'user', root: '/skills', name: 'chosen' }
+  const complete = { status: 'applied', revision: 9, effective: { skills: [], skillIdentities: [], mcpServers: [], digest: 'a'.repeat(64) }, warnings: [] }
+  const degraded = { status: 'applied', revision: 10, effective: { skills: [], skillIdentities: [], mcpServers: [], digest: 'b'.repeat(64) }, warnings: ['selection-unavailable'] }
+  let reads = 0, writes = 0
+  const props = { shell: 'sidebar', sessionId: 's', model, t: key => ({ 'capability.effectiveUnknown': '已应用数量未知——请刷新并检查技能来源', 'capability.effectiveUnknownShort': '技能 ? · MCP ?', 'capability.effectiveUnknownDetail': '修订已接受，但有效能力暂无法核实。请刷新并检查技能来源。草稿已保留；只有手动应用才会更改会话。' })[key] ?? key,
+    fetchListing: async () => ({ skills: [{ name: 'chosen', scope: 'user', status: 'parsed', identity }], mcpServers: [] }),
+    fetchConditions: async () => ({ conditions: [] }),
+    fetchReceipt: async () => ++reads === 1 ? complete : degraded,
+    applySelection: async () => { writes++; return { status: 'applied', revision: 10 } } }
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await flush()
+  let tree = render()
+  expect(findAll(tree, node => node.children === '0 skills · 0 MCP')).toHaveLength(1)
+  findAll(tree, node => node.type === 'checkbox')[0].onChange()
+  tree = render()
+  const apply = findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0]
+  apply.onClick(); apply.onClick()
+  expect(writes).toBe(1)
+  await flush()
+  tree = render()
+  expect(findAll(tree, node => node.type === 'checkbox')[0].checked).toBe(true)
+  expect(findAll(tree, node => node.children === '0 skills · 0 MCP')).toHaveLength(0)
+  expect(findAll(tree, node => node.children === '技能 ? · MCP ?')).toHaveLength(1)
+  expect(findAll(tree, node => node.title === '已应用数量未知——请刷新并检查技能来源')).toHaveLength(1)
+  expect(findAll(tree, node => node.role === 'status' && String(node.children).includes('草稿已保留'))).toHaveLength(1)
+  expect(findAll(tree, node => node.children === 'Accepted · effective count unknown')).toHaveLength(1)
+  tree.children[0].children[2].onClick()
+  const preset = findAll(render(), node => typeof node.__type === 'function' && node.stagePreset)[0]
+  expect(preset.draft.appliedSourceIssue).toBe('unavailable')
+  expect(preset.draft.appliedDigest).toBeUndefined()
+  expect(preset.draft.skills).toEqual([identity])
+})
+
+test('manager ignores an older initial receipt after a newer degraded refresh', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const pending = []
+  const props = { sessionId: 's', shell: 'sidebar', model,
+    fetchListing: async () => ({ skills: [], mcpServers: [] }), fetchConditions: async () => ({ conditions: [] }),
+    fetchReceipt: () => new Promise(resolve => pending.push(resolve)),
+    mcpAdd: async () => ({ status: 'registered' }), applySelection: () => { throw new Error('no Apply expected') } }
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await flush()
+  let tree = render()
+  tree.children[0].children[1].onClick()
+  tree = render()
+  findAll(tree, node => node.__type === 'button' && node.children === '+ Add managed MCP server')[0].onClick()
+  tree = render()
+  findAll(tree, node => node.__type === 'input' && node.placeholder === 'identity (e.g. my-docs)')[0].onChange({ target: { value: 'docs' } })
+  tree = render()
+  findAll(tree, node => node.__type === 'input' && node.placeholder === 'command (e.g. npx)')[0].onChange({ target: { value: 'npx' } })
+  tree = render()
+  findAll(tree, node => node.__type === 'button' && node.children === 'Add')[0].onClick()
+  await flush()
+  expect(pending).toHaveLength(2)
+  pending[1]({ status: 'applied', revision: 10, effective: { skills: [], mcpServers: [] }, warnings: ['selection-unavailable'] })
+  await flush()
+  expect(findAll(render(), node => node.role === 'status' && String(node.children).includes('cannot be verified'))).toHaveLength(1)
+  pending[0]({ status: 'applied', revision: 9, effective: { skills: [], mcpServers: [] }, warnings: [] })
+  await flush()
+  expect(findAll(render(), node => node.children === '0 skills · 0 MCP')).toHaveLength(0)
+})
+
+test('popover without prior draft still announces an incomplete applied receipt', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const props = { shell: 'popover', sessionId: 's', model: loadModel(),
+    fetchListing: async () => ({ skills: [], mcpServers: [] }),
+    fetchConditions: async () => ({ conditions: [] }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 10, effective: { skills: [], mcpServers: [] }, warnings: ['selection-unavailable'] }) }
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await new Promise(resolve => setTimeout(resolve, 0))
+  const tree = render()
+  expect(tree.children[1]).toBeNull()
+  expect(findAll(tree, node => node.role === 'status' && String(node.children).includes('cannot be verified'))).toHaveLength(1)
+  expect(findAll(tree, node => node.children === '0 skills · 0 MCP')).toHaveLength(0)
+  expect(findAll(tree, node => node.children === 'Apply')[0].disabled).toBe(true)
+})
+
+test('first degraded open requires explicit overwrite confirmation before recovery Apply', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const identity = { scope: 'user', root: '/skills', name: 'new' }
+  let writes = 0
+  const props = { shell: 'popover', sessionId: 's', model,
+    fetchListing: async () => ({ skills: [{ name: 'new', scope: 'user', status: 'parsed', identity }], mcpServers: [] }),
+    fetchConditions: async () => ({ conditions: [] }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 10, effective: { skills: [], skillIdentities: [], mcpServers: [] }, warnings: ['selection-unavailable'] }),
+    applySelection: async (_id, request) => { writes++; expect(request.expectedRevision).toBe(10); return { status: 'applied', revision: 11 } } }
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await new Promise(resolve => setTimeout(resolve, 0))
+  let tree = render()
+  expect(findAll(tree, node => node.role === 'alert' && String(node.children).includes('other accepted Skills'))).toHaveLength(1)
+  findAll(tree, node => node.type === 'checkbox')[0].onChange()
+  tree = render()
+  expect(findAll(tree, node => node.children === '+1 skills')).toHaveLength(0)
+  let apply = findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0]
+  expect(apply.disabled).toBe(true)
+  apply.onClick(); expect(writes).toBe(0)
+  findAll(tree, node => node.__type === 'button' && node.children === 'Discard')[0].onClick()
+  expect(writes).toBe(0)
+  findAll(render(), node => node.type === 'checkbox')[0].onChange()
+  tree = render()
+  findAll(tree, node => node.__type === 'button' && node.children === 'Confirm replacing unknown selection')[0].onClick()
+  tree = render()
+  expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(false)
+  findAll(tree, node => node.type === 'checkbox')[0].onChange()
+  tree = render()
+  expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(true)
+  findAll(tree, node => node.type === 'checkbox')[0].onChange()
+  tree = render()
+  expect(findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0].disabled).toBe(true)
+  findAll(tree, node => node.__type === 'button' && node.children === 'Confirm replacing unknown selection')[0].onClick()
+  findAll(render(), node => node.__type === 'button' && node.children === 'Apply')[0].onClick()
+  expect(writes).toBe(1)
 })
