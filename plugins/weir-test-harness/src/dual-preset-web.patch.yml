@@ -1,0 +1,10 @@
+# Test-only overlay: activate only in a fresh DSH_HOME with WEIR_DUAL_WEB_ROOT.
+# The product bundle supplies the real host Typert service; only the two
+# preset declarations are replaced with disposable registry registrations.
+- id: preset-weir
+  disabled: true
+- id: preset-weir-creative
+  disabled: true
+- insert:
+    - id: weir-dual-web-qa-bootstrap
+      name: './dual-preset-web-bootstrap.js'
