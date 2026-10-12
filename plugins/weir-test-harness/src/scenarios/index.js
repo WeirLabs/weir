@@ -36,6 +36,7 @@ import presetDefaults from './preset-defaults.js'
 import capabilityPresetsSurface from './capability-presets-surface.js'
 import resumeIncarnation from './resume-incarnation.js'
 import capabilityRemote from './capability-remote.js'
+import capabilityRemoteDualPreset from './capability-remote-dual-preset.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import worktreeAutoApprove from './worktree-auto-approve.js'
@@ -77,6 +78,8 @@ SCENARIOS.push(childPrompt)
 SCENARIOS.push(staleSweep)
 SCENARIOS.push(staleSweepOff)
 SCENARIOS.push(capabilityRemote)
+// Opt-in until the production routing fix lands: this fixture is intentionally RED.
+if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') SCENARIOS.push(capabilityRemoteDualPreset)
 SCENARIOS.push(continuable)
 SCENARIOS.push(crashRecovery)
 SCENARIOS.push(coldView)

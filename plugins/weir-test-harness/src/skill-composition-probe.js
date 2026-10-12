@@ -13,8 +13,22 @@ export const inject = ['tools', 'skills', 'agents']
 export const name = 'weir-it-skill-composition'
 export function apply(ctx, config = {}) {
   if (config.selection) {
-    selectionPlugin.apply(ctx, { machineId: 'weir-it-machine', includeDefaultRoots: false, customSkillDirs: [join(IT_ROOT, 'ws', 'skill-roots')], weirBuiltinDir: config.weirBuiltinDir })
+    selectionPlugin.apply(ctx, { machineId: 'weir-it-machine', readPresetId: config.selection, includeDefaultRoots: false, customSkillDirs: [config.root ?? join(IT_ROOT, 'ws', 'skill-roots')], weirBuiltinDir: config.weirBuiltinDir })
     mounted.set(config.selection, selectionPlugin.skillSelectionFor(ctx))
+    return
+  }
+  if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') {
+    ctx.tools.register({
+      name: 'capability_dual_preset_probe',
+      description: 'Observe two real preset mounts, their owner commands, remote reads and session projections.',
+      parameters: { type: 'object', properties: {} },
+      output: { schema: { type: 'object' }, render: () => [{ type: 'text', text: 'DUAL_PRESET_PROBE_DONE' }] },
+      async execute() {
+        const report = await runDualPresetProbe(ctx).catch(error => ({ error: error.stack ?? String(error) }))
+        await writeFile(join(IT_ROOT, 'ws', 'capability-dual-preset.json'), JSON.stringify(report, null, 2))
+        return { completed: !report.error }
+      },
+    })
     return
   }
   if (!process.env.WEIR_IT_SKILL_COMPOSITION) return
@@ -114,4 +128,110 @@ export function apply(ctx, config = {}) {
       return { mode, completed: !report.error }
     },
   })
+}
+
+// This runs inside the installed Host, not a fake provider or an in-memory feed
+// fixture. Registry.register eagerly mounts two independent preset revisions.
+async function runDualPresetProbe(ctx) {
+  const { createCapabilityReadService } = await import('../../weir-harness/src/capabilities/capability-remote.js')
+  const registry = ctx.get('agentPresets')
+  const query = ctx.get('sessionQuery')
+  const commands = ctx.get('commands')
+  if (!registry || !query || !commands) throw new Error('installed preset/sessionQuery/commands services required')
+  const service = createCapabilityReadService({ sessionQuery: query })
+  const report = { orders: [], projection: null, leasesReleased: 0 }
+  const cwd = join(IT_ROOT, 'ws')
+  const names = ['weir', 'weir-creative']
+  const roots = Object.fromEntries(names.map(id => [id, join(cwd, `dual-${id}`)]))
+  for (const id of names) {
+    await mkdir(join(roots[id], `only-${id}`), { recursive: true })
+    await writeFile(join(roots[id], `only-${id}`, 'SKILL.md'), `---\nname: only-${id}\ndescription: ${id} owner fixture\n---\nOWNER_${id}\n`)
+  }
+  async function observe(id) {
+    const start = performance.now()
+    const lease = await query.observeSession(id)
+    try {
+      return { source: lease.source, headerPreset: lease.header.agentPreset ?? null,
+        projectedPreset: lease.projections?.values?.agentPreset ?? null,
+        cursor: lease.cursor, eventCount: lease.events.length,
+        elapsedMs: +(performance.now() - start).toFixed(2) }
+    } finally { lease[Symbol.dispose](); report.leasesReleased++ }
+  }
+  const commandReceipt = async agent => {
+    const settled = await commands.execute(agent, '/capabilities receipt', [], new AbortController().signal)
+    const result = settled?.result ?? settled
+    if (result?.kind !== 'success') throw new Error(`owner command failed: ${JSON.stringify(result)}`)
+    return JSON.parse(result.text)
+  }
+  for (const order of [names, [...names].reverse()]) {
+    const unregister = []
+    const handles = []
+    const outcome = { order, owners: [] }
+    report.orders.push(outcome)
+    try {
+      for (const id of order) {
+        unregister.push(await registry.register({ id, plugins: [
+          { id: `selection-${id}`, name: fileURLToPath(import.meta.url), config: { selection: id, root: roots[id] } },
+          { id: `skill-tool-${id}`, name: '@deepseek-ai/dsh-tool-skill' },
+        ] }))
+        const resolved = await registry.resolve(id)
+        if (resolved.broken) throw new Error(`preset ${id} failed: ${resolved.broken}`)
+      }
+      for (const id of names) {
+        const handle = await ctx.agents.create({ sessionId: randomUUID(), meta: { cwd, agentPreset: id },
+          setup: agentCtx => registry.mount(agentCtx, id).then(() => undefined) })
+        handles.push(handle)
+        const agent = handle.agent
+        const selected = mounted.get(id)
+        if (!selected) throw new Error(`selection face ${id} did not mount`)
+        const lookup = { cwd, scope: agent }
+        const identity = (await selected.inventory(lookup)).candidates.find(c => c.name === `only-${id}`)?.identity
+        if (!identity) throw new Error(`fixture identity only-${id} missing`)
+        // The real command pipeline commits a durable selection revision; no
+        // synthetic store or provider override is involved.
+        const request = JSON.stringify({ requestId: randomUUID(), expectedRevision: 0, skills: [identity], mcpServers: [] })
+        const committed = await commands.execute(agent, `/capabilities apply ${request}`, [], new AbortController().signal)
+        const commitResult = committed?.result ?? committed
+        if (commitResult?.kind !== 'success') throw new Error(`apply ${id}: ${JSON.stringify(commitResult)}`)
+        const owner = { id, sessionId: agent.id, composed: registry.composedPreset(agent.ctx), commit: JSON.parse(commitResult.text) }
+        owner.command = await commandReceipt(agent)
+        owner.remote = await service.receipt(agent.id)
+        owner.projectionLive = await observe(agent.id)
+        owner.commandEventsAfter = agent.session.snapshotEvents().filter(e => e.type === 'command/run' || e.type === 'command/done').map(e => e.type)
+        outcome.owners.push(owner)
+      }
+      // Re-read AFTER both presets are live and both commands have committed;
+      // this is the discriminator for the old single-slot bridge.
+      for (const owner of outcome.owners) {
+        owner.remoteAfterBoth = await service.receipt(owner.sessionId)
+        const agent = handles.find(h => h.agent.id === owner.sessionId).agent
+        owner.commandAfterBoth = await commandReceipt(agent)
+        owner.commandEventsFinal = agent.session.snapshotEvents().filter(e => e.type === 'command/run' || e.type === 'command/done').map(e => e.type)
+      }
+      if (order[0] === 'weir' && outcome.owners.length === 2) {
+        const agent = handles[0].agent
+        // A real blank-session selection commits agent-preset/selected while
+        // preserving the creation header (the exact stale-header regression).
+        report.projection = { beforeSelect: await observe(agent.id) }
+        report.projection.selected = await registry.select(agent, 'weir-creative')
+        report.projection.afterSelect = await observe(agent.id)
+        // Replay-valid native selection events; request/context outside an open
+        // turn corrupts cold logs and is deliberately NOT used for this probe.
+        const selectedEvent = agent.session.snapshotEvents().findLast(event => event.type === 'agent-preset/selected')
+        if (!selectedEvent) throw new Error('preset selection event missing')
+        for (let i = 0; i < 2000; i++) await agent.session.append('agent-preset/selected', selectedEvent.data)
+        report.projection.liveLong = await observe(agent.id)
+        await handles[0].dispose()
+        handles.shift()
+        report.projection.coldLong = await observe(agent.id)
+        report.projection.coldRepeat = await observe(agent.id)
+      }
+    } catch (error) { outcome.error = error.stack ?? String(error) }
+    finally {
+      for (const handle of handles.reverse()) await handle.dispose()
+      for (const dispose of unregister.reverse()) await dispose()
+      for (const id of names) mounted.delete(id)
+    }
+  }
+  return report
 }
