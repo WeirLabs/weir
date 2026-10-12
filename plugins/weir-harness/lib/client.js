@@ -725,6 +725,7 @@ window.__ModuleLoader__.load({
 			blackboardTabLabel: "Blackboard",
 			blackboardGuideTitle: "Session blackboard",
 			blackboardGuideDescription: "Findings shared across this session: entries, usage counts, arbitrated editing.",
+			blackboardPillTitle: "Open the session blackboard",
 			"blackboard.title": "Blackboard",
 			"blackboard.entries": "{n} entries",
 			"blackboard.loading": "Loading the board…",
@@ -1481,6 +1482,7 @@ window.__ModuleLoader__.load({
 			blackboardTabLabel: "黑板",
 			blackboardGuideTitle: "会话黑板",
 			blackboardGuideDescription: "本会话共享的发现：条目、用量计数与仲裁编辑。",
+			blackboardPillTitle: "打开会话黑板",
 			"blackboard.title": "黑板",
 			"blackboard.entries": "{n} 条",
 			"blackboard.loading": "正在加载黑板…",
@@ -1638,6 +1640,81 @@ window.__ModuleLoader__.load({
 			const arrival = useChunkArrival(loadEditLockChunk, typeof props.sessionId === "string" && props.sessionId !== "");
 			if (!arrival?.chunks) return null;
 			return react_jsx_runtime.jsx(arrival.chunks.EditLockPanel, props);
+		}
+		// ---- Tab glyphs (ui-entries-and-icons) ----
+		// Three 16x16 stroke glyphs drawn in currentColor, matching the host
+		// CompassGlyph/CubeGlyph style (no strokeWidth, rounded caps/joins).
+		// The guide capsule icon and the tab chip title are registered eagerly
+		// at apply time, so the glyph components MUST live inline in this
+		// entry — a lazy chunk would flash the host's placeholder cube.
+		/** @param {object} props @param {Array} children */
+		function glyphSvg(props, children) {
+			const size = props.size ?? 16;
+			return react_jsx_runtime.jsx("svg", {
+				width: size, height: size, viewBox: "0 0 16 16", fill: "none",
+				"aria-hidden": "true", className: props.className, style: props.style,
+				stroke: "currentColor", strokeLinecap: "round", strokeLinejoin: "round",
+				children
+			});
+		}
+		/** Worktree: git-branch fork (same geometry as the panel chunk's branch icon). */
+		function WorktreeGlyph(props) {
+			return glyphSvg(props, [
+				react_jsx_runtime.jsx("circle", { cx: 4.5, cy: 3, r: 1.8 }, "c1"),
+				react_jsx_runtime.jsx("circle", { cx: 4.5, cy: 13, r: 1.8 }, "c2"),
+				react_jsx_runtime.jsx("circle", { cx: 11.5, cy: 5.5, r: 1.8 }, "c3"),
+				react_jsx_runtime.jsx("path", { d: "M4.5 4.8v6.4M4.5 11.2c2.8 0 7-.8 7-3.9" }, "p")
+			]);
+		}
+		/** Capabilities: two horizontal sliders. */
+		function CapabilityGlyph(props) {
+			return glyphSvg(props, [
+				react_jsx_runtime.jsx("path", { d: "M2.4 5.2h11.2M2.4 10.8h11.2" }, "l"),
+				react_jsx_runtime.jsx("circle", { cx: 6, cy: 5.2, r: 1.7 }, "c1"),
+				react_jsx_runtime.jsx("circle", { cx: 10, cy: 10.8, r: 1.7 }, "c2")
+			]);
+		}
+		/** Blackboard: a board rectangle with list lines. */
+		function BlackboardGlyph(props) {
+			return glyphSvg(props, [
+				react_jsx_runtime.jsx("rect", { x: 2, y: 2.6, width: 12, height: 10.8, rx: 1.6 }, "r"),
+				react_jsx_runtime.jsx("path", { d: "M4.6 5.8h4.2M4.6 8h6.8M4.6 10.2h5.4" }, "l")
+			]);
+		}
+		// Tab chip title: icon + the host-provided tab title (the host's own
+		// GuideTitle renders glyph + tab.title the same way). Icon styling is
+		// inline — the shell's CSS-module classes are unreachable from a bundle.
+		const tabChipIconStyle = { marginRight: "5px", color: "var(--dsw-alias-label-tertiary)", flex: "none", display: "inline-block", verticalAlign: "-2px" };
+		const tabChipTitle = (Glyph) => {
+			function WeirTabChipTitle({ useTabInfo }) {
+				return react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, { children: [
+					react_jsx_runtime.jsx(Glyph, { size: 12, style: tabChipIconStyle }, "icon"),
+					useTabInfo().tab.title
+				] });
+			}
+			return WeirTabChipTitle;
+		};
+		// Blackboard session-header quick entry (D2): a plain icon button — no
+		// live lane state to poll, so no chunk and no model; hover paint follows
+		// the capability badge's inline-style pattern.
+		const blackboardPillStyle = {
+			display: "inline-flex", alignItems: "center", justifyContent: "center",
+			padding: "2px 5px", border: "none", borderRadius: "var(--dsw-radius-sm, 6px)",
+			background: "none", cursor: "pointer", color: "var(--dsw-alias-label-tertiary)"
+		};
+		function BlackboardPill(props) {
+			const title = typeof props.t === "function" ? props.t("blackboardPillTitle") : "Open the session blackboard";
+			return react_jsx_runtime.jsx("button", {
+				type: "button",
+				style: blackboardPillStyle,
+				onClick: () => props.openPanel?.(),
+				onMouseEnter: (event) => { event.currentTarget.style.background = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))"; },
+				onMouseLeave: (event) => { event.currentTarget.style.background = "none"; },
+				title,
+				"aria-label": title,
+				"data-weir-blackboard-pill": "",
+				children: react_jsx_runtime.jsx(BlackboardGlyph, { size: 13 })
+			});
 		}
 		// ---- Worktree lanes surfaces ----
 		// One model chunk plus one view chunk carry every lane surface; the
@@ -1924,7 +2001,8 @@ window.__ModuleLoader__.load({
 						id: "worktree",
 						order: 30,
 						title: () => sidebarScope.locale.bind(NS)("worktreeGuideTitle"),
-						description: () => sidebarScope.locale.bind(NS)("worktreeGuideDescription")
+						description: () => sidebarScope.locale.bind(NS)("worktreeGuideDescription"),
+						icon: WorktreeGlyph
 					}]
 				}), "ui-weir-settings: worktree tab type");
 				sidebarScope.effect(() => sidebarScope.slots.register({
@@ -1939,6 +2017,11 @@ window.__ModuleLoader__.load({
 						commandsList: () => worktreeCommandsList(sessionId)
 					} : {})
 				}, WorktreePanelWrapper), "ui-weir-settings: worktree panel body");
+				sidebarScope.effect(() => sidebarScope.slots.register({
+					name: "sidebar.right.pane.tab.title",
+					key: tabId,
+					locale: NS
+				}, tabChipTitle(WorktreeGlyph)), "ui-weir-settings: worktree tab title");
 			});
 			// Session capability Badge in the composer bar (12.1): order 95, next
 			// to the LSP toggle (order 100). The wrapper registers synchronously
@@ -2141,7 +2224,8 @@ window.__ModuleLoader__.load({
 						id: "capabilities",
 						order: 40,
 						title: () => sidebarScope.locale.bind(NS)("capabilityGuideTitle"),
-						description: () => sidebarScope.locale.bind(NS)("capabilityGuideDescription")
+						description: () => sidebarScope.locale.bind(NS)("capabilityGuideDescription"),
+						icon: CapabilityGlyph
 					}]
 				}), "ui-weir-settings: capability tab type");
 				sidebarScope.effect(() => sidebarScope.slots.register({
@@ -2150,6 +2234,11 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: (sessionId) => (sessionId ? capabilityVerbs(sessionId) : {})
 				}, CapabilityPanelWrapper), "ui-weir-settings: capability panel body");
+				sidebarScope.effect(() => sidebarScope.slots.register({
+					name: "sidebar.right.pane.tab.title",
+					key: tabId,
+					locale: NS
+				}, tabChipTitle(CapabilityGlyph)), "ui-weir-settings: capability tab title");
 			});
 			// ---- Session blackboard panel (slice 2, tasks 2.3/2.4) ----
 			// The board data channel is the plugin-owned typert remote
@@ -2201,7 +2290,8 @@ window.__ModuleLoader__.load({
 						id: "blackboard",
 						order: 50,
 						title: () => sidebarScope.locale.bind(NS)("blackboardGuideTitle"),
-						description: () => sidebarScope.locale.bind(NS)("blackboardGuideDescription")
+						description: () => sidebarScope.locale.bind(NS)("blackboardGuideDescription"),
+						icon: BlackboardGlyph
 					}]
 				}), "ui-weir-settings: blackboard tab type");
 				sidebarScope.effect(() => sidebarScope.slots.register({
@@ -2210,7 +2300,27 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: (sessionId) => (sessionId ? { sessionId, callBoard: blackboardRawCall } : {})
 				}, BlackboardPanelWrapper), "ui-weir-settings: blackboard panel body");
+				sidebarScope.effect(() => sidebarScope.slots.register({
+					name: "sidebar.right.pane.tab.title",
+					key: tabId,
+					locale: NS
+				}, tabChipTitle(BlackboardGlyph)), "ui-weir-settings: blackboard tab title");
 			});
+			// Blackboard quick entry in the session header utilities row (D2):
+			// order 20, after the worktree pill (order 10). A shell without the
+			// sidebar right package keeps the button; openPanel then no-ops.
+			ctx.effect(() => ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
+				name: "conversation.session.header.utilities",
+				id: "weir-blackboard-pill",
+				order: 20,
+				locale: NS,
+				inject: (sessionId) => (sessionId ? {
+					sessionId,
+					openPanel: () => {
+						try { ctx.get("sidebarRight")?.openTab?.("weir-blackboard"); } catch { /* no sidebar in this shell */ }
+					}
+				} : {})
+			}, BlackboardPill)), "ui-weir-settings: blackboard header pill");
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form — the single Weir settings entry.

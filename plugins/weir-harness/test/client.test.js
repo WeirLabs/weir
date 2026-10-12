@@ -326,6 +326,8 @@ describe('weir settings client half', () => {
       'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
       // the session capability Badge (12.1): order 95, apply-level registration
       'conversation.input.right',
+      // the blackboard header quick entry (order 20, after the worktree pill)
+      'conversation.session.header.utilities',
       'settings.section', 'settings.weir.item',
     ])
 
@@ -368,7 +370,7 @@ describe('weir settings client half', () => {
     ])
 
     // the top-level settings section registration
-    slotInjects[12].fn()
+    slotInjects[13].fn()
     const { definition: sectionDef, component: sectionComponent } = slotRegistrations.find((registration) => registration.definition.name === 'settings.section')
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('weir-settings')
@@ -380,7 +382,7 @@ describe('weir settings client half', () => {
 
     // the item slot registration hosting the form card (the single entry:
     // no plugins.item registration anymore)
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     expect(itemEntry.definition.id).toBe('weir-config')
     expect(slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')).toBeUndefined()
@@ -412,7 +414,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const injected = definition.inject()
 
@@ -485,7 +487,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
 
     const settle = async (props) => {
@@ -516,7 +518,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[13].fn()
+    slotInjects[14].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
 
     const settle = async (props) => {
@@ -547,7 +549,7 @@ describe('weir settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right', 'conversation.session.header.utilities'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('weir-lsp-toggle')
