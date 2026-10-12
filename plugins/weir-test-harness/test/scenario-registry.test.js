@@ -8,6 +8,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
+import dualPreset from '../src/scenarios/capability-remote-dual-preset.js'
 import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
 import hashlineNegatives from '../src/scenarios/editlock-hashline-negatives.js'
 import lspRename from '../src/scenarios/editlock-lsp-rename.js'
@@ -31,6 +32,11 @@ EXPECTED_ORDER.push('worktree-auto-approve')
 EXPECTED_ORDER.push('child-prompt')
 EXPECTED_ORDER.push('editlock-stale-sweep', 'editlock-stale-sweep-off')
 EXPECTED_ORDER.push('capability-remote')
+// capability-remote-dual-preset is opt-in (src/scenarios/index.js pushes it
+// only when WEIR_IT_CAPABILITY_DUAL === '1', until the production routing fix
+// lands): the expected order follows the same flag, immediately after
+// capability-remote, so neither mode accepts the other's list.
+if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') EXPECTED_ORDER.push('capability-remote-dual-preset')
 EXPECTED_ORDER.push('continuable')
 EXPECTED_ORDER.push('editlock-crash-recovery')
 EXPECTED_ORDER.push('editlock-cold-view')
@@ -74,8 +80,28 @@ describe('scenario registry', () => {
     const files = readdirSync(join(dir, '..', 'src', 'scenarios'))
       .filter((file) => file.endsWith('.js') && file !== 'index.js')
       .flatMap((file) => file === 'skill-composition.js' ? ['skill-composition-off', 'skill-composition-leak', 'skill-composition-host', 'skill-composition-office', 'skill-composition-migration'] : [file.slice(0, -3)])
-      .sort()
+    // The opt-in scenario's module is always on disk, but the registry carries
+    // it only under the flag: the disk set applies the same condition, so the
+    // identity stays exact instead of being loosened by a mere exclusion.
+    if (process.env.WEIR_IT_CAPABILITY_DUAL !== '1') {
+      files.splice(files.indexOf('capability-remote-dual-preset'), 1)
+    }
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
+  })
+
+  it('registers the opt-in capability-remote-dual-preset only under its flag', () => {
+    const member = byId('capability-remote-dual-preset')
+    if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') {
+      assert.equal(member, dualPreset, 'flag on must register the module default export itself')
+      const remote = SCENARIOS.findIndex((s) => s.id === 'capability-remote')
+      assert.notEqual(remote, -1, 'capability-remote must stay registered')
+      assert.equal(SCENARIOS[remote + 1], member, 'opt-in member sits immediately after capability-remote')
+    } else {
+      // Not a mere env-unset assumption: the registry pushes the member on the
+      // exact opt-in value '1' only (index.js), so any other value — including
+      // a defined-but-non-'1' flag — must leave the member unregistered.
+      assert.equal(member, undefined)
+    }
   })
 
   it('byId resolves every member and returns undefined for unknown ids', () => {
