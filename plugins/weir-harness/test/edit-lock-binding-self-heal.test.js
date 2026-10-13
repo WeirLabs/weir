@@ -588,12 +588,21 @@ test('a still-serving holder safely refuses the message-driven retry; the turn p
   const diagnostic = await host.toolDefinitions.get('edit_lock_status').execute({}, { agent })
   assert.equal(diagnostic.bindingFailure.code, 'binding-duplicate')
   assert.equal(host.emitted.filter(entry => entry.record?.data?.kind === 'binding-auto-retry').length, 0)
+  // Audit-everything (change edit-lock-binding-transfer): the refusal is no
+  // longer swallowed — exactly one binding-transfer refusal audit per consumed
+  // armed retry, carrying the holder class.
+  const refusals = host.emitted.filter(entry => entry.record?.data?.kind === 'binding-transfer')
+  assert.equal(refusals.length, 1)
+  assert.equal(refusals[0].record.data.result, 'refused')
+  assert.equal(refusals[0].record.data.reason, 'unknown')
+  assert.equal(refusals[0].record.data.sessionId, 's')
 
   // The NEXT genuine message arms exactly one retry again (bounded per turn).
   await userMessage(host, agent)
   await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
   assert.equal(agent.injects.length, noticesBefore + 2)
   assert.equal(service.blocksContinuation(agent), true)
+  assert.equal(host.emitted.filter(entry => entry.record?.data?.kind === 'binding-transfer' && entry.record?.data?.result === 'refused').length, 2)
   await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /binding is unavailable/)
 })
 
@@ -616,4 +625,265 @@ test('injected messages and a disabled setting never arm the binding retry', asy
   const retried = await off.host.command().handler({ agent: off.agent, rawInput: 'retry', commandId: 'manual-after-off' })
   assert.equal(retried.kind, 'success', retried.text)
   assert.equal((await off.service.describe(off.agent)).status.state, 'stopped')
+})
+
+// --- Driving-ingress binding transfer (change edit-lock-binding-transfer) ----
+// The production dual-agent shape: two mount generations over ONE authority —
+// the first publishes and holds the ghost's LOCAL binding; the second (the
+// user-driven claimant's mount) is its client. The shared plane carries one
+// agents registry (pinned to the ghost), one preset registry and one audit
+// capture, exactly the single-process incident anatomy.
+
+/** @param {string} root */
+function transferPlane(root) {
+  const agents = new Map()
+  const owners = new Map()
+  const emitted = []
+  const stock = { write: { name: 'write', execute() {} }, edit: { name: 'edit', execute() {} } }
+  const registry = { get: id => agents.get(id), roots: () => [...agents.values()] }
+  const presets = { serviceFor: (agent, name) => (name === 'weirEditLock' ? owners.get(agent)?.provided.get('weirEditLock') : undefined) }
+  function makeHost() {
+    const listeners = new Map()
+    const provided = new Map()
+    const toolDefinitions = new Map()
+    let command
+    const host = {
+      provided, toolDefinitions, command: () => command,
+      ctx: {
+        fs: stubFs,
+        logger: { warn() {} },
+        on(name, fn) { listeners.set(name, [...(listeners.get(name) ?? []), fn]) },
+        emit(type, record) { emitted.push({ type, record }) },
+        reflect: { provide(name, value) { provided.set(name, value) } },
+        get(name) {
+          if (name === 'commands') return { register(definition) { command = definition; return () => { command = undefined } } }
+          if (name === 'agents') return registry
+          if (name === 'agentPresets') return presets
+          return provided.get(name)
+        },
+        tools: { get(name, agent) { return agent.visible.get(name) }, register(definition) { toolDefinitions.set(definition.name, definition); return () => toolDefinitions.delete(definition.name) } },
+      },
+      agent(id) {
+        const visible = new Map(Object.entries(stock))
+        const created = {
+          id, visible, status: 'idle', injects: [],
+          session: { header: { cwd: root } },
+          inject(message) { created.injects.push(message) },
+          followup(message) { created.injects.push(message) },
+          ctx: { tools: {
+            registrations: 0,
+            restrict({ deny }) { for (const name of deny) if (visible.get(name) === stock[name]) visible.delete(name) },
+            register(definition) {
+              created.ctx.tools.registrations++
+              if (visible.has(definition.name)) throw new Error(`duplicate registration of tool "${definition.name}"`)
+              visible.set(definition.name, definition)
+              return () => visible.delete(definition.name)
+            },
+          } },
+        }
+        return created
+      },
+      async emit(name, ...args) {
+        let result
+        for (const fn of listeners.get(name) ?? []) result = await fn(...args, async () => ({ kind: 'allow' }))
+        return result
+      },
+    }
+    return host
+  }
+  return { agents, owners, emitted, registry, makeHost }
+}
+
+/** Ghost bound on the publisher mount + claimant refused on the client mount.
+ * The registry stays pinned to the ghost — the defect being repaired. */
+async function transferFixture(t, { holderStatus = 'idle' } = {}) {
+  const { root, directory } = await fixture()
+  const plane = transferPlane(root)
+  const hostPub = plane.makeHost()
+  const disposePub = apply(hostPub.ctx, { enabled: true, root, authorityDirectory: directory })
+  const hostCli = plane.makeHost()
+  const disposeCli = apply(hostCli.ctx, { enabled: true, root, authorityDirectory: directory })
+  t.after(async () => { await disposeCli(); await disposePub() })
+
+  const ghost = hostPub.agent('s')
+  ghost.status = holderStatus
+  plane.agents.set('s', ghost)
+  plane.owners.set(ghost, hostPub)
+  await hostPub.emit('agent/created', { agent: ghost })
+  const servicePub = hostPub.provided.get('weirEditLock')
+  await untilSettled(servicePub, ghost)
+  await servicePub.acquire({ agent: ghost }, { filePath: 'a.txt', cwd: root })
+
+  // The claimant's mount is the publisher's client; its creation bind is
+  // refused while the registry keeps naming the ghost.
+  const claimant = hostCli.agent('s')
+  plane.owners.set(claimant, hostCli)
+  await hostCli.emit('agent/created', { agent: claimant })
+  const serviceCli = hostCli.provided.get('weirEditLock')
+  assert.equal(serviceCli.blocksContinuation(claimant), true)
+  const transferAudits = () => plane.emitted.filter(entry => entry.type === 'weir/edit-lock-maintenance' && entry.record?.data?.kind === 'binding-transfer')
+  return { plane, hostPub, hostCli, ghost, claimant, servicePub, serviceCli, root, transferAudits }
+}
+
+test('transfer: one genuine message transfers from the idle same-process holder and resumes in the same turn, audited', async (t) => {
+  const { hostCli, ghost, claimant, servicePub, serviceCli, root, transferAudits } = await transferFixture(t)
+
+  // Creation-time refusal is the calm transferable announcement — no alarm,
+  // no raw holder classification, no reservation warning.
+  assert.equal(claimant.injects.length, 1)
+  const notice = claimant.injects[0].content[0].text
+  assert.match(notice, /inactive attachment of this same session/)
+  assert.match(notice, /transfers automatically when you send a message/)
+  assert.doesNotMatch(notice, /temporarily unavailable|pid=|holder=|Do NOT remove/)
+  // The read-only status names the transferable class despite the registry
+  // pointing at the ghost (relaxed panel eligibility).
+  const diagnostic = await hostCli.toolDefinitions.get('edit_lock_status').execute({}, { agent: claimant })
+  assert.equal(diagnostic.state, 'unavailable')
+  assert.equal(diagnostic.bindingFailure.holderKind, 'transferable')
+  assert.match(diagnostic.message, /inactive attachment of this same session/)
+  // The ghost's binding is undisturbed until a driving ingress fires.
+  assert.equal((await servicePub.describe(ghost)).status.state, 'active')
+  assert.equal(transferAudits().length, 0)
+
+  await userMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+
+  assert.equal(serviceCli.blocksContinuation(claimant), false)
+  const status = (await serviceCli.describe(claimant)).status
+  assert.equal(status.state, 'active')
+  // The retained lock was confirmed by the same-turn auto-resume replay.
+  assert.equal(status.locks.length, 1)
+  assert.equal(status.locks[0].status, 'active')
+  // The ghost's binding is gone; the claimant can edit immediately.
+  assert.equal(servicePub.blocksContinuation(ghost), true)
+  assert.equal((await hostCli.emit('tools/pre-execute', { name: 'write', agent: claimant })).kind, 'allow')
+  assert.equal((await serviceCli.acquire({ agent: claimant }, { filePath: 'a.txt', cwd: root })).generation, 1)
+  const audits = transferAudits()
+  assert.equal(audits.length, 1)
+  assert.equal(audits[0].record.data.result, 'transferred')
+  assert.equal(audits[0].record.data.sessionId, 's')
+  assert.equal(audits[0].record.data.holder, 'transferable')
+})
+
+test('transfer: a mid-turn holder refuses honestly, recovers on the next idle window; injected messages never transfer', async (t) => {
+  const { hostCli, ghost, claimant, servicePub, serviceCli, transferAudits } = await transferFixture(t, { holderStatus: 'running' })
+
+  // The mid-turn refusal names the live edit and the retry moment.
+  const notice = claimant.injects[0].content[0].text
+  assert.match(notice, /being edited in another attachment right now/)
+  assert.match(notice, /edit-lock retry/)
+  assert.doesNotMatch(notice, /pid=|holder=/)
+
+  // An injected message arms nothing (spec: injected messages never transfer).
+  await injectedMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+  assert.equal(serviceCli.blocksContinuation(claimant), true)
+  assert.equal(transferAudits().length, 0)
+
+  // A genuine message runs exactly one refused transfer, audited with its class.
+  await userMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+  assert.equal(serviceCli.blocksContinuation(claimant), true)
+  assert.equal((await servicePub.describe(ghost)).status.state, 'active')
+  let audits = transferAudits()
+  assert.equal(audits.length, 1)
+  assert.equal(audits[0].record.data.result, 'refused')
+  assert.equal(audits[0].record.data.reason, 'serving')
+  // The re-recorded failure now carries the mid-turn class.
+  const diagnostic = await hostCli.toolDefinitions.get('edit_lock_status').execute({}, { agent: claimant })
+  assert.equal(diagnostic.bindingFailure.holderKind, 'serving')
+
+  // The holder's turn ends; the next genuine message transfers.
+  ghost.status = 'idle'
+  await userMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+  assert.equal(serviceCli.blocksContinuation(claimant), false)
+  assert.equal((await serviceCli.describe(claimant)).status.state, 'active')
+  audits = transferAudits()
+  assert.equal(audits.length, 2)
+  assert.equal(audits[1].record.data.result, 'transferred')
+})
+
+test('transfer gate: an unavailable or empty registry refuses without touching the holder', async (t) => {
+  const { plane, hostCli, ghost, claimant, servicePub, serviceCli, transferAudits } = await transferFixture(t)
+
+  for (const breakdown of [
+    () => { plane.registry.get = () => { throw new Error('registry down') } },
+    () => { plane.registry.get = () => undefined },
+  ]) {
+    breakdown()
+    await userMessage(hostCli, claimant)
+    await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+    assert.equal(serviceCli.blocksContinuation(claimant), true)
+  }
+  // Both breakdowns audited as unattestable; the holder was never approached.
+  const audits = transferAudits()
+  assert.equal(audits.length, 2)
+  assert.ok(audits.every(entry => entry.record.data.result === 'refused' && entry.record.data.reason === 'registry-unattestable'))
+  assert.equal((await servicePub.describe(ghost)).status.state, 'active')
+
+  // Evidence healed: the registry names the idle ghost again, and the next
+  // genuine message completes the transfer.
+  plane.registry.get = id => plane.agents.get(id)
+  await userMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+  assert.equal(serviceCli.blocksContinuation(claimant), false)
+  assert.equal(transferAudits().length, 3)
+  assert.equal(transferAudits()[2].record.data.result, 'transferred')
+})
+
+test('transfer gate: explicit /edit-lock retry transfers from an idle holder without arming auto-resume', async (t) => {
+  const { hostCli, claimant, serviceCli, transferAudits } = await transferFixture(t)
+
+  const retried = await hostCli.command().handler({ agent: claimant, rawInput: 'retry', commandId: 'manual-transfer' })
+  assert.equal(retried.kind, 'success', retried.text)
+  // Bound as interrupted — never authority; no auto-resume was armed by the
+  // command path, and the audits carry the transfer.
+  assert.equal((await serviceCli.describe(claimant)).status.state, 'stopped')
+  assert.equal(transferAudits().length, 1)
+  assert.equal(transferAudits()[0].record.data.result, 'transferred')
+  // The ordinary trusted recovery completes with the next genuine message.
+  await userMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+  assert.equal((await serviceCli.describe(claimant)).status.state, 'active')
+})
+
+test('transfer gate: the write-guard lazy re-bind is a driving transfer ingress, once per generation', async (t) => {
+  const { root, directory } = await fixture()
+  const plane = transferPlane(root)
+  const hostPub = plane.makeHost()
+  const disposePub = apply(hostPub.ctx, { enabled: true, root, authorityDirectory: directory })
+  const hostCli = plane.makeHost()
+  const disposeCli = apply(hostCli.ctx, { enabled: true, root, authorityDirectory: directory })
+  t.after(async () => { await disposeCli(); await disposePub() })
+  const ghost = hostPub.agent('s')
+  plane.agents.set('s', ghost)
+  plane.owners.set(ghost, hostPub)
+  await hostPub.emit('agent/created', { agent: ghost })
+  const servicePub = hostPub.provided.get('weirEditLock')
+  await untilSettled(servicePub, ghost)
+
+  // The claimant never saw a setup pass (no agent/created): the first guarded
+  // write triggers the lazy re-bind, which records the duplicate failure and
+  // then runs ONE transfer-capable retry in the same admission.
+  const claimant = hostCli.agent('s')
+  plane.owners.set(claimant, hostCli)
+  const verdict = await hostCli.emit('tools/pre-execute', { name: 'write', agent: claimant })
+  assert.equal(verdict.kind, 'allow')
+  const serviceCli = hostCli.provided.get('weirEditLock')
+  const audits = plane.emitted.filter(entry => entry.record?.data?.kind === 'binding-transfer')
+  assert.equal(audits.length, 1)
+  assert.equal(audits[0].record.data.result, 'transferred')
+  // Transferred as interrupted, never authority: the lifecycle still denies
+  // the business write until the trusted resume path runs.
+  assert.equal((await serviceCli.describe(claimant)).status.state, 'stopped')
+  await assert.rejects(serviceCli.acquire({ agent: claimant }, { filePath: 'a.txt', cwd: root }), /stopped/)
+  // A second guarded call short-circuits on the settled binding — no repeated
+  // transfer attempts this generation.
+  assert.equal((await hostCli.emit('tools/pre-execute', { name: 'write', agent: claimant })).kind, 'allow')
+  assert.equal(plane.emitted.filter(entry => entry.record?.data?.kind === 'binding-transfer').length, 1)
+  // The genuine message that follows completes the recovery in-turn.
+  await userMessage(hostCli, claimant)
+  await hostCli.emit('agent/pre-step', { agent: claimant, turn: {}, signal: new AbortController().signal })
+  assert.equal((await serviceCli.describe(claimant)).status.state, 'active')
 })
