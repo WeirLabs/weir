@@ -375,15 +375,18 @@ describe('client.edit-lock-panel chunk', () => {
     expect(reads).toBeGreaterThan(before)
   })
 
-  it('an administratively revoked session is terminal: no resume, no stop, with an explanation', async () => {
+  it('an administratively revoked session offers continue editing (like stopped), keeps the explanation, no stop', async () => {
     const { runs, render } = await mounted([viewOf('revoked', [])])
     find(render(), (node) => node['data-weir-edit-lock'] === '').onClick(); await flush()
     const tree = render()
     expect(find(tree, (node) => node['data-weir-edit-lock-summary'] === '').children).toBe('editLockState_revoked')
-    expect(byAction(tree, 'primary')).toBe(undefined)
+    // Revoked regains the Continue primary action (resume only: a revoked
+    // session holds no retained files, so no confirm --all is recorded).
+    expect(byAction(tree, 'primary').children).toBe('editLockResume')
     expect(byAction(tree, 'arm-stop')).toBe(undefined)
     expect(find(tree, (node) => node['data-weir-edit-lock-revoked'] !== undefined).children).toBe('editLockRevokedHint')
-    expect(runs).toEqual([])
+    byAction(tree, 'primary').onClick(); await flush(); await flush()
+    expect(runs).toEqual(['resume'])
   })
 	it('a cold stopped session shows activation guidance and offers no live-only action', async () => {
 		const { runs, render } = await mounted([viewOf('stopped', [own('a.txt', 'user-interrupted')], { cold: true, autoResume: true })])
@@ -404,6 +407,26 @@ describe('client.edit-lock-panel chunk', () => {
 		const { render } = await mounted([viewOf('stopped', [], { cold: true, autoResume: false })])
 		find(render(), (node) => node['data-weir-edit-lock'] === '').onClick(); await flush()
 		expect(find(render(), (node) => node['data-weir-edit-lock-cold'] !== undefined).children).toBe('editLockColdResumeManual')
+	})
+
+	it('a cold revoked session is repairable: no live-only action, but message-driven repair guidance', async () => {
+		const { runs, render } = await mounted([viewOf('revoked', [], { cold: true, autoResume: true })])
+		find(render(), (node) => node['data-weir-edit-lock'] === '').onClick(); await flush()
+		const tree = render()
+		expect(find(tree, (node) => node['data-weir-edit-lock-summary'] === '').children).toBe('editLockState_revoked')
+		// No live agent: the command channel is cold, so no primary action —
+		// the guidance says a genuine message repairs the session.
+		expect(byAction(tree, 'primary')).toBe(undefined)
+		expect(byAction(tree, 'arm-stop')).toBe(undefined)
+		expect(find(tree, (node) => node['data-weir-edit-lock-revoked'] !== undefined)).toBe(undefined)
+		expect(find(tree, (node) => node['data-weir-edit-lock-cold'] !== undefined).children).toBe('editLockColdRevokedAuto')
+		expect(runs).toEqual([])
+	})
+
+	it('a cold revoked session with auto-resume off is told to activate, then continue by hand', async () => {
+		const { render } = await mounted([viewOf('revoked', [], { cold: true, autoResume: false })])
+		find(render(), (node) => node['data-weir-edit-lock'] === '').onClick(); await flush()
+		expect(find(render(), (node) => node['data-weir-edit-lock-cold'] !== undefined).children).toBe('editLockColdRevokedManual')
 	})
 
 	it('a cold view in any other state is read-only too: no primary, no row action, no revoke, no guidance', async () => {

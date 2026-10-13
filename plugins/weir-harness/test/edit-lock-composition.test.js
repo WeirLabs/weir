@@ -831,7 +831,7 @@ test('the view endpoint answers a cold session its true recorded state, read-onl
   dispose()
 })
 
-test('the view endpoint renders a cold revoked session as terminal', async () => {
+test('the view endpoint renders a cold revoked session as revoked and repairable (never terminal)', async () => {
   const { root, directory } = await fixture()
   // An ADMIN OVERRIDE over the owner's unknown operation revokes it durably.
   const store = await openEditLockStore({ directory, domainId: root, mode: 'create' })
@@ -858,7 +858,9 @@ test('the view endpoint renders a cold revoked session as terminal', async () =>
   const dispose = apply(host.ctx, { enabled: true, root, authorityDirectory: directory })
   const value = (await host.read({ sessionId: 'owner' })).value
   assert.equal(value.state, 'revoked')
+  // Repairable, not terminal: the repair guidance travels with the view.
   assert.equal(value.cold, true)
+  assert.equal(value.autoResume, true)
   dispose()
 })
 
