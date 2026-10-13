@@ -15,6 +15,7 @@ import { installAutoResumeProbe } from './edit-lock-auto-resume-probe.js'
 import { installStaleSweepProbe } from './edit-lock-stale-sweep-probe.js'
 import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
 import { installBindingProbe } from './edit-lock-binding-probe.js'
+import { installRepairFaultProbe } from './edit-lock-repair-fault-probe.js'
 import { installBlackboardColdProbe } from './blackboard-cold-probe.js'
 import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
 import { installPlannedCompactionProbe } from './scenarios/planned-compaction-probe.mjs'
@@ -57,6 +58,7 @@ function apply(ctx) {
   installStaleSweepProbe(ctx, tap)
   installColdViewProbe(ctx, tap)
   installBindingProbe(ctx, tap)
+  installRepairFaultProbe(ctx, tap)
   // Cordis audit channel (cold-safe; session logs stay clean).
   for (const type of AUDIT_SUBSCRIPTIONS) {
     ctx.on(`weir/${type}`, (record) => {

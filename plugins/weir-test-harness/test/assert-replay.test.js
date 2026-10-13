@@ -26,7 +26,10 @@ function syntheticObs() {
 // post-run bytes, so it has no committed replay fixture (precedent 62c0ee2).
 // editlock-negotiation needs an actual 120s Host timeout and disposable fault
 // fixture; a frozen trace cannot establish delivery failure or holder liveness.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'editlock-negotiation'].includes(scenario.id))
+// editlock-revoked-repair and editlock-binding-auto-retry drive live operator /
+// holder child processes against the real authority; a frozen trace cannot
+// establish the child's liveness arbitration or the multi-boot epoch chain.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'editlock-negotiation', 'editlock-revoked-repair', 'editlock-binding-auto-retry'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {
