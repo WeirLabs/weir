@@ -53,33 +53,43 @@ window.__ModuleLoader__.load({
 		const CLASSIFIER_JEV = Object.freeze({ key: "intentGateClassifier", equals: "jev" });
 		const WINDOWS_ONLY = Object.freeze({ env: "platform", in: Object.freeze(["win32"]) });
 		const ROBASH_WINDOWS = Object.freeze({ all: Object.freeze([enabledWhen("robashEnabled"), WINDOWS_ONLY]) });
-		// The GROUPS field table. Every node: { field?, kind, values?, display?,
-		// when?, parent?, folded?, slot? }. kind: boolean | enum | number | text |
-		// custom. An enum node may set `display: "select"` to render a compact
-		// native dropdown instead of the segmented control (long option labels
-		// squeeze the row label). `custom` nodes carry a render `slot` identifier
-		// and share
-		// parent/when with plain rows; a custom node with a `field` is
-		// text-backed at the form layer. `folded` fields stay in the form but
-		// render inside another row (the model picker folds intentGateModel /
-		// intentGateReasoningEffort into the intentGateProvider row; their
-		// `when` matches the carrier row by declaration). Field-less custom
-		// nodes (maintenance/permission panels) hang in the same tree.
+		const CLASSIFIER_LLM_OR_JEV = Object.freeze({ any: Object.freeze([CLASSIFIER_LLM, CLASSIFIER_JEV]) });
+		// The GROUPS field table. Every group: { id, page?, fields }. page is
+		// "main" (default when absent) or "routing" — the model-routing groups
+		// form the separate routing settings page (WeirCard/WeirCardController
+		// filter by it; validateLayout rejects any other value). Every node:
+		// { field?, kind, values?, display?, when?, parent?, folded?, slot? }.
+		// kind: boolean | enum | number | text | custom. An enum node may set
+		// `display: "select"` to render a compact native dropdown instead of the
+		// segmented control (long option labels squeeze the row label). `custom`
+		// nodes carry a render `slot` identifier and share parent/when with
+		// plain rows; a custom node with a `field` is text-backed at the form
+		// layer. `folded` fields stay in the form but render inside another row
+		// (the model picker folds intentGateModel / intentGateReasoningEffort
+		// into the intentGateProvider row; their `when` matches the carrier row
+		// by declaration). Field-less custom nodes (maintenance/permission
+		// panels) hang in the same tree. Keys marked page:false in
+		// src/settings/sections.js (CONFIG_FACE_ONLY_KEYS) never appear here —
+		// config-face-only by declaration, pinned by test.
 		const GROUPS = [
 			{ id: "intent", fields: [
 				{ field: "intentGateClassifier", kind: "enum", values: ["regex", "llm", "jev"] },
 				{ field: "intentGateProvider", kind: "custom", slot: "modelPicker", when: CLASSIFIER_LLM },
 				{ field: "intentGateModel", kind: "text", folded: true, when: CLASSIFIER_LLM },
 				{ field: "intentGateReasoningEffort", kind: "text", folded: true, when: CLASSIFIER_LLM },
-				{ field: "intentGateTimeoutMs", kind: "number" },
+				{ field: "intentGateTimeoutMs", kind: "number", when: CLASSIFIER_LLM_OR_JEV },
 				{ field: "jevEndpoint", kind: "text", when: CLASSIFIER_JEV },
 				{ field: "jevModel", kind: "text", when: CLASSIFIER_JEV },
 				{ field: "jevApiKeyEnv", kind: "text", when: CLASSIFIER_JEV }
 			] },
-			{ id: "delegate", fields: [
+			{ id: "routingCategories", page: "routing", fields: [
 				{ field: "delegateCategoryChains", kind: "custom", slot: "chainEditor" },
-				{ field: "delegateAgentChains", kind: "custom", slot: "agentChainEditor" },
-				{ field: "delegateDisabledCategories", kind: "custom", slot: "disabledCategoriesEditor" },
+				{ field: "delegateDisabledCategories", kind: "custom", slot: "disabledCategoriesEditor" }
+			] },
+			{ id: "routingAgents", page: "routing", fields: [
+				{ field: "delegateAgentChains", kind: "custom", slot: "agentChainEditor" }
+			] },
+			{ id: "routingSupervision", page: "routing", fields: [
 				{ field: "supervisionMaxRetries", kind: "number" },
 				{ field: "supervisionInitialBackoffMs", kind: "number" },
 				{ field: "supervisionMaxBackoffMs", kind: "number" }
@@ -87,9 +97,7 @@ window.__ModuleLoader__.load({
 			{ id: "todo", fields: [
 				{ field: "todoEnabled", kind: "boolean" },
 				{ field: "todoMaxConsecutive", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") },
-				{ field: "todoErrorRetryMax", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") },
-				{ field: "todoErrorBackoffBaseMs", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") },
-				{ field: "todoErrorBackoffCapMs", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") }
+				{ field: "todoErrorRetryMax", kind: "number", parent: "todoEnabled", when: enabledWhen("todoEnabled") }
 			] },
 			{ id: "guard", fields: [
 				{ field: "guardEnabled", kind: "boolean" },
@@ -101,11 +109,6 @@ window.__ModuleLoader__.load({
 				{ field: "editLockEnabled", kind: "boolean" },
 				{ field: "editLockAutoResume", kind: "boolean", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
 				{ field: "editLockStaleSweep", kind: "boolean", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ field: "editLockHoldDefaultMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ field: "editLockHoldSingleMaxMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ field: "editLockHoldCumulativeMaxMinutes", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ field: "editLockNudgeAttempts", kind: "number", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ field: "editLockNudgeFallback", kind: "text", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
 				// Diagnostics must remain reachable when enforcement is off.
 				{ kind: "custom", slot: "editLockMaintenance" }
 			] },
@@ -127,9 +130,6 @@ window.__ModuleLoader__.load({
 			] },
 			{ id: "lsp", fields: [
 				{ field: "lspEnabled", kind: "boolean" },
-				{ field: "lspIdleMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
-				{ field: "lspRequestTimeoutMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
-				{ field: "lspDiagnosticsWaitMs", kind: "number", parent: "lspEnabled", when: enabledWhen("lspEnabled") },
 				// The raw lspServers JSON row is folded into the manager row: one
 				// custom node carrying the field (the robashList pattern —
 				// text-backed at the form layer via specFor), so the panel owns the
@@ -149,19 +149,25 @@ window.__ModuleLoader__.load({
 				// confirms its platform (self-gating), so it stays unconditional
 				// here even as a custom node in the tree.
 				{ kind: "custom", slot: "notifyPermissions" }
-			] },
-			// Session blackboard (2.4a): the write-token TTL leaves
-			// config-face-only and rides its own group. A single live number row
-			// (volatile config — no restart marker, no master switch).
-			{ id: "blackboard", fields: [
-				{ field: "blackboardWriteTokenTtlMinutes", kind: "number" }
 			] }
 		];
 		// Form fields: every node that names a flat settings key (custom
-		// panels without a field render only). Order matches the pre-overhaul
-		// flat table exactly — test pins this list.
+		// panels without a field render only), in GROUPS declaration order
+		// across both pages — test pins this list.
 		const FIELDS = GROUPS.flatMap((group) => group.fields).filter((descriptor) => typeof descriptor.field === "string");
 		const FIELD_BY_NAME = Object.fromEntries(FIELDS.map((descriptor) => [descriptor.field, descriptor]));
+		// The page one field's group belongs to ("main" when the group declares
+		// no page): the controller's form specs and projection cover exactly the
+		// page's fields, and WeirCard renders only the page's groups.
+		const FIELD_PAGE = new Map();
+		for (const group of GROUPS) {
+			for (const node of group.fields) {
+				if (typeof node.field === "string") FIELD_PAGE.set(node.field, group.page ?? "main");
+			}
+		}
+		function fieldsForPage(page) {
+			return FIELDS.filter((descriptor) => FIELD_PAGE.get(descriptor.field) === page);
+		}
 		/** Product defaults of every flat settings key with a concrete
 		 * default — hand-maintained mirror of FIELD_DEFAULTS in
 		 * src/settings/sections.js (same-package sync require is impossible
@@ -352,8 +358,14 @@ window.__ModuleLoader__.load({
 		}
 		/** Fail-loud declaration validation, run at module load: unknown or
 		 * cross-group parents, parent cycles, conditions on unknown keys or
-		 * unknown env facts — every error names the offending key. */
+		 * unknown env facts, an invalid group page — every error names the
+		 * offending key or group. */
 		function validateLayout(groups) {
+			for (const group of groups) {
+				if (group.page !== void 0 && group.page !== "main" && group.page !== "routing") {
+					throw settingsLayoutError(`group '${String(group.id)}' declares an invalid page '${String(group.page)}'`);
+				}
+			}
 			const keyToGroup = new Map();
 			for (const group of groups) {
 				for (const node of group.fields) {
@@ -409,7 +421,7 @@ window.__ModuleLoader__.load({
 					for (const child of node.children) assignDepth(child, depth + 1);
 				};
 				for (const root of roots) assignDepth(root, 0);
-				return { id: group.id, roots };
+				return { id: group.id, page: group.page ?? "main", roots };
 			});
 		}
 		// Declaration-time validation (D4): a bad GROUPS table fails chunk load
@@ -479,14 +491,19 @@ window.__ModuleLoader__.load({
 		var WeirCardController = class {
 			form;
 			store;
-			constructor(scope, deps) {
+			constructor(scope, deps, page) {
+				// page: "main" (default) or "routing" — the form model tracks only
+				// that page's fields, so one scope hosts two independent forms (the
+				// routing page edits the same namespace, disjoint key set).
+				this.page = page === "routing" ? "routing" : "main";
+				this.fields = fieldsForPage(this.page);
 				// Prop-injected dependencies: the entry-owned settings bus (save →
 				// toggle re-check) and a getSession closure resolving the
 				// remote.session domain lazily at call time (it may not be wired
 				// yet during apply, S17). fetchEnv is the injectable environment
 				// facts read (tests); production uses the fetch above.
 				this.deps = deps;
-				this.form = new primitives.SettingsFormModel(scope, FIELDS.map(specFor));
+				this.form = new primitives.SettingsFormModel(scope, this.fields.map(specFor));
 				this.store = this.form.bind(() => this.projection());
 				// Restart-required keys touched by the last landed save, in
 				// registry order; null until such a save lands or after the
@@ -518,7 +535,7 @@ window.__ModuleLoader__.load({
 			}
 			projection() {
 				const fields = {};
-				for (const descriptor of FIELDS) {
+				for (const descriptor of this.fields) {
 					// `saved` rides along so condition evaluation can fall back
 					// to the saved value while an unparseable draft is staged
 					// (D3) — the merged field text alone cannot express it.
@@ -758,7 +775,11 @@ window.__ModuleLoader__.load({
 		function WeirCard(props) {
 			const state = props.useWeirSettingsCard((snapshot) => snapshot);
 			const { t } = props;
-			if (props.view === "summary") return t("description");
+			// Dual-page card: props.page ("main" default, "routing") selects the
+			// summary text and the rendered group subset; conditions/restartTag/
+			// displayText are page-independent.
+			const page = props.page === "routing" ? "routing" : "main";
+			if (props.view === "summary") return t(page === "routing" ? "routingDescription" : "description");
 			const disabled = !state.writable;
 			// env three-state (D6): pending/failed hide env-gated rows only.
 			const env = state.env ?? { status: "ready", facts: {} };
@@ -893,7 +914,7 @@ window.__ModuleLoader__.load({
 			// Card sections: the tree walk prunes hidden subtrees wholesale (a
 			// hidden parent hides every descendant), and children land directly
 			// under their parent's subtree in DFS order.
-			const cards = LAYOUT.map((groupLayout) => {
+			const cards = LAYOUT.filter((groupLayout) => groupLayout.page === page).map((groupLayout) => {
 				const rows = [];
 				const walk = (node, ancestorsVisible) => {
 					const isVisible = ancestorsVisible && visible(node);
@@ -945,9 +966,12 @@ window.__ModuleLoader__.load({
 			gap: "var(--dsw-spacing-3, 12px)"
 		};
 		const ITEM_SLOT = "settings.weir.item";
-		const WeirSection = ({ renderSlot }) => react_jsx_runtime.jsx("div", {
+		// The section shell is page-agnostic: the composition root passes the
+		// child item slot of the page being hosted (main by default, the
+		// routing page's "settings.weir-routing.item" for the routing section).
+		const WeirSection = ({ renderSlot, slot }) => react_jsx_runtime.jsx("div", {
 			style: columnStyle,
-			children: renderSlot(ITEM_SLOT)
+			children: renderSlot(slot ?? ITEM_SLOT)
 		});
 		exports.GROUPS = GROUPS;
 		exports.BOOLEAN_DEFAULTS = BOOLEAN_DEFAULTS;
@@ -957,6 +981,7 @@ window.__ModuleLoader__.load({
 		exports.CATEGORY_NAMES = CATEGORY_NAMES;
 		exports.RESTART_FIELDS = RESTART_FIELDS;
 		exports.FIELDS = FIELDS;
+		exports.fieldsForPage = fieldsForPage;
 		exports.ENV_FACTS = ENV_FACTS;
 		exports.evaluateCondition = evaluateCondition;
 		exports.conditionUsesEnv = conditionUsesEnv;
