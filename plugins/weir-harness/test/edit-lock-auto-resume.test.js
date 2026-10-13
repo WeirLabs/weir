@@ -249,6 +249,10 @@ test('a revoked session is repaired by a genuine user message: silent resume, em
   assert.equal(revoked.revoked, true)
   const revokedEpoch = revoked.executionEpoch
   const ledgerBefore = JSON.parse(await readFile(join(directory, 'snapshot.json'), 'utf8')).payload.state.adminRecoveries
+  // /edit-lock status names the repair path, never a terminal dead end.
+  const statusText = await host.command().handler({ agent, rawInput: 'status', commandId: 'status-1' })
+  assert.match(statusText.text, /revoked by an administrative recovery/)
+  assert.match(statusText.text, /Continue editing or send any message to restore/)
 
   await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
