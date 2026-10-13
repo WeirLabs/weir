@@ -13,18 +13,24 @@ test('binding guidance names holder-side proof and explicit retry rather than re
   assert.match(text, /edit-lock retry/)
   assert.doesNotMatch(text, /Restart DeepSeek Harness to recover/)
 })
-for (const [label, pid, state, expected, excluded] of [
-  ['serving', process.pid, 'serving', /active in the DeepSeek Harness window.*Use the session in that window/, /stale runtime/],
-  ['same-process unknown', process.pid, 'unknown', /same process.*stale runtime incarnation.*edit-lock retry/, /window/],
-  ['cross-process', process.pid + 1, 'unknown', new RegExp(`pid ${process.pid + 1}.*Quit that holder process`), /window/],
-  ['old publisher', undefined, 'unknown', /holder cannot be attested.*edit-lock retry/, /window/],
+for (const [label, pid, state, expected, excluded, reservation] of [
+  // Mid-turn/live holder (change edit-lock-binding-transfer): name the live
+  // edit and the retry moment; no window hunt, no reservation warning.
+  ['serving', process.pid, 'serving', /being edited in another attachment right now.*edit-lock retry/, /stale runtime|window/, false],
+  // Transferable: same-process idle holder — calm automatic-takeover copy;
+  // the reservation warning is never attached to this class.
+  ['serving-idle', process.pid, 'serving-idle', /inactive attachment of this same session.*attaches here automatically when you next send a message/, /window|pid |Do NOT remove/, false],
+  ['same-process unknown', process.pid, 'unknown', /same process.*stale runtime incarnation.*edit-lock retry/, /window/, true],
+  ['cross-process', process.pid + 1, 'unknown', new RegExp(`pid ${process.pid + 1}.*Quit that holder process`), /window/, true],
+  ['old publisher', undefined, 'unknown', /holder cannot be attested.*edit-lock retry/, /window/, true],
 ]) test(`duplicate-binding guidance: ${label}`, () => {
   const reason = bindingRefusalReason(pid, state)
   assert.doesNotMatch(reason, /Restart|reservation|window/)
   const text = bindingGuidance('session-1', reason)
   assert.match(text, expected)
   assert.doesNotMatch(text, excluded)
-  assert.match(text, /Do NOT remove the publisher reservation.*while its process is alive/)
+  if (reservation) assert.match(text, /Do NOT remove the publisher reservation.*while its process is alive/)
+  else assert.doesNotMatch(text, /Do NOT remove the publisher reservation/)
 })
 
 test('guidance trusts publisher classification, not the rendering process pid', () => {

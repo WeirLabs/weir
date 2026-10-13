@@ -15,6 +15,14 @@ export function localDomain(lifecycle, endpoint) {
       lifecycle.assertStartable(agent)
       return endpoint?.startLocal ? endpoint.startLocal(agent, true) : lifecycle.start(agent)
     },
+    /** Trusted binding transfer (change edit-lock-binding-transfer): the
+     * explicit driving-ingress counterpart of retryStart — the holder-side
+     * admission (local, registry-named, provably idle holder) is re-adjudicated
+     * at execution and refuses exactly like start() otherwise. @param {object} agent */
+    transferStart: async agent => {
+      lifecycle.assertStartable(agent)
+      return endpoint?.startLocal ? endpoint.startLocal(agent, true, true) : lifecycle.transferStart(agent)
+    },
     /** Synchronous admission fence for an aborted turn. @param {object} agent */
     latch: agent => { lifecycle.stop(agent).catch(() => {}) },
     /** @param {object} agent */
@@ -86,6 +94,10 @@ export function remoteDomain(remote) {
     start: async agent => (await remote.channelFor(agent)).state,
     /** @param {object} agent */
     retryStart: async agent => (await remote.channelFor(agent, true)).state,
+    /** The wire retry flag carries the transfer admission to the publisher
+     * (its lifecycle re-adjudicates holder idleness); the client adds nothing. */
+    /** @param {object} agent */
+    transferStart: async agent => (await remote.channelFor(agent, true)).state,
     /** @param {object} agent */
     forget: async agent => { try { await remote.call(agent, 'stop') } finally { remote.drop(agent) } },
     /** Closing the channel makes the publisher revoke on EOF. @param {object} agent */

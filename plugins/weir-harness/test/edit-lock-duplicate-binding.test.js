@@ -179,7 +179,7 @@ test('endpoint: a live channel is refused and keeps its locks; the refused clien
   }
 })
 
-test('endpoint: a serving holder keeps window guidance exactly once and the complete publisher reason', async () => {
+test('endpoint: a serving holder is told of the live edit and the retry moment, never a window hunt', async () => {
   const { root, directory } = await fixture()
   const { lifecycle, server } = await publisher(directory, root, () => 'serving')
   const remoteA = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {} })
@@ -187,10 +187,12 @@ test('endpoint: a serving holder keeps window guidance exactly once and the comp
   try {
     await remoteA.channelFor({ id: 'serving-session' })
     await assert.rejects(remoteB.channelFor({ id: 'serving-session' }), error => {
-      assert.match(error.message, /Use the session in that window/)
-      assert.doesNotMatch(error.message, /stale runtime incarnation/)
-      assert.equal(error.message.split('Use the session in that window').length - 1, 1)
-      assert.equal(error.message.split('Do NOT remove the publisher reservation').length - 1, 1)
+      // The mid-turn/live-holder copy (change edit-lock-binding-transfer):
+      // what is happening and when to retry — no window hunt, no process
+      // management, no publisher-reservation warning.
+      assert.match(error.message, /being edited in another attachment right now/)
+      assert.match(error.message, /Wait for that turn to finish.*\/edit-lock retry/)
+      assert.doesNotMatch(error.message, /stale runtime incarnation|window|Do NOT remove the publisher reservation/)
       assert.ok(error.message.endsWith(`(publisher answered: session already bound: holder=serving; pid=${process.pid})`))
       return true
     })
@@ -458,4 +460,196 @@ for (const prior of ['remote', 'already-forgotten']) test(`supersession during f
     assert.equal(await local.start(successor), 'interrupted')
     assert.equal((await local.status(successor)).locks.length, 1)
   } finally { barrier.resolve(); remote.close(); await local.close() }
+})
+
+// --- Binding transfer to the driving agent (change edit-lock-binding-transfer) ---
+// Holder-liveness vocabulary pinned here: the DSH agent `status` getter reports
+// exactly 'idle' | 'running' (idle covers the idle and maintenance phases).
+// Only 'idle' proves the holder is not mid-turn; a missing, non-string or
+// throwing read is undeterminable and NEVER admits a transfer.
+
+test('transferStart: an idle registry-named local holder transfers; the lock stays interrupted, never released', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const holder = { id: 's', status: 'idle' }, claimant = { id: 's' }
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => holder })
+  try {
+    await lifecycle.start(holder)
+    await lifecycle.service.acquire({ agent: holder }, { filePath: 'a.txt', cwd: root })
+    assert.equal(await lifecycle.transferStart(claimant), 'interrupted')
+    assert.throws(() => lifecycle.status(holder), /unknown lifecycle agent/)
+    assert.equal(lifecycle.status(claimant).state, 'stopped')
+    assert.equal(lifecycle.status(claimant).locks.length, 1)
+    assert.equal(lifecycle.status(claimant).locks[0].generation, 1)
+    assert.equal(lifecycle.status(claimant).locks[0].status, 'user-interrupted')
+    // Binding alone grants nothing: business ingress stays denied until the
+    // trusted resume path runs.
+    await assert.rejects(lifecycle.service.acquire({ agent: claimant }, { filePath: 'a.txt', cwd: root }), /stopped/)
+  } finally { await lifecycle.close() }
+})
+
+for (const [label, holder] of [
+  ['mid-turn (running)', { id: 's', status: 'running' }],
+  ['undeterminable (no status)', { id: 's' }],
+  ['undeterminable (non-string status)', { id: 's', status: null }],
+  ['undeterminable (throwing status getter)', { id: 's', get status() { throw new Error('gone') } }],
+]) {
+  test(`transferStart: a ${label} holder is never preempted`, async () => {
+    const { root, directory } = await fixture()
+    const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+    const claimant = { id: 's' }
+    const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => holder })
+    try {
+      await lifecycle.start(holder)
+      await lifecycle.service.acquire({ agent: holder }, { filePath: 'a.txt', cwd: root })
+      await assert.rejects(lifecycle.transferStart(claimant), error => {
+        assert.match(error.message, /session already bound: holder=serving/)
+        assert.equal(error.bindingFailure?.holderKind, 'serving')
+        return true
+      })
+      // The holder and its lock are completely untouched.
+      assert.equal(lifecycle.status(holder).state, 'active')
+      assert.equal(lifecycle.status(holder).locks[0].status, 'active')
+    } finally { await lifecycle.close() }
+  })
+}
+
+for (const [label, serving] of [
+  ['registry names no one', undefined],
+  ['registry names a third agent', { id: 's', status: 'idle' }],
+]) {
+  test(`transferStart: ${label} — the holder is unattestable and stays`, async () => {
+    const { root, directory } = await fixture()
+    const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+    const holder = { id: 's', status: 'idle' }, claimant = { id: 's' }
+    const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => serving })
+    try {
+      await lifecycle.start(holder)
+      // A local holder whose attestation is unknown classifies as
+      // same-process-unattestable (never the transferable class).
+      await assert.rejects(lifecycle.transferStart(claimant), error => {
+        assert.match(error.message, /session already bound: holder=same-process-unattestable/)
+        assert.equal(error.bindingFailure?.holderKind, 'unknown')
+        return true
+      })
+      assert.equal(lifecycle.status(holder).state, 'active')
+    } finally { await lifecycle.close() }
+  })
+}
+
+test('transferStart: a throwing registry and a remote proxy holder both stay fail-closed', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const proxy = { id: 's', remote: true }, claimant = { id: 's' }
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => { throw new Error('registry down') } })
+  try {
+    await lifecycle.start(proxy)
+    // The remote-proxy ban is absolute for the transfer admission as well.
+    await assert.rejects(lifecycle.transferStart(claimant), /session already bound/)
+    assert.equal(lifecycle.status(proxy).state, 'active')
+  } finally { await lifecycle.close() }
+})
+
+test('transferStart: without a prior binding it is an ordinary start; a local idle holder classifies refusals as transferable', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const holder = { id: 's', status: 'idle' }, claimant = { id: 's' }, other = { id: 'other' }
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: id => (id === 's' ? holder : undefined) })
+  try {
+    // No prior binding: the transfer entry binds directly.
+    assert.equal(await lifecycle.transferStart(other), 'active')
+    // Passive start() still refuses the idle holder — but with the
+    // transferable classification and its calm guidance, no reservation warning.
+    await lifecycle.start(holder)
+    await assert.rejects(lifecycle.start(claimant), error => {
+      assert.match(error.message, /session already bound: holder=serving-idle/)
+      assert.match(error.message, /inactive attachment of this same session/)
+      assert.match(error.message, /attaches here automatically when you next send a message/)
+      assert.doesNotMatch(error.message, /Do NOT remove the publisher reservation|window/)
+      assert.equal(error.bindingFailure?.code, 'binding-duplicate')
+      assert.equal(error.bindingFailure?.holderKind, 'transferable')
+      assert.equal(error.bindingFailure?.retryable, true)
+      return true
+    })
+  } finally { await lifecycle.close() }
+})
+
+test('endpoint: a retry open transfers from an idle local holder; ordinary and refused opens never do', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const holder = { id: 's', status: 'idle' }
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => holder })
+  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap())
+  const remote = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {} })
+  try {
+    await lifecycle.start(holder)
+    await lifecycle.service.acquire({ agent: holder }, { filePath: 'a.txt', cwd: root })
+
+    // A passive (non-retry) open is refused with the transferable class.
+    await assert.rejects(remote.channelFor({ id: 's' }), error => {
+      assert.equal(error.bindingFailure?.holderKind, 'transferable')
+      assert.match(error.message, /inactive attachment of this same session/)
+      assert.doesNotMatch(error.message, /Do NOT remove the publisher reservation/)
+      return true
+    })
+    assert.equal(lifecycle.status(holder).state, 'active')
+
+    // The retry open — the wire form of a trusted driving ingress — transfers.
+    const claimant = { id: 's' }
+    assert.equal((await remote.channelFor(claimant, true)).state, 'interrupted')
+    assert.throws(() => lifecycle.status(holder), /unknown lifecycle agent/)
+    assert.equal(runtime.control.status().locks[0].status, 'user-interrupted')
+    // The transferred channel denies edits until the trusted resume runs.
+    await assert.rejects(remote.call(claimant, 'acquire', { filePath: 'a.txt', cwd: root }), /stopped/)
+  } finally {
+    remote.close()
+    await server.close()
+    await lifecycle.close()
+  }
+})
+
+test('endpoint: a retry open never preempts a mid-turn local holder', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const holder = { id: 's', status: 'running' }
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => holder })
+  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap())
+  const remote = createRemoteEditLockDomain(fixtureEndpoint(directory), { onNotice() {} })
+  try {
+    await lifecycle.start(holder)
+    await assert.rejects(remote.channelFor({ id: 's' }, true), error => {
+      assert.equal(error.bindingFailure?.holderKind, 'serving')
+      assert.match(error.message, /being edited in another attachment right now/)
+      return true
+    })
+    assert.equal(lifecycle.status(holder).state, 'active')
+  } finally {
+    remote.close()
+    await server.close()
+    await lifecycle.close()
+  }
+})
+
+test('endpoint: startLocal transfer threads the admission and the relaxed currency proof', async () => {
+  const { root, directory } = await fixture()
+  const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
+  const holder = { id: 's', status: 'idle' }, claimant = { id: 's' }
+  let serving = holder
+  const lifecycle = createEditLockLifecycle(runtime, agent => agent.id, { servingRuntime: () => serving })
+  // The production currency proof (index.js): a transfer claimant is never the
+  // registry's serving agent; its liveness proof is the live root listing.
+  const roots = [holder, claimant]
+  const server = await serveEditLockEndpoint(lifecycle, fixtureEndpoint(directory), new WeakMap(), undefined,
+    (agent, requireProof, transfer) => (transfer === true ? roots.includes(agent) : serving === agent))
+  const local = localDomain(lifecycle, server)
+  try {
+    await lifecycle.start(holder)
+    await lifecycle.service.acquire({ agent: holder }, { filePath: 'a.txt', cwd: root })
+    // The ordinary local retry dies at the currency gate while the registry
+    // names the holder (the claimant is not the serving runtime)…
+    await assert.rejects(local.retryStart(claimant), /no longer current/)
+    // …and the explicit transfer entry takes the binding over.
+    assert.equal(await local.transferStart(claimant), 'interrupted')
+    assert.equal(lifecycle.status(claimant).locks[0].status, 'user-interrupted')
+  } finally { await local.close() }
 })

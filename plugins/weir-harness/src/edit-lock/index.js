@@ -258,7 +258,7 @@ function registerLockTools(ctx, service) {
       output: text('message'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
         const unavailable = service.startupFailure(exec.agent)
-        if (unavailable) return { ...unavailable, message: `Edit Lock unavailable: ${unavailable.reason}. ${unavailable.bindingFailure?.retryable ? 'Do not retry failed edits: the binding is retried automatically when the user next sends a message, and /edit-lock retry also retries the connection; neither resumes editing by itself.' : 'Inspect Edit Lock maintenance before continuing.'}` }
+        if (unavailable) return { ...unavailable, message: `Edit Lock unavailable: ${unavailable.reason}. ${statusRetryHint(unavailable.bindingFailure)}` }
         const locks = await service.locks(exec)
         const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status} generation=${lock.generation}${lock.reason ? ` reason=${lock.reason}` : ''}`)
         // The reservation is part of what the holder needs to know: without it the
@@ -308,6 +308,41 @@ function describe(status) {
     lines.push(`Reserved for ${Math.ceil(retention.remainingMs / 60_000)} more minute(s); ${Math.round(retention.holdCumulativeMs / 60_000)} minute(s) used in this batch.`)
   }
   return lines.join('\n')
+}
+
+/** In-session binding-failure notice copy (change edit-lock-binding-transfer,
+ * design D4): the transferable class (same-process idle holder) is a calm
+ * self-heal announcement rather than an editing-disabled alarm and never
+ * carries the raw holder classification or the reservation warning; a mid-turn
+ * holder names the real state and the retry moment. Template layer stays
+ * English (AGENTS §3.7). @param {string} reason @param {any} failure */
+function bindingFailureNotice(reason, failure) {
+  if (failure?.code === 'binding-duplicate' && failure.holderKind === 'transferable') {
+    return "Edit Lock: this session's editing authority is held by an inactive attachment of this same session; it transfers automatically when you send a message."
+  }
+  if (failure?.code === 'binding-duplicate' && failure.holderKind === 'serving') {
+    return "Edit Lock: this session is being edited in another attachment right now; managed file editing stays unavailable until that turn finishes. Do not retry the failed edit; use /edit-lock retry (or the panel's Retry connection) once it finishes — retry does not Continue editing."
+  }
+  return `Edit Lock could not start this session's edit domain (${reason}); managed file editing is temporarily unavailable. ${failure?.code === 'binding-duplicate' ? 'Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`
+}
+
+/** Read-only binding-unavailable guidance tail for the tool/service surfaces
+ * (domainFor and edit_lock_status), split by the recorded holder class.
+ * @param {string} failure @param {any} bindingFailure */
+function bindingUnavailableMessage(failure, bindingFailure) {
+  const kind = bindingFailure?.holderKind
+  if (kind === 'transferable') return `Edit Lock binding is unavailable (${failure}). The holder is an inactive attachment of this same session: the binding transfers automatically when the user next sends a message, and /edit-lock retry also takes it over; neither resumes editing by itself. Do not retry the failed edit.`
+  if (kind === 'serving') return `Edit Lock binding is unavailable (${failure}). This session is being edited in another attachment right now; retry the connection once that turn finishes. Do not retry the failed edit.`
+  return `Edit Lock binding is unavailable (${failure}). Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.`
+}
+
+/** edit_lock_status read-only guidance tail, split by the recorded holder
+ * class (change edit-lock-binding-transfer). @param {any} bindingFailure */
+function statusRetryHint(bindingFailure) {
+  if (bindingFailure?.retryable !== true) return 'Inspect Edit Lock maintenance before continuing.'
+  if (bindingFailure.holderKind === 'transferable') return 'The holder is an inactive attachment of this same session: editing attaches automatically when you next send a message, and /edit-lock retry also takes it over; neither resumes editing by itself.'
+  if (bindingFailure.holderKind === 'serving') return 'This session is being edited in another attachment right now; /edit-lock retry retries the connection once that turn finishes — it does not resume editing by itself.'
+  return 'Do not retry failed edits: the binding is retried automatically when the user next sends a message, and /edit-lock retry also retries the connection; neither resumes editing by itself.'
 }
 
 /** Composition dependencies, not persisted settings. Defaults are the host paths.
@@ -474,11 +509,18 @@ return (ctx, config = {}) => {
       })
       let server
       try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding,
-        (agent, requireProof) => {
+        (agent, requireProof, transfer = false) => {
           if (closed || disposedAgents.has(agent)) return false
           const agents = ctx.get?.('agents')
           if (typeof agents?.get === 'function') {
-            if (agents.get(agent.id) !== agent) return false
+            if (transfer === true) {
+              // A transfer claimant is NEVER the registry's serving agent —
+              // that mismatch is the defect being repaired (change
+              // edit-lock-binding-transfer). Its liveness proof is listing
+              // among the live root agents; holder-side admission is the
+              // lifecycle's transferStart.
+              if (typeof agents.roots !== 'function' || !agents.roots().includes(agent)) return false
+            } else if (agents.get(agent.id) !== agent) return false
           } else if (requireProof) return false
           // Fresh creation keeps the established missing/throwing-registry
           // fallback. A reclaim or retry never uses that fallback as proof.
@@ -520,7 +562,7 @@ return (ctx, config = {}) => {
     await setupInFlight.get(agent)
     if (settled.has(agent)) return settled.get(agent)
     const failure = startFailures.get(agent)
-    if (failure && bindingFailures.has(agent)) throw new Error(`Edit Lock binding is unavailable (${failure}). Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.`)
+    if (failure && bindingFailures.has(agent)) throw new Error(bindingUnavailableMessage(failure, bindingFailures.get(agent)))
     if (failure) throw new Error(`this session has no Edit Lock domain: setup failed under the current preset generation (${failure}); the automatic re-bind was already attempted. Recovery: restart DeepSeek Harness or start a new conversation.`)
     // No fence match (foreign preset) or unmount: keep the stock refusal.
     return registry.forAgent(agent)
@@ -623,7 +665,17 @@ return (ctx, config = {}) => {
     if (platformFailure) return { state: 'unavailable', reason: platformFailure.message, bindingFailure: null }
     if (!agent || settled.has(agent) || !startFailures.has(agent)) return null
     let eligible = false
-    try { eligible = !closed && !disposedAgents.has(agent) && ownAgent(agent) && servingRuntime(agent.id) === agent } catch { /* no trusted live identity */ }
+    try {
+      const serving = servingRuntime(agent.id)
+      eligible = !closed && !disposedAgents.has(agent) && ownAgent(agent)
+        && (serving === agent
+          // The registry names ANOTHER live local agent — the dual-agent defect
+          // this change heals (edit-lock-binding-transfer). The recorded
+          // duplicate-binding failure is still THIS agent's honest panel state:
+          // show it, with its Retry action, instead of hiding behind the ghost's
+          // healthy binding. An empty registry stays hidden (unattestable).
+          || (serving !== undefined && bindingFailures.get(agent)?.code === 'binding-duplicate'))
+    } catch { /* no trusted live identity */ }
     if (!eligible) return null
     const failure = bindingFailures.get(agent)
     return { state: 'unavailable', reason: startFailures.get(agent),
@@ -700,6 +752,15 @@ return (ctx, config = {}) => {
     const agent = exec?.agent
     if (!closed && agent && !registry.rootOf(agent) && !startFailures.has(agent) && (agent?.session?.header?.delegationDepth ?? 0) === 0 && ownAgent(agent)) {
       await setupAgent(agent)
+      // The lazy re-bind is a driving ingress (design D1, change
+      // edit-lock-binding-transfer): when the re-setup just recorded a
+      // duplicate-binding failure, ONE transfer-capable retry runs here — an
+      // idle same-process holder hands the binding over mid-turn. The recorded
+      // failure then suppresses further attempts for the rest of this mount
+      // generation, so arbitrary write calls never loop retries.
+      if (bindingFailures.get(agent)?.code === 'binding-duplicate') {
+        try { await retryBinding(agent, 'write-guard') } catch { /* audited inside retryBinding; the denial below names the recorded cause */ }
+      }
       if (admitted()) return next()
     }
     const failure = /** @type {any} */ (agent) ? startFailures.get(agent) : undefined
@@ -728,8 +789,12 @@ return (ctx, config = {}) => {
    * re-bind, so the paths can never diverge. Root selection and successful
    * startup are separate: explicit binding retry reuses the existing scope
    * and root, while ordinary entry points never repeat a failed startup.
-   * @param {any} agent */
-  async function setupAgentOnce(agent, retry = false) {
+   * @param {any} agent @param {boolean} [retry] @param {boolean} [transfer]
+   * transfer (change edit-lock-binding-transfer) marks the driving-ingress
+   * transfer admission: the domain's transferStart re-adjudicates holder
+   * idleness at execution, and the post-bind registry-identity check is
+   * skipped because the registry legitimately still names the idle holder. */
+  async function setupAgentOnce(agent, retry = false, transfer = false) {
     if (closed || settled.has(agent)) return
     // No writer scope, root resolution, directory, reservation or session
     // authority may be installed when the mount preflight failed.
@@ -764,9 +829,10 @@ return (ctx, config = {}) => {
     }
     try {
       const domain = await domainOf(agent)
-      if (retry) await domain.retryStart(agent)
+      if (transfer) await domain.transferStart(agent)
+      else if (retry) await domain.retryStart(agent)
       else await domain.start(agent)
-      if (closed || disposedAgents.has(agent) || (retry && (!ownAgent(agent) || servingRuntime(agent.id) !== agent))) {
+      if (closed || disposedAgents.has(agent) || (retry && (!ownAgent(agent) || (!transfer && servingRuntime(agent.id) !== agent)))) {
         await domain.forget(agent)
         throw new Error('Edit Lock mount changed during binding')
       }
@@ -790,7 +856,7 @@ return (ctx, config = {}) => {
       if (failure?.code === 'binding-duplicate') bindingFailures.set(agent, failure)
       else bindingFailures.delete(agent)
       try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
-      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is temporarily unavailable. ${failure?.code === 'binding-duplicate' ? 'Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`) } catch { /* the panel record remains */ }
+      try { deliverLocal(agent, bindingFailureNotice(reason, failure)) } catch { /* the panel record remains */ }
       ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${reason}`)
     }
   }
@@ -806,20 +872,64 @@ return (ctx, config = {}) => {
     setupInFlight.set(agent, task)
     return task
   }
-  /** Trusted command ingress only. Same Agent/root/mount; no writer reinstallation.
-   * @param {any} agent */
-  async function retryBinding(agent) {
-    if (closed || disposedAgents.has(agent) || !ownAgent(agent) || servingRuntime(agent.id) !== agent) throw new Error('Edit Lock retry requires the current live Agent of this mount')
+  /** Trusted driving ingresses only: the explicit /edit-lock retry (and panel
+   * action), the message-armed pre-step retry, and the write-guard lazy
+   * re-bind. Same Agent/root/mount; no writer reinstallation. Every attempt
+   * past the eligibility gate is audited — a silently swallowed refusal is a
+   * defect (change edit-lock-binding-transfer, design D3/D5).
+   * @param {any} agent @param {'command' | 'message' | 'write-guard'} [via] */
+  async function retryBinding(agent, via = 'command') {
+    if (closed || disposedAgents.has(agent) || !ownAgent(agent)) throw new Error('Edit Lock retry requires the current live Agent of this mount')
     if (!registry.rootOf(agent) || bindingFailures.get(agent)?.code !== 'binding-duplicate') throw new Error('Edit Lock startup failure is not eligible for binding retry')
-    let task = setupInFlight.get(agent)
-    if (!task) {
-      const inner = setupAgentOnce(agent, true)
-      task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
-      setupInFlight.set(agent, task)
+    const cause = bindingFailures.get(agent)
+    const sessionId = sessionOf(agent) ?? null
+    const root = registry.rootOf(agent) ?? undefined
+    /** @param {string} result @param {Record<string, unknown>} [extra] */
+    const record = (result, extra = {}) => audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, {
+      kind: 'binding-transfer', sessionId, code: cause?.code ?? 'binding-duplicate', result, ...extra,
+    }, { root })
+    // Attestation trichotomy (design D5): the registry naming THIS claimant
+    // keeps the existing superseded rebind; naming ANOTHER live local agent
+    // routes to the transfer admission (holder idleness is re-adjudicated at
+    // execution, publisher-side); an unavailable or empty registry stays
+    // fail-closed — the holder cannot be attested.
+    let serving
+    try { serving = servingRuntime(agent.id) } catch { serving = undefined }
+    if (serving === undefined) {
+      const error = new Error('Edit Lock binding retry refused: the agent registry is unavailable or names no live agent for this session, so the holder cannot be attested. The recorded cause stays; a later retry remains possible.')
+      record('refused', { reason: 'registry-unattestable', detail: error.message })
+      throw error
     }
-    await task
+    const transfer = serving !== agent
+    try {
+      let task = setupInFlight.get(agent)
+      if (!task) {
+        const inner = setupAgentOnce(agent, true, transfer)
+        task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
+        setupInFlight.set(agent, task)
+      }
+      await task
+    } catch (error) {
+      record('refused', { reason: /** @type {any} */ (error)?.bindingFailure?.holderKind ?? 'retry-refused', detail: String(/** @type {any} */ (error)?.message ?? error) })
+      throw error
+    }
     const failure = startFailures.get(agent)
-    if (failure || !settled.has(agent)) throw new Error(failure ?? 'Edit Lock binding remains unavailable')
+    if (failure || !settled.has(agent)) {
+      // setupAgentOnce records instead of rethrowing: the refusal's holder
+      // class comes from the freshly re-recorded structured failure.
+      const error = new Error(failure ?? 'Edit Lock binding remains unavailable')
+      record('refused', { reason: bindingFailures.get(agent)?.holderKind ?? 'binding-unavailable', detail: error.message })
+      throw error
+    }
+    if (transfer) {
+      record('transferred', { holder: cause?.holderKind ?? null })
+    } else if (via === 'message') {
+      // The message-armed superseded success keeps its established audit shape
+      // (pinned by the editlock-binding-auto-retry integration scenario).
+      audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, {
+        kind: 'binding-auto-retry', sessionId, code: cause?.code ?? 'binding-duplicate', result: 'recovered',
+      }, { root })
+    }
     return 'Edit Lock connection recovered. Editing remains interrupted; use Continue editing when ready. No failed edit was replayed.'
   }
   ctx.on('agent/created', (/** @type {any} */ { agent }) => setupAgent(agent))
@@ -953,17 +1063,17 @@ return (ctx, config = {}) => {
       lastTurn.set(agent, turn)
       if (pendingBindingRetry.get(agent) === true) {
         pendingBindingRetry.delete(agent)
-        const cause = bindingFailures.get(agent)
         try {
-          await retryBinding(agent)
+          await retryBinding(agent, 'message')
           // The genuine message that armed this retry is also this turn's
           // Continue receipt: re-arm what setupAgentOnce(retry) cleared, then
-          // fall through to the ordinary auto-resume consumption below.
+          // fall through to the ordinary auto-resume consumption below. A
+          // transfer success (registry named an idle same-process holder)
+          // lands here identically: bound interrupted, then resumed in-turn.
           pendingAutoResume.set(agent, true)
-          audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, {
-            kind: 'binding-auto-retry', sessionId: sessionOf(agent) ?? null,
-            code: cause?.code ?? 'binding-duplicate', result: 'recovered',
-          }, { root: registry.rootOf(agent) ?? undefined })
+          // The outcome audit (transferred / refused) was written inside
+          // retryBinding — success AND refusal alike; the catch below is not
+          // a silent swallow any more (design D3).
         } catch { /* a safe refusal keeps the recorded cause; the turn proceeds with edits denied */ }
       }
       const domain = settled.get(agent)
