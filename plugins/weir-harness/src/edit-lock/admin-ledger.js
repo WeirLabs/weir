@@ -13,7 +13,16 @@ export const ONLINE_RECOVERY_ACTOR = 'online-administrator'
 const ACTORS = ['authenticated-settings-administrator', AUTOMATIC_RECOVERY_ACTOR, ONLINE_RECOVERY_ACTOR]
 export const digest = value => createHash('sha256').update(canonical(value)).digest('hex')
 export const dispositionFor = (state, op) => state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
-export const revokedOwner = (state, owner) => state.adminRecoveries?.some(row => row.owner === owner) === true
+/** Epoch-scoped revocation: a disposition revokes its owner's execution
+ * authority exactly at the recorded revokedEpoch. The owner stays revoked
+ * while its recorded epoch is within it; a trusted resume advances the epoch
+ * past every revokedEpoch and ends the revoked state atomically, without any
+ * ledger change (append-only: dispositions are never removed or altered). */
+export const revokedOwner = (state, owner) => {
+  const session = state.sessions?.find(s => s.sessionId === owner)
+  if (!session) return false
+  return state.adminRecoveries?.some(row => row.owner === owner && session.executionEpoch <= row.revokedEpoch) === true
+}
 
 function requireThat(condition, message) { if (!condition) throw new Error(`invalid administrative recovery: ${message}`) }
 function keys(value, names) {
@@ -28,21 +37,41 @@ export function validateAdminLedger(state) {
   // The v5 ledger exists only once an override lands; a v6 image may carry an
   // empty one (registry upgrade before any administrative recovery).
   if (state.adminRecoveries.length === 0) { requireThat(state.version === 6, 'nonempty v5 ledger'); return }
-  const ids = new Set(), owners = new Set()
+  const ids = new Set()
+  // An owner may be revoked again after a repair: its rows must carry strictly
+  // increasing revokedEpochs in ledger order (the epoch only ever advances).
+  const lastRevokedEpoch = new Map()
+  // Operations bound by an owner's earlier rows are already disposed; a later
+  // row of the same owner never re-covers them.
+  const covered = new Map()
+  // "Still revoked" is judged against the owner's LATEST row at image time.
+  const finalRevokedEpoch = new Map()
+  for (const row of state.adminRecoveries) {
+    if (natural(row?.revokedEpoch) && typeof row?.owner === 'string') {
+      finalRevokedEpoch.set(row.owner, Math.max(row.revokedEpoch, finalRevokedEpoch.get(row.owner) ?? -1))
+    }
+  }
   // Rows committed in one transaction share one expected/committed pair;
   // across transactions both revisions are non-decreasing.
   let lastExpected = -1, lastCommitted = -1
   for (const row of state.adminRecoveries) {
     keys(row, ['recoveryId', 'root', 'owner', 'expectedRevision', 'committedRevision', 'at', 'actor', 'reason', 'risk', 'confirmation', 'backup', 'operations', 'releasedLocks', 'revokedEpoch'])
-    requireThat(text(row.recoveryId, 128) && !ids.has(row.recoveryId) && text(row.root, 4096) && text(row.owner) && !owners.has(row.owner), 'identity')
-    ids.add(row.recoveryId); owners.add(row.owner)
+    requireThat(text(row.recoveryId, 128) && !ids.has(row.recoveryId) && text(row.root, 4096) && text(row.owner), 'identity')
+    ids.add(row.recoveryId)
+    requireThat(natural(row.revokedEpoch) && row.revokedEpoch > (lastRevokedEpoch.get(row.owner) ?? -1), 'revocation epoch progression')
+    lastRevokedEpoch.set(row.owner, row.revokedEpoch)
     requireThat(natural(row.expectedRevision) && natural(row.committedRevision) && row.committedRevision === row.expectedRevision + 1 && row.expectedRevision >= lastExpected && row.committedRevision >= lastCommitted && natural(row.at) && ACTORS.includes(row.actor) && text(row.reason, 2000), 'audit')
     lastExpected = row.expectedRevision; lastCommitted = row.committedRevision
     requireThat(row.risk === LATE_WRITER_RISK && /^[a-f0-9]{64}$/.test(row.confirmation), 'risk acknowledgement')
     keys(row.backup, ['file', 'sha256', 'bytes'])
     requireThat(row.backup.file === `admin-backup-${digest([row.root, row.recoveryId])}.json` && /^[a-f0-9]{64}$/.test(row.backup.sha256) && natural(row.backup.bytes) && row.backup.bytes > 0, 'backup')
     const session = state.sessions.find(s => s.sessionId === row.owner)
-    requireThat(session?.interrupted && natural(row.revokedEpoch) && session.executionEpoch >= row.revokedEpoch && !state.locks.some(l => l.owner === row.owner), 'revoked owner')
+    requireThat(session && session.executionEpoch >= row.revokedEpoch, 'revoked owner epoch')
+    // The row-level invariants of an unsettled revocation bind only an owner
+    // still revoked at image time; a repaired owner's historical rows stand on
+    // their append-only bindings alone.
+    const stillRevoked = session.executionEpoch <= (finalRevokedEpoch.get(row.owner) ?? -1)
+    requireThat(!stillRevoked || (session.interrupted && !state.locks.some(l => l.owner === row.owner)), 'revoked owner')
     requireThat(Array.isArray(row.operations) && row.operations.length > 0, 'operations')
     const opIds = new Set()
     for (const item of row.operations) {
@@ -52,7 +81,14 @@ export function validateAdminLedger(state) {
       const op = state.operations.find(o => o.sessionId === row.owner && o.operationId === item.operationId)
       requireThat(op?.phase === 'unknown' && digest(op) === item.sha256, 'immutable operation binding')
     }
-    requireThat(state.operations.filter(o => o.sessionId === row.owner && (o.phase === 'unknown' || o.phase === 'publishing' || o.phase === 'prepared')).every(o => opIds.has(o.operationId)), 'complete unresolved owner scope')
+    // The row's responsibility is exactly the owner's unresolved operations
+    // originating at or before its revokedEpoch (that epoch never ran, so none
+    // originate AT it), excluding operations its earlier rows already cover.
+    const disposed = covered.get(row.owner) ?? new Set()
+    requireThat(state.operations.filter(o => o.sessionId === row.owner && (o.phase === 'unknown' || o.phase === 'publishing' || o.phase === 'prepared')
+      && (typeof o.origin?.executionEpoch !== 'number' || o.origin.executionEpoch <= row.revokedEpoch)
+      && !disposed.has(o.operationId)).every(o => opIds.has(o.operationId)), 'complete unresolved owner scope')
+    covered.set(row.owner, new Set([...disposed, ...opIds]))
     requireThat(row.confirmation === digest({ root: row.root, owner: row.owner, expectedRevision: row.expectedRevision, operationIds: [...opIds].sort(), risk: LATE_WRITER_RISK }), 'scoped confirmation')
     requireThat(Array.isArray(row.releasedLocks), 'released locks')
     const resources = new Set()

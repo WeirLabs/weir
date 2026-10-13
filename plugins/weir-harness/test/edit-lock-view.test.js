@@ -31,7 +31,8 @@ it('derives one state per session, in precedence order', () => {
   expect(view(base({ state: 'recovering', locks: [lock('/w/a', 's1', 'abnormal', { reason: 'provider-error' })] })).state).toBe('attention')
   // Stopped wins over everything: the session cannot act until a human continues.
   expect(view(base({ state: 'stopped', locks: [lock('/w/a', 's1', 'abnormal', { reason: 'x' })] })).state).toBe('stopped')
-  // Revoked wins even over stopped: administrative revocation is terminal.
+  // Revoked wins even over stopped: the administrative revocation is a distinct
+  // durable fact, though repairable through the trusted Continue path.
   expect(view(base({ state: 'stopped', revoked: true, locks: [lock('/w/a', 's1', 'user-interrupted')] })).state).toBe('revoked')
   // Without the flag nothing changes.
   expect(view(base({ state: 'stopped', revoked: null })).state).toBe('stopped')
@@ -149,9 +150,14 @@ it('a cold view lists the domain\'s locks so the panel can show who else holds f
   expect(files.map((file) => [file.name, file.mine, file.action])).toEqual([['a.txt', true, 'release'], ['b.txt', false, 'unlock']])
 })
 
-it('an administratively revoked cold session is terminal, ahead of stopped', () => {
-  const image = imageOf({ locks: [], adminRecoveries: [{ recoveryId: 'r1', root: '/w', owner: 's1', committedRevision: 4, operations: [] }] })
+it('an administratively revoked cold session renders revoked, ahead of stopped, until its epoch advances past the disposition', () => {
+  const image = imageOf({ locks: [], adminRecoveries: [{ recoveryId: 'r1', root: '/w', owner: 's1', committedRevision: 4, operations: [], revokedEpoch: 3 }] })
   expect(coldView(image).state).toBe('revoked')
+  // Repair is epoch-scoped: once the recorded epoch has advanced past every
+  // revokedEpoch the same ledger row no longer marks the session revoked.
+  const repaired = imageOf({ locks: [], sessions: [{ sessionId: 's1', executionEpoch: 4, interrupted: false }],
+    adminRecoveries: [{ recoveryId: 'r1', root: '/w', owner: 's1', committedRevision: 4, operations: [], revokedEpoch: 3 }] })
+  expect(coldView(repaired).state).toBe('idle')
 })
 
 it('cold retention settles against the read instant, exactly like the live read-time settlement', () => {

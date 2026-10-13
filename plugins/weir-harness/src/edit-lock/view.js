@@ -63,8 +63,9 @@ export function buildView({ status, locks, recoveryState, cwd, root, mode, now }
     ? recoveryState.pausedUntil : null
   /** @type {typeof VIEW_STATES[number]} */
   let state
-  // Revoked wins over everything: administrative revocation is terminal and
-  // no action (resume, confirm, release) can ever apply to this session again.
+  // Revoked wins over everything: an administrative revocation is a distinct,
+  // durable fact the user must see. It is repairable, not terminal: the panel
+  // offers the same continue-editing path as for a stopped session.
   if (status.revoked === true) state = 'revoked'
   else if (status.state === 'stopped' || status.state === 'resuming') state = 'stopped'
   else if (status.state === 'recovering' || own.some(lock => lock.status === 'abnormal')) state = 'attention'
@@ -117,8 +118,10 @@ export function unavailableView(reason = null, bindingFailure = null) {
  * Cold-session view (design D2): map one validated authority image into the
  * same buildView input a live status read would produce, so a restored session
  * shows its TRUE recorded state — interrupted as stopped, an ADMIN OVERRIDE as
- * terminal revoked, its own locks and the domain's locks, retention settled
- * against the read instant — never a reasonless "starting". The `cold` marker
+ * repairable revoked (epoch-scoped: the owner is revoked only while its
+ * recorded epoch is within the disposition's revokedEpoch), its own locks and
+ * the domain's locks, retention settled against the read instant — never a
+ * reasonless "starting". The `cold` marker
  * tells the panel to replace live-only actions with activation guidance, and
  * the auto-resume gate travels with the view so the guidance matches the
  * committed setting. Pure like buildView: no IO, no clock, no ctx — the caller
@@ -141,7 +144,7 @@ export function buildColdView({ image, sessionId, cwd, root, autoResume = true, 
   const session = sessions.find(row => row?.sessionId === sessionId) ?? null
   // The manager derives the revoked flag from the administrative ledger at
   // status time (revokedOwner); the cold read applies the same rule to the image.
-  const revoked = adminRecoveries.some(row => row?.owner === sessionId)
+  const revoked = session != null && adminRecoveries.some(row => row?.owner === sessionId && Number.isSafeInteger(row?.revokedEpoch) && session.executionEpoch <= row.revokedEpoch)
   // Read-time retention settlement, byte-equivalent to the kernel's settleHold:
   // a hold counts only while the session owns a lock, and the remaining budget
   // is computed against the read instant, so a missed expiry timer can never

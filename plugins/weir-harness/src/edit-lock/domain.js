@@ -9,7 +9,8 @@ export function localDomain(lifecycle, endpoint) {
     service: lifecycle.service,
     /** @param {object} agent */
     start: agent => endpoint?.startLocal ? endpoint.startLocal(agent) : lifecycle.start(agent),
-    /** Trusted binding retry; never reopens permanently revoked authority. @param {object} agent */
+    /** Trusted binding retry; binds a revoked session as interrupted without
+     * restoring authority (the trusted resume path does that). @param {object} agent */
     retryStart: async agent => {
       lifecycle.assertStartable(agent)
       return endpoint?.startLocal ? endpoint.startLocal(agent, true) : lifecycle.start(agent)

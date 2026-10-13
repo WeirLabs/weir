@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
 			// Continue editing is one human action: restore authority, then confirm the
 			// retained files (each through the ordinary per-file check).
 			// confirm --all only when something waits, so no empty "Confirmed 0 of 0" is recorded.
-			if (state === "stopped") return { verbs: view.files.some((file) => file.mine && file.status === "user-interrupted") ? ["resume", "confirm --all"] : ["resume"], label: "editLockResume" };
+			if (state === "stopped" || state === "revoked") return { verbs: view.files.some((file) => file.mine && file.status === "user-interrupted") ? ["resume", "confirm --all"] : ["resume"], label: "editLockResume" };
 			if (state === "confirm") return { verb: "confirm --all", label: "editLockConfirmAll" };
 			if (state === "holding" && view.ownCount > 0) return { verbs: view.files.filter((file) => file.mine && file.action === "release").map(rowCommand), label: "editLockReleaseAll" };
 			return null;
@@ -209,7 +209,8 @@ window.__ModuleLoader__.load({
 				] }, "head"),
 				view?.reason && !bindingRefusal ? jsx("div", { style: { ...errorStyle, wordBreak: "break-word" }, "data-weir-edit-lock-reason": "", children: view.reason }, "reason") : null,
 				view?.bindingFailure ? jsx("div", { style: mutedStyle, "data-weir-edit-lock-binding": "", children: t(`editLockBinding_${view.bindingFailure.holderKind ?? "unknown"}`) }, "binding") : null,
-				state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
+				state === "revoked" && !cold ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-revoked": "", children: t("editLockRevokedHint") }, "revoked") : null,
+				cold && state === "revoked" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdRevokedManual" : "editLockColdRevokedAuto") }, "cold") : null,
 				cold && state === "stopped" ? jsx("div", { style: { ...mutedStyle, marginTop: "4px" }, "data-weir-edit-lock-cold": "", children: t(view.autoResume === false ? "editLockColdResumeManual" : "editLockColdResumeAuto") }, "cold") : null,
 				// Usage is historical; only the live driver's explicit deadline signals a pause.
 				// Follow-up locale keys: editLockCleanupOnly, editLockRecoveryUsage,

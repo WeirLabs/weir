@@ -42,6 +42,9 @@ async function automaticSettlementRecords(previous, base, { liveness, root, proc
   const unknownByOwner = new Map()
   for (const operation of base.operations) {
     if (operation.phase !== 'unknown') continue
+    // An operation an earlier disposition already covers stays disposed; a
+    // re-revocation after repair binds only genuinely new unknowns.
+    if (dispositionFor(base, operation)) continue
     const ops = unknownByOwner.get(operation.sessionId) ?? []
     ops.push(operation)
     unknownByOwner.set(operation.sessionId, ops)
@@ -370,7 +373,8 @@ function managerCore(store, kernel, { processIdentity = null, root = null, write
       const captured = { ...execution }
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
-        checkNotRevoked(captured.sessionId)
+        // A revoked owner is NOT refused here: receipt issuance is half of the
+        // trusted repair path; the epoch binding still fences stale authority.
         return draft.authority.issueExecutionReceipt(captured, requestId)
       }, { kind: 'none' }).then(async receipt => {
         const cancellation = cancelled.get(captured.sessionId)
@@ -389,7 +393,8 @@ function managerCore(store, kernel, { processIdentity = null, root = null, write
       const captured = { ...execution }
       return transact(draft => {
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
-        checkNotRevoked(captured.sessionId)
+        // A revoked owner is NOT refused here: the resume commits the epoch
+        // advance that atomically ends the revocation (no ledger change).
         return draft.operations.resume(captured, requestId, receipt)
       }, () => sessionResources(captured.sessionId)).then(async resumed => {
         const cancellation = cancelled.get(captured.sessionId)
@@ -664,7 +669,7 @@ function managerCore(store, kernel, { processIdentity = null, root = null, write
         if (revokedOwner(state, input.owner)) refuse('invalid-recovery', 'owner already revoked by administrative recovery')
         const session = state.sessions.find((/** @type {any} */ row) => row.sessionId === input.owner)
         if (!session || !session.interrupted) refuse('invalid-recovery', 'Only an interrupted historical owner can be overridden')
-        const unresolved = state.operations.filter((/** @type {any} */ op) => op.sessionId === input.owner && ['prepared', 'publishing', 'unknown'].includes(op.phase))
+        const unresolved = state.operations.filter((/** @type {any} */ op) => op.sessionId === input.owner && ['prepared', 'publishing', 'unknown'].includes(op.phase) && !dispositionFor(state, op))
         if (!(unresolved.length > 0 && unresolved.every((/** @type {any} */ op) => op.phase === 'unknown'))) refuse('invalid-recovery', 'Recover to stable unknown history before administrative override')
         if (canonical(unresolved.map((/** @type {any} */ op) => op.operationId).sort()) !== canonical(scoped.operationIds)) refuse('invalid-recovery', 'Confirm every unresolved operation for this owner')
         const bytes = store.currentBytes()
