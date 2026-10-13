@@ -1694,17 +1694,21 @@ window.__ModuleLoader__.load({
 			}
 			return WeirTabChipTitle;
 		};
-		// Blackboard session-header quick entry (D2): a plain icon button — no
-		// live lane state to poll, so no chunk and no model; hover paint follows
-		// the capability badge's inline-style pattern.
+		// Blackboard session-header quick entry (D2): a bordered badge pill — glyph
+		// plus the localized tab label — so it reads as a control next to the
+		// worktree pill. No live lane state to poll, so no chunk and no model; hover
+		// paint follows the capability badge's inline-style pattern.
 		const blackboardPillStyle = {
-			display: "inline-flex", alignItems: "center", justifyContent: "center",
-			padding: "2px 5px", border: "none", borderRadius: "var(--dsw-radius-sm, 6px)",
-			background: "none", cursor: "pointer", color: "var(--dsw-alias-label-tertiary)"
+			display: "inline-flex", alignItems: "center", gap: "5px",
+			padding: "1px 7px", fontSize: "11px", lineHeight: "16px", fontWeight: 600,
+			color: "var(--dsw-alias-label-secondary)", cursor: "pointer", background: "none",
+			border: "1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.35))",
+			borderRadius: "var(--dsw-radius-sm)"
 		};
 		function BlackboardPill(props) {
 			const title = typeof props.t === "function" ? props.t("blackboardPillTitle") : "Open the session blackboard";
-			return react_jsx_runtime.jsx("button", {
+			const label = typeof props.t === "function" ? props.t("blackboardTabLabel") : "Blackboard";
+			return react_jsx_runtime.jsxs("button", {
 				type: "button",
 				style: blackboardPillStyle,
 				onClick: () => props.openPanel?.(),
@@ -1713,7 +1717,10 @@ window.__ModuleLoader__.load({
 				title,
 				"aria-label": title,
 				"data-weir-blackboard-pill": "",
-				children: react_jsx_runtime.jsx(BlackboardGlyph, { size: 13 })
+				children: [
+					react_jsx_runtime.jsx(BlackboardGlyph, { size: 11 }, "icon"),
+					react_jsx_runtime.jsx("span", { children: label }, "label")
+				]
 			});
 		}
 		// ---- Worktree lanes surfaces ----
