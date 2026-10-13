@@ -169,6 +169,17 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     }
     return result
   }
+  /** Holder liveness signal (change edit-lock-binding-transfer, task 1.1): the
+   * DSH agent `status` vocabulary is exactly 'idle' | 'running' (idle covers the
+   * idle and maintenance phases). Only 'idle' proves the holder is not mid-turn;
+   * a missing, non-string or throwing read is undeterminable and never admits.
+   * @param {object} holder @returns {string | undefined} */
+  function holderStatus(holder) {
+    try {
+      const status = /** @type {any} */ (holder)?.status
+      return typeof status === 'string' ? status : undefined
+    } catch { return undefined }
+  }
   /** Read-only startup admission. A revoked session is startable: it binds as
    * interrupted and its revocation ends only through the trusted resume path
    * (the epoch advance is the repair; binding alone grants no authority).
@@ -195,11 +206,17 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     if (prior) {
       let serving
       try { serving = options.servingRuntime?.(sessionId) } catch { /* unknown: refuse */ }
+      // A registry-named local holder that is provably not mid-turn is the
+      // TRANSFERABLE class (serving-idle): passive paths still refuse, but the
+      // refusal announces the automatic takeover instead of a window hunt.
+      const attestation = serving === prior[0]
+        ? (/** @type {any} */ (prior[0]).remote !== true && holderStatus(prior[0]) === 'idle' ? 'serving-idle' : 'serving')
+        : 'unknown'
       const refusal = () => {
-        const reason = bindingRefusalReason(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown')
+        const reason = bindingRefusalReason(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, attestation)
         // Remote callers render after their retry budget; local callers have no wire.
         return Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`),
-          { bindingFailure: bindingFailure(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, serving === prior[0] ? 'serving' : 'unknown') })
+          { bindingFailure: bindingFailure(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, attestation) })
       }
       // Remote entries are channel proxies, NOT runtime identities. Only the
       // endpoint's nonce attestation may reclaim them (including same-process).
@@ -235,6 +252,39 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       }
     })()
     return entry.ready
+  }
+  /** Trusted driving-ingress transfer admission (change
+   * edit-lock-binding-transfer, design D1/D2): take the binding from a
+   * same-process, local (non-remote-proxy) holder that is registry-named and
+   * provably not mid-turn, reusing the exact superseded-reclaim semantics —
+   * durable revocation and forget, no lock is released, the claimant binds as
+   * interrupted. Every other shape (remote proxy, holder not registry-named,
+   * mid-turn, undeterminable liveness, unavailable registry) delegates to the
+   * ordinary start(), keeping its fail-closed refusal and its classification.
+   * Passive entry points (creation setup, catch-up, preset switch) never call
+   * this. @param {object} agent @returns {Promise<'active'|'interrupted'>} */
+  function transferStart(agent) {
+    if (closed) return Promise.reject(new Error('edit lifecycle closed'))
+    if (entries.has(agent)) return Promise.reject(new Error('agent already registered'))
+    const sessionId = sessionForAgent(agent)
+    if (!sessionId) return Promise.reject(new Error('unregistered lifecycle agent'))
+    const prior = [...entries].find(([, entry]) => entry.sessionId === sessionId)
+    if (!prior) return start(agent)
+    let serving
+    try { serving = options.servingRuntime?.(sessionId) } catch { /* unattestable: fall through to the ordinary refusal */ }
+    if (/** @type {any} */ (prior[0]).remote !== true && serving === prior[0] && holderStatus(prior[0]) === 'idle') {
+      // Concurrent claimants re-check after the shared revocation settles;
+      // no file lock is released and the claimant starts interrupted. A failed
+      // revocation keeps the transferable refusal: the holder entry is retained
+      // (start()'s reclaim-failure discipline) and the next driving ingress
+      // re-attempts the transfer.
+      return forget(prior[0]).then(() => start(agent), () => {
+        const reason = bindingRefusalReason(process.pid, 'serving-idle')
+        throw Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`),
+          { bindingFailure: bindingFailure(process.pid, 'serving-idle') })
+      })
+    }
+    return start(agent)
   }
   return Object.freeze({
     assertStartable,
@@ -283,6 +333,8 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       pendingRequests(exec) { return negotiation.pending(host.executionFor(exec.agent).sessionId) },
     }),
     start,
+    /** Explicit driving-ingress transfer entry; ordinary start() never transfers. */
+    transferStart,
     stop,
     /** Normal end of an agent: an agent that is still active (never stopped,
      * not recovering) can never edit again, so its active locks are released

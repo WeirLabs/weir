@@ -172,6 +172,22 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, 
             const agent = Object.freeze({ id: sessionId, remote: true })
             sinks.set(agent, event => transport.notify(event))
             inner = createEditLockPeer(lifecycle, agent)
+            // A retry open is a trusted driving ingress (change
+            // edit-lock-binding-transfer): when the ordinary start is refused by
+            // a duplicate LOCAL holder, the transfer admission re-adjudicates the
+            // holder's idleness publisher-side. start() runs first and refuses
+            // without side effects, so a non-transferable refusal keeps its
+            // original classification and is evaluated exactly once per caller.
+            if (message.request.retry === true && typeof lifecycle.transferStart === 'function') {
+              try {
+                const state = await lifecycle.start(agent)
+                return { peer: inner, state }
+              } catch (error) {
+                if (/** @type {any} */ (error)?.bindingFailure?.code !== 'binding-duplicate') throw error
+                const state = await lifecycle.transferStart(agent)
+                return { peer: inner, state }
+              }
+            }
             const state = await lifecycle.start(agent)
             return { peer: inner, state }
           }, { nonce: typeof message.request.nonce === 'string' && message.request.nonce.length <= 256 ? message.request.nonce : undefined,
@@ -199,14 +215,17 @@ export async function serveEditLockEndpoint(lifecycle, endpoint, sinks, attest, 
   })
   return Object.freeze({
     bindings: arbitration.bindings,
-    /** @param {any} agent @param {boolean} [retry] */
-    startLocal(agent, retry = false) {
+    /** @param {any} agent @param {boolean} [retry] @param {boolean} [transfer]
+     * transfer: the claimant arrives through a driving ingress whose registry
+     * identity is the defect being repaired — the lifecycle transfer admission
+     * decides, and the currency proof relaxes accordingly (isCurrentLocal). */
+    startLocal(agent, retry = false, transfer = false) {
       return arbitration.openLocal(agent.id, async reclaimed => {
         const current = () => {
-          try { return !closed && (isCurrentLocal ? isCurrentLocal(agent, reclaimed || retry) : !(reclaimed || retry)) } catch { return false }
+          try { return !closed && (isCurrentLocal ? isCurrentLocal(agent, reclaimed || retry, transfer) : !(reclaimed || retry)) } catch { return false }
         }
         if (!current()) throw new Error('local edit binding claimant is no longer current')
-        const state = await lifecycle.start(agent)
+        const state = transfer && typeof lifecycle.transferStart === 'function' ? await lifecycle.transferStart(agent) : await lifecycle.start(agent)
         if (!current()) {
           // A stopped entry still has subtractive cleanup authority. Forget it
           // only after durable revocation; never dispose (which releases locks).
