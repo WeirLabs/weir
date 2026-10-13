@@ -13,8 +13,13 @@ window.__ModuleLoader__.load({
 		// /api/weirBlackboard/<method> payload shape.
 		//
 		// WIRE CONTRACT (pinned by src/blackboard/remote.js): namespace
-		// weirBlackboard, five methods, each taking the acting session as the
-		// `agentId` lookup parameter plus one JSON `args` object. The channel
+		// weirBlackboard. The seven board verbs each take the acting session as
+		// the `agentId` lookup parameter plus one JSON `args` object. The eighth
+		// method, resolve, is the deliberate exception: the browsing session id
+		// crosses as a BARE JSON `agentId` (no lookup, no scope, no inner args)
+		// because the gateway's agent lookup refuses subagent-owned sessions
+		// before the service can run — resolve is how a subagent session page
+		// learns the conversation root whose board it binds. The channel
 		// rides the RAW gateway carrier exactly like the capability reads (the
 		// hand-written src-json contribution cannot mount through
 		// ctx.remote.$mount — its strict-codec gate rejects src-json codecs),
@@ -97,6 +102,33 @@ window.__ModuleLoader__.load({
 				/** markPromoted({ key, destination }) — the panel's 1:1 mirror of the agent tool (the agent marks; the panel only reads the marker). */
 				markPromoted: (key, destination) => call("markPromoted", { key, destination }),
 			};
+		}
+
+		/**
+		 * The panel's root resolution (slice 4): POST weirBlackboard/resolve
+		 * with the browsing session id as a bare JSON `agentId` — NO inner
+		 * args object, NO agent lookup (the gateway's lookup would refuse a
+		 * subagent-owned session before the service runs). ok with a non-empty
+		 * value.sessionId folds to { ok: true, sessionId }; every other shape
+		 * (failure envelope, unusable payload, carrier throw) folds to
+		 * { ok: false, error } so the panel can fall back to the browsing id.
+		 */
+		function resolveBoardSession(rawCall, sessionId) {
+			let pending;
+			try {
+				pending = Promise.resolve(rawCall("weirBlackboard/resolve", { args: { agentId: sessionId } }));
+			} catch (cause) {
+				return Promise.resolve({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } });
+			}
+			return pending.then((result) => {
+				const folded = foldRemoteResult(result);
+				if (folded.ok === true) {
+					const root = folded.value?.sessionId;
+					if (typeof root === "string" && root !== "") return { ok: true, sessionId: root };
+					return { ok: false, error: { code: "bad-payload", message: "resolve returned no usable session id" } };
+				}
+				return { ok: false, error: folded.error };
+			}, (cause) => ({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } }));
 		}
 
 		// ---- entries ----
@@ -358,6 +390,7 @@ window.__ModuleLoader__.load({
 		exports.WATCH_GIVE_UP_AFTER = WATCH_GIVE_UP_AFTER;
 		exports.foldRemoteResult = foldRemoteResult;
 		exports.createBlackboardChannel = createBlackboardChannel;
+		exports.resolveBoardSession = resolveBoardSession;
 		exports.entryRowOf = entryRowOf;
 		exports.listOutcomeOf = listOutcomeOf;
 		exports.readOutcomeOf = readOutcomeOf;

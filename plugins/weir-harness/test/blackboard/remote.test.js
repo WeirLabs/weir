@@ -222,12 +222,12 @@ describe('remote typed failures and the contribution', () => {
     expect(caught.code).toBe('channel-unavailable')
   })
 
-  it('the hand-written contribution pins the wire contract: namespace, seven methods, agent lookup + args', async () => {
+  it('the hand-written contribution pins the wire contract: namespace, the seven agent-lookup verbs plus the scope-free resolve', async () => {
     const contribution = blackboardRemoteContribution()
     expect(contribution.package).toBe('weir-blackboard')
     expect(contribution.face).toBe('host')
-    expect(contribution.invocations.map((invocation) => invocation.method)).toEqual(BLACKBOARD_REMOTE_METHODS)
-    for (const invocation of contribution.invocations) {
+    expect(contribution.invocations.map((invocation) => invocation.method)).toEqual([...BLACKBOARD_REMOTE_METHODS, 'resolve'])
+    for (const invocation of contribution.invocations.slice(0, BLACKBOARD_REMOTE_METHODS.length)) {
       expect(invocation.namespace).toBe(BLACKBOARD_REMOTE_NAMESPACE)
       expect(invocation.service).toBe(BLACKBOARD_REMOTE_SERVICE_KEY)
       expect(invocation.invocation).toEqual({ kind: 'direct' })
@@ -238,6 +238,52 @@ describe('remote typed failures and the contribution', () => {
       ])
       expect(invocation.result).toEqual({ mode: 'src-json' })
     }
+    // resolve is the eighth invocation and deliberately breaks the shared
+    // shape: NO scope, NO agent lookup — the browsing session id crosses as
+    // a bare JSON `agentId` (a subagent-owned session cannot pass the lookup).
+    const resolve = contribution.invocations[BLACKBOARD_REMOTE_METHODS.length]
+    expect(resolve.namespace).toBe(BLACKBOARD_REMOTE_NAMESPACE)
+    expect(resolve.service).toBe(BLACKBOARD_REMOTE_SERVICE_KEY)
+    expect(resolve.invocation).toEqual({ kind: 'direct' })
+    expect('scope' in resolve).toBe(false)
+    expect(resolve.parameters).toEqual([
+      { name: 'sessionId', wire: 'agentId', source: 'json', codec: { mode: 'src-json' } },
+    ])
+    expect(resolve.result).toEqual({ mode: 'src-json' })
+  })
+})
+
+
+describe('remote resolve (the panel root resolution: no lookup, a bare JSON session id)', () => {
+  it('answers the bridge rootOf face and degrades to the browsing id without the face or on a bad face value', async () => {
+    const bridge = makeBridge()
+    const withRoot = createBlackboardRemoteService({ bridge: () => ({ ...bridge.faces, rootOf: async (id) => (id === 'child' ? 'root-session' : id) }) })
+    expect((await withRoot.resolve('child'))).toEqual({ sessionId: 'root-session' })
+    expect((await withRoot.resolve('root-session'))).toEqual({ sessionId: 'root-session' })
+    // A bridge without the face (an older blackboard plugin) degrades to the browsing id.
+    expect((await serviceOf(bridge).resolve('child'))).toEqual({ sessionId: 'child' })
+    // A face returning an unusable id falls back to the browsing id.
+    const garbage = createBlackboardRemoteService({ bridge: () => ({ ...bridge.faces, rootOf: async () => '' }) })
+    expect((await garbage.resolve('child'))).toEqual({ sessionId: 'child' })
+  })
+
+  it('surfaces the typed failures: bridge-absent, unknown-session, channel-unavailable', async () => {
+    const absent = createBlackboardRemoteService({ bridge: () => null })
+    let caught
+    try { (await absent.resolve('child')) } catch (error) { caught = error }
+    expect(caught).toBeInstanceOf(BlackboardRemoteError)
+    expect(caught.code).toBe('bridge-absent')
+    const bridge = makeBridge()
+    for (const bad of ['', 42, null, undefined]) {
+      let badCaught
+      try { (await serviceOf(bridge).resolve(bad)) } catch (error) { badCaught = error }
+      expect(badCaught).toBeInstanceOf(BlackboardRemoteError)
+      expect(badCaught.code).toBe('unknown-session')
+    }
+    const gated = createBlackboardRemoteService({ bridge: () => bridge.faces, ensureRegistered: () => false })
+    let channelCaught
+    try { (await gated.resolve('child')) } catch (error) { channelCaught = error }
+    expect(channelCaught.code).toBe('channel-unavailable')
   })
 })
 

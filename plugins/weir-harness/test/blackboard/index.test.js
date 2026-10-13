@@ -10,8 +10,8 @@ import { createBlackboardPlugin, DEFAULT_WRITE_TOKEN_TTL_MINUTES, resolveWriteTo
 
 const TTL = 60_000
 
-/** @param {{ settings?: object, sessions?: Map<string, object>, toolsView?: (agent: any) => { visible: Set<string> } }} [options] */
-function mountStub({ settings = {}, sessions = new Map(), toolsView, kernel = createBlackboardKernel } = {}) {
+/** @param {{ settings?: object, sessions?: Map<string, object>, toolsView?: (agent: any) => { visible: Set<string> }, readSession?: (id: string) => Promise<any> }} [options] */
+function mountStub({ settings = {}, sessions = new Map(), toolsView, kernel = createBlackboardKernel, readSession } = {}) {
   /** @type {any[]} */
   const registered = []
   /** @type {Map<string, Function>} */
@@ -36,6 +36,7 @@ function mountStub({ settings = {}, sessions = new Map(), toolsView, kernel = cr
     get: (/** @type {string} */ name) => {
       if (name === 'weirSettings') return { get: (/** @type {string} */ section) => settings[section] }
       if (name === 'sessions') return { get: (/** @type {string} */ id) => sessions.get(id) }
+      if (name === 'sessionQuery') return readSession ? { readSession } : undefined
       return undefined
     },
     emit: (/** @type {string} */ type, /** @type {object} */ record) => { emitted.push({ type, record }) },
@@ -150,6 +151,74 @@ describe('board identity across the delegation tree', () => {
     const mount = mountStub({ sessions: new Map() })
     const service = mount.provided.get('weirBlackboard')
     expect(service.boardOf(childExec('child', 'root').agent)).toBe('root')
+  })
+})
+
+
+describe('bridge rootOf (the panel resolve face: a bare session id resolves the conversation root)', () => {
+  it('walks the live sessions registry to the depth-0 root; a root is its own answer', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const sessions = new Map([
+      ['root', { id: 'root', header: { delegationDepth: 0 } }],
+      ['mid', { id: 'mid', header: { delegationDepth: 1, parentSession: 'root' } }],
+    ])
+    const mount = mountStub({ sessions })
+    const faces = blackboardRemoteBridge()
+    expect(typeof faces.rootOf).toBe('function')
+    expect((await faces.rootOf('mid'))).toBe('root')
+    expect((await faces.rootOf('root'))).toBe('root')
+    mount.dispose()
+  })
+
+  it('falls back to the durable header via sessionQuery for a child without a live registry entry', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const mount = mountStub({
+      sessions: new Map([['root', { id: 'root', header: { delegationDepth: 0 } }]]),
+      readSession: async (/** @type {string} */ id) => (id === 'cold' ? { session: { id: 'cold', delegationDepth: 1, parentSession: 'root' }, events: [] } : null),
+    })
+    expect((await blackboardRemoteBridge().rootOf('cold'))).toBe('root')
+    mount.dispose()
+  })
+
+  it('a depth-0 fork carrying a parentSession is its own root (resolveDurableRoot semantics)', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const mount = mountStub({
+      sessions: new Map([['fork', { id: 'fork', header: { delegationDepth: 0, parentSession: 'elsewhere' } }]]),
+    })
+    expect((await blackboardRemoteBridge().rootOf('fork'))).toBe('fork')
+    mount.dispose()
+  })
+
+  it('a broken chain degrades to the deepest known ancestor, never a guessed root', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const mount = mountStub({
+      sessions: new Map([['mid', { id: 'mid', header: { delegationDepth: 1, parentSession: 'ghost' } }]]),
+      readSession: async () => null, // 'ghost' has no live entry and no readable durable header
+    })
+    expect((await blackboardRemoteBridge().rootOf('mid'))).toBe('ghost')
+    mount.dispose()
+    // A depth>0 header without a parent ends the walk where it stands.
+    const orphan = mountStub({ sessions: new Map([['lone', { id: 'lone', header: { delegationDepth: 2 } }]]) })
+    expect((await blackboardRemoteBridge().rootOf('lone'))).toBe('lone')
+    orphan.dispose()
+  })
+
+  it('a parent cycle keeps the deepest known ancestor; the MAX_ANCESTORS hop cap stops an endless chain', async () => {
+    const { blackboardRemoteBridge } = await import('../../src/blackboard/remote.js')
+    const cyclic = mountStub({
+      sessions: new Map([
+        ['a', { id: 'a', header: { delegationDepth: 1, parentSession: 'b' } }],
+        ['b', { id: 'b', header: { delegationDepth: 1, parentSession: 'a' } }],
+      ]),
+    })
+    expect((await blackboardRemoteBridge().rootOf('a'))).toBe('b')
+    cyclic.dispose()
+    // A chain longer than MAX_ANCESTORS (8) stops at the deepest reached id.
+    const chain = new Map()
+    for (let i = 0; i <= 10; i++) chain.set(`s${i}`, { id: `s${i}`, header: { delegationDepth: 1, parentSession: `s${i + 1}` } })
+    const deep = mountStub({ sessions: chain })
+    expect((await blackboardRemoteBridge().rootOf('s0'))).toBe('s8')
+    deep.dispose()
   })
 })
 

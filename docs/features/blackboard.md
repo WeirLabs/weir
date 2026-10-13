@@ -17,6 +17,7 @@
 - **同一会话可恢复**：重启 DSH 或卸载重装 Weir 后，重新打开同一个持久 Session，正文、摘要、读/订阅计数与晋升只读标记继续存在。新建另一个 Session 不是恢复旧黑板。
 
 - **黑板面板**：右侧侧边栏新增黑板面板，列出本会话全部条目（key + 类型 + 摘要），支持按类型分组/过滤、搜索，点开查看完整信息。面板有两条入口路径：向导页胶囊（带专属黑板图标，不再是占位 cube）与会话头部快捷按钮。
+- **子 Agent 会话页显示父会话黑板**：在子 Agent（委派会话）的会话页打开黑板面板时，面板先把浏览会话 id 交给 `resolve` 解析出**会话根**，再绑定根会话的黑板——子 Agent 回合间或结束后，网关的 agent lookup 会拒绝 subagent 身份的会话（`owned by subagent routing`，此前面板显示「黑板不可用」），resolve 以裸 JSON 参数绕开该 lookup。绑定根黑板时列表顶部显示一条 muted 提示条「正在显示父会话的黑板。」；resolve 失败（桥缺失、通道不可用等）时回退浏览会话自身，保持原有行为。
 - **会话头部快捷入口**：会话头部工具区（`conversation.session.header.utilities`，order 20，排在 Worktree 胶囊之后）有一个黑板胶囊按钮（描边徽章样式：图标 + 「黑板」文字，与 Worktree 胶囊视觉重量一致），点击直接打开/聚焦右侧栏黑板面板（`sidebarRight.openTab('weir-blackboard')`）；按钮无实时状态、无轮询，tooltip/aria-label 中英双语；shell 无右侧栏包时点击静默不动作。
 - **页签图标**：黑板页签在向导胶囊与标签 chip 两层都显示专属图标（矩形板 + 列表线的 16×16 stroke glyph，`currentColor`），chip 为「图标 + 标题」。
 - **用户操作等价于 Agent**：创建、更新、删除条目都必须先申请该键的写入权，无写入权时操作被拒并给出提示；持有写入权时面板显示剩余有效时间。用户没有绕过仲裁的后门。
@@ -90,6 +91,8 @@
 ### 面板数据通道
 
 面板的 list/read/apply/write/delete 走**插件自有 typert remote 服务**（`src/capabilities/capability-remote.js` 先例：宿主 typert gateway + 手写 wire schema，客户端 `ctx.remote.<ns>.*` 直调，读操作零会话日志），与 Agent 工具共享同一仲裁内核；不经 commands 通道（`execute()` 无条件落日志且硬编码 user 来源）。
+
+第 8 个 wire 方法 `resolve`：**无 scope、无 agent lookup**——浏览会话 id 以裸 JSON `agentId` 传输（src-json codec，同 capability-remote 先例），返回 `{ sessionId }`（会话根 id）。面板在任何 lookup 门控动词之前先调 resolve 绑定根黑板；网桥的 `rootOf` 面沿 parentSession 链上行（活体 sessions 注册表优先、`sessionQuery.readSession` 持久头兜底），走到 `delegationDepth` 为 0 的根为止（depth 0 的 fork 是自己的根，语义对齐 `resolveDurableRoot`）；断链、无 parent、环路或超过跳数上限（MAX_ANCESTORS=8）一律降级为已知最深祖先，绝不猜测跨会话的根。resolve 只解析 id、不读板内容，七个板动词仍全部走 agent lookup——不新增绕过网关的冷会话身份后门。
 
 ### 持久文件、冷恢复与版本迁移
 

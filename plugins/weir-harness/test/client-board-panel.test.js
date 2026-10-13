@@ -100,6 +100,33 @@ describe('client.blackboard-model: wire channel slice-3 verbs', () => {
   })
 })
 
+
+describe('client.blackboard-model: resolveBoardSession (the panel root resolution)', () => {
+  it('posts the browsing session id as a bare JSON agentId (NO inner args) and folds the root id', async () => {
+    const { exports: model } = await loadModel()
+    const remote = fakeRemote({ resolve: () => okEnvelope({ sessionId: 'root-1' }) })
+    const result = await model.resolveBoardSession(remote.rawCall, 'child-1')
+    expect(remote.calls).toHaveLength(1)
+    expect(remote.calls[0].endpoint).toBe('weirBlackboard/resolve')
+    // the pinned resolve wire shape: { args: { agentId } } — no inner args,
+    // no agent lookup (a subagent-owned session cannot pass the lookup)
+    expect(remote.calls[0].payload).toEqual({ args: { agentId: 'child-1' } })
+    expect(result).toEqual({ ok: true, sessionId: 'root-1' })
+  })
+
+  it('an ok envelope without a usable session id, a failure envelope, and a carrier throw all fold to { ok:false }', async () => {
+    const { exports: model } = await loadModel()
+    const badPayload = fakeRemote({ resolve: () => okEnvelope({}) })
+    expect((await model.resolveBoardSession(badPayload.rawCall, 'c')).ok).toBe(false)
+    const emptyId = fakeRemote({ resolve: () => okEnvelope({ sessionId: '' }) })
+    expect((await model.resolveBoardSession(emptyId.rawCall, 'c')).ok).toBe(false)
+    const failing = fakeRemote({ resolve: () => ({ ok: false, error: { code: 'gateway/internal', message: 'down' } }) })
+    expect((await model.resolveBoardSession(failing.rawCall, 'c'))).toEqual({ ok: false, error: { code: 'gateway/internal', message: 'down' } })
+    expect((await model.resolveBoardSession(() => Promise.reject(new Error('offline')), 'c')).error.code).toBe('call-threw')
+    expect((await model.resolveBoardSession(() => { throw new Error('no connection') }, 'c')).error.code).toBe('call-threw')
+  })
+})
+
 describe('client.blackboard-model: promotion (slice 3: button state, outcomes, promoted rows)', () => {
   it('promotionButtonState enables exactly when a non-promoted entry exists', async () => {
     const { exports: model } = await loadModel()
@@ -349,10 +376,16 @@ function makeReactStub(counts) {
       }]
       return reactState[at]
     },
-    useEffect(fn) {
+    useEffect(fn, deps) {
       counts.useEffect += 1
       const at = hookCursor++
-      if (!(at in reactState)) reactState[at] = { cleanup: fn() }
+      const slot = reactState[at]
+      // Faithful-enough deps tracking: no deps array runs every render; a
+      // deps array re-runs only when an element moved (Object.is) — the
+      // channel-keyed effects re-run when the resolved board id swapped the
+      // channel, exactly like React.
+      const changed = slot === undefined || deps === undefined || slot.deps === undefined || deps.length !== slot.deps.length || deps.some((dep, index) => !Object.is(dep, slot.deps[index]))
+      if (changed) reactState[at] = { cleanup: fn(), deps }
       return undefined
     },
     useMemo(fn) { return fn() },
@@ -415,6 +448,9 @@ test('the panel renders loading → grouped list → detail → create form with
   // loading: the a11y status line announces the state
   renderOnce()
   await flush()
+  // the resolve round-trip precedes the channel: one more settle before the list lands
+  renderOnce()
+  await flush()
   const loaded = renderOnce()
   expect(findAll(loaded, (node) => node.children === '4 entries')).toHaveLength(1)
   // type filter chips: All + the six entry types (localizable labels → raw fallbacks here)
@@ -463,7 +499,7 @@ test('the panel renders loading → grouped list → detail → create form with
 
   // hook-count stability across every transition (React #310 guard)
   expect(new Set(renders).size).toBe(1)
-  expect(renders[0]).toBe('14/7')
+  expect(renders[0]).toBe('15/8')
 })
 
 test('the panel settles the explicit unavailable state when the channel degrades', async () => {
@@ -476,6 +512,10 @@ test('the panel settles the explicit unavailable state when the channel degrades
   })
   const props = { sessionId: 's1', model, t: (key) => key, callBoard: remote.rawCall, pollMs: 0, watchMs: 0 }
   reactStub.reset()
+  reactStub.begin()
+  panel.BlackboardPanel(props)
+  await flush()
+  // the resolve round-trip precedes the channel: one more settle before the list lands
   reactStub.begin()
   panel.BlackboardPanel(props)
   await flush()
@@ -523,6 +563,9 @@ test('the panel renders the promoted badge, disables editing, and gates the prom
   }
   renderOnce()
   await flush()
+  // the resolve round-trip precedes the channel: one more settle before the list lands
+  renderOnce()
+  await flush()
   const loaded = renderOnce()
   // The header shows the promotion button (a non-promoted entry exists) and the promoted row shows the badge.
   expect(findAll(loaded, (node) => node['aria-label'] === 'Evaluate for promotion')).toHaveLength(1)
@@ -544,4 +587,66 @@ test('the panel renders the promoted badge, disables editing, and gates the prom
   const after = renderOnce()
   expect(findAll(after, (node) => typeof node.children === 'string' && node.children.includes('promotion-evaluation request'))).toHaveLength(1)
   expect(remote.calls.some((call) => call.endpoint === 'weirBlackboard/requestPromotion')).toBe(true)
+})
+
+test('the panel binds the root board resolve names and shows the parent-board note on a subagent page', async () => {
+  const counts = { useState: 0, useEffect: 0 }
+  const reactStub = makeReactStub(counts)
+  const { exports: model } = await loadModel()
+  const { exports: panel } = await loadClientChunk('lib/client.blackboard-panel.js', requireStubFor(reactStub))
+  const remote = fakeRemote({
+    resolve: () => okEnvelope({ sessionId: 'root-1' }),
+    list: () => okEnvelope({ entries: ROWS }),
+  })
+  const props = { sessionId: 'child-1', model, t: (key) => key, callBoard: remote.rawCall, pollMs: 0, watchMs: 0 }
+  reactStub.reset()
+  const renderOnce = () => {
+    counts.useState = 0
+    counts.useEffect = 0
+    reactStub.begin()
+    return panel.BlackboardPanel(props)
+  }
+  renderOnce()
+  await flush()
+  renderOnce()
+  await flush()
+  const loaded = renderOnce()
+  // the channel keys on the resolved root: every board verb targets the root id
+  const lists = remote.calls.filter((call) => call.endpoint === 'weirBlackboard/list')
+  expect(lists.length).toBeGreaterThanOrEqual(1)
+  expect(lists.every((call) => call.payload.args.agentId === 'root-1')).toBe(true)
+  // the parent-board note renders on the list view
+  expect(findAll(loaded, (node) => node.children === "Showing the parent conversation's board.")).toHaveLength(1)
+  // and the list itself loaded through the root channel
+  expect(findAll(loaded, (node) => node.children === '4 entries')).toHaveLength(1)
+})
+
+test('a failed resolve falls back to the browsing session id without the parent-board note', async () => {
+  const counts = { useState: 0, useEffect: 0 }
+  const reactStub = makeReactStub(counts)
+  const { exports: model } = await loadModel()
+  const { exports: panel } = await loadClientChunk('lib/client.blackboard-panel.js', requireStubFor(reactStub))
+  // no resolve handler: the gateway's invocation-unavailable envelope folds to { ok:false }
+  const remote = fakeRemote({
+    list: () => okEnvelope({ entries: ROWS }),
+  })
+  const props = { sessionId: 'child-1', model, t: (key) => key, callBoard: remote.rawCall, pollMs: 0, watchMs: 0 }
+  reactStub.reset()
+  const renderOnce = () => {
+    counts.useState = 0
+    counts.useEffect = 0
+    reactStub.begin()
+    return panel.BlackboardPanel(props)
+  }
+  renderOnce()
+  await flush()
+  renderOnce()
+  await flush()
+  const loaded = renderOnce()
+  // the fallback keeps the browsing id — the pre-resolve behavior
+  const lists = remote.calls.filter((call) => call.endpoint === 'weirBlackboard/list')
+  expect(lists.length).toBeGreaterThanOrEqual(1)
+  expect(lists.every((call) => call.payload.args.agentId === 'child-1')).toBe(true)
+  expect(findAll(loaded, (node) => node.children === "Showing the parent conversation's board.")).toHaveLength(0)
+  expect(findAll(loaded, (node) => node.children === '4 entries')).toHaveLength(1)
 })
