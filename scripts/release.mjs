@@ -5,6 +5,11 @@
 //
 // Sequence: clean-worktree check → CHANGELOG finalize → manifest bump →
 // gates (check, unit tests, integration tests) → commit → tag → publish.
+// The official npm publish path is the GitHub release pipeline
+// (.github/workflows/release.yml, OIDC Trusted Publishing, triggered by the
+// pushed tag): run this script with --no-publish, then push main and the tag.
+// Local publish only works with a logged-in npm; without credentials it fails
+// 401/404 AFTER the commit and tag are already on disk — push, do not re-tag.
 // --dry-run computes everything in memory, still runs the gates, and never
 // writes files, commits, tags, or publishes.
 

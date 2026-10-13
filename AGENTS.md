@@ -54,7 +54,7 @@ LICENSE                     # MIT 开源协议（入库）
 1. **入库范围**：仅限产品实际内容——`plugins/`（源码/测试/技能/清单/构建配置）、`AGENTS.md`、`README.md`、`CHANGELOG.md`、`LICENSE`、`docs/features/`、`docs/assets/`、workspace 配置。其余一律 `.gitignore`（详见文件内注释）。
 2. **提交节奏**：阶段性 feat/fix 即提交，不攒超大 commit；一个逻辑变更一个 commit。
 3. **提交信息**：Conventional Commits（`feat/fix/docs/chore/refactor/test(scope): ...`）；**严禁** `Co-authored-by` 与任何 AI 署名；不含敏感信息。
-4. **打版纪律**：版本号语义化；打版 = CHANGELOG 的 Unreleased 段落固化为版本段 + `plugins/weir-harness/package.json` version 同步 bump + `git tag vX.Y.Z` + `npm publish`，四者版本一一对应，由 `scripts/release.mjs` 编排强制执行；脱节即事故（0.7.0 与 tag 脱节教训）。**同步更新 README**：安装说明中的包名版本号（`weir-harness@X.Y.Z`）与顶部版本徽标必须随打版一并 bump，与 manifest 版本保持一致。
+4. **打版纪律**：版本号语义化；打版 = CHANGELOG 的 Unreleased 段落固化为版本段 + `plugins/weir-harness/package.json` version 同步 bump + `git tag vX.Y.Z`，由 `scripts/release.mjs` 编排强制执行（本地跑门禁、提交、打 tag）；脱节即事故（0.7.0 与 tag 脱节教训）。**npm 发布一律走 GitHub 发版管线**：本地不登录 npm；`git push origin main` + `git push origin vX.Y.Z` 后，`.github/workflows/release.yml` 经 OIDC Trusted Publishing 发布，并自动用 CHANGELOG 对应版本段创建 GitHub Release；发布后必须验证 registry 的 `dist-tags.latest` 与 GitHub Release 均已就位。本地运行 release.mjs 常规带 `--no-publish`（无本地凭证时裸跑会在 publish 步报 404/401，但提交与 tag 已落盘，直接推送即可，勿重复打 tag）。**同步更新 README**：安装说明中的包名版本号（`weir-harness@X.Y.Z`）与顶部版本徽标必须随打版一并 bump，与 manifest 版本保持一致。
 5. **lockfile**：`pnpm-lock.yaml` 随 workspace 结构变化同步提交，不留悬空 diff。
 
 ## 5. 文档规范（产品级文档体系）
