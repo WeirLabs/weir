@@ -168,6 +168,13 @@ window.__ModuleLoader__.load({
 					minWidth: "16px",
 					textAlign: "center",
 					flex: "none"
+				},
+				parentNote: {
+					fontSize: "11px",
+					lineHeight: "16px",
+					color: MUTED,
+					flex: "none",
+					padding: "0 2px 4px"
 				}
 			},
 			row: {
@@ -481,20 +488,35 @@ window.__ModuleLoader__.load({
 			const [typeFilter, setTypeFilter] = react.useState("");
 			const [query, setQuery] = react.useState("");
 			const [promoting, setPromoting] = react.useState(false);
+			// The board the panel binds: null while resolveBoardSession runs, then
+			// the conversation root resolve names (a subagent session page cannot
+			// ride the gateway's agent lookup) or the browsing id itself when
+			// resolve fails — exactly the pre-resolve behavior.
+			const [boardSessionId, setBoardSessionId] = react.useState(null);
 			// Mirrors for async continuations (polls and call settles read the
 			// freshest state without stale-closure races).
 			const detailRef = react.useRef(null);
 			detailRef.current = detail;
 			const watchRef = react.useRef(null);
 			watchRef.current = watch;
-			const channel = react.useMemo(() => model.createBlackboardChannel(props.callBoard, props.sessionId), [props.callBoard, props.sessionId]);
-			const refreshList = () => channel.list().then((result) => {
-				setBoard(model.listOutcomeOf(result));
-			});
+			// The channel keys on the RESOLVED board session, never the browsing
+			// id: while resolution runs it does not exist, and every list/poll/
+			// detail effect below gates on it being non-null.
+			const channel = react.useMemo(
+				() => (boardSessionId === null ? null : model.createBlackboardChannel(props.callBoard, boardSessionId)),
+				[props.callBoard, boardSessionId],
+			);
+			const refreshList = () => {
+				if (channel === null) return Promise.resolve();
+				return channel.list().then((result) => {
+					setBoard(model.listOutcomeOf(result));
+				});
+			};
 			const setDetailFor = (key, next) => {
 				if (detailRef.current?.key === key) setDetail(next);
 			};
 			const loadDetail = (key) => {
+				if (channel === null) return;
 				// Record the request synchronously: a fast-settling read must not
 				// be dropped by the setDetailFor guard before the next render
 				// re-mirrors the ref.
@@ -514,14 +536,32 @@ window.__ModuleLoader__.load({
 				setRoute({ name: "detail", key });
 				loadDetail(key);
 			};
-			// Initial listing + session switch.
+			// Root resolution precedes the channel: a subagent session page cannot
+			// pass the gateway's agent lookup, so the panel first asks resolve for
+			// the conversation root and binds THAT board; a failed resolve keeps
+			// the browsing id (the pre-resolve behavior). While the answer is
+			// pending the board resets to the loading state; the alive flag drops
+			// a superseded answer after a session switch.
 			react.useEffect(() => {
+				let alive = true;
+				setBoardSessionId(null);
+				setBoard(null);
+				model.resolveBoardSession(props.callBoard, props.sessionId).then((result) => {
+					if (!alive) return;
+					setBoardSessionId(result.ok === true ? result.sessionId : props.sessionId);
+				});
+				return () => { alive = false; };
+			}, [props.callBoard, props.sessionId]);
+			// Initial listing + (re)bind: runs once the resolved channel exists
+			// and again whenever the answer swapped it.
+			react.useEffect(() => {
+				if (channel === null) return undefined;
 				let alive = true;
 				channel.list().then((result) => {
 					if (alive) setBoard(model.listOutcomeOf(result));
 				});
 				return () => { alive = false; };
-			}, [props.sessionId]);
+			}, [channel]);
 			// Page visibility: polls pause while hidden (no server push in this
 			// slice — the interval is the only refresh channel).
 			react.useEffect(() => {
@@ -531,15 +571,15 @@ window.__ModuleLoader__.load({
 				return () => document.removeEventListener("visibilitychange", onVisibility);
 			}, []);
 			react.useEffect(() => {
-				if (!visible || !(pollMs > 0)) return undefined;
+				if (!visible || !(pollMs > 0) || channel === null) return undefined;
 				const timer = setInterval(refreshList, pollMs);
 				return () => clearInterval(timer);
-			}, [visible, pollMs, props.sessionId]);
+			}, [visible, pollMs, channel]);
 			// The contention watch: poll apply until the key frees (an acquired
 			// flip means THIS session now holds the authority — the one-shot
 			// subscription's client-side half).
 			react.useEffect(() => {
-				if (!visible || watch?.phase !== "watching" || !(watchMs > 0)) return undefined;
+				if (!visible || watch?.phase !== "watching" || !(watchMs > 0) || channel === null) return undefined;
 				const timer = setInterval(() => {
 					channel.apply(watch.key).then((result) => {
 						const next = model.watchAfterPoll(watchRef.current, model.applyOutcomeOf(result));
@@ -587,6 +627,7 @@ window.__ModuleLoader__.load({
 				setRoute({ name: "editor", mode: "create" });
 			};
 			const startEdit = (entry) => {
+				if (channel === null) return;
 				if (entry.promoted) {
 					setNotice({ tone: "warn", text: t("blackboard.promotedReadonly", "This entry is promoted and read-only.") });
 					return;
@@ -611,6 +652,7 @@ window.__ModuleLoader__.load({
 			};
 			// ---- promotion request (3.1): the button pushes the evaluation brief into the main agent ----
 			const requestPromotionNow = () => {
+				if (channel === null) return;
 				if (promoting) return;
 				setNotice(null);
 				setPromoting(true);
@@ -626,6 +668,7 @@ window.__ModuleLoader__.load({
 				});
 			};
 			const reacquire = () => {
+				if (channel === null) return;
 				if (editor?.mode !== "update") return;
 				const key = editor.key;
 				setEditor({ ...editor, phase: "applying", error: null, contended: null });
@@ -643,6 +686,7 @@ window.__ModuleLoader__.load({
 				});
 			};
 			const saveEditor = () => {
+				if (channel === null) return;
 				if (editor === null || editor.draft === null || editor.phase === "saving" || editor.phase === "applying") return;
 				const errors = model.editorErrorsOf(editor.draft);
 				if (Object.keys(errors).length > 0) {
@@ -694,6 +738,7 @@ window.__ModuleLoader__.load({
 				writeNow();
 			};
 			const startDelete = (key) => {
+				if (channel === null) return;
 				setNotice(null);
 				setConfirmDelete({ key, phase: "applying", error: null });
 				channel.apply(key).then((result) => {
@@ -711,6 +756,7 @@ window.__ModuleLoader__.load({
 				});
 			};
 			const confirmDeleteNow = () => {
+				if (channel === null) return;
 				if (confirmDelete?.phase !== "confirm") return;
 				const key = confirmDelete.key;
 				setConfirmDelete({ key, phase: "removing", error: null });
@@ -1181,6 +1227,11 @@ window.__ModuleLoader__.load({
 					]
 				})
 				: null;
+			// The parent-board note: the resolved root differs from the browsing
+			// session — this page is a subagent session showing its parent's board.
+			const parentBoardNote = route.name === "list" && boardSessionId !== null && boardSessionId !== props.sessionId
+				? react_jsx_runtime.jsx("div", { style: S.list.parentNote, children: t("blackboard.parentBoard", "Showing the parent conversation's board.") })
+				: null;
 			const scrollBody = route.name === "editor"
 				? react_jsx_runtime.jsx("div", { style: S.form.box, children: editorBody })
 				: route.name === "detail"
@@ -1189,6 +1240,7 @@ window.__ModuleLoader__.load({
 			return react_jsx_runtime.jsxs("div", { style: S.frame, children: [
 				header,
 				searchRow,
+				parentBoardNote,
 				scrollBody,
 				footerChips.length > 0 ? react_jsx_runtime.jsx("div", { style: S.footer.bar, children: footerChips }) : null
 			] });
