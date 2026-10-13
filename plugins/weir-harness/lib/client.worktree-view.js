@@ -260,7 +260,16 @@ window.__ModuleLoader__.load({
 				],
 			});
 		}
-		/** U2 — session header status pill: badge look, warning tint on awaiting/base-moved, click opens the panel. */
+		/** U2 — session header status pill: the same bordered badge as the blackboard
+		 * header entry (branch glyph + label) on a neutral base; warning tone on
+		 * awaiting/base-moved, click opens the panel. */
+		const statusPillStyle = {
+			display: "inline-flex", alignItems: "center", gap: "5px",
+			padding: "1px 7px", fontSize: "11px", lineHeight: "16px", fontWeight: 600,
+			color: "var(--dsw-alias-label-secondary)", cursor: "pointer", background: "none",
+			border: "1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.35))",
+			borderRadius: "var(--dsw-radius-sm)"
+		};
 		function WorktreeStatusPill(props) {
 			const available = useCommandPresence(props);
 			const enabled = available === true;
@@ -274,19 +283,25 @@ window.__ModuleLoader__.load({
 			if (summary.active > 0) parts.push(t("pillCount").replace("{n}", String(summary.active)));
 			if (summary.awaiting > 0) parts.push(t("pillAwaiting").replace("{n}", String(summary.awaiting)));
 			const attention = summary.baseMoved || summary.awaiting > 0;
-			const color = attention ? WARN : summary.mode ? BUSINESS : "var(--dsw-alias-label-tertiary)";
+			// Attention keeps the documented warning signal — text, border and the
+			// 12% tint — so a base-moved lane or a pending approval still reads at a
+			// glance; every other state carries mode/business purely in the label.
+			const tone = attention ? { color: WARN, background: tint(WARN, 12), border: `1px solid ${WARN}` } : null;
+			// Hover paints the neutral base only: an attention pill keeps its tint
+			// instead of losing it on mouse-leave.
+			const hover = attention ? {} : {
+				onMouseEnter: (event) => { event.currentTarget.style.background = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))"; },
+				onMouseLeave: (event) => { event.currentTarget.style.background = "none"; },
+			};
 			return jsxs("button", {
 				type: "button",
-				style: {
-					display: "inline-flex", alignItems: "center", gap: "5px", padding: "1px 7px",
-					fontSize: "11px", lineHeight: "16px", fontWeight: 600, color, cursor: "pointer",
-					background: tint(color, 12), border: `1px solid ${color}`, borderRadius: "var(--dsw-radius-sm)",
-				},
+				style: { ...statusPillStyle, ...tone },
+				...hover,
 				onClick: () => props.openPanel?.(),
 				title: summary.baseMoved ? t("pillBaseMoved") : t("pillTitle"),
 				"data-weir-worktree-pill": "",
 				"data-weir-worktree-state": summary.baseMoved ? "base-moved" : summary.mode ? "on" : "off",
-				children: [jsx(Dot, { color }, "dot"), jsx("span", { children: parts.join(" · ") }, "label")],
+				children: [jsx(Icon, { name: "branch", size: 11 }, "icon"), jsx("span", { children: parts.join(" · ") }, "label")],
 			});
 		}
 		/** One lane card in the panel. */
