@@ -1,6 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
-import { EDIT_LOCK_DEFAULTS, FIELD_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimits } from '../src/settings/sections.js'
+import { CONFIG_FACE_ONLY_KEYS, EDIT_LOCK_DEFAULTS, FIELD_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimits } from '../src/settings/sections.js'
 import { DEFAULT_CLASSIFIER_TIMEOUT_MS } from '../src/intent-gate/classifier.js'
 import { DEFAULT_SUPERVISION } from '../src/delegate/group-coordinator.js'
 import { DEFAULTS as TODO_DEFAULTS } from '../src/todo-driver/state-machine.js'
@@ -16,8 +16,9 @@ import { DEFAULTS as NOTIFY_DEFAULTS } from '../src/notify/policy.js'
 // 行 config 的产品默认镜像 / 设置页 GROUPS 字段集）由本对拍测试守卫——
 // D5 显式拒绝跨运行时统一（ModuleLoader 同包同步 require 不可能 + YAML 层），
 // 代价是新增字段要改三处，本测试让"忘了改"变成响亮失败。
-// 刻意不在设置页出现的配置面键（见 category-delegation.md:35）：
-const CONFIG_FACE_ONLY = new Set(['robashDefaultsPath', 'robashDefaultsReload'])
+// 刻意不在设置页出现的配置面键（见 category-delegation.md:35）——唯一声明住
+// sections.js 的 FIELDS page:false 标记，本测试只引用不复制。
+const CONFIG_FACE_ONLY = new Set(CONFIG_FACE_ONLY_KEYS)
 // §3.8 例外：五张 whitelist 表的默认值住 whitelist-defaults.json，
 // 绝不出现在 patch 行 config（整值替换契约会冻结它们）。
 const WHITELIST_TABLE_KEYS = new Set(['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny'])
@@ -57,6 +58,32 @@ describe('settings field-key parity (FIELDS ↔ patch row ↔ settings page)', (
     const page = settingsPageFields()
     const expected = new Set([...fieldKeys].filter((key) => !CONFIG_FACE_ONLY.has(key)))
     expect([...page].sort()).toEqual([...expected].sort())
+  })
+})
+
+describe('CONFIG_FACE_ONLY_KEYS (config-face-only settings declaration)', () => {
+  // 13 把高级/调试旋钮只在配置面出现：两个 robash defaults 键、todo 退避、
+  // Edit Lock 保留策略五个、LSP 三个计时器、黑板写入权 TTL。唯一声明是
+  // FIELDS 的 page:false 标记；本清单是全量对拍，增删即红。
+  const EXPECTED = [
+    'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
+    'editLockHoldDefaultMinutes', 'editLockHoldSingleMaxMinutes', 'editLockHoldCumulativeMaxMinutes',
+    'editLockNudgeAttempts', 'editLockNudgeFallback',
+    'robashDefaultsPath', 'robashDefaultsReload',
+    'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs',
+    'blackboardWriteTokenTtlMinutes',
+  ]
+
+  it('contains exactly the 13 config-face-only keys in declaration order', () => {
+    expect([...CONFIG_FACE_ONLY_KEYS]).toEqual(EXPECTED)
+  })
+
+  it('is derived from the FIELDS page markers (declared once, no second list)', () => {
+    expect(CONFIG_FACE_ONLY_KEYS).toEqual(FIELDS.filter((f) => f.page === false).map((f) => f.key))
+  })
+
+  it('is frozen so consumers cannot widen or reorder it in place', () => {
+    expect(Object.isFrozen(CONFIG_FACE_ONLY_KEYS)).toBe(true)
   })
 })
 
