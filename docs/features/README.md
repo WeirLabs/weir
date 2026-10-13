@@ -11,7 +11,7 @@
 | 特性 | 文档 | 对应模块 |
 |---|---|---|
 | 预设打包 | [preset-packaging.md](preset-packaging.md) | `cordis.patch.yml`（bundle 清单） |
-| Weir 设置页 | [settings-page.md](settings-page.md) | `weir-harness/settings` + 浏览器半区 `lib/client.settings-page.js` |
+| Weir 设置页（主页面 + 模型路由页） | [settings-page.md](settings-page.md) | `weir-harness/settings` + 浏览器半区 `lib/client.settings-page.js`（两个 `settings.section`：`weir-settings` / `weir-model-routing`） |
 | Orchestrator 总指挥 | [orchestrator-persona.md](orchestrator-persona.md) | `weir-harness/core` |
 | 意图门 | [intent-gate.md](intent-gate.md) | `weir-harness/intent-gate` |
 | 分类委派 | [category-delegation.md](category-delegation.md) | `weir-harness/delegate` |

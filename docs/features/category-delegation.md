@@ -9,7 +9,7 @@
 ## 用户可见行为
 
 - 主 agent 调用 `delegate({ category, prompt })` 或 `delegate({ agent, prompt })`（两者必须且只能给其一），也可用 `tasks` 批量派发。
-- 类别与精选 agent 都可绑定**期望路由**：链上首个可解析档位胜出，整链不可解析时显式报错（**不回退继承**）；精选 agent 未配置链时继承调用方路由。二者均由设置页在线配置、即时生效。
+- 类别与精选 agent 都可绑定**期望路由**：链上首个可解析档位胜出，整链不可解析时显式报错（**不回退继承**）；精选 agent 未配置链时继承调用方路由。二者均在设置 › Weir 模型路由（任务类别／精选代理 卡片）在线配置、即时生效。
 - **停用的目标对模型不可见**：停用类别/agent 不出现在委托目标指引里，也不出现在任何「可选目标」报错文本中；派发它得到显式 disabled 错误。
 - 后台委派（`run_in_background: true`）立即返回 job 标识；完成时主 agent 只收到紧凑通知，完整报告用 `job_output` 拉取——报告全文不会自动灌进上下文。
 - **可续聊委派**（`mode: 'continuable'`，默认 `one-shot` 零行为变化）：立即返回 `{ continuable: true, children: [{ childId, label, name? }] }`，不等待结果——子代理的每个回合结果经 **DSH 内建结算通知**送达父会话（不包 jobs 包装，结算通知本身就是报告通道）；父 agent 可用 `send_message` 追问/纠偏（只有 continuable 子代才能接收 follow-up）、用 `interrupt_agent` 打断当前回合而不销毁子代理，应用重启后子代理从耐久会话 cold-resume 仍可续聊。顶层与批量 item 级都接受 `mode`，item 覆盖顶层、两级不要求一致（混合批量：one-shot item 等待结果、continuable item 立即返回 childId，渲染先列 childId 清单再附 one-shot 结果）。continuable 子代理 persona 追加 `WORKER_CONTRACT + CONTINUABLE_CONTRACT`（不含 `SUPERVISION_CONTRACT`，无二元终态契约），**不注册进监督协调器**——`supervised_status` 的既有孤儿检测会把它们列为 untracked，这是**正常态而非异常**（`list_agents` 是查看它们的正门）。continuable 子代理占用 DSH continuable 容量池（`maxActiveSubagents`，默认 **8**，满池 `ACTIVATION_LIMIT_REACHED` 显式报错、不排队、不静默降级为 one-shot）——注意批量上限 16 与池 8 的数值差：大 fan-out 仍应使用 one-shot。只读精选目标以 continuable 派遣时经 `deps.agents.get(childId)` 挂同一份只读守卫（与受监督道同一 fail-closed 语义）。
@@ -40,10 +40,10 @@
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| 类别注册表 | 内置 9 类别 | 每类别：`description`、`guidance`、`promptAppend`、有序 `chain: [{provider, model, reasoningEffort?}]`、可选 `gateModels`、`disabled` |
+| 类别注册表 | 内置 9 类别 | 每类别：`description`、`guidance`、`promptAppend`、有序 `chain: [{provider, model, reasoningEffort?}]`、可选 `gateModels`、`disabled`；类别链的设置键为 `delegateCategoryChains`（设置 › Weir 模型路由 · 任务类别 卡片在线编辑） |
 | 代理注册表 | `finder`/`scholar`/`advisor` | 精选只读代理定义；每条可选 `chain: [{provider, model, reasoningEffort?}]`、`reasoningEffort`、`disabled` |
-| `delegateAgentChains` | 空（继承调用方路由） | 精选 agent 链覆盖（JSON map，整链替换；未知名告警忽略）。设置页键：`delegateAgentChains` |
-| `delegateDisabledCategories` | 空 | 停用类别名单（设置页提供**逐类别勾选列表**，勾选结果合成 JSON 字符串数组；只能追加停用）；停用者不入模型可见清单、不可派发。设置页键：`delegateDisabledCategories` |
+| `delegateAgentChains` | 空（继承调用方路由） | 精选 agent 链覆盖（JSON map，整链替换；未知名告警忽略）。设置键：`delegateAgentChains`（设置 › Weir 模型路由 · 精选代理 卡片） |
+| `delegateDisabledCategories` | 空 | 停用类别名单（设置 › Weir 模型路由 · 任务类别 卡片提供**逐类别勾选列表**，勾选结果合成 JSON 字符串数组；只能追加停用）；停用者不入模型可见清单、不可派发。设置键：`delegateDisabledCategories` |
 | 模型族提示词变体表 | 内置 | 按模型族选择提示词变体（Claude/Kimi 式清单风格、GPT 式原则风格、其余中性），可覆盖 |
 | `readOnlyBash.enabled` | `true` | 只读 bash 守卫开关；`false` 时只读代理工具面回落到 v0.1.0（无 bash）。设置页键：`robashEnabled` |
 | `readOnlyBash.allow` | 初版白名单 | 命令级只读白名单（basename 匹配），可迭代补全。设置页键：`robashAllow`（JSON 字符串数组） |
@@ -54,18 +54,18 @@
 | 平台等待原语 | `sleep` / `Start-Sleep` | 两侧都放行：POSIX 侧 `sleep` 在 bash 白名单里，win32 侧 `Start-Sleep` 在 pwsh 白名单里，且 `sleep` 作为 pwsh 内建 ReadOnly 别名（→ `Start-Sleep`）登记在别名表。两侧必须同时在场，否则同一个“等待”操作会 macOS 放行、Windows 拒绝 |
 | 名单来源不变式 | 行 config **不得**携带白名单表 | 五张表**不再**出现在 `cordis.patch.yml` 的 `weir-settings` 行里——patch 层的 `config` 是**整体替换**而非深合并，任何住在行里的默认值都可能被某个 profile 行整块丢弃（这正是"改过列表的用户永远收不到后续默认项"的成因）。该不变式由 `test/robash-whitelist-parity.test.js` 守护：行内出现任一白名单键即失败（已做变异验证）。`robashEnabled` 这类纯开关仍留在行里 |
 | 默认值来源文件 | `whitelist-defaults.json`（bundle 根） | 五张表的**产品默认值**由插件在**运行时自己读取**该文件（`new URL('../../whitelist-defaults.json', import.meta.url)`），不经任何配置层，因此 profile 行替换不掉它。五张表的 canonical 常量 `DEFAULT_TABLES` 住在守卫核心模块 `src/delegate/robash-guard-core.js`（单一表示），`src/shared/whitelist-defaults.js` 的 `FALLBACK_TABLES` 从核心**正向派生**并按表兜底：文件缺失/不可读、或某表畸形/非字符串数组 → 该表回退到常量并记一行英文告警，其余表仍取自文件，**绝不因坏文件放宽守卫、也不拒绝启动**。该文件默认不向用户开放、不在设置页出现 |
-| 默认值接管与重读 | `robashDefaultsPath` / `robashDefaultsReload` | 高级用户可把路径指向自己的副本以**整体接管**默认值（此时该文件是其默认值的完整来源，缺项即不生效）；改完文件后递增 `robashDefaultsReload` 即**显式重读**（每进程只读一次并缓存，这是唯一重读入口，磁盘 IO 不进入守卫的逐命令判定路径）。两个键均为配置面键，刻意**不**出现在设置页 |
+| 默认值接管与重读 | `robashDefaultsPath` / `robashDefaultsReload` | 高级用户可把路径指向自己的副本以**整体接管**默认值（此时该文件是其默认值的完整来源，缺项即不生效）；改完文件后递增 `robashDefaultsReload` 即**显式重读**（每进程只读一次并缓存，这是唯一重读入口，磁盘 IO 不进入守卫的逐命令判定路径）。两个键均为配置文件面键（`FIELDS` 的 `page: false`，见 [settings-page.md](settings-page.md)），刻意**不**出现在设置页 |
 | 旧的基线漂移报告 | 已退役 | `src/shared/whitelist-drift.js` 及其启动期告警随本变更移除：它的唯一职责是报告"行 config 遮蔽基线"，而默认值改由模块自己读文件交付后该类漂移在结构上不可能发生。其"运行时读随包文件"的范式被 `src/shared/whitelist-defaults.js` 继承 |
-| `supervision.maxRetries` | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用） |
-| `supervision.initialBackoffMs` | `30000` | 供应商错误续推初始延迟，逐次翻倍 |
-| `supervision.maxBackoffMs` | `300000` | 续推延迟封顶（5min） |
+| `supervision.maxRetries`（设置键 `supervisionMaxRetries`） | `5` | 受监督子代理续推连续上限（催促与供应商错误重试共用）；设置 › Weir 模型路由 · 监督与重试 卡片在线编辑 |
+| `supervision.initialBackoffMs`（设置键 `supervisionInitialBackoffMs`） | `30000` | 供应商错误续推初始延迟，逐次翻倍；同一卡片在线编辑 |
+| `supervision.maxBackoffMs`（设置键 `supervisionMaxBackoffMs`） | `300000` | 续推延迟封顶（5min）；同一卡片在线编辑 |
 
 以上 `readOnlyBash.*` / `readOnlyPwsh.*` / `supervision.*` 均为 volatile config，**在同一进程内即提交即生效，无需重启应用、无需重建会话**。生效时机分两条路径，二者都实现，不能只靠一条：
 
 - **读取时解析**——设置服务每次 `get` 都重新计算 section，因此 `delegate` 在**每次消费点**重新解析，而不是在 `apply` 期读一次：委派时解析只读工具面与守卫列表（一次委派内取同一份快照，不会出现「已授予 shell 但守卫已关」），建协调器时解析监督参数。
 - **提交时推送**——协调器是按父会话缓存的长生命周期对象，不会再随新委派重建；因此 `apply` 同时订阅设置服务的变更广播，把新的监督参数推入**已存在**的协调器（与 `src/lsp/index.js` 同一范式）。
 
-注：`intentGate`/`todoDriver`/`contextGuard`/`hashlineEdit` 四个插件仍在 `apply` 期做同类快照，**热更新语义未覆盖它们**，需重启才生效。设置页保存触达这些键（以及挂载门 `editLockEnabled`）并落地后，会在顶部横幅点名提醒哪些改动需要重启，见 [settings-page.md](settings-page.md)。
+注：`intentGate`/`todoDriver`/`contextGuard`/`hashlineEdit` 四个插件仍在 `apply` 期做同类快照，**热更新语义未覆盖它们**，需重启才生效。设置页保存触达这些键（以及挂载门 `editLockEnabled`）并落地后，会在居中警告弹窗里点名提醒哪些改动需要重启，见 [settings-page.md](settings-page.md)。
 
 ## 设计细节
 

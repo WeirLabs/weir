@@ -10,7 +10,7 @@
 
 黑板按**持久根 Session ID** 独立保存；同一个 Session 重启或重装 Weir 后恢复，不同 Session 不共享。它是两层缓存架构中的 L1（会话内 staging + 横向共享），持久文档（`docs/spikes.md`、runtime map、AGENTS.md 指针）是 L2；L1→L2 的门只有一扇，钥匙只在用户手里。
 
-当前实施进度：**三切片全部落地**——核心存储 + 写入权仲裁 + 模型工具面（六个工具）、Agent 写入契约与检索纪律注入、订阅通知端到端投递、插件自有 typert remote 数据通道、右侧侧边栏黑板面板（类型分组/过滤/搜索、申请→写入/删除全流程、令牌倒计时、竞争订阅、晋升评估按钮与「已晋升」徽标）、设置页上架 `blackboardWriteTokenTtlMinutes`、晋升评估全链路（按钮 → 注入 → 计数排序评估 → 逐项裁决 → 落盘 → 只读标记）。OpenSpec 变更 `session-blackboard` 交付完毕。
+当前实施进度：**三切片全部落地**——核心存储 + 写入权仲裁 + 模型工具面（六个工具）、Agent 写入契约与检索纪律注入、订阅通知端到端投递、插件自有 typert remote 数据通道、右侧侧边栏黑板面板（类型分组/过滤/搜索、申请→写入/删除全流程、令牌倒计时、竞争订阅、晋升评估按钮与「已晋升」徽标）、`blackboardWriteTokenTtlMinutes` 设置键（配置文件面，不在设置页渲染）、晋升评估全链路（按钮 → 注入 → 计数排序评估 → 逐项裁决 → 落盘 → 只读标记）。OpenSpec 变更 `session-blackboard` 交付完毕。
 
 ## 用户可见行为
 
@@ -28,7 +28,7 @@
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `blackboard.writeTokenTtlMinutes` | `60` | 写入权超时（分钟），超时自动释放并通知订阅者；设置页「黑板」组可直接编辑 |
+| `blackboard.writeTokenTtlMinutes` | `60` | 写入权超时（分钟），超时自动释放并通知订阅者；设置键 `blackboardWriteTokenTtlMinutes` 为**配置文件面键**（`FIELDS` 的 `page: false`，schema/校验不变）：不在任何设置页渲染，只能改配置文件（生效时机不变），见 [settings-page.md](settings-page.md) |
 | `blackboard.maxEntriesPerAgent` | （待定） | 单 Agent 写入配额，防黑板变垃圾桶；实施切片中定稿 |
 
 （配置均为 volatile config，在线编辑、无需重挂载。）
