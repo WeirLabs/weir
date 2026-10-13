@@ -11,6 +11,9 @@
 
 - **侧栏功能图标与黑板快捷入口**：Worktrees／Capabilities／黑板三个右侧栏页签在向导页胶囊与标签 chip 两处都显示专属图标（替代默认占位 cube 与纯文字）；会话头部新增黑板快捷按钮，一键直达本会话黑板面板，无需再经向导页；插件管理器中 weir-harness 卡片显示 Weir 品牌图标（`package.json.icon`）。详见 [会话黑板](docs/features/blackboard.md)、[Worktree 车道](docs/features/git-worktree.md)、[预设打包](docs/features/preset-packaging.md)。
 
+### Changed
+
+- **编辑锁中断全面改为静默自愈（BREAKING 行为语义）**：管理员恢复（维护面板一键／离线设置／死进程自动清算）不再永久报废会话——吊销改为 epoch 作用域，被吊销会话经可信「继续编辑」或默认开启的消息驱动恢复即可修复（锁已在恢复时释放，修复后零锁直接可编辑，修复有审计记录，处置本身不可撤销）；编辑域启动被 duplicate binding 拒绝（如同一会话在另一窗口仍被服务）后，下一条真实用户消息会自动执行一次有界、attestation 守门的绑定重试并在同一回合恢复编辑，无需再手动 `/edit-lock retry`（命令与面板按钮保留为备用）；失败时的会话内通知改写为模型行动指引。两类自愈统一由「编辑锁消息驱动恢复」设置管辖（默认开）。账本格式不变，旧镜像零迁移。详见 [编辑锁](docs/features/edit-lock.md)。
 ## [1.1.5] - 2026-10-12
 
 ### Added

@@ -284,7 +284,7 @@ describe('editLockAutoResume (message-driven auto-resume switch)', () => {
     const row = FIELDS.find(({ key }) => key === 'editLockAutoResume')
     expect(row).toEqual({
       key: 'editLockAutoResume', section: 'editLock', field: 'autoResume', type: 'boolean',
-      description: 'Edit Lock: a genuine user message automatically resumes a stopped session and confirms its retained files (default on)',
+      description: 'Edit Lock: a genuine user message automatically resumes a stopped or administratively revoked session and retries a duplicate-binding failure (default on)',
     })
     expect(RESTART_KEYS.includes('editLockAutoResume')).toBe(false)
   })
