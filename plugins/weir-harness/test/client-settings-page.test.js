@@ -10,8 +10,10 @@ import { CONFIG_FACE_ONLY_KEYS, FIELD_DEFAULTS as SERVER_FIELD_DEFAULTS, RESTART
  * field editors arrive as sentinel props (composition-root injection).
  * Covers the pure exports (evaluateCondition / resolveEffectiveValue /
  * validateLayout / buildLayout), the env three-state gating, the card/tree
- * render structure, the always-on restart tag, and the save-flow contract
- * migrated from the pre-split client.test.js settings page blocks.
+ * render structure, the always-on restart tag, the local form shell with
+ * its floating save bar (host SettingsForm contract preserved), and the
+ * save-flow contract migrated from the pre-split client.test.js settings
+ * page blocks.
  */
 
 describe('client.settings-page chunk', () => {
@@ -55,7 +57,9 @@ describe('client.settings-page chunk', () => {
       Tag: (props) => ({ __tag: props }),
       Modal: (props) => ({ __modal: props }),
       Button: (props) => ({ __button: props }),
-      SettingsForm: (props) => ({ __form: props }),
+      // The page renders its own form shell (WeirSettingsForm) for the
+      // floating save bar: the host SettingsForm is no longer consumed, and
+      // the Proxy below turns a regression into a named failure.
       SettingsFormModel: class {
         constructor(scope, specs) {
           this.scope = scope
@@ -93,10 +97,16 @@ describe('client.settings-page chunk', () => {
         dispose() {}
       },
     }
+    const primitives = new Proxy(primitivesStub, {
+      get(target, prop) {
+        if (prop === 'SettingsForm') throw new Error('the settings page renders its own WeirSettingsForm shell; primitives.SettingsForm is no longer consumed')
+        return target[prop]
+      },
+    })
     const requireStub = (name) => {
       if (name === 'react') return reactStub
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitivesStub
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives
       throw new Error(`unexpected require ${name}`)
     }
     const { definition, exports } = await loadClientChunk('lib/client.settings-page.js', requireStub)
@@ -108,7 +118,7 @@ describe('client.settings-page chunk', () => {
       NotifyPermissionsField: (props) => ({ __notifyPermissions: props }),
       EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }),
     }
-    return { definition, exports, editors, specsSeen, reactStub, primitivesStub }
+    return { definition, exports, editors, specsSeen, reactStub, reactState, primitivesStub }
   }
 
   // Capture the entry's synchronously registered en/zh dictionaries by
@@ -163,12 +173,12 @@ describe('client.settings-page chunk', () => {
     return exports.WeirCard({
       view: 'form',
       page: spies.page,
-      t: (key) => key,
+      t: spies.t ?? ((key) => key),
       useWeirSettingsCard: (selector) => selector({ writable: true, ...state }),
       edit: spies.edit ?? (() => {}),
       resetField: spies.resetField ?? (() => {}),
-      save: () => {},
-      discard: () => {},
+      save: spies.save ?? (() => {}),
+      discard: spies.discard ?? (() => {}),
       dismissRestartReminder: spies.dismissRestartReminder ?? (() => {}),
       getSession: () => {},
       editors,
@@ -645,6 +655,150 @@ describe('client.settings-page chunk', () => {
     expect(modal.footer.children).toBe('restartReminderAcknowledge')
     modal.footer.onClick()
     expect(dismissals).toEqual(['dismiss', 'dismiss'])
+  })
+
+  // ---- floating save bar: the local form shell (WeirSettingsForm) ----
+  // The shell replaces the host primitives.SettingsForm (whose page-bottom
+  // footer could not be restyled from outside); the host contract is
+  // preserved — discard staged edits on unmount, the unavailable line
+  // INSTEAD of the form, the readOnly notice above the children — and the
+  // save affordance is a sticky bar rendered ONLY while the form is dirty.
+
+  /** A complete form-shell state at rest (the controller projection's face). */
+  const shellState = (overrides = {}) => ({
+    available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false, pendingCount: 0,
+    fields: makeFields(),
+    env: { status: 'ready', facts: { platform: 'darwin' } },
+    ...overrides,
+  })
+
+  /** Invoke the rendered form-shell element (runs its hooks in the react stub). */
+  function renderForm(rendered, reactStub) {
+    reactStub.begin()
+    return rendered.__type(rendered)
+  }
+
+  const saveBarsOf = (tree) => findAll(tree, (node) => node['data-save-bar'] !== undefined)
+
+  it('renders NO save bar while clean, and the sticky bar with the interpolated pending count once dirty', async () => {
+    const { exports, editors, reactStub } = await loadPage()
+    const dicts = await loadDictionaries()
+    // a t that interpolates {n} the way the host locale service does
+    const tFor = (locale) => (key, params) => {
+      const template = dicts[locale][key] ?? key
+      return params ? template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match)) : template
+    }
+    // clean form: nothing renders — no new visual noise
+    const clean = renderCard(exports, editors, shellState(), { t: tFor('en') })
+    expect(saveBarsOf(renderForm(clean, reactStub))).toHaveLength(0)
+    // dirty with three staged writes: exactly one bar, pinned sticky to the
+    // scroll container's bottom edge, in the page's card chrome
+    const dirty = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 3 }), { t: tFor('en') })
+    const dirtyForm = renderForm(dirty, reactStub)
+    const bars = saveBarsOf(dirtyForm)
+    expect(bars).toHaveLength(1)
+    const bar = bars[0]
+    expect(bar.style.position).toBe('sticky')
+    expect(bar.style.bottom).toBe('12px')
+    expect(bar.style.zIndex).toBe(1)
+    expect(bar.style.background).toBe('var(--dsw-alias-bg-layer-1)')
+    expect(bar.style.border).toBe('1px solid var(--dsw-alias-border-l1)')
+    expect(bar.style.borderRadius).toBe('12px')
+    // the pending count interpolates through the real dictionaries
+    expect(JSON.stringify(dirtyForm)).toContain('3 unsaved change(s)')
+    const dirtyZh = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 2 }), { t: tFor('zh') })
+    expect(JSON.stringify(renderForm(dirtyZh, reactStub))).toContain('2 项未保存的更改')
+  })
+
+  it('disables save on invalid or saving, labels it save/saving, and wires discard and save to the actions', async () => {
+    const { exports, editors, reactStub, primitivesStub } = await loadPage()
+    const calls = { save: [], discard: [] }
+    const spies = { save: () => calls.save.push('save'), discard: () => calls.discard.push('discard') }
+    const buttonsOf = (tree) => findAll(tree, (node) => node.__type === primitivesStub.Button)
+    // plain dirty: both buttons live, save enabled with the save label
+    const normal = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1 }), spies), reactStub)
+    const [discard, save] = buttonsOf(normal)
+    expect(discard.variant).toBe('outline')
+    expect(discard.children).toBe('discardChanges')
+    expect(save.variant).toBe('primary')
+    expect(save.disabled).toBe(false)
+    expect(save.children).toBe('save')
+    save.onClick()
+    discard.onClick()
+    expect(calls.save).toEqual(['save'])
+    expect(calls.discard).toEqual(['discard'])
+    // invalid draft: save disabled
+    const invalid = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1, invalid: true }), spies), reactStub)
+    expect(buttonsOf(invalid)[1].disabled).toBe(true)
+    // saving: save disabled with the saving label
+    const saving = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1, saving: true }), spies), reactStub)
+    expect(buttonsOf(saving)[1].disabled).toBe(true)
+    expect(buttonsOf(saving)[1].children).toBe('saving')
+    // a failed save adds the saveFailed line in the warn token color
+    const failed = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1, failed: true }), spies), reactStub)
+    const failedLines = findAll(failed, (node) => node.role === 'status' && node.children === 'saveFailed')
+    expect(failedLines).toHaveLength(1)
+    expect(failedLines[0].style.color).toBe('var(--dsw-alias-state-warn-primary)')
+    // not failed: no failure line inside the bar
+    expect(findAll(normal, (node) => node.children === 'saveFailed')).toHaveLength(0)
+  })
+
+  it('discards staged edits on unmount (the preserved host contract), never on mount', async () => {
+    const { exports, editors, reactStub, reactState } = await loadPage()
+    const discards = []
+    const rendered = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 2 }), { discard: () => discards.push('discard') })
+    renderForm(rendered, reactStub)
+    // the mount pass of the effect discards nothing; the stored cleanup is the unmount
+    expect(discards).toEqual([])
+    reactState[0].cleanup()
+    expect(discards).toEqual(['discard'])
+  })
+
+  it('renders the unavailable notice INSTEAD of the form and the readOnly notice above it', async () => {
+    const { exports, editors, reactStub, reactState } = await loadPage()
+    // unavailable: one status line, no children, no bar — and the unmount
+    // discard is still registered (hooks run before the early return)
+    const discards = []
+    const unavailable = renderCard(exports, editors, shellState({ available: false }), { discard: () => discards.push('discard') })
+    const unavailableForm = renderForm(unavailable, reactStub)
+    expect(unavailableForm.__type).toBe('p')
+    expect(unavailableForm.role).toBe('status')
+    expect(unavailableForm.children).toBe('unavailable')
+    expect(saveBarsOf(unavailableForm)).toHaveLength(0)
+    reactState[0].cleanup()
+    expect(discards).toEqual(['discard'])
+    // readOnly: the notice renders above the (still rendered) children
+    const readOnly = renderCard(exports, editors, shellState({ writable: false }))
+    const readOnlyForm = renderForm(readOnly, reactStub)
+    expect(readOnlyForm.children[0].role).toBe('status')
+    expect(readOnlyForm.children[0].children).toBe('readOnly')
+    expect(readOnlyForm.children[1]).toBe(readOnly.children)
+    // a clean read-only form shows no bar (its disabled fields never stage)
+    expect(saveBarsOf(readOnlyForm)).toHaveLength(0)
+  })
+
+  it('keeps the restart reminder modal rendering alongside the dirty save bar', async () => {
+    const { exports, editors, reactStub, primitivesStub } = await loadPage()
+    const rendered = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 2, restartReminder: ['todoEnabled'] }))
+    // the children contract is unchanged: the cards column, then the modal
+    expect(rendered.children).toHaveLength(2)
+    expect(rendered.children[1].key).toBe('restart-reminder')
+    const form = renderForm(rendered, reactStub)
+    expect(saveBarsOf(form)).toHaveLength(1)
+    const modals = findAll(form, (node) => node.__type === primitivesStub.Modal)
+    expect(modals).toHaveLength(1)
+    expect(modals[0].open).toBe(true)
+  })
+
+  it('gives BOTH pages the bar: the main page and the routing page render it while dirty', async () => {
+    const { exports, editors, reactStub } = await loadPage()
+    for (const page of [undefined, 'routing']) {
+      const rendered = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1 }), { page })
+      const form = renderForm(rendered, reactStub)
+      expect(saveBarsOf(form), page ?? 'main').toHaveLength(1)
+      // and the page split itself is untouched by the shell swap
+      expect(Object.keys(cardsOf(rendered)), page ?? 'main').toEqual(page === 'routing' ? ROUTING_GROUPS : MAIN_GROUPS)
+    }
   })
 
   it('renders boolean rows via the shared effective-value helper and enum rows per their display marker', async () => {
@@ -1202,6 +1356,18 @@ describe('client.settings-page chunk', () => {
     return { controller, notifications, face: controller.inject() }
   }
 
+  it('controller: the projection carries pendingCount from the staged-write plan', async () => {
+    const { controller } = await makeController()
+    // nothing staged: no pending writes, and the save bar stays hidden
+    expect(controller.projection().pendingCount).toBe(0)
+    controller.form.planItems = [
+      { field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } },
+      { field: 'guardEnabled', op: { op: 'set', path: ['guardEnabled'], value: false } },
+    ]
+    expect(controller.projection().pendingCount).toBe(2)
+    controller.dispose()
+  })
+
   it('save flow: a landed save touching restart-required keys raises the reminder in registry order', async () => {
     const { controller, notifications, face } = await makeController()
     controller.form.planItems = [
@@ -1378,6 +1544,12 @@ describe('client.settings-page chunk', () => {
       for (const key of ['restartReminderTitle', 'restartReminderBody', 'restartReminderDismiss', 'restartRequired']) {
         expectResolved(dict, key)
       }
+      // the floating save bar's own keys resolve too (pendingChanges keeps
+      // its {n} placeholder for the locale's vars-object interpolation)
+      for (const key of ['pendingChanges', 'discardChanges']) {
+        expectResolved(dict, key)
+      }
+      expect(dict.pendingChanges).toContain('{n}')
       // the disabled-categories editor's own panel keys resolve too
       for (const key of ['disabledCategoriesCount', 'disabledCategoriesPanelHint', 'disabledCategoriesInvalid']) {
         expectResolved(dict, key)
@@ -1404,5 +1576,9 @@ describe('client.settings-page chunk', () => {
         expect(Object.hasOwn(dict, `${key}Hint`), `${locale} must not keep an orphan hint for ${key}`).toBe(false)
       }
     }
+    // the two dictionaries stay key-identical: an entry added to only one
+    // side (the exact class of slip the save-bar keys would have been)
+    // turns this red
+    expect(Object.keys(dicts.zh).sort()).toEqual(Object.keys(dicts.en).sort())
   })
 })
