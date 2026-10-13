@@ -15,7 +15,7 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 
 - 默认（设置关）：没有任何 LSP 表面，也不运行任何语言服务器。
 - 设置开启后：会话输入栏（模型选择器旁）出现 **LSP 开关**（不亮 = 本会话未启用）；点击点亮 → 本会话注册五个工具，首次使用时按 (cwd, 语言族) 懒启动语言服务器；再次点击熄灭 → 工具即刻消失、本会话持有的服务器全部关停。
-- 设置页 LSP 节提供 **"管理 LSP 服务"** 面板：列出全部 13 族服务器的安装状态与版本；缺失的服务器**一键安装**（先展示完整命令 → 确认 → 执行 → 输出与退出码回显）。面板底部可**添加/删除自定义语言服务器**（族名/命令/参数/安装命令，随设置保存，保存后检测并同样支持一键安装）。原独立的 `lspServers` 原始 JSON 输入行已并入该管理器行：覆盖标记/恢复默认收在行内，已保存值是坏 JSON 时行内显示错误提示、面板以空自定义列表打开，增删后保存即覆盖坏值（字段永不被卡死）。
+- 设置页主页面「LSP 语义工具」组提供 **"管理 LSP 服务"** 面板：列出全部 13 族服务器的安装状态与版本；缺失的服务器**一键安装**（先展示完整命令 → 确认 → 执行 → 输出与退出码回显）。面板底部可**添加/删除自定义语言服务器**（族名/命令/参数/安装命令，随设置保存，保存后检测并同样支持一键安装）。原独立的 `lspServers` 原始 JSON 输入行已并入该管理器行：覆盖标记/恢复默认收在行内，已保存值是坏 JSON 时行内显示错误提示、面板以空自定义列表打开，增删后保存即覆盖坏值（字段永不被卡死）。
 - 模型也可以自行调用 `lsp {enabled: true/false}` 切换，与面板开关共享同一状态。
 - 设置关闭时正在启用的会话被立即清理（工具注销、服务器关停、开关消失）；重新开启后会话回到默认关。
 - 会话级状态持久化：会话重启/应用重启后，之前点亮 LSP 的会话自动恢复五个工具。
@@ -33,16 +33,16 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 |---|---|---|
 | `lsp.enabled` | `false` | 能力总闸：关 = LSP 完全不存在；开 = 面板开关 + `lsp` 工具 + `/lsp` 命令可用，新会话默认关 |
 | `lsp.servers` | 内置注册表 | 每语言 `{command, args, manifests, installHint}`，可覆盖/扩展：typescript（typescript-language-server）、python（basedpyright-langserver）、go（gopls）、rust（rust-analyzer） |
-| `lsp.idleMs` | `600000` | 空闲自动关停阈值 |
-| `lsp.requestTimeoutMs` | `15000` | 单请求超时（超时为普通工具错误） |
-| `lsp.diagnosticsWaitMs` | `2000` | 诊断未发布时的短暂等待窗口 |
+| `lsp.idleMs`（设置键 `lspIdleMs`） | `600000` | 空闲自动关停阈值；**配置文件面键**：不在设置页渲染，只能改配置文件（生效时机不变） |
+| `lsp.requestTimeoutMs`（设置键 `lspRequestTimeoutMs`） | `15000` | 单请求超时（超时为普通工具错误）；**配置文件面键**：同上 |
+| `lsp.diagnosticsWaitMs`（设置键 `lspDiagnosticsWaitMs`） | `2000` | 诊断未发布时的短暂等待窗口；**配置文件面键**：同上 |
 | `lsp.servers` | 内置注册表 | 用户自定义服务器（`lspServers` 设置，面板可视化编辑）：每族 `{command, args?, manifests?, installHint?, install?}`，覆盖/扩展内置目录 |
 
 内置注册表 13 族：typescript、python（basedpyright）、go（gopls）、rust（rust-analyzer）、json/html/css/markdown（`vscode-langservers-extracted`）、bash、dockerfile、yaml、lua、cpp（clangd）。配方取自社区注册表（nvim-lspconfig / lsp-mode / Helix / vscode-langservers-extracted，来源注明于 `src/lsp/registry.js`）。每族带平台化安装命令（npm/pipx/go/rustup/brew/apt），由管理面板执行。
 
 **VSCode 生态说明**：VS Code 语言扩展是 VS Code API 插件，不可直接复用；其捆绑的服务器二进制探测列为后续项（路径私密、随版本漂移，见文档边界）。社区生态以配方注册表形式引入。
 
-均为 volatile config；`lsp.enabled` 另入设置面板 `lsp` 节，保存后**实时生效**（settings 服务在 volatile 提交时广播，LSP 模块原地注册/注销能力面，无需重启）。
+均为 volatile config；`lsp.enabled` 与 `lsp.servers` 另入设置页主页面「LSP 语义工具」组（总开关 + 管理器行），保存后**实时生效**（settings 服务在 volatile 提交时广播，LSP 模块原地注册/注销能力面，无需重启）。三个计时器键（`lspIdleMs`/`lspRequestTimeoutMs`/`lspDiagnosticsWaitMs`）是配置文件面键（`FIELDS` 的 `page: false`，见 [settings-page.md](settings-page.md)），不在设置页渲染、schema 与语义不变。
 
 ## 设计细节
 
