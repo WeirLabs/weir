@@ -784,13 +784,18 @@ window.__ModuleLoader__.load({
 		// The bar renders ONLY while the form is dirty — a clean page gets no
 		// new visual noise. It sits in the normal flow as the form's last
 		// element with position: sticky, so once the page scrolls it pins to
-		// the bottom edge of the settings scroll container. Chrome mirrors
-		// the group cards (layer-1 background, l1 border, 12px radius) plus a
-		// soft elevation so scrolled rows read as passing underneath; colors
-		// only from theme tokens, geometry hardcoded.
-		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "8px 12px", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", boxShadow: "var(--dsw-elevation-soft, 0 4px 16px rgba(0,0,0,.08))" };
-		const saveBarTextStyle = { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const saveBarFailedStyle = { color: "var(--dsw-alias-state-warn-primary)" };
+		// the bottom edge of the settings scroll container. Chrome mirrors the
+		// host's Toast surface (dark in BOTH themes) instead of the group cards:
+		// a floating action bar must read as a surface ABOVE the rows, not as
+		// one more row. Colors only from theme tokens, geometry hardcoded.
+		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "10px 14px", background: "var(--dsw-alias-toast-bg)", border: "none", borderRadius: "var(--dsw-radius-lg, 12px)", boxShadow: "var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,.18))" };
+		const saveBarTextStyle = { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-toast-label)" };
+		// warn-label (not warn-primary) is the token designed for dark surfaces.
+		const saveBarFailedStyle = { color: "var(--dsw-alias-state-warn-label)" };
+		// Discard as a plain text action (the host toast's action pattern): the
+		// outline Button variant is tuned for regular surfaces and reads poorly
+		// on the always-dark toast surface.
+		const saveBarDiscardStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", lineHeight: "16px", padding: "4px 2px", color: "var(--dsw-static-deepseek-400, var(--dsw-alias-brand-primary))" };
 		const saveBarActionsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		// The form-shell notice lines (unavailable / readOnly) keep the host
 		// contract's role="status" lines in the page's hint styling.
@@ -820,7 +825,7 @@ window.__ModuleLoader__.load({
 						state.failed ? react_jsx_runtime.jsx("span", { style: saveBarFailedStyle, role: "status", children: labels.saveFailed, key: "failed" }) : null
 					] }),
 					react_jsx_runtime.jsxs("div", { style: saveBarActionsStyle, children: [
-						react_jsx_runtime.jsx(primitives.Button, { variant: "outline", size: "sm", onClick: props.onDiscard, children: labels.discard }),
+						react_jsx_runtime.jsx("button", { type: "button", style: saveBarDiscardStyle, onClick: props.onDiscard, children: labels.discard }),
 						react_jsx_runtime.jsx(primitives.Button, { variant: "primary", size: "sm", disabled: state.invalid || state.saving, onClick: props.onSave, children: state.saving ? labels.saving : labels.save })
 					] })
 				] }, "save-bar") : null

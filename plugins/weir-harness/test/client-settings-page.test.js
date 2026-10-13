@@ -692,7 +692,7 @@ describe('client.settings-page chunk', () => {
     const clean = renderCard(exports, editors, shellState(), { t: tFor('en') })
     expect(saveBarsOf(renderForm(clean, reactStub))).toHaveLength(0)
     // dirty with three staged writes: exactly one bar, pinned sticky to the
-    // scroll container's bottom edge, in the page's card chrome
+    // scroll container's bottom edge, on the dark toast surface
     const dirty = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 3 }), { t: tFor('en') })
     const dirtyForm = renderForm(dirty, reactStub)
     const bars = saveBarsOf(dirtyForm)
@@ -701,9 +701,10 @@ describe('client.settings-page chunk', () => {
     expect(bar.style.position).toBe('sticky')
     expect(bar.style.bottom).toBe('12px')
     expect(bar.style.zIndex).toBe(1)
-    expect(bar.style.background).toBe('var(--dsw-alias-bg-layer-1)')
-    expect(bar.style.border).toBe('1px solid var(--dsw-alias-border-l1)')
-    expect(bar.style.borderRadius).toBe('12px')
+    // toast surface: dark in both themes, no border, elevation shadow
+    expect(bar.style.background).toBe('var(--dsw-alias-toast-bg)')
+    expect(bar.style.border).toBe('none')
+    expect(bar.style.borderRadius).toBe('var(--dsw-radius-lg, 12px)')
     // the pending count interpolates through the real dictionaries
     expect(JSON.stringify(dirtyForm)).toContain('3 unsaved change(s)')
     const dirtyZh = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 2 }), { t: tFor('zh') })
@@ -717,8 +718,13 @@ describe('client.settings-page chunk', () => {
     const buttonsOf = (tree) => findAll(tree, (node) => node.__type === primitivesStub.Button)
     // plain dirty: both buttons live, save enabled with the save label
     const normal = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1 }), spies), reactStub)
-    const [discard, save] = buttonsOf(normal)
-    expect(discard.variant).toBe('outline')
+    const [save] = buttonsOf(normal)
+    // discard is a plain text action on the dark toast surface (the host
+    // toast's action pattern), not an outline Button
+    const discards = findAll(normal, (node) => node.__type === 'button' && node.children === 'discardChanges')
+    expect(discards).toHaveLength(1)
+    const discard = discards[0]
+    expect(discard.style.color).toBe('var(--dsw-static-deepseek-400, var(--dsw-alias-brand-primary))')
     expect(discard.children).toBe('discardChanges')
     expect(save.variant).toBe('primary')
     expect(save.disabled).toBe(false)
@@ -729,16 +735,16 @@ describe('client.settings-page chunk', () => {
     expect(calls.discard).toEqual(['discard'])
     // invalid draft: save disabled
     const invalid = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1, invalid: true }), spies), reactStub)
-    expect(buttonsOf(invalid)[1].disabled).toBe(true)
+    expect(buttonsOf(invalid)[0].disabled).toBe(true)
     // saving: save disabled with the saving label
     const saving = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1, saving: true }), spies), reactStub)
-    expect(buttonsOf(saving)[1].disabled).toBe(true)
-    expect(buttonsOf(saving)[1].children).toBe('saving')
+    expect(buttonsOf(saving)[0].disabled).toBe(true)
+    expect(buttonsOf(saving)[0].children).toBe('saving')
     // a failed save adds the saveFailed line in the warn token color
     const failed = renderForm(renderCard(exports, editors, shellState({ dirty: true, pendingCount: 1, failed: true }), spies), reactStub)
     const failedLines = findAll(failed, (node) => node.role === 'status' && node.children === 'saveFailed')
     expect(failedLines).toHaveLength(1)
-    expect(failedLines[0].style.color).toBe('var(--dsw-alias-state-warn-primary)')
+    expect(failedLines[0].style.color).toBe('var(--dsw-alias-state-warn-label)')
     // not failed: no failure line inside the bar
     expect(findAll(normal, (node) => node.children === 'saveFailed')).toHaveLength(0)
   })
