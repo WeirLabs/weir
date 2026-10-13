@@ -79,9 +79,10 @@ describe('weir settings client half', () => {
     const sentinelSnapshot = { marker: 'snapshot' }
     const settingsPageChunk = {
       WeirCardController: class {
-        constructor(scope, deps) {
+        constructor(scope, deps, page) {
           this.scope = scope
           this.deps = deps
+          this.page = page
           this.store = { getSnapshot: () => sentinelSnapshot, subscribe: () => () => {} }
           controllerConstructed.push(this)
         }
@@ -317,7 +318,8 @@ describe('weir settings client half', () => {
     expect(whileServedCalls[0].namespaces).toEqual(['weir-settings'])
 
     // drive the whileServed registration: the composer toggle and the hash_edit
-    // toolview registered at apply, then two page-chain slot injects
+    // toolview registered at apply, then the two pages' slot injects (main +
+    // model routing)
     whileServedCalls[0].register(new Set(['weir-settings']))
     expect(slotInjects.map((inject) => inject.name)).toEqual([
       'conversation.input.right', 'tool.call.toolview', 'conversation.input.right',
@@ -329,6 +331,8 @@ describe('weir settings client half', () => {
       // the blackboard header quick entry (order 20, after the worktree pill)
       'conversation.session.header.utilities',
       'settings.section', 'settings.weir.item',
+      // the model-routing page: its own section + item slot registrations
+      'settings.section', 'settings.weir-routing.item',
     ])
 
     // the per-session LSP toggle in the conversation composer bar slot
@@ -369,9 +373,20 @@ describe('weir settings client half', () => {
       'worktree_abandon', 'worktree_check', 'worktree_cleanup', 'worktree_land', 'worktree_open', 'worktree_watch',
     ])
 
-    // the top-level settings section registration
+    // the top-level settings section registrations: the main page (order 40)
+    // and the model-routing page (order 41)
     slotInjects[13].fn()
-    const { definition: sectionDef, component: sectionComponent } = slotRegistrations.find((registration) => registration.definition.name === 'settings.section')
+    slotInjects[15].fn()
+    const sectionEntries = slotRegistrations.filter((registration) => registration.definition.name === 'settings.section')
+    expect(sectionEntries).toHaveLength(2)
+    const { definition: sectionDef, component: sectionComponent } = sectionEntries.find((registration) => registration.definition.id === 'weir-settings')
+    const routingSectionEntry = sectionEntries.find((registration) => registration.definition.id === 'weir-model-routing')
+    expect(routingSectionEntry).toBeTruthy()
+    expect(routingSectionEntry.definition.order).toBe(41)
+    expect(routingSectionEntry.definition.children['settings.weir-routing.item']).toEqual({ kind: 'list', scope: 'root' })
+    expect(routingSectionEntry.definition.label()).toBe('routingTitle')
+    reactStub.begin()
+    expect(routingSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
     expect(sectionDef.name).toBe('settings.section')
     expect(sectionDef.id).toBe('weir-settings')
     expect(sectionDef.order).toBe(40)
@@ -380,10 +395,15 @@ describe('weir settings client half', () => {
     reactStub.begin()
     expect(sectionComponent({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
 
-    // the item slot registration hosting the form card (the single entry:
-    // no plugins.item registration anymore)
+    // the item slot registrations hosting the form cards (the single entry
+    // per page: no plugins.item registration anymore)
     slotInjects[14].fn()
+    slotInjects[16].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
+    const routingItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
+    expect(routingItemEntry).toBeTruthy()
+    expect(routingItemEntry.definition.id).toBe('weir-routing-config')
+    expect(routingItemEntry.definition.order).toBe(0)
     expect(itemEntry.definition.id).toBe('weir-config')
     expect(slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')).toBeUndefined()
 
@@ -398,7 +418,14 @@ describe('weir settings client half', () => {
     expect(typeof badgeVerbs.fetchReceipt).toBe('function')
 
     // the page inject(): form hooks + save/edit/discard actions (a stable
-    // deferred-store face plus controller-delegating verbs)
+    // deferred-store face plus controller-delegating verbs) — the routing
+    // item carries the same face shape against its own controller
+    const routingInjected = routingItemEntry.definition.inject()
+    expect(routingInjected.hooks.weirSettingsCard).toBeTruthy()
+    expect(typeof routingInjected.save).toBe('function')
+    expect(typeof routingInjected.edit).toBe('function')
+    expect(typeof routingInjected.discard).toBe('function')
+    expect(typeof routingInjected.dismissRestartReminder).toBe('function')
     const injected = itemEntry.definition.inject()
     expect(injected.hooks.weirSettingsCard).toBeTruthy()
     expect(typeof injected.save).toBe('function')
@@ -409,7 +436,7 @@ describe('weir settings client half', () => {
     expect(sessionAccesses()).toBe(0)
   })
 
-  it('fans out the settings chunks plus the picker, constructs the controller on arrival, and renders loading/arrived states', async () => {
+  it('fans out the settings chunks plus the picker, constructs both page controllers on arrival, and renders loading/arrived states', async () => {
     const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
@@ -455,13 +482,31 @@ describe('weir settings client half', () => {
     // a prop — never through the settings-chunk Promise.all
     expect(settled.modelPicker).toBe(modelPickerChunk)
 
-    // the controller was constructed on arrival with the served scope and the
-    // prop-injected deps; the deferred store now serves its snapshot
-    expect(controllerConstructed).toHaveLength(1)
+    // both page controllers were constructed on arrival with the served
+    // scope and the prop-injected deps; each deferred store now serves its
+    // controller's snapshot
+    expect(controllerConstructed).toHaveLength(2)
+    expect(controllerConstructed.map((c) => c.page)).toEqual(['main', 'routing'])
     expect(controllerConstructed[0].scope).toBe(scope)
+    expect(controllerConstructed[1].scope).toBe(scope)
     expect(typeof controllerConstructed[0].deps.getSession).toBe('function')
     expect(typeof controllerConstructed[0].deps.settingsBus.notify).toBe('function')
     expect(injected.hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
+
+    // the routing item renders the same WeirCard on the routing page against
+    // the second controller's store
+    slotInjects[16].fn()
+    const routingItem = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
+    expect(routingItem.definition.inject().hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
+    reactStub.reset()
+    reactStub.begin()
+    routingItem.component(formProps)
+    await flush()
+    reactStub.begin()
+    const routingSettled = routingItem.component(formProps)
+    expect(routingSettled.__type).toBe(settingsPageChunk.WeirCard)
+    expect(routingSettled.page).toBe('routing')
+    expect(routingSettled.modelPicker).toBe(modelPickerChunk)
 
     // settingsBus 贯通: the composer toggle wrapper receives the same bus object
     slotInjects[0].fn()

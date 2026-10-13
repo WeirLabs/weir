@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 import { CURATED_AGENTS } from '../src/delegate/agents.js'
 import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
-import { FIELD_DEFAULTS as SERVER_FIELD_DEFAULTS, RESTART_KEYS } from '../src/settings/sections.js'
+import { CONFIG_FACE_ONLY_KEYS, FIELD_DEFAULTS as SERVER_FIELD_DEFAULTS, RESTART_KEYS } from '../src/settings/sections.js'
 
 /**
  * client.settings-page.js chunk test: shared helper + react/jsx-runtime/
@@ -130,7 +130,11 @@ describe('client.settings-page chunk', () => {
     return registrations[0].dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateAgentChains','delegateDisabledCategories','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','todoErrorBackoffBaseMs','todoErrorBackoffCapMs','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','editLockHoldDefaultMinutes','editLockHoldSingleMaxMinutes','editLockHoldCumulativeMaxMinutes','editLockNudgeAttempts','editLockNudgeFallback','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspIdleMs','lspRequestTimeoutMs','lspDiagnosticsWaitMs','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground','blackboardWriteTokenTtlMinutes']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+
+  const MAIN_GROUPS = ['intent', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify']
+  const ROUTING_GROUPS = ['routingCategories', 'routingAgents', 'routingSupervision']
+  const ROUTING_FIELD_NAMES = ['delegateCategoryChains', 'delegateDisabledCategories', 'delegateAgentChains', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs']
 
   // The six boolean product defaults shipped after BOOLEAN_DEFAULTS was first
   // written. Their module/bundle defaults are all ON (cordis.patch.yml
@@ -158,6 +162,7 @@ describe('client.settings-page chunk', () => {
   function renderCard(exports, editors, state, spies = {}) {
     return exports.WeirCard({
       view: 'form',
+      page: spies.page,
       t: (key) => key,
       useWeirSettingsCard: (selector) => selector({ writable: true, ...state }),
       edit: spies.edit ?? (() => {}),
@@ -198,9 +203,11 @@ describe('client.settings-page chunk', () => {
     const { definition, exports, editors } = await loadPage()
     expect(definition.id).toBe('weir-harness')
     expect(definition.chunk).toBe('client.settings-page.js')
-    // the form-layer field table is exactly the pre-overhaul flat namespace
+    // the form-layer field table covers both pages in GROUPS declaration
+    // order (main-page fields and the routing page's six model fields)
     expect(exports.FIELDS.map((descriptor) => descriptor.field)).toEqual(FIELD_NAMES)
     expect(exports.WeirCard({ view: 'summary', t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('description')
+    expect(exports.WeirCard({ view: 'summary', page: 'routing', t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('routingDescription')
   })
 
   it('renders the card-based sections and the default visible set per group', async () => {
@@ -215,7 +222,7 @@ describe('client.settings-page chunk', () => {
     expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '12px' })
     const cards = cardsOf(rendered)
     const groupIds = Object.keys(cards)
-    expect(groupIds).toEqual(['intent', 'delegate', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify', 'blackboard'])
+    expect(groupIds).toEqual(MAIN_GROUPS)
     // every card: layered background, l1 border, radius, title inside the top
     for (const [id, card] of Object.entries(cards)) {
       expect(card.style.background).toBe('var(--dsw-alias-bg-layer-1)')
@@ -224,21 +231,39 @@ describe('client.settings-page chunk', () => {
       expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
     // the default visible set (product defaults: todo/guard/worktree/robash/
-    // notify and Edit Lock on; LSP off; classifier regex; platform darwin)
-    expect(rowKeys(cards, 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
-    expect(rowKeys(cards, 'delegate')).toEqual(['delegateCategoryChains', 'delegateAgentChains', 'delegateDisabledCategories', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
-    expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs'])
+    // notify and Edit Lock on; LSP off; classifier regex — its timeout row
+    // only exists for the llm/jev classifiers; platform darwin)
+    expect(rowKeys(cards, 'intent')).toEqual(['intentGateClassifier'])
+    expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax'])
     expect(rowKeys(cards, 'guard')).toEqual(['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'])
-    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled', 'editLockAutoResume', 'editLockStaleSweep', 'editLockHoldDefaultMinutes', 'editLockHoldSingleMaxMinutes', 'editLockHoldCumulativeMaxMinutes', 'editLockNudgeAttempts', 'editLockNudgeFallback', 'editLockMaintenance'])
+    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled', 'editLockAutoResume', 'editLockStaleSweep', 'editLockMaintenance'])
     expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes', 'worktreeAutoApprove'])
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
     expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
-    expect(rowKeys(cards, 'blackboard')).toEqual(['blackboardWriteTokenTtlMinutes'])
     // hairline separators: the first row in a card has none, the rest do
     const todoRows = cards.todo.children.slice(1)
     expect(todoRows[0].style.borderTop).toBe('none')
     for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('1px solid var(--dsw-alias-border-l2)')
+  })
+
+  it('splits the two pages: main renders its 8 groups, routing renders its 3 — never mixed', async () => {
+    const { exports, editors } = await loadPage()
+    const state = { fields: makeFields(), env: { status: 'ready', facts: { platform: 'darwin' } } }
+    const main = cardsOf(renderCard(exports, editors, state))
+    expect(Object.keys(main)).toEqual(MAIN_GROUPS)
+    expect(Object.keys(main)).not.toContain('routingCategories')
+    const routing = cardsOf(renderCard(exports, editors, state, { page: 'routing' }))
+    expect(Object.keys(routing)).toEqual(ROUTING_GROUPS)
+    for (const id of MAIN_GROUPS) expect(Object.keys(routing)).not.toContain(id)
+    expect(rowKeys(routing, 'routingCategories')).toEqual(['delegateCategoryChains', 'delegateDisabledCategories'])
+    expect(rowKeys(routing, 'routingAgents')).toEqual(['delegateAgentChains'])
+    expect(rowKeys(routing, 'routingSupervision')).toEqual(['supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
+    // the routing cards keep the card chrome and the translated group titles
+    for (const id of ROUTING_GROUPS) {
+      expect(routing[id].style.borderRadius).toBe('12px')
+      expect(routing[id].children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
+    }
   })
 
   it('keeps opt-out risk at the switch and diagnostics reachable in off, saved-off, and on states in both locales', async () => {
@@ -317,7 +342,7 @@ describe('client.settings-page chunk', () => {
       fields: makeFields({ todoEnabled: { text: 'true' } }),
       env: { status: 'ready', facts: { platform: 'darwin' } },
     })
-    expect(rowKeys(cardsOf(on), 'todo')).toHaveLength(5)
+    expect(rowKeys(cardsOf(on), 'todo')).toHaveLength(3)
     // hiding performs no writes: the hidden rows' staged drafts and saved
     // values are untouched by the render itself
     const editCalls = []
@@ -372,7 +397,7 @@ describe('client.settings-page chunk', () => {
       env: { status: 'failed', facts: {} },
     })
     expect(rowKeys(cardsOf(failed), 'robash')).toEqual(pendingKeys)
-    expect(rowKeys(cardsOf(failed), 'todo')).toHaveLength(5)
+    expect(rowKeys(cardsOf(failed), 'todo')).toHaveLength(3)
     // ...but a disabled master switch hides even Windows-matching rows
     const win32Off = renderCard(exports, editors, {
       fields: makeFields({ robashEnabled: { text: 'false' } }),
@@ -406,9 +431,15 @@ describe('client.settings-page chunk', () => {
       env: { status: 'ready', facts: { platform: 'win32' } },
     })
     const cards = cardsOf(rendered)
-    // the two chain editors (category lanes default, curated-agent lanes
+    // the chain editors left the main page with the old delegate group: the
+    // routing page hosts them (category lanes default, curated-agent lanes
     // pinned) — sentinel components arrive as element types, never invoked
-    const chainRows = findAll(rendered.children, (node) => node.__type === editors.ChainEditorField)
+    expect(findAll(rendered.children, (node) => node.__type === editors.ChainEditorField)).toHaveLength(0)
+    const routingRendered = renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'win32' } },
+    }, { page: 'routing' })
+    const chainRows = findAll(routingRendered.children, (node) => node.__type === editors.ChainEditorField)
     expect(chainRows).toHaveLength(2)
     expect(chainRows[0].field).toBe('delegateCategoryChains')
     expect(chainRows[0].rows).toBeUndefined()
@@ -418,7 +449,7 @@ describe('client.settings-page chunk', () => {
     expect(chainRows[1].rowLabelPrefix).toBe('chainAgent_')
     expect(chainRows[1].panelHintKey).toBe('chainAgentPanelHint')
     // the disabled-categories editor over the parity-pinned category rows
-    const disabledRow = findAll(rendered.children, (node) => node.__type === editors.DisabledCategoriesEditorField)
+    const disabledRow = findAll(routingRendered.children, (node) => node.__type === editors.DisabledCategoriesEditorField)
     expect(disabledRow).toHaveLength(1)
     expect(disabledRow[0].rows).toBe(exports.CATEGORY_NAMES)
     // the five robash list editors (master on + Windows env facts)
@@ -442,7 +473,7 @@ describe('client.settings-page chunk', () => {
     expect(typeof manager[0].onReset).toBe('function')
     expect(typeof manager[0].t).toBe('function')
     expect(manager[0].disabled).toBe(false)
-    expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled', 'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs', 'lspServers'])
+    expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled', 'lspServers'])
     // the merged node declaration: custom-with-field sharing parent/when
     // with the old pair, exactly one lspManager slot in the group
     const lspGroup = exports.GROUPS.find((group) => group.id === 'lsp')
@@ -558,13 +589,15 @@ describe('client.settings-page chunk', () => {
     })
     // the value rows carry their tags eagerly in the label prop (the
     // ChoiceField component tree only materializes when invoked — covered
-    // below): timeout + todo 4; guard thresholds are live
+    // below): the todo children todoMaxConsecutive + todoErrorRetryMax (the
+    // backoff pair left the page; the classifier timeout row only exists for
+    // llm/jev); guard thresholds are live
     const tags = findAll(rendered.children, (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
-    expect(tags).toHaveLength(5)
+    expect(tags).toHaveLength(2)
     expect(tags.every((tag) => tag.tone === 'neutral')).toBe(true)
     // no other Tag elements on the page (nothing overridden by default)
     const allTags = findAll(rendered.children, (node) => node.__type === primitivesStub.Tag)
-    expect(allTags).toHaveLength(5)
+    expect(allTags).toHaveLength(2)
     // choice rows: invoking the ChoiceField element materializes the tag
     const choiceRows = findAll(rendered.children, (node) => node.descriptor && node.field && typeof node.onChange === 'function')
     const choiceByName = Object.fromEntries(choiceRows.map((el) => [el.descriptor.field, el]))
@@ -583,8 +616,8 @@ describe('client.settings-page chunk', () => {
       env: { status: 'ready', facts: { platform: 'darwin' } },
     })
     const llmTags = findAll(llm.children, (node) => node.__type === primitivesStub.Tag && node.children === 'restartRequired')
-    // value rows 5 + the picker carrier = 6
-    expect(llmTags).toHaveLength(6)
+    // value rows 3 (timeout + todoMaxConsecutive + todoErrorRetryMax) + the picker carrier = 4
+    expect(llmTags).toHaveLength(4)
   })
 
   it('renders the restart reminder as a centered modal when the state carries one', async () => {
@@ -737,10 +770,14 @@ describe('client.settings-page chunk', () => {
       fields,
       env: { status: 'ready', facts: { platform: 'darwin' } },
     })
-    const valueFields = findAll(rendered.children, (node) => node.__type === primitivesStub.SettingsValueField)
-    const byId = Object.fromEntries(valueFields.map((el) => [el.id, el]))
     // number input: the formatted default is the displayed text, and the
-    // field stays non-overridden with no invalid marking
+    // field stays non-overridden with no invalid marking — the timeout row
+    // only renders under the llm/jev classifiers, so this render sets llm
+    const llm = renderCard(exports, editors, {
+      fields: makeFields({ intentGateClassifier: { text: 'llm' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    })
+    const byId = Object.fromEntries(findAll(llm.children, (node) => node.__type === primitivesStub.SettingsValueField).map((el) => [el.id, el]))
     const timeout = byId['plugin-config-weir-settings-intentGateTimeoutMs']
     expect(timeout.text).toBe('1500')
     expect(timeout.overridden).toBe(false)
@@ -768,8 +805,9 @@ describe('client.settings-page chunk', () => {
   it('staged drafts and saved values win over the default display; clearing re-shows it', async () => {
     const { exports, editors, primitivesStub } = await loadPage()
     const valueFieldProps = (fields, name) => {
+      // the timeout row only renders under the llm/jev classifiers
       const rendered = renderCard(exports, editors, {
-        fields,
+        fields: { ...fields, intentGateClassifier: { ...fields.intentGateClassifier, text: 'llm' } },
         env: { status: 'ready', facts: { platform: 'darwin' } },
       })
       return findAll(rendered.children, (node) => node.__type === primitivesStub.SettingsValueField && node.id === `plugin-config-weir-settings-${name}`)[0]
@@ -819,7 +857,7 @@ describe('client.settings-page chunk', () => {
       fields: makeFields({ intentGateClassifier: { text: '' } }),
       env: { status: 'ready', facts: { platform: 'darwin' } },
     })
-    expect(rowKeys(cardsOf(rendered), 'intent')).toEqual(['intentGateClassifier', 'intentGateTimeoutMs'])
+    expect(rowKeys(cardsOf(rendered), 'intent')).toEqual(['intentGateClassifier'])
   })
 
   it('renders the mirrored switches ON with their children visible when the profile never saved them', async () => {
@@ -847,6 +885,9 @@ describe('client.settings-page chunk', () => {
     const { WeirSection } = exports
     const section = WeirSection({ renderSlot: (slot) => slot })
     expect(section.children).toBe('settings.weir.item')
+    // the routing section reuses the shell with its own item slot
+    const routingSection = WeirSection({ renderSlot: (slot) => slot, slot: 'settings.weir-routing.item' })
+    expect(routingSection.children).toBe('settings.weir-routing.item')
   })
 
   // ---- pure export: evaluateCondition ----
@@ -982,6 +1023,13 @@ describe('client.settings-page chunk', () => {
     ] }], `empty 'all' condition`)
     // duplicate field
     expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text' }, { field: 'a', kind: 'number' }] }], `duplicate field 'a'`)
+    // an invalid group page names the group
+    expectLayoutError([{ id: 'g', page: 'side', fields: [{ field: 'a', kind: 'text' }] }], `group 'g' declares an invalid page 'side'`)
+    // both declared pages pass
+    validateLayout([
+      { id: 'g1', page: 'main', fields: [{ field: 'a', kind: 'text' }] },
+      { id: 'g2', page: 'routing', fields: [{ field: 'b', kind: 'text' }] },
+    ])
     // conditions may reference keys of other groups (existence only)
     validateLayout([
       { id: 'g1', fields: [{ field: 'a', kind: 'text' }] },
@@ -1046,9 +1094,9 @@ describe('client.settings-page chunk', () => {
 
   // ---- controller: inject face, env fetch, save flow ----
 
-  it('controller: builds the flat field specs, exposes the inject face, and bumps the prop-injected bus on save', async () => {
+  it('controller: builds the main-page field specs, exposes the inject face, and bumps the prop-injected bus on save', async () => {
     const { exports, specsSeen } = await loadPage()
-    const { WeirCardController, FIELDS } = exports
+    const { WeirCardController, fieldsForPage } = exports
 
     const notifications = []
     const settingsBus = { subscribe: () => () => {}, notify: () => notifications.push('bump') }
@@ -1061,10 +1109,11 @@ describe('client.settings-page chunk', () => {
     const scope = { ns: 'weir-settings' }
     const controller = new WeirCardController(scope, { settingsBus, getSession, fetchEnv: () => new Promise(() => {}) })
 
-    // the form model tracks the flat FIELDS spec list (custom rows naming a
-    // field — chains, robash lists, the picker carrier — are text-backed)
+    // the form model tracks the main page's spec list by default (custom
+    // rows naming a field — robash lists, the picker carrier — are
+    // text-backed); the routing page's form covers exactly its six fields
     const ROBASH_LIST_FIELDS = ['robashAllow', 'robashGitAllow', 'robashDeny', 'robashPwshAllow', 'robashPwshDeny']
-    expect(specsSeen).toHaveLength(FIELDS.length)
+    expect(specsSeen.map((spec) => spec.field)).toEqual(fieldsForPage('main').map((descriptor) => descriptor.field))
     expect(specsSeen.filter((spec) => ROBASH_LIST_FIELDS.includes(spec.field))).toHaveLength(5)
 
     // the inject face: hooks + edit/reset/save/discard + lazy getSession
@@ -1085,6 +1134,26 @@ describe('client.settings-page chunk', () => {
     await flush()
     expect(notifications).toEqual(['bump'])
 
+    controller.dispose()
+  })
+
+  it('controller: the routing page form tracks exactly the six routing fields', async () => {
+    const { exports, specsSeen } = await loadPage()
+    const settingsBus = { subscribe: () => () => {}, notify: () => {} }
+    const scope = { ns: 'weir-settings' }
+    const controller = new exports.WeirCardController(scope, { settingsBus, getSession: () => ({}), fetchEnv: () => new Promise(() => {}) }, 'routing')
+    // the constructor's third parameter selects the page: specs and the
+    // projection cover exactly the routing groups' fields
+    expect(specsSeen.map((spec) => spec.field)).toEqual(ROUTING_FIELD_NAMES)
+    expect(exports.fieldsForPage('routing').map((descriptor) => descriptor.field)).toEqual(ROUTING_FIELD_NAMES)
+    const projection = controller.projection()
+    expect(Object.keys(projection.fields).sort()).toEqual([...ROUTING_FIELD_NAMES].sort())
+    expect(projection.restartReminder).toBe(null)
+    // the main page covers the rest: the two pages partition the chunk FIELDS
+    const mainFields = exports.fieldsForPage('main').map((descriptor) => descriptor.field)
+    expect([...mainFields, ...exports.fieldsForPage('routing').map((descriptor) => descriptor.field)].sort())
+      .toEqual(exports.FIELDS.map((descriptor) => descriptor.field).sort())
+    expect(mainFields.some((field) => ROUTING_FIELD_NAMES.includes(field))).toBe(false)
     controller.dispose()
   })
 
@@ -1221,6 +1290,27 @@ describe('client.settings-page chunk', () => {
     expect(controller.form.publishCount).toBe(1)
   })
 
+  it('save flow: a routing-page save never raises the restart reminder', async () => {
+    // The routing page has no restart-required fields: every landed save is
+    // live, and the reminder code path (shared with the main page) finds no
+    // restart field among the touched ones.
+    const { exports } = await loadPage()
+    const notifications = []
+    const settingsBus = { subscribe: () => () => {}, notify: () => notifications.push('bump') }
+    const controller = new exports.WeirCardController({ ns: 'weir-settings' }, { settingsBus, getSession: () => ({}), fetchEnv: () => new Promise(() => {}) }, 'routing')
+    const face = controller.inject()
+    controller.form.planItems = [
+      { field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } },
+      { field: 'delegateCategoryChains', op: { op: 'set', path: ['delegateCategoryChains'], value: '{}' } },
+    ]
+    await face.save()
+    expect(notifications).toEqual(['bump'])
+    expect(controller.restartReminder).toBe(null)
+    expect(controller.projection().restartReminder).toBe(null)
+    expect(controller.form.publishCount).toBe(1)
+    controller.dispose()
+  })
+
   it('pins the curated agent lane names to the server registry (rename drift guard)', async () => {
     const { exports } = await loadPage()
     // The client keeps the curated agent names in ONE exported constant; the
@@ -1247,7 +1337,7 @@ describe('client.settings-page chunk', () => {
     expect(exports.RESTART_FIELDS).toEqual([...RESTART_KEYS])
   })
 
-  it('resolves a label and a hint for every form field in both dictionaries — never the raw key', async () => {
+  it('resolves a label and a hint for every field on both pages in both dictionaries — never the raw key, no orphans', async () => {
     const { exports } = await loadPage()
     const { exports: chainModel } = await loadClientChunk('lib/client.chain-model.js')
     const dicts = await loadDictionaries()
@@ -1262,6 +1352,9 @@ describe('client.settings-page chunk', () => {
     }
     for (const locale of ['en', 'zh']) {
       const dict = dicts[locale]
+      // every field on BOTH pages (the chunk FIELDS partition into the main
+      // and routing groups) resolves its label, hint, and enum options
+      expect(exports.fieldsForPage('main').length + exports.fieldsForPage('routing').length).toBe(exports.FIELDS.length)
       for (const descriptor of exports.FIELDS) {
         expectResolved(dict, descriptor.field)
         expectResolved(dict, `${descriptor.field}Hint`)
@@ -1293,6 +1386,22 @@ describe('client.settings-page chunk', () => {
       // lspServers row's error state)
       for (const key of ['lspManagerInvalidJson']) {
         expectResolved(dict, key)
+      }
+      // both pages' section texts resolve
+      for (const key of ['title', 'description', 'routingTitle', 'routingDescription']) {
+        expectResolved(dict, key)
+      }
+      // every group on both pages has its translated card title, and no
+      // departed group (delegate, blackboard) leaves an orphan label behind
+      const groupLabelKeys = exports.GROUPS.map((group) => `group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`)
+      expect(groupLabelKeys).toHaveLength(11)
+      for (const key of groupLabelKeys) expectResolved(dict, key)
+      expect(Object.keys(dict).filter((key) => key.startsWith('group')).sort()).toEqual([...groupLabelKeys].sort())
+      // no orphans: the config-face-only keys (server-declared page:false)
+      // left the page, so their label/hint rows left the dictionaries too
+      for (const key of CONFIG_FACE_ONLY_KEYS) {
+        expect(Object.hasOwn(dict, key), `${locale} must not keep an orphan label for ${key}`).toBe(false)
+        expect(Object.hasOwn(dict, `${key}Hint`), `${locale} must not keep an orphan hint for ${key}`).toBe(false)
       }
     }
   })
