@@ -346,6 +346,50 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
       return id
     }
 
+    /**
+     * The conversation root for a BARE session id (the remote bridge's
+     * resolve face — the side panel asks for the board it should bind
+     * before any lookup-gated verb runs). Same root semantics as boardOf
+     * and resolveDurableRoot: a depth-0 session (including a fork that
+     * still carries a parentSession) is its own root; a delegated child
+     * ascends the parentSession chain. Each hop reads the live sessions
+     * registry first, then the durable header through
+     * sessionQuery.readSession (the parentOf seam — a child between
+     * turns has no live registry entry). A hop that yields no header, a
+     * missing parent, a cycle, or the hop cap degrades to the deepest
+     * known ancestor: boards never silently cross-contaminate
+     * conversations.
+     * @param {string} sessionId
+     * @returns {Promise<string>}
+     */
+    const rootOf = async (sessionId) => {
+      const headerOf = async (/** @type {string} */ id) => {
+        try {
+          const live = ctx.get?.('sessions')?.get?.(id)
+          if (live?.header && typeof live.header === 'object') return live.header
+        } catch { /* fall through to the durable lookup */ }
+        try {
+          // readSession returns { session, events } — the session record IS
+          // the durable header (id, parentSession, delegationDepth, ...).
+          const read = await ctx.get?.('sessionQuery')?.readSession?.(id)
+          if (read?.session && typeof read.session === 'object') return read.session
+        } catch { /* an unreadable log yields no header */ }
+        return undefined
+      }
+      let id = sessionId
+      const seen = new Set([id])
+      for (let hop = 0; hop < MAX_ANCESTORS; hop++) {
+        const header = await headerOf(id)
+        if (!header) break
+        if ((header.delegationDepth ?? 0) === 0) return id
+        const parentId = header.parentSession
+        if (typeof parentId !== 'string' || parentId.length === 0 || seen.has(parentId)) break
+        seen.add(parentId)
+        id = parentId
+      }
+      return id
+    }
+
     const call = (exec, action) => {
       if (lifecycle) return lifecycle.run(exec?.agent, root => { exec?.signal?.throwIfAborted?.(); return action(root) })
       const id = boardOf(exec?.agent)
@@ -382,7 +426,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
       resolveMainAgent: agent => agent,
       logger: ctx.logger,
     })
-    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, run: lifecycle?.run, ttlMs, requestPromotion: async (/** @type {any} */ agent) => {
+    const offBridge = feedBlackboardRemoteBridge({ kernel: kernelInstance, boardOf, rootOf, run: lifecycle?.run, ttlMs, requestPromotion: async (/** @type {any} */ agent) => {
       const root = await boardOf(agent)
       const main = root === agent.id ? agent : ctx.get?.('agents')?.get?.(root)
       if (!main) throw new Error('blackboard: root Agent is not live for promotion')

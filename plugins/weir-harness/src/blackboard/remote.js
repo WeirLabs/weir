@@ -16,11 +16,12 @@
 // WIRE CONTRACT (pinned — the parallel panel lane builds against this exact
 // shape; see docs/features/blackboard.md 面板数据通道):
 //
-//   namespace `weirBlackboard`; every method takes one JSON `args` object.
-//   The acting session rides the `agent` lookup parameter (wire `agentId`,
-//   scope context `agent`) — the panel page's current session injects it the
-//   same way the stock `fileReferences` remote does, so the domain signatures
-//   below need no session field:
+//   namespace `weirBlackboard`. The seven board verbs each take one JSON
+//   `args` object, and the acting session rides the `agent` lookup
+//   parameter (wire `agentId`, scope context `agent`) — the panel page's
+//   current session injects it the same way the stock `fileReferences`
+//   remote does, so the domain signatures below need no session field.
+//   The eighth method, resolve, is the deliberate exception named below.
 //
 //   - list({ type?, query? }) → { entries: [{ key, entryType, summary,
 //     readCount, subscribeCount, updatedAt, promoted? }] }
@@ -40,6 +41,16 @@
 //   - markPromoted({ key, destination }) → { ok: true, destination }
 //                             | { ok: false, error } — makes the entry
 //                             read-only with the promoted marker
+//   - resolve                  → { sessionId } — the panel's root
+//                             resolution (slice 4): NO scope, NO agent
+//                             lookup. The gateway's agent lookup refuses
+//                             subagent-owned sessions before this service
+//                             can run (the subagent-panel 404 root cause),
+//                             so the browsing session id crosses as a bare
+//                             JSON `agentId` parameter (source 'json' — the
+//                             capability-remote precedent) and the answer
+//                             is the conversation root whose board the
+//                             panel binds before any lookup-gated verb.
 //
 //   `token` is an opaque per-acquisition identifier (the authority itself is
 //   the acting session's live kernel token, re-checked at every mutation);
@@ -56,7 +67,7 @@
 export const BLACKBOARD_REMOTE_SERVICE_KEY = 'weirBlackboardRemote'
 /** The wire namespace: POST /api/weirBlackboard/<method>, client ctx.remote.weirBlackboard.*. */
 export const BLACKBOARD_REMOTE_NAMESPACE = 'weirBlackboard'
-/** The seven methods, each taking one JSON `args` parameter plus the acting-session lookup. */
+/** The seven board verbs, each taking one JSON `args` parameter plus the acting-session lookup. The eighth wire method, resolve, is built separately in the contribution (no lookup, no scope). */
 export const BLACKBOARD_REMOTE_METHODS = Object.freeze(['list', 'read', 'apply', 'write', 'remove', 'requestPromotion', 'markPromoted'])
 /** The wire package identity (distinct from 'weir-harness' — the capability-remote contribution already owns that package face). */
 const BLACKBOARD_REMOTE_PACKAGE = 'weir-blackboard'
@@ -90,6 +101,7 @@ export class BlackboardRemoteError extends Error {
  * module-level slot pattern as the capability read bridge. Faces:
  *   kernel()  — the shared arbitration kernel (list/read/apply/write/deleteKey)
  *   boardOf(agent) — conversation-root board id for an agent handle
+ *   rootOf(sessionId) — conversation-root session id for a BARE session id
  *   ttlMs()   — the settings-driven write-token TTL in milliseconds
  */
 let bridgeFaces = null
@@ -97,7 +109,7 @@ let bridgeFaces = null
 /**
  * Feed the bridge (blackboard plugin apply). Returns the unregister the plugin
  * disposes with its own lifecycle.
- * @param {{ kernel: any, boardOf: (agent: any) => string | undefined, ttlMs: () => number }} faces
+ * @param {{ kernel: any, boardOf: (agent: any) => string | undefined, rootOf?: (sessionId: string) => Promise<string>, ttlMs: () => number }} faces
  */
 export function feedBlackboardRemoteBridge(faces) {
   bridgeFaces = faces
@@ -155,7 +167,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
    * @param {any} agent
    * @returns {{ sessionId: string, boardId: string, faces: { kernel: any, boardOf: Function, ttlMs: Function } }}
    */
-  async function resolve(agent) {
+  async function resolveActing(agent) {
     if (!ensure()) throw new BlackboardRemoteError('channel-unavailable', 'blackboard remote is not registered with the gateway')
     const faces = bridgeFor()
     if (!faces) throw new BlackboardRemoteError('bridge-absent', 'blackboard remote is not offered (non-Weir preset or unmounted bridge)')
@@ -187,7 +199,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Aggregate rows: key + entryType + summary + counts, never content. */
     async list(agent, args) {
       return payloadWrap('list', async () => {
-        const { boardId, faces } = await resolve(agent)
+        const { boardId, faces } = await resolveActing(agent)
         const rows = await faces.kernel.list(boardId, { entryType: args?.type, query: args?.query })
         return { entries: rows.map((/** @type {any} */ entry) => wireEntry(entry)) }
       })
@@ -198,7 +210,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
      * the agent-tool path's reuse evidence, not a page-view metric. */
     async read(agent, args) {
       return payloadWrap('read', async () => {
-        const { boardId, faces } = await resolve(agent)
+        const { boardId, faces } = await resolveActing(agent)
         const result = await faces.kernel.read(boardId, args?.keys ?? [], { count: false })
         return { entries: result.found.map((/** @type {any} */ entry) => wireEntry(entry, { content: true })) }
       })
@@ -207,7 +219,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Acquire the one-shot write authority for one key (auto-subscribes on contention; a promoted key refuses explicitly). */
     async apply(agent, args) {
       return payloadWrap('apply', async () => {
-        const { sessionId, boardId, faces } = await resolve(agent)
+        const { sessionId, boardId, faces } = await resolveActing(agent)
         const result = await faces.kernel.apply(boardId, { holderId: sessionId, key: args?.key, ttlMs: faces.ttlMs() })
         if (result.status === 'contended') return { acquired: false, holder: result.holder, subscribed: true }
         if (result.status === 'promoted') return { acquired: false, promoted: true, destination: result.destination }
@@ -218,7 +230,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Create or update one entry under the acting session's live write authority. */
     async write(agent, args) {
       try {
-        const { sessionId, boardId, faces } = await resolve(agent)
+        const { sessionId, boardId, faces } = await resolveActing(agent)
         const result = await faces.kernel.write(boardId, {
           holderId: sessionId,
           key: args?.key,
@@ -249,7 +261,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Delete one entry under the acting session's live write authority. */
     async remove(agent, args) {
       try {
-        const { sessionId, boardId, faces } = await resolve(agent)
+        const { sessionId, boardId, faces } = await resolveActing(agent)
         const result = await faces.kernel.deleteKey(boardId, { holderId: sessionId, key: args?.key })
         if (result.status === 'missing') return { ok: false, error: `blackboard key "${result.key}" does not exist` }
         if (result.status === 'promoted') {
@@ -271,7 +283,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Request the promotion-evaluation brief into the session's main agent (slice 3). Folds failures like the mutations. */
     async requestPromotion(agent, args) {
       try {
-        const { faces } = await resolve(agent)
+        const { faces } = await resolveActing(agent)
         if (typeof faces.requestPromotion !== 'function') {
           return { ok: false, error: 'the blackboard bridge does not offer promotion requests' }
         }
@@ -288,7 +300,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
     /** Mark one entry promoted under the user-adjudicated destination (slice 3); marking is an annotation, not a payload mutation. */
     async markPromoted(agent, args) {
       try {
-        const { boardId, faces } = await resolve(agent)
+        const { boardId, faces } = await resolveActing(agent)
         const result = await faces.kernel.markPromoted(boardId, { key: args?.key, destination: args?.destination })
         if (result.status === 'missing') return { ok: false, error: `blackboard key "${result.key}" does not exist` }
         if (result.status === 'already-promoted') return { ok: true, destination: result.destination, alreadyPromoted: true }
@@ -299,6 +311,28 @@ export function createBlackboardRemoteService(dependencies = {}) {
           : `blackboard markPromoted failed: ${cause instanceof Error ? cause.message : String(cause)}`
         return { ok: false, error }
       }
+    },
+
+    /**
+     * The panel's root resolution (slice 4): the browsing session id
+     * crosses as a bare JSON value — NO agent lookup, NO scope — because
+     * the gateway's lookup refuses subagent-owned sessions before this
+     * service can run. Answers the conversation root whose board the
+     * panel binds; a bridge without the rootOf face (an older blackboard
+     * plugin) or a face returning an unusable id degrades to the
+     * browsing id itself, which is exactly the pre-resolve behavior.
+     */
+    async resolve(sessionId) {
+      return payloadWrap('resolve', async () => {
+        if (!ensure()) throw new BlackboardRemoteError('channel-unavailable', 'blackboard remote is not registered with the gateway')
+        const faces = bridgeFor()
+        if (!faces) throw new BlackboardRemoteError('bridge-absent', 'blackboard remote is not offered (non-Weir preset or unmounted bridge)')
+        const id = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined
+        if (id === undefined) throw new BlackboardRemoteError('unknown-session', 'blackboard remote resolve: the browsing session identity is unavailable')
+        if (typeof faces.rootOf !== 'function') return { sessionId: id }
+        const root = await faces.rootOf(id)
+        return { sessionId: typeof root === 'string' && root.length > 0 ? root : id }
+      })
     },
   }
 }
@@ -321,7 +355,8 @@ export function blackboardRemoteContribution() {
     face: 'host',
     schemas: [],
     model: { services: [], events: [], objects: [] },
-    invocations: BLACKBOARD_REMOTE_METHODS.map(method => ({
+    invocations: [
+      ...BLACKBOARD_REMOTE_METHODS.map(method => ({
       id: `${BLACKBOARD_REMOTE_PACKAGE}.${BLACKBOARD_REMOTE_NAMESPACE}.${method}`,
       service: BLACKBOARD_REMOTE_SERVICE_KEY,
       namespace: BLACKBOARD_REMOTE_NAMESPACE,
@@ -334,6 +369,24 @@ export function blackboardRemoteContribution() {
       ],
       result: { mode: 'src-json' },
     })),
+      // The eighth invocation, resolve, deliberately breaks the shared
+      // shape: NO agent-lookup parameter, NO scope projection — the
+      // gateway's agent lookup refuses subagent-owned sessions before
+      // this service can run (the subagent-panel 404 root cause), so the
+      // browsing session id crosses as a bare JSON value on the same
+      // `agentId` wire field (the capability-remote precedent, src-json).
+      {
+        id: `${BLACKBOARD_REMOTE_PACKAGE}.${BLACKBOARD_REMOTE_NAMESPACE}.resolve`,
+        service: BLACKBOARD_REMOTE_SERVICE_KEY,
+        namespace: BLACKBOARD_REMOTE_NAMESPACE,
+        method: 'resolve',
+        invocation: { kind: 'direct' },
+        parameters: [
+          { name: 'sessionId', wire: 'agentId', source: 'json', codec: { mode: 'src-json' } },
+        ],
+        result: { mode: 'src-json' },
+      },
+    ],
   }
 }
 
