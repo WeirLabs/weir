@@ -58,6 +58,7 @@ EXPECTED_ORDER.push('editlock-hashline-negatives')
 EXPECTED_ORDER.push('editlock-negotiation')
 EXPECTED_ORDER.push('editlock-revoked-repair')
 EXPECTED_ORDER.push('editlock-binding-auto-retry')
+EXPECTED_ORDER.push('editlock-binding-transfer')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -136,7 +137,7 @@ describe('scenario registry', () => {
   const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'editlock-stale-sweep', 'editlock-stale-sweep-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'editlock-crash-recovery', 'editlock-cold-view', 'zombie-lane', 'lane-resumable', 'editlock-recovery-ux']
   RUN_OVERRIDE.push('preset-delegation-surface')
   RUN_OVERRIDE.push('editlock-lsp-rename', 'editlock-lsp-uncertain')
-  RUN_OVERRIDE.push('editlock-revoked-repair', 'editlock-binding-auto-retry')
+  RUN_OVERRIDE.push('editlock-revoked-repair', 'editlock-binding-auto-retry', 'editlock-binding-transfer')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {
