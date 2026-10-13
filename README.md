@@ -1,7 +1,7 @@
 ![Weir — Orchestrator preset for DeepSeek Harness](docs/assets/readme-hero.svg)
 
 <p>
-  <img src="https://img.shields.io/badge/版本-1.0.0-0a0a0b?labelColor=1c1d20&color=ccff00" alt="版本">
+  <img src="https://img.shields.io/badge/版本-1.1.6-0a0a0b?labelColor=1c1d20&color=ccff00" alt="版本">
   <img src="https://img.shields.io/badge/许可-MIT-0a0a0b?labelColor=1c1d20&color=ccff00" alt="许可 MIT">
   <img src="https://img.shields.io/badge/宿主-DeepSeek%20Harness-0a0a0b?labelColor=1c1d20&color=ecece6" alt="宿主">
 </p>
@@ -76,15 +76,34 @@ flowchart LR
 
 Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；能力集合可存为预设、日后改名或重新保存，也可导入导出，第三方技能支持检查更新（需你确认后发布）。→ [会话能力管理器](docs/features/session-capability-manager.md)、[Skill 分发](docs/features/skill-distribution.md)
 
-## 快速开始
+## 安装
 
-1. 安装 bundle：在 Harness 会话中通过 `plugin_manager` 的 `install_bundle` 装 `weir-harness`（从 npm registry 安装，无需克隆仓库），或 `dsh plugin --profile <profile> add weir-harness`；克隆了仓库的开发者改用 `plugins/weir-harness` 目录做 link 安装（随源码更新）。
-2. 打开 Web GUI 预设选择器，选择 **Weir** 新建会话。开发或调试 DeepSeek Harness 本身时选 **Weir 创造模式**，额外带上运行时检查工具与开发技能。→ [预设打包](docs/features/preset-packaging.md)
+**前置要求**：DeepSeek Harness 桌面版 `>=0.2.0-rc.2 <0.3.0`（安装时自动校验，不匹配会被拒绝并提示）。
+
+打开 DeepSeek Harness 桌面应用，进入**插件管理面板**：
+
+1. 点击**添加插件**按钮；
+2. 输入包名 `weir-harness@1.1.6`，点击**安装**。
+
+安装器会从 npm registry 拉取，无需克隆仓库。习惯终端的话也可以直接执行 `dsh plugin --profile <profile> add weir-harness@1.1.6`；开发者克隆本仓库后对 `plugins/weir-harness` 做 link 安装（随源码更新，改动经「禁用 → 启用」重应用）。
+
+安装成功后：
+
+1. 打开 Web GUI 预设选择器，应能看到 **Weir**；用它新建会话即完成启用。
+2. 开发或调试 DeepSeek Harness 本身时选 **Weir 创造模式**，额外带上运行时检查工具与开发技能。→ [预设打包](docs/features/preset-packaging.md)
 3. 其他预设不受影响。Weir 只在自己的会话内生效，唯一例外是系统通知（作用于 profile 层）。
 
-## 配置
+## 快速配置
 
-全局设置中的 **Weir 设置页**可一站式调整：意图分类档位、各类别模型链、续推与退避上限、上下文压力阈值、锚点编辑开关、只读 shell 白名单等。多数改动即时生效，需重启的选项带「需重启」标记。→ [设置页](docs/features/settings-page.md)
+装好后默认值即可直接使用，无需任何配置。想按自己的工作习惯细调时，建议按以下顺序过一遍（全部在 **全局设置 → Weir 分区**完成，这是唯一入口）：
+
+1. **委派与模型链**：为九种任务类别分别绑定模型与推理等级，可视化编辑，不用手写配置；主模型不可用时自动按备选链降级。
+2. **意图分类**：默认关键词档位开箱即用；希望「说人话」也被识别（不依赖固定关键词）时，切换为语义分类并选一个轻量模型。
+3. **续推与上下文压力**：默认开启；可调整连续续推上限、失败退避，以及上下文整理提醒的触发阈值。
+4. **系统通知**：长任务完成、需要审批时发系统通知；不想被打扰可整体关闭（对整个 profile 生效）。
+5. **编辑与只读 shell**：锚点编辑、编辑锁默认开启；只读 shell 的命令白名单可按需增删。
+
+多数改动即时生效；标有「需重启」的选项保存后重启生效，保存时弹窗会点名本次涉及的选项。→ [设置页](docs/features/settings-page.md)
 
 ## 技术概览
 
