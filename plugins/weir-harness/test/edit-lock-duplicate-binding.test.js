@@ -404,7 +404,7 @@ test('publisher-local startup reclaims an attested stale remote holder without r
   } finally { remote.close(); await local.close() }
 })
 
-test('binding retry refuses permanently revoked owner before registering an interrupted replacement', async () => {
+test('binding retry of a revoked owner binds an interrupted replacement (repair path), never authority', async () => {
   const { root, directory } = await fixture()
   const runtime = await openEditLockRuntime({ directory, root, domainId: 'd', mode: 'create', fs: stubFs, assertExclusive() {} })
   await runtime.control.openSession('revoked')
@@ -412,8 +412,13 @@ test('binding retry refuses permanently revoked owner before registering an inte
     status() { const state = runtime.control.status(); return { ...state, sessions: state.sessions.map(s => ({ ...s, revoked: true })) } },
   } }, agent => agent.id)
   try {
-    await assert.rejects(localDomain(lifecycle, undefined).retryStart({ id: 'revoked' }), /permanently revoked/)
-    assert.deepEqual(lifecycle.bindings(), [])
+    // A revoked session is startable: it binds as interrupted and only the
+    // trusted resume path (receipt + epoch advance) ends the revocation.
+    const agent = { id: 'revoked' }
+    assert.equal(await localDomain(lifecycle, undefined).retryStart(agent), 'interrupted')
+    assert.equal(lifecycle.bindings()[0].sessionId, 'revoked')
+    // Binding alone grants nothing: business ingress stays denied while stopped.
+    await assert.rejects(lifecycle.service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /stopped/)
   } finally { await lifecycle.close() }
 })
 

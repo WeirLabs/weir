@@ -9,7 +9,7 @@ import { isMissingTarget, STALE_SWEEP_COOLDOWN_MS } from './stale-sweep.js'
  * Resume and confirm are trusted human ingress only; never expose them as tools.
  * @param {Awaited<ReturnType<typeof import('./runtime.js').openEditLockRuntime>>} runtime
  * @param {(agent: object) => string | undefined} sessionForAgent
- * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, onAdminRecovery?: (info: {revision: number, idempotent: boolean, record: any, trigger: string | null}) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number, servingRuntime?: (sessionId: string) => object | undefined}} [options] */
+ * @param {{deliver?: (agent: object, text: string, wake?: boolean) => void, onPending?: (agent: object, pending: number) => void, negotiationTimeoutMs?: number, onStaleRelease?: (row: {resourceId: string, owner: string, generation: number}, triggerSessionId: string | null) => void, onAdminRecovery?: (info: {revision: number, idempotent: boolean, record: any, trigger: string | null}) => void, onRevocationRepair?: (info: {owner: string, fromEpoch: number | undefined, toEpoch: number, trigger: string}) => void, warn?: (message: string) => void, sweepCooldownMs?: number, sweepNow?: () => number, servingRuntime?: (sessionId: string) => object | undefined}} [options] */
 export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) {
   /** @typedef {{sessionId:string, state:'starting'|'active'|'recovering'|'stopped'|'resuming', attempt:number, ready:Promise<'active'|'interrupted'>, stop?:Promise<unknown>}} Entry */
   /** @type {Map<object, Entry>} */
@@ -169,13 +169,18 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
     }
     return result
   }
-  /** Read-only startup admission; revoked owners remain terminal.
+  /** Read-only startup admission. A revoked session is startable: it binds as
+   * interrupted and its revocation ends only through the trusted resume path
+   * (the epoch advance is the repair; binding alone grants no authority).
    * @param {object} agent */
   function assertStartable(agent) {
     if (closed) throw new Error('edit lifecycle closed')
     const sessionId = sessionForAgent(agent)
     if (!sessionId) throw new Error('unregistered lifecycle agent')
-    if (sessionStatus(sessionId).session?.revoked) throw new Error('Edit Lock: this session was permanently revoked; binding retry cannot restore authority.')
+    // Health probe: a poisoned manager refuses the retry here, before any
+    // holder is touched. A revoked session passes — it binds as interrupted
+    // and only the trusted resume path ends the revocation.
+    sessionStatus(sessionId)
   }
   /** Register once before publishing an agent's editing tools. A session the
    * manager already knows (restart, re-created agent) is never re-armed: it
@@ -314,7 +319,12 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       const attempt = ++entry.attempt
       try {
         const { status, session } = sessionStatus(entry.sessionId)
-        if (session?.revoked) throw new Error('Edit Lock: editing authority in this session was permanently revoked by an administrative recovery and cannot be resumed. Start a new conversation to edit this workspace again.')
+        // A revoked session resumes exactly like a stopped one: the
+        // disposition already released its locks, so resume confirms the empty
+        // set and the epoch advance past revokedEpoch ends the revocation.
+        const wasRevoked = session?.revoked === true
+        const fromEpoch = session?.executionEpoch
+        if (!session?.interrupted) throw new Error('session is not durably interrupted')
         if (!session?.interrupted) throw new Error('session is not durably interrupted')
         const execution = {managerIncarnation: status.managerIncarnation, sessionId: entry.sessionId, executionEpoch: session.executionEpoch}
         const receipt = await runtime.control.issueExecutionReceipt(execution, requestId)
@@ -324,6 +334,12 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
         }
         entry.state = 'active'
         host.attach(agent, resumed)
+        if (wasRevoked) {
+          // Repair of an administrative revocation is audited through the same
+          // shared channel as the recovery itself — never the session log.
+          const trigger = requestId.startsWith('auto:user-message:') ? 'auto' : 'manual'
+          try { options.onRevocationRepair?.({ owner: entry.sessionId, fromEpoch, toEpoch: resumed.executionEpoch, trigger }) } catch { /* audit is log-only */ }
+        }
         return statusOf(agent)
       } catch (error) {
         // Anything that may have resumed without attaching is revoked again.
