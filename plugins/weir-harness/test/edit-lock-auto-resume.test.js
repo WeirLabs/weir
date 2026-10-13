@@ -6,7 +6,7 @@
 // (the revoked-authority fixture).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -213,11 +213,9 @@ test('race with the manual Continue is idempotent in both directions; no crash, 
   await dispose()
 })
 
-test('a revoked session stays terminal: auto-resume fails warn-only and edits stay denied', async (t) => {
-  const { root } = await fixture()
-  // Revocation exists only as an administrative recovery over an interrupted
-  // owner with unknown-history operations; build that authority first, then
-  // mount the composition over it (modeled on edit-lock-admin-recovery.test.js).
+/** A revoked authority for session 's' (one ADMIN OVERRIDE over its unknown
+ * operation), built exactly like edit-lock-admin-recovery.test.js. */
+async function revokedAuthority(root) {
   const directory = join(root, '.weir', 'edit-lock')
   await mkdir(directory, { recursive: true })
   const target = join(root, 'a.txt')
@@ -233,41 +231,90 @@ test('a revoked session stays terminal: auto-resume fails warn-only and edits st
   await manager.cancel(execution)
   const before = store.snapshot()
   await manager.close(); await store.close()
-  const input = { root, recoveryId: 'admin-auto-resume-test', expectedRevision: before.revision, owner: 's',
+  const input = { root, recoveryId: `admin-auto-resume-${crypto.randomUUID()}`, expectedRevision: before.revision, owner: 's',
     operationIds: ['unknown-op'], reason: 'Operator accepts residual late writer risk', acceptLateWriterRisk: true }
   input.confirmation = recoveryConfirmation(input)
   await recoverAuthority(input)
+  return directory
+}
 
+test('a revoked session is repaired by a genuine user message: silent resume, empty confirmation, audited', async (t) => {
+  const { root } = await fixture()
+  const directory = await revokedAuthority(root)
   const host = fakeHost(root)
   const { dispose, service, agent } = await boot(host, root, directory)
   t.after(() => dispose())
   assert.equal(service.blocksContinuation(agent), true)
+  const revoked = (await service.describe(agent)).status
+  assert.equal(revoked.revoked, true)
+  const revokedEpoch = revoked.executionEpoch
+  const ledgerBefore = JSON.parse(await readFile(join(directory, 'snapshot.json'), 'utf8')).payload.state.adminRecoveries
 
-  await assert.rejects(withSupervisedEditResume(agent, agent.id, async () => {}), /permanently revoked/)
-  assert.equal((await service.describe(agent)).status.revoked, true)
   await host.userMessage(agent)
   await host.preStep(agent, {}, new AbortController().signal)
 
-  assert.equal(service.blocksContinuation(agent), true)
-  assert.equal((await service.describe(agent)).status.revoked, true)
-  assert.equal(host.warns.length, 1)
-  assert.match(host.warns[0], /auto-resume failed/)
-  assert.match(host.warns[0], /permanently revoked/)
-  await assert.rejects(service.acquire({ agent }, { filePath: 'b.txt', cwd: root }), /was stopped/)
-  // A cold activation failure is swallowed by setup for host safety, but the
-  // explicit resume caller still receives the refusal and cannot re-arm it.
-  await host.emit('agent/disposed', { agent })
-  await settleDelegateEditLifecycle(agent, agent.id)
-  let replacement
-  await assert.rejects(withSupervisedEditResume(agent, agent.id, async () => {
-    replacement = host.agent(agent.id)
-    await host.emit('agent/created', { agent: replacement })
-  }), /permanently revoked/)
-  assert.equal(service.blocksContinuation(replacement), true)
-  assert.equal((await service.describe(replacement)).status.revoked, true)
+  // One genuine message silently repairs: the resume commits, the epoch
+  // advances past the revokedEpoch, and zero retained locks confirm the empty
+  // set — no revoked branch in auto-resume, the ordinary path suffices.
+  assert.equal(service.blocksContinuation(agent), false)
+  assert.deepEqual(host.warns, [])
+  const status = (await service.describe(agent)).status
+  assert.equal(status.state, 'active')
+  assert.equal(status.revoked, false)
+  assert.equal(status.executionEpoch, revokedEpoch + 1)
+  assert.equal(status.locks.length, 0)
+  assert.equal((await service.acquire({ agent }, { filePath: 'b.txt', cwd: root })).generation, 1)
+  // The ledger record is preserved byte-identically; the repair is audited
+  // through the shared maintenance channel, never the session log.
+  const after = JSON.parse(await readFile(join(directory, 'snapshot.json'), 'utf8')).payload.state
+  assert.deepEqual(after.adminRecoveries, ledgerBefore)
+  const mirror = await readFile(join(root, '.weir', 'audit.jsonl'), 'utf8')
+  assert.match(mirror, /"kind":"revocation-repaired"/)
+  assert.match(mirror, /"trigger":"auto"/)
   await dispose()
 })
 
+test('an injected message never repairs a revoked session', async (t) => {
+  const { root } = await fixture()
+  const directory = await revokedAuthority(root)
+  const host = fakeHost(root)
+  const { dispose, service, agent } = await boot(host, root, directory)
+  t.after(() => dispose())
+  await host.injectedMessage(agent)
+  await host.preStep(agent, {}, new AbortController().signal)
+  assert.equal(service.blocksContinuation(agent), true)
+  assert.equal((await service.describe(agent)).status.revoked, true)
+  assert.deepEqual(host.warns, [])
+  await dispose()
+})
+
+test('an explicit supervised Continue repairs a revoked session (manual trigger); a re-created agent inherits the repair', async (t) => {
+  const { root } = await fixture()
+  const directory = await revokedAuthority(root)
+  const host = fakeHost(root)
+  const { dispose, service, agent } = await boot(host, root, directory)
+  t.after(() => dispose())
+  assert.equal(service.blocksContinuation(agent), true)
+  await withSupervisedEditResume(agent, agent.id, async () => {
+    assert.equal(service.blocksContinuation(agent), false)
+  })
+  assert.equal((await service.describe(agent)).status.revoked, false)
+  const mirror = await readFile(join(root, '.weir', 'audit.jsonl'), 'utf8')
+  assert.match(mirror, /"kind":"revocation-repaired"/)
+  assert.match(mirror, /"trigger":"manual"/)
+  // A re-created agent of the repaired session is an ordinary interrupted
+  // session: not revoked, resumable through the ordinary trusted path.
+  await host.emit('agent/disposed', { agent })
+  await settleDelegateEditLifecycle(agent, agent.id)
+  const replacement = host.agent(agent.id)
+  await host.emit('agent/created', { agent: replacement })
+  const restarted = (await service.describe(replacement)).status
+  assert.equal(restarted.revoked, false)
+  assert.equal(restarted.state, 'stopped')
+  await withSupervisedEditResume(replacement, replacement.id, async () => {})
+  assert.equal((await service.describe(replacement)).status.state, 'active')
+  await dispose()
+})
 for (const interruption of ['user', 'restart']) test(`explicit supervised resume restores ${interruption} interruption without confirming files`, async (t) => {
   const { root, directory } = await fixture()
   const host = fakeHost(root)

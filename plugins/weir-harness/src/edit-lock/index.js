@@ -258,7 +258,7 @@ function registerLockTools(ctx, service) {
       output: text('message'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
         const unavailable = service.startupFailure(exec.agent)
-        if (unavailable) return { ...unavailable, message: `Edit Lock unavailable: ${unavailable.reason}. ${unavailable.bindingFailure?.retryable ? 'The user can run /edit-lock retry to retry the connection; this does not resume editing.' : 'Inspect Edit Lock maintenance before continuing.'}` }
+        if (unavailable) return { ...unavailable, message: `Edit Lock unavailable: ${unavailable.reason}. ${unavailable.bindingFailure?.retryable ? 'Do not retry failed edits: the binding is retried automatically when the user next sends a message, and /edit-lock retry also retries the connection; neither resumes editing by itself.' : 'Inspect Edit Lock maintenance before continuing.'}` }
         const locks = await service.locks(exec)
         const lines = locks.map((/** @type {any} */ lock) => `- ${lock.resourceId} owner=${lock.mine ? 'this session' : lock.owner} status=${lock.status} generation=${lock.generation}${lock.reason ? ` reason=${lock.reason}` : ''}`)
         // The reservation is part of what the holder needs to know: without it the
@@ -294,7 +294,7 @@ function replyToolDefinition(service) {
 /** @param {any} status */
 function describe(status) {
   const lines = [`Edit Lock session ${status.sessionId}: ${status.state}${status.interrupted ? ' (interrupted)' : ''}, epoch ${status.executionEpoch ?? '-'}`]
-  if (status.revoked) lines.push('Editing authority was permanently revoked by an administrative recovery; resume is impossible. Start a new conversation to edit this workspace.')
+  if (status.revoked) lines.push('Editing authority was revoked by an administrative recovery and its locks were released. Continue editing or send any message to restore editing in a new execution epoch; the revocation record is preserved.')
   for (const lock of status.locks) lines.push(`- ${lock.resourceId} [${lock.status}${lock.reason ? `: ${lock.reason}` : ''}] generation ${lock.generation}`)
   if (status.locks.length === 0) lines.push('- no locks held')
   const recovery = status.recovery
@@ -464,6 +464,13 @@ return (ctx, config = {}) => {
           recoveryId: info.record.recoveryId, revision: info.revision, idempotent: info.idempotent,
           operations: info.record.operations.length,
         }, { root }),
+        // Revocation repair audit: publisher-side, after the durable resume
+        // commit advanced the owner's epoch past its revokedEpoch. The ledger
+        // record itself never changes; the repair is a new-epoch event.
+        onRevocationRepair: info => audit(null, AUDIT_TYPES.editLockMaintenance, {
+          kind: 'revocation-repaired', root, owner: info.owner, trigger: info.trigger,
+          fromEpoch: info.fromEpoch ?? null, toEpoch: info.toEpoch,
+        }, { root })
       })
       let server
       try { server = await serveEditLockEndpoint(lifecycle, endpoint(directory), sinks, attestBinding,
@@ -513,7 +520,7 @@ return (ctx, config = {}) => {
     await setupInFlight.get(agent)
     if (settled.has(agent)) return settled.get(agent)
     const failure = startFailures.get(agent)
-    if (failure && bindingFailures.has(agent)) throw new Error(`Edit Lock binding is unavailable (${failure}). The user can run /edit-lock retry after the holder evidence changes. Retry connects only; do not replay the failed edit or remove a live publisher reservation.`)
+    if (failure && bindingFailures.has(agent)) throw new Error(`Edit Lock binding is unavailable (${failure}). Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.`)
     if (failure) throw new Error(`this session has no Edit Lock domain: setup failed under the current preset generation (${failure}); the automatic re-bind was already attempted. Recovery: restart DeepSeek Harness or start a new conversation.`)
     // No fence match (foreign preset) or unmount: keep the stock refusal.
     return registry.forAgent(agent)
@@ -751,7 +758,7 @@ return (ctx, config = {}) => {
       startFailures.set(agent, reason)
       try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
       audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, { kind: 'setup-failed', sessionId: sessionOf(agent) ?? null, reason })
-      try { deliverLocal(agent, `Edit Lock is unavailable for this session (${reason}); managed file editing is disabled. Recovery: restart DeepSeek Harness or start a new conversation.`) } catch { /* the audit record is the durable account */ }
+      try { deliverLocal(agent, `Edit Lock is unavailable for this session (${reason}); managed file editing is disabled and the failed edit must not be retried. This failure is not repaired automatically: the user can restart DeepSeek Harness or start a new conversation.`) } catch { /* the audit record is the durable account */ }
       ctx.logger?.warn?.(`edit lock scope failed; edit tools denied: ${reason}`)
       return
     }
@@ -783,7 +790,7 @@ return (ctx, config = {}) => {
       if (failure?.code === 'binding-duplicate') bindingFailures.set(agent, failure)
       else bindingFailures.delete(agent)
       try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
-      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is unavailable. ${failure?.code === 'binding-duplicate' ? 'Recovery: use /edit-lock retry after the original holder disconnects or its process shutdown is confirmed. Retry does not resume editing; never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`) } catch { /* the panel record remains */ }
+      try { deliverLocal(agent, `Edit Lock could not start this session's edit domain (${reason}); managed file editing is temporarily unavailable. ${failure?.code === 'binding-duplicate' ? 'Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`) } catch { /* the panel record remains */ }
       ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${reason}`)
     }
   }
@@ -927,39 +934,65 @@ return (ctx, config = {}) => {
    * Boolean, consumed once by the next turn's first pre-step (message-driven
    * auto-resume D1/D6); WeakMap keys die with their agent. @type {WeakMap<object, boolean>} */
   const pendingAutoResume = new WeakMap()
+  /** A genuine user message also arms ONE bounded binding retry when this agent
+   * has a recorded duplicate-binding failure (message-driven self-heal, design
+   * D5): consumed at the next turn's first pre-step by awaiting the existing
+   * trusted retryBinding — same attestation guards, same in-flight join,
+   * fail-closed while a holder serves. @type {WeakMap<object, boolean>} */
+  const pendingBindingRetry = new WeakMap()
   /** @type {WeakSet<AbortSignal>} */
   const watched = new WeakSet()
   ctx.on('agent/pre-step', async (/** @type {any} */ event, /** @type {() => Promise<any>} */ next) => {
     const { agent, signal, turn } = event ?? {}
-    const domain = agent && settled.get(agent)
     // `pre-step` fires once per STEP, not per turn, so "a new turn started" has to
     // be detected on turn identity. Doing it on every step would clear the
-    // reservation a holder just asked for, one step later.
-    if (domain && turn && lastTurn.get(agent) !== turn) {
+    // reservation a holder just asked for, one step later. The detection runs
+    // even without a settled domain: a message-armed binding retry (D5) exists
+    // exactly while no domain is settled and must precede the turn's first step.
+    if (agent && turn && lastTurn.get(agent) !== turn) {
       lastTurn.set(agent, turn)
-      // A queued automatic-recovery summary (design D3) reaches exactly one
-      // agent as an ordinary mid-turn notice — the same proven delivery point
-      // as the settling and expiry notices.
-      const recoveryNotice = recoveryNotices.get(registry.rootOf(agent) ?? '')
-      if (recoveryNotice) {
-        recoveryNotices.delete(registry.rootOf(agent) ?? '')
-        try { deliverLocal(agent, recoveryNotice) } catch { /* the audit record is the durable account */ }
+      if (pendingBindingRetry.get(agent) === true) {
+        pendingBindingRetry.delete(agent)
+        const cause = bindingFailures.get(agent)
+        try {
+          await retryBinding(agent)
+          // The genuine message that armed this retry is also this turn's
+          // Continue receipt: re-arm what setupAgentOnce(retry) cleared, then
+          // fall through to the ordinary auto-resume consumption below.
+          pendingAutoResume.set(agent, true)
+          audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, {
+            kind: 'binding-auto-retry', sessionId: sessionOf(agent) ?? null,
+            code: cause?.code ?? 'binding-duplicate', result: 'recovered',
+          }, { root: registry.rootOf(agent) ?? undefined })
+        } catch { /* a safe refusal keeps the recorded cause; the turn proceeds with edits denied */ }
       }
-      // A genuine user message arrived while this session was stopped: resume
-      // it and confirm its retained files BEFORE the turn's first step, so the
-      // edits the turn is about to request are admitted (message-driven
-      // auto-resume D1). A failure only warns and the turn proceeds denied —
-      // the panel keeps showing the stopped state (D6).
-      if (pendingAutoResume.get(agent) === true) {
-        pendingAutoResume.delete(agent)
-        if (domain.blocks(agent)) await autoResume(domain, agent, message => ctx.logger?.warn?.(message))
+      const domain = settled.get(agent)
+      if (domain) {
+        // A queued automatic-recovery summary (design D3) reaches exactly one
+        // agent as an ordinary mid-turn notice — the same proven delivery point
+        // as the settling and expiry notices.
+        const recoveryNotice = recoveryNotices.get(registry.rootOf(agent) ?? '')
+        if (recoveryNotice) {
+          recoveryNotices.delete(registry.rootOf(agent) ?? '')
+          try { deliverLocal(agent, recoveryNotice) } catch { /* the audit record is the durable account */ }
+        }
+        // A genuine user message arrived while this session was stopped: resume
+        // it and confirm its retained files BEFORE the turn's first step, so the
+        // edits the turn is about to request are admitted (message-driven
+        // auto-resume D1). A failure only warns and the turn proceeds denied —
+        // the panel keeps showing the stopped state (D6).
+        if (pendingAutoResume.get(agent) === true) {
+          pendingAutoResume.delete(agent)
+          if (domain.blocks(agent)) await autoResume(domain, agent, message => ctx.logger?.warn?.(message))
+        }
+        // The holder is working again: every lock it holds leaves the holding state at
+        // once, without waiting for the reservation to run out (design D4), and the
+        // notice budget for this batch restarts.
+        settle.turnStarted(agent)
+        void Promise.resolve(domain.turnStarted(agent)).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock turn start failed: ${error?.message ?? error}`))
       }
-      // The holder is working again: every lock it holds leaves the holding state at
-      // once, without waiting for the reservation to run out (design D4), and the
-      // notice budget for this batch restarts.
-      settle.turnStarted(agent)
-      void Promise.resolve(domain.turnStarted(agent)).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock turn start failed: ${error?.message ?? error}`))
     }
+    const domain = agent && settled.get(agent)
     if (domain && signal && !watched.has(signal)) {
       watched.add(signal)
       const latch = () => { if (abortedByUser(signal)) domain.latch(agent) }
@@ -1004,6 +1037,11 @@ return (ctx, config = {}) => {
     }
     if (ctx.get?.('weirSettings')?.get?.('editLock')?.autoResume === false) return
     pendingAutoResume.set(agent, true)
+    // Message-driven binding self-heal (D5): the same genuine message arms ONE
+    // bounded retry of a recorded duplicate-binding failure, executed through
+    // the trusted retryBinding path at the next turn's first pre-step. Injected
+    // messages, timers, write calls and status reads never reach this branch.
+    if (bindingFailures.get(agent)?.code === 'binding-duplicate') pendingBindingRetry.set(agent, true)
   })
 
   // Classification and settling read only the durable turn/end reason

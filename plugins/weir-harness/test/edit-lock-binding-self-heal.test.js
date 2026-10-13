@@ -60,7 +60,7 @@ function fakeHost(root, { host: hostKey = {}, agents: withAgents = false, preset
       if (name === 'commands') return { register(definition) { command = definition; return () => { command = undefined } } }
       if (name === 'agents') return withAgents ? { roots: () => [...agents.values()], get: id => agents.get(id) } : undefined
       if (name === 'weirSettings') return {
-        get: () => undefined,
+        get: section => (section === 'editLock' ? editLockSection : undefined),
         editLockEvidence: { recordMount: () => ({ recordSessionFailure: (id, reason) => sessionFailures.push([id, reason]), recordDomain() {}, installed() {}, disposing() {}, dispose() {}, failed() {} }) },
       }
       return provided.get(name)
@@ -104,7 +104,8 @@ function fakeHost(root, { host: hostKey = {}, agents: withAgents = false, preset
     return result
   }
   const own = candidate => { ownAgents.add(candidate); return candidate }
-  return { ctx, provided, agent, own, emit, warns, emitted, sessionFailures, toolDefinitions, command: () => command }
+  let editLockSection
+  return { ctx, provided, agent, own, emit, warns, emitted, sessionFailures, toolDefinitions, command: () => command, setEditLockSection(section) { editLockSection = section } }
 }
 
 function mount(host, root, directory) {
@@ -380,7 +381,8 @@ test('a failed write-scope install leaves the fourfold record — panel state, e
   // 3. In-session notice with the recovery action.
   expect(broken.injects).toHaveLength(1)
   expect(broken.injects[0].content[0].text).toContain('Edit Lock is unavailable for this session')
-  expect(broken.injects[0].content[0].text).toContain('Recovery: restart DeepSeek Harness or start a new conversation')
+  expect(broken.injects[0].content[0].text).toContain('the failed edit must not be retried')
+  expect(broken.injects[0].content[0].text).toContain('not repaired automatically')
   // 4. Cold-safe audit: the cordis event and its JSONL mirror.
   const records = host.emitted.filter(entry => entry.type === 'weir/edit-lock-maintenance')
   expect(records).toHaveLength(1)
@@ -439,7 +441,7 @@ test('explicit retry recovers the original failed Agent without reinstalling wri
     assert.equal(diagnostic.bindingFailure.retryable, true)
     assert.match(diagnostic.message, /edit-lock retry/)
     assert.equal(diagnostic.locks, undefined)
-    await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /edit-lock retry/)
+    await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /retried automatically when the user next sends a message/)
     const writer = agent.visible.get('write')
     const retry = () => host.command().handler({ agent, rawInput: 'retry', commandId: crypto.randomUUID() })
     assert.equal((await retry()).kind, 'error')
@@ -508,4 +510,110 @@ test('retry cannot carry a failed-binding user message into a later injected wak
     await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
     assert.equal((await service.describe(agent)).status.state, 'active')
   } finally { remote.close(); await dispose() }
+})
+
+// --- D5: message-driven binding self-heal ------------------------------------
+// A genuine user message arms ONE bounded retry of a recorded duplicate-binding
+// failure; the next turn's first pre-step awaits the trusted retryBinding path
+// (same attestation guards, same in-flight join). On success the same turn
+// continues into auto-resume; on a safe refusal the turn proceeds denied and
+// the recorded cause stays.
+
+const userMessage = (host, agent, id = crypto.randomUUID()) =>
+  host.emit('agent/inbox/inserted', { agent, message: { id, role: 'user', content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } } })
+const injectedMessage = (host, agent, id = crypto.randomUUID()) =>
+  host.emit('agent/inbox/inserted', { agent, message: { id, role: 'user', content: [{ type: 'text', text: 'background' }], source: { kind: 'weir-todo-driver' } } })
+
+/** A duplicate-binding failure for session 's': a remote channel proxy holds
+ * the session while the local agent is created. Returns the handles the retry
+ * attestation needs. */
+async function duplicateBindingFixture(t, { autoResume } = {}) {
+  const { root, directory } = await fixture()
+  const host = fakeHost(root, { agents: true, presets: true })
+  if (autoResume !== undefined) host.setEditLockSection({ autoResume })
+  const { dispose, service } = mount(host, root, directory)
+  let token, unregister = () => {}
+  const remote = createRemoteEditLockDomain(endpointFor(directory), { onNotice() {}, onChannelOpen(nonce) { token = nonce; return () => unregister() } })
+  t.after(async () => { remote.close(); await dispose() })
+  const other = host.own(host.agent('other'))
+  await host.emit('agent/created', { agent: other })
+  const old = { id: 's' }
+  await remote.channelFor(old)
+  await remote.call(old, 'acquire', { filePath: 'a.txt', cwd: root })
+  const agent = host.own(host.agent('s'))
+  await host.emit('agent/created', { agent })
+  assert.equal(service.blocksContinuation(agent), true)
+  assert.equal(host.sessionFailures.length, 1)
+  return { host, service, root, remote, old, agent, attest: () => { unregister = registerBindingRuntime(token, old, old.id) } }
+}
+
+test('a genuine user message retries the binding and resumes in the same turn, audited', async (t) => {
+  const { host, service, root, remote, old, agent, attest } = await duplicateBindingFixture(t)
+  await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /retried automatically when the user next sends a message/)
+
+  // The holder evidence changes (the old holder becomes attestable-stale); the
+  // next genuine message repairs without any manual /edit-lock retry.
+  attest()
+  await userMessage(host, agent)
+  await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+
+  assert.equal(service.blocksContinuation(agent), false)
+  const status = (await service.describe(agent)).status
+  assert.equal(status.state, 'active')
+  // The rebound session confirmed its retained lock through the ordinary
+  // auto-resume replay: one message completed reconnect + restore.
+  assert.equal(status.locks[0].status, 'active')
+  assert.equal((await service.acquire({ agent }, { filePath: 'a.txt', cwd: root })).generation, 1)
+  await assert.rejects(remote.call(old, 'status'), /disconnected/)
+  const audits = host.emitted.filter(entry => entry.type === 'weir/edit-lock-maintenance' && entry.record?.data?.kind === 'binding-auto-retry')
+  assert.equal(audits.length, 1)
+  assert.equal(audits[0].record.data.sessionId, 's')
+  assert.equal(audits[0].record.data.code, 'binding-duplicate')
+  assert.equal(audits[0].record.data.result, 'recovered')
+  const mirror = await readFile(join(root, '.weir', 'audit.jsonl'), 'utf8')
+  expect(mirror).toContain('"kind":"binding-auto-retry"')
+})
+
+test('a still-serving holder safely refuses the message-driven retry; the turn proceeds, the cause stays, once per turn', async (t) => {
+  const { host, service, root, agent } = await duplicateBindingFixture(t)
+  const noticesBefore = agent.injects.length
+
+  // Two pre-steps in ONE turn consume the armed flag exactly once.
+  await userMessage(host, agent)
+  const turn = {}
+  await host.emit('agent/pre-step', { agent, turn, signal: new AbortController().signal })
+  await host.emit('agent/pre-step', { agent, turn, signal: new AbortController().signal })
+  assert.equal(service.blocksContinuation(agent), true)
+  assert.equal(agent.injects.length, noticesBefore + 1) // one retried failure notice
+  const diagnostic = await host.toolDefinitions.get('edit_lock_status').execute({}, { agent })
+  assert.equal(diagnostic.bindingFailure.code, 'binding-duplicate')
+  assert.equal(host.emitted.filter(entry => entry.record?.data?.kind === 'binding-auto-retry').length, 0)
+
+  // The NEXT genuine message arms exactly one retry again (bounded per turn).
+  await userMessage(host, agent)
+  await host.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+  assert.equal(agent.injects.length, noticesBefore + 2)
+  assert.equal(service.blocksContinuation(agent), true)
+  await assert.rejects(service.acquire({ agent }, { filePath: 'a.txt', cwd: root }), /binding is unavailable/)
+})
+
+test('injected messages and a disabled setting never arm the binding retry', async (t) => {
+  const armed = await duplicateBindingFixture(t)
+  // Injected message: no retry, no notice, failure record unchanged.
+  await injectedMessage(armed.host, armed.agent)
+  await armed.host.emit('agent/pre-step', { agent: armed.agent, turn: {}, signal: new AbortController().signal })
+  assert.equal(armed.agent.injects.length, 1) // only the original failure notice
+  assert.equal(armed.service.blocksContinuation(armed.agent), true)
+
+  const off = await duplicateBindingFixture(t, { autoResume: false })
+  off.attest()
+  await userMessage(off.host, off.agent)
+  await off.host.emit('agent/pre-step', { agent: off.agent, turn: {}, signal: new AbortController().signal })
+  assert.equal(off.service.blocksContinuation(off.agent), true)
+  assert.equal(off.agent.injects.length, 1)
+  assert.equal(off.host.emitted.filter(entry => entry.record?.data?.kind === 'binding-auto-retry').length, 0)
+  // The manual fallback remains available with the setting off.
+  const retried = await off.host.command().handler({ agent: off.agent, rawInput: 'retry', commandId: 'manual-after-off' })
+  assert.equal(retried.kind, 'success', retried.text)
+  assert.equal((await off.service.describe(off.agent)).status.state, 'stopped')
 })
