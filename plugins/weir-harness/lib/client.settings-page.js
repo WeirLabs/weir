@@ -467,7 +467,12 @@ window.__ModuleLoader__.load({
 				readOnly: t("readOnly"),
 				saveFailed: t("saveFailed"),
 				save: t("save"),
-				saving: t("saving")
+				saving: t("saving"),
+				discard: t("discardChanges"),
+				// The save bar's pending count interpolates per render, so a
+				// function label: the host locale's second argument is the
+				// interpolation VARS object (never a fallback string).
+				pendingChanges: (n) => t("pendingChanges", { n })
 			};
 		}
 		// ---- environment facts (design D6) ----
@@ -544,6 +549,9 @@ window.__ModuleLoader__.load({
 				return {
 					...this.form.shell(),
 					fields,
+					// Staged-write count for the save bar's pending label —
+					// plan() is a pure read (the same read save() plans from).
+					pendingCount: this.form.plan().length,
 					restartReminder: this.restartReminder,
 					env: this.env
 				};
@@ -772,6 +780,52 @@ window.__ModuleLoader__.load({
 			if (picker === void 0 || picker === null) return manualFallback;
 			return react_jsx_runtime.jsx(picker.ModelPickerBoundary, { fallback: manualFallback, children: pickerRow(picker) });
 		}
+		// ---- floating save bar + local form shell ----
+		// The bar renders ONLY while the form is dirty — a clean page gets no
+		// new visual noise. It sits in the normal flow as the form's last
+		// element with position: sticky, so once the page scrolls it pins to
+		// the bottom edge of the settings scroll container. Chrome mirrors
+		// the group cards (layer-1 background, l1 border, 12px radius) plus a
+		// soft elevation so scrolled rows read as passing underneath; colors
+		// only from theme tokens, geometry hardcoded.
+		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "8px 12px", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", boxShadow: "var(--dsw-elevation-soft, 0 4px 16px rgba(0,0,0,.08))" };
+		const saveBarTextStyle = { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const saveBarFailedStyle = { color: "var(--dsw-alias-state-warn-primary)" };
+		const saveBarActionsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
+		// The form-shell notice lines (unavailable / readOnly) keep the host
+		// contract's role="status" lines in the page's hint styling.
+		const formNoticeStyle = { fontSize: "13px", lineHeight: "18px", color: "var(--dsw-alias-label-secondary)", margin: "0 0 12px" };
+		/** Local form shell replacing the host primitives.SettingsForm (whose
+		 * footer sits at the bottom of a long page and cannot be restyled from
+		 * outside). The host contract is preserved verbatim: staged edits are
+		 * discarded on unmount (the ref follows the latest onDiscard; hooks run
+		 * before the early return so the cleanup registers in every state), an
+		 * unavailable namespace renders the notice line INSTEAD of the form,
+		 * and a read-only deployment shows the readOnly notice above the
+		 * controls. The save affordance is the sticky bar: pending count +
+		 * failure text left, discard/save right; invalid or saving disables
+		 * save (the bar existing already implies dirty). */
+		function WeirSettingsForm(props) {
+			const { state, labels } = props;
+			const discardRef = react.useRef(props.onDiscard);
+			discardRef.current = props.onDiscard;
+			react.useEffect(() => () => discardRef.current(), []);
+			if (!state.available) return react_jsx_runtime.jsx("p", { style: formNoticeStyle, role: "status", children: labels.unavailable });
+			return react_jsx_runtime.jsxs("div", { children: [
+				!state.writable ? react_jsx_runtime.jsx("p", { style: formNoticeStyle, role: "status", children: labels.readOnly, key: "read-only" }) : null,
+				props.children,
+				state.dirty ? react_jsx_runtime.jsxs("div", { style: saveBarStyle, "data-save-bar": "", children: [
+					react_jsx_runtime.jsxs("div", { style: saveBarTextStyle, children: [
+						react_jsx_runtime.jsx("span", { children: labels.pendingChanges(state.pendingCount ?? 0), key: "pending" }),
+						state.failed ? react_jsx_runtime.jsx("span", { style: saveBarFailedStyle, role: "status", children: labels.saveFailed, key: "failed" }) : null
+					] }),
+					react_jsx_runtime.jsxs("div", { style: saveBarActionsStyle, children: [
+						react_jsx_runtime.jsx(primitives.Button, { variant: "outline", size: "sm", onClick: props.onDiscard, children: labels.discard }),
+						react_jsx_runtime.jsx(primitives.Button, { variant: "primary", size: "sm", disabled: state.invalid || state.saving, onClick: props.onSave, children: state.saving ? labels.saving : labels.save })
+					] })
+				] }, "save-bar") : null
+			] });
+		}
 		function WeirCard(props) {
 			const state = props.useWeirSettingsCard((snapshot) => snapshot);
 			const { t } = props;
@@ -952,7 +1006,9 @@ window.__ModuleLoader__.load({
 					key: "restart-reminder"
 				}));
 			}
-			return react_jsx_runtime.jsxs(primitives.SettingsForm, {
+			// The local form shell (NOT the host primitives.SettingsForm): same
+			// contract, with the save affordance as the sticky bar above.
+			return react_jsx_runtime.jsxs(WeirSettingsForm, {
 				labels: formLabels(t),
 				state,
 				onSave: props.save,
