@@ -15,13 +15,16 @@ import { guardOptions } from '../context-guard/pressure.js'
  * restart: true marks keys whose consuming module snapshots them once at
  * apply, so a volatile settings commit only takes effect after an app
  * restart (see RESTART_KEYS below).
+ * page: false marks keys that never appear on the settings page(s): they
+ * stay configurable through the generic config face only (see
+ * CONFIG_FACE_ONLY_KEYS below).
  */
 const FIELDS = [
-  { key: 'intentGateClassifier', section: 'intentGate', field: 'classifier', type: { union: ['regex', 'llm', 'jev'] }, description: 'Intent classifier front-end', restart: true },
-  { key: 'intentGateProvider', section: 'intentGate', field: 'classifierProvider', type: 'string', description: 'Sidecar route override (llm mode)', restart: true },
+  { key: 'intentGateClassifier', section: 'intentGate', field: 'classifier', type: { union: ['regex', 'llm', 'jev'] }, description: 'Intent detection front-end: regex rules (default), llm semantic classification, or experimental jev', restart: true },
+  { key: 'intentGateProvider', section: 'intentGate', field: 'classifierProvider', type: 'string', description: 'Sidecar route override for llm classifier mode; blank follows the session route', restart: true },
   { key: 'intentGateModel', section: 'intentGate', field: 'classifierModel', type: 'string', description: 'Sidecar model override (llm mode)', restart: true },
   { key: 'intentGateReasoningEffort', section: 'intentGate', field: 'classifierReasoningEffort', type: 'string', description: 'Sidecar reasoning-effort override (llm mode)', restart: true },
-  { key: 'intentGateTimeoutMs', section: 'intentGate', field: 'classifierTimeoutMs', type: 'number', description: 'Classifier timeout (fail-open)', restart: true },
+  { key: 'intentGateTimeoutMs', section: 'intentGate', field: 'classifierTimeoutMs', type: 'number', description: 'Classifier timeout in ms; on timeout the regex result is used (fail-open)', restart: true },
   { key: 'jevEndpoint', section: 'intentGate', field: 'jevEndpoint', type: 'string', description: 'Jev decisions endpoint (experimental)', restart: true },
   { key: 'jevModel', section: 'intentGate', field: 'jevModel', type: 'string', description: 'Jev model name (experimental)', restart: true },
   { key: 'jevApiKeyEnv', section: 'intentGate', field: 'jevApiKeyEnv', type: 'string', description: 'Env var name holding the Jev API key', restart: true },
@@ -34,8 +37,8 @@ const FIELDS = [
   { key: 'todoEnabled', section: 'todoDriver', field: 'enabled', type: 'boolean', description: 'Todo continuation driver switch', restart: true },
   { key: 'todoMaxConsecutive', section: 'todoDriver', field: 'maxConsecutive', type: 'number', description: 'Auto-continuation cap without user input', restart: true },
   { key: 'todoErrorRetryMax', section: 'todoDriver', field: 'errorRetryMax', type: 'number', description: 'Provider-error retry cap', restart: true },
-  { key: 'todoErrorBackoffBaseMs', section: 'todoDriver', field: 'errorBackoffBaseMs', type: 'number', description: 'Provider-error retry initial backoff (ms)', restart: true },
-  { key: 'todoErrorBackoffCapMs', section: 'todoDriver', field: 'errorBackoffCapMs', type: 'number', description: 'Provider-error retry backoff cap (ms)', restart: true },
+  { key: 'todoErrorBackoffBaseMs', section: 'todoDriver', field: 'errorBackoffBaseMs', type: 'number', description: 'Provider-error retry initial backoff (ms)', restart: true, page: false },
+  { key: 'todoErrorBackoffCapMs', section: 'todoDriver', field: 'errorBackoffCapMs', type: 'number', description: 'Provider-error retry backoff cap (ms)', restart: true, page: false },
   { key: 'guardEnabled', section: 'contextGuard', field: 'enabled', type: 'boolean', description: 'Context pressure guard switch (live)' },
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (live advisory; 0 < soft < hard < 1)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (live maintenance request; not a completion guarantee)' },
@@ -44,11 +47,11 @@ const FIELDS = [
   // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
   // session reads one expiry instead of N countdowns. These keys are policy, not
   // mechanism: the kernel never sees them, the lifecycle resolves them per call.
-  { key: 'editLockHoldDefaultMinutes', section: 'editLock', field: 'holdDefaultMinutes', type: 'number', description: 'Edit Lock: retention minutes used when a session asks to keep its locks without giving a period (default 30)' },
-  { key: 'editLockHoldSingleMaxMinutes', section: 'editLock', field: 'holdSingleMaxMinutes', type: 'number', description: 'Edit Lock: most minutes one retention request may ask for (default 30)' },
-  { key: 'editLockHoldCumulativeMaxMinutes', section: 'editLock', field: 'holdCumulativeMaxMinutes', type: 'number', description: 'Edit Lock: cumulative retention minutes one batch of locks may use; asks beyond it are refused and only release remains (default 120)' },
-  { key: 'editLockNudgeAttempts', section: 'editLock', field: 'nudgeAttempts', type: 'number', description: 'Edit Lock: how many times a finished turn is continued to ask for still-held locks to be released or retained (default 2)' },
-  { key: 'editLockNudgeFallback', section: 'editLock', field: 'nudgeFallback', type: { union: ['release', 'abnormal'] }, description: 'Edit Lock: disposition of locks still held after those notices are used up; release frees the files for other sessions, abnormal keeps them for the user (default release)' },
+  { key: 'editLockHoldDefaultMinutes', section: 'editLock', field: 'holdDefaultMinutes', type: 'number', description: 'Edit Lock: retention minutes used when a session asks to keep its locks without giving a period (default 30)', page: false },
+  { key: 'editLockHoldSingleMaxMinutes', section: 'editLock', field: 'holdSingleMaxMinutes', type: 'number', description: 'Edit Lock: most minutes one retention request may ask for (default 30)', page: false },
+  { key: 'editLockHoldCumulativeMaxMinutes', section: 'editLock', field: 'holdCumulativeMaxMinutes', type: 'number', description: 'Edit Lock: cumulative retention minutes one batch of locks may use; asks beyond it are refused and only release remains (default 120)', page: false },
+  { key: 'editLockNudgeAttempts', section: 'editLock', field: 'nudgeAttempts', type: 'number', description: 'Edit Lock: how many times a finished turn is continued to ask for still-held locks to be released or retained (default 2)', page: false },
+  { key: 'editLockNudgeFallback', section: 'editLock', field: 'nudgeFallback', type: { union: ['release', 'abnormal'] }, description: 'Edit Lock: disposition of locks still held after those notices are used up; release frees the files for other sessions, abnormal keeps them for the user (default release)', page: false },
   { key: 'editLockAutoResume', section: 'editLock', field: 'autoResume', type: 'boolean', description: 'Edit Lock: a genuine user message automatically resumes a stopped or administratively revoked session and retries a duplicate-binding failure (default on)' },
   { key: 'editLockStaleSweep', section: 'editLock', field: 'staleSweep', type: 'boolean', description: 'Edit Lock: a genuine user message silently releases locks whose target file no longer exists (default on; read per message, applies immediately)' },
   { key: 'robashEnabled', section: 'robash', field: 'enabled', type: 'boolean', description: 'Guarded read-only bash for curated agents (master switch)' },
@@ -57,12 +60,12 @@ const FIELDS = [
   { key: 'robashDeny', section: 'robash', field: 'deny', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default bash deny list (empty adds nothing; the defaults are always in effect)' },
   { key: 'robashPwshAllow', section: 'robash', field: 'pwshAllow', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default pwsh allow list (empty adds nothing; the defaults are always in effect)' },
   { key: 'robashPwshDeny', section: 'robash', field: 'pwshDeny', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default pwsh deny list (empty adds nothing; the defaults are always in effect)' },
-  { key: 'robashDefaultsPath', section: 'robash', field: 'defaultsPath', type: 'string', description: 'Path to a whitelist defaults file that TAKES OVER the shipped one (JSON object keyed by the five robash* table names); empty uses the shipped defaults' },
-  { key: 'robashDefaultsReload', section: 'robash', field: 'defaultsReload', type: 'number', description: 'Bump this number to re-read the whitelist defaults file without restarting (advanced/debug entry)' },
+  { key: 'robashDefaultsPath', section: 'robash', field: 'defaultsPath', type: 'string', description: 'Path to a whitelist defaults file that TAKES OVER the shipped one (JSON object keyed by the five robash* table names); empty uses the shipped defaults', page: false },
+  { key: 'robashDefaultsReload', section: 'robash', field: 'defaultsReload', type: 'number', description: 'Bump this number to re-read the whitelist defaults file without restarting (advanced/debug entry)', page: false },
   { key: 'lspEnabled', section: 'lsp', field: 'enabled', type: 'boolean', description: 'LSP capability master switch (default off; when on, sessions start with LSP off and toggle it from the session header switch or the lsp tool)' },
-  { key: 'lspIdleMs', section: 'lsp', field: 'idleMs', type: 'number', description: 'LSP server idle shutdown threshold (ms)' },
-  { key: 'lspRequestTimeoutMs', section: 'lsp', field: 'requestTimeoutMs', type: 'number', description: 'LSP request timeout (ms)' },
-  { key: 'lspDiagnosticsWaitMs', section: 'lsp', field: 'diagnosticsWaitMs', type: 'number', description: 'LSP diagnostics publish wait window (ms)' },
+  { key: 'lspIdleMs', section: 'lsp', field: 'idleMs', type: 'number', description: 'LSP server idle shutdown threshold (ms)', page: false },
+  { key: 'lspRequestTimeoutMs', section: 'lsp', field: 'requestTimeoutMs', type: 'number', description: 'LSP request timeout (ms)', page: false },
+  { key: 'lspDiagnosticsWaitMs', section: 'lsp', field: 'diagnosticsWaitMs', type: 'number', description: 'LSP diagnostics publish wait window (ms)', page: false },
   { key: 'worktreeEnabled', section: 'worktree', field: 'enabled', type: 'boolean', description: 'Worktree lanes capability switch: lane tools, /worktree, Worktree mode, and the lanes panel' },
   { key: 'worktreeRoot', section: 'worktree', field: 'root', type: 'string', description: 'Repository-relative directory that holds lanes (locally ignored through .git/info/exclude)' },
   { key: 'worktreeMaxActive', section: 'worktree', field: 'maxActive', type: 'number', description: 'Maximum number of active lanes per repository' },
@@ -76,7 +79,7 @@ const FIELDS = [
   { key: 'notifyMinTurnSeconds', section: 'notify', field: 'minTurnSeconds', type: 'number', description: 'A finished turn is only reported when it ran at least this many seconds (0 reports every turn)' },
   { key: 'notifySound', section: 'notify', field: 'sound', type: 'boolean', description: 'Play the platform notification sound where supported' },
   { key: 'notifyForeground', section: 'notify', field: 'foreground', type: { union: ['skip', 'always'] }, description: 'DeepSeek Harness window in the foreground: skip stays quiet (default), always notifies anyway' },
-  { key: 'blackboardWriteTokenTtlMinutes', section: 'blackboard', field: 'writeTokenTtlMinutes', type: 'number', description: 'Session blackboard write-token TTL (minutes): an acquired write authority expires after this long, the key is released, and its subscribers are notified (default 60)' },
+  { key: 'blackboardWriteTokenTtlMinutes', section: 'blackboard', field: 'writeTokenTtlMinutes', type: 'number', description: 'Session blackboard write-token TTL (minutes): an acquired write authority expires after this long, the key is released, and its subscribers are notified (default 60)', page: false },
 ]
 
 /** Flat settings keys that only take effect after an app restart: their
@@ -84,6 +87,12 @@ const FIELDS = [
  * commit does not re-read them. Derived from FIELDS (declared once); the
  * settings page keeps a client-side copy pinned to this list by test. */
 export const RESTART_KEYS = Object.freeze(FIELDS.filter(({ restart }) => restart).map(({ key }) => key))
+
+/** Flat settings keys that never appear on the settings page(s): advanced or
+ * debug-level knobs reachable only through the generic config face. Derived
+ * from FIELDS (declared once); the settings page drops exactly these keys
+ * from its GROUPS table, pinned by test. */
+export const CONFIG_FACE_ONLY_KEYS = Object.freeze(FIELDS.filter((f) => f.page === false).map((f) => f.key))
 
 export { FIELDS }
 
