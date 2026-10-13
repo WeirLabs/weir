@@ -113,6 +113,10 @@
         # Message-driven auto-resume counter-case: the live gate is switched off
         # only when the scenario asks for it (default stays ON everywhere else).
         editLockAutoResume: !!js "process.env.WEIR_IT_AUTO_RESUME === 'off' ? false : undefined"
+        # Message-driven binding self-heal counter-case companion: the stale
+        # sweep would add unbounded remote bursts to the binding-auto-retry
+        # scenario's exact attempt counts; off only when a scenario asks.
+        editLockStaleSweep: !!js "process.env.WEIR_IT_STALE_SWEEP === 'off' ? false : undefined"
     - id: weir-it-event-tap
       name: 'weir-test-harness/event-tap'
     # Capability-store probe, host level: the baseline the isolated row below
@@ -237,7 +241,7 @@
             # Fixed authority for multi-boot suites; only rename and uncertain
             # own dedicated nested domains, leaving all prior scenarios unchanged.
             root: !!js "process.env.WEIR_IT_LSP_RENAME === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-rename' : (process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives' : ((process.env.WEIR_IT_STOP_BOUNDARY || process.env.WEIR_IT_AUTO_RESUME || process.env.WEIR_IT_EDIT_LOCK === '1') ? process.env.WEIR_IT_ROOT + '/ws' : undefined)))"
-            authorityDirectory: !!js "process.env.WEIR_IT_LSP_RENAME === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-rename/.weir/edit-lock' : (process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain/.weir/edit-lock' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives/.weir/edit-lock' : (process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined)))))"
+            authorityDirectory: !!js "process.env.WEIR_IT_LSP_RENAME === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-rename/.weir/edit-lock' : (process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain/.weir/edit-lock' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives/.weir/edit-lock' : (process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_REVOKED_REPAIR === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-revoked-repair' : (process.env.WEIR_IT_BINDING_AUTO_RETRY === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-binding-auto-retry' : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined)))))))"
         # Dev-only trusted reservation for editlock-delegate-settle: the real
         # child's managed write happened earlier. The serial stopping hook
         # records the hold ACK before turn/end; no owner tool is exposed.
