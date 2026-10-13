@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { reservePublisher } from './reservation.js'
 import { openEditLockStore } from './store.js'
 import { canonical, parseSnapshot, validateImage } from './snapshot.js'
-import { administrativeState, digest, LATE_WRITER_RISK } from './admin-ledger.js'
+import { administrativeState, digest, dispositionFor, LATE_WRITER_RISK } from './admin-ledger.js'
 
 export const MAX_RECOVERY_BYTES = 16 * 1024 * 1024
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -101,7 +101,9 @@ export async function recoverAuthority(input, testing = {}) {
     if (before.revision !== input.expectedRevision) fail('revision-conflict', 'Authority revision changed; inspect and confirm again')
     const owner = before.state.sessions.find(s => s.sessionId === input.owner)
     if (!owner || !owner.interrupted) throw new Error('Only an interrupted historical owner can be overridden')
-    const unresolved = before.state.operations.filter(op => op.sessionId === input.owner && ['prepared', 'publishing', 'unknown'].includes(op.phase))
+    // Operations an earlier disposition of the same owner already covers stay
+    // disposed: a re-revocation after repair names only genuinely new unknowns.
+    const unresolved = before.state.operations.filter(op => op.sessionId === input.owner && ['prepared', 'publishing', 'unknown'].includes(op.phase) && !dispositionFor(before.state, op))
     check(unresolved.length > 0 && unresolved.every(op => op.phase === 'unknown'), 'Recover to stable unknown history before administrative override')
     check(canonical(unresolved.map(op => op.operationId).sort()) === canonical([...input.operationIds].sort()), 'Confirm every unresolved operation for this owner')
     const backup = { file: `admin-backup-${digest([input.root, input.recoveryId])}.json`, sha256: sha256(bytes), bytes: bytes.length }

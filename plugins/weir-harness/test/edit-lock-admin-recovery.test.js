@@ -7,7 +7,7 @@ import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager, recoverEditLockManager } from '../src/edit-lock/manager.js'
 import { recoverAuthority, recoveryConfirmation } from '../src/edit-lock/admin-recovery.js'
 import { reservePublisher } from '../src/edit-lock/reservation.js'
-import { parseSnapshot, validateImage } from '../src/edit-lock/snapshot.js'
+import { canonical, parseSnapshot, validateImage } from '../src/edit-lock/snapshot.js'
 import { administrativeState, digest } from '../src/edit-lock/admin-ledger.js'
 import { registerEditLockMaintenanceEndpoints as registerEditLockMaintenance, createEditLockEvidence, inspectAuthority } from '../src/edit-lock/maintenance.js'
 
@@ -71,7 +71,9 @@ it('audited override releases the real 22-lock blocked owner without resolving o
   assert.equal(statusAfter.sessions.find(s => s.sessionId === 'blocked-owner').revoked, true)
   assert.equal(statusAfter.sessions.find(s => s.sessionId === 'unrelated-owner').revoked, false)
   const revisionBeforeReceipt = store.snapshot().revision
-  await assert.rejects(manager.issueExecutionReceipt(f.execution, 'late-resume-request'), /revoked/)
+  // Receipt issuance is the repair path: not refused for a revoked owner, but
+  // the captured pre-revocation execution is fenced as a stale incarnation.
+  await assert.rejects(manager.issueExecutionReceipt(f.execution, 'late-resume-request'), /stale incarnation/)
   assert.equal(store.snapshot().revision, revisionBeforeReceipt)
   const fresh = await manager.openSession('fresh-owner')
   const token = await manager.acquire(fresh, f.target)
@@ -81,9 +83,28 @@ it('audited override releases the real 22-lock blocked owner without resolving o
   assert.equal(replay.kind, 'history'); assert.equal(replay.operation.phase, 'unknown'); assert.equal(calls, 0)
   await assert.rejects(manager.acquire(f.execution, f.target))
   await assert.rejects(manager.openSession(f.execution.sessionId), /revoked/)
-  await assert.rejects(manager.resume(f.execution, 'old-request', {}), /revoked/)
+  await assert.rejects(manager.resume(f.execution, 'old-request', {}), /invalid receipt/)
   await assert.rejects(manager.prepare(f.execution, { ...f.request, content: 'different' }, { validate() {}, publish: async () => { calls++ } }), /ID_REUSE/)
   assert.equal(calls, 0)
+  // The repair path: receipt + resume at the CURRENT (revoked) epoch commits,
+  // the epoch advances past revokedEpoch, and the revoked state ends atomically
+  // without any ledger change.
+  const revokedEpoch = store.snapshot().state.adminRecoveries[0].revokedEpoch
+  const repair = { managerIncarnation: 'fresh', sessionId: 'blocked-owner', executionEpoch: revokedEpoch }
+  const receipt = await manager.issueExecutionReceipt(repair, 'repair-request')
+  const repaired = await manager.resume(repair, 'repair-request', receipt)
+  assert.equal(repaired.executionEpoch, revokedEpoch + 1)
+  assert.equal(manager.status().sessions.find(s => s.sessionId === 'blocked-owner').revoked, false)
+  assert.equal(manager.status().sessions.find(s => s.sessionId === 'blocked-owner').interrupted, false)
+  // The repaired session edits in the new epoch; the pre-disposition authority
+  // stays fenced, and the durable image (ledger preserved byte-identically)
+  // validates.
+  await assert.rejects(manager.acquire(f.execution, f.target), /stale incarnation/)
+  const repairedToken = await manager.acquire(repaired, join(f.root, 'repaired.txt'))
+  assert.equal(repairedToken.executionEpoch, revokedEpoch + 1)
+  const reopened = await openEditLockStore({ directory: f.directory, domainId: f.root, mode: 'recover' })
+  assert.equal(canonical(reopened.snapshot().state.adminRecoveries), canonical(store.snapshot().state.adminRecoveries))
+  await reopened.close()
   const next = await manager.prepare(fresh, { ...f.request, operationId: 'new-op', target: { ...f.request.target, generation: token.generation } }, {
     validate() {}, publish: async () => { await writeFile(f.target, 'fresh write'); return { version: 'new' } }, identify: () => f.target,
   })
