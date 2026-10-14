@@ -38,7 +38,7 @@
       disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION)"
     - id: weir-it-agent-presets
       name: '@deepseek-ai/dsh-agent-preset-registry'
-      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL)"
+      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_PRESET_SWITCH)"
       config:
         default: weir-it-selection
     - id: weir-it-skill-composition-probe
@@ -119,6 +119,14 @@
         editLockStaleSweep: !!js "process.env.WEIR_IT_STALE_SWEEP === 'off' ? false : undefined"
     - id: weir-it-event-tap
       name: 'weir-test-harness/event-tap'
+    # Edit Lock preset-switch probe (editlock-preset-switch scenario only):
+    # composes two Edit-Lock preset revisions in one headless process and
+    # drives the blank-window switch flow. Host level, never in a realm.
+    - id: weir-it-edit-lock-preset-switch-probe
+      name: './src/edit-lock-preset-switch-probe.js'
+      disabled: !!js process.env.WEIR_IT_PRESET_SWITCH !== '1'
+      config:
+        enabled: !!js process.env.WEIR_IT_PRESET_SWITCH === '1'
     # Capability-store probe, host level: the baseline the isolated row below
     # is compared against (capstore scenario only).
     - id: weir-it-capstore-probe-host

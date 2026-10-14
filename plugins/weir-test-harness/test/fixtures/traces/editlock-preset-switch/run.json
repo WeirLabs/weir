@@ -1,0 +1,8 @@
+{
+  "scenario": "editlock-preset-switch",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/home",
+  "code": 0,
+  "stdout": "preset switch done\n",
+  "stderr": "",
+  "sessionId": null
+}
