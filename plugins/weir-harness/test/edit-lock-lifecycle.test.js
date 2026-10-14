@@ -23,7 +23,10 @@ test('stop during registration closes admission and waits for durable revocation
   await rejected
   await stopped
   assert.equal(cancels, 1)
-  await assert.rejects(lifecycle.start(agent), /already registered/)
+  // Same-agent adoption (change edit-lock-shared-domain-mounts, design D2):
+  // the same object+session is adopted and the established start result is
+  // returned verbatim — here the rejected registration, with no state change.
+  await assert.rejects(lifecycle.start(agent), /stopped during registration/)
   await lifecycle.close()
   await assert.rejects(lifecycle.start({}), /closed/)
 })

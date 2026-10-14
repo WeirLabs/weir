@@ -374,8 +374,14 @@ test('local reclaim failure retains entry and subsequent concurrent starts admit
     serving = current
     await assert.rejects(lifecycle.start(current), /session already bound/)
     assert.equal(lifecycle.status(old).state, 'stopped')
+    // Same-agent adoption (change edit-lock-shared-domain-mounts, design D2):
+    // two concurrent starts of the SAME agent object now converge on the ONE
+    // in-flight registration instead of the second failing 'already
+    // registered'. Exactly one binding results: the reclaim of the failed old
+    // holder completed once, the claimant bound once as interrupted.
     const results = await Promise.allSettled([lifecycle.start(current), lifecycle.start(current)])
-    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+    assert.deepEqual(results.map(result => result.status), ['fulfilled', 'fulfilled'])
+    assert.deepEqual(results.map(result => result.value), ['interrupted', 'interrupted'])
     assert.equal(lifecycle.status(current).state, 'stopped')
     assert.throws(() => lifecycle.status(old), /unknown lifecycle agent/)
   } finally { await lifecycle.close() }
