@@ -1,8 +1,8 @@
 {
   "scenario": "blackboard-persistence",
-  "home": "/Users/young/Documents/Orrery/.weir/worktrees/session-blackboard-persistence-107/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
   "code": 0,
   "stdout": "blackboard cold recovery verified\n",
   "stderr": "",
-  "sessionId": "session-689753ae-e88d-4a3f-b017-596928b807a5"
+  "sessionId": "session-78eac4ea-a972-4ca2-b7f1-b6361433c3d6"
 }

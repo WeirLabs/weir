@@ -1,6 +1,6 @@
 {
   "scenario": "semantic",
-  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
   "code": 0,
   "stdout": "semantic mode armed, task done\n",
   "stderr": "",

@@ -1,8 +1,8 @@
 {
   "scenario": "rehydrate",
-  "home": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
   "code": 0,
   "stdout": "parent observed post-restart group-settled signal\n",
   "stderr": "",
-  "sessionId": "session-3778f0dd-a93e-4d88-a953-6a0176d4d430"
+  "sessionId": "session-6f5b8dd2-b60b-4dca-8a29-6e950edcbfa0"
 }

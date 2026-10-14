@@ -1,0 +1,25 @@
+{
+  "label": "host",
+  "present": true,
+  "name": "weir-it",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
+  "located": {
+    "supported": true,
+    "root": "/Users/young/Documents/Orrery/.weir/it-root/home/weir/profiles/weir-it/capabilities"
+  },
+  "sessionId": "session-095fc9c0-f6ec-44b4-bf16-64f696c970af",
+  "commit": "committed",
+  "read": {
+    "kind": "ok",
+    "revision": 1,
+    "payload": {
+      "probes": [
+        "host"
+      ]
+    }
+  },
+  "recordPath": "/Users/young/Documents/Orrery/.weir/it-root/home/weir/profiles/weir-it/capabilities/sessions/session-095fc9c0-f6ec-44b4-bf16-64f696c970af/selection.json",
+  "dirFiles": [
+    "selection.json"
+  ]
+}

@@ -1,8 +1,8 @@
 {
   "scenario": "zombie-lane",
-  "home": "/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-delegate-lifecycle-hyg-106/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
   "code": 0,
   "stdout": "ZOMBIE_PROBE_DONE\n",
   "stderr": "",
-  "sessionId": "session-396d3698-5522-45ac-931f-75dabee5ec46"
+  "sessionId": "session-86eab32e-78ef-499b-880e-c2f421846222"
 }

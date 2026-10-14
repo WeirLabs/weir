@@ -5,15 +5,15 @@
     {
       "id": "watch-lane-001",
       "title": "Watch lane",
-      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/watch-lane-001",
+      "path": "/Users/young/Documents/Orrery/.weir/it-root/ws/.weir/worktrees/watch-lane-001",
       "branch": "weir/watch-lane-001",
       "base": {
         "branch": "main",
-        "commit": "a340d9f69e2fbbdd2e50cf0941e5961ca3583214"
+        "commit": "5d07fb94bf5a8054efaafe47f6c9cb5ede8fb8bf"
       },
       "scope": [],
       "state": "no-commits",
-      "ownerSession": "session-0217073a-232c-4415-bc07-159baf46a110",
+      "ownerSession": "session-8e0d5c7e-fea1-4185-8f35-4e851484ca07",
       "boundChild": null,
       "baseMoved": false,
       "landableTree": null,
@@ -24,28 +24,28 @@
       "land": null,
       "cleanup": null,
       "reason": "no commits ahead of main",
-      "createdAt": 1791395244723,
-      "updatedAt": 1791395245078,
+      "createdAt": 1791971671314,
+      "updatedAt": 1791971673967,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791395244775,
+          "at": 1791971672162,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791395244837,
+          "at": 1791971672866,
           "by": "host"
         },
         {
           "from": "working",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791395244914,
+          "at": 1791971673258,
           "by": "host",
           "reason": "no commits ahead of main"
         },
@@ -53,7 +53,7 @@
           "from": "no-commits",
           "to": "no-commits",
           "event": "checked",
-          "at": 1791395245078,
+          "at": 1791971673967,
           "by": "host",
           "reason": "no commits ahead of main"
         }

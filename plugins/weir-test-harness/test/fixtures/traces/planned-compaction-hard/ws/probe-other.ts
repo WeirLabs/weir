@@ -1,2 +1,2 @@
-import { fixtureSymbol } from "./probe"
-export const useIt = fixtureSymbol + 1
+import { staleProbe } from "./probe"
+export const useIt = staleProbe + 1

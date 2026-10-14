@@ -1,0 +1,8 @@
+{
+  "scenario": "blackboard-fork",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
+  "code": 0,
+  "stdout": "blackboard fork seeding verified\n",
+  "stderr": "",
+  "sessionId": null
+}

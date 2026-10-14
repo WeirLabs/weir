@@ -3,16 +3,16 @@
   "mode": "seed",
   "preset": "weir-it-cold",
   "created": "weir-it-cold",
-  "sessionId": "15188ee4-74be-4b24-b6d5-625d6a8235ce",
-  "cwd": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws",
+  "sessionId": "6e6f228b-a6fe-4618-b2f4-d8c20890c12a",
+  "cwd": "/Users/young/Documents/Orrery/.weir/it-root/ws",
   "createdAgents": [
     {
-      "id": "session-cdd5a988-1d74-42df-8fb1-45cbb7d57e73",
+      "id": "session-6313fc01-980b-4054-954b-9e6d9ab518f8",
       "origin": null,
       "depth": 0
     },
     {
-      "id": "15188ee4-74be-4b24-b6d5-625d6a8235ce",
+      "id": "6e6f228b-a6fe-4618-b2f4-d8c20890c12a",
       "origin": null,
       "depth": 0
     }
@@ -22,7 +22,7 @@
       "type": "emit",
       "event": "agent-preset/selected",
       "args": [
-        "15188ee4-74be-4b24-b6d5-625d6a8235ce",
+        "6e6f228b-a6fe-4618-b2f4-d8c20890c12a",
         "weir-it-cold"
       ],
       "via": [
@@ -30,16 +30,16 @@
         "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
         "at Array.map (<anonymous>)",
         "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-        "at emit (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/skill-selection-plugin.js:198:32)",
-        "at emitPresetSelected (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
-        "at Object.agentCreated (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:76:16)"
+        "at emit (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/skill-selection-plugin.js:197:32)",
+        "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
+        "at Object.agentCreated (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:76:16)"
       ]
     },
     {
       "type": "emit",
       "event": "agent-preset/selected",
       "args": [
-        "15188ee4-74be-4b24-b6d5-625d6a8235ce",
+        "6e6f228b-a6fe-4618-b2f4-d8c20890c12a",
         "weir-it-cold"
       ],
       "via": [
@@ -47,9 +47,9 @@
         "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
         "at Array.map (<anonymous>)",
         "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-        "at file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-test-harness/src/cold-session-probe.js:127:80",
-        "at emitPresetSelected (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
-        "at invalidate (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-test-harness/src/cold-session-probe.js:127:44)"
+        "at file:///Users/young/Documents/Orrery/plugins/weir-test-harness/src/cold-session-probe.js:127:80",
+        "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
+        "at invalidate (file:///Users/young/Documents/Orrery/plugins/weir-test-harness/src/cold-session-probe.js:127:44)"
       ]
     }
   ],
@@ -88,7 +88,7 @@
     ]
   },
   "unselectedPresent": true,
-  "plainSessionId": "3918b02b-317a-4f40-a297-f4812a26adcc",
+  "plainSessionId": "f9faed24-4473-420e-b62e-2b1346d27563",
   "heldApply": {
     "status": "applied",
     "reason": null,

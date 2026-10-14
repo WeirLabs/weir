@@ -1,6 +1,6 @@
 {
   "scenario": "jobs-aware-todo",
-  "home": "/Users/young/Documents/Orrery/.weir/worktrees/complete-planned-compaction-bind-112/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
   "code": 0,
   "stdout": "jobs-aware-outer-finished\n",
   "stderr": "",

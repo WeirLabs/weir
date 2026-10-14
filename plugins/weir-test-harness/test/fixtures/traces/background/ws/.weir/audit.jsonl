@@ -1,24 +1,26 @@
-{"time":1791395175006,"session":"session-f16bafec-e771-4645-afc9-b62ef8c7cb71","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
-{"time":1791395175692,"session":"session-97b53eb4-9320-4abf-a1a6-819516c89d5a","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395175780,"session":"a1f9bb79-11cf-4536-8bd6-d21c0b96f7fa","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395176407,"session":"session-b0d24330-869f-4d12-8219-5ed7f0bccbc0","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395177148,"session":"session-8092f92b-bbc6-4d9f-b62f-4100c0c1677c","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395177822,"session":"session-64f214e9-c949-484b-988e-e9887bdfafb1","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395177913,"session":"25effecf-af78-4531-a7d7-1f18f73786ef","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395179623,"session":"session-e978e9da-648a-4fb0-91b1-5467481ec1ed","type":"weir/intent-classify","data":{"mode":"llm","hit":"deep-work"}}
-{"time":1791395179647,"session":"session-e978e9da-648a-4fb0-91b1-5467481ec1ed","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
-{"time":1791395180270,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395180364,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"8824e49a-efb2-4823-b155-5ed2616c4548","name":"quick: GROUPED_CHILD_A","group":"probe-group"}}
-{"time":1791395180365,"session":"8824e49a-efb2-4823-b155-5ed2616c4548","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395180387,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision","data":{"note":"child quick: GROUPED_CHILD_A: retry in 50ms"}}
-{"time":1791395180407,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"760e1749-5093-4ab7-8513-ec4c5f2e96b8","name":"quick: GROUPED_CHILD_B","group":"probe-group"}}
-{"time":1791395180407,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["8824e49a-efb2-4823-b155-5ed2616c4548","760e1749-5093-4ab7-8513-ec4c5f2e96b8"]}}
-{"time":1791395180412,"session":"760e1749-5093-4ab7-8513-ec4c5f2e96b8","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395180438,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/settle","data":{"kind":"settle","childId":"760e1749-5093-4ab7-8513-ec4c5f2e96b8","status":"completed","report":"beta finished first try"}}
-{"time":1791395180495,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/settle","data":{"kind":"settle","childId":"8824e49a-efb2-4823-b155-5ed2616c4548","status":"completed","report":"alpha finished after one retry"}}
-{"time":1791395180496,"session":"session-d6c0115f-27f4-49e9-9906-cf734eb7af5f","type":"weir/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
-{"time":1791395182128,"session":"session-1839d86a-59be-46f0-a426-1673ec3a430c","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395182214,"session":"6be08c86-d3b8-4d6e-adee-4f387a9555db","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395182257,"session":"4acddc9a-883e-4df3-a52f-5aae37241572","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395182913,"session":"session-c61f75c4-ea21-43c3-9b46-47943df8de02","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
-{"time":1791395183015,"session":"606a5e24-8561-4396-b739-cea7aba9a1ab","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971527145,"session":"session-66dfad59-d9ef-4b67-8108-7e3305d7b43f","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791971528408,"session":"session-31100982-ced6-4de5-b728-260bc307948e","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971528549,"session":"069fae7b-ab64-4406-8142-a6a55c1dda5b","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971529659,"session":"session-ba3bd136-2a71-4105-944b-2b29070cfd26","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971531027,"session":"session-ab48d6b4-6d1d-471f-9679-5f8770383aac","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971531131,"session":"session-ab48d6b4-6d1d-471f-9679-5f8770383aac","type":"weir/compaction","data":{"requestId":"c8cf80b9-e89f-4f6c-a317-01f595351ff0","sources":["hard"],"kind":"requested"}}
+{"time":1791971531153,"session":"session-ab48d6b4-6d1d-471f-9679-5f8770383aac","type":"weir/compaction","data":{"requestId":"c8cf80b9-e89f-4f6c-a317-01f595351ff0","sources":["hard"],"kind":"applied","summarySeq":21,"compactionId":"87b47bd4-c61f-4bfe-820a-cb8338bdd3ad"}}
+{"time":1791971532262,"session":"session-559f22ca-11bb-4278-963a-f59d33614dc9","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971532396,"session":"0ceba54b-0391-467a-be2d-84fe4d1864e8","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971534408,"session":"session-47652cbb-a547-4875-b7ee-4618e289c845","type":"weir/intent-classify","data":{"mode":"llm","hit":"deep-work"}}
+{"time":1791971534460,"session":"session-47652cbb-a547-4875-b7ee-4618e289c845","type":"weir/intent-hit","data":{"intent":"deep-work","first":true}}
+{"time":1791971535493,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971535629,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"83603557-942f-4926-b712-bee97074ddfc","name":"quick: GROUPED_CHILD_A","group":"probe-group"}}
+{"time":1791971535630,"session":"83603557-942f-4926-b712-bee97074ddfc","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971535661,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision/spawn","data":{"kind":"spawn","childId":"64e2ae3e-1671-45e0-946d-7edb84cb67d8","name":"quick: GROUPED_CHILD_B","group":"probe-group"}}
+{"time":1791971535661,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision/seal","data":{"kind":"seal","group":"probe-group","memberIds":["83603557-942f-4926-b712-bee97074ddfc","64e2ae3e-1671-45e0-946d-7edb84cb67d8"]}}
+{"time":1791971535669,"session":"64e2ae3e-1671-45e0-946d-7edb84cb67d8","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971535678,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision","data":{"note":"child quick: GROUPED_CHILD_A: retry in 50ms"}}
+{"time":1791971535711,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision/settle","data":{"kind":"settle","childId":"64e2ae3e-1671-45e0-946d-7edb84cb67d8","status":"completed","report":"beta finished first try"}}
+{"time":1791971535784,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision/settle","data":{"kind":"settle","childId":"83603557-942f-4926-b712-bee97074ddfc","status":"completed","report":"alpha finished after one retry"}}
+{"time":1791971535784,"session":"session-510a297c-4d17-44c6-b976-7bc129bae5e1","type":"weir/supervision/group-settled","data":{"kind":"group-settled","group":"probe-group"}}
+{"time":1791971537741,"session":"session-f6202a8e-c461-4cff-9f24-7b159fac81a6","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971537863,"session":"de9e42ef-18b0-4a2b-95b9-3f6171495bed","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971537922,"session":"89f215e7-6546-47a1-a6dc-ff56e9763bd4","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971538996,"session":"session-58bf85db-ecf9-49af-8a28-530db5ecb76c","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}
+{"time":1791971539155,"session":"76515d9f-d9e6-4f8f-ba94-1f9733a3fdec","type":"weir/intent-classify","data":{"mode":"llm","hit":null}}

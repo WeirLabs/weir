@@ -17,7 +17,7 @@
             "type": "emit",
             "event": "agent-preset/selected",
             "args": [
-              "15188ee4-74be-4b24-b6d5-625d6a8235ce",
+              "6e6f228b-a6fe-4618-b2f4-d8c20890c12a",
               "weir-it-cold"
             ],
             "via": [
@@ -25,9 +25,9 @@
               "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
               "at Array.map (<anonymous>)",
               "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-              "at emit (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/skill-selection-plugin.js:198:32)",
-              "at emitPresetSelected (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
-              "at Object.agentCreated (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:76:16)"
+              "at emit (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/skill-selection-plugin.js:197:32)",
+              "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
+              "at Object.agentCreated (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:76:16)"
             ]
           },
           "names": [
@@ -49,7 +49,7 @@
             "type": "emit",
             "event": "agent-preset/selected",
             "args": [
-              "15188ee4-74be-4b24-b6d5-625d6a8235ce",
+              "6e6f228b-a6fe-4618-b2f4-d8c20890c12a",
               "weir-it-cold"
             ],
             "via": [
@@ -57,9 +57,9 @@
               "at file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:43",
               "at Array.map (<anonymous>)",
               "at Proxy.emit (file:///private/tmp/dsh-src/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:281:31)",
-              "at emit (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/skill-selection-plugin.js:198:32)",
-              "at emitPresetSelected (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
-              "at Object.agentCreated (file:///Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/plugins/weir-harness/src/capabilities/preset-invalidation.js:76:16)"
+              "at emit (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/skill-selection-plugin.js:197:32)",
+              "at emitPresetSelected (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:38:5)",
+              "at Object.agentCreated (file:///Users/young/Documents/Orrery/plugins/weir-harness/src/capabilities/preset-invalidation.js:76:16)"
             ]
           },
           "names": [
@@ -81,10 +81,10 @@
   "held": {
     "failure": {
       "code": "session/writer-held",
-      "message": "dsh: session \"3918b02b-317a-4f40-a297-f4812a26adcc\" is already owned by an active write handle"
+      "message": "dsh: session \"f9faed24-4473-420e-b62e-2b1346d27563\" is already owned by an active write handle"
     },
     "statusUnderNote": {
-      "error": "dsh: session \"3918b02b-317a-4f40-a297-f4812a26adcc\" is already owned by an active write handle",
+      "error": "dsh: session \"f9faed24-4473-420e-b62e-2b1346d27563\" is already owned by an active write handle",
       "reason": "session-writer-held",
       "hint": "Another process holds this session log. Close the session in that process (or continue it there), then resume it here.",
       "conflicts": []

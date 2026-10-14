@@ -1,7 +1,7 @@
 {
-  "logs": 1,
-  "frames": 25,
-  "decoded": 25,
+  "logs": 2,
+  "frames": 28,
+  "decoded": 28,
   "events": [
     {
       "type": "command/run",

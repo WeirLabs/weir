@@ -1,0 +1,8 @@
+{
+  "scenario": "editlock-delegate-resume",
+  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
+  "code": 0,
+  "stdout": "parent observed R2 resumed completion\n",
+  "stderr": "",
+  "sessionId": null
+}

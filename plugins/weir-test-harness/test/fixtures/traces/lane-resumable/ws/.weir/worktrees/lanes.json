@@ -5,50 +5,50 @@
     {
       "id": "lane-resumable-001",
       "title": "Lane resumable",
-      "path": "/Users/young/Documents/Orrery/.weir/worktrees/blackboard-ux-fixes-101/.weir/it-root/ws/.weir/worktrees/lane-resumable-001",
+      "path": "/Users/young/Documents/Orrery/.weir/it-root/ws/.weir/worktrees/lane-resumable-001",
       "branch": "weir/lane-resumable-001",
       "base": {
         "branch": "main",
-        "commit": "98173fdfd27fbd2e32b274be78b1e89678159758"
+        "commit": "db2e2e0ed3ac608b31062ddab397d082253e8867"
       },
       "scope": [],
       "state": "landable",
-      "ownerSession": "session-f7fb1ec4-d309-47cc-ac2d-c56141cf2caf",
+      "ownerSession": "session-9105755b-ea12-44c4-8651-a37b0a7b50ed",
       "boundChild": null,
       "baseMoved": false,
-      "landableTree": "990465b99097ca7d9410f55237a7ca114ace6c39",
+      "landableTree": "3a08b5c8c4972a24220c6ac7322d31bdc494902a",
       "setup": {
         "status": "none"
       },
       "check": {
         "enabled": false,
-        "tree": "990465b99097ca7d9410f55237a7ca114ace6c39"
+        "tree": "3a08b5c8c4972a24220c6ac7322d31bdc494902a"
       },
       "land": null,
       "cleanup": null,
       "reason": null,
-      "createdAt": 1791395268930,
-      "updatedAt": 1791395270285,
+      "createdAt": 1791971726534,
+      "updatedAt": 1791971727999,
       "history": [
         {
           "from": "preparing",
           "to": "ready",
           "event": "setup-ok",
-          "at": 1791395268982,
+          "at": 1791971726621,
           "by": "host"
         },
         {
           "from": "ready",
           "to": "working",
           "event": "bind",
-          "at": 1791395269005,
+          "at": 1791971726657,
           "by": "host"
         },
         {
           "from": "working",
           "to": "landable",
           "event": "checked",
-          "at": 1791395270285,
+          "at": 1791971727999,
           "by": "host"
         }
       ]
