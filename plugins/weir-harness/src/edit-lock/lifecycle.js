@@ -195,11 +195,25 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
   }
   /** Register once before publishing an agent's editing tools. A session the
    * manager already knows (restart, re-created agent) is never re-armed: it
-   * starts interrupted and needs trusted resume. @param {object} agent
+   * starts interrupted and needs trusted resume. Presenting the SAME agent
+   * object again adopts the established entry instead of registering twice
+   * (change edit-lock-shared-domain-mounts, design D2). @param {object} agent
    * @returns {Promise<'active'|'interrupted'>} */
   function start(agent) {
     if (closed) return Promise.reject(new Error('edit lifecycle closed'))
-    if (entries.has(agent)) return Promise.reject(new Error('agent already registered'))
+    const existing = entries.get(agent)
+    if (existing) {
+      // Same-agent binding adoption: a sibling mount's idempotent re-setup
+      // presents the same agent object and takes the established start result
+      // verbatim — no openSession, no revocation, no epoch advance, no state
+      // change. A stopped/revoked entry keeps its state: adoption returns its
+      // established result, and business ingress stays gated by
+      // denyStopped/business until a trusted resume. Identity continuity is
+      // required — a host that reused the agent object for a different
+      // session keeps the duplicate-registration refusal.
+      if (sessionForAgent(agent) === existing.sessionId) return existing.ready
+      return Promise.reject(new Error('agent already registered'))
+    }
     const sessionId = sessionForAgent(agent)
     if (!sessionId) return Promise.reject(new Error('unregistered lifecycle agent'))
     const prior = [...entries].find(([, entry]) => entry.sessionId === sessionId)

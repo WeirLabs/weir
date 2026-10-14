@@ -60,6 +60,7 @@ EXPECTED_ORDER.push('editlock-negotiation')
 EXPECTED_ORDER.push('editlock-revoked-repair')
 EXPECTED_ORDER.push('editlock-binding-auto-retry')
 EXPECTED_ORDER.push('editlock-binding-transfer')
+EXPECTED_ORDER.push('editlock-preset-switch')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

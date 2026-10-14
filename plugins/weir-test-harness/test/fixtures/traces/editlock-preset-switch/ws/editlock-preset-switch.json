@@ -1,0 +1,60 @@
+{
+  "completed": true,
+  "phases": [
+    {
+      "label": "created-under-A",
+      "writeAdmitted": true,
+      "writeError": null,
+      "writeResult": "{\"isError\":false,\"content\":[{\"type\":\"text\",\"text\":\"Created file: /Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/ws/preset-switch-1.txt\"}],\"meta\":{\"diffs\":[]},\"value\":{\"path\":\"/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/ws/preset-switch-1.txt\",\"operation\":\"create\",\"before\":null,\"after\":\"one\\n\",\"fragments\":[]}}",
+      "epochBefore": 1,
+      "epochAfter": 1,
+      "state": "active",
+      "epoch": 1,
+      "locks": 1,
+      "startupFailure": null
+    },
+    {
+      "label": "switched-to-B",
+      "writeAdmitted": true,
+      "writeError": null,
+      "writeResult": "{\"isError\":false,\"content\":[{\"type\":\"text\",\"text\":\"Created file: /Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/ws/preset-switch-2.txt\"}],\"meta\":{\"diffs\":[]},\"value\":{\"path\":\"/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/ws/preset-switch-2.txt\",\"operation\":\"create\",\"before\":null,\"after\":\"two\\n\",\"fragments\":[]}}",
+      "epochBefore": 1,
+      "epochAfter": 1,
+      "state": "active",
+      "epoch": 1,
+      "locks": 2,
+      "startupFailure": null
+    },
+    {
+      "label": "switched-back-to-A",
+      "writeAdmitted": true,
+      "writeError": null,
+      "writeResult": "{\"isError\":false,\"content\":[{\"type\":\"text\",\"text\":\"Created file: /Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/ws/preset-switch-3.txt\"}],\"meta\":{\"diffs\":[]},\"value\":{\"path\":\"/Users/young/Documents/Orrery/.weir/worktrees/edit-lock-shared-domain-mounts-183/.weir/it-root/ws/preset-switch-3.txt\",\"operation\":\"create\",\"before\":null,\"after\":\"three\\n\",\"fragments\":[]}}",
+      "epochBefore": 1,
+      "epochAfter": 1,
+      "state": "active",
+      "epoch": 1,
+      "locks": 3,
+      "startupFailure": null
+    }
+  ],
+  "sessionId": "dc4316d3-d6ff-414a-a82e-965f23c61015",
+  "initialServiceIsA": true,
+  "crossRead": {
+    "serviceSwiched": true,
+    "modeA": "publisher",
+    "modeB": "publisher",
+    "stateA": "active",
+    "stateB": "active",
+    "epochA": 1,
+    "epochB": 1,
+    "failureA": null,
+    "failureB": null
+  },
+  "crossReadBack": {
+    "epochA": 1,
+    "epochB": 1,
+    "stateA": "active"
+  },
+  "failureNotices": []
+}

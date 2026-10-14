@@ -26,7 +26,7 @@ import { createStaleSweepScheduler } from './stale-sweep.js'
 import { createRemoteEditLockDomain, endpointFor, serveEditLockEndpoint } from './remote.js'
 import { registerBindingRuntime, createBindingAttester } from './binding-attestation.js'
 import { localDomain, remoteDomain } from './domain.js'
-import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor } from './domains.js'
+import { AUTHORITY_DIR, createDomainRegistry, excludeFromGit, managementRootFor, sharedDomainRegistryFor } from './domains.js'
 import { createRecoveryDriver } from './recovery.js'
 import { createSettlementDriver } from './settle.js'
 import { editLockLimits } from '../settings/sections.js'
@@ -40,6 +40,29 @@ const inject = ['tools', 'fs', 'agents']
 
 /** Tool names whose definitions must be Edit Lock routed when enabled. */
 export const GUARDED_TOOLS = Object.freeze(['write', 'edit', 'hash_edit', 'lsp_rename', 'str_replace_editor'])
+
+/** Claimed managed-editor executions, shared by every mount of this bundle in
+ * the process (change edit-lock-shared-domain-mounts, design D3): membership
+ * is execute-object identity, so cross-host admission is impossible and an
+ * execution claimed by a disposed mount is harmless — no live guard reads it.
+ * Whichever mount's guard stage hears an execution, the verdict is the same.
+ * @type {WeakSet<Function>} */
+const managed = new WeakSet()
+
+/** Host-lifetime live weirEditLock services (design D3): every mount registers
+ * its service at apply and unregisters at dispose, so the endpoint currency
+ * proof can accept any live sibling mount's service identity.
+ * @type {WeakMap<object, Set<object>>} */
+const liveServicesByHost = new WeakMap()
+/** @param {object} host @returns {Set<object>} */
+function liveServicesFor(host) {
+  let services = liveServicesByHost.get(host)
+  if (!services) {
+    services = new Set()
+    liveServicesByHost.set(host, services)
+  }
+  return services
+}
 
 /** Row config wins over the settings section; `root` + `authorityDirectory`
  * pin one fixed domain (development compositions and probes).
@@ -370,6 +393,10 @@ return (ctx, config = {}) => {
     evidence?.failed(platformFailure)
     ctx.logger?.warn?.(platformFailure.message)
   }
+  /** The shared-registry handle, assigned inside the mount try so a failed
+   * apply can release its count (design D1: a failed mount enters no count).
+   * @type {any} */
+  let shared = null
   try {
   /** @type {any} */
   let sandboxPolicyRef = null
@@ -377,6 +404,11 @@ return (ctx, config = {}) => {
   // Capture the original host filesystem once; the manager is its only writer.
   const fs = ctx.fs
   const audit = createAudit(ctx)
+  // The host-lifetime key shared by the write-scope store, the domain registry
+  // container and the live-service set (design D1/D3) — identical to the key
+  // expression the settings evidence store uses.
+  const host = ctx.root ?? ctx
+  const liveServices = liveServicesFor(host)
   /** Successful undefined means no live runtime; missing service means unknown.
    * @param {string} sessionId */
   const servingRuntime = sessionId => {
@@ -396,12 +428,12 @@ return (ctx, config = {}) => {
   const disposedAgents = new WeakSet()
   /** One queued automatic-recovery summary notice per management root (design
    * D3): delivered to the first agent that finishes domain start, then gone.
-   * @type {Map<string, string>} */
-  const recoveryNotices = new Map()
-  // The tool registry may hand back a normalized copy of a definition; the
-  // claimed execute function is what actually runs, so it is the identity.
-  /** @type {WeakSet<Function>} */
-  const managed = new WeakSet()
+   * Shared across sibling mounts with the domain registry (change
+   * edit-lock-shared-domain-mounts): the domain opens through the first
+   * mount's closure, so the queue must live in the shared entry for the
+   * mount that hears the first post-recovery turn to drain it. Assigned
+   * with `shared` below. @type {Map<string, string>} */
+  let recoveryNotices
   /** Managed write registrations outlive this mount: the tool is installed
    * into the agent's OWN scope layer, which a preset rebind never disposes.
    * Their disposers live in a host-lifetime store so any later generation can
@@ -410,7 +442,7 @@ return (ctx, config = {}) => {
    * tearing the managed write down mid-gap would expose the stock writers
    * until the next mount's per-agent re-install.
    * @type {WeakMap<object, import('./write-scopes.js').WriteScopeEntry>} */
-  const writeScopes = writeScopesFor(ctx.root ?? ctx)
+  const writeScopes = writeScopesFor(host)
   let closed = false
   /** Remote channel agents on the publisher side → their notice sink.
    * @type {WeakMap<object, (event: unknown) => void>} */
@@ -419,8 +451,11 @@ return (ctx, config = {}) => {
   const startFailures = new WeakMap()
   /** Publisher-classified failures, never inferred from text. @type {WeakMap<object, any>} */
   const bindingFailures = new WeakMap()
-  /** Settled domain per bound agent, for synchronous gates. @type {WeakMap<object, any>} */
-  const settled = new WeakMap()
+  /** Settled domain per bound agent, for synchronous gates. Shared across
+   * sibling mounts with the domain registry (design D3): whichever mount
+   * hears an event reads the same binding. Assigned with `shared` below.
+   * @type {WeakMap<object, any>} */
+  let settled
   /** In-flight setup per agent, shared by every entry point (creation,
    * preset-switch, catch-up, lazy re-bind) so concurrent callers can never
    * double-register. @type {WeakMap<object, Promise<void>>} */
@@ -524,8 +559,11 @@ return (ctx, config = {}) => {
           } else if (requireProof) return false
           // Fresh creation keeps the established missing/throwing-registry
           // fallback. A reclaim or retry never uses that fallback as proof.
+          // Currency proof (design D3): the agent's resolved service must be a
+          // LIVE service of this process — after a preset switch that is the
+          // sibling mount's service, never this mount's own necessarily.
           if (typeof presets?.serviceFor === 'function') {
-            try { return presets.serviceFor(agent, 'weirEditLock') === service }
+            try { return liveServices.has(presets.serviceFor(agent, 'weirEditLock')) }
             catch { return !requireProof }
           }
           return true
@@ -541,12 +579,21 @@ return (ctx, config = {}) => {
       throw error
     }
   }
-  const registry = createDomainRegistry(root => {
+  // One domain registry per host + effective domain configuration, shared by
+  // every same-process preset mount of this bundle (design D1): a sibling
+  // mount never degrades to a same-process remote client, and the LAST
+  // disposer closes all domains through the established drain discipline. The
+  // first mount's `open` closure serves every sharing mount — mounts are
+  // process-persistent, so the capture is safe (design D1 trade-off).
+  shared = sharedDomainRegistryFor(host, options.fixed ? `${options.fixed.root}\n${options.fixed.directory}` : '', () => createDomainRegistry(root => {
     const fixed = options.fixed
     if (fixed) return openDomain(fixed.root, fixed.directory, root)
     try { exclude(root) } catch (error) { ctx.logger?.warn?.(`edit lock: could not update .git/info/exclude: ${/** @type {any} */ (error)?.message ?? error}`) }
     return openDomain(root, join(root, AUTHORITY_DIR), root)
-  }, resolveRoot)
+  }, resolveRoot))
+  const registry = shared.registry
+  settled = shared.settled
+  recoveryNotices = shared.recoveryNotices
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
   /** Lazy re-bind (design D2): an own-preset main agent with no binding —
@@ -734,6 +781,9 @@ return (ctx, config = {}) => {
     },
   })
   ctx.reflect.provide('weirEditLock', service)
+  // Any live sibling mount's service identity attests endpoint currency
+  // (design D3); unregister at dispose.
+  liveServices.add(service)
 
   const offTools = registerLockTools(ctx, service)
 
@@ -1394,6 +1444,7 @@ return (ctx, config = {}) => {
   return async () => {
     if (closed) return
     closed = true
+    liveServices.delete(service)
     offDelegateLifecycle()
     evidence?.disposing()
     try {
@@ -1405,10 +1456,9 @@ return (ctx, config = {}) => {
       offView()
       offCommand?.()
       for (const off of offTools) off?.()
-      // Retain uncertain evidence until every generation-owned domain is drained.
-      const results = await Promise.allSettled(registry.all().map(async domain => (await domain).close()))
-      const failure = results.find(result => result.status === 'rejected')
-      if (failure?.status === 'rejected') throw failure.reason
+      // Retain uncertain evidence until every generation-owned domain is
+      // drained; only the LAST sharing disposer closes them (design D1).
+      await shared.release()
       evidence?.dispose()
     } catch (error) {
       evidence?.failed(error)
@@ -1417,6 +1467,10 @@ return (ctx, config = {}) => {
   }
   } catch (error) {
     evidence?.failed(error)
+    // A mount that failed mid-apply must not stay counted in the shared
+    // registry (design D1); domains are lazy, so this release closes nothing
+    // unless a sibling mount already opened one — its count keeps it alive.
+    if (shared) void shared.release().catch(() => {})
     throw error
   }
 }

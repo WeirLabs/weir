@@ -65,6 +65,7 @@ import editlockNegotiation from './editlock-negotiation.js'
 import editlockRevokedRepair from './editlock-revoked-repair.js'
 import editlockBindingAutoRetry from './editlock-binding-auto-retry.js'
 import editlockBindingTransfer from './editlock-binding-transfer.js'
+import editlockPresetSwitch from './editlock-preset-switch.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
 SCENARIOS.push(...skillComposition)
 SCENARIOS.push(applyTransaction)
@@ -107,6 +108,7 @@ SCENARIOS.push(editlockNegotiation)
 SCENARIOS.push(editlockRevokedRepair)
 SCENARIOS.push(editlockBindingAutoRetry)
 SCENARIOS.push(editlockBindingTransfer)
+SCENARIOS.push(editlockPresetSwitch)
 
 /**
  * Find a scenario entry by id.
