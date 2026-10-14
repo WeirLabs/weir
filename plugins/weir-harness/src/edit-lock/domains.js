@@ -97,7 +97,7 @@ export function createDomainRegistry(open, resolveRoot = managementRootFor) {
   })
 }
 
-/** @type {WeakMap<object, Map<string, {registry: any, settled: WeakMap<object, any>, mounts: number}>>} */
+/** @type {WeakMap<object, Map<string, {registry: any, settled: WeakMap<object, any>, recoveryNotices: Map<string, string>, mounts: number}>>} */
 const sharedRegistriesByHost = new WeakMap()
 
 /** Process-shared domain registry container (change
@@ -118,16 +118,18 @@ const sharedRegistriesByHost = new WeakMap()
  * Only the LAST release closes every domain through the established drain
  * discipline (`registry.all() → domain.close()`), revoking sessions and
  * releasing reservations; the entry is then dropped, so a later generation
- * reopens fresh. The per-entry `settled` store shares the entry's lifetime:
- * it outlives any single mount (a preset switch lets a sibling mount's
- * listeners read the binding the first mount settled), and it dies with the
- * last release so a closed domain is never mistaken for a live binding.
+ * reopens fresh. The per-entry `settled` store and the per-root
+ * automatic-recovery notice queue share the entry's lifetime: they outlive
+ * any single mount (a preset switch lets a sibling mount's listeners read
+ * the binding the first mount settled, and the mount that hears the first
+ * post-recovery turn drains the summary), and they die with the last
+ * release so a closed domain is never mistaken for a live binding.
  *
  * @template T
  * @param {object} host
  * @param {string} discriminator
  * @param {() => ReturnType<typeof createDomainRegistry<T>>} makeRegistry
- * @returns {{registry: ReturnType<typeof createDomainRegistry<T>>, settled: WeakMap<object, T>, release: () => Promise<void>}} */
+ * @returns {{registry: ReturnType<typeof createDomainRegistry<T>>, settled: WeakMap<object, T>, recoveryNotices: Map<string, string>, release: () => Promise<void>}} */
 export function sharedDomainRegistryFor(host, discriminator, makeRegistry) {
   let entries = sharedRegistriesByHost.get(host)
   if (!entries?.has(discriminator)) {
@@ -137,14 +139,17 @@ export function sharedDomainRegistryFor(host, discriminator, makeRegistry) {
       entries = new Map()
       sharedRegistriesByHost.set(host, entries)
     }
-    entries.set(discriminator, { registry: created, settled: new WeakMap(), mounts: 0 })
+    entries.set(discriminator, { registry: created, settled: new WeakMap(), recoveryNotices: new Map(), mounts: 0 })
   }
-  const entry = /** @type {{registry: any, settled: WeakMap<object, any>, mounts: number}} */ (entries.get(discriminator))
+  const entry = /** @type {{registry: any, settled: WeakMap<object, any>, recoveryNotices: Map<string, string>, mounts: number}} */ (entries.get(discriminator))
   entry.mounts += 1
   let released = false
   return Object.freeze({
     registry: entry.registry,
     settled: entry.settled,
+    /** One queued automatic-recovery summary per root, shared so the mount
+     * that hears the first post-recovery turn drains it (design D3). */
+    recoveryNotices: entry.recoveryNotices,
     /** Idempotent: only the first call counts; only the last call closes. */
     async release() {
       if (released) return

@@ -16,13 +16,15 @@ import { test, expect } from './helpers.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { existsSync, realpathSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDomainRegistry, sharedDomainRegistryFor } from '../src/edit-lock/domains.js'
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { createEditLockPlugin } from '../src/edit-lock/index.js'
 import { reservationPathFor } from '../src/edit-lock/reservation.js'
+import { openEditLockStore } from '../src/edit-lock/store.js'
+import { createEditLockManager } from '../src/edit-lock/manager.js'
 import { fixtureRoot as managementRootFor, fixtureEndpoint as endpointFor, fixtureExclude as excludeFromGit } from './helpers/edit-lock-fixtures.js'
 
 const apply = createEditLockPlugin({ resolveRoot: managementRootFor, endpoint: endpointFor, exclude: excludeFromGit })
@@ -590,4 +592,59 @@ test('mounts with different fixed configurations on one host never share: each d
   await disposeB()
   t.after(() => {})
   assert.equal(existsSync(reservationPathFor(b.directory)), false)
+})
+
+/** An authority whose previous incarnation (registered with a dead pid)
+ * crashed mid-publication: one unknown operation fencing a.txt. Mirrors the
+ * crashedAuthority fixture of edit-lock-recovery-notice.test.js. */
+const DEAD_PID = 40_000_000
+async function crashedAuthority(root, directory) {
+  const store = await openEditLockStore({ directory, domainId: root, mode: 'create' })
+  const manager = createEditLockManager({ store, managerIncarnation: 'crashed-incarnation',
+    processIdentity: { pid: DEAD_PID, host: hostname(), osStart: null, bootNonce: 'crashed-boot' } })
+  const execution = await manager.openSession('crashed-session')
+  const target = join(root, 'a.txt')
+  const token = await manager.acquire(execution, target)
+  const ready = await manager.prepare(execution, {
+    operationId: 'crashed-op', tool: 'write', filePath: target, cwd: root, args: {}, content: 'late',
+    effectivePolicy: { mode: 'workspace-write' },
+    target: { kind: 'update', resourceId: target, generation: token.generation, policy: { kind: 'replaceIfVersion', version: 'old' } },
+  }, { validate() {}, publish: async () => { throw new Error('writer outcome lost') }, identify: () => target })
+  await assert.rejects(manager.commit(ready.submission), /writer outcome lost/)
+  await store.close()
+}
+
+test('the automatic-recovery summary drains from the shared queue through the sibling mount that hears the first turn', async (t) => {
+  const { root, directory } = await fixture()
+  await crashedAuthority(root, directory)
+  const plane = dualPlane(root, {})
+  // Mount A applies first: the shared registry and its open closure belong to
+  // A, so the recovery summary queues against A's audit/deliver closures.
+  const hostA = plane.makeHost()
+  const disposeA = apply(hostA.ctx, { enabled: true, root, authorityDirectory: directory })
+  const hostB = plane.makeHost()
+  const disposeB = apply(hostB.ctx, { enabled: true, root, authorityDirectory: directory })
+  t.after(async () => { await disposeB(); await disposeA() })
+  const serviceB = hostB.provided.get('weirEditLock')
+
+  // The first post-recovery session belongs to the sibling mount B: the
+  // notice queued at domain open must still reach it (design D3), exactly once.
+  const agent = hostB.agent('s')
+  plane.agents.set('s', agent)
+  plane.owners.set(agent, hostB)
+  await hostB.emit('agent/created', { agent })
+  await untilSettled(serviceB, agent)
+  assert.equal(serviceB.blocksContinuation(agent), false)
+
+  await hostB.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+  assert.equal(agent.injects.length, 1)
+  assert.match(agent.injects[0].content[0].text, /unresolved publication/)
+
+  // The next turn (either mount) does not re-deliver; the durable audit
+  // landed exactly once through the opening mount's closure.
+  await hostB.emit('agent/pre-step', { agent, turn: {}, signal: new AbortController().signal })
+  assert.equal(agent.injects.length, 1)
+  const recoveryAudits = plane.emitted.filter(entry => entry.type === 'weir/edit-lock-maintenance' && entry.record?.data?.kind === 'automatic-recovery')
+  assert.equal(recoveryAudits.length, 1)
+  assert.equal(recoveryAudits[0].record.data.root, root)
 })

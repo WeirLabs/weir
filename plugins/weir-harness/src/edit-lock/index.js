@@ -428,8 +428,12 @@ return (ctx, config = {}) => {
   const disposedAgents = new WeakSet()
   /** One queued automatic-recovery summary notice per management root (design
    * D3): delivered to the first agent that finishes domain start, then gone.
-   * @type {Map<string, string>} */
-  const recoveryNotices = new Map()
+   * Shared across sibling mounts with the domain registry (change
+   * edit-lock-shared-domain-mounts): the domain opens through the first
+   * mount's closure, so the queue must live in the shared entry for the
+   * mount that hears the first post-recovery turn to drain it. Assigned
+   * with `shared` below. @type {Map<string, string>} */
+  let recoveryNotices
   /** Managed write registrations outlive this mount: the tool is installed
    * into the agent's OWN scope layer, which a preset rebind never disposes.
    * Their disposers live in a host-lifetime store so any later generation can
@@ -589,6 +593,7 @@ return (ctx, config = {}) => {
   }, resolveRoot))
   const registry = shared.registry
   settled = shared.settled
+  recoveryNotices = shared.recoveryNotices
   /** @param {any} agent */
   const domainOf = agent => registry.forAgent(agent)
   /** Lazy re-bind (design D2): an own-preset main agent with no binding —
