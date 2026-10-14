@@ -23,6 +23,15 @@ async function fixture(t, options = {}) {
   return { home, cwd, dir, log, side: log + '_bb', storage, board }
 }
 
+// A fork-shaped Session fixture: depth-0 (delegationDepth absent — the real
+// DSH fork header shape) carrying parentSession, with no sidecar of its own.
+async function forkSession(f, id, parentSession) {
+  const dir = join(f.home, 'sessions', 'workspace', id)
+  await fs.mkdir(dir)
+  await fs.writeFile(join(dir, 'session.v4.jsonl'), JSON.stringify({ type: 'session', version: 4, id, cwd: f.cwd, parentSession }) + '\n')
+  return { dir, log: join(dir, 'session.v4.jsonl'), side: join(dir, 'session.v4.jsonl_bb') }
+}
+
 test('empty creation; durable entries, counts, promotion; authority never restored', async t => {
   const f = await fixture(t)
   assert.deepEqual(await f.board.list(ID), [])
@@ -327,7 +336,7 @@ test('volatile revocation still works when the durable log has disappeared', asy
 })
 
 
-test('depth-zero fork remains an isolated root despite parentSession metadata', async t => {
+test('depth-zero fork resolves as its own root and starts as a snapshot of the source board', async t => {
   const f = await fixture(t)
   await f.board.write(ID, entry)
   const id = 'session-fork'
@@ -336,7 +345,128 @@ test('depth-zero fork remains an isolated root despite parentSession metadata', 
   await fs.writeFile(join(dir, 'session.v4.jsonl'), JSON.stringify({ type: 'session', version: 4, id, cwd: f.cwd, delegationDepth: 0, parentSession: ID }))
   const root = await resolveDurableRoot({ get: () => undefined }, { id }, { storage: f.storage, kernel: f.board, flushed: new WeakSet() })
   assert.equal(root, id)
+  // The first resolution seeded the fork board from the source; from then on
+  // the two boards drift independently (a later source write never arrives).
+  assert.deepEqual((await f.board.list(id)).map(row => row.key), [entry.key])
+  await f.board.write(ID, { ...entry, key: 'after-fork' })
+  assert.deepEqual((await f.board.list(id)).map(row => row.key), [entry.key])
+})
+
+test('fork seeding failure degrades to an empty board with a warning', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  const id = 'session-fork'
+  await forkSession(f, id, 'session-missing')
+  const warnings = []
+  const ctx = { get: () => undefined, logger: { warn: text => warnings.push(String(text)) } }
+  const root = await resolveDurableRoot(ctx, { id }, { storage: f.storage, kernel: f.board, flushed: new WeakSet() })
+  assert.equal(root, id)
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /fork seeding failed/)
   assert.deepEqual(await f.board.list(id), [])
+})
+
+test('seedFork copies entries, counts and promotion into the fork root board', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  await f.board.write(ID, { ...entry, key: 'editable', entryType: 'map', content: 'editable body' })
+  await f.board.read(ID, ['knowledge'])
+  await f.board.apply(ID, { holderId: ID, key: 'editable', ttlMs: 60000 })
+  await f.board.apply(ID, { holderId: 'child', key: 'editable', ttlMs: 60000 })
+  await f.board.markPromoted(ID, { key: 'knowledge', destination: 'runtime-map' })
+  const fork = await forkSession(f, 'session-fork', ID)
+  assert.equal(await f.storage.seedFork('session-fork', ID, f.cwd), true)
+  const record = JSON.parse(await fs.readFile(fork.side, 'utf8'))
+  assert.equal(record.rootSessionId, 'session-fork')
+  assert.equal(record.revision, 0)
+  assert.equal(record.entries.length, 2)
+  const knowledge = record.entries.find(row => row.key === 'knowledge')
+  const editable = record.entries.find(row => row.key === 'editable')
+  assert.equal(knowledge.content, 'durable body')
+  assert.equal(knowledge.readCount, 1)
+  assert.equal(knowledge.promoted.destination, 'runtime-map')
+  assert.equal(editable.content, 'editable body')
+  assert.equal(editable.subscribeCount, 1)
+  // A later transact on the fork reads the seeded entries as previous…
+  let previous
+  await f.storage.transact('session-fork', f.cwd, entries => { previous = entries; return { entries, publish: () => null } })
+  assert.equal(previous.length, 2)
+  // …and the durable kernel serves them through the ordinary read path.
+  f.board.bind('session-fork', f.cwd)
+  assert.equal((await f.board.read('session-fork', ['knowledge'], { count: false })).found[0].content, 'durable body')
+})
+
+test('seedFork without a source sidecar is a no-op', async t => {
+  const f = await fixture(t)
+  const fork = await forkSession(f, 'session-fork', ID)
+  assert.equal(await f.storage.seedFork('session-fork', ID, f.cwd), false)
+  assert.deepEqual(await fs.readdir(fork.dir), ['session.v4.jsonl'])
+})
+
+test('seedFork never overwrites or merges an initialized fork board', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  await forkSession(f, 'session-fork', ID)
+  f.board.bind('session-fork', f.cwd)
+  await f.board.write('session-fork', { ...entry, key: 'fork-own', content: 'fork body' })
+  assert.equal(await f.storage.seedFork('session-fork', ID, f.cwd), false)
+  assert.deepEqual((await f.board.list('session-fork')).map(row => row.key), ['fork-own'])
+})
+
+test('seedFork from a delegated source ascends to the chain root board', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  // Two-level chain: the root owns the sidecar; the delegated child has none.
+  const childDir = join(f.home, 'sessions', 'workspace', 'child-parent')
+  await fs.mkdir(childDir)
+  await fs.writeFile(join(childDir, 'session.v4.jsonl'), JSON.stringify({ type: 'session', version: 4, id: 'child-parent', cwd: f.cwd, delegationDepth: 1, parentSession: ID }))
+  const fork = await forkSession(f, 'session-fork', 'child-parent')
+  assert.equal(await f.storage.seedFork('session-fork', 'child-parent', f.cwd), true)
+  const record = JSON.parse(await fs.readFile(fork.side, 'utf8'))
+  assert.equal(record.rootSessionId, 'session-fork')
+  assert.deepEqual(record.entries.map(row => row.content), ['durable body'])
+  assert.deepEqual(await fs.readdir(childDir), ['session.v4.jsonl'])
+})
+
+test('seedFork refuses conflicting source sidecars and creates nothing', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  await fs.writeFile(join(f.dir, 'session.v3.jsonl_bb'), (await fs.readFile(f.side, 'utf8')).replace('durable body', 'other body'))
+  const fork = await forkSession(f, 'session-fork', ID)
+  await assert.rejects(f.storage.seedFork('session-fork', ID, f.cwd), /conflicting sidecars/)
+  assert.deepEqual(await fs.readdir(fork.dir), ['session.v4.jsonl'])
+})
+
+test('seedFork refuses a corrupt source sidecar and creates nothing', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  await fs.writeFile(f.side, '{')
+  const fork = await forkSession(f, 'session-fork', ID)
+  await assert.rejects(f.storage.seedFork('session-fork', ID, f.cwd), /corrupt sidecar/)
+  assert.deepEqual(await fs.readdir(fork.dir), ['session.v4.jsonl'])
+})
+
+test('seedFork fails when the source session log is unavailable', async t => {
+  const f = await fixture(t)
+  const fork = await forkSession(f, 'session-fork', 'session-missing')
+  await assert.rejects(f.storage.seedFork('session-fork', 'session-missing', f.cwd), /log unavailable/)
+  await assert.rejects(f.storage.seedFork('session-fork', '../escape', f.cwd), /invalid Session identity/)
+  assert.deepEqual(await fs.readdir(fork.dir), ['session.v4.jsonl'])
+})
+
+test('seedFork leaves source bytes, writer authority and locks untouched', async t => {
+  const f = await fixture(t)
+  await f.board.write(ID, entry)
+  const sideBefore = await fs.readFile(f.side, 'utf8')
+  const writerBefore = await fs.readFile(join(f.dir, 'weir-blackboard.writer'), 'utf8')
+  const fork = await forkSession(f, 'session-fork', ID)
+  assert.equal(await f.storage.seedFork('session-fork', ID, f.cwd), true)
+  assert.equal(await fs.readFile(f.side, 'utf8'), sideBefore)
+  assert.equal(await fs.readFile(join(f.dir, 'weir-blackboard.writer'), 'utf8'), writerBefore)
+  assert.deepEqual((await fs.readdir(fork.dir)).sort(), ['session.v4.jsonl', 'session.v4.jsonl_bb'])
+  for (const dir of [f.dir, fork.dir]) {
+    assert.ok(!(await fs.readdir(dir)).some(name => name === 'weir-blackboard.lock' || name.startsWith('weir-blackboard.lock.') || name.endsWith('.tmp')))
+  }
 })
 
 test('unsafe generation numbers and relative header cwd cannot select a write target', async t => {

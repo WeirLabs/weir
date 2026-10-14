@@ -213,8 +213,64 @@ export function createBlackboardStorage({ home, hook = async (_op, _path) => {},
       return result.publish()
     } finally { await release() }
   }
+  // One-time fork seeding: a forked Session is its own board root, but its
+  // board starts as a snapshot of the fork source's durable root board. Both
+  // directories stay under the writer lock in deterministic path order, and
+  // the fork is only ever seeded while it has no sidecar of its own — a
+  // re-seed can never overwrite or merge an initialized board.
+  async function seedFork(id, parentId, cwd) {
+    sessionId(id)
+    let hopId = sessionId(parentId)
+    // The source's durable root is resolved on disk: a delegated source has
+    // no sidecar of its own, so ascend its parent chain to the root board it
+    // actually used.
+    const seen = new Set()
+    let source
+    for (let hop = 0; hop < 64; hop++) {
+      if (seen.has(hopId)) throw new Error('blackboard: cyclic Session parent chain')
+      seen.add(hopId)
+      const located = await locateSession(home, hopId)
+      const depth = located.header.delegationDepth ?? 0
+      if (!Number.isSafeInteger(depth) || depth < 0) throw new Error('blackboard: invalid Session delegation depth')
+      if (depth === 0) { source = located; break }
+      hopId = sessionId(located.header.parentSession)
+    }
+    if (!source) throw new Error('blackboard: Session ancestry exceeds safety limit')
+    const child = await locateSession(home, id, cwd)
+    // Two directories need two writer locks; taking them in deterministic
+    // path-string order means single-lock users (transact) can never
+    // deadlock with this pair. Distinct Session ids never share a directory.
+    const [first, second] = source.dir < child.dir ? [source.dir, child.dir] : [child.dir, source.dir]
+    const releaseFirst = await lock(first)
+    let releaseSecond
+    try { releaseSecond = await lock(second) } catch (error) { await releaseFirst(); throw error }
+    try {
+      const records = []
+      for (const name of (await fs.readdir(source.dir)).filter(name => SIDE.test(name))) {
+        records.push(decodeRecord(await safeRead(join(source.dir, name)), source.id))
+      }
+      if (!records.length) return false
+      if (records.some(record => JSON.stringify(record) !== JSON.stringify(records[0]))) throw new Error('blackboard: conflicting sidecars; originals preserved')
+      // Idempotence: any existing fork sidecar means the board is already
+      // initialized — never overwrite or merge.
+      if ((await fs.readdir(child.dir)).some(name => SIDE.test(name))) return false
+      // Volatile state (tokens/subscriptions/timers) is never persisted, so
+      // the snapshot carries durable entry fields only; the fork starts at
+      // revision 0 under its own root identity.
+      const seeded = { schemaVersion: 1, rootSessionId: id, revision: 0, entries: structuredClone(records[0].entries) }
+      const encoded = JSON.stringify(decodeRecord(JSON.stringify(seeded), id)) + '\n'
+      await publish(child.file, encoded)
+      return true
+    } finally {
+      let failure
+      try { await releaseSecond() } catch (error) { failure ??= error }
+      try { await releaseFirst() } catch (error) { failure ??= error }
+      if (failure) throw failure
+    }
+  }
   return {
     locate: (id, cwd) => locateSession(home, id, cwd),
+    seedFork,
     async releaseWriter(id, cwd) {
       let where
       try { where = await locateSession(home, id, cwd) } catch { return }

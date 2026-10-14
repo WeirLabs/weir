@@ -16,6 +16,8 @@
 
 - **同一会话可恢复**：重启 DSH 或卸载重装 Weir 后，重新打开同一个持久 Session，正文、摘要、读/订阅计数与晋升只读标记继续存在。新建另一个 Session 不是恢复旧黑板。
 
+- **Fork 会话带上黑板快照**：Fork 一个新会话时，新会话的黑板以源会话持久根黑板的一次性快照开局（条目、read/subscribe 计数与晋升只读标记一并复制；写入权令牌与订阅属易失状态，不随 fork 转移）。快照之后两块板完全独立——源板后续变化不再传播到 fork，fork 上的修改也不回写源板。
+
 - **黑板面板**：右侧侧边栏新增黑板面板，列出本会话全部条目（key + 类型 + 摘要），支持按类型分组/过滤、搜索，点开查看完整信息。面板有两条入口路径：向导页胶囊（带专属黑板图标，不再是占位 cube）与会话头部快捷按钮。
 - **子 Agent 会话页显示父会话黑板**：在子 Agent（委派会话）的会话页打开黑板面板时，面板先把浏览会话 id 交给 `resolve` 解析出**会话根**，再绑定根会话的黑板——子 Agent 回合间或结束后，网关的 agent lookup 会拒绝 subagent 身份的会话（`owned by subagent routing`，此前面板显示「黑板不可用」），resolve 以裸 JSON 参数绕开该 lookup。绑定根黑板时列表顶部显示一条 muted 提示条「正在显示父会话的黑板。」；resolve 失败（桥缺失、通道不可用等）时回退浏览会话自身，保持原有行为。
 - **会话头部快捷入口**：会话头部工具区（`conversation.session.header.utilities`，order 20，排在 Worktree 胶囊之后）有一个黑板胶囊按钮（描边徽章样式：图标 + 「黑板」文字，与 Worktree 胶囊视觉重量一致），点击直接打开/聚焦右侧栏黑板面板（`sidebarRight.openTab('weir-blackboard')`）；按钮无实时状态、无轮询，tooltip/aria-label 中英双语；shell 无右侧栏包时点击静默不动作。
@@ -113,6 +115,17 @@
 
 旁置 schema 独立于 DSH 日志版本，保存根 ID、全局 revision 和完整条目：key/type/summary/content、readCount/subscribeCount、createdAt/updatedAt、entry revision、promoted destination/at。**不保存/恢复**键令牌、timer 或 subscriber 集合。摘要始终是字符串，不转换成字符索引对象。
 
+### Fork 播种（fork blackboard seeding）
+
+DSH fork 产生的子 Session 是 depth 0 且头部携带 `parentSession` 的新根会话（`delegationDepth` 缺省）。判定规则：**depth 0 + 非空 `header.parentSession` ⇒ fork**。fork 是自己的板根（不继承源板），但它的板不再从空板开局：`resolveDurableRoot` 在 depth-0 分支首次解析某个 fork 时（先于首次 ensure 物化空旁置）调用 `storage.seedFork(id, parentId, cwd)`，从源会话的持久根板播种一次性快照。触发时机即 fork 创建：黑板插件的 `agent/created` → `ensureRoot` → `boardOf` → `lifecycle.run` → `resolveDurableRoot`。
+
+- **源为委派子会话时沿链上行**：被 fork 的源若是 delegated child（`delegationDepth > 0`，自身没有 `_bb`），seedFork 沿磁盘上的 `parentSession` 链上行到 depth-0 根，从根板播种——即源会话实际使用的那块板。环路、非法 depth、超过 64 跳上限分别报 `cyclic Session parent chain` / `invalid Session delegation depth` / `Session ancestry exceeds safety limit`。
+- **双目录定序锁**：源目录与 fork 目录同时持有 `weir-blackboard.lock`，按路径字符串字典序固定加锁顺序；单锁使用者（transact）与定序双锁使用者不会构成死锁。
+- **幂等**：仅当 fork 目录不存在任何 `_bb` 旁置时才播种并返回 true；已有旁置（已初始化）直接返回 false，永不覆盖或合并。每个 runtime 对同一 fork 只尝试一次（`runtime.forkSeeded`），重启后由磁盘上的「无旁置」检查保证跨进程幂等。
+- **快照内容**：`{ schemaVersion: 1, rootSessionId: <fork-id>, revision: 0, entries }`——条目字段（key/entryType/summary/content/readCount/subscribeCount/createdAt/updatedAt/revision/promoted）经 `decodeRecord` 投影校验后逐字复制；令牌/订阅/timer 属易失状态，从不落盘也从不播种。发布走与 transact 相同的私有临时文件（0600）→ 文件 fsync → 原子 rename → 目录 fsync 路径，发布前经 `decodeRecord` 回读校验。
+- **源侧只读**：播种不修改源旁置字节、`weir-blackboard.writer`、`weir-blackboard.lock` 或 `session.lock`；fork 目录也不会因播种本身留下 writer/lock/临时文件残留。
+- 源根无旁置（从未建板）时不创建任何东西，返回 false——fork 按普通空板开局。
+
 ### 原子提交与并发边界
 
 Agent 工具和面板 remote 共用同一可等待事务。Agent 批量 read 的计数、竞争申请的 subscribeCount、write/delete/markPromoted 都纳入持久提交；面板 `count:false` 审计 read 和 list 不增加计数。remote 保留原参数、返回信封及 Agent lookup 权限，不增加绕过网关的冷会话身份后门；旧会话重新打开、宿主重新附着 Agent 后即可显示恢复条目。
@@ -142,6 +155,7 @@ Agent 工具和面板 remote 共用同一可等待事务。Agent 批量 read 的
 - 持有令牌期间 Agent 终止：终止路径主动释放；异常死亡由 TTL 兜底，订阅者不会被无限期阻塞。
 - 写入权一次性：写完即失效，迭代补充须重新申请（申请自己刚释放的键无竞争成本）。
 - 宿主重启、根 Agent 销毁、预设重挂、归档/取消归档均保留条目；重启后旧写入权和订阅不恢复。不同根 Session 之间复用仍只经用户裁决的文档晋升。
+- **Fork 播种失败退化为空板**：源 Session 目录/日志消失、源旁置冲突或损坏、锁超时等失败只产生一条 `blackboard fork seeding failed` 告警，fork 仍以空板正常可用；每个 runtime 只尝试一次，不对持久失败反复扫描告警。fork 之后两块板完全独立。
 - **永不发生**：Agent 自主发起晋升；无写入权的写入生效；用户绕过仲裁修改条目；用黑板传递任务指令。
 
 ## 测试
@@ -150,3 +164,5 @@ Agent 工具和面板 remote 共用同一可等待事务。Agent 批量 read 的
 - 集成测试：`plugins/weir-test-harness`——mock LLM 下「子 Agent 写板 → 父/兄弟 Agent list+read 复用」链路、双 Agent 竞争同键的仲裁与订阅通知、terminate 释放与 TTL 超时、晋升按钮注入 → 评估 → 裁决落盘全链路（随对应切片交付）。
 
 持久化回归位于 [persistence.test.js](../../plugins/weir-harness/test/blackboard/persistence.test.js)：真实文件、故障注入、暂停提交/TTL/销毁竞争、跨进程写者与 SIGKILL、迁移/冲突/损坏/身份路径、计数与晋升恢复、孤儿保留。安装版 [blackboard-persistence 场景](../../plugins/weir-test-harness/src/scenarios/blackboard-persistence.js) 验证首次访问前空板、未物化 Session、同 ID 两进程工具/remote 恢复、隔离卸载重装、两层冷 parent 链与 live-orphan 不可判死。
+
+fork 播种覆盖同样位于 [persistence.test.js](../../plugins/weir-harness/test/blackboard/persistence.test.js)：条目/计数/晋升标记复制与 fork 根身份、源无旁置 no-op、已初始化 fork 不被覆盖合并、委派源沿链上行到根板、冲突/损坏源旁置拒绝、源日志缺失与非法 id 拒绝、源字节与 writer/锁卫生，以及 `resolveDurableRoot` 层的失败告警退化与播种后两板独立。[blackboard-fork 场景](../../plugins/weir-test-harness/src/scenarios/blackboard-fork.js) 经真实 `agents.create` fork 路径（depth 0 + `parentSession` + `isSeeded`）验证端到端播种、计数/晋升标记随快照转移、易失令牌/订阅不转移、源板不受损。

@@ -55,6 +55,7 @@ import bindingReclaim from './editlock-binding-reclaim.js'
 import delegateSettle from './editlock-delegate-settle.js'
 import delegateResume from './editlock-delegate-resume.js'
 import blackboardPersistence from './blackboard-persistence.js'
+import blackboardFork from './blackboard-fork.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
@@ -95,6 +96,7 @@ SCENARIOS.push(bindingReclaim)
 SCENARIOS.push(delegateSettle)
 SCENARIOS.push(delegateResume)
 SCENARIOS.push(blackboardPersistence)
+SCENARIOS.push(blackboardFork)
 SCENARIOS.push(presetDelegationSurface)
 SCENARIOS.push(plannedCompaction)
 SCENARIOS.push(plannedCase('busy'), plannedCase('wake'), plannedCase('cancel'), plannedCase('noop'), plannedCase('hard'))

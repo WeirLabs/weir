@@ -19,6 +19,7 @@ import { installBindingTransferProbe } from './edit-lock-binding-transfer-probe.
 import { installRepairFaultProbe } from './edit-lock-repair-fault-probe.js'
 import { installBlackboardColdProbe } from './blackboard-cold-probe.js'
 import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
+import { installBlackboardForkProbe } from './blackboard-fork-probe.js'
 import { installPlannedCompactionProbe } from './scenarios/planned-compaction-probe.mjs'
 import { installJobsAwareTodoProbe } from './scenarios/jobs-aware-todo-probe.mjs'
 
@@ -54,6 +55,7 @@ function apply(ctx) {
   installJobsAwareTodoProbe(ctx, tap)
   installBlackboardPersistenceProbe(ctx, tap)
   installBlackboardColdProbe(ctx, tap)
+  installBlackboardForkProbe(ctx, tap)
   installStopProbe(ctx, tap)
   installAutoResumeProbe(ctx, tap)
   installStaleSweepProbe(ctx, tap)
