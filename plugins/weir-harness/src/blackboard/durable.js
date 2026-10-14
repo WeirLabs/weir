@@ -186,6 +186,19 @@ export async function resolveDurableRoot(ctx, agent, runtime, mount = undefined)
         if (mount) mounts.add(mount)
         runtime.members.set(agent.id, { agent, root: id, mounts })
       }
+      // A fork (a depth-0 Session carrying parentSession) is its own board root,
+      // but its board starts as a one-time snapshot of the fork source's durable
+      // root board: seed before the first ensure can materialize an empty sidecar.
+      // Once per runtime; the no-sidecar disk check keeps it idempotent across
+      // restarts. Best-effort: a failed seed never blocks board availability.
+      const parentId = header.parentSession
+      if (typeof parentId === 'string' && parentId.length > 0) {
+        runtime.forkSeeded ??= new Set()
+        if (!runtime.forkSeeded.has(id)) {
+          runtime.forkSeeded.add(id)
+          try { await runtime.storage.seedFork(id, parentId, where.header.cwd) } catch (error) { ctx.logger?.warn?.(`blackboard fork seeding failed: ${String(error)}`) }
+        }
+      }
       runtime.kernel.bind(id, where.header.cwd)
       await runtime.kernel.ensure(id)
       if (wasLive && (runtime.revoked?.has(agent) || ctx.get?.('agents')?.get?.(agent.id) !== agent)) throw new Error('blackboard: Agent disposed while resolving its root')
