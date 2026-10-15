@@ -24,6 +24,7 @@
  * @typedef {{ now?: number, singleMaxMs: number, cumulativeMaxMs: number }} HoldCaps
  */
 
+import { settleHoldFacts } from './derived-facts.js'
 /** Private transfer seam; no raw hydration is exported. */
 const cores = new WeakMap()
 /** @param {string} managerIncarnation */
@@ -165,10 +166,7 @@ export function createEditLockState(managerIncarnation) {
       const held = holds.get(sessionId)
       if (!held) return Object.freeze({ sessionId, held: false, expired: false, holdUntil: null, remainingMs: 0, holdCumulativeMs: 0 })
       const owns = [...locks.values()].some(lock => lock.owner === sessionId)
-      const remainingMs = held.holdUntil === null ? 0 : Math.max(0, held.holdUntil - now)
-      const holding = held.holding && owns
-      return Object.freeze({ sessionId, held: holding, expired: holding && held.holdUntil !== null && remainingMs === 0,
-        holdUntil: held.holdUntil, remainingMs, holdCumulativeMs: held.holdCumulativeMs })
+      return Object.freeze(settleHoldFacts(sessionId, held, owns, now))
     },
   }
 

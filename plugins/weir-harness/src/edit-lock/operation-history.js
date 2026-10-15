@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from 'node:path'
-import { dispositionFor } from './admin-ledger.js'
+import { dispositionFor } from './derived-facts.js'
 
 /** Historical assertions only: no authentication, live permission or FS publication.
  * Digests MUST be computed by a future trusted publisher over canonical requests,

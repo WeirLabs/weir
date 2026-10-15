@@ -4,6 +4,7 @@
 // supplies the parsed snapshot and the mount evidence. Nothing here opens a
 // runtime, grants authority, or changes what admission would decide; an
 // unresolved operation is reported, never settled.
+import { dispositionFor } from './derived-facts.js'
 
 /**
  * The switch state the maintenance panel renders. Detection is evidence-based:
@@ -52,7 +53,7 @@ export function summarizeAuthorityImage(snapshot) {
   const unresolved = operations
     .filter(op => op?.phase === 'publishing' || op?.phase === 'unknown')
     .map(op => {
-      const disposition = state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
+      const disposition = dispositionFor(state, op)
       return { ...unresolvedRow(op), admissionBlocked: !disposition, administrativeRecoveryId: disposition?.recoveryId ?? null }
     })
   // Prepared operations never fence anything, but the online administrative
