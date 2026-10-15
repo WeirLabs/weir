@@ -17,6 +17,7 @@ import { makeRunView } from './src/run-view.js'
 import { SCENARIOS, byId } from './src/scenarios/index.js'
 import { defaultItRoot } from './src/it-root.js'
 import { LOCK_NAME, acquireRunLock, releaseRunLock } from './src/run-lock.js'
+import { makeVerdicts } from './src/run-verdict.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const WS_ROOT = join(HERE, '..', '..')
@@ -311,12 +312,10 @@ const driverCtx = { IT_ROOT: RUN_ROOT, spawnHeadless, scenarioEnv, runPresetDele
 
 // ---------- assertion collection ----------
 
-const results = []
-
-function check(scenario, label, ok, detail = '') {
-  results.push({ scenario, label, ok, detail })
-  console.log(`${ok ? 'PASS' : 'FAIL'} [${scenario}] ${label}${ok ? '' : ` — ${detail}`}`)
-}
+// PASS/FAIL/SKIP verdict vocabulary (design D1): SKIP reports an absent
+// OPTIONAL environment capability with evidence — counted and displayed, never
+// failing the suite; only FAIL decides a non-zero exit code.
+const { check, skip, summarize } = makeVerdicts()
 
 // The dual-preset replay needs only request shapes and assert-consumed Host facts.
 // In particular, do not freeze runtime-context messages or the full skills
@@ -436,11 +435,9 @@ async function main() {
       console.log(`[stderr:${scenario.id}] ${run.stderr.trim().split('\n').slice(-3).join('\n')}`)
     }
     recordRun(run)
-    scenario.assert(makeRunView(run, { ws: WS, check: (label, ok, detail) => check(scenario.id, label, ok, detail) }))
+    scenario.assert(makeRunView(run, { ws: WS, check: (label, ok, detail) => check(scenario.id, label, ok, detail), skip: (label, detail) => skip(scenario.id, label, detail) }))
   }
-  const failed = results.filter((result) => !result.ok)
-  console.log(`\n${results.length - failed.length}/${results.length} integration checks passed`)
-  process.exit(failed.length > 0 ? 1 : 0)
+  process.exit(summarize().exitCode)
 }
 
 await main()

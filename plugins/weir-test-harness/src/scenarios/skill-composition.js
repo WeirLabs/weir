@@ -12,6 +12,14 @@ export default ['OFF', 'LEAK', 'HOST', 'OFFICE', 'MIGRATION'].map(mode => ({
   assert(run) {
     let report
     try { report = JSON.parse(readFileSync(join(run.ws, `skill-composition-${mode.toLowerCase()}.json`), 'utf8')) } catch {}
+    // Environment-capability skip (design D3): the probe observed the OPTIONAL
+    // Office candidates absent from this environment's inventory — emit exactly
+    // one SKIP carrying the evidence and skip the whole assertion matrix.
+    if (mode === 'OFFICE' && report?.officeUnavailable) {
+      const { missing = [], providers = [] } = report.officeUnavailable
+      run.skip('optional Office capability unavailable in this environment', `missing=${JSON.stringify(missing)} providers=${JSON.stringify(providers)}`)
+      return
+    }
     run.check('real preset agents.create succeeds', report?.created === 'weir-it-selection' && !report?.roster?.broken && !report?.error, JSON.stringify(report))
     if (mode === 'MIGRATION') {
       const reason = report?.migration?.inventoryError ?? ''
