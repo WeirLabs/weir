@@ -17,7 +17,9 @@ export const digest = value => createHash('sha256').update(canonical(value)).dig
 // (`dispositionFor`) live in derived-facts.js (change edit-lock-deepening,
 // design D1) — one pure home shared by the manager status path, the cold view
 // and the inspector; `revokedOwner` is imported above for this module's own
-// validation.
+// validation. The re-export keeps existing external importers working (the
+// integration scenario child imports dispositionFor from this module).
+export { dispositionFor, revokedOwner } from './derived-facts.js'
 
 function requireThat(condition, message) { if (!condition) throw new Error(`invalid administrative recovery: ${message}`) }
 function keys(value, names) {
