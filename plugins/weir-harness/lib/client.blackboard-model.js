@@ -26,13 +26,18 @@ window.__ModuleLoader__.load({
 		// so read verbs produce zero session-log events and every mutation
 		// shares the agent tools' arbitration kernel.
 
-		/** The closed entryType enum, mirroring src/blackboard/kernel.js (same-package sync require is impossible in the ModuleLoader). */
+		// DERIVED FROM src/blackboard/kernel.js (ENTRY_TYPES, KEY_PATTERN, SUMMARY_MAX_LENGTH
+		// and the write gate below) — the kernel is authoritative; this derived copy exists because
+		// same-package sync require is impossible in the ModuleLoader. Decision equivalence is
+		// pinned by test/client-blackboard-parity.test.js: a draft judged invalid here MUST throw
+		// kernel-side, one judged valid MUST be accepted. Change there = change here.
+		/** The closed entryType enum. */
 		const ENTRY_TYPES = Object.freeze(["map", "contract", "deadend", "wiring", "recipe", "why"]);
 
-		/** Verbatim copy of the kernel's key rule (src/blackboard/kernel.js KEY_PATTERN): a letter/digit first, then letters, digits and . _ - / */
+		/** Verbatim copy of the kernel's key rule (DERIVED FROM src/blackboard/kernel.js KEY_PATTERN, pinned by test/client-blackboard-parity.test.js): a letter/digit first, then letters, digits and . _ - / */
 		const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 
-		/** Free-text summary cap (mirrors the kernel's validateSummary). */
+		/** Free-text summary cap (DERIVED FROM src/blackboard/kernel.js SUMMARY_MAX_LENGTH, pinned by test/client-blackboard-parity.test.js). */
 		const SUMMARY_MAX_LENGTH = 500;
 
 		/** Watch polling gives up after this many consecutive carrier failures. */
@@ -356,6 +361,9 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		// DERIVED FROM src/blackboard/kernel.js write gate (validateKey, validateEntryType,
+		// validateSummary, and write's content check) — decision equivalence with the kernel
+		// is pinned by test/client-blackboard-parity.test.js over one shared corpus.
 		/**
 		 * Per-field draft errors mirroring the kernel's write gate (validateKey,
 		 * the closed entryType enum, non-empty free-text summary within the
@@ -386,6 +394,7 @@ window.__ModuleLoader__.load({
 		}
 
 		exports.ENTRY_TYPES = ENTRY_TYPES;
+		exports.KEY_PATTERN = KEY_PATTERN;
 		exports.SUMMARY_MAX_LENGTH = SUMMARY_MAX_LENGTH;
 		exports.WATCH_GIVE_UP_AFTER = WATCH_GIVE_UP_AFTER;
 		exports.foldRemoteResult = foldRemoteResult;
