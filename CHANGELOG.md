@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **测试装置：Office 技能组合场景在环境不具备 Office 候选时显式跳过（SKIP）**：此前 `skill-composition-office` 集成场景在任何能力清单不含 Office 候选的环境（如未安装 Office 套件的本机）以 19 项 FAIL 阻断全量集成套件与 release.mjs 打版门禁。Office 属可选环境能力：探针现改为观察能力清单后落盘缺席标记与证据（缺失候选与实见提供者），集成 runner 新增与 PASS/FAIL 并列的 SKIP 判定（带原因打印、计入汇总、不计失败、退出码仍只由 FAIL 决定），该场景在缺席时报告恰好一条 SKIP 且退出码为 0；能力存在时（含回放夹具）完整断言矩阵逐字不变。
+
 ## [1.2.0] - 2026-10-15
 
 ### Fixed
