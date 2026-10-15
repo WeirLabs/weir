@@ -198,7 +198,7 @@
 
 ### 吊销修复与绑定消息自愈（变更 edit-lock-revoked-session-repair，设计 D1–D7）
 
-- **D1 epoch 作用域吊销**：`revokedOwner(state, owner)` 从「账本存在该 owner 行即终态」改为「存在行且 `session.executionEpoch <= row.revokedEpoch`」。吊销时 `administrativeState` 把会话 epoch 置为 `revokedEpoch`（语义不变）；可信 resume 在事务内 epoch+1，吊销态随同一提交原子失效——不需要任何「解除吊销」记录，账本保持 append-only。`manager.status()` 的 `revoked` 派生、`buildColdView` 冷读、自动结清跳过全部共用这一条判定。
+- **D1 epoch 作用域吊销**：`revokedOwner(state, owner)` 从「账本存在该 owner 行即终态」改为「存在行且 `session.executionEpoch <= row.revokedEpoch`」。吊销时 `administrativeState` 把会话 epoch 置为 `revokedEpoch`（语义不变）；可信 resume 在事务内 epoch+1，吊销态随同一提交原子失效——不需要任何「解除吊销」记录，账本保持 append-only。`manager.status()` 的 `revoked` 派生、`buildColdView` 冷读、自动结清跳过全部共用这一条判定（变更 edit-lock-deepening 后：同吃 `derived-facts.js` 一份实现，见「架构深化」节）。
 - **D2 resume/receipt 是唯一吊销出口**：`manager.resume` 与 `issueExecutionReceipt` 移除 `checkNotRevoked`（receipt 绑定当前 epoch，resume 提交 epoch+1 并清 interrupted，满足 revoked 会话的 resume 前提）；`openSession`、`checkExecution`（publish/acquire）、`adminRecoverOnline` 的拒绝保留——旧 epoch 的一切执行构件继续被 epoch 围栏拒绝，注册不复活旧身份。`lifecycle.assertStartable` 删除吊销拒绝但保留管理器健康探测（中毒时先于触碰持有者拒绝）；`lifecycle.resume` 删除「永久吊销」拒绝。
 - **D3 账本校验按 owner+epoch 放宽**：`validateAdminLedger` 的 owner 唯一性改为同 owner 多行 `revokedEpoch` 严格递增；行级不变量（interrupted、无锁、完整未决范围）仅对镜像时仍被吊销的 owner 强制；未决范围按 `op.origin.executionEpoch <= row.revokedEpoch` 界定且排除同 owner 更早行已覆盖的操作。三条产生路径（离线 `recoverAuthority`、在线 `adminRecoverOnline`、自动 `automaticSettlementRecords`）都跳过已被处置的操作，再吊销只绑定新未决操作。旧单行镜像零迁移通过。
 - **D4 修复 UX 默认静默、可审计**：自动恢复对 revoked 会话无需分支——同一 `domain.resume` 调用自然成功（零锁确认空集）；修复成功经 `onAdminRecovery` 同款共享审计通道记 `revocation-repaired`（owner、原/新 epoch、trigger manual/auto），不写会话日志。面板 revoked 态保留身份但恢复「继续编辑」主动作；hint 与冷读指引 EN/ZH 同步。
@@ -263,8 +263,10 @@
 | `operation-history.js` | 与快照同一镜像的持久 operation history：操作身份、绑定、阶段、结果、围栏与 closeout 的封闭历史层。 |
 | `runtime.js`／`reservation.js`／`reserved-runtime.js` | 域打开：先以原子 mkdir 抢占 authority 同级预约目录，再打开 runtime；打开失败即释放预约。 |
 | `lifecycle.js` | 宿主生命周期控制器：显式 start／stop／close，撤权与实际提交在管理器里排序；resume／confirm 只作可信人类入口，绝不注册为工具。 |
+| `binding-machine.js` | per-agent 绑定生命周期状态机（变更 edit-lock-deepening 自 index.js 抽出）：幂等 setup（并发共享 in-flight）、重试（attestation 三分支与转让入场）、dispose、启动失败四联记录、处置判定，连同其按 agent 状态表；跨挂载共享条目托管于 `domains.js` 共享注册表，`index.js` 回归纯组合接线。 |
+| `derived-facts.js` | ledger 派生事实纯函数（变更 edit-lock-deepening）：epoch 作用域吊销判定（`revokedOwner`）、读时 hold 结算、`dispositionFor`；manager status、`buildColdView` 与维护 inspector 共用一份实现，参数化严格度以保留冷路径对部分镜像的宽松容忍。 |
 | `publisher.js`／`host.js`／`adapter.js`／`call-context.js`／`write-tool.js`／`tool-scope.js` | 发布与宿主适配：捕获原始 `ctx.fs`、把真实 agent 对象绑定到已注册 execution、以单次消费的进程内 call context 发布受控 write。 |
-| `remote.js`／`peer.js`／`peer-transport.js`／`peer-client.js`／`remote-service.js` | 跨进程：同一 authority 目录的第二个 Harness 成为唯一 publisher 的客户端，工具、命令与协商经本机通道转发。 |
+| `remote.js`／`peer.js`／`peer-transport.js`／`peer-client.js` | 跨进程：同一 authority 目录的第二个 Harness 成为唯一 publisher 的客户端，工具、命令与协商经本机通道转发；绑定拒绝以结构化 `bindingFailure` 字段端到端传递（文本仅作展示），不再经 regex 反解（变更 edit-lock-deepening）。 |
 | `negotiation.js` | 转交协商（`try_steal` → 持有者答复）：请求只存在内存，120 秒答复窗口。 |
 | `recovery.js` | 仅清理的自动恢复：3 次／5 分钟、退避 15/30/60 秒、暂停单次 15 分钟／累计 30 分钟。 |
 | `settle.js` | 回合末收尾：仅 `completed` 回合进入，提醒次数与兜底处置由调用方作为策略传入。 |
@@ -274,6 +276,15 @@
 | `stale-sweep.js` | 失效锁清扫：ENOENT-only 缺失目标判定 + 按管理域根聚合的 detached 调度器（单飞 + 60 秒冷却，时钟/定时器/任务注入；冷却过期空闲条目回收，`close()` 清空注册表）。 |
 | `incarnations.js` | incarnation 进程身份注册表（v6）：引用收集、无损 null 种子、注册表转换纪律（`expectedRegistry`/`isRegistryUpgrade`/`withIncarnation`）与镜像校验（`validateIncarnations`）；纯函数，无 IO。 |
 | `../shared/delegate-edit-lifecycle.js` | 委派生命周期桥（同实例、挂载内）：受监督 `resume_agent` 的受信继续投递窗口，以及终态结算时对「实际静止＋处置 ACK」的 join；不新增宿主服务，也不写自定义会话事件。 |
+
+### 架构深化（变更 edit-lock-deepening，2026-10-16）
+
+三处结构性深化，全部为零可观察行为变化的机械搬迁，以组合级测试（驱动 `createEditLockPlugin`）与 editlock 集成族（324/324 + 冒烟 41/41）作搬迁前后对照：
+
+- **派生事实统一**：`revokedOwner`（epoch 作用域）、读时 hold 结算、`dispositionFor` 曾在 `admin-ledger.js`／`state.js`／`view.js` 三处内联重实现（`d9e619d` 改规则、`887b9ba` 被迫重教视图）；现收进纯函数模块 `derived-facts.js` 三方共用。`admin-ledger.js` 保留一行再导出作兼容 seam——weir-test-harness 的 editlock-revoked-repair 场景子进程直接 import 它（见该场景源）；主会话后续把场景 import 迁到 derived-facts.js 后可删此行。
+- **结构化拒绝**：绑定拒绝的持有者分类此前编码进人类可读字符串、再由 guidance（regex 重解析）与重试预算（`/session already bound/` 匹配）两处反解；现 `bindingFailure` 结构化对象端到端传递（补齐 `lifecycle.start` 拒绝路径），两处分类器删除，用户可见文案字节不变。
+- **绑定状态机抽取**：per-agent 绑定状态（约 10 个闭包状态表）与五个生命周期函数自 `index.js`（1503→1303 行）迁入 `binding-machine.js`（312 行）；搬迁前先建逐项寿命表，跨挂载共享条目复用 `sharedDomainRegistryFor`（`settled`／`recoveryNotices` 先例），不新造容器。
+- **卫生**：删除零生产 importer 的幻影模块 `remote-service.js` 及其测试；其独有的 per-channel 授权与 close 封存行为钉移植至 peer-client 测试。
 
 ### 状态内核与授权
 
