@@ -3,8 +3,9 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 
 /**
  * client.notify-web.js: the page half of web notification delivery. A
- * zero-dependency chunk, so every environment piece (fetch, Notification,
- * document, timers) is a fake and the loop runs deterministically.
+ * zero-dependency chunk, so every environment piece (the composition root's
+ * channel adapter, Notification, document, timers) is a fake and the loop
+ * runs deterministically.
  */
 
 async function chunk() {
@@ -178,22 +179,20 @@ describe('showNote', () => {
 })
 
 describe('startWebDelivery', () => {
-  /** A scripted host: each pull pops the next answer; an exhausted script parks forever. */
+  /** A scripted host over the channel-adapter face: each pull pops the next answer; an exhausted script parks until the abort signal. Error entries model a carrier failure — the adapter folds those to a resolved call-threw, never a rejection. */
   function host(script) {
     const calls = []
-    const pending = []
     const env = {
       document: background,
-      fetch: (path, init) => {
-        const body = JSON.parse(init.body)
+      channel: (path, body, options) => {
         calls.push({ path, body })
         if (path.endsWith('/pull')) {
           const next = script.shift()
-          if (next === undefined) return new Promise((_resolve, reject) => { pending.push(reject); init.signal?.addEventListener('abort', () => reject(new Error('aborted'))) })
-          if (next instanceof Error) return Promise.reject(next)
-          return Promise.resolve({ json: async () => next })
+          if (next === undefined) return new Promise((resolve) => { options?.signal?.addEventListener('abort', () => resolve({ ok: false, error: { code: 'call-threw', message: 'aborted' } })) })
+          if (next instanceof Error) return Promise.resolve({ ok: false, error: { code: 'call-threw', message: next.message } })
+          return Promise.resolve(next)
         }
-        return Promise.resolve({ json: async () => ({ ok: true, value: { matched: true } }) })
+        return Promise.resolve({ ok: true, value: { matched: true } })
       },
       setTimeout: (fn) => { globalThis.queueMicrotask(fn); return 1 },
       clearTimeout: () => {},
@@ -271,12 +270,12 @@ describe('startWebDelivery', () => {
     const env = {
       document: background,
       Notification: Fake,
-      fetch: (path, init) => {
+      channel: (path, body) => {
         calls.push(path)
-        if (path.endsWith('/ack')) return Promise.reject(new Error('ack down'))
+        if (path.endsWith('/ack')) return Promise.resolve({ ok: false, error: { code: 'call-threw', message: 'ack down' } })
         const next = script.shift()
         if (next === undefined) return new Promise(() => {})
-        return Promise.resolve({ json: async () => next })
+        return Promise.resolve(next)
       },
       setTimeout: (fn) => { globalThis.queueMicrotask(fn); return 1 },
       clearTimeout: () => {},

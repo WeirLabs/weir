@@ -21,9 +21,10 @@ window.__ModuleLoader__.load({
 		// a verbatim copy of the entry constant (same-package sync require is
 		// impossible in the ModuleLoader).
 		const WEIR_NS = "weir-settings";
-		// Host environment-facts endpoint (src/settings/env-admin.js): read
-		// once per page arrival, POST like the other weir-* fetch endpoints.
-		const ENV_PATH = "api/weir-settings/env";
+		// Host environment facts (src/settings/env-admin.js) arrive through
+		// deps.fetchEnv — the composition root's HTTP-channel-backed read; this
+		// chunk keeps the failure policy (warn-once) but no longer builds the
+		// carrier.
 		// Environment fact names a `when` condition may reference. Keep in sync
 		// with the facts the endpoint answers (platform today); validateLayout
 		// fails module load on any other name.
@@ -482,17 +483,6 @@ window.__ModuleLoader__.load({
 			envFailureWarned = true;
 			console.warn(`weir-settings: environment facts unavailable — env-gated rows stay hidden (${String(error?.message ?? error)})`);
 		}
-		function fetchEnvFacts() {
-			return fetch(ENV_PATH, {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: "{}"
-			}).then((response) => response.json()).then((payload) => {
-				if (payload?.ok !== true || typeof payload.value?.platform !== "string") throw new Error("malformed environment facts response");
-				return { platform: payload.value.platform };
-			});
-		}
 		var WeirCardController = class {
 			form;
 			store;
@@ -505,8 +495,8 @@ window.__ModuleLoader__.load({
 				// Prop-injected dependencies: the entry-owned settings bus (save →
 				// toggle re-check) and a getSession closure resolving the
 				// remote.session domain lazily at call time (it may not be wired
-				// yet during apply, S17). fetchEnv is the injectable environment
-				// facts read (tests); production uses the fetch above.
+				// yet during apply, S17). fetchEnv is the composition root's
+				// channel-backed environment-facts read.
 				this.deps = deps;
 				this.form = new primitives.SettingsFormModel(scope, this.fields.map(specFor));
 				this.store = this.form.bind(() => this.projection());
@@ -521,7 +511,7 @@ window.__ModuleLoader__.load({
 				// console warning — the rest of the page stays usable.
 				this.env = { status: "pending", facts: {} };
 				Promise.resolve()
-					.then(() => (deps.fetchEnv ?? fetchEnvFacts)())
+					.then(() => deps.fetchEnv())
 					.then(
 						(facts) => {
 							this.env = { status: "ready", facts: facts ?? {} };

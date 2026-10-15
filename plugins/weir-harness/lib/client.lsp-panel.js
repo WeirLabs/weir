@@ -9,8 +9,10 @@ window.__ModuleLoader__.load({
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		// LSP service manager panel: status over the catalog + one-click
-		// install + custom servers, talking to the host over raw fetch
-		// ("/api/weir-lsp/*"). The lsp model trio (client.lsp-model.js) and
+		// install + custom servers, talking to the host over the composition
+		// root's HTTP channel adapter (props.channel: (endpoint, payload?) =>
+		// Promise<{ ok: true, value } | { ok: false, error }>, never rejecting;
+		// "/api/weir-lsp/*"). The lsp model trio (client.lsp-model.js) and
 		// `t` arrive via props. Style constants are verbatim copies of the
 		// settings-page constants this panel uses (same-package sync require
 		// is impossible in the ModuleLoader).
@@ -63,10 +65,9 @@ window.__ModuleLoader__.load({
 			const serversInvalid = model.lspServersJsonValid(props.serversText) === false;
 			const load = () => {
 				setView({ status: "loading" });
-				fetch("api/weir-lsp/status", { method: "POST", credentials: "include" })
-					.then((response) => response.json())
-					.then((payload) => {
-						setView(payload?.ok ? { status: "ready", servers: payload.value.servers } : { status: "error", message: payload?.error?.message ?? "unknown" });
+				props.channel("api/weir-lsp/status")
+					.then((result) => {
+						setView(result.ok === true ? { status: "ready", servers: result.value.servers } : { status: "error", message: result.error.message });
 					})
 					.catch((error) => setView({ status: "error", message: String(error?.message ?? error) }));
 			};
@@ -81,17 +82,11 @@ window.__ModuleLoader__.load({
 				setConfirming(null);
 				setBusy(family);
 				setResult(null);
-				fetch("api/weir-lsp/install", {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ family })
-				})
-					.then((response) => response.json())
-					.then((payload) => {
+				props.channel("api/weir-lsp/install", { family })
+					.then((result) => {
 						setBusy(null);
-						setResult(payload?.ok ? { family, output: payload.value.output, exitCode: payload.value.exitCode, timedOut: payload.value.timedOut } : { family, error: payload?.error?.message ?? "unknown" });
-						if (payload?.ok) load();
+						setResult(result.ok === true ? { family, output: result.value.output, exitCode: result.value.exitCode, timedOut: result.value.timedOut } : { family, error: result.error.message });
+						if (result.ok === true) load();
 					})
 					.catch((error) => {
 						setBusy(null);

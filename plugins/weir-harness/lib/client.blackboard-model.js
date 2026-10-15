@@ -24,7 +24,10 @@ window.__ModuleLoader__.load({
 		// hand-written src-json contribution cannot mount through
 		// ctx.remote.$mount — its strict-codec gate rejects src-json codecs),
 		// so read verbs produce zero session-log events and every mutation
-		// shares the agent tools' arbitration kernel.
+		// shares the agent tools' arbitration kernel. The carrier, the envelope
+		// folding and the warn-once degradation now live in the composition
+		// root's gateway channel adapter (lib/client.js); this chunk owns only
+		// the pinned wire shape and the verb mapping.
 
 		// DERIVED FROM src/blackboard/kernel.js (ENTRY_TYPES, KEY_PATTERN, SUMMARY_MAX_LENGTH
 		// and the write gate below) — the kernel is authoritative; this derived copy exists because
@@ -45,47 +48,20 @@ window.__ModuleLoader__.load({
 
 		// ---- wire channel ----
 
-		/**
-		 * Fold one gateway envelope (or a carrier throw) into the panel's
-		 * uniform result shape: { ok: true, value } | { ok: false, error:
-		 * { code, message } }. The gateway already folds host-side failures
-		 * into { ok: false, error } — including the remote's typed
-		 * BlackboardRemoteError, which crosses as gateway/internal with its
-		 * message intact — so the panel never sees an exception from a call.
-		 */
-		function foldRemoteResult(result) {
-			if (result?.ok === true) return { ok: true, value: result.value };
-			const failure = result?.error ?? result ?? null;
-			return {
-				ok: false,
-				error: {
-					code: typeof failure?.code === "string" ? failure.code : "call-failed",
-					message: typeof failure?.message === "string" ? failure.message : String(failure ?? "unknown"),
-				},
-			};
-		}
-
 		/** Drop undefined fields so the wire payload carries exactly the arguments the caller meant (undefined is not JSON-safe). */
 		const cleanArgs = (obj) => Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
 		/**
-		 * The panel's board channel over the raw gateway carrier. rawCall is
-		 * (endpoint, payload) => Promise<RemoteResult> — the composition root
-		 * binds it to connection.rpc.call("/api", …) with its degradation
-		 * warnings; this factory owns the pinned wire shape:
+		 * The panel's board channel. callBoard is the composition root's gateway
+		 * channel adapter: (endpoint, payload) => Promise<{ ok: true, value } |
+		 * { ok: false, error: { code, message } }>, NEVER rejecting (a carrier
+		 * throw arrives pre-folded as call-threw, a missing connection as
+		 * channel-unavailable). This factory owns the pinned wire shape:
 		 *   POST /api/weirBlackboard/<method>
 		 *   payload { args: { agentId: <session>, args: <one JSON object> } }
-		 * Every verb resolves the folded result, never rejects.
+		 * Every verb resolves the adapter's folded result.
 		 */
-		function createBlackboardChannel(rawCall, sessionId) {
-			const call = (method, args) => {
-				let pending;
-				try {
-					pending = Promise.resolve(rawCall(`weirBlackboard/${method}`, { args: { agentId: sessionId, args: args ?? {} } }));
-				} catch (cause) {
-					return Promise.resolve({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } });
-				}
-				return pending.then(foldRemoteResult, (cause) => ({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } }));
-			};
+		function createBlackboardChannel(callBoard, sessionId) {
+			const call = (method, args) => callBoard(`weirBlackboard/${method}`, { args: { agentId: sessionId, args: args ?? {} } });
 			return {
 				/** list({ type?, query? }) — the panel polls the unfiltered board and shapes groups client-side. */
 				list: (args) => call("list", cleanArgs({ type: args?.type, query: args?.query })),
@@ -115,25 +91,19 @@ window.__ModuleLoader__.load({
 		 * args object, NO agent lookup (the gateway's lookup would refuse a
 		 * subagent-owned session before the service runs). ok with a non-empty
 		 * value.sessionId folds to { ok: true, sessionId }; every other shape
-		 * (failure envelope, unusable payload, carrier throw) folds to
-		 * { ok: false, error } so the panel can fall back to the browsing id.
+		 * (failure envelope, unusable payload; a carrier throw arrives
+		 * pre-folded from the adapter) folds to { ok: false, error } so the
+		 * panel can fall back to the browsing id.
 		 */
-		function resolveBoardSession(rawCall, sessionId) {
-			let pending;
-			try {
-				pending = Promise.resolve(rawCall("weirBlackboard/resolve", { args: { agentId: sessionId } }));
-			} catch (cause) {
-				return Promise.resolve({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } });
-			}
-			return pending.then((result) => {
-				const folded = foldRemoteResult(result);
-				if (folded.ok === true) {
-					const root = folded.value?.sessionId;
+		function resolveBoardSession(callBoard, sessionId) {
+			return Promise.resolve(callBoard("weirBlackboard/resolve", { args: { agentId: sessionId } })).then((result) => {
+				if (result?.ok === true) {
+					const root = result.value?.sessionId;
 					if (typeof root === "string" && root !== "") return { ok: true, sessionId: root };
 					return { ok: false, error: { code: "bad-payload", message: "resolve returned no usable session id" } };
 				}
-				return { ok: false, error: folded.error };
-			}, (cause) => ({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } }));
+				return { ok: false, error: result?.error ?? { code: "call-failed", message: "unknown" } };
+			});
 		}
 
 		// ---- entries ----
@@ -397,7 +367,6 @@ window.__ModuleLoader__.load({
 		exports.KEY_PATTERN = KEY_PATTERN;
 		exports.SUMMARY_MAX_LENGTH = SUMMARY_MAX_LENGTH;
 		exports.WATCH_GIVE_UP_AFTER = WATCH_GIVE_UP_AFTER;
-		exports.foldRemoteResult = foldRemoteResult;
 		exports.createBlackboardChannel = createBlackboardChannel;
 		exports.resolveBoardSession = resolveBoardSession;
 		exports.entryRowOf = entryRowOf;

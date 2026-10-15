@@ -6,17 +6,17 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 /**
  * client.notify-permissions.js chunk test: a hook-state-preserving react stub
  * (state persists across renders; effects run once) + fake primitives +
- * scripted fetch + fake timers. The component is rendered by calling it as a
- * function, so every assertion is on the element tree it returns.
+ * a scripted channel adapter (the composition root's carrier face) + fake
+ * timers. The component is rendered by calling it as a function, so every
+ * assertion is on the element tree it returns.
  */
 
 const GRANTED = { supported: true, platform: 'darwin', sender: { bundleId: 'com.apple.ScriptEditor2', name: 'Script Editor' }, state: 'granted', reason: 'alerts-allowed', auth: 7, flags: 8206 }
 const UNKNOWN = { ...GRANTED, state: 'unknown', reason: 'default', auth: null }
 
 // The setup helper replaces these globals; put the real ones back after each test.
-const REAL = { fetch: globalThis.fetch, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, now: Date.now }
+const REAL = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, now: Date.now }
 afterEach(() => {
-  globalThis.fetch = REAL.fetch
   globalThis.setTimeout = REAL.setTimeout
   globalThis.clearTimeout = REAL.clearTimeout
   Date.now = REAL.now
@@ -57,19 +57,20 @@ describe('client.notify-permissions chunk', () => {
     const { definition, exports } = await loadClientChunk('lib/client.notify-permissions.js', requireStub)
 
     const calls = []
-    globalThis.fetch = (path, init) => {
-      const body = init?.body ? JSON.parse(init.body) : {}
+    // the channel-adapter face: (endpoint, payload) — never rejects; an Error
+    // answer models a carrier failure (folded call-threw)
+    const channel = (path, body) => {
       calls.push({ path, body })
       const answer = responses(path, body)
-      if (answer instanceof Error) return Promise.reject(answer)
-      return Promise.resolve({ json: async () => answer })
+      if (answer instanceof Error) return Promise.resolve({ ok: false, error: { code: 'call-threw', message: answer.message } })
+      return Promise.resolve(answer)
     }
     const timers = []
     globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length }
     globalThis.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].fn = null }
 
     const t = (key) => key
-    const render = () => { reactStub.begin(); return exports.NotifyPermissionsPanel({ t }) }
+    const render = () => { reactStub.begin(); return exports.NotifyPermissionsPanel({ t, channel }) }
     const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((resolve) => queueMicrotask(resolve)) }
     return { definition, exports, calls, timers, render, flush, effects, slots }
   }

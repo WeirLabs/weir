@@ -11,8 +11,10 @@ window.__ModuleLoader__.load({
 		// macOS notification permission panel: an entry row plus a modal that
 		// detects the permission and walks the user through allowing it. The
 		// host decides everything (platform, state, actions) over
-		// "api/weir-notify/permissions/*"; this chunk only renders the answer
-		// and calls the two whitelisted actions. The entry renders NOTHING until
+		// "api/weir-notify/permissions/*" via the composition root's HTTP
+		// channel adapter (props.channel: (endpoint, payload?) => Promise<
+		// { ok: true, value } | { ok: false, error }>, never rejecting); this
+		// chunk only renders the answer and calls the two whitelisted actions. The entry renders NOTHING until
 		// the host confirms it is macOS, so other platforms never see it. Style
 		// constants are verbatim copies of the settings-page ones (same-package
 		// sync require is impossible in the ModuleLoader).
@@ -56,14 +58,6 @@ window.__ModuleLoader__.load({
 			return "wait";
 		}
 		const INITIAL_FLOW = { testSent: false, settingsOpened: false, seen: null };
-		function post(path, body) {
-			return fetch(path, {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body ?? {})
-			}).then((response) => response.json());
-		}
 		const messageOf = (error) => String(error?.message ?? error);
 		/**
 		 * The page's own web-notification permission, read-only. Delivery itself
@@ -123,14 +117,14 @@ window.__ModuleLoader__.load({
 			// Resolves the fresh host status, or null when it could not be read.
 			const load = () => {
 				setChecking(true);
-				return post(STATUS_PATH).then((payload) => {
+				return props.channel(STATUS_PATH, {}).then((result) => {
 					setChecking(false);
-					if (payload?.ok && payload.value?.supported) {
-						setHost(payload.value);
+					if (result.ok === true && result.value?.supported) {
+						setHost(result.value);
 						setError(null);
-						return payload.value;
+						return result.value;
 					}
-					setError(payload?.error?.message ?? "unknown");
+					setError(result.error?.message ?? "unknown");
 					return null;
 				}).catch((failure) => {
 					setChecking(false);
@@ -139,8 +133,8 @@ window.__ModuleLoader__.load({
 				});
 			};
 			react.useEffect(() => {
-				post(STATUS_PATH).then(
-					(payload) => setHost(payload?.ok && payload.value?.supported ? payload.value : { supported: false }),
+				props.channel(STATUS_PATH, {}).then(
+					(result) => setHost(result.ok === true && result.value?.supported ? result.value : { supported: false }),
 					() => setHost({ supported: false })
 				);
 				return stopPolling;
@@ -183,10 +177,10 @@ window.__ModuleLoader__.load({
 				setError(null);
 				// Ask for the page permission inside this click (the only place a browser shows the prompt).
 				const ready = action === "test" ? requestWebPermission(globalThis).then(() => setPermTick((tick) => tick + 1)) : Promise.resolve();
-				ready.then(() => post(ACTION_PATH, { action })).then((payload) => {
+				ready.then(() => props.channel(ACTION_PATH, { action })).then((result) => {
 					setBusy(null);
-					if (!payload?.ok) {
-						setError(payload?.error?.message ?? "unknown");
+					if (result.ok !== true) {
+						setError(result.error?.message ?? "unknown");
 						return;
 					}
 					setFlow((current) => action === "test"

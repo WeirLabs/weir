@@ -839,9 +839,12 @@ describe('weir settings client half', () => {
     }
     surface.apply(ctx)
     await flush()
-    // started once, on the real global environment (fetch/Notification/document come from the page)
+    // started once, on the real global environment (fetch/Notification/document
+    // come from the page via the prototype) plus the composition root's channel
     expect(notifyWebStarts).toHaveLength(1)
-    expect(notifyWebStarts[0]).toBe(globalThis)
+    expect(Object.getPrototypeOf(notifyWebStarts[0])).toBe(globalThis)
+    expect(typeof notifyWebStarts[0].channel).toBe('function')
+    expect(notifyWebStarts[0].fetch).toBe(globalThis.fetch)
     expect(notifyWebStops).toHaveLength(0)
     for (const dispose of disposers) dispose()
     expect(notifyWebStops).toHaveLength(1)

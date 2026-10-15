@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"122c1dde4bd57f31070e8ffed72e52b8381958ea6e1dfe9e60b4efe1a9a0816f","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"6ffd703f498e0aa5cc8ac78f244402ec4ceee56d22d2a0e74c246799565776cc","client.capability-manager.js":"d8d1076e1b624c1dfc0834ad393c05fd7d9ee35004cd2fb34e5e5ba83f44c902","client.capability-model.js":"d0ad248c4a6defbc90f79c8c0e7904639779d47927874b8663c15c6cecb9d54a","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"f5dca1a7658e2f536b52d265c49ab37bb5d2df6bcd6cf21826b843c9554311a8","client.edit-lock-panel.js":"54f7a21b79adc2b91803c61d92b0dad72d95d5d320fdf35433719cefd0a6c46d","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"39211da7658e0810abc0984b8bcbbfb4ee6a6299fedfd21649ded1ab39d1f291","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"c1c103ce5976a4032b62e12b3b3ecb907a574159bf89512539c68c4886ea37a7","client.notify-web.js":"b2ccf831524be4e94c532324cb5495793d4424e3b78d6014d2a3f3d20e9c5871","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"ca31b2fbf5bbca0e1357bf6c78d5860898a5bdc9c878fe61c6b4645e0a7ecb79","client.worktree-model.js":"819f1b00650aa0bb01140690b29b4a1f09b9d26e6bb73adc7efbb3a08e215766","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
+// Weir client chunks: {"client.blackboard-model.js":"ed0bf77ddfc7a877bc1ef5d97022237b8fa90539da28ea8e702947ed280450df","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"6ffd703f498e0aa5cc8ac78f244402ec4ceee56d22d2a0e74c246799565776cc","client.capability-manager.js":"d8d1076e1b624c1dfc0834ad393c05fd7d9ee35004cd2fb34e5e5ba83f44c902","client.capability-model.js":"d0ad248c4a6defbc90f79c8c0e7904639779d47927874b8663c15c6cecb9d54a","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"81cdd04626900a63c38ccb3d9c4d117686c6f8a5da2ce9131b7aaf2f089dea77","client.disabled-categories-editor.js":"d4606a3172b47b25caf76fd64c8420a0079cd5f008bc67a9c71b3f146724e393","client.edit-lock-maintenance.js":"14a57362b4ad51fbe34b52c36235bfdf3320e41b2808804407bbab958784becd","client.edit-lock-panel.js":"54f7a21b79adc2b91803c61d92b0dad72d95d5d320fdf35433719cefd0a6c46d","client.hash-edit-model.js":"99df87cc3cc261abd160b83124b5ce726d0708f3c87eba9d58ad9e5a1f41bae9","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"6b5bead2900289427a1ad723b9c7bea85af4c5547029e486c620ff94ece24775","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"4d960984ccf1045c617be6d282665513a9cf636779563a276973b55036a59fb6","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"89afcc2abc93a4d05d0c85d281094a52f05cf85c97175c0cc4345d0491757a0d","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"356ee7a679223bcd351720b2bc9e7300e390d97a60d1c8d75998706b4644923b","client.settings-page.js":"da10093f18b2ba50c4f230c0017690fd82c49600c5c3f2f9df6b1b3c719beae3","client.worktree-model.js":"819f1b00650aa0bb01140690b29b4a1f09b9d26e6bb73adc7efbb3a08e215766","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -1797,6 +1797,131 @@ window.__ModuleLoader__.load({
 		const inject = ["slots", "locale", "configForms", "remote", "remote.session", "remote.commands", "connection"];
 		function apply(ctx) {
 			const t = ctx.locale.bind(NS);
+			// ---- Channel adapters (composition root) ----
+			// Every feature read channel below rides one of two carriers through
+			// these adapters instead of re-hand-building "POST → unfold the {ok,
+			// value} envelope → warn-once on degradation" per site. A channel call
+			// NEVER rejects: a carrier throw folds to { ok:false, error:{ code:
+			// "call-threw" } }, a failure envelope to call-failed, a missing gateway
+			// connection to channel-unavailable — the folded shape the blackboard
+			// model chunk's foldRemoteResult used to own chunk-side. Warn-once keeps
+			// degradation observable: once per failure shape per page generation (an
+			// apply() run), never per render (the silent-fallback lesson). The kind
+			// strings, the per-channel method labeling and the documented cold-open
+			// "unknown session" silence are byte-identical to the hand-written sites
+			// this replaces.
+			const createWarnOnce = (label) => {
+				const warned = new Set();
+				return (kind, method, detail) => {
+					if (warned.has(kind)) return;
+					warned.add(kind);
+					console.warn(`[weir] ${label} degraded (${kind}${method ? `, ${method}` : ""})`, detail ?? "");
+				};
+			};
+			// Raw-gateway carrier (connection.rpc.call("/api", …)) for the endpoints
+			// that cannot mount a typed namespace: ctx.remote.$mount's strict-codec
+			// gate rejects src-json codecs, and declaring the namespace in inject
+			// would park this fiber forever, so these channels ride the raw gateway
+			// (zero session-log events). requireValue marks channels whose callers
+			// treat an ok envelope with a null value as a failure (capability reads).
+			const createGatewayChannel = ({ label, unavailableMessage, warnOnFailure = false, silentFailure = null, requireValue = false, methodOf = (endpoint) => endpoint }) => {
+				const warn = createWarnOnce(label);
+				return async (endpoint, payload) => {
+					const method = methodOf(endpoint);
+					let connection = null;
+					try { connection = ctx.get?.("connection") ?? null; } catch { connection = null; }
+					if (typeof connection?.rpc?.call !== "function") {
+						warn("connection-missing", method, null);
+						return { ok: false, error: { code: "channel-unavailable", message: unavailableMessage } };
+					}
+					let result = null;
+					try {
+						result = await connection.rpc.call("/api", endpoint, payload);
+					} catch (callError) {
+						if (warnOnFailure) warn("call-threw", method, callError && (callError.stack || callError.message || String(callError)));
+						return { ok: false, error: { code: "call-threw", message: callError instanceof Error ? callError.message : String(callError) } };
+					}
+					if (result?.ok === true && (!requireValue || result.value != null)) return { ok: true, value: result.value };
+					const failure = result?.error ?? result ?? null;
+					if (warnOnFailure && !silentFailure?.test(String(failure?.message ?? failure ?? ""))) warn("call-failed", method, failure);
+					return {
+						ok: false,
+						error: {
+							code: typeof failure?.code === "string" ? failure.code : "call-failed",
+							message: typeof failure?.message === "string" ? failure.message : String(failure ?? "unknown"),
+						},
+					};
+				};
+			};
+			// Plain HTTP carrier (fetch): the weir-* admin endpoints are ordinary
+			// JSON POSTs that need no gateway connection and must work inside chunks
+			// (a chunk cannot reach ctx.get("connection")). payload === undefined
+			// sends NO body (the status endpoints' wire convention); an object
+			// payload crosses as a JSON body. The failure fold keeps every extra
+			// error field the server sent (e.g. detail) so consumers lose nothing,
+			// and defaults the message to the HTTP status exactly like the
+			// hand-written sites did. No warn-once here: every HTTP consumer already
+			// surfaces failures inline in its own UI (the settings env read keeps
+			// its chunk-side warn-once).
+			const createHttpChannel = () => {
+				return async (endpoint, payload, options) => {
+					let response;
+					try {
+						response = await fetch(endpoint, {
+							method: "POST",
+							credentials: "include",
+							...(payload === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }),
+							...(options?.signal ? { signal: options.signal } : {}),
+						});
+					} catch (cause) {
+						return { ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } };
+					}
+					let parsed = null;
+					try {
+						parsed = await response.json();
+					} catch (cause) {
+						return { ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } };
+					}
+					if (parsed?.ok === true) return { ok: true, value: parsed.value };
+					const failure = parsed?.error;
+					return {
+						ok: false,
+						error: {
+							...(failure !== null && typeof failure === "object" ? failure : {}),
+							code: typeof failure?.code === "string" ? failure.code : "call-failed",
+							message: typeof failure?.message === "string" ? failure.message : `HTTP ${response.status}`,
+						},
+					};
+				};
+			};
+			const httpChannel = createHttpChannel();
+			const capabilityChannel = createGatewayChannel({
+				label: "capability read",
+				// Never surfaces: capabilityRead maps every failure to its fallback.
+				unavailableMessage: "the capability channel has no gateway connection",
+				warnOnFailure: true,
+				// unknown-session at cold open is the DOCUMENTED convergence shape
+				// (先空后收敛): the Badge may read before the session's agent is
+				// registered; the agent-preset/selected frame refetches and
+				// converges. Never warn for it — warns are for failures that would
+				// otherwise stay invisible.
+				silentFailure: /unknown session/,
+				requireValue: true,
+				methodOf: (endpoint) => endpoint.split("/")[1] ?? endpoint,
+			});
+			const blackboardChannel = createGatewayChannel({
+				label: "blackboard call",
+				unavailableMessage: "the blackboard channel has no gateway connection",
+			});
+			// Host environment-facts endpoint (src/settings/env-admin.js): read
+			// once per settings-page arrival over the HTTP channel. A carrier
+			// failure rethrows with the carrier's message; an envelope-level or
+			// shape failure throws the malformed marker — the chunk-side
+			// warn-once reports either exactly as before.
+			const fetchEnvFacts = () => httpChannel("api/weir-settings/env", {}).then((result) => {
+				if (result.ok === true && typeof result.value?.platform === "string") return { platform: result.value.platform };
+				throw new Error(result.error?.code === "call-threw" ? result.error.message : "malformed environment facts response");
+			});
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-weir-settings: dictionaries");
 			// Web notification delivery: the page half of "notify as DeepSeek Harness".
 			// It long-polls the host for notes the host decided to send and shows
@@ -1807,7 +1932,9 @@ window.__ModuleLoader__.load({
 				let delivery = null;
 				let live = true;
 				loadNotifyWebChunk().then((chunk) => {
-					if (live) delivery = chunk.startWebDelivery(globalThis);
+					// The delivery env is the page's global scope plus the HTTP channel
+					// adapter (env injection face; the chunk never touches fetch itself).
+					if (live) delivery = chunk.startWebDelivery(Object.assign(Object.create(globalThis), { channel: httpChannel }));
 				}, () => {});
 				return () => {
 					live = false;
@@ -1881,15 +2008,9 @@ window.__ModuleLoader__.load({
 						},
 						// Structured view: read-only, never written to the conversation.
 						fetchView: async () => {
-							const response = await fetch("api/weir-edit-lock/view", {
-								method: "POST",
-								credentials: "include",
-								headers: { "content-type": "application/json" },
-								body: JSON.stringify({ sessionId })
-							});
-							const payload = await response.json();
-							if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
-							return payload.value;
+							const result = await httpChannel("api/weir-edit-lock/view", { sessionId });
+							if (!result.ok) throw new Error(result.error.message);
+							return result.value;
 						}
 					};
 				}
@@ -1909,26 +2030,14 @@ window.__ModuleLoader__.load({
 				}
 			};
 			const worktreeView = async (sessionId) => {
-				const response = await fetch("api/weir-worktree/view", {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ sessionId, locale: activeLocale() })
-				});
-				const payload = await response.json();
-				if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
-				return payload.value;
+				const result = await httpChannel("api/weir-worktree/view", { sessionId, locale: activeLocale() });
+				if (!result.ok) throw new Error(result.error.message);
+				return result.value;
 			};
 			const worktreeDiff = async (sessionId, lane) => {
-				const response = await fetch("api/weir-worktree/diff", {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ sessionId, lane })
-				});
-				const payload = await response.json();
-				if (!payload?.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
-				return payload.value?.diff ?? "";
+				const result = await httpChannel("api/weir-worktree/diff", { sessionId, lane });
+				if (!result.ok) throw new Error(result.error.message);
+				return result.value?.diff ?? "";
 			};
 			const worktreeRun = async (sessionId, line) => {
 				if (!ctx.remote.commands?.execute) return { kind: "error", text: "unknown command: /worktree" };
@@ -2059,43 +2168,12 @@ window.__ModuleLoader__.load({
 			// failed call maps to the existing degraded semantics (receipt →
 			// null → "Capabilities n/a"; listing/conditions → { error: true }).
 			//
-			// Degradation must be observable: the silent-fallback design made a
-			// multi-link failure chain invisible for days. Warn once per
-			// distinct failure shape per page generation, never per render.
-			const capabilityReadWarns = new Set();
-			const capabilityReadWarn = (kind, method, detail) => {
-				if (capabilityReadWarns.has(kind)) return;
-				capabilityReadWarns.add(kind);
-				console.warn(`[weir] capability read degraded (${kind}${method ? `, ${method}` : ""})`, detail ?? "");
-			};
+			// The warn-once degradation (kind strings, unknown-session silence) now
+			// lives in the capability channel adapter (composition root, above);
+			// this read keeps only its endpoint and its fallback semantics.
 			const capabilityRead = async (method, sid, fallback) => {
-				let connection = null;
-				try { connection = ctx.get?.("connection") ?? null; } catch { connection = null; }
-				if (typeof connection?.rpc?.call !== "function") {
-					capabilityReadWarn("connection-missing", method, null);
-					return fallback;
-				}
-				let result = null;
-				try {
-					result = await connection.rpc.call("/api", `weirCapabilities/${method}`, { args: { sessionId: sid } });
-				} catch (callError) {
-					capabilityReadWarn("call-threw", method, callError && (callError.stack || callError.message || String(callError)));
-					return fallback;
-				}
-				// Remote calls resolve to the RemoteResult ENVELOPE — never the
-				// bare payload; a failing call resolves { ok: false, error }
-				// rather than rejecting (the gateway folds carrier failures).
-				if (result?.ok === true && result.value != null) return result.value;
-				// unknown-session at cold open is the DOCUMENTED convergence shape
-				// (先空后收敛): the Badge may read before the session's agent is
-				// registered; the agent-preset/selected frame refetches and
-				// converges. Never warn for it — warns are for failures that
-				// would otherwise stay invisible.
-				const failure = result?.error ?? result ?? null;
-				if (!/unknown session/.test(String(failure?.message ?? failure ?? ""))) {
-					capabilityReadWarn("call-failed", method, failure);
-				}
-				return fallback;
+				const result = await capabilityChannel(`weirCapabilities/${method}`, { args: { sessionId: sid } });
+				return result.ok === true ? result.value : fallback;
 			};
 			// The presets & workspace-default view is its own chunk, pulled only
 			// when the Presets view is first selected (D3) — the composition root
@@ -2234,25 +2312,10 @@ window.__ModuleLoader__.load({
 			// src-json codecs), so the panel calls the RAW gateway exactly like
 			// the capability reads — POST /api/weirBlackboard/<method>,
 			// answered with the RemoteResult envelope, zero session log. The
-			// pinned wire shape ({ agentId, args }) and the envelope folding are
-			// owned by the model chunk's channel factory; this closure only binds
-			// the carrier. Degradation warns once per shape per page generation,
-			// never per render (the silent-fallback lesson).
-			const blackboardCallWarns = new Set();
-			const blackboardCallWarn = (kind, method, detail) => {
-				if (blackboardCallWarns.has(kind)) return;
-				blackboardCallWarns.add(kind);
-				console.warn(`[weir] blackboard call degraded (${kind}${method ? `, ${method}` : ""})`, detail ?? "");
-			};
-			const blackboardRawCall = (endpoint, payload) => {
-				let connection = null;
-				try { connection = ctx.get?.("connection") ?? null; } catch { connection = null; }
-				if (typeof connection?.rpc?.call !== "function") {
-					blackboardCallWarn("connection-missing", endpoint, null);
-					return Promise.resolve({ ok: false, error: { code: "channel-unavailable", message: "the blackboard channel has no gateway connection" } });
-				}
-				return connection.rpc.call("/api", endpoint, payload);
-			};
+			// pinned wire shape ({ agentId, args }) stays owned by the model
+			// chunk's channel factory; the carrier, the envelope folding and the
+			// warn-once degradation live in the blackboard channel adapter
+			// (composition root, above).
 			const loadBlackboardPanelChunks = lazyChunks(() => Promise.all([
 				require.async("./client.blackboard-model.js"),
 				require.async("./client.blackboard-panel.js")
@@ -2285,7 +2348,7 @@ window.__ModuleLoader__.load({
 					name: "sidebar.right.pane.tab",
 					key: tabId,
 					locale: NS,
-					inject: (sessionId) => (sessionId ? { sessionId, callBoard: blackboardRawCall } : {})
+					inject: (sessionId) => (sessionId ? { sessionId, callBoard: blackboardChannel } : {})
 				}, BlackboardPanelWrapper), "ui-weir-settings: blackboard panel body");
 				sidebarScope.effect(() => sidebarScope.slots.register({
 					name: "sidebar.right.pane.tab.title",
@@ -2363,9 +2426,9 @@ window.__ModuleLoader__.load({
 							require.async("./client.edit-lock-maintenance.js")
 						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel, notifyPermissions, editLockMaintenance]) => {
 							if (serving) {
-								controller = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session }, "main");
+								controller = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session, fetchEnv: fetchEnvFacts }, "main");
 								deferredStore.attach(controller.store);
-								routingController = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session }, "routing");
+								routingController = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session, fetchEnv: fetchEnvFacts }, "routing");
 								routingDeferredStore.attach(routingController.store);
 							}
 							// Editor components pre-bound with their model chunks,
@@ -2375,9 +2438,12 @@ window.__ModuleLoader__.load({
 								ChainEditorField: (editorProps) => react_jsx_runtime.jsx(chainEditor.ChainEditorField, { ...editorProps, model: chainModel }),
 								RobashListEditorField: (editorProps) => react_jsx_runtime.jsx(robashEditor.RobashListEditorField, { ...editorProps, model: robashModel }),
 								DisabledCategoriesEditorField: (editorProps) => react_jsx_runtime.jsx(disabledCategoriesEditor.DisabledCategoriesEditorField, editorProps),
-								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel }),
-								NotifyPermissionsField: (editorProps) => react_jsx_runtime.jsx(notifyPermissions.NotifyPermissionsField, editorProps),
-								EditLockMaintenanceField: (editorProps) => react_jsx_runtime.jsx(editLockMaintenance.EditLockMaintenanceField, editorProps)
+								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel, channel: httpChannel }),
+								// The HTTP channel adapter reaches every fetch-talking editor
+								// through the same prop (composition-root injection: a chunk
+								// never builds its own carrier).
+								NotifyPermissionsField: (editorProps) => react_jsx_runtime.jsx(notifyPermissions.NotifyPermissionsField, { ...editorProps, channel: httpChannel }),
+								EditLockMaintenanceField: (editorProps) => react_jsx_runtime.jsx(editLockMaintenance.EditLockMaintenanceField, { ...editorProps, channel: httpChannel })
 							};
 							return { settingsPage, editors };
 						}, (error) => {

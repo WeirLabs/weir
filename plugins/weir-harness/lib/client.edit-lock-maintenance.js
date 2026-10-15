@@ -10,7 +10,9 @@ window.__ModuleLoader__.load({
 		// Edit Lock maintenance panel (settings "Editing" group): the
 		// profile-wide switch status (SAVED vs actually mounted, restart
 		// semantics) plus read-only authority inspection per server-derived
-		// domain root, over raw fetch ("/api/weir-edit-lock/maintenance/*").
+		// domain root, over the composition root's HTTP channel adapter
+		// (props.channel: (endpoint, payload?) => Promise<{ ok: true, value } |
+		// { ok: false, error }>, never rejecting; "/api/weir-edit-lock/maintenance/*").
 		// The panel never sends a path the server did not list first, and it
 		// offers recovery only while the manager is mounted. The switch itself
 		// field. Style constants are verbatim copies of the settings-page
@@ -268,11 +270,6 @@ window.__ModuleLoader__.load({
 		/** Switch-state banner keys (state names contain hyphens). */
 		const STATE_KEYS = { enforced: "Enforced", "disable-requested": "DisableRequested", "enable-requested": "EnableRequested", disabled: "Disabled", unknown: "Unknown" };
 		const onlineRecoveryAvailable = (state) => state === "enforced" || state === "disable-requested";
-		const post = (url, body) => fetch(url, {
-			method: "POST",
-			credentials: "include",
-			...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-		}).then((response) => response.json());
 		// Invoke the render callback only during descendant traversal, never while
 		// the parent constructs the boundary element.
 		function MaintenanceBody({ render }) {
@@ -293,7 +290,7 @@ window.__ModuleLoader__.load({
 			const recover = (root, candidate) => {
 				if (view?.status !== "ready" || !onlineRecoveryAvailable(view.value.state)) return;
 				setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: { status: "busy" } }));
-				post("api/weir-edit-lock/maintenance/recover-online", {
+				props.channel("api/weir-edit-lock/maintenance/recover-online", {
 					root,
 					owner: candidate.owner,
 					expectedRevision: candidate.scope.expectedRevision,
@@ -302,10 +299,10 @@ window.__ModuleLoader__.load({
 					reason: "Confirmed in the Edit Lock maintenance panel: the operator reviewed the displayed scope and accepted the displayed late-writer risk.",
 					acceptLateWriterRisk: true,
 					confirmation: candidate.confirmation,
-				}).then((payload) => {
-					setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: payload?.ok
-						? { status: "done", revision: payload.value.revision, idempotent: payload.value.idempotent === true }
-						: { status: "error", message: payload?.error?.detail ?? payload?.error?.message ?? "unknown" } }));
+				}).then((result) => {
+					setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: result.ok === true
+						? { status: "done", revision: result.value.revision, idempotent: result.value.idempotent === true }
+						: { status: "error", message: result.error?.detail ?? result.error?.message ?? "unknown" } }));
 					inspect(root);
 				}).catch((error) => {
 					setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: { status: "error", message: String(error?.message ?? error) } }));
@@ -314,14 +311,14 @@ window.__ModuleLoader__.load({
 			};
 			const load = () => {
 				setView({ status: "loading" });
-				post("api/weir-edit-lock/maintenance/status")
-					.then((payload) => {
-						setView(payload?.ok ? { status: "ready", value: payload.value } : { status: "error", message: payload?.error?.message ?? "unknown" });
+				props.channel("api/weir-edit-lock/maintenance/status")
+					.then((result) => {
+						setView(result.ok === true ? { status: "ready", value: result.value } : { status: "error", message: result.error.message });
 						// Recovery UX D1: opening the panel auto-runs the read-only
 						// inspection for every server-derived domain root, so the
 						// blocked/unmet zones render without any manual step. The
 						// inspection itself stays read-only (the same endpoint).
-						if (payload?.ok && Array.isArray(payload.value?.domains)) payload.value.domains.forEach((domain) => inspect(domain.root, false));
+						if (result.ok === true && Array.isArray(result.value?.domains)) result.value.domains.forEach((domain) => inspect(domain.root, false));
 					})
 					.catch((error) => setView({ status: "error", message: String(error?.message ?? error) }));
 			};
@@ -335,9 +332,9 @@ window.__ModuleLoader__.load({
 			const inspect = (root, expand = true) => {
 				if (expand) setExpanded(root);
 				setInspections((previous) => ({ ...previous, [root]: { status: "loading" } }));
-				post("api/weir-edit-lock/maintenance/inspect", { root })
-					.then((payload) => {
-						setInspections((previous) => ({ ...previous, [root]: payload?.ok ? { status: "ready", value: payload.value } : { status: "error", message: payload?.error?.message ?? "unknown" } }));
+				props.channel("api/weir-edit-lock/maintenance/inspect", { root })
+					.then((result) => {
+						setInspections((previous) => ({ ...previous, [root]: result.ok === true ? { status: "ready", value: result.value } : { status: "error", message: result.error.message } }));
 					})
 					.catch((error) => setInspections((previous) => ({ ...previous, [root]: { status: "error", message: String(error?.message ?? error) } })));
 			};

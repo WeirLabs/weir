@@ -3,7 +3,8 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 
 /**
  * client.edit-lock-maintenance.js chunk test: shared helper +
- * hook-state-preserving react stub + fetch stub (client-lsp-panel pattern).
+ * hook-state-preserving react stub + a channel-adapter stub (the composition
+ * root's carrier face; client-lsp-panel pattern).
  * The panel is the profile-wide switch status plus read-only inspection; the
  * tests pin the read-only contract (no inputs, no mutation payloads) and the
  * saved-vs-mounted state rendering.
@@ -123,19 +124,20 @@ describe('client.edit-lock-maintenance chunk', () => {
     const { EditLockMaintenanceField } = exports
     expect(typeof EditLockMaintenanceField).toBe('function')
 
-    const fetchCalls = []
+    const channelCalls = []
     let statusPayload = { ok: true, value: STATUS }
     let inspectPayload = { ok: true, value: INSPECT }
-    const fetchStub = (url, init) => {
-      fetchCalls.push({ url, init })
-      if (url === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ json: async () => statusPayload })
-      if (url === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ json: async () => inspectPayload })
-      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    // a folded carrier failure stands in for the old fetch rejection
+    let carrierFailure = null
+    const channelStub = (endpoint, payload) => {
+      channelCalls.push({ endpoint, payload })
+      if (carrierFailure) return Promise.resolve({ ok: false, error: { code: 'call-threw', message: carrierFailure } })
+      if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve(statusPayload)
+      if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve(inspectPayload)
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
     }
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = fetchStub
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-    const props = { t: (key) => key }
+    const props = { t: (key) => key, channel: channelStub }
     const render = () => {
       reactStub.begin()
       return renderTree(EditLockMaintenanceField(props))
@@ -145,17 +147,18 @@ describe('client.edit-lock-maintenance chunk', () => {
       // closed: the toggle row, no fetch, no inputs anywhere
       const initial = render()
       expect(initial.children[0].children[1].children).toBe('chainEdit')
-      expect(fetchCalls).toHaveLength(0)
+      expect(channelCalls).toHaveLength(0)
       expect(collect(initial, (node) => node.__type === 'input')).toHaveLength(0)
 
       // open → status loads with a read-only POST (no body, session credentials)
       initial.children[0].children[1].onClick()
       await flush()
       const opened = render()
-      expect(fetchCalls[0].url).toBe('api/weir-edit-lock/maintenance/status')
-      expect(fetchCalls[0].init.method).toBe('POST')
-      expect(fetchCalls[0].init.credentials).toBe('include')
-      expect(fetchCalls[0].init.body).toBeUndefined()
+      expect(channelCalls[0].endpoint).toBe('api/weir-edit-lock/maintenance/status')
+      // a read-only status POST: no body (the adapter maps an undefined
+      // payload to a bodiless request; the init shape is pinned in
+      // test/client-channel-adapter.test.js)
+      expect(channelCalls[0].payload).toBeUndefined()
       const tree = opened
       // the enforced banner, its evidence-based hint, the profile scope note,
       // and both standing warnings
@@ -176,8 +179,8 @@ describe('client.edit-lock-maintenance chunk', () => {
       inspectButtons[0].onClick()
       await flush()
       const inspected = render()
-      expect(fetchCalls[1].url).toBe('api/weir-edit-lock/maintenance/inspect')
-      expect(JSON.parse(fetchCalls[1].init.body)).toEqual({ root: '/work/repo' })
+      expect(channelCalls[1].endpoint).toBe('api/weir-edit-lock/maintenance/inspect')
+      expect(channelCalls[1].payload).toEqual({ root: '/work/repo' })
       // unresolved operation: its scope in user terms, then the technical detail
       expect(collect(inspected, (node) => typeof node.children === 'string' && node.children.startsWith('editLockMaintScopeFile')).length).toBeGreaterThan(0)
       expect(collect(inspected, (node) => node.children === 'write /work/repo/a.txt · unknown/unknown')).toHaveLength(1)
@@ -212,7 +215,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(collect(corrupt, (node) => typeof node.children === 'string' && node.children.includes('editLockMaintPresenceCorrupt') && node.children.includes('invalid snapshot checksum'))).toHaveLength(1)
 
       // status fetch failure → inline error with retry
-      globalThis.fetch = () => Promise.reject(new Error('down'))
+      carrierFailure = 'down'
       collect(corrupt, (node) => node.children === 'editLockMaintRefresh' && typeof node.onClick === 'function')[0].onClick()
       await flush()
       await flush()
@@ -223,7 +226,7 @@ describe('client.edit-lock-maintenance chunk', () => {
 
       // A successful HTTP envelope can still contain malformed rendering data.
       // It must fail INSIDE the boundary, leaving the settings toggle available.
-      globalThis.fetch = fetchStub
+      carrierFailure = null
       statusPayload = { ok: true, value: { ...STATUS, domains: {} } }
       collect(errored, (node) => node.children === 'editLockMaintRetry')[0].onClick()
       await flush()
@@ -239,7 +242,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       failedBoundary.state = { failed: true }
       expect(failedBoundary.render().children).toBe('editLockMaintFailed')
     } finally {
-      globalThis.fetch = originalFetch
+      carrierFailure = null
     }
   })
 
@@ -309,19 +312,17 @@ describe('client.edit-lock-maintenance chunk', () => {
       },
     }
     const expectedConfirmation = editLockRecovery.recoveryConfirmation({ root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] })
-    const fetchCalls = []
+    const channelCalls = []
     let recoverPayload = { ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }
-    const fetchStub = (url, init) => {
-      fetchCalls.push({ url, init })
-      if (url === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ json: async () => ({ ok: true, value: STATUS }) })
-      if (url === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ json: async () => ({ ok: true, value: eligible }) })
-      if (url === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ json: async () => recoverPayload })
-      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    const channelStub = (endpoint, payload) => {
+      channelCalls.push({ endpoint, payload })
+      if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+      if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: eligible })
+      if (endpoint === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve(recoverPayload)
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
     }
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = fetchStub
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-    const props = { t: (key) => key }
+    const props = { t: (key) => key, channel: channelStub }
     const render = () => {
       reactStub.begin()
       return renderTree(EditLockMaintenanceField(props))
@@ -351,8 +352,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       confirm[0].onClick()
       await flush()
       await flush()
-      const call = fetchCalls.find((entry) => entry.url === 'api/weir-edit-lock/maintenance/recover-online')
-      const body = JSON.parse(call.init.body)
+      const body = channelCalls.find((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/recover-online').payload
       expect(body.root).toBe('/work/repo')
       expect(body.owner).toBe('sess-1')
       expect(body.expectedRevision).toBe(12)
@@ -367,7 +367,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       // The panel re-inspected after the settle: the scope reloads. Three
       // inspection calls total: the automatic one on open, the manual expand,
       // and the post-settle reload.
-      expect(fetchCalls.filter((entry) => entry.url === 'api/weir-edit-lock/maintenance/inspect').length).toBe(3)
+      expect(channelCalls.filter((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/inspect').length).toBe(3)
       // A refusal is shown next to the reloaded scope, with the server's detail.
       recoverPayload = { ok: false, error: { code: 'weir-edit-lock/revision-conflict', message: 'Recovery not acknowledged.', detail: 'Authority revision changed; inspect and confirm again.' } }
       collect(settled, (node) => node.children === 'editLockMaintRecoverConfirm' && typeof node.onClick === 'function')[0].onClick()
@@ -377,7 +377,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       // The refusal surfaces in both the zone card and the expanded detail card.
       expect(collect(refused, (node) => node.children === 'editLockMaintRecoverFailed Authority revision changed; inspect and confirm again.')).toHaveLength(2)
     } finally {
-      globalThis.fetch = originalFetch
+      // nothing to restore: the channel arrives as a prop
     }
   })
 
@@ -404,18 +404,16 @@ describe('client.edit-lock-maintenance chunk', () => {
       },
     })
     const recoverPayload = { ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (url, init) => {
-      if (url === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ json: async () => ({ ok: true, value: STATUS_TWO }) })
-      if (url === 'api/weir-edit-lock/maintenance/inspect') {
-        const root = JSON.parse(init.body).root
-        return Promise.resolve({ json: async () => ({ ok: true, value: eligibleFor(root) }) })
+    const channelStub = (endpoint, payload) => {
+      if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS_TWO })
+      if (endpoint === 'api/weir-edit-lock/maintenance/inspect') {
+        return Promise.resolve({ ok: true, value: eligibleFor(payload.root) })
       }
-      if (url === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ json: async () => recoverPayload })
-      return Promise.reject(new Error(`unexpected fetch ${url}`))
+      if (endpoint === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve(recoverPayload)
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
     }
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-    const props = { t: (key) => key }
+    const props = { t: (key) => key, channel: channelStub }
     const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField(props)) }
     const confirms = (tree) => collect(tree, (node) => node.children === 'editLockMaintRecoverConfirm' && typeof node.onClick === 'function')
     const inspects = (tree) => collect(tree, (node) => node.children === 'editLockMaintInspect' && typeof node.onClick === 'function')
@@ -440,7 +438,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(confirmB).toHaveLength(1)
       expect(confirmB[0].disabled === true).toBe(false)
     } finally {
-      globalThis.fetch = originalFetch
+      // nothing to restore: the channel arrives as a prop
     }
   })
 
@@ -453,18 +451,17 @@ describe('client.edit-lock-maintenance chunk', () => {
       return registrations[0]
     })()
     const eligible = { ...INSPECT, snapshot: { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] } }
-    const originalFetch = globalThis.fetch
     const calls = []
     let state
-    globalThis.fetch = (url, init) => {
-      calls.push({ url, init })
-      if (url.endsWith('/status')) return Promise.resolve({ json: async () => ({ ok: true, value: { ...STATUS, ...state } }) })
-      if (url.endsWith('/inspect')) return Promise.resolve({ json: async () => ({ ok: true, value: eligible }) })
-      if (url.endsWith('/recover-online')) return Promise.resolve({ json: async () => ({ ok: true, value: { revision: 13 } }) })
-      throw new Error(`unexpected ${url}`)
+    const channelStub = (endpoint, payload) => {
+      calls.push({ endpoint, payload })
+      if (endpoint.endsWith('/status')) return Promise.resolve({ ok: true, value: { ...STATUS, ...state } })
+      if (endpoint.endsWith('/inspect')) return Promise.resolve({ ok: true, value: eligible })
+      if (endpoint.endsWith('/recover-online')) return Promise.resolve({ ok: true, value: { revision: 13 } })
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected ${endpoint}` } })
     }
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-    try {
+    {
       for (const locale of [en, zh]) {
         for (const [name, patch, online] of [
           ['disabled', { state: 'disabled', saved: false, mounted: false }, false],
@@ -475,11 +472,11 @@ describe('client.edit-lock-maintenance chunk', () => {
         ]) {
           reactStub.reset()
           state = patch
-          const render = () => { reactStub.begin(); return renderTree(exports.EditLockMaintenanceField({ t: (key) => locale[key] ?? key })) }
+          const render = () => { reactStub.begin(); return renderTree(exports.EditLockMaintenanceField({ t: (key) => locale[key] ?? key, channel: channelStub })) }
           render().children[0].children[1].onClick()
           await flush()
           let tree = render()
-          expect(calls.some((call) => call.url.endsWith('/inspect')), `${name} inspection`).toBe(true)
+          expect(calls.some((call) => call.endpoint.endsWith('/inspect')), `${name} inspection`).toBe(true)
           const text = JSON.stringify(tree)
           if (!online) {
             expect(text.includes(name === 'unknown' ? locale.editLockMaintUnknownRisk : locale.editLockMaintOffRisk), `${name} unprotected warning`).toBe(true)
@@ -502,17 +499,17 @@ describe('client.edit-lock-maintenance chunk', () => {
             tree = render()
             expect(JSON.stringify(tree).includes(historyLabel)).toBe(true)
             expect(collect(tree, (node) => node.children === locale.editLockMaintRecoverConfirm)).toHaveLength(0)
-            expect(calls.filter((call) => call.url.endsWith('/recover-online'))).toHaveLength(0)
+            expect(calls.filter((call) => call.endpoint.endsWith('/recover-online'))).toHaveLength(0)
           } else {
             expect(collect(tree, (node) => node.children === 'Force release' && typeof node.onClick === 'function')).toHaveLength(1)
             collect(tree, (node) => node.children === 'Force release')[0].onClick()
             await flush()
-            expect(calls.filter((call) => call.url.endsWith('/recover-online')).length).toBeGreaterThan(0)
+            expect(calls.filter((call) => call.endpoint.endsWith('/recover-online')).length).toBeGreaterThan(0)
           }
           calls.length = 0
         }
       }
-    } finally { globalThis.fetch = originalFetch }
+    }
   })
   it('chunk confirmation algorithm matches the server byte-for-byte, and eligibility mirrors the manager', async () => {
     const { exports } = await loadPanel()
@@ -649,18 +646,16 @@ describe('client.edit-lock-maintenance chunk', () => {
         ],
       },
     }
-    const fetchCalls = []
-    const fetchStub = (url, init) => {
-      fetchCalls.push({ url, init })
-      if (url === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ json: async () => ({ ok: true, value: STATUS }) })
-      if (url === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ json: async () => ({ ok: true, value: incident }) })
-      if (url === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ json: async () => ({ ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }) })
-      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    const channelCalls = []
+    const channelStub = (endpoint, payload) => {
+      channelCalls.push({ endpoint, payload })
+      if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+      if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: incident })
+      if (endpoint === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } })
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
     }
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = fetchStub
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-    const props = { t: (key) => key }
+    const props = { t: (key) => key, channel: channelStub }
     const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField(props)) }
     try {
       const initial = render()
@@ -668,9 +663,9 @@ describe('client.edit-lock-maintenance chunk', () => {
       await flush()
       const opened = render()
       // Opening alone runs the read-only inspection — no manual step.
-      const inspectCalls = fetchCalls.filter((entry) => entry.url === 'api/weir-edit-lock/maintenance/inspect')
+      const inspectCalls = channelCalls.filter((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/inspect')
       expect(inspectCalls).toHaveLength(1)
-      expect(JSON.parse(inspectCalls[0].init.body)).toEqual({ root: '/work/repo' })
+      expect(inspectCalls[0].payload).toEqual({ root: '/work/repo' })
       // Blocked zone (top): the header, the file with holder and holder state,
       // and the one primary force-release action per row.
       expect(collect(opened, (node) => node.children === 'Blocked files — one-click force release')).toHaveLength(1)
@@ -688,8 +683,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       force[0].onClick()
       await flush()
       await flush()
-      const call = fetchCalls.find((entry) => entry.url === 'api/weir-edit-lock/maintenance/recover-online')
-      const body = JSON.parse(call.init.body)
+      const body = channelCalls.find((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/recover-online').payload
       expect(body.root).toBe('/work/repo')
       expect(body.owner).toBe('sess-1')
       expect(body.expectedRevision).toBe(12)
@@ -697,7 +691,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(body.acceptLateWriterRisk).toBe(true)
       expect(body.confirmation).toBe(editLockRecovery.recoveryConfirmation({ root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] }))
     } finally {
-      globalThis.fetch = originalFetch
+      // nothing to restore: the channel arrives as a prop
     }
   })
 })
