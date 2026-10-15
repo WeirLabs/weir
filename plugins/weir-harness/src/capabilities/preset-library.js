@@ -3,6 +3,8 @@
 import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { isSegment } from './store/paths.js'
+import { createSkillIdentity, skillIdentityKey } from './skill-identity.js'
+import { createMcpRegistry } from './mcp-registry.js'
 
 export const PRESET_SCHEMA_VERSION = 1
 
@@ -165,4 +167,249 @@ export function createPresetLibrary({ store }) {
     return { status: 'ok', document: { version: PRESET_SCHEMA_VERSION, scope, presetId, ...loaded.document } }
   }
   return { load, create, edit, rename, resave, remove, exportPreset, withNamespace, unitOf }
+}
+
+// ---- /capabilities preset verbs (capabilities-deepening D2) -----------------
+// The seven preset-verb bodies of the /capabilities command, moved verbatim
+// out of the handler into the module that owns the preset contract (the CAS
+// read-modify-write and the created/edited/deleted/revision-conflict/
+// name-conflict status values above). Per-invocation state arrives through
+// the `call` argument ({ agent, options }); everything the handler used to
+// close over is injected in `wiring` — including the payload builders and the
+// v2 packer, so this module keeps its import graph acyclic (read-payloads.js
+// and preset-package.js both import from here, never the reverse).
+
+/** Shared scope validation for the preset verbs (command-surface text). */
+export const presetScopeError = spec => (spec?.scope !== 'global' && spec?.scope !== 'workspace')
+  ? { kind: 'error', text: `capabilities: scope must be "global" | "workspace", got ${JSON.stringify(spec?.scope ?? null)}` }
+  : null
+
+/** The shared no-workspace command result (the historical shape: kind error). */
+export const noWorkspaceError = () => ({ kind: 'error', text: JSON.stringify({ status: 'no-workspace' }) })
+
+/**
+ * The draft branch of the save-time set resolution: the client-supplied
+ * arrays, normalized. (from:'applied' never takes this branch — its sets are
+ * server-authoritative.)
+ */
+export const draftSelectionSets = spec => ({
+  skills: Array.isArray(spec.skills) ? spec.skills : [],
+  mcpServers: Array.isArray(spec.mcpServers) ? spec.mcpServers : [],
+  unresolvedRefs: Array.isArray(spec.unresolvedRefs) ? spec.unresolvedRefs : [],
+})
+
+const message = error => (error instanceof Error ? error.message : String(error))
+
+/**
+ * The /capabilities preset verb bodies. `wiring` is the handler's former
+ * closure surface, injected explicitly:
+ * @param {{
+ *   openStore: () => any,
+ *   provider: any,
+ *   inventory: (options: any) => Promise<any>,
+ *   lifecycle: any,
+ *   builders: { buildPresetsPayload: Function, buildReceiptPayload: Function },
+ *   packPresetPackage: Function,
+ * }} wiring
+ */
+export function createPresetVerbs(wiring) {
+  /**
+   * Applied preset writers share one locked source proof. The library
+   * enters this callback only under its namespace guard, and holds the
+   * selection lock until the target unit CAS has finished.
+   */
+  const appliedPresetSource = (spec, sets, store, agent, options) => commit => store.withSelectionSnapshot(agent.id, async current => {
+    if (!Number.isSafeInteger(spec.expectedSelectionRevision) || spec.expectedSelectionRevision < 0
+      || typeof spec.expectedSelectionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(spec.expectedSelectionDigest)
+      || current.revision !== spec.expectedSelectionRevision) return { status: 'source-changed', revision: current.revision }
+    const receipt = await wiring.builders.buildReceiptPayload({ provider: wiring.provider, lifecycle: wiring.lifecycle, store }, options)
+    const effective = receipt.effective
+    const selected = effective.skillIdentities
+    const raw = current.kind === 'ok' ? current.payload?.skills : null
+    if (current.kind === 'ok') {
+      const rawKeys = new Set()
+      const effectiveKeys = new Set(selected.map(skillIdentityKey))
+      const missing = []
+      for (const identity of Array.isArray(raw) ? raw : []) {
+        try {
+          const key = skillIdentityKey(createSkillIdentity(identity))
+          rawKeys.add(key)
+          if (!effectiveKeys.has(key)) missing.push(identity.name)
+        } catch { missing.push(String(identity?.name ?? identity ?? 'unknown')) }
+      }
+      if (!Array.isArray(raw) || missing.length || rawKeys.size !== selected.length || receipt.warnings.length) {
+        return { status: 'source-unavailable', missing, reason: receipt.warnings[0] ?? 'Selected Skills are not completely available' }
+      }
+      if (!Array.isArray(current.payload?.mcpServers)
+        || JSON.stringify(current.payload.mcpServers) !== JSON.stringify(effective.mcpServers)) {
+        return { status: 'source-unavailable', missing: [], reason: 'Applied MCP snapshot is unavailable' }
+      }
+    } else if (receipt.warnings.length) return { status: 'source-unavailable', missing: [], reason: receipt.warnings[0] }
+    // Provider enumeration can short-circuit an empty selection.
+    const observed = await wiring.inventory(options)
+    if (observed?.complete !== true) return { status: 'source-unavailable', missing: [], reason: 'Skill inventory is incomplete' }
+    if (effective.digest !== spec.expectedSelectionDigest || receipt.revision !== current.revision) {
+      return { status: 'source-changed', revision: current.revision }
+    }
+    sets.skills.push(...selected)
+    sets.mcpServers.push(...effective.mcpServers)
+    return commit()
+  })
+
+  /** presets: thin shell over the shared builder. */
+  async function presets(_spec, call) {
+    // Thin shell over the shared builder (read-payloads.js): domain failures
+    // stay JSON status text (the panel categorizes them); the remote resolves
+    // the same object as a plain value.
+    try {
+      const payload = await wiring.builders.buildPresetsPayload({ store: wiring.openStore() }, call.options)
+      if (typeof payload.status === 'string') return { kind: 'error', text: JSON.stringify(payload) }
+      return { kind: 'success', text: JSON.stringify(payload) }
+    } catch (cause) {
+      return { kind: 'error', text: `capabilities presets failed: ${message(cause)}` }
+    }
+  }
+
+  /** preset-save / preset-rename / preset-resave (one shared body, per action). */
+  async function presetSaveLike(action, spec, call) {
+    try {
+      const scopeError = presetScopeError(spec)
+      if (scopeError) return scopeError
+      const workspaceKey = workspaceKeyOf(call.options)
+      if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspaceError()
+      const library = createPresetLibrary({ store: wiring.openStore() })
+      if (action === 'preset-rename' || action === 'preset-resave') {
+        if (!isSegment(spec.presetId)) return { kind: 'error', text: `${action}: invalid presetId` }
+        if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 1) return { kind: 'error', text: `${action}: expectedRevision must be positive` }
+        if (action === 'preset-rename') {
+          const result = await library.rename({ scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision, name: spec.name })
+          return { kind: 'success', text: JSON.stringify(result) }
+        }
+        if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-resave: from must be draft or applied' }
+        if (spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
+          return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
+        }
+        const store = wiring.openStore()
+        const sets = spec.from === 'applied' ? { skills: [], mcpServers: [], unresolvedRefs: [] } : draftSelectionSets(spec)
+        const withSource = spec.from === 'applied' ? appliedPresetSource(spec, sets, store, call.agent, call.options) : undefined
+        const result = await library.resave({
+          scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
+          selection: sets, withSource,
+        })
+        return { kind: 'success', text: JSON.stringify(result) }
+      }
+      if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-save: from must be draft or applied' }
+      if (typeof spec.name !== 'string' || !spec.name.length) return { kind: 'error', text: 'preset-save: name must be non-empty' }
+      if (spec.expectedRevision !== undefined && spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
+        return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
+      }
+      const store = wiring.openStore()
+      const sets = spec.from === 'applied' ? { skills: [], mcpServers: [], unresolvedRefs: [] } : draftSelectionSets(spec)
+      const selection = { skills: sets.skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs }
+      const withSource = spec.from === 'applied' ? appliedPresetSource(spec, sets, store, call.agent, call.options) : undefined
+      if (spec.expectedRevision !== undefined) {
+        if (!isSegment(spec.presetId)) return { kind: 'error', text: 'preset-save: edit needs presetId' }
+        const result = await library.edit({ scope: spec.scope, presetId: spec.presetId, workspaceKey,
+          expectedRevision: spec.expectedRevision, mutate: () => ({ name: spec.name, selection }), withSource })
+        return { kind: 'success', text: JSON.stringify(result) }
+      }
+      const result = await library.create({ scope: spec.scope, presetId: spec.presetId, workspaceKey,
+        document: { name: spec.name, selection }, onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget, withSource })
+      return { kind: 'success', text: JSON.stringify(result) }
+    } catch (cause) {
+      return { kind: 'error', text: `capabilities ${action} failed: ${message(cause)}` }
+    }
+  }
+
+  /** preset-load: load one preset document; the client stages its selection. */
+  async function presetLoad(spec, call) {
+    try {
+      const scopeError = presetScopeError(spec)
+      if (scopeError) return scopeError
+      if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-load: presetId must be a valid store segment' }
+      const workspaceKey = workspaceKeyOf(call.options)
+      if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspaceError()
+      const library = createPresetLibrary({ store: wiring.openStore() })
+      const loaded = await library.load(spec.scope, spec.presetId, workspaceKey)
+      if (loaded.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: loaded.kind }) }
+      return { kind: 'success', text: JSON.stringify({ status: 'ok', revision: loaded.revision, document: loaded.document }) }
+    } catch (cause) {
+      return { kind: 'error', text: `capabilities preset-load failed: ${message(cause)}` }
+    }
+  }
+
+  /** preset-delete: delete under CAS; a stale revision conflicts. */
+  async function presetDelete(spec, call) {
+    try {
+      const scopeError = presetScopeError(spec)
+      if (scopeError) return scopeError
+      if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-delete: presetId must be a valid store segment' }
+      if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 0) {
+        return { kind: 'error', text: 'capabilities preset-delete: expectedRevision must be a non-negative integer' }
+      }
+      const workspaceKey = workspaceKeyOf(call.options)
+      if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspaceError()
+      const library = createPresetLibrary({ store: wiring.openStore() })
+      const result = await library.remove({ scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision })
+      return { kind: 'success', text: JSON.stringify(result) }
+    } catch (cause) {
+      return { kind: 'error', text: `capabilities preset-delete failed: ${message(cause)}` }
+    }
+  }
+
+  /**
+   * preset-export: format:'document' is the v1 portable document (verbatim
+   * via library.exportPreset — inspect/backup); the default 'package' is the
+   * D6 version-2 package: remote Skills as portable refs, workspace/local
+   * Skills as bundled content, builtin Skills by name, managed MCP as
+   * {identity,label}.
+   */
+  async function presetExport(spec, call) {
+    try {
+      const scopeError = presetScopeError(spec)
+      if (scopeError) return scopeError
+      if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-export: presetId must be a valid store segment' }
+      const format = spec.format ?? 'package'
+      if (format !== 'package' && format !== 'document') {
+        return { kind: 'error', text: 'capabilities preset-export: format must be "package" | "document"' }
+      }
+      const workspaceKey = workspaceKeyOf(call.options)
+      if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspaceError()
+      const library = createPresetLibrary({ store: wiring.openStore() })
+      if (format === 'document') {
+        const exported = await library.exportPreset(spec.scope, spec.presetId, workspaceKey)
+        return { kind: 'success', text: JSON.stringify(exported) }
+      }
+      const loaded = await library.load(spec.scope, spec.presetId, workspaceKey)
+      if (loaded.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: loaded.kind }) }
+      // Pack against the live inventory (Skill file content comes from the
+      // matched candidates' locators) and the managed registry (MCP labels).
+      const inventoryResult = await wiring.inventory(call.options)
+      const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+      const registry = createMcpRegistry({ store: wiring.openStore() })
+      const record = await registry.read()
+      /** @type {Record<string, string>} */
+      const labels = {}
+      if (record.kind === 'ok') for (const entry of Object.values(record.servers)) labels[entry.identity] = entry.label
+      const source = /** @type {Record<string, unknown>} */ (loaded.document ?? {})
+      const packed = await wiring.packPresetPackage({ name: source.name, selection: source.selection }, {
+        candidates,
+        mcpLabels: identity => labels[identity],
+      })
+      if (!packed.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: packed.reason }) }
+      return { kind: 'success', text: JSON.stringify({ status: 'ok', format: 'package', document: packed.package }) }
+    } catch (cause) {
+      return { kind: 'error', text: `capabilities preset-export failed: ${message(cause)}` }
+    }
+  }
+
+  return {
+    presets,
+    'preset-save': (spec, call) => presetSaveLike('preset-save', spec, call),
+    'preset-rename': (spec, call) => presetSaveLike('preset-rename', spec, call),
+    'preset-resave': (spec, call) => presetSaveLike('preset-resave', spec, call),
+    'preset-load': presetLoad,
+    'preset-delete': presetDelete,
+    'preset-export': presetExport,
+  }
 }
