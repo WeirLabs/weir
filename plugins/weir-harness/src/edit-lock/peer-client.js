@@ -1,3 +1,4 @@
+import { asBindingFailure } from './binding-guidance.js'
 import { canonicalRequestData } from './request-data.js'
 import { PEER_KINDS } from './peer.js'
 
@@ -39,15 +40,21 @@ export function createEditLockPeerClient(stream, hooks = {}) {
         try { hooks.onEvent?.(message.event) } catch { /* notices never imply consent */ }
         continue
       }
+      const frameKeys = !message || typeof message !== 'object' ? '' : Object.keys(message).sort().join(',')
+      // The error frame carries the structured binding refusal as an additive
+      // optional field (change edit-lock-deepening, design D2).
       if (!message || typeof message.callId !== 'string' || typeof message.ok !== 'boolean'
-        || Object.keys(message).sort().join(',') !== (message.ok ? 'callId,ok,outcome' : 'callId,error,ok')
+        || (message.ok ? frameKeys !== 'callId,ok,outcome' : frameKeys !== 'callId,error,ok' && frameKeys !== 'bindingFailure,callId,error,ok')
         || (!message.ok && typeof message.error !== 'string')) { close(); return }
       const entry = pending.get(message.callId)
       if (!entry) { close(); return }
       pending.delete(message.callId)
       entry.cleanup()
       if (message.ok) entry.resolve(message.outcome)
-      else entry.reject(new Error(message.error))
+      else {
+        const failure = asBindingFailure(message.bindingFailure)
+        entry.reject(Object.assign(new Error(message.error), failure ? { bindingFailure: failure } : {}))
+      }
     }
   }
   stream.on('data', receive)

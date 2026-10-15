@@ -6,6 +6,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createChannelBindingArbitration, createRemoteEditLockDomain, serveEditLockEndpoint } from '../src/edit-lock/remote.js'
+import { bindingRefusal } from '../src/edit-lock/binding-guidance.js'
 import { openEditLockRuntime } from '../src/edit-lock/runtime.js'
 import { createEditLockLifecycle } from '../src/edit-lock/lifecycle.js'
 import { fixtureEndpoint } from './helpers/edit-lock-fixtures.js'
@@ -275,11 +276,14 @@ test('client failure split: an open request that dies unanswered keeps the unrea
 test('client failure split: an answered duplicate refusal that heals inside the retry window still binds', async () => {
   const { directory } = await fixture()
   const endpoint = fixtureEndpoint(directory)
-  // Two refusals (the earlier channel's death is still in flight), then admission.
+  // Two structured refusals (the earlier channel's death is still in flight),
+  // then admission. The retry budget classifies on the structured field, never
+  // on the text (change edit-lock-deepening): a real lifecycle refusal always
+  // carries the minted bindingFailure.
   let starts = 0
   const lifecycle = {
     service: {},
-    start: async () => { starts++; if (starts <= 2) throw new Error('session already bound'); return 'active' },
+    start: async () => { starts++; if (starts <= 2) throw bindingRefusal(process.pid, 'unknown'); return 'active' },
     forget: async () => {},
   }
   const server = await serveEditLockEndpoint(/** @type {any} */ (lifecycle), endpoint, new WeakMap())
