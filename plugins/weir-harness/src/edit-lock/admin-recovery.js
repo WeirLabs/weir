@@ -6,7 +6,8 @@ import { createHash } from 'node:crypto'
 import { reservePublisher } from './reservation.js'
 import { openEditLockStore } from './store.js'
 import { canonical, parseSnapshot, validateImage } from './snapshot.js'
-import { administrativeState, digest, dispositionFor, LATE_WRITER_RISK } from './admin-ledger.js'
+import { administrativeState, digest, LATE_WRITER_RISK } from './admin-ledger.js'
+import { dispositionFor } from './derived-facts.js'
 
 export const MAX_RECOVERY_BYTES = 16 * 1024 * 1024
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')

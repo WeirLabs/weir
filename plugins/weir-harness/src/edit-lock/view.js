@@ -10,6 +10,7 @@
  * in `technical` and per-lock `detail`, for the expandable detail only.
  */
 import { isAbsolute, relative, sep } from 'node:path'
+import { revokedOwner, settleHoldFacts } from './derived-facts.js'
 
 /** Session states the panel renders, in precedence order. */
 export const VIEW_STATES = Object.freeze(['revoked', 'unavailable', 'stopped', 'attention', 'confirm', 'holding', 'editing', 'idle'])
@@ -140,21 +141,19 @@ export function buildColdView({ image, sessionId, cwd, root, autoResume = true, 
   const locks = (Array.isArray(image?.locks) ? image.locks : []).filter(lock => lock !== null && typeof lock === 'object')
   const holds = Array.isArray(image?.holds) ? image.holds : []
   const recoveries = Array.isArray(image?.recovery) ? image.recovery : []
-  const adminRecoveries = Array.isArray(image?.adminRecoveries) ? image.adminRecoveries : []
   const session = sessions.find(row => row?.sessionId === sessionId) ?? null
   // The manager derives the revoked flag from the administrative ledger at
-  // status time (revokedOwner); the cold read applies the same rule to the image.
-  const revoked = session != null && adminRecoveries.some(row => row?.owner === sessionId && Number.isSafeInteger(row?.revokedEpoch) && session.executionEpoch <= row.revokedEpoch)
-  // Read-time retention settlement, byte-equivalent to the kernel's settleHold:
-  // a hold counts only while the session owns a lock, and the remaining budget
-  // is computed against the read instant, so a missed expiry timer can never
-  // leave stale ownership behind a status read.
+  // status time (revokedOwner); the cold read applies the SAME shared rule in
+  // its deliberately tolerant partial mode (design D1).
+  const revoked = revokedOwner(image, sessionId, { partial: true })
+  // Read-time retention settlement through the shared derived fact (design D5,
+  // partial mode — byte-equivalent to the kernel's settleHold): a hold counts
+  // only while the session owns a lock, and the remaining budget is computed
+  // against the read instant, so a missed expiry timer can never leave stale
+  // ownership behind a status read. No hold row settles to no retention (null).
   const held = holds.find(row => row?.sessionId === sessionId) ?? null
   const owns = locks.some(lock => lock.owner === sessionId)
-  const remainingMs = held?.holdUntil == null ? 0 : Math.max(0, held.holdUntil - now)
-  const holding = held?.holding === true && owns
-  const retention = held ? { sessionId, held: holding, expired: holding && held.holdUntil !== null && remainingMs === 0,
-    holdUntil: held.holdUntil, remainingMs, holdCumulativeMs: held.holdCumulativeMs } : null
+  const retention = held ? settleHoldFacts(sessionId, held, owns, now, { partial: true }) : null
   const status = {
     sessionId,
     // Interrupted records a stopped session (a restarted host interrupts every

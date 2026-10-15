@@ -8,14 +8,32 @@ export function bindingRefusalReason(pid, attestation) {
   return `session already bound: holder=${holder}${pid !== undefined ? `; pid=${pid}` : ''}`
 }
 
-/** Render only publisher-classified facts. Unrecognized/legacy reasons are unknown.
- * @param {string} sessionId @param {string} reason */
-export function bindingGuidance(sessionId, reason) {
-  const facts = /^session already bound: holder=(serving-idle|serving|same-process-unattestable|cross-process-pid|unknown)(?:; pid=([1-9]\d*))?$/.exec(reason)
-  const classification = facts?.[1]
-  const pid = facts?.[2]
+/** The wire/minted holder classes. */
+const HOLDER_KINDS = Object.freeze(['revocation-failed', 'serving', 'transferable', 'cross-process', 'unknown'])
+
+/** Validate a structured binding refusal — exactly the minted four-field
+ * shape crosses the wire or reaches a classifier; anything else degrades to
+ * the text channel (display only, never a decision input).
+ * @param {unknown} value @returns {{code: 'binding-duplicate', retryable: true, holderKind: string, holderPid: number | null} | undefined} */
+export function asBindingFailure(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (Object.keys(value).sort().join(',') !== 'code,holderKind,holderPid,retryable') return undefined
+  const { code, retryable, holderKind, holderPid } = /** @type {any} */ (value)
+  if (code !== 'binding-duplicate' || retryable !== true || !HOLDER_KINDS.includes(holderKind)) return undefined
+  if (holderPid !== null && !(Number.isSafeInteger(holderPid) && holderPid > 0)) return undefined
+  return { code, retryable, holderKind, holderPid }
+}
+
+/** Render only publisher-classified facts — the STRUCTURED bindingFailure,
+ * never a re-parse of the display text (spec: presentation must not infer
+ * state by matching human-readable text; change edit-lock-deepening D2).
+ * Unrecognized or missing structure renders as unknown.
+ * @param {string} sessionId @param {any} failure */
+export function bindingGuidance(sessionId, failure) {
+  const classification = failure?.code === 'binding-duplicate' ? failure?.holderKind : undefined
+  const pid = typeof failure?.holderPid === 'number' ? failure.holderPid : undefined
   let holder
-  if (classification === 'serving-idle') {
+  if (classification === 'transferable') {
     // Transferable (change edit-lock-binding-transfer): an idle same-process
     // holder is taken over by the next driving ingress — calm copy, no pid,
     // no window hunt, and NEVER the publisher-reservation warning.
@@ -25,14 +43,14 @@ export function bindingGuidance(sessionId, reason) {
     // channel proxy): name what is happening and when to retry. No window
     // hunt (single-instance hosts exist) and no process management.
     holder = `session ${sessionId} is being edited in another attachment right now. Wait for that turn to finish, then use /edit-lock retry in this session; retry does not Continue editing.`
-  } else if (classification === 'same-process-unattestable' && pid !== undefined) {
+  } else if (classification === 'unknown' && pid !== undefined) {
     holder = `session ${sessionId} has a binding in this same process (pid ${pid}) that cannot be safely reclaimed. A stale runtime incarnation may still hold its channel. Wait for the original holder to disconnect or for confirmed process shutdown.`
-  } else if (classification === 'cross-process-pid' && pid !== undefined) {
+  } else if (classification === 'cross-process' && pid !== undefined) {
     holder = `session ${sessionId} has a binding held by process pid ${pid}. Quit that holder process or disconnect the original holder, and wait for confirmation.`
   } else {
     holder = `session ${sessionId} has a binding whose holder cannot be attested. Wait for the original holder to disconnect or for confirmed process shutdown.`
   }
-  if (classification === 'serving-idle' || classification === 'serving') return holder
+  if (classification === 'transferable' || classification === 'serving') return holder
   return `${holder} Then use /edit-lock retry in the original session when available; retry does not Continue editing. Do NOT remove the publisher reservation (.weir/.edit-lock.publisher-reservation) while its process is alive — removing it would split the edit authority.`
 }
 

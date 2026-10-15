@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { openEditLockStore } from '../src/edit-lock/store.js'
 import { createEditLockManager, recoverEditLockManager } from '../src/edit-lock/manager.js'
 import { recoverAuthority, recoveryConfirmation } from '../src/edit-lock/admin-recovery.js'
-import { revokedOwner } from '../src/edit-lock/admin-ledger.js'
+import { revokedOwner } from '../src/edit-lock/derived-facts.js'
 import { validateImage } from '../src/edit-lock/snapshot.js'
 
 const roots = []

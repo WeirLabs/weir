@@ -1,3 +1,4 @@
+import { asBindingFailure } from './binding-guidance.js'
 import { canonicalRequestData } from './request-data.js'
 
 /** Attach ONLY an authenticated, host-owned byte stream. Never accepts public
@@ -54,7 +55,12 @@ export function serveEditLockPeer(stream, peer) {
       const callId = request.callId
       void peer.receive(request).then(
         outcome => { try { send({callId, ok:true, outcome:outcome ?? null}) } catch { close() } },
-        error => { try { send({callId, ok:false, error:String(error?.message ?? error).slice(0,4096)}) } catch { close() } },
+        error => {
+          // The wire carries the structured binding refusal additively (change
+          // edit-lock-deepening, design D2); the text stays for display.
+          const failure = asBindingFailure(/** @type {any} */ (error)?.bindingFailure)
+          try { send({ callId, ok: false, error: String(/** @type {any} */ (error)?.message ?? error).slice(0, 4096), ...(failure ? { bindingFailure: failure } : {}) }) } catch { close() }
+        },
       )
     }
   }

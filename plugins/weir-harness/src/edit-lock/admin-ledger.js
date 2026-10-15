@@ -2,6 +2,7 @@
 // of publication outcome or old-writer quiescence. It lives in the atomic image.
 import { createHash } from 'node:crypto'
 import { canonical } from './snapshot.js'
+import { revokedOwner } from './derived-facts.js'
 import { expectedRegistry, isRegistryUpgrade } from './incarnations.js'
 
 export const LATE_WRITER_RISK = 'Detached historic writers may still modify files after this override.'
@@ -12,17 +13,13 @@ export const ONLINE_RECOVERY_ACTOR = 'online-administrator'
  * settlement (design D3) are the only writers. */
 const ACTORS = ['authenticated-settings-administrator', AUTOMATIC_RECOVERY_ACTOR, ONLINE_RECOVERY_ACTOR]
 export const digest = value => createHash('sha256').update(canonical(value)).digest('hex')
-export const dispositionFor = (state, op) => state.adminRecoveries?.find(row => row.owner === op.sessionId && row.operations.some(item => item.operationId === op.operationId))
-/** Epoch-scoped revocation: a disposition revokes its owner's execution
- * authority exactly at the recorded revokedEpoch. The owner stays revoked
- * while its recorded epoch is within it; a trusted resume advances the epoch
- * past every revokedEpoch and ends the revoked state atomically, without any
- * ledger change (append-only: dispositions are never removed or altered). */
-export const revokedOwner = (state, owner) => {
-  const session = state.sessions?.find(s => s.sessionId === owner)
-  if (!session) return false
-  return state.adminRecoveries?.some(row => row.owner === owner && session.executionEpoch <= row.revokedEpoch) === true
-}
+// Epoch-scoped revocation (`revokedOwner`) and the disposition lookup
+// (`dispositionFor`) live in derived-facts.js (change edit-lock-deepening,
+// design D1) — one pure home shared by the manager status path, the cold view
+// and the inspector; `revokedOwner` is imported above for this module's own
+// validation. The re-export keeps existing external importers working (the
+// integration scenario child imports dispositionFor from this module).
+export { dispositionFor, revokedOwner } from './derived-facts.js'
 
 function requireThat(condition, message) { if (!condition) throw new Error(`invalid administrative recovery: ${message}`) }
 function keys(value, names) {

@@ -227,10 +227,12 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
         ? (/** @type {any} */ (prior[0]).remote !== true && holderStatus(prior[0]) === 'idle' ? 'serving-idle' : 'serving')
         : 'unknown'
       const refusal = () => {
-        const reason = bindingRefusalReason(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, attestation)
+        const pid = /** @type {any} */ (prior[0]).remote === true ? undefined : process.pid
+        const reason = bindingRefusalReason(pid, attestation)
+        const failure = bindingFailure(pid, attestation)
         // Remote callers render after their retry budget; local callers have no wire.
-        return Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`),
-          { bindingFailure: bindingFailure(/** @type {any} */ (prior[0]).remote === true ? undefined : process.pid, attestation) })
+        return Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, failure)}`),
+          { bindingFailure: failure })
       }
       // Remote entries are channel proxies, NOT runtime identities. Only the
       // endpoint's nonce attestation may reclaim them (including same-process).
@@ -294,8 +296,9 @@ export function createEditLockLifecycle(runtime, sessionForAgent, options = {}) 
       // re-attempts the transfer.
       return forget(prior[0]).then(() => start(agent), () => {
         const reason = bindingRefusalReason(process.pid, 'serving-idle')
-        throw Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, reason)}`),
-          { bindingFailure: bindingFailure(process.pid, 'serving-idle') })
+        const failure = bindingFailure(process.pid, 'serving-idle')
+        throw Object.assign(new Error(/** @type {any} */ (agent).remote === true ? reason : `${reason}: ${bindingGuidance(sessionId, failure)}`),
+          { bindingFailure: failure })
       })
     }
     return start(agent)

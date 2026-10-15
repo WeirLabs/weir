@@ -4,11 +4,11 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createChannelBindingArbitration } from '../src/edit-lock/remote.js'
-import { bindingGuidance, bindingRefusalReason } from '../src/edit-lock/binding-guidance.js'
+import { bindingFailure, bindingGuidance, bindingRefusalReason } from '../src/edit-lock/binding-guidance.js'
 import { createEditLockEvidence, maintenanceStatus, registerEditLockMaintenanceEndpoints } from '../src/edit-lock/maintenance.js'
 
 test('binding guidance names holder-side proof and explicit retry rather than requiring restart', () => {
-  const text = bindingGuidance('s', bindingRefusalReason(process.pid, 'unknown'))
+  const text = bindingGuidance('s', bindingFailure(process.pid, 'unknown'))
   assert.match(text, /original holder.*disconnect/)
   assert.match(text, /edit-lock retry/)
   assert.doesNotMatch(text, /Restart DeepSeek Harness to recover/)
@@ -26,7 +26,7 @@ for (const [label, pid, state, expected, excluded, reservation] of [
 ]) test(`duplicate-binding guidance: ${label}`, () => {
   const reason = bindingRefusalReason(pid, state)
   assert.doesNotMatch(reason, /Restart|reservation|window/)
-  const text = bindingGuidance('session-1', reason)
+  const text = bindingGuidance('session-1', bindingFailure(pid, state))
   assert.match(text, expected)
   assert.doesNotMatch(text, excluded)
   if (reservation) assert.match(text, /Do NOT remove the publisher reservation.*while its process is alive/)
@@ -34,13 +34,15 @@ for (const [label, pid, state, expected, excluded, reservation] of [
 })
 
 test('guidance trusts publisher classification, not the rendering process pid', () => {
-  const text = bindingGuidance('s', `session already bound: holder=cross-process-pid; pid=${process.pid}`)
+  const text = bindingGuidance('s', { code: 'binding-duplicate', retryable: true, holderKind: 'cross-process', holderPid: process.pid })
   assert.match(text, /Quit that holder process/)
   assert.doesNotMatch(text, /same process/)
-  const same = bindingGuidance('s', 'session already bound: holder=same-process-unattestable; pid=123')
+  const same = bindingGuidance('s', { code: 'binding-duplicate', retryable: true, holderKind: 'unknown', holderPid: 123 })
   assert.match(same, /same process.*pid 123/)
-  for (const reason of ['session already bound', 'session already bound: holder=future', 'session already bound: holder=cross-process-pid; pid=oops']) {
-    assert.match(bindingGuidance('s', reason), /holder cannot be attested/)
+  // Missing or unrecognized structure renders as unknown — never a re-parse
+  // of the display text (change edit-lock-deepening: the regex is deleted).
+  for (const failure of [undefined, null, {}, { code: 'other', holderKind: 'serving' }, { code: 'binding-duplicate' }, { code: 'binding-duplicate', holderKind: 'future' }, { code: 'binding-duplicate', holderKind: 'cross-process', holderPid: null }]) {
+    assert.match(bindingGuidance('s', failure), /holder cannot be attested/)
   }
 })
 

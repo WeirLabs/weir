@@ -17,7 +17,8 @@ import { openReservedEditLockRuntime } from './reserved-runtime.js'
 import { reservationPathFor } from './reservation.js'
 import { createEditLockLifecycle } from './lifecycle.js'
 import { installEditLockWriteScope } from './tool-scope.js'
-import { disposeWriteScope, writeScopesFor } from './write-scopes.js'
+import { writeScopesFor } from './write-scopes.js'
+import { createBindingMachine } from './binding-machine.js'
 import { createResourceIdentity } from './resource-identity.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { isGenuineUserMessage } from '../shared/runtime-messages.js'
@@ -333,21 +334,9 @@ function describe(status) {
   return lines.join('\n')
 }
 
-/** In-session binding-failure notice copy (change edit-lock-binding-transfer,
- * design D4): the transferable class (same-process idle holder) is a calm
- * self-heal announcement rather than an editing-disabled alarm and never
- * carries the raw holder classification or the reservation warning; a mid-turn
- * holder names the real state and the retry moment. Template layer stays
- * English (AGENTS §3.7). @param {string} reason @param {any} failure */
-function bindingFailureNotice(reason, failure) {
-  if (failure?.code === 'binding-duplicate' && failure.holderKind === 'transferable') {
-    return "Edit Lock: this session's editing authority is held by an inactive attachment of this same session; it transfers automatically when you send a message."
-  }
-  if (failure?.code === 'binding-duplicate' && failure.holderKind === 'serving') {
-    return "Edit Lock: this session is being edited in another attachment right now; managed file editing stays unavailable until that turn finishes. Do not retry the failed edit; use /edit-lock retry (or the panel's Retry connection) once it finishes — retry does not Continue editing."
-  }
-  return `Edit Lock could not start this session's edit domain (${reason}); managed file editing is temporarily unavailable. ${failure?.code === 'binding-duplicate' ? 'Do not retry the failed edit: the binding is retried automatically when the user next sends a message, after which editing works normally. Never remove a live publisher reservation.' : 'Inspect Edit Lock maintenance before continuing.'}`
-}
+// The binding-failure notice copy moved with the binding state machine to
+// binding-machine.js (change edit-lock-deepening, design D3) — it renders only
+// inside setupAgentOnce's failure record.
 
 /** Read-only binding-unavailable guidance tail for the tool/service surfaces
  * (domainFor and edit_lock_status), split by the recorded holder class.
@@ -423,9 +412,10 @@ return (ctx, config = {}) => {
     warn: message => ctx.logger?.warn?.(message),
     setTimer: fn => (safeSetTimer(ctx) ?? globalThis.setTimeout)(fn, 0),
   })
-  /** Agents disposed in this mount; their undispatched sweep work cancels.
-   * @type {WeakSet<object>} */
-  const disposedAgents = new WeakSet()
+  // The binding state machine's stores (disposedAgents, startFailures,
+  // bindingFailures, setupInFlight, boundAgents, dispositions,
+  // agentDispositions) live in binding-machine.js and arrive destructured
+  // below (change edit-lock-deepening, design D3).
   /** One queued automatic-recovery summary notice per management root (design
    * D3): delivered to the first agent that finishes domain start, then gone.
    * Shared across sibling mounts with the domain registry (change
@@ -447,19 +437,11 @@ return (ctx, config = {}) => {
   /** Remote channel agents on the publisher side → their notice sink.
    * @type {WeakMap<object, (event: unknown) => void>} */
   const sinks = new WeakMap()
-  /** Why registration failed for an agent, for the panel. @type {WeakMap<object, string>} */
-  const startFailures = new WeakMap()
-  /** Publisher-classified failures, never inferred from text. @type {WeakMap<object, any>} */
-  const bindingFailures = new WeakMap()
   /** Settled domain per bound agent, for synchronous gates. Shared across
    * sibling mounts with the domain registry (design D3): whichever mount
    * hears an event reads the same binding. Assigned with `shared` below.
    * @type {WeakMap<object, any>} */
   let settled
-  /** In-flight setup per agent, shared by every entry point (creation,
-   * preset-switch, catch-up, lazy re-bind) so concurrent callers can never
-   * double-register. @type {WeakMap<object, Promise<void>>} */
-  const setupInFlight = new WeakMap()
   /** `wake` is used only for an ownership request addressed to an idle holder:
    * inject alone would sit unread until the holder's next user message, which is
    * how a request expired unanswered. Interrupted holders are never woken.
@@ -682,6 +664,31 @@ return (ctx, config = {}) => {
    * lost timer (suspend, sleep) only delays the release, never the decision.
    * @type {WeakMap<object, {timer?: any}>} */
   const expiry = new WeakMap()
+  /** A genuine user message asked for the stopped session's automatic resume.
+   * Boolean, consumed once by the next turn's first pre-step (message-driven
+   * auto-resume D1/D6); WeakMap keys die with their agent. @type {WeakMap<object, boolean>} */
+  const pendingAutoResume = new WeakMap()
+  const delegateResumes = new Map()
+  const turnClassifications = new WeakMap()
+  // The per-agent binding state machine (change edit-lock-deepening, design
+  // D3): setup/retry/dispose/startup-diagnostic plus the binding stores,
+  // shared by every entry point below. The remaining wiring reads the same
+  // container objects through these destructured aliases.
+  const {
+    disposedAgents, startFailures, bindingFailures, setupInFlight,
+    boundAgents, dispositions, agentDispositions,
+    setupAgent, retryBinding, disposeAgent, startupFailure,
+  } = createBindingMachine({
+    ctx, sessionOf, GUARDED_TOOLS, options, registry, settled, writeScopes,
+    domainOf, servingRuntime,
+    // Late-bound wiring (ownAgent and the service object are declared below;
+    // the machine dereferences them only when an entry point actually calls).
+    ownAgent: (/** @type {any} */ agent) => ownAgent(agent),
+    installWriteScope: (/** @type {any} */ agent) => ({ owner: service, dispose: installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef) }),
+    evidence, audit, deliverLocal,
+    pendingAutoResume, delegateResumes, turnClassifications, replyTools, expiry, settle,
+    isClosed: () => closed, platformFailure: () => platformFailure,
+  })
   /** @param {any} agent @param {any} domain */
   function armExpiry(agent, domain) {
     const state = expiry.get(agent) ?? {}
@@ -706,27 +713,6 @@ return (ctx, config = {}) => {
       }, Math.min(retention.remainingMs, 2 ** 31 - 1))
       state.timer?.unref?.()
     }).catch((/** @type {any} */ error) => ctx.logger?.warn?.(`edit lock expiry arm failed: ${error?.message ?? error}`))
-  }
-  /** Only this live Agent's diagnostic; no domain reads or startup side effects. @param {any} agent */
-  function startupFailure(agent) {
-    if (platformFailure) return { state: 'unavailable', reason: platformFailure.message, bindingFailure: null }
-    if (!agent || settled.has(agent) || !startFailures.has(agent)) return null
-    let eligible = false
-    try {
-      const serving = servingRuntime(agent.id)
-      eligible = !closed && !disposedAgents.has(agent) && ownAgent(agent)
-        && (serving === agent
-          // The registry names ANOTHER live local agent — the dual-agent defect
-          // this change heals (edit-lock-binding-transfer). The recorded
-          // duplicate-binding failure is still THIS agent's honest panel state:
-          // show it, with its Retry action, instead of hiding behind the ghost's
-          // healthy binding. An empty registry stays hidden (unattestable).
-          || (serving !== undefined && bindingFailures.get(agent)?.code === 'binding-duplicate'))
-    } catch { /* no trusted live identity */ }
-    if (!eligible) return null
-    const failure = bindingFailures.get(agent)
-    return { state: 'unavailable', reason: startFailures.get(agent),
-      bindingFailure: failure ? { ...failure, inFlight: setupInFlight.has(agent) } : null }
   }
   const service = Object.freeze({
     startupFailure,
@@ -817,171 +803,11 @@ return (ctx, config = {}) => {
     if (failure) return { kind: 'deny', reason: `${exec.name} refused: this session has no Edit Lock domain under the current preset generation (setup failed: ${failure}); an automatic re-bind was attempted and did not recover it. Recovery: restart DeepSeek Harness or start a new conversation.` }
     return { kind: 'deny', reason: `${exec.name} is not routed through Edit Lock in this composition; unmanaged file mutation refused.` }
   })
-  const delegateResumes = new Map()
-  const boundAgents = new Map()
-  const turnClassifications = new WeakMap()
-  // Keep the latest incarnation joinable even after synchronous binding cleanup.
-  // Exact-handle waiters retain their own record when a session activates again.
-  const dispositions = new Map()
-  const agentDispositions = new WeakMap()
-  function dispositionFor(agent) {
-    let record = agentDispositions.get(agent)
-    if (!record) {
-      record = Promise.withResolvers()
-      record.promise.catch(() => {}) // emit initiators have no awaiting caller
-      agentDispositions.set(agent, record)
-      dispositions.set(agent.id, record)
-    }
-    return record
-  }
-  /** Per-agent Edit Lock setup, shared by the creation listener, the
-   * preset-switch re-bind, the late-mount catch-up and the guard/acquire lazy
-   * re-bind, so the paths can never diverge. Root selection and successful
-   * startup are separate: explicit binding retry reuses the existing scope
-   * and root, while ordinary entry points never repeat a failed startup.
-   * @param {any} agent @param {boolean} [retry] @param {boolean} [transfer]
-   * transfer (change edit-lock-binding-transfer) marks the driving-ingress
-   * transfer admission: the domain's transferStart re-adjudicates holder
-   * idleness at execution, and the post-bind registry-identity check is
-   * skipped because the registry legitimately still names the idle holder. */
-  async function setupAgentOnce(agent, retry = false, transfer = false) {
-    if (closed || settled.has(agent)) return
-    // No writer scope, root resolution, directory, reservation or session
-    // authority may be installed when the mount preflight failed.
-    if (platformFailure) return
-    if (!registry.rootOf(agent)) try {
-      // A previous generation's managed write survives in the agent's own
-      // scope layer (a preset rebind never disposes own-layer registrations);
-      // retire it first or the scope registry throws duplicate-registration
-      // and the re-bind dies here (design D3).
-      disposeWriteScope(writeScopes, agent)
-      writeScopes.set(agent, { owner: service, dispose: installEditLockWriteScope(agent, ctx, service, sandboxPolicyRef) })
-      registry.bind(agent, options.fixed?.root ?? agent?.session?.header?.cwd)
-    } catch (error) {
-      // The denial itself must never escape: restrict() throws on names the
-      // agent's composition does not know, and an escape from this setup path
-      // is fiber-fatal during a reload (2026-10-05 host crash). Deny only the
-      // guarded tools the agent actually has.
-      try {
-        const known = GUARDED_TOOLS.filter(name => ctx.tools?.get?.(name, agent) !== undefined)
-        if (known.length > 0) agent?.ctx?.tools?.restrict?.({ deny: [...known] })
-      } catch { /* the denial is best-effort; the records below are the visible account */ }
-      // Failure visibility (design D4): the same reason lands in the panel
-      // state, the maintenance evidence, an in-session notice and the durable
-      // audit; the warn stays as the host ring-buffer copy.
-      const reason = String(/** @type {any} */ (error)?.message ?? error)
-      startFailures.set(agent, reason)
-      try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
-      audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, { kind: 'setup-failed', sessionId: sessionOf(agent) ?? null, reason })
-      try { deliverLocal(agent, `Edit Lock is unavailable for this session (${reason}); managed file editing is disabled and the failed edit must not be retried. This failure is not repaired automatically: the user can restart DeepSeek Harness or start a new conversation.`) } catch { /* the audit record is the durable account */ }
-      ctx.logger?.warn?.(`edit lock scope failed; edit tools denied: ${reason}`)
-      return
-    }
-    try {
-      const domain = await domainOf(agent)
-      if (transfer) await domain.transferStart(agent)
-      else if (retry) await domain.retryStart(agent)
-      else await domain.start(agent)
-      if (closed || disposedAgents.has(agent) || (retry && (!ownAgent(agent) || (!transfer && servingRuntime(agent.id) !== agent)))) {
-        await domain.forget(agent)
-        throw new Error('Edit Lock mount changed during binding')
-      }
-      startFailures.delete(agent)
-      bindingFailures.delete(agent)
-      try { evidence?.clearSessionFailure?.(sessionOf(agent)) } catch { /* reporting cannot undo a successful bind */ }
-      // A genuine message from a turn that ran while binding was unavailable
-      // is not a Continue receipt for a later injected wake after connection retry.
-      if (retry) pendingAutoResume.delete(agent)
-      settled.set(agent, domain)
-      boundAgents.set(agent.id, agent)
-      dispositionFor(agent)
-      if (!retry) await delegateResumes.get(agent.id)?.resume(agent, domain)
-    } catch (error) {
-      // Kept so the panel can say WHY editing is unavailable instead of
-      // showing "starting" forever; the notice aligns this catch with the
-      // write-scope failure above.
-      const reason = String(/** @type {any} */ (error)?.message ?? error)
-      startFailures.set(agent, reason)
-      const failure = /** @type {any} */ (error)?.bindingFailure
-      if (failure?.code === 'binding-duplicate') bindingFailures.set(agent, failure)
-      else bindingFailures.delete(agent)
-      try { evidence?.recordSessionFailure?.(sessionOf(agent), reason) } catch { /* reporting only */ }
-      try { deliverLocal(agent, bindingFailureNotice(reason, failure)) } catch { /* the panel record remains */ }
-      ctx.logger?.warn?.(`edit lock registration failed for ${sessionOf(agent)}: ${reason}`)
-    }
-  }
-  /** Concurrent entry points (agent/created, preset-switch, lazy re-bind)
-   * share one in-flight setup per agent; a completed setup short-circuits on
-   * the root binding. @param {any} agent @returns {Promise<void>} */
-  function setupAgent(agent) {
-    const pending = setupInFlight.get(agent)
-    if (pending) return pending
-    if (closed || settled.has(agent) || registry.rootOf(agent)) return Promise.resolve()
-    const inner = setupAgentOnce(agent)
-    const task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
-    setupInFlight.set(agent, task)
-    return task
-  }
-  /** Trusted driving ingresses only: the explicit /edit-lock retry (and panel
-   * action), the message-armed pre-step retry, and the write-guard lazy
-   * re-bind. Same Agent/root/mount; no writer reinstallation. Every attempt
-   * past the eligibility gate is audited — a silently swallowed refusal is a
-   * defect (change edit-lock-binding-transfer, design D3/D5).
-   * @param {any} agent @param {'command' | 'message' | 'write-guard'} [via] */
-  async function retryBinding(agent, via = 'command') {
-    if (closed || disposedAgents.has(agent) || !ownAgent(agent)) throw new Error('Edit Lock retry requires the current live Agent of this mount')
-    if (!registry.rootOf(agent) || bindingFailures.get(agent)?.code !== 'binding-duplicate') throw new Error('Edit Lock startup failure is not eligible for binding retry')
-    const cause = bindingFailures.get(agent)
-    const sessionId = sessionOf(agent) ?? null
-    const root = registry.rootOf(agent) ?? undefined
-    /** @param {string} result @param {Record<string, unknown>} [extra] */
-    const record = (result, extra = {}) => audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, {
-      kind: 'binding-transfer', sessionId, code: cause?.code ?? 'binding-duplicate', result, ...extra,
-    }, { root })
-    // Attestation trichotomy (design D5): the registry naming THIS claimant
-    // keeps the existing superseded rebind; naming ANOTHER live local agent
-    // routes to the transfer admission (holder idleness is re-adjudicated at
-    // execution, publisher-side); an unavailable or empty registry stays
-    // fail-closed — the holder cannot be attested.
-    let serving
-    try { serving = servingRuntime(agent.id) } catch { serving = undefined }
-    if (serving === undefined) {
-      const error = new Error('Edit Lock binding retry refused: the agent registry is unavailable or names no live agent for this session, so the holder cannot be attested. The recorded cause stays; a later retry remains possible.')
-      record('refused', { reason: 'registry-unattestable', detail: error.message })
-      throw error
-    }
-    const transfer = serving !== agent
-    try {
-      let task = setupInFlight.get(agent)
-      if (!task) {
-        const inner = setupAgentOnce(agent, true, transfer)
-        task = inner.finally(() => { if (setupInFlight.get(agent) === task) setupInFlight.delete(agent) })
-        setupInFlight.set(agent, task)
-      }
-      await task
-    } catch (error) {
-      record('refused', { reason: /** @type {any} */ (error)?.bindingFailure?.holderKind ?? 'retry-refused', detail: String(/** @type {any} */ (error)?.message ?? error) })
-      throw error
-    }
-    const failure = startFailures.get(agent)
-    if (failure || !settled.has(agent)) {
-      // setupAgentOnce records instead of rethrowing: the refusal's holder
-      // class comes from the freshly re-recorded structured failure.
-      const error = new Error(failure ?? 'Edit Lock binding remains unavailable')
-      record('refused', { reason: bindingFailures.get(agent)?.holderKind ?? 'binding-unavailable', detail: error.message })
-      throw error
-    }
-    if (transfer) {
-      record('transferred', { holder: cause?.holderKind ?? null })
-    } else if (via === 'message') {
-      // The message-armed superseded success keeps its established audit shape
-      // (pinned by the editlock-binding-auto-retry integration scenario).
-      audit(agent?.session ?? null, AUDIT_TYPES.editLockMaintenance, {
-        kind: 'binding-auto-retry', sessionId, code: cause?.code ?? 'binding-duplicate', result: 'recovered',
-      }, { root })
-    }
-    return 'Edit Lock connection recovered. Editing remains interrupted; use Continue editing when ready. No failed edit was replayed.'
-  }
+  // The binding stores (boundAgents, dispositions, agentDispositions) and
+  // dispositionFor moved into binding-machine.js; delegateResumes and
+  // turnClassifications stay composition-owned and are declared above with it.
+  // setupAgentOnce / setupAgent / retryBinding moved into binding-machine.js
+  // (change edit-lock-deepening, design D3) — they arrive destructured above.
   ctx.on('agent/created', (/** @type {any} */ { agent }) => setupAgent(agent))
 
   // Late-mount catch-up (the same mount-order hazard the worktree-mode guard
@@ -1090,10 +916,8 @@ return (ctx, config = {}) => {
   /** Turn identity seen last per agent, so a new turn is detected exactly once.
    * @type {WeakMap<object, unknown>} */
   const lastTurn = new WeakMap()
-  /** A genuine user message asked for the stopped session's automatic resume.
-   * Boolean, consumed once by the next turn's first pre-step (message-driven
-   * auto-resume D1/D6); WeakMap keys die with their agent. @type {WeakMap<object, boolean>} */
-  const pendingAutoResume = new WeakMap()
+  // pendingAutoResume moved next to the binding machine (its retry path clears
+  // an armed auto-resume); it is declared above with it.
   /** A genuine user message also arms ONE bounded binding retry when this agent
    * has a recorded duplicate-binding failure (message-driven self-heal, design
    * D5): consumed at the next turn's first pre-step by awaiting the existing
@@ -1234,32 +1058,8 @@ return (ctx, config = {}) => {
 
   // A reply tool may only disappear at a turn boundary, never mid-turn.
   ctx.on('agent/turn-stopping', (/** @type {any} */ { agent }) => { retireReplyTool(agent) })
-  const disposalTasks = new WeakMap()
-  function disposeAgent(agent) {
-    if (disposedAgents.has(agent)) return disposalTasks.get(agent) ?? Promise.resolve()
-    if (boundAgents.get(agent.id) === agent) boundAgents.delete(agent.id)
-    // Undispatched sweep work armed by this agent cancels here (an in-flight
-    // authority transaction is never cancelled or reinterpreted).
-    disposedAgents.add(agent)
-    // The managed write lives on the agent's own scope layer, which dies with
-    // the agent: retire the host-lifetime registration here (design D3).
-    disposeWriteScope(writeScopes, agent)
-    replyTools.get(agent)?.dispose()
-    replyTools.delete(agent)
-    const timer = expiry.get(agent)?.timer
-    if (timer) clearTimeout(timer)
-    expiry.delete(agent)
-    settle.settled(agent)
-    const domain = settled.get(agent)
-    settled.delete(agent)
-    // The emit hook must cancel timers/scopes/sweeps synchronously. Only the
-    // final authority disposal waits for durable abnormal classification.
-    const record = dispositionFor(agent)
-    const task = Promise.resolve(turnClassifications.get(agent)).then(() => domain?.dispose(agent))
-    task.then(record.resolve, record.reject)
-    disposalTasks.set(agent, record.promise)
-    return record.promise
-  }
+  // disposeAgent and its disposalTasks moved into binding-machine.js (change
+  // edit-lock-deepening, design D3) — the destructured alias is shared below.
   ctx.on('agent/disposed', ({ agent }) => disposeAgent(agent).catch(() => {}))
 
   /** Cold-read fallback for the status view (design D1/D2): a session with no

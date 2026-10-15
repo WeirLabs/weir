@@ -3,7 +3,7 @@ import { lstatSync, realpathSync, unlinkSync } from 'node:fs'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bindingGuidance, bindingRefusal } from './binding-guidance.js'
+import { asBindingFailure, bindingGuidance, bindingRefusal } from './binding-guidance.js'
 import { createEditLockPeer } from './peer.js'
 import { serveEditLockPeer } from './peer-transport.js'
 import { createEditLockPeerClient } from './peer-client.js'
@@ -275,12 +275,16 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
     for (let attempt = 0; ; attempt++) {
       try { return await openChannel(agent, retry) } catch (error) {
         if (/** @type {any} */ (error)?.answeredRefusal !== true) throw error
-        if (!retry && /session already bound/.test(String(/** @type {any} */ (error)?.message)) && attempt < 20) {
+        // The retry budget classifies on the STRUCTURED refusal field, never on
+        // the display text (change edit-lock-deepening, design D2): only an
+        // answered, publisher-classified duplicate binding is retried — the
+        // publisher may not yet have processed the earlier channel's death.
+        if (!retry && /** @type {any} */ (error)?.bindingFailure?.code === 'binding-duplicate' && attempt < 20) {
           await new Promise(resolve => setTimeout(resolve, 50))
           continue
         }
         const reason = String(/** @type {any} */ (error)?.message ?? error)
-        const guidance = bindingGuidance(agent.id, reason)
+        const guidance = bindingGuidance(agent.id, /** @type {any} */ (error)?.bindingFailure)
         throw Object.assign(new Error(`edit lock duplicate session binding: ${guidance} (publisher answered: ${reason})`), { bindingFailure: /** @type {any} */ (error)?.bindingFailure })
       }
     }
@@ -317,7 +321,10 @@ export function createRemoteEditLockDomain(endpoint, hooks) {
       let opened
       try {
         opened = await channel.client.request('open', 'open', { sessionId: agent.id, nonce, pid: process.pid, bindingFailures: true, retry }, never)
-        if (opened?.state === 'unavailable' && opened.bindingFailure?.code === 'binding-duplicate') throw Object.assign(new Error(opened.reason), { bindingFailure: opened.bindingFailure })
+        // The answered refusal's structured field is validated on receipt;
+        // only the exact minted shape becomes decision input.
+        const refused = opened?.state === 'unavailable' ? asBindingFailure(opened.bindingFailure) : undefined
+        if (refused) throw Object.assign(new Error(opened.reason), { bindingFailure: refused })
       } catch (error) {
         const message = String(/** @type {any} */ (error)?.message ?? error)
         // No answer ever arrived — the channel died mid-open or the request
