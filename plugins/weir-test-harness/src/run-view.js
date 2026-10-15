@@ -7,12 +7,14 @@ import { readJsonl } from './jsonl.js'
 
 /**
  * @param {object} run - raw run record ({ scenario, trace, trace2?, code, stdout, stderr, sessionId? })
- * @param {{ ws: string, check: (label: string, ok: boolean, detail?: string) => void }} deps
+ * @param {{ ws: string, check: (label: string, ok: boolean, detail?: string) => void, skip?: (label: string, detail?: string) => void }} deps
  *   ws: the scenario workspace path (fixture files, .weir/audit.jsonl);
- *   check: the scenario-bound assertion collector.
+ *   check: the scenario-bound assertion collector;
+ *   skip: optional environment-capability skip reporter (design D1 — only the
+ *   live driver wires it; success replays never trigger it).
  * @returns {object} the structured view every scenario's assert(view) consumes
  */
-export function makeRunView(run, { ws, check }) {
+export function makeRunView(run, { ws, check, skip }) {
   const records = readJsonl(run.trace)
   const records2 = run.trace2 ? readJsonl(run.trace2) : []
   return {
@@ -30,5 +32,6 @@ export function makeRunView(run, { ws, check }) {
     requests2: records2.filter((r) => Array.isArray(r.emitted)),
     ws,
     check,
+    skip,
   }
 }

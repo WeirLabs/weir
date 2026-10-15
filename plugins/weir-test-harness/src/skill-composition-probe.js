@@ -7,6 +7,7 @@ import * as selectionPlugin from '../../weir-harness/src/capabilities/skill-sele
 import { createSkillIdentity } from '../../weir-harness/src/capabilities/skill-identity.js'
 import { checkBuiltinSkillMigration } from '../../weir-harness/src/capabilities/skill-builtin-migration.js'
 import { IT_ROOT } from './mock-kit.js'
+import { officeUnavailable } from './office-availability.js'
 
 const mounted = new Map()
 export const inject = ['tools', 'skills', 'agents']
@@ -88,6 +89,14 @@ export function apply(ctx, config = {}) {
         const inventory = await selection.inventory(lookup)
         report.inventory = inventory.candidates.map(c => ({ name: c.name, provider: c.provider, source: c.source, rank: c.rank, scope: c.identity?.scope ?? null }))
         report.builtinMigration = checkBuiltinSkillMigration(inventory)
+        // Office capability gate (design D2): the OFFICE mode probes an
+        // OPTIONAL environment capability. When the bundled Office candidates
+        // are not all present in the observed inventory, record the absence
+        // marker with evidence and finish normally (no throw) — the scenario
+        // reports SKIP, never FAIL. Every other mode is byte-identical.
+        const unavailable = office ? officeUnavailable(inventory) : null
+        if (unavailable) report.officeUnavailable = unavailable
+        const exercise = async () => {
         const chosen = office ? 'office-docx' : 'selected-fixture'
         const rejected = office ? 'office-pptx' : 'unselected-fixture'
         const identity = inventory.candidates.find(c => c.name === chosen)?.identity
@@ -117,6 +126,8 @@ export function apply(ctx, config = {}) {
         report.cold = await observe({ cwd: lookup.cwd, scope: lease.key })
         selection.provider.acceptSelection([], lookup)
         report.revoked = await observe(lookup)
+        }
+        if (!unavailable) await exercise()
         }
       } catch (error) { report.error = error.stack ?? String(error) }
       finally {
