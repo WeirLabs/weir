@@ -2,8 +2,15 @@ import { posix, win32 } from 'node:path'
 
 /** Candidates describe effects, not merely explicit API arguments. Session-wide
  * operations must enumerate affected ownership at their FIFO position.
+ * Modes: 'normal' covers every mutating ingress; 'release' is pure removal and
+ * must retain the ownership unresolved updates require; 'revocation' is strictly
+ * subtractive and crosses fences. 'resume' is reserved for session-level
+ * recovery transactions (the trusted Continue): it publishes nothing, so an
+ * unresolved resource-level fence never denies it, while domain fences and
+ * every shape denial bind it exactly as they bind 'normal'. It must never be
+ * used for a transaction that publishes, confirms, acquires or releases.
  * @typedef {{kind: 'resources', resourceIds: string[]} | {kind: 'scope', ancestor: string} | {kind: 'none'}} Candidate
- * @typedef {'normal'|'release'|'revocation'} Mode
+ * @typedef {'normal'|'release'|'revocation'|'resume'} Mode
  */
 
 /** Shape check only, NOT filesystem proof. The trusted manager ingress already
@@ -59,7 +66,10 @@ export function admitMutation(operations, candidate, mode = 'normal') {
       for (const resourceId of candidate.resourceIds) {
         if (!canonicalResource(resourceId)) deny('identity-unproved')
         if (fence?.kind !== 'resource') deny('scope-continuity-unproved')
-        if (fence?.kind === 'resource' && (!canonicalResource(fence.resourceId) || fence.resourceId === resourceId)) deny('resource-conflict')
+        // 'resume' publishes nothing: a resource-level fence never bars the
+        // session-level recovery transaction; it keeps barring the resource
+        // itself on every other mode until administrative settlement.
+        if (mode !== 'resume' && fence?.kind === 'resource' && (!canonicalResource(fence.resourceId) || fence.resourceId === resourceId)) deny('resource-conflict')
       }
     }
   }

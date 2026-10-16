@@ -396,8 +396,11 @@ function managerCore(store, kernel, { processIdentity = null, root = null, write
         if (cancelled.has(captured.sessionId)) throw new Error('session cancelled')
         // A revoked owner is NOT refused here: the resume commits the epoch
         // advance that atomically ends the revocation (no ledger change).
+        // Admission runs in the resume mode: the epoch advance publishes nothing,
+        // so unresolved resource-level fences never block the trusted Continue;
+        // the fenced resources stay barred to every other ingress.
         return draft.operations.resume(captured, requestId, receipt)
-      }, () => sessionResources(captured.sessionId)).then(async resumed => {
+      }, () => sessionResources(captured.sessionId), 'resume').then(async resumed => {
         const cancellation = cancelled.get(captured.sessionId)
         if (cancellation) {
           await cancellation
