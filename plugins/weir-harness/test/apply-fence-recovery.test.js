@@ -363,3 +363,35 @@ test('lost-response semantics: nothing ever claims a cancellation succeeded or a
     assert.equal(key in missing, false, `not-found query must not carry '${key}'`)
   }
 })
+
+// --- apply-delta-durable-basis group 1: characterization pin -----------------
+
+test('CHARACTERIZATION of a defect (flips in 3.6): a recovery-published settle queues no model-facing notice', async t => {
+  const deltas = []
+  const { store } = await fixture(t)
+  let lose = false
+  const lossy = { ...store, commit: async (...args) => {
+    const result = await store.commit(...args)
+    if (lose) throw new Error('response lost after durable acceptance')
+    return result
+  } }
+  const engine = createApplyEngine({
+    store: lossy,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+  })
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(deltas.length, 1)
+  lose = true
+  const response = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
+  assert.equal(response.status, 'indeterminate')
+  const query = await engine.queryReceipt(auth, 'req-2')
+  assert.equal(query.recovery, 'published')
+  // DEFECT (C4 oversight, git-verified: recovery added in 0515cc4 predates the
+  // onAccepted segment of bc22941): the recovery publication re-runs the
+  // snapshot/lifecycle/provider/fence segment but never queues the notice —
+  // the model never learns the landed change. Scheduled to flip in 3.6.
+  assert.equal(deltas.length, 1)
+})
