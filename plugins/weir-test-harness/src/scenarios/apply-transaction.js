@@ -1,8 +1,8 @@
 // Scenario: apply-transaction — group-4 Apply transaction acceptance
 // (session-capability-manager task 4.7). The in-session probe drives the real
-// apply engine / skill-admission / selection-draft surfaces against the real
-// capability store and selection provider; this module asserts on the probe
-// report file <ws>/apply-transaction.json (the traced tool result is
+// apply engine / selection provider / selection-draft surfaces against the
+// real capability store and selection provider; this module asserts on the
+// probe report file <ws>/apply-transaction.json (the traced tool result is
 // truncated at 300 chars, so the file is the assertion surface; replay-safe:
 // recordRun whitelists it). Four acceptance points:
 //   1. post-Apply convergence (G2c): invalidate precedes the response, the
@@ -14,9 +14,10 @@
 //   3. lost response: the original requestId query recovers the accepted
 //      revision, an identical replay returns the original receipt
 //      (duplicate), a changed payload under the same requestId is rejected;
-//   4. after a removal Apply, stale skill references get explicit
-//      unavailable from skill-admission, a not-handed-off body load never
-//      runs its loader, and an in-flight load is revoked before publication.
+//   4. after a removal Apply, stale skill references read as unavailable
+//      through the selection provider's production path, a not-handed-off
+//      body read never runs its loader, and an in-flight read is revoked
+//      before publication (the provider's epoch re-check).
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { lastOfRole, textChunks, toolCallChunks } from '../mock-kit.js'
@@ -90,10 +91,9 @@ function assert(run) {
 
   // ---- 4. stale references after a removal Apply are denied ----
   run.check('removal Apply accepted at revision 4 with empty selection', report.removal?.applied?.status === 'applied' && report.removal.applied.revision === 4 && sameNames(report.removal.applied.effectiveNames, []), json(report.removal?.applied))
-  run.check('removed skill admission explicitly unavailable (skill-not-selected)', report.removal?.admit?.status === 'unavailable' && report.removal.admit.reason === 'skill-not-selected' && typeof report.removal.admit.message === 'string' && report.removal.admit.message.includes('apply-fixture-b') && report.removal.admit.message.includes('not selected'), json(report.removal?.admit))
-  run.check('not-handed-off body load denied before the loader runs', report.removal?.loadBody?.status === 'unavailable' && report.removal.loadBody.loaderCalled === false, json(report.removal?.loadBody))
-  run.check('in-flight body load revoked before publication (no content served)', report.removal?.inFlight?.status === 'revoked' && report.removal.inFlight.reason === 'selection-revoked' && report.removal.inFlight.contentServed === false, json(report.removal?.inFlight))
-  run.check('not-handed-off call refused while the admission fence is held', report.removal?.fenced?.status === 'unavailable' && report.removal.fenced.reason === 'admission-fence-held', json(report.removal?.fenced))
+  run.check('removed skill reads as unavailable through the mounted provider production path', report.removal?.staleGet === 'undefined', json(report.removal))
+  run.check('not-handed-off read of the removed skill never runs the loader', report.removal?.notHandedOff?.served === false && report.removal.notHandedOff.loaderRan === false, json(report.removal?.notHandedOff))
+  run.check('in-flight read revoked before publication once the removal lands (epoch re-check)', report.removal?.inFlight?.served === false, json(report.removal?.inFlight))
   run.check('list after removal serves no fixture skills', Array.isArray(report.removal?.listedAfter) && report.removal.listedAfter.length === 0, json(report.removal?.listedAfter))
   run.check('authority after removal is revision 4 with empty selection', report.removal?.authority?.revision === 4 && sameNames(report.removal.authority.names, []), json(report.removal?.authority))
   run.check('host skill tool call for the removed skill fails explicitly unavailable', typeof report.removal?.skillToolError === 'string' && /no longer available|not available|unavailable/i.test(report.removal.skillToolError), json(report.removal?.skillToolError))

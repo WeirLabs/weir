@@ -156,3 +156,139 @@ test('concurrent fresh reads share the in-flight collect instead of degrading ea
   expect(third.complete).toBe(true)
   expect(scans).toBe(2)
 })
+
+// ---- capabilities-deepening D5: the retired duplicate-admission assertions,
+// retargeted. The deleted suite pinned a parallel admission implementation
+// with zero production importers; the REAL blocking has always been this
+// provider's production path (collect pending reuse, epoch re-checks in get,
+// fail-closed empty lists). Those assertions live here now, driving
+// createSkillSelectionProvider directly — no stub admission object:
+//   old 'path 1' (unselected body never loaded)        -> 'unselected or malformed identities never touch the fs'
+//   old 'path 2' (slash re-validation flips)           -> 'the server-side read verdict flips with the accepted selection'
+//   old 'path 3' (handed-off read revoked)             -> 'an in-flight read is revoked before publication when a removal lands mid-read'
+//   old 'not-handed-off loads/prompt publications refused' -> the same test's post-removal arm (no fs read after removal)
+//   old 'fence refuses while an Apply commits'         -> covered by 'in-flight enumeration cannot republish a selection revoked by Apply'
+//                                                         and 'concurrent fresh reads share the in-flight collect' above
+//   old 'handed-off read finishes when authority unchanged' -> the removal test's control arm (read completes before the Apply)
+//   old 'superseded revision revokes even when selected'    -> 'an in-flight read is revoked by a superseding Apply even when the skill stays selected'
+//   old 'authority unavailable fails closed; explicit empty is distinct' -> 'an unreadable policy fails closed on reads; an explicit empty selection is a loaded empty state'
+//   old 'malformed sessions/identities fail closed'    -> the malformed arm of 'unselected or malformed identities never touch the fs'
+
+test('unselected or malformed identities read as undefined and never touch the fs', async () => {
+  let reads = 0
+  const fs = { realpath: async path => path, readFile: async path => { reads++; return text('user') } }
+  const provider = createSkillSelectionProvider({
+    control: { invalidate() {} },
+    readSelection: async () => [user.identity],
+    inventory: async () => ({ complete: true, candidates: [project, user] }),
+    fs,
+  })
+  const listed = await provider.list()
+  expect(listed.candidates.map(c => c.identity)).toEqual([user.identity])
+  // An unselected (higher-ranked) identity: get returns undefined and the
+  // content file is never read — the loader never runs.
+  expect(await provider.get(project)).toBeUndefined()
+  expect(reads).toBe(0)
+  // A malformed identity fails closed the same way, without a read.
+  expect(await provider.get({ name: 'example', identity: { scope: 'user', name: 'example' } })).toBeUndefined()
+  expect(reads).toBe(0)
+  // The selected identity still loads.
+  expect((await provider.get(listed.candidates[0])).content).toBe('user')
+  expect(reads).toBe(1)
+})
+
+test('the server-side read verdict flips with the accepted selection (never trusting client filtering)', async () => {
+  const { provider } = setup()
+  const listed = await provider.list()
+  const selected = listed.candidates[0]
+  expect((await provider.get(selected)).content).toBe('user')
+  // A removal Apply lands: the same read is now refused server-side.
+  provider.acceptSelection([])
+  expect(await provider.get(selected)).toBeUndefined()
+  expect((await provider.list()).candidates).toEqual([])
+})
+
+test('an in-flight read is revoked before publication when a removal lands mid-read', async () => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  let armed = false
+  let entered = false
+  const fs = {
+    realpath: async path => path,
+    readFile: async path => {
+      if (armed) { entered = true; await gate }
+      return text(path.includes('/user/') ? 'user' : 'project')
+    },
+  }
+  const provider = createSkillSelectionProvider({
+    control: { invalidate() {} },
+    readSelection: async () => [user.identity],
+    inventory: async () => ({ complete: true, candidates: [project, user] }),
+    fs,
+  })
+  const listed = await provider.list()
+  const selected = listed.candidates[0]
+  // Control arm: a read completing before any selection change is served.
+  expect((await provider.get(selected)).content).toBe('user')
+  // The handed-off read: the file read is mid-flight when the removal lands.
+  armed = true
+  const pending = provider.get(selected)
+  while (!entered) await new Promise(resolve => setImmediate(resolve))
+  provider.acceptSelection([]) // the Apply commits: epoch superseded
+  release()
+  expect(await pending).toBeUndefined() // revoked: no content published
+  // After the removal, not-handed-off reads never touch the fs either.
+  expect(await provider.get(selected)).toBeUndefined()
+})
+
+test('an in-flight read is revoked by a superseding Apply even when the skill stays selected', async () => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  let entered = false
+  const fs = {
+    realpath: async path => path,
+    readFile: async path => { entered = true; await gate; return text('user') },
+  }
+  const provider = createSkillSelectionProvider({
+    control: { invalidate() {} },
+    readSelection: async () => [user.identity],
+    inventory: async () => ({ complete: true, candidates: [project, user] }),
+    fs,
+  })
+  const listed = await provider.list()
+  const selected = listed.candidates[0]
+  const pending = provider.get(selected)
+  while (!entered) await new Promise(resolve => setImmediate(resolve))
+  // An unrelated Apply (same selection, new revision) still supersedes the
+  // epoch: the in-flight read is revoked conservatively and the caller retries.
+  provider.acceptSelection([user.identity])
+  release()
+  expect(await pending).toBeUndefined()
+  // A fresh read under the new epoch serves again.
+  expect((await provider.get(selected)).content).toBe('user')
+})
+
+test('an unreadable policy fails closed on reads; an explicit empty selection is a loaded empty state', async () => {
+  let reads = 0
+  const fs = { realpath: async path => path, readFile: async path => { reads++; return text('user') } }
+  const unavailable = createSkillSelectionProvider({
+    control: { invalidate() {} },
+    readSelection: async () => { throw new Error('policy unreadable') },
+    inventory: async () => ({ complete: true, candidates: [project, user] }),
+    fs,
+  })
+  // Fail closed: no loaded authority means nothing is served, ever.
+  expect((await unavailable.list()).candidates).toEqual([])
+  expect(unavailable.status().error).toBe('policy unreadable')
+  expect(await unavailable.get(user)).toBeUndefined()
+  expect(reads).toBe(0)
+
+  // An explicitly emptied selection IS a loaded authority: complete and
+  // error-free, just empty — distinct from the unavailable state above.
+  const emptied = setup({ selected: [] })
+  const result = await emptied.provider.list()
+  expect(result.complete).toBe(true)
+  expect(result.candidates).toEqual([])
+  expect(emptied.provider.status().error).toBe(null)
+  expect(await emptied.provider.get(user)).toBeUndefined()
+})

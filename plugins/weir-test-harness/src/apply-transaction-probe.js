@@ -9,18 +9,19 @@
 //      the loser gets revision-conflict, no receipt, authority/drafts kept;
 //   3. a "lost response" recovered by receipt query, an idempotent replay
 //      returning the original receipt, and a changed-payload replay rejected;
-//   4. stale references after a removal Apply denied by skill-admission,
-//      including an in-flight body load revoked before publication.
+//   4. stale references after a removal Apply denied through the selection
+//      provider's production path (epoch re-checks), including an in-flight
+//      body read revoked before publication.
 // The full report lands in <ws>/apply-transaction.json (the traced tool
 // result is truncated at 300 chars, so the file is the assertion surface);
 // the tool result text is only the short marker the mock LLM advances on.
 // Enabled only when WEIR_IT_APPLY_TX=1. Dev-only.
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { openCapabilityStore } from '../../weir-harness/src/capabilities/store/store.js'
 import * as selectionPlugin from '../../weir-harness/src/capabilities/skill-selection-plugin.js'
 import { createApplyEngine } from '../../weir-harness/src/capabilities/apply-engine.js'
-import { createSkillAdmission } from '../../weir-harness/src/capabilities/skill-admission.js'
+import { createSkillSelectionProvider } from '../../weir-harness/src/capabilities/skill-selection-provider.js'
 import { createSelectionDraft } from '../../weir-harness/src/capabilities/selection-draft.js'
 import { IT_ROOT } from './mock-kit.js'
 
@@ -81,14 +82,45 @@ function apply(ctx, config = {}) {
         if (!selection) throw new Error('skill selection plugin not mounted')
         /** @type {string[]} */
         const traceEvents = []
+        // A second instance of the PRODUCTION provider class, sharing the
+        // plugin's inventory and the store's accepted record, with a gated
+        // fs.readFile: the deterministic "in-flight body read" — the engine
+        // fan-out applies the same acceptSelection to both providers, exactly
+        // like the production engine publishes to the mounted one.
+        let readArmed = false
+        let readEntered = false
+        let releaseRead = () => {}
+        let readGate = Promise.resolve()
+        let loaderReads = 0
+        const gatedProvider = createSkillSelectionProvider({
+          control: { invalidate() {} },
+          readSelection: async () => {
+            const record = await store.read({ kind: 'selection', sessionId })
+            return record.kind === 'ok' ? record.payload?.skills ?? [] : []
+          },
+          inventory: options => selection.inventory(options),
+          fs: {
+            realpath: async path => realpathSync(path),
+            readFile: async (path, encoding) => {
+              loaderReads += 1
+              if (readArmed) { readEntered = true; await readGate }
+              return readFileSync(path, encoding ?? 'utf8')
+            },
+          },
+        })
         const engine = createApplyEngine({
           store,
           locateSession: async session => session,
           inventory: options => selection.inventory(options),
-          provider: selection.provider,
+          provider: {
+            acceptSelection: (identities, options) => {
+              const result = selection.provider.acceptSelection(identities, options)
+              gatedProvider.acceptSelection(identities, options)
+              return result
+            },
+          },
           trace: event => traceEvents.push(event),
         })
-        const admission = createSkillAdmission({ authority: engine.authority, fence: engine.fence })
         const readRecord = async () => {
           const record = await store.read({ kind: 'selection', sessionId })
           return record.kind === 'ok'
@@ -168,32 +200,34 @@ function apply(ctx, config = {}) {
         }
 
         // ---- 4. stale references after a removal Apply are denied ----
-        // An admitted (handed-off) body load is still in flight when the
-        // removal commits: publication must be revoked before content returns.
-        let releaseGate = () => {}
-        const gate = new Promise(resolve => { releaseGate = resolve })
-        let inFlightServed = false
-        const inFlight = admission.loadBody(sessionId, identityB, async () => {
-          await gate
-          return 'CONTENT_apply-fixture-b'
-        }).then(result => {
-          inFlightServed = result.status === 'loaded'
-          return result
-        })
+        // All assertions drive the selection provider's PRODUCTION path
+        // (createSkillSelectionProvider): a stale reference reads as undefined,
+        // a not-handed-off read never runs the content loader, and a handed-off
+        // (in-flight) read is revoked by the epoch re-check before any content
+        // is published. Read is not authorization.
+        const candidateB = candidates.get('apply-fixture-b')
+
+        // The in-flight read: handed off under revision 3 (fixture-b selected),
+        // suspended mid-read, then the removal commits.
+        readArmed = true
+        readEntered = false
+        readGate = new Promise(resolve => { releaseRead = resolve })
+        const inFlightRead = gatedProvider.get(candidateB, lookup)
+        while (!readEntered) await new Promise(resolve => setImmediate(resolve))
         const removal = await engine.apply(authSession, { requestId: 'apply-tx-4', expectedRevision: 3, selection: { skills: [], mcpServers: [] } })
-        releaseGate()
-        const inFlightResult = await inFlight
-        // A not-handed-off load after removal: denied before the loader runs.
-        let deniedLoaderCalled = false
-        const deniedLoad = await admission.loadBody(sessionId, identityB, async () => {
-          deniedLoaderCalled = true
-          return 'CONTENT_apply-fixture-b'
-        })
-        const deniedAdmit = await admission.admit(sessionId, identityB)
-        // While the admission fence is held, not-yet-handed-off calls are refused.
-        const lease = engine.fence.enter(sessionId)
-        const fenced = await admission.admit(sessionId, identityB)
-        lease.release()
+        releaseRead()
+        const inFlightServed = (await inFlightRead) !== undefined
+
+        // A not-handed-off read after the removal: undefined, and the loader
+        // never runs again.
+        const readsBefore = loaderReads
+        const staleRead = await gatedProvider.get(candidateB, lookup)
+        const notHandedOff = { served: staleRead !== undefined, loaderRan: loaderReads > readsBefore }
+
+        // The mounted plugin's provider (the production wiring end-to-end):
+        // the removed skill reads as unavailable there too.
+        const mountedRead = await selection.provider.get(candidateB, lookup)
+
         let skillToolError = null
         try {
           const skillTool = ctx.tools.get('skill', exec.agent)
@@ -204,10 +238,9 @@ function apply(ctx, config = {}) {
         const lastAuthority = engine.authority(sessionId)
         report.removal = {
           applied: outcomeOf(removal),
-          admit: { status: deniedAdmit.status, reason: deniedAdmit.reason ?? null, message: deniedAdmit.message ?? null },
-          loadBody: { status: deniedLoad.status, reason: deniedLoad.reason ?? null, loaderCalled: deniedLoaderCalled },
-          inFlight: { status: inFlightResult.status, reason: inFlightResult.reason ?? null, message: inFlightResult.message ?? null, contentServed: inFlightServed },
-          fenced: { status: fenced.status, reason: fenced.reason ?? null },
+          staleGet: mountedRead === undefined ? 'undefined' : 'served',
+          notHandedOff,
+          inFlight: { served: inFlightServed },
           listedAfter: await listedFixtureNames(lookup),
           authority: lastAuthority ? { revision: lastAuthority.revision, names: namesOf(lastAuthority.selection?.skills) } : null,
           skillToolError,
