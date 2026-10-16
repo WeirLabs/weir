@@ -264,3 +264,89 @@ export function createLockProtocol(options) {
 
   return { acquire, release, cleanup, inspect, clear }
 }
+
+// ---- Synchronous nominal-lease variant (capabilities-deepening D4) -----------
+// For callers that may not yield the event loop (the agent/created lifecycle
+// listener): the SAME publication convention as the async protocol above —
+// private candidate + fsync + link (EEXIST = contention), the same OwnerDoc
+// schema, remove-only-if-ours release — but with NO backoff and NO
+// reclamation: contention fails closed, and a crashed holder's leftover lock
+// becomes reclaimable to the async protocol after the nominal lease expires
+// ('sync-capture' marks an owner whose start identity was never probed, so a
+// same-process leftover reads as dead once the lease lapses).
+
+import { hostname } from 'node:os'
+import { createNodeSyncFs } from './fs-adapter.js'
+
+/** Nominal lease of a synchronously acquired lock (acquired, used, released in one segment). */
+export const SYNC_LOCK_LEASE_MS = 10_000
+
+/**
+ * @param {{ fs?: import('./fs-adapter.js').StoreSyncFs, now?: () => number, token?: () => string }} [options]
+ */
+export function createSyncLock(options = {}) {
+  const fs = options.fs ?? createNodeSyncFs()
+  const now = options.now ?? Date.now
+  const token = options.token ?? (() => randomBytes(12).toString('hex'))
+
+  /**
+   * Acquire `<dir>/<name>.lock` synchronously or fail closed. Never writes
+   * the unit record. Contention (EEXIST) is a 'locked' refusal, not a wait.
+   * @param {string} dir @param {string} name
+   * @returns {{ ok: true, token: string } | { ok: false, reason: 'locked' }}
+   */
+  function acquire(dir, name) {
+    const ownerToken = token()
+    const lockFile = join(dir, `${name}.lock`)
+    const candidate = `${lockFile}.${ownerToken}.cand`
+    const at = now()
+    /** @type {OwnerDoc} */
+    const doc = {
+      schemaVersion: LOCK_SCHEMA_VERSION,
+      ownerToken,
+      pid: process.pid,
+      host: hostname(),
+      startIdentity: { osStart: null, bootNonce: 'sync-capture' },
+      acquiredAt: at,
+      leaseUntil: at + SYNC_LOCK_LEASE_MS,
+    }
+    try {
+      fs.writeFullSync(candidate, JSON.stringify(doc))
+      fs.fsyncFileSync(candidate)
+      fs.linkSync(candidate, lockFile)
+    } catch (error) {
+      try { fs.unlinkSync(candidate) } catch { /* the candidate may never have landed */ }
+      // EEXIST = the lock is held; ENOENT = the holder's orphan sweep removed
+      // our candidate mid-race (the async publish() convention) — both mean
+      // this round is lost, and the caller fails closed or retries.
+      if (hasCode(error, 'EEXIST', 'ENOENT')) return { ok: false, reason: /** @type {const} */ ('locked') }
+      throw error
+    }
+    // Candidate cleanup is best-effort (the async publish() convention): a
+    // leftover candidate is swept by the next async acquire's cleanup.
+    try { fs.unlinkSync(candidate) } catch { /* best effort */ }
+    return { ok: true, token: ownerToken }
+  }
+
+  /** Remove `<dir>/<name>.lock` only while it still names our token. @param {string} dir @param {string} name @param {string} ownerToken */
+  function release(dir, name, ownerToken) {
+    const lockFile = join(dir, `${name}.lock`)
+    let text
+    try {
+      text = fs.readTextSync(lockFile)
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) return false
+      throw error
+    }
+    const doc = parseOwnerDoc(text)
+    if (doc.kind === 'ok' && doc.value.ownerToken !== ownerToken) return false
+    try {
+      fs.unlinkSync(lockFile)
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error
+    }
+    return true
+  }
+
+  return { acquire, release }
+}

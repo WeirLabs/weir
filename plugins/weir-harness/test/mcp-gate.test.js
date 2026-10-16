@@ -4,7 +4,7 @@ import { test, expect } from './helpers.js'
 import assert from 'node:assert/strict'
 import { createMcpGate } from '../src/capabilities/mcp-gate.js'
 import { createMcpToolWrapper } from '../src/capabilities/mcp-admission.js'
-import { createMcpDrain } from '../src/capabilities/mcp-drain.js'
+import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 const registryWith = servers => ({
   async read() { return { kind: 'ok', revision: 1, servers } },
@@ -83,4 +83,37 @@ test('drain: closing the gate rejects new calls, in-flight calls finish, timeout
   expect(timedOut.drained).toBe(false)
   expect(timedOut.inFlight).toBe(1)
   expect(timedOut.calls).toEqual(['stuck-call'])
+})
+
+test('8.6 wiring: a removal through the engine seam closes the session gate; the wrapper rejects before any RPC (mcp-gate-closed)', async () => {
+  // The production chain (capabilities-deepening D3): the engine's drain seam
+  // adapter over the manager's (agent, server)-keyed drain — the same drain
+  // the tool wrapper's admission enters at handoff.
+  const drain = createMcpDrain()
+  const adapter = createSessionDrainAdapter(() => drain)
+  const wrapper = createMcpToolWrapper({ identity: 'docs', generation: 1, admit: async () => true, drain })
+  let rpcs = 0
+  const wrapped = wrapper.wrap({ name: 'echo', execute: async () => { rpcs++; return 'ok' } })
+  const agentA = { session: { id: 'sess-a' } }
+  const agentB = { session: { id: 'sess-b' } }
+
+  // Before any removal the call enters and hands off.
+  expect(await wrapped.execute({}, { agent: agentA })).toBe('ok')
+  expect(rpcs).toBe(1)
+
+  // The Apply's step-4 seam call: close session A's gate for 'docs'.
+  const handle = adapter.begin(['docs'], 'sess-a')
+  await assert.rejects(
+    wrapped.execute({}, { agent: agentA }),
+    error => error?.code === 'mcp-gate-closed' && /draining for this agent/.test(error.message),
+  )
+  expect(rpcs).toBe(1) // ZERO RPC reached the process
+  // Session B's gate is untouched (8.5 A/B isolation).
+  expect(await wrapped.execute({}, { agent: agentB })).toBe('ok')
+  expect(rpcs).toBe(2)
+
+  // The Apply failed: abort() reopens exactly session A's gate.
+  handle.abort()
+  expect(await wrapped.execute({}, { agent: agentA })).toBe('ok')
+  expect(rpcs).toBe(3)
 })

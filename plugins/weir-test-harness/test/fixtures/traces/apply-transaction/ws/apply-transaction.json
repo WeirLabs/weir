@@ -163,25 +163,13 @@
       "hasReceipt": true,
       "effectiveNames": []
     },
-    "admit": {
-      "status": "unavailable",
-      "reason": "skill-not-selected",
-      "message": "Skill \"apply-fixture-b\" is not selected for this session."
-    },
-    "loadBody": {
-      "status": "unavailable",
-      "reason": "skill-not-selected",
-      "loaderCalled": false
+    "staleGet": "undefined",
+    "notHandedOff": {
+      "served": false,
+      "loaderRan": false
     },
     "inFlight": {
-      "status": "revoked",
-      "reason": "selection-revoked",
-      "message": "The skill content was read under a superseded selection and will not be published.",
-      "contentServed": false
-    },
-    "fenced": {
-      "status": "unavailable",
-      "reason": "admission-fence-held"
+      "served": false
     },
     "listedAfter": [],
     "authority": {

@@ -1,6 +1,6 @@
 {
   "scenario": "apply-transaction",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/capabilities-deepening-188/.weir/it-root/home",
   "code": 0,
   "stdout": "apply transaction done\n",
   "stderr": "",

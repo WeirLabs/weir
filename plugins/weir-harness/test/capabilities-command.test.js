@@ -399,3 +399,66 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
     host.restore()
   }
 })
+
+test('/capabilities apply wires the manager drain: a removal reports the real in-flight count (D3)', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-drain-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    mkdirSync(join(root, 'custom-skills', 'alpha'), { recursive: true })
+    writeFileSync(join(root, 'custom-skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: drain fixture\n---\nALPHA\n')
+    // The manager face with the REAL (agent, server)-keyed drain — the
+    // production wiring resolves ctx.get('weirMcpManager').drain lazily.
+    const { createMcpDrain } = await import('../src/capabilities/mcp-drain.js')
+    const managerDrain = createMcpDrain()
+    let starts = 0
+    const manager = { drain: managerDrain, start: async () => { starts += 1 } }
+    let registeredCommands = []
+    let provider
+    const ctx = {
+      skills: {
+        registerProvider(create) { provider = create({ invalidate() {} }) },
+        async list(options) { return (await provider.list(options)).candidates },
+        layers: { global: { providers: new Map() } },
+      },
+      on() {},
+      effect(fn) { fn(); return () => {} },
+      logger: { warn() {} },
+      get(name) {
+        if (name === 'profileContext') return { home: root, name: 'it' }
+        if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+        if (name === 'weirMcpManager') return manager
+        return undefined
+      },
+    }
+    createSkillSelectionPlugin()(ctx, {
+      machineId: 'weir-it-machine',
+      includeDefaultRoots: false,
+      customSkillDirs: [join(root, 'custom-skills')],
+      agentsHome: host.agentsHome,
+      dshHome: root,
+    })
+    const command = registeredCommands.find(entry => entry.name === 'capabilities')
+    const agent = { id: 'sess-drain', session: { id: 'sess-drain', header: { cwd: root } } }
+
+    // The session accepts the managed server, then has a call in flight on it
+    // (the manager drain's enter/exit is the handoff ledger, mcp-admission).
+    const accepted = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: ['docs'] })}` })
+    expect(JSON.parse(accepted.text).status).toBe('applied')
+    const token = managerDrain.enter('sess-drain', 'docs', 'slow-call')
+    expect(token).not.toBeNull()
+
+    // The removal's draining snapshot reports the REAL in-flight count — not
+    // the pre-fix constant settled/0 of the engine's private coordinator.
+    const removed = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-2', expectedRevision: 1, skills: ['alpha'], mcpServers: [] })}` })
+    const response = JSON.parse(removed.text)
+    expect(response.status).toBe('applied')
+    expect(response.draining).toEqual([{ server: 'docs', state: 'draining', inFlight: 1 }])
+    // The accepted removal closed this session's gate on the manager drain.
+    expect(managerDrain.isClosed('sess-drain', 'docs')).toBe(true)
+    expect(managerDrain.enter('sess-drain', 'docs', 'late-call')).toBeNull()
+    managerDrain.exit('sess-drain', 'docs', token)
+  } finally {
+    host.restore()
+  }
+})

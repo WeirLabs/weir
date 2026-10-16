@@ -14,23 +14,20 @@ import { createPresetInvalidation, emitPresetSelected } from './preset-invalidat
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
-import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames, resolveSkillNamesForSave } from './initial-selection.js'
-import { createPresetLibrary, workspaceKeyOf } from './preset-library.js'
-import { createDefaultsTransaction } from './defaults-transaction.js'
+import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
+import { workspaceKeyOf, createPresetVerbs } from './preset-library.js'
+import { createDefaultsVerbs } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
-import { bindImportedSelection, validatePortableDocument } from './portable-refs.js'
-import { inspectPresetNamespace } from './store/enumerate.js'
-import { bindPackageSelection, packPresetPackage, planPackageInstall, validatePresetPackage } from './preset-package.js'
-import { installBundledSkills } from './preset-package-install.js'
-import { isSegment } from './store/paths.js'
+import { packPresetPackage, createPackageVerbs } from './preset-package.js'
 import { createApplyEngine } from './apply-engine.js'
+import { createSessionDrainAdapter } from './mcp-drain.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
 import { feedCapabilityReadBridge } from './capability-remote.js'
 import { parseFrontmatter } from './frontmatter.js'
 import { userTextMessage } from '../shared/user-message.js'
-import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
+import { createAudit } from '../shared/audit.js'
 
 const mounted = new WeakMap()
 /**
@@ -249,6 +246,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         locateSession: session => session,
         inventory: (options) => inventory(options),
         provider,
+        // The manager's (agent, server)-keyed drain is the only real
+        // in-flight ledger (mcp-admission enter/exit at handoff). The engine
+        // is shared across sessions, so the adapter keys begin/abort by the
+        // Apply's session id (capabilities-deepening D3); a composition
+        // without the manager row has no managed servers to drain and the
+        // adapter reports the empty truth.
+        drain: createSessionDrainAdapter(() => ctx.get?.('weirMcpManager')?.drain),
         publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
         onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
         // The Apply-path convergence emission (5.2 parity with agent/created):
@@ -283,716 +287,254 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     // Group 12 client surface: a /capabilities command serving the Badge and
     // manager (receipt / listing / conditions). Values travel as command
     // results — no projection state and no custom session-log event types.
+    //
+    // capabilities-deepening D2: the handler is now only the dispatch surface
+    // — registration, the verb table (each entry's payload shape and usage
+    // line) and the case-insensitive dispatch with its usage fall-through.
+    // The preset/default/package verb bodies live in the domain modules that
+    // own their contracts (preset-library.js / defaults-transaction.js /
+    // preset-package.js), instantiated here with their former handler
+    // closures injected explicitly. receipt/list/apply/mcp-add/conditions
+    // stay local: their contracts are the read-payload builders and the
+    // manager/engine wiring themselves.
     try {
       const commands = ctx.get?.('commands')
       if (commands) {
+        // Shared wiring — every verb opens the same store and resolves the
+        // same workspace binding as before; every failure is an explicit
+        // status in the JSON payload, never a throw escaping the handler.
+        const openStore = () => openCapabilityStore({ profileContext: ctx.get?.('profileContext') })
+        const presetVerbs = createPresetVerbs({
+          openStore, provider, inventory, lifecycle,
+          builders: { buildPresetsPayload, buildReceiptPayload },
+          packPresetPackage,
+        })
+        const defaultsVerbs = createDefaultsVerbs({
+          openStore, provider, inventory, lifecycle,
+          builders: { buildDefaultGetPayload },
+        })
+        const packageVerbs = createPackageVerbs({ openStore, inventory, skillRootsFor, audit })
+
+        /** receipt: thin shell over the shared builder (silent-capability-reads 2.1). */
+        const receiptVerb = async (_spec, { options }) => {
+          try {
+            // Shared builder (silent-capability-reads 2.1): the read remote
+            // serializes the same payload from the same code.
+            const payload = await buildReceiptPayload({
+              provider,
+              lifecycle,
+              store: openStore(),
+            }, options)
+            // The commands registry normalizes results to {kind, text}
+            // (CITED dsh-commands normalizeResult): structured payloads
+            // travel as JSON text.
+            return { kind: 'success', text: JSON.stringify(payload) }
+          } catch (cause) {
+            return { kind: 'error', text: `capabilities receipt failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+          }
+        }
+
+        /** list: full inventory joined with the session's effective selection. */
+        const listVerb = async (_spec, { options }) => {
+          try {
+            // Shared builder (silent-capability-reads 2.1): the FULL
+            // inventory joined with the session's EFFECTIVE selection, plus
+            // the MCP manager listing (read at call time).
+            const payload = await buildListPayload({
+              inventory: (inventoryOptions, previous) => inventory(inventoryOptions, previous),
+              provider,
+              mcpManager: ctx.get?.('weirMcpManager'),
+            }, options)
+            // Degraded-listing fidelity (resume-incarnation-recovery D3):
+            // when the selection view is in an error state, provider.list
+            // fail-closed empty made buildListPayload list the inventory
+            // with every mark false — but the error state itself was
+            // invisible, indistinguishable from a successful empty
+            // inventory. Rebuild the rows from the RAW inventory with the
+            // real scope/provenance labels (candidate identity/root scope —
+            // never the 'unknown'/'other' degradation), every selection mark
+            // false, and carry the classified failure alongside, so the
+            // panel can still drive the Apply self-heal. The healthy path
+            // above stays byte-identical.
+            const status = provider.status(options)
+            if (status?.error) {
+              const rawInventory = await inventory(options)
+              const rawCandidates = Array.isArray(rawInventory?.candidates) ? rawInventory.candidates : []
+              return { kind: 'success', text: JSON.stringify({
+                skills: rawCandidates.map(candidate => ({
+                  name: candidate?.name,
+                  description: candidate?.description ?? '',
+                  scope: candidate?.identity?.scope ?? candidate?.root?.scope ?? 'unknown',
+                  status: candidate?.status ?? 'unknown',
+                  selected: false,
+                  conflict: Boolean(candidate?.conflict),
+                  identity: candidate?.identity ?? null,
+                })),
+                mcpServers: payload.mcpServers,
+                selectionError: { error: status.error, reason: status.reason ?? null, hint: status.hint ?? null },
+              }) }
+            }
+            return { kind: 'success', text: JSON.stringify(payload) }
+          } catch (cause) {
+            return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+          }
+        }
+
+        /** apply: the manager editor's commit (12.3). */
+        const applyVerb = async (draft, { agent, options }) => {
+          // The client sends {requestId, expectedRevision, skills:
+          // [identities or names], mcpServers: [names]} as JSON text after
+          // the verb; identities match exactly and names must match one
+          // parsed CURRENT candidate, never a silent winner.
+          try {
+            // The full inventory (not the effective selection): an Apply may
+            // name any discovered candidate, selected or not.
+            const inventoryResult = await inventory(options)
+            const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+            const byKey = new Map()
+            const parsedByName = new Map()
+            for (const candidate of candidates) {
+              if (!candidate.identity) continue
+              byKey.set(skillIdentityKey(candidate.identity), candidate)
+              if (candidate.status !== 'parsed') continue
+              const matches = parsedByName.get(candidate.name) ?? []
+              matches.push(candidate)
+              parsedByName.set(candidate.name, matches)
+            }
+            const missing = []
+            const identities = []
+            const admitted = new Set()
+            for (const entry of draft.skills ?? []) {
+              let candidate
+              if (typeof entry === 'string') {
+                const matches = parsedByName.get(entry) ?? []
+                if (matches.length === 1) candidate = matches[0]
+                else missing.push(entry)
+              } else {
+                const identity = createSkillIdentity(entry)
+                candidate = byKey.get(skillIdentityKey(identity))
+                if (!candidate) missing.push(identity.name)
+              }
+              if (!candidate) continue
+              const key = skillIdentityKey(candidate.identity)
+              if (admitted.has(key)) continue
+              admitted.add(key)
+              identities.push(candidate.identity)
+            }
+            // preset-skill-applicability (D2): partition the missing names —
+            // KNOWN-BUT-INAPPLICABLE (resolvable in a profile-supplemental
+            // directory, e.g. creative-preset skills carried by a workspace
+            // default) are SKIPPED with a per-name reason while the
+            // resolvable remainder commits; genuinely unknown names keep the
+            // hard-failure contract. Records are never rewritten for
+            // applicability, so a preset round-trip stays lossless.
+            const unknown = []
+            const skipped = []
+            for (const name of missing) {
+              if (supplementalSkillKnown(config.supplementalSkillDirs, name)) skipped.push({ name, reason: 'not applicable in this agent preset' })
+              else unknown.push(name)
+            }
+            if (unknown.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: unknown, ...(skipped.length > 0 ? { skipped } : {}) }) }
+            const response = await face.applySelection(
+              { sessionId: agent.id, cwd: agent.session?.header?.cwd, presetId: 'weir' },
+              { requestId: draft.requestId, expectedRevision: draft.expectedRevision, selection: { skills: identities, mcpServers: draft.mcpServers ?? [] }, unresolved: [] },
+              options,
+            )
+            return { kind: 'success', text: JSON.stringify(skipped.length > 0 ? { ...response, skipped } : response) }
+          } catch (cause) {
+            return { kind: 'error', text: `capabilities apply failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+          }
+        }
+
+        /**
+         * mcp-add: register a new managed MCP server and mount it
+         * immediately (8.1 registry + manager start). Payload:
+         * {identity, label, command, args?: [], env?: {}, serverName?}
+         */
+        const mcpAddVerb = async (spec) => {
+          try {
+            if (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0) {
+              return { kind: 'error', text: 'mcp-add needs identity, label and command strings' }
+            }
+            const store = openStore()
+            const registry = createMcpRegistry({ store })
+            const current = await registry.read()
+            const expectedRevision = current.kind === 'ok' ? current.revision : 0
+            const entry = {
+              identity: spec.identity,
+              label: spec.label,
+              owner: { kind: 'global', key: 'installation' },
+              transport: { kind: 'stdio', ref: `cmd:${spec.command}` },
+              client: {
+                transport: 'stdio',
+                serverName: typeof spec.serverName === 'string' && spec.serverName.length ? spec.serverName : spec.identity,
+                command: spec.command,
+                args: Array.isArray(spec.args) ? spec.args.map(String) : [],
+                env: spec.env && typeof spec.env === 'object' && !Array.isArray(spec.env) ? spec.env : {},
+                reconnect: { enabled: true },
+              },
+            }
+            const committed = await registry.register(entry, expectedRevision)
+            if (committed.status !== 'committed') return { kind: 'error', text: JSON.stringify({ status: committed.status }) }
+            const manager = ctx.get?.('weirMcpManager')
+            if (manager?.start) await manager.start()
+            return { kind: 'success', text: JSON.stringify({ status: 'registered', identity: entry.identity, generation: 1, mounted: Boolean(manager?.start) }) }
+          } catch (cause) {
+            return { kind: 'error', text: `capabilities mcp-add failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+          }
+        }
+
+        /** conditions: the 1.12 consistency conditions; empty = supported. */
+        const conditionsVerb = async () => ({ kind: 'success', text: JSON.stringify(buildConditionsPayload()) })
+
+        // The dispatch table. `payload` declares the argument shape: 'none'
+        // (bare verb only), 'required' (verb + JSON), 'optional'
+        // (default-clear). A payload-less call of a required-payload verb
+        // and extra words after a bare verb both land on the usage
+        // fall-through — the historical behavior.
+        const verbTable = {
+          receipt: { payload: 'none', run: receiptVerb },
+          list: { payload: 'none', run: listVerb },
+          apply: { payload: 'required', usage: 'Usage: /capabilities apply <json selection>', run: applyVerb },
+          'mcp-add': { payload: 'required', usage: 'Usage: /capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>', run: mcpAddVerb },
+          presets: { payload: 'none', run: presetVerbs.presets },
+          'preset-save': { payload: 'required', usage: 'Usage: /capabilities preset-save <json>', run: presetVerbs['preset-save'] },
+          'preset-rename': { payload: 'required', usage: 'Usage: /capabilities preset-rename <json>', run: presetVerbs['preset-rename'] },
+          'preset-resave': { payload: 'required', usage: 'Usage: /capabilities preset-resave <json>', run: presetVerbs['preset-resave'] },
+          'preset-load': { payload: 'required', usage: 'Usage: /capabilities preset-load <json {scope,presetId}>', run: presetVerbs['preset-load'] },
+          'preset-delete': { payload: 'required', usage: 'Usage: /capabilities preset-delete <json {scope,presetId,expectedRevision}>', run: presetVerbs['preset-delete'] },
+          'preset-export': { payload: 'required', usage: 'Usage: /capabilities preset-export <json {scope,presetId,format?:"package"|"document"}>', run: presetVerbs['preset-export'] },
+          'preset-import': { payload: 'required', usage: 'Usage: /capabilities preset-import <json {document,scope,presetId?,name?,onNameConflict?,dryRun?,onCollision?}>', run: packageVerbs['preset-import'] },
+          'default-get': { payload: 'none', run: defaultsVerbs['default-get'] },
+          'default-save': { payload: 'required', usage: 'Usage: /capabilities default-save <json {from:"draft"|"applied",skills?,mcpServers?,unresolvedRefs?,expectedRevision?}>', run: defaultsVerbs['default-save'] },
+          'default-clear': { payload: 'optional', usage: 'Usage: /capabilities default-clear [json {expectedRevision?}]', run: defaultsVerbs['default-clear'] },
+          conditions: { payload: 'none', run: conditionsVerb },
+        }
+
         ctx.effect(() => commands.register({
           name: 'capabilities',
           description: 'Session capability surface for the Weir Badge and manager (receipt | list | conditions | presets | preset-save | preset-rename | preset-resave | preset-load | preset-delete | preset-export | preset-import | default-get | default-save | default-clear).',
           handler: async (invocation) => {
             const agent = invocation?.agent
             if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
-            // Verb matching is case-insensitive; the apply payload is JSON and
-            // must keep its original casing (requestId/expectedRevision/...).
+            // Verb matching is case-insensitive; the apply payload is JSON
+            // and must keep its original casing
+            // (requestId/expectedRevision/...).
             const rawInput = String(invocation.rawInput ?? '').trim()
             const verb = rawInput.toLowerCase()
             const options = { cwd: agent.session?.header?.cwd, scope: { session: { id: agent.id } } }
-            // Preset/workspace-default verbs (capability-manager-ux D2): the
-            // command surface is the UI's only data source. Shared wiring —
-            // every verb opens the same store and resolves the same workspace
-            // binding as the existing verbs; every failure is an explicit
-            // status in the JSON payload, never a throw escaping the handler.
-            const capabilityStore = () => openCapabilityStore({ profileContext: ctx.get?.('profileContext') })
-            const sessionWorkspaceKey = () => workspaceKeyOf(options)
-            const noWorkspace = { kind: 'error', text: JSON.stringify({ status: 'no-workspace' }) }
-            /**
-             * The sets a save records. from:'applied' is server-authoritative:
-             * the sets come from the same provider/lifecycle state the receipt
-             * verb reports — client-sent set fields are never trusted then.
-             */
-            const selectionSetsOf = async spec => {
-              if (spec.from === 'applied') {
-                const result = await provider.list(options)
-                const candidates = Array.isArray(result?.candidates) ? result.candidates : []
-                const skills = []
-                for (const candidate of candidates) {
-                  if (candidate?.selected && candidate.identity) skills.push(candidate.identity)
-                }
-                const snapshot = lifecycle?.snapshotFor?.(agent.id)
-                return { skills, mcpServers: Array.isArray(snapshot?.mcpServers) ? [...snapshot.mcpServers] : [], unresolvedRefs: [] }
-              }
-              return {
-                skills: Array.isArray(spec.skills) ? spec.skills : [],
-                mcpServers: Array.isArray(spec.mcpServers) ? spec.mcpServers : [],
-                unresolvedRefs: Array.isArray(spec.unresolvedRefs) ? spec.unresolvedRefs : [],
-              }
+            const head = verb.split(' ', 1)[0]
+            const entry = verbTable[head]
+            const hasArgs = verb.length > head.length
+            if (!entry || (entry.payload === 'none' && hasArgs) || (entry.payload === 'required' && !hasArgs)) {
+              return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear' }
             }
-             // Applied preset writers share one locked source proof. The library
-             // enters this callback only under its namespace guard, and holds the
-             // selection lock until the target unit CAS has finished.
-             const appliedPresetSource = (spec, sets, store, agent, options) => commit => store.withSelectionSnapshot(agent.id, async current => {
-               if (!Number.isSafeInteger(spec.expectedSelectionRevision) || spec.expectedSelectionRevision < 0
-                 || typeof spec.expectedSelectionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(spec.expectedSelectionDigest)
-                 || current.revision !== spec.expectedSelectionRevision) return { status: 'source-changed', revision: current.revision }
-               const receipt = await buildReceiptPayload({ provider, lifecycle, store }, options)
-               const effective = receipt.effective
-               const selected = effective.skillIdentities
-               const raw = current.kind === 'ok' ? current.payload?.skills : null
-               if (current.kind === 'ok') {
-                 const rawKeys = new Set()
-                 const effectiveKeys = new Set(selected.map(skillIdentityKey))
-                 const missing = []
-                 for (const identity of Array.isArray(raw) ? raw : []) {
-                   try {
-                     const key = skillIdentityKey(createSkillIdentity(identity))
-                     rawKeys.add(key)
-                     if (!effectiveKeys.has(key)) missing.push(identity.name)
-                   } catch { missing.push(String(identity?.name ?? identity ?? 'unknown')) }
-                 }
-                 if (!Array.isArray(raw) || missing.length || rawKeys.size !== selected.length || receipt.warnings.length) {
-                   return { status: 'source-unavailable', missing, reason: receipt.warnings[0] ?? 'Selected Skills are not completely available' }
-                 }
-                 if (!Array.isArray(current.payload?.mcpServers)
-                   || JSON.stringify(current.payload.mcpServers) !== JSON.stringify(effective.mcpServers)) {
-                   return { status: 'source-unavailable', missing: [], reason: 'Applied MCP snapshot is unavailable' }
-                 }
-               } else if (receipt.warnings.length) return { status: 'source-unavailable', missing: [], reason: receipt.warnings[0] }
-               // Provider enumeration can short-circuit an empty selection.
-               const observed = await inventory(options)
-               if (observed?.complete !== true) return { status: 'source-unavailable', missing: [], reason: 'Skill inventory is incomplete' }
-               if (effective.digest !== spec.expectedSelectionDigest || receipt.revision !== current.revision) {
-                 return { status: 'source-changed', revision: current.revision }
-               }
-               sets.skills.push(...selected)
-               sets.mcpServers.push(...effective.mcpServers)
-               return commit()
-             })
-            /** Shared scope validation for the preset verbs. */
-            const presetScopeError = spec => (spec?.scope !== 'global' && spec?.scope !== 'workspace')
-              ? { kind: 'error', text: `capabilities: scope must be "global" | "workspace", got ${JSON.stringify(spec?.scope ?? null)}` }
-              : null
-            /**
-             * D6 version-2 package import (tasks 6.2/6.3). Phase one
-             * (dryRun:true) is a read-only summary — the exact install
-             * targets, file counts, unresolved refs and collisions, ZERO
-             * writes. Phase two (confirmed, onCollision default 'cancel')
-             * installs the bundled Skills into the resolved roots and then
-             * commits the preset record by CAS. A poison package is rejected
-             * atomically: nothing is written, no preset is created, the
-             * reason is named. Installed Skills stay UNSELECTED in every
-             * established set — selection remains a later draft + Apply.
-             */
-            const importPresetPackage = async spec => {
-              const verdict = validatePresetPackage(spec.document)
-              if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
-              if (spec.dryRun !== undefined && typeof spec.dryRun !== 'boolean') {
-                return { kind: 'error', text: 'capabilities preset-import: dryRun must be a boolean' }
-              }
-              const onCollision = spec.onCollision ?? 'cancel'
-              if (onCollision !== 'cancel' && onCollision !== 'replace' && onCollision !== 'coexist') {
-                return { kind: 'error', text: 'capabilities preset-import: onCollision must be "cancel" | "replace" | "coexist"' }
-              }
-              const workspaceKey = sessionWorkspaceKey()
-              if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-              const pkg = /** @type {any} */ (spec.document)
-              const store = capabilityStore()
-              // Local binding context: the managed MCP identities this
-              // machine configured, the builtin names it actually has, and
-              // the D6 install roots (project = this workspace, user = user
-              // root) via the existing skill-inventory root resolution.
-              const registry = createMcpRegistry({ store })
-              const record = await registry.read()
-              const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
-              const bound = bindPackageSelection(pkg, { localMcpIdentities })
-              const inventoryResult = await inventory(options)
-              const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
-              const builtinNames = new Set()
-              for (const candidate of candidates) {
-                const identity = /** @type {Record<string, any>} */ (candidate)?.identity
-                if (identity?.scope === 'weir-builtin' && typeof identity.name === 'string') builtinNames.add(identity.name)
-              }
-              const missingBuiltin = pkg.builtin.filter(name => !builtinNames.has(name))
-              const roots = await skillRootsFor(options)
-              const targetRoots = {
-                project: roots.find(root => root.source === 'project-dsh')?.path ?? null,
-                user: roots.find(root => root.source === 'user-dsh')?.path ?? null,
-              }
-              const plan = await planPackageInstall(pkg, { roots: targetRoots })
-              const carried = [
-                ...bound.unresolvedRefs,
-                ...missingBuiltin.map(name => ({ kind: 'skill', ref: { name, source: 'builtin' } })),
-              ]
-              if (spec.dryRun === true) {
-                const view = await inspectPresetNamespace(store, spec.scope, workspaceKey)
-                if (view.status !== 'ok') return { kind: 'error', text: JSON.stringify(view) }
-                const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
-                const conflicts = view.names.get(name) ?? []
-                const presetConflict = conflicts.length ? { with: conflicts[0], withRevision: view.activeById.get(conflicts[0]).revision, duplicates: conflicts.length > 1 } : null
-                return { kind: 'success', text: JSON.stringify({ status: 'dry-run', install: plan.install, unresolved: carried, collisions: plan.collisions, presetConflict }) }
-              }
-              // Confirmed: the install is this import's explicit main effect.
-              const neededScopes = [...new Set(pkg.bundled.map(entry => entry.targetScope))]
-              const missingRoot = neededScopes.find(scope => targetRoots[scope] === null)
-              if (missingRoot !== undefined) {
-                return { kind: 'error', text: JSON.stringify({ status: 'no-target-root', targetScope: missingRoot }) }
-              }
-              const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
-              const requestedId = spec.presetId
-              if (requestedId !== undefined && requestedId !== null && !isSegment(requestedId)) return { kind: 'error', text: `capabilities preset-import: invalid presetId ${JSON.stringify(requestedId)}` }
-              const library = createPresetLibrary({ store })
-              const guardedResult = await library.withNamespace(spec.scope, workspaceKey, async guarded => {
-                const request = { scope: spec.scope, presetId: requestedId, workspaceKey,
-                  document: { name, selection: { skills: [], mcpServers: [], unresolvedRefs: [] } },
-                  onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget }
-                const admission = await guarded.checkCreate(request)
-                if (admission.status !== 'ready') return { kind: 'success', text: JSON.stringify(admission) }
-                let install
-                try {
-                  install = await installBundledSkills(pkg.bundled, { roots: targetRoots, onCollision }, {
-                    audit: data => audit(agent.session, AUDIT_TYPES.capabilityPresetImport, data),
-                  })
-                  if (!install.ok) {
-                    // installBundledSkills already rolled back what it wrote.
-                    return { kind: 'error', text: JSON.stringify({ status: 'install-failed', reason: install.reason, rolledBack: install.rolledBack }) }
-                  }
-                  // Resolve what is now local (installed bundled Skills, present
-                  // builtin names) against a FRESH inventory: the preset record
-                  // names real identities; everything else stays unresolved.
-                  const afterResult = await inventory(options)
-                  const afterCandidates = Array.isArray(afterResult?.candidates) ? afterResult.candidates : []
-                  const resolveLocal = (scope, name) => {
-                    const matches = []
-                    for (const candidate of afterCandidates) {
-                      const identity = /** @type {Record<string, any>} */ (candidate)?.identity
-                      if (identity?.scope === scope && identity.name === name) matches.push(identity)
-                    }
-                    // An ambiguous name stays unresolved rather than guessing.
-                    return matches.length === 1 ? matches[0] : null
-                  }
-                  const resolvedSkills = []
-                  const unresolvedRefs = [...carried]
-                  for (const entry of install.installed) {
-                    const identity = resolveLocal(entry.targetScope === 'project' ? 'project' : 'user', entry.target)
-                    if (identity) resolvedSkills.push(identity)
-                    else unresolvedRefs.push({ kind: 'skill', ref: { name: entry.target, targetScope: entry.targetScope, source: 'bundled' } })
-                  }
-                  for (const entry of install.collisions) {
-                    unresolvedRefs.push({ kind: 'skill', ref: { name: entry.name, targetScope: entry.targetScope, source: 'bundled', collision: entry.decision } })
-                  }
-                  for (const name of pkg.builtin) {
-                    if (missingBuiltin.includes(name)) continue
-                    const identity = resolveLocal('weir-builtin', name)
-                    if (identity) resolvedSkills.push(identity)
-                    else unresolvedRefs.push({ kind: 'skill', ref: { name, source: 'builtin' } })
-                  }
-                  const document = { name, selection: { skills: resolvedSkills, mcpServers: bound.mcpServers, unresolvedRefs } }
-                  const result = await guarded.create({ ...request, document })
-                  return { kind: 'success', text: JSON.stringify({
-                    ...result,
-                    bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: unresolvedRefs.length },
-                    installed: install.installed,
-                    collisions: install.collisions,
-                    unresolved: unresolvedRefs,
-                    ...(result.status !== 'created' && result.status !== 'edited' ? { presetStatus: 'unconfirmed' } : {}),
-                  }) }
-                } catch (cause) {
-                  return { kind: 'error', text: JSON.stringify({ status: 'preset-unconfirmed',
-                    presetStatus: 'unconfirmed', installed: install?.installed ?? [], reason: cause instanceof Error ? cause.message : String(cause) }) }
-                }
-              })
-              return guardedResult?.kind === 'success' || guardedResult?.kind === 'error'
-                ? guardedResult : { kind: 'success', text: JSON.stringify(guardedResult) }
+            let spec
+            if (entry.payload !== 'none' && hasArgs) {
+              try { spec = JSON.parse(rawInput.slice(head.length + 1)) }
+              catch { return { kind: 'error', text: entry.usage } }
             }
-            if (verb === 'receipt') {
-              try {
-                // Shared builder (silent-capability-reads 2.1): the read
-                // remote serializes the same payload from the same code.
-                const payload = await buildReceiptPayload({
-                  provider,
-                  lifecycle,
-                  store: openCapabilityStore({ profileContext: ctx.get?.('profileContext') }),
-                }, options)
-                // The commands registry normalizes results to {kind, text}
-                // (CITED dsh-commands normalizeResult): structured payloads
-                // travel as JSON text.
-                return { kind: 'success', text: JSON.stringify(payload) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities receipt failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb === 'list') {
-              try {
-                // Shared builder (silent-capability-reads 2.1): the FULL
-                // inventory joined with the session's EFFECTIVE selection,
-                // plus the MCP manager listing (read at call time).
-                const payload = await buildListPayload({
-                  inventory: (inventoryOptions, previous) => inventory(inventoryOptions, previous),
-                  provider,
-                  mcpManager: ctx.get?.('weirMcpManager'),
-                }, options)
-                // Degraded-listing fidelity (resume-incarnation-recovery D3):
-                // when the selection view is in an error state, provider.list
-                // fail-closed empty made buildListPayload list the inventory
-                // with every mark false — but the error state itself was
-                // invisible, indistinguishable from a successful empty
-                // inventory. Rebuild the rows from the RAW inventory with the
-                // real scope/provenance labels (candidate identity/root scope
-                // — never the 'unknown'/'other' degradation), every selection
-                // mark false, and carry the classified failure alongside, so
-                // the panel can still drive the Apply self-heal. The healthy
-                // path above stays byte-identical.
-                const status = provider.status(options)
-                if (status?.error) {
-                  const rawInventory = await inventory(options)
-                  const rawCandidates = Array.isArray(rawInventory?.candidates) ? rawInventory.candidates : []
-                  return { kind: 'success', text: JSON.stringify({
-                    skills: rawCandidates.map(candidate => ({
-                      name: candidate?.name,
-                      description: candidate?.description ?? '',
-                      scope: candidate?.identity?.scope ?? candidate?.root?.scope ?? 'unknown',
-                      status: candidate?.status ?? 'unknown',
-                      selected: false,
-                      conflict: Boolean(candidate?.conflict),
-                      identity: candidate?.identity ?? null,
-                    })),
-                    mcpServers: payload.mcpServers,
-                    selectionError: { error: status.error, reason: status.reason ?? null, hint: status.hint ?? null },
-                  }) }
-                }
-                return { kind: 'success', text: JSON.stringify(payload) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities list failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('apply ')) {
-              // The manager editor's commit (12.3): the client sends
-              // {requestId, expectedRevision, skills: [identities or names], mcpServers: [names]}
-              // as JSON text after the verb; identities match exactly and names
-              // must match one parsed CURRENT candidate, never a silent winner.
-              let draft
-              try {
-                draft = JSON.parse(rawInput.slice('apply '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities apply <json selection>' }
-              }
-              try {
-                // The full inventory (not the effective selection): an Apply
-                // may name any discovered candidate, selected or not.
-                const inventoryResult = await inventory(options)
-                const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
-                const byKey = new Map()
-                const parsedByName = new Map()
-                for (const candidate of candidates) {
-                  if (!candidate.identity) continue
-                  byKey.set(skillIdentityKey(candidate.identity), candidate)
-                  if (candidate.status !== 'parsed') continue
-                  const matches = parsedByName.get(candidate.name) ?? []
-                  matches.push(candidate)
-                  parsedByName.set(candidate.name, matches)
-                }
-                const missing = []
-                const identities = []
-                const admitted = new Set()
-                for (const entry of draft.skills ?? []) {
-                  let candidate
-                  if (typeof entry === 'string') {
-                    const matches = parsedByName.get(entry) ?? []
-                    if (matches.length === 1) candidate = matches[0]
-                    else missing.push(entry)
-                  } else {
-                    const identity = createSkillIdentity(entry)
-                    candidate = byKey.get(skillIdentityKey(identity))
-                    if (!candidate) missing.push(identity.name)
-                  }
-                  if (!candidate) continue
-                  const key = skillIdentityKey(candidate.identity)
-                  if (admitted.has(key)) continue
-                  admitted.add(key)
-                  identities.push(candidate.identity)
-                }
-                // preset-skill-applicability (D2): partition the missing names —
-                // KNOWN-BUT-INAPPLICABLE (resolvable in a profile-supplemental
-                // directory, e.g. creative-preset skills carried by a workspace
-                // default) are SKIPPED with a per-name reason while the
-                // resolvable remainder commits; genuinely unknown names keep
-                // the hard-failure contract. Records are never rewritten for
-                // applicability, so a preset round-trip stays lossless.
-                const unknown = []
-                const skipped = []
-                for (const name of missing) {
-                  if (supplementalSkillKnown(config.supplementalSkillDirs, name)) skipped.push({ name, reason: 'not applicable in this agent preset' })
-                  else unknown.push(name)
-                }
-                if (unknown.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: unknown, ...(skipped.length > 0 ? { skipped } : {}) }) }
-                const response = await face.applySelection(
-                  { sessionId: agent.id, cwd: agent.session?.header?.cwd, presetId: 'weir' },
-                  { requestId: draft.requestId, expectedRevision: draft.expectedRevision, selection: { skills: identities, mcpServers: draft.mcpServers ?? [] }, unresolved: [] },
-                  options,
-                )
-                return { kind: 'success', text: JSON.stringify(skipped.length > 0 ? { ...response, skipped } : response) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities apply failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('mcp-add ')) {
-              // Register a new managed MCP server and mount it immediately
-              // (8.1 registry + manager start). Payload:
-              // {identity, label, command, args?: [], env?: {}, serverName?}
-              let spec
-              try {
-                spec = JSON.parse(rawInput.slice('mcp-add '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>' }
-              }
-              try {
-                if (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0) {
-                  return { kind: 'error', text: 'mcp-add needs identity, label and command strings' }
-                }
-                const store = openCapabilityStore({ profileContext: ctx.get?.('profileContext') })
-                const registry = createMcpRegistry({ store })
-                const current = await registry.read()
-                const expectedRevision = current.kind === 'ok' ? current.revision : 0
-                const entry = {
-                  identity: spec.identity,
-                  label: spec.label,
-                  owner: { kind: 'global', key: 'installation' },
-                  transport: { kind: 'stdio', ref: `cmd:${spec.command}` },
-                  client: {
-                    transport: 'stdio',
-                    serverName: typeof spec.serverName === 'string' && spec.serverName.length ? spec.serverName : spec.identity,
-                    command: spec.command,
-                    args: Array.isArray(spec.args) ? spec.args.map(String) : [],
-                    env: spec.env && typeof spec.env === 'object' && !Array.isArray(spec.env) ? spec.env : {},
-                    reconnect: { enabled: true },
-                  },
-                }
-                const committed = await registry.register(entry, expectedRevision)
-                if (committed.status !== 'committed') return { kind: 'error', text: JSON.stringify({ status: committed.status }) }
-                const manager = ctx.get?.('weirMcpManager')
-                if (manager?.start) await manager.start()
-                return { kind: 'success', text: JSON.stringify({ status: 'registered', identity: entry.identity, generation: 1, mounted: Boolean(manager?.start) }) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities mcp-add failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb === 'presets') {
-              // Thin shell over the shared builder (read-payloads.js): domain
-              // failures stay JSON status text (the panel categorizes them);
-              // the remote resolves the same object as a plain value.
-              try {
-                const payload = await buildPresetsPayload({ store: capabilityStore() }, options)
-                if (typeof payload.status === 'string') return { kind: 'error', text: JSON.stringify(payload) }
-                return { kind: 'success', text: JSON.stringify(payload) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities presets failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('preset-save ') || verb.startsWith('preset-rename ') || verb.startsWith('preset-resave ')) {
-              const action = rawInput.split(' ', 1)[0].toLowerCase()
-              let spec
-              try { spec = JSON.parse(rawInput.slice(action.length + 1)) }
-              catch { return { kind: 'error', text: `Usage: /capabilities ${action} <json>` } }
-              try {
-                const scopeError = presetScopeError(spec)
-                if (scopeError) return scopeError
-                const workspaceKey = sessionWorkspaceKey()
-                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-                const library = createPresetLibrary({ store: capabilityStore() })
-                if (action === 'preset-rename' || action === 'preset-resave') {
-                  if (!isSegment(spec.presetId)) return { kind: 'error', text: `${action}: invalid presetId` }
-                  if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 1) return { kind: 'error', text: `${action}: expectedRevision must be positive` }
-                  if (action === 'preset-rename') {
-                    const result = await library.rename({ scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision, name: spec.name })
-                    return { kind: 'success', text: JSON.stringify(result) }
-                  }
-                  if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-resave: from must be draft or applied' }
-                  if (spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
-                    return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
-                  }
-                  const store = capabilityStore()
-                  const sets = spec.from === 'applied' ? { skills: [], mcpServers: [], unresolvedRefs: [] } : await selectionSetsOf(spec)
-                  const withSource = spec.from === 'applied' ? appliedPresetSource(spec, sets, store, agent, options) : undefined
-                  const result = await library.resave({
-                    scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision,
-                    selection: sets, withSource,
-                  })
-                  return { kind: 'success', text: JSON.stringify(result) }
-                }
-                if (spec.from !== 'draft' && spec.from !== 'applied') return { kind: 'error', text: 'preset-save: from must be draft or applied' }
-                if (typeof spec.name !== 'string' || !spec.name.length) return { kind: 'error', text: 'preset-save: name must be non-empty' }
-                if (spec.expectedRevision !== undefined && spec.from === 'draft' && ![spec.skills, spec.mcpServers, spec.unresolvedRefs].every(Array.isArray)) {
-                  return { kind: 'error', text: JSON.stringify({ status: 'invalid-selection' }) }
-                }
-                const store = capabilityStore()
-                const sets = spec.from === 'applied' ? { skills: [], mcpServers: [], unresolvedRefs: [] } : await selectionSetsOf(spec)
-                const selection = { skills: sets.skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs }
-                const withSource = spec.from === 'applied' ? appliedPresetSource(spec, sets, store, agent, options) : undefined
-                if (spec.expectedRevision !== undefined) {
-                  if (!isSegment(spec.presetId)) return { kind: 'error', text: 'preset-save: edit needs presetId' }
-                  const result = await library.edit({ scope: spec.scope, presetId: spec.presetId, workspaceKey,
-                    expectedRevision: spec.expectedRevision, mutate: () => ({ name: spec.name, selection }), withSource })
-                  return { kind: 'success', text: JSON.stringify(result) }
-                }
-                const result = await library.create({ scope: spec.scope, presetId: spec.presetId, workspaceKey,
-                  document: { name: spec.name, selection }, onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget, withSource })
-                return { kind: 'success', text: JSON.stringify(result) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities ${action} failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('preset-load ')) {
-              // Load one preset document; the client stages its selection into
-              // the local draft (stagePreset semantics) — Apply stays the only
-              // path that changes the session's applied set.
-              let spec
-              try {
-                spec = JSON.parse(rawInput.slice('preset-load '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-load <json {scope,presetId}>' }
-              }
-              try {
-                const scopeError = presetScopeError(spec)
-                if (scopeError) return scopeError
-                if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-load: presetId must be a valid store segment' }
-                const workspaceKey = sessionWorkspaceKey()
-                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-                const library = createPresetLibrary({ store: capabilityStore() })
-                const loaded = await library.load(spec.scope, spec.presetId, workspaceKey)
-                if (loaded.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: loaded.kind }) }
-                return { kind: 'success', text: JSON.stringify({ status: 'ok', revision: loaded.revision, document: loaded.document }) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities preset-load failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('preset-delete ')) {
-              let spec
-              try {
-                spec = JSON.parse(rawInput.slice('preset-delete '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-delete <json {scope,presetId,expectedRevision}>' }
-              }
-              try {
-                const scopeError = presetScopeError(spec)
-                if (scopeError) return scopeError
-                if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-delete: presetId must be a valid store segment' }
-                if (!Number.isSafeInteger(spec.expectedRevision) || spec.expectedRevision < 0) {
-                  return { kind: 'error', text: 'capabilities preset-delete: expectedRevision must be a non-negative integer' }
-                }
-                const workspaceKey = sessionWorkspaceKey()
-                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-                const library = createPresetLibrary({ store: capabilityStore() })
-                const result = await library.remove({ scope: spec.scope, presetId: spec.presetId, workspaceKey, expectedRevision: spec.expectedRevision })
-                return { kind: 'success', text: JSON.stringify(result) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities preset-delete failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('preset-export ')) {
-              // format:'document' is the v1 portable document (verbatim via
-              // library.exportPreset — inspect/backup); the default 'package'
-              // is the D6 version-2 package: remote Skills as portable refs,
-              // workspace/local Skills as bundled content, builtin Skills by
-              // name, managed MCP as {identity,label}.
-              let spec
-              try {
-                spec = JSON.parse(rawInput.slice('preset-export '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-export <json {scope,presetId,format?:"package"|"document"}>' }
-              }
-              try {
-                const scopeError = presetScopeError(spec)
-                if (scopeError) return scopeError
-                if (!isSegment(spec.presetId)) return { kind: 'error', text: 'capabilities preset-export: presetId must be a valid store segment' }
-                const format = spec.format ?? 'package'
-                if (format !== 'package' && format !== 'document') {
-                  return { kind: 'error', text: 'capabilities preset-export: format must be "package" | "document"' }
-                }
-                const workspaceKey = sessionWorkspaceKey()
-                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-                const library = createPresetLibrary({ store: capabilityStore() })
-                if (format === 'document') {
-                  const exported = await library.exportPreset(spec.scope, spec.presetId, workspaceKey)
-                  return { kind: 'success', text: JSON.stringify(exported) }
-                }
-                const loaded = await library.load(spec.scope, spec.presetId, workspaceKey)
-                if (loaded.kind !== 'ok') return { kind: 'success', text: JSON.stringify({ status: loaded.kind }) }
-                // Pack against the live inventory (Skill file content comes
-                // from the matched candidates' locators) and the managed
-                // registry (MCP labels).
-                const inventoryResult = await inventory(options)
-                const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
-                const registry = createMcpRegistry({ store: capabilityStore() })
-                const record = await registry.read()
-                /** @type {Record<string, string>} */
-                const labels = {}
-                if (record.kind === 'ok') for (const entry of Object.values(record.servers)) labels[entry.identity] = entry.label
-                const source = /** @type {Record<string, unknown>} */ (loaded.document ?? {})
-                const packed = await packPresetPackage({ name: source.name, selection: source.selection }, {
-                  candidates,
-                  mcpLabels: identity => labels[identity],
-                })
-                if (!packed.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: packed.reason }) }
-                return { kind: 'success', text: JSON.stringify({ status: 'ok', format: 'package', document: packed.package }) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities preset-export failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('preset-import ')) {
-              // Import a portable document: validate atomically first (a
-              // poison document is rejected with zero writes), then bind only
-              // the identities the local MCP registry already configured —
-              // everything else stays an unresolved ref. Nothing is installed,
-              // started or connected here.
-              let spec
-              try {
-                spec = JSON.parse(rawInput.slice('preset-import '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities preset-import <json {document,scope,presetId?,name?,onNameConflict?,dryRun?,onCollision?}>' }
-              }
-              try {
-                const scopeError = presetScopeError(spec)
-                if (scopeError) return scopeError
-                // Version dispatch (D6): a version-2 package takes the
-                // two-phase path (dryRun summary → confirmed install + CAS
-                // preset create). Everything else keeps the v1 portable
-                // path, whose own gate rejects unknown versions atomically.
-                if (spec.document !== null && typeof spec.document === 'object' && !Array.isArray(spec.document)
-                  && /** @type {Record<string, unknown>} */ (spec.document).version === 2) {
-                  return await importPresetPackage(spec)
-                }
-                const verdict = validatePortableDocument(spec.document)
-                if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
-                const workspaceKey = sessionWorkspaceKey()
-                if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspace
-                const presetId = spec.presetId ?? spec.document.presetId
-                if (!isSegment(presetId)) return { kind: 'error', text: 'capabilities preset-import: presetId must be a valid store segment' }
-                const name = typeof spec.name === 'string' && spec.name.length ? spec.name : spec.document.name
-                const store = capabilityStore()
-                const registry = createMcpRegistry({ store })
-                const record = await registry.read()
-                const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
-                const selection = /** @type {Record<string, unknown>} */ (spec.document.selection ?? {})
-                const bound = bindImportedSelection(selection, { localMcpIdentities })
-                const document = {
-                  name,
-                  selection: {
-                    skills: [],
-                    mcpServers: bound.mcpServers,
-                    unresolvedRefs: [
-                      ...(Array.isArray(selection.unresolvedRefs) ? selection.unresolvedRefs : []),
-                      ...bound.unresolvedRefs,
-                    ],
-                  },
-                }
-                const library = createPresetLibrary({ store })
-                const result = await library.create({ scope: spec.scope, presetId, workspaceKey, document,
-                  onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget })
-                return { kind: 'success', text: JSON.stringify({ ...result, bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: bound.unresolvedRefs.length } }) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities preset-import failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb === 'default-get') {
-              // Thin shell over the shared builder. The no-workspace status is
-              // the ONLY error mapping (the historical noWorkspace object);
-              // every other status — including a non-ok record — stays success.
-              try {
-                const payload = await buildDefaultGetPayload({ store: capabilityStore() }, options)
-                if (payload.status === 'no-workspace') return { kind: 'error', text: JSON.stringify(payload) }
-                return { kind: 'success', text: JSON.stringify(payload) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities default-get failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb.startsWith('default-save ')) {
-              // Save this workspace's new-session default as a COPY snapshot
-              // of the draft or the applied sets. Saving never changes the
-              // current session; an explicit empty set is a real choice.
-              let spec
-              try {
-                spec = JSON.parse(rawInput.slice('default-save '.length))
-              } catch {
-                return { kind: 'error', text: 'Usage: /capabilities default-save <json {from:"draft"|"applied",skills?,mcpServers?,unresolvedRefs?,expectedRevision?}>' }
-              }
-              try {
-                if (spec?.from !== 'draft' && spec?.from !== 'applied') return { kind: 'error', text: 'capabilities default-save: from must be "draft" | "applied"' }
-                const workspaceKey = sessionWorkspaceKey()
-                if (!isSegment(workspaceKey)) return noWorkspace
-                const transaction = createDefaultsTransaction({ store: capabilityStore() })
-                let expectedRevision = spec.expectedRevision
-                if (expectedRevision === undefined) {
-                  const current = await transaction.read(workspaceKey)
-                  if (current.kind !== 'ok' && current.kind !== 'absent') return { kind: 'error', text: JSON.stringify({ status: current.kind }) }
-                  expectedRevision = current.kind === 'ok' ? current.revision : 0
-                }
-                if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-                  return { kind: 'error', text: 'capabilities default-save: expectedRevision must be a non-negative integer' }
-                }
-                const sets = await selectionSetsOf(spec)
-                let skills = sets.skills
-                if (spec.from === 'draft') {
-                  // The draft's wire shape is name strings: resolve them to
-                  // exact SkillIdentity objects BEFORE persisting, so the
-                  // default record carries the resolved-sets contract and a
-                  // duplicated name never lands as an unbindable string. The
-                  // session's applied selection is the authoritative
-                  // disambiguation; unresolvable or still-ambiguous names are
-                  // an explicit error with ZERO writes.
-                  const inventoryResult = await inventory(options)
-                  const inventoryCandidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
-                  const appliedResult = await provider.list(options)
-                  const appliedCandidates = Array.isArray(appliedResult?.candidates) ? appliedResult.candidates : []
-                  const appliedIdentities = []
-                  for (const candidate of appliedCandidates) {
-                    if (candidate?.selected && candidate.identity) appliedIdentities.push(candidate.identity)
-                  }
-                  const resolved = resolveSkillNamesForSave(spec.skills, inventoryCandidates, appliedIdentities)
-                  if (resolved.missing.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: resolved.missing }) }
-                  if (resolved.ambiguous.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'ambiguous', ambiguous: resolved.ambiguous }) }
-                  skills = resolved.identities
-                }
-                const result = await transaction.save({ workspaceKey, expectedRevision, snapshot: { skills, mcpServers: sets.mcpServers, unresolvedRefs: sets.unresolvedRefs } })
-                return { kind: 'success', text: JSON.stringify({ ...result, workspaceKey }) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities default-save failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb === 'default-clear' || verb.startsWith('default-clear ')) {
-              // Clear this workspace's default (absent afterwards — NOT an
-              // explicit empty set). The JSON payload is optional.
-              let spec = {}
-              const rest = rawInput.slice('default-clear'.length).trim()
-              if (rest.length > 0) {
-                try {
-                  spec = JSON.parse(rest)
-                } catch {
-                  return { kind: 'error', text: 'Usage: /capabilities default-clear [json {expectedRevision?}]' }
-                }
-              }
-              try {
-                const workspaceKey = sessionWorkspaceKey()
-                if (!isSegment(workspaceKey)) return noWorkspace
-                const transaction = createDefaultsTransaction({ store: capabilityStore() })
-                let expectedRevision = spec.expectedRevision
-                if (expectedRevision === undefined) {
-                  const current = await transaction.read(workspaceKey)
-                  if (current.kind !== 'ok' && current.kind !== 'absent') return { kind: 'error', text: JSON.stringify({ status: current.kind }) }
-                  expectedRevision = current.kind === 'ok' ? current.revision : 0
-                }
-                if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-                  return { kind: 'error', text: 'capabilities default-clear: expectedRevision must be a non-negative integer' }
-                }
-                const result = await transaction.clear({ workspaceKey, expectedRevision })
-                return { kind: 'success', text: JSON.stringify({ ...result, workspaceKey }) }
-              } catch (cause) {
-                return { kind: 'error', text: `capabilities default-clear failed: ${cause instanceof Error ? cause.message : String(cause)}` }
-              }
-            }
-            if (verb === 'conditions') {
-              // The 1.12 consistency conditions; empty = supported.
-              return { kind: 'success', text: JSON.stringify(buildConditionsPayload()) }
-            }
-            return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear' }
+            return entry.run(spec, { agent, options })
           },
         }), 'weir-capabilities-command')
       }

@@ -11,6 +11,7 @@ import { createSkillIdentity, skillIdentityKey } from '../src/capabilities/skill
 import { createSkillSelectionProvider } from '../src/capabilities/skill-selection-provider.js'
 import { createSelectionDraft } from '../src/capabilities/selection-draft.js'
 import { APPLY_AUDIT_TYPE, createAdmissionFence, createApplyEngine, createDrainCoordinator, digestApplyRequest } from '../src/capabilities/apply-engine.js'
+import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 const SESSION = 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 const auth = { id: SESSION, authenticated: true }
@@ -45,7 +46,10 @@ async function fixture(t, { available = [alpha, beta], engineOptions = {}, store
     fs: { realpath: async path => path, readFile: async () => 'content' },
   })
   const fence = createAdmissionFence()
-  const drain = createDrainCoordinator()
+  // The production-shaped drain wiring (capabilities-deepening D3): the
+  // manager's (agent, server)-keyed drain behind the session seam adapter.
+  const mcpDrain = createMcpDrain()
+  const drain = createSessionDrainAdapter(() => mcpDrain)
   const engine = createApplyEngine({
     store,
     locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
@@ -53,7 +57,7 @@ async function fixture(t, { available = [alpha, beta], engineOptions = {}, store
     provider, fence, drain, trace,
     ...engineOptions,
   })
-  return { root, store, engine, provider, fence, drain, events }
+  return { root, store, engine, provider, fence, drain: mcpDrain, events }
 }
 
 const request = ({ requestId = 'req-1', expectedRevision = 0, selection, unresolved = [], ...rest } = {}) =>
@@ -326,21 +330,24 @@ test('the response returns while a slow in-flight call is still draining and rep
   let settle
   const slow = new Promise(resolve => { settle = resolve })
   let settled = false
-  slow.then(() => { settled = true })
-  assert.equal(drain.track('mcp-a', slow), true)
+  // The production in-flight ledger: the manager drain's enter/exit (what
+  // mcp-admission does at handoff) — never a track() on a private engine
+  // coordinator.
+  const token = drain.enter(SESSION, 'mcp-a', 'slow-call')
+  slow.then(() => { settled = true; drain.exit(SESSION, 'mcp-a', token) })
   const response = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
   assert.equal(response.status, 'applied')
   // The response did not wait for the in-flight call to finish.
   assert.equal(settled, false)
   assert.deepEqual(response.draining, [{ server: 'mcp-a', state: 'draining', inFlight: 1 }])
   // The gate stays closed: new calls to the removed server are refused.
-  assert.equal(drain.isClosed('mcp-a'), true)
-  assert.equal(drain.track('mcp-a', Promise.resolve()), false)
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), true)
+  assert.equal(drain.enter(SESSION, 'mcp-a', 'late-call'), null)
   settle()
   await slow
   await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(drain.status('mcp-a'), { server: 'mcp-a', state: 'settled', inFlight: 0 })
-  assert.equal(drain.isClosed('mcp-a'), true)
+  assert.deepEqual(drain.snapshot(SESSION, 'mcp-a'), { server: 'mcp-a', state: 'settled', inFlight: 0 })
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), true)
 })
 
 test('a definite write failure releases the fence, keeps the old snapshot and reopens drain gates', async t => {
@@ -357,7 +364,13 @@ test('a definite write failure releases the fence, keeps the old snapshot and re
   assert.equal(response.status, 'write-failed')
   assert.equal(response.step, 5)
   assert.equal(fence.isHeld(SESSION), false)
-  assert.equal(drain.isClosed('mcp-a'), false)
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), false)
+  // 3.4 regression pin: the failed Apply's abort() reopened the SAME
+  // (session, server) gate begin() closed — a new call enters (no permanent
+  // gating).
+  const token = drain.enter(SESSION, 'mcp-a', 'after-failure')
+  assert.notEqual(token, null)
+  drain.exit(SESSION, 'mcp-a', token)
   assert.deepEqual(engine.authority(SESSION).selection.skills, [alpha])
   const record = await store.read(unit)
   assert.equal(record.revision, 1)

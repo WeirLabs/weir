@@ -29,7 +29,13 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { createSkillIdentity, skillIdentityKey } from './skill-identity.js'
-import { validateMcpRef, validateSkillRef } from './portable-refs.js'
+import { validateMcpRef, validateSkillRef, bindImportedSelection, validatePortableDocument } from './portable-refs.js'
+import { createPresetLibrary, workspaceKeyOf, presetScopeError, noWorkspaceError } from './preset-library.js'
+import { installBundledSkills } from './preset-package-install.js'
+import { inspectPresetNamespace } from './store/enumerate.js'
+import { createMcpRegistry } from './mcp-registry.js'
+import { isSegment } from './store/paths.js'
+import { AUDIT_TYPES } from '../shared/audit.js'
 
 export const PACKAGE_VERSION = 2
 export const PACKAGE_LIMITS = Object.freeze({ documentBytes: 8 * 1024 * 1024, fileBytes: 512 * 1024, filesPerSkill: 256 })
@@ -484,4 +490,209 @@ export async function packPresetPackage(input, deps = {}) {
   const verdict = validatePresetPackage(pkg)
   if (!verdict.ok) return { ok: false, reason: verdict.reason }
   return { ok: true, package: pkg }
+}
+
+// ---- /capabilities preset-import verb (capabilities-deepening D2) -----------
+// The preset-import verb body and its D6 version-2 orchestration, moved
+// verbatim out of the handler into the module that owns the package contract
+// (validatePresetPackage/bindPackageSelection/planPackageInstall/
+// packPresetPackage above). Per-invocation state arrives through the `call`
+// argument ({ agent, options }); the handler's former closures are injected in
+// `wiring`. The install target roots still resolve through the injected
+// skillRootsFor.
+
+/**
+ * The /capabilities preset-import verb body. `wiring`:
+ * @param {{
+ *   openStore: () => any,
+ *   inventory: (options: any) => Promise<any>,
+ *   skillRootsFor: (options: any) => Promise<any>,
+ *   audit: (session: any, type: string, data?: unknown) => void,
+ * }} wiring
+ */
+export function createPackageVerbs(wiring) {
+  /**
+   * D6 version-2 package import (tasks 6.2/6.3). Phase one (dryRun:true) is
+   * a read-only summary — the exact install targets, file counts, unresolved
+   * refs and collisions, ZERO writes. Phase two (confirmed, onCollision
+   * default 'cancel') installs the bundled Skills into the resolved roots
+   * and then commits the preset record by CAS. A poison package is rejected
+   * atomically: nothing is written, no preset is created, the reason is
+   * named. Installed Skills stay UNSELECTED in every established set —
+   * selection remains a later draft + Apply.
+   */
+  const importPresetPackage = async (spec, call) => {
+    const verdict = validatePresetPackage(spec.document)
+    if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
+    if (spec.dryRun !== undefined && typeof spec.dryRun !== 'boolean') {
+      return { kind: 'error', text: 'capabilities preset-import: dryRun must be a boolean' }
+    }
+    const onCollision = spec.onCollision ?? 'cancel'
+    if (onCollision !== 'cancel' && onCollision !== 'replace' && onCollision !== 'coexist') {
+      return { kind: 'error', text: 'capabilities preset-import: onCollision must be "cancel" | "replace" | "coexist"' }
+    }
+    const workspaceKey = workspaceKeyOf(call.options)
+    if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspaceError()
+    const pkg = /** @type {any} */ (spec.document)
+    const store = wiring.openStore()
+    // Local binding context: the managed MCP identities this machine
+    // configured, the builtin names it actually has, and the D6 install roots
+    // (project = this workspace, user = user root) via the existing
+    // skill-inventory root resolution.
+    const registry = createMcpRegistry({ store })
+    const record = await registry.read()
+    const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
+    const bound = bindPackageSelection(pkg, { localMcpIdentities })
+    const inventoryResult = await wiring.inventory(call.options)
+    const candidates = Array.isArray(inventoryResult?.candidates) ? inventoryResult.candidates : []
+    const builtinNames = new Set()
+    for (const candidate of candidates) {
+      const identity = /** @type {Record<string, any>} */ (candidate)?.identity
+      if (identity?.scope === 'weir-builtin' && typeof identity.name === 'string') builtinNames.add(identity.name)
+    }
+    const missingBuiltin = pkg.builtin.filter(name => !builtinNames.has(name))
+    const roots = await wiring.skillRootsFor(call.options)
+    const targetRoots = {
+      project: roots.find(root => root.source === 'project-dsh')?.path ?? null,
+      user: roots.find(root => root.source === 'user-dsh')?.path ?? null,
+    }
+    const plan = await planPackageInstall(pkg, { roots: targetRoots })
+    const carried = [
+      ...bound.unresolvedRefs,
+      ...missingBuiltin.map(name => ({ kind: 'skill', ref: { name, source: 'builtin' } })),
+    ]
+    if (spec.dryRun === true) {
+      const view = await inspectPresetNamespace(store, spec.scope, workspaceKey)
+      if (view.status !== 'ok') return { kind: 'error', text: JSON.stringify(view) }
+      const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
+      const conflicts = view.names.get(name) ?? []
+      const presetConflict = conflicts.length ? { with: conflicts[0], withRevision: view.activeById.get(conflicts[0]).revision, duplicates: conflicts.length > 1 } : null
+      return { kind: 'success', text: JSON.stringify({ status: 'dry-run', install: plan.install, unresolved: carried, collisions: plan.collisions, presetConflict }) }
+    }
+    // Confirmed: the install is this import's explicit main effect.
+    const neededScopes = [...new Set(pkg.bundled.map(entry => entry.targetScope))]
+    const missingRoot = neededScopes.find(scope => targetRoots[scope] === null)
+    if (missingRoot !== undefined) {
+      return { kind: 'error', text: JSON.stringify({ status: 'no-target-root', targetScope: missingRoot }) }
+    }
+    const name = typeof spec.name === 'string' && spec.name.length ? spec.name : pkg.name
+    const requestedId = spec.presetId
+    if (requestedId !== undefined && requestedId !== null && !isSegment(requestedId)) return { kind: 'error', text: `capabilities preset-import: invalid presetId ${JSON.stringify(requestedId)}` }
+    const library = createPresetLibrary({ store })
+    const guardedResult = await library.withNamespace(spec.scope, workspaceKey, async guarded => {
+      const request = { scope: spec.scope, presetId: requestedId, workspaceKey,
+        document: { name, selection: { skills: [], mcpServers: [], unresolvedRefs: [] } },
+        onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget }
+      const admission = await guarded.checkCreate(request)
+      if (admission.status !== 'ready') return { kind: 'success', text: JSON.stringify(admission) }
+      let install
+      try {
+        install = await installBundledSkills(pkg.bundled, { roots: targetRoots, onCollision }, {
+          audit: data => wiring.audit(call.agent.session, AUDIT_TYPES.capabilityPresetImport, data),
+        })
+        if (!install.ok) {
+          // installBundledSkills already rolled back what it wrote.
+          return { kind: 'error', text: JSON.stringify({ status: 'install-failed', reason: install.reason, rolledBack: install.rolledBack }) }
+        }
+        // Resolve what is now local (installed bundled Skills, present builtin
+        // names) against a FRESH inventory: the preset record names real
+        // identities; everything else stays unresolved.
+        const afterResult = await wiring.inventory(call.options)
+        const afterCandidates = Array.isArray(afterResult?.candidates) ? afterResult.candidates : []
+        const resolveLocal = (scope, name) => {
+          const matches = []
+          for (const candidate of afterCandidates) {
+            const identity = /** @type {Record<string, any>} */ (candidate)?.identity
+            if (identity?.scope === scope && identity.name === name) matches.push(identity)
+          }
+          // An ambiguous name stays unresolved rather than guessing.
+          return matches.length === 1 ? matches[0] : null
+        }
+        const resolvedSkills = []
+        const unresolvedRefs = [...carried]
+        for (const entry of install.installed) {
+          const identity = resolveLocal(entry.targetScope === 'project' ? 'project' : 'user', entry.target)
+          if (identity) resolvedSkills.push(identity)
+          else unresolvedRefs.push({ kind: 'skill', ref: { name: entry.target, targetScope: entry.targetScope, source: 'bundled' } })
+        }
+        for (const entry of install.collisions) {
+          unresolvedRefs.push({ kind: 'skill', ref: { name: entry.name, targetScope: entry.targetScope, source: 'bundled', collision: entry.decision } })
+        }
+        for (const name of pkg.builtin) {
+          if (missingBuiltin.includes(name)) continue
+          const identity = resolveLocal('weir-builtin', name)
+          if (identity) resolvedSkills.push(identity)
+          else unresolvedRefs.push({ kind: 'skill', ref: { name, source: 'builtin' } })
+        }
+        const document = { name, selection: { skills: resolvedSkills, mcpServers: bound.mcpServers, unresolvedRefs } }
+        const result = await guarded.create({ ...request, document })
+        return { kind: 'success', text: JSON.stringify({
+          ...result,
+          bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: unresolvedRefs.length },
+          installed: install.installed,
+          collisions: install.collisions,
+          unresolved: unresolvedRefs,
+          ...(result.status !== 'created' && result.status !== 'edited' ? { presetStatus: 'unconfirmed' } : {}),
+        }) }
+      } catch (cause) {
+        return { kind: 'error', text: JSON.stringify({ status: 'preset-unconfirmed',
+          presetStatus: 'unconfirmed', installed: install?.installed ?? [], reason: cause instanceof Error ? cause.message : String(cause) }) }
+      }
+    })
+    return guardedResult?.kind === 'success' || guardedResult?.kind === 'error'
+      ? guardedResult : { kind: 'success', text: JSON.stringify(guardedResult) }
+  }
+
+  /**
+   * Import a portable document: validate atomically first (a poison document
+   * is rejected with zero writes), then bind only the identities the local
+   * MCP registry already configured — everything else stays an unresolved
+   * ref. Nothing is installed, started or connected here.
+   */
+  async function presetImport(spec, call) {
+    try {
+      const scopeError = presetScopeError(spec)
+      if (scopeError) return scopeError
+      // Version dispatch (D6): a version-2 package takes the two-phase path
+      // (dryRun summary → confirmed install + CAS preset create). Everything
+      // else keeps the v1 portable path, whose own gate rejects unknown
+      // versions atomically.
+      if (spec.document !== null && typeof spec.document === 'object' && !Array.isArray(spec.document)
+        && /** @type {Record<string, unknown>} */ (spec.document).version === 2) {
+        return await importPresetPackage(spec, call)
+      }
+      const verdict = validatePortableDocument(spec.document)
+      if (!verdict.ok) return { kind: 'error', text: JSON.stringify({ status: 'rejected', reason: verdict.reason }) }
+      const workspaceKey = workspaceKeyOf(call.options)
+      if (spec.scope === 'workspace' && !isSegment(workspaceKey)) return noWorkspaceError()
+      const presetId = spec.presetId ?? /** @type {Record<string, unknown>} */ (spec.document).presetId
+      if (!isSegment(presetId)) return { kind: 'error', text: 'capabilities preset-import: presetId must be a valid store segment' }
+      const name = typeof spec.name === 'string' && spec.name.length ? spec.name : /** @type {Record<string, unknown>} */ (spec.document).name
+      const store = wiring.openStore()
+      const registry = createMcpRegistry({ store })
+      const record = await registry.read()
+      const localMcpIdentities = record.kind === 'ok' ? Object.keys(record.servers) : []
+      const selection = /** @type {Record<string, unknown>} */ (/** @type {Record<string, unknown>} */ (spec.document).selection ?? {})
+      const bound = bindImportedSelection(selection, { localMcpIdentities })
+      const document = {
+        name,
+        selection: {
+          skills: [],
+          mcpServers: bound.mcpServers,
+          unresolvedRefs: [
+            ...(Array.isArray(selection.unresolvedRefs) ? selection.unresolvedRefs : []),
+            ...bound.unresolvedRefs,
+          ],
+        },
+      }
+      const library = createPresetLibrary({ store })
+      const result = await library.create({ scope: spec.scope, presetId, workspaceKey, document,
+        onNameConflict: spec.onNameConflict ?? 'cancel', replaceTarget: spec.replaceTarget })
+      return { kind: 'success', text: JSON.stringify({ ...result, bound: { mcpServers: bound.mcpServers.length, unresolvedRefs: bound.unresolvedRefs.length } }) }
+    } catch (cause) {
+      return { kind: 'error', text: `capabilities preset-import failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+    }
+  }
+
+  return { 'preset-import': presetImport }
 }

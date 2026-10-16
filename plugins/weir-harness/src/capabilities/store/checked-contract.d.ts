@@ -8,6 +8,7 @@ declare module 'node:fs' {
   export function renameSync(from: string, to: string): void;
   export function unlinkSync(path: string): void;
   export function fsyncSync(fd: number): void;
+  export function linkSync(existingPath: string, newPath: string): void;
 }
 declare module 'node:fs/promises' {
   export function link(existingPath: string, newPath: string): Promise<void>;

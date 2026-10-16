@@ -81,28 +81,39 @@ export function createMcpDrain({ timeoutMs = 30_000, now = Date.now, sleep = ms 
 }
 
 /**
- * The apply-engine drain seam (4.2) over this coordinator, keyed at the
- * engine's session: track/isClosed/status/begin exactly as the engine's
- * built-in coordinator, but with (agent, server) granularity so a removal
- * in session A never closes the gate of session B (8.5 A/B isolation).
- * @param {ReturnType<typeof createMcpDrain>} drain
- * @param {() => string} sessionIdOf
+ * The apply-engine drain seam (capabilities-deepening D3) over the manager's
+ * (agent, server)-keyed drain. The engine shares ONE instance across all
+ * sessions and passes the session id into begin(removed, sessionId) — so a
+ * removal in session A never closes the gate of session B (8.5 A/B
+ * isolation), and the returned handle's abort() reopens exactly the gates
+ * begin() closed (a failed Apply never permanently gates that session).
+ *
+ * The drain resolves LAZILY per begin: the manager row may mount after this
+ * plugin, and a composition without it has no managed servers to drain —
+ * the handle then reports the empty truth (settled, zero in flight) and
+ * abort() is a no-op. In-flight registration stays where it always was:
+ * mcp-admission.js's enter/exit at handoff, never this seam.
+ * @param {() => ReturnType<typeof createMcpDrain> | null | undefined} resolveDrain
  */
-export function createDrainEngineAdapter(drain, sessionIdOf) {
+export function createSessionDrainAdapter(resolveDrain) {
   return {
-    track(server, call) {
-      const token = drain.enter(sessionIdOf(), server, 'call')
-      if (token === null) return false
-      Promise.resolve(call).catch(() => {}).finally(() => drain.exit(sessionIdOf(), server, token))
-      return true
-    },
-    isClosed: server => drain.isClosed(sessionIdOf(), server),
-    status: server => drain.snapshot(sessionIdOf(), server),
-    begin(removed) {
-      for (const server of removed) drain.close(sessionIdOf(), server)
+    /**
+     * Close the removed servers' gates for this session and report the live
+     * counts; abort() reopens exactly these (session, server) gates.
+     * @param {string[]} removed @param {string} sessionId
+     */
+    begin(removed, sessionId) {
+      const drain = resolveDrain()
+      if (!drain) {
+        return {
+          snapshot: () => removed.map(server => ({ server, state: 'settled', inFlight: 0 })),
+          abort: () => {},
+        }
+      }
+      for (const server of removed) drain.close(sessionId, server)
       return {
-        snapshot: () => removed.map(server => drain.snapshot(sessionIdOf(), server)),
-        abort: () => removed.forEach(server => drain.reopen(sessionIdOf(), server)),
+        snapshot: () => removed.map(server => drain.snapshot(sessionId, server)),
+        abort: () => { for (const server of removed) drain.reopen(sessionId, server) },
       }
     },
   }
