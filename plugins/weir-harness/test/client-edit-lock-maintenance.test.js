@@ -46,6 +46,24 @@ const INSPECT = {
   },
 }
 
+// A server-computed proposals payload (schemaVersion 1) for the render-switch
+// pins. The marker confirmation is deliberately NOT what any algorithm would
+// produce: the panel must render and submit it VERBATIM (it never computes).
+const MARKER_CONFIRMATION = 'ADMIN OVERRIDE 00000000000000000000000000000000000000000000000000000000000000ff'
+const PROPOSALS = {
+  schemaVersion: 1,
+  revision: 12,
+  candidates: [{
+    owner: 'sess-1',
+    scope: { root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] },
+    confirmation: MARKER_CONFIRMATION,
+    risk: 'Detached historic writers may still modify files after this override.',
+    rows: [{ resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+  }],
+  blocked: [{ resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+  unmet: [],
+}
+
 // Render descendants lazily, matching React's boundary traversal order. Parent
 // evaluation is deliberately outside the boundary's try/catch.
 function renderTree(node) {
@@ -689,6 +707,106 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(body.confirmation).toBe(editLockRecovery.recoveryConfirmation({ root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] }))
     } finally {
       // nothing to restore: the channel arrives as a prop
+    }
+  })
+
+  it('fails closed when the response lacks usable recovery proposals: no online action, refresh guidance, read-only intact', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { EditLockMaintenanceField } = exports
+    // An ELIGIBLE snapshot shape: a client that still derived recovery itself
+    // would offer the action here — the fail-closed gate must suppress it.
+    const eligibleSnapshot = { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] }
+    for (const [name, proposals] of [
+      ['missing', undefined],
+      ['unsupported schemaVersion', { schemaVersion: 2, revision: 12, candidates: [], blocked: [], unmet: [] }],
+    ]) {
+      reactStub.reset()
+      const inspectValue = { ...INSPECT, snapshot: eligibleSnapshot, ...(proposals === undefined ? {} : { recoveryProposals: proposals }) }
+      const channelCalls = []
+      const channelStub = (endpoint, payload) => {
+        channelCalls.push({ endpoint, payload })
+        if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+        if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: inspectValue })
+        return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
+      }
+      const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+      const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField({ t: (key) => key, channel: channelStub })) }
+      render().children[0].children[1].onClick()
+      await flush()
+      const tree = render()
+      // The online recovery action is disabled: no force-release row action,
+      // no per-candidate confirm, and the refresh/upgrade guidance shows.
+      expect(collect(tree, (node) => node.children === 'Force release'), `${name}: no force release`).toHaveLength(0)
+      expect(collect(tree, (node) => node.children === 'editLockMaintRecoverConfirm'), `${name}: no confirm`).toHaveLength(0)
+      expect(collect(tree, (node) => node.children === 'editLockMaintRecoverUpgrade'), `${name}: upgrade hint`).toHaveLength(1)
+      // The read-only inspection stays fully usable.
+      expect(collect(tree, (node) => node.children === 'editLockMaintUnresolved'), `${name}: read-only section`).toHaveLength(1)
+      expect(collect(tree, (node) => node.children === 'write /work/repo/a.txt · unknown/unknown'), `${name}: read-only op row`).toHaveLength(1)
+      expect(channelCalls.filter((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/recover-online'), `${name}: nothing submitted`).toHaveLength(0)
+    }
+  })
+
+  it('renders the server proposal verbatim and submits its confirmation unchanged', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { EditLockMaintenanceField } = exports
+    const channelCalls = []
+    const channelStub = (endpoint, payload) => {
+      channelCalls.push({ endpoint, payload })
+      if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+      if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: { ...INSPECT, recoveryProposals: PROPOSALS } })
+      if (endpoint === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } })
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
+    }
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField({ t: (key) => key, channel: channelStub })) }
+    render().children[0].children[1].onClick()
+    await flush()
+    const tree = render()
+    // The marker confirmation — no client algorithm could produce it — renders
+    // in the blocked-zone card with the server scope and risk verbatim.
+    expect(collect(tree, (node) => node.children === `editLockMaintRecoverDigest: ${MARKER_CONFIRMATION}`).length).toBeGreaterThan(0)
+    expect(collect(tree, (node) => node.children === 'editLockMaintRecoverRisk: Detached historic writers may still modify files after this override.').length).toBeGreaterThan(0)
+    expect(collect(tree, (node) => node.children === 'editLockMaintRecoverRevision: 12').length).toBeGreaterThan(0)
+    const force = collect(tree, (node) => node.children === 'Force release' && typeof node.onClick === 'function')
+    expect(force).toHaveLength(1)
+    force[0].onClick()
+    await flush()
+    await flush()
+    const body = channelCalls.find((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/recover-online').payload
+    // The submission forwards the server scope and confirmation unchanged.
+    expect(body.root).toBe('/work/repo')
+    expect(body.owner).toBe('sess-1')
+    expect(body.expectedRevision).toBe(12)
+    expect(body.operationIds).toEqual(['op-1'])
+    expect(body.acceptLateWriterRisk).toBe(true)
+    expect(body.confirmation).toBe(MARKER_CONFIRMATION)
+  })
+
+  it('localizes unmet reason codes and falls back to a generic message for unknown codes', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const proposals = {
+      schemaVersion: 1, revision: 12, candidates: [], blocked: [],
+      unmet: [
+        { owner: 'sess-3', reason: 'not-interrupted', rows: [{ resourceId: '/work/repo/b.txt', owner: 'sess-3', lockStatus: 'user-interrupted', fence: true, interrupted: false }], scopePaths: [] },
+        { owner: 'sess-9', reason: 'future-code', rows: [], scopePaths: ['/work/repo/sub'] },
+      ],
+    }
+    for (const locale of ['en', 'zh']) {
+      reactStub.reset()
+      const dictionary = exports.dictionaries[locale]
+      const channelStub = (endpoint) => {
+        if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+        if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: { ...INSPECT, recoveryProposals: proposals } })
+        return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected ${endpoint}` } })
+      }
+      const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+      const render = () => { reactStub.begin(); return renderTree(exports.EditLockMaintenanceField({ t: (key) => dictionary[key] ?? key, channel: channelStub })) }
+      render().children[0].children[1].onClick()
+      await flush()
+      const tree = render()
+      const text = JSON.stringify(tree)
+      expect(text.includes(dictionary.editLockMaintRecoverReasonNotInterrupted), `${locale}: known code localized`).toBe(true)
+      expect(text.includes(dictionary.editLockMaintRecoverReasonUnknown.replace('{code}', 'future-code')), `${locale}: unknown code fallback`).toBe(true)
     }
   })
 })
