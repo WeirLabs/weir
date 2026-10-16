@@ -2,7 +2,8 @@
 // removal notification — net-change merging, the advisory template, the
 // consumption seam, and the exclusion guarantees.
 import { test, expect } from './helpers.js'
-import { mergeNetChanges, notificationText, createSelectionNotifier, NOTIFY_SOURCE } from '../src/capabilities/selection-notify.js'
+import { mergeNetChanges, notificationText, createSelectionNotifier, selectionDelta, NOTIFY_SOURCE } from '../src/capabilities/selection-notify.js'
+import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
 import { isGenuineUserMessage } from '../src/shared/runtime-messages.js'
 import { userTextMessage } from '../src/shared/user-message.js'
 
@@ -43,4 +44,30 @@ test('12.4 the injected message is excluded from genuine-user detection (intent 
   expect(message.role).toBe('user')
   expect(message.source.kind).toBe('weir-selection-notify')
   expect(isGenuineUserMessage(message)).toBe(false)
+})
+
+// --- apply-delta-durable-basis (design D1): the pure delta function ----------
+// selectionDelta(previousSets, acceptedSets) owns the exact name semantics the
+// committed-apply inline diff had: skill identities map to display names, MCP
+// server names pass through, both lists sort, a nameless entry never leaks.
+
+const idOf = (scope, name) => createSkillIdentity({ scope, root: `/${scope}`, name, opaqueId: `${scope}-${name}` })
+
+test('selectionDelta maps skill identities to display names, passes MCP names through, sorts the combined lists', () => {
+  const before = { skills: [idOf('user', 'alpha'), idOf('project', 'beta')], mcpServers: ['mcp-a'] }
+  const after = { skills: [idOf('project', 'beta'), idOf('user', 'gamma')], mcpServers: ['mcp-b'] }
+  expect(selectionDelta(before, after)).toEqual({ added: ['gamma', 'mcp-b'], removed: ['alpha', 'mcp-a'] })
+})
+
+test('selectionDelta returns an empty delta for equal sets (the notice suppresses it)', () => {
+  const sets = { skills: [idOf('user', 'alpha')], mcpServers: ['mcp-a'] }
+  expect(selectionDelta(sets, sets)).toEqual({ added: [], removed: [] })
+  expect(selectionDelta({ skills: [], mcpServers: [] }, { skills: [], mcpServers: [] })).toEqual({ added: [], removed: [] })
+})
+
+test('selectionDelta tolerates missing arrays and drops nameless identities', () => {
+  expect(selectionDelta({}, {})).toEqual({ added: [], removed: [] })
+  expect(selectionDelta(null, undefined)).toEqual({ added: [], removed: [] })
+  expect(selectionDelta({ skills: [{ name: '' }, null, {}], mcpServers: [] }, { skills: [], mcpServers: [] })).toEqual({ added: [], removed: [] })
+  expect(selectionDelta({ skills: [], mcpServers: [] }, { skills: [null, idOf('user', 'alpha')], mcpServers: null })).toEqual({ added: ['alpha'], removed: [] })
 })

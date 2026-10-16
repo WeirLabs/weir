@@ -585,3 +585,23 @@ test('CHARACTERIZATION of a defect (flips in 3.6): re-applying the accepted set 
   // these sets, yet the notice reports every capability as newly added.
   assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: ['alpha', 'mcp-a'], removed: [] } }])
 })
+
+// --- apply-delta-durable-basis group 2: target behavior (RED until 3.2) ------
+
+test('restart: the first Apply after a host restart names every removed capability (durable delta basis)', async t => {
+  const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] } })
+  const response = await engine.apply(auth, request({ requestId: 'restart-removal', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(response.status, 'applied')
+  // The delta basis is the durable accepted record, so the removals survive
+  // the restart: beta and mcp-a are named, and nothing reads as added.
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a'] } }])
+})
+
+test('restart: re-applying the exact accepted set after a host restart stays silent', async t => {
+  const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha], mcpServers: ['mcp-a'] } })
+  const response = await engine.apply(auth, request({ requestId: 'restart-reapply', expectedRevision: 1, selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(response.status, 'applied')
+  // The durable record shows no net change: no notice, in particular no
+  // spurious full-set Added delta.
+  assert.deepEqual(deltas, [])
+})
