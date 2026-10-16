@@ -10,6 +10,31 @@
 export const NOTIFY_SOURCE = 'weir-selection-notify'
 
 /**
+ * The accepted-set delta for the model-facing notice (apply-delta-durable-basis
+ * D1): two `{ skills: identities[], mcpServers: string[] }` set objects in —
+ * the durable pre-write accepted record and the just-committed payload — one
+ * sorted `{ added, removed }` name delta out. Skill identities map to display
+ * names (`identity?.name`), MCP server names pass through unchanged; nameless
+ * entries never leak. Pure: the same inputs always yield the same delta, so
+ * the committed branch and the recovery-'published' branch share it.
+ * @param {{ skills?: unknown[], mcpServers?: string[] } | null | undefined} previousSets
+ * @param {{ skills?: unknown[], mcpServers?: string[] } | null | undefined} acceptedSets
+ * @returns {{ added: string[], removed: string[] }}
+ */
+export function selectionDelta(previousSets, acceptedSets) {
+  const names = identities => new Set((Array.isArray(identities) ? identities : []).map(identity => String(identity?.name ?? '')).filter(Boolean))
+  const servers = value => new Set(Array.isArray(value) ? value : [])
+  const before = names(previousSets?.skills)
+  const after = names(acceptedSets?.skills)
+  const beforeMcp = servers(previousSets?.mcpServers)
+  const afterMcp = servers(acceptedSets?.mcpServers)
+  return {
+    added: [...after].filter(name => !before.has(name)).concat([...afterMcp].filter(name => !beforeMcp.has(name))).sort(),
+    removed: [...before].filter(name => !after.has(name)).concat([...beforeMcp].filter(name => !afterMcp.has(name))).sort(),
+  }
+}
+
+/**
  * The merged net change set for one session (12.4): a name queued as added
  * then removed nets out of BOTH sets (and vice versa).
  * @param {{ added: string[], removed: string[] }} pending

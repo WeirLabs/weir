@@ -567,26 +567,10 @@ async function restartedFixture(t, { seed, engineOptions = {}, available = [alph
   return { root, store, engine, deltas }
 }
 
-test('CHARACTERIZATION of a defect (flips in 3.6): after a host restart a removal Apply silently drops the removals from the notice', async t => {
-  const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] } })
-  const response = await engine.apply(auth, request({ requestId: 'restart-removal', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
-  assert.equal(response.status, 'applied')
-  // DEFECT (C4, verified 2026-10-16): the delta basis is the process-local
-  // snapshots map — empty in a fresh process — so 'before' reads as ∅: the
-  // removals never reach the notice and the surviving skill reads as Added.
-  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: ['alpha'], removed: [] } }])
-})
+// (The group-1 defect pins documenting the pre-fix restart shapes were removed
+// in 3.6 — the restart scenarios below pin the fixed behavior.)
 
-test('CHARACTERIZATION of a defect (flips in 3.6): re-applying the accepted set after a restart queues a spurious full-set Added notice', async t => {
-  const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha], mcpServers: ['mcp-a'] } })
-  const response = await engine.apply(auth, request({ requestId: 'restart-reapply', expectedRevision: 1, selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
-  assert.equal(response.status, 'applied')
-  // DEFECT: same empty-memory basis — the durable record already holds exactly
-  // these sets, yet the notice reports every capability as newly added.
-  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: ['alpha', 'mcp-a'], removed: [] } }])
-})
-
-// --- apply-delta-durable-basis group 2: target behavior (RED until 3.2) ------
+// --- apply-delta-durable-basis: restart behavior of the durable delta basis ---
 
 test('restart: the first Apply after a host restart names every removed capability (durable delta basis)', async t => {
   const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] } })
