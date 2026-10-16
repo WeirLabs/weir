@@ -91,21 +91,26 @@ it('checks every member of acquisition, release, transfer and session-wide clean
   })
 })
 
-it('resume inspects retained ownership and does not consume a receipt or poison the manager on denial', async () => {
+it('resume tolerates a resource-level unresolved fence; the fenced resource stays refused until administrative settlement', async (t) => {
   await fixture(async ({ store, manager, child, parent }) => {
-    await unknown(manager, child)
+    const { token } = await unknown(manager, child)
     const stopped = await manager.cancel(child)
     const receipt = await manager.issueExecutionReceipt(stopped, 'continue-child')
-    const before = store.snapshot()
-    await assert.rejects(manager.resume(stopped, 'continue-child', receipt), /fence/)
-    await assert.rejects(manager.resume(stopped, 'continue-child', receipt), /fence/)
-    assert.deepEqual(store.snapshot(), before)
-    assert.equal(manager.status().locks[0].status, 'user-interrupted')
+    // resume is a session-level transition: a resource-level unresolved fence
+    // must not collateral-block it (2026-10-16 Continue Editing incident)
+    const resumed = await manager.resume(stopped, 'continue-child', receipt)
+    // the consumed receipt rejects a replayed resume instead of double-applying
+    await assert.rejects(manager.resume(stopped, 'continue-child', receipt))
+    // the fence survives the resume: the fenced resource cannot be confirmed,
+    // released or published until the administrative disposition settles the op
+    assert.equal(manager.status().locks[0].status, 'pending-confirmation')
+    await assert.rejects(manager.confirm(resumed, token.resourceId), /fence/)
+    await assert.rejects(manager.releaseMany([resumed && { ...token, generation: token.generation }]), /fence/)
     await manager.acquire(parent, '/w/parent.txt')
     const stoppedParent = await manager.cancel(parent)
     const intent = await manager.issueExecutionReceipt(stoppedParent, 'continue-parent')
-    const resumed = await manager.resume(stoppedParent, 'continue-parent', intent)
-    await manager.confirm(resumed, '/w/parent.txt')
+    const resumedParent = await manager.resume(stoppedParent, 'continue-parent', intent)
+    await manager.confirm(resumedParent, '/w/parent.txt')
     await manager.markAbnormal('child', 'publication unresolved')
     await manager.chargeRecovery('child', { attempts: 1 })
     assert.equal(manager.history('child', 'interrupted').outcome.kind, 'unknown')
