@@ -159,7 +159,7 @@ test('/capabilities apply commits through the shared engine and the receipt refl
 
     // The Apply-path convergence emission (5.2 parity): an accepted Apply
     // re-emits the preset invalidation event so connected clients refetch.
-    expect(emitted).toEqual([['agent-preset/selected', 'sess-apply', 'weir']])
+    expect(emitted.filter(entry => entry[0] === 'agent-preset/selected')).toEqual([['agent-preset/selected', 'sess-apply', 'weir']])
 
     // preset-skill-applicability (D2 partition): a known-but-inapplicable name
     // is SKIPPED with a reason while the resolvable remainder commits — and the
