@@ -180,9 +180,11 @@ describe('inspectAuthority (read-only)', () => {
   it('pins the valid-branch response shape verbatim (the additive-extension baseline)', async (t) => {
     const { root, resourceId } = await authorityWithUnknown(t)
     const result = inspectAuthority(root)
-    // The pre-extension response, exactly: an old client meeting a new host
-    // must see every one of these fields unchanged (the extension is additive).
-    assert.deepEqual(Object.keys(result).sort(), ['authorityDir', 'endpoint', 'presence', 'reservation', 'root', 'snapshot'])
+    // Every pre-existing field is unchanged while the additive
+    // `recoveryProposals` (schemaVersion 1) rides alongside: an old client
+    // meeting a new host behaves exactly as before; a new client gates on the
+    // stamped version.
+    assert.deepEqual(Object.keys(result).sort(), ['authorityDir', 'endpoint', 'presence', 'recoveryProposals', 'reservation', 'root', 'snapshot'])
     assert.equal(result.root, root)
     assert.equal(result.authorityDir, join(root, '.weir', 'edit-lock'))
     assert.equal(result.reservation, false)
@@ -195,7 +197,13 @@ describe('inspectAuthority (read-only)', () => {
     assert.deepEqual(Object.keys(snapshot.sessions[0]).sort(), ['executionEpoch', 'interrupted', 'recovery', 'sessionId'])
     assert.deepEqual(snapshot.retainedLocks, []) // the lock stays active: this fixture never interrupts the owner
     assert.equal(snapshot.unresolved[0].fence.resourceId, resourceId)
-    // A branch without a parsed image carries only the base fields.
+    // The additive extension: stamped version, the inspected revision, and
+    // the three views derived from the same parsed image.
+    assert.deepEqual(Object.keys(result.recoveryProposals).sort(), ['blocked', 'candidates', 'revision', 'schemaVersion', 'unmet'])
+    assert.equal(result.recoveryProposals.schemaVersion, 1)
+    assert.equal(result.recoveryProposals.revision, snapshot.revision)
+    // A branch without a parsed image carries only the base fields — never
+    // the proposals (there is no image to derive them from).
     const bare = await tempRoot()
     t.after(() => rm(bare, { recursive: true, force: true }))
     const none = inspectAuthority(bare)

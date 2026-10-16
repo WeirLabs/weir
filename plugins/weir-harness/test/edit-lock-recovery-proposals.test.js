@@ -157,11 +157,15 @@ describe('recoveryProposals (host-derived, schemaVersion 1)', () => {
     const proposals = recoveryProposals('/work/repo', { revision: 3, state })
     assert.deepEqual(proposals.candidates, [])
     assert.deepEqual(proposals.blocked, [])
-    assert.equal(proposals.unmet.length, 1)
-    assert.equal(proposals.unmet[0].owner, 'b')
-    assert.equal(proposals.unmet[0].reason, 'not-interrupted')
-    assert.deepEqual(proposals.unmet[0].rows, [])
-    assert.deepEqual(proposals.unmet[0].scopePaths, ['/r/a.txt'])
+    // a is a blocking owner too (its retained lock): no operations, interrupted.
+    assert.deepEqual(proposals.unmet.map(entry => entry.owner), ['a', 'b'])
+    const [a, b] = proposals.unmet
+    assert.equal(a.reason, 'no-unresolved')
+    assert.deepEqual(a.rows.map(row => row.resourceId), ['/r/a.txt'])
+    assert.deepEqual(a.scopePaths, [])
+    assert.equal(b.reason, 'not-interrupted')
+    assert.deepEqual(b.rows, [])
+    assert.deepEqual(b.scopePaths, ['/r/a.txt'])
   })
 
   it('offers no candidate while any unresolved operation is publishing, prepared or dispositioned', () => {

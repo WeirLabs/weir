@@ -5,6 +5,8 @@
 // runtime, grants authority, or changes what admission would decide; an
 // unresolved operation is reported, never settled.
 import { dispositionFor } from './derived-facts.js'
+import { recoveryConfirmation } from './admin-recovery.js'
+import { LATE_WRITER_RISK } from './admin-ledger.js'
 
 /**
  * The switch state the maintenance panel renders. Detection is evidence-based:
@@ -88,6 +90,115 @@ export function summarizeAuthorityImage(snapshot) {
       recovery: recovery.find(row => row?.sessionId === session?.sessionId) ?? null,
     })),
   }
+}
+
+/**
+ * Server-computed online-recovery proposals over the SAME parsed image the
+ * summary above projects (change edit-lock-recovery-proposals, D1/D2). The
+ * client renders these verbatim and never re-derives eligibility or the
+ * confirmation: eligibility uses the host's own disposition rule, and the
+ * confirmation is produced by the very function the manager re-verifies at
+ * commit time — the proposal is a read-time suggestion, never an
+ * authorization. `unmet` entries carry stable reason CODES in the manager's
+ * refusal order (disposition recorded → owner unknown → not interrupted →
+ * prepared outstanding → publishing outstanding → no unresolved operations);
+ * the prose is the client's localization job. Pure: reading changes nothing.
+ * @param {string} root @param {{ revision: number, state: any }} snapshot
+ */
+export function recoveryProposals(root, snapshot) {
+  const state = snapshot.state
+  const revision = snapshot.revision
+  const operations = Array.isArray(state?.operations) ? state.operations : []
+  const sessionByOwner = new Map()
+  const interruptedByOwner = new Map()
+  for (const session of Array.isArray(state?.sessions) ? state.sessions : []) {
+    if (typeof session?.sessionId !== 'string') continue
+    sessionByOwner.set(session.sessionId, session)
+    interruptedByOwner.set(session.sessionId, session.interrupted === true)
+  }
+  /** Unresolved (publishing/unknown) operations by owner, in image order. */
+  const unresolvedByOwner = new Map()
+  const preparedOwners = new Set()
+  for (const op of operations) {
+    if (typeof op?.sessionId !== 'string') continue
+    if (op.phase === 'prepared') { preparedOwners.add(op.sessionId); continue }
+    if (op.phase !== 'publishing' && op.phase !== 'unknown') continue
+    const list = unresolvedByOwner.get(op.sessionId) ?? []
+    list.push(op)
+    unresolvedByOwner.set(op.sessionId, list)
+  }
+  // The panel's merged display rows: retained locks plus still-blocking file
+  // fences (one row per resource); wide fences and cross-owner file fences
+  // become named scope paths instead of rows.
+  const rowsByResource = new Map()
+  const scopePathsByOwner = new Map()
+  const blockedOwners = new Set()
+  /** @param {string} owner @param {unknown} path */
+  const addScopePath = (owner, path) => {
+    if (typeof path !== 'string') return
+    const paths = scopePathsByOwner.get(owner) ?? []
+    if (!paths.includes(path)) paths.push(path)
+    scopePathsByOwner.set(owner, paths)
+  }
+  for (const lock of Array.isArray(state?.locks) ? state.locks : []) {
+    if (lock?.status === 'active') continue
+    if (typeof lock?.resourceId !== 'string' || typeof lock?.owner !== 'string') continue
+    blockedOwners.add(lock.owner)
+    const row = rowsByResource.get(lock.resourceId) ?? { resourceId: lock.resourceId, owner: lock.owner, lockStatus: null, fence: false, interrupted: interruptedByOwner.get(lock.owner) ?? false }
+    row.lockStatus = row.lockStatus ?? (typeof lock.status === 'string' ? lock.status : null)
+    rowsByResource.set(lock.resourceId, row)
+  }
+  for (const [owner, ops] of unresolvedByOwner) {
+    for (const op of ops) {
+      if (dispositionFor(state, op)) continue // disposed: no longer blocks admission
+      blockedOwners.add(owner)
+      const scope = fenceScope(op?.fence)
+      if (scope.kind === 'file' && typeof scope.path === 'string') {
+        const existing = rowsByResource.get(scope.path)
+        if (existing) {
+          // Same owner locks AND fences the file (the incident shape): one row.
+          if (existing.owner === owner) existing.fence = true
+          else addScopePath(owner, scope.path)
+        } else {
+          rowsByResource.set(scope.path, { resourceId: scope.path, owner, lockStatus: null, fence: true, interrupted: interruptedByOwner.get(owner) ?? false })
+        }
+      } else {
+        addScopePath(owner, scope.path)
+      }
+    }
+  }
+  const rows = [...rowsByResource.values()]
+  // Eligibility: an interrupted owner whose every unresolved operation is a
+  // still-blocking unknown, with no prepared operation outstanding — exactly
+  // the preconditions the manager re-verifies at the FIFO execution point.
+  const eligible = []
+  for (const [owner, ops] of unresolvedByOwner) {
+    if (interruptedByOwner.get(owner) !== true) continue
+    if (preparedOwners.has(owner)) continue
+    if (!(ops.length > 0 && ops.every(op => op.phase === 'unknown' && !dispositionFor(state, op)))) continue
+    eligible.push({ owner, ops })
+  }
+  const candidateOwners = new Set(eligible.map(entry => entry.owner))
+  const blocked = rows.filter(row => candidateOwners.has(row.owner))
+  blocked.sort((a, b) => a.resourceId.localeCompare(b.resourceId))
+  const candidates = eligible.map(({ owner, ops }) => {
+    const scope = { root, owner, expectedRevision: revision, operationIds: ops.map(op => op.operationId).sort() }
+    return { owner, scope, confirmation: recoveryConfirmation(scope), risk: LATE_WRITER_RISK, rows: blocked.filter(row => row.owner === owner) }
+  })
+  const unmet = []
+  for (const owner of [...blockedOwners].sort()) {
+    if (candidateOwners.has(owner)) continue
+    const ops = unresolvedByOwner.get(owner) ?? []
+    const session = sessionByOwner.get(owner)
+    const reason = ops.some(op => dispositionFor(state, op)) ? 'disposition-recorded'
+      : !session ? 'owner-unknown'
+      : session.interrupted !== true ? 'not-interrupted'
+      : preparedOwners.has(owner) ? 'prepared-outstanding'
+      : ops.some(op => op.phase === 'publishing') ? 'publishing-outstanding'
+      : 'no-unresolved'
+    unmet.push({ owner, reason, rows: rows.filter(row => row.owner === owner), scopePaths: scopePathsByOwner.get(owner) ?? [] })
+  }
+  return { schemaVersion: 1, revision, candidates, blocked, unmet }
 }
 
 /**
