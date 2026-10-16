@@ -124,6 +124,9 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   let audits = emitted.filter(([type]) => type === `weir/${APPLY_AUDIT_TYPE}`)
   expect(audits).toHaveLength(1)
   expect(audits[0][1].data).toEqual({ requestId: 'req-1', revision: 1 })
+  // Drain the committed Apply's own notice so the recovery delta is observed
+  // in isolation (the notifier net-merges across queued Applies by design).
+  expect(notifier.consume(SESSION)?.net).toEqual({ added: ['alpha'], removed: [] })
 
   lose = true
   const second = await engine.apply(auth, { requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] }, unresolved: [] })
@@ -135,7 +138,8 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   expect(audits).toHaveLength(2)
   expect(audits[1][1].data).toEqual({ requestId: 'req-2', revision: 2, recovery: 'published' })
   // The recovery publication also queued the model-facing notice through the
-  // wired onAccepted hook, computed against the captured pre-write sets.
+  // wired onAccepted hook — exactly one delta computed against the captured
+  // pre-write sets ({alpha} → {beta}).
   expect(notifier.has(SESSION)).toBe(true)
   expect(notifier.consume(SESSION).net).toEqual({ added: ['beta'], removed: ['alpha'] })
 })
