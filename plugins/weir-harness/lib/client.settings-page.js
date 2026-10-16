@@ -21,9 +21,10 @@ window.__ModuleLoader__.load({
 		// a verbatim copy of the entry constant (same-package sync require is
 		// impossible in the ModuleLoader).
 		const WEIR_NS = "weir-settings";
-		// Host environment-facts endpoint (src/settings/env-admin.js): read
-		// once per page arrival, POST like the other weir-* fetch endpoints.
-		const ENV_PATH = "api/weir-settings/env";
+		// Host environment facts (src/settings/env-admin.js) arrive through
+		// deps.fetchEnv — the composition root's HTTP-channel-backed read; this
+		// chunk keeps the failure policy (warn-once) but no longer builds the
+		// carrier.
 		// Environment fact names a `when` condition may reference. Keep in sync
 		// with the facts the endpoint answers (platform today); validateLayout
 		// fails module load on any other name.
@@ -482,17 +483,6 @@ window.__ModuleLoader__.load({
 			envFailureWarned = true;
 			console.warn(`weir-settings: environment facts unavailable — env-gated rows stay hidden (${String(error?.message ?? error)})`);
 		}
-		function fetchEnvFacts() {
-			return fetch(ENV_PATH, {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: "{}"
-			}).then((response) => response.json()).then((payload) => {
-				if (payload?.ok !== true || typeof payload.value?.platform !== "string") throw new Error("malformed environment facts response");
-				return { platform: payload.value.platform };
-			});
-		}
 		var WeirCardController = class {
 			form;
 			store;
@@ -505,8 +495,8 @@ window.__ModuleLoader__.load({
 				// Prop-injected dependencies: the entry-owned settings bus (save →
 				// toggle re-check) and a getSession closure resolving the
 				// remote.session domain lazily at call time (it may not be wired
-				// yet during apply, S17). fetchEnv is the injectable environment
-				// facts read (tests); production uses the fetch above.
+				// yet during apply, S17). fetchEnv is the composition root's
+				// channel-backed environment-facts read.
 				this.deps = deps;
 				this.form = new primitives.SettingsFormModel(scope, this.fields.map(specFor));
 				this.store = this.form.bind(() => this.projection());
@@ -521,7 +511,7 @@ window.__ModuleLoader__.load({
 				// console warning — the rest of the page stays usable.
 				this.env = { status: "pending", facts: {} };
 				Promise.resolve()
-					.then(() => (deps.fetchEnv ?? fetchEnvFacts)())
+					.then(() => deps.fetchEnv())
 					.then(
 						(facts) => {
 							this.env = { status: "ready", facts: facts ?? {} };
@@ -1034,6 +1024,286 @@ window.__ModuleLoader__.load({
 			style: columnStyle,
 			children: renderSlot(slot ?? ITEM_SLOT)
 		});
+		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
+		// under HMR, so a chunk-local register would throw on the duplicate
+		// (namespace, locale) pair): the entry registers these under "settings.weir.page"
+		// inside a ctx.effect when this chunk arrives (lib/client.js
+		// registerChunkDictionaries). Pinned by test/client.test.js's dictionary
+		// union pin.
+		const dictionaries = {
+			en: {
+				description: "One-stop configuration for the Weir preset: intent classification, auto-continuation, context pressure, file editing, worktree lanes, read-only shell, LSP, and notifications; model routing is a separate page.",
+				routingDescription: "Which models delegated children run on: per task category or curated agent, with ordered fallbacks.",
+				unavailable: "This plugin is not loaded, so it cannot be configured right now.",
+				readOnly: "This deployment stores settings read-only.",
+				saveFailed: "The deployment did not accept these values; they were left for you to correct.",
+				save: "Save",
+				saving: "Saving…",
+				pendingChanges: "{n} unsaved change(s)",
+				discardChanges: "Discard",
+				overridden: "Overridden",
+				reset: "Reset to default",
+				restartRequired: "Restart required",
+				invalidValue: "Enter a value this field accepts, or leave blank to use the default.",
+				restartReminderTitle: "Restart to apply",
+				restartReminderBody: "These settings changed and take effect after restarting DeepSeek Harness. Everything else you saved is already live.",
+				restartReminderDismiss: "Dismiss",
+				restartReminderAcknowledge: "Got it",
+				catalogLoading: "Loading providers…",
+				pickerModel: "Model",
+				pickerEffort: "Reasoning",
+				effortProviderDefault: "Provider default",
+				catalogFailed: "Provider catalog unavailable; enter provider and model manually.",
+				providerEmpty: "Select a provider",
+				modelEmpty: "Select a model",
+				pickerUnavailable: "Model picker unavailable — reload the settings page to retry.",
+				groupIntent: "Intent",
+				groupTodo: "Auto-continuation",
+				groupGuard: "Context pressure",
+				groupEditing: "File editing",
+				groupWorktree: "Worktree lanes",
+				groupRobash: "Read-only shell",
+				groupLsp: "LSP",
+				groupNotify: "Notifications",
+				groupRoutingCategories: "Task categories",
+				groupRoutingAgents: "Curated agents",
+				groupRoutingSupervision: "Supervision and retries",
+				intentGateClassifierOptionRegex: "regex",
+				intentGateClassifierOptionLlm: "llm",
+				intentGateClassifierOptionJev: "jev",
+				intentGateClassifier: "Intent classifier",
+				intentGateClassifierHint: "How each message's intent is detected: regex uses built-in rules at zero cost (default); llm uses a small dedicated model; jev is experimental.",
+				intentGateProvider: "Classifier model (llm mode)",
+				intentGateProviderHint: "A dedicated model for semantic classification; blank follows the session model.",
+				intentGateModel: "Classifier model name (llm mode)",
+				intentGateModelHint: "Blank follows the session route's model.",
+				intentGateReasoningEffort: "Classifier reasoning effort (llm mode)",
+				intentGateReasoningEffortHint: "Blank follows the model default.",
+				intentGateTimeoutMs: "Classifier timeout (ms)",
+				intentGateTimeoutMsHint: "On timeout the rule-based result is used; the message is never blocked (default 1500).",
+				jevEndpoint: "Jev endpoint",
+				jevEndpointHint: "Jev decisions service URL (experimental mode).",
+				jevModel: "Jev model",
+				jevModelHint: "Model name for Jev (default jev).",
+				jevApiKeyEnv: "Jev API key env var",
+				jevApiKeyEnvHint: "Environment variable name holding the Jev API key; the key itself never enters config.",
+				delegateCategoryChains: "Category models",
+				delegateCategoryChainsHint: "The model children of each task category run on; add fallbacks tried in order, or leave empty to follow the session model.",
+				delegateAgentChains: "Curated agent models",
+				delegateAgentChainsHint: "The model each curated agent (finder, scholar, advisor) runs on; empty inherits the caller's route.",
+				delegateDisabledCategories: "Disabled categories",
+				delegateDisabledCategoriesHint: "Disabled categories leave the delegation list and can no longer be delegated to.",
+				supervisionMaxRetries: "Child retry limit",
+				supervisionMaxRetriesHint: "How many times a supervised child is continued when it ends without a report or keeps failing (default 5).",
+				supervisionInitialBackoffMs: "Initial retry backoff (ms)",
+				supervisionInitialBackoffMsHint: "Wait before the first retry; doubles each round (default 30000).",
+				supervisionMaxBackoffMs: "Maximum retry backoff (ms)",
+				supervisionMaxBackoffMsHint: "The retry wait never grows past this (default 300000).",
+				todoEnabled: "Auto-continuation",
+				todoEnabledHint: "With unfinished todos the assistant keeps going without waiting for your message (default on).",
+				todoMaxConsecutive: "Continuation limit",
+				todoMaxConsecutiveHint: "At most this many consecutive auto-continuations without your input (default 8).",
+				todoErrorRetryMax: "Error retry limit",
+				todoErrorRetryMaxHint: "How many times a provider error is retried automatically (default 5).",
+				guardEnabled: "Context pressure guard",
+				guardEnabledHint: "As the context fills up, asks the assistant to wrap up and requests compaction before it overflows; applies immediately.",
+				guardSoftThreshold: "Advisory threshold",
+				guardSoftThresholdHint: "Above this fill ratio the assistant is asked to wrap up (default 0.72; must stay below the compaction threshold).",
+				guardHardThreshold: "Compaction threshold",
+				guardHardThresholdHint: "Above this fill ratio compaction is requested (default 0.88; not a completion guarantee).",
+				hashlineHideStockEdit: "Anchor editing only",
+				hashlineHideStockEditHint: "Hides the built-in edit tool; file edits go through hash_edit anchors only.",
+				editLockEnabled: "Edit Lock",
+				editLockEnabledHint: "Sessions take turns editing the same files instead of overwriting each other.",
+				editLockOptOutWarning: "Edit Lock is set to off. After saving, restart DeepSeek Harness to apply the change. Once enforcement is off, ordinary editing is UNPROTECTED and can overwrite another session's work. Old fences and history are retained and may block files when you re-enable Edit Lock.",
+				editLockAutoResume: "Message resumes editing",
+				editLockAutoResumeHint: "After a session is stopped, sending any message restores its editing right and re-confirms its kept files (default on).",
+				editLockStaleSweep: "Sweep stale locks",
+				editLockStaleSweepHint: "Locks whose target file was deleted or moved are re-verified and released as you send messages (default on).",
+				worktreeEnabled: "Worktree lanes",
+				worktreeEnabledHint: "Lets the assistant work in isolated git worktrees: lane tools, the /worktree command, and the lanes panel.",
+				worktreeAutoSetup: "Auto-install in new lanes",
+				worktreeAutoSetupHint: "Runs the repository's configured install command when a lane opens (default on).",
+				worktreeMaxActive: "Active lane limit",
+				worktreeMaxActiveHint: "At most this many active lanes per repository (default 4).",
+				worktreeRoot: "Lane directory",
+				worktreeRootHint: "Repository-relative directory holding lanes (default .weir/worktrees; locally git-ignored).",
+				worktreeWatchTimeoutMinutes: "Lane watch timeout (minutes)",
+				worktreeWatchTimeoutMinutesHint: "A lane-state watch expires with one notice after this long without a hit (default 360); existing watches keep their deadline.",
+				worktreeAutoApprove: "Lane auto-approve",
+				worktreeAutoApproveHint: "Default approval mode for new sessions: manual asks every time; auto-keep approves and keeps the branch; auto-clean also deletes it; /worktree approve overrides per session.",
+				worktreeAutoApproveOptionManual: "manual",
+				"worktreeAutoApproveOptionAuto-keep": "auto-keep",
+				"worktreeAutoApproveOptionAuto-clean": "auto-clean",
+				robashEnabled: "Read-only shell guard",
+				robashEnabledHint: "Curated read-only agents (finder etc.) may only run allow-listed read-only commands (default on).",
+				robashAllow: "Extra allowed commands",
+				robashAllowHint: "Command names added on top of the built-in allow list; built-ins always apply, empty adds nothing.",
+				robashGitAllow: "Extra allowed git subcommands",
+				robashGitAllowHint: "Git subcommands added on top of the built-in list (shared with the pwsh gate); empty adds nothing.",
+				robashDeny: "Extra denied commands",
+				robashDenyHint: "Command names added on top of the built-in deny list; deny wins over allow.",
+				robashPwshAllow: "Extra allowed pwsh commands",
+				robashPwshAllowHint: "Additions to the Windows read-only pwsh allow list; built-ins always apply.",
+				robashPwshDeny: "Extra denied pwsh commands",
+				robashPwshDenyHint: "Additions to the Windows read-only pwsh deny list; deny wins over allow.",
+				lspEnabled: "LSP semantic tools",
+				lspEnabledHint: "When on, each session can enable go-to-definition, find-references and friends from its composer switch (sessions start off).",
+				lspServers: "Custom language servers",
+				lspServersHint: "Add language servers beyond the built-in catalog, edited visually in the manager panel.",
+				notifyEnabled: "System notifications",
+				notifyEnabledHint: "Sends a system notification when a session needs you or a turn finishes (default on).",
+				notifyOnComplete: "Notify on completion",
+				notifyOnCompleteHint: "Notifies when a turn finishes and ran longer than the minimum below.",
+				notifyOnAttention: "Notify when needed",
+				notifyOnAttentionHint: "Notifies on approval requests, questions, plan reviews, and failed or stopped turns.",
+				notifyMinTurnSeconds: "Minimum turn length (seconds)",
+				notifyMinTurnSecondsHint: "A finished turn is only reported when it ran at least this long; 0 reports every turn (default 15).",
+				notifySound: "Notification sound",
+				notifySoundHint: "Plays the platform notification sound where supported.",
+				notifyForeground: "When the window is in front",
+				notifyForegroundHint: "Whether to notify while the window is in the foreground: don't notify (default) or always notify.",
+				notifyForegroundOptionSkip: "Don't notify",
+				notifyForegroundOptionAlways: "Always notify",
+			},
+			zh: {
+				description: "Weir 预设的一站式配置：意图分类、自动续推、上下文压力、文件编辑、Worktree 车道、只读命令行、LSP 与系统通知；模型路由为独立页面。",
+				routingDescription: "委派给子代理的模型：按任务类别或精选代理指定，可设备选按序回退。",
+				unavailable: "此插件未加载，当前无法配置。",
+				readOnly: "此部署的设置为只读。",
+				saveFailed: "部署未接受这些值，已保留供你修正。",
+				save: "保存",
+				saving: "保存中…",
+				pendingChanges: "{n} 项未保存的更改",
+				discardChanges: "放弃更改",
+				overridden: "已覆盖",
+				reset: "恢复默认",
+				restartRequired: "需重启",
+				invalidValue: "请输入该字段接受的值，或留空以使用默认值。",
+				restartReminderTitle: "重启后生效",
+				restartReminderBody: "以下设置已更改，重启 DeepSeek Harness 后才会生效；本次保存的其它改动已即时生效。",
+				restartReminderDismiss: "知道了",
+				restartReminderAcknowledge: "知道了",
+				catalogLoading: "正在加载 provider…",
+				pickerModel: "模型",
+				pickerEffort: "推理",
+				effortProviderDefault: "跟随 provider 默认",
+				catalogFailed: "Provider 目录不可用；可手动填写 provider 与模型。",
+				providerEmpty: "选择 provider",
+				modelEmpty: "选择模型",
+				pickerUnavailable: "模型选择器不可用——请重新加载设置页后重试。",
+				groupIntent: "意图分类",
+				groupTodo: "自动续推",
+				groupGuard: "上下文压力",
+				groupEditing: "文件编辑",
+				groupWorktree: "Worktree 车道",
+				groupRobash: "只读命令行",
+				groupLsp: "LSP 语义工具",
+				groupNotify: "系统通知",
+				groupRoutingCategories: "任务类别",
+				groupRoutingAgents: "精选代理",
+				groupRoutingSupervision: "监督与重试",
+				intentGateClassifierOptionRegex: "regex（规则）",
+				intentGateClassifierOptionLlm: "llm（语义）",
+				intentGateClassifierOptionJev: "jev（实验）",
+				intentGateClassifier: "意图分类器",
+				intentGateClassifierHint: "如何识别每条消息的意图：regex 用内置规则，零成本（默认）；llm 用独立小模型做语义分类；jev 为实验实现。",
+				intentGateProvider: "分类器模型（llm 模式）",
+				intentGateProviderHint: "为语义分类单独指定的模型；留空跟随会话当前模型。",
+				intentGateModel: "分类器模型名（llm 模式）",
+				intentGateModelHint: "留空跟随会话路由所用模型。",
+				intentGateReasoningEffort: "分类器推理档位（llm 模式）",
+				intentGateReasoningEffortHint: "留空跟随模型默认。",
+				intentGateTimeoutMs: "分类超时（毫秒）",
+				intentGateTimeoutMsHint: "超过该时长按规则分类结果继续，不阻塞消息（默认 1500）。",
+				jevEndpoint: "Jev 端点",
+				jevEndpointHint: "Jev 决策服务地址（实验模式）。",
+				jevModel: "Jev 模型",
+				jevModelHint: "Jev 使用的模型名（默认 jev）。",
+				jevApiKeyEnv: "Jev 密钥环境变量名",
+				jevApiKeyEnvHint: "存放 Jev API 密钥的环境变量名；密钥本身不写入配置。",
+				delegateCategoryChains: "任务类别模型",
+				delegateCategoryChainsHint: "每类任务委派给子代理时使用的模型；可添加备选按序回退，留空跟随会话模型。",
+				delegateAgentChains: "精选代理模型",
+				delegateAgentChainsHint: "finder、scholar、advisor 各自运行的模型；留空继承调用方路由。",
+				delegateDisabledCategories: "停用任务类别",
+				delegateDisabledCategoriesHint: "停用的类别从委派清单中移除，助手无法再委派这类任务。",
+				supervisionMaxRetries: "子代理续推上限",
+				supervisionMaxRetriesHint: "受监督子代理未交结果或连续出错时，最多自动续推几次（默认 5）。",
+				supervisionInitialBackoffMs: "重试初始间隔（毫秒）",
+				supervisionInitialBackoffMsHint: "首次重试前的等待时间，之后逐次加倍（默认 30000）。",
+				supervisionMaxBackoffMs: "重试间隔上限（毫秒）",
+				supervisionMaxBackoffMsHint: "重试间隔最多增长到该值（默认 300000）。",
+				todoEnabled: "自动续推",
+				todoEnabledHint: "有待办未完成时，助手自动继续推进，无需你发消息（默认开启）。",
+				todoMaxConsecutive: "连续续推上限",
+				todoMaxConsecutiveHint: "没有你输入时最多连续自动续推几轮（默认 8）。",
+				todoErrorRetryMax: "出错重试上限",
+				todoErrorRetryMaxHint: "模型供应商报错时最多自动重试几次（默认 5）。",
+				guardEnabled: "上下文压力守卫",
+				guardEnabledHint: "上下文将满时提醒助手收尾并请求压缩，避免超限报错；即时生效。",
+				guardSoftThreshold: "提醒阈值",
+				guardSoftThresholdHint: "上下文用量超过该比例时提醒助手收尾（默认 0.72，须小于压缩阈值）。",
+				guardHardThreshold: "压缩阈值",
+				guardHardThresholdHint: "上下文用量超过该比例时请求立即压缩（默认 0.88，不保证压缩完成）。",
+				hashlineHideStockEdit: "仅用锚点编辑",
+				hashlineHideStockEditHint: "隐藏内置 edit 工具，文件修改一律走 hash_edit 锚点编辑。",
+				editLockEnabled: "编辑锁",
+				editLockEnabledHint: "多个会话轮流编辑同一批文件，而不是互相覆盖。",
+				editLockOptOutWarning: "编辑锁已设为关闭。保存后须重启 DeepSeek Harness 才会生效。停用强制执行后，普通编辑不受保护，可能覆盖其他会话的工作。旧围栏与历史仍会保留，重新启用编辑锁时可能再次阻塞文件。",
+				editLockAutoResume: "发消息即恢复编辑",
+				editLockAutoResumeHint: "会话被停止后，发送任意消息即自动恢复其编辑权并确认保留的文件（默认开启）。",
+				editLockStaleSweep: "自动清理失效锁",
+				editLockStaleSweepHint: "目标文件已被删除或移动的锁，在你发消息时自动复核并释放（默认开启）。",
+				worktreeEnabled: "Worktree 车道",
+				worktreeEnabledHint: "让助手在隔离的 git worktree 中工作：车道工具、/worktree 命令与车道面板。",
+				worktreeAutoSetup: "新车道自动安装依赖",
+				worktreeAutoSetupHint: "开车道时自动执行仓库配置的安装命令（默认开启）。",
+				worktreeMaxActive: "活跃车道上限",
+				worktreeMaxActiveHint: "每个仓库最多同时活跃几条车道（默认 4）。",
+				worktreeRoot: "车道目录",
+				worktreeRootHint: "车道存放在仓库内的相对目录（默认 .weir/worktrees，已通过 .git/info/exclude 本地忽略）。",
+				worktreeWatchTimeoutMinutes: "车道订阅有效期（分钟）",
+				worktreeWatchTimeoutMinutesHint: "订阅车道状态后，超过该时长未命中即过期并通知一次（默认 360）；已建立的订阅不变。",
+				worktreeAutoApprove: "车道自动授权",
+				worktreeAutoApproveHint: "新会话的默认审批方式：manual 每次都问；auto-keep 自动批准并保留分支；auto-clean 自动批准并删除分支；会话内 /worktree approve 可覆盖。",
+				worktreeAutoApproveOptionManual: "manual（手动）",
+				"worktreeAutoApproveOptionAuto-keep": "auto-keep（保留分支）",
+				"worktreeAutoApproveOptionAuto-clean": "auto-clean（清理分支）",
+				robashEnabled: "只读命令行守卫",
+				robashEnabledHint: "精选只读代理（finder 等）只能运行允许清单内的只读命令（默认开启）。",
+				robashAllow: "额外允许的命令",
+				robashAllowHint: "在内置允许清单之上追加的命令名；内置清单始终生效，留空即不追加。",
+				robashGitAllow: "额外允许的 git 子命令",
+				robashGitAllowHint: "追加的 git 只读子命令（与 pwsh 侧共用）；留空即不追加。",
+				robashDeny: "额外禁止的命令",
+				robashDenyHint: "在内置禁止清单之上追加的命令名；禁止优先于允许。",
+				robashPwshAllow: "额外允许的 pwsh 命令",
+				robashPwshAllowHint: "Windows 只读 pwsh 的追加允许项；内置清单始终生效。",
+				robashPwshDeny: "额外禁止的 pwsh 命令",
+				robashPwshDenyHint: "Windows 只读 pwsh 的追加禁止项；禁止优先于允许。",
+				lspEnabled: "LSP 语义工具",
+				lspEnabledHint: "开启后，每个会话可在输入栏单独启用定义跳转、引用查找等语言服务（会话默认关）。",
+				lspServers: "自定义语言服务器",
+				lspServersHint: "添加内置清单之外的语言服务器，在管理面板中可视化配置。",
+				notifyEnabled: "系统通知",
+				notifyEnabledHint: "会话需要你处理或一轮任务结束时发送系统通知（默认开启）。",
+				notifyOnComplete: "完成时通知",
+				notifyOnCompleteHint: "一轮任务结束且耗时超过下方最短时长时通知。",
+				notifyOnAttention: "需要处理时通知",
+				notifyOnAttentionHint: "审批请求、提问、计划评审、任务失败或中止时通知。",
+				notifyMinTurnSeconds: "最短通知时长（秒）",
+				notifyMinTurnSecondsHint: "任务至少运行这么久才通知完成；0 表示每轮都通知（默认 15）。",
+				notifySound: "通知提示音",
+				notifySoundHint: "通知时播放系统提示音（平台支持时）。",
+				notifyForeground: "窗口在前台时",
+				notifyForegroundHint: "你正看着窗口时是否仍通知：不通知（默认）或始终通知。",
+				notifyForegroundOptionSkip: "不通知",
+				notifyForegroundOptionAlways: "始终通知",
+			},
+		};
+
+		exports.dictionaries = dictionaries;
 		exports.GROUPS = GROUPS;
 		exports.BOOLEAN_DEFAULTS = BOOLEAN_DEFAULTS;
 		exports.FIELD_DEFAULTS = FIELD_DEFAULTS;

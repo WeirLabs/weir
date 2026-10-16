@@ -87,10 +87,13 @@ window.__ModuleLoader__.load({
 		}
 		/**
 		 * Start the long-poll loop. Returns { stop, stats }. `env` is injectable:
-		 * { fetch, Notification, document, setTimeout, clearTimeout }.
+		 * { channel, Notification, document, setTimeout, clearTimeout } — channel
+		 * is the composition root's HTTP channel adapter ((endpoint, payload,
+		 * { signal }) => Promise<{ ok, value | error }>, never rejecting; a
+		 * carrier throw arrives folded as error.code "call-threw").
 		 */
 		function startWebDelivery(env) {
-			const doFetch = env.fetch ?? globalThis.fetch;
+			const channel = env.channel;
 			const wait = env.setTimeout ?? globalThis.setTimeout;
 			const unwait = env.clearTimeout ?? globalThis.clearTimeout;
 			const open = new Map();
@@ -99,13 +102,7 @@ window.__ModuleLoader__.load({
 			let failures = 0;
 			let controller = null;
 			let sleeper = null;
-			const post = (path, body, signal) => doFetch(path, {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body ?? {}),
-				signal
-			}).then((response) => response.json());
+			const post = (path, body, signal) => channel(path, body ?? {}, { signal });
 			const sleep = (ms) => new Promise((resolve) => {
 				sleeper = wait(resolve, ms);
 			});
@@ -114,6 +111,10 @@ window.__ModuleLoader__.load({
 					try {
 						controller = typeof AbortController === "function" ? new AbortController() : null;
 						const payload = await post(PULL_PATH, {}, controller?.signal);
+						// A folded carrier failure (call-threw) throws BEFORE stats.pulls++
+						// exactly like the old rejecting post did; an envelope failure
+						// counts as an answered pull, then throws.
+						if (payload?.error?.code === "call-threw") throw new Error(payload.error.message);
 						stats.pulls++;
 						if (!payload?.ok) throw new Error(payload?.error?.message ?? "pull failed");
 						failures = 0;
@@ -122,8 +123,10 @@ window.__ModuleLoader__.load({
 							const result = await showNote(env, pulled.note, open);
 							if (result === "shown") stats.shown++;
 							// The ACK must not be able to wedge the loop.
-							post(ACK_PATH, { id: pulled.id, result: RESULTS.includes(result) ? result : "error" }).catch(() => {
-								stats.failures++;
+							post(ACK_PATH, { id: pulled.id, result: RESULTS.includes(result) ? result : "error" }).then((ackResult) => {
+								// The folded call-threw stands in for the old rejection (the only
+								// shape the .catch counted); an envelope failure was ignored then.
+								if (ackResult?.error?.code === "call-threw") stats.failures++;
 							});
 						}
 					} catch {

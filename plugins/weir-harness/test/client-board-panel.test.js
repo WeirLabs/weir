@@ -8,7 +8,7 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 
 const loadModel = () => loadClientChunk('lib/client.blackboard-model.js')
 
-/** A mocked carrier standing in for the gateway (ctx.remote): records every call and answers per method. */
+/** A mocked channel adapter standing in for the composition root's gateway channel: records every call and answers per method with the folded envelope shape ({ ok, value } | { ok: false, error }) the adapter contract guarantees. Carrier throws / missing-connection folds are the adapter's own contract — pinned in test/client-channel-adapter.test.js. */
 function fakeRemote(handlers) {
   const calls = []
   const rawCall = (endpoint, payload) => {
@@ -61,26 +61,16 @@ describe('client.blackboard-model: wire channel against a mocked carrier', () =>
     expect(remote.calls[5].payload).toEqual({ args: { agentId: 'session-1', args: { key: 'k' } } })
   })
 
-  it('folds carrier failures and throws into { ok:false, error:{code,message} } — verbs never reject', async () => {
+  it('a failure envelope passes the channel through untouched', async () => {
     const { exports: model } = await loadModel()
     const failing = fakeRemote({ list: () => ({ ok: false, error: { code: 'gateway/internal', message: 'blackboard remote is not offered (non-Weir preset or unmounted bridge)' } }) })
     const channel = model.createBlackboardChannel(failing.rawCall, 's')
     const folded = await channel.list()
     expect(folded.ok).toBe(false)
     expect(folded.error.message).toContain('not offered')
-    const throwing = model.createBlackboardChannel(() => Promise.reject(new Error('offline')), 's')
-    expect((await throwing.list()).error.code).toBe('call-threw')
-    const syncThrowing = model.createBlackboardChannel(() => { throw new Error('no connection') }, 's')
-    const syncFolded = await syncThrowing.apply('k')
-    expect(syncFolded).toEqual({ ok: false, error: { code: 'call-threw', message: 'no connection' } })
-  })
-
-  it('foldRemoteResult normalizes the envelope shapes defensively', async () => {
-    const { exports: model } = await loadModel()
-    expect(model.foldRemoteResult({ ok: true, value: 1 })).toEqual({ ok: true, value: 1 })
-    expect(model.foldRemoteResult({ ok: false, error: { code: 'x', message: 'y' } })).toEqual({ ok: false, error: { code: 'x', message: 'y' } })
-    expect(model.foldRemoteResult(null).ok).toBe(false)
-    expect(model.foldRemoteResult({}).error.code).toBe('call-failed')
+    // Carrier throws and the defensive envelope normalization are the
+    // composition root adapter's contract — pinned in
+    // test/client-channel-adapter.test.js; the chunk no longer re-folds.
   })
 })
 
@@ -114,7 +104,7 @@ describe('client.blackboard-model: resolveBoardSession (the panel root resolutio
     expect(result).toEqual({ ok: true, sessionId: 'root-1' })
   })
 
-  it('an ok envelope without a usable session id, a failure envelope, and a carrier throw all fold to { ok:false }', async () => {
+  it('an ok envelope without a usable session id or a failure envelope folds to { ok:false }', async () => {
     const { exports: model } = await loadModel()
     const badPayload = fakeRemote({ resolve: () => okEnvelope({}) })
     expect((await model.resolveBoardSession(badPayload.rawCall, 'c')).ok).toBe(false)
@@ -122,8 +112,7 @@ describe('client.blackboard-model: resolveBoardSession (the panel root resolutio
     expect((await model.resolveBoardSession(emptyId.rawCall, 'c')).ok).toBe(false)
     const failing = fakeRemote({ resolve: () => ({ ok: false, error: { code: 'gateway/internal', message: 'down' } }) })
     expect((await model.resolveBoardSession(failing.rawCall, 'c'))).toEqual({ ok: false, error: { code: 'gateway/internal', message: 'down' } })
-    expect((await model.resolveBoardSession(() => Promise.reject(new Error('offline')), 'c')).error.code).toBe('call-threw')
-    expect((await model.resolveBoardSession(() => { throw new Error('no connection') }, 'c')).error.code).toBe('call-threw')
+    // carrier throws fold adapter-side (test/client-channel-adapter.test.js)
   })
 })
 
@@ -649,4 +638,39 @@ test('a failed resolve falls back to the browsing session id without the parent-
   expect(lists.every((call) => call.payload.args.agentId === 'child-1')).toBe(true)
   expect(findAll(loaded, (node) => node.children === "Showing the parent conversation's board.")).toHaveLength(0)
   expect(findAll(loaded, (node) => node.children === '4 entries')).toHaveLength(1)
+})
+
+test('echo-guard: the pre-registration window renders in-code fallbacks, and a late registration swaps in the real strings without a remount', async () => {
+  // The dictionary for the panel rides the blackboard chunk's data face and
+  // registers when the chunk arrives (lib/client.js registerChunkDictionaries).
+  // This pins the contract for the window in between: the slot-bound t echoes
+  // the raw key, the panel's echo-guard (lib/client.blackboard-panel.js) shows
+  // the in-code fallback; once the registration lands, the revision re-render
+  // resolves the real string on the SAME mounted instance (hook state kept).
+  const counts = { useState: 0, useEffect: 0 }
+  const reactStub = makeReactStub(counts)
+  const { exports: model } = await loadModel()
+  const { exports: panel } = await loadClientChunk('lib/client.blackboard-panel.js', requireStubFor(reactStub))
+  const remote = fakeRemote({ list: () => okEnvelope({ entries: ROWS }) })
+  const base = { sessionId: 's1', model, t: (key) => key, callBoard: remote.rawCall, pollMs: 0, watchMs: 0 }
+  reactStub.reset()
+  const renderOnce = (props) => {
+    reactStub.begin()
+    return panel.BlackboardPanel(props)
+  }
+  renderOnce(base)
+  await flush()
+  renderOnce(base)
+  await flush()
+  const fallbackTree = renderOnce(base)
+  // unregistered: in-code fallbacks, never the raw dotted keys
+  expect(findAll(fallbackTree, (node) => node.children === '4 entries')).toHaveLength(1)
+  expect(findAll(fallbackTree, (node) => node.placeholder === 'Search')).toHaveLength(1)
+  expect(findAll(fallbackTree, (node) => node.children === 'blackboard.entries')).toHaveLength(0)
+
+  // registered (late): the same instance re-renders the registered strings
+  const registered = { ...base, t: (key) => ({ 'blackboard.entries': '{n} entries · registered', 'blackboard.search': 'Search · registered' })[key] ?? key }
+  const resolvedTree = renderOnce(registered)
+  expect(findAll(resolvedTree, (node) => node.children === '4 entries · registered')).toHaveLength(1)
+  expect(findAll(resolvedTree, (node) => node.placeholder === 'Search · registered')).toHaveLength(1)
 })

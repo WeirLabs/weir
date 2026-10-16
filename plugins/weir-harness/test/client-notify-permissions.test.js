@@ -6,17 +6,17 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 /**
  * client.notify-permissions.js chunk test: a hook-state-preserving react stub
  * (state persists across renders; effects run once) + fake primitives +
- * scripted fetch + fake timers. The component is rendered by calling it as a
- * function, so every assertion is on the element tree it returns.
+ * a scripted channel adapter (the composition root's carrier face) + fake
+ * timers. The component is rendered by calling it as a function, so every
+ * assertion is on the element tree it returns.
  */
 
 const GRANTED = { supported: true, platform: 'darwin', sender: { bundleId: 'com.apple.ScriptEditor2', name: 'Script Editor' }, state: 'granted', reason: 'alerts-allowed', auth: 7, flags: 8206 }
 const UNKNOWN = { ...GRANTED, state: 'unknown', reason: 'default', auth: null }
 
 // The setup helper replaces these globals; put the real ones back after each test.
-const REAL = { fetch: globalThis.fetch, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, now: Date.now }
+const REAL = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, now: Date.now }
 afterEach(() => {
-  globalThis.fetch = REAL.fetch
   globalThis.setTimeout = REAL.setTimeout
   globalThis.clearTimeout = REAL.clearTimeout
   Date.now = REAL.now
@@ -57,19 +57,20 @@ describe('client.notify-permissions chunk', () => {
     const { definition, exports } = await loadClientChunk('lib/client.notify-permissions.js', requireStub)
 
     const calls = []
-    globalThis.fetch = (path, init) => {
-      const body = init?.body ? JSON.parse(init.body) : {}
+    // the channel-adapter face: (endpoint, payload) — never rejects; an Error
+    // answer models a carrier failure (folded call-threw)
+    const channel = (path, body) => {
       calls.push({ path, body })
       const answer = responses(path, body)
-      if (answer instanceof Error) return Promise.reject(answer)
-      return Promise.resolve({ json: async () => answer })
+      if (answer instanceof Error) return Promise.resolve({ ok: false, error: { code: 'call-threw', message: answer.message } })
+      return Promise.resolve(answer)
     }
     const timers = []
     globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length }
     globalThis.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].fn = null }
 
     const t = (key) => key
-    const render = () => { reactStub.begin(); return exports.NotifyPermissionsPanel({ t }) }
+    const render = () => { reactStub.begin(); return exports.NotifyPermissionsPanel({ t, channel }) }
     const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((resolve) => queueMicrotask(resolve)) }
     return { definition, exports, calls, timers, render, flush, effects, slots }
   }
@@ -388,17 +389,11 @@ describe('page permission helpers', () => {
   })
 
   it('never mentions Script Editor in either dictionary: DSH itself is the sender', async () => {
-    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
-    const registrations = []
-    entry.apply({
-      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push(dicts) },
-      effect: (fn) => { fn(); return () => {} },
-      slots: { inject: () => () => {} },
-      configForms: { whileServed: () => () => {} },
-      remote: {},
-    })
+    // the notifyPerm*/notifyWeb* labels ride this chunk's own data face now
+    // (the entry registers them under the page namespace on chunk arrival)
+    const { exports } = await loadClientChunk('lib/client.notify-permissions.js', (name) => (name === 'react' ? { Component: class {} } : {}))
     for (const locale of ['en', 'zh']) {
-      for (const [key, value] of Object.entries(registrations[0][locale])) {
+      for (const [key, value] of Object.entries(exports.dictionaries[locale])) {
         if (!key.startsWith('notifyPerm') && !key.startsWith('notifyWeb')) continue
         expect(/Script Editor|脚本编辑器/.test(value), `${locale}.${key} still names Script Editor`).toBe(false)
       }
@@ -423,17 +418,11 @@ describe('primaryStep', () => {
 })
 
 describe('notify-permissions dictionaries', () => {
+  // the chunk's own data face (the entry merges it into the page namespace
+  // registration when the settings batch arrives)
   async function dictionaries() {
-    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
-    const registrations = []
-    entry.apply({
-      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push(dicts) },
-      effect: (fn) => { fn(); return () => {} },
-      slots: { inject: () => () => {} },
-      configForms: { whileServed: () => () => {} },
-      remote: {},
-    })
-    return registrations[0]
+    const { exports } = await loadClientChunk('lib/client.notify-permissions.js', (name) => (name === 'react' ? { Component: class {} } : {}))
+    return exports.dictionaries
   }
 
   it('resolves every label the chunk reads in both languages, never the raw key', async () => {

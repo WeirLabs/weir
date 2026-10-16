@@ -24,15 +24,23 @@ window.__ModuleLoader__.load({
 		// hand-written src-json contribution cannot mount through
 		// ctx.remote.$mount — its strict-codec gate rejects src-json codecs),
 		// so read verbs produce zero session-log events and every mutation
-		// shares the agent tools' arbitration kernel.
+		// shares the agent tools' arbitration kernel. The carrier, the envelope
+		// folding and the warn-once degradation now live in the composition
+		// root's gateway channel adapter (lib/client.js); this chunk owns only
+		// the pinned wire shape and the verb mapping.
 
-		/** The closed entryType enum, mirroring src/blackboard/kernel.js (same-package sync require is impossible in the ModuleLoader). */
+		// DERIVED FROM src/blackboard/kernel.js (ENTRY_TYPES, KEY_PATTERN, SUMMARY_MAX_LENGTH
+		// and the write gate below) — the kernel is authoritative; this derived copy exists because
+		// same-package sync require is impossible in the ModuleLoader. Decision equivalence is
+		// pinned by test/client-blackboard-parity.test.js: a draft judged invalid here MUST throw
+		// kernel-side, one judged valid MUST be accepted. Change there = change here.
+		/** The closed entryType enum. */
 		const ENTRY_TYPES = Object.freeze(["map", "contract", "deadend", "wiring", "recipe", "why"]);
 
-		/** Verbatim copy of the kernel's key rule (src/blackboard/kernel.js KEY_PATTERN): a letter/digit first, then letters, digits and . _ - / */
+		/** Verbatim copy of the kernel's key rule (DERIVED FROM src/blackboard/kernel.js KEY_PATTERN, pinned by test/client-blackboard-parity.test.js): a letter/digit first, then letters, digits and . _ - / */
 		const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 
-		/** Free-text summary cap (mirrors the kernel's validateSummary). */
+		/** Free-text summary cap (DERIVED FROM src/blackboard/kernel.js SUMMARY_MAX_LENGTH, pinned by test/client-blackboard-parity.test.js). */
 		const SUMMARY_MAX_LENGTH = 500;
 
 		/** Watch polling gives up after this many consecutive carrier failures. */
@@ -40,47 +48,20 @@ window.__ModuleLoader__.load({
 
 		// ---- wire channel ----
 
-		/**
-		 * Fold one gateway envelope (or a carrier throw) into the panel's
-		 * uniform result shape: { ok: true, value } | { ok: false, error:
-		 * { code, message } }. The gateway already folds host-side failures
-		 * into { ok: false, error } — including the remote's typed
-		 * BlackboardRemoteError, which crosses as gateway/internal with its
-		 * message intact — so the panel never sees an exception from a call.
-		 */
-		function foldRemoteResult(result) {
-			if (result?.ok === true) return { ok: true, value: result.value };
-			const failure = result?.error ?? result ?? null;
-			return {
-				ok: false,
-				error: {
-					code: typeof failure?.code === "string" ? failure.code : "call-failed",
-					message: typeof failure?.message === "string" ? failure.message : String(failure ?? "unknown"),
-				},
-			};
-		}
-
 		/** Drop undefined fields so the wire payload carries exactly the arguments the caller meant (undefined is not JSON-safe). */
 		const cleanArgs = (obj) => Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
 		/**
-		 * The panel's board channel over the raw gateway carrier. rawCall is
-		 * (endpoint, payload) => Promise<RemoteResult> — the composition root
-		 * binds it to connection.rpc.call("/api", …) with its degradation
-		 * warnings; this factory owns the pinned wire shape:
+		 * The panel's board channel. callBoard is the composition root's gateway
+		 * channel adapter: (endpoint, payload) => Promise<{ ok: true, value } |
+		 * { ok: false, error: { code, message } }>, NEVER rejecting (a carrier
+		 * throw arrives pre-folded as call-threw, a missing connection as
+		 * channel-unavailable). This factory owns the pinned wire shape:
 		 *   POST /api/weirBlackboard/<method>
 		 *   payload { args: { agentId: <session>, args: <one JSON object> } }
-		 * Every verb resolves the folded result, never rejects.
+		 * Every verb resolves the adapter's folded result.
 		 */
-		function createBlackboardChannel(rawCall, sessionId) {
-			const call = (method, args) => {
-				let pending;
-				try {
-					pending = Promise.resolve(rawCall(`weirBlackboard/${method}`, { args: { agentId: sessionId, args: args ?? {} } }));
-				} catch (cause) {
-					return Promise.resolve({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } });
-				}
-				return pending.then(foldRemoteResult, (cause) => ({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } }));
-			};
+		function createBlackboardChannel(callBoard, sessionId) {
+			const call = (method, args) => callBoard(`weirBlackboard/${method}`, { args: { agentId: sessionId, args: args ?? {} } });
 			return {
 				/** list({ type?, query? }) — the panel polls the unfiltered board and shapes groups client-side. */
 				list: (args) => call("list", cleanArgs({ type: args?.type, query: args?.query })),
@@ -110,25 +91,19 @@ window.__ModuleLoader__.load({
 		 * args object, NO agent lookup (the gateway's lookup would refuse a
 		 * subagent-owned session before the service runs). ok with a non-empty
 		 * value.sessionId folds to { ok: true, sessionId }; every other shape
-		 * (failure envelope, unusable payload, carrier throw) folds to
-		 * { ok: false, error } so the panel can fall back to the browsing id.
+		 * (failure envelope, unusable payload; a carrier throw arrives
+		 * pre-folded from the adapter) folds to { ok: false, error } so the
+		 * panel can fall back to the browsing id.
 		 */
-		function resolveBoardSession(rawCall, sessionId) {
-			let pending;
-			try {
-				pending = Promise.resolve(rawCall("weirBlackboard/resolve", { args: { agentId: sessionId } }));
-			} catch (cause) {
-				return Promise.resolve({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } });
-			}
-			return pending.then((result) => {
-				const folded = foldRemoteResult(result);
-				if (folded.ok === true) {
-					const root = folded.value?.sessionId;
+		function resolveBoardSession(callBoard, sessionId) {
+			return Promise.resolve(callBoard("weirBlackboard/resolve", { args: { agentId: sessionId } })).then((result) => {
+				if (result?.ok === true) {
+					const root = result.value?.sessionId;
 					if (typeof root === "string" && root !== "") return { ok: true, sessionId: root };
 					return { ok: false, error: { code: "bad-payload", message: "resolve returned no usable session id" } };
 				}
-				return { ok: false, error: folded.error };
-			}, (cause) => ({ ok: false, error: { code: "call-threw", message: cause instanceof Error ? cause.message : String(cause) } }));
+				return { ok: false, error: result?.error ?? { code: "call-failed", message: "unknown" } };
+			});
 		}
 
 		// ---- entries ----
@@ -356,6 +331,9 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		// DERIVED FROM src/blackboard/kernel.js write gate (validateKey, validateEntryType,
+		// validateSummary, and write's content check) — decision equivalence with the kernel
+		// is pinned by test/client-blackboard-parity.test.js over one shared corpus.
 		/**
 		 * Per-field draft errors mirroring the kernel's write gate (validateKey,
 		 * the closed entryType enum, non-empty free-text summary within the
@@ -385,10 +363,148 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
+		// under HMR, so a chunk-local register would throw on the duplicate
+		// (namespace, locale) pair): the entry registers these under "settings.weir.blackboard"
+		// inside a ctx.effect when this chunk arrives (lib/client.js
+		// registerChunkDictionaries). Pinned by test/client.test.js's dictionary
+		// union pin.
+		const dictionaries = {
+			en: {
+				"blackboard.title": "Blackboard",
+				"blackboard.entries": "{n} entries",
+				"blackboard.unavailable": "Blackboard unavailable for this session.",
+				"blackboard.parentBoard": "Showing the parent conversation's board.",
+				"blackboard.retry": "Retry",
+				"blackboard.empty": "The board is empty.",
+				"blackboard.emptyDesc": "Findings agents write to this session's board appear here.",
+				"blackboard.noMatch": "No entries match.",
+				"blackboard.search": "Search",
+				"blackboard.new": "New entry",
+				"blackboard.refresh": "Refresh",
+				"blackboard.back": "Back",
+				"blackboard.dismiss": "Dismiss",
+				"blackboard.filterAll": "All",
+				"blackboard.type.map": "map",
+				"blackboard.type.contract": "contract",
+				"blackboard.type.deadend": "dead end",
+				"blackboard.type.wiring": "wiring",
+				"blackboard.type.recipe": "recipe",
+				"blackboard.type.why": "why",
+				"blackboard.rowMeta": "{read} reads · {watching} watching",
+				"blackboard.updated": "updated {time}",
+				"blackboard.summary": "Summary",
+				"blackboard.content": "Content",
+				"blackboard.gone": "This entry is gone.",
+				"blackboard.goneDesc": "It was deleted from the board (possibly by another writer).",
+				"blackboard.error": "The entry could not be loaded.",
+				"blackboard.edit": "Edit",
+				"blackboard.delete": "Delete",
+				"blackboard.deleting": "Deleting…",
+				"blackboard.deleted": "Entry deleted.",
+				"blackboard.deleteConfirm": "Delete this entry? The write authority is consumed.",
+				"blackboard.contention": "Write authority is held by {holder}.",
+				"blackboard.watch": "Notify me when free",
+				"blackboard.watching": "watching {key}",
+				"blackboard.watchingState": "watching…",
+				"blackboard.released": "Key free — you hold the write authority.",
+				"blackboard.editorNew": "New entry",
+				"blackboard.formKey": "Key",
+				"blackboard.formType": "Type",
+				"blackboard.formRequired": "Required.",
+				"blackboard.formKeyInvalid": "Letters, digits and . _ - / only; start with a letter or digit.",
+				"blackboard.formSummaryPlaceholder": "One or two sentences: the finding, what it cost, how to verify it",
+				"blackboard.save": "Save",
+				"blackboard.saving": "Saving…",
+				"blackboard.cancel": "Cancel",
+				"blackboard.saved": "Saved (revision {n}).",
+				"blackboard.created": "Entry created.",
+				"blackboard.applying": "Acquiring write authority…",
+				"blackboard.reacquire": "Re-acquire",
+				"blackboard.tokenHeld": "write authority {time}",
+				"blackboard.tokenExpired": "Write authority expired — re-acquire before saving.",
+				"blackboard.tokenExpiredShort": "write authority expired",
+				// Session blackboard (slice 3): the promotion-evaluation button and
+				// the promoted read-only marker.
+				"blackboard.promote": "Evaluate for promotion",
+				"blackboard.promoteDisabled": "Every entry is already promoted — nothing to evaluate.",
+				"blackboard.promotionRequested": "The main agent received the promotion-evaluation request.",
+				"blackboard.promoted": "promoted",
+				"blackboard.promotedTo": "promoted → {destination}",
+				"blackboard.promotedReadonly": "This entry is promoted and read-only.",
+				"blackboard.promotedReadonlyDetail": "Promoted entries are read-only: the durable copy lives in the target document, this board copy preserves the session references.",
+				"blackboard.loading": "Loading the board…",
+			},
+			zh: {
+				"blackboard.title": "黑板",
+				"blackboard.entries": "{n} 条",
+				"blackboard.unavailable": "此会话的黑板不可用。",
+				"blackboard.parentBoard": "正在显示父会话的黑板。",
+				"blackboard.retry": "重试",
+				"blackboard.empty": "黑板为空。",
+				"blackboard.emptyDesc": "Agent 写入本会话黑板的发现会出现在这里。",
+				"blackboard.noMatch": "没有匹配的条目。",
+				"blackboard.search": "搜索",
+				"blackboard.new": "新建条目",
+				"blackboard.refresh": "刷新",
+				"blackboard.back": "返回",
+				"blackboard.dismiss": "忽略",
+				"blackboard.filterAll": "全部",
+				"blackboard.type.map": "索引",
+				"blackboard.type.contract": "硬约束",
+				"blackboard.type.deadend": "已否决方案",
+				"blackboard.type.wiring": "隐藏耦合",
+				"blackboard.type.recipe": "操作流程",
+				"blackboard.type.why": "设计缘由",
+				"blackboard.rowMeta": "{read} 次读取 · {watching} 个等待者",
+				"blackboard.updated": "更新于 {time}",
+				"blackboard.summary": "摘要",
+				"blackboard.content": "正文",
+				"blackboard.gone": "此条目已不存在。",
+				"blackboard.goneDesc": "它已从黑板删除（可能是其他写入者所为）。",
+				"blackboard.error": "条目加载失败。",
+				"blackboard.edit": "编辑",
+				"blackboard.delete": "删除",
+				"blackboard.deleting": "删除中…",
+				"blackboard.deleted": "条目已删除。",
+				"blackboard.deleteConfirm": "删除此条目？写入权将被消耗。",
+				"blackboard.contention": "写入权正被 {holder} 持有。",
+				"blackboard.watch": "释放时通知我",
+				"blackboard.watching": "正在监视 {key}",
+				"blackboard.watchingState": "监视中…",
+				"blackboard.released": "键已释放——写入权现由你持有。",
+				"blackboard.editorNew": "新建条目",
+				"blackboard.formKey": "键",
+				"blackboard.formType": "类型",
+				"blackboard.formRequired": "必填。",
+				"blackboard.formKeyInvalid": "仅限字母、数字与 . _ - /；须以字母或数字开头。",
+				"blackboard.formSummaryPlaceholder": "一两句话：发现是什么、代价几何、如何复核",
+				"blackboard.save": "保存",
+				"blackboard.saving": "保存中…",
+				"blackboard.cancel": "取消",
+				"blackboard.saved": "已保存（修订 {n}）。",
+				"blackboard.created": "条目已创建。",
+				"blackboard.applying": "正在申请写入权…",
+				"blackboard.reacquire": "重新申请",
+				"blackboard.tokenHeld": "写入权 {time}",
+				"blackboard.tokenExpired": "写入权已过期——保存前请重新申请。",
+				"blackboard.tokenExpiredShort": "写入权已过期",
+				"blackboard.promote": "评估晋升",
+				"blackboard.promoteDisabled": "所有条目均已晋升——没有可评估的条目。",
+				"blackboard.promotionRequested": "主 Agent 已收到晋升评估请求。",
+				"blackboard.promoted": "已晋升",
+				"blackboard.promotedTo": "已晋升 → {destination}",
+				"blackboard.promotedReadonly": "此条目已晋升，只读。",
+				"blackboard.promotedReadonlyDetail": "已晋升条目只读：持久副本位于目标文档，黑板副本保留会话内引用。",
+				"blackboard.loading": "正在加载黑板…",
+			},
+		};
+
+		exports.dictionaries = dictionaries;
 		exports.ENTRY_TYPES = ENTRY_TYPES;
+		exports.KEY_PATTERN = KEY_PATTERN;
 		exports.SUMMARY_MAX_LENGTH = SUMMARY_MAX_LENGTH;
 		exports.WATCH_GIVE_UP_AFTER = WATCH_GIVE_UP_AFTER;
-		exports.foldRemoteResult = foldRemoteResult;
 		exports.createBlackboardChannel = createBlackboardChannel;
 		exports.resolveBoardSession = resolveBoardSession;
 		exports.entryRowOf = entryRowOf;

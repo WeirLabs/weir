@@ -120,6 +120,28 @@ window.__ModuleLoader__.load({
 				] }) : null
 			] });
 		}
+		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
+		// under HMR, so a chunk-local register would throw on the duplicate
+		// (namespace, locale) pair): the entry registers these under "settings.weir.page"
+		// inside a ctx.effect when this chunk arrives (lib/client.js
+		// registerChunkDictionaries). Pinned by test/client.test.js's dictionary
+		// union pin.
+		// (The entry merges every settings-batch slice into the single "settings.weir.page"
+		// registration — the whole settings card tree shares one t.)
+		const dictionaries = {
+			en: {
+				disabledCategoriesCount: "disabled",
+				disabledCategoriesPanelHint: "One switch per category; saving writes exactly the switched-on names — all off disables nothing.",
+				disabledCategoriesInvalid: "The stored value is not a valid category list; the editor opened with every category off — saving replaces it.",
+			},
+			zh: {
+				disabledCategoriesCount: "个已停用",
+				disabledCategoriesPanelHint: "每个类别一个开关；保存只写入打开的类别，全部关闭即不停用任何类别。",
+				disabledCategoriesInvalid: "已保存的值不是有效的类别清单；编辑器已以全部关闭打开，保存将覆盖该值。",
+			},
+		};
+
+		exports.dictionaries = dictionaries;
 		exports.DisabledCategoriesEditorField = DisabledCategoriesEditorField;
 		return module.exports;
 	}

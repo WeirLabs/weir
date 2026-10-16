@@ -77,6 +77,9 @@ describe('weir settings client half', () => {
     const notifyWebStops = []
     const controllerConstructed = []
     const sentinelSnapshot = { marker: 'snapshot' }
+    // Marker data faces: the dictionary migration pins assert these arrive as
+    // one merged "settings.weir.page" registration (never as duplicate pairs).
+    const markerDict = (name) => ({ en: { [`pageSentinel.${name}`]: `${name} en` }, zh: { [`pageSentinel.${name}`]: `${name} zh` } })
     const settingsPageChunk = {
       WeirCardController: class {
         constructor(scope, deps, page) {
@@ -95,17 +98,18 @@ describe('weir settings client half', () => {
       },
       WeirCard: (props) => ({ __card: props }),
       WeirSection: (props) => ({ __section: props }),
+      dictionaries: markerDict('settingsPage'),
     }
     const chainEditorChunk = { ChainEditorField: (props) => ({ __chainEditor: props }) }
     const robashEditorChunk = { RobashListEditorField: (props) => ({ __robashEditor: props }) }
     const disabledCategoriesEditorChunk = { DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }) }
     const lspPanelChunk = { LspManagerField: (props) => ({ __lspPanel: props }) }
     const modelPickerChunk = { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: (props) => ({ __pickerBoundary: props }) }
-    const chainModelChunk = { marker: 'chain-model' }
-    const robashModelChunk = { marker: 'robash-model' }
-    const lspModelChunk = { marker: 'lsp-model' }
-    const notifyPermissionsChunk = { NotifyPermissionsField: (props) => ({ __notifyPermissions: props }) }
-    const editLockMaintenanceChunk = { EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }) }
+    const chainModelChunk = { marker: 'chain-model', dictionaries: markerDict('chain') }
+    const robashModelChunk = { marker: 'robash-model', dictionaries: markerDict('robash') }
+    const lspModelChunk = { marker: 'lsp-model', dictionaries: markerDict('lsp') }
+    const notifyPermissionsChunk = { NotifyPermissionsField: (props) => ({ __notifyPermissions: props }), dictionaries: markerDict('notifyPermissions') }
+    const editLockMaintenanceChunk = { EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }), dictionaries: markerDict('editLockMaintenance') }
     const notifyWebChunk = { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => notifyWebStops.push(1) } } }
     const lspToggleChunk = { LspToggle: (props) => ({ __toggle: props }) }
     const hashEditViewChunk = { HashEditRow: (props) => ({ __row: props }) }
@@ -118,8 +122,18 @@ describe('weir settings client half', () => {
     }
     const worktreeModelChunk = { WORKTREE_PROJECTION_KEY: 'weirWorktree', marker: 'worktree-model' }
     const presetChunk = { CapabilityPresetsView: () => null }
+    const capabilityBadgeChunk = { CapabilityBadge: (props) => ({ __badge: props }) }
+    const capabilityModelChunk = { marker: 'capability-model', dictionaries: { en: { 'capability.sentinel': 'cap en' }, zh: { 'capability.sentinel': 'cap zh' } } }
+    const capabilityManagerChunk = { CapabilityManagerPanel: (props) => ({ __capabilityPanel: props }) }
+    const blackboardModelChunk = { marker: 'blackboard-model', dictionaries: { en: { 'blackboard.sentinel': 'board en' }, zh: { 'blackboard.sentinel': 'board zh' } } }
+    const blackboardPanelChunk = { BlackboardPanel: (props) => ({ __blackboardPanel: props }) }
     const chunkModules = {
       './client.capability-presets.js': presetChunk,
+      './client.capability-badge.js': capabilityBadgeChunk,
+      './client.capability-model.js': capabilityModelChunk,
+      './client.capability-manager.js': capabilityManagerChunk,
+      './client.blackboard-model.js': blackboardModelChunk,
+      './client.blackboard-panel.js': blackboardPanelChunk,
       './client.settings-page.js': settingsPageChunk,
       './client.model-picker.js': modelPickerChunk,
       './client.chain-editor.js': chainEditorChunk,
@@ -293,12 +307,18 @@ describe('weir settings client half', () => {
     expect(surface.disabledCategoriesEditor).toBeUndefined()
     expect(surface.hashEditView).toBeUndefined()
 
-    // apply: locale dictionaries registered synchronously, then the slot
-    // registration chain — no chunk request needed for apply itself (S18)
+    // apply: the synchronously rendered dictionaries register first, then the
+    // slot registration chain — no chunk request needed for apply itself (S18)
     const { ctx, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, sessionAccesses } = makeCtx()
     surface.apply(ctx)
 
+    // Exactly one apply-time registration: NS carries only the strings that
+    // apply-time-registered synchronous faces read (tab titles, guide copy,
+    // pill labels, loading states); feature dictionaries arrive with their
+    // chunks (the arrival registrations are pinned further down and in the
+    // dedup pin below).
     expect(localeRegistrations).toHaveLength(1)
+    expect(localeRegistrations[0].ns).toBe('settings.weir')
     expect(localeRegistrations[0].dicts.en.title).toBe('Weir')
     expect(localeRegistrations[0].dicts.zh.title).toBe('Weir')
     // the chunk arrival states carry dictionary entries (templates in English)
@@ -306,13 +326,26 @@ describe('weir settings client half', () => {
     expect(localeRegistrations[0].dicts.en.loadFailed).toBe('Weir settings could not be loaded:')
     expect(localeRegistrations[0].dicts.zh.loading).toBe('正在加载 Weir 设置…')
     expect(localeRegistrations[0].dicts.zh.loadFailed).toBe('Weir 设置加载失败：')
-    // Settings switch labels are stable in both locales; other plugin labels remain independent.
-    expect(localeRegistrations[0].dicts.en.editLockEnabled).toBe('Edit Lock')
-    expect(localeRegistrations[0].dicts.zh.editLockEnabled).toBe('编辑锁')
-    // Edit Lock panel locale keys resolve in both dictionaries (templates in English)
+    // the tab titles / guide copy and the pre-arrival hash_edit fallback stay sync
+    for (const key of ['worktreeTabLabel', 'capabilityTabLabel', 'blackboardTabLabel', 'blackboardPillTitle', 'hashEditInput', 'hashEditOutput']) {
+      expect(typeof localeRegistrations[0].dicts.en[key], `en.${key} stays in NS`).toBe('string')
+      expect(typeof localeRegistrations[0].dicts.zh[key], `zh.${key} stays in NS`).toBe('string')
+    }
+    // Migrated (not deleted): the settings switch label and the Edit Lock
+    // panel keys now live in the chunk data faces and register on arrival.
+    const chunkRequire = (name) => {
+      if (name === 'react') return { Component: class {} }
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {}
+      throw new Error(`unexpected require ${name}`)
+    }
+    const { exports: realSettingsPage } = await loadClientChunk('lib/client.settings-page.js', chunkRequire)
+    expect(realSettingsPage.dictionaries.en.editLockEnabled).toBe('Edit Lock')
+    expect(realSettingsPage.dictionaries.zh.editLockEnabled).toBe('编辑锁')
+    const { exports: realEditLockPanel } = await loadClientChunk('lib/client.edit-lock-panel.js', chunkRequire)
     for (const key of ['editLockCleanupOnly', 'editLockRecoveryUsage', 'editLockPauseUsageHint', 'editLockPausedUntil', 'editLockOwnershipHint']) {
-      expect(typeof localeRegistrations[0].dicts.en[key]).toBe('string')
-      expect(typeof localeRegistrations[0].dicts.zh[key]).toBe('string')
+      expect(typeof realEditLockPanel.dictionaries.en[key], `en.${key} in the edit-lock slice`).toBe('string')
+      expect(typeof realEditLockPanel.dictionaries.zh[key], `zh.${key} in the edit-lock slice`).toBe('string')
     }
     expect(whileServedCalls).toHaveLength(1)
     expect(whileServedCalls[0].namespaces).toEqual(['weir-settings'])
@@ -839,9 +872,12 @@ describe('weir settings client half', () => {
     }
     surface.apply(ctx)
     await flush()
-    // started once, on the real global environment (fetch/Notification/document come from the page)
+    // started once, on the real global environment (fetch/Notification/document
+    // come from the page via the prototype) plus the composition root's channel
     expect(notifyWebStarts).toHaveLength(1)
-    expect(notifyWebStarts[0]).toBe(globalThis)
+    expect(Object.getPrototypeOf(notifyWebStarts[0])).toBe(globalThis)
+    expect(typeof notifyWebStarts[0].channel).toBe('function')
+    expect(notifyWebStarts[0].fetch).toBe(globalThis.fetch)
     expect(notifyWebStops).toHaveLength(0)
     for (const dispose of disposers) dispose()
     expect(notifyWebStops).toHaveLength(1)
@@ -1086,8 +1122,10 @@ describe('weir settings client half', () => {
     expect(await verbs.applySelection('s1', {})).toEqual({ status: 'missing', missing: ['research'] })
     ctx.remote.commands.execute = async () => ({ ok: true, value: { kind: 'error', text: 'not JSON' } })
     expect(await verbs.applySelection('s1', {})).toBeNull()
-    expect(localeRegistrations[0].dicts.en['capability.serverSameName']).toContain('{names}')
-    expect(localeRegistrations[0].dicts.zh['capability.serverMissing']).toContain('{names}')
+    // migrated to the capability chunk's data face (registered on arrival)
+    const { exports: capabilityModel } = await loadClientChunk('lib/client.capability-model.js')
+    expect(capabilityModel.dictionaries.en['capability.serverSameName']).toContain('{names}')
+    expect(capabilityModel.dictionaries.zh['capability.serverMissing']).toContain('{names}')
   })
   it('build binds the entry to every chunk digest', () => {
     // Content binding is the red line: the entry header pins each chunk's
@@ -1106,5 +1144,923 @@ describe('weir settings client half', () => {
       expect(manifest[name], `${name} differs from the manifest — run pnpm build`)
         .toBe(createHash('sha256').update(readFileSync(new URL(name, libDir))).digest('hex'))
     }
+  })
+
+  it('chunk dictionaries register per namespace on arrival, effect-owned, never duplicating a (namespace, locale) pair', async () => {
+    const { surface, reactStub } = await loadEntry()
+    // A fake locale service enforcing the real register contract (DSH
+    // dsh-client-locale): a duplicate (namespace, locale) pair throws
+    // synchronously; the disposer frees the pair.
+    const occupied = new Set()
+    const events = []
+    const effectCleanups = []
+    const base = makeCtx()
+    const registrations = base.localeRegistrations
+    base.ctx.locale.register = (ns, dicts) => {
+      for (const locale of Object.keys(dicts)) {
+        if (occupied.has(`${ns}/${locale}`)) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`)
+      }
+      for (const locale of Object.keys(dicts)) occupied.add(`${ns}/${locale}`)
+      events.push(`register:${ns}`)
+      registrations.push({ ns, dicts })
+      return () => {
+        for (const locale of Object.keys(dicts)) occupied.delete(`${ns}/${locale}`)
+        events.push(`dispose:${ns}`)
+      }
+    }
+    base.ctx.effect = (fn) => {
+      const cleanup = fn()
+      if (typeof cleanup === 'function') effectCleanups.push(cleanup)
+      return () => {}
+    }
+    const sidebarSlotRegistrations = []
+    const sidebarScope = {
+      effect: (fn) => { const cleanup = fn(); if (typeof cleanup === 'function') effectCleanups.push(cleanup); return () => {} },
+      sidebarRightTabs: { register: () => () => {} },
+      slots: { register: (definition, component) => { sidebarSlotRegistrations.push({ definition, component }); return () => {} } },
+      locale: { bind: () => (key) => key },
+    }
+    base.ctx.inject = (names, fn) => {
+      if (Array.isArray(names) && names.includes('sidebarRightTabs')) fn(sidebarScope)
+      return () => {}
+    }
+
+    surface.apply(base.ctx)
+    expect(events).toEqual(['register:settings.weir'])
+
+    // the settings batch arrival merges every slice into ONE page registration
+    base.whileServedCalls[0].register(new Set(['weir-settings']))
+    const itemInject = base.slotInjects.find((inject) => inject.name === 'settings.weir.item')
+    itemInject.fn()
+    const item = base.slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
+    reactStub.begin()
+    item.component({ view: 'form', t: (key) => key })
+    await flush()
+    expect(events).toEqual(['register:settings.weir', 'register:settings.weir.page'])
+    const pageRegistration = registrations.find((registration) => registration.ns === 'settings.weir.page')
+    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions', 'editLockMaintenance']) {
+      expect(pageRegistration.dicts.en[`pageSentinel.${slice}`], `page merge carries the ${slice} slice`).toBe(`${slice} en`)
+      expect(pageRegistration.dicts.zh[`pageSentinel.${slice}`], `page merge carries the ${slice} zh slice`).toBe(`${slice} zh`)
+    }
+
+    // chunk re-arrival inside one apply: the badge batch and the pane batch
+    // both carry the capability namespace — exactly one registration survives
+    for (const inject of base.slotInjects) inject.fn()
+    const badge = base.slotRegistrations.find((registration) => registration.definition.id === 'weir-capability-badge')
+    // the react stub's hook state is per test: reset between different components
+    reactStub.reset()
+    reactStub.begin()
+    badge.component({ sessionId: 's1', t: (key) => key })
+    const capabilityPane = sidebarSlotRegistrations.find((registration) => registration.definition.key === 'weir-capabilities')
+    reactStub.reset()
+    reactStub.begin()
+    capabilityPane.component({ sessionId: 's1', t: (key) => key })
+    const blackboardPane = sidebarSlotRegistrations.find((registration) => registration.definition.key === 'weir-blackboard')
+    reactStub.reset()
+    reactStub.begin()
+    blackboardPane.component({ sessionId: 's1', t: (key) => key })
+    await flush()
+    await flush()
+    expect(events.filter((event) => event === 'register:settings.weir.capability')).toHaveLength(1)
+    expect(events.filter((event) => event === 'register:settings.weir.blackboard')).toHaveLength(1)
+    expect(events.filter((event) => event.startsWith('register:'))).toHaveLength(4)
+
+    // fiber unload: the effect disposers free every pair before any
+    // re-registration (the HMR/restart ordering contract)
+    for (const dispose of effectCleanups) dispose()
+    expect([...occupied]).toEqual([])
+
+    // second apply (the HMR shape): registers everything again, never throws —
+    // round 2's registers come strictly after round 1's disposes
+    const base2 = makeCtx()
+    base2.ctx.locale.register = base.ctx.locale.register
+    surface.apply(base2.ctx)
+    expect(registrations[registrations.length - 1].ns).toBe('settings.weir')
+    const lastDispose = events.lastIndexOf('dispose:settings.weir')
+    expect(lastDispose).toBeGreaterThan(-1)
+    expect(events.indexOf('register:settings.weir', lastDispose)).toBeGreaterThan(lastDispose)
+
+    // the negative witness: a second apply WITHOUT the disposal throws on the
+    // duplicate pair — the contract the effect ownership defends
+    expect(() => surface.apply(base2.ctx)).toThrow(/already has locale/)
+  })
+
+  it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
+    // The frozen pre-move key set (738 keys): any key dropped in a future edit
+    // of the data faces or the entry dictionary reddens here (the design's
+    // 键集并集 pin), and any cross-slice duplicate inside the page merge would
+    // silently shadow — pinned too.
+    const GOLDEN_KEYS = [
+    'blackboard.applying',
+    'blackboard.back',
+    'blackboard.cancel',
+    'blackboard.content',
+    'blackboard.contention',
+    'blackboard.created',
+    'blackboard.delete',
+    'blackboard.deleteConfirm',
+    'blackboard.deleted',
+    'blackboard.deleting',
+    'blackboard.dismiss',
+    'blackboard.edit',
+    'blackboard.editorNew',
+    'blackboard.empty',
+    'blackboard.emptyDesc',
+    'blackboard.entries',
+    'blackboard.error',
+    'blackboard.filterAll',
+    'blackboard.formKey',
+    'blackboard.formKeyInvalid',
+    'blackboard.formRequired',
+    'blackboard.formSummaryPlaceholder',
+    'blackboard.formType',
+    'blackboard.gone',
+    'blackboard.goneDesc',
+    'blackboard.loading',
+    'blackboard.new',
+    'blackboard.noMatch',
+    'blackboard.parentBoard',
+    'blackboard.promote',
+    'blackboard.promoteDisabled',
+    'blackboard.promoted',
+    'blackboard.promotedReadonly',
+    'blackboard.promotedReadonlyDetail',
+    'blackboard.promotedTo',
+    'blackboard.promotionRequested',
+    'blackboard.reacquire',
+    'blackboard.refresh',
+    'blackboard.released',
+    'blackboard.retry',
+    'blackboard.rowMeta',
+    'blackboard.save',
+    'blackboard.saved',
+    'blackboard.saving',
+    'blackboard.search',
+    'blackboard.summary',
+    'blackboard.title',
+    'blackboard.tokenExpired',
+    'blackboard.tokenExpiredShort',
+    'blackboard.tokenHeld',
+    'blackboard.type.contract',
+    'blackboard.type.deadend',
+    'blackboard.type.map',
+    'blackboard.type.recipe',
+    'blackboard.type.why',
+    'blackboard.type.wiring',
+    'blackboard.unavailable',
+    'blackboard.updated',
+    'blackboard.watch',
+    'blackboard.watching',
+    'blackboard.watchingState',
+    'blackboardGuideDescription',
+    'blackboardGuideTitle',
+    'blackboardPillTitle',
+    'blackboardTabLabel',
+    'capability.acceptedUnknown',
+    'capability.applied',
+    'capability.appliedSkipped',
+    'capability.apply',
+    'capability.applying',
+    'capability.badge',
+    'capability.close',
+    'capability.confirmUnknownOverwrite',
+    'capability.conflict',
+    'capability.conflictState',
+    'capability.diff.addMcp',
+    'capability.diff.addSkills',
+    'capability.diff.removeMcp',
+    'capability.diff.removeSkills',
+    'capability.discard',
+    'capability.effectiveUnknown',
+    'capability.effectiveUnknownDetail',
+    'capability.effectiveUnknownShort',
+    'capability.error',
+    'capability.failed',
+    'capability.inventoryUnavailableName',
+    'capability.loading',
+    'capability.mcp.add',
+    'capability.mcp.addConfirm',
+    'capability.mcp.adding',
+    'capability.mcp.args',
+    'capability.mcp.cancel',
+    'capability.mcp.command',
+    'capability.mcp.errorIdentityInvalid',
+    'capability.mcp.errorRequired',
+    'capability.mcp.groupManaged',
+    'capability.mcp.groupUnmanaged',
+    'capability.mcp.identity',
+    'capability.mcp.label',
+    'capability.mcp.none',
+    'capability.mcp.stateMounted',
+    'capability.mcp.stateRegistered',
+    'capability.mcp.unmanagedHint',
+    'capability.missing',
+    'capability.missingAction',
+    'capability.noSkills',
+    'capability.pending',
+    'capability.presets.appliedReceiptMissing',
+    'capability.presets.appliedUnavailable',
+    'capability.presets.cancel',
+    'capability.presets.clearing',
+    'capability.presets.close',
+    'capability.presets.collisionCancel',
+    'capability.presets.collisionCoexist',
+    'capability.presets.collisionReplace',
+    'capability.presets.confirmAgain',
+    'capability.presets.copied',
+    'capability.presets.copy',
+    'capability.presets.counts',
+    'capability.presets.countsUnresolved',
+    'capability.presets.currentRevision',
+    'capability.presets.defaultClearConfirm',
+    'capability.presets.defaultClearConfirmButton',
+    'capability.presets.defaultClearFailed',
+    'capability.presets.defaultClearOpen',
+    'capability.presets.defaultCleared',
+    'capability.presets.defaultEmpty',
+    'capability.presets.defaultEntries',
+    'capability.presets.defaultNone',
+    'capability.presets.defaultSaveConfirm',
+    'capability.presets.defaultSaveConfirmButton',
+    'capability.presets.defaultSaveFailed',
+    'capability.presets.defaultSaveOpen',
+    'capability.presets.defaultSaved',
+    'capability.presets.defaultTitle',
+    'capability.presets.defaultUnavailable',
+    'capability.presets.defaultUnresolved',
+    'capability.presets.delete',
+    'capability.presets.deleteConfirm',
+    'capability.presets.deleteConfirmButton',
+    'capability.presets.deleteFailed',
+    'capability.presets.deleted',
+    'capability.presets.deleting',
+    'capability.presets.downloaded',
+    'capability.presets.editConflict',
+    'capability.presets.editTarget',
+    'capability.presets.emptyGlobal',
+    'capability.presets.emptyWorkspace',
+    'capability.presets.errorName',
+    'capability.presets.export',
+    'capability.presets.exportDownload',
+    'capability.presets.exportFailed',
+    'capability.presets.exportLabel',
+    'capability.presets.fromApplied',
+    'capability.presets.fromDraft',
+    'capability.presets.gone',
+    'capability.presets.groupGlobal',
+    'capability.presets.groupWorkspace',
+    'capability.presets.groupWorkspaceNone',
+    'capability.presets.importCollision',
+    'capability.presets.importCollisionDecision',
+    'capability.presets.importConfirm',
+    'capability.presets.importFailed',
+    'capability.presets.importFiles',
+    'capability.presets.importInstallFailed',
+    'capability.presets.importInstalledNote',
+    'capability.presets.importInvalidJson',
+    'capability.presets.importNameConflict',
+    'capability.presets.importNoInstalls',
+    'capability.presets.importNoTargetRoot',
+    'capability.presets.importOpen',
+    'capability.presets.importPartial',
+    'capability.presets.importPlaceholder',
+    'capability.presets.importRejected',
+    'capability.presets.importResultTitle',
+    'capability.presets.importSubmit',
+    'capability.presets.importSummaryTitle',
+    'capability.presets.importUnresolvedTitle',
+    'capability.presets.imported',
+    'capability.presets.importedPackage',
+    'capability.presets.importing',
+    'capability.presets.load',
+    'capability.presets.loadFailed',
+    'capability.presets.loaded',
+    'capability.presets.loadedUnresolved',
+    'capability.presets.loading',
+    'capability.presets.locked',
+    'capability.presets.missingSelection',
+    'capability.presets.name',
+    'capability.presets.nameConflict',
+    'capability.presets.namespace',
+    'capability.presets.needsReceipt',
+    'capability.presets.newName',
+    'capability.presets.noWorkspace',
+    'capability.presets.noneKnown',
+    'capability.presets.rename',
+    'capability.presets.renameCollision',
+    'capability.presets.renameHint',
+    'capability.presets.renameRow',
+    'capability.presets.renameSubmit',
+    'capability.presets.renamed',
+    'capability.presets.replace',
+    'capability.presets.replaceTarget',
+    'capability.presets.replaced',
+    'capability.presets.resaveConfirm',
+    'capability.presets.resaveRow',
+    'capability.presets.resaveSubmit',
+    'capability.presets.resaved',
+    'capability.presets.revisionConflict',
+    'capability.presets.save',
+    'capability.presets.saveFailed',
+    'capability.presets.saveOpen',
+    'capability.presets.saved',
+    'capability.presets.saving',
+    'capability.presets.scopeGlobal',
+    'capability.presets.scopeProject',
+    'capability.presets.scopeUser',
+    'capability.presets.scopeWorkspace',
+    'capability.presets.source',
+    'capability.presets.sourceChanged',
+    'capability.presets.sourceUnavailable',
+    'capability.presets.unavailable',
+    'capability.presets.uncertain',
+    'capability.presets.unreadable',
+    'capability.presets.unsupported',
+    'capability.removeName',
+    'capability.replaceName',
+    'capability.sameNameWarning',
+    'capability.search',
+    'capability.serverMissing',
+    'capability.serverSameName',
+    'capability.sourceNumber',
+    'capability.sourceUnknown',
+    'capability.tab.mcp',
+    'capability.tab.presets',
+    'capability.tab.skills',
+    'capability.unavailable',
+    'capability.unavailable.short',
+    'capability.unknownLegacyName',
+    'capability.unknownName',
+    'capability.unknownOverwriteRisk',
+    'capability.unmanaged',
+    'capability.unresolvedNameTitle',
+    'capability.unresolvedNameWarning',
+    'capability.unsupported',
+    'capabilityGuideDescription',
+    'capabilityGuideTitle',
+    'capabilityTabLabel',
+    'catalogFailed',
+    'catalogLoading',
+    'chainAddRung',
+    'chainAgentPanelHint',
+    'chainAgent_advisor',
+    'chainAgent_advisor_desc',
+    'chainAgent_finder',
+    'chainAgent_finder_desc',
+    'chainAgent_scholar',
+    'chainAgent_scholar_desc',
+    'chainCancel',
+    'chainCategory_architect',
+    'chainCategory_architect_desc',
+    'chainCategory_artistry',
+    'chainCategory_artistry_desc',
+    'chainCategory_deep',
+    'chainCategory_deep-plus',
+    'chainCategory_deep-plus_desc',
+    'chainCategory_deep_desc',
+    'chainCategory_general-high',
+    'chainCategory_general-high_desc',
+    'chainCategory_general-low',
+    'chainCategory_general-low_desc',
+    'chainCategory_quick',
+    'chainCategory_quick_desc',
+    'chainCategory_visual',
+    'chainCategory_visual_desc',
+    'chainCategory_writing',
+    'chainCategory_writing_desc',
+    'chainClear',
+    'chainEdit',
+    'chainPanelHint',
+    'chainRemove',
+    'chainSave',
+    'delegateAgentChains',
+    'delegateAgentChainsHint',
+    'delegateCategoryChains',
+    'delegateCategoryChainsHint',
+    'delegateDisabledCategories',
+    'delegateDisabledCategoriesHint',
+    'description',
+    'disabledCategoriesCount',
+    'disabledCategoriesInvalid',
+    'disabledCategoriesPanelHint',
+    'discardChanges',
+    'editLockAutoResume',
+    'editLockAutoResumeHint',
+    'editLockBinding_cross-process',
+    'editLockBinding_revocation-failed',
+    'editLockBinding_serving',
+    'editLockBinding_transferable',
+    'editLockBinding_unknown',
+    'editLockCleanupOnly',
+    'editLockColdResumeAuto',
+    'editLockColdResumeManual',
+    'editLockColdRevokedAuto',
+    'editLockColdRevokedManual',
+    'editLockConfirmAll',
+    'editLockDetails',
+    'editLockEnabled',
+    'editLockEnabledHint',
+    'editLockHoldUntil',
+    'editLockLabel',
+    'editLockLoading',
+    'editLockMaint',
+    'editLockMaintAuthorityNo',
+    'editLockMaintAuthorityYes',
+    'editLockMaintBlocked',
+    'editLockMaintCounts',
+    'editLockMaintDomains',
+    'editLockMaintFailed',
+    'editLockMaintHint',
+    'editLockMaintHistory',
+    'editLockMaintHistoryHint',
+    'editLockMaintInspect',
+    'editLockMaintLoading',
+    'editLockMaintNoDomains',
+    'editLockMaintOffRisk',
+    'editLockMaintPinned',
+    'editLockMaintPresenceCorrupt',
+    'editLockMaintPresenceEmpty',
+    'editLockMaintPresenceJunk',
+    'editLockMaintPresenceNone',
+    'editLockMaintPresenceNotAFile',
+    'editLockMaintPresenceUnreadable',
+    'editLockMaintRecoverBusy',
+    'editLockMaintRecoverConfirm',
+    'editLockMaintRecoverDigest',
+    'editLockMaintRecoverDone',
+    'editLockMaintRecoverFailed',
+    'editLockMaintRecoverHint',
+    'editLockMaintRecoverOperations',
+    'editLockMaintRecoverOwner',
+    'editLockMaintRecoverRevision',
+    'editLockMaintRecoverRisk',
+    'editLockMaintRecoverRoot',
+    'editLockMaintRecoveries',
+    'editLockMaintRefresh',
+    'editLockMaintReservation',
+    'editLockMaintRestart',
+    'editLockMaintRetained',
+    'editLockMaintRetry',
+    'editLockMaintScopeDomain',
+    'editLockMaintScopeFile',
+    'editLockMaintScopeNone',
+    'editLockMaintScopeNote',
+    'editLockMaintScopeSubtree',
+    'editLockMaintStateDisableRequested',
+    'editLockMaintStateDisableRequestedHint',
+    'editLockMaintStateDisabled',
+    'editLockMaintStateDisabledHint',
+    'editLockMaintStateEnableRequested',
+    'editLockMaintStateEnableRequestedHint',
+    'editLockMaintStateEnforced',
+    'editLockMaintStateEnforcedHint',
+    'editLockMaintStateUnknown',
+    'editLockMaintStateUnknownHint',
+    'editLockMaintUnavailable',
+    'editLockMaintUnknownHistory',
+    'editLockMaintUnknownHistoryHint',
+    'editLockMaintUnknownRisk',
+    'editLockMaintUnresolved',
+    'editLockMaintUnresolvedNone',
+    'editLockMaintWarnKeepHistory',
+    'editLockMaintWarnUnlock',
+    'editLockOptOutWarning',
+    'editLockOwnerOther',
+    'editLockOwnershipHint',
+    'editLockPanelTitle',
+    'editLockPauseUsageHint',
+    'editLockPausedUntil',
+    'editLockRecovery',
+    'editLockRecoveryUsage',
+    'editLockRefresh',
+    'editLockReleaseAll',
+    'editLockResume',
+    'editLockRetry',
+    'editLockRetryPending',
+    'editLockRevokeConfirm',
+    'editLockRevokedHint',
+    'editLockRow_confirm',
+    'editLockRow_release',
+    'editLockRow_unlock',
+    'editLockRow_unlockConfirm',
+    'editLockStaleSweep',
+    'editLockStaleSweepHint',
+    'editLockState_attention',
+    'editLockState_confirm',
+    'editLockState_editing',
+    'editLockState_failed',
+    'editLockState_holding',
+    'editLockState_idle',
+    'editLockState_revoked',
+    'editLockState_stopped',
+    'editLockState_unavailable',
+    'editLockStatus_abnormal',
+    'editLockStatus_active',
+    'editLockStatus_pending-confirmation',
+    'editLockStatus_user-interrupted',
+    'editLockStop',
+    'editLockTitle',
+    'effortProviderDefault',
+    'groupEditing',
+    'groupGuard',
+    'groupIntent',
+    'groupLsp',
+    'groupNotify',
+    'groupRobash',
+    'groupRoutingAgents',
+    'groupRoutingCategories',
+    'groupRoutingSupervision',
+    'groupTodo',
+    'groupWorktree',
+    'guardEnabled',
+    'guardEnabledHint',
+    'guardHardThreshold',
+    'guardHardThresholdHint',
+    'guardSoftThreshold',
+    'guardSoftThresholdHint',
+    'hashEditCodeLabel',
+    'hashEditCollapse',
+    'hashEditCollapseAria',
+    'hashEditCopied',
+    'hashEditCopy',
+    'hashEditExpand',
+    'hashEditExpandAria',
+    'hashEditFailed',
+    'hashEditInput',
+    'hashEditOutput',
+    'hashEditPlanned',
+    'hashEditPreparing',
+    'hashEditRunning',
+    'hashEditStopped',
+    'hashEditTitle',
+    'hashEditUnwrap',
+    'hashEditWrap',
+    'hashlineHideStockEdit',
+    'hashlineHideStockEditHint',
+    'intentGateClassifier',
+    'intentGateClassifierHint',
+    'intentGateClassifierOptionJev',
+    'intentGateClassifierOptionLlm',
+    'intentGateClassifierOptionRegex',
+    'intentGateModel',
+    'intentGateModelHint',
+    'intentGateProvider',
+    'intentGateProviderHint',
+    'intentGateReasoningEffort',
+    'intentGateReasoningEffortHint',
+    'intentGateTimeoutMs',
+    'intentGateTimeoutMsHint',
+    'invalidValue',
+    'jevApiKeyEnv',
+    'jevApiKeyEnvHint',
+    'jevEndpoint',
+    'jevEndpointHint',
+    'jevModel',
+    'jevModelHint',
+    'loadFailed',
+    'loading',
+    'lspEnabled',
+    'lspEnabledHint',
+    'lspFamily_bash',
+    'lspFamily_cpp',
+    'lspFamily_css',
+    'lspFamily_dockerfile',
+    'lspFamily_go',
+    'lspFamily_html',
+    'lspFamily_json',
+    'lspFamily_lua',
+    'lspFamily_markdown',
+    'lspFamily_python',
+    'lspFamily_rust',
+    'lspFamily_typescript',
+    'lspFamily_yaml',
+    'lspManager',
+    'lspManagerAddServer',
+    'lspManagerArgs',
+    'lspManagerCancel',
+    'lspManagerCommand',
+    'lspManagerConfirmInstall',
+    'lspManagerCustom',
+    'lspManagerCustomHint',
+    'lspManagerExitCode',
+    'lspManagerFailed',
+    'lspManagerFamily',
+    'lspManagerHint',
+    'lspManagerInstall',
+    'lspManagerInstallCmd',
+    'lspManagerInstalled',
+    'lspManagerInstallerMissing',
+    'lspManagerInstalling',
+    'lspManagerInvalidJson',
+    'lspManagerLoading',
+    'lspManagerMissing',
+    'lspManagerPendingStatus',
+    'lspManagerRemove',
+    'lspManagerRetry',
+    'lspManagerTimedOut',
+    'lspManagerUnavailable',
+    'lspServers',
+    'lspServersHint',
+    'lspToggleLabel',
+    'lspToggleTitle',
+    'modelEmpty',
+    'notifyEnabled',
+    'notifyEnabledHint',
+    'notifyForeground',
+    'notifyForegroundHint',
+    'notifyForegroundOptionAlways',
+    'notifyForegroundOptionSkip',
+    'notifyMinTurnSeconds',
+    'notifyMinTurnSecondsHint',
+    'notifyOnAttention',
+    'notifyOnAttentionHint',
+    'notifyOnComplete',
+    'notifyOnCompleteHint',
+    'notifyPermBestEffort',
+    'notifyPermChecking',
+    'notifyPermClose',
+    'notifyPermConfirm',
+    'notifyPermDescription',
+    'notifyPermDetails',
+    'notifyPermError',
+    'notifyPermFailed',
+    'notifyPermFocusNote',
+    'notifyPermManualPath',
+    'notifyPermNotSeen',
+    'notifyPermOpenHint',
+    'notifyPermOpenSettings',
+    'notifyPermOpening',
+    'notifyPermReason_alerts-allowed',
+    'notifyPermReason_default',
+    'notifyPermReason_no-record',
+    'notifyPermReason_not-allowed',
+    'notifyPermReason_unreadable',
+    'notifyPermRecheck',
+    'notifyPermRetry',
+    'notifyPermSeen',
+    'notifyPermSeenNo',
+    'notifyPermSeenYes',
+    'notifyPermSendAgain',
+    'notifyPermSendTest',
+    'notifyPermSending',
+    'notifyPermState_denied',
+    'notifyPermState_granted',
+    'notifyPermState_unknown',
+    'notifyPermTitle',
+    'notifyPermWaiting',
+    'notifyPermissions',
+    'notifyPermissionsHint',
+    'notifyPermissionsOpen',
+    'notifySound',
+    'notifySoundHint',
+    'notifyWebDeniedHint',
+    'notifyWebPerm_default',
+    'notifyWebPerm_denied',
+    'notifyWebPerm_granted',
+    'notifyWebPermission',
+    'notifyWebUnsupported',
+    'overridden',
+    'pendingChanges',
+    'pickerEffort',
+    'pickerModel',
+    'pickerUnavailable',
+    'providerEmpty',
+    'readOnly',
+    'reset',
+    'restartReminderAcknowledge',
+    'restartReminderBody',
+    'restartReminderDismiss',
+    'restartReminderTitle',
+    'restartRequired',
+    'robashAllow',
+    'robashAllowHint',
+    'robashDeny',
+    'robashDenyHint',
+    'robashEnabled',
+    'robashEnabledHint',
+    'robashGitAllow',
+    'robashGitAllowHint',
+    'robashListAdd',
+    'robashListEntries',
+    'robashListEntryPlaceholder',
+    'robashListInvalid',
+    'robashListPanelHint',
+    'robashPwshAllow',
+    'robashPwshAllowHint',
+    'robashPwshDeny',
+    'robashPwshDenyHint',
+    'routingDescription',
+    'routingTitle',
+    'save',
+    'saveFailed',
+    'saving',
+    'supervisionInitialBackoffMs',
+    'supervisionInitialBackoffMsHint',
+    'supervisionMaxBackoffMs',
+    'supervisionMaxBackoffMsHint',
+    'supervisionMaxRetries',
+    'supervisionMaxRetriesHint',
+    'title',
+    'todoEnabled',
+    'todoEnabledHint',
+    'todoErrorRetryMax',
+    'todoErrorRetryMaxHint',
+    'todoMaxConsecutive',
+    'todoMaxConsecutiveHint',
+    'unavailable',
+    'worktreeAbandon',
+    'worktreeAbandonConfirm',
+    'worktreeActionFailed',
+    'worktreeActionUnavailable',
+    'worktreeAheadBehind',
+    'worktreeApproveLabel',
+    'worktreeApproveOptionAutoClean',
+    'worktreeApproveOptionAutoKeep',
+    'worktreeApproveOptionManual',
+    'worktreeApproveTitle',
+    'worktreeAutoApprove',
+    'worktreeAutoApproveHint',
+    'worktreeAutoApproveOptionAuto-clean',
+    'worktreeAutoApproveOptionAuto-keep',
+    'worktreeAutoApproveOptionManual',
+    'worktreeAutoSetup',
+    'worktreeAutoSetupHint',
+    'worktreeBaseMoved',
+    'worktreeCancel',
+    'worktreeCleanup',
+    'worktreeCleanupAll',
+    'worktreeCleanupAllConfirm',
+    'worktreeCleanupWorktree',
+    'worktreeConfigAdd',
+    'worktreeConfigChecks',
+    'worktreeConfigHint',
+    'worktreeConfigName',
+    'worktreeConfigRemove',
+    'worktreeConfigRun',
+    'worktreeConfigSave',
+    'worktreeConfigSetup',
+    'worktreeConfigure',
+    'worktreeConflicts',
+    'worktreeCopyPath',
+    'worktreeDiffUnavailable',
+    'worktreeDisabled',
+    'worktreeEmpty',
+    'worktreeEmptyBody',
+    'worktreeEmptyTitle',
+    'worktreeEnabled',
+    'worktreeEnabledHint',
+    'worktreeExcludeMissing',
+    'worktreeExcludeOk',
+    'worktreeExitCode',
+    'worktreeFiles',
+    'worktreeFlatInput',
+    'worktreeFlatOutput',
+    'worktreeGuideDescription',
+    'worktreeGuideTitle',
+    'worktreeHideDiff',
+    'worktreeHideHistory',
+    'worktreeInitParseFailed',
+    'worktreeLand',
+    'worktreeLandConfirm',
+    'worktreeLoadFailed',
+    'worktreeLoading',
+    'worktreeMaxActive',
+    'worktreeMaxActiveHint',
+    'worktreeMergeCommit',
+    'worktreeModeLabel',
+    'worktreeModeTitle',
+    'worktreeModeUnavailable',
+    'worktreeNextLabel',
+    'worktreeNext_delegate',
+    'worktreeNext_worktree_check',
+    'worktreeNext_worktree_cleanup',
+    'worktreeNext_worktree_land',
+    'worktreeNoChanges',
+    'worktreePillAwaiting',
+    'worktreePillBaseMoved',
+    'worktreePillCount',
+    'worktreePillLanes',
+    'worktreePillMode',
+    'worktreePillTitle',
+    'worktreeRecheck',
+    'worktreeRefresh',
+    'worktreeRetrySetup',
+    'worktreeRoot',
+    'worktreeRootHint',
+    'worktreeShowHistory',
+    'worktreeSkipSetup',
+    'worktreeStaleData',
+    'worktreeState_abandoned',
+    'worktreeState_awaiting_approval',
+    'worktreeState_branch_moved',
+    'worktreeState_check_failed',
+    'worktreeState_checking',
+    'worktreeState_cleaned',
+    'worktreeState_conflicted',
+    'worktreeState_declined',
+    'worktreeState_dirty',
+    'worktreeState_kept',
+    'worktreeState_landable',
+    'worktreeState_landed',
+    'worktreeState_no_commits',
+    'worktreeState_preparing',
+    'worktreeState_ready',
+    'worktreeState_setup_failed',
+    'worktreeState_working',
+    'worktreeTabLabel',
+    'worktreeTool_worktree_abandon',
+    'worktreeTool_worktree_check',
+    'worktreeTool_worktree_cleanup',
+    'worktreeTool_worktree_land',
+    'worktreeTool_worktree_open',
+    'worktreeTool_worktree_watch',
+    'worktreeUnavailable',
+    'worktreeUnmanaged',
+    'worktreeVerificationOff',
+    'worktreeVerificationOn',
+    'worktreeViewDiff',
+    'worktreeWait_check_complete',
+    'worktreeWait_child_settle',
+    'worktreeWait_lane_ready',
+    'worktreeWait_user',
+    'worktreeWatchExpires',
+    'worktreeWatchHit',
+    'worktreeWatchStates',
+    'worktreeWatchTimeoutMinutes',
+    'worktreeWatchTimeoutMinutesHint',
+    'worktreeWatching',
+    ]
+    const chunkRequire = (name) => {
+      if (name === 'react') return { Component: class {} }
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {}
+      throw new Error(`unexpected require ${name}`)
+    }
+    // the entry's sync registration (dictionary-only apply)
+    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
+    const registrations = []
+    entry.apply({
+      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push({ ns, dicts }) },
+      effect: (fn) => { fn(); return () => {} },
+      slots: { inject: () => () => {} },
+      configForms: { whileServed: () => () => {} },
+      remote: {},
+    })
+    expect(registrations).toHaveLength(1)
+    expect(registrations[0].ns).toBe('settings.weir')
+
+    const homes = [
+      ['NS (entry)', null],
+      ['lib/client.settings-page.js', chunkRequire],
+      ['lib/client.chain-model.js', undefined],
+      ['lib/client.robash-model.js', undefined],
+      ['lib/client.lsp-model.js', undefined],
+      ['lib/client.disabled-categories-editor.js', chunkRequire],
+      ['lib/client.notify-permissions.js', chunkRequire],
+      ['lib/client.edit-lock-maintenance.js', chunkRequire],
+      ['lib/client.capability-model.js', undefined],
+      ['lib/client.blackboard-model.js', undefined],
+      ['lib/client.lsp-toggle.js', chunkRequire],
+      ['lib/client.hash-edit-model.js', undefined],
+      ['lib/client.edit-lock-panel.js', chunkRequire],
+    ]
+    const seen = new Map() // key -> home name (first writer)
+    const union = new Set()
+    // the documented cross-namespace duplicates: a loading/fallback string a
+    // second surface reads from its own namespace
+    const allowedDupes = new Map([
+      ['capability.loading', ['NS (entry)', 'lib/client.capability-model.js']],
+      ['unavailable', ['lib/client.settings-page.js', 'lib/client.capability-model.js']],
+      ['save', ['lib/client.settings-page.js', 'lib/client.capability-model.js']],
+      ['blackboard.loading', ['NS (entry)', 'lib/client.blackboard-model.js']],
+      ['hashEditInput', ['NS (entry)', 'lib/client.hash-edit-model.js']],
+      ['hashEditOutput', ['NS (entry)', 'lib/client.hash-edit-model.js']],
+    ])
+    const entryDicts = registrations[0].dicts
+    for (const [home, requireStub] of homes) {
+      const dictionaries = home === 'NS (entry)'
+        ? { en: entryDicts.en, zh: entryDicts.zh }
+        : (await loadClientChunk(home, ...(requireStub ? [requireStub] : []))).exports.dictionaries
+      expect(dictionaries, `${home} carries a data face`).toBeTruthy()
+      const enKeys = Object.keys(dictionaries.en)
+      const zhKeys = Object.keys(dictionaries.zh)
+      expect(enKeys.sort(), `${home} en/zh key parity`).toEqual(zhKeys.sort())
+      for (const key of enKeys) {
+        union.add(key)
+        const holder = seen.get(key)
+        if (holder !== undefined) {
+          const allowed = allowedDupes.get(key)
+          expect(allowed, `${key} duplicated across ${holder} and ${home}`).toBeTruthy()
+          expect(allowed).toContain(holder)
+          expect(allowed).toContain(home)
+          // a duplicated key must carry the same string in both homes
+          expect(dictionaries.en[key], `${key} en text drift between homes`).toBe(seen.get(`${key}en`))
+        } else {
+          seen.set(key, home)
+          seen.set(`${key}en`, dictionaries.en[key])
+        }
+      }
+    }
+    expect([...union].sort(), 'entry ∪ chunk data faces == the pre-move key set').toEqual([...GOLDEN_KEYS].sort())
   })
 })

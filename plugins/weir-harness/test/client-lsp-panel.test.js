@@ -3,7 +3,8 @@ import { loadClientChunk } from './helpers/load-client-chunk.js'
 
 /**
  * client.lsp-panel.js chunk test: shared helper + hook-state-preserving react
- * stub + fetch stub; the lsp model trio comes from the real zero-dependency
+ * stub + a channel-adapter stub (the composition root's carrier face); the lsp
+ * model trio comes from the real zero-dependency
  * client.lsp-model.js chunk via the `model` prop. Assertions migrated
  * verbatim from the pre-split client.test.js LSP manager panel describe.
  */
@@ -57,21 +58,22 @@ describe('client.lsp-panel chunk', () => {
       { family: 'typescript', languageIds: ['typescript'], command: 'typescript-language-server', installed: true, version: '5.0', installCommand: 'npm install -g typescript-language-server typescript', installHint: '', installerAvailable: true },
       { family: 'cpp', languageIds: ['cpp'], command: 'clangd', installed: false, version: null, installCommand: 'brew install llvm', installHint: '', installerAvailable: false },
     ]
-    const fetchCalls = []
-    const fetchStub = (url, init) => {
-      fetchCalls.push({ url, init })
-      if (url === 'api/weir-lsp/status') {
-        return Promise.resolve({ json: async () => ({ ok: true, value: { servers: SERVERS } }) })
+    const channelCalls = []
+    let channelBehavior = null
+    const channelStub = (endpoint, payload) => {
+      channelCalls.push({ endpoint, payload })
+      if (channelBehavior) return channelBehavior(endpoint, payload)
+      if (endpoint === 'api/weir-lsp/status') {
+        return Promise.resolve({ ok: true, value: { servers: SERVERS } })
       }
-      if (url === 'api/weir-lsp/install') {
-        return Promise.resolve({ json: async () => ({ ok: true, value: { output: 'added 2 packages', exitCode: 0, timedOut: false } }) })
+      if (endpoint === 'api/weir-lsp/install') {
+        return Promise.resolve({ ok: true, value: { output: 'added 2 packages', exitCode: 0, timedOut: false } })
       }
-      return Promise.reject(new Error(`unexpected fetch ${url}`))
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
     }
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = fetchStub
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-    const props = { t: (key) => key, model }
+    // the composition root injects the HTTP channel adapter as the channel prop
+    const props = { t: (key) => key, model, channel: channelStub }
     const renderWith = (componentProps) => {
       reactStub.begin()
       return LspManagerField(componentProps)
@@ -100,7 +102,9 @@ describe('client.lsp-panel chunk', () => {
       const opened = render()
       const body = opened.children[1].children
       expect(body.__type).toBe('div')
-      expect(fetchCalls[0].url).toBe('api/weir-lsp/status')
+      expect(channelCalls[0].endpoint).toBe('api/weir-lsp/status')
+      // the status read sends NO body (the endpoint's wire convention)
+      expect(channelCalls[0].payload).toBeUndefined()
       // two server rows: lua missing (install button), typescript installed (version)
       const luaRow = body.children[0]
       expect(luaRow.children[1].children[0].children).toBe('lspManagerMissing')
@@ -126,15 +130,15 @@ describe('client.lsp-panel chunk', () => {
       // run the install → the endpoint is called with the family
       confirmRow.children[1].children[2].children[0].onClick()
       await flush()
-      expect(fetchCalls[1].url).toBe('api/weir-lsp/install')
-      expect(JSON.parse(fetchCalls[1].init.body)).toEqual({ family: 'lua' })
+      expect(channelCalls[1].endpoint).toBe('api/weir-lsp/install')
+      expect(channelCalls[1].payload).toEqual({ family: 'lua' })
       const afterInstall = render()
       const resultBlock = afterInstall.children[1].children.children[3]
       expect(resultBlock).toBeTruthy()
       expect(resultBlock.children[0].children).toContain('lspFamily_lua')
       expect(resultBlock.children[1].children).toBe('added 2 packages')
       // fetch failure → inline error row with retry
-      globalThis.fetch = () => Promise.reject(new Error('down'))
+      channelBehavior = () => Promise.resolve({ ok: false, error: { code: 'call-threw', message: 'down' } })
       const failed = await settle()
       failed.settled.children[0].children[1].children[0].onClick()
       await flush()
@@ -152,9 +156,9 @@ describe('client.lsp-panel chunk', () => {
       expect(failedBoundary.render().children).toBe('lspManagerFailed')
 
       // custom servers: the add form synthesizes the lspServers JSON
-      globalThis.fetch = fetchStub
+      channelBehavior = null
       const edited = []
-      const customProps = { t: (key) => key, model, serversText: '{}', edit: (field, text) => edited.push({ field, text }) }
+      const customProps = { t: (key) => key, model, channel: channelStub, serversText: '{}', edit: (field, text) => edited.push({ field, text }) }
       const customRun = await settleWith(customProps)
       customRun.settled.children[0].children[1].children[0].onClick()
       await flush()
@@ -185,7 +189,7 @@ describe('client.lsp-panel chunk', () => {
       expect(model.jsonToLspServers(edited[0].text).zig.command).toBe('zls')
       expect(model.lspServersToJson({})).toBe('{}')
     } finally {
-      globalThis.fetch = originalFetch
+      channelBehavior = null
     }
   })
 
@@ -255,14 +259,13 @@ describe('client.lsp-panel chunk', () => {
     expect(controlsOf(renderWith({ t, model, serversText: '{}' }))[2]).toBe(null)
 
     // malformed stored JSON: the danger hint shows…
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (url) => {
-      if (url === 'api/weir-lsp/status') return Promise.resolve({ json: async () => ({ ok: true, value: { servers: [] } }) })
-      return Promise.reject(new Error(`unexpected fetch ${url}`))
+    const channelStub = (endpoint) => {
+      if (endpoint === 'api/weir-lsp/status') return Promise.resolve({ ok: true, value: { servers: [] } })
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
     }
     try {
       const edited = []
-      const malformedProps = { t, model, serversText: 'not-json', edit: (field, text) => edited.push({ field, text }) }
+      const malformedProps = { t, model, channel: channelStub, serversText: 'not-json', edit: (field, text) => edited.push({ field, text }) }
       reactStub.reset()
       const collapsed = renderWith(malformedProps)
       const hint = controlsOf(collapsed)[1]
@@ -295,7 +298,7 @@ describe('client.lsp-panel chunk', () => {
       expect(edited[0].field).toBe('lspServers')
       expect(JSON.parse(edited[0].text)).toEqual({ zig: { command: 'zls' } })
     } finally {
-      globalThis.fetch = originalFetch
+      // nothing to restore: the channel arrives as a prop
     }
   })
 })

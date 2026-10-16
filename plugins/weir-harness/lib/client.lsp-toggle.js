@@ -113,6 +113,24 @@ window.__ModuleLoader__.load({
 				]
 			});
 		}
+		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
+		// under HMR, so a chunk-local register would throw on the duplicate
+		// (namespace, locale) pair): the entry registers these under "settings.weir.lsp-toggle"
+		// inside a ctx.effect when this chunk arrives (lib/client.js
+		// registerChunkDictionaries). Pinned by test/client.test.js's dictionary
+		// union pin.
+		const dictionaries = {
+			en: {
+				lspToggleLabel: "LSP",
+				lspToggleTitle: "Toggle LSP semantic tools for this session",
+			},
+			zh: {
+				lspToggleLabel: "LSP",
+				lspToggleTitle: "为本会话启用/禁用 LSP 语义工具",
+			},
+		};
+
+		exports.dictionaries = dictionaries;
 		exports.LSP_PROJECTION_KEY = LSP_PROJECTION_KEY;
 		exports.LspToggle = LspToggle;
 		return module.exports;

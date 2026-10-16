@@ -326,9 +326,10 @@ describe('client.capability-presets chunk', () => {
     }
   })
 
-  // Reads the string literal of `key` from both dictionary blocks of the entry.
+  // Reads the string literal of `key` from both dictionary blocks of the
+  // capability data face (the capability-model chunk carries them now).
   const clientDictionaryValues = (key) => {
-    const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+    const source = readFileSync(new URL('../lib/client.capability-model.js', import.meta.url), 'utf8')
     return [...source.matchAll(new RegExp(`"${key}": "((?:[^"\\\\]|\\\\.)*)"`, 'g'))].map(match => match[1])
   }
 
