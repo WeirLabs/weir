@@ -303,6 +303,40 @@ export function createLaneCore(deps) {
     })
   }
 
+  /**
+   * Binding-commit CAS (lane-binding-authoritative-commit D1): the nonce check
+   * and the childId swap happen in ONE atomic ledger write — under the same
+   * exclusive lock the reservation clearers (force-reclaim's childSettled and
+   * reconcile --rebuild's ledger.replace) go through, so a reclaimed
+   * reservation can never be committed onto. Refuses LANE_RESERVATION_LOST
+   * when the lane no longer holds the nonce or is no longer `working`; the
+   * refusal carries the structured facts (state, reservationHeld) and
+   * lane-workflows owns the model-facing copy (D2). Deliberately separate
+   * from patchLane: a refused commit is a structured refusal, not an empty
+   * patch.
+   * @param {any} repo @param {string} laneId @param {string} nonce @param {string} childId
+   */
+  async function commitBinding(repo, laneId, nonce, childId) {
+    return repo.ledger.update((/** @type {any} */ ledger) => {
+      const index = ledger.lanes.findIndex((/** @type {any} */ entry) => entry.id === laneId)
+      if (index === -1) {
+        throw new WorktreeError(WORKTREE_CODES.LANE_RESERVATION_LOST, `lane "${laneId}" no longer exists in ${repo.rootPath}`, {
+          lane: laneId,
+          data: { state: null, reservationHeld: false },
+        })
+      }
+      const current = ledger.lanes[index]
+      if (current.boundChild !== nonce || current.state !== 'working') {
+        throw new WorktreeError(WORKTREE_CODES.LANE_RESERVATION_LOST, `lane ${laneId} is ${current.state} and ${current.boundChild === nonce ? 'still holds' : 'no longer holds'} the reservation`, {
+          lane: laneId,
+          data: { state: current.state, reservationHeld: current.boundChild === nonce },
+        })
+      }
+      ledger.lanes[index] = { ...current, boundChild: childId, updatedAt: now() }
+      return { ledger, result: ledger.lanes[index] }
+    })
+  }
+
   /** @param {any} lane @param {string} [detail] */
   function notifyOwner(lane, detail) {
     if (!lane?.ownerSession) return
@@ -601,7 +635,7 @@ export function createLaneCore(deps) {
     approveModeSafe, approveModeSourceSafe,
     cwdOf, config, repoFor, repoCached,
     armWatch, disarmWatch,
-    laneOf, apply, patchLane, notifyOwner, residueOf, result, readConfig, logFile,
+    laneOf, apply, patchLane, commitBinding, notifyOwner, residueOf, result, readConfig, logFile,
     refresh, reconcileNote, reconcileBinding, childSettled, check,
   }
 }
