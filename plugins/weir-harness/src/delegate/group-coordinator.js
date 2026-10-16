@@ -1,6 +1,7 @@
 // Supervised group coordinator: registry state machine for grouped delegation.
 // Pure logic (no DSH imports) — the mount layer (index.js/tool.js) feeds it
 // session events and injects the effectors (sendMessage/interrupt/timers).
+import { isTerminalStatus, parseTerminalStatus } from '../shared/terminal-evidence.js'
 
 export const SUPERVISION_CONTRACT = `
 
@@ -30,15 +31,6 @@ export const DEFAULT_SUPERVISION = {
 /** Bounded wait for the last settlement notice before the fallback delivery. */
 export const SIGNAL_FALLBACK_MS = 1000
 
-/** Parse a child's final assistant text into a terminal status, or null. */
-export function parseTerminalStatus(text) {
-  if (typeof text !== 'string' || text.length === 0) return null
-  const match = /^STATUS:[ \t]*(completed|blocked)[ \t]*$/m.exec(text)
-  if (!match) return null
-  const reportMatch = /^REPORT:[ \t]*([\s\S]*)$/m.exec(text.slice(match.index))
-  return { status: match[1], report: (reportMatch?.[1] ?? '').trim() }
-}
-
 /**
  * Canonical member record shape: eight fields, fixed order. The single source
  * every construction site converges on (registerMember, hydrate, rehydrate).
@@ -52,14 +44,6 @@ export function createMemberRecord({ id, name = id, group = 'unknown', status = 
 /** Canonical group record shape. memberIds is copied into the record. */
 export function createGroupRecord(name, { sealed = false, settled = false, memberIds = [] } = {}) {
   return { name, memberIds: [...memberIds], sealed, settled }
-}
-
-/**
- * Single exit for the terminal-status predicate: statuses that count toward
- * group completion (blocked waits for a resume, so it is NOT terminal here).
- */
-export function isTerminalStatus(status) {
-  return status === 'completed' || status === 'terminated'
 }
 
 /**

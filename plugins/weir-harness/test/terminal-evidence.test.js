@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { auditFilePathOf, readAuditTail, readChildFinalText } from '../src/delegate/audit-readers.js'
+import { auditFilePathOf, readAuditTail, readChildFinalText } from '../src/shared/terminal-evidence.js'
 
 describe('auditFilePathOf', () => {
   it('returns null when the session carries no cwd', () => {
@@ -23,7 +23,7 @@ describe('auditFilePathOf', () => {
 })
 
 describe('readAuditTail', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'audit-readers-'))
+  const tmp = mkdtempSync(join(tmpdir(), 'terminal-evidence-'))
 
   it('returns [] when the file is missing', () => {
     expect(readAuditTail(join(tmp, 'nope.jsonl'))).toEqual([])

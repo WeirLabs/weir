@@ -2,7 +2,8 @@
 // restart. Pure logic — the mount layer feeds it parsed audit records and the
 // DSH catalog; no DSH imports, no fs.
 
-import { parseTerminalStatus, createMemberRecord, createGroupRecord, isTerminalStatus, untrackedCatalogEntries } from './group-coordinator.js'
+import { createMemberRecord, createGroupRecord, untrackedCatalogEntries } from './group-coordinator.js'
+import { parseTerminalStatus, isTerminalStatus } from '../shared/terminal-evidence.js'
 
 /**
  * Rebuild supervision state by replaying structured audit facts and
