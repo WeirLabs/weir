@@ -177,6 +177,48 @@ describe('inspectAuthority (read-only)', () => {
     assert.ok((await lstat(reservation)).isDirectory())
   })
 
+  it('pins the valid-branch response shape verbatim (the additive-extension baseline)', async (t) => {
+    const { root, resourceId } = await authorityWithUnknown(t)
+    const result = inspectAuthority(root)
+    // The pre-extension response, exactly: an old client meeting a new host
+    // must see every one of these fields unchanged (the extension is additive).
+    assert.deepEqual(Object.keys(result).sort(), ['authorityDir', 'endpoint', 'presence', 'reservation', 'root', 'snapshot'])
+    assert.equal(result.root, root)
+    assert.equal(result.authorityDir, join(root, '.weir', 'edit-lock'))
+    assert.equal(result.reservation, false)
+    assert.equal(result.endpoint, null)
+    assert.equal(result.presence, 'valid')
+    const { snapshot } = result
+    assert.deepEqual(Object.keys(snapshot).sort(), ['adminRecoveries', 'counts', 'prepared', 'retainedLocks', 'revision', 'sessions', 'unresolved', 'version'])
+    assert.deepEqual(Object.keys(snapshot.counts).sort(), ['locks', 'operations', 'retainedLocks', 'sessions', 'unresolved'])
+    assert.deepEqual(Object.keys(snapshot.unresolved[0]).sort(), ['administrativeRecoveryId', 'admissionBlocked', 'closeouts', 'fence', 'key', 'origin', 'outcome', 'phase', 'scope', 'target'])
+    assert.deepEqual(Object.keys(snapshot.sessions[0]).sort(), ['executionEpoch', 'interrupted', 'recovery', 'sessionId'])
+    assert.deepEqual(snapshot.retainedLocks, []) // the lock stays active: this fixture never interrupts the owner
+    assert.equal(snapshot.unresolved[0].fence.resourceId, resourceId)
+    // A branch without a parsed image carries only the base fields.
+    const bare = await tempRoot()
+    t.after(() => rm(bare, { recursive: true, force: true }))
+    const none = inspectAuthority(bare)
+    assert.equal(none.presence, 'none')
+    assert.deepEqual(Object.keys(none).sort(), ['authorityDir', 'endpoint', 'presence', 'reservation', 'root'])
+  })
+
+  it('leaves the authority directory byte-identical across valid inspections', async (t) => {
+    const { root, directory } = await authorityWithUnknown(t)
+    const manifest = async () => {
+      const entries = await readdir(directory)
+      const hashes = {}
+      for (const entry of entries) hashes[entry] = sha256(await readFile(join(directory, entry)))
+      return { entries, hashes }
+    }
+    const before = await manifest()
+    assert.equal(inspectAuthority(root).presence, 'valid')
+    assert.deepEqual(await manifest(), before)
+    // A second inspection recomputes every projection over the same bytes.
+    assert.equal(inspectAuthority(root).presence, 'valid')
+    assert.deepEqual(await manifest(), before)
+  })
+
   it('surfaces corruption as a visible state, never repairs, and preserves the refusal reason', async (t) => {
     const { root, directory } = await authorityWithUnknown(t)
     const snapshotPath = join(directory, 'snapshot.json')
