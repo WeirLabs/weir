@@ -19,6 +19,7 @@
 
 - **测试装置：Office 技能组合场景在环境不具备 Office 候选时显式跳过（SKIP）**：此前 `skill-composition-office` 集成场景在任何能力清单不含 Office 候选的环境（如未安装 Office 套件的本机）以 19 项 FAIL 阻断全量集成套件与 release.mjs 打版门禁。Office 属可选环境能力：探针现改为观察能力清单后落盘缺席标记与证据（缺失候选与实见提供者），集成 runner 新增与 PASS/FAIL 并列的 SKIP 判定（带原因打印、计入汇总、不计失败、退出码仍只由 FAIL 决定），该场景在缺席时报告恰好一条 SKIP 且退出码为 0；能力存在时（含回放夹具）完整断言矩阵逐字不变。
 - **能力管理：MCP server 移除的关闸与 drain 计数修复**：Apply 移除 Weir 管理的 MCP server 后，该 server 未派发的调用（含队列中与旧 schema 残留调用）现在会被实际拒绝（`mcp-gate-closed`），且 Apply 响应的 drain 快照报告真实在途计数；此前准入闸从未关闭、快照恒读为零。这是文档早已承诺的「关闸 → 等待在途 → 超时报告仍在途」行为的真正落地；失败的 Apply 会重开同一闸门，绝不永久关闸。
+- **编辑锁：Continue Editing 不再被未决发布围栏株连**：此前某文件的一次写入被 CAS 拒绝而留下未决发布围栏后，该会话的 Continue Editing 会被 `resource-conflict` 整体拒绝（准入候选枚举了会话全部持有资源），逐文件 confirm 也同遭拒绝，唯一出路只剩维护面板——且此类围栏只进不出。现在：会话级 resume 以专属准入模式跳过资源级围栏（domain 围栏与形状校验保留），用户总能恢复编辑；被围栏的单个文件在维护恢复结清前依旧拒绝发布/确认/释放，语义零放松。新增正反回归钉（resume 成功、围栏对资源操作依旧生效、receipt 不重放）。详见 [编辑锁](docs/features/edit-lock.md)。
 
 ### Removed
 
