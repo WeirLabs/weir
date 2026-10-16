@@ -18,13 +18,14 @@
 // the host storageDomain — a promise interface, unusable here, CITED).
 //
 // 6.2 — synchronous durable capture: a subagent's inherited snapshot is
-// written inside the listener with writeFileSync + fsyncSync through the
-// group-2 unit layout (sessions/<sessionId>/inherited.json, own lock and
-// revision) and the group-2 lock convention (private candidate + fsync +
-// link publication, OwnerDoc schema, remove-only-if-ours release). A lock
-// conflict fails the capture — the synchronous listener cannot run the
-// async reclamation protocol, so contention fails closed instead of
-// blocking the event loop on backoff sleeps.
+// written inside the listener through the capability store's SYNC commit path
+// (store/store.js commitSync — the group-2 unit layout, record schema, fsync
+// order and the nominal-lease sync lock of store/lock.js, all shared with the
+// async path; capabilities-deepening D4 retired this module's private
+// reimplementation of exactly those conventions). A lock conflict fails the
+// capture — the synchronous listener cannot run the async reclamation
+// protocol, so contention fails closed instead of blocking the event loop on
+// backoff sleeps.
 //
 // The capture is NOT ATOMIC with the host's session publication: the host
 // writing the child session header and this plugin writing the snapshot are
@@ -51,20 +52,12 @@
 //   throwing is the INTENTIONAL bail that refuses the subagent while the
 //   parent session continues and learns the reason through the delegation
 //   result. Never an unrestricted pass.
-import { hostname } from 'node:os'
-import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
-import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { isSegment, resolveStoreRoot, unitLayout } from './store/paths.js'
-import { decodeRecord, encodeRecord } from './store/record.js'
-import { LOCK_SCHEMA_VERSION, parseOwnerDoc } from './store/lock.js'
+import { isSegment } from './store/paths.js'
+import { openCapabilityStore } from './store/store.js'
 import { skillIdentityKey } from './skill-identity.js'
-import { SUPPORTED_PLATFORMS } from './store/store.js'
 
 /** origin marker of a captured inherited snapshot payload. */
 export const INHERITED_ORIGIN = 'inherited'
-/** Nominal lease of the synchronously acquired capture lock (released immediately). */
-export const SYNC_LOCK_LEASE_MS = 10_000
 
 /**
  * @typedef {{ state: 'ready', sessionId: string, revision: number, skills: unknown[], mcpServers: string[],
@@ -75,39 +68,15 @@ export const SYNC_LOCK_LEASE_MS = 10_000
  *   captured?: { parentSessionId: string, parentRevision: number | null, capturedAt: number } | null }} SnapshotInput
  */
 
-/** @param {unknown} error @param {...string} codes */
-const hasCode = (error, ...codes) => codes.includes(/** @type {{ code?: string }} */ (error)?.code ?? '')
-
 /** @param {unknown} error */
 const message = error => (error instanceof Error ? error.message : String(error))
 
-/** fsync one file (mirrors the group-2 fs-adapter fsyncFile step). @param {string} path */
-function fsyncPath(path) {
-  const fd = openSync(path, 'r+')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-}
-
-/** fsync one directory entry change (mirrors the fs-adapter fsyncDir step). @param {string} dir */
-function fsyncDirectory(dir) {
-  // Directory fsync is POSIX-only (EPERM on win32 — same gate as fs-adapter.js).
-  if (process.platform !== 'darwin' && process.platform !== 'linux') return
-  const fd = openSync(dir, 'r')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-}
-
 /**
  * In-memory lifecycle snapshots plus the synchronous read/capture paths.
- * Resolution mirrors the group-2 store exactly: root from `profileContext`
- * (or an explicit test root), the same platform gate, the same unit layout
- * and record schema — never a parallel layout.
+ * All durable I/O delegates to the capability store's sync path: the same
+ * root resolution (from `profileContext` or an explicit test root), the same
+ * platform gate, the same unit layout and record schema — never a parallel
+ * layout.
  * @param {{
  *   profileContext?: unknown,
  *   root?: string,
@@ -119,24 +88,15 @@ function fsyncDirectory(dir) {
 export function createLifecycleSnapshots(options = {}) {
   const warn = options.warn ?? (() => {})
   const now = options.now ?? Date.now
-  const platform = options.platform ?? process.platform
-  const located = typeof options.root === 'string' ? { supported: true, root: options.root } : resolveStoreRoot(options.profileContext)
-  /** @type {{ supported: true, root: string } | { supported: false, reason: string }} */
-  const support = !SUPPORTED_PLATFORMS.includes(platform)
-    ? { supported: false, reason: `platform-unsupported:${platform}` }
-    : /** @type {any} */ (located)
+  const store = openCapabilityStore({
+    root: options.root,
+    platform: options.platform,
+    profileContext: options.profileContext,
+    now,
+  })
+  const support = store.support
   /** @type {Map<string, LifecycleSnapshot>} */
   const snapshots = new Map()
-
-  /**
-   * @param {'selection'|'inherited'} kind @param {string} sessionId
-   * @returns {{ dir: string, record: string, name: string }}
-   */
-  function locate(kind, sessionId) {
-    const layout = unitLayout(/** @type {import('./store/paths.js').Unit} */ ({ kind, sessionId }))
-    const dir = join(/** @type {{ root: string }} */ (support).root, ...layout.segments)
-    return { dir, record: join(dir, `${layout.name}.json`), name: layout.name }
-  }
 
   /**
    * Publish an accepted selection into the memory snapshot. Called at
@@ -187,9 +147,10 @@ export function createLifecycleSnapshots(options = {}) {
   /**
    * THE synchronous read path (6.1): memory hit returns immediately; a
    * miss performs ONE blocking synchronous read of the durable record —
-   * never a promise, never a yield. An absent record returns null (no
-   * accepted selection; initialization priority for brand-new root
-   * sessions is task 6.5). An undecodable record becomes BLOCKED.
+   * the store's sync read, never a promise, never a yield. An absent record
+   * returns null (no accepted selection; initialization priority for
+   * brand-new root sessions is task 6.5). An undecodable record becomes
+   * BLOCKED.
    * @param {string} sessionId
    * @returns {LifecycleSnapshot | null}
    */
@@ -197,82 +158,27 @@ export function createLifecycleSnapshots(options = {}) {
     const memory = snapshots.get(sessionId)
     if (memory) return memory
     if (!support.supported) return null
-    const { record } = locate('selection', sessionId)
-    let text
+    let record
     try {
-      text = readFileSync(record, 'utf8')
-    } catch (error) {
-      // No accepted record yet — a legitimate cold state, not a failure.
-      if (hasCode(error, 'ENOENT')) return null
+      record = store.readSync({ kind: 'selection', sessionId })
+    } catch {
       // EACCES and friends: the record exists but cannot be read — fail
       // closed BLOCKED (6.4), never a guessed full authorization.
       return markBlocked(sessionId, 'unreadable')
     }
-    const decoded = decodeRecord(text)
-    if (decoded.kind === 'ok') {
-      const payload = /** @type {Record<string, unknown>} */ (decoded.payload ?? {})
+    // No accepted record yet — a legitimate cold state, not a failure.
+    if (record.kind === 'absent') return null
+    if (record.kind === 'ok') {
+      const payload = /** @type {Record<string, unknown>} */ (record.payload ?? {})
       return publish(sessionId, {
-        revision: decoded.revision,
+        revision: record.revision,
         skills: Array.isArray(payload.skills) ? payload.skills : [],
         mcpServers: Array.isArray(payload.mcpServers) ? /** @type {string[]} */ (payload.mcpServers) : [],
       })
     }
-    // corrupt / unknown-schema / torn: fail closed BLOCKED (6.4 root rule).
-    // The original file is never rewritten from this path.
-    return markBlocked(sessionId, decoded.kind)
-  }
-
-  /**
-   * Synchronous acquisition of `<unit>.lock` through the group-2 lock
-   * convention: private candidate + fsync + link publication (never
-   * wx-then-write, which strands 0-byte locks on crash), OwnerDoc schema,
-   * remove-only-if-ours release. A conflict fails the capture immediately:
-   * the listener cannot run the async reclamation protocol without
-   * yielding, so contention fails closed.
-   * @param {string} dir @param {string} name @returns {string} owner token
-   */
-  function acquireLockSync(dir, name) {
-    const token = randomBytes(12).toString('hex')
-    const lockFile = join(dir, `${name}.lock`)
-    const candidate = `${lockFile}.${token}.cand`
-    const at = now()
-    const doc = {
-      schemaVersion: LOCK_SCHEMA_VERSION,
-      ownerToken: token,
-      pid: process.pid,
-      host: hostname(),
-      startIdentity: { osStart: null, bootNonce: 'sync-capture' },
-      acquiredAt: at,
-      leaseUntil: at + SYNC_LOCK_LEASE_MS,
-    }
-    try {
-      writeFileSync(candidate, JSON.stringify(doc), { mode: 0o600 })
-      fsyncPath(candidate)
-      linkSync(candidate, lockFile)
-    } catch (error) {
-      if (hasCode(error, 'EEXIST')) throw new Error(`inherited snapshot capture lost the lock race for unit "${name}"`, { cause: error })
-      if (hasCode(error, 'ENOENT')) throw new Error(`inherited snapshot capture lock candidate vanished for unit "${name}"`, { cause: error })
-      throw error
-    } finally {
-      try {
-        unlinkSync(candidate)
-      } catch (error) {
-        if (!hasCode(error, 'ENOENT')) warn(`inherited snapshot capture candidate cleanup failed: ${message(error)}`)
-      }
-    }
-    return token
-  }
-
-  /** Remove `<unit>.lock` only while it still names our token (mirrors releaseOwned). @param {string} dir @param {string} name @param {string} token */
-  function releaseLockSync(dir, name, token) {
-    const lockFile = join(dir, `${name}.lock`)
-    try {
-      const doc = parseOwnerDoc(readFileSync(lockFile, 'utf8'))
-      if (doc.kind === 'ok' && doc.value.ownerToken !== token) return
-      unlinkSync(lockFile)
-    } catch (error) {
-      if (!hasCode(error, 'ENOENT')) warn(`inherited snapshot capture lock release failed: ${message(error)}`)
-    }
+    // corrupt / unknown-schema / torn / unsupported: fail closed BLOCKED
+    // (6.4 root rule). The original file is never rewritten from this path.
+    return markBlocked(sessionId, /** @type {BlockedSnapshot['reason']} */ (record.kind))
   }
 
   /**
@@ -306,7 +212,7 @@ export function createLifecycleSnapshots(options = {}) {
     })
   }
 
-  /** String-set counterpart for managed MCP identities. @param {unknown} values @param {unknown} allowed @returns {string[]} */
+  /** String-set counterpart for managed MCP identities. @param {unknown[]} values @param {unknown[]} allowed @returns {string[]} */
   function intersectStrings(values, allowed) {
     const keep = new Set(Array.isArray(allowed) ? allowed : [])
     return (Array.isArray(values) ? values : []).filter(value => typeof value === 'string' && keep.has(value))
@@ -339,80 +245,53 @@ export function createLifecycleSnapshots(options = {}) {
     if (!support.supported) {
       throw new Error(`inherited snapshot capture unsupported for subagent "${childSessionId}": ${support.reason}`)
     }
-    const { dir, record, name } = locate('inherited', childSessionId)
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    const token = acquireLockSync(dir, name)
-    try {
-      // Same-unit CAS discipline, synchronously: decode the current record
-      // under the lock and write the NEXT revision. A record that cannot be
-      // decoded fails closed — it is never overwritten from this path.
-      let current
-      try {
-        current = decodeRecord(readFileSync(record, 'utf8'))
-      } catch (error) {
-        if (!hasCode(error, 'ENOENT')) throw error
-        current = /** @type {import('./store/record.js').RecordRead} */ ({ kind: 'absent', revision: 0 })
-      }
-      if (current.kind !== 'absent' && current.kind !== 'ok') {
-        throw new Error(`existing inherited snapshot of "${childSessionId}" is ${current.kind}; refusing to overwrite it`)
-      }
-      const revision = current.revision + 1
-      const capturedAt = now()
-      // 6.3: an existing record means an explicit resume/escalation — the
-      // child's previous snapshot intersected with the CURRENT parent set
-      // (removed capabilities never return, added ones never arrive). A fresh
-      // capture starts from the parent verbatim. Constraints narrow further.
-      const previousSkills = current.kind === 'ok'
-        ? (Array.isArray(/** @type {Record<string, unknown>} */ (current.payload)?.skills) ? /** @type {unknown[]} */ (/** @type {Record<string, unknown>} */ (current.payload).skills) : [])
-        : null
-      const parentSkills = parent ? parent.skills : []
-      const skills = deriveInheritedSkills(parentSkills, previousSkills, constraints)
-      const parentMcp = parent ? parent.mcpServers : []
-      const previousMcp = current.kind === 'ok' && Array.isArray(/** @type {Record<string, unknown>} */ (current.payload)?.mcpServers)
-        ? /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (current.payload).mcpServers)
-        : null
-      let mcpServers = previousMcp == null ? parentMcp.slice() : intersectStrings(previousMcp, parentMcp)
-      if (Array.isArray(constraints.allowMcpServers)) mcpServers = intersectStrings(mcpServers, constraints.allowMcpServers)
-      const payload = {
-        skills: structuredClone(skills),
-        mcpServers,
-        origin: INHERITED_ORIGIN,
-        parent: { sessionId: parentSessionId, revision: parent ? parent.revision : null },
-        capturedAt,
-      }
-      // Atomic commit through the group-2 record schema: temp + fsync +
-      // rename + directory fsync. A rename failure is INDETERMINATE — the
-      // record may or may not have landed — so the capture fails and the
-      // subagent creation is refused; a later explicit resume recaptures.
-      const next = encodeRecord(revision, payload, [])
-      const temp = join(dir, `${name}.${token}.tmp`)
-      try {
-        writeFileSync(temp, JSON.stringify(next), { mode: 0o600 })
-        fsyncPath(temp)
-      } catch (error) {
-        try {
-          unlinkSync(temp)
-        } catch { /* best effort */ }
-        throw new Error(`inherited snapshot capture write failed for subagent "${childSessionId}": ${message(error)}`, { cause: error })
-      }
-      try {
-        renameSync(temp, record)
-        fsyncDirectory(dir)
-      } catch (error) {
-        try {
-          unlinkSync(temp)
-        } catch { /* best effort */ }
-        throw new Error(`inherited snapshot capture commit failed for subagent "${childSessionId}": ${message(error)}`, { cause: error })
-      }
-      return publish(childSessionId, {
-        revision,
-        skills: payload.skills,
-        mcpServers: payload.mcpServers,
-        captured: { parentSessionId, parentRevision: payload.parent.revision, capturedAt },
-      })
-    } finally {
-      releaseLockSync(dir, name, token)
+    // Same-unit CAS discipline, synchronously through the store's sync commit
+    // path: the record decodes under the store's sync lock and the next
+    // revision commits only over the exact expected one. A record that cannot
+    // be decoded fails closed — it is never overwritten from this path.
+    const unit = { kind: 'inherited', sessionId: childSessionId }
+    const current = store.readSync(unit)
+    if (current.kind !== 'absent' && current.kind !== 'ok') {
+      throw new Error(`existing inherited snapshot of "${childSessionId}" is ${current.kind}; refusing to overwrite it`)
     }
+    const capturedAt = now()
+    // 6.3: an existing record means an explicit resume/escalation — the
+    // child's previous snapshot intersected with the CURRENT parent set
+    // (removed capabilities never return, added ones never arrive). A fresh
+    // capture starts from the parent verbatim. Constraints narrow further.
+    const previousSkills = current.kind === 'ok'
+      ? (Array.isArray(/** @type {Record<string, unknown>} */ (current.payload)?.skills) ? /** @type {unknown[]} */ (/** @type {Record<string, unknown>} */ (current.payload).skills) : [])
+      : null
+    const parentSkills = parent ? parent.skills : []
+    const skills = deriveInheritedSkills(parentSkills, previousSkills, constraints)
+    const parentMcp = parent ? parent.mcpServers : []
+    const previousMcp = current.kind === 'ok' && Array.isArray(/** @type {Record<string, unknown>} */ (current.payload)?.mcpServers)
+      ? /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (current.payload).mcpServers)
+      : null
+    let mcpServers = previousMcp == null ? parentMcp.slice() : intersectStrings(previousMcp, parentMcp)
+    if (Array.isArray(constraints.allowMcpServers)) mcpServers = intersectStrings(mcpServers, constraints.allowMcpServers)
+    const payload = {
+      skills: structuredClone(skills),
+      mcpServers,
+      origin: INHERITED_ORIGIN,
+      parent: { sessionId: parentSessionId, revision: parent ? parent.revision : null },
+      capturedAt,
+    }
+    // The store's sync commit performs the temp+fsync+rename+directory-fsync
+    // sequence under the sync lock. A non-committed outcome (lock contention,
+    // a CAS race, a failed write) fails the capture and refuses the subagent
+    // creation; a later explicit resume recaptures.
+    const result = store.commitSync(unit, current.kind === 'ok' ? current.revision : 0, () => payload)
+    if (result.status !== 'committed') {
+      const reason = /** @type {{ reason?: unknown }} */ (result).reason ?? result.status
+      throw new Error(`inherited snapshot capture failed for subagent "${childSessionId}": ${reason}`)
+    }
+    return publish(childSessionId, {
+      revision: result.revision,
+      skills: payload.skills,
+      mcpServers: payload.mcpServers,
+      captured: { parentSessionId, parentRevision: payload.parent.revision, capturedAt },
+    })
   }
 
   return {

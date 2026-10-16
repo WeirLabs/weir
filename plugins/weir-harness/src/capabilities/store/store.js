@@ -3,9 +3,9 @@
 // next). Locking, stale-lock reclamation, temp cleanup, schema checks and the
 // platform gate stay inside; the filesystem Adapter is the only seam.
 import { join } from 'node:path'
-import { createNodeFs } from './fs-adapter.js'
+import { createNodeFs, createNodeSyncFs } from './fs-adapter.js'
 import { createLiveness } from './liveness.js'
-import { createLockProtocol } from './lock.js'
+import { createLockProtocol, createSyncLock } from './lock.js'
 import { validPresetPayload } from './enumerate.js'
 import { isFileSegment, isSegment, resolveStoreRoot, unitLayout } from './paths.js'
 import { decodeRecord, digestOf, encodeRecord } from './record.js'
@@ -61,6 +61,11 @@ export function openCapabilityStore(options) {
     ? { supported: false, reason: `platform-unsupported:${platform}` }
     : /** @type {any} */ (located)
   const lock = createLockProtocol({ fs, liveness, leaseMs: options.leaseMs, deadlineMs: options.deadlineMs, now, token: options.token })
+  // The synchronous path (capabilities-deepening D4): same root/layout/record
+  // schema, the sync fs counterpart and the nominal-lease sync lock — acquired,
+  // used and released in one blocking segment, contention fails closed.
+  const syncFs = options.syncFs ?? createNodeSyncFs()
+  const syncLock = createSyncLock({ fs: syncFs, now, token: options.token })
   /** @type {Map<string, Promise<unknown>>} */
   const queues = new Map()
 
@@ -302,5 +307,93 @@ export function openCapabilityStore(options) {
     return serialize(layout.key, () => lock.clear(dir, layout.name, which, ownerToken))
   }
 
-  return { support, read, commit, publishPointer, inspect, clear, withPresetNamespace, withSelectionSnapshot }
+  /** Synchronous record read — the same decode/fail-closed semantics as
+   * readRecord, blocking. @param {string} path @returns {RecordRead} */
+  function readRecordSync(path) {
+    let text
+    try {
+      text = syncFs.readTextSync(path)
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) return { kind: 'absent', revision: 0 }
+      throw error
+    }
+    return decodeRecord(text)
+  }
+
+  /**
+   * Synchronous read (capabilities-deepening D4): the listener path may not
+   * yield the event loop. Same unit layout, same record schema, same
+   * fail-closed kinds as the async read.
+   * @param {Unit} unit
+   * @returns {RecordRead | { kind: 'unsupported', reason: string }}
+   */
+  function readSync(unit) {
+    const { record } = locate(unit)
+    if (!support.supported) return { kind: 'unsupported', reason: support.reason }
+    return readRecordSync(record)
+  }
+
+  /**
+   * Synchronous CAS commit (capabilities-deepening D4), mirroring transact's
+   * step order: lock → dedup the request receipt → CAS the revision → mutate
+   * → temp+fsync → rename → directory fsync. The sync lock is the nominal-
+   * lease convention (acquired, used, released in one blocking segment):
+   * contention fails closed as 'locked' — never a backoff, never a second
+   * reclamation protocol. `mutate` must be synchronous.
+   * @param {Unit} unit
+   * @param {number} expectedRevision
+   * @param {(payload: unknown, info: { revision: number }) => unknown} mutate
+   * @param {RequestRef} [request]
+   * @returns {CommitResult}
+   */
+  function commitSync(unit, expectedRevision, mutate, request = {}) {
+    const { layout, dir, record } = locate(unit)
+    if (!support.supported) return { status: 'unsupported', reason: support.reason }
+    const { requestId, requestDigest } = request
+    if (requestId !== undefined && (typeof requestId !== 'string' || requestId.length === 0 || typeof requestDigest !== 'string')) {
+      throw new TypeError('requestId requires a non-empty id and a requestDigest')
+    }
+    syncFs.mkdirpSync(dir)
+    const acquired = syncLock.acquire(dir, layout.name)
+    if (!acquired.ok) return { status: 'locked', reason: acquired.reason }
+    try {
+      const current = readRecordSync(record)
+      if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unreadable', kind: current.kind }
+      const receipts = current.kind === 'ok' ? current.receipts : []
+      if (requestId !== undefined) {
+        const prior = receipts.find(r => r.requestId === requestId)
+        if (prior) return prior.requestDigest === requestDigest ? { status: 'duplicate', revision: prior.revision, receipt: prior } : { status: 'request-conflict', receipt: prior }
+      }
+      if (current.revision !== expectedRevision) return { status: 'revision-conflict', revision: current.revision }
+      const revision = current.revision + 1
+      const payload = mutate(current.kind === 'ok' ? current.payload : undefined, { revision: current.revision })
+      /** @type {Receipt|null} */
+      const receipt = requestId === undefined ? null : { requestId, requestDigest: /** @type {string} */ (requestDigest), revision, acceptedAt: now() }
+      const next = encodeRecord(revision, payload, receipt ? [...receipts, receipt] : receipts)
+      const temp = join(dir, `${layout.name}.${acquired.token}.tmp`)
+      try {
+        syncFs.writeFullSync(temp, JSON.stringify(next))
+        syncFs.fsyncFileSync(temp)
+      } catch (error) {
+        try { syncFs.unlinkSync(temp) } catch { /* the temp may never have landed */ }
+        return { status: 'write-failed', error }
+      }
+      try {
+        syncFs.renameSync(temp, record)
+        syncFs.fsyncDirSync(dir)
+      } catch (error) {
+        try { syncFs.unlinkSync(temp) } catch { /* the temp may never have landed */ }
+        if (hasCode(error, 'EXDEV')) return { status: 'unsupported', reason: 'cross-device' }
+        // Same indeterminate settle-check as the async path: the rename may or
+        // may not have landed — only a digest match proves it did.
+        let settled
+        try { settled = readRecordSync(record) } catch { settled = null }
+        if (settled?.kind !== 'ok' || settled.digest !== next.digest) return { status: 'write-failed', error }
+      }
+      return { status: 'committed', revision, payload, receipt }
+    } finally {
+      try { syncLock.release(dir, layout.name, acquired.token) } catch { /* release is best-effort */ }
+    }
+  }
+  return { support, read, commit, commitSync, readSync, publishPointer, inspect, clear, withPresetNamespace, withSelectionSnapshot }
 }

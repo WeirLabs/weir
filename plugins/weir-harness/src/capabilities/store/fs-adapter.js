@@ -106,3 +106,55 @@ export function instrumentFs(inner, hook) {
   }
   return /** @type {StoreFs} */ (wrapped)
 }
+
+// ---- Synchronous counterpart (capabilities-deepening D4) ---------------------
+// The lifecycle listener may not yield the event loop (G4b), so the store's
+// sync commit/read path needs blocking I/O with the SAME durability
+// discipline as the async Adapter above: full-content write, file fsync,
+// link/rename publication, directory fsync (POSIX-only — the same platform
+// stance as fsyncDir). One seam, so a test can wrap these calls exactly like
+// instrumentFs wraps the async ones.
+
+import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+
+/**
+ * @typedef {{
+ *   readTextSync(path: string): string,
+ *   writeFullSync(path: string, text: string): void,
+ *   fsyncFileSync(path: string): void,
+ *   linkSync(from: string, to: string): void,
+ *   renameSync(from: string, to: string): void,
+ *   unlinkSync(path: string): void,
+ *   mkdirpSync(path: string): void,
+ *   fsyncDirSync(path: string): void,
+ * }} StoreSyncFs
+ */
+
+/** @returns {StoreSyncFs} */
+export function createNodeSyncFs() {
+  return {
+    readTextSync: path => readFileSync(path, 'utf8'),
+    writeFullSync(path, text) { writeFileSync(path, text, { mode: 0o600 }) },
+    fsyncFileSync(path) {
+      const fd = openSync(path, 'r+')
+      try {
+        fsyncSync(fd)
+      } finally {
+        closeSync(fd)
+      }
+    },
+    linkSync: (from, to) => linkSync(from, to),
+    renameSync: (from, to) => renameSync(from, to),
+    unlinkSync: path => unlinkSync(path),
+    mkdirpSync(path) { mkdirSync(path, { recursive: true, mode: 0o700 }) },
+    fsyncDirSync(path) {
+      if (!DIR_SYNC_SUPPORTED) return
+      const fd = openSync(path, 'r')
+      try {
+        fsyncSync(fd)
+      } finally {
+        closeSync(fd)
+      }
+    },
+  }
+}
