@@ -25,6 +25,7 @@ import { skillIdentityKey } from './skill-identity.js'
 import { validateSkillSelection } from './skill-selection-provider.js'
 import { normalizeEnabledSets } from './selection-draft.js'
 import { AUDIT_TYPES } from '../shared/audit.js'
+import { selectionDelta } from './selection-notify.js'
 
 /** Audit event type (without the 'weir/' prefix) emitted after acceptance.
  * Registered in src/shared/audit.js (AUDIT_TYPES); emit sites never invent
@@ -207,7 +208,7 @@ export function createApplyEngine(options) {
     verifyContent,
     audit, notify, invalidate, publishSnapshot, onAccepted, warn = () => {}, trace = () => {},
   } = options
-  /** In-memory authority snapshots per session (D6 seam; group 6 loads them at mount). */
+  /** In-memory authority snapshots per session (D6 seam): written only by the publication segment, never loaded from disk — after a restart the durable accepted record is the only delta/recovery basis (apply-delta-durable-basis D2). */
   const snapshots = new Map()
   /** Per-session in-process serialization; cross-process exclusion is the store lock. */
   const queues = new Map()
@@ -215,8 +216,11 @@ export function createApplyEngine(options) {
    * Sessions whose last write ended indeterminate: the fence lease stays held
    * and the prepared (never published) transaction is kept so a receipt query
    * can settle it from durable evidence — publish on proof, reopen on proven
-   * absence, keep blocking while the record cannot vouch either way.
-   * @type {Map<string, { lease: { release(): void }, requestId: string, prepared: { handles: unknown[], identities: unknown[], view: unknown }, payload: unknown, drainHandle: { abort(): void } | null, viewOptions: unknown }>}
+   * absence, keep blocking while the record cannot vouch either way. The entry
+   * captures the pre-write accepted sets (the transaction-start store read):
+   * at settle time the durable record already holds the LANDED write, so the
+   * recovery publication's notice delta needs the captured basis (D3).
+   * @type {Map<string, { lease: { release(): void }, requestId: string, prepared: { handles: unknown[], identities: unknown[], view: unknown }, payload: unknown, previousSets: { skills: unknown[], mcpServers: string[] }, drainHandle: { abort(): void } | null, viewOptions: unknown }>}
    */
   const blocked = new Map()
 
@@ -405,7 +409,7 @@ export function createApplyEngine(options) {
       // The write outcome is UNKNOWN: stay blocked (fence held, gates closed)
       // and let a receipt query confirm the authority; never roll back on a guess.
       trace('indeterminate', { sessionId })
-      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, drainHandle, viewOptions })
+      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, previousSets, drainHandle, viewOptions })
       return { status: 'indeterminate', step: 5 }
     }
     trace('commit', { sessionId, status: result.status })
@@ -418,60 +422,30 @@ export function createApplyEngine(options) {
         // guaranteed: stay blocked and let a receipt query publish the
         // authority from durable evidence.
         trace('indeterminate', { sessionId, reason: 'fence-lost-before-publish' })
-        blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, drainHandle, viewOptions })
+        blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, previousSets, drainHandle, viewOptions })
         return { status: 'indeterminate', step: 5 }
       }
       // Synchronous publication segment: no await between the snapshot swap,
       // the provider invalidation and the fence release. invalidate() must
       // complete before the fence release and before the step-6 response, so
-      // a client that sees the new receipt never refetches a stale list.
+      // a client that sees the new receipt never refetches a stale list. The
+      // SAME segment runs on the recovery-'published' path (D4).
       /** @type {string[]} */
       const warnings = []
       trace('snapshot-swap', { sessionId, revision: result.revision })
-      // Task 12.4: the net accepted delta is known only HERE (previous
-      // authority snapshot vs the just-committed payload); notify consumers
-      // queue it for the next safe request. A failed hook warns, never
-      // changes the accepted policy.
-      try {
-        const previous = snapshots.get(sessionId)
-        const names = identities => new Set((Array.isArray(identities) ? identities : []).map(identity => String(identity?.name ?? '')).filter(Boolean))
-        const before = names(previous?.selection?.skills)
-        const after = names(payload?.skills)
-        const beforeMcp = new Set(Array.isArray(previous?.selection?.mcpServers) ? previous.selection.mcpServers : [])
-        const afterMcp = new Set(Array.isArray(payload?.mcpServers) ? payload.mcpServers : [])
-        const delta = {
-          added: [...after].filter(name => !before.has(name)).concat([...afterMcp].filter(name => !beforeMcp.has(name))).sort(),
-          removed: [...before].filter(name => !after.has(name)).concat([...beforeMcp].filter(name => !afterMcp.has(name))).sort(),
-        }
-        if (delta.added.length > 0 || delta.removed.length > 0) onAccepted?.(sessionId, delta)
-      } catch (error) {
-        warnings.push('accepted-notification-degraded')
-        warn(`apply onAccepted hook failed: ${message(error)}`)
-      }
-      snapshots.set(sessionId, { revision: result.revision, selection: structuredClone(payload), handles: prepared.handles, view: prepared.view })
-      // Task 6.1: load the accepted selection into the shared lifecycle
-      // memory snapshot inside the SAME non-async segment, so the
-      // agent/created listener's synchronous read never observes a durable
-      // acceptance this process has not published. A publication failure
-      // degrades to the listener's blocking synchronous disk read of the
-      // just-committed record — reported, never fatal.
-      try {
-        publishSnapshot?.(sessionId, { revision: result.revision, skills: structuredClone(payload.skills), mcpServers: [...payload.mcpServers] })
-      } catch {
-        warnings.push('snapshot-publication-degraded')
-      }
-      try {
-        trace('invalidate', { sessionId })
-        const accepted = provider.acceptSelection(prepared.identities, viewOptions)
-        if (!accepted?.accepted) warnings.push('provider-publication-degraded')
-      } catch {
-        // The record is durably accepted; a failed cache invalidation degrades
-        // convergence, never the policy. The warning is reported, not hidden.
-        warnings.push('invalidate-failed')
-      } finally {
-        trace('fence-release', { sessionId })
-        lease.release()
-      }
+      publishAccepted({
+        sessionId,
+        revision: result.revision,
+        payload,
+        prepared,
+        viewOptions,
+        previousSets,
+        lease,
+        degraded: (code, error) => {
+          warnings.push(code)
+          if (code === 'accepted-notification-degraded') warn(`apply onAccepted hook failed: ${message(error)}`)
+        },
+      })
       const response = {
         status: 'applied',
         revision: result.revision,
@@ -492,7 +466,7 @@ export function createApplyEngine(options) {
     const KNOWN_UNCOMMITTED = new Set(['duplicate', 'request-conflict', 'revision-conflict', 'locked', 'unreadable', 'unsupported', 'write-failed'])
     if (!KNOWN_UNCOMMITTED.has(result.status)) {
       trace('indeterminate', { sessionId, status: result.status })
-      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, drainHandle, viewOptions })
+      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, previousSets, drainHandle, viewOptions })
       return { status: 'indeterminate', step: 5 }
     }
     drainHandle?.abort()
@@ -548,6 +522,69 @@ export function createApplyEngine(options) {
   }
 
   /**
+   * The ONE synchronous publication segment (apply-delta-durable-basis D4),
+   * run by BOTH the committed branch and the recovery-'published' branch:
+   * net delta → notice queue → snapshot swap → lifecycle publication →
+   * provider invalidation → fence release (→ blocked settle on recovery).
+   * No await anywhere in the segment: the atomicity invariant the committed
+   * branch documents (a client that sees the new receipt never refetches a
+   * stale list) holds for a recovered publication too.
+   *
+   * The delta basis is the durable evidence only (D2): `previousSets` is the
+   * accepted record read at transaction start — the CAS on expectedRevision
+   * proved it the committed-over authority on the committed path, and the
+   * blocked entry carried it to the recovery path. The in-memory snapshots
+   * map is never a delta basis. A failed hook degrades, never changes the
+   * accepted policy; per-branch surfacing travels through `degraded` — the
+   * committed branch collects response warnings, the recovery branch warns
+   * only (it has no response payload).
+   *
+   * @param {{ sessionId: string, revision: number, payload: unknown,
+   *   prepared: { handles: unknown[], identities: unknown[], view: unknown },
+   *   viewOptions: unknown,
+   *   previousSets: { skills: unknown[], mcpServers: string[] },
+   *   lease: { release(): void }, settle?: (() => void) | null,
+   *   degraded: (code: string, error?: unknown) => void }} segment
+   */
+  function publishAccepted({ sessionId, revision, payload, prepared, viewOptions, previousSets, lease, settle = null, degraded }) {
+    // Task 12.4: the net accepted delta is known only HERE (durable pre-write
+    // record vs the just-committed payload); notify consumers queue it for
+    // the next safe request.
+    try {
+      const delta = selectionDelta(previousSets, safeSets(payload))
+      if (delta.added.length > 0 || delta.removed.length > 0) onAccepted?.(sessionId, delta)
+    } catch (error) {
+      degraded('accepted-notification-degraded', error)
+    }
+    snapshots.set(sessionId, { revision, selection: structuredClone(payload), handles: prepared.handles, view: prepared.view })
+    // Task 6.1: load the accepted selection into the shared lifecycle memory
+    // snapshot inside the SAME non-async segment (committed or recovered), so
+    // the agent/created listener's synchronous read never observes a durable
+    // acceptance this process has not published. A publication failure
+    // degrades to the listener's blocking synchronous disk read of the
+    // just-committed record — reported, never fatal.
+    try {
+      const sets = safeSets(payload)
+      publishSnapshot?.(sessionId, { revision, skills: structuredClone(sets.skills), mcpServers: [...sets.mcpServers] })
+    } catch (error) {
+      degraded('snapshot-publication-degraded', error)
+    }
+    try {
+      trace('invalidate', { sessionId })
+      const accepted = provider.acceptSelection(prepared.identities, viewOptions)
+      if (!accepted?.accepted) degraded('provider-publication-degraded')
+    } catch (error) {
+      // The record is durably accepted; a failed cache invalidation degrades
+      // convergence, never the policy. The warning is reported, not hidden.
+      degraded('invalidate-failed', error)
+    } finally {
+      trace('fence-release', { sessionId })
+      lease.release()
+      settle?.()
+    }
+  }
+
+  /**
    * Receipt query (tasks 4.4): after a lost response or an indeterminate
    * write, the client enters "result pending confirmation" and queries the
    * original requestId instead of claiming a cancellation or a rollback that
@@ -558,8 +595,11 @@ export function createApplyEngine(options) {
    * the query is serialized behind any in-flight Apply, then settles the
    * pending transaction from durable evidence only —
    * - pending receipt FOUND in a clean record: the write had landed; run the
-   *   publication segment the lost response never ran (snapshot swap,
-   *   provider invalidation, fence release) and report recovery 'published';
+   *   publication segment the lost response never ran — the SAME segment the
+   *   committed path runs (delta → notice queue → snapshot swap → lifecycle
+   *   publication → provider invalidation → fence release, D4), with the
+   *   delta computed against the pre-write sets captured at transaction
+   *   start — and report recovery 'published';
    * - a digest-verified record WITHOUT the pending receipt: durable proof the
    *   write never landed; reopen the drain gates, release the fence and
    *   report recovery 'not-committed' (proven absence, NOT a rollback);
@@ -595,27 +635,27 @@ export function createApplyEngine(options) {
     if (pending) {
       const confirmed = record.kind === 'ok' ? record.receipts.find(entry => entry.requestId === pending.requestId) ?? null : null
       if (confirmed) {
-        // The indeterminate write LANDED: publish the prepared authority and
-        // invalidate the provider BEFORE releasing the fence — the same
-        // ordering the synchronous publication segment guarantees.
+        // The indeterminate write LANDED: run the ONE publication segment the
+        // lost response never ran (D4), delta against the captured pre-write
+        // sets included, so the recovered acceptance notifies the model
+        // exactly once (the segment settles the blocked entry).
         trace('recovery-publish', { sessionId, revision: confirmed.revision })
-        snapshots.set(sessionId, { revision: confirmed.revision, selection: structuredClone(pending.payload), handles: pending.prepared.handles, view: pending.prepared.view })
-        // Task 6.1: the recovered publication loads the lifecycle memory
-        // snapshot too — the lost response never ran the segment.
-        try {
-          const sets = safeSets(pending.payload)
-          publishSnapshot?.(sessionId, { revision: confirmed.revision, skills: structuredClone(sets.skills), mcpServers: sets.mcpServers })
-        } catch (error) {
-          warn(`snapshot publication failed: ${message(error)}`)
-        }
-        try {
-          provider.acceptSelection(pending.prepared.identities, pending.viewOptions)
-        } catch (error) {
-          warn(`receipt-recovery invalidate failed: ${message(error)}`)
-        } finally {
-          pending.lease.release()
-          blocked.delete(sessionId)
-        }
+        publishAccepted({
+          sessionId,
+          revision: confirmed.revision,
+          payload: pending.payload,
+          prepared: pending.prepared,
+          viewOptions: pending.viewOptions,
+          previousSets: pending.previousSets,
+          lease: pending.lease,
+          settle: () => blocked.delete(sessionId),
+          // Recovery has no response payload: degradation is warn-only.
+          degraded: (code, error) => {
+            if (code === 'snapshot-publication-degraded') warn(`snapshot publication failed: ${message(error)}`)
+            else if (code === 'invalidate-failed') warn(`receipt-recovery invalidate failed: ${message(error)}`)
+            else warn(`receipt-recovery publication degraded: ${code}${error instanceof Error ? `: ${message(error)}` : ''}`)
+          },
+        })
         recovery = 'published'
         queueMicrotask(() => {
           try { audit?.({ id: sessionId }, APPLY_AUDIT_TYPE, { requestId: confirmed.requestId, revision: confirmed.revision, recovery }) } catch (error) { warn(`apply audit failed: ${message(error)}`) }

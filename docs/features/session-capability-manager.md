@@ -63,12 +63,12 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 2. 校验 requestId 与 payload digest（request digest 覆盖 expectedRevision）、expected revision、完整清单状态、精确身份与冲突（同名单多选直接拒绝，不任意取胜）、一致性条件（未满足显示 unsupported）；
 3. 准备纯快照、过滤视图与已验证 content handle——不发布权限、不启动外部安装、不注入通知，准备失败保留旧 authority 与用户草稿；
 4. 进入 admission fence，冻结尚未 handed-off 的能力调用与 prompt publication（MCP 排空接口已预留，实现见后续 MCP 组）；
-5. 经自管存储在锁内 CAS 原子写入新 selection 与 receipt，随后在**同一个非异步段**内依次切换内存快照 → 调用 provider `control.invalidate()` → 解除 fence——`invalidate()` 先于解除 fence、先于发送响应，客户端收到响应后的第一次重取绝不会命中旧缓存；写入明确失败则解除 fence 并恢复旧快照，写入结果不确定则维持阻断，按原 request ID 查询 receipt 结算（`published`／`not-committed`／`blocked`——不宣称取消成功、不伪造回滚）；
+5. 经自管存储在锁内 CAS 原子写入新 selection 与 receipt，随后在**同一个非异步段**（`publishAccepted`，apply-delta-durable-basis D4）内依次 对持久记录计算净 delta 并入队模型通知 → 切换内存快照 → 更新 lifecycle 快照 → 调用 provider `control.invalidate()` → 解除 fence——`invalidate()` 先于解除 fence、先于发送响应，客户端收到响应后的第一次重取绝不会命中旧缓存；写入明确失败则解除 fence 并恢复旧快照，写入结果不确定则维持阻断，按原 request ID 查询 receipt 结算（`published`／`not-committed`／`blocked`——不宣称取消成功、不伪造回滚；`published` 恢复运行**同一个** `publishAccepted` 发布段，通知恰好入队一次）；
 6. 发送响应：accepted revision、effective sets、unresolved warnings 与发送时刻的排空状态快照，**不等待**排空完成。
 
 配套纪律与机制：
 
-- **审计**：`capability-apply` 类型注册于共享 [audit.js](<../../plugins/weir-harness/src/shared/audit.js>)（cordis emit + `.weir/audit.jsonl` 双写），发射失败 warn/swallow 且不改变 policy；`command/run`／`command/done`／审计日志都不是提交证据；新增代码静态保证不触碰 `session.append` 与自定义 session 事件（冷读红线）。
+- **审计**：`capability-apply` 类型注册于共享 [audit.js](<../../plugins/weir-harness/src/shared/audit.js>)（cordis emit + `.weir/audit.jsonl` 双写），发射失败 warn/swallow 且不改变 policy；生产引擎经 `engineFor()` 接入该冷安全通道与 logger 诊断 `trace`（apply-delta-durable-basis D5——此前审计只在测试中接线），`apply-wiring.test.js` 钉住提交 Apply 与 recovery-`published` 结算两处发射；`command/run`／`command/done`／审计日志都不是提交证据；新增代码静态保证不触碰 `session.append` 与自定义 session 事件（冷读红线）。
 - **幂等与丢失响应**：receipts 随会话生命周期保留，清理不允许旧请求重放成第二次变更；已接受请求重放返回原 receipt，异参 ID 复用拒绝；durable acceptance 后响应丢失时按原 request ID 查询取回 accepted revision（「结果待确认」语义）。
 - **content refresh 协调**（**当前未交付**：策略模块存在但从未接线生产路径，随分发能力一并待撤回变更处理；设计意图为 refresh 用独立存储单元与 receipt/revision，与 selection 共用同一会话级提交协调者，提交前重查 selection revision）。
 - **Skill 侧会话阻断**（[skill-selection-provider.js](<../../plugins/weir-harness/src/capabilities/skill-selection-provider.js>) 生产路径）：未选中 Skill 的 `skill` 调用返回显式 unavailable 且不加载正文；slash 提交由服务端在当前选择上再验证；正文异步读取结束、返回内容之前复核选择快照（已读取 ≠ 已授权）；接受移除后，未 handed-off 的正文加载与子代理 prompt 发布被拒。（变更 capabilities-deepening：重复且从未接线的 `skill-admission.js` 已删除，其测试断言改靶到此生产路径。）
@@ -146,6 +146,8 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 **给模型的移除通知**（12.4，[selection-notify.js](<../../plugins/weir-harness/src/capabilities/selection-notify.js>)）：Apply 被接受后净增减跨多次应用合并，在**下一次安全请求**时以完整 UserMessage（共享 helper）随该请求注入——绝不自行触发回合、不在 `session/event` 内同步 followup；来源标记为 `weir-selection-notify`（非 `user`），intent gate 与 continuation/intent 分类器按构造排除（共享 `isGenuineUserMessage` 只认 `source.kind === 'user'`）；英文 advisory 模板明确「已 handed off 的调用仍可能完成、历史中任何回合或调用不被撤回或抹除」；注入失败只 audit/warn，绝不影响已接受的提交。
 
+**delta 基准是持久记录而非进程内存**（apply-delta-durable-basis，2026-10-16 C4 修复）：净增减由纯函数 `selectionDelta(previousSets, acceptedSets)` 计算——`previousSets` 是事务起始读到的 accepted 选择记录（提交路径上 CAS 已证明它是被覆写权威；恢复路径上由 blocked 条目在事务起始捕获，因为结算时记录已含落地写入），不再是每进程为空的内存快照图。因此宿主重启后首次 Apply 的移除通知仍点名**每一个**被移除能力，重放已接受集合则保持静默（无伪 `Added:` 通知）。receipt 恢复同责：recovery `published` 结算运行与提交路径**同一个**同步发布段，恰好排队一次通知（被阻断事务从未到达提交段、结算只发生一次、notifier 净合并跨 Apply 收敛）；`not-committed` 与 `blocked` 结算不排队任何通知。已知边界（明确非目标）：已入队但尚未注入的通知仍随进程退出丢失（durable pending-notice 队列列为后续跟进）；`store.commit` 返回被覆写 payload 的强化同理不在本变更。
+
 **收敛语义（D-E）**：服务端精确性立即生效（任何调用以服务端校验为准）；宿主 `/` 菜单经 provider `invalidate()` + 5.2 的重发事件收敛（草稿 chip 可能短暂空白，侧栏预览与 transcript 中的 catalog 不刷新）；Badge/面板经 `ctx.remote.$on('agent-preset/selected')` 订阅收敛帧按 session ID 过滤刷新（订阅不可用时显示「refresh to sync」提示），Apply 被接受后经 apply 引擎的 `invalidate` 钩子重发该事件（曾长期未接线，2026-10-06 修复）；typert 注册为幂等且每次读取前自愈（fiber 重挂载竞态不再致命）。旧实现的 cwd 三级回退（`agent/created` 缓存 → 存活 agents → 持久化 header）只能定位路径，不能确定预设归属；新的静默读从同一宿主会话观察同时取当前预设投影与 cwd，冷会话也不靠创建 header 猜预设，读中切换则拒绝旧结果。
 
 ### 消费者
@@ -170,7 +172,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 - 单元测试：`plugins/weir-harness/test/capability-store.test.js`（17 例：路径解析与隔离、单元布局、fail-closed 解码、CAS 与幂等回执、锁获取／回收／手动恢复、平台桩零写入、win32 行真实提交、代次指针原子切换）。
 - 多进程与故障注入：`plugins/weir-harness/test/capability-store-race.test.js`（真实子进程：两进程同 revision 恰一胜、两回收者竞争已死锁恰一个新 owner 且活锁零移除、SIGKILL 发布点循环只见完整旧/新记录）。
-- 单元测试（Apply 事务）：`selection-draft.test.js`（dirty 语义）、`apply-engine.test.js`（六步 + 顺序断言 + 故障注入）、`apply-fence-recovery.test.js`（fence 恢复 / 幂等 / 静态红线）、`content-refresh.test.js`（refresh×Apply 并发、移除后 refresh）、`skill-admission.test.js`（三条阻断路径 + 发布前拒绝）。
+- 单元测试（Apply 事务）：`selection-draft.test.js`（dirty 语义）、`apply-engine.test.js`（六步 + 顺序断言 + 故障注入 + 通知语义/重启 delta 基准钉）、`apply-fence-recovery.test.js`（fence 恢复 / 幂等 / 静态红线 / 恢复路径通知恰好一次与静默边界）、`apply-wiring.test.js`（生产引擎接线的审计发射钉：挂载面提交 Apply + 钩子装配 recovery-`published` 结算）、`content-refresh.test.js`（refresh×Apply 并发、移除后 refresh）、`skill-admission.test.js`（三条阻断路径 + 发布前拒绝）。
 - 集成测试：`plugins/weir-test-harness` 的 `apply-transaction` 场景——Apply 后收敛、并发冲突恰一胜、响应丢失按原 request ID 取回、移除后旧引用显式 unavailable。
 - 集成测试：`plugins/weir-test-harness` 的 `capstore` 场景——探针分别在宿主层与 isolated `cordis:group` 内读取 `profileContext` 并经真实 store 往返一条选择记录，证明预设 realm 结构内存储根可解析（任务 2.1）。
 - 单元测试（库存与身份）：`skill-identity.test.js`、`skill-inventory.test.js`（含宿主 0.2.0-rc.2 解析器生成的兼容性 fixture 逐文件比对，宿主漂移即红；生成器 `test/helpers/generate-host-reference.js`）、`skill-selection-provider.test.js`（精确加载、冲突呈现、挂载不抛出、invalidate 反例与重入闸门）、`skill-office-adapter.test.js`、`skill-composition.test.js`（patch 静态检查）。

@@ -363,3 +363,108 @@ test('lost-response semantics: nothing ever claims a cancellation succeeded or a
     assert.equal(key in missing, false, `not-found query must not carry '${key}'`)
   }
 })
+
+// --- apply-delta-durable-basis: recovery-path notice behavior ----------------
+// (The group-1 defect pin documenting the pre-fix recovery silence was removed
+// in 3.6 — the pins below cover the fixed behavior.)
+
+/** Engine over a commit-lossy store with an onAccepted collector. */
+function lossyEngine(store, deltas, extra = {}) {
+  const state = { lose: false }
+  const lossy = { ...store, commit: async (...args) => {
+    const result = await store.commit(...args)
+    if (state.lose) throw new Error('response lost after durable acceptance')
+    return result
+  } }
+  const engine = createApplyEngine({
+    store: lossy,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+    ...extra,
+  })
+  return { state, engine }
+}
+
+test('recovery-published queues exactly one notice computed against the captured pre-write sets', async t => {
+  const deltas = []
+  const { store } = await fixture(t)
+  const { state, engine } = lossyEngine(store, deltas)
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(deltas.length, 1)
+  deltas.length = 0
+  state.lose = true
+  const response = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
+  assert.equal(response.status, 'indeterminate')
+  const query = await engine.queryReceipt(auth, 'req-2')
+  assert.equal(query.recovery, 'published')
+  // The lost response never queued a notice, so the recovery publication owes
+  // exactly one: the net delta of the landed write against the pre-write
+  // accepted record ({alpha, mcp-a} → {beta}).
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: ['beta'], removed: ['alpha', 'mcp-a'] } }])
+})
+
+test('recovery-not-committed queues nothing (proven absence stays silent)', async t => {
+  const deltas = []
+  const { store } = await fixture(t)
+  let down = false
+  const flaky = { ...store, commit: async (...args) => {
+    if (down) throw new Error('connection reset before write')
+    return store.commit(...args)
+  } }
+  const engine = createApplyEngine({
+    store: flaky,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+  })
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(deltas.length, 1)
+  deltas.length = 0
+  down = true
+  const response = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
+  assert.equal(response.status, 'indeterminate')
+  const query = await engine.queryReceipt(auth, 'req-2')
+  assert.equal(query.recovery, 'not-committed')
+  // Boundary pin (green before and after the fix): the write provably never
+  // landed, so no notice may appear for it.
+  assert.deepEqual(deltas, [])
+})
+
+test('recovery-blocked queues nothing while the record cannot vouch', async t => {
+  const deltas = []
+  const { store } = await fixture(t)
+  let lose = false
+  let corruptRead = false
+  // Rigged store: the commit lands then the response is "lost"; reads then
+  // turn corrupt so the record can vouch neither way.
+  const rigged = { ...store,
+    commit: async (...args) => {
+      const result = await store.commit(...args)
+      if (lose) throw new Error('response lost after durable acceptance')
+      return result
+    },
+    read: async (...args) => corruptRead ? { kind: 'corrupt' } : store.read(...args),
+  }
+  const riggedEngine = createApplyEngine({
+    store: rigged,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+  })
+  await riggedEngine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(deltas.length, 1)
+  deltas.length = 0
+  lose = true
+  const response = await riggedEngine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
+  assert.equal(response.status, 'indeterminate')
+  corruptRead = true
+  const query = await riggedEngine.queryReceipt(auth, 'req-2')
+  assert.equal(query.recovery, 'blocked')
+  // Boundary pin (green before and after the fix): blocking vouches neither
+  // way, so no notice may be queued.
+  assert.deepEqual(deltas, [])
+})

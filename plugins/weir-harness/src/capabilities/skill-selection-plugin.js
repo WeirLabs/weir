@@ -241,27 +241,16 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     let sharedEngine = null
     const engineFor = () => {
       if (sharedEngine) return sharedEngine
+      // The production hook set (drain / publishSnapshot / onAccepted /
+      // invalidate / audit / trace / warn) lives in the exported
+      // applyEngineHooks assembly so the wiring pin drives the exact
+      // production hooks (design D5).
       sharedEngine = createApplyEngine({
         store: openCapabilityStore({ profileContext: ctx.get?.('profileContext') }),
         locateSession: session => session,
         inventory: (options) => inventory(options),
         provider,
-        // The manager's (agent, server)-keyed drain is the only real
-        // in-flight ledger (mcp-admission enter/exit at handoff). The engine
-        // is shared across sessions, so the adapter keys begin/abort by the
-        // Apply's session id (capabilities-deepening D3); a composition
-        // without the manager row has no managed servers to drain and the
-        // adapter reports the empty truth.
-        drain: createSessionDrainAdapter(() => ctx.get?.('weirMcpManager')?.drain),
-        publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
-        onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
-        // The Apply-path convergence emission (5.2 parity with agent/created):
-        // an accepted Apply re-emits the preset invalidation event so every
-        // connected client drops cached capability state and refetches —
-        // without this hook the engine never re-emits and every Badge/panel
-        // goes stale until a remount.
-        invalidate: (sessionId, presetId) => emitPresetSelected((...args) => ctx.emit(...args), sessionId, presetId, text => ctx.logger?.warn?.(text)),
-        warn: text => ctx.logger?.warn?.(text),
+        ...applyEngineHooks({ ctx, lifecycle, notifier }),
       })
       return sharedEngine
     }
@@ -589,6 +578,44 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     } catch (cause) {
       ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)
     }
+  }
+}
+
+/**
+ * The production Apply-engine hook set (apply-delta-durable-basis D5), one
+ * exported assembly so `engineFor()` and the wiring pin
+ * (test/apply-wiring.test.js) share the exact production hooks — the store
+ * and the session-facing deps (locateSession/inventory/provider) stay with
+ * the caller. `audit` rides the shared cold-safe channel (createAudit:
+ * cordis emit + .weir/audit.jsonl mirror, never session.append); `trace` is
+ * logger-backed debug diagnostics and never throws into a transaction. The
+ * `notify` response-bus seam stays unwired: no production consumer exists
+ * (the manager reads the Apply response from its own call), and the wiring
+ * pin says so explicitly.
+ * @param {{ ctx: any, lifecycle: any, notifier: { queue(sessionId: string, delta: { added: string[], removed: string[] }): void } }} deps
+ */
+export function applyEngineHooks({ ctx, lifecycle, notifier }) {
+  return {
+    // The manager's (agent, server)-keyed drain is the only real in-flight
+    // ledger (mcp-admission enter/exit at handoff). The engine is shared
+    // across sessions, so the adapter keys begin/abort by the Apply's
+    // session id (capabilities-deepening D3); a composition without the
+    // manager row has no managed servers to drain and the adapter reports
+    // the empty truth.
+    drain: createSessionDrainAdapter(() => ctx.get?.('weirMcpManager')?.drain),
+    publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
+    onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
+    // The Apply-path convergence emission (5.2 parity with agent/created):
+    // an accepted Apply re-emits the preset invalidation event so every
+    // connected client drops cached capability state and refetches —
+    // without this hook the engine never re-emits and every Badge/panel
+    // goes stale until a remount.
+    invalidate: (sessionId, presetId) => emitPresetSelected((...args) => ctx.emit(...args), sessionId, presetId, text => ctx.logger?.warn?.(text)),
+    audit: createAudit(ctx),
+    trace: (event, data) => {
+      try { ctx.logger?.debug?.(`capability-apply ${event}`, data) } catch { /* diagnostics never break a transaction */ }
+    },
+    warn: text => ctx.logger?.warn?.(text),
   }
 }
 

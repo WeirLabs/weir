@@ -11,6 +11,8 @@ import { createSkillIdentity, skillIdentityKey } from '../src/capabilities/skill
 import { createSkillSelectionProvider } from '../src/capabilities/skill-selection-provider.js'
 import { createSelectionDraft } from '../src/capabilities/selection-draft.js'
 import { APPLY_AUDIT_TYPE, createAdmissionFence, createApplyEngine, createDrainCoordinator, digestApplyRequest } from '../src/capabilities/apply-engine.js'
+import { digestOf } from '../src/capabilities/store/record.js'
+import { createSelectionNotifier } from '../src/capabilities/selection-notify.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 const SESSION = 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
@@ -495,4 +497,95 @@ test('an explicitly emptied selection is a durable state distinct from an absent
   assert.equal(record.revision, 1)
   assert.deepEqual(record.payload.skills, [])
   assert.deepEqual(record.payload.mcpServers, [])
+})
+
+// --- apply-delta-durable-basis group 1: characterization pins ----------------
+// These pin the committed-path notice semantics the durable-basis refactor
+// (design D1/D2) must preserve unchanged: identity→display-name mapping, MCP
+// server name passthrough, sorted combined added/removed lists, empty-delta
+// suppression, and notifier net-merge coalescing across Applies.
+
+test('notice semantics: the committed delta maps identities to display names, passes MCP names through and sorts both lists', async t => {
+  const deltas = []
+  const { engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }) } })
+  const first = await engine.apply(auth, request({ selection: { skills: [beta, alpha], mcpServers: ['mcp-z', 'mcp-a'] } }))
+  assert.equal(first.status, 'applied')
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: ['alpha', 'beta', 'mcp-a', 'mcp-z'], removed: [] } }])
+  const second = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: ['mcp-b'] } }))
+  assert.equal(second.status, 'applied')
+  assert.deepEqual(deltas[1], { sessionId: SESSION, delta: { added: ['mcp-b'], removed: ['alpha', 'mcp-a', 'mcp-z'] } })
+})
+
+test('notice semantics: re-committing the same sets queues no notice (empty-delta suppression)', async t => {
+  const deltas = []
+  const { engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }) } })
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(deltas.length, 1)
+  const again = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(again.status, 'applied')
+  assert.equal(deltas.length, 1)
+})
+
+test('notice semantics: deltas queue into the notifier and net-merge across applies', async t => {
+  const notifier = createSelectionNotifier()
+  const { engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) } })
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
+  const pending = notifier.consume(SESSION)
+  // alpha and mcp-a were added then removed before the next request: net zero.
+  assert.deepEqual(pending.net, { added: ['beta'], removed: [] })
+  assert.ok(pending.text.includes('Added: beta.'))
+  assert.equal(notifier.consume(SESSION), null)
+})
+
+/**
+ * Restart simulation: seed the durable accepted record, then build a FRESH
+ * engine over the same store — a restarted host process has empty in-memory
+ * state and only the durable record survives.
+ */
+async function restartedFixture(t, { seed, engineOptions = {}, available = [alpha, beta] } = {}) {
+  const base = await realpath(tmpdir())
+  const root = await mkdtemp(join(base, 'weir-apply-restart-'))
+  t.after(async () => {
+    assert.equal(dirname(resolve(root)), base)
+    assert.ok(root.startsWith(join(base, 'weir-apply-restart-')))
+    await rm(root, { recursive: true, force: true })
+  })
+  const store = openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  await store.commit(unit, 0,
+    () => ({ skills: seed.skills ?? [], mcpServers: seed.mcpServers ?? [], origin: 'apply' }),
+    { requestId: 'seed', requestDigest: digestOf({ seed: true }) })
+  const deltas = []
+  const engine = createApplyEngine({
+    store,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: available.map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+    ...engineOptions,
+  })
+  return { root, store, engine, deltas }
+}
+
+// (The group-1 defect pins documenting the pre-fix restart shapes were removed
+// in 3.6 — the restart scenarios below pin the fixed behavior.)
+
+// --- apply-delta-durable-basis: restart behavior of the durable delta basis ---
+
+test('restart: the first Apply after a host restart names every removed capability (durable delta basis)', async t => {
+  const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] } })
+  const response = await engine.apply(auth, request({ requestId: 'restart-removal', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(response.status, 'applied')
+  // The delta basis is the durable accepted record, so the removals survive
+  // the restart: beta and mcp-a are named, and nothing reads as added.
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a'] } }])
+})
+
+test('restart: re-applying the exact accepted set after a host restart stays silent', async t => {
+  const { engine, deltas } = await restartedFixture(t, { seed: { skills: [alpha], mcpServers: ['mcp-a'] } })
+  const response = await engine.apply(auth, request({ requestId: 'restart-reapply', expectedRevision: 1, selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(response.status, 'applied')
+  // The durable record shows no net change: no notice, in particular no
+  // spurious full-set Added delta.
+  assert.deepEqual(deltas, [])
 })
