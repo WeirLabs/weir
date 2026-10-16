@@ -10,6 +10,7 @@
 ### Changed
 
 - **编辑锁：内部架构深化（零可观察行为变化）**：绑定生命周期状态机自组合模块抽出为独立模块——`index.js`（1503→1303 行）回归纯接线，per-agent 绑定状态与五个生命周期函数迁入新模块 `binding-machine.js`；ledger 派生规则（epoch 作用域吊销判定、读时保留结算、处置判定）统一为纯函数模块 `derived-facts.js`，管理器状态、冷视图与维护检查器共用一份实现（此前改一次规则要同步改两处）；绑定拒绝的持有者分类改为结构化字段端到端传递（补齐 `lifecycle.start` 拒绝路径），删除两处「正则解析自身输出文本」的分类器——指引文案逐字不变。幻影模块 `remote-service.js`（零生产引用）及其测试删除，行为钉并入 peer-client 测试。全部组合级测试与集成场景（324/324 + 41/41）为搬迁前后对照。详见 [编辑锁](docs/features/edit-lock.md)。
+- **worktree 车道服务拆分与终态证据统一下沉（零可观察行为变化）**：1,520 行的 `lanes.js` 闭包沿其自身分节横幅拆为三块——`lane-core.js`（账本应用与检查管线，全树唯一 `apply()`）、`lane-workflows.js`（决策卡片工作流）、`lane-views.js`（只读视图）——`lanes.js` 收为薄门面，「所有变更的唯一入口」承诺不变（22 键服务面逐字保持）；子代理终态证据（STATUS/REPORT 解析、终态谓词、audit 尾读、子日志冷读）下沉为 `src/shared/terminal-evidence.js`，delegate 与 worktree 不再互相静态 import（恢复 S24/S26 的单向服务 seam），「blocked 不是终态」规则收敛为一处定义。账本格式、状态机语义、结算挂点（S26 S-D）不变；worktree 集成族 58/58（含 zombie-lane）为对照。详见 [git worktree 车道](docs/features/git-worktree.md)。
 - **客户端入口减重与通道收口（零用户可见行为变化）**：全仓最热文件 `lib/client.js` 从 2,485 行降至 1,203 行——①全部特性字典搬出入口：各 chunk 自带 `{en,zh}` 数据面，入口在 chunk 到达时经 effect 注册（每特性独立 namespace，迟到注册幂等去重与 echo-guard 到达前兜底均有钉；worktree 字典随末批收尾一并迁出）；②全部特性的「POST 端点＋拆信封＋warn-once 降级」胶水（11 处手写站点）收口为组合根的两个载体 adapter（`fetch` / `rpc.call`），逐特性载体选择与告警语义逐字保留；③新增 blackboard 写闸门 chunk↔kernel 对等测试与通道 adapter 降级测试。面板行为、UI 字符串、slot 树与 wire 形状不变；迟注册契约以运行时源码实证（重复 (namespace, locale) 对同步 throw、disposer 归注册方）。详见 [客户端 chunk 化](docs/features/client-module-chunking.md)。
 
 ### Fixed
