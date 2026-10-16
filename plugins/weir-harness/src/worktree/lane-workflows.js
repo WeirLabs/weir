@@ -35,7 +35,7 @@ function residueNote(residue) {
 
 /** @param {ReturnType<typeof import('./lane-core.js').createLaneCore>} core */
 export function createLaneWorkflows(core) {
-  const { deps, git, now, pid, asking, approveModeSafe, cwdOf, config, repoFor, laneOf, apply, patchLane, notifyOwner, residueOf, result, readConfig, logFile, refresh, reconcileNote, reconcileBinding, armWatch, disarmWatch } = core
+  const { deps, git, now, pid, asking, approveModeSafe, cwdOf, config, repoFor, laneOf, apply, patchLane, commitBinding, notifyOwner, residueOf, result, readConfig, logFile, refresh, reconcileNote, reconcileBinding, armWatch, disarmWatch } = core
 
   // ─── open / setup ─────────────────────────────────────────────────────
 
@@ -306,9 +306,41 @@ export function createLaneWorkflows(core) {
       repo,
       spec: spec(lane),
       contract: renderChildContract(lane, { readOnly: false }),
-      /** @param {string} childId */
+      /**
+       * Commit the spawned child's id onto the reservation — authoritative
+       * (lane-binding-authoritative-commit): the core's commitBinding CAS
+       * checks nonce AND `working` inside the ledger lock, so a reservation
+       * reclaimed mid-spawn (force-reclaim / reconcile --rebuild) or a lane
+       * reconciled to `abandoned` refuses LANE_RESERVATION_LOST instead of
+       * silently authorising the child. Success and refusal are both audited
+       * (D4); the refusal's model-facing copy and `next` live here (D2).
+       * @param {string} childId
+       */
       commit: async (childId) => {
-        await patchLane(repo, laneId, (current) => (current.boundChild === nonce ? { boundChild: childId } : {}))
+        try {
+          const committed = await commitBinding(repo, laneId, nonce, childId)
+          deps.audit('bind', { lane: laneId, nonce, child: childId, outcome: 'committed' }, repo.mainRoot, parentSession?.id ?? null)
+          return committed
+        } catch (error) {
+          if (/** @type {any} */ (error)?.code !== WORKTREE_CODES.LANE_RESERVATION_LOST) throw error
+          const facts = /** @type {any} */ (error).data ?? {}
+          deps.audit('bind', { lane: laneId, nonce, child: null, outcome: 'refused', state: facts.state ?? null, reservationHeld: facts.reservationHeld ?? false }, repo.mainRoot, parentSession?.id ?? null)
+          /** @type {any} */
+          let current = null
+          try {
+            current = laneOf(repo, laneId)
+          } catch {
+            // the lane record is gone (a rebuild dropped it): no nextFor
+          }
+          const state = facts.state ?? current?.state ?? 'gone'
+          const detail = facts.reservationHeld
+            ? `the lane left the working state (now ${state})`
+            : `the reservation was reclaimed while the worker spawned (the lane is now ${state})`
+          throw new WorktreeError(WORKTREE_CODES.LANE_RESERVATION_LOST, `lane ${laneId} refused the binding commit: ${detail}; the spawned child was never authorised and is torn down`, {
+            lane: laneId,
+            next: (current ? nextFor(current) : null) ?? { waitFor: 'user', hint: 'the lane is gone or abandoned; open a fresh lane with worktree_open and re-delegate' },
+          })
+        }
       },
       rollback: async () => {
         await repo.ledger.update((/** @type {any} */ ledger) => {

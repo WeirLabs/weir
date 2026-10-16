@@ -3,6 +3,7 @@
 // @deepseek-ai packages do not resolve from a linked bundle).
 import { parseEscalation } from './escalate.js'
 import { continuableLane, oneShotLane, spawnGuardedChild, supervisedLane } from './spawn-adapter.js'
+import { WORKTREE_CODES } from '../worktree/errors.js'
 import { contentText } from '../shared/content-text.js'
 import { settleDelegateEditLifecycle } from '../shared/delegate-edit-lifecycle.js'
 
@@ -473,16 +474,38 @@ async function laneBindingFor(target, args, deps, exec) {
   }
 }
 
-/** Spawn under a reserved binding: commit the child id, or roll back on failure. */
+/**
+ * Spawn under a reserved binding: commit the child id, or roll back on
+ * failure. A commit refusing LANE_RESERVATION_LOST means the reservation was
+ * reclaimed while the child spawned (lane-binding-authoritative-commit): the
+ * child was never authorised, so it is disposed BEFORE the error surfaces
+ * (one-shot dispose precedent: spawn-adapter.js onGuardFailure). The rollback
+ * afterwards is a nonce-conditional no-op by then (D5). A spawn failure has
+ * no child to tear down; supervised-group commits roll back in the group
+ * catch (terminate per member), never here.
+ */
 async function spawnBound(binding, spawn, idOf) {
+  let started
   try {
-    const started = await spawn()
-    await binding?.commit(idOf(started))
-    return started
+    started = await spawn()
   } catch (error) {
     await binding?.rollback().catch(() => {})
     throw error
   }
+  try {
+    await binding?.commit(idOf(started))
+  } catch (error) {
+    if (/** @type {any} */ (error)?.code === WORKTREE_CODES.LANE_RESERVATION_LOST) {
+      try {
+        await started.dispose?.()
+      } catch {
+        // best-effort teardown of the unauthorised child
+      }
+    }
+    await binding?.rollback().catch(() => {})
+    throw error
+  }
+  return started
 }
 
 /** Lane guard spec with the path resolver bound to the parent's cwd. */

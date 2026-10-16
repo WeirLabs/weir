@@ -17,7 +17,7 @@ import { makeRepo, nodeGitRun } from './helpers/worktree-fixtures.js'
 function harness() {
   const fixture = makeRepo()
   const audits = []
-  const lanes = createLaneService({
+  const service = createLaneService({
     git: createGit(nodeGitRun),
     shellRun: null,
     settings: () => ({ enabled: true, root: '.weir/worktrees', maxActive: 4, autoSetup: true }),
@@ -26,8 +26,17 @@ function harness() {
     audit: (type, data, root) => audits.push({ type, data, root }),
     modeOf: () => false,
   })
+  // The delegate consumes the preset service wrapper (worktree/index.js
+  // ctx.reflect.provide), not the raw lane service: mirror that shape.
+  const lanes = {
+    enabled: () => true,
+    modeOf: () => false,
+    prepareBind: service.prepareBind,
+    childSettled: service.childSettled,
+    resolveArgPath: service.resolveArgPath,
+  }
   const session = { id: 'main-1', header: { cwd: fixture.repo, delegationDepth: 0 } }
-  const laneOf = async (id) => (await lanes.repoFor(fixture.repo)).ledger.read().lanes.find((lane) => lane.id === id)
+  const laneOf = async (id) => (await service.repoFor(fixture.repo)).ledger.read().lanes.find((lane) => lane.id === id)
   const disposed = []
   const spawned = []
   const continued = []
@@ -35,9 +44,9 @@ function harness() {
   // delegate's prepareBind and its commit, exactly the C1 interleaving.
   const state = { reclaimOnSpawn: false }
   const reclaimReservation = async () => {
-    const ledger = (await lanes.repoFor(fixture.repo)).ledger.read()
+    const ledger = (await service.repoFor(fixture.repo)).ledger.read()
     const reserved = ledger.lanes.find((lane) => typeof lane.boundChild === 'string' && lane.boundChild.startsWith('pending:'))
-    if (reserved) await lanes.childSettled(reserved.boundChild, session)
+    if (reserved) await service.childSettled(reserved.boundChild, session)
   }
   const agent = { ctx: { tools: { guard: () => () => {} } } }
   const coordinator = createGroupCoordinator({ sendTo: async () => {}, interruptChild: () => {}, schedule: () => {} })
@@ -70,14 +79,14 @@ function harness() {
     lanes: () => lanes,
   })
   const exec = { agent: { id: 'main-1', session }, signal: new AbortController().signal }
-  return { ...fixture, lanes, laneOf, tool, exec, audits, disposed, spawned, continued, coordinator, state }
+  return { ...fixture, service, laneOf, tool, exec, audits, disposed, spawned, continued, coordinator, state }
 }
 
 describe('delegate lane-commit refusal', () => {
   it('disposes a spawned one-shot child when the binding commit refuses (stale reservation)', async () => {
     const h = harness()
     try {
-      const { lane } = await h.lanes.open({ id: 'main-1', header: { cwd: h.repo } }, { title: 'stale commit' })
+      const { lane } = await h.service.open(h.exec.agent.session, { title: 'stale commit' })
       h.state.reclaimOnSpawn = true
       const error = await h.tool.execute({ category: 'quick', prompt: 'TASK: x', worktree: lane }, h.exec).then(
         () => null,
@@ -99,8 +108,7 @@ describe('delegate lane-commit refusal', () => {
   it('terminates spawned supervised members when a binding commit refuses mid-batch', async () => {
     const h = harness()
     try {
-      const session = { id: 'main-1', header: { cwd: h.repo } }
-      const { lane } = await h.lanes.open(session, { title: 'group commit' })
+      const { lane } = await h.service.open(h.exec.agent.session, { title: 'group commit' })
       h.state.reclaimOnSpawn = true
       const error = await h.tool.execute(
         { group: 'crew', worktree: lane, tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },

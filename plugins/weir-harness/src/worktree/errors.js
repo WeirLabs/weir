@@ -18,6 +18,9 @@ export const WORKTREE_CODES = Object.freeze({
   UNKNOWN_LANE: 'UNKNOWN_LANE',
   ILLEGAL_TRANSITION: 'ILLEGAL_TRANSITION',
   LANE_NOT_DISPATCHABLE: 'LANE_NOT_DISPATCHABLE',
+  // The binding commit's reservation is gone (force-reclaim / reconcile
+  // --rebuild) or the lane left `working` before the commit landed.
+  LANE_RESERVATION_LOST: 'LANE_RESERVATION_LOST',
   LANE_BUSY: 'LANE_BUSY',
   NOT_LANDABLE: 'NOT_LANDABLE',
   STALE_LANDABLE: 'STALE_LANDABLE',
