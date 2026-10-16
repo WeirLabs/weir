@@ -20,6 +20,7 @@ import { createDefaultsVerbs } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 import { packPresetPackage, createPackageVerbs } from './preset-package.js'
 import { createApplyEngine } from './apply-engine.js'
+import { createSessionDrainAdapter } from './mcp-drain.js'
 import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
@@ -245,6 +246,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         locateSession: session => session,
         inventory: (options) => inventory(options),
         provider,
+        // The manager's (agent, server)-keyed drain is the only real
+        // in-flight ledger (mcp-admission enter/exit at handoff). The engine
+        // is shared across sessions, so the adapter keys begin/abort by the
+        // Apply's session id (capabilities-deepening D3); a composition
+        // without the manager row has no managed servers to drain and the
+        // adapter reports the empty truth.
+        drain: createSessionDrainAdapter(() => ctx.get?.('weirMcpManager')?.drain),
         publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
         onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
         // The Apply-path convergence emission (5.2 parity with agent/created):

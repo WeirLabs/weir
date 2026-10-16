@@ -3,7 +3,7 @@
 // schema hiding, and drain engine adapter A/B isolation.
 import { test, expect } from './helpers.js'
 import { partitionMcpRows, hostRowHoldingReservation, createMcpManager } from '../src/capabilities/mcp-manager.js'
-import { createMcpDrain, createDrainEngineAdapter } from '../src/capabilities/mcp-drain.js'
+import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 test('8.8 partition: our groups are managed, stock client rows elsewhere are unmanaged', () => {
   const rows = [
@@ -58,18 +58,28 @@ test('8.4 creation-time schema hiding denies only the public names of non-accept
   expect(restricted).toEqual([{ deny: ['mcp__web__search'] }])
 })
 
-test('8.6 engine adapter: a removal in session A never closes session B (8.5 A/B isolation)', async () => {
+test('8.6 engine seam: a removal in session A never closes session B (8.5 A/B isolation)', async () => {
   const drain = createMcpDrain({ timeoutMs: 10, now: () => 0 })
-  const sessionA = createDrainEngineAdapter(drain, () => 'sess-a')
-  const sessionB = createDrainEngineAdapter(drain, () => 'sess-b')
-  expect(sessionA.track('docs', Promise.resolve('a-call'))).toBe(true)
-  expect(sessionB.track('docs', Promise.resolve('b-call'))).toBe(true)
-  const handle = sessionA.begin(['docs'])
-  // B's gate stays open even while A drains.
-  expect(sessionB.track('docs', Promise.resolve('b-late'))).toBe(true)
+  // The new seam: one adapter shared by the engine across sessions; the
+  // session id arrives at begin() (the manager drain's enter/exit stay the
+  // only in-flight registration points, via mcp-admission at handoff).
+  const adapter = createSessionDrainAdapter(() => drain)
+  expect(drain.enter('sess-a', 'docs', 'a-call')).not.toBeNull()
+  expect(drain.enter('sess-b', 'docs', 'b-call')).not.toBeNull()
+  const handle = adapter.begin(['docs'], 'sess-a')
+  // A's gate is closed; B's gate stays open even while A drains.
+  expect(drain.enter('sess-a', 'docs', 'a-late')).toBeNull()
+  expect(drain.enter('sess-b', 'docs', 'b-late')).not.toBeNull()
   expect(handle.snapshot()).toEqual([{ server: 'docs', state: 'draining', inFlight: 1 }])
   // A rejected Apply reopens ONLY A's gate.
   handle.abort()
-  expect(sessionA.track('docs', Promise.resolve('a-reopened'))).toBe(true)
+  expect(drain.enter('sess-a', 'docs', 'a-reopened')).not.toBeNull()
   expect(drain.isClosed('sess-b', 'docs')).toBe(false)
+})
+
+test('8.6 engine seam: a composition without a manager drain reports the empty truth', () => {
+  const adapter = createSessionDrainAdapter(() => undefined)
+  const handle = adapter.begin(['docs'], 'sess-a')
+  expect(handle.snapshot()).toEqual([{ server: 'docs', state: 'settled', inFlight: 0 }])
+  handle.abort() // a no-op that must not throw
 })

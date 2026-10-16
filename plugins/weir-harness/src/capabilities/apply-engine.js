@@ -36,6 +36,14 @@ export const APPLY_AUDIT_TYPE = AUDIT_TYPES.capabilityApply
  * @typedef {import('./skill-selection-provider.js')} SelectionProviderModule
  * @typedef {{ kind: 'skill'|'mcp', ref: string, reason: string }} UnresolvedRef
  * @typedef {{ server: string, state: 'draining'|'settled', inFlight: number }} DrainStatus
+ * The engine drain seam (step 4). begin(removed, sessionId) closes the gates
+ * of the removed servers FOR THAT SESSION and returns a handle: snapshot()
+ * reports the live in-flight counts (sent with the response, never awaited)
+ * and abort() reopens exactly the gates begin() closed when the Apply does
+ * not commit — abort() and begin() act on the SAME drain, so a failed Apply
+ * never leaves a session permanently gated. Production wires the manager's
+ * (agent, server)-keyed drain here (createSessionDrainAdapter, mcp-drain.js).
+ * @typedef {{ begin(removed: string[], sessionId: string): { snapshot(): DrainStatus[], abort(): void } }} ApplyDrain
  * A step-tagged rejection keeps the old authority and the user's draft.
  * @typedef {{ status: 'applied', revision: number, receipt: unknown, effective: unknown, unresolvedWarnings: UnresolvedRef[], draining?: DrainStatus[], warnings?: string[] }
  *   | { status: 'duplicate', revision: number, receipt: unknown, effective: unknown, warnings?: string[] }
@@ -94,10 +102,13 @@ export function createAdmissionFence() {
 }
 
 /**
- * Drain coordinator for managed MCP servers removed by an Apply (step 4 seam;
- * group 8.6 wires it to the real MCP facade with timeouts). Closing a gate is
- * reversible until the commit succeeds: a rejected or failed Apply aborts the
- * closure. In-flight calls are reported, never force-cancelled.
+ * Drain coordinator for managed MCP servers removed by an Apply: the
+ * server-keyed DEFAULT seam implementation (the test surface). Production
+ * wires the manager's (agent, server)-keyed drain through
+ * createSessionDrainAdapter in mcp-drain.js — the engine passes the session
+ * id to begin(), which a server-keyed coordinator simply ignores. Closing a
+ * gate is reversible until the commit succeeds: a rejected or failed Apply
+ * aborts the closure. In-flight calls are reported, never force-cancelled.
  */
 export function createDrainCoordinator() {
   /** @type {Map<string, { closed: boolean, inFlight: Set<Promise<unknown>> }>} */
@@ -176,7 +187,7 @@ export function digestApplyRequest(normalized) {
  *   inventory: (options: { cwd?: string, scope: { session: { id: string } } }) => Promise<{ complete: boolean, candidates: any[] }>,
  *   provider: { acceptSelection(identities: unknown[], options?: unknown): { accepted: boolean, conflicts?: unknown[] } },
  *   fence?: ReturnType<typeof createAdmissionFence>,
- *   drain?: ReturnType<typeof createDrainCoordinator>,
+ *   drain?: ApplyDrain,
  *   conditions?: () => string[] | Promise<string[]>,
  *   verifyContent?: (candidate: unknown) => Promise<void> | void,
  *   audit?: (session: { id?: string }, type: string, data?: unknown) => void,
@@ -381,7 +392,7 @@ export function createApplyEngine(options) {
     }
     let drainHandle = null
     try {
-      drainHandle = removedServers.length ? drain.begin(removedServers) : null
+      drainHandle = removedServers.length ? drain.begin(removedServers, sessionId) : null
     } catch (error) {
       lease.release()
       return { status: 'rejected', reason: `drain-failed:${message(error)}`, step: 4 }
