@@ -4,9 +4,9 @@
 // into live coordinators. This module is a ctx adapter — per the jsconfig
 // purity curation it stays out of include (same precedent as index.js and
 // group-coordinator.js).
-import { createGroupCoordinator, isTerminalStatus } from './group-coordinator.js'
+import { createGroupCoordinator } from './group-coordinator.js'
 import { rehydrateSupervision, applyChildLogRecovery } from './rehydrate.js'
-import { auditFilePathOf, readAuditTail, readChildFinalText } from './audit-readers.js'
+import { auditFilePathOf, isTerminalStatus, readAuditTail, readChildFinalText } from '../shared/terminal-evidence.js'
 import { AUDIT_TYPES } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { contentText } from '../shared/content-text.js'
@@ -75,8 +75,9 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
             audit(parent.session, `${AUDIT_TYPES.supervision}/${fact.kind}`, fact)
             // A settled or terminated member frees its worktree lane (the host
             // checks the lane) — TERMINAL outcomes only (resumable-lane-workers
-            // D1): a blocked member stands by for resume_agent, so its binding
-            // must survive; the blocked fact still rides the audit channel.
+            // D1), with terminality defined by the shared isTerminalStatus
+            // predicate: a blocked member's binding must survive a possible
+            // resume; the blocked fact still rides the audit channel.
             // Deferred: never run lane work inside the fact.
             const settlesLane = fact.kind === 'terminate' || (fact.kind === 'settle' && isTerminalStatus(fact.status))
             if (settlesLane && !handoffs.has(fact.childId)) {

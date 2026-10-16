@@ -19,8 +19,7 @@ import { DEFAULT_ROOT } from './rules.js'
 import { LANES_CONTEXT_NAME, LANES_CONTEXT_ORDER, LANES_SECTION_NAME, LANES_SECTION_TEXT, LANES_VARIABLE_NAME } from './prompts.js'
 import { DEFAULT_WATCH_TIMEOUT_MINUTES } from './watches.js'
 import { APPROVE_MODES, WORKTREE_PROJECTION_KEY, foldWorktreeState, initialWorktreeState, worktreeStateSchema, worktreeView, worktreeViewSchema } from './projection.js'
-import { readAuditTail, readChildFinalText } from '../delegate/audit-readers.js'
-import { isTerminalStatus, parseTerminalStatus } from '../delegate/group-coordinator.js'
+import { isTerminalStatus, parseTerminalStatus, readAuditTail, readChildFinalText } from '../shared/terminal-evidence.js'
 
 const name = 'weir-worktree'
 // subprocess is a host-plane service every composition mounts; it is a hard

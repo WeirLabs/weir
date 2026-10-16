@@ -1,7 +1,9 @@
 // Weir delegate plugin: category registry + curated agents + the delegate
 // tool. Plain ESM, ctx-only. Composition root: all policy lives in the sibling
 // modules (settings-overlay / target-resolver / supervision-tools /
-// supervision-mount / audit-readers); apply() only constructs and wires them.
+// supervision-mount); apply() only constructs and wires them. The terminal-
+// evidence cold readers live in src/shared/terminal-evidence.js (shared with
+// the worktree plugin).
 import { CURATED_AGENTS } from './agents.js'
 import { createSettingsOverlay } from './settings-overlay.js'
 import { createTargetResolver } from './target-resolver.js'

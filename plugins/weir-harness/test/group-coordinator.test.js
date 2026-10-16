@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
-import { createGroupCoordinator, parseTerminalStatus, SUPERVISION_CONTRACT } from '../src/delegate/group-coordinator.js'
+import { createGroupCoordinator, SUPERVISION_CONTRACT } from '../src/delegate/group-coordinator.js'
+import { parseTerminalStatus } from '../src/shared/terminal-evidence.js'
 
 describe('parseTerminalStatus', () => {
   it('parses completed with a report body', () => {

@@ -1,9 +1,39 @@
-// Best-effort cold readers for supervision rebuild: the audit JSONL tail and a
-// child's final assistant text. These are the only node: consumers in the
-// delegate subsystem's cold path — the composition root stays node:-free.
+// Terminal evidence — the single definition site for what proves a supervised
+// child reached a terminal state: the STATUS/REPORT parser, the terminal-status
+// predicate (its JSDoc carries the one blocked-vs-terminal rule every consumer
+// refers to), and the two best-effort cold readers (the bounded audit-JSONL
+// tail; a child log's final assistant text). Delegate supervision and worktree
+// zombie-lane reconciliation both import from here, so neither subsystem
+// reaches into the other for this concept.
+//
+// Load-bearing tolerance semantics (zombie-lane safety): readAuditTail's 256KB
+// bounded window and error tolerance (missing/unreadable → [], a partial first
+// line dropped, malformed lines skipped) make an aged-out fact degrade to "no
+// evidence", never to a wrong release. Keep them byte-exact.
+//
+// Ports & adapters: the readers take their services as parameters (never ctx).
+// node: imports are the src/shared precedent (audit.js, whitelist-defaults.js);
+// the node:-free constraint guards the delegate composition root, not shared.
 import { openSync, readSync, closeSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { contentText } from '../shared/content-text.js'
+import { contentText } from './content-text.js'
+
+/** Parse a child's final assistant text into a terminal status, or null. */
+export function parseTerminalStatus(text) {
+  if (typeof text !== 'string' || text.length === 0) return null
+  const match = /^STATUS:[ \t]*(completed|blocked)[ \t]*$/m.exec(text)
+  if (!match) return null
+  const reportMatch = /^REPORT:[ \t]*([\s\S]*)$/m.exec(text.slice(match.index))
+  return { status: match[1], report: (reportMatch?.[1] ?? '').trim() }
+}
+
+/**
+ * Single exit for the terminal-status predicate: statuses that count toward
+ * group completion (blocked waits for a resume, so it is NOT terminal here).
+ */
+export function isTerminalStatus(status) {
+  return status === 'completed' || status === 'terminated'
+}
 
 /** Audit JSONL location for one session (cold-safe channel; may not exist). */
 export function auditFilePathOf(session) {
