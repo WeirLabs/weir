@@ -2023,6 +2023,7 @@ describe('weir settings client half', () => {
       ['lib/client.lsp-toggle.js', chunkRequire],
       ['lib/client.hash-edit-model.js', undefined],
       ['lib/client.edit-lock-panel.js', chunkRequire],
+      ['lib/client.worktree-model.js', undefined],
     ]
     const seen = new Map() // key -> home name (first writer)
     const union = new Set()
@@ -2035,6 +2036,10 @@ describe('weir settings client half', () => {
       ['blackboard.loading', ['NS (entry)', 'lib/client.blackboard-model.js']],
       ['hashEditInput', ['NS (entry)', 'lib/client.hash-edit-model.js']],
       ['hashEditOutput', ['NS (entry)', 'lib/client.hash-edit-model.js']],
+      // worktreeLoading: the lanes panel's pre-arrival state resolves it from
+      // NS (entry-side, sync-rendered); the chunk's own loading row reads it
+      // from its feature namespace — byte-identical in both homes.
+      ['worktreeLoading', ['NS (entry)', 'lib/client.worktree-model.js']],
     ])
     const entryDicts = registrations[0].dicts
     for (const [home, requireStub] of homes) {
