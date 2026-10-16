@@ -121,23 +121,37 @@ describe('client.settings-page chunk', () => {
     return { definition, exports, editors, specsSeen, reactStub, reactState, primitivesStub }
   }
 
-  // Capture the entry's synchronously registered en/zh dictionaries by
-  // driving lib/client.js's apply with a minimal fake ctx (slot/config
-  // effects are inert stubs; only locale.register is observed).
+  // The settings page dictionary now rides the chunk data faces: the entry
+  // merges every settings-batch slice into the single "settings.weir.page"
+  // registration when the batch arrives. This helper reproduces that merge
+  // over the real chunks (the entry-side wiring is pinned in
+  // test/client.test.js).
   async function loadDictionaries() {
-    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
-    const registrations = []
-    entry.apply({
-      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push({ ns, dicts }) },
-      effect: (fn) => {
-        fn()
-        return () => {}
-      },
-      slots: { inject: () => () => {} },
-      configForms: { whileServed: () => () => {} },
-      remote: {},
-    })
-    return registrations[0].dicts
+    const chunkRequire = (name) => {
+      if (name === 'react') return { Component: class {} }
+      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {}
+      throw new Error(`unexpected require ${name}`)
+    }
+    // sequential: loadClientChunk captures globalThis.window per call
+    const slices = []
+    for (const [spec, stub] of [
+      ['lib/client.settings-page.js', chunkRequire],
+      ['lib/client.chain-model.js', undefined],
+      ['lib/client.robash-model.js', undefined],
+      ['lib/client.lsp-model.js', undefined],
+      ['lib/client.disabled-categories-editor.js', chunkRequire],
+      ['lib/client.notify-permissions.js', chunkRequire],
+      ['lib/client.edit-lock-maintenance.js', chunkRequire],
+    ]) {
+      slices.push(await loadClientChunk(spec, ...(stub ? [stub] : [])))
+    }
+    const dicts = { en: {}, zh: {} }
+    for (const { exports } of slices) {
+      Object.assign(dicts.en, exports.dictionaries.en)
+      Object.assign(dicts.zh, exports.dictionaries.zh)
+    }
+    return dicts
   }
 
   const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
@@ -1565,8 +1579,10 @@ describe('client.settings-page chunk', () => {
       for (const key of ['lspManagerInvalidJson']) {
         expectResolved(dict, key)
       }
-      // both pages' section texts resolve
-      for (const key of ['title', 'description', 'routingTitle', 'routingDescription']) {
+      // both pages' section descriptions resolve (the section TITLES —
+      // title/routingTitle — stayed in the entry's sync registration, pinned
+      // in test/client.test.js)
+      for (const key of ['description', 'routingDescription']) {
         expectResolved(dict, key)
       }
       // every group on both pages has its translated card title, and no

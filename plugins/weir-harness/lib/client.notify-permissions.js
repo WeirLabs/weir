@@ -289,6 +289,104 @@ window.__ModuleLoader__.load({
 		function NotifyPermissionsField(props) {
 			return react_jsx_runtime.jsx(NotifyPermissionsBoundary, { t: props.t, children: react_jsx_runtime.jsx(NotifyPermissionsPanel, props) });
 		}
+		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
+		// under HMR, so a chunk-local register would throw on the duplicate
+		// (namespace, locale) pair): the entry registers these under "settings.weir.page"
+		// inside a ctx.effect when this chunk arrives (lib/client.js
+		// registerChunkDictionaries). Pinned by test/client.test.js's dictionary
+		// union pin.
+		// (The entry merges every settings-batch slice into the single "settings.weir.page"
+		// registration — the whole settings card tree shares one t.)
+		const dictionaries = {
+			en: {
+				notifyPermissions: "Notification permission",
+				notifyPermissionsHint: "Check whether macOS lets these notifications through, and walk through allowing them.",
+				notifyPermissionsOpen: "Manage",
+				notifyPermTitle: "Notification permission",
+				notifyPermDescription: "Notifications are shown by DeepSeek Harness itself, so macOS has to let DeepSeek Harness notify you.",
+				notifyPermClose: "Close",
+				notifyPermChecking: "Checking…",
+				notifyPermRecheck: "Check again",
+				notifyPermBestEffort: "This check reads macOS settings that Apple does not document, so treat it as a hint. Seeing the test notification is the real proof.",
+				notifyPermFocusNote: "Focus / Do Not Disturb can still hold notifications back, and it cannot be checked from here.",
+				notifyPermSendTest: "Send a test notification",
+				notifyPermSending: "Sending…",
+				notifyPermOpenSettings: "Open notification settings",
+				notifyPermOpening: "Opening…",
+				notifyPermOpenHint: "In the list, find “DeepSeek Harness”, turn on “Allow notifications”, and pick the Banners or Alerts style.",
+				notifyPermWaiting: "Waiting for you to allow notifications… checking every 2 seconds.",
+				notifyPermConfirm: "Did you see the test notification?",
+				notifyPermSeenYes: "Yes, I saw it",
+				notifyPermSeenNo: "No",
+				notifyPermSeen: "All set — notifications will reach you.",
+				notifyPermNotSeen: "Check that Focus / Do Not Disturb is off, that DeepSeek Harness's style is Banners or Alerts, and — if the window is in front — that \"When the window is in front\" is set to Always notify. Then try again.",
+				notifyPermRetry: "Start over",
+				notifyPermSendAgain: "Send another test",
+				notifyPermError: "Something went wrong:",
+				notifyPermManualPath: "You can do this by hand: System Settings → Notifications → DeepSeek Harness.",
+				notifyPermDetails: "Technical details",
+				notifyPermFailed: "The permission panel failed; check the runtime log.",
+				"notifyPermState_granted": "Allowed",
+				"notifyPermState_denied": "Not allowed",
+				"notifyPermState_unknown": "Can't tell",
+				"notifyPermReason_alerts-allowed": "Alerts are allowed for DeepSeek Harness.",
+				"notifyPermReason_not-allowed": "Notifications are turned off for DeepSeek Harness.",
+				"notifyPermReason_no-record": "macOS has no record of DeepSeek Harness yet. Send a test notification so it shows up in the list.",
+				"notifyPermReason_default": "macOS has no explicit setting for DeepSeek Harness (it uses the system default), so this can't be told from here.",
+				"notifyPermReason_unreadable": "The notification settings could not be read.",
+				notifyWebUnsupported: "This page has no web Notification support, so DeepSeek Harness cannot notify directly.",
+				notifyWebPermission: "Web notification permission",
+				notifyWebDeniedHint: "This page was blocked from showing notifications and cannot ask again. Open System Settings → Notifications → DeepSeek Harness and turn notifications on.",
+				"notifyWebPerm_granted": "Allowed",
+				"notifyWebPerm_denied": "Blocked",
+				"notifyWebPerm_default": "Not asked yet",
+			},
+			zh: {
+				notifyPermissions: "通知权限",
+				notifyPermissionsHint: "检测 macOS 是否放行这些通知，并引导你完成授权。",
+				notifyPermissionsOpen: "管理",
+				notifyPermTitle: "通知权限",
+				notifyPermDescription: "通知由 DeepSeek Harness 自己弹出，所以需要在 macOS 里允许 DeepSeek Harness 发送通知。",
+				notifyPermClose: "关闭",
+				notifyPermChecking: "检测中…",
+				notifyPermRecheck: "重新检测",
+				notifyPermBestEffort: "该检测读取的是苹果未公开文档化的系统设置，仅供参考；亲眼看到测试通知才是最终证明。",
+				notifyPermFocusNote: "专注模式 / 勿扰仍可能拦截通知，且无法在这里检测。",
+				notifyPermSendTest: "发送测试通知",
+				notifyPermSending: "发送中…",
+				notifyPermOpenSettings: "打开系统通知设置",
+				notifyPermOpening: "打开中…",
+				notifyPermOpenHint: "在列表中找到「DeepSeek Harness」，打开「允许通知」，并选择「横幅」或「提醒」样式。",
+				notifyPermWaiting: "正在等你允许通知…每 2 秒自动检测一次。",
+				notifyPermConfirm: "你看到测试通知了吗？",
+				notifyPermSeenYes: "看到了",
+				notifyPermSeenNo: "没看到",
+				notifyPermSeen: "设置完成，通知会送达你。",
+				notifyPermNotSeen: "请确认专注模式 / 勿扰已关闭，「DeepSeek Harness」的样式是「横幅」或「提醒」，并且（若窗口在前台）「窗口在前台时」已设为「始终通知」，然后重试。",
+				notifyPermRetry: "重新开始",
+				notifyPermSendAgain: "再发一条测试",
+				notifyPermError: "出错了：",
+				notifyPermManualPath: "也可以手动操作：系统设置 → 通知 → DeepSeek Harness。",
+				notifyPermDetails: "技术细节",
+				notifyPermFailed: "权限面板出错，请查看运行日志。",
+				"notifyPermState_granted": "已允许",
+				"notifyPermState_denied": "未允许",
+				"notifyPermState_unknown": "无法判定",
+				"notifyPermReason_alerts-allowed": "已允许「DeepSeek Harness」弹出提醒。",
+				"notifyPermReason_not-allowed": "「DeepSeek Harness」的通知已被关闭。",
+				"notifyPermReason_no-record": "macOS 里还没有「DeepSeek Harness」的记录。先发一条测试通知，让它出现在列表里。",
+				"notifyPermReason_default": "macOS 里没有「DeepSeek Harness」的明确设置（沿用系统默认），无法在这里判定。",
+				"notifyPermReason_unreadable": "无法读取通知设置。",
+				notifyWebUnsupported: "当前页面没有网页通知能力，DeepSeek Harness 无法直接通知。",
+				notifyWebPermission: "网页通知权限",
+				notifyWebDeniedHint: "本页面被禁止显示通知，且无法再次询问。请打开「系统设置 → 通知 → DeepSeek Harness」并开启通知。",
+				"notifyWebPerm_granted": "已允许",
+				"notifyWebPerm_denied": "已禁止",
+				"notifyWebPerm_default": "尚未询问",
+			},
+		};
+
+		exports.dictionaries = dictionaries;
 		exports.LABEL_KEYS = LABEL_KEYS;
 		exports.webNotificationSupport = webNotificationSupport;
 		exports.requestWebPermission = requestWebPermission;

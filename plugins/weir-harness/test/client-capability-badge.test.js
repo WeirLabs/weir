@@ -256,7 +256,37 @@ describe('client.capability-badge chunk', () => {
     expect(button['aria-label']).toBe('0 skills · 0 MCP')
     expect(button.children.includes('0 · 0')).toBe(true)
   })
+
+
+  it('echo-guard: the pre-registration window renders the in-code fallback, and a late registration swaps in the real string without a remount', async () => {
+    // Same contract as the blackboard panel's pin (client-board-panel.test.js):
+    // the capability dictionaries register when the chunk batch arrives; before
+    // that, the slot-bound t echoes the raw key and the Badge's echo-guard
+    // (lib/client.capability-badge.js) shows the in-code fallback.
+    const { exports, reactStub } = await loadBadge()
+    const { CapabilityBadge } = exports
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const { props } = baseProps()
+    const echoProps = { ...props, t: (key) => key }
+    reactStub.reset()
+    reactStub.begin()
+    CapabilityBadge(echoProps)
+    await flush()
+    reactStub.begin()
+    const fallbackTree = CapabilityBadge(echoProps)
+    // the in-code fallback template, not the raw dotted key
+    expect(fallbackTree.children[0]['aria-label']).toBe('10 skills · 0 MCP')
+    expect(JSON.stringify(fallbackTree)).not.toContain('capability.badge')
+
+    // registered (late): same mounted instance (hook state kept — no reset),
+    // the revision re-render resolves the registered template
+    const registeredProps = { ...echoProps, t: (key) => (key === 'capability.badge' ? '{skills} Skills (registered) · {mcp}' : key) }
+    reactStub.begin()
+    const resolvedTree = CapabilityBadge(registeredProps)
+    expect(resolvedTree.children[0]['aria-label']).toBe('10 Skills (registered) · 0')
+  })
 })
+
 
 describe('capability chunks locale contract (2026-10-05 badge slot crash)', () => {
   // The host locale's second t() parameter is an interpolation VARS object,
@@ -272,7 +302,8 @@ describe('capability chunks locale contract (2026-10-05 badge slot crash)', () =
     }
   })
   it('registers matching English and Chinese unknown-count recovery labels', () => {
-    const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+    // the capability dictionaries ride the capability-model chunk's data face now
+    const source = readFileSync(new URL('../lib/client.capability-model.js', import.meta.url), 'utf8')
     for (const key of ['capability.effectiveUnknown', 'capability.effectiveUnknownShort', 'capability.effectiveUnknownDetail']) {
       const values = [...source.matchAll(new RegExp('"' + key + '": "([^"]+)"', 'g'))].map(match => match[1])
       expect(values).toHaveLength(2)
@@ -290,4 +321,5 @@ describe('capability chunks locale contract (2026-10-05 badge slot crash)', () =
     expect(accepted[0]).toContain('unknown')
     expect(accepted[1]).toContain('未知')
   })
+
 })

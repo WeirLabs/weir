@@ -246,20 +246,14 @@ describe('client.edit-lock-maintenance chunk', () => {
     }
   })
 
-  it('resolves every panel key in both entry dictionaries — never the raw key', async () => {
-    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
-    const registrations = []
-    entry.apply({
-      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push({ ns, dicts }) },
-      effect: (fn) => {
-        fn()
-        return () => {}
-      },
-      slots: { inject: () => () => {} },
-      configForms: { whileServed: () => () => {} },
-      remote: {},
-    })
-    const { en, zh } = registrations[0].dicts
+  it('resolves every panel key in both dictionaries of the chunk data face — never the raw key', async () => {
+    // the editLockMaint* keys ride this chunk's own data face (merged by the
+    // entry into the settings.weir.page registration on arrival); the shared
+    // chain* button labels come from the chain-model slice
+    const { exports } = await loadPanel()
+    const { exports: chainModel } = await loadClientChunk('lib/client.chain-model.js')
+    const en = { ...chainModel.dictionaries.en, ...exports.dictionaries.en }
+    const zh = { ...chainModel.dictionaries.zh, ...exports.dictionaries.zh }
     const KEYS = [
       'editLockMaint', 'editLockMaintHint', 'editLockMaintFailed', 'editLockMaintLoading', 'editLockMaintUnavailable',
       'editLockMaintRetry', 'editLockMaintRefresh', 'editLockMaintInspect',
@@ -444,11 +438,14 @@ describe('client.edit-lock-maintenance chunk', () => {
 
   it('shows retained eligible fences as history without online recovery while effective off, but saved-off remains actionable', async () => {
     const { exports, reactStub } = await loadPanel()
+    // the panel renders the merged page namespace: this chunk's own slice
+    // plus the shared chain* button labels from the chain-model slice
     const { en, zh } = await (async () => {
-      const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('dictionary only')) }))
-      const registrations = []
-      entry.apply({ locale: { bind: () => (key) => key, register: (_ns, dicts) => registrations.push(dicts) }, effect: (fn) => { fn(); return () => {} }, slots: { inject: () => () => {} }, configForms: { whileServed: () => () => {} }, remote: {} })
-      return registrations[0]
+      const { exports: chainModel } = await loadClientChunk('lib/client.chain-model.js')
+      return {
+        en: { ...chainModel.dictionaries.en, ...exports.dictionaries.en },
+        zh: { ...chainModel.dictionaries.zh, ...exports.dictionaries.zh },
+      }
     })()
     const eligible = { ...INSPECT, snapshot: { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] } }
     const calls = []

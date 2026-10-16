@@ -639,3 +639,38 @@ test('a failed resolve falls back to the browsing session id without the parent-
   expect(findAll(loaded, (node) => node.children === "Showing the parent conversation's board.")).toHaveLength(0)
   expect(findAll(loaded, (node) => node.children === '4 entries')).toHaveLength(1)
 })
+
+test('echo-guard: the pre-registration window renders in-code fallbacks, and a late registration swaps in the real strings without a remount', async () => {
+  // The dictionary for the panel rides the blackboard chunk's data face and
+  // registers when the chunk arrives (lib/client.js registerChunkDictionaries).
+  // This pins the contract for the window in between: the slot-bound t echoes
+  // the raw key, the panel's echo-guard (lib/client.blackboard-panel.js) shows
+  // the in-code fallback; once the registration lands, the revision re-render
+  // resolves the real string on the SAME mounted instance (hook state kept).
+  const counts = { useState: 0, useEffect: 0 }
+  const reactStub = makeReactStub(counts)
+  const { exports: model } = await loadModel()
+  const { exports: panel } = await loadClientChunk('lib/client.blackboard-panel.js', requireStubFor(reactStub))
+  const remote = fakeRemote({ list: () => okEnvelope({ entries: ROWS }) })
+  const base = { sessionId: 's1', model, t: (key) => key, callBoard: remote.rawCall, pollMs: 0, watchMs: 0 }
+  reactStub.reset()
+  const renderOnce = (props) => {
+    reactStub.begin()
+    return panel.BlackboardPanel(props)
+  }
+  renderOnce(base)
+  await flush()
+  renderOnce(base)
+  await flush()
+  const fallbackTree = renderOnce(base)
+  // unregistered: in-code fallbacks, never the raw dotted keys
+  expect(findAll(fallbackTree, (node) => node.children === '4 entries')).toHaveLength(1)
+  expect(findAll(fallbackTree, (node) => node.placeholder === 'Search')).toHaveLength(1)
+  expect(findAll(fallbackTree, (node) => node.children === 'blackboard.entries')).toHaveLength(0)
+
+  // registered (late): the same instance re-renders the registered strings
+  const registered = { ...base, t: (key) => ({ 'blackboard.entries': '{n} entries · registered', 'blackboard.search': 'Search · registered' })[key] ?? key }
+  const resolvedTree = renderOnce(registered)
+  expect(findAll(resolvedTree, (node) => node.children === '4 entries · registered')).toHaveLength(1)
+  expect(findAll(resolvedTree, (node) => node.placeholder === 'Search · registered')).toHaveLength(1)
+})

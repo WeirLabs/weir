@@ -389,17 +389,11 @@ describe('page permission helpers', () => {
   })
 
   it('never mentions Script Editor in either dictionary: DSH itself is the sender', async () => {
-    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
-    const registrations = []
-    entry.apply({
-      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push(dicts) },
-      effect: (fn) => { fn(); return () => {} },
-      slots: { inject: () => () => {} },
-      configForms: { whileServed: () => () => {} },
-      remote: {},
-    })
+    // the notifyPerm*/notifyWeb* labels ride this chunk's own data face now
+    // (the entry registers them under the page namespace on chunk arrival)
+    const { exports } = await loadClientChunk('lib/client.notify-permissions.js', (name) => (name === 'react' ? { Component: class {} } : {}))
     for (const locale of ['en', 'zh']) {
-      for (const [key, value] of Object.entries(registrations[0][locale])) {
+      for (const [key, value] of Object.entries(exports.dictionaries[locale])) {
         if (!key.startsWith('notifyPerm') && !key.startsWith('notifyWeb')) continue
         expect(/Script Editor|脚本编辑器/.test(value), `${locale}.${key} still names Script Editor`).toBe(false)
       }
@@ -424,17 +418,11 @@ describe('primaryStep', () => {
 })
 
 describe('notify-permissions dictionaries', () => {
+  // the chunk's own data face (the entry merges it into the page namespace
+  // registration when the settings batch arrives)
   async function dictionaries() {
-    const { exports: entry } = await loadClientChunk('lib/client.js', Object.assign(() => ({}), { async: () => Promise.reject(new Error('chunks are not loaded in a dictionary-only test')) }))
-    const registrations = []
-    entry.apply({
-      locale: { bind: () => (key) => key, register: (ns, dicts) => registrations.push(dicts) },
-      effect: (fn) => { fn(); return () => {} },
-      slots: { inject: () => () => {} },
-      configForms: { whileServed: () => () => {} },
-      remote: {},
-    })
-    return registrations[0]
+    const { exports } = await loadClientChunk('lib/client.notify-permissions.js', (name) => (name === 'react' ? { Component: class {} } : {}))
+    return exports.dictionaries
   }
 
   it('resolves every label the chunk reads in both languages, never the raw key', async () => {

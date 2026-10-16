@@ -190,6 +190,54 @@ function narrowDiffFragment(value) {
 				expand: (count) => t("hashEditExpand", { count })
 			};
 		}
+		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
+		// under HMR, so a chunk-local register would throw on the duplicate
+		// (namespace, locale) pair): the entry registers these under "settings.weir.hash-edit"
+		// inside a ctx.effect when this chunk arrives (lib/client.js
+		// registerChunkDictionaries). Pinned by test/client.test.js's dictionary
+		// union pin.
+		const dictionaries = {
+			en: {
+				hashEditTitle: "Edit file",
+				hashEditPreparing: "Preparing edit",
+				hashEditPlanned: "Planned edit — the applied diff appears when the call settles.",
+				hashEditRunning: "Editing…",
+				hashEditFailed: "Edit failed",
+				hashEditStopped: "Interrupted",
+				hashEditCodeLabel: "diff",
+				hashEditCopy: "Copy",
+				hashEditCopied: "Copied",
+				hashEditWrap: "Wrap lines",
+				hashEditUnwrap: "Disable line wrap",
+				hashEditCollapse: "Collapse",
+				hashEditCollapseAria: "Collapse diff",
+				hashEditExpand: "Show {count} more",
+				hashEditExpandAria: "Expand {count} more rows",
+				hashEditInput: "Input",
+				hashEditOutput: "Output",
+			},
+			zh: {
+				hashEditTitle: "编辑文件",
+				hashEditPreparing: "准备编辑",
+				hashEditPlanned: "计划编辑——调用完成后此处显示实际应用的 diff。",
+				hashEditRunning: "编辑中…",
+				hashEditFailed: "编辑失败",
+				hashEditStopped: "已中断",
+				hashEditCodeLabel: "diff",
+				hashEditCopy: "复制",
+				hashEditCopied: "已复制",
+				hashEditWrap: "自动换行",
+				hashEditUnwrap: "取消换行",
+				hashEditCollapse: "收起",
+				hashEditCollapseAria: "收起 diff",
+				hashEditExpand: "展开剩余 {count} 行",
+				hashEditExpandAria: "展开剩余 {count} 行",
+				hashEditInput: "输入",
+				hashEditOutput: "输出",
+			},
+		};
+
+		exports.dictionaries = dictionaries;
 		exports.HASH_EDIT_TOOL = HASH_EDIT_TOOL;
 		exports.narrowDiffFragment = narrowDiffFragment;
 		exports.appliedDiffFragments = appliedDiffFragments;
