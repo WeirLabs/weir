@@ -70,8 +70,8 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 
 - **审计**：`capability-apply` 类型注册于共享 [audit.js](<../../plugins/weir-harness/src/shared/audit.js>)（cordis emit + `.weir/audit.jsonl` 双写），发射失败 warn/swallow 且不改变 policy；`command/run`／`command/done`／审计日志都不是提交证据；新增代码静态保证不触碰 `session.append` 与自定义 session 事件（冷读红线）。
 - **幂等与丢失响应**：receipts 随会话生命周期保留，清理不允许旧请求重放成第二次变更；已接受请求重放返回原 receipt，异参 ID 复用拒绝；durable acceptance 后响应丢失时按原 request ID 查询取回 accepted revision（「结果待确认」语义）。
-- **content refresh 协调**（[content-refresh.js](<../../plugins/weir-harness/src/capabilities/content-refresh.js>)）：refresh 用独立存储单元与 receipt/revision，但与 selection 共用同一会话级提交协调者，提交前重查 selection revision——被移除的 Skill 在 refresh 期间不会继续发布。
-- **Skill 侧会话阻断**（[skill-admission.js](<../../plugins/weir-harness/src/capabilities/skill-admission.js>)）：未选中 Skill 的 `skill` 调用返回显式 unavailable 且不加载正文；slash 提交由服务端在当前选择上再验证；正文异步读取结束、返回内容之前复核选择快照（已读取 ≠ 已授权）；接受移除后，未 handed-off 的正文加载与子代理 prompt 发布被拒。
+- **content refresh 协调**（**当前未交付**：策略模块存在但从未接线生产路径，随分发能力一并待撤回变更处理；设计意图为 refresh 用独立存储单元与 receipt/revision，与 selection 共用同一会话级提交协调者，提交前重查 selection revision）。
+- **Skill 侧会话阻断**（[skill-selection-provider.js](<../../plugins/weir-harness/src/capabilities/skill-selection-provider.js>) 生产路径）：未选中 Skill 的 `skill` 调用返回显式 unavailable 且不加载正文；slash 提交由服务端在当前选择上再验证；正文异步读取结束、返回内容之前复核选择快照（已读取 ≠ 已授权）；接受移除后，未 handed-off 的正文加载与子代理 prompt 发布被拒。（变更 capabilities-deepening：重复且从未接线的 `skill-admission.js` 已删除，其测试断言改靶到此生产路径。）
 
 ### 目录与菜单收敛
 
