@@ -4,11 +4,12 @@
 // (the shim is runtime-only state), the deny-floor degrade when the fact is
 // missing, attribution (a foreign delegated child is never touched), and the
 // listener's fail-open posture on the replay path.
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from './helpers.js'
-import { createChildComposition, SPAWN_FACT_TYPE } from '../src/delegate/child-composition.js'
+import { createChildComposition, SPAWN_FACT_RECORD_TYPE, SPAWN_FACT_TYPE } from '../src/delegate/child-composition.js'
+import { createAudit } from '../src/shared/audit.js'
 import { CHILD_DENY_TOOLS } from '../src/shared/child-scope.js'
 
 const KNOWN = new Set(['bash', 'read', 'write', 'delegate', 'send_message', 'workflow'])
@@ -39,7 +40,7 @@ function fakeAgent({ id = 'child-1', header = {}, toolsKnown = KNOWN } = {}) {
   return { agent, applied }
 }
 
-function mount({ toolsKnown = KNOWN, restrictableNames = () => toolsKnown } = {}) {
+function mount({ toolsKnown = KNOWN, restrictableNames = () => toolsKnown, audit = () => {} } = {}) {
   const handlers = {}
   const warnings = []
   const ctx = {
@@ -52,11 +53,21 @@ function mount({ toolsKnown = KNOWN, restrictableNames = () => toolsKnown } = {}
   }
   const composition = createChildComposition({
     ctx,
-    audit: () => {},
+    audit,
     logger: { warn: (message) => warnings.push(message) },
     restrictableNames,
   })
   return { composition, handlers, warnings }
+}
+
+/**
+ * One audit JSONL record in the shape createAudit actually writes: the sink
+ * prepends `weir/` to the type it is handed, so fixtures mirror that prepend.
+ * A fixture reusing the unprefixed sink argument verbatim is what hid the
+ * double-prefixed `weir/weir/delegate/spawn` defect.
+ */
+function sinkRecord(session, type, data) {
+  return { time: Date.now(), session, type: `weir/${type}`, data }
 }
 
 function sectionOf(applied) {
@@ -145,12 +156,13 @@ describe('child-composition cold resume', () => {
   }
 
   it('replays the spawn fact for a resumed child of this parent session', () => {
-    const record = {
-      time: Date.now(),
-      session: 'parent-1',
-      type: SPAWN_FACT_TYPE,
-      data: { childId: 'child-1', lane: 'supervised', label: 'resumed', persona: 'RESUMED-PERSONA', toolFilter: { deny: ['send_message'] } },
-    }
+    const record = sinkRecord('parent-1', SPAWN_FACT_TYPE, {
+      childId: 'child-1',
+      lane: 'supervised',
+      label: 'resumed',
+      persona: 'RESUMED-PERSONA',
+      toolFilter: { deny: ['send_message'] },
+    })
     withAudit([record], (cwd) => {
       const { handlers, warnings } = mount()
       const { agent, applied } = fakeAgent({ header: { cwd } })
@@ -190,12 +202,12 @@ describe('child-composition cold resume', () => {
   })
 
   it('degrades fail-open (warn) when the replay application throws, still applying the deny floor', () => {
-    const record = {
-      time: Date.now(),
-      session: 'parent-1',
-      type: SPAWN_FACT_TYPE,
-      data: { childId: 'child-1', lane: 'continuable', persona: 'P', toolFilter: { deny: ['rm'] } },
-    }
+    const record = sinkRecord('parent-1', SPAWN_FACT_TYPE, {
+      childId: 'child-1',
+      lane: 'continuable',
+      persona: 'P',
+      toolFilter: { deny: ['rm'] },
+    })
     withAudit([record], (cwd) => {
       const { handlers, warnings } = mount()
       const { agent, applied } = fakeAgent({ header: { cwd } })
@@ -219,6 +231,48 @@ describe('child-composition cold resume', () => {
     expect(applied.sections).toHaveLength(0)
     expect(applied.restrictions).toHaveLength(0)
     expect(warnings).toHaveLength(0)
+  })
+})
+
+describe('child-composition spawn-fact record shape (double-prefix regression)', () => {
+  it('writes one single-prefixed weir/delegate/spawn record through the real sink and replays it after a restart', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'weir-composition-sink-'))
+    try {
+      // The REAL sink: createAudit prepends `weir/` to whatever beginSpawn hands
+      // it, so this is the only assertion covering the write path end to end.
+      const emitted = []
+      const audit = createAudit({ emit: (type, record) => emitted.push({ type, record }) })
+      const live = mount({ audit })
+      live.composition.beginSpawn({
+        session: { id: 'parent-1', header: { cwd } },
+        childId: 'child-1',
+        lane: 'one-shot',
+        label: 'sink-shaped',
+        persona: 'SINK-PERSONA',
+        toolFilter: { deny: ['send_message'] },
+      })
+      // A host restart: the runtime shim state is gone, only the JSONL remains.
+      live.composition.dispose()
+
+      // (a) the stored record and the cordis event carry exactly ONE prefix.
+      expect(SPAWN_FACT_TYPE).toBe('delegate/spawn')
+      expect(SPAWN_FACT_RECORD_TYPE).toBe('weir/delegate/spawn')
+      expect(emitted[0].type).toBe('weir/delegate/spawn')
+      const lines = readFileSync(join(cwd, '.weir', 'audit.jsonl'), 'utf8').trim().split('\n')
+      expect(lines).toHaveLength(1)
+      expect(JSON.parse(lines[0]).type).toBe('weir/delegate/spawn')
+
+      // (b) the cold-resume replay finds that record: persona + toolFilter land
+      // and the deny-floor warn (the old symptom) never fires.
+      const restarted = mount()
+      const { agent, applied } = fakeAgent({ header: { cwd } })
+      restarted.handlers['agent/created']({ agent })
+      expect(restarted.warnings).toHaveLength(0)
+      expect(sectionOf(applied)?.text).toBe('SINK-PERSONA')
+      expect(applied.restrictions[0].deny).toContain('send_message')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })
 
