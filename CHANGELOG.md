@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+> **DSH 兼容性边界（破坏性适配）**：本批次起 Weir 需要 DSH **0.2.1 线**（`>=0.2.1-rc.1 <0.3.0`，`engines.dsh` 与 `peerDependencies` 双声明；0.2.1 起宿主优先按 `engines.dsh` 判定）。仍在 DSH 0.2.0 线的用户请留在 Weir 1.2.1——它是该线的最后支持版本。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
+
+### Changed
+
+- **适配 DSH 0.2.1：委派子代 spawn 迁移至 `subagents.startActivation`**：0.2.1 移除了 `subagents.start`/`startContinuable` 与请求级 `persona`/`toolFilter` 字段。三条 spawn 道统一走 `startActivation`——一次性道（前台/后台/升级重派）映射为 `delivery: 'caller'`（Weir 自行等待结果，无父通知），continuable/受监督道映射为 `delivery: 'parent'`（内建结算通知形状不变，监督排序闸门不受影响）；每次 spawn 由 Weir 预留 `childId`（continuable 道由此取回 `messageId`）；返回句柄规范化为 `{ id, childId, agent, result, dispose }`，活子 agent 句柄在 spawn 当场捕获（0.2.1 的 `result` 在 dispose 后才 resolve）。**用户可见行为不变**。
+- **子代 persona 与工具目录限制改由创建窗口垫片应用**：delegate 新增 `child-composition` 模块——spawn 前登记组合，子代的 `agent/created` 窗口内同步应用 persona section 与 `tools.restrict`（先于初始消息投递，无竞态；应用失败即 fail-closed 拆除子代）；spawn 事实（含 persona/toolFilter/lane）写入冷安全审计通道，宿主重启后冷恢复子代时重放；审计缺失时仍兜底应用编排工具 deny 列表。0.2.1 起子代理激活 signal 仅覆盖发布前取消，一次性道的中断语义改由 Weir 显式接管（abort → dispose，与 0.2.0 行为一致）。
+- **监督重启重建不再以目录 mode 判道**：0.2.1 起所有本地子代的目录 mode 恒为 `continuable`；孤儿识别改由 spawn 事实的 lane 判定——一次性/普通 continuable 子代不再被误提升为受监督成员，无事实孤儿维持既有恢复语义；`supervised_status` 原样呈现目录 mode（含新增的 `external`）。
+- **两个预设移除 persona 的 `{{cwd}}` suffix**：0.2.1 的 agent-loop 不再注册该提示词变量（未知变量装配即抛）；工作目录事实改由宿主 0.2.1 新增的 `working-directory` 运行时上下文提供，信息不丢失。
+- **测试装置**：集成门禁可对任意 DSH 树运行（`WEIR_IT_NODE`/`WEIR_IT_DSH`/`WEIR_IT_PNPM` 覆盖，`run.mjs` 头注释已记录用法与原生插件注意事项）；0.2.1 headless runner 会 join 常驻子代并把 agent 错误重抛为运行失败，两个场景断言相应放宽（属性不变）；`dsh-skill-office` 0.2.1 新增四个同族技能，Office 适配器对非 OFFICE 名改为跳过（认领 Weir 名字的异形候选仍 fail-closed）。
+
 ## [1.2.1] - 2026-10-17
 
 > **DSH 兼容性边界**：本版本是支持 DSH `0.2.0-rc.2`（`>=0.2.0-rc.2 <0.3.0`）的**最后一个 Weir 版本**。DSH 迭代快且常有破坏性变更，后续 Weir 版本将跟随更新的宿主运行时，可能抬升下限。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。

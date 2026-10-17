@@ -39,7 +39,7 @@ Weir 以 `weir-harness` 包发布到公共 npm registry。DSH 的插件管理原
 
 ## 边界与失败语义
 
-- 重复 `install_bundle` 同一包被 `ambiguous-install` 幂等拒绝——bundle 改动重应用走 `set_bundle` 先禁后启（开发者）或 `weir-harness@新版本`（用户）。
+- 重复 `install_bundle` 同一包被幂等拒绝（DSH ≥ 0.2.1 为装前 `already-installed`，更早版本为装后 `ambiguous-install`）——bundle 改动重应用走 `set_bundle` 先禁后启（开发者）或 `weir-harness@新版本`（用户）。
 - 兼容性豁免（`compatibility.json`）以精确 `name@version` → 精确 DSH 版本数组登记，需 `acceptRisk: true`；不可读/不可解析的豁免文件不授权任何豁免。
 - tarball/路径安装绕过装前 preflight，兼容性问题只在装后暴露（仍回滚）——文档统一引导 registry 安装，tarball 仅用于发布前验证。
 - peer 区间上限随 DSH 升级维护：DSH 0.3 发布后由一次兼容性验证 + 区间放宽的小版本跟进。
