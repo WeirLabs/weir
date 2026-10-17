@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- **能力管理：MCP resource 请求纳入 Apply drain 围栏**：此前 Apply 移除 server 时，resource 请求（list/templates/read）只查准入快照不进 drain——在关闸与提交之间的窗口期仍由旧 provider 正常服务（工具调用在同窗口早已正确拒绝 `mcp-gate-closed`）。现在 facade 的 resource 请求与工具走同一条 drain enter/exit 路径：窗口期请求零 RPC 拒绝 `mcp-gate-closed`；未接线 drain 的组合保持 admit-only 且文档明示该保证不成立，不再静默宣称。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **会话黑板：远端桥接槽改为栈式存活所有权，杜绝单挂载 dispose 株连**：两个预设（weir / weir-creative）在 profile 加载时即常驻双挂载，此前模块级单例槽在「槽主挂载单独 dispose」时直接清空——仍存活的兄弟挂载随之失联，面板误报「Blackboard unavailable / non-Weir preset」（数据无损：内核状态本就在运行时全局注册表按引用计数共享）。现在槽位改为存活 feed 栈：最新存活 feed 服务，dispose 只移除自身并恢复上一个存活 feed，仅当栈真正为空才报 `bridge-absent`（文案语义由此始终为真）；remote.js 的过时注释同步更正。兄弟 capability 读桥经核验无需同类修复（其 feed 已按 `readPresetId` 键控），补一条跨预设 dispose 隔离钉。双挂载矩阵 6 钉先红后绿。详见 [会话黑板](docs/features/blackboard.md)。
 - **能力管理：Apply 变更通知在重启与恢复路径上不再丢失**：model-facing 的 added/removed delta 此前算自 engine 的内存 map（从不从磁盘加载）——宿主重启后首次 Apply 会静默丢失全部 removals 通知，无差异重 Apply 反而误报全量 "Added:"；receipt 恢复路径重发了 snapshot 却从不触发 onAccepted，模型永远不知道恢复落地的变更（git 考古证实为疏漏而非设计）。现在 delta 基准统一为 durable 选择记录（提交前读取、CAS 证明其权威），纯函数 `selectionDelta` 收进通知模块；恢复路径把 pre-write sets 捕获进 blocked 条目， committed 与 recovery-published 两条路径共享同一段同步发布段（delta → onAccepted → snapshot → provider → fence 释放），恰好一次由 blocked.delete 与通知合并共同保证。附带修复：生产 engine 此前未接线 audit/trace 钩子（capability-apply 审计只在测试中存在），现经 cold-safe 审计通道接线；`capabilities-command` 的发射断言改为过滤式以兼容新增的审计发射。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **worktree：车道绑定 commit 权威化，杜绝僵尸写入者**：此前 `delegate` 在 spawn 子代理期间若预留被回收（force-reclaim 卡或 `/worktree reconcile --rebuild`），绑定 commit 会静默空转——子代理带着车道契约继续运行，但账本从未记录它（僵尸 worker，cwd 甚至已被删除），重建后的车道还可能被二次绑定（单车道双写）；对账把车道转 `abandoned` 后 commit 甚至仍会成功（镜像缺陷）。现在绑定 commit 在账本锁内做 CAS：`boundChild` 仍等于预留 nonce 且车道仍是 `working` 才落写，否则以 `LANE_RESERVATION_LOST` 结构化拒绝并附 `next` 恢复指引；`delegate` 收到拒绝时先拆除刚 spawn 的子代理（一次性 `dispose`，受监督组走既有组回滚 `terminate`）再上浮错误——未授权的子代理绝不运行；commit 的成功与拒绝均写 `worktree/bind` 审计（补上原 `patchLane` commit 的审计盲区）。新增 6 条回归钉（三种拒绝路径 + 账本不变式 + delegate 两侧拆除）先红后绿；全量单测与集成（含 worktree / lane-resumable / zombie-lane 场景）零回归。详见 [git worktree 车道](docs/features/git-worktree.md)。
@@ -27,6 +28,7 @@
 
 ### Removed
 
+- **假想 seam 清理（零生产引用的被测代码）**：`mcp-admission.js` 的 `wrapResourceProvider` 删除——它零生产调用且钉的是生产从不使用的 provider 形状（生产 resource 门在 facade 内联），其测试改钉生产 facade 路径（admit 拒绝 + drain 接线 + A/B 会话隔离）；client capability-model 的 `commitStateOf`/`closeDirtyDraft` 决策助手删除（零生产调用，生产路径每次锻造新 requestId，其文档声称的重用语义与生产相反），manager 中只由死代码可达的 `install-or-configure` 渲染分支一并删除；chunk 清单随提交同步重建。
 - **Skill 分发（第三方来源安装/更新）声明与代码撤回**：该能力从未接线交付（策略层模块零生产 importer）——六个未接线模块（`content-refresh`、`isolated-exec`、`distribution-manifest`、`publisher`、`content-pin`、`update-lifecycle`，约 838 行）与其三条测试套件、`apply-engine` 的 `coordinate` 钩子一并删除；`same-name-policy.js` 的两个零生产调用者导出按打捞裁决一并移除（其语义由选择 provider 生产路径覆盖）。实际交付的等价路径：会话选择 + Apply、v2 预设包导入（带确认安装随包本地 Skill 文件）、Weir 捆绑 Skill 经 npm bundle 更新、本地技能发现根。`skill-distribution` spec 的 14 条未交付要求同步撤回（保留的 5 条由已交付路径实现）。
 
 ## [1.2.0] - 2026-10-15
