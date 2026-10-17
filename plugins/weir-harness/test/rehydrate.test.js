@@ -40,15 +40,57 @@ describe('rehydrateSupervision', () => {
     expect(state.children[0].status).toBe('terminated')
   })
 
-  it('reports partial confidence with untracked catalog children when no facts exist', () => {
+  it('reports partial confidence with fact-less catalog children as untracked orphans', () => {
+    // DSH 0.2.1 reports every local child as 'continuable' (and may report
+    // 'external'); the catalog mode no longer discriminates lanes, so BOTH
+    // fact-less entries keep the orphan semantics (never silently dropped).
     const catalog = [
       { id: 'orphan-1', label: 'leftover', mode: 'continuable' },
       { id: 'job-1', label: 'one-shot', mode: 'one-shot' },
+      { id: 'ext-1', label: 'external', mode: 'external' },
     ]
     const state = rehydrateSupervision({ parentId: 'parent-1', records: [], catalogChildren: catalog })
     expect(state.confidence).toBe('partial')
     expect(state.children).toEqual([])
-    expect(state.untracked).toEqual([{ id: 'orphan-1', label: 'leftover', mode: 'continuable' }])
+    expect(state.untracked.map((entry) => [entry.id, entry.mode])).toEqual([
+      ['orphan-1', 'continuable'],
+      ['job-1', 'one-shot'],
+      ['ext-1', 'external'],
+    ])
+  })
+
+  it('never resurrects a one-shot or plain-continuable child claimed by a spawn fact', () => {
+    const catalog = [
+      { id: 'c-oneshot', label: 'one-shot job', mode: 'continuable' },
+      { id: 'c-cont', label: 'continuable', mode: 'continuable' },
+      { id: 'c-sup', label: 'supervised', mode: 'continuable' },
+      { id: 'orphan-9', label: 'leftover', mode: 'continuable' },
+    ]
+    const records = [
+      record('parent-1', 'weir/delegate/spawn', { childId: 'c-oneshot', lane: 'one-shot', label: 'one-shot job', persona: 'P' }),
+      record('parent-1', 'weir/delegate/spawn', { childId: 'c-cont', lane: 'continuable', label: 'continuable', persona: 'P' }),
+      record('parent-1', 'weir/delegate/spawn', { childId: 'c-sup', lane: 'supervised', label: 'supervised', persona: 'P' }),
+      // the supervised child's fact chain is present: the registry tracks it
+      record('parent-1', 'weir/supervision/spawn', { kind: 'spawn', childId: 'c-sup', name: 'supervised', group: 'scan' }),
+    ]
+    const state = rehydrateSupervision({ parentId: 'parent-1', records, catalogChildren: catalog })
+    expect(state.children.map((child) => child.id)).toEqual(['c-sup'])
+    expect(state.untracked.map((entry) => entry.id)).toEqual(['orphan-9'])
+    // the spawn facts are surfaced for the live coordinator's catalog check
+    expect(state.spawnFacts.map((fact) => [fact.childId, fact.lane])).toEqual([
+      ['c-oneshot', 'one-shot'],
+      ['c-cont', 'continuable'],
+      ['c-sup', 'supervised'],
+    ])
+  })
+
+  it('keeps a supervised child with a broken fact chain visible as an orphan', () => {
+    const catalog = [{ id: 'c-sup', label: 'supervised', mode: 'continuable' }]
+    const records = [record('parent-1', 'weir/delegate/spawn', { childId: 'c-sup', lane: 'supervised', label: 'supervised', persona: 'P' })]
+    const state = rehydrateSupervision({ parentId: 'parent-1', records, catalogChildren: catalog })
+    // Broken chain: the spawn fact still forbids treating it as a lost one-shot
+    // child, but a supervised child missing from the registry is never hidden.
+    expect(state.untracked.map((entry) => entry.id)).toEqual(['c-sup'])
   })
 
   it('ignores records from other sessions and non-supervision types', () => {

@@ -28,8 +28,11 @@
     "whitelist-defaults.json",
     "icon.svg"
   ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.1 <0.3.0"
+  },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0"
+    "@deepseek-ai/dsh": ">=0.2.1-rc.1 <0.3.0"
   },
   "exports": {
     "./package.json": "./package.json",

@@ -83,13 +83,22 @@ export function extraBinDirectories(env = process.env, platform = process.platfo
  * User-writable npm global prefix for panel installs: `npm --prefix <dir>
  * install -g …` lands servers here instead of a possibly root-owned global
  * prefix, and this directory is already part of the extended scan.
+ *
+ * `create` is a test seam: the win32 layout assertion must be runnable on any
+ * host WITHOUT materializing a literal `C:\Users\...` directory in the
+ * process CWD (the artifact that used to pollute the package directory after
+ * every unit run). Production callers keep the default (create the prefix).
+ * @param {Record<string, string | undefined>} [env]
+ * @param {string} [platform] - 'win32' | 'darwin' | 'linux' (process.platform values)
+ * @param {{ create?: boolean }} [options]
+ * @returns {string}
  */
-export function npmGlobalPrefix(env = process.env, platform = process.platform) {
+export function npmGlobalPrefix(env = process.env, platform = process.platform, options = {}) {
   const home = env.HOME ?? homedir()
   const prefix = platform === 'win32'
     ? join(env.APPDATA ?? join(home, 'AppData', 'Roaming'), 'npm')
     : join(home, '.npm-global')
-  mkdirSync(prefix, { recursive: true })
+  if (options.create !== false) mkdirSync(prefix, { recursive: true })
   return prefix
 }
 

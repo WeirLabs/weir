@@ -52,8 +52,23 @@ test('unselected, failed policy and failed discovery all retain three non-invoca
 test('unsupported registry and malformed raw candidates fail explicitly', async t => {
   await assert.rejects(createOfficeAdapter({}, 'machine')({}), /registry is unavailable/)
   const { adapter, upstream } = await fixture(t)
-  upstream.list = async () => [{ name: 'other' }]
+  // A candidate claiming one of OUR names with a foreign shape still fails
+  // closed (the provider contract for the three skills Weir composes).
+  upstream.list = async () => [{ name: 'office-docx', provider: 'somebody-else', source: 'bundled', locator: '/tmp/x' }]
   await assert.rejects(adapter({}), /Unsupported Office provider candidate/)
+})
+
+test('foreign sibling Office skills are skipped, never an error (DSH 0.2.1)', async t => {
+  const { adapter, upstream } = await fixture(t)
+  // 0.2.1's office provider also lists office / office-render /
+  // office-recalculate / office-export-pdf; Weir composes only the three
+  // authoring skills, so siblings must not break discovery.
+  upstream.list = async () => [
+    { name: 'office', provider: 'dsh-office', source: 'bundled' },
+    { name: 'office-render', provider: 'dsh-office', source: 'bundled' },
+  ]
+  const inventory = await adapter({})
+  assert.deepEqual(inventory.candidates, [])
 })
 
 test('revocation during upstream load cannot publish a stale Office definition', async t => {

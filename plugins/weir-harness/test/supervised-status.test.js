@@ -37,7 +37,7 @@ describe('supervised_status tool', () => {
     expect(text).toContain('retries 0')
     expect(text).toContain('report: beta stuck on missing input')
     expect(text).toContain('group "scan" — 2 member(s) — sealed, not settled')
-    expect(text).toContain('No untracked continuable children in the DSH catalog.')
+    expect(text).toContain('No untracked delegated children in the DSH catalog.')
   })
 
   it('reports an empty registry rather than an error', async () => {
@@ -48,22 +48,46 @@ describe('supervised_status tool', () => {
     expect(text).toContain('No supervised groups in this registry.')
   })
 
-  it('flags catalog continuable children that the registry does not track', async () => {
+  it('flags fact-less catalog orphans and tolerates every catalog mode verbatim', async () => {
     const coordinator = makeCoordinator()
     const listChildren = async () => [
       { id: 'child-1', label: 'tracked', mode: 'continuable' },
       { id: 'orphan-9', label: 'leftover from before restart', mode: 'continuable' },
+      { id: 'external-1', label: 'external leftover', mode: 'external' },
       { id: 'oneshot-1', label: 'one-shot job', mode: 'one-shot' },
     ]
+    // 0.2.1: all local children report mode 'continuable'; the spawn fact is
+    // what keeps a one-shot child out of the orphan list (covered below).
+    const tool = makeTool({ coordinator, listChildren })
     coordinator.registerMember({ id: 'child-1', name: 'alpha', group: 'scan' })
     coordinator.sealGroup('scan')
 
-    const tool = makeTool({ coordinator, listChildren })
     const value = await tool.execute({}, execStub())
     const text = renderStatus(value)
     expect(text).toContain('orphan-9 — label "leftover from before restart" — mode continuable')
-    expect(text).not.toContain('oneshot-1')
+    // An external-mode entry renders verbatim (never an "undefined" mode).
+    expect(text).toContain('external-1 — label "external leftover" — mode external')
+    expect(text).toContain('oneshot-1 — label "one-shot job" — mode one-shot')
     expect(text).not.toContain('label "tracked"') // child-1 is tracked: never listed as untracked
+  })
+
+  it('keeps spawn-fact-claimed one-shot children out of the orphan list', async () => {
+    const coordinator = createGroupCoordinator({
+      sendTo: async () => {},
+      interruptChild: () => {},
+      schedule: () => {},
+      spawnFactOf: (childId) => (childId === 'oneshot-1' ? { childId, lane: 'one-shot' } : undefined),
+    })
+    const tool = makeTool({
+      coordinator,
+      listChildren: async () => [
+        { id: 'oneshot-1', label: 'one-shot job', mode: 'continuable' },
+        { id: 'orphan-9', label: 'leftover', mode: 'continuable' },
+      ],
+    })
+    const text = renderStatus(await tool.execute({}, execStub()))
+    expect(text).not.toContain('oneshot-1')
+    expect(text).toContain('orphan-9')
   })
 
   it('reports the cross-check as unavailable when the catalog read fails', async () => {

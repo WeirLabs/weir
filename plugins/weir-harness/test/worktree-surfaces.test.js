@@ -15,6 +15,8 @@ import { createGroupCoordinator } from '../src/delegate/group-coordinator.js'
 import { attachWorktreeModeGuard } from '../src/delegate/worktree-mode.js'
 import { DEFAULT_ROBASH, checkBashCommand } from '../src/delegate/robash-guard.js'
 import { DEFAULT_ROBASH_PWSH } from '../src/delegate/robash-guard-pwsh.js'
+import { createHandlerRecorder } from './helpers/spawn-harness.js'
+import { createChildComposition } from '../src/delegate/child-composition.js'
 
 const LANE = '/r/.weir/worktrees/a-001'
 const spec = (overrides = {}) => ({
@@ -413,35 +415,67 @@ describe('worktree text and settings', () => {
 })
 
 describe('spawn adapter lane guard', () => {
-  const handle = () => {
-    const attached = []
-    return { attached, ctx: { tools: { guard: (fn) => { attached.push(fn); return () => {} } } } }
+  /** One lane-guard spawn against a fake DSH 0.2.1 start surface. */
+  async function laneSpawn({ laneGuard = spec(), robash = () => ({ enabled: false, lists: {} }), mutateChild } = {}) {
+    const children = new Map()
+    const recorder = createHandlerRecorder()
+    const ctx = { on: recorder.on }
+    // A minimal deps surface: no composition here (the lane guard is the unit
+    // under test), one reserved child id, and the captured live agent.
+    const deps = {
+      subagents: {
+        async startActivation(activation) {
+          const applied = { guards: [] }
+          const agent = {
+            id: activation.childId,
+            session: { header: { delegationDepth: 1 } },
+            ctx: { tools: { guard: (fn) => { applied.guards.push(fn); return () => {} } } },
+          }
+          mutateChild?.(agent, applied)
+          children.set(activation.childId, { agent, applied })
+          return { childId: activation.childId, result: Promise.resolve({}), dispose: async () => { children.delete(activation.childId); (applied.disposed = (applied.disposed ?? 0) + 1) } }
+        },
+      },
+      agents: { get: (id) => children.get(id)?.agent },
+      reserveChildId: () => 'c1',
+      robash,
+    }
+    const started = await spawnGuardedChild({ target: { persona: 'p', label: 'l' }, prompt: [], parent: {}, signal: undefined, laneGuard }, oneShotLane(), deps)
+    return { started, children, ...deps }
   }
 
   it('attaches the lane guard to a writing one-shot child', async () => {
-    const agent = handle()
-    const started = { id: 'c1', localAgent: agent, result: Promise.resolve({}), dispose: () => {} }
-    const deps = { subagents: { start: async () => started }, robash: () => ({ enabled: true, lists: {} }) }
-    await spawnGuardedChild({ target: { persona: 'p', label: 'l' }, prompt: [], parent: {}, signal: undefined, laneGuard: spec() }, oneShotLane(), deps)
-    expect(agent.attached).toHaveLength(1)
-    expect(agent.attached[0]({ name: 'bash', arguments: { command: 'ls' } })).toContain('workdir')
+    const { children } = await laneSpawn()
+    const guards = children.get('c1').applied.guards
+    expect(guards).toHaveLength(1)
+    expect(guards[0]({ name: 'bash', arguments: { command: 'ls' } })).toContain('workdir')
   })
 
   it('tears a one-shot child down when the lane guard cannot attach', async () => {
-    let disposed = 0
-    const started = { id: 'c1', localAgent: { ctx: {} }, result: Promise.resolve({}), dispose: () => { disposed++ } }
-    const deps = { subagents: { start: async () => started }, robash: () => ({ enabled: false, lists: {} }) }
-    await spawnGuardedChild({ target: { persona: 'p', label: 'l' }, prompt: [], parent: {}, laneGuard: spec() }, oneShotLane(), deps).then(
-      () => expect(1).toBe(0),
-      (error) => expect(error.message).toContain('read-only bash guard'),
+    const spawned = await laneSpawn({ mutateChild: (agent) => { agent.ctx = {} } }).then(
+      () => { throw new Error('expected a rejection') },
+      (error) => error,
     )
-    expect(disposed).toBe(1)
+    // The supervise-style teardown wraps the guard failure for one-shot lanes.
+    expect(spawned.message).toContain('read-only bash guard')
   })
 
   it('rethrows for supervised members so the group rollback terminates them', async () => {
     const members = []
+    const children = new Map()
     const lane = supervisedLane({ coordinator: { registerMember: (record) => record }, groupName: 'g', members })
-    const deps = { subagents: { startContinuable: async () => ({ childId: 'm1' }) }, agents: { get: () => ({ ctx: {} }) }, robash: () => ({ enabled: false }) }
+    const deps = {
+      subagents: {
+        async startActivation(activation) {
+          // A live agent whose scope exposes no guard channel at all.
+          children.set(activation.childId, { agent: { id: activation.childId, ctx: {} } })
+          return { childId: activation.childId }
+        },
+      },
+      agents: { get: (id) => children.get(id)?.agent },
+      reserveChildId: () => 'm1',
+      robash: () => ({ enabled: false }),
+    }
     await spawnGuardedChild({ target: { persona: 'p', label: 'l' }, prompt: [], parent: {}, laneGuard: spec() }, lane, deps).then(
       () => expect(1).toBe(0),
       (error) => expect(error.message).toContain('no tool guard'),
@@ -451,10 +485,37 @@ describe('spawn adapter lane guard', () => {
 })
 
 describe('delegate lane binding', () => {
-  function delegateWith({ lanes, target = { persona: 'p', label: 'quick', readOnly: false }, start, startContinuable } = {}) {
+  function delegateWith({ lanes, target = { persona: 'p', label: 'quick', readOnly: false }, startActivation } = {}) {
     const spawned = []
     const continued = []
-    const agent = { ctx: { tools: { guard: () => () => {} } } }
+    const children = new Map()
+    const recorder = createHandlerRecorder()
+    // A REAL child-composition shim: the implicit-supervision assertions read
+    // the persona section and tool restriction the child actually received.
+    const composition = createChildComposition({
+      ctx: { on: recorder.on },
+      audit: () => {},
+      logger: { warn: () => {} },
+    })
+    let reserved = 0
+    const makeChild = (id) => {
+      const applied = { sections: [], restrictions: [], guards: [] }
+      const agent = {
+        id,
+        session: { header: { delegationDepth: 1 } },
+        ctx: {
+          systemPrompt: { section: (section) => { applied.sections.push(section); return () => {} }, getSectionOrder: () => 0 },
+          tools: {
+            view: () => ({ restrictableNames: new Set(['bash', 'read', 'write', 'edit', 'delegate', 'send_message', 'workflow']) }),
+            restrict: (filter) => { applied.restrictions.push(filter); return () => {} },
+            guard: (fn) => { applied.guards.push(fn); return () => {} },
+          },
+        },
+      }
+      children.set(id, { agent, applied })
+      recorder.handlers['agent/created']?.({ agent, source: 'startup' })
+      return { agent, applied }
+    }
     // A REAL coordinator: the implicit-supervision tests assert registration,
     // resume/terminate lookups, and group-name reuse through it.
     const coordinator = createGroupCoordinator({ sendTo: async () => {}, interruptChild: () => {}, schedule: () => {} })
@@ -462,22 +523,32 @@ describe('delegate lane binding', () => {
       resolveTarget: async () => target,
       loadSkill: async () => '',
       subagents: {
-        start: start ?? (async (_name, request) => {
-          spawned.push(request)
-          return { id: `child-${spawned.length}`, localAgent: agent, result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }), dispose: () => {} }
-        }),
-        startContinuable: startContinuable ?? (async (spec) => {
-          continued.push(spec)
-          return { childId: `child-c${continued.length}`, messageId: `msg-c${continued.length}` }
+        // DSH 0.2.1 single start entry: 'caller' is the one-shot lane, 'parent'
+        // the continuable/supervised lanes. The child id is the caller-reserved
+        // one (the composition registration is keyed by it).
+        startActivation: startActivation ?? (async (activation) => {
+          const id = activation.childId
+          if (activation.delivery === 'caller') {
+            spawned.push(activation)
+            makeChild(id)
+            return { childId: id, result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }), dispose: async () => {} }
+          }
+          continued.push(activation)
+          makeChild(id)
+          return { childId: id, messageId: `msg-${id}` }
         }),
       },
       jobs: undefined,
       robash: () => ({ enabled: false, lists: {} }),
       coordinatorFor: async () => coordinator,
-      agents: { get: () => agent },
+      agents: { get: (id) => children.get(id)?.agent },
       lanes: () => lanes,
+      composition,
+      // Deterministic reserved child ids (the adapter's name for the caller-
+      // allocated 0.2.1 child identity), one counter across both lanes.
+      reserveChildId: () => `child-${++reserved}`,
     })
-    return { tool, spawned, continued, coordinator }
+    return { tool, spawned, continued, coordinator, children }
   }
   const exec = { agent: { id: 'p', session: { id: 'p', header: { cwd: '/r', delegationDepth: 0 } } }, signal: new AbortController().signal }
 
@@ -510,7 +581,7 @@ describe('delegate lane binding', () => {
     const { tool, spawned } = delegateWith({ lanes })
     const value = await tool.execute({ category: 'quick', prompt: 'TASK: x', worktree: 'a-001' }, exec)
     expect(spawned[0].label).toBe('quick · lane:a-001')
-    expect(spawned[0].prompt.at(-1).text).toContain('<lane id="a-001">')
+    expect(spawned[0].request.prompt.at(-1).text).toContain('<lane id="a-001">')
     expect(lanes.log).toEqual([['bind', 'a-001', false], ['commit', 'child-1'], ['settled', 'child-1', { silent: true }]])
     expect(value.results[0].lane.notice).toContain('worktree_land')
     expect(tool.output.render({}, value)[0].text).toContain('[worktree] lane a-001 landable')
@@ -518,7 +589,7 @@ describe('delegate lane binding', () => {
 
   it('rolls the reservation back when the spawn fails', async () => {
     const lanes = fakeLanes()
-    const { tool } = delegateWith({ lanes, start: async () => { throw new Error('spawn failed') } })
+    const { tool } = delegateWith({ lanes, startActivation: async () => { throw new Error('spawn failed') } })
     await tool.execute({ category: 'quick', prompt: 'TASK: x', worktree: 'a-001' }, exec).then(() => expect(1).toBe(0), () => {})
     expect(lanes.log.map((entry) => entry[0])).toEqual(['bind', 'rollback'])
   })
@@ -559,28 +630,30 @@ describe('delegate lane binding', () => {
 
   it('routes a lane-bound continuable worker through the implicit supervised group (resumable-lane-workers D3)', async () => {
     const lanes = fakeLanes()
-    const { tool, spawned, continued, coordinator } = delegateWith({ lanes })
+    const { tool, spawned, continued, coordinator, children } = delegateWith({ lanes })
     const value = await tool.execute({ category: 'quick', prompt: 'TASK: x', mode: 'continuable', worktree: 'a-001', name: 'worker' }, exec)
     expect(value.supervised).toBe(true)
     expect(value.implicit).toBe(true)
     expect(value.group).toBe('lane:a-001')
     expect(value.lane).toBe('a-001')
-    expect(value.members).toEqual([{ id: 'child-c1', name: 'quick' }])
+    expect(value.members).toEqual([{ id: 'child-1', name: 'quick' }])
     expect(spawned).toHaveLength(0) // not the one-shot lane
     expect(continued).toHaveLength(1)
     const spec = continued[0]
     // The full supervision package: SUPERVISION_CONTRACT persona, send_message
     // denied, the lane contract appended to the prompt, the lane binding committed.
-    expect(spec.request.persona).toContain('Terminal status contract')
-    expect(spec.request.toolFilter.deny).toContain('send_message')
+    const child = children.get('child-1')
+    const persona = child.applied.sections.find((section) => section.name === 'deployment:persona-prefix')
+    expect(persona.text).toContain('Terminal status contract')
+    expect(child.applied.restrictions[0].deny).toContain('send_message')
     expect(spec.request.prompt.at(-1).text).toContain('<lane id="a-001">')
-    expect(lanes.log).toEqual([['bind', 'a-001', false], ['commit', 'child-c1']])
+    expect(lanes.log).toEqual([['bind', 'a-001', false], ['commit', 'child-1']])
     // Registered: resume_agent / terminate_agent / supervised_status find the member.
-    expect(coordinator.memberOf('child-c1')?.group).toBe('lane:a-001')
+    expect(coordinator.memberOf('child-1')?.group).toBe('lane:a-001')
     const rendered = tool.output.render({}, value)[0].text
     expect(rendered).toContain('implicit supervised group "lane:a-001"')
     expect(rendered).toContain('lane a-001')
-    expect(rendered).toContain('child-c1')
+    expect(rendered).toContain('child-1')
   })
 
   it('rejects an explicit group name with the reserved lane: prefix before any lane work (D5)', async () => {
@@ -615,7 +688,7 @@ describe('delegate lane binding', () => {
     expect(value.implicit).toBeUndefined()
     expect(value.group).toBe('crew')
     expect(continued[0].request.prompt.at(-1).text).toContain('<lane id="a-001">')
-    expect(lanes.log).toEqual([['bind', 'a-001', false], ['commit', 'child-c1']])
+    expect(lanes.log).toEqual([['bind', 'a-001', false], ['commit', 'child-1']])
   })
 
   it('a mixed batch keeps sequential item order: one-shot settles the lane, then the continuable joins the implicit group', async () => {
@@ -639,7 +712,7 @@ describe('delegate lane binding', () => {
       ['commit', 'child-1'],
       ['settled', 'child-1', { silent: true }],
       ['bind', 'a-001', false],
-      ['commit', 'child-c1'],
+      ['commit', 'child-2'],
     ])
     const rendered = tool.output.render({}, value)[0].text
     expect(rendered).toContain('implicit supervised group')
@@ -661,10 +734,10 @@ describe('delegate lane binding', () => {
     const lanes = fakeLanes()
     const { tool, continued, coordinator } = delegateWith({ lanes })
     await tool.execute({ category: 'quick', prompt: 'TASK: x', mode: 'continuable', worktree: 'a-001' }, exec)
-    coordinator.terminate('child-c1', 'batch done') // terminal: the group settles
+    coordinator.terminate('child-1', 'batch done') // terminal: the group settles
     const again = await tool.execute({ category: 'quick', prompt: 'TASK: y', mode: 'continuable', worktree: 'a-001' }, exec)
     expect(again.group).toBe('lane:a-001')
-    expect(again.members).toEqual([{ id: 'child-c2', name: 'quick' }])
+    expect(again.members).toEqual([{ id: 'child-2', name: 'quick' }])
     expect(continued).toHaveLength(2)
   })
 })

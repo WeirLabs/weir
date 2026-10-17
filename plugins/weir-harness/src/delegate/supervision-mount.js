@@ -20,12 +20,34 @@ import { withSupervisedEditResume, settleDelegateEditLifecycle } from '../shared
  * @param {any} deps.settings - weirSettings service handle (absent = no commit push)
  * @param {() => object} deps.supervisionNow - overlay getter for supervision tuning
  * @param {(childId: string, parent: object) => void} [deps.onChildSettled] - a member reached a terminal fact (worktree lane settlement)
- * @returns {{ coordinatorFor: (parent: object) => Promise<object>, dispose: () => void }}
+ * @returns {{ coordinatorFor: (parent: object) => Promise<object>, noteSpawnFact: (fact: { session?: object | null, childId: string, lane?: string }) => void, dispose: () => void }}
  */
 export function mountSupervision({ ctx, audit, settings, supervisionNow, onChildSettled }) {
   // Supervised group coordinators, one per parent session.
   /** @type {Map<string, { coordinator: object, parent: object }>} */
   const coordinators = new Map()
+  // Durable delegate/spawn facts per parent session (childId → { lane }): the
+  // catalog cross-check consults them because DSH 0.2.1 reports every local
+  // child as mode 'continuable' (see untrackedCatalogEntries). Live spawns
+  // register through noteSpawnFact; a restart rebuild fills the same map from
+  // the rehydrated state.
+  /** @type {Map<string, Map<string, { childId: string, lane?: string }>>} */
+  const spawnFacts = new Map()
+  function spawnFactsFor(parentId) {
+    let facts = spawnFacts.get(parentId)
+    if (!facts) {
+      facts = new Map()
+      spawnFacts.set(parentId, facts)
+    }
+    return facts
+  }
+  /** Record one child-composition spawn fact (live spawn or rehydrated). */
+  function noteSpawnFact(fact) {
+    const parentId = fact?.session?.id
+    if (typeof parentId !== 'string' || parentId.length === 0) return
+    if (typeof fact.childId !== 'string' || fact.childId.length === 0) return
+    spawnFactsFor(parentId).set(fact.childId, { childId: fact.childId, lane: typeof fact.lane === 'string' ? fact.lane : undefined })
+  }
   // STATUS/turn-end is a bookkeeping fact, never proof the driver stopped.
   // This gate exists even when Edit Lock is disabled in the composition.
   const quiescence = new Map()
@@ -121,12 +143,18 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
             }
             deliver(1)
           },
+          // Lane decisions for the catalog cross-check come from the durable
+          // delegate/spawn facts (live-registered + rehydrated below).
+          spawnFactOf: (childId) => spawnFacts.get(parent.id)?.get(childId),
         },
         supervisionNow(),
       )
       // Restart rebuild: replay durable facts, cross-check the DSH catalog.
       const state = await rehydrateForParent(parent)
       coordinator.hydrate(state)
+      // Spawn facts ride the same tail: they decide which catalog children are
+      // orphans (one-shot/continuable children are never resurrected).
+      for (const fact of state.spawnFacts ?? []) noteSpawnFact({ session: parent.session, childId: fact.childId, lane: fact.lane })
       entry = { coordinator, parent }
       coordinators.set(parent.id, entry)
     }
@@ -209,5 +237,5 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
     offSettings?.()
   }
 
-  return { coordinatorFor, dispose }
+  return { coordinatorFor, noteSpawnFact, dispose }
 }

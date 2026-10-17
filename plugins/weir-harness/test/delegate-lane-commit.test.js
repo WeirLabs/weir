@@ -54,18 +54,20 @@ function harness() {
     resolveTarget: async () => ({ persona: 'p', label: 'quick', readOnly: false }),
     loadSkill: async () => '',
     subagents: {
-      async start(_name, request) {
-        spawned.push(request)
-        if (state.reclaimOnSpawn) await reclaimReservation()
-        const id = `child-${spawned.length}`
-        return {
-          id,
-          localAgent: agent,
-          result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }),
-          dispose: async () => { disposed.push(id) },
+      // DSH 0.2.1 single start entry: delivery 'caller' is the one-shot lane,
+      // 'parent' the continuable/supervised lanes.
+      async startActivation(spec) {
+        if (spec.delivery === 'caller') {
+          spawned.push(spec.request)
+          if (state.reclaimOnSpawn) await reclaimReservation()
+          const id = `child-${spawned.length}`
+          return {
+            childId: id,
+            agent,
+            result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }),
+            dispose: async () => { disposed.push(id) },
+          }
         }
-      },
-      async startContinuable(spec) {
         continued.push(spec)
         if (state.reclaimOnSpawn) await reclaimReservation()
         return { childId: `child-c${continued.length}`, messageId: `msg-c${continued.length}` }

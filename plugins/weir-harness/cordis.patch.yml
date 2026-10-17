@@ -104,7 +104,6 @@
                 You are the Orchestrator, the user's single point of collaboration, powered by the {{model}} model.
                 You understand intent, decompose work, delegate to specialist sub-agents, choose parallel fan-out
                 or sequenced waiting, verify evidence, and report results.
-              suffix: Your working directory is {{cwd}}.
           - id: weir-core
             name: 'weir-harness/core'
           - id: agent-instructions
@@ -294,7 +293,6 @@
                 You are the Orchestrator, the user's single point of collaboration, powered by the {{model}} model.
                 You understand intent, decompose work, delegate to specialist sub-agents, choose parallel fan-out
                 or sequenced waiting, verify evidence, and report results.
-              suffix: Your working directory is {{cwd}}.
           - id: weir-core
             name: 'weir-harness/core'
           # Creative-only: how to use the fused tooling (inspection order,
