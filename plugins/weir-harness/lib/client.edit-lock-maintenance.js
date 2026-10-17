@@ -30,136 +30,39 @@ window.__ModuleLoader__.load({
 		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
 		const domainRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "6px 0" };
 		const monoStyle = { fontSize: "12px", lineHeight: "16px", fontFamily: "monospace", wordBreak: "break-all" };
-		// ---- Online administrative recovery (design D4) --------------------
-		// The SAME scoped confirmation algorithm as the offline ADMIN
-		// OVERRIDE, implemented client-side so the panel COMPUTES and
-		// DISPLAYS the digest: canonical JSON (object keys sorted, arrays in
-		// order, JSON scalar spelling, no whitespace) of
-		// {root, owner, expectedRevision, operationIds sorted, risk}, SHA-256
-		// lowercase hex, prefixed "ADMIN OVERRIDE ". The operator never types
-		// a hash: the click submits the computed confirmation.
-		const LATE_WRITER_RISK = "Detached historic writers may still modify files after this override.";
-		/** @param {unknown} value @returns {string} */
-		function canonicalJson(value) {
-			if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-			if (value !== null && typeof value === "object") {
-				const object = /** @type {Record<string, unknown>} */ (value);
-				return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
-			}
-			return JSON.stringify(value);
-		}
-		/** @param {string} text @returns {number[]} */
-		function utf8Bytes(text) {
-			/** @type {number[]} */
-			const bytes = [];
-			for (let i = 0; i < text.length; i++) {
-				let code = text.charCodeAt(i);
-				if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
-					const next = text.charCodeAt(i + 1);
-					if (next >= 0xdc00 && next <= 0xdfff) {
-						code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
-						i++;
-					}
-				}
-				if (code < 0x80) bytes.push(code);
-				else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
-				else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
-				else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
-			}
-			return bytes;
-		}
-		/** @param {number} x @param {number} n */
-		function rotr(x, n) { return ((x >>> n) | (x << (32 - n))) >>> 0; }
-		const SHA256_K = [
-			0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-			0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-			0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-			0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-			0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-			0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-			0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-			0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-		];
-		/** Pure-JS SHA-256 of the UTF-8 encoding, lowercase hex (the client has
-		 * no node:crypto; the chunk test pins this against the server digest).
-		 * @param {string} text @returns {string} */
-		function sha256Hex(text) {
-			const bytes = utf8Bytes(text);
-			const bitLength = bytes.length * 8;
-			bytes.push(0x80);
-			while (bytes.length % 64 !== 56) bytes.push(0);
-			for (let i = 7; i >= 0; i--) bytes.push(Math.floor(bitLength / 2 ** (8 * i)) % 256);
-			let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
-			let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
-			const w = new Array(64).fill(0);
-			for (let block = 0; block < bytes.length; block += 64) {
-				for (let i = 0; i < 16; i++) w[i] = ((bytes[block + 4 * i] << 24) | (bytes[block + 4 * i + 1] << 16) | (bytes[block + 4 * i + 2] << 8) | bytes[block + 4 * i + 3]) >>> 0;
-				for (let i = 16; i < 64; i++) {
-					const s0 = (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)) >>> 0;
-					const s1 = (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10)) >>> 0;
-					w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
-				}
-				let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
-				for (let i = 0; i < 64; i++) {
-					const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;
-					const ch = ((e & f) ^ (~e & g)) >>> 0;
-					const t1 = (h + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
-					const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;
-					const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
-					const t2 = (S0 + maj) >>> 0;
-					h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
-				}
-				h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
-				h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
-			}
-			return [h0, h1, h2, h3, h4, h5, h6, h7].map((word) => word.toString(16).padStart(8, "0")).join("");
-		}
-		/** The exact offline confirmation string for one recovery scope.
-		 * @param {{root: string, owner: string, expectedRevision: number, operationIds: string[]}} scope */
-		function recoveryConfirmation(scope) {
-			return `ADMIN OVERRIDE ${sha256Hex(canonicalJson({ root: scope.root, owner: scope.owner, expectedRevision: scope.expectedRevision, operationIds: [...scope.operationIds].sort(), risk: LATE_WRITER_RISK }))}`;
-		}
+		// ---- Online administrative recovery (proposals from the host) ------
+		// The recovery derivation — eligibility, the scoped confirmation
+		// digest, the failing-precondition diagnosis — lives HOST-side
+		// (src/edit-lock/inspect.js recoveryProposals), computed from the same
+		// parsed authority image the inspection summarizes. The panel renders
+		// the server proposals and submits their scope and confirmation
+		// VERBATIM; it never re-derives a safety-sensitive rule. The manager
+		// re-verifies every precondition at commit time either way.
+		/** The unmet reason CODES (schemaVersion 1) mapped to dictionary keys;
+		 * an unknown code falls back to a generic message naming the code. */
+		const RECOVERY_REASON_KEYS = {
+			"disposition-recorded": "editLockMaintRecoverReasonDispositionRecorded",
+			"owner-unknown": "editLockMaintRecoverReasonOwnerUnknown",
+			"not-interrupted": "editLockMaintRecoverReasonNotInterrupted",
+			"prepared-outstanding": "editLockMaintRecoverReasonPreparedOutstanding",
+			"publishing-outstanding": "editLockMaintRecoverReasonPublishingOutstanding",
+			"no-unresolved": "editLockMaintRecoverReasonNoUnresolved",
+		};
+		/** The fail-closed gate (a new client meeting an old or evolved host):
+		 * only a schemaVersion-1 proposals payload is rendered at all; anything
+		 * else disables the online recovery action with refresh guidance.
+		 * @param {any} value the inspect response value */
+		const supportedProposals = (value) => value?.recoveryProposals?.schemaVersion === 1 ? value.recoveryProposals : null;
 		/** Recovery state is scoped exactly like the authority: per domain root
 		 * AND owner. Session ids are not unique across independent domains, so
 		 * one root's completed recovery must never disable another root's. */
 		const recoveryKey = (root, owner) => `${root}\n${owner}`;
-		/** Eligible one-click recoveries from one inspection: each interrupted
-		 * owner whose every unresolved operation is a still-blocking unknown.
-		 * @param {string} root @param {any} snapshot */
-		function recoveryCandidates(root, snapshot) {
-			const interrupted = new Set((Array.isArray(snapshot?.sessions) ? snapshot.sessions : [])
-				.filter((/** @type {any} */ session) => session?.interrupted === true)
-				.map((/** @type {any} */ session) => session.sessionId));
-			/** @type {Map<string, any[]>} */
-			const byOwner = new Map();
-			for (const op of Array.isArray(snapshot?.unresolved) ? snapshot.unresolved : []) {
-				const owner = op?.key?.sessionId;
-				if (typeof owner !== "string") continue;
-				const list = byOwner.get(owner) ?? [];
-				list.push(op);
-				byOwner.set(owner, list);
-			}
-			/** @type {{owner: string, scope: {root: string, owner: string, expectedRevision: number, operationIds: string[]}, confirmation: string}[]} */
-			const candidates = [];
-			// An owner with a prepared operation can never be recovered online
-			// (the manager requires every unresolved operation to be unknown), so
-			// offering the action would present a click that always refuses.
-			const preparedOwners = new Set((Array.isArray(snapshot?.prepared) ? snapshot.prepared : [])
-				.map((op) => op?.key?.sessionId)
-				.filter((owner) => typeof owner === "string"));
-			for (const [owner, ops] of byOwner) {
-				if (!interrupted.has(owner)) continue;
-				if (preparedOwners.has(owner)) continue;
-				if (!(ops.length > 0 && ops.every((op) => op?.phase === "unknown" && op?.admissionBlocked === true))) continue;
-				const scope = { root, owner, expectedRevision: snapshot.revision, operationIds: ops.map((op) => op.key.operationId).sort() };
-				candidates.push({ owner, scope, confirmation: recoveryConfirmation(scope) });
-			}
-			return candidates;
-		}
 		/** Recovery-UX zone copy (D1/D2). The entry dictionaries (client.js) are
-		 * owned by the entry chunk, so the new zone copy lives HERE as
-		 * template-layer English per the text discipline; file paths, session ids
-		 * and statuses stay dynamic instance content. */
+		 * owned by the entry chunk, so the zone copy lives HERE as
+		 * template-layer English per the text discipline; the unmet reason prose
+		 * lives in the dictionaries below (server reason CODES are localized),
+		 * while file paths, session ids and statuses stay dynamic instance
+		 * content. */
 		const RECOVERY_UX = Object.freeze({
 			blockedHeader: "Blocked files — one-click force release",
 			blockedHint: "Opening the panel ran the read-only inspection automatically. Each row settles the holder's unresolved publication fence (when present) and releases the lock in one operator-confirmed step.",
@@ -169,88 +72,7 @@ window.__ModuleLoader__.load({
 			stateFence: "publication fence",
 			stateInterrupted: "interrupted",
 			stateActive: "active",
-			reasonNotInterrupted: "The holding session is not durably interrupted; the online administrative recovery can only override an interrupted historical owner. Stop the session first, or ask it to release the file.",
-			reasonPrepared: "The owner still has a prepared operation; recover to stable unknown history before an administrative override.",
-			reasonPublishing: "The owner still has an operation in the publishing phase; only unknown outcomes can be overridden online.",
-			reasonDisposition: "An administrative recovery is already recorded for this owner; admission for its operations is no longer blocked.",
-			reasonNoUnresolved: "The owner has no unresolved operations; an ordinary unlock may be enough.",
-			reasonUnknownSession: "The owner session is not recorded in this authority image.",
 		});
-		/** The first failing precondition of an ineligible blocking owner, in the
-		 * manager's refusal order (revoked/disposition → owner unknown → not
-		 * interrupted → prepared → publishing → no unresolved operations).
-		 * @param {string} owner @param {any} snapshot @returns {string} */
-		function unmetReason(owner, snapshot) {
-			const unresolved = Array.isArray(snapshot?.unresolved) ? snapshot.unresolved : [];
-			const ownerOps = unresolved.filter((op) => op?.key?.sessionId === owner);
-			const prepared = (Array.isArray(snapshot?.prepared) ? snapshot.prepared : []).filter((op) => op?.key?.sessionId === owner);
-			const session = (Array.isArray(snapshot?.sessions) ? snapshot.sessions : []).find((row) => row?.sessionId === owner);
-			if (ownerOps.some((op) => op?.admissionBlocked === false)) return RECOVERY_UX.reasonDisposition;
-			if (!session) return RECOVERY_UX.reasonUnknownSession;
-			if (session.interrupted !== true) return RECOVERY_UX.reasonNotInterrupted;
-			if (prepared.length > 0) return RECOVERY_UX.reasonPrepared;
-			if (ownerOps.some((op) => op?.phase === "publishing")) return RECOVERY_UX.reasonPublishing;
-			return RECOVERY_UX.reasonNoUnresolved;
-		}
-		/** Recovery-UX diagnosis (D1/D2): the three-zone classification the panel
-		 * renders from one inspection. Eligibility is recoveryCandidates — the
-		 * SAME scope and confirmation algorithm — and every ineligible blocking
-		 * owner carries the named failing precondition. Blocking artifacts are
-		 * retained locks plus still-blocking (admissionBlocked) unresolved
-		 * publications; file-scoped fences become rows, wider fences name their
-		 * scope path in the unmet zone. Pure: no fetch, no state, no clock.
-		 * @param {string} root @param {any} snapshot */
-		function recoveryDiagnosis(root, snapshot) {
-			const candidates = recoveryCandidates(root, snapshot);
-			const candidateByOwner = new Map(candidates.map((candidate) => [candidate.owner, candidate]));
-			const sessions = Array.isArray(snapshot?.sessions) ? snapshot.sessions : [];
-			const interruptedByOwner = new Map(sessions.map((session) => [session.sessionId, session?.interrupted === true]));
-			const retained = Array.isArray(snapshot?.retainedLocks) ? snapshot.retainedLocks : [];
-			/** @type {Map<string, {resourceId: string, owner: string, lockStatus: string|null, fence: boolean, interrupted: boolean}>} */
-			const rowsByResource = new Map();
-			const blockedOwners = new Set();
-			for (const lock of retained) {
-				if (typeof lock?.resourceId !== "string" || typeof lock?.owner !== "string") continue;
-				blockedOwners.add(lock.owner);
-				const row = rowsByResource.get(lock.resourceId) ?? { resourceId: lock.resourceId, owner: lock.owner, lockStatus: null, fence: false, interrupted: interruptedByOwner.get(lock.owner) ?? false };
-				row.lockStatus = row.lockStatus ?? (typeof lock.status === "string" ? lock.status : null);
-				rowsByResource.set(lock.resourceId, row);
-			}
-			/** @type {Map<string, {owner: string, scopePaths: string[]}>} */
-			const fencedOwners = new Map();
-			for (const op of Array.isArray(snapshot?.unresolved) ? snapshot.unresolved : []) {
-				if (op?.admissionBlocked !== true || typeof op?.key?.sessionId !== "string") continue;
-				blockedOwners.add(op.key.sessionId);
-				const scope = op?.scope ?? null;
-				if (scope?.kind === "file" && typeof scope.path === "string") {
-					const existing = rowsByResource.get(scope.path);
-					if (existing) {
-						// Same owner locks AND fences the file (the incident shape): one row.
-						if (existing.owner === op.key.sessionId) existing.fence = true;
-						else {
-							const entry = fencedOwners.get(op.key.sessionId) ?? { owner: op.key.sessionId, scopePaths: /** @type {string[]} */ ([]) };
-							if (!entry.scopePaths.includes(scope.path)) entry.scopePaths.push(scope.path);
-							fencedOwners.set(op.key.sessionId, entry);
-						}
-					} else {
-						rowsByResource.set(scope.path, { resourceId: scope.path, owner: op.key.sessionId, lockStatus: null, fence: true, interrupted: interruptedByOwner.get(op.key.sessionId) ?? false });
-					}
-				} else {
-					const entry = fencedOwners.get(op.key.sessionId) ?? { owner: op.key.sessionId, scopePaths: /** @type {string[]} */ ([]) };
-					if (typeof scope?.path === "string" && !entry.scopePaths.includes(scope.path)) entry.scopePaths.push(scope.path);
-					fencedOwners.set(op.key.sessionId, entry);
-				}
-			}
-			const rows = [...rowsByResource.values()];
-			const blocked = rows.filter((row) => candidateByOwner.has(row.owner));
-			blocked.sort((a, b) => a.resourceId.localeCompare(b.resourceId));
-			const unmet = [];
-			for (const owner of [...blockedOwners].sort()) {
-				if (candidateByOwner.has(owner)) continue;
-				unmet.push({ owner, rows: rows.filter((row) => row.owner === owner), scopePaths: fencedOwners.get(owner)?.scopePaths ?? [], reason: unmetReason(owner, snapshot) });
-			}
-			return { candidates, blocked, unmet };
-		}
 		/** Error boundary isolating the maintenance panel from the settings page. */
 		class EditLockMaintenanceBoundary extends react.Component {
 			constructor(props) {
@@ -283,10 +105,10 @@ window.__ModuleLoader__.load({
 			const [expanded, setExpanded] = react.useState(/** @type {string | null} */ (null));
 			const [inspections, setInspections] = react.useState({});
 			const [recoveries, setRecoveries] = react.useState(/** @type {Record<string, {status: 'busy'} | {status: 'done', revision: number, idempotent: boolean} | {status: 'error', message: string}>} */ ({}));
-			/** The one explicit action: submit the displayed, client-computed
-			 * confirmation for one displayed scope. No hash typing, no restart.
+			/** The one explicit action: submit the SERVER-computed confirmation
+			 * for one displayed scope, unchanged. No hash typing, no restart.
 			 * A refusal is shown next to a freshly reloaded scope.
-			 * @param {string} root @param {ReturnType<typeof recoveryCandidates>[number]} candidate */
+			 * @param {string} root @param {ReturnType<typeof import('../src/edit-lock/inspect.js').recoveryProposals>['candidates'][number]} candidate */
 			const recover = (root, candidate) => {
 				if (view?.status !== "ready" || !onlineRecoveryAvailable(view.value.state)) return;
 				setRecoveries((previous) => ({ ...previous, [recoveryKey(root, candidate.owner)]: { status: "busy" } }));
@@ -344,14 +166,20 @@ window.__ModuleLoader__.load({
 				if (scope?.kind === "domain") return t("editLockMaintScopeDomain");
 				return t("editLockMaintScopeNone");
 			};
+			/** The localized explanation for one server reason CODE; an unknown
+			 * code falls back to a generic message naming the code itself. */
+			const reasonText = (reason) => {
+				const key = RECOVERY_REASON_KEYS[reason];
+				return key ? t(key) : t("editLockMaintRecoverReasonUnknown").replace("{code}", String(reason ?? ""));
+			};
 			const presenceRow = (value) => {
 				if (value.presence === "valid") return null;
 				const key = { none: "editLockMaintPresenceNone", empty: "editLockMaintPresenceEmpty", "no-committed-snapshot": "editLockMaintPresenceJunk", "not-a-file": "editLockMaintPresenceNotAFile", corrupt: "editLockMaintPresenceCorrupt", unreadable: "editLockMaintPresenceUnreadable" }[value.presence];
 				return react_jsx_runtime.jsx("div", { style: value.presence === "corrupt" || value.presence === "not-a-file" || value.presence === "no-committed-snapshot" ? dangerStyle : hintStyle, children: `${t(key) ?? value.presence}${value.message ? ` ${value.message}` : ""}` });
 			};
-			/** Recovery card for one eligible owner: the FULL scope, the risk text
-			 * verbatim and the computed digest, then the one explicit button.
-			 * @param {string} root @param {ReturnType<typeof recoveryCandidates>[number]} candidate */
+			/** Recovery card for one eligible owner: the FULL server scope, the
+			 * risk text and the server digest, then the one explicit button.
+			 * @param {string} root @param {ReturnType<typeof import('../src/edit-lock/inspect.js').recoveryProposals>['candidates'][number]} candidate */
 			const recoveryCard = (root, candidate) => {
 				const state = recoveries[recoveryKey(root, candidate.owner)];
 				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", padding: "8px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)" }, children: [
@@ -362,7 +190,7 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("div", { children: `${t("editLockMaintRecoverOperations")}:` }),
 						...candidate.scope.operationIds.map((id, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: id }, index))
 					] }),
-					react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverRisk")}: ${LATE_WRITER_RISK}` }),
+					react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverRisk")}: ${candidate.risk}` }),
 					react_jsx_runtime.jsx("div", { style: monoStyle, children: `${t("editLockMaintRecoverDigest")}: ${candidate.confirmation}` }),
 					state?.status === "done"
 						? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("editLockMaintRecoverDone").replace("{revision}", String(state.revision)) })
@@ -416,7 +244,7 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("div", { children: `${t("editLockMaintRecoverOperations")}:` }),
 						...candidate.scope.operationIds.map((id, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: id }, index))
 					] }),
-					react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverRisk")}: ${LATE_WRITER_RISK}` }),
+					react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverRisk")}: ${candidate.risk}` }),
 					react_jsx_runtime.jsx("div", { style: monoStyle, children: `${t("editLockMaintRecoverDigest")}: ${candidate.confirmation}` }),
 					state?.status === "error"
 						? react_jsx_runtime.jsx("div", { style: dangerStyle, children: `${t("editLockMaintRecoverFailed")} ${state.message}` })
@@ -429,9 +257,12 @@ window.__ModuleLoader__.load({
 				react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${t("editLockMaintRecoverOwner")}: ${entry.owner}` }),
 				...entry.rows.map((row, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: `${row.resourceId} · ${RECOVERY_UX.holder} ${row.owner} · ${holderStateText(row)}` }, index)),
 				...entry.scopePaths.map((path, index) => react_jsx_runtime.jsx("div", { style: monoStyle, children: path }, index)),
-				react_jsx_runtime.jsx("div", { style: dangerStyle, children: entry.reason })
+				react_jsx_runtime.jsx("div", { style: dangerStyle, children: reasonText(entry.reason) })
 			], key: `${root}\n${entry.owner}\nunmet` });
-			const snapshotSection = (/** @type {string} */ root, /** @type {any} */ snapshot) => react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
+			const snapshotSection = (/** @type {string} */ root, /** @type {any} */ value) => {
+				const snapshot = value.snapshot;
+				const proposals = supportedProposals(value);
+				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
 				react_jsx_runtime.jsx("div", { style: chainDescStyle, children: t("editLockMaintCounts")
 					.replace("{sessions}", String(snapshot.counts.sessions))
 					.replace("{locks}", String(snapshot.counts.locks))
@@ -450,13 +281,14 @@ window.__ModuleLoader__.load({
 						...snapshot.retainedLocks.map((lock, index) => react_jsx_runtime.jsx("div", { style: chainDescStyle, children: `${lock.resourceId} · ${lock.owner} · ${lock.status}${lock.reason ? `: ${lock.reason}` : ""} · gen ${lock.generation}` }, index))
 					] })
 					: null,
-				onlineRecoveryAvailable(view?.status === "ready" ? view.value.state : null) && recoveryCandidates(root, snapshot).length > 0
+					proposals !== null && onlineRecoveryAvailable(view?.status === "ready" ? view.value.state : null) && Array.isArray(proposals.candidates) && proposals.candidates.length > 0
 					? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px" }, children: [
 						react_jsx_runtime.jsx("div", { style: chainCategoryStyle, children: t("editLockMaintRecoveries") }),
 						react_jsx_runtime.jsx("div", { style: chainDescStyle, children: t("editLockMaintRecoverHint") }),
-						...recoveryCandidates(root, snapshot).map((candidate) => recoveryCard(root, candidate))
+						...proposals.candidates.map((candidate) => recoveryCard(root, candidate))
 					] }) : null
-			] });
+				] });
+			};
 			const inspectionBody = (root) => {
 				const inspection = inspections[root];
 				if (!inspection) return null;
@@ -471,7 +303,7 @@ window.__ModuleLoader__.load({
 				return react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "6px", paddingTop: "4px" }, children: [
 					value.reservation === true ? react_jsx_runtime.jsx("div", { style: hintStyle, children: t("editLockMaintReservation") }) : null,
 					presenceRow(value),
-					value.presence === "valid" ? snapshotSection(root, value.snapshot) : null
+					value.presence === "valid" ? snapshotSection(root, value) : null
 				] });
 			};
 			const domainRow = (domain) => react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column" }, children: [
@@ -503,18 +335,23 @@ window.__ModuleLoader__.load({
 				const online = onlineRecoveryAvailable(value.state);
 				const zoneGroups = new Map();
 				const zoneUnmet = [];
+				// Fail closed: a missing or unsupported proposals payload disables
+				// every zone derived from it — the panel never re-derives the
+				// recovery surface by itself.
+				let proposalsUnsupported = false;
 				for (const root of Object.keys(inspections)) {
 					const inspection = inspections[root];
 					if (inspection?.status !== "ready" || inspection.value?.presence !== "valid") continue;
-					const diagnosis = recoveryDiagnosis(root, inspection.value.snapshot);
-					for (const row of diagnosis.blocked) {
-						const candidate = diagnosis.candidates.find((entry) => entry.owner === row.owner);
-						const key = recoveryKey(root, row.owner);
+					const proposals = supportedProposals(inspection.value);
+					if (!proposals) { proposalsUnsupported = true; continue; }
+					for (const candidate of Array.isArray(proposals.candidates) ? proposals.candidates : []) {
+						if (!candidate || typeof candidate.owner !== "string" || !Array.isArray(candidate.rows) || candidate.rows.length === 0) continue;
+						const key = recoveryKey(root, candidate.owner);
 						const group = zoneGroups.get(key) ?? { root, candidate, rows: [] };
-						group.rows.push(row);
+						for (const row of candidate.rows) group.rows.push(row);
 						zoneGroups.set(key, group);
 					}
-					for (const entry of diagnosis.unmet) zoneUnmet.push({ root, entry });
+					for (const entry of Array.isArray(proposals.unmet) ? proposals.unmet : []) zoneUnmet.push({ root, entry });
 				}
 				const blockedGroups = [...zoneGroups.values()];
 				zoneUnmet.sort((a, b) => a.entry.owner.localeCompare(b.entry.owner));
@@ -546,6 +383,9 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintWarnKeepHistory") }),
 						react_jsx_runtime.jsx("span", { style: warnStyle, children: t("editLockMaintWarnUnlock") })
 					] }),
+				proposalsUnsupported
+					? react_jsx_runtime.jsx("div", { style: warnStyle, children: t("editLockMaintRecoverUpgrade") })
+					: null,
 					online && blockedGroups.length > 0
 						? react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px" }, children: [
 							react_jsx_runtime.jsx("span", { style: chainCategoryStyle, children: RECOVERY_UX.blockedHeader }),
@@ -658,6 +498,14 @@ window.__ModuleLoader__.load({
 				editLockMaintRecoverBusy: "Settling…",
 				editLockMaintRecoverDone: "Settled at revision {revision}; admission is unblocked and the unknown outcome stays in history.",
 				editLockMaintRecoverFailed: "Recovery not acknowledged:",
+				editLockMaintRecoverUpgrade: "Online administrative recovery is unavailable: the server did not return recovery proposals this panel understands (missing or unsupported version). Refresh this panel or upgrade DeepSeek Harness, then inspect again.",
+				editLockMaintRecoverReasonDispositionRecorded: "An administrative recovery is already recorded for this owner; admission for its operations is no longer blocked.",
+				editLockMaintRecoverReasonOwnerUnknown: "The owner session is not recorded in this authority image.",
+				editLockMaintRecoverReasonNotInterrupted: "The holding session is not durably interrupted; the online administrative recovery can only override an interrupted historical owner. Stop the session first, or ask it to release the file.",
+				editLockMaintRecoverReasonPreparedOutstanding: "The owner still has a prepared operation; recover to stable unknown history before an administrative override.",
+				editLockMaintRecoverReasonPublishingOutstanding: "The owner still has an operation in the publishing phase; only unknown outcomes can be overridden online.",
+				editLockMaintRecoverReasonNoUnresolved: "The owner has no unresolved operations; an ordinary unlock may be enough.",
+				editLockMaintRecoverReasonUnknown: "The server reported an unrecognized recovery precondition (code: {code}). Refresh or upgrade DeepSeek Harness for the localized explanation.",
 			},
 			zh: {
 				editLockMaint: "编辑锁维护",
@@ -721,14 +569,24 @@ window.__ModuleLoader__.load({
 				editLockMaintRecoverBusy: "结清中……",
 				editLockMaintRecoverDone: "已在 revision {revision} 结清；准入阻塞解除，历史仍保持未知。",
 				editLockMaintRecoverFailed: "恢复未确认：",
+				editLockMaintRecoverUpgrade: "在线管理员恢复不可用：服务端未返回本面板可理解的恢复提案（缺失或版本不受支持）。请刷新本面板或升级 DeepSeek Harness，然后重新检查。",
+				editLockMaintRecoverReasonDispositionRecorded: "该 owner 已有记录在案的管理员恢复；其操作的准入已不再阻塞。",
+				editLockMaintRecoverReasonOwnerUnknown: "该 owner 会话未记录在此权威镜像中。",
+				editLockMaintRecoverReasonNotInterrupted: "持有会话尚未持久中断；在线管理员恢复只能撤权已中断的历史 owner。请先停止该会话，或请它释放文件。",
+				editLockMaintRecoverReasonPreparedOutstanding: "该 owner 仍持有 prepared 操作；请先恢复到稳定的 unknown 历史，再进行管理员撤权。",
+				editLockMaintRecoverReasonPublishingOutstanding: "该 owner 仍有处于 publishing 阶段的操作；只有 unknown 结论可以在线撤权。",
+				editLockMaintRecoverReasonNoUnresolved: "该 owner 没有未决操作；普通解锁或许就已足够。",
+				editLockMaintRecoverReasonUnknown: "服务端报告了本面板不认识的恢复前置条件（代码：{code}）。请刷新或升级 DeepSeek Harness 以获取对应说明。",
 			},
 		};
 
 		exports.dictionaries = dictionaries;
 		exports.EditLockMaintenanceBoundary = EditLockMaintenanceBoundary;
 		exports.EditLockMaintenanceField = EditLockMaintenanceField;
-		// Exported for the chunk test's 对拍 against the server-side digest.
-		exports.editLockRecovery = Object.freeze({ canonicalJson, sha256Hex, recoveryConfirmation, recoveryCandidates, recoveryDiagnosis, unmetReason, recoveryKey, LATE_WRITER_RISK, RECOVERY_UX });
+		// Exported for the chunk tests: the recovery progress key and the zone
+		// copy. The recovery derivation lives host-side (inspect.js); the chunk
+		// renders and forwards, never computes.
+		exports.editLockRecovery = Object.freeze({ recoveryKey, RECOVERY_UX });
 		return module.exports;
 	}
 });

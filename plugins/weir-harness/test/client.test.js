@@ -1246,7 +1246,7 @@ describe('weir settings client half', () => {
   })
 
   it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
-    // The frozen pre-move key set (738 keys): any key dropped in a future edit
+    // The frozen key set (746 keys): any key dropped in a future edit
     // of the data faces or the entry dictionary reddens here (the design's
     // 键集并集 pin), and any cross-slice duplicate inside the page merge would
     // silently shadow — pinned too.
@@ -1592,9 +1592,17 @@ describe('weir settings client half', () => {
     'editLockMaintRecoverHint',
     'editLockMaintRecoverOperations',
     'editLockMaintRecoverOwner',
+    'editLockMaintRecoverReasonDispositionRecorded',
+    'editLockMaintRecoverReasonNoUnresolved',
+    'editLockMaintRecoverReasonNotInterrupted',
+    'editLockMaintRecoverReasonOwnerUnknown',
+    'editLockMaintRecoverReasonPreparedOutstanding',
+    'editLockMaintRecoverReasonPublishingOutstanding',
+    'editLockMaintRecoverReasonUnknown',
     'editLockMaintRecoverRevision',
     'editLockMaintRecoverRisk',
     'editLockMaintRecoverRoot',
+    'editLockMaintRecoverUpgrade',
     'editLockMaintRecoveries',
     'editLockMaintRefresh',
     'editLockMaintReservation',
