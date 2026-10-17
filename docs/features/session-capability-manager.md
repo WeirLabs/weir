@@ -122,11 +122,11 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 | 对象 | 保证 |
 |---|---|
-| Weir 管理的 server | **网关级强制**：工具调用在**包装后定义的 `execute` 最开头**按「注册表 configured identity + registration generation + 会话已接受集合 + lifecycle 快照」准入（被拒调用零 RPC 到达 server，G3b 语义）；三个资源操作按目标 server 在派发时门控；`mcp:<server>` 指令段每次 prompt 组装时按 agent 过滤；Apply 移除后「关闸 → 等待在途 → 超时只报告仍在途」，不承诺强制取消，外部副作用不可撤销 |
+| Weir 管理的 server | **网关级强制**：工具调用在**包装后定义的 `execute` 最开头**按「注册表 configured identity + registration generation + 会话已接受集合 + lifecycle 快照」准入（被拒调用零 RPC 到达 server，G3b 语义）；三个资源操作（list/templates/read，经 facade 的 `mcpResources.register` 请求路径）按目标 server 在派发时门控，且与工具调用走**同一个排空闸**：Apply 移除关闸后、提交发布前到达的资源请求以 `mcp-gate-closed` 拒绝（零 RPC 到达 provider），不再被旧 provider 服务；`mcp:<server>` 指令段每次 prompt 组装时按 agent 过滤；Apply 移除后「关闸 → 等待在途 → 超时只报告仍在途」，不承诺强制取消，外部副作用不可撤销 |
 | 工具 schema | **按 agent 在创建时隐藏**（`tools.restrict` 创建时快照）：只对 Apply 之后创建的 agent 成立；live Apply 后既有 agent 的旧 schema 可能仍可见，但每次派发都在任何 server 活动前被拒——不声称 schema 已从该 agent 的请求中消失 |
 | 宿主直接配置／ACP／其他预设挂载的 server | **不提供任何保证**：一律显示为 **unmanaged**，管理器不提供关闭开关、不声称已关闭、不计入关闭统计 |
 
-**软化条款（如实记录）**：准入基于 Weir 注册层派生的 configured identity 与 registration generation（重连以同 identity 的新 generation 续接，同名不同 identity 不继承授权），范围限于 Weir 管理的 server；宿主发布的权威身份/generation 与 SDK 最终准入是未授权的后续依赖。`tools/pre-execute` 只作额外早拒，唯一防线是包装定义的最后一刻校验。
+**软化条款（如实记录）**：准入基于 Weir 注册层派生的 configured identity 与 registration generation（重连以同 identity 的新 generation 续接，同名不同 identity 不继承授权），范围限于 Weir 管理的 server；宿主发布的权威身份/generation 与 SDK 最终准入是未授权的后续依赖。`tools/pre-execute` 只作额外早拒，唯一防线是包装定义的最后一刻校验。资源请求的排空围栏依赖 manager 注入的 drain（facade 构造参数）：未挂 manager 行的组合没有受管 server 与资源面，该排空保证在那类组合中属 **unsupported**（准入保持仅 admit 行为），不被沉默声称。
 
 **组合期歧义**：一个 configured name 是另一个的 `__` 前缀、或同一公开名被两个 server 声明时 fail closed 拒挂其一（不猜测）；facade 遇到未知宿主方法时该 server fail closed 并可见报错。崩溃残留 `weir-mcp-*` 行启动时识别并清理。
 
@@ -172,7 +172,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 - 单元测试：`plugins/weir-harness/test/capability-store.test.js`（17 例：路径解析与隔离、单元布局、fail-closed 解码、CAS 与幂等回执、锁获取／回收／手动恢复、平台桩零写入、win32 行真实提交、代次指针原子切换）。
 - 多进程与故障注入：`plugins/weir-harness/test/capability-store-race.test.js`（真实子进程：两进程同 revision 恰一胜、两回收者竞争已死锁恰一个新 owner 且活锁零移除、SIGKILL 发布点循环只见完整旧/新记录）。
-- 单元测试（Apply 事务）：`selection-draft.test.js`（dirty 语义）、`apply-engine.test.js`（六步 + 顺序断言 + 故障注入 + 通知语义/重启 delta 基准钉）、`apply-fence-recovery.test.js`（fence 恢复 / 幂等 / 静态红线 / 恢复路径通知恰好一次与静默边界）、`apply-wiring.test.js`（生产引擎接线的审计发射钉：挂载面提交 Apply + 钩子装配 recovery-`published` 结算）、`content-refresh.test.js`（refresh×Apply 并发、移除后 refresh）、`skill-admission.test.js`（三条阻断路径 + 发布前拒绝）。
+- 单元测试（Apply 事务）：`selection-draft.test.js`（dirty 语义）、`apply-engine.test.js`（六步 + 顺序断言 + 故障注入 + 通知语义/重启 delta 基准钉）、`apply-fence-recovery.test.js`（fence 恢复 / 幂等 / 静态红线 / 恢复路径通知恰好一次与静默边界）、`apply-wiring.test.js`（生产引擎接线的审计发射钉：挂载面提交 Apply + 钩子装配 recovery-`published` 结算）、`content-refresh.test.js`（refresh×Apply 并发、移除后 refresh）、`skill-admission.test.js`（三条阻断路径 + 发布前拒绝）、`mcp-gate.test.js`（facade 生产资源门的 admit 拒绝与排空围栏：关闸后资源请求 `mcp-gate-closed`、A/B 会话隔离、abort() 重开）。
 - 集成测试：`plugins/weir-test-harness` 的 `apply-transaction` 场景——Apply 后收敛、并发冲突恰一胜、响应丢失按原 request ID 取回、移除后旧引用显式 unavailable。
 - 集成测试：`plugins/weir-test-harness` 的 `capstore` 场景——探针分别在宿主层与 isolated `cordis:group` 内读取 `profileContext` 并经真实 store 往返一条选择记录，证明预设 realm 结构内存储根可解析（任务 2.1）。
 - 单元测试（库存与身份）：`skill-identity.test.js`、`skill-inventory.test.js`（含宿主 0.2.0-rc.2 解析器生成的兼容性 fixture 逐文件比对，宿主漂移即红；生成器 `test/helpers/generate-host-reference.js`）、`skill-selection-provider.test.js`（精确加载、冲突呈现、挂载不抛出、invalidate 反例与重入闸门）、`skill-office-adapter.test.js`、`skill-composition.test.js`（patch 静态检查）。

@@ -84,35 +84,6 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * The commit flow state machine (12.3): submission reuses the same
-		 * request ID for retries; a failure keeps the draft; a revision
-		 * conflict shows the current state for the user to re-pick (never a
-		 * silent rebase); a no-diff draft with missing warnings offers
-		 * install/configure instead of a fictional Apply; an indeterminate
-		 * result stays queryable.
-		 */
-		function commitStateOf(draft) {
-			if (!draft) return { phase: "idle" };
-			if (draft.phase === "submitting") return { phase: "submitting", requestId: draft.requestId };
-			if (draft.phase === "failed") return { phase: "failed", requestId: draft.requestId, error: draft.error ?? "unknown", draftKept: true };
-			if (draft.phase === "revision-conflict") return { phase: "revision-conflict", current: draft.current ?? null, draftKept: true };
-			if (draft.phase === "indeterminate") return { phase: "indeterminate", requestId: draft.requestId, queryable: true };
-			if (draft.phase === "applied") return { phase: "applied", revision: draft.revision ?? null };
-			if (draft.dirty === true) {
-				if (Array.isArray(draft.missing) && draft.missing.length > 0 && draft.hasDiff !== true) {
-					return { phase: "install-or-configure", missing: [...draft.missing] };
-				}
-				return { phase: "ready" };
-			}
-			return { phase: "idle" };
-		}
-
-		/** Discard vs keep-editing on a dirty draft close (12.3). */
-		function closeDirtyDraft(decision) {
-			return decision === "discard" ? { phase: "idle", draft: null } : { phase: "ready", keepEditing: true };
-		}
-
-		/**
 		 * Second-window convergence (12.5): an agent-preset/selected frame
 		 * refreshes THIS session's Badge only when the frame names the same
 		 * session ID; anything else is ignored. A missing subscription
@@ -965,8 +936,6 @@ window.__ModuleLoader__.load({
 		exports.skillRowOf = skillRowOf;
 		exports.partitionManagerListing = partitionManagerListing;
 		exports.managerConditionState = managerConditionState;
-		exports.commitStateOf = commitStateOf;
-		exports.closeDirtyDraft = closeDirtyDraft;
 		exports.frameRefreshesSession = frameRefreshesSession;
 		exports.draftFromReceipt = draftFromReceipt;
 		exports.draftAfterRefresh = draftAfterRefresh;

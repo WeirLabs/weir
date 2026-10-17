@@ -54,29 +54,6 @@ test('12.2 unsupported conditions stay explicit, loading and unknown stay distin
   expect(model.managerConditionState(null)).toBe('unknown')
 })
 
-test('12.3 commit states: request ID reused, failure keeps the draft, conflict shows current state', () => {
-  expect(model.commitStateOf({ phase: 'submitting', requestId: 'r-1' })).toEqual({ phase: 'submitting', requestId: 'r-1' })
-  const failed = model.commitStateOf({ phase: 'failed', requestId: 'r-1', error: 'revision moved' })
-  expect(failed.draftKept).toBe(true)
-  expect(failed.requestId).toBe('r-1')
-  const conflict = model.commitStateOf({ phase: 'revision-conflict', current: { revision: 5, skills: ['a'] } })
-  expect(conflict.current.revision).toBe(5)
-  expect(conflict.draftKept).toBe(true)
-  expect(model.commitStateOf({ phase: 'indeterminate', requestId: 'r-2' }).queryable).toBe(true)
-})
-
-test('12.3 a no-diff draft with missing warnings offers install/configure instead of a fictional Apply', () => {
-  const state = model.commitStateOf({ dirty: true, hasDiff: false, missing: ['fixture-a'] })
-  expect(state.phase).toBe('install-or-configure')
-  expect(state.missing).toEqual(['fixture-a'])
-  expect(model.commitStateOf({ dirty: true, hasDiff: true }).phase).toBe('ready')
-})
-
-test('12.3 closing a dirty draft offers discard or keep editing', () => {
-  expect(model.closeDirtyDraft('discard')).toEqual({ phase: 'idle', draft: null })
-  expect(model.closeDirtyDraft('keep')).toEqual({ phase: 'ready', keepEditing: true })
-})
-
 test('12.5 second-window frames refresh only the named session; no subscription degrades to a refresh hint', () => {
   expect(model.frameRefreshesSession({ sessionId: 's-1' }, 's-1')).toBe(true)
   expect(model.frameRefreshesSession({ sessionId: 's-2' }, 's-1')).toBe(false)

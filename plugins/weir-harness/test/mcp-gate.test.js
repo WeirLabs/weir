@@ -4,6 +4,7 @@ import { test, expect } from './helpers.js'
 import assert from 'node:assert/strict'
 import { createMcpGate } from '../src/capabilities/mcp-gate.js'
 import { createMcpToolWrapper } from '../src/capabilities/mcp-admission.js'
+import { createMcpFacade } from '../src/capabilities/mcp-facade.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 const registryWith = servers => ({
@@ -58,11 +59,34 @@ test('wrapper: the check runs at the head of execute and only then hands off', a
   expect(order).not.toContain('should-not-run')
 })
 
-test('wrapper: resource operations are gated by the same verdict', async () => {
-  const wrapper = createMcpToolWrapper({ identity: 'docs', generation: 1, admit: async () => false })
-  const provider = wrapper.wrapResourceProvider({ list: async () => ['r1'], read: async () => 'body' })
-  await assert.rejects(provider.list({}, {}), /resources are not enabled/)
-  await assert.rejects(provider.read({}, {}), /resources are not enabled/)
+test('facade: the production resource gate refuses with mcp-admission-refused when the verdict is false', async () => {
+  // The PRODUCTION resource gate: mcpResources.register wraps the provider's
+  // request path (mcp-facade.js) — the shape the stock client registers.
+  let registered
+  const facade = createMcpFacade({
+    host: { mcpResources: { register: (server, provider) => { registered = provider } } },
+    identity: 'docs', generation: 1,
+    admit: async () => false,
+    isEnabledFor: () => false,
+  })
+  let rpcs = 0
+  facade.mcpResources.register('docs', { request: async () => { rpcs++; return 'body' } })
+  await assert.rejects(
+    registered.request({}, { agent: agentOf('s1') }),
+    error => error?.code === 'mcp-admission-refused' && /resources are not enabled/.test(error.message),
+  )
+  expect(rpcs).toBe(0) // the refusal happens before any RPC reaches the provider
+
+  // The same gate with a positive verdict hands the request through.
+  let served
+  const open = createMcpFacade({
+    host: { mcpResources: { register: (server, provider) => { served = provider } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true,
+    isEnabledFor: () => true,
+  })
+  open.mcpResources.register('docs', { request: async () => 'body' })
+  expect(await served.request({}, { agent: agentOf('s1') })).toBe('body')
 })
 
 test('drain: closing the gate rejects new calls, in-flight calls finish, timeout reports in-flight', async () => {
@@ -115,5 +139,46 @@ test('8.6 wiring: a removal through the engine seam closes the session gate; the
   // The Apply failed: abort() reopens exactly session A's gate.
   handle.abort()
   expect(await wrapped.execute({}, { agent: agentA })).toBe('ok')
+  expect(rpcs).toBe(3)
+})
+
+test('8.6 wiring: a removal through the engine seam closes the session gate for facade RESOURCE requests too (mcp-gate-closed)', async () => {
+  // The same drain seam the tool path enters at handoff must also fence the
+  // facade's gated resource request: between drain.begin and the post-commit
+  // snapshot publication the admit verdict still reads the PRE-Apply snapshot,
+  // so without the drain the request is served by the old provider.
+  const drain = createMcpDrain()
+  const adapter = createSessionDrainAdapter(() => drain)
+  let registered
+  const facade = createMcpFacade({
+    host: { mcpResources: { register: (server, provider) => { registered = provider } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true, // mid-Apply the stale snapshot still admits — the drain is the fence
+    isEnabledFor: () => true,
+    drain,
+  })
+  let rpcs = 0
+  facade.mcpResources.register('docs', { request: async () => { rpcs++; return 'body' } })
+  const agentA = { session: { id: 'sess-a' } }
+  const agentB = { session: { id: 'sess-b' } }
+
+  // Before any removal the request enters and hands off.
+  expect(await registered.request({}, { agent: agentA })).toBe('body')
+  expect(rpcs).toBe(1)
+
+  // The Apply's step-4 seam call: close session A's gate for 'docs'.
+  const handle = adapter.begin(['docs'], 'sess-a')
+  await assert.rejects(
+    registered.request({}, { agent: agentA }),
+    error => error?.code === 'mcp-gate-closed' && /draining for this agent/.test(error.message),
+  )
+  expect(rpcs).toBe(1) // ZERO RPC reached the provider
+  // Session B's gate is untouched (8.5 A/B isolation).
+  expect(await registered.request({}, { agent: agentB })).toBe('body')
+  expect(rpcs).toBe(2)
+
+  // The Apply failed: abort() reopens exactly session A's gate.
+  handle.abort()
+  expect(await registered.request({}, { agent: agentA })).toBe('body')
   expect(rpcs).toBe(3)
 })
