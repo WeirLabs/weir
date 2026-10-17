@@ -46,6 +46,24 @@ const INSPECT = {
   },
 }
 
+// A server-computed proposals payload (schemaVersion 1) for the render-switch
+// pins. The marker confirmation is deliberately NOT what any algorithm would
+// produce: the panel must render and submit it VERBATIM (it never computes).
+const MARKER_CONFIRMATION = 'ADMIN OVERRIDE 00000000000000000000000000000000000000000000000000000000000000ff'
+const PROPOSALS = {
+  schemaVersion: 1,
+  revision: 12,
+  candidates: [{
+    owner: 'sess-1',
+    scope: { root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] },
+    confirmation: MARKER_CONFIRMATION,
+    risk: 'Detached historic writers may still modify files after this override.',
+    rows: [{ resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+  }],
+  blocked: [{ resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+  unmet: [],
+}
+
 // Render descendants lazily, matching React's boundary traversal order. Parent
 // evaluation is deliberately outside the boundary's try/catch.
 function renderTree(node) {
@@ -275,6 +293,11 @@ describe('client.edit-lock-maintenance chunk', () => {
       'editLockMaintRecoveries', 'editLockMaintRecoverHint', 'editLockMaintRecoverRoot', 'editLockMaintRecoverOwner',
       'editLockMaintRecoverRevision', 'editLockMaintRecoverOperations', 'editLockMaintRecoverRisk', 'editLockMaintRecoverDigest',
       'editLockMaintRecoverConfirm', 'editLockMaintRecoverBusy', 'editLockMaintRecoverDone', 'editLockMaintRecoverFailed',
+      'editLockMaintRecoverUpgrade',
+      'editLockMaintRecoverReasonDispositionRecorded', 'editLockMaintRecoverReasonOwnerUnknown',
+      'editLockMaintRecoverReasonNotInterrupted', 'editLockMaintRecoverReasonPreparedOutstanding',
+      'editLockMaintRecoverReasonPublishingOutstanding', 'editLockMaintRecoverReasonNoUnresolved',
+      'editLockMaintRecoverReasonUnknown',
     ]
     for (const key of KEYS) {
       expect(typeof en[key], `en.${key}`).toBe('string')
@@ -286,7 +309,7 @@ describe('client.edit-lock-maintenance chunk', () => {
 
   it('computes and displays the scope, risk and digest per eligible owner; the click submits the confirmation', async () => {
     const { exports, reactStub } = await loadPanel()
-    const { EditLockMaintenanceField, editLockRecovery } = exports
+    const { EditLockMaintenanceField } = exports
     const eligible = {
       ...INSPECT,
       snapshot: {
@@ -305,7 +328,19 @@ describe('client.edit-lock-maintenance chunk', () => {
         ],
       },
     }
-    const expectedConfirmation = editLockRecovery.recoveryConfirmation({ root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] })
+    // The server (host) computes the proposal — the fixture carries its
+    // output, and the panel must render and submit it VERBATIM.
+    const { recoveryConfirmation } = await import('../src/edit-lock/admin-recovery.js')
+    const candidateScope = { root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] }
+    const expectedConfirmation = recoveryConfirmation(candidateScope)
+    const candidateRow = { resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }
+    eligible.recoveryProposals = {
+      schemaVersion: 1,
+      revision: 12,
+      candidates: [{ owner: 'sess-1', scope: candidateScope, confirmation: expectedConfirmation, risk: 'Detached historic writers may still modify files after this override.', rows: [candidateRow] }],
+      blocked: [candidateRow],
+      unmet: [{ owner: 'sess-3', reason: 'not-interrupted', rows: [], scopePaths: ['/work/repo/a.txt'] }],
+    }
     const channelCalls = []
     let recoverPayload = { ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }
     const channelStub = (endpoint, payload) => {
@@ -330,7 +365,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       await flush()
       const inspected = render()
       // Exactly one eligible owner card: the full scope, the risk verbatim,
-      // the client-computed digest. The other two owners render no action.
+      // the server-computed digest. The other two owners render no action.
       expect(collect(inspected, (node) => node.children === 'editLockMaintRecoveries')).toHaveLength(1)
       // The blocked zone card (auto-inspection) and the expanded detail card
       // both display the same scope/risk/digest — two surfaces, one action.
@@ -342,7 +377,7 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(collect(inspected, (node) => typeof node.children === 'string' && node.children.includes('sess-2') && node.children.includes('Recover'))).toHaveLength(0)
       const confirm = collect(inspected, (node) => node.children === 'editLockMaintRecoverConfirm' && typeof node.onClick === 'function')
       expect(confirm).toHaveLength(1)
-      // The one explicit click submits the computed confirmation — no typing.
+      // The one explicit click submits the server confirmation — no typing.
       confirm[0].onClick()
       await flush()
       await flush()
@@ -396,6 +431,19 @@ describe('client.edit-lock-maintenance chunk', () => {
         retainedLocks: INSPECT.snapshot.retainedLocks,
         sessions: [{ sessionId: 'sess-1', executionEpoch: 17, interrupted: true, recovery: null }],
       },
+      recoveryProposals: {
+        schemaVersion: 1,
+        revision: 12,
+        candidates: [{
+          owner: 'sess-1',
+          scope: { root, owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] },
+          confirmation: `ADMIN OVERRIDE marker-${root}`,
+          risk: 'Detached historic writers may still modify files after this override.',
+          rows: [{ resourceId: `${root}/a.txt`, owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+        }],
+        blocked: [{ resourceId: `${root}/a.txt`, owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+        unmet: [],
+      },
     })
     const recoverPayload = { ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } }
     const channelStub = (endpoint, payload) => {
@@ -447,7 +495,7 @@ describe('client.edit-lock-maintenance chunk', () => {
         zh: { ...chainModel.dictionaries.zh, ...exports.dictionaries.zh },
       }
     })()
-    const eligible = { ...INSPECT, snapshot: { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] } }
+    const eligible = { ...INSPECT, snapshot: { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] }, recoveryProposals: PROPOSALS }
     const calls = []
     let state
     const channelStub = (endpoint, payload) => {
@@ -508,118 +556,9 @@ describe('client.edit-lock-maintenance chunk', () => {
       }
     }
   })
-  it('chunk confirmation algorithm matches the server byte-for-byte, and eligibility mirrors the manager', async () => {
-    const { exports } = await loadPanel()
-    const { editLockRecovery } = exports
-    const { recoveryConfirmation: serverConfirmation } = await import('../src/edit-lock/admin-recovery.js')
-    const { canonical } = await import('../src/edit-lock/snapshot.js')
-    const { LATE_WRITER_RISK } = await import('../src/edit-lock/admin-ledger.js')
-    const { createHash } = await import('node:crypto')
-    expect(editLockRecovery.LATE_WRITER_RISK).toBe(LATE_WRITER_RISK)
-    const texts = ['', 'a', 'abc', 'x'.repeat(55), 'y'.repeat(56), 'z'.repeat(64), 'w'.repeat(119), 'q'.repeat(1000),
-      '管理域/编辑锁 ✓', JSON.stringify({ envelope: [1, '中文', { nested: true }] })]
-    for (const text of texts) {
-      expect(editLockRecovery.sha256Hex(text)).toBe(createHash('sha256').update(text, 'utf8').digest('hex'))
-    }
-    const scopes = [
-      { root: '/work/repo', owner: 'sess-1', expectedRevision: 0, operationIds: ['op-1'] },
-      { root: '/work/中文 目录', owner: '会话-九', expectedRevision: 42, operationIds: ['op-长', 'op-2', 'op-10', 'a'.repeat(200)] },
-      { root: '/r', owner: 'o', expectedRevision: 999999, operationIds: ['z', 'y', 'x', 'w'] },
-    ]
-    for (const scope of scopes) {
-      const sorted = { ...scope, operationIds: [...scope.operationIds].sort() }
-      expect(editLockRecovery.canonicalJson({ ...sorted, risk: LATE_WRITER_RISK })).toBe(canonical({ ...sorted, risk: LATE_WRITER_RISK }))
-      expect(editLockRecovery.recoveryConfirmation(scope)).toBe(serverConfirmation(scope))
-    }
-    // Eligibility mirrors the manager's admission conditions exactly:
-    // interrupted owner, every unresolved operation a still-blocking unknown.
-    const candidates = editLockRecovery.recoveryCandidates('/work/repo', {
-      revision: 7,
-      sessions: [
-        { sessionId: 'a', interrupted: true }, { sessionId: 'b', interrupted: false },
-        { sessionId: 'c', interrupted: true }, { sessionId: 'd', interrupted: true },
-        { sessionId: 'e', interrupted: true },
-      ],
-      unresolved: [
-        { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'a', operationId: 'op-2' } },
-        { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'a', operationId: 'op-1' } },
-        { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'b', operationId: 'op-3' } },
-        { phase: 'publishing', admissionBlocked: true, key: { sessionId: 'c', operationId: 'op-4' } },
-        { phase: 'unknown', admissionBlocked: false, key: { sessionId: 'd', operationId: 'op-5' } },
-        { phase: 'unknown', admissionBlocked: true, key: { sessionId: 'e', operationId: 'op-6' } },
-      ],
-      // 'e' is otherwise eligible but still holds a prepared operation: the
-      // online recovery can never succeed for it, so the panel must not offer it.
-      prepared: [{ target: { tool: 'write', filePath: '/w/e.txt' }, key: { sessionId: 'e', operationId: 'op-7' } }],
-    })
-    expect(candidates).toHaveLength(1)
-    expect(candidates[0].owner).toBe('a')
-    expect(candidates[0].scope).toEqual({ root: '/work/repo', owner: 'a', expectedRevision: 7, operationIds: ['op-1', 'op-2'] })
-    expect(candidates[0].confirmation).toBe(serverConfirmation(candidates[0].scope))
-  })
-
-  it('recoveryDiagnosis classifies the blocked rows, the force-release scope and every named failing precondition', async () => {
-    const { exports } = await loadPanel()
-    const { editLockRecovery } = exports
-    const snapshot = {
-      revision: 7,
-      sessions: [
-        { sessionId: 'a', interrupted: true }, { sessionId: 'b', interrupted: false },
-        { sessionId: 'c', interrupted: true }, { sessionId: 'd', interrupted: true },
-        { sessionId: 'e', interrupted: true }, { sessionId: 'f', interrupted: true },
-        { sessionId: 'x', interrupted: true },
-      ],
-      unresolved: [
-        // Eligible owner a: lock + file fence on the same resource (the incident shape).
-        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'file', path: '/r/b.txt' }, fence: { kind: 'resource', resourceId: '/r/b.txt' }, key: { sessionId: 'a', operationId: 'op-2' } },
-        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'file', path: '/r/a.txt' }, fence: { kind: 'resource', resourceId: '/r/a.txt' }, key: { sessionId: 'a', operationId: 'op-1' } },
-        // Ineligible blocking owners, one per precondition.
-        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'file', path: '/r/c.txt' }, fence: { kind: 'resource', resourceId: '/r/c.txt' }, key: { sessionId: 'b', operationId: 'op-3' } },
-        { phase: 'publishing', admissionBlocked: true, scope: { kind: 'file', path: '/r/d.txt' }, fence: { kind: 'resource', resourceId: '/r/d.txt' }, key: { sessionId: 'c', operationId: 'op-4' } },
-        { phase: 'unknown', admissionBlocked: false, scope: { kind: 'file', path: '/r/e.txt' }, fence: { kind: 'resource', resourceId: '/r/e.txt' }, key: { sessionId: 'd', operationId: 'op-5' } },
-        // Eligible owner f with a subtree fence and NO file row: the candidate
-        // still carries the scope (the domain detail renders its card).
-        { phase: 'unknown', admissionBlocked: true, scope: { kind: 'subtree', path: '/r/sub' }, fence: { kind: 'subtree', ancestor: '/r/sub' }, key: { sessionId: 'f', operationId: 'op-6' } },
-      ],
-      prepared: [{ target: { tool: 'write', filePath: '/w/e.txt' }, key: { sessionId: 'e', operationId: 'op-7' } }],
-      retainedLocks: [
-        { resourceId: '/r/a.txt', owner: 'a', generation: 3, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/b.txt', owner: 'a', generation: 1, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/c.txt', owner: 'b', generation: 1, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/d.txt', owner: 'c', generation: 1, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/e.txt', owner: 'd', generation: 1, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/g.txt', owner: 'e', generation: 1, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/h.txt', owner: 'ghost', generation: 1, status: 'user-interrupted', reason: null },
-        { resourceId: '/r/i.txt', owner: 'x', generation: 1, status: 'user-interrupted', reason: null },
-      ],
-    }
-    const diagnosis = editLockRecovery.recoveryDiagnosis('/work/repo', snapshot)
-    // Candidates: the eligible owners (a and the row-less f).
-    expect(diagnosis.candidates).toHaveLength(2)
-    expect(diagnosis.candidates.map((candidate) => candidate.owner).sort()).toEqual(['a', 'f'])
-    expect(diagnosis.candidates.find((candidate) => candidate.owner === 'a').scope)
-      .toEqual({ root: '/work/repo', owner: 'a', expectedRevision: 7, operationIds: ['op-1', 'op-2'] })
-    // Blocked rows: only rows whose owner has the force-release action, sorted by resource id.
-    expect(diagnosis.blocked.map((row) => row.resourceId)).toEqual(['/r/a.txt', '/r/b.txt'])
-    expect(diagnosis.blocked[0].owner).toBe('a')
-    expect(diagnosis.blocked[0].lockStatus).toBe('user-interrupted')
-    expect(diagnosis.blocked[0].fence).toBe(true)
-    expect(diagnosis.blocked[0].interrupted).toBe(true)
-    // Unmet: named preconditions in the manager's refusal order, sorted by owner.
-    expect(diagnosis.unmet.map((entry) => entry.owner)).toEqual(['b', 'c', 'd', 'e', 'ghost', 'x'])
-    const byOwner = new Map(diagnosis.unmet.map((entry) => [entry.owner, entry]))
-    expect(byOwner.get('b').reason).toBe(editLockRecovery.RECOVERY_UX.reasonNotInterrupted)
-    expect(byOwner.get('c').reason).toBe(editLockRecovery.RECOVERY_UX.reasonPublishing)
-    expect(byOwner.get('d').reason).toBe(editLockRecovery.RECOVERY_UX.reasonDisposition)
-    expect(byOwner.get('e').reason).toBe(editLockRecovery.RECOVERY_UX.reasonPrepared)
-    expect(byOwner.get('ghost').reason).toBe(editLockRecovery.RECOVERY_UX.reasonUnknownSession)
-    expect(byOwner.get('x').reason).toBe(editLockRecovery.RECOVERY_UX.reasonNoUnresolved)
-    expect(byOwner.get('e').rows.map((row) => row.resourceId)).toEqual(['/r/g.txt'])
-  })
-
-  it('opens with an automatic read-only inspection, renders the three zones, and the Force release click submits the computed confirmation', async () => {
+  it('opens with an automatic read-only inspection, renders the three zones, and the Force release click submits the server confirmation', async () => {
     const { exports, reactStub } = await loadPanel()
-    const { EditLockMaintenanceField, editLockRecovery } = exports
+    const { EditLockMaintenanceField } = exports
     const incident = {
       root: '/work/repo',
       authorityDir: '/work/repo/.weir/edit-lock',
@@ -642,6 +581,18 @@ describe('client.edit-lock-maintenance chunk', () => {
           { sessionId: 'sess-3', executionEpoch: 4, interrupted: false, recovery: null },
         ],
       },
+    }
+    // The server (host) computes the proposal — the fixture carries its
+    // output, and the panel must render and submit it VERBATIM.
+    const { recoveryConfirmation } = await import('../src/edit-lock/admin-recovery.js')
+    const candidateScope = { root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] }
+    const expectedConfirmation = recoveryConfirmation(candidateScope)
+    incident.recoveryProposals = {
+      schemaVersion: 1,
+      revision: 12,
+      candidates: [{ owner: 'sess-1', scope: candidateScope, confirmation: expectedConfirmation, risk: 'Detached historic writers may still modify files after this override.', rows: [{ resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }] }],
+      blocked: [{ resourceId: '/work/repo/a.txt', owner: 'sess-1', lockStatus: 'user-interrupted', fence: true, interrupted: true }],
+      unmet: [{ owner: 'sess-3', reason: 'not-interrupted', rows: [{ resourceId: '/work/repo/b.txt', owner: 'sess-3', lockStatus: 'user-interrupted', fence: true, interrupted: false }], scopePaths: [] }],
     }
     const channelCalls = []
     const channelStub = (endpoint, payload) => {
@@ -675,8 +626,8 @@ describe('client.edit-lock-maintenance chunk', () => {
       // Unmet zone: the ineligible owner's file and the named precondition.
       expect(collect(opened, (node) => node.children === 'Blocked files — recovery preconditions not met')).toHaveLength(1)
       expect(collect(opened, (node) => typeof node.children === 'string' && node.children.includes('/work/repo/b.txt'))).toHaveLength(1)
-      expect(collect(opened, (node) => node.children === editLockRecovery.RECOVERY_UX.reasonNotInterrupted)).toHaveLength(1)
-      // The one explicit click submits the computed confirmation.
+      expect(collect(opened, (node) => node.children === 'editLockMaintRecoverReasonNotInterrupted')).toHaveLength(1)
+      // The one explicit click submits the server confirmation unchanged.
       force[0].onClick()
       await flush()
       await flush()
@@ -686,9 +637,112 @@ describe('client.edit-lock-maintenance chunk', () => {
       expect(body.expectedRevision).toBe(12)
       expect(body.operationIds).toEqual(['op-1'])
       expect(body.acceptLateWriterRisk).toBe(true)
-      expect(body.confirmation).toBe(editLockRecovery.recoveryConfirmation({ root: '/work/repo', owner: 'sess-1', expectedRevision: 12, operationIds: ['op-1'] }))
+      expect(body.confirmation).toBe(expectedConfirmation)
     } finally {
       // nothing to restore: the channel arrives as a prop
+    }
+  })
+
+  it('fails closed when the response lacks usable recovery proposals: no online action, refresh guidance, read-only intact', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { EditLockMaintenanceField } = exports
+    // An ELIGIBLE snapshot shape: a client that still derived recovery itself
+    // would offer the action here — the fail-closed gate must suppress it.
+    const eligibleSnapshot = { ...INSPECT.snapshot, prepared: [], unresolved: [{ ...INSPECT.snapshot.unresolved[0], admissionBlocked: true }] }
+    for (const [name, proposals] of [
+      ['missing', undefined],
+      ['unsupported schemaVersion', { schemaVersion: 2, revision: 12, candidates: [], blocked: [], unmet: [] }],
+    ]) {
+      reactStub.reset()
+      const inspectValue = { ...INSPECT, snapshot: eligibleSnapshot, ...(proposals === undefined ? {} : { recoveryProposals: proposals }) }
+      const channelCalls = []
+      const channelStub = (endpoint, payload) => {
+        channelCalls.push({ endpoint, payload })
+        if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+        if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: inspectValue })
+        return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
+      }
+      const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+      const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField({ t: (key) => key, channel: channelStub })) }
+      render().children[0].children[1].onClick()
+      await flush()
+      // Expand the domain detail: the read-only snapshot section renders there.
+      collect(render(), (node) => node.children === 'editLockMaintInspect' && typeof node.onClick === 'function')[0].onClick()
+      await flush()
+      const tree = render()
+      // The online recovery action is disabled: no force-release row action,
+      // no per-candidate confirm, and the refresh/upgrade guidance shows.
+      expect(collect(tree, (node) => node.children === 'Force release'), `${name}: no force release`).toHaveLength(0)
+      expect(collect(tree, (node) => node.children === 'editLockMaintRecoverConfirm'), `${name}: no confirm`).toHaveLength(0)
+      expect(collect(tree, (node) => node.children === 'editLockMaintRecoverUpgrade'), `${name}: upgrade hint`).toHaveLength(1)
+      // The read-only inspection stays fully usable.
+      expect(collect(tree, (node) => node.children === 'editLockMaintUnresolved'), `${name}: read-only section`).toHaveLength(1)
+      expect(collect(tree, (node) => node.children === 'write /work/repo/a.txt · unknown/unknown'), `${name}: read-only op row`).toHaveLength(1)
+      expect(channelCalls.filter((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/recover-online'), `${name}: nothing submitted`).toHaveLength(0)
+    }
+  })
+
+  it('renders the server proposal verbatim and submits its confirmation unchanged', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const { EditLockMaintenanceField } = exports
+    const channelCalls = []
+    const channelStub = (endpoint, payload) => {
+      channelCalls.push({ endpoint, payload })
+      if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+      if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: { ...INSPECT, recoveryProposals: PROPOSALS } })
+      if (endpoint === 'api/weir-edit-lock/maintenance/recover-online') return Promise.resolve({ ok: true, value: { revision: 13, idempotent: false, record: { owner: 'sess-1' } } })
+      return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected endpoint ${endpoint}` } })
+    }
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const render = () => { reactStub.begin(); return renderTree(EditLockMaintenanceField({ t: (key) => key, channel: channelStub })) }
+    render().children[0].children[1].onClick()
+    await flush()
+    const tree = render()
+    // The marker confirmation — no client algorithm could produce it — renders
+    // in the blocked-zone card with the server scope and risk verbatim.
+    expect(collect(tree, (node) => node.children === `editLockMaintRecoverDigest: ${MARKER_CONFIRMATION}`).length).toBeGreaterThan(0)
+    expect(collect(tree, (node) => node.children === 'editLockMaintRecoverRisk: Detached historic writers may still modify files after this override.').length).toBeGreaterThan(0)
+    expect(collect(tree, (node) => node.children === 'editLockMaintRecoverRevision: 12').length).toBeGreaterThan(0)
+    const force = collect(tree, (node) => node.children === 'Force release' && typeof node.onClick === 'function')
+    expect(force).toHaveLength(1)
+    force[0].onClick()
+    await flush()
+    await flush()
+    const body = channelCalls.find((entry) => entry.endpoint === 'api/weir-edit-lock/maintenance/recover-online').payload
+    // The submission forwards the server scope and confirmation unchanged.
+    expect(body.root).toBe('/work/repo')
+    expect(body.owner).toBe('sess-1')
+    expect(body.expectedRevision).toBe(12)
+    expect(body.operationIds).toEqual(['op-1'])
+    expect(body.acceptLateWriterRisk).toBe(true)
+    expect(body.confirmation).toBe(MARKER_CONFIRMATION)
+  })
+
+  it('localizes unmet reason codes and falls back to a generic message for unknown codes', async () => {
+    const { exports, reactStub } = await loadPanel()
+    const proposals = {
+      schemaVersion: 1, revision: 12, candidates: [], blocked: [],
+      unmet: [
+        { owner: 'sess-3', reason: 'not-interrupted', rows: [{ resourceId: '/work/repo/b.txt', owner: 'sess-3', lockStatus: 'user-interrupted', fence: true, interrupted: false }], scopePaths: [] },
+        { owner: 'sess-9', reason: 'future-code', rows: [], scopePaths: ['/work/repo/sub'] },
+      ],
+    }
+    for (const locale of ['en', 'zh']) {
+      reactStub.reset()
+      const dictionary = exports.dictionaries[locale]
+      const channelStub = (endpoint) => {
+        if (endpoint === 'api/weir-edit-lock/maintenance/status') return Promise.resolve({ ok: true, value: STATUS })
+        if (endpoint === 'api/weir-edit-lock/maintenance/inspect') return Promise.resolve({ ok: true, value: { ...INSPECT, recoveryProposals: proposals } })
+        return Promise.resolve({ ok: false, error: { code: 'test/unexpected', message: `unexpected ${endpoint}` } })
+      }
+      const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+      const render = () => { reactStub.begin(); return renderTree(exports.EditLockMaintenanceField({ t: (key) => dictionary[key] ?? key, channel: channelStub })) }
+      render().children[0].children[1].onClick()
+      await flush()
+      const tree = render()
+      const text = JSON.stringify(tree)
+      expect(text.includes(dictionary.editLockMaintRecoverReasonNotInterrupted), `${locale}: known code localized`).toBe(true)
+      expect(text.includes(dictionary.editLockMaintRecoverReasonUnknown.replace('{code}', 'future-code')), `${locale}: unknown code fallback`).toBe(true)
     }
   })
 })

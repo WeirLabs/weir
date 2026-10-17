@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { AUTHORITY_DIR } from './domains.js'
 import { reservationPathFor } from './reservation.js'
 import { parseSnapshot } from './snapshot.js'
-import { maintenanceState, summarizeAuthorityImage } from './inspect.js'
+import { maintenanceState, summarizeAuthorityImage, recoveryProposals } from './inspect.js'
 import { readSnapshotBytes, checkedPath, verifyPins, missing, errorMessage, MAX_SNAPSHOT_BYTES } from './read-authority.js'
 import { recoverAuthority } from './admin-recovery.js'
 import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
@@ -141,7 +141,10 @@ export function inspectAuthority(root) {
   if (read.presence === 'not-a-file') return { ...base, presence: 'not-a-file' }
   if (read.presence !== 'valid') return { ...base, presence: 'unreadable', message: read.message }
   try {
-    return { ...base, presence: 'valid', snapshot: summarizeAuthorityImage(parseSnapshot(read.bytes, root)) }
+    const parsed = parseSnapshot(read.bytes, root)
+    // Both projections derive from the SAME parsed image: the snapshot summary
+    // and the server-computed recovery proposals (additive, schemaVersion 1).
+    return { ...base, presence: 'valid', snapshot: summarizeAuthorityImage(parsed), recoveryProposals: recoveryProposals(root, parsed) }
   } catch (error) {
     return { ...base, presence: 'corrupt', message: errorMessage(error) }
   }
