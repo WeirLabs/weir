@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLaneService } from './lanes.js'
-import { renderChildContract } from './prompts.js'
+import { createLaneService } from '../src/worktree/lanes.js'
+import { renderChildContract } from '../src/worktree/prompts.js'
 
 // Exercise the real refusal/serialization path without spawning git processes.
 async function fixture(t, states, maxActive = 4) {
