@@ -14,7 +14,8 @@
 //   PER AGENT at every prompt assembly — an agent without the server gets an
 //   empty string (renderPrompt drops zero-length sections, CITED).
 // - mcpResources.register(provider): resource operations are gated by the
-//   target server at dispatch time (8.4).
+//   target server at dispatch time (8.4) AND fenced by the Apply drain at
+//   handoff (8.6) when the manager wires one in.
 //
 // Fail closed: a host method the facade does not know (the host added a new
 // call to one of these services) makes THIS server fail visibly instead of
@@ -28,6 +29,7 @@ const message = error => (error instanceof Error ? error.message : String(error)
  *   identity: string, generation: number,
  *   admit: (agent: unknown) => Promise<boolean>,
  *   isEnabledFor: (agent: unknown) => boolean,
+ *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void },
  *   onError?: (reason: string, cause?: unknown) => void }} config
  */
 export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onError = () => {} }) {
@@ -79,7 +81,10 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
      * preserved verbatim and the provider's request path is gated by THIS
      * facade's admission verdict (8.4①: resource operations are gated at
      * dispatch by the target server; shared resource tool schemas stay
-     * visible, only execution is gated).
+     * visible, only execution is gated). With a drain attached the request
+     * also enters the (agent, server) in-flight fence at handoff (8.6), so a
+     * removal's commit window rejects late requests instead of letting the
+     * old provider serve them.
      */
     register(server, provider) {
       const request = provider?.request
@@ -90,7 +95,22 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
               const error = new Error(`MCP server "${identity}" resources are not enabled for this agent`)
               throw Object.assign(error, { code: 'mcp-admission-refused' })
             }
-            return request(args, exec)
+            // The same drain fence the tool wrapper enters at handoff (8.6):
+            // between drain.begin and the post-commit snapshot publication the
+            // admit verdict above still reads the PRE-Apply snapshot, so a
+            // removed server's resource request must be rejected HERE or the
+            // old provider keeps serving it through the commit window.
+            const label = typeof args?.method === 'string' ? args.method : 'resource'
+            const token = drain ? drain.enter(exec?.agent?.id ?? exec?.agent?.session?.id, identity, label) : null
+            if (drain && token === null) {
+              const error = new Error(`MCP server "${identity}" is draining for this agent after an accepted removal (8.6)`)
+              throw Object.assign(error, { code: 'mcp-gate-closed' })
+            }
+            try {
+              return await request(args, exec)
+            } finally {
+              if (drain) drain.exit(exec?.agent?.id ?? exec?.agent?.session?.id, identity, token)
+            }
           } }
         : provider
       return /** @type {{ register(s: unknown, p: unknown): unknown }} */ (host.mcpResources).register(server, gated)

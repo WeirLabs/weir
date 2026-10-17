@@ -148,3 +148,44 @@ test('8.6 wiring: a removal through the engine seam closes the session gate; the
   expect(await wrapped.execute({}, { agent: agentA })).toBe('ok')
   expect(rpcs).toBe(3)
 })
+
+test('8.6 wiring: a removal through the engine seam closes the session gate for facade RESOURCE requests too (mcp-gate-closed)', async () => {
+  // The same drain seam the tool path enters at handoff must also fence the
+  // facade's gated resource request: between drain.begin and the post-commit
+  // snapshot publication the admit verdict still reads the PRE-Apply snapshot,
+  // so without the drain the request is served by the old provider.
+  const drain = createMcpDrain()
+  const adapter = createSessionDrainAdapter(() => drain)
+  let registered
+  const facade = createMcpFacade({
+    host: { mcpResources: { register: (server, provider) => { registered = provider } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true, // mid-Apply the stale snapshot still admits — the drain is the fence
+    isEnabledFor: () => true,
+    drain,
+  })
+  let rpcs = 0
+  facade.mcpResources.register('docs', { request: async () => { rpcs++; return 'body' } })
+  const agentA = { session: { id: 'sess-a' } }
+  const agentB = { session: { id: 'sess-b' } }
+
+  // Before any removal the request enters and hands off.
+  expect(await registered.request({}, { agent: agentA })).toBe('body')
+  expect(rpcs).toBe(1)
+
+  // The Apply's step-4 seam call: close session A's gate for 'docs'.
+  const handle = adapter.begin(['docs'], 'sess-a')
+  await assert.rejects(
+    registered.request({}, { agent: agentA }),
+    error => error?.code === 'mcp-gate-closed' && /draining for this agent/.test(error.message),
+  )
+  expect(rpcs).toBe(1) // ZERO RPC reached the provider
+  // Session B's gate is untouched (8.5 A/B isolation).
+  expect(await registered.request({}, { agent: agentB })).toBe('body')
+  expect(rpcs).toBe(2)
+
+  // The Apply failed: abort() reopens exactly session A's gate.
+  handle.abort()
+  expect(await registered.request({}, { agent: agentA })).toBe('body')
+  expect(rpcs).toBe(3)
+})
