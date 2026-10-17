@@ -35,6 +35,11 @@ export const AUDIT_TYPES = Object.freeze({
   // identity, feed census and provider status, never skill names; the receipt
   // itself stays the only effective-state authority.
   capabilityRead: 'capability-read',
+  // The pending model-facing capability notice (durable-pending-notice D7):
+  // queue / degrade / deliver / clear outcomes of the durable notice unit.
+  // Counts only, never names — the same rule as capability-read above; the
+  // accepted selection record stays the only effective-state authority.
+  capabilityNotice: 'capability-notice',
   // Session blackboard release facts (design D3): one record per key release
   // that had waiting subscribers; the emission lives in the blackboard plugin
   // and never touches a session log.

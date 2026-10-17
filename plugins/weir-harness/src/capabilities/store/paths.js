@@ -33,6 +33,7 @@ export function resolveStoreRoot(profileContext) {
  * @typedef {{ kind: 'selection', sessionId: string }
  *   | { kind: 'content', sessionId: string }
  *   | { kind: 'inherited', sessionId: string }
+ *   | { kind: 'notice', sessionId: string }
  *   | { kind: 'defaults', workspaceKey: string }
  *   | { kind: 'preset', scope: 'global', presetId: string }
  *   | { kind: 'preset', scope: 'workspace', workspaceKey: string, presetId: string }
@@ -55,6 +56,10 @@ export function unitLayout(unit) {
     case 'selection':
     case 'content':
     case 'inherited':
+    // The pending model-facing notice (durable-pending-notice D1): its own
+    // unit, so the accepted selection record's revision — the client's CAS
+    // token — is never touched by delivery bookkeeping. Absent = nothing owed.
+    case 'notice':
       need(u.sessionId)
       return layout(['sessions', /** @type {string} */ (u.sessionId)], u.kind)
     case 'defaults':
