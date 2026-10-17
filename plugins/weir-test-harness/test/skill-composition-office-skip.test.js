@@ -119,7 +119,7 @@ describe('OFFICE success replay fixture (spec: 能力存在时断言矩阵逐字
       'catalog excludes unselected in OFF composition',
       'all raw host Office candidates are bundled inventory entries',
       'unselected Office shadow denies both invocation paths',
-      'selected Office retains validated runtime suffix',
+      'selected Office definition loads its validated body',
       'no invalid preset diagnostic',
       'headless exits cleanly',
     ], 'the assertion matrix drifted — the capability-present contract is verbatim')

@@ -68,7 +68,15 @@ export function plannedCase(mode = 'success') {
         run.check('no fictional summary or success wake', summary < 0 && !run.inboxInserted.some((r) => r.session === subject && r.text.includes('Compaction completed')))
         run.check('no todo steer after blocked outcome', !run.inboxInserted.some((r) => r.session === subject && r.text.includes('<todo_continuation>') && events.some((e) => e.type === 'weir/compaction' && e.data.kind === 'blocked') && run.records.indexOf(r) > run.records.findIndex((e) => e.type === 'weir/compaction' && e.session === subject && e.data.kind === 'blocked')))
       }
-      run.check('subject completed through live parent interval', run.code === 0 && run.stdout.includes('planned-parent-finished') && !run.records.some((r) => r.kind === 'planned-probe-error'))
+      // DSH 0.2.1 headless joins the session until quiescence instead of
+      // exiting at the parent's FIRST idle, so in the hard-window mode the
+      // parent also compacts and its post-compaction continuation produces the
+      // final message. Both terminal texts prove the same property — the
+      // subject settled while the parent's live interval was open, with no
+      // probe error — so the assertion accepts either (0.2.0 recorded
+      // 'planned-parent-finished'; 0.2.1 may end on the resumed turn).
+      const finished = run.stdout.includes('planned-parent-finished') || run.stdout.includes('planned-subject-finished')
+      run.check('subject completed through live parent interval', run.code === 0 && finished && !run.records.some((r) => r.kind === 'planned-probe-error'), run.stdout.slice(-300))
     },
   }
 }

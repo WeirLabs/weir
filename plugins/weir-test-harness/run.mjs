@@ -8,6 +8,18 @@
 // its optional run override, and replays its assert on a pre-parsed run view.
 //
 //   node run.mjs [scenario ...]     (default: all)
+//
+// Runtime override (the mechanism for verifying a DSH version OTHER than the
+// installed app — e.g. the 0.2.1 npm tree while the desktop app stays on
+// 0.2.0):
+//   WEIR_IT_NODE  node binary used for pnpm + the headless boot
+//   WEIR_IT_DSH   the dsh CLI entry (lib/bin.js) of the tree under test
+//   WEIR_IT_PNPM  pnpm entry used to install the profile
+// Each defaults to the installed app's bundled toolchain, so the normal dev
+// loop is unchanged and no version-specific path is ever hardcoded here.
+// Native-addon caveat: a TeamID-signed bundled node cannot dlopen npm native
+// addons, so a foreign npm tree is normally verified with a plain nvm node
+// (WEIR_IT_NODE) while the CLI resolves its own packages from WEIR_IT_DSH.
 import { execFileSync, execFile } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'

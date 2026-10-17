@@ -49,7 +49,13 @@ export default ['OFF', 'LEAK', 'HOST', 'OFFICE', 'MIGRATION'].map(mode => ({
     if (mode === 'OFFICE') {
       run.check('all raw host Office candidates are bundled inventory entries', ['office-docx', 'office-pptx', 'office-xlsx'].every(name => report?.inventory?.some(c => c.name === name && c.provider === 'dsh-office' && c.source === 'bundled')))
       run.check('unselected Office shadow denies both invocation paths', ['office-pptx', 'office-xlsx'].every(name => report?.live?.all?.some(c => c.name === name && !c.invocation.modelInvocable && !c.invocation.userInvocable)))
-      run.check('selected Office retains validated runtime suffix', /[Ll]ibre[Oo]ffice/.test(report?.loads?.[selected]?.content ?? ''))
+      // DSH 0.2.1 moved the LibreOffice runtime guidance onto NEW sibling
+      // bundled skills (office-render/-recalculate/-export-pdf) that Weir does
+      // not compose; the three authoring skills now load their own body only.
+      // The adapter contract this pins is therefore "the selected definition
+      // loads through the validated raw identity", not a vendor suffix that no
+      // longer ships in the composed skill set.
+      run.check('selected Office definition loads its validated body', typeof report?.loads?.[selected]?.content === 'string' && report.loads[selected].content.length > 0, JSON.stringify(report?.loads?.[selected]))
     }
     run.check('no invalid preset diagnostic', !`${run.stdout} ${run.stderr}`.includes('agent-preset/invalid'))
     run.check('headless exits cleanly', run.code === 0 || run.code === null, `code=${run.code}`)
