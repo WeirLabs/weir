@@ -8,9 +8,11 @@
 //      no permission publication, no external installs, no notifications.
 //   4. Enter the session admission fence; close the gate and start draining
 //      removed managed MCP servers (drain is a stub seam until group 8.6).
-//   5. CAS-commit the new selection and receipt through the group-2 store,
-//      then in ONE non-async segment: swap the in-memory snapshot, call the
-//      provider's control.invalidate() and release the fence. invalidate()
+//   5. CAS-commit the new selection and receipt through the group-2 store, which
+//      reports the payload its CAS replaced — the authority for the net-change
+//      notice and for the gate/drain set — then in ONE non-async segment: swap
+//      the in-memory snapshot, call the provider's control.invalidate() and
+//      release the fence. invalidate()
 //      happens before the fence release and before the step-6 response.
 //   6. Send the response: accepted revision, effective sets, unresolved
 //      warnings and a drain snapshot taken at send time (never awaited).
@@ -217,10 +219,14 @@ export function createApplyEngine(options) {
    * and the prepared (never published) transaction is kept so a receipt query
    * can settle it from durable evidence — publish on proof, reopen on proven
    * absence, keep blocking while the record cannot vouch either way. The entry
-   * captures the pre-write accepted sets (the transaction-start store read):
-   * at settle time the durable record already holds the LANDED write, so the
-   * recovery publication's notice delta needs the captured basis (D3).
-   * @type {Map<string, { lease: { release(): void }, requestId: string, prepared: { handles: unknown[], identities: unknown[], view: unknown }, payload: unknown, previousSets: { skills: unknown[], mcpServers: string[] }, drainHandle: { abort(): void } | null, viewOptions: unknown }>}
+   * captures the publication basis (`basisSets`) of the aborted transaction: at
+   * settle time the durable record already holds the LANDED write, so the
+   * recovery notice delta cannot re-read it. Which record that is depends on the
+   * site — the committed-over record when the commit result proved it (a landed
+   * write whose fence was lost before publication), otherwise the transaction-
+   * start store read (the commit threw or its outcome is unknown: this process
+   * never observed the locked record, so no committed-over proof exists).
+   * @type {Map<string, { lease: { release(): void }, requestId: string, prepared: { handles: unknown[], identities: unknown[], view: unknown }, payload: unknown, basisSets: { skills: unknown[], mcpServers: string[] }, drainHandle: { abort(): void } | null, viewOptions: unknown }>}
    */
   const blocked = new Map()
 
@@ -409,20 +415,58 @@ export function createApplyEngine(options) {
       // The write outcome is UNKNOWN: stay blocked (fence held, gates closed)
       // and let a receipt query confirm the authority; never roll back on a guess.
       trace('indeterminate', { sessionId })
-      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, previousSets, drainHandle, viewOptions })
+      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, basisSets: previousSets, drainHandle, viewOptions })
       return { status: 'indeterminate', step: 5 }
     }
     trace('commit', { sessionId, status: result.status })
 
     if (result.status === 'committed') {
+      // Basis authority (D2/D5): the store hands back the payload its CAS replaced,
+      // read under the same per-unit lock. The transaction-start read above is NOT
+      // that authority — a foreign writer can land between it and this commit, and
+      // the CAS then passes on a revision this engine never saw. A committed result
+      // that cannot prove the record (a store double, a future store that does not
+      // honour the interface) keeps that read and reports
+      // `committed-over-unavailable`: never a fabricated full-set delta.
+      const proven = Object.hasOwn(result, 'committedOver')
+      const basisSets = proven
+        ? (result.committedOver === undefined ? { skills: [], mcpServers: [] } : safeSets(result.committedOver))
+        : previousSets
+      /** @type {string[]} */
+      const warnings = []
+      const degraded = (code, error) => {
+        warnings.push(code)
+        if (code === 'accepted-notification-degraded') warn(`apply onAccepted hook failed: ${message(error)}`)
+        else if (code === 'committed-over-unavailable') warn('apply commit result cannot prove the committed-over record: notice and drain basis fall back to the transaction-start read')
+      }
+      if (!proven) degraded('committed-over-unavailable')
+      // Two-phase drain (D3): the pre-commit closure above started draining from
+      // the transaction-start read — early, but possibly one revision stale.
+      // Servers the committed-over record drops that the earlier read could not
+      // name get their gates closed HERE, inside the still-held fence and before
+      // publication. The residual is a strict difference against the early set, so
+      // the two handles are disjoint by construction, and the reconciled handle is
+      // never abortable: a commit already landed.
+      const residualServers = basisSets.mcpServers.filter(server => !normalized.mcpServers.includes(server) && !removedServers.includes(server))
+      let reconciledHandle = null
+      if (residualServers.length) {
+        try {
+          reconciledHandle = drain.begin(residualServers, sessionId)
+        } catch (error) {
+          // The write is already durable: a reconciliation failure must never
+          // become a rejection. Report it and keep what the early handle closed.
+          degraded('drain-reconciliation-degraded', error)
+        }
+      }
       // Re-check the fence before publishing: the lease must still be ours.
       // The revision was already re-checked by the store CAS (expectedRevision).
       if (!fence.isHeld(sessionId)) {
         // The write LANDED but an atomic publication can no longer be
         // guaranteed: stay blocked and let a receipt query publish the
-        // authority from durable evidence.
+        // authority from durable evidence. The entry carries the basis this
+        // transaction would have published with (D4).
         trace('indeterminate', { sessionId, reason: 'fence-lost-before-publish' })
-        blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, previousSets, drainHandle, viewOptions })
+        blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, basisSets, drainHandle, viewOptions })
         return { status: 'indeterminate', step: 5 }
       }
       // Synchronous publication segment: no await between the snapshot swap,
@@ -430,8 +474,6 @@ export function createApplyEngine(options) {
       // complete before the fence release and before the step-6 response, so
       // a client that sees the new receipt never refetches a stale list. The
       // SAME segment runs on the recovery-'published' path (D4).
-      /** @type {string[]} */
-      const warnings = []
       trace('snapshot-swap', { sessionId, revision: result.revision })
       publishAccepted({
         sessionId,
@@ -439,20 +481,24 @@ export function createApplyEngine(options) {
         payload,
         prepared,
         viewOptions,
-        previousSets,
+        basisSets,
         lease,
-        degraded: (code, error) => {
-          warnings.push(code)
-          if (code === 'accepted-notification-degraded') warn(`apply onAccepted hook failed: ${message(error)}`)
-        },
+        degraded,
       })
+      // The response's drain snapshot is the union of both closures: the early
+      // one from the transaction-start read and the reconciled one from the
+      // committed-over record. Disjoint by construction; absent when empty.
+      const draining = [
+        ...(drainHandle ? drainHandle.snapshot() : []),
+        ...(reconciledHandle ? reconciledHandle.snapshot() : []),
+      ]
       const response = {
         status: 'applied',
         revision: result.revision,
         receipt: result.receipt,
         effective: { skills: structuredClone(prepared.identities), mcpServers: [...normalized.mcpServers] },
         unresolvedWarnings: normalized.unresolved.map(entry => ({ ...entry })),
-        ...(drainHandle ? { draining: drainHandle.snapshot() } : {}),
+        ...(draining.length ? { draining } : {}),
         ...(warnings.length ? { warnings } : {}),
       }
       trace('response', { sessionId, revision: result.revision })
@@ -466,7 +512,7 @@ export function createApplyEngine(options) {
     const KNOWN_UNCOMMITTED = new Set(['duplicate', 'request-conflict', 'revision-conflict', 'locked', 'unreadable', 'unsupported', 'write-failed'])
     if (!KNOWN_UNCOMMITTED.has(result.status)) {
       trace('indeterminate', { sessionId, status: result.status })
-      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, previousSets, drainHandle, viewOptions })
+      blocked.set(sessionId, { lease, requestId: normalized.requestId, prepared, payload, basisSets: previousSets, drainHandle, viewOptions })
       return { status: 'indeterminate', step: 5 }
     }
     drainHandle?.abort()
@@ -530,28 +576,28 @@ export function createApplyEngine(options) {
    * branch documents (a client that sees the new receipt never refetches a
    * stale list) holds for a recovered publication too.
    *
-   * The delta basis is the durable evidence only (D2): `previousSets` is the
-   * accepted record read at transaction start — the CAS on expectedRevision
-   * proved it the committed-over authority on the committed path, and the
-   * blocked entry carried it to the recovery path. The in-memory snapshots
-   * map is never a delta basis. A failed hook degrades, never changes the
-   * accepted policy; per-branch surfacing travels through `degraded` — the
-   * committed branch collects response warnings, the recovery branch warns
-   * only (it has no response payload).
+   * The delta basis is the durable evidence only (D2): `basisSets` is the
+   * accepted state this publication replaces — on the committed path the payload
+   * `store.commit` reports it committed over (read under the commit's own lock),
+   * carried into the recovery path by the blocked entry. It is never the
+   * in-memory snapshots map and never an unlocked re-read. A failed hook
+   * degrades, never changes the accepted policy; per-branch surfacing travels
+   * through `degraded` — the committed branch collects response warnings, the
+   * recovery branch warns only (it has no response payload).
    *
    * @param {{ sessionId: string, revision: number, payload: unknown,
    *   prepared: { handles: unknown[], identities: unknown[], view: unknown },
    *   viewOptions: unknown,
-   *   previousSets: { skills: unknown[], mcpServers: string[] },
+   *   basisSets: { skills: unknown[], mcpServers: string[] },
    *   lease: { release(): void }, settle?: (() => void) | null,
    *   degraded: (code: string, error?: unknown) => void }} segment
    */
-  function publishAccepted({ sessionId, revision, payload, prepared, viewOptions, previousSets, lease, settle = null, degraded }) {
+  function publishAccepted({ sessionId, revision, payload, prepared, viewOptions, basisSets, lease, settle = null, degraded }) {
     // Task 12.4: the net accepted delta is known only HERE (durable pre-write
     // record vs the just-committed payload); notify consumers queue it for
     // the next safe request.
     try {
-      const delta = selectionDelta(previousSets, safeSets(payload))
+      const delta = selectionDelta(basisSets, safeSets(payload))
       if (delta.added.length > 0 || delta.removed.length > 0) onAccepted?.(sessionId, delta)
     } catch (error) {
       degraded('accepted-notification-degraded', error)
@@ -598,8 +644,9 @@ export function createApplyEngine(options) {
    *   publication segment the lost response never ran — the SAME segment the
    *   committed path runs (delta → notice queue → snapshot swap → lifecycle
    *   publication → provider invalidation → fence release, D4), with the
-   *   delta computed against the pre-write sets captured at transaction
-   *   start — and report recovery 'published';
+   *   delta computed against the basis the blocked entry captured (the
+   *   committed-over record when the commit result proved it, D4) — and report
+   *   recovery 'published';
    * - a digest-verified record WITHOUT the pending receipt: durable proof the
    *   write never landed; reopen the drain gates, release the fence and
    *   report recovery 'not-committed' (proven absence, NOT a rollback);
@@ -636,9 +683,9 @@ export function createApplyEngine(options) {
       const confirmed = record.kind === 'ok' ? record.receipts.find(entry => entry.requestId === pending.requestId) ?? null : null
       if (confirmed) {
         // The indeterminate write LANDED: run the ONE publication segment the
-        // lost response never ran (D4), delta against the captured pre-write
-        // sets included, so the recovered acceptance notifies the model
-        // exactly once (the segment settles the blocked entry).
+        // lost response never ran (D4), delta against the basis the blocked
+        // entry captured included, so the recovered acceptance notifies the
+        // model exactly once (the segment settles the blocked entry).
         trace('recovery-publish', { sessionId, revision: confirmed.revision })
         publishAccepted({
           sessionId,
@@ -646,7 +693,7 @@ export function createApplyEngine(options) {
           payload: pending.payload,
           prepared: pending.prepared,
           viewOptions: pending.viewOptions,
-          previousSets: pending.previousSets,
+          basisSets: pending.basisSets,
           lease: pending.lease,
           settle: () => blocked.delete(sessionId),
           // Recovery has no response payload: degradation is warn-only.

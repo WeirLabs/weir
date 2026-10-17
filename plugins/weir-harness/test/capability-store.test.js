@@ -64,8 +64,16 @@ test('commit is compare-and-set on the unit revision and leaves no lock or temp 
   const root = await fixture(t)
   const store = openCapabilityStore({ root, platform: 'darwin' })
   assert.deepEqual(await store.read(unit), { kind: 'absent', revision: 0 })
+  // The exact committed-result INTERFACE (apply-basis-lock-hardening 3.1): the new
+  // payload plus the payload the CAS replaced. This first commit replaced nothing,
+  // so `committedOver` is present and undefined rather than absent.
   const first = await store.commit(unit, 0, previous => ({ previous: previous ?? null, skills: ['a'] }))
-  assert.deepEqual(first, { status: 'committed', revision: 1, payload: { previous: null, skills: ['a'] }, receipt: null })
+  assert.deepEqual(first, { status: 'committed', revision: 1, payload: { previous: null, skills: ['a'] }, receipt: null, committedOver: undefined })
+  // Field level as well, so the contract stays readable next to the exact shape.
+  assert.equal(first.revision, 1)
+  assert.deepEqual(first.payload, { previous: null, skills: ['a'] })
+  assert.equal(first.receipt, null)
+  assert.equal(first.committedOver, undefined)
   const bytes = await readFile(recordPath(root), 'utf8')
   assert.deepEqual(await store.commit(unit, 0, () => ({ skills: ['b'] })), { status: 'revision-conflict', revision: 1 })
   assert.equal(await readFile(recordPath(root), 'utf8'), bytes)
@@ -265,4 +273,21 @@ test('publishPointer writes the generation under the lock and switches active.js
   assert.equal((await store.read({ kind: 'distribution', scope: 'global' })).revision, 1)
   assert.throws(() => store.publishPointer('global', { expectedRevision: 1, generationId: 'g.3', files: {} }), TypeError)
   assert.throws(() => store.publishPointer('global', { expectedRevision: 1, generationId: 'g3', files: { '../x': 'a' } }), TypeError)
+})
+
+// --- apply-basis-lock-hardening 2.1: the committed-over payload --------------
+test('a committed result reports the payload the commit replaced as committedOver', async t => {
+  const root = await fixture(t)
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  const first = await store.commit(unit, 0, () => ({ skills: ['a'] }))
+  assert.equal(first.status, 'committed')
+  // A first-ever commit replaces no record: the property is PRESENT with value
+  // undefined (not null) — the distinction the engine's degradation check reads.
+  assert.equal(Object.hasOwn(first, 'committedOver'), true)
+  assert.equal(first.committedOver, undefined)
+  // A later commit reports the payload its CAS replaced, distinct from the new one.
+  const second = await store.commit(unit, 1, () => ({ skills: ['b'] }))
+  assert.equal(second.status, 'committed')
+  assert.deepEqual(second.committedOver, { skills: ['a'] })
+  assert.deepEqual(second.payload, { skills: ['b'] })
 })

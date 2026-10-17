@@ -49,6 +49,7 @@ test('sync commit → async read: same revision and same receipt; the async path
   const committed = store.commitSync(unit, 0, () => ({ skills: ['s'] }), { requestId: 'rs', requestDigest: 'ds' })
   assert.equal(committed.status, 'committed')
   assert.equal(committed.revision, 1)
+  assert.deepEqual(committed.payload, { skills: ['s'] })
   assert.deepEqual(committed.receipt, { requestId: 'rs', requestDigest: 'ds', revision: 1, acceptedAt: 2000 })
 
   const read = await store.read(unit)
@@ -113,4 +114,19 @@ test('sync commit requires a digest with a requestId (same contract as transact)
   const root = await fixture(t)
   const store = openStore({ root })
   assert.throws(() => store.commitSync(unit, 0, () => ({}), { requestId: 'r1' }), TypeError)
+})
+
+// --- apply-basis-lock-hardening 2.2: sync parity for the committed-over payload --
+test('commitSync reports the payload it committed over, with the async path\'s semantics', async t => {
+  const root = await fixture(t)
+  const store = openStore({ root })
+  const first = store.commitSync(unit, 0, () => ({ skills: ['a'] }))
+  assert.equal(first.status, 'committed')
+  assert.equal(Object.hasOwn(first, 'committedOver'), true)
+  assert.equal(first.committedOver, undefined)
+  // A second SEQUENTIAL sync commit reports the FIRST payload as the replaced one.
+  const second = store.commitSync(unit, 1, () => ({ skills: ['b'] }))
+  assert.equal(second.status, 'committed')
+  assert.deepEqual(second.committedOver, { skills: ['a'] })
+  assert.deepEqual(second.payload, { skills: ['b'] })
 })
