@@ -519,29 +519,37 @@ test('recovery-published from a fence lost after the commit computes the notice 
 // replays the receipt (`status: 'duplicate'`), and the duplicate branch queues
 // nothing — so on unmodified code nothing anywhere owes the model a notice.
 
-test('notice pin B pins a DEFECT: a duplicate replay after a restart owes no notice', async t => {
-  const notifier = createSelectionNotifier()
-  const { store, engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) } })
+test('notice pin B (fixed in 5.3): a duplicate replay after a restart delivers the durable notice and queues no second one', async t => {
+  let notifier = null
+  const { root, store, engine } = await fixture(t, {
+    engineOptions: { onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info) },
+  })
+  notifier = createSelectionNotifier({ store })
   const first = await engine.apply(auth, request())
   assert.equal(first.status, 'applied')
-  assert.deepEqual(notifier.consume(SESSION)?.net, { added: ['alpha'], removed: [] })
 
-  // A restart: a fresh engine and a fresh notifier over the same store root.
-  const restarted = createSelectionNotifier()
+  // A restart: a fresh module instance (and store handle) over the same root.
+  const restartStore = () => openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  const restarted = createSelectionNotifier({ store: restartStore() })
+  // The obligation became durable when the original publication ran, so the
+  // restarted process owes the notice even before the replay arrives.
+  assert.deepEqual(await restarted.pending(SESSION), { added: ['alpha'], removed: [], revision: 1 })
+
   const replayed = createApplyEngine({
     store,
     locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
     inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
     provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
-    onAccepted: (sessionId, delta) => restarted.queue(sessionId, delta),
+    onAccepted: (sessionId, delta, info) => restarted.queueSync(sessionId, delta, info),
   })
   const replay = await replayed.apply(auth, request())
   assert.equal(replay.status, 'duplicate')
   assert.equal(replay.revision, 1)
   assert.equal(replay.receipt.requestId, 'req-1')
-  // The replay recomputes and queues nothing, so no notice is owed anywhere.
-  assert.equal(restarted.has(SESSION), false)
-  assert.equal(restarted.consume(SESSION), null)
+  // The replay queues nothing (it cannot recompute a delta against a record that
+  // already holds the accepted sets) and nothing needs re-queueing: the durable
+  // obligation is unchanged, exactly once.
+  assert.deepEqual(await createSelectionNotifier({ store: restartStore() }).pending(SESSION), { added: ['alpha'], removed: [], revision: 1 })
 })
 
 // --- durable-pending-notice group 3.3: recovery paths write the durable unit --

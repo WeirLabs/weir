@@ -1,11 +1,29 @@
 // Task 12.4 of the session-capability-manager change: the model-facing
-// removal notification — net-change merging, the advisory template, the
-// consumption seam, and the exclusion guarantees.
-import { test, expect } from './helpers.js'
+// removal notification — net-change merging, the advisory template, the durable
+// queue seam (durable-pending-notice), and the exclusion guarantees.
+import { test, expect, storePlatformSkip } from './helpers.js'
+import assert from 'node:assert/strict'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { mergeNetChanges, notificationText, createSelectionNotifier, selectionDelta, NOTIFY_SOURCE } from '../src/capabilities/selection-notify.js'
+import { openCapabilityStore } from '../src/capabilities/store/store.js'
+import { createStubLiveness } from './helpers/stub-liveness.js'
 import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
 import { isGenuineUserMessage } from '../src/shared/runtime-messages.js'
 import { userTextMessage } from '../src/shared/user-message.js'
+
+/** A throwaway store root: the notifier's queue is a real durable unit. */
+async function noticeStore(t) {
+  const base = await realpath(tmpdir())
+  const root = await mkdtemp(join(base, 'weir-notice-queue-'))
+  t.after(async () => {
+    assert.equal(dirname(resolve(root)), base)
+    await rm(root, { recursive: true, force: true })
+  })
+  const open = () => openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  return { root, store: open(), reopen: open }
+}
 
 test('12.4 net changes merge across queued applications (add-then-remove nets out both)', () => {
   expect(mergeNetChanges({ added: [], removed: [] }, { added: ['a', 'b'], removed: [] })).toEqual({ added: ['a', 'b'], removed: [] })
@@ -26,31 +44,27 @@ test('12.4 the advisory template states the change, the not-a-user-message mark,
   expect(notificationText({ added: [], removed: [] })).toBeNull()
 })
 
-test('12.4 the notifier queues, merges and consumes exactly once per session', () => {
-  const notifier = createSelectionNotifier()
-  notifier.queue('s1', { added: ['a'] })
-  notifier.queue('s1', { removed: ['b'] })
-  notifier.queue('s2', { added: ['x'] })
+// durable-pending-notice 5.3: the queue is durable, so "queued" means written
+// to the store unit and "consumed" means cleared after delivery. A fresh
+// notifier over the same root — a restarted host process — sees the obligation.
+test('12.4 the notifier queues, merges and clears exactly once per session (durable)', { skip: storePlatformSkip }, async t => {
+  const { store, reopen } = await noticeStore(t)
+  const notifier = createSelectionNotifier({ store })
+  notifier.queueSync('s1', { added: ['a'] })
+  notifier.queueSync('s1', { removed: ['b'] })
+  notifier.queueSync('s2', { added: ['x'] })
   expect(notifier.has('s1')).toBe(true)
-  const pending = notifier.consume('s1')
-  expect(pending.net).toEqual({ added: ['a'], removed: ['b'] })
+  // A restarted process reports the same obligation…
+  const restarted = createSelectionNotifier({ store: reopen() })
+  const pending = await restarted.pending('s1')
+  expect(pending).toEqual({ added: ['a'], removed: ['b'], revision: 2 })
+  expect(restarted.has('s1')).toBe(true)
+  // …and only delivery clears it, exactly once.
+  expect((await notifier.clearDelivered('s1', pending)).status).toBe('cleared')
   expect(notifier.has('s1')).toBe(false)
-  expect(notifier.consume('s1')).toBeNull()
+  expect(await notifier.pending('s1')).toBeNull()
+  expect(await createSelectionNotifier({ store: reopen() }).pending('s1')).toBeNull()
   expect(notifier.has('s2')).toBe(true)
-})
-
-// Characterization of the PRE-CHANGE interface (durable-pending-notice 1.1,
-// replaced in 5.3): the queue is process memory, so a fresh notifier — a
-// restarted host process — reports nothing for a session whose Apply was
-// already durably accepted. This is the loss the durable unit removes.
-test('pre-change interface: the pending queue is process memory (a fresh notifier sees nothing)', () => {
-  const notifier = createSelectionNotifier()
-  notifier.queue('s1', { added: ['a'] })
-  expect(notifier.has('s1')).toBe(true)
-  // A second notifier stands for the next host process over the same store.
-  const restarted = createSelectionNotifier()
-  expect(restarted.has('s1')).toBe(false)
-  expect(restarted.consume('s1')).toBeNull()
 })
 
 test('12.4 the injected message is excluded from genuine-user detection (intent gate / continuation by construction)', () => {

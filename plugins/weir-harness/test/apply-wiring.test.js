@@ -101,7 +101,7 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
     get: () => undefined,
     logger: { warn() {}, debug() {} },
   }
-  const notifier = createSelectionNotifier()
+  const notifier = createSelectionNotifier({ store })
   const hooks = applyEngineHooks({ ctx, lifecycle: null, notifier })
   // Design D5: notify is the response-bus seam and no production consumer
   // exists — the production wiring deliberately leaves it unset.
@@ -127,9 +127,11 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   let audits = emitted.filter(([type]) => type === `weir/${APPLY_AUDIT_TYPE}`)
   expect(audits).toHaveLength(1)
   expect(audits[0][1].data).toEqual({ requestId: 'req-1', revision: 1 })
-  // Drain the committed Apply's own notice so the recovery delta is observed
+  // Deliver the committed Apply's own notice so the recovery delta is observed
   // in isolation (the notifier net-merges across queued Applies by design).
-  expect(notifier.consume(SESSION)?.net).toEqual({ added: ['alpha'], removed: [] })
+  const committed = await notifier.pending(SESSION)
+  expect(committed).toEqual({ added: ['alpha'], removed: [], revision: 1 })
+  expect((await notifier.clearDelivered(SESSION, committed)).status).toBe('cleared')
 
   lose = true
   const second = await engine.apply(auth, { requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] }, unresolved: [] })
@@ -144,10 +146,18 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   // wired onAccepted hook — exactly one delta computed against the captured
   // pre-write sets ({alpha} → {beta}).
   expect(notifier.has(SESSION)).toBe(true)
-  expect(notifier.consume(SESSION).net).toEqual({ added: ['beta'], removed: ['alpha'] })
-  // …and the diagnostic follows the queue exactly (1.4): true while queued,
-  // false once the notice has been handed to a request boundary.
+  const recovered = await notifier.pending(SESSION)
+  expect(recovered).toEqual({ added: ['beta'], removed: ['alpha'], revision: 3 })
+
+  // Delivery is the only clear (durable-pending-notice D4): the diagnostic
+  // follows the durable unit exactly (1.4) — true while queued, false once the
+  // notice has been handed to a request boundary.
+  const messages = []
+  expect(await notifier.deliver(SESSION, messages)).toBe('delivered')
+  expect(messages).toHaveLength(1)
+  expect(messages[0].source.kind).toBe('weir-selection-notify')
   expect(notifier.has(SESSION)).toBe(false)
+  expect(await notifier.pending(SESSION)).toBeNull()
 })
 
 // --- durable-pending-notice group 3.4: the delivery seam ----------------------

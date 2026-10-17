@@ -12,7 +12,7 @@ import { createSkillSelectionProvider } from '../src/capabilities/skill-selectio
 import { createSelectionDraft } from '../src/capabilities/selection-draft.js'
 import { APPLY_AUDIT_TYPE, createAdmissionFence, createApplyEngine, createDrainCoordinator, digestApplyRequest } from '../src/capabilities/apply-engine.js'
 import { digestOf } from '../src/capabilities/store/record.js'
-import { createSelectionNotifier } from '../src/capabilities/selection-notify.js'
+import { createSelectionNotifier, notificationText } from '../src/capabilities/selection-notify.js'
 import { applyEngineHooks } from '../src/capabilities/skill-selection-plugin.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
@@ -527,16 +527,23 @@ test('notice semantics: re-committing the same sets queues no notice (empty-delt
   assert.equal(deltas.length, 1)
 })
 
-test('notice semantics: deltas queue into the notifier and net-merge across applies', async t => {
-  const notifier = createSelectionNotifier()
-  const { engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) } })
+test('notice semantics: deltas queue durably into the notifier and net-merge across applies', async t => {
+  // durable-pending-notice 5.3: the queue is the store unit, so the notifier is
+  // built once the fixture's store root exists.
+  let notifier = null
+  const { store, engine } = await fixture(t, {
+    engineOptions: { onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info) },
+  })
+  notifier = createSelectionNotifier({ store })
   await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
   await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
-  const pending = notifier.consume(SESSION)
+  const pending = await notifier.pending(SESSION)
   // alpha and mcp-a were added then removed before the next request: net zero.
-  assert.deepEqual(pending.net, { added: ['beta'], removed: [] })
-  assert.ok(pending.text.includes('Added: beta.'))
-  assert.equal(notifier.consume(SESSION), null)
+  assert.deepEqual(pending, { added: ['beta'], removed: [], revision: 2 })
+  assert.ok(notificationText(pending).includes('Added: beta.'))
+  // Only delivery clears it.
+  assert.equal((await notifier.clearDelivered(SESSION, pending)).status, 'cleared')
+  assert.equal(await notifier.pending(SESSION), null)
 })
 
 /**
@@ -596,23 +603,27 @@ test('restart: re-applying the exact accepted set after a host restart stays sil
 // obligation exists only in process memory, so the restart and the replay drop
 // it. They are pinned as DEFECTS on unmodified code and inverted in 5.3.
 
-test('notice pin A pins a DEFECT: a restart loses the queued notice of a durably accepted Apply', async t => {
-  const notifier = createSelectionNotifier()
-  const { store, engine } = await restartedFixture(t, {
+test('notice pin A (fixed in 5.3): the queued notice of a durably accepted Apply survives a restart', async t => {
+  let notifier = null
+  const { root, store, engine } = await restartedFixture(t, {
     seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] },
-    engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) },
+    engineOptions: { onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info) },
   })
+  notifier = createSelectionNotifier({ store })
   const response = await engine.apply(auth, request({ requestId: 'restart-notice', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
   assert.equal(response.status, 'applied')
-  // The Apply IS durably accepted and its removal IS queued in this process…
-  assert.deepEqual(notifier.consume(SESSION)?.net, { added: [], removed: ['beta', 'mcp-a'] })
   const record = await store.read(unit)
   assert.equal(record.kind, 'ok')
   assert.deepEqual(record.payload.skills, [alpha])
-  // …but a fresh notifier (the next host process) reports nothing owed.
-  const restarted = createSelectionNotifier()
-  assert.equal(restarted.has(SESSION), false)
-  assert.equal(restarted.consume(SESSION), null)
+  // The obligation is durable: the NEXT host process owes the model the notice.
+  const restarted = createSelectionNotifier({
+    store: openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() }),
+  })
+  assert.equal(restarted.has(SESSION), true)
+  assert.deepEqual(await restarted.pending(SESSION), { added: [], removed: ['beta', 'mcp-a'], revision: 1 })
+  // The notice unit is its OWN record: the accepted selection revision is not
+  // touched by notice bookkeeping (the client's CAS token stays valid).
+  assert.equal(record.revision, 2)
 })
 
 // --- durable-pending-notice group 3: engine hook + durability (RED pre-fix) ---
