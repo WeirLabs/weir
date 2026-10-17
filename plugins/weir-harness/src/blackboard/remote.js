@@ -84,7 +84,7 @@ const BLACKBOARD_REMOTE_PACKAGE = 'weir-blackboard'
  */
 export class BlackboardRemoteError extends Error {
   /**
-   * @param {'bridge-absent' | 'unknown-session' | 'payload-failed'} code
+   * @param {'bridge-absent' | 'unknown-session' | 'payload-failed' | 'channel-unavailable'} code
    * @param {string} message
    * @param {{ cause?: unknown }} [options]
    */
@@ -112,7 +112,8 @@ export class BlackboardRemoteError extends Error {
  *   rootOf(sessionId) — conversation-root session id for a BARE session id
  *   ttlMs()   — the settings-driven write-token TTL in milliseconds
  */
-/** @type {Array<{ faces: { kernel: any, boardOf: (agent: any) => string | undefined, rootOf?: (sessionId: string) => Promise<string>, ttlMs: () => number } }>} Live feeds in feed order; the stack top serves. */
+/** The faces every live feed provides. `run` is the mount's lifecycle gate (apply/write/delete through one admission), `requestPromotion` the slice-3 promotion requester, and `boardOf` may await that same gate. @typedef {{ kernel: any, boardOf: (agent: any) => string | undefined | Promise<string | undefined>, rootOf?: (sessionId: string) => Promise<string>, ttlMs: () => number, run?: (agent: any, action: (root: string) => any) => Promise<any>, requestPromotion?: (agent: any) => Promise<unknown> }} BridgeFaces */
+/** @type {Array<{ faces: BridgeFaces }>} Live feeds in feed order; the stack top serves. */
 const bridgeStack = []
 
 /**
@@ -121,7 +122,7 @@ const bridgeStack = []
  * lifecycle. The unregister removes exactly its own token — removing the
  * serving token restores the previous live feed — and a repeated call is a
  * no-op.
- * @param {{ kernel: any, boardOf: (agent: any) => string | undefined, rootOf?: (sessionId: string) => Promise<string>, ttlMs: () => number }} faces
+ * @param {BridgeFaces} faces
  */
 export function feedBlackboardRemoteBridge(faces) {
   const token = { faces }
@@ -182,7 +183,7 @@ export function createBlackboardRemoteService(dependencies = {}) {
   /**
    * Resolve the acting session and its board from the wire agent.
    * @param {any} agent
-   * @returns {{ sessionId: string, boardId: string, faces: { kernel: any, boardOf: Function, ttlMs: Function } }}
+   * @returns {Promise<{ sessionId: string, boardId: string | undefined, faces: BridgeFaces }>}
    */
   async function resolveActing(agent) {
     if (!ensure()) throw new BlackboardRemoteError('channel-unavailable', 'blackboard remote is not registered with the gateway')

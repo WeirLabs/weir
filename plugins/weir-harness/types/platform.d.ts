@@ -23,6 +23,9 @@ declare module 'node:crypto' {
   export function createHash(algorithm: string): Hash;
   export function randomUUID(): string;
 }
+declare module 'node:zlib' {
+  export function zstdDecompressSync(bytes: Uint8Array): Buffer;
+}
 declare module 'node:fs' {
   export interface Stats { dev: number; ino: number; mode: number; nlink: number; size: number; mtimeMs: number; ctimeMs: number; isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean }
   export function lstatSync(path: string): Stats;
@@ -44,7 +47,7 @@ declare module 'node:fs' {
   export function statSync(path: string): Stats;
 }
 declare module 'node:fs/promises' {
-  export interface FileHandle { stat(): Promise<import('node:fs').Stats>; writeFile(bytes: string | Uint8Array, encoding?: string): Promise<void>; read(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesRead: number }>; readFile(): Promise<Buffer>; sync(): Promise<void>; close(): Promise<void> }
+  export interface FileHandle { stat(): Promise<import('node:fs').Stats>; writeFile(bytes: string | Uint8Array, encoding?: string): Promise<void>; read(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesRead: number }>; readFile(encoding: 'utf8'): Promise<string>; readFile(): Promise<Buffer>; sync(): Promise<void>; close(): Promise<void> }
   export function open(path: string, flags: string | number, mode?: number): Promise<FileHandle>;
   export function rename(from: string, to: string): Promise<void>;
   export function lstat(path: string): Promise<import('node:fs').Stats>;

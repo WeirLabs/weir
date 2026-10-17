@@ -4,6 +4,14 @@
 import { createBlackboardKernel } from './kernel.js'
 import { createBlackboardStorage, sessionId } from './storage.js'
 
+/**
+ * @param {object} dependencies
+ * @param {any} [dependencies.storage] durable store (createBlackboardStorage)
+ * @param {() => number} [dependencies.now]
+ * @param {(fn: () => void, ms: number) => any} [dependencies.setTimer]
+ * @param {(handle: any) => void} [dependencies.clearTimer]
+ * @param {(error: unknown) => void} [dependencies.warn] diagnostics sink
+ */
 export function createDurableBlackboard({ storage, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, warn = () => {} }) {
   const states = new Map()
   const listeners = new Set()
@@ -152,6 +160,10 @@ export function createRuntimeMount(ctx, runtime) {
   }
 }
 
+/**
+ * @param {any} ctx @param {any} agent @param {any} runtime @param {{ active: boolean }} [mount]
+ * @returns {Promise<string>}
+ */
 export async function resolveDurableRoot(ctx, agent, runtime, mount = undefined) {
   let id = sessionId(agent?.id)
   const wasLive = ctx.get?.('agents')?.get?.(id) === agent

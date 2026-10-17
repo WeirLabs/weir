@@ -33,6 +33,12 @@ export const RELEASE_NOTICE_PREFIX = 'Blackboard notice'
 export const MAX_DELIVERY_ATTEMPTS = 3
 
 /**
+ * The subagent delivery face a between-turns subscriber is reached through: asserted
+ * present on the one path that needs it (no runtime guard is added, design D6).
+ * @typedef {{ sendMessage: (parent: any, childId: string, blocks: Array<{ type: string, text: string }>, options: object) => unknown }} SubagentSendFace
+ */
+
+/**
  * The human-readable release clause per reason. Instance content (the key) is
  * embedded verbatim; the template is English.
  * @param {string} key
@@ -117,7 +123,7 @@ export function createReleaseNotifier({ agents, parentOf, subagents, logger, set
    * the live agent works, followup when it is idle, and — for a delegated
    * child whose agent handle is dropped between turns — the subagents channel
    * through its live parent.
-   * @param {string} subscriberId @param {object} message @param {number} attempt
+   * @param {string} subscriberId @param {{ content: Array<{ type: string, text: string }> }} message @param {number} attempt
    */
   function deliver(subscriberId, message, attempt) {
     const agent = safeGet(agents, subscriberId)
@@ -137,7 +143,7 @@ export function createReleaseNotifier({ agents, parentOf, subagents, logger, set
       }
       const parent = typeof parentId === 'string' && parentId.length > 0 ? safeGet(agents, parentId) : undefined
       if (!parent) throw new Error(`subscriber "${subscriberId}" is between turns and its parent agent is unavailable`)
-      return channel.sendMessage(parent, subscriberId, [{ type: 'text', text: message.content[0].text }], { signal: new AbortController().signal })
+      return /** @type {SubagentSendFace} */ (channel).sendMessage(parent, subscriberId, [{ type: 'text', text: message.content[0].text }], { signal: new AbortController().signal })
     }, (error) => {
       logger?.warn?.(`blackboard: release notice delivery to "${subscriberId}" failed after ${MAX_DELIVERY_ATTEMPTS} attempts: ${error?.message ?? error}`)
     })
@@ -145,7 +151,8 @@ export function createReleaseNotifier({ agents, parentOf, subagents, logger, set
 
   return (event) => {
     if (!Array.isArray(event.subscriberIds) || event.subscriberIds.length === 0) return
-    const message = userTextMessage(renderReleaseNotice(event), RELEASE_SOURCE_KIND)
+    // userTextMessage declares only `object`; assert the shape deliver reads (S13 UserMessage contract).
+    const message = /** @type {{ content: Array<{ type: string, text: string }> }} */ (userTextMessage(renderReleaseNotice(event), RELEASE_SOURCE_KIND))
     for (const subscriberId of event.subscriberIds) {
       if (typeof subscriberId !== 'string' || subscriberId.length === 0) continue
       deliver(subscriberId, message, 1)

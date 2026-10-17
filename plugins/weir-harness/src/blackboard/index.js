@@ -44,7 +44,7 @@ const MAX_ANCESTORS = 8
  * @returns {number} TTL in minutes
  */
 export function resolveWriteTokenTtlMinutes(section) {
-  const value = section && typeof section === 'object' ? section.writeTokenTtlMinutes : undefined
+  const value = section && typeof section === 'object' ? /** @type {{ writeTokenTtlMinutes?: unknown }} */ (section).writeTokenTtlMinutes : undefined
   if (value === undefined) return DEFAULT_WRITE_TOKEN_TTL_MINUTES
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
   throw new Error('weir-settings: blackboardWriteTokenTtlMinutes must be a positive number')
@@ -319,7 +319,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
      * rootOf pattern). A walk that breaks early degrades to the deepest known
      * ancestor so boards never silently cross-contaminate conversations.
      * @param {any} agent
-     * @returns {string | undefined}
+     * @returns {string | undefined | Promise<string | undefined>}
      */
     const boardOf = agent => {
       if (lifecycle) return lifecycle.run(agent, root => root)
