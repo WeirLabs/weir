@@ -20,7 +20,7 @@ Call \`cordis_inspect_list\` first to enumerate the Host and Client Inspect Prov
 
 ## Manage plugins deliberately
 
-\`plugin_manager\` lists, installs, enables, disables, and removes profile bundles and plugins. List first to obtain exact identifiers. Changes affect every session in the profile and apply immediately in a live profile. To re-apply a changed bundle, disable then enable it (\`set_bundle\`) — repeating \`install_bundle\` for an already-installed bundle is rejected as ambiguous. A version exemption risks crashes and data loss: warn the user and obtain explicit permission for the exact plugin and runtime versions before granting one.
+\`plugin_manager\` lists, installs, enables, disables, and removes profile bundles and plugins. List first to obtain exact identifiers. Changes affect every session in the profile and apply immediately in a live profile. To re-apply a changed bundle, disable then enable it (\`set_bundle\`) — repeating \`install_bundle\` for a known, already-installed bundle is refused up front as \`already-installed\`. A version exemption risks crashes and data loss: warn the user and obtain explicit permission for the exact plugin and runtime versions before granting one.
 
 ## Load the development skills
 
