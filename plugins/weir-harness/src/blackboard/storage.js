@@ -12,7 +12,9 @@ export const LOG = /^session\.v([1-9][0-9]*)\.jsonl(?:\.zstd)?$/
 const SIDE = /^session\.v[1-9][0-9]*\.jsonl(?:\.zstd)?_bb$/
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/
 const LOCK = 'weir-blackboard.lock'
-const uid = () => process.getuid?.()
+// The checked graph's global `process` contract (capabilities/store/checked-contract.d.ts)
+// is narrow by design; getuid is optional here and asserted locally (kernel.js:99 precedent).
+const uid = () => /** @type {any} */ (process).getuid?.()
 const code = error => error?.code
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -55,11 +57,11 @@ export async function locateSession(home, id, expectedCwd) {
     const logs = (await fs.readdir(dir)).filter(name => LOG.test(name))
     // Highest generation is DSH's canonical selection. Same-version physical
     // encodings are ambiguous: never guess which installation owns the log.
-    if (logs.some(name => !Number.isSafeInteger(Number(LOG.exec(name)[1])))) throw new Error('blackboard: unsupported canonical generation number')
-    logs.sort((a, b) => Number(LOG.exec(b)[1]) - Number(LOG.exec(a)[1]))
+    if (logs.some(name => !Number.isSafeInteger(Number(/** @type {RegExpExecArray} */ (LOG.exec(name))[1])))) throw new Error('blackboard: unsupported canonical generation number')
+    logs.sort((a, b) => Number(/** @type {RegExpExecArray} */ (LOG.exec(b))[1]) - Number(/** @type {RegExpExecArray} */ (LOG.exec(a))[1]))
     if (!logs.length) continue
     const name = logs[0]
-    if (logs[1] && LOG.exec(logs[1])[1] === LOG.exec(name)[1]) throw new Error('blackboard: ambiguous canonical log')
+    if (logs[1] && /** @type {RegExpExecArray} */ (LOG.exec(logs[1]))[1] === /** @type {RegExpExecArray} */ (LOG.exec(name))[1]) throw new Error('blackboard: ambiguous canonical log')
     const path = join(dir, name)
     await trusted(path)
     const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
@@ -70,7 +72,7 @@ export async function locateSession(home, id, expectedCwd) {
       const text = name.endsWith('.zstd') ? zstdDecompressSync(bytes).toString('utf8') : bytes.toString('utf8')
       header = JSON.parse(text.split('\n')[0])
     } catch { throw new Error('blackboard: unreadable Session header') }
-    if (header.type !== 'session' || header.id !== id || typeof header.cwd !== 'string' || !isAbsolute(header.cwd) || header.version !== Number(LOG.exec(name)[1]) || expectedCwd !== undefined && header.cwd !== expectedCwd) throw new Error('blackboard: Session header identity/cwd mismatch')
+    if (header.type !== 'session' || header.id !== id || typeof header.cwd !== 'string' || !isAbsolute(header.cwd) || header.version !== Number(/** @type {RegExpExecArray} */ (LOG.exec(name))[1]) || expectedCwd !== undefined && header.cwd !== expectedCwd) throw new Error('blackboard: Session header identity/cwd mismatch')
     matches.push({ id, dir, log: path, file: join(dir, name + '_bb'), header })
   }
   if (matches.length !== 1) throw new Error(`blackboard: ${matches.length ? 'ambiguous Session directories' : 'durable Session log unavailable; sidecars preserved'}`)
@@ -102,6 +104,12 @@ function dead(owner) {
 const ownerKey = Symbol.for('weir.blackboard.storage.owner.v1')
 const writerToken = globalThis[ownerKey] ??= randomUUID()
 
+/**
+ * @param {object} [dependencies] test seams
+ * @param {string} [dependencies.home] profile home; locateSession fail-closes on an unusable value
+ * @param {(op: string, path: string) => unknown} [dependencies.hook] maintenance fault-injection seam
+ * @param {number} [dependencies.timeoutMs] writer-lock acquisition budget
+ */
 export function createBlackboardStorage({ home, hook = async (_op, _path) => {}, timeoutMs = 5000 } = {}) {
   const queue = new Map()
   async function safeRead(path) {

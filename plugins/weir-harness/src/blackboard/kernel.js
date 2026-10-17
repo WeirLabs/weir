@@ -12,6 +12,20 @@
 // wire delivery. The kernel is concept-isomorphic to Edit Lock but shares
 // none of its code: no persistence, no recovery, no cross-process story.
 
+/**
+ * One live write token; `timer` is the injected timer handle (opaque here).
+ * @typedef {{ key: string, holder: string, expiresAt: number, timer: unknown }} Token
+ * One registered subscription row (rebuilt from the owning runtime's snapshot).
+ * @typedef {{ key: string, subscriberIds: string[] }} Subscription
+ * The release-event shape every listener receives (slice 2 delivery wiring).
+ * @typedef {{ boardId: string, key: string, holder: string, reason: 'write' | 'delete' | 'expire' | 'terminate', subscriberIds: string[], at: number }} ReleaseEvent
+ * A release listener; onRelease returns the matching unregister.
+ * @typedef {(event: ReleaseEvent) => void} ReleaseListener
+ * One board's volatile state: durable entries plus the arbitration maps.
+ * @typedef {{ entries: Map<string, object>, tokens: Map<string, Token>, subscribers: Map<string, Set<string>> }} BoardState
+ * The runtime snapshot `restore` rebuilds a board's volatile state from.
+ * @typedef {{ tokens: Token[], subscriptions: Subscription[] }} RuntimeState
+ */
 /** The closed entry-type taxonomy (D4); schema `enum` and runtime both pin it. */
 export const ENTRY_TYPES = Object.freeze(['map', 'contract', 'deadend', 'wiring', 'recipe', 'why'])
 
@@ -101,9 +115,9 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
   })
   const disarm = clearTimer ?? ((/** @type {any} */ handle) => globalThis.clearTimeout(handle))
 
-  /** @type {Map<string, { entries: Map<string, object>, tokens: Map<string, object>, subscribers: Map<string, Set<string>> }>} */
+  /** @type {Map<string, BoardState>} */
   const boards = new Map()
-  /** @type {Set<(event: object) => void>} release listeners (slice 2 delivery wiring) */
+  /** @type {Set<ReleaseListener>} release listeners (slice 2 delivery wiring) */
   const listeners = new Set()
 
   /** @param {string} boardId @returns {any} the board, created lazily */
@@ -122,7 +136,7 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
    * best-effort and NEVER breaks arbitration; events only fire when someone
    * actually waits (subscriberIds non-empty) so slice 2 gets a signal, not
    * noise.
-   * @param {object} event
+   * @param {ReleaseEvent} event
    */
   function fireRelease(event) {
     if (!Array.isArray(event.subscriberIds) || event.subscriberIds.length === 0) return
@@ -153,7 +167,7 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
     const state = boards.get(boardId)
     const token = state?.tokens.get(key)
     if (!token || token.expiresAt > at) return
-    state.tokens.delete(key)
+    /** @type {BoardState} */ (state).tokens.delete(key)
     if (token.timer !== undefined) disarm(token.timer)
     release(state, boardId, key, token.holder, 'expire', at)
   }
@@ -438,11 +452,14 @@ export function createBlackboardKernel({ now = Date.now, setTimer, clearTimer } 
 
     // Internal transaction seam. Only entries are durable; authority comes
     // exclusively from the owning runtime's snapshot, never from disk.
+    /**
+     * @param {string} boardId @param {any} entries @param {RuntimeState} [runtime]
+     */
     restore(boardId, entries, runtime = { tokens: [], subscriptions: [] }) {
       const state = board(boardId)
       state.entries = new Map(entries.map(entry => [entry.key, structuredClone(entry)]))
-      state.tokens = new Map(runtime.tokens.map(token => [token.key, { ...token }]))
-      state.subscribers = new Map(runtime.subscriptions.map(row => [row.key, new Set(row.subscriberIds)]))
+      state.tokens = new Map(runtime.tokens.map(token => /** @type {[string, Token]} */ ([token.key, { ...token }])))
+      state.subscribers = new Map(runtime.subscriptions.map(row => /** @type {[string, Set<string>]} */ ([row.key, new Set(row.subscriberIds)])))
     },
 
     expire(boardId, at = now()) {
