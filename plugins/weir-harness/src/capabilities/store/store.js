@@ -2,6 +2,10 @@
 // read(unit), commit(unit, expectedRevision, mutate) and publishPointer(scope,
 // next). Locking, stale-lock reclamation, temp cleanup, schema checks and the
 // platform gate stay inside; the filesystem Adapter is the only seam.
+// A committed result also reports the payload its CAS replaced (`committedOver`,
+// read under the same per-unit lock that performed the write): the store is the
+// only component that can prove a write's "before" state without a race, so no
+// caller may re-derive it from an unlocked read.
 import { join } from 'node:path'
 import { createNodeFs, createNodeSyncFs } from './fs-adapter.js'
 import { createLiveness } from './liveness.js'
@@ -23,7 +27,7 @@ export const SUPPORTED_PLATFORMS = Object.freeze(['darwin', 'win32'])
  * @typedef {import('./record.js').Receipt} Receipt
  * @typedef {import('./record.js').RecordRead} RecordRead
  * @typedef {{ requestId?: string, requestDigest?: string }} RequestRef
- * @typedef {{ status: 'committed', revision: number, payload: unknown, receipt: Receipt|null }
+ * @typedef {{ status: 'committed', revision: number, payload: unknown, receipt: Receipt|null, committedOver: unknown }
  *   | { status: 'duplicate', revision: number, receipt: Receipt }
  *   | { status: 'revision-conflict', revision: number }
  *   | { status: 'request-conflict', receipt: Receipt }
@@ -248,7 +252,9 @@ export function openCapabilityStore(options) {
           const settled = await readRecord(record).catch(() => null)
           if (settled?.kind !== 'ok' || settled.digest !== next.digest) return { status: 'write-failed', error }
         }
-        return { status: 'committed', revision, payload, receipt }
+        // The payload the CAS replaced, read under this same lock — the only
+        // provable "before" authority of this write (undefined: no record).
+        return { status: 'committed', revision, payload, receipt, committedOver: current.kind === 'ok' ? current.payload : undefined }
       } finally {
         await lock.release(dir, layout.name, acquired.token).catch(() => {})
       }
@@ -390,7 +396,8 @@ export function openCapabilityStore(options) {
         try { settled = readRecordSync(record) } catch { settled = null }
         if (settled?.kind !== 'ok' || settled.digest !== next.digest) return { status: 'write-failed', error }
       }
-      return { status: 'committed', revision, payload, receipt }
+      // Same committed-over authority as the async path (one typedef, both writes).
+      return { status: 'committed', revision, payload, receipt, committedOver: current.kind === 'ok' ? current.payload : undefined }
     } finally {
       try { syncLock.release(dir, layout.name, acquired.token) } catch { /* release is best-effort */ }
     }

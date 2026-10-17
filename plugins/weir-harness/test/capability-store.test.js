@@ -64,16 +64,16 @@ test('commit is compare-and-set on the unit revision and leaves no lock or temp 
   const root = await fixture(t)
   const store = openCapabilityStore({ root, platform: 'darwin' })
   assert.deepEqual(await store.read(unit), { kind: 'absent', revision: 0 })
-  // This pins the store's committed-result INTERFACE as it stands BEFORE
-  // apply-basis-lock-hardening: the result carries the newly written payload and
-  // nothing else — the payload the CAS replaced is not handed back yet. Task 3.1
-  // updates this exact literal when `committedOver` joins the result.
+  // The exact committed-result INTERFACE (apply-basis-lock-hardening 3.1): the new
+  // payload plus the payload the CAS replaced. This first commit replaced nothing,
+  // so `committedOver` is present and undefined rather than absent.
   const first = await store.commit(unit, 0, previous => ({ previous: previous ?? null, skills: ['a'] }))
-  assert.deepEqual(first, { status: 'committed', revision: 1, payload: { previous: null, skills: ['a'] }, receipt: null })
+  assert.deepEqual(first, { status: 'committed', revision: 1, payload: { previous: null, skills: ['a'] }, receipt: null, committedOver: undefined })
   // Field level as well, so the contract stays readable next to the exact shape.
   assert.equal(first.revision, 1)
   assert.deepEqual(first.payload, { previous: null, skills: ['a'] })
   assert.equal(first.receipt, null)
+  assert.equal(first.committedOver, undefined)
   const bytes = await readFile(recordPath(root), 'utf8')
   assert.deepEqual(await store.commit(unit, 0, () => ({ skills: ['b'] })), { status: 'revision-conflict', revision: 1 })
   assert.equal(await readFile(recordPath(root), 'utf8'), bytes)
