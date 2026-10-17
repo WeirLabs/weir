@@ -12,8 +12,10 @@ import {
   BLACKBOARD_REMOTE_SERVICE_KEY,
   BlackboardRemoteError,
   apply as remoteApply,
+  blackboardRemoteBridge,
   blackboardRemoteContribution,
   createBlackboardRemoteService,
+  feedBlackboardRemoteBridge,
 } from '../../src/blackboard/remote.js'
 
 const TTL = 60_000
@@ -284,6 +286,20 @@ describe('remote resolve (the panel root resolution: no lookup, a bare JSON sess
     let channelCaught
     try { (await gated.resolve('child')) } catch (error) { channelCaught = error }
     expect(channelCaught.code).toBe('channel-unavailable')
+  })
+})
+
+describe('module bridge feed (single-mount lifecycle pin)', () => {
+  it('an unfed bridge is null; a fed bridge serves its faces until its own unregister', () => {
+    const bridge = makeBridge()
+    expect(blackboardRemoteBridge()).toBeNull()
+    const unregister = feedBlackboardRemoteBridge(bridge.faces)
+    try {
+      expect(blackboardRemoteBridge()).toBe(bridge.faces)
+    } finally {
+      unregister()
+    }
+    expect(blackboardRemoteBridge()).toBeNull()
   })
 })
 
