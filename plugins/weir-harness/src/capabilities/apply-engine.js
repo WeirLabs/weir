@@ -644,8 +644,9 @@ export function createApplyEngine(options) {
    *   publication segment the lost response never ran — the SAME segment the
    *   committed path runs (delta → notice queue → snapshot swap → lifecycle
    *   publication → provider invalidation → fence release, D4), with the
-   *   delta computed against the pre-write sets captured at transaction
-   *   start — and report recovery 'published';
+   *   delta computed against the basis the blocked entry captured (the
+   *   committed-over record when the commit result proved it, D4) — and report
+   *   recovery 'published';
    * - a digest-verified record WITHOUT the pending receipt: durable proof the
    *   write never landed; reopen the drain gates, release the fence and
    *   report recovery 'not-committed' (proven absence, NOT a rollback);
@@ -682,9 +683,9 @@ export function createApplyEngine(options) {
       const confirmed = record.kind === 'ok' ? record.receipts.find(entry => entry.requestId === pending.requestId) ?? null : null
       if (confirmed) {
         // The indeterminate write LANDED: run the ONE publication segment the
-        // lost response never ran (D4), delta against the captured pre-write
-        // sets included, so the recovered acceptance notifies the model
-        // exactly once (the segment settles the blocked entry).
+        // lost response never ran (D4), delta against the basis the blocked
+        // entry captured included, so the recovered acceptance notifies the
+        // model exactly once (the segment settles the blocked entry).
         trace('recovery-publish', { sessionId, revision: confirmed.revision })
         publishAccepted({
           sessionId,
