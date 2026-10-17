@@ -80,7 +80,10 @@ describe('lsp executable resolution on Windows', () => {
   })
 
   it('pins the npm install prefix to the Windows global prefix', () => {
-    expect(npmGlobalPrefix(WIN_ENV, 'win32')).toBe(join(WIN_ENV.APPDATA, 'npm'))
+    // create: false — the layout assertion must not materialize a literal
+    // `C:\Users\tester\AppData\Roaming\npm` directory in the process CWD
+    // (the package-directory artifact that used to appear after unit runs).
+    expect(npmGlobalPrefix(WIN_ENV, 'win32', { create: false })).toBe(join(WIN_ENV.APPDATA, 'npm'))
   })
 
 
