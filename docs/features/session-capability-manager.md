@@ -154,7 +154,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 投递是 **deliver-then-clear**：`agent/pre-step` 先读义务、构建通知文本、把完整 UserMessage push 进这次请求，**之后**才按 CAS 清除，并且只减掉这一次真正投递的名字（并发 Apply 在 CAS 下合并进来的 delta 因此不会被抹掉；清除输掉 CAS 时重读并再减一次，只重试一次，第二次冲突保留义务——宁可重发，不可丢）。注入失败（`messages` 不是数组、push 抛错）不删除义务，留到下一个安全边界；此前的 consume-before-push 会在 push 之前先删，失败即静默丢失。
 
-失败语义：入队写失败（锁被占用、记录不可读、写失败、平台不支持）**抛错**，由引擎既有的 `accepted-notification-degraded` 路径降级响应——接受结果、revision 与选择策略完全不受影响，通知从不凌驾于接受之上；不可读/撕裂/未知 schema 的通知单元一律不投递、不删除、不重写，也绝不从中编造通知。审计走冷安全通道：新 `AUDIT_TYPES.capabilityNotice`（`weir/capability-notice`，cordis emit + `.weir/audit.jsonl` 镜像），outcome 取值 `queued`／`queue-failed`／`delivered`／`cleared`／`clear-failed`／`unreadable`／`injection-failed`，只记 added/removed **计数**（绝不记名字，与 `capability-read` 同规），失败时带 store status 与已知的接受 revision。
+失败语义：入队写失败（锁被占用、记录不可读、写失败、平台不支持）**抛错**，由引擎既有的 `accepted-notification-degraded` 路径降级响应——接受结果、revision 与选择策略完全不受影响，通知从不凌驾于接受之上；不可读/撕裂/未知 schema 的通知单元一律不投递、不删除、不重写，也绝不从中编造通知。审计走冷安全通道：新 `AUDIT_TYPES.capabilityNotice`（事件 `weir/capability-notice`；队列侧只知道 session id、不带会话 cwd，因此当前只走 cordis emit、不写 `.weir/audit.jsonl` 镜像——如实记录，`createAudit` 的镜像能力仍在），outcome 取值 `queued`／`queue-failed`／`delivered`／`cleared`／`clear-failed`／`unreadable`／`injection-failed`，只记 added/removed **计数**（绝不记名字，与 `capability-read` 同规），失败时带 store status 与已知的接受 revision。
 
 已知边界（如实，不是声称）：① 落盘验收与同步入队之间是两条相邻的无 yield 语句，进程恰好死在那一小段内（或入队写失败）会丢失该通知——该情形被审计并报为降级结果，绝不编造通知内容；② 跨进程可见性有限：模块为每个会话保留镜像（本进程首次边界冷读一次，之后由自身写入更新），**另一个宿主进程**排入的通知要等下一次冷加载（下次进程启动）才被本进程看见，不宣称即时跨进程可见；③ "已投递"指已注入某次请求，不指模型已读。
 
