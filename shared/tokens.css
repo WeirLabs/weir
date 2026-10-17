@@ -1,0 +1,30 @@
+@import url("fonts.css");
+/* Weir 设计令牌 —— 沿用 brand-board / fluid-board：外壳酸，内核清 */
+:root {
+  --bg: #070708;
+  --ink: #0a0a0b;
+  --graphite: #1c1d20;
+  --panel: #0f1012;
+  --bone: #ecece6;
+  --fg: #ecece6;
+  --dim: #8b8b86;
+  --dim2: #5d5e5a;
+  --line: rgba(236, 236, 230, 0.12);
+  --line2: rgba(236, 236, 230, 0.22);
+  --acid: #ccff00;
+  --pink: #ff2e9a;
+  --uv: #7b2cff;
+  --serif: "Instrument Serif", "Times New Roman", "Songti SC", serif;
+  --sans: "Inter Tight", "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", "PingFang SC", Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.mono { font-family: var(--mono); }
+.serif { font-family: var(--serif); font-weight: 400; }
+.fluid-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+[data-fluid] { position: relative; overflow: hidden; background: #050506; }
+[data-svg] > svg { display: block; width: 100%; height: auto; }
+/* 标志 + 流体堰口：两层共用同一 viewBox，按 144:136 等比 */
+.mk { position: relative; aspect-ratio: 144 / 136; }
+.mk > [data-svg] { position: absolute; inset: 0; }
+.mk-fluid { position: absolute !important; inset: 0; background: #050506; mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; }

@@ -1,0 +1,6 @@
+/* 自托管字体：Instrument Serif（展示）/ Inter Tight（界面）/ JetBrains Mono（数据与代码）。中文回落到系统苹方 / Noto Sans SC。 */
+@font-face { font-family: "Instrument Serif"; font-style: normal; font-weight: 400; font-display: block; src: url("fonts/instrument-serif-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; font-display: block; src: url("fonts/instrument-serif-latin-400-italic.woff2") format("woff2"); }
+@font-face { font-family: "Inter Tight"; font-style: normal; font-weight: 100 900; font-display: block; src: url("fonts/inter-tight-latin-wght-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: block; src: url("fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: block; src: url("fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
