@@ -96,29 +96,46 @@ export class BlackboardRemoteError extends Error {
 }
 
 /**
- * The bridge: exactly one blackboard plugin mounts per composition (per
- * process), and every consumer is the same bundle module instance — the same
- * module-level slot pattern as the capability read bridge. Faces:
+ * The bridge: EVERY mounted blackboard plugin feeds this module-level slot,
+ * and every consumer is the same bundle module instance. The preset registry
+ * eagerly mounts BOTH declared presets (weir and weir-creative) at profile
+ * load, so two blackboard mounts feeding this bridge is the permanent steady
+ * state — ownership is a LIVE-FEED STACK: the latest live feed serves, a
+ * feed's unregister removes only itself and restores the previous live feed,
+ * and only an empty stack surfaces as bridge-absent. (The sibling capability
+ * read bridge keys its feeds by preset instead: its reads route by the
+ * session's exact projected preset, while blackboard calls carry no routing
+ * dimension and the two presets' faces are equivalent today.)
+ * Faces:
  *   kernel()  — the shared arbitration kernel (list/read/apply/write/deleteKey)
  *   boardOf(agent) — conversation-root board id for an agent handle
  *   rootOf(sessionId) — conversation-root session id for a BARE session id
  *   ttlMs()   — the settings-driven write-token TTL in milliseconds
  */
-let bridgeFaces = null
+/** @type {Array<{ faces: { kernel: any, boardOf: (agent: any) => string | undefined, rootOf?: (sessionId: string) => Promise<string>, ttlMs: () => number } }>} Live feeds in feed order; the stack top serves. */
+const bridgeStack = []
 
 /**
- * Feed the bridge (blackboard plugin apply). Returns the unregister the plugin
- * disposes with its own lifecycle.
+ * Feed the bridge (blackboard plugin apply): push a unique token onto the
+ * live-feed stack and return the unregister the plugin disposes with its own
+ * lifecycle. The unregister removes exactly its own token — removing the
+ * serving token restores the previous live feed — and a repeated call is a
+ * no-op.
  * @param {{ kernel: any, boardOf: (agent: any) => string | undefined, rootOf?: (sessionId: string) => Promise<string>, ttlMs: () => number }} faces
  */
 export function feedBlackboardRemoteBridge(faces) {
-  bridgeFaces = faces
-  return () => { if (bridgeFaces === faces) bridgeFaces = null }
+  const token = { faces }
+  bridgeStack.push(token)
+  return () => {
+    const at = bridgeStack.indexOf(token)
+    if (at >= 0) bridgeStack.splice(at, 1)
+  }
 }
 
-/** Current bridge faces, or null when unmounted. */
+/** Current bridge faces: the latest live feed's, or null when no live feed remains (the one true bridge-absent). */
 export function blackboardRemoteBridge() {
-  return bridgeFaces
+  const top = bridgeStack[bridgeStack.length - 1]
+  return top ? top.faces : null
 }
 
 /** Strip one kernel row to the pinned wire entry shape (summary is a free-text string, content optional, the promoted marker rides along when present). */
