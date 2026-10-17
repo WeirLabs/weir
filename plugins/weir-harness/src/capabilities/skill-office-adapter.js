@@ -30,7 +30,13 @@ export function createOfficeAdapter(skills, machineId) {
     const observation = Array.isArray(output) ? { candidates: output, complete: true } : output
     const candidates = []
     for (const raw of observation.candidates) {
-      if (!OFFICE_NAMES.includes(raw.name) || raw.provider !== 'dsh-office' || raw.source !== 'bundled' || typeof raw.locator !== 'string') {
+      // DSH 0.2.1's office provider lists MORE bundled siblings than the three
+      // Weir composes (`office`, `office-render`, `office-recalculate`,
+      // `office-export-pdf`). This adapter only owns OFFICE_NAMES: a foreign
+      // sibling is skipped, never an error — while a candidate that CLAIMS one
+      // of our names with an unexpected shape still fails closed below.
+      if (!OFFICE_NAMES.includes(raw.name)) continue
+      if (raw.provider !== 'dsh-office' || raw.source !== 'bundled' || typeof raw.locator !== 'string') {
         throw new Error('Unsupported Office provider candidate')
       }
       const path = await realpath(raw.locator)
