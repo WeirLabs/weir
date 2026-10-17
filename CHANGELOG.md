@@ -29,6 +29,7 @@
 
 ### Removed
 
+- **死导出与临时 seam 摘除**：`same-name-policy.js` 的 `sameNameListing`/`refSatisfiedBy` 删除（零 src/lib 消费者，此前仅有测试钉住——钉住死代码会将其石化，模块本体因 `installTargetFor` 被生产消费而保留）；`settings/sections.js` 的临时 `EDIT_LOCK_DEFAULTS`/`editLockLimits` re-export 按 subsystem-seam-hygiene D4 的声明摘除，唯一消费者（settings-fields 测试）改直接 import `edit-lock/limits.js`；另随架构程序补齐 checkJs 覆盖：`src/blackboard/**` 六个模块纳入 allowlist（52 个类型错误清零，纯 JSDoc + curated 契约扩展，零运行时变更）。
 - **假想 seam 清理（零生产引用的被测代码）**：`mcp-admission.js` 的 `wrapResourceProvider` 删除——它零生产调用且钉的是生产从不使用的 provider 形状（生产 resource 门在 facade 内联），其测试改钉生产 facade 路径（admit 拒绝 + drain 接线 + A/B 会话隔离）；client capability-model 的 `commitStateOf`/`closeDirtyDraft` 决策助手删除（零生产调用，生产路径每次锻造新 requestId，其文档声称的重用语义与生产相反），manager 中只由死代码可达的 `install-or-configure` 渲染分支一并删除；chunk 清单随提交同步重建。
 - **Skill 分发（第三方来源安装/更新）声明与代码撤回**：该能力从未接线交付（策略层模块零生产 importer）——六个未接线模块（`content-refresh`、`isolated-exec`、`distribution-manifest`、`publisher`、`content-pin`、`update-lifecycle`，约 838 行）与其三条测试套件、`apply-engine` 的 `coordinate` 钩子一并删除；`same-name-policy.js` 的两个零生产调用者导出按打捞裁决一并移除（其语义由选择 provider 生产路径覆盖）。实际交付的等价路径：会话选择 + Apply、v2 预设包导入（带确认安装随包本地 Skill 文件）、Weir 捆绑 Skill 经 npm bundle 更新、本地技能发现根。`skill-distribution` spec 的 14 条未交付要求同步撤回（保留的 5 条由已交付路径实现）。
 
