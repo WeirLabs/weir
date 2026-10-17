@@ -5,14 +5,15 @@
 // incarnation — stands in for the idle-but-alive holder whose process can
 // never be proven dead) acquires the file and dies inside the publish hook,
 // leaving a retained lock plus an unresolved publication fence. The "panel"
-// child then opens the authority read-only-inspection-first: the REAL client
-// chunk classifies the blocked row (file, holder, holder state, force-release
-// scope) without any manual trigger, observes the bare unlock refusal the
-// incident showed, settles lock + fence with ONE adminRecoverOnline call
-// carrying the chunk-computed confirmation, and proves another session
-// acquires the file immediately. A third child manufactures an owner whose
-// preconditions fail (a committed prepared operation) and asserts the
-// diagnosis names the failing precondition instead of staying silent.
+// child then opens the authority read-only-inspection-first: the host-side
+// recovery proposals classify the blocked row (file, holder, holder state,
+// force-release scope) without any manual trigger, observes the bare unlock
+// refusal the incident showed, settles lock + fence with ONE
+// adminRecoverOnline call carrying the server-computed confirmation, and
+// proves another session acquires the file immediately. A third child
+// manufactures an owner whose preconditions fail (a committed prepared
+// operation) and asserts the proposal names the failing precondition code
+// instead of staying silent.
 // Phase 2 is a fresh headless boot: another session edits the target file
 // right away, and the ledger/authority facts pin the outcomes.
 import { spawn } from 'node:child_process'
@@ -28,8 +29,7 @@ const TARGET = join(WS, 'recovery-ux-target.txt')
 const TARGET2 = join(WS, 'recovery-ux-unmet.txt')
 const NODE = process.env.WEIR_IT_NODE ?? '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'
 const HARNESS_SRC = new URL('../../../weir-harness/src/', import.meta.url).pathname
-const HARNESS_TEST = new URL('../../../weir-harness/test/', import.meta.url).pathname
-const REASON_PREPARED = 'The owner still has a prepared operation; recover to stable unknown history before an administrative override.'
+const PREPARED_OUTSTANDING = 'prepared-outstanding'
 
 /** Run one node child; resolves with { code, signal, stdout, stderr }. */
 function runChild(script) {
@@ -74,9 +74,9 @@ function manufactureForeignStuck() {
   `)
 }
 
-/** The panel: read-only inspection → REAL chunk diagnosis → the bare unlock
- * refusal → one adminRecoverOnline with the chunk-computed confirmation →
- * another session acquires the file immediately. */
+/** The panel: read-only inspection → server recovery proposals → the bare
+ * unlock refusal → one adminRecoverOnline with the server-computed
+ * confirmation → another session acquires the file immediately. */
 function runPanelSettle() {
   return runChild(`
     import { writeFile } from 'node:fs/promises'
@@ -85,9 +85,8 @@ function runPanelSettle() {
     import { recoverEditLockManager } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/manager.js`)}
     import { reservePublisher } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/reservation.js`)}
     import { createLiveness } from ${JSON.stringify(`${HARNESS_SRC}/capabilities/store/liveness.js`)}
-    import { summarizeAuthorityImage } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/inspect.js`)}
+    import { recoveryProposals } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/inspect.js`)}
     import { recoveryConfirmation } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/admin-recovery.js`)}
-    import { loadClientChunk } from ${JSON.stringify(`${HARNESS_TEST}/helpers/load-client-chunk.js`)}
     const liveness = createLiveness()
     await reservePublisher(${JSON.stringify(AUTHORITY)}, { liveness, leaseMs: 1000, renewMs: 250 })
     const store = await openEditLockStore({ directory: ${JSON.stringify(AUTHORITY)}, domainId: ${JSON.stringify(WS)}, mode: 'recover' })
@@ -96,15 +95,9 @@ function runPanelSettle() {
     // the only settlement), and it maps publishing → unknown, interrupts all
     // sessions and retains the lock — exactly the incident state.
     const manager = await recoverEditLockManager({ store, managerIncarnation: 'it-ux-panel', root: ${JSON.stringify(WS)}, writeBackup })
-    const requireStub = (name) => {
-      if (name === 'react') return { Component: class {} }
-      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
-      throw new Error('unexpected require ' + name)
-    }
-    const { editLockRecovery } = (await loadClientChunk('lib/client.edit-lock-maintenance.js', requireStub)).exports
-    const diagnosis = editLockRecovery.recoveryDiagnosis(${JSON.stringify(WS)}, summarizeAuthorityImage(store.snapshot()))
-    const row = diagnosis.blocked.find((entry) => entry.resourceId === ${JSON.stringify(TARGET)})
-    const candidate = diagnosis.candidates.find((entry) => entry.owner === 'it-ux-foreign')
+    const proposals = recoveryProposals(${JSON.stringify(WS)}, store.snapshot())
+    const row = proposals.blocked.find((entry) => entry.resourceId === ${JSON.stringify(TARGET)})
+    const candidate = proposals.candidates.find((entry) => entry.owner === 'it-ux-foreign')
     const lock = store.snapshot().state.locks.find((entry) => entry.resourceId === ${JSON.stringify(TARGET)})
     // The bare refusal the incident showed, observed BEFORE the settle.
     const unlockRefusal = await manager.adminUnlock(${JSON.stringify(TARGET)}, lock.generation).then(() => null, (error) => String(error?.message ?? error))
@@ -118,7 +111,7 @@ function runPanelSettle() {
     // Proving editability must not leave the file locked: release it so the
     // phase-2 session acquires it through the ordinary path.
     await manager.release(admitted)
-    const afterDiagnosis = editLockRecovery.recoveryDiagnosis(${JSON.stringify(WS)}, summarizeAuthorityImage(store.snapshot()))
+    const afterProposals = recoveryProposals(${JSON.stringify(WS)}, store.snapshot())
     await manager.close()
     console.log(JSON.stringify({
       blockedRow: row ?? null,
@@ -127,8 +120,8 @@ function runPanelSettle() {
       unlockRefusal,
       settle: { revision: settle.revision, idempotent: settle.idempotent, actor: settle.record.actor, releasedLocks: settle.record.releasedLocks.map((entry) => entry.resourceId) },
       verifyAcquiredGeneration: admitted.generation,
-      afterBlocked: afterDiagnosis.blocked.length,
-      afterUnmet: afterDiagnosis.unmet.length,
+      afterBlocked: afterProposals.blocked.length,
+      afterUnmet: afterProposals.unmet.length,
     }))
   `)
 }
@@ -141,8 +134,7 @@ function runUnmetManufacture() {
     import { recoverEditLockManager } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/manager.js`)}
     import { reservePublisher } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/reservation.js`)}
     import { createLiveness } from ${JSON.stringify(`${HARNESS_SRC}/capabilities/store/liveness.js`)}
-    import { summarizeAuthorityImage } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/inspect.js`)}
-    import { loadClientChunk } from ${JSON.stringify(`${HARNESS_TEST}/helpers/load-client-chunk.js`)}
+    import { recoveryProposals } from ${JSON.stringify(`${HARNESS_SRC}/edit-lock/inspect.js`)}
     const liveness = createLiveness()
     await reservePublisher(${JSON.stringify(AUTHORITY)}, { liveness, leaseMs: 1000, renewMs: 250 })
     const store = await openEditLockStore({ directory: ${JSON.stringify(AUTHORITY)}, domainId: ${JSON.stringify(WS)}, mode: 'recover' })
@@ -156,16 +148,10 @@ function runUnmetManufacture() {
     }, { validate() {}, publish: async () => { throw new Error('never dispatched') }, identify: () => ${JSON.stringify(TARGET2)} })
     if (ready.kind !== 'ready') throw new Error('prepare did not return ready')
     await manager.cancel(execution)
-    const requireStub = (name) => {
-      if (name === 'react') return { Component: class {} }
-      if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
-      throw new Error('unexpected require ' + name)
-    }
-    const { editLockRecovery } = (await loadClientChunk('lib/client.edit-lock-maintenance.js', requireStub)).exports
-    const diagnosis = editLockRecovery.recoveryDiagnosis(${JSON.stringify(WS)}, summarizeAuthorityImage(store.snapshot()))
+    const proposals = recoveryProposals(${JSON.stringify(WS)}, store.snapshot())
     const preparedPhase = manager.history('it-ux-c', 'it-ux-c-op')?.phase ?? null
     await manager.close()
-    console.log(JSON.stringify({ preparedPhase, unmet: diagnosis.unmet }))
+    console.log(JSON.stringify({ preparedPhase, unmet: proposals.unmet }))
   `)
 }
 
@@ -258,12 +244,12 @@ function assertRun(run, { home } = {}) {
   run.check('phase 1 established the authority and exited cleanly', run.records.find((r) => r.kind === 'phase1-exit')?.code === 0, JSON.stringify(run.records.find((r) => r.kind === 'phase1-exit')))
   run.check('the foreign child died inside the publish hook, leaving the half-published file and the leaked reservation', foreignFacts?.signal === 'SIGKILL' && foreignFacts?.orphanPublished === true && foreignFacts?.reservationLeaked === true, JSON.stringify(foreignFacts))
   // The panel auto-lists the blocked row without any manual step: the
-  // inspection + the REAL chunk classification ran in the child.
+  // inspection + the server-side proposal computation ran in the child.
   const panel = panelFacts?.value ?? null
   run.check('the panel classified the blocked row: file, holder, holder state, force-release scope', panelFacts?.childCode === 0 && panel?.blockedRow?.resourceId === target
     && panel.blockedRow.owner === 'it-ux-foreign' && panel.blockedRow.lockStatus === 'user-interrupted'
     && panel.blockedRow.fence === true && panel.blockedRow.interrupted === true, JSON.stringify(panel))
-  run.check('the force-release scope matches the chunk-computed confirmation byte-for-byte', panel?.confirmationMatches === true
+  run.check('the force-release scope matches the server-computed confirmation byte-for-byte', panel?.confirmationMatches === true
     && panel.candidateScope?.owner === 'it-ux-foreign' && JSON.stringify(panel.candidateScope?.operationIds) === '["it-ux-foreign-op"]', JSON.stringify(panel?.candidateScope))
   run.check('the incident bare refusal was observed before the settle', typeof panel?.unlockRefusal === 'string' && panel.unlockRefusal.includes('unresolved publication fence: retained-ownership'), JSON.stringify(panel?.unlockRefusal))
   run.check('one online administrative transaction settled the fence, released the lock and revoked the owner', panel?.settle?.actor === 'online-administrator'
@@ -272,8 +258,8 @@ function assertRun(run, { home } = {}) {
   run.check('the settled owner leaves no blocked row and no unmet entry', panel?.afterBlocked === 0 && panel?.afterUnmet === 0, JSON.stringify({ afterBlocked: panel?.afterBlocked, afterUnmet: panel?.afterUnmet }))
   // The unmet zone names the failing precondition instead of staying silent.
   const unmet = unmetFacts?.value ?? null
-  run.check('the prepared-owner diagnosis names the failing precondition', unmetFacts?.childCode === 0 && unmet?.preparedPhase === 'prepared'
-    && unmet.unmet?.some((entry) => entry.owner === 'it-ux-c' && entry.reason === REASON_PREPARED && entry.rows.some((row) => row.resourceId === target2)) === true, JSON.stringify(unmet))
+  run.check('the prepared-owner proposal names the failing precondition code', unmetFacts?.childCode === 0 && unmet?.preparedPhase === 'prepared'
+    && unmet.unmet?.some((entry) => entry.owner === 'it-ux-c' && entry.reason === PREPARED_OUTSTANDING && entry.rows.some((row) => row.resourceId === target2)) === true, JSON.stringify(unmet))
   // Phase 2: the file is editable by another session and the ledger is exact.
   run.check('phase 2 edited the settled file immediately', phase2Facts?.targetContent === 'recovered\n', JSON.stringify(phase2Facts?.targetContent))
   run.check('the ledger holds exactly one online administrative recovery for the foreign owner', snapshot?.adminRecoveries?.length === 1
