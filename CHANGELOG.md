@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+> **DSH 兼容性边界**：本版本是支持 DSH `0.2.0-rc.2`（`>=0.2.0-rc.2 <0.3.0`）的**最后一个 Weir 版本**。DSH 迭代快且常有破坏性变更，后续 Weir 版本将跟随更新的宿主运行时，可能抬升下限。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
+
 ### Changed
 
 - **子系统 seam 卫生：五处 internal reach-through 机械搬迁（零可观察行为变化）**：①通用进程机械（可执行解析/启动形态/受限运行，540 行）自 `src/lsp/child-process.js` 迁入新子系统 `src/process/`——worktree 的 git 运行器不再越界 import LSP 内部，npm 安装策略仍留在 LSP；②通用 HTTP JSON 助手（`jsonResponse`/`readJsonBody`）自 `lsp/admin.js` 下沉 `src/shared/http-json.js`，settings/notify 不再伸手 LSP 内部；③whitelist-defaults 读取器上移 `src/delegate/`（与守卫表同居），消除全树唯一的 shared↔delegate 反向环；④edit-lock 保留期解析器迁入自有 `limits.js`，settings 经临时 re-export 消费同一常量（双份实现风险消除）；⑤`content-text.js` 移动经评审否决（第二消费者 terminal-evidence 同日出现，移动只会平移反向边）。每次搬迁独立提交、全量单测逐提交恒绿（2881/0 fail，零断言变更），checkJs 覆盖同步扩展到新子系统。详见各 docs/features 模块表。

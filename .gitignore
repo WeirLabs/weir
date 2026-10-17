@@ -10,6 +10,8 @@ docs/*
 !docs/features/
 # docs/assets/ holds committed brand & README imagery (SVG).
 !docs/assets/
+# docs/compatibility.md holds the committed DSH support matrix.
+!docs/compatibility.md
 
 # Harness runtime scratch (notepads, research notes written by weir sessions)
 .weir/
