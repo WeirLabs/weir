@@ -1013,7 +1013,6 @@ window.__ModuleLoader__.load({
 					commit?.phase === "same-name-conflict" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(DANGER), role: "alert", children: t("capability.serverSameName", "Server rejected same-name Skill {names}. Uncheck one source, or refresh the listing; draft kept.").replace("{names}", commit.names.join(", ") || t("capability.unknownName", "unknown name")) }) : null,
 					commit?.phase === "missing" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(WARN), role: "alert", children: t("capability.serverMissing", "Server could not resolve {names}. Refresh the listing and choose an exact source or remove the name; draft kept.").replace("{names}", commit.names.join(", ") || t("capability.unknownName", "unknown name")) }) : null,
 					commit?.phase === "revision-conflict" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(WARN), children: t("capability.conflictState", "Changed elsewhere — review current state") }) : null,
-					commit?.phase === "install-or-configure" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(ACCENT), title: (commit.missing ?? []).join(", "), children: t("capability.missingAction", "Missing items need install/configure") }) : null,
 					commit?.phase === "indeterminate" ? react_jsx_runtime.jsx("span", { style: S.footer.chip(MUTED), children: t("capability.pending", "Result pending — query the receipt") }) : null
 				] }) : null
 			] });
