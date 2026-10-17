@@ -24,10 +24,14 @@ declare module 'node:child_process' {
 }
 declare module 'node:os' {
   export function hostname(): string;
+  export function homedir(): string;
 }
 declare var process: {
   pid: number;
   platform: string;
+  execPath: string;
+  cwd(): string;
+  env: Record<string, string | undefined>;
   kill(pid: number, signal?: number): void;
 };
 

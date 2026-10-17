@@ -39,7 +39,9 @@ declare module 'node:fs' {
   export function mkdirSync(path: string, options?: { recursive?: boolean; mode?: number }): string | undefined;
   export function appendFileSync(path: string, value: string): void;
   export function rmdirSync(path: string): void;
-  export const constants: { O_RDONLY: number; O_DIRECTORY: number; O_NOFOLLOW: number; O_NONBLOCK: number };
+  export const constants: { O_RDONLY: number; O_DIRECTORY: number; O_NOFOLLOW: number; O_NONBLOCK: number; X_OK: number };
+  export function accessSync(path: string, mode?: number): void;
+  export function statSync(path: string): Stats;
 }
 declare module 'node:fs/promises' {
   export interface FileHandle { stat(): Promise<import('node:fs').Stats>; writeFile(bytes: string | Uint8Array, encoding?: string): Promise<void>; read(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesRead: number }>; readFile(): Promise<Buffer>; sync(): Promise<void>; close(): Promise<void> }
