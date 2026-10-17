@@ -11,6 +11,7 @@ import { digestOf } from '../src/capabilities/store/record.js'
 import { createStubLiveness } from './helpers/stub-liveness.js'
 import { createSkillIdentity, skillIdentityKey } from '../src/capabilities/skill-identity.js'
 import { APPLY_AUDIT_TYPE, createAdmissionFence, createApplyEngine, createDrainCoordinator } from '../src/capabilities/apply-engine.js'
+import { createSelectionNotifier } from '../src/capabilities/selection-notify.js'
 import { AUDIT_TYPES, createAudit } from '../src/shared/audit.js'
 
 const SESSION = 'session-ffffffff-0000-4aaa-8bbb-cccccccccccc'
@@ -510,4 +511,35 @@ test('recovery-published from a fence lost after the commit computes the notice 
   // Exactly one notice, computed against the record the CAS replaced: beta and
   // mcp-w are named, and only the revision-2 record holds them.
   assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a', 'mcp-w'] } }])
+})
+
+// --- durable-pending-notice group 1: defect pin B (flipped in 5.3) -----------
+// The reported replay loss: an Apply is durably accepted, the client loses the
+// response and retries the SAME requestId after a host restart. The store
+// replays the receipt (`status: 'duplicate'`), and the duplicate branch queues
+// nothing — so on unmodified code nothing anywhere owes the model a notice.
+
+test('notice pin B pins a DEFECT: a duplicate replay after a restart owes no notice', async t => {
+  const notifier = createSelectionNotifier()
+  const { store, engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) } })
+  const first = await engine.apply(auth, request())
+  assert.equal(first.status, 'applied')
+  assert.deepEqual(notifier.consume(SESSION)?.net, { added: ['alpha'], removed: [] })
+
+  // A restart: a fresh engine and a fresh notifier over the same store root.
+  const restarted = createSelectionNotifier()
+  const replayed = createApplyEngine({
+    store,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta) => restarted.queue(sessionId, delta),
+  })
+  const replay = await replayed.apply(auth, request())
+  assert.equal(replay.status, 'duplicate')
+  assert.equal(replay.revision, 1)
+  assert.equal(replay.receipt.requestId, 'req-1')
+  // The replay recomputes and queues nothing, so no notice is owed anywhere.
+  assert.equal(restarted.has(SESSION), false)
+  assert.equal(restarted.consume(SESSION), null)
 })

@@ -39,6 +39,20 @@ test('12.4 the notifier queues, merges and consumes exactly once per session', (
   expect(notifier.has('s2')).toBe(true)
 })
 
+// Characterization of the PRE-CHANGE interface (durable-pending-notice 1.1,
+// replaced in 5.3): the queue is process memory, so a fresh notifier — a
+// restarted host process — reports nothing for a session whose Apply was
+// already durably accepted. This is the loss the durable unit removes.
+test('pre-change interface: the pending queue is process memory (a fresh notifier sees nothing)', () => {
+  const notifier = createSelectionNotifier()
+  notifier.queue('s1', { added: ['a'] })
+  expect(notifier.has('s1')).toBe(true)
+  // A second notifier stands for the next host process over the same store.
+  const restarted = createSelectionNotifier()
+  expect(restarted.has('s1')).toBe(false)
+  expect(restarted.consume('s1')).toBeNull()
+})
+
 test('12.4 the injected message is excluded from genuine-user detection (intent gate / continuation by construction)', () => {
   const message = userTextMessage(notificationText({ added: [], removed: ['a'] }), NOTIFY_SOURCE)
   expect(message.role).toBe('user')

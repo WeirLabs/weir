@@ -590,6 +590,30 @@ test('restart: re-applying the exact accepted set after a host restart stays sil
   assert.deepEqual(deltas, [])
 })
 
+// --- durable-pending-notice group 1: defect pins (flipped in 5.3) -------------
+// Both shapes below are the reported losses this change fixes: the notice
+// obligation exists only in process memory, so the restart and the replay drop
+// it. They are pinned as DEFECTS on unmodified code and inverted in 5.3.
+
+test('notice pin A pins a DEFECT: a restart loses the queued notice of a durably accepted Apply', async t => {
+  const notifier = createSelectionNotifier()
+  const { store, engine } = await restartedFixture(t, {
+    seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] },
+    engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) },
+  })
+  const response = await engine.apply(auth, request({ requestId: 'restart-notice', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(response.status, 'applied')
+  // The Apply IS durably accepted and its removal IS queued in this process…
+  assert.deepEqual(notifier.consume(SESSION)?.net, { added: [], removed: ['beta', 'mcp-a'] })
+  const record = await store.read(unit)
+  assert.equal(record.kind, 'ok')
+  assert.deepEqual(record.payload.skills, [alpha])
+  // …but a fresh notifier (the next host process) reports nothing owed.
+  const restarted = createSelectionNotifier()
+  assert.equal(restarted.has(SESSION), false)
+  assert.equal(restarted.consume(SESSION), null)
+})
+
 // --- apply-basis-lock-hardening group 1: characterization pins -----------------
 // Interleaving-free basis pin (tasks 1.2): with no foreign writer, the record read
 // at transaction start and the record the CAS replaced are the same revision, so

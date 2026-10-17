@@ -79,6 +79,9 @@ test('production wiring: a committed Apply through the mounted plugin emits capa
     expect(audits).toHaveLength(1)
     expect(audits[0][1].session).toBe('sess-wire')
     expect(audits[0][1].data.revision).toBe(1)
+    // The face diagnostic reports the queued notice for that session (12.4).
+    expect(face.hasPendingNotification('sess-wire')).toBe(true)
+    expect(face.hasPendingNotification('sess-other')).toBe(false)
   } finally {
     host.restore()
   }
@@ -142,4 +145,7 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   // pre-write sets ({alpha} → {beta}).
   expect(notifier.has(SESSION)).toBe(true)
   expect(notifier.consume(SESSION).net).toEqual({ added: ['beta'], removed: ['alpha'] })
+  // …and the diagnostic follows the queue exactly (1.4): true while queued,
+  // false once the notice has been handed to a request boundary.
+  expect(notifier.has(SESSION)).toBe(false)
 })
