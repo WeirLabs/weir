@@ -468,3 +468,46 @@ test('recovery-blocked queues nothing while the record cannot vouch', async t =>
   // way, so no notice may be queued.
   assert.deepEqual(deltas, [])
 })
+
+// --- apply-basis-lock-hardening 2.5: the recovery basis is the committed-over record ---
+test('recovery-published from a fence lost after the commit computes the notice against the committed-over record', async t => {
+  const deltas = []
+  // The fence is lost AFTER the durable commit (the rig at :123): the blocked
+  // entry is the only carrier of the publication basis, so it must hold the
+  // committed-over record rather than the transaction-start read.
+  const stubFence = { enter: () => ({ release() {} }), admit: () => false, isHeld: () => false }
+  let foreign = null
+  let interleavedRevision = null
+  const { root, store, engine } = await fixture(t, {
+    engineOptions: {
+      fence: stubFence,
+      onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+      verifyContent: async () => {
+        if (!foreign) return
+        const writer = foreign
+        foreign = null
+        assert.equal((await writer.commit(unit, 1,
+          () => ({ skills: [alpha, beta], mcpServers: ['mcp-a', 'mcp-w'], origin: 'foreign' }),
+          { requestId: 'foreign-write', requestDigest: digestOf({ foreign: true }) })).status, 'committed')
+        interleavedRevision = (await writer.read(unit)).revision
+      },
+    },
+  })
+  assert.equal((await store.commit(unit, 0, () => ({ skills: [alpha], mcpServers: ['mcp-a'], origin: 'apply' }),
+    { requestId: 'seed', requestDigest: digestOf({ seed: true }) })).status, 'committed')
+  foreign = openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+
+  const response = await engine.apply(auth, request({ requestId: 'req-interleaved', expectedRevision: 2, selection: { skills: [alpha], mcpServers: [] } }))
+  // The interleaving landed one revision; the write itself landed (revision 3)
+  // but publication could not be claimed.
+  assert.equal(interleavedRevision, 2)
+  assert.equal(response.status, 'indeterminate')
+  assert.equal((await store.read(unit)).revision, 3)
+  assert.deepEqual(deltas, [])
+
+  const query = await engine.queryReceipt(auth, 'req-interleaved')
+  assert.equal(query.recovery, 'published')
+  // Exactly one notice, computed against the record the CAS replaced: beta and
+  // mcp-w are named, and only the revision-2 record holds them.
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a', 'mcp-w'] } }])
+})

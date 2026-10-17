@@ -678,3 +678,49 @@ test('DEFECT pin: a foreign write between the transaction read and the commit le
   assert.equal(drain.isClosed(SESSION, 'mcp-w'), false)
   assert.deepEqual(response.draining, [{ server: 'mcp-a', state: 'settled', inFlight: 0 }])
 })
+
+// --- apply-basis-lock-hardening 2.4: the committed-over basis under an interleaving ---
+test('interleaving: the notice and the gate set derive from the record the CAS replaced, so foreign additions are named and drained', async t => {
+  const { response, deltas, drain } = await interleavedApply(t)
+  assert.equal(response.status, 'applied')
+  assert.equal(response.revision, 3)
+  // Consumer 1: every capability the committed-over record held and this Apply
+  // drops is named — including the ones only the foreign write added.
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a', 'mcp-w'] } }])
+  // Consumer 2: the residual managed server is gated and reported, and the two
+  // drain handles (pre-commit read + committed-over record) stay disjoint.
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), true)
+  assert.equal(drain.isClosed(SESSION, 'mcp-w'), true)
+  assert.deepEqual(response.draining, [
+    { server: 'mcp-a', state: 'settled', inFlight: 0 },
+    { server: 'mcp-w', state: 'settled', inFlight: 0 },
+  ])
+  assert.equal(new Set(response.draining.map(row => row.server)).size, response.draining.length)
+})
+
+// --- apply-basis-lock-hardening 2.6: the one honest degradation ------------------
+test('degradation: a committed result that cannot prove the committed-over record falls back and says so', async t => {
+  const deltas = []
+  let inner = null
+  // A store double that honours the write but cannot hand back the payload its
+  // CAS replaced: the `committedOver` property is ABSENT (not undefined), the
+  // shape the engine must distinguish from "the unit had no record".
+  const blind = {
+    read: (...args) => inner.read(...args),
+    commit: async (...args) => {
+      const { committedOver, ...rest } = await inner.commit(...args)
+      return rest
+    },
+  }
+  const { store, engine } = await fixture(t, { engineOptions: { store: blind, onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }) } })
+  inner = store
+  assert.equal((await store.commit(unit, 0, () => ({ skills: [alpha, beta], mcpServers: ['mcp-a'], origin: 'apply' }),
+    { requestId: 'seed', requestDigest: digestOf({ seed: true }) })).status, 'committed')
+
+  const response = await engine.apply(auth, request({ requestId: 'req-degraded', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(response.status, 'applied')
+  assert.deepEqual(response.warnings, ['committed-over-unavailable'])
+  // The basis stays the transaction-start read: the real removals are named and
+  // nothing is claimed as added (a fabricated empty basis would say otherwise).
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a'] } }])
+})

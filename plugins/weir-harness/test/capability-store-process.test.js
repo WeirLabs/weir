@@ -264,3 +264,29 @@ test('live namespace holder is not stolen on lease expiry; dead holder is recove
   assert.equal(JSON.parse(await next.line(line => line.startsWith('{'))).status, 'created')
   assert.equal((await next.exited).code, 0)
 })
+
+// --- apply-basis-lock-hardening 2.3: a REAL cross-process interleaving ---------
+test('a foreign process commit between this store\'s read and its CAS is named in the committed result', async t => {
+  const root = await fixture(t)
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  assert.equal((await store.commit(unit, 0, () => ({ skills: ['seed'] }))).status, 'committed')
+  // The transaction-start read of THIS writer: revision 1.
+  assert.equal((await store.read(unit)).revision, 1)
+
+  // A real second process lands revision 2 while this writer sits between that
+  // read and its CAS — the cross-process variant of the same interleaving.
+  const foreign = worker(t, { role: 'commit', root, unit, expected: 1, id: 'w2' })
+  await foreign.line(text => text === 'READY')
+  foreign.send('GO')
+  const landed = JSON.parse(await foreign.line(text => text.startsWith('{')))
+  assert.deepEqual({ id: landed.id, status: landed.status }, { id: 'w2', status: 'committed' })
+  assert.equal((await foreign.exited).code, 0)
+
+  // The CAS passes on the revision the foreign writer landed, not the one read.
+  const result = await store.commit(unit, 2, () => ({ skills: ['mine'] }))
+  assert.equal(result.status, 'committed')
+  assert.equal(result.revision, 3)
+  // Only the store's locked read can prove what this write replaced.
+  assert.deepEqual(result.committedOver, { writer: 'w2' })
+  assert.deepEqual(result.payload, { skills: ['mine'] })
+})
