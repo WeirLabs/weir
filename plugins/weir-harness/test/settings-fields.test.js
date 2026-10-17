@@ -1,6 +1,7 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
-import { CONFIG_FACE_ONLY_KEYS, EDIT_LOCK_DEFAULTS, FIELD_DEFAULTS, FIELDS, RESTART_KEYS, computeSections, editLockLimits } from '../src/settings/sections.js'
+import { CONFIG_FACE_ONLY_KEYS, FIELD_DEFAULTS, FIELDS, RESTART_KEYS, computeSections } from '../src/settings/sections.js'
+import { EDIT_LOCK_DEFAULTS, editLockLimits } from '../src/edit-lock/limits.js'
 import { DEFAULT_CLASSIFIER_TIMEOUT_MS } from '../src/intent-gate/classifier.js'
 import { DEFAULT_SUPERVISION } from '../src/delegate/group-coordinator.js'
 import { DEFAULTS as TODO_DEFAULTS } from '../src/todo-driver/state-machine.js'
