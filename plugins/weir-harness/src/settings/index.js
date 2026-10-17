@@ -9,7 +9,7 @@
 // config contains only the values the user actually set, so the settings
 // service can overlay them over preset-row config without clobbering
 // bundle-shipped defaults (layering: module defaults ← row config ← service).
-import { createWhitelistDefaultsCache, DEFAULT_WHITELIST_PATH } from '../shared/whitelist-defaults.js'
+import { createWhitelistDefaultsCache, DEFAULT_WHITELIST_PATH } from '../delegate/whitelist-defaults.js'
 import { configValue } from './volatile.js'
 import { computeSections } from './sections.js'
 import { wireLspAdmin } from '../lsp/admin.js'

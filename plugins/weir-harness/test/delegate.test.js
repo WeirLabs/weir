@@ -9,7 +9,7 @@ import { modelFamily, pickVariant } from '../src/delegate/target-resolver.js'
 import { resolveTargetRoute, rungResolves, snapshotProviders } from '../src/delegate/resolver.js'
 import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
-import { readWhitelistDefaults } from '../src/shared/whitelist-defaults.js'
+import { readWhitelistDefaults } from '../src/delegate/whitelist-defaults.js'
 import { CHILD_DENY_TOOLS, CONTINUABLE_CONTRACT, WORKER_CONTRACT } from '../src/shared/child-scope.js'
 import { DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
 import {

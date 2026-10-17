@@ -1,7 +1,7 @@
 // Read-only shell guard core: the single canonical home of every cross-shell
 // policy the bash and pwsh adapters share — the whitelist tables (one
 // representation, consumed by the guard adapters, delegate/index.js, and
-// shared/whitelist-defaults.js), the git gate, the GIT_CONFIG_* environment
+// whitelist-defaults.js), the git gate, the GIT_CONFIG_* environment
 // smuggle refusal, the recursion budget, the redirect sink policy, and the
 // per-executable verdict tail. Pure functions, no ctx access.
 //
@@ -10,7 +10,7 @@
 // the three & roles, alias expansion), so the scanners are not merged.
 
 /** Canonical whitelist tables, organized by the five published keys so
- * shared/whitelist-defaults.js derives FALLBACK_TABLES with zero translation.
+ * whitelist-defaults.js derives FALLBACK_TABLES with zero translation.
  * Entries moved verbatim from the former DEFAULT_ROBASH (robash-guard.js) and
  * DEFAULT_ROBASH_PWSH (robash-guard-pwsh.js); pwsh entries keep their original
  * casing (the pwsh adapter lowercases at lookup) so the shipped

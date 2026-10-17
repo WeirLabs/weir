@@ -12,7 +12,7 @@
 // evidence", never to a wrong release. Keep them byte-exact.
 //
 // Ports & adapters: the readers take their services as parameters (never ctx).
-// node: imports are the src/shared precedent (audit.js, whitelist-defaults.js);
+// node: imports are the src/shared precedent (audit.js);
 // the node:-free constraint guards the delegate composition root, not shared.
 import { openSync, readSync, closeSync, statSync } from 'node:fs'
 import { join } from 'node:path'

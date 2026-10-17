@@ -23,7 +23,7 @@
 // so tests can drive it without a runtime.
 
 import { readFileSync } from 'node:fs'
-import { DEFAULT_TABLES } from '../delegate/robash-guard-core.js'
+import { DEFAULT_TABLES } from './robash-guard-core.js'
 /** @typedef {{ readFile?: (path: string | URL) => string, logger?: { warn?: (message: string) => void } }} ReaderOptions */
 
 /** The five table names, in the order they are published. */
@@ -51,7 +51,7 @@ export const FALLBACK_TABLES = Object.freeze({
 /**
  * The shipped defaults file, resolved against THIS module's location so it
  * travels with the bundle rather than with whatever working directory the host
- * happens to have. `src/shared/` → bundle root.
+ * happens to have. `src/delegate/` → bundle root.
  */
 export const DEFAULT_WHITELIST_PATH = new URL('../../whitelist-defaults.json', import.meta.url)
 
