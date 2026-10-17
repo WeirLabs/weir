@@ -194,7 +194,7 @@ export function digestApplyRequest(normalized) {
  *   verifyContent?: (candidate: unknown) => Promise<void> | void,
  *   audit?: (session: { id?: string }, type: string, data?: unknown) => void,
  *   notify?: (response: unknown) => unknown,
- *   onAccepted?: (sessionId: string, delta: { added: string[], removed: string[] }) => void,
+ *   onAccepted?: (sessionId: string, delta: { added: string[], removed: string[] }, info: { revision: number }) => void,
  *   invalidate?: (sessionId: string, presetId: string) => void,
  *   publishSnapshot?: (sessionId: string, snapshot: { revision: number, skills: unknown[], mcpServers: string[] }) => void,
  *   warn?: (message: string) => void,
@@ -595,10 +595,12 @@ export function createApplyEngine(options) {
   function publishAccepted({ sessionId, revision, payload, prepared, viewOptions, basisSets, lease, settle = null, degraded }) {
     // Task 12.4: the net accepted delta is known only HERE (durable pre-write
     // record vs the just-committed payload); notify consumers queue it for
-    // the next safe request.
+    // the next safe request. durable-pending-notice D2: the acceptance revision
+    // rides along as a third argument for diagnosis and audit — additive, so
+    // every two-argument collector keeps working.
     try {
       const delta = selectionDelta(basisSets, safeSets(payload))
-      if (delta.added.length > 0 || delta.removed.length > 0) onAccepted?.(sessionId, delta)
+      if (delta.added.length > 0 || delta.removed.length > 0) onAccepted?.(sessionId, delta, { revision })
     } catch (error) {
       degraded('accepted-notification-degraded', error)
     }
