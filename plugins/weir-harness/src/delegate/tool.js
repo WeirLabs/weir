@@ -48,6 +48,8 @@ Children cannot delegate further. Curated agents are read-only and never write f
  * @property {object | undefined} agents - ctx.agents (live agent lookup by child id)
  * @property {() => any} [lanes] - live getter for the weirWorktreeLanes service (absent = no lane support)
  * @property {() => Set<string> | undefined} [restrictableNames] - live resolver for the composition's restrictable tool names (ctx.tools.view); intersects CHILD_DENY_TOOLS at spawn because tools.restrict() rejects unknown deny names
+ * @property {{ beginSpawn: (composition: object) => { outcome: () => { ok: boolean, error?: Error }, forget: () => void } }} [composition] - the creation-window composition shim (child-composition.js): the reserved childId's persona/toolFilter are registered before startActivation and applied by the agent/created listener
+ * @property {() => string} [reserveChildId] - child-id minter override (tests); defaults to crypto.randomUUID
  */
 
 /**
@@ -321,7 +323,7 @@ async function settledResult(started, parent) {
   try { return await started.result } finally {
     // subagent/end is emit, not an awaited barrier. Explicitly join the
     // incarnation's standard edit disposition before result/escalation/handoff.
-    await settleDelegateEditLifecycle(parent, started.id, started.localAgent)
+    await settleDelegateEditLifecycle(parent, started.id, started.agent)
   }
 }
 /** Await one child, honoring the one-level ESCALATE contract. */

@@ -25,9 +25,11 @@ function delegateDeps(overrides = {}) {
     spawned,
     resolveTarget: async () => ({ provider: 'category', label: 'quick', persona: 'persona', model: 'm', reasoningEffort: 'medium' }),
     subagents: {
-      async start(provider, request) {
-        spawned.push({ provider, request })
-        return { id: 'child-1', result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }), dispose: async () => {} }
+      // DSH 0.2.1 single start entry; no composition dep here, so the spawn
+      // contract under test is the request itself.
+      async startActivation(spec) {
+        spawned.push(spec)
+        return { childId: spec.childId, result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }), dispose: async () => {} }
       },
       async listChildren() { return [] },
     },

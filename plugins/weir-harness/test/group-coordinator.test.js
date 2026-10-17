@@ -1,5 +1,5 @@
 import { describe, expect, it } from './helpers.js'
-import { createGroupCoordinator, SUPERVISION_CONTRACT } from '../src/delegate/group-coordinator.js'
+import { createGroupCoordinator, SUPERVISION_CONTRACT, untrackedCatalogEntries } from '../src/delegate/group-coordinator.js'
 import { parseTerminalStatus } from '../src/shared/terminal-evidence.js'
 
 describe('parseTerminalStatus', () => {
@@ -459,5 +459,46 @@ describe('group coordinator', () => {
     expect(coordinator.memberOf('c1').retries).toBe(2)
     // the blocked verdict text is the exhaustion one either way
     expect(coordinator.memberOf('c1').report).toContain('exhausted')
+  })
+})
+
+describe('untrackedCatalogEntries (spawn-fact lanes)', () => {
+  const entries = [
+    { id: 'tracked', label: 'tracked', mode: 'continuable' },
+    { id: 'oneshot', label: 'one-shot', mode: 'continuable' },
+    { id: 'plain', label: 'plain', mode: 'continuable' },
+    { id: 'orphan', label: 'orphan', mode: 'continuable' },
+    { id: 'external', label: 'external', mode: 'external' },
+  ]
+  const facts = new Map([
+    ['oneshot', { childId: 'oneshot', lane: 'one-shot' }],
+    ['plain', { childId: 'plain', lane: 'continuable' }],
+  ])
+
+  it('skips children claimed by a one-shot or plain-continuable spawn fact', () => {
+    const untracked = untrackedCatalogEntries(entries, (id) => id === 'tracked', (id) => facts.get(id))
+    // DSH 0.2.1 reports every local child as mode 'continuable', so only the
+    // fact-less orphans remain (mode is passed through verbatim).
+    expect(untracked.map((entry) => [entry.id, entry.mode])).toEqual([
+      ['orphan', 'continuable'],
+      ['external', 'external'],
+    ])
+  })
+
+  it('keeps a supervised child whose fact chain is broken visible as an orphan', () => {
+    const supervised = new Map([['sup', { childId: 'sup', lane: 'supervised' }]])
+    const untracked = untrackedCatalogEntries([{ id: 'sup', label: 'sup', mode: 'continuable' }], () => false, (id) => supervised.get(id))
+    expect(untracked.map((entry) => entry.id)).toEqual(['sup'])
+  })
+
+  it('matches the coordinator-side cross-check through the injected predicate', () => {
+    const coordinator = createGroupCoordinator({
+      sendTo: async () => {},
+      interruptChild: () => {},
+      schedule: () => {},
+      spawnFactOf: (id) => facts.get(id),
+    })
+    const untracked = coordinator.untrackedAgainstCatalog(entries)
+    expect(untracked.map((entry) => entry.id)).toEqual(['tracked', 'orphan', 'external'])
   })
 })

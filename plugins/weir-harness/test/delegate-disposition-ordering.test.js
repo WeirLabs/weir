@@ -109,12 +109,12 @@ for (const escalation of [false, true]) test(`one-shot ${escalation ? 'escalatio
   const result = deferred()
   let starts = 0, returned = false
   const tool = createDelegateTool({ resolveTarget: async () => ({ label: 'worker', persona: '' }), loadSkill: async () => '',
-    subagents: { async start() {
+    subagents: { async startActivation(spec) {
       starts++
-      if (starts === 1) return { id: f.child.id, localAgent: f.child, result: result.promise }
+      if (starts === 1) return { childId: spec.childId, agent: f.child, result: result.promise }
       const second = await f.agent('escalated')
       f.emit('subagent/end', { id: second.id, runId: 'second-run', stopReason: 'completed' })
-      return { id: second.id, localAgent: second, result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }) }
+      return { childId: second.id, agent: second, result: Promise.resolve({ output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }) }
     } },
   })
   const pending = tool.execute({ category: 'deep', prompt: 'task' }, { agent: f.parent, signal: new AbortController().signal }).then(value => { returned = true; return value })
@@ -178,7 +178,7 @@ for (const background of [false, true]) test(`one-shot lane ${background ? 'job'
   let job
   const binding = { spec: { readOnly: false }, lane: { id: 'lane' }, contract: 'lane', commit: async () => {}, rollback: async () => {} }
   const tool = createDelegateTool({ resolveTarget: async () => ({ label: 'worker', persona: '' }), loadSkill: async () => '',
-    subagents: { start: async () => ({ id: f.child.id, localAgent: f.child, result: result.promise }) },
+    subagents: { startActivation: async (spec) => ({ childId: spec.childId, agent: f.child, result: result.promise }) },
     lanes: () => ({ enabled: () => true, prepareBind: async () => binding, childSettled: async id => lanes.push(id) }),
     jobs: { start(spec) { job = spec.run({ updateProgress() {} }).done; return 'job' } },
   })

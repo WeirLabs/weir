@@ -11,6 +11,7 @@ import { createDelegateTool, normalizeItems, supervisedToolFilter, DELEGATE_DESC
 import { apply, readOnlyShellName } from '../src/delegate/index.js'
 import { readWhitelistDefaults } from '../src/delegate/whitelist-defaults.js'
 import { CHILD_DENY_TOOLS, CONTINUABLE_CONTRACT, WORKER_CONTRACT } from '../src/shared/child-scope.js'
+import { createHandlerRecorder, createSpawnHarness } from './helpers/spawn-harness.js'
 import { DOCTRINE_SECTION_ORDER } from '../src/core/doctrine.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
@@ -197,42 +198,27 @@ describe('delegate tool', () => {
     }
   }
 
+  /** DSH 0.2.1 spawn double: every lane enters startActivation. */
   function fakeDeps(overrides = {}) {
-    const spawned = []
-    const continued = []
-    const interrupted = []
-    return {
-      spawned,
-      continued,
-      interrupted,
-      resolveTarget: overrides.resolveTarget ?? (async (item) => ({
-        persona: 'persona',
-        label: item.name ?? 'child',
-        ...(item.agent === 'finder' ? { toolFilter: { allow: ['read'] } } : {}),
-      })),
-      loadSkill: async () => 'skill-body',
-      subagents: {
-        async start(provider, request) {
-          spawned.push({ provider, request })
-          return {
-            id: 'child-1',
-            result: Promise.resolve({
-              output: [{ type: 'text', text: 'done the thing' }],
-              stopReason: 'completed',
-            }),
-            dispose: async () => {},
-          }
-        },
-        async startContinuable(spec) {
-          continued.push(spec)
-          return { childId: `child-c${continued.length}`, messageId: `msg-c${continued.length}` }
-        },
-        interrupt(targetId, authority) {
-          interrupted.push({ targetId, authority })
-        },
+    const h = createSpawnHarness({
+      childIdFor: (n) => `child-${n}`,
+      deps: {
+        resolveTarget: async (item) => ({
+          persona: 'persona',
+          label: item.name ?? 'child',
+          ...(item.agent === 'finder' ? { toolFilter: { allow: ['read'] } } : {}),
+        }),
       },
+    })
+    return {
+      ...h.deps,
+      spawned: h.spawned,
+      continued: h.continued,
+      interrupted: h.interrupted,
+      children: h.children,
+      ...(overrides.resolveTarget ? { resolveTarget: overrides.resolveTarget } : {}),
       jobs: overrides.jobs,
-      agents: overrides.agents,
+      ...(overrides.agents ? { agents: overrides.agents } : {}),
       robash: overrides.robash,
     }
   }
@@ -245,10 +231,13 @@ describe('delegate tool', () => {
     expect(result.results).toHaveLength(1)
     expect(result.results[0].text).toBe('done the thing')
     expect(deps.spawned[0].request.maxDepth).toBe(1)
-    expect(deps.spawned[0].request.persona).toBe('persona' + WORKER_CONTRACT)
-    // Every spawned child loses the orchestrator-only tools (allow-list
-    // targets like finder are untouched; see child-scope.js).
-    expect(deps.spawned[0].request.toolFilter.deny).toEqual([...CHILD_DENY_TOOLS])
+    expect(deps.spawned[0].delivery).toBe('caller')
+    expect(deps.spawned[0].childId).toBe('child-1')
+    // The composition shim put the worker persona into the child's persona
+    // section and merged the orchestrator-only deny list into its tools.
+    const section = deps.children[0].applied.sections.find((entry) => entry.name === 'deployment:persona-prefix')
+    expect(section.text).toBe('persona' + WORKER_CONTRACT)
+    expect(deps.children[0].applied.restrictions[0].deny).toEqual([...CHILD_DENY_TOOLS])
   })
 
   it('refuses delegation from a child session', async () => {
@@ -284,15 +273,16 @@ describe('delegate tool', () => {
   it('respawns once on ESCALATE with findings', async () => {
     const deps = fakeDeps()
     const calls = []
-    deps.subagents.start = async (provider, request) => {
-      calls.push({ provider, request })
+    const original = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      calls.push(spec)
+      const activation = await original(spec)
       return {
-        id: `child-${calls.length}`,
+        ...activation,
         result: Promise.resolve({
           output: [{ type: 'text', text: calls.length === 1 ? 'ESCALATE: deep-plus\nfound the boundary' : 'settled properly' }],
           stopReason: 'completed',
         }),
-        dispose: async () => {},
       }
     }
     const tool = createDelegateTool(deps)
@@ -300,6 +290,7 @@ describe('delegate tool', () => {
     expect(result.results[0].escalated).toBe('deep-plus')
     expect(result.results[0].text).toBe('settled properly')
     expect(calls).toHaveLength(2)
+    expect(calls[1].label).toContain('(escalated)')
     expect(calls[1].request.prompt.at(-1).text).toContain('found the boundary')
   })
 })
@@ -318,42 +309,27 @@ describe('delegate continuable mode', () => {
     }
   }
 
+  /** DSH 0.2.1 spawn double: child-c<N> ids keep the continuable assertions stable. */
   function fakeDeps(overrides = {}) {
-    const spawned = []
-    const continued = []
-    const interrupted = []
-    return {
-      spawned,
-      continued,
-      interrupted,
-      resolveTarget: overrides.resolveTarget ?? (async (item) => ({
-        persona: 'persona',
-        label: item.name ?? 'child',
-        ...(item.agent === 'finder' ? { toolFilter: { allow: ['read'] } } : {}),
-      })),
-      loadSkill: async () => 'skill-body',
-      subagents: {
-        async start(provider, request) {
-          spawned.push({ provider, request })
-          return {
-            id: 'child-1',
-            result: Promise.resolve({
-              output: [{ type: 'text', text: 'done the thing' }],
-              stopReason: 'completed',
-            }),
-            dispose: async () => {},
-          }
-        },
-        async startContinuable(spec) {
-          continued.push(spec)
-          return { childId: `child-c${continued.length}`, messageId: `msg-c${continued.length}` }
-        },
-        interrupt(targetId, authority) {
-          interrupted.push({ targetId, authority })
-        },
+    const h = createSpawnHarness({
+      childIdFor: (n) => `child-c${n}`,
+      deps: {
+        resolveTarget: async (item) => ({
+          persona: 'persona',
+          label: item.name ?? 'child',
+          ...(item.agent === 'finder' ? { toolFilter: { allow: ['read'] } } : {}),
+        }),
       },
+    })
+    return {
+      ...h.deps,
+      spawned: h.spawned,
+      continued: h.continued,
+      interrupted: h.interrupted,
+      children: h.children,
+      ...(overrides.resolveTarget ? { resolveTarget: overrides.resolveTarget } : {}),
       jobs: overrides.jobs,
-      agents: overrides.agents,
+      ...(overrides.agents ? { agents: overrides.agents } : {}),
       robash: overrides.robash,
     }
   }
@@ -429,14 +405,17 @@ describe('delegate continuable mode', () => {
     const spec = deps.continued[0]
     expect(spec.provider).toBe('spawn')
     expect(spec.label).toBe('alpha')
+    expect(spec.delivery).toBe('parent')
     expect('label' in spec.request).toBe(false)
     expect('signal' in spec.request).toBe(false)
-    // worker + continuation contracts; NEVER the supervised terminal-status contract
-    expect(spec.request.persona).toBe('persona' + WORKER_CONTRACT + CONTINUABLE_CONTRACT)
-    expect(spec.request.persona).not.toContain('Terminal status contract')
     expect(spec.request.maxDepth).toBe(1)
+    // worker + continuation contracts land as the child persona section;
+    // NEVER the supervised terminal-status contract
+    const section = deps.children[0].applied.sections.find((entry) => entry.name === 'deployment:persona-prefix')
+    expect(section.text).toBe('persona' + WORKER_CONTRACT + CONTINUABLE_CONTRACT)
+    expect(section.text).not.toContain('Terminal status contract')
     // the child→parent channel stays closed via the common deny list
-    expect(spec.request.toolFilter.deny).toEqual([...CHILD_DENY_TOOLS])
+    expect(deps.children[0].applied.restrictions[0].deny).toEqual([...CHILD_DENY_TOOLS])
     const rendered = tool.output.render({}, value)[0].text
     expect(rendered).toContain('continuable')
     expect(rendered).toContain('child-c1')
@@ -454,13 +433,14 @@ describe('delegate continuable mode', () => {
       ],
     }, fakeExec())
     expect(value.continuable).toBe(true)
-    expect(value.children).toEqual([{ childId: 'child-c1', label: 'beta', name: 'beta' }])
+    // The one-shot item reserved child-c1, so the continuable item got child-c2.
+    expect(value.children).toEqual([{ childId: 'child-c2', label: 'beta', name: 'beta' }])
     expect(value.results).toHaveLength(1)
     expect(value.results[0].text).toBe('done the thing')
     expect(deps.spawned).toHaveLength(1)
     expect(deps.continued).toHaveLength(1)
     const rendered = tool.output.render({}, value)[0].text
-    expect(rendered).toContain('child-c1')
+    expect(rendered).toContain('child-c2')
     expect(rendered).toContain('done the thing')
   })
 
@@ -486,7 +466,7 @@ describe('delegate continuable mode', () => {
 
   it('wraps ACTIVATION_LIMIT_REACHED into an explicit capacity error (no queue, no downgrade, no published child)', async () => {
     const deps = fakeDeps()
-    deps.subagents.startContinuable = async () => {
+    deps.subagents.startActivation = async () => {
       const error = new Error('subagent limit reached (active child limit: 8); wait for an existing child to finish or complete this work with the current agents')
       error.code = 'ACTIVATION_LIMIT_REACHED'
       throw error
@@ -648,23 +628,39 @@ describe('delegate plugin apply', () => {
     const guards = []
     const sections = []
     const variables = new Map()
+    const recorder = createHandlerRecorder()
+    const handlers = recorder.handlers
+    const children = new Map()
+    let sequence = 0
     const ctx = {
       tools: { register: (tool) => registered.push(tool) },
       subagents: {
-        async start(provider, request) {
-          spawned.push({ provider, request })
-          return {
-            id: 'child-ro',
-            localAgent: {
-              ctx: {
-                tools: {
-                  guard: (fn) => {
-                    guards.push(fn)
-                    return () => {}
-                  },
+        // DSH 0.2.1 single start entry. The fake announces the child exactly
+        // like the runtime does: the real composition listener lands inside
+        // this call, before the tool would deliver the initial prompt.
+        async startActivation(spec) {
+          spawned.push(spec)
+          const childId = spec.childId ?? `child-ro-${++sequence}`
+          const applied = { sections: [], restrictions: [] }
+          const agent = {
+            id: childId,
+            session: { header: { delegationDepth: 1, parentSession: 'parent-session' } },
+            ctx: {
+              systemPrompt: { section: (section) => { applied.sections.push(section); return () => {} }, getSectionOrder: () => 0 },
+              tools: {
+                view: () => ({ restrictableNames: new Set(['guard-able', 'bash', 'read', 'write', 'edit']) }),
+                restrict: (filter) => { applied.restrictions.push(filter); return () => {} },
+                guard: (fn) => {
+                  guards.push(fn)
+                  return () => {}
                 },
               },
             },
+          }
+          children.set(childId, { agent, applied })
+          handlers['agent/created']?.({ agent, source: 'startup' })
+          return {
+            childId,
             result: Promise.resolve({ output: [{ type: 'text', text: 'ro findings' }], stopReason: 'completed' }),
             dispose: async () => {},
           }
@@ -682,26 +678,32 @@ describe('delegate plugin apply', () => {
           return () => {}
         },
       },
-      get: (name) =>
-        name === 'weirSettings'
-          ? (settingsService ?? (settingsSections ? { get: (section) => withDefaults(settingsSections[section]) } : undefined))
-          : undefined,
-      on: () => {},
+      get: (name) => {
+        if (name === 'agents') return { get: (id) => children.get(id)?.agent }
+        if (name === 'weirSettings') return settingsService ?? (settingsSections ? { get: (section) => withDefaults(settingsSections[section]) } : undefined)
+        return undefined
+      },
+      on: recorder.on,
     }
     const dispose = apply(ctx, config)
-    return { tool: registered[0], spawned, guards, ctx, dispose, sections, variables }
+    return { tool: registered[0], spawned, guards, ctx, dispose, sections, variables, children, handlers }
   }
 
 
   it('curated spawns get the platform shell in the allowlist, a persona note, and a live guard', async () => {
-    const { tool, spawned, guards } = applyHarness()
+    const { tool, children, guards } = applyHarness()
     const result = await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
     expect(result.results[0].text).toBe('ro findings')
     // win32 gets pwsh, elsewhere bash: the read-only shell follows the platform
     const shell = readOnlyShellName(process.platform)
-    expect(spawned[0].request.toolFilter.allow).toContain(shell)
-    expect(spawned[0].request.toolFilter.allow).toContain('read')
-    expect(spawned[0].request.persona).toContain('guarded read-only')
+    const child = [...children.values()][0]
+    // The composition applied the allow filter and the persona note inside the
+    // child's creation window (0.2.1 has no request-level fields any more).
+    const allow = child.applied.restrictions[0].allow
+    expect(allow).toContain(shell)
+    expect(allow).toContain('read')
+    const persona = child.applied.sections.find((section) => section.name === 'deployment:persona-prefix')
+    expect(persona.text).toContain('guarded read-only')
     expect(guards).toHaveLength(1)
     expect(guards[0]({ name: shell, arguments: { command: 'git status' } })).toBe(undefined)
     const denied = shell === 'pwsh' ? { command: 'iex "rm x"' } : { command: 'rm x' }
@@ -724,10 +726,12 @@ describe('delegate plugin apply', () => {
   })
 
   it('readOnlyBash disabled drops the shell from the allowlist and skips the guard', async () => {
-    const { tool, spawned, guards } = applyHarness({ readOnlyBash: { enabled: false } })
+    const { tool, children, guards } = applyHarness({ readOnlyBash: { enabled: false } })
     await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
-    expect(spawned[0].request.toolFilter.allow).not.toContain(readOnlyShellName(process.platform))
-    expect(spawned[0].request.persona).not.toContain('guarded read-only')
+    const child = [...children.values()][0]
+    expect(child.applied.restrictions[0].allow).not.toContain(readOnlyShellName(process.platform))
+    const persona = child.applied.sections.find((section) => section.name === 'deployment:persona-prefix')
+    expect(persona.text).not.toContain('guarded read-only')
     expect(guards).toHaveLength(0)
   })
 
@@ -775,17 +779,17 @@ describe('delegate plugin apply', () => {
 
   it('hot reload: committing robashEnabled=false withdraws the shell without a rebuild', async () => {
     const live = liveSettings()
-    const { tool, spawned } = applyHarness({}, undefined, live.service)
+    const { tool, children } = applyHarness({}, undefined, live.service)
     const shell = readOnlyShellName(process.platform)
 
     await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
-    expect(spawned[0].request.toolFilter.allow).toContain(shell)
+    expect([...children.values()][0].applied.restrictions[0].allow).toContain(shell)
 
     // Same process, same plugin instance: only the settings commit changes.
     live.commit('robash', { enabled: false })
 
     await tool.execute({ agent: 'finder', prompt: 'TASK: find again' }, execStub())
-    expect(spawned[1].request.toolFilter.allow).not.toContain(shell)
+    expect([...children.values()][1].applied.restrictions[0].allow).not.toContain(shell)
   })
 
   it('hot reload: a committed allow list governs the next delegation fail-closed', async () => {
@@ -871,29 +875,21 @@ describe('delegate plugin apply', () => {
   })
 
   it('a failing guard attach disposes the child and fails the call', async () => {
-    const disposed = []
-    const deps = {
-      resolveTarget: async () => ({ persona: 'p', label: 'ro', readOnly: true }),
-      loadSkill: async () => 's',
-      subagents: {
-        async start() {
-          return {
-            id: 'child-x',
-            localAgent: { ctx: { tools: { guard: () => { throw new Error('no tools service') } } } },
-            result: Promise.resolve({ output: [], stopReason: 'completed' }),
-            dispose: async () => {
-              disposed.push(true)
-            },
-          }
-        },
+    const h = createSpawnHarness({
+      deps: { resolveTarget: async () => ({ persona: 'p', label: 'ro', readOnly: true }) },
+      onChild: (child) => {
+        child.agent.ctx.tools.guard = () => { throw new Error('no tools service') }
       },
+    })
+    const deps = {
+      ...h.deps,
       jobs: undefined,
       // deps.robash is a live resolver resolved per delegation (see tool.js)
       robash: () => ({ enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: ['Get-Content'], gitAllow: [], deny: [] } } }),
     }
     const guardedTool = createDelegateTool(deps)
     await expect(async () => guardedTool.execute({ agent: 'finder', prompt: 'x' }, execStub())).rejects.toThrow(/failed to attach/)
-    expect(disposed).toEqual([true])
+    expect(h.children[0].disposed).toBe(1)
   })
 })
 
@@ -908,13 +904,37 @@ describe('supervised groups (mount layer)', () => {
     const scheduled = []
     const steered = []
     const sessionEvents = []
-    const handlers = {}
+    const recorder = createHandlerRecorder()
+    const handlers = recorder.handlers
+    const emitted = []
+    const guards = []
+    const children = new Map()
+    let catalogEntries = []
+    let sequence = 0
     const ctx = {
       tools: { register: (tool) => registered.push(tool) },
       subagents: {
-        async startContinuable(spec) {
+        // DSH 0.2.1 single start entry; announces the child exactly like the
+        // runtime so the real composition listener lands in the creation window.
+        async startActivation(spec) {
           continued.push(spec)
-          return { childId: `child-${continued.length}`, messageId: `msg-${continued.length}` }
+          const childId = spec.childId ?? `child-${++sequence}`
+          const applied = { sections: [], restrictions: [] }
+          const agent = {
+            id: childId,
+            session: { header: { delegationDepth: 1, parentSession: 'parent-session' } },
+            ctx: {
+              systemPrompt: { section: (section) => { applied.sections.push(section); return () => {} }, getSectionOrder: () => 0 },
+              tools: {
+                view: () => ({ restrictableNames: new Set(['bash', 'read', 'write', 'edit', 'delegate', 'send_message', 'workflow']) }),
+                restrict: (filter) => { applied.restrictions.push(filter); return () => {} },
+                guard: (fn) => { guards.push(fn); return () => {} },
+              },
+            },
+          }
+          children.set(childId, { agent, applied })
+          handlers['agent/created']?.({ agent, source: 'startup' })
+          return { childId, messageId: `msg-${childId}`, result: Promise.resolve({ output: [], stopReason: 'completed' }), dispose: async () => {} }
         },
         async sendMessage(sender, targetId, content) {
           sent.push({ targetId, text: content[0].text })
@@ -931,18 +951,13 @@ describe('supervised groups (mount layer)', () => {
       // this double only has to accept both registrations.
       systemPrompt: { section: () => () => {}, variable: () => () => {} },
       get: (name) => {
-        if (name === 'agents') return { get: (id) => ({ id, ctx: { tools: { guard: (fn) => { guards.push(fn); return () => {} } } } }) }
+        if (name === 'agents') return { get: (id) => children.get(id)?.agent }
         if (name === 'weirSettings') return settingsService
         return undefined
       },
-      on(event, handler) {
-        handlers[event] = handler
-      },
+      on: recorder.on,
       emit: (type, record) => emitted.push({ type, record }),
     }
-    const emitted = []
-    const guards = []
-    let catalogEntries = []
     apply(ctx, config)
     return {
       ctx,
@@ -955,6 +970,9 @@ describe('supervised groups (mount layer)', () => {
       sessionEvents,
       emitted,
       guards,
+      children,
+      // Reserved child ids in spawn order (0.2.1 allocates them at spawn).
+      childIds: () => continued.map((spec) => spec.childId),
       setCatalog: (entries) => {
         catalogEntries = entries
       },
@@ -964,7 +982,7 @@ describe('supervised groups (mount layer)', () => {
   }
 
   it('registers resume_agent and terminate_agent with object-rooted schemas', () => {
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     expect(tools.resume_agent.parameters.type).toBe('object')
     expect(tools.resume_agent.parameters.required).toEqual(['agent', 'context'])
     expect(tools.terminate_agent.parameters.type).toBe('object')
@@ -972,7 +990,7 @@ describe('supervised groups (mount layer)', () => {
   })
 
   it('spawns a supervised group as continuable children with the status contract', async () => {
-    const { tools, continued } = groupHarness()
+    const { tools, continued, children, childIds } = groupHarness()
     const result = await tools.delegate.execute(
       { group: 'scan', tasks: [
         { category: 'quick', prompt: 'TASK: a' },
@@ -984,22 +1002,24 @@ describe('supervised groups (mount layer)', () => {
     expect(result.group).toBe('scan')
     expect(result.members).toHaveLength(2)
     expect(continued).toHaveLength(2)
-    expect(continued[0].request.persona).toContain('STATUS: completed')
-    expect(continued[0].request.persona).toContain('Terminal status contract')
+    expect(continued[0].delivery).toBe('parent')
     expect(continued[0].request.maxDepth).toBe(1)
+    const persona = [...children.values()][0].applied.sections.find((section) => section.name === 'deployment:persona-prefix')
+    expect(persona.text).toContain('STATUS: completed')
+    expect(persona.text).toContain('Terminal status contract')
   })
 
   it('denies send_message on category members without a caller filter', async () => {
-    const { tools, continued } = groupHarness()
+    const { tools, children, childIds } = groupHarness()
     await tools.delegate.execute(
       { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a' }] },
       execStub(),
     )
-    expect(continued[0].request.toolFilter.deny).toContain('send_message')
+    expect([...children.values()][0].applied.restrictions[0].deny).toContain('send_message')
   })
 
   it('writes structured supervision facts to the cold-safe audit channel', async () => {
-    const { tools, emitted } = groupHarness()
+    const { tools, emitted, childIds } = groupHarness()
     await tools.delegate.execute(
       { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
       execStub(),
@@ -1008,23 +1028,24 @@ describe('supervised groups (mount layer)', () => {
     const sealRecord = emitted.find((entry) => entry.type === 'weir/supervision/seal')
     expect(spawnRecord).toBeTruthy()
     expect(spawnRecord.record.session).toBe('parent-session')
-    expect(spawnRecord.record.data).toEqual({ kind: 'spawn', childId: 'child-1', name: 'alpha', group: 'scan' })
+    expect(spawnRecord.record.data).toEqual({ kind: 'spawn', childId: childIds()[0], name: 'alpha', group: 'scan' })
     expect(sealRecord).toBeTruthy()
-    expect(sealRecord.record.data).toEqual({ kind: 'seal', group: 'scan', memberIds: ['child-1'] })
+    expect(sealRecord.record.data).toEqual({ kind: 'seal', group: 'scan', memberIds: [childIds()[0]] })
   })
 
   it('keeps the allow-list filter unchanged for read-only members', async () => {
-    const { tools, continued } = groupHarness()
+    const { tools, children, childIds } = groupHarness()
     await tools.delegate.execute(
       { group: 'scan', tasks: [{ category: 'architect', prompt: 'TASK: a' }] },
       execStub(),
     )
-    expect(continued[0].request.toolFilter.allow).toContain('read')
-    expect(continued[0].request.toolFilter.deny).toBeUndefined()
+    const restriction = [...children.values()][0].applied.restrictions[0]
+    expect(restriction.allow).toContain('read')
+    expect(restriction.deny).toBeUndefined()
   })
 
   it('rejects a second delegation into a live group', async () => {
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a' }, execStub())
     await expect(async () =>
       tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: b' }, execStub()),
@@ -1032,7 +1053,7 @@ describe('supervised groups (mount layer)', () => {
   })
 
   it('supervised_status renders the live registry through the mount layer', async () => {
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     await tools.delegate.execute(
       { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
       execStub(),
@@ -1045,7 +1066,7 @@ describe('supervised groups (mount layer)', () => {
   })
 
   it('rejects group combined with run_in_background', async () => {
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     await expect(async () =>
       tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a', run_in_background: true }, execStub()),
     ).rejects.toThrow(/cannot be combined/)
@@ -1053,7 +1074,7 @@ describe('supervised groups (mount layer)', () => {
 
   it('delivers one group-settled signal via deferred followup after every settlement notice', async () => {
     const followedUp = []
-    const { tools, handlers } = groupHarness()
+    const { tools, handlers, childIds } = groupHarness()
     const parentExec = () => ({ agent: { id: 'parent-session', status: 'idle', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, followup: (message) => followedUp.push(message) }, signal: new AbortController().signal })
     const notice = (childId) => handlers['session/event']({ id: 'parent-session' }, { type: 'user/message', data: { source: { kind: 'subagent-settled', senderSessionId: childId }, message: { content: [] } } })
     await tools.delegate.execute(
@@ -1064,19 +1085,19 @@ describe('supervised groups (mount layer)', () => {
       parentExec(),
     )
 
-    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
-    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[0] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
+    await handlers['session/event']({ id: childIds()[0] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(followedUp).toHaveLength(0) // group still open
 
-    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
-    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[1] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
+    await handlers['session/event']({ id: childIds()[1] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(followedUp).toHaveLength(0) // ordering gate: notices not observed yet
 
-    notice('child-1')
+    notice(childIds()[0])
     expect(followedUp).toHaveLength(0)
-    notice('child-2')
+    notice(childIds()[1])
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(followedUp).toHaveLength(1)
     expect(followedUp[0].content[0].text).toContain('supervised_group_settled')
@@ -1087,7 +1108,7 @@ describe('supervised groups (mount layer)', () => {
 
   it('steers the group-settled signal into the current turn after every settlement notice', async () => {
     const steered = []
-    const { tools, handlers } = groupHarness()
+    const { tools, handlers, childIds } = groupHarness()
     const busyExec = () => ({ agent: { id: 'parent-session', status: 'streaming', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, steer: (message) => steered.push(message) }, signal: new AbortController().signal })
     const notice = (childId) => handlers['session/event']({ id: 'parent-session' }, { type: 'user/message', data: { source: { kind: 'subagent-settled', senderSessionId: childId }, message: { content: [] } } })
     await tools.delegate.execute(
@@ -1097,14 +1118,14 @@ describe('supervised groups (mount layer)', () => {
       ] },
       busyExec(),
     )
-    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
-    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
-    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
-    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[0] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: alpha done' }] } } })
+    await handlers['session/event']({ id: childIds()[0] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[1] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
+    await handlers['session/event']({ id: childIds()[1] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(steered).toHaveLength(0) // ordering gate
-    notice('child-1')
-    notice('child-2')
+    notice(childIds()[0])
+    notice(childIds()[1])
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(steered).toHaveLength(1)
     expect(steered[0].content[0].text).toContain('supervised_group_settled')
@@ -1113,7 +1134,7 @@ describe('supervised groups (mount layer)', () => {
 
   it('emits no parent signal while the group is still open (blocked member)', async () => {
     const followedUp = []
-    const { tools, handlers } = groupHarness()
+    const { tools, handlers, childIds } = groupHarness()
     const parentExec = () => ({ agent: { id: 'parent-session', status: 'idle', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, followup: (message) => followedUp.push(message) }, signal: new AbortController().signal })
     await tools.delegate.execute(
       { group: 'scan', tasks: [
@@ -1122,17 +1143,17 @@ describe('supervised groups (mount layer)', () => {
       ] },
       parentExec(),
     )
-    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: beta stuck' }] } } })
-    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[0] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: beta stuck' }] } } })
+    await handlers['session/event']({ id: childIds()[0] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(followedUp).toHaveLength(0) // blocked settle emits no Weir notice
     const status = await tools.supervised_status.execute({}, parentExec())
-    expect(status.children.find((child) => child.id === 'child-1').status).toBe('blocked')
+    expect(status.children.find((child) => child.id === childIds()[0]).status).toBe('blocked')
   })
 
   it('group-settled signal fires after termination once both notices are observed', async () => {
     const followedUp = []
-    const { tools, handlers } = groupHarness()
+    const { tools, handlers, childIds } = groupHarness()
     const parentExec = () => ({ agent: { id: 'parent-session', status: 'idle', session: { id: 'parent-session', header: { delegationDepth: 0 }, requestContext: () => undefined }, followup: (message) => followedUp.push(message) }, signal: new AbortController().signal })
     const notice = (childId) => handlers['session/event']({ id: 'parent-session' }, { type: 'user/message', data: { source: { kind: 'subagent-settled', senderSessionId: childId }, message: { content: [] } } })
     await tools.delegate.execute(
@@ -1144,12 +1165,12 @@ describe('supervised groups (mount layer)', () => {
     )
 
     await tools.terminate_agent.execute({ agent: 'alpha', reason: 'redirected' }, parentExec())
-    handlers['session/event']({ id: 'child-2' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
-    await handlers['session/event']({ id: 'child-2' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[1] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: completed\nREPORT: beta done' }] } } })
+    await handlers['session/event']({ id: childIds()[1] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(followedUp).toHaveLength(0) // ordering gate
-    notice('child-1')
-    notice('child-2')
+    notice(childIds()[0])
+    notice(childIds()[1])
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(followedUp).toHaveLength(1)
     expect(followedUp[0].content[0].text).toContain('supervised_group_settled')
@@ -1157,36 +1178,36 @@ describe('supervised groups (mount layer)', () => {
   })
 
   it('resume_agent delivers context and flips the child back to running', async () => {
-    const { tools, handlers, sent } = groupHarness()
+    const { tools, handlers, sent, childIds } = groupHarness()
     await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a', name: 'alpha' }, execStub())
-    handlers['session/event']({ id: 'child-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: stuck' }] } } })
-    await handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    handlers['session/event']({ id: childIds()[0] }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'STATUS: blocked\nREPORT: stuck' }] } } })
+    await handlers['session/event']({ id: childIds()[0] }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
 
     const outcome = await tools.resume_agent.execute({ agent: 'alpha', context: 'registry is back' }, execStub())
     expect(outcome.status).toBe('running')
     expect(sent.at(-1).text).toContain('registry is back')
-    expect(sent.at(-1).targetId).toBe('child-1')
+    expect(sent.at(-1).targetId).toBe(childIds()[0])
   })
 
   it('terminate_agent on a running child interrupts for real', async () => {
-    const { tools, interruptedCalls } = groupHarness()
+    const { tools, interruptedCalls, childIds } = groupHarness()
     await tools.delegate.execute({ group: 'scan', category: 'quick', prompt: 'TASK: a', name: 'alpha' }, execStub())
     const outcome = await tools.terminate_agent.execute({ agent: 'alpha' }, execStub())
     expect(outcome.interrupted).toBe(true)
     expect(interruptedCalls).toHaveLength(1)
-    expect(interruptedCalls[0].targetId).toBe('child-1')
+    expect(interruptedCalls[0].targetId).toBe(childIds()[0])
     expect(interruptedCalls[0].authority.kind).toBe('ancestor')
   })
 
   it('supervision tools are depth-gated', async () => {
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     const childExec = () => ({ agent: { id: 'child-x', session: { header: { delegationDepth: 1 } } }, signal: undefined })
     await expect(async () => tools.resume_agent.execute({ agent: 'x', context: 'y' }, childExec())).rejects.toThrow(/only the main agent/)
     await expect(async () => tools.terminate_agent.execute({ agent: 'x' }, childExec())).rejects.toThrow(/only the main agent/)
   })
 
   it('never claims no supervised children after a restart rebuild', async () => {
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     // No prior spawn, no audit: coordinatorFor rehydrates an empty registry.
     await expect(async () =>
       tools.resume_agent.execute({ agent: 'ghost', context: 'x' }, execStub()),
@@ -1195,7 +1216,7 @@ describe('supervised groups (mount layer)', () => {
 
 
   it('resolves every member before spawning any child (no live group after a resolution failure)', async () => {
-    const { tools, continued, emitted } = groupHarness()
+    const { tools, continued, emitted, childIds } = groupHarness()
     await expect(async () =>
       tools.delegate.execute(
         { group: 'scan', tasks: [
@@ -1217,13 +1238,13 @@ describe('supervised groups (mount layer)', () => {
   })
 
   it('rolls back spawned members and releases the group name when a mid-batch spawn fails', async () => {
-    const { ctx, tools, continued, interruptedCalls, emitted } = groupHarness()
+    const { ctx, tools, continued, interruptedCalls, emitted, childIds } = groupHarness()
+    const original = ctx.subagents.startActivation
     let calls = 0
-    ctx.subagents.startContinuable = async (spec) => {
+    ctx.subagents.startActivation = async (spec) => {
       calls += 1
       if (calls === 2) throw new Error('spawn exploded')
-      continued.push(spec)
-      return { childId: `child-${calls}`, messageId: `msg-${calls}` }
+      return original(spec)
     }
     await expect(async () =>
       tools.delegate.execute(
@@ -1247,7 +1268,7 @@ describe('supervised groups (mount layer)', () => {
   })
 
   it('attaches the read-only bash guard to read-only supervised members via the live agent handle', async () => {
-    const { tools, guards } = groupHarness()
+    const { tools, guards, childIds } = groupHarness()
     await tools.delegate.execute(
       { group: 'scan', tasks: [{ category: 'architect', prompt: 'TASK: a' }] },
       execStub(),
@@ -1260,7 +1281,7 @@ describe('supervised groups (mount layer)', () => {
   it('keeps the new signal contract in the tool description and result text', async () => {
     expect(DELEGATE_DESCRIPTION).toContain('group-settled signal')
     expect(DELEGATE_DESCRIPTION).not.toContain('merged group report')
-    const { tools } = groupHarness()
+    const { tools, childIds } = groupHarness()
     const result = await tools.delegate.execute(
       { group: 'scan', tasks: [{ category: 'quick', prompt: 'TASK: a', name: 'alpha' }] },
       execStub(),
@@ -1271,7 +1292,7 @@ describe('supervised groups (mount layer)', () => {
     expect(rendered).not.toContain('merged group report')
   })
   it('appends an untracked-catalog hint when rebuilt state is partial', async () => {
-    const { tools, setCatalog } = groupHarness()
+    const { tools, setCatalog, childIds } = groupHarness()
     setCatalog([{ id: 'orphan-9', label: 'leftover', mode: 'continuable' }])
     await expect(async () =>
       tools.resume_agent.execute({ agent: 'ghost', context: 'x' }, execStub()),
@@ -1283,16 +1304,16 @@ describe('supervised groups (mount layer)', () => {
     mkdirSync(join(cwd, '.weir'), { recursive: true })
     const line = (type, data) => `${JSON.stringify({ time: 1, session: 'parent-1', type, data })}\n`
     writeFileSync(join(cwd, '.weir', 'audit.jsonl'), [
-      line('weir/supervision/spawn', { kind: 'spawn', childId: 'child-1', name: 'alpha', group: 'scan' }),
-      line('weir/supervision/seal', { kind: 'seal', group: 'scan', memberIds: ['child-1'] }),
-      line('weir/supervision/settle', { kind: 'settle', childId: 'child-1', status: 'blocked', report: 'stuck before restart' }),
+      line('weir/supervision/spawn', { kind: 'spawn', childId: 'child-r1', name: 'alpha', group: 'scan' }),
+      line('weir/supervision/seal', { kind: 'seal', group: 'scan', memberIds: ['child-r1'] }),
+      line('weir/supervision/settle', { kind: 'settle', childId: 'child-r1', status: 'blocked', report: 'stuck before restart' }),
     ].join(''))
     const { tools, sent } = groupHarness()
     const restartExec = () => ({ agent: { id: 'parent-1', session: { id: 'parent-1', header: { delegationDepth: 0, cwd } } }, signal: new AbortController().signal })
     const outcome = await tools.resume_agent.execute({ agent: 'alpha', context: 'restored' }, restartExec())
     expect(outcome.status).toBe('running')
     expect(sent.at(-1).text).toContain('restored')
-    expect(sent.at(-1).targetId).toBe('child-1')
+    expect(sent.at(-1).targetId).toBe('child-r1')
   })
 
   // --- Live supervision tuning through the mount layer ---------------------
@@ -1303,7 +1324,7 @@ describe('supervised groups (mount layer)', () => {
 
   it('a settings commit reaches the coordinator of an already-delegated parent', async () => {
     const live = liveSettings()
-    const { tools, handlers } = groupHarness({}, live.service)
+    const { tools, handlers, childIds } = groupHarness({}, live.service)
 
     // Establish the coordinator: one supervised member, still running.
     await tools.delegate.execute(
@@ -1314,7 +1335,7 @@ describe('supervised groups (mount layer)', () => {
 
     // First provider error: well under the default cap of 5, so the child is
     // retried and stays running.
-    handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'error', error: { message: '500' } } } })
+    handlers['session/event']({ id: childIds()[0] }, { type: 'turn/end', data: { reason: { kind: 'error', error: { message: '500' } } } })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect((await memberOf()).retries).toBe(1)
     expect((await memberOf()).status).toBe('running')
@@ -1324,7 +1345,7 @@ describe('supervised groups (mount layer)', () => {
 
     // The tightened cap governs the coordinator that is already serving this
     // parent: the very next provider error exhausts the budget.
-    handlers['session/event']({ id: 'child-1' }, { type: 'turn/end', data: { reason: { kind: 'error', error: { message: '500' } } } })
+    handlers['session/event']({ id: childIds()[0] }, { type: 'turn/end', data: { reason: { kind: 'error', error: { message: '500' } } } })
     await new Promise((resolve) => setTimeout(resolve, 0))
     const settled = await memberOf()
     expect(settled.status).toBe('blocked')
@@ -1340,7 +1361,7 @@ describe('supervised groups (mount layer)', () => {
       { group: 'g1', tasks: [{ agent: 'finder', prompt: 'TASK: a' }] },
       execStub(),
     )
-    expect(before.continued[0].request.toolFilter.allow).toContain(shell)
+    expect([...before.children.values()][0].applied.restrictions[0].allow).toContain(shell)
     expect(before.guards).toHaveLength(1)
 
     // A commit turning the guard off governs the very next spawn: the same
@@ -1352,7 +1373,7 @@ describe('supervised groups (mount layer)', () => {
       { group: 'g1', tasks: [{ agent: 'finder', prompt: 'TASK: a' }] },
       execStub(),
     )
-    expect(after.continued[0].request.toolFilter.allow).not.toContain(shell)
+    expect([...after.children.values()][0].applied.restrictions[0].allow).not.toContain(shell)
     expect(after.guards).toHaveLength(0)
   })
 })

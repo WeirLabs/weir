@@ -47,18 +47,31 @@ export function createGroupRecord(name, { sealed = false, settled = false, membe
 }
 
 /**
- * Single exit for the untracked-catalog predicate: continuable catalog entries
- * the registry does not track. mode is normalized (undefined → 'continuable');
- * the row shape is { id, label, mode }. `isTracked(id)` is the caller's lookup.
+ * Single exit for the untracked-catalog predicate: catalog children the
+ * supervision registry does not track AND no one-shot/continuable spawn fact
+ * claims. The row shape is { id, label, mode } (mode is passed through
+ * verbatim: DSH 0.2.1 reports every local child as 'continuable' and may also
+ * report 'external', so the catalog mode no longer discriminates lanes — the
+ * durable spawn facts do).
+ * `isTracked(id)` is the caller's registry lookup. `spawnFactOf(id)` returns
+ * the durable delegate/spawn fact for a weir-spawned child (lane included):
+ * one-shot and plain-continuable children must never be resurrected as
+ * supervision orphans, while a supervised child normally IS tracked and a
+ * supervised child missing from the fact chain stays visible as an orphan
+ * (never hidden). Only a fact-less orphan (not spawned by this weir build)
+ * keeps the promoted/recovered semantics.
+ * @param {object[]} entries - DSH catalog children
+ * @param {(id: string) => boolean} isTracked
+ * @param {(id: string) => { lane?: string } | undefined} [spawnFactOf]
  */
-export function untrackedCatalogEntries(entries, isTracked) {
+export function untrackedCatalogEntries(entries, isTracked, spawnFactOf) {
   const untracked = []
   for (const entry of entries ?? []) {
     if (!entry || typeof entry !== 'object') continue
-    const mode = entry.mode === undefined ? 'continuable' : entry.mode
-    if (mode !== 'continuable') continue
     if (isTracked(entry.id)) continue
-    untracked.push({ id: entry.id, label: entry.label ?? '', mode })
+    const lane = spawnFactOf?.(entry.id)?.lane
+    if (lane === 'one-shot' || lane === 'continuable') continue
+    untracked.push({ id: entry.id, label: entry.label ?? '', mode: entry.mode })
   }
   return untracked
 }
@@ -73,7 +86,8 @@ export function untrackedCatalogEntries(entries, isTracked) {
  * @param {(delayMs: number, fn: () => void) => void} deps.schedule - delayed retry scheduler
  * @param {(reason: string) => void} [deps.onAudit]
   * @param {(fact: object) => void} [deps.onFact] - structured supervision facts (durability)
-  * @param {(text: string) => void} [deps.notifyParent] - deliver a parent-facing signal (timer-deferred followup)
+ * @param {(text: string) => void} [deps.notifyParent] - deliver a parent-facing signal (timer-deferred followup)
+ * @param {(childId: string) => { lane?: string } | undefined} [deps.spawnFactOf] - durable delegate/spawn fact for one child id (lane decides orphan resurrection; see untrackedCatalogEntries)
   */
 export function createGroupCoordinator(deps, config = {}) {
   const cfg = { ...DEFAULT_SUPERVISION, ...config }
@@ -174,9 +188,9 @@ export function createGroupCoordinator(deps, config = {}) {
     }
   }
 
-  /** Catalog cross-check: continuable catalog entries this registry does not track. */
+  /** Catalog cross-check: catalog children this registry does not track (spawn-fact aware). */
   function untrackedAgainstCatalog(entries) {
-    return untrackedCatalogEntries(entries, (id) => children.has(id))
+    return untrackedCatalogEntries(entries, (id) => children.has(id), deps.spawnFactOf)
   }
 
   function noteAssistantText(childId, text) {

@@ -59,7 +59,9 @@ export const CHILD_DENY_TOOLS = [
  * returned unchanged — allow semantics stay untouched. Deny-list or absent
  * filters get CHILD_DENY_TOOLS merged in, deduped. Same merge pattern as
  * supervisedToolFilter in src/delegate/spawn-adapter.js, applied AFTER the
- * lane transform at the single request-assembly point.
+ * lane transform at the single activation-assembly point, and re-applied by
+ * the DSH 0.2.1 creation-window shim (src/delegate/child-composition.js) with
+ * the CHILD scope's restrictable names before tools.restrict().
  *
  * DSH's tools.restrict() REJECTS deny names the composition never registered
  * (e.g. ask_user_question/present/edit_lock_* are absent from a headless

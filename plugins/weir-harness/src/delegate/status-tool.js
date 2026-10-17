@@ -19,7 +19,7 @@ export function digestReport(report, max = 200) {
 export function createStatusTool(deps) {
   return {
     name: 'supervised_status',
-    description: `Render the supervised-child registry of this session: per child the id, name, group, status (running/blocked/completed/terminated), retries, and a truncated report digest; per group the member count and sealed/settled state; plus continuable children in the DSH subagent catalog that this coordinator does not track (flagged untracked). Main agent only. Member report bodies live in the built-in settlement notices and the registry digest; respond to a blocked member with resume_agent or terminate_agent.`,
+    description: `Render the supervised-child registry of this session: per child the id, name, group, status (running/blocked/completed/terminated), retries, and a truncated report digest; per group the member count and sealed/settled state; plus delegated children in the DSH subagent catalog that this coordinator does not track and no spawn fact claims (flagged untracked; the catalog mode is reported verbatim and may be 'continuable' or 'external'). Main agent only. Member report bodies live in the built-in settlement notices and the registry digest; respond to a blocked member with resume_agent or terminate_agent.`,
     parameters: {
       type: 'object',
       properties: {},
@@ -66,8 +66,9 @@ export function collectStatus(coordinator) {
 }
 
 /**
- * Cross-check the DSH catalog: continuable children not tracked by the
- * coordinator are supervision orphans and must be surfaced, never hidden.
+ * Cross-check the DSH catalog: delegated children not tracked by the
+ * coordinator (and not claimed by a spawn fact) are supervision orphans and
+ * must be surfaced, never hidden.
  * @returns {Promise<object[] | null>} untracked rows, or null when the catalog is unavailable
  */
 export async function catalogUntracked(coordinator, parentId, listChildren) {
@@ -111,11 +112,13 @@ export function renderStatus(value) {
   if (value.untracked === null) {
     lines.push('Untracked-catalog cross-check unavailable (DSH catalog read failed).')
   } else if (value.untracked.length === 0) {
-    lines.push('No untracked continuable children in the DSH catalog.')
+    lines.push('No untracked delegated children in the DSH catalog.')
   } else {
-    lines.push('Untracked continuable children in the DSH catalog (not supervised by this registry):')
+    lines.push('Untracked delegated children in the DSH catalog (not supervised by this registry and not spawned by this session):')
     for (const entry of value.untracked) {
-      lines.push(`- ${entry.id} — label "${entry.label}" — mode ${entry.mode}`)
+      // The catalog mode is reported verbatim: DSH 0.2.1 reports every local
+      // child as 'continuable' and may also report 'external'.
+      lines.push(`- ${entry.id} — label "${entry.label}" — mode ${entry.mode ?? 'unknown'}`)
     }
   }
   return lines.join('\n')

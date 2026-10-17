@@ -44,6 +44,10 @@ export const AUDIT_TYPES = Object.freeze({
   // that had waiting subscribers; the emission lives in the blackboard plugin
   // and never touches a session log.
   blackboard: 'blackboard',
+  // Child-composition spawn facts (DSH 0.2.1 delegate shim): one record per
+  // spawn carrying the composition the child's creation window applies, so a
+  // host restart can replay it — the shim itself is runtime-only state.
+  delegate: 'delegate',
 })
 /**
  * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
@@ -58,6 +62,9 @@ export const AUDIT_SUBTYPES = Object.freeze({
   // family, plus reconciliation reports.
   worktree: Object.freeze(['open', 'setup', 'bind', 'checked', 'check', 'invalidate', 'ask', 'decline', 'conflict', 'land', 'cleanup', 'abandon', 'reconcile', 'watch']),
   blackboard: Object.freeze(['released']),
+  // Child-composition spawn facts: one record per spawn, replayed on cold
+  // resume from this same channel (audit only — never a session log).
+  delegate: Object.freeze(['spawn']),
 })
 
 /**

@@ -9,21 +9,37 @@ import { parseTerminalStatus, isTerminalStatus } from '../shared/terminal-eviden
  * Rebuild supervision state by replaying structured audit facts and
  * cross-checking the DSH subagent catalog.
  *
+ * Two fact channels ride the same audit file: the supervision facts
+ * (`weir/supervision/<kind>`) and the child-composition spawn facts
+ * (`weir/delegate/spawn`, which carry the lane). The spawn facts decide which
+ * catalog children are supervision orphans — DSH 0.2.1 reports every local
+ * child as mode 'continuable', so the catalog mode can no longer tell a
+ * one-shot child from a supervised one.
+ *
  * @param {object} input
  * @param {string} input.parentId - the parent session id (record filter key)
  * @param {object[]} input.records - parsed audit JSONL records (already tail-read; may contain other sessions/types)
  * @param {object[]} input.catalogChildren - DSH catalog entries ({ id, label?, mode? }); best-effort
- * @returns {{ children: object[], groups: object[], untracked: object[], confidence: 'full'|'partial', factsSeen: number }}
+ * @returns {{ children: object[], groups: object[], untracked: object[], spawnFacts: object[], confidence: 'full'|'partial', factsSeen: number }}
  */
 export function rehydrateSupervision({ parentId, records, catalogChildren }) {
   const children = new Map()
   const groups = new Map()
+  /** @type {Map<string, { childId: string, lane?: string }>} */
+  const spawnFacts = new Map()
   let factsSeen = 0
 
   for (const record of records ?? []) {
     if (!record || typeof record !== 'object') continue
     if (record.session !== undefined && record.session !== null && record.session !== parentId) continue
     const type = typeof record.type === 'string' ? record.type : ''
+    if (type === 'weir/delegate/spawn') {
+      const fact = record.data
+      if (fact && typeof fact === 'object' && typeof fact.childId === 'string' && fact.childId.length > 0) {
+        spawnFacts.set(fact.childId, { childId: fact.childId, lane: typeof fact.lane === 'string' ? fact.lane : undefined })
+      }
+      continue
+    }
     if (!type.startsWith('weir/supervision/')) continue
     const fact = record.data
     if (!fact || typeof fact !== 'object' || typeof fact.kind !== 'string') continue
@@ -37,13 +53,16 @@ export function rehydrateSupervision({ parentId, records, catalogChildren }) {
     group.settled = group.sealed === true && group.memberIds.length > 0 && terminal
   }
 
-  // Catalog cross-check: continuable children the registry does not track.
-  const untracked = untrackedCatalogEntries(catalogChildren, (id) => children.has(id))
+  // Catalog cross-check: only fact-less orphans remain untracked (the spawn
+  // facts identify the one-shot/continuable children this registry must never
+  // resurrect, and keep a supervised child whose fact chain is broken visible).
+  const untracked = untrackedCatalogEntries(catalogChildren, (id) => children.has(id), (id) => spawnFacts.get(id))
 
   return {
     children: [...children.values()],
     groups: [...groups.values()],
     untracked,
+    spawnFacts: [...spawnFacts.values()],
     confidence: factsSeen > 0 ? 'full' : 'partial',
     factsSeen,
   }

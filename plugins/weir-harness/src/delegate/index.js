@@ -18,6 +18,7 @@ import { createDelegateTool } from './tool.js'
 import { attachWorktreeModeGuard } from './worktree-mode.js'
 import { DOCTRINE_SECTION_ORDER } from '../core/doctrine.js'
 import { isDelegatedChild } from '../shared/child-scope.js'
+import { createChildComposition } from './child-composition.js'
 import {
   DELEGATE_TARGETS_SECTION_NAME,
   DELEGATE_TARGETS_SECTION_ORDER_OFFSET,
@@ -97,6 +98,20 @@ function apply(ctx, config = {}) {
     onAdaptersUpdated: (fn) => ctx.on('llm/adapters-updated', fn),
   })
 
+  // Creation-window child composition (DSH 0.2.1 removed the request-level
+  // persona/toolFilter): the shim applies the reserved spawn's composition in
+  // the child's agent/created window and replays it from the audit channel on
+  // cold resume. One instance per plugin context; dispose unregisters it.
+  const composition = createChildComposition({
+    ctx,
+    audit,
+    logger: ctx.logger,
+    restrictableNames: () => ctx.tools.view?.(undefined)?.restrictableNames,
+    // Feed the supervision catalog cross-check the same durable fact without a
+    // file re-read (spawn-fact lane decides orphan resurrection).
+    onSpawn: mount.noteSpawnFact,
+  })
+
   ctx.tools.register(
     createDelegateTool({
       resolveTarget: targetResolver.resolveTarget,
@@ -114,6 +129,7 @@ function apply(ctx, config = {}) {
       // names, so the child deny list names only tools this composition
       // actually registers (tools.restrict() rejects unknown deny names).
       restrictableNames: () => ctx.tools.view?.(undefined)?.restrictableNames,
+      composition,
     }),
   )
 
@@ -165,6 +181,7 @@ function apply(ctx, config = {}) {
   return () => {
     offModeGuard()
     mount.dispose()
+    composition.dispose()
   }
 }
 
