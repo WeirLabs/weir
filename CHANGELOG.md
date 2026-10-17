@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-17
+
 > **DSH 兼容性边界**：本版本是支持 DSH `0.2.0-rc.2`（`>=0.2.0-rc.2 <0.3.0`）的**最后一个 Weir 版本**。DSH 迭代快且常有破坏性变更，后续 Weir 版本将跟随更新的宿主运行时，可能抬升下限。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
 
 ### Changed
