@@ -31,7 +31,7 @@ LICENSE                     # MIT 开源协议（入库）
 - **运行时**：DSH（宿主为 Electron 应用）。当前开发 profile：`desktop`（`$DSH_PROFILE_DIR` 下），bundle 以 link 方式安装并启用。
 - **捆绑 Node/pnpm 不在 PATH**：用 Harness 会话的 `load_workspace_dependencies` 工具取绝对路径；兜底路径 `~/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/{node/bin/node,pnpm/bin/pnpm.mjs}`。调用 pnpm 的方式：`node <pnpm.mjs 绝对路径> <args>`。
 - **OpenSpec CLI**：`node_modules/.bin/openspec`（需先把捆绑 node 的 bin 目录加进 PATH）。
-- **bundle 改动重应用**：`plugin_manager` 的 `set_bundle` 先禁用再启用（DSH ≥ 0.2.1 起，对已就位包的重复 `install_bundle` 在安装前即以 `already-installed` 拒绝；旧码 `ambiguous-install` 仍存在于安装后路径）。
+- **bundle 改动重应用**：`plugin_manager` 的 `set_bundle` 先禁用再启用（DSH ≥ 0.2.1 起，对已就位包的重复 `install_bundle` 在安装前即以 `already-installed` 拒绝；旧码 `ambiguous-install` 仍存在于安装后路径）。**0.2.1 实况注意**：对带宿主层行的 link bundle（如 weir-harness），off→on 循环现在可能回 `restart-required`（`unmanaged-plugin`——行运行在插件列表之外，热重载覆盖不到）——此时 profile 状态已翻转，代码改动在**下一次 App 重启**生效。
 - **易失参考**：`/tmp/dsh-src`（DSH 编译产物提取）、`/tmp/oh-my-openagent`（OmO 参考仓库）随时可能丢失，不得依赖其长期存在；dsh-src 重建见下条。
 - **dsh-src 重建**（上条易失参考的具体方法）：`npm_config_cache=/tmp/npm-cache npx --yes @electron/asar extract "/Applications/DeepSeek Harness.app/Contents/Resources/app.asar" /tmp/dsh-src`；重建后必须核对版本——提取物 `/tmp/dsh-src/dsh/package.json` 的 version 与安装版 `defaults read "/Applications/DeepSeek Harness.app/Contents/Info.plist" CFBundleShortVersionString` 一致方可作为当前运行时参考，否则只是历史快照。
 - **会话日志解码**：日志位于 `~/.dsh/sessions/<workspace-slug>/<session-id>/session.v4.jsonl.zstd`，是 append-only **多帧** zstd（Node `zlib.zstdDecompressSync` 只解首帧）。解码用入库脚本：`node scripts/dump-session.mjs <日志路径> <输出.jsonl>`（输出帧数统计，`decoded=0` 意味着 DSH 改了日志格式）。

@@ -17,6 +17,10 @@
 - **两个预设移除 persona 的 `{{cwd}}` suffix**：0.2.1 的 agent-loop 不再注册该提示词变量（未知变量装配即抛）；工作目录事实改由宿主 0.2.1 新增的 `working-directory` 运行时上下文提供，信息不丢失。
 - **测试装置**：集成门禁可对任意 DSH 树运行（`WEIR_IT_NODE`/`WEIR_IT_DSH`/`WEIR_IT_PNPM` 覆盖，`run.mjs` 头注释已记录用法与原生插件注意事项）；0.2.1 headless runner 会 join 常驻子代并把 agent 错误重抛为运行失败，两个场景断言相应放宽（属性不变）；`dsh-skill-office` 0.2.1 新增四个同族技能，Office 适配器对非 OFFICE 名改为跳过（认领 Weir 名字的异形候选仍 fail-closed）。
 
+### Fixed
+
+- **委派 spawn 审计事实类型双前缀**：创建窗口垫片把已带 `weir/` 前缀的类型传给审计 sink（sink 自身再补一次前缀），落盘为 `weir/weir/delegate/spawn`，导致冷恢复重放与监督孤儿交叉检查永远匹配不到该事实（0.2.1 实况验收发现；deny 下限未失效，persona/白名单会在重启后降级）。修复后写入与匹配统一为 `weir/delegate/spawn`，并补真实 sink 形状的回归测试。
+
 ## [1.2.1] - 2026-10-17
 
 > **DSH 兼容性边界**：本版本是支持 DSH `0.2.0-rc.2`（`>=0.2.0-rc.2 <0.3.0`）的**最后一个 Weir 版本**。DSH 迭代快且常有破坏性变更，后续 Weir 版本将跟随更新的宿主运行时，可能抬升下限。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
