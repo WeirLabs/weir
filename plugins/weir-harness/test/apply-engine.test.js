@@ -12,7 +12,8 @@ import { createSkillSelectionProvider } from '../src/capabilities/skill-selectio
 import { createSelectionDraft } from '../src/capabilities/selection-draft.js'
 import { APPLY_AUDIT_TYPE, createAdmissionFence, createApplyEngine, createDrainCoordinator, digestApplyRequest } from '../src/capabilities/apply-engine.js'
 import { digestOf } from '../src/capabilities/store/record.js'
-import { createSelectionNotifier } from '../src/capabilities/selection-notify.js'
+import { createSelectionNotifier, notificationText } from '../src/capabilities/selection-notify.js'
+import { applyEngineHooks } from '../src/capabilities/skill-selection-plugin.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 const SESSION = 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
@@ -526,16 +527,23 @@ test('notice semantics: re-committing the same sets queues no notice (empty-delt
   assert.equal(deltas.length, 1)
 })
 
-test('notice semantics: deltas queue into the notifier and net-merge across applies', async t => {
-  const notifier = createSelectionNotifier()
-  const { engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta) } })
+test('notice semantics: deltas queue durably into the notifier and net-merge across applies', async t => {
+  // durable-pending-notice 5.3: the queue is the store unit, so the notifier is
+  // built once the fixture's store root exists.
+  let notifier = null
+  const { store, engine } = await fixture(t, {
+    engineOptions: { onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info) },
+  })
+  notifier = createSelectionNotifier({ store })
   await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
   await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
-  const pending = notifier.consume(SESSION)
+  const pending = await notifier.pending(SESSION)
   // alpha and mcp-a were added then removed before the next request: net zero.
-  assert.deepEqual(pending.net, { added: ['beta'], removed: [] })
-  assert.ok(pending.text.includes('Added: beta.'))
-  assert.equal(notifier.consume(SESSION), null)
+  assert.deepEqual(pending, { added: ['beta'], removed: [], revision: 2 })
+  assert.ok(notificationText(pending).includes('Added: beta.'))
+  // Only delivery clears it.
+  assert.equal((await notifier.clearDelivered(SESSION, pending)).status, 'cleared')
+  assert.equal(await notifier.pending(SESSION), null)
 })
 
 /**
@@ -588,6 +596,95 @@ test('restart: re-applying the exact accepted set after a host restart stays sil
   // The durable record shows no net change: no notice, in particular no
   // spurious full-set Added delta.
   assert.deepEqual(deltas, [])
+})
+
+// --- durable-pending-notice group 1: defect pins (flipped in 5.3) -------------
+// Both shapes below are the reported losses this change fixes: the notice
+// obligation exists only in process memory, so the restart and the replay drop
+// it. They are pinned as DEFECTS on unmodified code and inverted in 5.3.
+
+test('notice pin A (fixed in 5.3): the queued notice of a durably accepted Apply survives a restart', async t => {
+  let notifier = null
+  const { root, store, engine } = await restartedFixture(t, {
+    seed: { skills: [alpha, beta], mcpServers: ['mcp-a'] },
+    engineOptions: { onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info) },
+  })
+  notifier = createSelectionNotifier({ store })
+  const response = await engine.apply(auth, request({ requestId: 'restart-notice', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(response.status, 'applied')
+  const record = await store.read(unit)
+  assert.equal(record.kind, 'ok')
+  assert.deepEqual(record.payload.skills, [alpha])
+  // The obligation is durable: the NEXT host process owes the model the notice.
+  const restarted = createSelectionNotifier({
+    store: openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() }),
+  })
+  assert.equal(restarted.has(SESSION), true)
+  assert.deepEqual(await restarted.pending(SESSION), { added: [], removed: ['beta', 'mcp-a'], revision: 1 })
+  // The notice unit is its OWN record: the accepted selection revision is not
+  // touched by notice bookkeeping (the client's CAS token stays valid).
+  assert.equal(record.revision, 2)
+})
+
+// --- durable-pending-notice group 3: engine hook + durability (RED pre-fix) ---
+
+test('3.1 the committed publication reports the accepted revision to onAccepted; an empty delta stays silent and a throwing hook only degrades the response', async t => {
+  const calls = []
+  const { store, engine } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta, info) => calls.push({ sessionId, delta, info }) } })
+  const response = await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(response.status, 'applied')
+  // The third argument carries the accepted revision (diagnosis + audit).
+  assert.deepEqual(calls, [{ sessionId: SESSION, delta: { added: ['alpha', 'mcp-a'], removed: [] }, info: { revision: 1 } }])
+  const again = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(again.status, 'applied')
+  assert.equal(calls.length, 1)
+
+  // A hook that cannot write the obligation degrades the notice only: the
+  // acceptance, its revision and the response stay untouched.
+  const { store: other, engine: throwing } = await fixture(t, {
+    engineOptions: { onAccepted: () => { throw new Error('notice store is locked') } },
+  })
+  const degraded = await throwing.apply(auth, request({ selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(degraded.status, 'applied')
+  assert.equal(degraded.revision, 1)
+  assert.deepEqual(degraded.warnings, ['accepted-notification-degraded'])
+  const record = await other.read(unit)
+  assert.equal(record.kind, 'ok')
+  assert.deepEqual(record.payload.skills, [alpha])
+  void store
+})
+
+test('3.2 durability through the production hook assembly: one obligation per session, merging across Applies', async t => {
+  const harness = await fixture(t)
+  const notifier = createSelectionNotifier({ store: harness.store })
+  const hooks = applyEngineHooks({
+    ctx: { emit() {}, get() { return undefined }, logger: { warn() {}, debug() {} } },
+    lifecycle: null,
+    notifier,
+  })
+  // The committed-Apply notice travels the exact production hook set.
+  const engine = createApplyEngine({
+    store: harness.store,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    ...hooks,
+    trace: () => {},
+  })
+  // A fresh module + store per observation: a restarted process, nothing else.
+  const restarted = () => createSelectionNotifier({
+    store: openCapabilityStore({ root: harness.root, platform: 'darwin', liveness: createStubLiveness() }),
+  })
+
+  assert.equal((await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))).status, 'applied')
+  assert.deepEqual(await restarted().pending(SESSION), { added: ['alpha', 'mcp-a'], removed: [], revision: 1 })
+
+  // A second Apply before the next request MERGES into the pending obligation
+  // instead of stacking a second one: alpha and mcp-a net out, beta is owed.
+  assert.equal((await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))).status, 'applied')
+  assert.deepEqual(await restarted().pending(SESSION), { added: ['beta'], removed: [], revision: 2 })
+  // ONE unit, merged in place: revision 2 on the same record, never a second one.
+  assert.equal((await harness.store.read({ kind: 'notice', sessionId: SESSION })).revision, 2)
 })
 
 // --- apply-basis-lock-hardening group 1: characterization pins -----------------

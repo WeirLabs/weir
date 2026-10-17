@@ -79,6 +79,9 @@ test('production wiring: a committed Apply through the mounted plugin emits capa
     expect(audits).toHaveLength(1)
     expect(audits[0][1].session).toBe('sess-wire')
     expect(audits[0][1].data.revision).toBe(1)
+    // The face diagnostic reports the queued notice for that session (12.4).
+    expect(face.hasPendingNotification('sess-wire')).toBe(true)
+    expect(face.hasPendingNotification('sess-other')).toBe(false)
   } finally {
     host.restore()
   }
@@ -98,7 +101,7 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
     get: () => undefined,
     logger: { warn() {}, debug() {} },
   }
-  const notifier = createSelectionNotifier()
+  const notifier = createSelectionNotifier({ store })
   const hooks = applyEngineHooks({ ctx, lifecycle: null, notifier })
   // Design D5: notify is the response-bus seam and no production consumer
   // exists — the production wiring deliberately leaves it unset.
@@ -124,9 +127,11 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   let audits = emitted.filter(([type]) => type === `weir/${APPLY_AUDIT_TYPE}`)
   expect(audits).toHaveLength(1)
   expect(audits[0][1].data).toEqual({ requestId: 'req-1', revision: 1 })
-  // Drain the committed Apply's own notice so the recovery delta is observed
+  // Deliver the committed Apply's own notice so the recovery delta is observed
   // in isolation (the notifier net-merges across queued Applies by design).
-  expect(notifier.consume(SESSION)?.net).toEqual({ added: ['alpha'], removed: [] })
+  const committed = await notifier.pending(SESSION)
+  expect(committed).toEqual({ added: ['alpha'], removed: [], revision: 1 })
+  expect((await notifier.clearDelivered(SESSION, committed)).status).toBe('cleared')
 
   lose = true
   const second = await engine.apply(auth, { requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] }, unresolved: [] })
@@ -141,5 +146,102 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   // wired onAccepted hook — exactly one delta computed against the captured
   // pre-write sets ({alpha} → {beta}).
   expect(notifier.has(SESSION)).toBe(true)
-  expect(notifier.consume(SESSION).net).toEqual({ added: ['beta'], removed: ['alpha'] })
+  const recovered = await notifier.pending(SESSION)
+  expect(recovered).toEqual({ added: ['beta'], removed: ['alpha'], revision: 3 })
+
+  // Delivery is the only clear (durable-pending-notice D4): the diagnostic
+  // follows the durable unit exactly (1.4) — true while queued, false once the
+  // notice has been handed to a request boundary.
+  const messages = []
+  expect(await notifier.deliver(SESSION, messages)).toBe('delivered')
+  expect(messages).toHaveLength(1)
+  expect(messages[0].source.kind).toBe('weir-selection-notify')
+  expect(notifier.has(SESSION)).toBe(false)
+  expect(await notifier.pending(SESSION)).toBeNull()
+})
+
+// --- durable-pending-notice group 3.4: the delivery seam ----------------------
+// The `agent/pre-step` listener becomes read → build → inject → clear: the
+// obligation is cleared only AFTER the message landed in the request, so a
+// failed injection now leaves it pending for the next safe boundary instead of
+// dropping it (the old consume-before-push deleted it first).
+
+test('3.4 delivery seam: a pre-seeded obligation is injected once and cleared after the push; a failed injection leaves it pending', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-wiring-deliver-'))
+    const listeners = []
+    const emitted = []
+    let provider
+    const ctx = {
+      skills: {
+        registerProvider(create) { provider = create({ invalidate() {} }) },
+        async list(options) { return (await provider.list(options)).candidates },
+        layers: { global: { providers: new Map() } },
+      },
+      on(name, handler) { listeners.push({ name, handler }) },
+      effect(fn) { fn(); return () => {} },
+      emit(...args) { emitted.push(args) },
+      logger: { warn() {}, debug() {} },
+      get(name) {
+        if (name === 'profileContext') return { home: root, name: 'it' }
+        return undefined
+      },
+    }
+    createSkillSelectionPlugin()(ctx, {
+      machineId: 'weir-it-machine',
+      includeDefaultRoots: false,
+      customSkillDirs: [],
+      agentsHome: host.agentsHome,
+      dshHome: root,
+    })
+    const preSteps = listeners.filter(listener => listener.name === 'agent/pre-step')
+    expect(preSteps).toHaveLength(1)
+    const preStep = preSteps[0].handler
+    const face = skillSelectionFor(ctx)
+
+    // The obligation is pre-seeded exactly where the plugin's store resolves it.
+    const store = openCapabilityStore({ root: join(root, 'weir', 'profiles', 'it', 'capabilities'), platform: 'darwin', liveness: createStubLiveness() })
+    const notice = { kind: 'notice', sessionId: 'sess-deliver' }
+    assert.equal(store.commitSync(notice, 0, () => ({ added: ['alpha'], removed: ['beta'] })).status, 'committed')
+    const stillPending = () => store.read(notice).then(record => record.payload)
+
+    // A throwing push leaves the obligation pending (deliver-then-clear).
+    await preStep({ agent: { id: 'sess-deliver' }, messages: Object.freeze([]) }, () => 'next')
+    expect(await stillPending()).toEqual({ added: ['alpha'], removed: ['beta'] })
+    // A non-array `messages` does the same: nothing injected, nothing cleared.
+    await preStep({ agent: { id: 'sess-deliver' }, messages: {} }, () => 'next')
+    expect(await stillPending()).toEqual({ added: ['alpha'], removed: ['beta'] })
+    expect(face.hasPendingNotification('sess-deliver')).toBe(true)
+    const failures = emitted
+      .filter(([type]) => type === 'weir/capability-notice')
+      .map(([, record]) => record.data)
+      .filter(data => data.outcome === 'injection-failed')
+    expect(failures).toHaveLength(2)
+
+    // The next healthy boundary injects exactly one UserMessage and clears it.
+    const messages = []
+    await preStep({ agent: { id: 'sess-deliver' }, messages }, () => 'next')
+    expect(messages).toHaveLength(1)
+    const injected = messages[0]
+    expect(injected.role).toBe('user')
+    expect(injected.source.kind).toBe('weir-selection-notify')
+    expect(injected.content[0].text).toContain('Removed: beta.')
+    expect(injected.content[0].text).toContain('Added: alpha.')
+    expect(injected.content[0].text).toContain('not a user message')
+    expect(await stillPending()).toEqual({ added: [], removed: [] })
+    expect(face.hasPendingNotification('sess-deliver')).toBe(false)
+
+    // Cleared means cleared: a second boundary injects nothing.
+    const again = []
+    await preStep({ agent: { id: 'sess-deliver' }, messages: again }, () => 'next')
+    expect(again).toHaveLength(0)
+    const outcomes = emitted
+      .filter(([type]) => type === 'weir/capability-notice')
+      .map(([, record]) => record.data.outcome)
+    expect(outcomes).toContain('delivered')
+    expect(outcomes).toContain('cleared')
+  } finally {
+    host.restore()
+  }
 })

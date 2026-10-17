@@ -21,12 +21,11 @@ import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 import { packPresetPackage, createPackageVerbs } from './preset-package.js'
 import { createApplyEngine } from './apply-engine.js'
 import { createSessionDrainAdapter } from './mcp-drain.js'
-import { createSelectionNotifier, NOTIFY_SOURCE } from './selection-notify.js'
+import { createSelectionNotifier } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
 import { feedCapabilityReadBridge } from './capability-remote.js'
 import { parseFrontmatter } from './frontmatter.js'
-import { userTextMessage } from '../shared/user-message.js'
 import { createAudit } from '../shared/audit.js'
 
 const mounted = new WeakMap()
@@ -237,7 +236,20 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     // next safe request consumes them as a full UserMessage riding WITH that
     // request (never an autonomous turn; source marked non-'user' so the
     // intent gate and continuation classifiers exclude it by construction).
-    const notifier = createSelectionNotifier()
+    //
+    // durable-pending-notice D6: the queue is durable, so the notifier needs the
+    // SAME capability store the engine writes — memoized here (the engine was
+    // already lazy per process) so the queue write and the acceptance share one
+    // unit layout, one support gate and one set of lock files. The audit channel
+    // is created before the notifier so its outcomes reach the cold-safe
+    // `weir/capability-notice` event (D7) — created once, shared with the hooks.
+    const audit = createAudit(ctx)
+    let sharedStore = null
+    const storeFor = () => {
+      if (!sharedStore) sharedStore = openCapabilityStore({ profileContext: ctx.get?.('profileContext') })
+      return sharedStore
+    }
+    const notifier = createSelectionNotifier({ store: storeFor(), audit })
     let sharedEngine = null
     const engineFor = () => {
       if (sharedEngine) return sharedEngine
@@ -246,11 +258,11 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       // applyEngineHooks assembly so the wiring pin drives the exact
       // production hooks (design D5).
       sharedEngine = createApplyEngine({
-        store: openCapabilityStore({ profileContext: ctx.get?.('profileContext') }),
+        store: storeFor(),
         locateSession: session => session,
         inventory: (options) => inventory(options),
         provider,
-        ...applyEngineHooks({ ctx, lifecycle, notifier }),
+        ...applyEngineHooks({ ctx, lifecycle, notifier, audit }),
       })
       return sharedEngine
     }
@@ -270,9 +282,10 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       })
     }
     // The shared cold-safe audit channel (cordis emit + .weir/audit.jsonl
-    // mirror; never session.append). The package-import install outcome and
-    // its collision decisions are audited through it (task 6.3).
-    const audit = createAudit(ctx)
+    // mirror; never session.append) is the one created above, so the notice
+    // queue, the Apply hooks and the package-import outcomes share it.
+    // (The package-import install outcome and its collision decisions are
+    // audited through it — task 6.3.)
     // Group 12 client surface: a /capabilities command serving the Badge and
     // manager (receipt / listing / conditions). Values travel as command
     // results — no projection state and no custom session-log event types.
@@ -532,14 +545,15 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     }
     try {
       ctx.on('agent/pre-step', async ({ agent, messages }, next) => {
-        const pending = notifier.consume(agent?.id)
-        if (pending === null) return next()
-        // Injection failure must never affect the accepted commit: a failed
-        // append warns and the request proceeds without the notice.
-        try {
-          if (Array.isArray(messages)) messages.push(userTextMessage(pending.text, NOTIFY_SOURCE))
-        } catch (cause) {
-          ctx.logger?.warn?.(`selection notification injection failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+        // durable-pending-notice D4: read → build → inject → clear. The
+        // obligation is cleared only AFTER the message landed in this request,
+        // so a failed injection (a non-array `messages`, a throwing push)
+        // leaves it pending for the next safe boundary instead of dropping it.
+        // Delivery is advisory: it never throws into the request and never
+        // affects an accepted commit.
+        const outcome = await notifier.deliver(agent?.id, messages)
+        if (outcome === 'injection-failed' || outcome === 'clear-failed') {
+          ctx.logger?.warn?.(`selection notification delivery: ${outcome}`)
         }
         return next()
       })
@@ -591,10 +605,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
  * logger-backed debug diagnostics and never throws into a transaction. The
  * `notify` response-bus seam stays unwired: no production consumer exists
  * (the manager reads the Apply response from its own call), and the wiring
- * pin says so explicitly.
- * @param {{ ctx: any, lifecycle: any, notifier: { queue(sessionId: string, delta: { added: string[], removed: string[] }): void } }} deps
+ * pin says so explicitly. The notice hook queues the DURABLE obligation
+ * (durable-pending-notice D2): `onAccepted` receives the accepted revision and
+ * `queueSync` throws on a failed write, which the engine degrades — never an
+ * exception into the Apply result.
+ * @param {{ ctx: any, lifecycle: any, audit?: (session: { id?: string } | null, type: string, data?: unknown) => void, notifier: { queueSync(sessionId: string, delta: { added: string[], removed: string[] }, info?: { revision?: number }): unknown } }} deps
  */
-export function applyEngineHooks({ ctx, lifecycle, notifier }) {
+export function applyEngineHooks({ ctx, lifecycle, notifier, audit = createAudit(ctx) }) {
   return {
     // The manager's (agent, server)-keyed drain is the only real in-flight
     // ledger (mcp-admission enter/exit at handoff). The engine is shared
@@ -604,14 +621,14 @@ export function applyEngineHooks({ ctx, lifecycle, notifier }) {
     // the empty truth.
     drain: createSessionDrainAdapter(() => ctx.get?.('weirMcpManager')?.drain),
     publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
-    onAccepted: (sessionId, delta) => notifier.queue(sessionId, delta),
+    onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info),
     // The Apply-path convergence emission (5.2 parity with agent/created):
     // an accepted Apply re-emits the preset invalidation event so every
     // connected client drops cached capability state and refetches —
     // without this hook the engine never re-emits and every Badge/panel
     // goes stale until a remount.
     invalidate: (sessionId, presetId) => emitPresetSelected((...args) => ctx.emit(...args), sessionId, presetId, text => ctx.logger?.warn?.(text)),
-    audit: createAudit(ctx),
+    audit,
     trace: (event, data) => {
       try { ctx.logger?.debug?.(`capability-apply ${event}`, data) } catch { /* diagnostics never break a transaction */ }
     },
