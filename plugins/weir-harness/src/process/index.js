@@ -1,15 +1,21 @@
-// Executable resolution for LSP servers and installers. The desktop app is
+// Generic process machinery: executable resolution, launch-shape
+// adjudication, and deadline-bounded runs — one concept, three stages
+// (resolve → launch shape → bounded run). The desktop app is
 // a GUI process launched by LaunchServices, so its PATH is the minimal
 // `/usr/bin:/bin:/usr/sbin:/sbin` — Homebrew (/opt/homebrew, /usr/local),
 // nvm, cargo, go, pipx and npm-global bins are all missing, and
 // ctx.subprocess.resolveExecutable() fails for them (S21). This helper
-// falls back to scanning well-known installation directories so servers and
-// their installers resolve the same way they do in the user's shell.
+// falls back to scanning well-known installation directories so spawned
+// tools resolve the same way they do in the user's shell.
 //
 // Windows resolves through the same helper with a different dialect: npm puts
 // its global shims in `%APPDATA%\npm` (not `~/.npm-global/bin`), bare names
 // carry a PATHEXT extension, and the PATH separator is `;`.
-// Renamed-and-expanded from executable.js (design D1): one concept, three stages — resolve → launch shape → bounded run.
+//
+// No LSP-specific semantics live here: the LSP subsystem (server lifecycle,
+// version probe, panel installer) and the worktree git runner are peer
+// consumers. Moved verbatim out of src/lsp/child-process.js
+// (subsystem-seam-hygiene, D1); npm install POLICY stays in src/lsp/.
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, join as nodeJoin } from 'node:path'
@@ -304,6 +310,7 @@ function expandShimToken(token, text, shimDirectory, join) {
 function tokenizeShimLine(line) {
   const tokens = []
   let current = ''
+  /** @type {string | null} */
   let quote = null
   let escaped = false
   for (const character of line) {
@@ -495,6 +502,7 @@ export async function runBounded(subprocess, { argv, timeoutMs, unref = false })
   })
   let timedOut = false
   let timer
+  /** @type {Promise<void>} */
   const deadline = new Promise((resolve) => {
     timer = setTimeout(() => {
       timedOut = true

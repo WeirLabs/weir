@@ -4,38 +4,16 @@
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
 import { buildRegistry, DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
-import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from './child-process.js'
+import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from '../process/index.js'
+import { jsonResponse, readJsonBody } from '../shared/http-json.js'
 
 const name = 'weir-lsp-admin'
 const inject = []
 const DEFAULT_INSTALL_TIMEOUT_MS = 600_000
 const VERSION_PROBE_TIMEOUT_MS = 8_000
 
-export function jsonResponse(payload, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  })
-}
-
 export function errorResponse(message, status = 400) {
   return jsonResponse({ ok: false, error: { code: `weir-lsp/${status === 400 ? 'invalid' : 'internal'}`, message } }, status)
-}
-
-/** Read the JSON body of a connection request (Request-like or stream). */
-export async function readJsonBody(request) {
-  try {
-    if (typeof request?.json === 'function') return await request.json()
-  } catch {
-    return null
-  }
-  try {
-    const chunks = []
-    for await (const chunk of request?.body ?? []) chunks.push(Buffer.from(chunk))
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch {
-    return null
-  }
 }
 
 /** Accept only lines that plausibly carry a version (stack traces and

@@ -2,7 +2,7 @@
 // lazy start, full-document sync, idle shutdown, per-session holder refcounts.
 import { createLspClient, handshake, shutdownClient } from './client.js'
 import { familyForLanguageId } from './registry.js'
-import { childEnvironment, spawnArgv } from './child-process.js'
+import { childEnvironment, spawnArgv } from '../process/index.js'
 import { pathToUri } from './uri.js'
 
 export const LSP_DEFAULTS = {

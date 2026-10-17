@@ -1,6 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { createSettingsOverlay, mergeWhitelist, readOnlyShellName } from '../src/delegate/settings-overlay.js'
-import { FALLBACK_TABLES } from '../src/shared/whitelist-defaults.js'
+import { FALLBACK_TABLES } from '../src/delegate/whitelist-defaults.js'
 
 // Mutable settings service with an onChange broadcast (same liveSettings
 // pattern as delegate.test.js): commit() publishes one section change to every

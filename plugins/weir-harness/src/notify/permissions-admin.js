@@ -4,7 +4,7 @@
 // connection service resolves from that scope (S20). The platform and the
 // process spawner are injected for tests.
 import { execFile as nodeExecFile } from 'node:child_process'
-import { jsonResponse, readJsonBody } from '../lsp/admin.js'
+import { jsonResponse, readJsonBody } from '../shared/http-json.js'
 import { ACTIONS, readNotificationPermission, runPermissionAction, SENDER } from './permissions.js'
 
 const STATUS_PATH = '/api/weir-notify/permissions/status'

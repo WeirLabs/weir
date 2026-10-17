@@ -149,60 +149,12 @@ export const FIELD_DEFAULTS = Object.freeze({
   blackboardWriteTokenTtlMinutes: 60,
 })
 
-/** Resolved Edit Lock retention policy. The keys are declared above; this is the
- * ONE place that turns them into the values the lifecycle consumes, so defaults
- * and validation cannot drift apart. */
-export const EDIT_LOCK_DEFAULTS = Object.freeze({
-  holdDefaultMinutes: 30,
-  holdSingleMaxMinutes: 30,
-  holdCumulativeMaxMinutes: 120,
-  nudgeAttempts: 2,
-  nudgeFallback: 'release',
-})
-
-/** Overlay one Edit Lock section onto the defaults. A key the user never set
- * falls back to its default; a key that is present but unusable (alone or in
- * combination) throws with the flat settings key named, because silently clamping
- * a retention cap would change how long other sessions stay blocked from those
- * files. The Edit Lock composition refuses retention requests with that error and
- * runs every other path (settling, status, release, stop, unlock) on defaults.
- * @param {any} section */
-export function editLockLimits(section) {
-  const value = section && typeof section === 'object' ? section : {}
-  /** @type {{holdDefaultMinutes: number, holdSingleMaxMinutes: number, holdCumulativeMaxMinutes: number, nudgeAttempts: number, nudgeFallback: 'release'|'abnormal'}} */
-  const limits = { ...EDIT_LOCK_DEFAULTS }
-  /** @param {'holdDefaultMinutes'|'holdSingleMaxMinutes'|'holdCumulativeMaxMinutes'} key @param {string} name */
-  const take = (key, name) => {
-    const input = value[key]
-    if (input === undefined) return
-    if (typeof input !== 'number' || !Number.isFinite(input) || input <= 0) {
-      throw new Error(`weir-settings: ${name} must be a positive number`)
-    }
-    limits[key] = input
-  }
-  take('holdDefaultMinutes', 'editLockHoldDefaultMinutes')
-  take('holdSingleMaxMinutes', 'editLockHoldSingleMaxMinutes')
-  take('holdCumulativeMaxMinutes', 'editLockHoldCumulativeMaxMinutes')
-  if (limits.holdDefaultMinutes > limits.holdSingleMaxMinutes) {
-    throw new Error('weir-settings: editLockHoldDefaultMinutes must not exceed editLockHoldSingleMaxMinutes')
-  }
-  if (limits.holdCumulativeMaxMinutes < limits.holdSingleMaxMinutes) {
-    throw new Error('weir-settings: editLockHoldCumulativeMaxMinutes must be at least editLockHoldSingleMaxMinutes')
-  }
-  if (value.nudgeAttempts !== undefined) {
-    if (!Number.isSafeInteger(value.nudgeAttempts) || value.nudgeAttempts < 0) {
-      throw new Error('weir-settings: editLockNudgeAttempts must be a non-negative integer')
-    }
-    limits.nudgeAttempts = value.nudgeAttempts
-  }
-  if (value.nudgeFallback !== undefined) {
-    if (value.nudgeFallback !== 'release' && value.nudgeFallback !== 'abnormal') {
-      throw new Error('weir-settings: editLockNudgeFallback must be "release" or "abnormal"')
-    }
-    limits.nudgeFallback = value.nudgeFallback
-  }
-  return Object.freeze(limits)
-}
+// TEMPORARY re-export (subsystem-seam-hygiene, D4): EDIT_LOCK_DEFAULTS and
+// editLockLimits moved to src/edit-lock/limits.js — the owner subsystem now
+// holds the retention policy. This re-export keeps existing callers
+// (test/settings-fields.test.js) green; removing it and re-pointing the test
+// is a follow-up change.
+export { EDIT_LOCK_DEFAULTS, editLockLimits } from '../edit-lock/limits.js'
 const zs = z
 
 function fieldSchema(type) {

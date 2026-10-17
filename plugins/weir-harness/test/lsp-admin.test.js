@@ -1,9 +1,10 @@
 import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
-import { apply, errorResponse, jsonResponse, lspStatusFor, probeVersion, readJsonBody, runInstall } from '../src/lsp/admin.js'
+import { apply, errorResponse, lspStatusFor, probeVersion, runInstall } from '../src/lsp/admin.js'
+import { jsonResponse, readJsonBody } from '../src/shared/http-json.js'
 import { DEFAULT_SERVERS, displayInstallCommand, installSpecFor } from '../src/lsp/registry.js'
-import { augmentedPath, npmGlobalPrefix } from '../src/lsp/child-process.js'
-import { spawnArgv } from '../src/lsp/child-process.js'
+import { augmentedPath, npmGlobalPrefix } from '../src/process/index.js'
+import { spawnArgv } from '../src/process/index.js'
 
 /**
  * What the double's resolver hands back. The launch shape is then the shipped

@@ -8,7 +8,7 @@
 // ESM, ctx-only.
 import { createLspManager, LSP_DEFAULTS } from './manager.js'
 import { buildRegistry } from './registry.js'
-import { resolveExecutable as extendedResolveExecutable } from './child-process.js'
+import { resolveExecutable as extendedResolveExecutable } from '../process/index.js'
 import { createLspTools } from './tools.js'
 
 const name = 'weir-lsp'

@@ -19,7 +19,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from './helpers.js'
 import { DEFAULT_TABLES } from '../src/delegate/robash-guard-core.js'
-import { WHITELIST_KEYS } from '../src/shared/whitelist-defaults.js'
+import { WHITELIST_KEYS } from '../src/delegate/whitelist-defaults.js'
 
 const PATCH = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 const DEFAULTS = JSON.parse(readFileSync(new URL('../whitelist-defaults.json', import.meta.url), 'utf8'))

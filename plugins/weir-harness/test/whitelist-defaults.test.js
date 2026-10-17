@@ -2,7 +2,7 @@
 //
 // The defaults live in `whitelist-defaults.json` at the bundle root, read by
 // the plugin itself rather than composed from a patch row, so no configuration
-// layer can discard them (see src/shared/whitelist-defaults.js for the why).
+// layer can discard them (see src/delegate/whitelist-defaults.js for the why).
 //
 // Two things this file must keep true:
 //   1. the DATA FILE and the built-in constants agree — the file is the source,
@@ -22,7 +22,7 @@ import {
   createWhitelistDefaultsCache,
   readWhitelistDefaults,
   readWhitelistDefaultsAt,
-} from '../src/shared/whitelist-defaults.js'
+} from '../src/delegate/whitelist-defaults.js'
 
 /** A reader seam that reports which path was asked for, so caching is observable. */
 function countingReader(contentsByPath) {
