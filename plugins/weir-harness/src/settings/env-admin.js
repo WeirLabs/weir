@@ -4,7 +4,7 @@
 // settings row through ctx.inject so no new package subpath is needed (S19),
 // same pattern as wireLspAdmin / wireNotifyPermissions. The platform is
 // injected for tests.
-import { jsonResponse } from '../lsp/admin.js'
+import { jsonResponse } from '../shared/http-json.js'
 
 const ENV_PATH = '/api/weir-settings/env'
 
