@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-18
+
 > **DSH 兼容性边界（破坏性适配）**：本批次起 Weir 需要 DSH **0.2.1 线**（`>=0.2.1-rc.1 <0.3.0`，`engines.dsh` 与 `peerDependencies` 双声明；0.2.1 起宿主优先按 `engines.dsh` 判定）。仍在 DSH 0.2.0 线的用户请留在 Weir 1.2.1——它是该线的最后支持版本。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
 
 ### Changed
