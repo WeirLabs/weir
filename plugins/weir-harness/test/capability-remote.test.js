@@ -336,6 +336,27 @@ test('ambiguous, absent and unobservable preset owners fail closed rather than b
   }
 })
 
+test('disposing one preset feed leaves the sibling preset reading untouched', async () => {
+  const fixture = twoPresetFixture()
+  const unregisterNormal = feedCapabilityReadBridge(fixture.faces('weir'))
+  const unregisterCreative = feedCapabilityReadBridge(fixture.faces('weir-creative'))
+  const service = createCapabilityReadService({ observeSession: fixture.observeSession, store: () => fixture.store })
+  try {
+    expect(await service.receipt('normal-session')).toEqual(await fixture.owningCommandReceipt('weir', 'normal-session'))
+    expect(await service.receipt('creative-session')).toEqual(await fixture.owningCommandReceipt('weir-creative', 'creative-session'))
+    unregisterNormal() // the 'weir' mount disposes while 'weir-creative' stays live
+    const absent = await service.receipt('normal-session').then(() => null, cause => cause)
+    expect(absent).toBeInstanceOf(CapabilityReadError)
+    expect(absent.code).toBe('bridge-absent')
+    // The keyed feeds are independent: the sibling preset still serves its
+    // exact byte-identical receipt, never a bridge-absent bystander.
+    expect(await service.receipt('creative-session')).toEqual(await fixture.owningCommandReceipt('weir-creative', 'creative-session'))
+  } finally {
+    unregisterNormal()
+    unregisterCreative()
+  }
+})
+
 test('all five reads observe the cold current owner and dispose both leases', async () => {
   const fixture = twoPresetFixture()
   const calls = []
