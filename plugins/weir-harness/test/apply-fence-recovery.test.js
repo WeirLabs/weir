@@ -543,3 +543,103 @@ test('notice pin B pins a DEFECT: a duplicate replay after a restart owes no not
   assert.equal(restarted.has(SESSION), false)
   assert.equal(restarted.consume(SESSION), null)
 })
+
+// --- durable-pending-notice group 3.3: recovery paths write the durable unit --
+
+const noticeUnit = { kind: 'notice', sessionId: SESSION }
+const noticeRevision = async store => (await store.read(noticeUnit)).revision
+
+/** An engine whose notice hook is the durable queue (the production shape). */
+function noticeEngine(store, notifier) {
+  return createApplyEngine({
+    store,
+    locateSession: async session => session?.id === SESSION ? { sessionId: SESSION, cwd: '/server-workspace' } : null,
+    inventory: async () => ({ complete: true, candidates: [alpha, beta].map(candidateOf) }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info),
+  })
+}
+
+test('3.3a recovery-published writes exactly one durable obligation, and a repeated receipt query writes none', async t => {
+  const { root, store } = await fixture(t)
+  const notifier = createSelectionNotifier({ store })
+  const restarted = () => createSelectionNotifier({
+    store: openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() }),
+  })
+  let lose = false
+  const lossy = { ...store, commit: async (...args) => {
+    const result = await store.commit(...args)
+    if (lose) throw new Error('response lost after durable acceptance')
+    return result
+  } }
+  const engine = noticeEngine(lossy, notifier)
+
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  // Deliver the committed Apply's own notice so the recovery delta is isolated.
+  const owed = await notifier.pending(SESSION)
+  assert.deepEqual(owed, { added: ['alpha', 'mcp-a'], removed: [], revision: 1 })
+  assert.equal((await notifier.clearDelivered(SESSION, owed)).status, 'cleared')
+
+  lose = true
+  const response = await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))
+  assert.equal(response.status, 'indeterminate')
+  // The lost response never published, so nothing is owed yet.
+  assert.equal(await restarted().pending(SESSION), null)
+
+  const query = await engine.queryReceipt(auth, 'req-2')
+  assert.equal(query.recovery, 'published')
+  // Exactly ONE durable obligation, computed against the captured pre-write sets.
+  assert.deepEqual(await restarted().pending(SESSION), { added: ['beta'], removed: ['alpha', 'mcp-a'], revision: 3 })
+
+  // The blocked entry was settled: a repeated query publishes nothing again.
+  const again = await engine.queryReceipt(auth, 'req-2')
+  assert.equal('recovery' in again, false)
+  assert.equal(await noticeRevision(store), 3)
+  assert.deepEqual(await restarted().pending(SESSION), { added: ['beta'], removed: ['alpha', 'mcp-a'], revision: 3 })
+})
+
+test('3.3b recovery-not-committed and recovery-blocked write no durable obligation', async t => {
+  // Proven absence: the write never landed, so no notice may be owed.
+  {
+    const { store } = await fixture(t)
+    const notifier = createSelectionNotifier({ store })
+    let down = false
+    const flaky = { ...store, commit: async (...args) => {
+      if (down) throw new Error('connection reset before write')
+      return store.commit(...args)
+    } }
+    const engine = noticeEngine(flaky, notifier)
+    await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+    assert.equal((await notifier.clearDelivered(SESSION, await notifier.pending(SESSION))).status, 'cleared')
+    const before = await noticeRevision(store)
+    down = true
+    assert.equal((await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))).status, 'indeterminate')
+    assert.equal((await engine.queryReceipt(auth, 'req-2')).recovery, 'not-committed')
+    assert.equal(await noticeRevision(store), before)
+    assert.equal(await notifier.pending(SESSION), null)
+  }
+  // Unreadable record: vouches neither way, so it may not queue a notice either.
+  {
+    const { store } = await fixture(t)
+    const notifier = createSelectionNotifier({ store })
+    let lose = false
+    let corruptRead = false
+    const rigged = { ...store,
+      commit: async (...args) => {
+        const result = await store.commit(...args)
+        if (lose) throw new Error('response lost after durable acceptance')
+        return result
+      },
+      read: async (...args) => corruptRead ? { kind: 'corrupt' } : store.read(...args),
+    }
+    const engine = noticeEngine(rigged, notifier)
+    await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+    assert.equal((await notifier.clearDelivered(SESSION, await notifier.pending(SESSION))).status, 'cleared')
+    const before = await noticeRevision(store)
+    lose = true
+    assert.equal((await engine.apply(auth, request({ requestId: 'req-2', expectedRevision: 1, selection: { skills: [beta], mcpServers: [] } }))).status, 'indeterminate')
+    corruptRead = true
+    assert.equal((await engine.queryReceipt(auth, 'req-2')).recovery, 'blocked')
+    assert.equal(await noticeRevision(store), before)
+  }
+})
