@@ -4,6 +4,7 @@ import { test, expect } from './helpers.js'
 import assert from 'node:assert/strict'
 import { createMcpGate } from '../src/capabilities/mcp-gate.js'
 import { createMcpToolWrapper } from '../src/capabilities/mcp-admission.js'
+import { createMcpFacade } from '../src/capabilities/mcp-facade.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
 
 const registryWith = servers => ({
@@ -63,6 +64,36 @@ test('wrapper: resource operations are gated by the same verdict', async () => {
   const provider = wrapper.wrapResourceProvider({ list: async () => ['r1'], read: async () => 'body' })
   await assert.rejects(provider.list({}, {}), /resources are not enabled/)
   await assert.rejects(provider.read({}, {}), /resources are not enabled/)
+})
+
+test('facade: the production resource gate refuses with mcp-admission-refused when the verdict is false', async () => {
+  // The PRODUCTION resource gate: mcpResources.register wraps the provider's
+  // request path (mcp-facade.js) — the shape the stock client registers.
+  let registered
+  const facade = createMcpFacade({
+    host: { mcpResources: { register: (server, provider) => { registered = provider } } },
+    identity: 'docs', generation: 1,
+    admit: async () => false,
+    isEnabledFor: () => false,
+  })
+  let rpcs = 0
+  facade.mcpResources.register('docs', { request: async () => { rpcs++; return 'body' } })
+  await assert.rejects(
+    registered.request({}, { agent: agentOf('s1') }),
+    error => error?.code === 'mcp-admission-refused' && /resources are not enabled/.test(error.message),
+  )
+  expect(rpcs).toBe(0) // the refusal happens before any RPC reaches the provider
+
+  // The same gate with a positive verdict hands the request through.
+  let served
+  const open = createMcpFacade({
+    host: { mcpResources: { register: (server, provider) => { served = provider } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true,
+    isEnabledFor: () => true,
+  })
+  open.mcpResources.register('docs', { request: async () => 'body' })
+  expect(await served.request({}, { agent: agentOf('s1') })).toBe('body')
 })
 
 test('drain: closing the gate rejects new calls, in-flight calls finish, timeout reports in-flight', async () => {
