@@ -4,10 +4,10 @@ import { EDIT_LOCK_DEFAULTS, editLockLimits } from '../src/edit-lock/limits.js'
 
 // Focused unit pin for src/edit-lock/limits.js (change test-surface-pinning,
 // task 6.1), the retention-policy resolver extracted by subsystem-seam-hygiene
-// (D4) with zero direct test imports. The same function object is also pinned
-// through the TEMPORARY settings/sections.js re-export (settings-fields.test.js);
-// this pin survives the re-export's declared removal and nails the flat
-// settings key names in the error faces.
+// (D4) with zero direct test imports. settings-fields.test.js now imports this
+// module directly too (the temporary sections.js re-export was removed by
+// dead-export-cleanup); this pin nails the flat settings key names in the
+// error faces.
 
 test('the defaults are the documented frozen retention policy', () => {
   assert.deepEqual(EDIT_LOCK_DEFAULTS, {

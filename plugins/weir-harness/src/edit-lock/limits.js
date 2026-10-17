@@ -1,8 +1,8 @@
 // Edit Lock retention policy: the defaults and the overlay resolver the
 // lifecycle (edit-lock/index.js) consumes. Moved verbatim out of
 // src/settings/sections.js (subsystem-seam-hygiene, D4) — the owner subsystem
-// now holds the policy; settings/sections.js keeps a TEMPORARY re-export for
-// existing callers (test/settings-fields.test.js), removal is a follow-up.
+// now holds the policy; settings' field-default parity consumes this module
+// directly (the temporary sections.js re-export was removed by dead-export-cleanup).
 
 /** Resolved Edit Lock retention policy. The flat keys are declared in the
  * settings sections table; this is the ONE place that turns them into the
