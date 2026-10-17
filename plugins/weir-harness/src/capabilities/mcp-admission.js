@@ -52,27 +52,5 @@ export function createMcpToolWrapper({ identity, generation, admit, drain }) {
     }
   }
 
-  /**
-   * Wrap a resource provider: the three resource operations are gated by
-   * the TARGET SERVER at dispatch time (8.4, shared resource tool schemas
-   * stay visible; only execution is gated).
-   * @param {{ list?: unknown, listTemplates?: unknown, read?: unknown }} provider
-   */
-  function wrapResourceProvider(provider) {
-    const gate = fn => async (args, exec) => {
-      const admitted = await admit(exec?.agent)
-      if (!admitted) {
-        const error = new Error(`MCP server "${identity}" resources are not enabled for this agent`)
-        throw Object.assign(error, { code: 'mcp-admission-refused' })
-      }
-      return fn(args, exec)
-    }
-    const wrapped = { ...provider }
-    for (const key of ['list', 'listTemplates', 'read']) {
-      if (typeof provider?.[key] === 'function') wrapped[key] = gate(provider[key])
-    }
-    return wrapped
-  }
-
-  return { wrap, wrapResourceProvider }
+  return { wrap }
 }

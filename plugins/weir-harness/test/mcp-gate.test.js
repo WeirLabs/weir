@@ -59,13 +59,6 @@ test('wrapper: the check runs at the head of execute and only then hands off', a
   expect(order).not.toContain('should-not-run')
 })
 
-test('wrapper: resource operations are gated by the same verdict', async () => {
-  const wrapper = createMcpToolWrapper({ identity: 'docs', generation: 1, admit: async () => false })
-  const provider = wrapper.wrapResourceProvider({ list: async () => ['r1'], read: async () => 'body' })
-  await assert.rejects(provider.list({}, {}), /resources are not enabled/)
-  await assert.rejects(provider.read({}, {}), /resources are not enabled/)
-})
-
 test('facade: the production resource gate refuses with mcp-admission-refused when the verdict is false', async () => {
   // The PRODUCTION resource gate: mcpResources.register wraps the provider's
   // request path (mcp-facade.js) — the shape the stock client registers.
