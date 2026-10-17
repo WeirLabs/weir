@@ -4,7 +4,7 @@
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
 import { buildRegistry, DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
-import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from './child-process.js'
+import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from '../process/index.js'
 
 const name = 'weir-lsp-admin'
 const inject = []

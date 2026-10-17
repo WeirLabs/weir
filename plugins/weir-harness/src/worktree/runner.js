@@ -1,15 +1,16 @@
 // Process runners for the worktree service.
 //
 // - gitRunner: argv-only execution of git through ctx.subprocess (no shell,
-//   no interpolation). The executable resolves through the LSP module's
-//   extended resolver because a LaunchServices-started desktop host has a
-//   minimal PATH (S21). Output is collected per stream with a deadline.
+//   no interpolation). The executable resolves through the process
+//   subsystem's extended resolver because a LaunchServices-started desktop
+//   host has a minimal PATH (S21). Output is collected per stream with a
+//   deadline.
 // - shellRunner: user-configured setup / verification commands (shell
 //   strings) through ctx.shell with the calling session's per-call sandbox
 //   policy — the same boundary the bash tool enforces (S23 / S26 S-G).
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { childEnvironment, extraBinDirectories, resolveExecutable } from '../lsp/child-process.js'
+import { childEnvironment, extraBinDirectories, resolveExecutable } from '../process/index.js'
 import { resolveDerivedSetup } from './pkgmgr.js'
 
 /** Vendor git install locations, probed when PATH resolution fails. */
