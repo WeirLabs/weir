@@ -589,3 +589,92 @@ test('restart: re-applying the exact accepted set after a host restart stays sil
   // spurious full-set Added delta.
   assert.deepEqual(deltas, [])
 })
+
+// --- apply-basis-lock-hardening group 1: characterization pins -----------------
+// Interleaving-free basis pin (tasks 1.2): with no foreign writer, the record read
+// at transaction start and the record the CAS replaced are the same revision, so
+// the reported net change and the drain set must name exactly that record's
+// removals — the shapes the committed-over refactor (3.3/3.4) must keep identical.
+
+test('basis pin: an interleaving-free removal Apply names the durable record\'s removals and drains exactly those servers once', async t => {
+  const deltas = []
+  const { store, engine, drain } = await fixture(t, { engineOptions: { onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }) } })
+  // A durable accepted record with two skills and two managed servers.
+  assert.equal((await store.commit(unit, 0, () => ({ skills: [alpha, beta], mcpServers: ['mcp-a', 'mcp-b'], origin: 'apply' }),
+    { requestId: 'seed', requestDigest: digestOf({ seed: true }) })).status, 'committed')
+
+  const response = await engine.apply(auth, request({ requestId: 'req-remove', expectedRevision: 1, selection: { skills: [alpha], mcpServers: ['mcp-b'] } }))
+  assert.equal(response.status, 'applied')
+  assert.equal(response.revision, 2)
+
+  // Consumer 1 — the model-facing notice: both dropped capabilities are named.
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['beta', 'mcp-a'] } }])
+
+  // Consumer 2 — the gate/drain set: exactly the removed managed server, once.
+  assert.deepEqual(response.draining, [{ server: 'mcp-a', state: 'settled', inFlight: 0 }])
+  assert.deepEqual(response.draining.map(row => row.server), [...new Set(response.draining.map(row => row.server))])
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), true)
+  assert.equal(drain.isClosed(SESSION, 'mcp-b'), false)
+
+  // No removal, no drain report: the response stays free of a `draining` key.
+  const quiet = await engine.apply(auth, request({ requestId: 'req-quiet', expectedRevision: 2, selection: { skills: [alpha], mcpServers: ['mcp-b'] } }))
+  assert.equal(quiet.status, 'applied')
+  assert.equal('draining' in quiet, false)
+  assert.deepEqual(deltas.length, 1)
+})
+
+// --- apply-basis-lock-hardening 1.3/2.4: deterministic interleaving rig --------
+/**
+ * A SECOND store over the same root — a writer outside this engine's in-process
+ * serialization, using the real file lock and the real CAS — lands revision 2
+ * inside the awaited `verifyContent` hook, i.e. AFTER the engine's transaction
+ * start read saw revision 1 and BEFORE its commit. The Apply then CASes at
+ * expectedRevision 2, so the CAS passes on a revision this engine never read: the
+ * window apply-basis-lock-hardening closes by making the store hand back the
+ * payload the CAS replaced. `verifyContent` is the only awaited engine hook
+ * between the read and the commit, so the interleaving is deterministic.
+ */
+async function interleavedApply(t, { selection = { skills: [alpha], mcpServers: [] } } = {}) {
+  const deltas = []
+  let foreign = null
+  let recordAtInterleave = null
+  const { root, store, engine, drain } = await fixture(t, {
+    engineOptions: {
+      onAccepted: (sessionId, delta) => deltas.push({ sessionId, delta }),
+      verifyContent: async () => {
+        if (!foreign) return
+        const writer = foreign
+        foreign = null
+        const landed = await writer.commit(unit, 1,
+          () => ({ skills: [alpha, beta], mcpServers: ['mcp-a', 'mcp-w'], origin: 'foreign' }),
+          { requestId: 'foreign-write', requestDigest: digestOf({ foreign: true }) })
+        const observed = await writer.read(unit)
+        recordAtInterleave = { status: landed.status, revision: observed.revision, payload: observed.kind === 'ok' ? observed.payload : null }
+      },
+    },
+  })
+  // Revision 1 is what the engine's transaction start read sees.
+  assert.equal((await store.commit(unit, 0, () => ({ skills: [alpha], mcpServers: ['mcp-a'], origin: 'apply' }),
+    { requestId: 'seed', requestDigest: digestOf({ seed: true }) })).status, 'committed')
+  assert.equal((await store.read(unit)).revision, 1)
+  foreign = openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  const response = await engine.apply(auth, request({ requestId: 'req-interleaved', expectedRevision: 2, selection }))
+  return { response, deltas, drain, store, recordAtInterleave }
+}
+
+test('DEFECT pin: a foreign write between the transaction read and the commit leaves the notice and the gate set one revision stale', async t => {
+  const { response, deltas, drain, recordAtInterleave } = await interleavedApply(t)
+  assert.equal(recordAtInterleave.status, 'committed')
+  // The interleaving advanced the record by exactly one revision before the commit.
+  assert.equal(recordAtInterleave.revision, 2)
+  assert.deepEqual(recordAtInterleave.payload, { skills: [alpha, beta], mcpServers: ['mcp-a', 'mcp-w'], origin: 'foreign' })
+  // The CAS passed on the newer revision, so the Apply landed at revision 3.
+  assert.equal(response.status, 'applied')
+  assert.equal(response.revision, 3)
+  // DEFECT (3.3/3.4 flip this): the basis is the transaction-start read, so both
+  // consumers miss everything the foreign write added — beta is not named as
+  // removed, and the managed server mcp-w stays ungated and undrained.
+  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['mcp-a'] } }])
+  assert.equal(drain.isClosed(SESSION, 'mcp-w'), false)
+  assert.deepEqual(response.draining, [{ server: 'mcp-a', state: 'settled', inFlight: 0 }])
+})

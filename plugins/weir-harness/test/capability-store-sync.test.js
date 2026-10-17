@@ -49,6 +49,7 @@ test('sync commit → async read: same revision and same receipt; the async path
   const committed = store.commitSync(unit, 0, () => ({ skills: ['s'] }), { requestId: 'rs', requestDigest: 'ds' })
   assert.equal(committed.status, 'committed')
   assert.equal(committed.revision, 1)
+  assert.deepEqual(committed.payload, { skills: ['s'] })
   assert.deepEqual(committed.receipt, { requestId: 'rs', requestDigest: 'ds', revision: 1, acceptedAt: 2000 })
 
   const read = await store.read(unit)
