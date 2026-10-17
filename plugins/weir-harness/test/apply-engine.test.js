@@ -662,23 +662,8 @@ async function interleavedApply(t, { selection = { skills: [alpha], mcpServers: 
   return { response, deltas, drain, store, recordAtInterleave }
 }
 
-test('DEFECT pin: a foreign write between the transaction read and the commit leaves the notice and the gate set one revision stale', async t => {
-  const { response, deltas, drain, recordAtInterleave } = await interleavedApply(t)
-  assert.equal(recordAtInterleave.status, 'committed')
-  // The interleaving advanced the record by exactly one revision before the commit.
-  assert.equal(recordAtInterleave.revision, 2)
-  assert.deepEqual(recordAtInterleave.payload, { skills: [alpha, beta], mcpServers: ['mcp-a', 'mcp-w'], origin: 'foreign' })
-  // The CAS passed on the newer revision, so the Apply landed at revision 3.
-  assert.equal(response.status, 'applied')
-  assert.equal(response.revision, 3)
-  // DEFECT (3.3/3.4 flip this): the basis is the transaction-start read, so both
-  // consumers miss everything the foreign write added — beta is not named as
-  // removed, and the managed server mcp-w stays ungated and undrained.
-  assert.deepEqual(deltas, [{ sessionId: SESSION, delta: { added: [], removed: ['mcp-a'] } }])
-  assert.equal(drain.isClosed(SESSION, 'mcp-w'), false)
-  assert.deepEqual(response.draining, [{ server: 'mcp-a', state: 'settled', inFlight: 0 }])
-})
-
+// (The 1.3 DEFECT pin documenting the stale basis in this rig was removed in 3.6
+// — the 2.4 interleaving pin below asserts the fixed behavior.)
 // --- apply-basis-lock-hardening 2.4: the committed-over basis under an interleaving ---
 test('interleaving: the notice and the gate set derive from the record the CAS replaced, so foreign additions are named and drained', async t => {
   const { response, deltas, drain } = await interleavedApply(t)
