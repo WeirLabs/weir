@@ -22,8 +22,20 @@ import { AUDIT_TYPES, AUDIT_SUBTYPES } from '../shared/audit.js'
 import { auditFilePathOf, readAuditTail } from '../shared/terminal-evidence.js'
 import { CHILD_DENY_TOOLS, childToolFilter } from '../shared/child-scope.js'
 
-/** The spawn-fact event type; matches the AUDIT_TYPES/AUDIT_SUBTYPES registry. */
-export const SPAWN_FACT_TYPE = `weir/${AUDIT_TYPES.delegate}/${AUDIT_SUBTYPES.delegate[0]}`
+/**
+ * The spawn-fact audit type AS PASSED TO the audit sink: UNPREFIXED, because
+ * createAudit prepends `weir/` itself (see src/shared/audit.js). Mirrors the
+ * AUDIT_TYPES/AUDIT_SUBTYPES registry; passing a pre-prefixed value here is
+ * what produced `weir/weir/delegate/spawn` records in the wild.
+ */
+export const SPAWN_FACT_TYPE = `${AUDIT_TYPES.delegate}/${AUDIT_SUBTYPES.delegate[0]}`
+
+/**
+ * The spawn-fact type AS STORED in the audit channel (JSONL record + cordis
+ * event name): the sink's single `weir/` prefix is part of the record, so every
+ * comparison against a stored `record.type` must use THIS constant.
+ */
+export const SPAWN_FACT_RECORD_TYPE = `weir/${SPAWN_FACT_TYPE}`
 
 /** Deployment persona prefix section (dsh-system-prompt / dsh-persona contract). */
 const PERSONA_PREFIX_SECTION = 'deployment:persona-prefix'
@@ -169,7 +181,7 @@ export function createChildComposition({ ctx, audit, logger, restrictableNames, 
       if (record.session !== header.parentSession) continue
       if (typeof record.type !== 'string' || !record.type.startsWith('weir/')) continue
       parentManaged = true
-      if (record.type === SPAWN_FACT_TYPE && record.data?.childId === agent.id) fact = record.data
+      if (record.type === SPAWN_FACT_RECORD_TYPE && record.data?.childId === agent.id) fact = record.data
     }
     if (!parentManaged) return // not a weir-managed parent session: not our child
     if (!fact) {

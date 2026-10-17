@@ -1,8 +1,17 @@
 import { describe, expect, it } from './helpers.js'
 import { createGroupCoordinator } from '../src/delegate/group-coordinator.js'
 import { rehydrateSupervision, applyChildLogRecovery } from '../src/delegate/rehydrate.js'
+import { SPAWN_FACT_RECORD_TYPE } from '../src/delegate/child-composition.js'
 
 const record = (session, type, data) => ({ time: 1, session, type, data })
+
+/**
+ * One spawn-fact audit record in the shape the writer's sink stores: the
+ * unprefixed audit type plus createAudit's single `weir/` prefix. Taking the
+ * record type from the producer (never a literal) keeps this replayer's fixtures
+ * pinned to what actually lands in .weir/audit.jsonl.
+ */
+const spawnFact = (session, data) => record(session, SPAWN_FACT_RECORD_TYPE, data)
 
 describe('rehydrateSupervision', () => {
   it('replays spawn/seal/settle/resume/terminate facts into a full-confidence registry', () => {
@@ -67,9 +76,9 @@ describe('rehydrateSupervision', () => {
       { id: 'orphan-9', label: 'leftover', mode: 'continuable' },
     ]
     const records = [
-      record('parent-1', 'weir/delegate/spawn', { childId: 'c-oneshot', lane: 'one-shot', label: 'one-shot job', persona: 'P' }),
-      record('parent-1', 'weir/delegate/spawn', { childId: 'c-cont', lane: 'continuable', label: 'continuable', persona: 'P' }),
-      record('parent-1', 'weir/delegate/spawn', { childId: 'c-sup', lane: 'supervised', label: 'supervised', persona: 'P' }),
+      spawnFact('parent-1', { childId: 'c-oneshot', lane: 'one-shot', label: 'one-shot job', persona: 'P' }),
+      spawnFact('parent-1', { childId: 'c-cont', lane: 'continuable', label: 'continuable', persona: 'P' }),
+      spawnFact('parent-1', { childId: 'c-sup', lane: 'supervised', label: 'supervised', persona: 'P' }),
       // the supervised child's fact chain is present: the registry tracks it
       record('parent-1', 'weir/supervision/spawn', { kind: 'spawn', childId: 'c-sup', name: 'supervised', group: 'scan' }),
     ]
@@ -86,11 +95,26 @@ describe('rehydrateSupervision', () => {
 
   it('keeps a supervised child with a broken fact chain visible as an orphan', () => {
     const catalog = [{ id: 'c-sup', label: 'supervised', mode: 'continuable' }]
-    const records = [record('parent-1', 'weir/delegate/spawn', { childId: 'c-sup', lane: 'supervised', label: 'supervised', persona: 'P' })]
+    const records = [spawnFact('parent-1', { childId: 'c-sup', lane: 'supervised', label: 'supervised', persona: 'P' })]
     const state = rehydrateSupervision({ parentId: 'parent-1', records, catalogChildren: catalog })
     // Broken chain: the spawn fact still forbids treating it as a lost one-shot
     // child, but a supervised child missing from the registry is never hidden.
     expect(state.untracked.map((entry) => entry.id)).toEqual(['c-sup'])
+  })
+
+  it('consumes the single-prefixed spawn-fact record type the spawn writer stores', () => {
+    // The writer's sink (createAudit) adds exactly one `weir/` prefix; a
+    // double-prefixed `weir/weir/delegate/spawn` record would fall through to
+    // "no spawn fact" and lose the lane in the catalog cross-check.
+    expect(SPAWN_FACT_RECORD_TYPE).toBe('weir/delegate/spawn')
+    const catalog = [{ id: 'c1', label: 'one-shot job', mode: 'continuable' }]
+    const state = rehydrateSupervision({
+      parentId: 'parent-1',
+      records: [spawnFact('parent-1', { childId: 'c1', lane: 'one-shot' })],
+      catalogChildren: catalog,
+    })
+    expect(state.spawnFacts.map((fact) => [fact.childId, fact.lane])).toEqual([['c1', 'one-shot']])
+    expect(state.untracked).toEqual([])
   })
 
   it('ignores records from other sessions and non-supervision types', () => {
