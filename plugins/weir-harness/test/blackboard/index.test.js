@@ -4,6 +4,7 @@
 // surface, board identity across the delegation tree, the settings-driven
 // TTL, and the terminate/dispose lifecycle hooks. Stub ctx — no cordis.
 import assert from 'node:assert/strict'
+import { afterEach } from 'node:test'
 import { describe, expect, it } from '../helpers.js'
 import { createBlackboardKernel } from '../../src/blackboard/kernel.js'
 import { createBlackboardPlugin, DEFAULT_WRITE_TOKEN_TTL_MINUTES, resolveWriteTokenTtlMinutes } from '../../src/blackboard/index.js'
@@ -49,8 +50,36 @@ function mountStub({ settings = {}, sessions = new Map(), toolsView, kernel = cr
   }
   const apply = createBlackboardPlugin({ kernel })
   const dispose = apply(ctx, {})
-  return { ctx, registered, handlers, provided, emitted, warnings, sections, variables, dispose }
+  // Every mount feeds the module-level remote bridge (src/blackboard/remote.js),
+  // whose live-feed stack restores the previous feed when a mount disposes — a
+  // mount leaked past its test would keep serving and poison later bridge
+  // assertions, so every stub mount is tracked and auto-disposed below.
+  const mount = {
+    ctx,
+    registered,
+    handlers,
+    provided,
+    emitted,
+    warnings,
+    sections,
+    variables,
+    dispose: () => {
+      liveMounts.delete(mount)
+      return dispose()
+    },
+  }
+  liveMounts.add(mount)
+  return mount
 }
+
+/** All currently live stub mounts (see mountStub). */
+const liveMounts = new Set()
+
+// Auto-dispose every stub mount after each case: the bridge feed a mount
+// registers must not outlive the case that mounted it.
+afterEach(() => {
+  for (const mount of [...liveMounts]) mount.dispose()
+})
 
 const tool = (/** @type {{ registered: any[] }} */ mount, /** @type {string} */ name) => mount.registered.find((/** @type {any} */ definition) => definition.name === name)
 

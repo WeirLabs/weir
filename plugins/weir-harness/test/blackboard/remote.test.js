@@ -12,8 +12,10 @@ import {
   BLACKBOARD_REMOTE_SERVICE_KEY,
   BlackboardRemoteError,
   apply as remoteApply,
+  blackboardRemoteBridge,
   blackboardRemoteContribution,
   createBlackboardRemoteService,
+  feedBlackboardRemoteBridge,
 } from '../../src/blackboard/remote.js'
 
 const TTL = 60_000
@@ -284,6 +286,114 @@ describe('remote resolve (the panel root resolution: no lookup, a bare JSON sess
     let channelCaught
     try { (await gated.resolve('child')) } catch (error) { channelCaught = error }
     expect(channelCaught.code).toBe('channel-unavailable')
+  })
+})
+
+describe('module bridge feed (single-mount lifecycle pin)', () => {
+  it('an unfed bridge is null; a fed bridge serves its faces until its own unregister', () => {
+    const bridge = makeBridge()
+    expect(blackboardRemoteBridge()).toBeNull()
+    const unregister = feedBlackboardRemoteBridge(bridge.faces)
+    try {
+      expect(blackboardRemoteBridge()).toBe(bridge.faces)
+    } finally {
+      unregister()
+    }
+    expect(blackboardRemoteBridge()).toBeNull()
+  })
+})
+
+describe('module bridge feed (multi-mount ownership: two live mounts, one serving)', () => {
+  // The production steady state: two eagerly-mounted presets feed the same
+  // module bridge, and their mounts share ONE kernel (the runtime-global
+  // durable registry). boardOf records which mount's faces served the call.
+  const mountPair = () => {
+    const kernel = createBlackboardKernel()
+    const servedBy = []
+    const facesOf = (owner) => ({
+      kernel,
+      boardOf: (agent) => {
+        servedBy.push(owner)
+        return (agent?.session?.header?.delegationDepth ?? 0) === 0 ? agent.id : agent.session?.header?.parentSession
+      },
+      ttlMs: () => TTL,
+    })
+    return { kernel, servedBy, facesA: facesOf('A'), facesB: facesOf('B') }
+  }
+
+  it('disposing the serving feed restores the previous live feed; the last dispose empties the slot', async () => {
+    const { facesA, facesB } = mountPair()
+    const service = createBlackboardRemoteService() // the default module bridge
+    const offA = feedBlackboardRemoteBridge(facesA)
+    const offB = feedBlackboardRemoteBridge(facesB)
+    try {
+      expect(blackboardRemoteBridge()).toBe(facesB) // the latest live feed serves
+      offB() // the serving mount disposes while its sibling lives
+      expect(blackboardRemoteBridge()).toBe(facesA)
+      offA() // no live feed remains: the slot empties and calls fail bridge-absent
+      expect(blackboardRemoteBridge()).toBeNull()
+      let caught
+      try { (await service.list(AGENT, {})) } catch (error) { caught = error }
+      expect(caught).toBeInstanceOf(BlackboardRemoteError)
+      expect(caught.code).toBe('bridge-absent')
+    } finally {
+      offA()
+      offB()
+    }
+  })
+
+  it('a non-serving feed disposes without disturbing the serving feed', () => {
+    const { facesA, facesB } = mountPair()
+    const offA = feedBlackboardRemoteBridge(facesA)
+    const offB = feedBlackboardRemoteBridge(facesB)
+    try {
+      offA() // out of order: the older feed leaves while B holds the slot
+      expect(blackboardRemoteBridge()).toBe(facesB)
+      offB()
+      expect(blackboardRemoteBridge()).toBeNull()
+    } finally {
+      offA()
+      offB()
+    }
+  })
+
+  it('a repeated unregister is a no-op and cannot erase the restored feed', () => {
+    const { facesA, facesB } = mountPair()
+    const offA = feedBlackboardRemoteBridge(facesA)
+    const offB = feedBlackboardRemoteBridge(facesB)
+    try {
+      offB()
+      offB() // idempotent: the second call leaves the slot state untouched
+      expect(blackboardRemoteBridge()).toBe(facesA)
+      offA()
+      offA()
+      expect(blackboardRemoteBridge()).toBeNull()
+    } finally {
+      offA()
+      offB()
+    }
+  })
+
+  it('service level: two mounts share the kernel; disposing the serving mount keeps list resolving against the survivor', async () => {
+    const { kernel, servedBy, facesA, facesB } = mountPair()
+    kernel.write('root-session', { holderId: 'root-session', ...ENTRY, ttlMs: TTL })
+    const service = createBlackboardRemoteService() // the default module bridge
+    const offA = feedBlackboardRemoteBridge(facesA)
+    const offB = feedBlackboardRemoteBridge(facesB)
+    try {
+      expect((await service.list(AGENT, {})).entries.map((entry) => entry.key)).toEqual(['probe.key'])
+      expect(servedBy).toEqual(['B'])
+      // The serving mount disposes while its sibling lives: list must resolve
+      // against the survivor's faces — never bridge-absent — and the shared
+      // board state crosses the handover untouched.
+      offB()
+      const listed = await service.list(AGENT, {})
+      expect(listed.entries.map((entry) => entry.key)).toEqual(['probe.key'])
+      expect(servedBy).toEqual(['B', 'A'])
+    } finally {
+      offA()
+      offB()
+    }
   })
 })
 

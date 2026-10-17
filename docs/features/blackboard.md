@@ -96,6 +96,8 @@
 
 第 8 个 wire 方法 `resolve`：**无 scope、无 agent lookup**——浏览会话 id 以裸 JSON `agentId` 传输（src-json codec，同 capability-remote 先例），返回 `{ sessionId }`（会话根 id）。面板在任何 lookup 门控动词之前先调 resolve 绑定根黑板；网桥的 `rootOf` 面沿 parentSession 链上行（活体 sessions 注册表优先、`sessionQuery.readSession` 持久头兜底），走到 `delegationDepth` 为 0 的根为止（depth 0 的 fork 是自己的根，语义对齐 `resolveDurableRoot`）；断链、无 parent、环路或超过跳数上限（MAX_ANCESTORS=8）一律降级为已知最深祖先，绝不猜测跨会话的根。resolve 只解析 id、不读板内容，七个板动词仍全部走 agent lookup——不新增绕过网关的冷会话身份后门。
 
+**桥接槽的多挂载所有权（stack-restore）**：preset registry 在 profile 加载时急切挂载 `weir` 与 `weir-creative` 两个预设，两个 blackboard 插件实例永久共存并都喂入 `src/blackboard/remote.js` 的模块级桥接——双挂载是稳态而非边缘情况。桥接槽是**存活喂入栈**：面板 remote 调用由最新存活喂入的 faces 服务；任一挂载 dispose 只移除自己的喂入，若移除的恰是服务中喂入则恢复上一个存活喂入；同一喂入的重复 dispose 幂等无操作。仅当不存在任何存活喂入时，remote 方法才以 `bridge-absent` 显式失败、面板才显示黑板不可用——「非 Weir 预设或桥未挂载」的文案语义由此始终为真。服务权切换不触碰内核与持久状态（条目、read/subscribe 计数、晋升标记、未过期写入权令牌跨切换原样可见可用），因为内核与持久层本就不是 per-mount（运行时全局注册表按 profile home 共享、引用计数）。当前两个预设的 faces 等价（同一全局内核、同一 host-plane sessions/agents/sessionQuery、同一设置行），由哪个存活挂载服务对用户不可见；faces 一旦按预设分化，该等价前提失效，须重新评估按预设键控路由（keyed-faces）或 domains.js 式引用计数共享 faces 的终态方案。兄弟桥 `capability-remote.js` 语义不同：capability 读按会话投影预设分发，其喂入按 `readPresetId` 键控、同预设重叠显式 `owner-ambiguous` 拒读（c5dec75），与本栈式所有权是两个域各自的正确语义。
+
 ### 持久文件、冷恢复与版本迁移
 
 黑板不在工作区 `.weir/`，也不在 Weir 安装目录。它位于 DSH home 的根 Session 日志目录，文件名是**当前规范日志完整 basename + `_bb`**，例如：
