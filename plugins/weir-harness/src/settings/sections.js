@@ -149,12 +149,6 @@ export const FIELD_DEFAULTS = Object.freeze({
   blackboardWriteTokenTtlMinutes: 60,
 })
 
-// TEMPORARY re-export (subsystem-seam-hygiene, D4): EDIT_LOCK_DEFAULTS and
-// editLockLimits moved to src/edit-lock/limits.js — the owner subsystem now
-// holds the retention policy. This re-export keeps existing callers
-// (test/settings-fields.test.js) green; removing it and re-pointing the test
-// is a follow-up change.
-export { EDIT_LOCK_DEFAULTS, editLockLimits } from '../edit-lock/limits.js'
 const zs = z
 
 function fieldSchema(type) {
