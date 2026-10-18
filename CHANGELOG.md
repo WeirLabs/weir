@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Windows 通知改由系统命令投递（来源显示为「Windows PowerShell」）**：此前 Windows 桌面宿主上系统通知**一条都不发、且没有任何告警**。根因是两条独立缺陷叠加：①页面腿弹不出——Electron 要求 Windows 通知必须有开始菜单快捷方式 + `AppUserModelID` + `ToastActivatorCLSID`，而 Weir 所在的宿主发布物没有声明任何应用身份（`app.asar` 全量扫描 `UserModelId` 命中 0 次），Chromium 对缺少该身份的 toast 只写一条 DLOG 就丢弃；②失败通道在 JS 侧结构性不可达——Blink 的 `Notification` 不因平台问题抛错，`error` 仅在「非安全上下文」或「权限未授予」时派发，而宿主以 `dsh-app:`（`standard + secure`）加载页面且除麦克风外一律授予权限，所以页面只能回报 `shown` / `pending`，两者都是终态，系统命令兜底永远轮不到执行。现在 Windows 不再走页面腿：新增平台谓词 `PAGE_DELIVERY_PLATFORMS`（`darwin` / `linux`）决定是否创建页面通道，`win32` 直接走 PowerShell WinRT toast——它的 AUMID 指向操作系统自己注册的「Windows PowerShell」快捷方式，因此能真正弹出。**代价**：Windows 通知来源显示为「Windows PowerShell」而非 DeepSeek Harness（带品牌名的路径需要宿主自己调用 `app.setAppUserModelId` 并在安装器里带 ToastActivatorCLSID，插件做不到，已登记为上游后续项）。页面端点（`web/pull` / `web/ack`）在 Windows 上不再注册。详见 [系统通知](docs/features/notify.md)。
+
+### Fixed
+
+- **Windows toast 被系统开关拦下时完全无痕**：`ToastNotifier.Show()` 没有同步失败返回，异步的 `ToastNotification.Failed` 事件又无法被「发完即退出」的进程等待，所以脚本在弹出前先读 `ToastNotifier.Setting`——只要不是 `Enabled`（被用户全局、单应用、组策略或应用清单关掉），就把 `Windows toast notifications are unavailable: <Setting>` 写入 stderr 并以退出码 3 结束，宿主据此走既有的「每种失败原因只告警一次」路径，告警里带具体原因。
+- **页面回报「已发出但未确认」时不留痕迹**：页面回报 `pending`（把通知交给了浏览器但 2.5 秒内没得到确认）仍按「至多弹一次」视为终态、不兜底，但现在会经宿主日志告警一次（同一原因只报一次）——平台静默丢弃通知时这条日志是唯一线索，不再隐形。
+
+> **实机验证边界**：本次修复依据 Electron / Chromium / Microsoft 的文档契约与发布物取证，**未在真实 Windows 桌面实机验证**。验收方法：把 `.weir/weir-notify-windows-diagnose.ps1` 拷到 Windows 上运行——第 4 节打印 PowerShell 发送方的 `ToastNotifier.Setting`（唯一的决定性一行），第 5 节发送与 Weir 完全同字节的载荷。若 `Setting` 不是 `Enabled` 或宿主以管理员权限运行，任何代码改动都不会让 toast 出现（后者是 Microsoft 明示的静默失败，两条腿同时失效）。
+
 ## [1.2.2] - 2026-10-18
 
 > **DSH 兼容性边界（破坏性适配）**：本批次起 Weir 需要 DSH **0.2.1 线**（`>=0.2.1-rc.1 <0.3.0`，`engines.dsh` 与 `peerDependencies` 双声明；0.2.1 起宿主优先按 `engines.dsh` 判定）。仍在 DSH 0.2.0 线的用户请留在 Weir 1.2.1——它是该线的最后支持版本。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
