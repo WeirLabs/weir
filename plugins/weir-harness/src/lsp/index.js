@@ -81,7 +81,10 @@ function apply(ctx, config = {}) {
     manager = createLspManager({
       subprocess: ctx.subprocess,
       fs: ctx.fs,
-      registry: buildRegistry(option('servers', config.servers)),
+      // `config.platform` is the test seam: the registry resolves the running
+      // host's rows unless a caller pins the platform (D2 — consumers below
+      // only ever see flat, already-resolved entries).
+      registry: buildRegistry(option('servers', config.servers), config.platform ?? process.platform),
       // config.extraBinDirs overrides the extended-resolution scan dirs
       // (hermetic tests; power users with exotic install locations)
       resolveExecutable: (command) => extendedResolveExecutable(ctx.subprocess, command, config.extraBinDirs),
@@ -244,7 +247,7 @@ function apply(ctx, config = {}) {
         diagnosticsWaitMs: option('diagnosticsWaitMs', config.diagnosticsWaitMs),
       }
       manager.setOptions(Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)))
-      manager.setRegistry(buildRegistry(option('servers', config.servers)))
+      manager.setRegistry(buildRegistry(option('servers', config.servers), config.platform ?? process.platform))
     }
   })
   applyGate()

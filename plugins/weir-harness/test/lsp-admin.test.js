@@ -66,7 +66,7 @@ function fakeRequest(body) {
 describe('lsp admin pure logic', () => {
   it('lspStatusFor reports installed/missing per family with versions', async () => {
     const subprocess = fakeSubprocess({ present: ['typescript-language-server', 'gopls'] })
-    const servers = await lspStatusFor(DEFAULT_SERVERS, subprocess, { probeTimeoutMs: 40, dirs: [] })
+    const servers = await lspStatusFor(DEFAULT_SERVERS, subprocess, { probeTimeoutMs: 40, dirs: [], platform: 'darwin' })
     expect(servers).toHaveLength(Object.keys(DEFAULT_SERVERS).length)
     const typescript = servers.find((server) => server.family === 'typescript')
     expect(typescript.installed).toBe(true)
@@ -74,7 +74,7 @@ describe('lsp admin pure logic', () => {
     expect(typescript.languageIds).toContain('typescript')
     const lua = servers.find((server) => server.family === 'lua')
     expect(lua.installed).toBe(false)
-    expect(lua.installCommand).toBe(displayInstallCommand(DEFAULT_SERVERS.lua, process.platform))
+    expect(lua.installCommand).toBe(displayInstallCommand(DEFAULT_SERVERS.lua, 'darwin'))
     expect(lua.installerAvailable).toBe(false)
     expect(typescript.installerAvailable).toBe(false) // npm not present in the fake
     // version probes consumed the spawned handles (any present command resolves)
@@ -108,12 +108,44 @@ describe('lsp admin pure logic', () => {
     // a family whose entry carries no install spec for this platform
     const custom = { command: 'custom-ls', installHint: 'see the docs' }
     await expect(async () => runInstall({ custom }, subprocess, 'custom', undefined, [])).rejects.toThrow(/no installer/)
-    // the installer that IS selected for a family is the host platform's: win32
-    // resolves via npm/pipx/go on the PATH, macOS/Linux via brew or apt
-    const cpp = installSpecFor(DEFAULT_SERVERS.cpp)
-    if (cpp) {
-      await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp', undefined, [])).rejects.toThrow(`installer '${cpp.command}' not found`)
-    }
+    // the installer that IS selected is the REQUESTED platform's, never the
+    // host's: darwin resolves brew, win32 resolves winget (D2/D3)
+    expect(installSpecFor(DEFAULT_SERVERS.cpp, 'darwin')).toEqual({ command: 'brew', args: ['install', 'llvm'] })
+    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp', undefined, [], 'darwin')).rejects.toThrow(`installer 'brew' not found`)
+    expect(installSpecFor(DEFAULT_SERVERS.cpp, 'win32').command).toBe('winget')
+    await expect(async () => runInstall(DEFAULT_SERVERS, subprocess, 'cpp', undefined, [], 'win32')).rejects.toThrow(`installer 'winget' not found`)
+  })
+
+  it('reports the Windows recipe for a win32 host', async () => {
+    const subprocess = fakeSubprocess({ present: ['winget'] })
+    const servers = await lspStatusFor(DEFAULT_SERVERS, subprocess, { probeTimeoutMs: 20, dirs: [], platform: 'win32' })
+    const cpp = servers.find((server) => server.family === 'cpp')
+    expect(cpp.installCommand.startsWith('winget install --id LLVM.LLVM')).toBe(true)
+    expect(cpp.installerAvailable).toBe(true)
+    expect(cpp.installHint).not.toContain('brew')
+    expect(cpp.installCommand).not.toContain('apt-get')
+    const lua = servers.find((server) => server.family === 'lua')
+    expect(lua.installCommand.startsWith('winget install --id LuaLS.lua-language-server')).toBe(true)
+    expect(lua.installHint).not.toContain('brew')
+    // the same catalog resolves the macOS recipe when the host is darwin
+    const darwin = await lspStatusFor(DEFAULT_SERVERS, fakeSubprocess({ present: ['winget'] }), { probeTimeoutMs: 20, dirs: [], platform: 'darwin' })
+    const darwinCpp = darwin.find((server) => server.family === 'cpp')
+    expect(darwinCpp.installCommand).toBe('brew install llvm')
+    expect(darwinCpp.installerAvailable).toBe(false) // no brew in the fake
+  })
+
+  it('runs the win32 install spec through the launch shape', async () => {
+    const subprocess = fakeSubprocess({ present: ['winget'] })
+    const pending = runInstall(DEFAULT_SERVERS, subprocess, 'cpp', 5_000, [], 'win32')
+    await new Promise((resolve) => setImmediate(resolve))
+    const handle = subprocess.spawns[0]
+    const installArgs = ['install', '--id', 'LLVM.LLVM', '-e', '--accept-source-agreements', '--accept-package-agreements']
+    expect(launched(handle.spec, resolvedAs('winget'), installArgs)).toBe(true)
+    handle.finish(0, ['Successfully installed LLVM'])
+    const result = await pending
+    expect(result.exitCode).toBe(0)
+    expect(result.timedOut).toBe(false)
+    expect(result.output).toContain('Successfully installed LLVM')
   })
 
   it('runInstall captures output and normalizes the exit code', async () => {

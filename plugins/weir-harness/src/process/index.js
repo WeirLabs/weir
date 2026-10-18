@@ -39,6 +39,8 @@ export function extraBinDirectories(env = process.env, platform = process.platfo
     // describe, not which separator to spell, so a test on any host can point
     // the seam at a real fixture directory.
     const roaming = env.APPDATA ?? join(home, 'AppData', 'Roaming')
+    const localAppData = env.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
+    const programFiles = env.ProgramFiles ?? 'C:\\Program Files'
     return [
       // npm's own global prefix: the .cmd/.ps1 shims live directly here.
       join(roaming, 'npm'),
@@ -51,6 +53,15 @@ export function extraBinDirectories(env = process.env, platform = process.platfo
       join(home, 'go', 'bin'),
       join(home, 'scoop', 'shims'),
       join(roaming, 'npm', 'node_modules', '.bin'),
+      // LLVM's NSIS installer skips the "add to PATH" step in silent mode, so
+      // these two are the ONLY way a winget-installed clangd resolves (D4).
+      join(programFiles, 'LLVM', 'bin'),
+      join(localAppData, 'Programs', 'LLVM', 'bin'),
+      // WinGet portable packages expose their command aliases here (LuaLS).
+      join(localAppData, 'Microsoft', 'WinGet', 'Links'),
+      // winget.exe itself lives here; a long-running GUI's PATH can predate the
+      // App Installer update, so the directory scan must cover it too.
+      join(localAppData, 'Microsoft', 'WindowsApps'),
     ]
   }
   const nvmBins = []

@@ -488,6 +488,27 @@ describe('lsp tool flows (gate on)', () => {
     await expect(async () => diagnosticsTool.execute({ file_path: '/ws/a.ts' }, { agent, signal: undefined })).rejects.toThrow(/install it first/)
   })
 
+  it('names the running platform\'s install hint when a server is missing (win32)', async () => {
+    const subprocess = fakeSubprocess()
+    subprocess.resolveExecutable = async () => {
+      throw new Error('not found')
+    }
+    const ctx = fakeCtx(subprocess, { enabled: true, extraBinDirs: [], platform: 'win32' })
+    apply(ctx, { enabled: true, extraBinDirs: [], platform: 'win32' })
+    const agent = fakeAgent()
+    await lspTool(ctx).execute({ enabled: true }, { agent })
+    const diagnosticsTool = agent.scoped.find((tool) => tool.name === 'lsp_diagnostics')
+    let message = ''
+    try {
+      await diagnosticsTool.execute({ file_path: '/ws/a.cpp' }, { agent, signal: undefined })
+    } catch (error) {
+      message = String(error?.message ?? error)
+    }
+    expect(message).toContain('install it first')
+    expect(message).toContain('winget install --id LLVM.LLVM')
+    expect(message).not.toContain('brew')
+  })
+
   it('unknown file types are rejected before any server starts', async () => {
     const subprocess = fakeSubprocess()
     const ctx = fakeCtx(subprocess, { enabled: true })

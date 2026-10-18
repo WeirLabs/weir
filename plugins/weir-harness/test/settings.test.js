@@ -67,6 +67,18 @@ describe('settings Config schema', () => {
     expect(() => computeSections({ lspServers: '{"zig":{"command":"zls","args":"--stdio"}}' })).toThrow(/args/)
   })
 
+  it('validates lspServers platform rows (fail loud, family and field named)', () => {
+    // a row may override only the fields it declares (install-only, no command)
+    const ok = computeSections({ lspServers: JSON.stringify({ zig: { command: 'zls', platforms: { win32: { command: 'C:/zig/zls.exe' }, darwin: { installHint: 'brew install zls' } } } }) })
+    expect(ok.lsp.servers.zig.platforms.win32.command).toBe('C:/zig/zls.exe')
+    expect(ok.lsp.servers.zig.platforms.darwin.installHint).toBe('brew install zls')
+    // malformed rows fail activation loud
+    expect(() => computeSections({ lspServers: '{"zig":{"command":"zls","platforms":[1]}}' })).toThrow(/platforms/)
+    expect(() => computeSections({ lspServers: '{"zig":{"command":"zls","platforms":{"win32":42}}}' })).toThrow(/zig\.platforms\.win32/)
+    expect(() => computeSections({ lspServers: '{"zig":{"command":"zls","platforms":{"win32":{"command":" "}}}}' })).toThrow(/command/)
+    expect(() => computeSections({ lspServers: '{"zig":{"command":"zls","platforms":{"win32":{"args":"x"}}}}' })).toThrow(/args/)
+  })
+
   it('validates robash list JSON (fail loud, key named)', () => {
     expect(computeSections({ robashAllow: '["ls","cat"]' }).robash.allow).toEqual(['ls', 'cat'])
     expect(computeSections({ robashDeny: '[]' }).robash?.deny).toBe(undefined)
