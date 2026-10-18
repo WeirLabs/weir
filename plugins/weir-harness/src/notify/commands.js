@@ -54,7 +54,10 @@ function linux(note, sound) {
   }
 }
 
-/** PowerShell source of the Windows toast; reads title/body from the environment. */
+/**
+ * PowerShell source of the Windows toast; reads title/body from the environment
+ * and reports an OS-level block through stderr plus a non-zero exit.
+ */
 const WINDOWS_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null',
@@ -66,7 +69,17 @@ const WINDOWS_SCRIPT = [
   '$xml.LoadXml("<toast><visual><binding template=\'ToastGeneric\'><text>$title</text><text>$body</text></binding></visual>$audio</toast>")',
   '$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)',
   "$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
-  '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)',
+  // `Show()` has no synchronous failure return, and the asynchronous
+  // `ToastNotification.Failed` event cannot be awaited by a process that exits
+  // right after firing, so `ToastNotifier.Setting` is the synchronous proxy: a
+  // non-`Enabled` value (disabled for the app, the user, by group policy or by
+  // manifest) becomes a non-zero exit whose stderr reaches the warn-once path
+  // instead of vanishing into silence. Explicit variables, not a chained
+  // expression: PowerShell 5.1 chaining behaviour must not be relied on.
+  '$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId)',
+  '$setting = $notifier.Setting',
+  'if ("$setting" -ne \'Enabled\') { [Console]::Error.WriteLine("Windows toast notifications are unavailable: $setting"); exit 3 }',
+  '$notifier.Show($toast)',
 ].join('\n')
 
 /**

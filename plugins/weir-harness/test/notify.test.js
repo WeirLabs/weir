@@ -157,6 +157,11 @@ describe('platform commands', () => {
     expect(script).toContain('$env:DSH_NOTIFY_TITLE')
     expect(script.includes('quoted')).toBe(false)
     expect(buildCommand('win32', note, { sound: true }).env.DSH_NOTIFY_SILENT).toBe('0')
+    // the OS switch is the only synchronous failure signal in WinRT
+    expect(script).toContain('$notifier.Setting')
+    expect(script).toContain('exit 3')
+    expect(script).toContain('$notifier.Show($toast)')
+    expect(script.includes(').Show(')).toBe(false)
   })
 
   it('has no command for unsupported platforms', () => {
