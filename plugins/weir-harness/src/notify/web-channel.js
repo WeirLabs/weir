@@ -9,8 +9,13 @@
 //
 // Safety contract (spec "待发通知通道对失败与异常页面安全"):
 //   - a note is handed to exactly ONE puller;
-//   - a note is delivered at most once: a page that showed it, or suppressed it
-//     on purpose (window in the foreground), is final — no fallback;
+//   - a note is delivered at most once: a page that showed it, suppressed it on
+//     purpose (window in the foreground), or handed it off without confirmation
+//     (`pending`) is final — no fallback;
+//   - `pending` is final but is NOT confirmation: it means the page could not
+//     tell whether the notification appeared, so it is reported once per cause
+//     through the logger instead of falling back — a silent platform drop would
+//     otherwise be invisible to the user and to the log;
 //   - a note is never lost: no puller, a failed page, or a missing ack all fall
 //     back to the system command;
 //   - nothing here touches a session. Plain ESM, ctx-free; clock and timers are
@@ -25,10 +30,15 @@ export const ACK_TIMEOUT_MS = 4_000
 
 /**
  * What the page may report. `shown`/`pending`/`suppressed` are final (no
- * fallback); everything else falls back.
+ * fallback); everything else falls back. `pending` is final without being
+ * confirmation — the page handed the note off and could not tell whether it
+ * appeared — so it is reported through the logger instead of falling back.
  */
 export const FINAL_RESULTS = Object.freeze(['shown', 'pending', 'suppressed'])
 export const FALLBACK_RESULTS = Object.freeze(['blocked', 'error', 'threw', 'unsupported'])
+
+/** Reported once per channel when a page hands a note off but never confirms it. */
+const UNCONFIRMED = 'the page sent a notification but could not confirm it appeared'
 
 /**
  * @typedef {{ title: string, body: string, urgent: boolean }} Note
@@ -62,6 +72,15 @@ export function createWebChannel({ fallback, now = Date.now, setTimer, clearTime
   let lastPullAt = 0
   let nextId = 1
   let closed = false
+
+  /** Distinct warnings already emitted (one per cause, like the notifier). @type {Set<string>} */
+  const reported = new Set()
+  /** @param {string} cause */
+  const warnOnce = (cause) => {
+    if (reported.has(cause)) return
+    reported.add(cause)
+    logger?.warn?.(`notify: ${cause}`)
+  }
 
   const hasPuller = () => waiters.length > 0 || now() - lastPullAt < PULLER_FRESH_MS
 
@@ -165,6 +184,10 @@ export function createWebChannel({ fallback, now = Date.now, setTimer, clearTime
       inFlight.delete(id)
       stop(entry.timer)
       if (!FINAL_RESULTS.includes(result)) useFallback(entry.note)
+      // `pending` is final (never fall back) but it is not confirmation: the
+      // page handed the note off and could not tell whether it appeared. Say so
+      // once per cause, or a silent platform drop stays invisible.
+      else if (result === 'pending') warnOnce(UNCONFIRMED)
       return true
     },
 

@@ -96,6 +96,35 @@ describe('web channel', () => {
     expect(h.fell).toHaveLength(1)
   })
 
+  it('warns once about an unconfirmed page delivery, and never falls back for it', async () => {
+    const h = harness()
+    const firstPull = h.channel.pull()
+    h.channel.send(note({ title: 'one' }))
+    const first = await firstPull
+    expect(h.channel.ack(first.id, 'pending')).toBe(true)
+    expect(h.fell).toHaveLength(0)
+    expect(h.warnings).toHaveLength(1)
+    expect(h.warnings[0]).toContain('could not confirm it appeared')
+
+    // one warning per cause, not per note: a second unconfirmed note stays quiet
+    const secondPull = h.channel.pull()
+    h.channel.send(note({ title: 'two' }))
+    const second = await secondPull
+    expect(h.channel.ack(second.id, 'pending')).toBe(true)
+    expect(h.warnings).toHaveLength(1)
+    expect(h.fell).toHaveLength(0)
+  })
+
+  it('a shown ack says nothing at all', async () => {
+    const h = harness()
+    const parked = h.channel.pull()
+    h.channel.send(note())
+    const { id } = await parked
+    expect(h.channel.ack(id, 'shown')).toBe(true)
+    expect(h.warnings).toHaveLength(0)
+    expect(h.fell).toHaveLength(0)
+  })
+
   it('falls back when the page takes a note and never acks', async () => {
     const h = harness()
     const parked = h.channel.pull()
