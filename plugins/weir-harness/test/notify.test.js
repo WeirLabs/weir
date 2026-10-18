@@ -9,7 +9,7 @@ import {
 import { clean, compose, formatDuration } from '../src/notify/messages.js'
 import { buildCommand } from '../src/notify/commands.js'
 import { createNotifier } from '../src/notify/notifier.js'
-import { apply, wire } from '../src/notify/index.js'
+import { apply, usesPageDelivery, wire } from '../src/notify/index.js'
 
 describe('classifyTurnEnd', () => {
   const cases = [
@@ -157,6 +157,11 @@ describe('platform commands', () => {
     expect(script).toContain('$env:DSH_NOTIFY_TITLE')
     expect(script.includes('quoted')).toBe(false)
     expect(buildCommand('win32', note, { sound: true }).env.DSH_NOTIFY_SILENT).toBe('0')
+    // the OS switch is the only synchronous failure signal in WinRT
+    expect(script).toContain('$notifier.Setting')
+    expect(script).toContain('exit 3')
+    expect(script).toContain('$notifier.Show($toast)')
+    expect(script.includes(').Show(')).toBe(false)
   })
 
   it('has no command for unsupported platforms', () => {
@@ -461,6 +466,75 @@ describe('notify plugin wiring', () => {
     expect(Object.keys(handlers).sort()).toEqual(['agent/status', 'session/disposed', 'session/event', 'worktree/question'])
     expect(typeof dispose).toBe('function')
     dispose()
+  })
+})
+
+describe('usesPageDelivery', () => {
+  it('allows the page leg only where the page can also confirm a notification', () => {
+    expect(usesPageDelivery('darwin')).toBe(true)
+    expect(usesPageDelivery('linux')).toBe(true)
+    expect(usesPageDelivery('win32')).toBe(false)
+    expect(usesPageDelivery('freebsd')).toBe(false)
+  })
+})
+
+describe('apply routing by platform', () => {
+  /**
+   * A ctx carrying the two seams `apply` uses: the cordis event registry and
+   * the real `ctx.inject(['connection'])` permission-endpoint seam. Routes are
+   * recorded and nothing spawns a process (no session event is emitted here).
+   */
+  function routedCtx() {
+    const handlers = {}
+    const paths = []
+    const routes = new Map()
+    const ctx = {
+      on: (name, handler) => { handlers[name] = handler; return () => delete handlers[name] },
+      get: () => undefined,
+      logger: { warn: () => {} },
+      inject: (services, callback) => {
+        expect(services).toEqual(['connection'])
+        const off = callback({
+          connection: {
+            fetch: {
+              register: (route) => { paths.push(route.path); routes.set(route.path, route); return () => {} },
+            },
+          },
+          logger: { warn: () => {} },
+        })
+        return typeof off === 'function' ? off : () => {}
+      },
+    }
+    return { ctx, paths, routes, handlers }
+  }
+  const permissionPaths = ['/api/weir-notify/permissions/action', '/api/weir-notify/permissions/status']
+
+  it('Windows registers only the permission endpoints: there is no page leg to pull or ack', async () => {
+    const { ctx, paths, routes } = routedCtx()
+    const dispose = apply(ctx, {}, { platform: 'win32' })
+    expect([...paths].sort()).toEqual([...permissionPaths].sort())
+    expect(paths).not.toContain('/api/weir-notify/web/pull')
+    expect(paths).not.toContain('/api/weir-notify/web/ack')
+    // the injected platform reaches the endpoints, so the panel stays hidden there
+    const status = await routes.get('/api/weir-notify/permissions/status').fetch({ json: async () => ({}) })
+    expect((await status.json()).value).toEqual({ supported: false, platform: 'win32' })
+    dispose()
+  })
+
+  it('macOS registers the page endpoints as well', () => {
+    const { ctx, paths } = routedCtx()
+    const dispose = apply(ctx, {}, { platform: 'darwin' })
+    const expected = [...permissionPaths, '/api/weir-notify/web/ack', '/api/weir-notify/web/pull']
+    expect([...paths].sort()).toEqual(expected.sort())
+    dispose()
+  })
+
+  it('the disposer tolerates the absent channel and shuts the listeners down', () => {
+    const { ctx, handlers } = routedCtx()
+    const dispose = apply(ctx, {}, { platform: 'win32' })
+    expect(Object.keys(handlers).sort()).toEqual(['agent/status', 'session/disposed', 'session/event', 'worktree/question'])
+    dispose()
+    expect(Object.keys(handlers)).toHaveLength(0)
   })
 })
 
