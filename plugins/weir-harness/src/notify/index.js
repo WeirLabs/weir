@@ -31,6 +31,32 @@ const STALE_EVENT_MS = 60_000
 const MAX_ANCESTORS = 8
 
 /**
+ * Platforms whose page can both DISPLAY a notification and REPORT whether it
+ * appeared, so handing the note to the page first is sound there: macOS and
+ * Linux. Windows is deliberately absent — the page's web `Notification` can
+ * neither display nor report failure there. Electron only shows a toast for an
+ * app that owns a Start Menu shortcut with an AppUserModelID and a
+ * ToastActivatorCLSID (the DSH desktop bundle declares no app identity), so
+ * Chromium drops it with nothing but a debug log; and in a secure context with
+ * permission granted, Blink never fails the constructor and never fires
+ * `error`. The page could therefore only answer `shown`/`pending`, both
+ * terminal, which would suppress the fallback forever. So Windows goes
+ * straight to the platform command, whose AUMID points at an OS-registered
+ * shortcut. The cost: Windows attributes the toast to "Windows PowerShell".
+ */
+export const PAGE_DELIVERY_PLATFORMS = Object.freeze(['darwin', 'linux'])
+
+/**
+ * Whether the page leg can carry a delivery on this platform.
+ *
+ * @param {string} platform - a `process.platform` value
+ * @returns {boolean}
+ */
+export function usesPageDelivery(platform) {
+  return PAGE_DELIVERY_PLATFORMS.includes(platform)
+}
+
+/**
  * Resolve the effective options NOW (the settings service is live: a
  * volatile commit takes effect on the next event, no remount). Unusable
  * values fall back to the module defaults rather than throwing inside an
@@ -238,26 +264,38 @@ export function wire(ctx, config, { notifier, channel, now = Date.now, setTimer,
   }
 }
 
-/** @param {any} ctx @param {object} [config] */
-function apply(ctx, config = {}) {
-  const notifier = createNotifier({ logger: ctx.logger })
-  if (!notifier.supported) ctx.logger?.warn?.(`notify: system notifications are not supported on platform "${process.platform}"`)
-  // The page delivers (as DeepSeek Harness); the system command is the fallback.
-  const channel = createWebChannel({ fallback: (note, options) => notifier.send(note, options), logger: ctx.logger })
+/**
+ * @param {any} ctx
+ * @param {object} [config]
+ * @param {{ platform?: string }} [options] - test seam; cordis calls (ctx, config) only
+ */
+function apply(ctx, config = {}, { platform = process.platform } = {}) {
+  const notifier = createNotifier({ platform, logger: ctx.logger })
+  if (!notifier.supported) ctx.logger?.warn?.(`notify: system notifications are not supported on platform "${platform}"`)
+  // The page delivers (as DeepSeek Harness) where it can also confirm; on the
+  // other platforms the system command is the only leg (PAGE_DELIVERY_PLATFORMS).
+  const channel = usesPageDelivery(platform)
+    ? createWebChannel({ fallback: (note, options) => notifier.send(note, options), logger: ctx.logger })
+    : undefined
   const offWire = wire(ctx, config, { notifier, channel })
   // Page endpoints (pull/ack) and the macOS permission panel's endpoints. They
   // register from this row, whose `./notify` subpath already exists, so no new
   // package subpath is needed (S19); services come through ctx.inject (S20).
   const offEndpoints = wireNotifyPermissions(ctx, {
+    platform,
     channel,
-    // The permission panel's test goes through the real path, and shows even
-    // with the window in front (the user is looking at the settings page).
-    sendTest: () => channel.send({ ...TEST_NOTE, tag: tagFor('test', 'test'), renotify: RENOTIFY, sound: true, foreground: 'always' }),
+    // The permission panel's test goes through whichever path the platform
+    // uses, and shows even with the window in front (the user is looking at
+    // the settings page).
+    sendTest: () =>
+      channel
+        ? channel.send({ ...TEST_NOTE, tag: tagFor('test', 'test'), renotify: RENOTIFY, sound: true, foreground: 'always' })
+        : notifier.send(TEST_NOTE, { sound: true }),
   })
   return () => {
     offWire()
     offEndpoints()
-    channel.close()
+    channel?.close()
   }
 }
 
