@@ -72,7 +72,7 @@ const FIELDS = [
   { key: 'worktreeAutoSetup', section: 'worktree', field: 'autoSetup', type: 'boolean', description: 'Install dependencies in a new lane automatically (configured setup, else lockfile-derived)' },
   { key: 'worktreeWatchTimeoutMinutes', section: 'worktree', field: 'watchTimeoutMinutes', type: 'number', description: 'Minutes a lane-state watch (worktree_watch) lives before expiring with one notice (default 360 = 6 hours, minimum 1); frozen per watch at subscribe time' },
   { key: 'worktreeAutoApprove', section: 'worktree', field: 'autoApprove', type: { union: ['manual', 'auto-keep', 'auto-clean'] }, description: 'Worktree auto-approve mode: manual shows every decision card; auto-keep auto-approves merges and abandons, removing the worktree but keeping the branch; auto-clean also deletes the branch. The initial mode for sessions without a /worktree approve override (default auto-clean); a session override wins over this global value' },
-  { key: 'lspServers', section: 'lsp', field: 'servers', type: 'string', description: 'JSON map of custom language servers: family → { command, args?, manifests?, installHint?, install? }' },
+  { key: 'lspServers', section: 'lsp', field: 'servers', type: 'string', description: 'JSON map of custom language servers: family → { command, args?, manifests?, installHint?, platforms?, install? }; a platforms map ({ darwin?, linux?, win32?, default? }) overrides only the fields its row declares for that platform' },
   { key: 'notifyEnabled', section: 'notify', field: 'enabled', type: 'boolean', description: 'System notifications master switch: tell the user when a session needs them or a turn finishes' },
   { key: 'notifyOnComplete', section: 'notify', field: 'onComplete', type: 'boolean', description: 'Notify when a turn finishes (only turns longer than notifyMinTurnSeconds)' },
   { key: 'notifyOnAttention', section: 'notify', field: 'onAttention', type: 'boolean', description: 'Notify when a session needs the user: approval, question, plan review, a failed or stopped turn' },
@@ -227,18 +227,41 @@ function chainsValidator(key) {
   return validate
 }
 
-/** Parse + validate the lspServers JSON map (bad input fails activation loud). */
+/** True for a JSON object literal (arrays and null are not plain objects). */
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** Parse + validate the lspServers JSON map (bad input fails activation loud).
+ *  A family may declare `platforms: { darwin?, linux?, win32?, default? }`,
+ *  each row shaped like an entry with every field optional; a malformed row
+ *  names the family and field so activation failure is diagnosable (D6). */
 function validateLspServers(raw) {
   const parsed = JSON.parse(raw)
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  if (!isPlainObject(parsed)) {
     throw new Error('weir-settings: lspServers must be a JSON object map')
   }
   for (const [family, entry] of Object.entries(parsed)) {
-    if (!entry || typeof entry !== 'object' || typeof entry.command !== 'string' || entry.command.trim().length === 0) {
+    if (!isPlainObject(entry) || typeof entry.command !== 'string' || entry.command.trim().length === 0) {
       throw new Error(`weir-settings: lspServers.${family} needs a { command } entry`)
     }
     if (entry.args !== undefined && !Array.isArray(entry.args)) {
       throw new Error(`weir-settings: lspServers.${family}.args must be an array`)
+    }
+    if (entry.platforms === undefined) continue
+    if (!isPlainObject(entry.platforms)) {
+      throw new Error(`weir-settings: lspServers.${family}.platforms must be a JSON object map`)
+    }
+    for (const [platform, row] of Object.entries(entry.platforms)) {
+      if (!isPlainObject(row)) {
+        throw new Error(`weir-settings: lspServers.${family}.platforms.${platform} must be a JSON object`)
+      }
+      if (row.command !== undefined && (typeof row.command !== 'string' || row.command.trim().length === 0)) {
+        throw new Error(`weir-settings: lspServers.${family}.platforms.${platform}.command must be a non-empty string`)
+      }
+      if (row.args !== undefined && !Array.isArray(row.args)) {
+        throw new Error(`weir-settings: lspServers.${family}.platforms.${platform}.args must be an array`)
+      }
     }
   }
   return parsed
