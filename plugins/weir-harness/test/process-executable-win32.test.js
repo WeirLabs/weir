@@ -63,6 +63,24 @@ describe('lsp executable resolution on Windows', () => {
     expect(dirs).toContain(join(WIN_ENV.HOME, '.npm-global', 'bin'))
   })
 
+  it('scans the LLVM and WinGet install locations a catalog install writes into', () => {
+    const dirs = extraBinDirectories(WIN_ENV, 'win32')
+    // LLVM's silent install skips PATH: the directory scan is the only way a
+    // winget-installed clangd resolves (D4)
+    expect(dirs).toContain(join('C:\\Program Files', 'LLVM', 'bin'))
+    expect(dirs).toContain(join(WIN_ENV.HOME, 'AppData', 'Local', 'Programs', 'LLVM', 'bin'))
+    // WinGet portable aliases (LuaLS) and winget.exe itself
+    expect(dirs).toContain(join(WIN_ENV.HOME, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links'))
+    expect(dirs).toContain(join(WIN_ENV.HOME, 'AppData', 'Local', 'Microsoft', 'WindowsApps'))
+  })
+
+  it('honors ProgramFiles/LOCALAPPDATA when the environment carries them', () => {
+    const env = { ...WIN_ENV, ProgramFiles: 'D:\\Apps', LOCALAPPDATA: 'D:\\Local' }
+    const dirs = extraBinDirectories(env, 'win32')
+    expect(dirs).toContain(join('D:\\Apps', 'LLVM', 'bin'))
+    expect(dirs).toContain(join('D:\\Local', 'Microsoft', 'WinGet', 'Links'))
+  })
+
   it('never lists POSIX-only directories in the win32 scan', () => {
     const dirs = extraBinDirectories(WIN_ENV, 'win32')
     expect(dirs).not.toContain('/opt/homebrew/bin')
