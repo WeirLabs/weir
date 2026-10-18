@@ -36,13 +36,29 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 | `lsp.idleMs`（设置键 `lspIdleMs`） | `600000` | 空闲自动关停阈值；**配置文件面键**：不在设置页渲染，只能改配置文件（生效时机不变） |
 | `lsp.requestTimeoutMs`（设置键 `lspRequestTimeoutMs`） | `15000` | 单请求超时（超时为普通工具错误）；**配置文件面键**：同上 |
 | `lsp.diagnosticsWaitMs`（设置键 `lspDiagnosticsWaitMs`） | `2000` | 诊断未发布时的短暂等待窗口；**配置文件面键**：同上 |
-| `lsp.servers` | 内置注册表 | 用户自定义服务器（`lspServers` 设置，面板可视化编辑）：每族 `{command, args?, manifests?, installHint?, install?}`，覆盖/扩展内置目录 |
+| `lsp.servers` | 内置注册表 | 用户自定义服务器（`lspServers` 设置，面板可视化编辑）：每族 `{command, args?, manifests?, installHint?, install?, platforms?}`；`platforms` 行与内置目录同形（见下节「平台矩阵」），覆盖/扩展内置目录 |
 
-内置注册表 13 族：typescript、python（basedpyright）、go（gopls）、rust（rust-analyzer）、json/html/css/markdown（`vscode-langservers-extracted`）、bash、dockerfile、yaml、lua、cpp（clangd）。配方取自社区注册表（nvim-lspconfig / lsp-mode / Helix / vscode-langservers-extracted，来源注明于 `src/lsp/registry.js`）。每族带平台化安装命令（npm/pipx/go/rustup/brew/apt），由管理面板执行。
+内置注册表 13 族：typescript、python（basedpyright）、go（gopls）、rust（rust-analyzer）、json/html/css/markdown（`vscode-langservers-extracted`）、bash、dockerfile、yaml、lua、cpp（clangd）。配方取自社区注册表（nvim-lspconfig / lsp-mode / Helix / vscode-langservers-extracted，来源注明于 `src/lsp/registry.js`）。每族按平台声明安装配方（npm/pipx/go/rustup 三平台一致；cpp/lua 为 brew/apt/winget 三行），由管理面板执行——见下节「平台矩阵」。
 
 **VSCode 生态说明**：VS Code 语言扩展是 VS Code API 插件，不可直接复用；其捆绑的服务器二进制探测列为后续项（路径私密、随版本漂移，见文档边界）。社区生态以配方注册表形式引入。
 
 均为 volatile config；`lsp.enabled` 与 `lsp.servers` 另入设置页主页面「LSP 语义工具」组（总开关 + 管理器行），保存后**实时生效**（settings 服务在 volatile 提交时广播，LSP 模块原地注册/注销能力面，无需重启）。三个计时器键（`lspIdleMs`/`lspRequestTimeoutMs`/`lspDiagnosticsWaitMs`）是配置文件面键（`FIELDS` 的 `page: false`，见 [settings-page.md](settings-page.md)），不在设置页渲染、schema 与语义不变。
+
+### 平台矩阵
+
+平台是目录数据的**一等维度**：条目可声明 `platforms: { darwin?, linux?, win32?, default? }`，行内字段（`command`/`args`/`installHint`/`install`/`versionArgs`）只覆盖它声明的部分；`serverForPlatform()` 在注册表构建边界把条目解析成扁平形状，manager／管理端点／面板只看已解析结果。三平台同构的族（npm/pipx/go/rustup）只写一份共享基座；C/C++ 与 Lua 按平台声明：
+
+| 族 | darwin | linux | win32 |
+|---|---|---|---|
+| cpp（clangd） | `brew install llvm` | `sudo apt-get install -y clangd` | `winget install --id LLVM.LLVM -e --accept-source-agreements --accept-package-agreements` |
+| lua（LuaLS） | `brew install lua-language-server` | 无平台安装器：提示指向官方发布页 | `winget install --id LuaLS.lua-language-server -e --accept-source-agreements --accept-package-agreements` |
+| 其余 11 族 | 共享基座（npm/pipx/go/rustup 一致） | 同左 | 同左 |
+
+- 基座 `installHint` 是**平台中立**文案；没有声明行的平台只会看到中立提示，**绝不**回退到另一平台的命令（旧版 Windows 显示 `brew` 的根因）。
+- winget 作为 Windows 默认安装器（Win10 21H1+／Win11 预装）；`--accept-*` 是无人值守安装必需（面板安装在无 TTY 子进程里执行）。`winget` 不存在时既有语义生效：状态报 `installerAvailable: false`、按钮禁用、提示仍显示正确命令。scoop/choco 是手工备选，不进一键安装。
+- **LLVM 静默安装不写 PATH**（NSIS 安装器在 silent 模式跳过「加入 PATH」），所以 `%ProgramFiles%\LLVM\bin` 与 `%LOCALAPPDATA%\Programs\LLVM\bin` 必须在扩展扫描目录里，否则装完仍显示「未安装」；WinGet 的 portable 别名目录（`%LOCALAPPDATA%\Microsoft\WinGet\Links`，LuaLS 一类）与 `winget.exe` 所在的 `WindowsApps` 同理。
+- 用户 `lspServers` 条目可声明同形 `platforms` 覆盖（设置加载时校验：行必须是对象，`command` 若声明须为非空字符串、`args` 若声明须为数组），面板仍展示宿主平台解析后的值。
+- **边界**：平台行只经平台参数化单测验证（在任意宿主上跑 darwin/linux/win32 断言），未在真实 Windows 桌面实机验收；winget 包若不创建命令别名，服务器仍可能解析不到，可用 `lspServers.<family>.platforms.win32.command` 指向实际路径。
 
 ## 设计细节
 
@@ -57,7 +73,7 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 - **可执行解析的平台分支**：`src/process/index.js` 服务优先、扩展目录扫描回退（S21：GUI 进程 PATH 最小化事故）。解析接口按目标平台参数化（默认宿主，沿用 `installSpecFor(entry, platform)` 先例）：
   - 路径形态（含 `/` 或 `\`，如 `C:\bin\ls.cmd`、`C:/bin/ls`、`./ls`）直接按文件系统判定，**不**交给服务解析器当命令名；
   - 裸名先走服务解析器，再扫扩展目录；win32 扫描按 `PATHEXT` 依次探测 `.com/.exe/.bat/.cmd`（小写化，因 npm 写 `.cmd` 而 PATHEXT 拼 `.CMD`），命中扩展名即视为可执行（NTFS 无执行位）；POSIX 仍以执行位判定；
-  - 扩展目录 win32 为 `%APPDATA%\npm`（npm 全局前缀，`.cmd`/`.ps1` shim 坐落于此）、`~/.npm-global` 根与其 `bin`、`~/.local/bin`、`~/.cargo/bin`、`~/go/bin`、`scoop\shims`；POSIX 为 nvm 版本 bin + Homebrew/usr/local/opt/local + `~/.npm-global/bin` 等；
+  - 扩展目录 win32 为 `%APPDATA%\npm`（npm 全局前缀，`.cmd`/`.ps1` shim 坐落于此）、`~/.npm-global` 根与其 `bin`、`~/.local/bin`、`~/.cargo/bin`、`~/go/bin`、`scoop\shims`、`%ProgramFiles%\LLVM\bin` 与 `%LOCALAPPDATA%\Programs\LLVM\bin`（LLVM 静默安装不写 PATH）、`%LOCALAPPDATA%\Microsoft\WinGet\Links`（portable 包别名）、`%LOCALAPPDATA%\Microsoft\WindowsApps`（`winget.exe`）；POSIX 为 nvm 版本 bin + Homebrew/usr/local/opt/local + `~/.npm-global/bin` 等；
   - `augmentedPath()` 用目标平台分隔符拼接（win32 `;`，POSIX `:`），子进程环境只有 `PATH` 一个键；
   - `npmGlobalPrefix()` win32 返回 `%APPDATA%\npm`，POSIX 返回 `~/.npm-global`。
 - **启动形态包装**：`spawnArgv(command, args, platform)` 决定真正交给 `ctx.subprocess.spawn` 的 argv——Windows 的 CreateProcess 既不执行批处理也无 shebang 处理（Node 对 `.cmd` 直接 `EINVAL`）。**不经 shell**：`.cmd`/`.bat` shim 被读入并**拆包**，交付 `node <cli> <args>`。三类真实 shim 均覆盖：npm 自带的 `"%NODE_EXE%" "%NPM_CLI_JS%" %*`（含 npm 的字面 `\"` 转义与 `SET` 变量链）、corepack/pnpm 的 `"%~dp0\node.exe"` 形态、以及 `%APPDATA%\npm` 安装用的 `"%_prog%"` 模板。解析是**结构化**而非按引号形状：取最后一行 `%*` 转发、只剔离引号转义（保留路径分隔符）、变量链迭代到不动点且给候选排序（npm 对 `NPM_CLI_JS` 赋值三次，`%%F` 那个 FOR 循环产物在启动时永不可解）。解释器按 shim 自身规则选（`%dp0%\node.exe` 存在则用它，否则用当前运行的 Node——shim 会用的裸 `node` 并不在声明的子环境 PATH 里）。**只有**当路径与每个参数都可证明不含空格/引号/cmd 元字符时，才回退 `cmd.exe /d /c`（**不用 `/s`**）；否则**明确拒绝**（宁失败也不得静默弄错路径或放行注入）。`.ps1` 经 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`，`.exe`/`.com` 直启，POSIX 维持 `[command, ...args]`。服务器、版本探测、面板安装器三个 spawn 点共用该形态；`childEnvironment()` 在 Windows 额外带上 `SystemRoot`/`ComSpec`（供 cmd 回退使用）。实测（本机，全部无 shell、含含空格路径）：npm 11.17.0、pnpm 11.7.0、typescript-language-server 6.0.1、dsh 0.1.7-rc.2；反例：`cmd /d /c <含空格 shim> --prefix "C:\Users\John Smith\…"` → `'C:\Program' is not recognized`，`--prefix "C:\a&b\npm"` → `&` 被当作命令分隔符。
@@ -76,6 +92,7 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 - 服务器未声明 `renameProvider` → 普通工具错误；服务器返回 `documentChanges` → 显式拒绝且零写入（本版本不做文件移动/删除/创建）。
 - 命令目录拉取失败 → 面板开关不渲染（宁缺勿假）。
 - 能力闸关闭瞬间 → 已启用会话的工具注销、服务器终止；进行中的工具调用不受影响（对象已注销，仅不可见新调用）。
+- `lspServers.platforms` 行不在面板可视化编辑器内（面板固定编辑命令/参数/安装命令），需在 `lspServers` JSON 层编辑；解析结果仍是宿主平台的值。
 
 ## 与编辑锁的关系
 
@@ -89,8 +106,8 @@ Weir 的 LSP 集成把五个语义工具带给单个会话：四个只读查询�
 
 ## 测试
 
-- 单元测试：`test/lsp-client.test.js`（帧编解码、握手、路由、通知、超时、关停；注册表语言映射、平台安装命令解析）与 `test/lsp.test.js`（门闸开/关、settings 覆盖优先、命令 on/off/坏参/无 agent、投影折叠、agent/created 恢复、实时翻转、实时调参、五工具链路、安装指引、类型拒绝、用后关停）；`test/lsp-admin.test.js`（status/install/版本探测/退出码归一化/超时终止/HTTP 接线/缺席降级）与 `test/lsp-admin-probe.test.js`（探测超时结算后不留下已武装的定时器）。
-- 平台可移植语料：`test/lsp-executable-win32.test.js`（win32 绝对路径形态、`%APPDATA%\npm` 与 `~/.npm-global` 扫描、PATHEXT 探测、无扩展名同名文件不算可执行、PATH 分号拼接、npm 前缀、子环境变量）与 `test/lsp-spawn-argv.test.js`（三类真实 shim 拆包（含 npm 自带的 `%NODE_EXE%`/`%NPM_CLI_JS%` 链与**无扩展名目标**）、含空格路径、拆包失败时 `cmd /d /c` 回退且**不含 `/s`**、不安全形状明确拒绝、`.ps1` → powershell、`.exe` 直启、POSIX 不变）。既有 POSIX 语料改为显式传平台（`{ platform: 'darwin' }`）并用跨平台可执行夹具（拷贝当前解释器），使其在 Windows 上同样可跑。已知语言限制：语料中的 corepack fixture 只建模 `IF EXIST "%~dp0\node.exe"` 那一支（真实 `pnpm.CMD` 最后一行 `%*` 属该支；`ELSE` 的裸 `node` 支未被覆盖，因测试的 `existsFile` 接缝使其不可达）。
+- 单元测试：`test/lsp-client.test.js`（帧编解码、握手、路由、通知、超时、关停；注册表语言映射、平台矩阵解析——cpp/lua 三平台配方、全族跨平台泄漏检查（win32 不出现 brew/apt-get/sudo 等）、未知平台中立提示、用户 `platforms` 行只覆盖声明字段、无 `platforms` 条目三平台一致）与 `test/lsp.test.js`（门闸开/关、settings 覆盖优先、命令 on/off/坏参/无 agent、投影折叠、agent/created 恢复、实时翻转、实时调参、五工具链路、安装指引按平台解析（win32 报 winget、不出现 brew）、类型拒绕、用后关停）；`test/lsp-admin.test.js`（status/install/版本探测/退出码归一化/超时终止/HTTP 接线/缺席降级；显式 `platform` 下的 win32 状态与安装 argv）与 `test/lsp-admin-probe.test.js`（探测超时结算后不留下已武装的定时器）；`test/settings.test.js` 钉住 `lspServers` 平台行的接受与拒绝语义。
+- 平台可移植语料：`test/process-executable-win32.test.js`（win32 绝对路径形态、`%APPDATA%\npm` 与 `~/.npm-global` 扫描、PATHEXT 探测、无扩展名同名文件不算可执行、PATH 分号拼接、npm 前缀、子环境变量；以及 LLVM／WinGet Links／WindowsApps 扫描目录与 `ProgramFiles`/`LOCALAPPDATA` 注入）与 `test/process-spawn-argv.test.js`（三类真实 shim 拆包（含 npm 自带的 `%NODE_EXE%`/`%NPM_CLI_JS%` 链与**无扩展名目标**）、含空格路径、拆包失败时 `cmd /d /c` 回退且**不含 `/s`**、不安全形状明确拒绝、`.ps1` → powershell、`.exe` 直启、POSIX 不变）。既有 POSIX 语料改为显式传平台（`{ platform: 'darwin' }`）并用跨平台可执行夹具（拷贝当前解释器），使其在 Windows 上同样可跑。已知语言限制：语料中的 corepack fixture 只建模 `IF EXIST "%~dp0\node.exe"` 那一支（真实 `pnpm.CMD` 最后一行 `%*` 属该支；`ELSE` 的裸 `node` 支未被覆盖，因测试的 `existsFile` 接缝使其不可达）。
 - 真实 GUI 验收：设置开 → 会话头开关出现 → 点亮 → 四工具可见 → 熄灭 → 消失 → 设置关 → 开关消失（用户桌面验收）。
 - **Edit Lock 下的真实重命名**：集成场景 `editlock-lsp-rename`（`WEIR_IT_EDIT_LOCK=1`，八次顺序 headless 启动共用**独立** `<ws>/editlock-lsp-rename/.weir/edit-lock` 权威、该目录下新播种的 LF/CRLF 双文件与协议服务器）：freeze（foreign 锁经 bounded hold 跨进程保留为 user-interrupted）→ conflict（foreign 锁使整批拒绝、零写入/零新锁）→ thaw（auto-resume 后释放）→ missing／mixed（协议夹具显式输出缺失目标，mixed 把有效现存目标排在缺失目标之前；两者均在预检拒绝，原字节不变、目标不创建、无新锁或操作）→ apply（跨文件成功、临时锁释放、CRLF 保留）→ duplicate（同文件别名写前拒绝）→ midbatch（第一文件落盘后中止、第二文件零记录、两临时锁保留）。运行：`WEIR_IT_DSH_EXEC=<安装版 CLI> node run.mjs editlock-lsp-rename`（43/43）；`6d43a77` 的独立根修复了全量集成中先前场景残留锁／篡改共享 `probe.ts` 导致的 9 项串扰，现整套运行中本场景也 **43/43**，全套剩余 19 项为历史 Office 候选缺失，**不**称为全套绿。`test/lsp.test.js` 直接钉住缺失／混合预检及真实 Host 边界单测的非空 `filesUncertain`；另有下述安装版受控丢确认场景，不把它叫作生产崩溃。
 - **安装版不确定发布实证**：`WEIR_IT_ROOT=<全新临时根> WEIR_IT_DSH_EXEC=<安装版 CLI> node run.mjs editlock-lsp-uncertain`（8/8）；只在该场景启用的 QA 插件先于 Edit Lock 发布者安装，包装真实 `ctx.fs.writeText`，严格匹配第二文件、`replaceIfVersion` 和预期全文；await 底层写成功后抛出丢失确认错误，不替换工具或管理视图。独立 `<ws>/editlock-lsp-uncertain` 管理域、协议服务器和两份初始文件不受共享根其他场景影响；断言完整工具原文、双文件实际字节、unknown operation 的 resource fence、双临时锁状态及 CLI 退出码。
