@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { createLspClient, handshake, shutdownClient } from '../src/lsp/client.js'
 import { pathToUri, uriToPath } from '../src/lsp/uri.js'
-import { DEFAULT_SERVERS, buildRegistry, displayInstallCommand, familyForLanguageId, installSpecFor, languageIdForFile } from '../src/lsp/registry.js'
+import { DEFAULT_SERVERS, buildRegistry, displayInstallCommand, familyForLanguageId, installSpecFor, languageIdForFile, serverForPlatform } from '../src/lsp/registry.js'
 
 function fakeChannel() {
   const stdin = new PassThrough()
@@ -151,11 +151,123 @@ describe('lsp registry and uri helpers', () => {
     expect(installSpecFor({ command: 'x' }, 'darwin')).toBe(undefined)
     expect(displayInstallCommand(DEFAULT_SERVERS.typescript)).toBe('npm install -g typescript-language-server typescript')
     expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'darwin')).toBe('brew install lua-language-server')
-    // where the platform has no spec, the display form falls back to the
-    // multi-platform hint rather than an empty or wrong command. The platform is
-    // passed explicitly: its default is the HOST, so an argument-less call pins a
-    // different string on every machine and passed on Windows alone.
-    expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'linux')).toBe(DEFAULT_SERVERS.lua.installHint)
+  })
+
+  // Every case below drives the platform through the argument (never
+  // process.platform), so the Windows/Linux rows are pinned on any host.
+  it('declares the exact darwin/linux/win32 recipes for cpp and lua', () => {
+    expect(installSpecFor(DEFAULT_SERVERS.cpp, 'darwin')).toEqual({ command: 'brew', args: ['install', 'llvm'] })
+    expect(displayInstallCommand(DEFAULT_SERVERS.cpp, 'darwin')).toBe('brew install llvm')
+    expect(installSpecFor(DEFAULT_SERVERS.cpp, 'linux')).toEqual({ command: 'sudo', args: ['apt-get', 'install', '-y', 'clangd'] })
+    expect(displayInstallCommand(DEFAULT_SERVERS.cpp, 'linux')).toBe('sudo apt-get install -y clangd')
+    expect(installSpecFor(DEFAULT_SERVERS.cpp, 'win32')).toEqual({
+      command: 'winget',
+      args: ['install', '--id', 'LLVM.LLVM', '-e', '--accept-source-agreements', '--accept-package-agreements'],
+    })
+    expect(displayInstallCommand(DEFAULT_SERVERS.cpp, 'win32')).toBe('winget install --id LLVM.LLVM -e --accept-source-agreements --accept-package-agreements')
+    expect(DEFAULT_SERVERS.cpp.platforms.win32.installHint).toBe(displayInstallCommand(DEFAULT_SERVERS.cpp, 'win32'))
+
+    expect(installSpecFor(DEFAULT_SERVERS.lua, 'darwin')).toEqual({ command: 'brew', args: ['install', 'lua-language-server'] })
+    // Linux declares NO one-click installer: hint only, and the hint names no
+    // other platform's installer (it used to fall back to the macOS `brew`).
+    expect(installSpecFor(DEFAULT_SERVERS.lua, 'linux')).toBe(undefined)
+    expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'linux')).toBe(DEFAULT_SERVERS.lua.platforms.linux.installHint)
+    expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'linux')).toContain('LuaLS/lua-language-server/releases')
+    expect(installSpecFor(DEFAULT_SERVERS.lua, 'win32')).toEqual({
+      command: 'winget',
+      args: ['install', '--id', 'LuaLS.lua-language-server', '-e', '--accept-source-agreements', '--accept-package-agreements'],
+    })
+    expect(displayInstallCommand(DEFAULT_SERVERS.lua, 'win32')).toBe('winget install --id LuaLS.lua-language-server -e --accept-source-agreements --accept-package-agreements')
+  })
+
+  it('never shows another platform\'s installer for any family', () => {
+    const forbidden = {
+      win32: ['brew', 'apt-get', 'sudo'],
+      linux: ['brew', 'winget'],
+      darwin: ['apt-get', 'winget'],
+    }
+    for (const [platform, words] of Object.entries(forbidden)) {
+      for (const family of Object.keys(DEFAULT_SERVERS)) {
+        const shown = displayInstallCommand(DEFAULT_SERVERS[family], platform)
+        expect(shown.length).toBeGreaterThan(0)
+        for (const word of words) {
+          expect(shown, `${family} on ${platform} shows '${word}': ${shown}`).not.toContain(word)
+        }
+      }
+    }
+  })
+
+  it('keeps a platform-neutral hint for an undeclared platform', () => {
+    const cpp = serverForPlatform(DEFAULT_SERVERS.cpp, 'freebsd')
+    expect(cpp.platforms).toBe(undefined)
+    expect(cpp.install).toBe(undefined)
+    expect(cpp.installHint).toBe(DEFAULT_SERVERS.cpp.installHint)
+    expect(displayInstallCommand(DEFAULT_SERVERS.cpp, 'freebsd')).toBe(DEFAULT_SERVERS.cpp.installHint)
+    for (const family of ['cpp', 'lua']) {
+      const shown = displayInstallCommand(DEFAULT_SERVERS[family], 'freebsd')
+      for (const word of ['brew', 'apt-get', 'sudo', 'winget']) {
+        expect(shown, `${family} on freebsd shows '${word}': ${shown}`).not.toContain(word)
+      }
+    }
+    // an entry without a platforms map is returned unchanged (identity preserved)
+    expect(serverForPlatform(DEFAULT_SERVERS.typescript, 'win32')).toBe(DEFAULT_SERVERS.typescript)
+  })
+
+  it('builds the registry for the requested platform', () => {
+    const win = buildRegistry(undefined, 'win32')
+    expect(win.cpp.installHint).toContain('winget')
+    expect(win.cpp.installHint).not.toContain('brew')
+    expect(win.cpp.platforms).toBe(undefined)
+    expect(win.typescript.command).toBe('typescript-language-server')
+    const darwin = buildRegistry(undefined, 'darwin')
+    expect(darwin.cpp.installHint).toBe('brew install llvm')
+    expect(darwin.cpp.installHint).not.toContain('winget')
+  })
+
+  it('a user platform row overrides only the fields it declares', () => {
+    const servers = { cpp: { platforms: { darwin: { command: '/opt/homebrew/opt/llvm/bin/clangd' } } } }
+    const darwin = buildRegistry(servers, 'darwin').cpp
+    expect(darwin.command).toBe('/opt/homebrew/opt/llvm/bin/clangd')
+    // undeclared fields keep the built-in darwin row
+    expect(darwin.args).toEqual([])
+    expect(darwin.installHint).toBe('brew install llvm')
+    expect(installSpecFor(darwin, 'darwin')).toEqual({ command: 'brew', args: ['install', 'llvm'] })
+    // the same user entry leaves win32 on the built-in win32 recipe
+    const win = buildRegistry(servers, 'win32').cpp
+    expect(win.command).toBe('clangd')
+    expect(displayInstallCommand(win, 'win32')).toContain('winget')
+    expect(displayInstallCommand(win, 'win32')).not.toContain('brew')
+    // a user WIN32 row wins over the built-in win32 row
+    const override = buildRegistry({ cpp: { platforms: { win32: { installHint: 'winget install --id LLVM.LLVM --silent', install: { command: 'winget', args: ['install', '--id', 'LLVM.LLVM', '--silent'] } } } } }, 'win32').cpp
+    expect(displayInstallCommand(override, 'win32')).toBe('winget install --id LLVM.LLVM --silent')
+  })
+
+  it('a user entry without platforms is identical on all three platforms', () => {
+    const servers = { kotlin: { command: 'kotlin-ls', args: ['--stdio'], installHint: 'sdkman install kotlin', install: { command: 'sdk', args: ['install', 'kotlin'] } } }
+    const shapes = ['darwin', 'linux', 'win32'].map((platform) => {
+      const entry = buildRegistry(servers, platform).kotlin
+      return { entry, spec: installSpecFor(entry, platform), display: displayInstallCommand(entry, platform) }
+    })
+    expect(shapes[0].entry).toEqual(shapes[1].entry)
+    expect(shapes[1].entry).toEqual(shapes[2].entry)
+    expect(shapes[0].spec).toEqual(shapes[1].spec)
+    expect(shapes[1].spec).toEqual(shapes[2].spec)
+    expect(shapes[0].display).toBe('sdk install kotlin')
+    expect(shapes[2].display).toBe('sdk install kotlin')
+  })
+
+  it('still resolves the legacy install platform map and a bare single spec', () => {
+    const legacy = {
+      command: 'x-ls',
+      install: { darwin: { command: 'brew', args: ['install', 'x'] }, default: { command: 'pkg', args: ['install', 'x'] } },
+    }
+    expect(installSpecFor(legacy, 'darwin')).toEqual({ command: 'brew', args: ['install', 'x'] })
+    expect(installSpecFor(legacy, 'linux')).toEqual({ command: 'pkg', args: ['install', 'x'] })
+    expect(displayInstallCommand(legacy, 'win32')).toBe('pkg install x')
+    // D7: a spec without args is a SPEC, not a platform map
+    const bare = { command: 'y-ls', install: { command: 'pkg' } }
+    expect(installSpecFor(bare, 'win32')).toEqual({ command: 'pkg' })
+    expect(displayInstallCommand(bare, 'win32')).toBe('pkg')
   })
 
   it('round-trips file URIs', () => {

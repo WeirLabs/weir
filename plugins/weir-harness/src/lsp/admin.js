@@ -3,7 +3,7 @@
 // the community catalog). Plain ESM, ctx-only; `connection`/`subprocess`
 // resolve through ctx.get so the module mounts harmlessly in compositions
 // without them (headless).
-import { buildRegistry, DEFAULT_SERVERS, displayInstallCommand, installSpecFor, languageIdsForFamily } from './registry.js'
+import { buildRegistry, displayInstallCommand, installSpecFor, languageIdsForFamily, serverForPlatform } from './registry.js'
 import { npmGlobalPrefix, resolveExecutable as extendedResolveExecutable, runBounded, spawnArgv } from '../process/index.js'
 import { jsonResponse, readJsonBody } from '../shared/http-json.js'
 
@@ -39,20 +39,27 @@ export async function probeVersion(subprocess, executable, args = ['--version'],
   return first ?? null
 }
 
-/** Per-family status rows over the community catalog. */
+/**
+ * Per-family status rows over the community catalog. `options.platform`
+ * (default: the host) resolves each family's platform row first, so every
+ * displayed value — command, version probe, install command, hint — belongs to
+ * the platform being reported (D2/D5).
+ */
 export async function lspStatusFor(registry, subprocess, options = {}) {
   const probeTimeoutMs = options.probeTimeoutMs ?? VERSION_PROBE_TIMEOUT_MS
   const dirs = options.dirs ?? undefined
+  const platform = options.platform ?? process.platform
   const servers = []
   for (const [family, entry] of Object.entries(registry)) {
+    const resolved = serverForPlatform(entry, platform)
     let installed = false
     let version = null
     try {
-      const executable = await extendedResolveExecutable(subprocess, entry.command, dirs)
+      const executable = await extendedResolveExecutable(subprocess, resolved.command, dirs)
       installed = Boolean(executable)
       if (executable) {
         try {
-          version = await probeVersion(subprocess, executable, entry.versionArgs ?? ['--version'], probeTimeoutMs)
+          version = await probeVersion(subprocess, executable, resolved.versionArgs ?? ['--version'], probeTimeoutMs)
         } catch {
           version = null
         }
@@ -61,7 +68,7 @@ export async function lspStatusFor(registry, subprocess, options = {}) {
       // unresolvable command = not installed
     }
     let installerAvailable = false
-    const installerSpec = installSpecFor(entry)
+    const installerSpec = installSpecFor(resolved, platform)
     if (installerSpec) {
       try {
         installerAvailable = Boolean(await extendedResolveExecutable(subprocess, installerSpec.command, dirs))
@@ -72,11 +79,11 @@ export async function lspStatusFor(registry, subprocess, options = {}) {
     servers.push({
       family,
       languageIds: languageIdsForFamily(family),
-      command: entry.command,
+      command: resolved.command,
       installed,
       version,
-      installCommand: displayInstallCommand(entry),
-      installHint: entry.installHint ?? '',
+      installCommand: displayInstallCommand(resolved, platform),
+      installHint: resolved.installHint ?? '',
       installerAvailable,
     })
   }
@@ -87,13 +94,15 @@ export async function lspStatusFor(registry, subprocess, options = {}) {
  * Run one family's install command: argv-only (no shell), output captured,
  * bounded by a timeout. Resolves `{ output, exitCode, timedOut }`; throws a
  * structured Error for unknown families, missing installers, or a missing
- * installer binary. `dirs` overrides the extra bin-directory scan (tests).
+ * installer binary. `dirs` overrides the extra bin-directory scan (tests);
+ * `platform` selects the family's platform row and its install spec (D2).
  */
-export async function runInstall(registry, subprocess, family, timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS, dirs = undefined) {
+export async function runInstall(registry, subprocess, family, timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS, dirs = undefined, platform = process.platform) {
   const entry = registry[family]
   if (!entry) throw new Error(`lsp: unknown language family '${family}'`)
-  const spec = installSpecFor(entry)
-  if (!spec) throw new Error(`lsp: no installer for '${family}' on this platform — ${entry.installHint ?? 'see the install hint'}`)
+  const resolved = serverForPlatform(entry, platform)
+  const spec = installSpecFor(resolved, platform)
+  if (!spec) throw new Error(`lsp: no installer for '${family}' on this platform — ${resolved.installHint ?? 'see the install hint'}`)
   const executable = await extendedResolveExecutable(subprocess, spec.command, dirs).catch(() => undefined)
   if (!executable) throw new Error(`lsp: installer '${spec.command}' not found on PATH — install it first`)
   // npm installs pin a user-writable prefix: the resolved npm may belong to
@@ -127,7 +136,9 @@ export function registerLspAdminEndpoints(ctx, options = {}) {
     ctx.logger?.warn?.('weir-lsp-admin: connection/subprocess unavailable — LSP management endpoints not registered')
     return () => {}
   }
-  const registryProvider = typeof options.registry === 'function' ? options.registry : () => DEFAULT_SERVERS
+  // The catalog is platform-scoped: an absent provider builds the registry for
+  // the running host (rows resolved), never the raw unresolved DEFAULT_SERVERS.
+  const registryProvider = typeof options.registry === 'function' ? options.registry : () => buildRegistry()
   const installTimeoutMs = options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS
   const dirs = options.dirs ?? undefined
   const disposers = []

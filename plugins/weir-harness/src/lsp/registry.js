@@ -64,6 +64,14 @@ export const LANGUAGE_FAMILY = {
   cpp: 'cpp',
 }
 
+/**
+ * Built-in catalog. An entry may carry `platforms: { darwin?, linux?, win32?,
+ * default? }`; every row has the entry shape (all fields optional) and
+ * overrides only the fields it declares for that platform (D1). A family whose
+ * data is identical on every platform declares it once as the shared base
+ * (npm/pipx/go/rustup); the rest keep a platform-NEUTRAL base plus one row per
+ * platform, so no platform ever sees another platform's installer (D5).
+ */
 export const DEFAULT_SERVERS = {
   typescript: {
     command: 'typescript-language-server',
@@ -155,19 +163,41 @@ export const DEFAULT_SERVERS = {
     command: 'lua-language-server',
     args: [],
     manifests: ['*.lua'],
-    installHint: 'brew install lua-language-server (macOS); see https://luals.github.io for other platforms',
-    install: {
-      darwin: { command: 'brew', args: ['install', 'lua-language-server'] },
+    installHint: 'install LuaLS from https://luals.github.io',
+    platforms: {
+      darwin: {
+        installHint: 'brew install lua-language-server',
+        install: { command: 'brew', args: ['install', 'lua-language-server'] },
+      },
+      linux: {
+        // no package-managed LuaLS on Linux: hint only, pointing at the release
+        // page (a one-click install would be a guess, not a recipe)
+        installHint: 'no package-managed LuaLS on Linux — download it from https://github.com/LuaLS/lua-language-server/releases',
+      },
+      win32: {
+        installHint: 'winget install --id LuaLS.lua-language-server -e --accept-source-agreements --accept-package-agreements',
+        install: { command: 'winget', args: ['install', '--id', 'LuaLS.lua-language-server', '-e', '--accept-source-agreements', '--accept-package-agreements'] },
+      },
     },
   },
   cpp: {
     command: 'clangd',
     args: [],
     manifests: ['*.c', '*.cpp', 'compile_commands.json'],
-    installHint: 'brew install llvm (macOS); sudo apt-get install clangd (Debian/Ubuntu)',
-    install: {
-      darwin: { command: 'brew', args: ['install', 'llvm'] },
-      linux: { command: 'sudo', args: ['apt-get', 'install', '-y', 'clangd'] },
+    installHint: 'install clangd from https://clangd.llvm.org/installation',
+    platforms: {
+      darwin: {
+        installHint: 'brew install llvm',
+        install: { command: 'brew', args: ['install', 'llvm'] },
+      },
+      linux: {
+        installHint: 'sudo apt-get install clangd',
+        install: { command: 'sudo', args: ['apt-get', 'install', '-y', 'clangd'] },
+      },
+      win32: {
+        installHint: 'winget install --id LLVM.LLVM -e --accept-source-agreements --accept-package-agreements',
+        install: { command: 'winget', args: ['install', '--id', 'LLVM.LLVM', '-e', '--accept-source-agreements', '--accept-package-agreements'] },
+      },
     },
   },
 }
@@ -192,26 +222,62 @@ export function languageIdsForFamily(family) {
   return Object.entries(LANGUAGE_FAMILY).filter(([, value]) => value === family).map(([id]) => id)
 }
 
-/** Platform-resolved install spec for a registry entry, or undefined. */
+/**
+ * Resolve one entry for a platform: `{...entry, ...platforms[platform]}` with
+ * the `platforms` key removed (D1/D2). An entry without a `platforms` map is
+ * returned unchanged — the platform is never guessed. A platform with no row
+ * (and no `default` row) keeps the entry's base fields, which are
+ * platform-neutral by contract — never another platform's recipe (D5).
+ */
+export function serverForPlatform(entry, platform = process.platform) {
+  const platforms = entry?.platforms
+  if (!platforms || typeof platforms !== 'object' || Array.isArray(platforms)) return entry
+  const row = platforms[platform] ?? platforms.default
+  const resolved = { ...entry, ...(row && typeof row === 'object' ? row : {}) }
+  delete resolved.platforms
+  return resolved
+}
+
+/**
+ * Platform-resolved install spec for a registry entry, or undefined. The entry
+ * is resolved first when it declares `platforms`. A single spec is identified
+ * by `install.command` being a string (a platform map never has a `command`
+ * key — D7); anything else is the legacy platform map, kept so existing user
+ * configs keep resolving.
+ */
 export function installSpecFor(entry, platform = process.platform) {
-  const install = entry?.install
+  const resolved = entry?.platforms ? serverForPlatform(entry, platform) : entry
+  const install = resolved?.install
   if (!install) return undefined
-  if (Array.isArray(install.args)) return install // single-spec form
+  if (typeof install.command === 'string') return install // single-spec form
   return install[platform] ?? install.default
 }
 
-/** Display form of the install command for a registry entry. */
+/**
+ * Display form of the install command for a registry entry. Where the platform
+ * declares no install spec the fallback is the RESOLVED entry's `installHint`
+ * — never another platform's command.
+ */
 export function displayInstallCommand(entry, platform = process.platform) {
-  const spec = installSpecFor(entry, platform)
-  if (!spec) return entry?.installHint ?? ''
+  const resolved = entry?.platforms ? serverForPlatform(entry, platform) : entry
+  const spec = installSpecFor(resolved, platform)
+  if (!spec) return resolved?.installHint ?? ''
   return [spec.command, ...(spec.args ?? [])].join(' ')
 }
 
-/** Merge user `lsp.servers` config over the defaults (per-language overlay). */
-export function buildRegistry(configServers) {
-  const registry = { ...DEFAULT_SERVERS }
+/**
+ * Merge user `lspServers` config over the platform-resolved catalog. Built-ins
+ * resolve first; each user override is then merged onto the resolved built-in
+ * and resolved again, so a user row overrides only the fields it declares and
+ * a user platform row wins over the built-in one (D2/D6).
+ */
+export function buildRegistry(configServers, platform = process.platform) {
+  const registry = {}
+  for (const [language, entry] of Object.entries(DEFAULT_SERVERS)) {
+    registry[language] = serverForPlatform(entry, platform)
+  }
   for (const [language, entry] of Object.entries(configServers ?? {})) {
-    registry[language] = { ...registry[language], ...entry }
+    registry[language] = serverForPlatform({ ...registry[language], ...entry }, platform)
   }
   return registry
 }
