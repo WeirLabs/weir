@@ -43,17 +43,6 @@ const FIELDS = [
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (live advisory; 0 < soft < hard < 1)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (live maintenance request; not a completion guarantee)' },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)', restart: true },
-  { key: 'editLockEnabled', section: 'editLock', field: 'enabled', type: 'boolean', description: 'Edit Lock cross-session file ownership (default on; explicit off applies after restart)', restart: true },
-  // Retention (design D1/D2): one lock batch shares one cumulative allowance, so a
-  // session reads one expiry instead of N countdowns. These keys are policy, not
-  // mechanism: the kernel never sees them, the lifecycle resolves them per call.
-  { key: 'editLockHoldDefaultMinutes', section: 'editLock', field: 'holdDefaultMinutes', type: 'number', description: 'Edit Lock: retention minutes used when a session asks to keep its locks without giving a period (default 30)', page: false },
-  { key: 'editLockHoldSingleMaxMinutes', section: 'editLock', field: 'holdSingleMaxMinutes', type: 'number', description: 'Edit Lock: most minutes one retention request may ask for (default 30)', page: false },
-  { key: 'editLockHoldCumulativeMaxMinutes', section: 'editLock', field: 'holdCumulativeMaxMinutes', type: 'number', description: 'Edit Lock: cumulative retention minutes one batch of locks may use; asks beyond it are refused and only release remains (default 120)', page: false },
-  { key: 'editLockNudgeAttempts', section: 'editLock', field: 'nudgeAttempts', type: 'number', description: 'Edit Lock: how many times a finished turn is continued to ask for still-held locks to be released or retained (default 2)', page: false },
-  { key: 'editLockNudgeFallback', section: 'editLock', field: 'nudgeFallback', type: { union: ['release', 'abnormal'] }, description: 'Edit Lock: disposition of locks still held after those notices are used up; release frees the files for other sessions, abnormal keeps them for the user (default release)', page: false },
-  { key: 'editLockAutoResume', section: 'editLock', field: 'autoResume', type: 'boolean', description: 'Edit Lock: a genuine user message automatically resumes a stopped or administratively revoked session and retries a duplicate-binding failure (default on)' },
-  { key: 'editLockStaleSweep', section: 'editLock', field: 'staleSweep', type: 'boolean', description: 'Edit Lock: a genuine user message silently releases locks whose target file no longer exists (default on; read per message, applies immediately)' },
   { key: 'robashEnabled', section: 'robash', field: 'enabled', type: 'boolean', description: 'Guarded read-only bash for curated agents (master switch)' },
   { key: 'robashAllow', section: 'robash', field: 'allow', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default bash allow list (empty adds nothing; the defaults are always in effect)' },
   { key: 'robashGitAllow', section: 'robash', field: 'gitAllow', type: 'string', list: true, description: 'JSON array of git subcommands to APPEND to the product-default git allow list (empty adds nothing; the defaults are always in effect)' },
@@ -98,8 +87,8 @@ export { FIELDS }
 
 /** Product defaults of the flat settings keys, mirrored from the consuming
  * modules' code defaults (intent-gate classifier, delegate supervision,
- * todo driver, context guard, edit-lock retention, robash, lsp, worktree,
- * notify). This is the canonical declaration: the cordis.patch.yml
+ * todo driver, context guard, robash, lsp, worktree, notify). This is the
+ * canonical declaration: the cordis.patch.yml
  * weir-settings row carries the same values so saved profiles resolve
  * them, and the settings page mirrors this table client-side to SHOW the
  * effective default of an unset field (both directions pinned by test).
@@ -121,14 +110,6 @@ export const FIELD_DEFAULTS = Object.freeze({
   guardSoftThreshold: 0.72,
   guardHardThreshold: 0.88,
   hashlineHideStockEdit: true,
-  editLockEnabled: true,
-  editLockHoldDefaultMinutes: 30,
-  editLockHoldSingleMaxMinutes: 30,
-  editLockHoldCumulativeMaxMinutes: 120,
-  editLockNudgeAttempts: 2,
-  editLockNudgeFallback: 'release',
-  editLockAutoResume: true,
-  editLockStaleSweep: true,
   robashEnabled: true,
   lspEnabled: false,
   lspIdleMs: 600000,
@@ -360,9 +341,6 @@ export function computeSections(config, { readDefaults } = {}) {
         }
       }
     }
-    // A saved profile row replaces the bundle row wholesale. An omitted key
-    // must still activate protection; a saved false remains an explicit opt-out.
-    if (key === 'editLock' && out.enabled === undefined) out.enabled = FIELD_DEFAULTS.editLockEnabled
     if (key === 'contextGuard') guardOptions(out)
     if (key === 'lsp' && typeof out.servers === 'string' && out.servers.trim().length > 0) {
       out.servers = parseJsonField(validateLspServers, out.servers)

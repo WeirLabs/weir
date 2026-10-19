@@ -16,7 +16,6 @@ import { wireLspAdmin } from '../lsp/admin.js'
 import { wireEnvAdmin } from './env-admin.js'
 import { createEditLockEvidence, wireEditLockMaintenance } from '../edit-lock/maintenance.js'
 import { managementRootFor } from '../edit-lock/domains.js'
-import { createAudit, AUDIT_TYPES } from '../shared/audit.js'
 
 // Host lifetime, not settings-row lifetime: remounting settings must not forget
 // still-live preset rows. Weak keys isolate hosts and release stopped hosts.
@@ -62,9 +61,11 @@ return (ctx, config = {}) => {
     evidenceByHost.set(host, editLockEvidence)
   }
   const candidateRoots = () => maintenanceRoots(ctx.get?.('agents'), resolveRoot)
-  const savedEnabled = () => compute().editLock?.enabled === true
-  const audit = createAudit(ctx)
-  let lastEnabled = savedEnabled()
+  // The eight editLock* settings keys are retired (edit-lock-rebuild task 4.4):
+  // no profile can save the old switch on or off, so the saved side of the
+  // maintenance status is permanently false until the edit-lock mechanism
+  // itself is deleted. Nothing here reads a setting for it.
+  const savedEnabled = () => false
 
   const listeners = new Set()
   // Host-plane service: preset modules read their override section on demand.
@@ -97,17 +98,6 @@ return (ctx, config = {}) => {
   observeReloadEntry()
   ctx.on('loader/volatile-update', () => {
     observeReloadEntry()
-    const enabled = savedEnabled()
-    if (enabled !== lastEnabled) {
-      lastEnabled = enabled
-      // Profile intent has no session log. Mirror only when a server-derived
-      // workspace exists; no cwd fallback to the developer's current directory.
-      const data = { kind: enabled ? 'enable-requested' : 'disable-requested', scope: 'profile', appliesAfterRestart: true }
-      let roots = []
-      try { roots = candidateRoots() } catch { /* emit remains available */ }
-      if (roots.length) for (const root of roots) audit(null, AUDIT_TYPES.editLockMaintenance, data, { root })
-      else audit(null, AUDIT_TYPES.editLockMaintenance, data)
-    }
     for (const callback of listeners) callback()
   })
 

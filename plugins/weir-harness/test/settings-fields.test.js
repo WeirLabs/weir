@@ -63,19 +63,17 @@ describe('settings field-key parity (FIELDS ↔ patch row ↔ settings page)', (
 })
 
 describe('CONFIG_FACE_ONLY_KEYS (config-face-only settings declaration)', () => {
-  // 13 把高级/调试旋钮只在配置面出现：两个 robash defaults 键、todo 退避、
-  // Edit Lock 保留策略五个、LSP 三个计时器、黑板写入权 TTL。唯一声明是
-  // FIELDS 的 page:false 标记；本清单是全量对拍，增删即红。
+  // 8 把高级/调试旋钮只在配置面出现：两个 robash defaults 键、todo 退避、
+  // LSP 三个计时器、黑板写入权 TTL。唯一声明是 FIELDS 的 page:false 标记；
+  // 本清单是全量对拍，增删即红。
   const EXPECTED = [
     'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
-    'editLockHoldDefaultMinutes', 'editLockHoldSingleMaxMinutes', 'editLockHoldCumulativeMaxMinutes',
-    'editLockNudgeAttempts', 'editLockNudgeFallback',
     'robashDefaultsPath', 'robashDefaultsReload',
     'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs',
     'blackboardWriteTokenTtlMinutes',
   ]
 
-  it('contains exactly the 13 config-face-only keys in declaration order', () => {
+  it('contains exactly the 8 config-face-only keys in declaration order', () => {
     expect([...CONFIG_FACE_ONLY_KEYS]).toEqual(EXPECTED)
   })
 
@@ -140,7 +138,7 @@ describe('editLockLimits default/single coherence', () => {
 })
 
 // FIELD_DEFAULTS（产品默认值的唯一声明，sections.js）：四层对拍——
-// ① 声明本体（39 键、冻结、unset 有语义的键无条目）；② ↔ 可导入的模块
+// ① 声明本体（33 键、冻结、unset 有语义的键无条目）；② ↔ 可导入的模块
 // 常量（源头）；③ ↔ 客户端 chunk 手维护镜像（ModuleLoader 同包同步
 // require 不可能的既定代价，raw 文本提取）；④ ↔ cordis.patch.yml
 // weir-settings 行（raw 文本提取，不引入 yaml 依赖）。
@@ -183,9 +181,9 @@ function chunkFieldDefaults() {
 }
 
 describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
-  it('declares exactly the 41 concrete defaults, frozen, with no entry where unset is meaningful', () => {
+  it('declares exactly the 33 concrete defaults, frozen, with no entry where unset is meaningful', () => {
     expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
-    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(41)
+    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(33)
     for (const key of NO_DEFAULT_KEYS) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must stay unset-meaningful (no default entry)`).toBe(false)
     }
@@ -207,11 +205,6 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
     expect(FIELD_DEFAULTS.guardEnabled).toBe(PRESSURE_DEFAULTS.enabled)
     expect(FIELD_DEFAULTS.guardSoftThreshold).toBe(PRESSURE_DEFAULTS.softThreshold)
     expect(FIELD_DEFAULTS.guardHardThreshold).toBe(PRESSURE_DEFAULTS.hardThreshold)
-    expect(FIELD_DEFAULTS.editLockHoldDefaultMinutes).toBe(EDIT_LOCK_DEFAULTS.holdDefaultMinutes)
-    expect(FIELD_DEFAULTS.editLockHoldSingleMaxMinutes).toBe(EDIT_LOCK_DEFAULTS.holdSingleMaxMinutes)
-    expect(FIELD_DEFAULTS.editLockHoldCumulativeMaxMinutes).toBe(EDIT_LOCK_DEFAULTS.holdCumulativeMaxMinutes)
-    expect(FIELD_DEFAULTS.editLockNudgeAttempts).toBe(EDIT_LOCK_DEFAULTS.nudgeAttempts)
-    expect(FIELD_DEFAULTS.editLockNudgeFallback).toBe(EDIT_LOCK_DEFAULTS.nudgeFallback)
     expect(FIELD_DEFAULTS.lspIdleMs).toBe(LSP_DEFAULTS.idleMs)
     expect(FIELD_DEFAULTS.lspRequestTimeoutMs).toBe(LSP_DEFAULTS.requestTimeoutMs)
     expect(FIELD_DEFAULTS.lspDiagnosticsWaitMs).toBe(LSP_DEFAULTS.diagnosticsWaitMs)
@@ -242,19 +235,19 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
 
   it('the patch row mirrors it: every row key is a FIELD_DEFAULTS key with the same value', () => {
     const entries = patchRowEntries()
-    // the 32 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
+    // the 29 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
     // absences (whitelist tables, defaultsPath/Reload) are covered by the
     // dedicated tests above, not required here
-    expect(entries.size).toBe(32)
+    expect(entries.size).toBe(29)
     for (const [key, raw] of entries) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `patch row key ${key} has no FIELD_DEFAULTS entry`).toBe(true)
       expect(FIELD_DEFAULTS[key], `patch row value of ${key} drifted from FIELD_DEFAULTS`).toEqual(coerceRowValue(raw))
     }
   })
 
-  it('the boolean subset is exactly the 14 switch defaults the patch row declares', () => {
+  it('the boolean subset is exactly the 11 switch defaults the patch row declares', () => {
     const booleans = Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === 'boolean')
-    expect(booleans).toHaveLength(14)
+    expect(booleans).toHaveLength(11)
     const row = patchRowEntries()
     for (const [key, value] of booleans) {
       expect(row.get(key), `${key} must ride the patch row as a boolean product default`).toBe(String(value))
@@ -270,7 +263,7 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
     'intentGateClassifier', 'intentGateProvider', 'intentGateModel', 'intentGateReasoningEffort',
     'intentGateTimeoutMs', 'jevEndpoint', 'jevModel', 'jevApiKeyEnv',
     'todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
-    'hashlineHideStockEdit', 'editLockEnabled',
+    'hashlineHideStockEdit',
   ]
 
   it('contains exactly the restart-required keys in declaration order', () => {
@@ -286,65 +279,46 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
   })
 })
 
-describe('Edit Lock effective Settings for unsaved and saved profiles', () => {
-  it('enables a never-saved or legacy omitted field, but retains an explicit saved false', () => {
-    expect(computeSections({}).editLock.enabled).toBe(true)
-    expect(computeSections({ todoEnabled: true }).editLock.enabled).toBe(true)
-    expect(computeSections({ editLockEnabled: false }).editLock.enabled).toBe(false)
-  })
-})
-describe('Edit Lock default-on Settings declaration', () => {
-  it('describes default-on, restart-applied ownership without an experiment label', () => {
-    const row = FIELDS.find(({ key }) => key === 'editLockEnabled')
-    expect(row.description).toBe('Edit Lock cross-session file ownership (default on; explicit off applies after restart)')
-    expect(row.restart).toBe(true)
-    expect(FIELD_DEFAULTS.editLockEnabled).toBe(true)
-    expect(patchRowEntries().get('editLockEnabled')).toBe('true')
-    expect(chunkFieldDefaults().get('editLockEnabled')).toBe(true)
-  })
-})
+// The eight editLock* settings keys were retired with the Edit Lock mechanism
+// (edit-lock-rebuild task 4.4): one assertion set covers every face they used
+// to ride — the FIELDS table, both canonically derived lists, FIELD_DEFAULTS,
+// the settings-page mirror, the patch row, and the section the service
+// publishes.
+const RETIRED_EDIT_LOCK_KEYS = [
+  'editLockEnabled',
+  'editLockHoldDefaultMinutes', 'editLockHoldSingleMaxMinutes', 'editLockHoldCumulativeMaxMinutes',
+  'editLockNudgeAttempts', 'editLockNudgeFallback',
+  'editLockAutoResume', 'editLockStaleSweep',
+]
 
-describe('editLockAutoResume (message-driven auto-resume switch)', () => {
-  // D5: the row is declared once in FIELDS; the runtime judges the section per
-  // message as `autoResume !== false`, so a missing key (old profile, or the
-  // patch default not yet declared by the main session) means ON.
-  it('declares the editLock.autoResume field row, live (no restart marker)', () => {
-    const row = FIELDS.find(({ key }) => key === 'editLockAutoResume')
-    expect(row).toEqual({
-      key: 'editLockAutoResume', section: 'editLock', field: 'autoResume', type: 'boolean',
-      description: 'Edit Lock: a genuine user message automatically resumes a stopped or administratively revoked session and retries a duplicate-binding failure (default on)',
-    })
-    expect(RESTART_KEYS.includes('editLockAutoResume')).toBe(false)
+describe('editLock* settings keys (retired with the Edit Lock mechanism)', () => {
+  it('declares none of the eight keys in FIELDS, in either derived list, or in FIELD_DEFAULTS', () => {
+    for (const key of RETIRED_EDIT_LOCK_KEYS) {
+      expect(FIELDS.find((row) => row.key === key), `${key} must not be declared in FIELDS`).toBe(undefined)
+      expect(RESTART_KEYS.includes(key), `${key} must not be a restart key`).toBe(false)
+      expect(CONFIG_FACE_ONLY_KEYS.includes(key), `${key} must not be a config-face-only key`).toBe(false)
+      expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must not carry a product default`).toBe(false)
+    }
   })
 
-  it('the autoResume !== false judgment defaults on; only an explicit false gates off', () => {
-    // The same section shape the weirSettings service publishes, judged with
-    // the runtime's exact predicate (src/edit-lock/index.js user/message branch).
-    const gate = (config) => computeSections(config).editLock?.autoResume !== false
-    expect(gate({})).toBe(true)
-    expect(gate({ editLockAutoResume: true })).toBe(true)
-    expect(gate({ editLockAutoResume: false })).toBe(false)
-  })
-})
-
-describe('editLockStaleSweep (message-triggered stale-lock sweep switch)', () => {
-  // Same declaration style as editLockAutoResume: the row lives once in
-  // FIELDS; the runtime judges the section per message as
-  // `staleSweep !== false`, so a missing key means ON.
-  it('declares the editLock.staleSweep field row, live (no restart marker)', () => {
-    const row = FIELDS.find(({ key }) => key === 'editLockStaleSweep')
-    expect(row).toEqual({
-      key: 'editLockStaleSweep', section: 'editLock', field: 'staleSweep', type: 'boolean',
-      description: 'Edit Lock: a genuine user message silently releases locks whose target file no longer exists (default on; read per message, applies immediately)',
-    })
-    expect(RESTART_KEYS.includes('editLockStaleSweep')).toBe(false)
+  it('keeps the retired keys off the settings-page mirror and the patch row', () => {
+    const mirror = chunkFieldDefaults()
+    const row = patchRowEntries()
+    for (const key of RETIRED_EDIT_LOCK_KEYS) {
+      expect(mirror.has(key), `${key} must not be mirrored by the settings page`).toBe(false)
+      expect(row.has(key), `${key} must not ride the patch row`).toBe(false)
+    }
   })
 
-  it('the staleSweep !== false judgment defaults on; only an explicit false gates off', () => {
-    const gate = (config) => computeSections(config).editLock?.staleSweep !== false
-    expect(gate({})).toBe(true)
-    expect(gate({ editLockStaleSweep: true })).toBe(true)
-    expect(gate({ editLockStaleSweep: false })).toBe(false)
+  it('publishes no editLock section, so a legacy saved key stays inert data', () => {
+    // The service regroups the declared fields by section, so a section with no
+    // declared field disappears. A profile saved before the rebuild may still
+    // carry these keys (test/edit-lock-settings-compat.test.js pins that they are
+    // accepted and carried losslessly) — flat inert data, never a live section.
+    expect(computeSections({}).editLock).toBe(undefined)
+    expect(computeSections({ todoEnabled: true }).editLock).toBe(undefined)
+    expect(computeSections({ editLockEnabled: true, editLockAutoResume: true, editLockStaleSweep: true }).editLock).toBe(undefined)
+    expect(Object.keys(computeSections({ editLockEnabled: false }))).not.toContain('editLock')
   })
 })
 
