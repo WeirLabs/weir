@@ -20,13 +20,12 @@
 //     request timeout per call, or refused the write after the recovery attempt,
 //     would leave no file and a red check above.
 //
-// NOT asserted here (known product gap, reported with this change): design D7
-// also requires ONE degraded audit record per process window, mirrored to
-// `<workspace>/.weir/audit.jsonl`. The lease client accepts an `audit` sink,
-// but nothing in the bundle wires it to `src/shared/audit.js`, so no such row
-// is written by the product. Asserting it would be a permanently red check;
-// asserting its absence would turn the gap into a passing contract. The
-// report records the actual audit file for the reviewer instead.
+// D7's audit obligation is asserted here, not just reported: the mount wires the
+// client's degradation sink into `src/shared/audit.js`, so the FIRST degraded
+// write appends exactly one `weir/file-lease` record to
+// `<workspace>/.weir/audit.jsonl` (owner + a path COUNT + the failure reason,
+// never path content), and the client's own 60s window keeps the SECOND
+// degradation in this same process from adding another.
 import { appendFileSync, existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -72,9 +71,12 @@ function readAudit(path) {
       // Any row that could be the design's degraded record, matched loosely so
       // the evidence survives a naming change (type/file-lease/degraded/…).
       degraded: rows.filter((row) => /degrad/i.test(String(row?.type ?? '')) || /degrad/i.test(String(row?.data?.kind ?? ''))),
+      // The exact record D7 requires, so the assertions below pin the contract
+      // instead of a lookalike.
+      fileLease: rows.filter((row) => row?.type === 'weir/file-lease'),
     }
   } catch {
-    return { path, rows: 0, degraded: [], missing: true }
+    return { path, rows: 0, degraded: [], fileLease: [], missing: true }
   }
 }
 
@@ -128,6 +130,24 @@ function assert(run) {
   )
   run.check('no managed write was refused while the arbiter was down', !text.includes('Refused:'), text.slice(-800))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+  // ---- D7: the degradation is audited, exactly once per process window ----
+  const audit = report?.audit ?? { path: '(no report)', rows: 0, fileLease: [] }
+  const leaseRows = Array.isArray(audit.fileLease) ? audit.fileLease : []
+  const leaseRow = leaseRows[0]
+  run.check(
+    'the degradation was audited: exactly one weir/file-lease record with kind=degraded and an owner session',
+    leaseRows.length === 1
+      && leaseRow?.data?.kind === 'degraded'
+      && typeof leaseRow?.data?.owner?.session === 'string' && leaseRow.data.owner.session.length > 0
+      // A count and a reason, never path content — the record is log-only.
+      && typeof leaseRow?.data?.paths === 'number' && leaseRow.data.code === 'transport',
+    JSON.stringify(audit),
+  )
+  run.check(
+    'the second degraded write in the same run added no record (one per 60s throttle window)',
+    text.includes(`Updated file: ${TARGET}`) && leaseRows.length === 1,
+    JSON.stringify({ total: leaseRows.length, audit }),
+  )
 }
 
 export default { id, prompt, env, decide, observe, run, assert }

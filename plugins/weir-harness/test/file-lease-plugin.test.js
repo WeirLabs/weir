@@ -771,3 +771,96 @@ describe('two preset mounts share one client (D11)', () => {
     disposeB()
   })
 })
+
+// Design D7 requires the degradation itself to be auditable: the client's own
+// rate-limited record (one per process window) is the only material a silent
+// loss of mutual exclusion leaves behind, so the mount must hand it a sink that
+// lands in the shared audit channel under `AUDIT_TYPES.fileLease`.
+describe('degraded-write audit wiring (D7)', () => {
+  /**
+   * Mount one instance over an injected shared-client factory and capture both
+   * the attributes the plugin passes to the process-wide client and every
+   * audit record `createAudit` emits (the fake ctx's `on` is a plain table).
+   * @param {Map<string, any>} agents
+   */
+  function mount(agents = new Map()) {
+    const ctx = createCtx(agents)
+    /** @type {any[]} */
+    const created = []
+    /** @type {any[]} */
+    const records = []
+    ctx.on('weir/file-lease', (/** @type {any} */ record) => records.push(record))
+    const client = createFakeClient()
+    const plugin = createFileLeasePlugin({
+      sharedClient: (/** @type {any} */ options) => {
+        created.push(options)
+        return client
+      },
+      ownerOf: () => OWNER,
+      deliver: () => true,
+    })
+    const dispose = plugin.apply(ctx)
+    return { ctx, client, created, records, dispose }
+  }
+
+  it('gives the process-wide client a sink that records one owner-bearing event', () => {
+    const agents = new Map()
+    const agent = createAgent(OWNER.session)
+    // The in-process record is what this test pins; the JSONL mirror is the
+    // integration scenario's contract (it needs a real session workspace).
+    agent.session.header.cwd = undefined
+    agents.set(OWNER.session, agent)
+    const { created, records, dispose } = mount(agents)
+
+    expect(created).toHaveLength(1)
+    expect(typeof created[0].audit).toBe('function')
+    // The client's signature, called the way `auditDegraded` calls it.
+    created[0].audit('degraded', {
+      code: 'transport',
+      session: OWNER.session,
+      lineage: OWNER.id,
+      scope: CWD,
+      paths: 2,
+      at: 1_700_000_000_000,
+    })
+
+    expect(records).toHaveLength(1)
+    expect(records[0].type).toBe('weir/file-lease')
+    expect(records[0].session).toBe(OWNER.session)
+    expect(records[0].data.kind).toBe('degraded')
+    expect(records[0].data.code).toBe('transport')
+    // A count, never path content.
+    expect(records[0].data.paths).toBe(2)
+    expect(records[0].data.owner).toEqual({ session: OWNER.session, lineage: OWNER.id })
+    dispose()
+  })
+
+  it('still emits with session null when the session cannot be resolved, and never throws', () => {
+    const { created, records, dispose } = mount(new Map())
+    // A disposed or foreign session is not an error: ownership facts survive,
+    // the live session object does not.
+    created[0].audit('degraded', { code: 'transport', session: 'sess-gone', lineage: 'lineage-gone', paths: 1 })
+
+    expect(records).toHaveLength(1)
+    expect(records[0].session).toBeNull()
+    expect(records[0].data.owner.session).toBe('sess-gone')
+    expect(records[0].data.kind).toBe('degraded')
+    dispose()
+  })
+
+  it('leaves an injected client on its own sink and never creates the shared one', () => {
+    let sharedCalls = 0
+    const plugin = createFileLeasePlugin({
+      client: createFakeClient(),
+      sharedClient: () => {
+        sharedCalls += 1
+        return createFakeClient()
+      },
+      ownerOf: () => OWNER,
+      deliver: () => true,
+    })
+    const dispose = plugin.apply(createCtx())
+    expect(sharedCalls).toBe(0)
+    dispose()
+  })
+})
