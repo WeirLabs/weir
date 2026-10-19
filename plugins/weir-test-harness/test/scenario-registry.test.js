@@ -50,6 +50,11 @@ EXPECTED_ORDER.push('planned-compaction-busy', 'planned-compaction-wake', 'plann
 EXPECTED_ORDER.push('editlock-lsp-rename')
 EXPECTED_ORDER.push('editlock-lsp-uncertain')
 EXPECTED_ORDER.push('editlock-hashline-negatives')
+// New lease-semantics scenarios (edit-lock-rebuild 5.2/5.5/5.6): appended in
+// registry order; they assert live broker state and injected faults, so they
+// carry run overrides except filelease-hold (the in-process probe supplies its
+// only driver-independent observation).
+EXPECTED_ORDER.push('filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-fault-injection')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -128,6 +133,7 @@ describe('scenario registry', () => {
   const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'zombie-lane', 'lane-resumable']
   RUN_OVERRIDE.push('preset-delegation-surface')
   RUN_OVERRIDE.push('editlock-lsp-rename', 'editlock-lsp-uncertain')
+RUN_OVERRIDE.push('filelease-turn-release', 'filelease-degrade', 'filelease-fault-injection')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

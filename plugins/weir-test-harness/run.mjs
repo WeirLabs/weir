@@ -245,8 +245,8 @@ async function runPresetDelegationSurface(scenario, preset) {
   return { scenario: scenario.id, trace, ...outcome }
 }
 
-/** The context handed to a scenario's optional run override (rehydrate). */
-const driverCtx = { IT_ROOT: RUN_ROOT, spawnHeadless, scenarioEnv, runPresetDelegationSurface }
+/** The context handed to a scenario's optional run override (rehydrate, filelease-*). */
+const driverCtx = { IT_ROOT: RUN_ROOT, WS_ROOT, spawnHeadless, scenarioEnv, runPresetDelegationSurface }
 
 // ---------- assertion collection ----------
 

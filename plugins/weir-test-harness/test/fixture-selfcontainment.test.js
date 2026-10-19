@@ -79,9 +79,11 @@ function listFiles(dir) {
 
 // The four surviving edit-lock scenarios have no committed replay fixture: their
 // oracles are live lease state (a claim held by a running broker), live sandbox
-// policy and post-run target bytes. See assert-replay.test.js for the reasoning
-// shared by both lists.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives'].includes(scenario.id))
+// policy and post-run target bytes. The filelease-* lease-semantics scenarios
+// are excluded for the same reason (their evidence comes from an in-process
+// turn-boundary probe and from killed/crippled arbiters). See
+// assert-replay.test.js for the reasoning shared by both lists.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-fault-injection'].includes(scenario.id))
 
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {
