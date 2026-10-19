@@ -554,3 +554,35 @@ QA 失败路径的第一轮安全修复 `a097c1a` 合入后，代码 SHA `39fb0f
 - **冻结代码树全量与打包（4.2 APPROVE）**：旧 SHA `8030cb4` 的安装版全量 778/797 中 19 项 Office 环境红灯，是隔离测试运行时未提供已捆绑服务要求的 `WEIR_IT_NODE`／`WEIR_IT_OFFICE_CLI`，非编辑锁回归；只补环境变量、不改断言，Office 单项 23/23。冻结 HEAD `34bd386` 所指产品树 `02d4b9b`／装置树 `d2bb0cd`／安全工件工作流 blob `5d30f241` 在验证首末一致：checkJs 退出 0；产品 **2707 pass/11 skip/0 fail**、装置 **443/443**、隔离安装版全量 **797/797**，非发布 pack dry-run **239 文件／unsafe=[]／零 tarball／无产品 diff**，OpenSpec 严格校验有效（`.weir/stable-gate/product-check-freeze2-02d4b9b.log`、`product-unit-freeze2-02d4b9b.log`、`harness-unit-freeze2-d2bb0cd.log`、`integration-freeze2-34bd386.log`、`pack-freeze2-02d4b9b.log`）。同一独立审查者对该固定快照明确 **OVERALL APPROVE 4.2**；本次 4.1 仅改用户标签/说明，默认关和停用风险不变。整体批准不是远端合并／归档／发布许可。
 - **已安装 Desktop-host 锁开启 smoke（4.2 子闸门 PASS）**：用户在原本就开启编辑锁的正式 Electron Desktop 0.2.0-rc.2（macOS 15.8 arm64、PID 30453、单实例端口 19387）中，以外部工作区 `/Users/young/WeirDesktopSmoke-IMViJUJU` 的两个会话完成 A gen1 `hash_edit` → B 的 `edit_lock_acquire`／受管 `write` 因活 owner 双拒且字节不变 → A 正常 release → B gen2 受管 `write` 成功 → B release，最终 `ws/probe.txt` 为 `desktop=3`。经用户授权仅只读核对两份原生 Session 日志与父目录真实权威：revision 21、两条 confirmed updated、锁 0、unresolved 0、无管理员恢复；详见 `.weir/stable-gate/desktop-smoke-20261012.md`。用户选择保持原本开启的设置；存活预约不可手动删除。Desktop 证据与三平台 Web 各自独立，并已纳入 4.2 整体 APPROVE。标签代码变更不会自动重启或重配现有正式 Desktop profile；旧窗口若未重新载入可能仍显示旧文案，不据此推断锁未执行。
 - **稳定标签的隔离 GUI 核验（4.1）**：合入标签代码后的 HEAD `96c6ffb` 在已安装 DSH 0.2.0-rc.2 上用两独立 macOS Web 进程复验 `--opt-out`，报告 **22 PASS/0 FAIL/1 SKIP**；深／浅主题各两张设置页图可见「编辑锁」而非「编辑锁（实验）」、重启提示及关闭期间覆盖风险（`.weir/stable-gate/stable-label-gui-safe-96c6ffb/`）。这不是新的 Linux/Win32 或正式 Electron Desktop UI 截图；正式 profile 未重新应用或重启。
+
+## 回归基线（edit-lock-rebuild 阶段 0）
+
+### A 层——重写后必须逐字不变
+
+重写必须让下列安装版场景原样通过：场景文件、prompt、env 与断言都不动。
+
+| 场景 | 锁定的行为（重写后必须逐字不变） |
+|---|---|
+| `editlock-hashline-negatives` | 锚点命中（受管 `write` 建立目标、`hash_edit` 经锁发布）与锚点未命中（整次调用 `>>> mismatch` 拒绝、目标字节不变）；版本 CAS 在派发后被拒（`file changed since it was read`），已发布字节恰为 `hash_edit` 所写；`hash_edit applied …` 报告的 diff 输出；域内但会话沙箱外的写入到达后端拒绝 `[sandbox: file access denied under workspace-write mode]`，且目标字节前后一致 |
+| `editlock-lsp-rename` | 整批预检先于任何派发；任一冲突即零写入（`resource owned`、`missing`／`mixed` 的缺失目标、`duplicate` 的别名入口）；失败报告如实列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 三清单并声明 `ownership retained (no rollback)`，含 `midbatch` 与 `duplicate` 两组；无跨文件回滚 |
+| `editlock-delegate-resume`、`editlock-delegate-settle` | 子代理编辑行为：受监督 resume 后同一 Session ID 在旧 Agent 处置后冷替换、旧锁转待确认、新 epoch 建新文件；一次性子代理在终态仍持 active 锁时，父会话早于保留到期即拿到 generation+1，全程无人工解锁、无子会话自助释放 |
+| `editlock-preset-switch` | 预设切换后继续编辑：空窗口 A→B→A 互切后三次受管写仍全部准入、epoch 恒 1、锁保留、零启动失败 |
+
+**车道内会话编辑当前没有既有资产**：`worktree`、`lane-resumable`、`zombie-lane` 均不驱动受管编辑，因此没有可逐字不变的断言面。它将作为阶段 3 新增的基线断言，不属于本阶段成果。
+
+本次实测（2026-10-20，`WEIR_IT_DSH_EXEC` 指向安装版 CLI，断言未改动）：第一组 `editlock-hashline-negatives` + `editlock-lsp-rename` **67/67**；第二组 `editlock-delegate-resume` + `editlock-delegate-settle` + `editlock-preset-switch` **34/34**。
+
+### B 层——新验收，不得称为回归
+
+这些语义**今天不存在或不同**，重写后是**新行为**：验收时按新项立项，不得拿「与今天的实现一致」当作回归通过的证据。
+
+- **回合结束释放**：回合结束即释放本回合占用的文件，不依赖今天的回合末续推、提醒次数与兜底处置链路。
+- **模型间协商（`try_steal` / `reply`）**：占用请求与答复改写为模型之间的协商语义，与今天由持有者在回合内答复、超时即过期的形状不同。
+- **`hold` 跨回合保留**：保留跨回合有效；今天「一开始新回合，全部保留立刻解除」的语义不再成立。
+- **仲裁器不可用时降级放行**：publisher 或管理域不可用时按降级语义继续写入；今天在这些条件下 fail-closed 拒绝，两者不同。
+
+### 主动放弃的能力
+
+`editlock-lsp-uncertain` 中被**刻意放弃**的断言有两条：`unknown` 发布的 resource fence，以及「失败批次保留双锁」（失败批次的临时锁以 `user-interrupted` 保留、中断执行态留存）。重写后不再要求这两者成立——这是**能力放弃**，不是回归失败；本节不得从文档中消失，删掉它等于把这次放弃伪装成从未发生。
+
+保留的是同一场景里更根本的诚实性断言：`lsp_rename` 在第二批发布丢失 ack 时中途失败，仍如实列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 三清单、声明 `ownership retained (no rollback)`，已落盘的第一份文件不回滚。
