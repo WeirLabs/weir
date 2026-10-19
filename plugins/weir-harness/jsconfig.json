@@ -62,9 +62,13 @@
     "src/worktree/projection.js",
     "src/worktree/cards.js",
     "src/worktree/pkgmgr.js",
-    // Edit-lock lease broker: the wire protocol and the pure arbitration
-    // kernel (no IO, injected clock).
+    // Edit-lock lease broker: pure-Node daemon modules (protocol, kernel,
+    // transport, executable entry) plus the daemon-only Node contracts they
+    // compile against (no @types/node under `types: []`).
     "src/lease-broker/protocol.js",
     "src/lease-broker/state.js",
+    "src/lease-broker/server.js",
+    "src/lease-broker/entry.js",
+    "src/lease-broker/node-contracts.d.ts",
   ]
 }
