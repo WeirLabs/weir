@@ -128,8 +128,8 @@ export const DEFAULT_INTENTS = [
   {
     id: 'writing',
     matchers: [
-      '\\bwrite (?:a |an |the |some )?(?:doc|docs|document|documents|documentation|readme|guide|manual|report|spec)\\b',
-      '\\b(?:draft|compose|author|produce|prepare|rewrite|revise|update|polish) (?:a |an |the |some )?(?:doc|docs|document|documentation|readme|guide|manual|report)\\b',
+      '\\bwrite (?:a |an |the |some )?(?:[a-z][\\w-]* )?(?:doc|docs|document|documents|documentation|readme|guide|manual|report|spec)\\b',
+      '\\b(?:draft|compose|author|produce|prepare|rewrite|revise|update|polish) (?:a |an |the |some )?(?:[a-z][\\w-]* )?(?:doc|docs|document|documentation|readme|guide|manual|report)\\b',
       '\\bwrite[- ]?up\\b',
       '\\bdocument (?:the|this|these|a|an)\\b',
       '(?:写|撰写|编写|起草|整理成|写成|润色|补全|更新)[^\\n]{0,8}(?:文档|说明|报告|指南|手册|教程|文案)',

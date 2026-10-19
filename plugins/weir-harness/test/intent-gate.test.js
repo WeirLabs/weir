@@ -165,7 +165,7 @@ describe('intent-gate plugin', () => {
     apply(ctx, {})
     const agent = fakeAgent([])
     const result = await ctx.handlers['agent/pre-step'](
-      { agent, messages: [promptMessage('write a guide for the deployment flow')], turn: 1, step: 1 },
+      { agent, messages: [promptMessage('write a deployment guide')], turn: 1, step: 1 },
       async () => ({ kind: 'enter', messages: [] }),
     )
     expect(result.messages).toHaveLength(1)
