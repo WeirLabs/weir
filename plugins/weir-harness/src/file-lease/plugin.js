@@ -25,44 +25,16 @@
 //
 // Nothing here imports `@deepseek-ai/*`: services arrive through `ctx`.
 
-import { createLeaseClient } from './client.js'
 import { createLineageResolver } from './lineage.js'
-import { defaultSocketPath } from '../lease-broker/server.js'
-import { PROTOCOL } from '../lease-broker/protocol.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
+import { getSharedLeaseClient } from './singleton.js'
 
 /** Plugin name (composition identity only; this row publishes no service). */
 const PLUGIN_NAME = 'weir-file-lease'
 
 /** Producer tag every injected message carries (AGENTS §3.4). */
 const SOURCE_KIND = 'weir-file-lease'
-
-/**
- * One lease client per socket path for the whole process (D8/D11).
- *
- * Deliberately a plain map that is never emptied: the client's lifetime is the
- * process's, not a mount's. `close()` is never called from here.
- * @type {Map<string, any>}
- */
-const processClients = new Map()
-
-/**
- * @param {string} socketPath
- * @returns {any} the process-wide client for that endpoint
- */
-function processClient(socketPath) {
-  const existing = processClients.get(socketPath)
-  if (existing !== undefined) return existing
-  const created = createLeaseClient({ socketPath })
-  processClients.set(socketPath, created)
-  return created
-}
-
-/** The endpoint this bundle's protocol major arbitrates on. @returns {string} */
-function defaultEndpoint() {
-  return defaultSocketPath({ protocol: PROTOCOL })
-}
 
 /**
  * Request ids this process has already handed to a holder agent.
@@ -261,7 +233,9 @@ export function createFileLeasePlugin(options = {}) {
       }
     }
 
-    const client = injectedClient ?? processClient(defaultEndpoint())
+    // The process-wide client (D11): shared with every other mount of this row
+    // and never closed by an unmount. An injected client wins and creates nothing.
+    const client = injectedClient ?? getSharedLeaseClient()
     const ownerOf = injectedOwnerOf ?? createOwnerResolver(agents)
     const deliver = injectedDeliver ?? defaultDeliver
 

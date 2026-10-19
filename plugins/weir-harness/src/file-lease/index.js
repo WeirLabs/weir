@@ -1,11 +1,11 @@
 // Public surface of the file-lease client subtree (edit-lock-rebuild 3.1–3.5).
 //
 // Barrel only: importing this module must have no side effects — no socket, no
-// spawn, no audit — because the adapters that will import it (`hashline-edit`,
-// `lsp`, the tool surface) are loaded for every session, including the ones that
-// never touch a managed write. `plugin.js` exports a row (`name`/`inject`/
-// `apply`) and a factory; neither connects anything until `apply` runs, and the
-// process-wide client it resolves is created lazily on first use (D11).
+// spawn, no audit — because the adapters that use it (`hashline-edit`, `lsp`,
+// the tool surface) are loaded for every session, including the ones that never
+// touch a managed write. `plugin.js` exports a row (`name`/`inject`/`apply`) and
+// a factory; neither connects anything until `apply` runs, and the process-wide
+// client that `singleton.js` owns is created lazily on first use (D11).
 
 export {
   createLeaseClient,
@@ -22,3 +22,6 @@ export {
   DEFAULT_HOLD_MINUTES,
 } from './tools.js'
 export { createFileLeasePlugin, name, inject, apply } from './plugin.js'
+// D11 wiring: the process-wide client and the owner/scope rule the managed
+// editors share.
+export { getSharedLeaseClient, createEditorLease, defaultLeaseEndpoint } from './singleton.js'

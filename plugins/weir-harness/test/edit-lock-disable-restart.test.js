@@ -88,7 +88,11 @@ function mount(f, saved, evidence = createEditLockEvidence()) {
     : join(f.root, 'publisher.sock')
   const apply = createEditLockPlugin({ resolveRoot: () => f.root, endpoint: () => endpoint, exclude() {} })
   const dispose = apply(ctx, { root: f.root, authorityDirectory: f.directory })
-  applyHashEdit(ctx, {})
+  // hash_edit's commit is the file lease now (design D11), not this service: the
+  // subject of this composition test is the Edit Lock guard, so the lease is a
+  // pass-through stub — the broker has no part in these assertions and a real
+  // client would open a socket from a unit test.
+  applyHashEdit(ctx, { leaseClient: { withLeases: async (_owner, _paths, _scope, fn) => await fn() } })
   f.cleanup.push(async () => { await dispose?.() })
   async function agent(id) {
     const visible = new Map(tools)
@@ -177,7 +181,11 @@ test('saved-off intent keeps the enabled generation and both managed editors gua
   assert.ok(on.tools.has('edit_lock_acquire'))
   assert.notEqual(other.visible.get('write'), on.stockWrite)
   await assert.rejects(on.call(other, 'write', { file_path: f.file, content: 'bypass' }), /owned/)
-  await assert.rejects(on.call(other, 'hash_edit', { file_path: f.file, edits: [{ op: 'replace', pos: anchorFor(1, 'original'), text: 'bypass' }] }), /owned/)
+  // hash_edit left the Edit Lock surface in step 3C.1: it commits through the
+  // file lease and claims nothing here, so the pre-execute guard refuses it as
+  // unmanaged. Still zero bytes written — only the reason changed (task 3.8
+  // deletes that guard together with the service).
+  await assert.rejects(on.call(other, 'hash_edit', { file_path: f.file, edits: [{ op: 'replace', pos: anchorFor(1, 'original'), text: 'bypass' }] }), /not routed through Edit Lock/)
   assert.equal(await readFile(f.file, 'utf8'), 'original')
 })
 
@@ -223,7 +231,10 @@ for (const unknown of [false, true]) {
     assert.ok(on.provided.get('weirEditLock'))
     const refusal = unknown ? /unresolved publication fence/ : /owned/
     await assert.rejects(on.call(newcomer, 'write', { file_path: f.file, content: 'must refuse' }), refusal)
-    await assert.rejects(on.call(newcomer, 'hash_edit', { file_path: f.file, edits: [{ op: 'replace', pos: anchorFor(1, 'off hash edit'), text: 'must refuse' }] }), refusal)
+    // `write` is still routed through the service in this generation; `hash_edit`
+    // left it in step 3C.1 (file lease) and is refused as unmanaged until task
+    // 3.8 deletes the guard. Both refuse with zero bytes written.
+    await assert.rejects(on.call(newcomer, 'hash_edit', { file_path: f.file, edits: [{ op: 'replace', pos: anchorFor(1, 'off hash edit'), text: 'must refuse' }] }), /not routed through Edit Lock/)
     const returning = await on.agent('old-owner')
     assert.equal((await on.provided.get('weirEditLock').describe(returning)).status.interrupted, true)
     await assert.rejects(on.call(returning, 'write', { file_path: f.file, content: 'implicit resume' }), /stopped|interrupted/)
