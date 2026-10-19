@@ -70,5 +70,8 @@
     "src/lease-broker/server.js",
     "src/lease-broker/entry.js",
     "src/lease-broker/node-contracts.d.ts",
+    // File-lease client: the lineage rule that turns a session into the opaque
+    // owner id the lease broker inherits along a delegation chain.
+    "src/file-lease/lineage.js",
   ]
 }
