@@ -555,34 +555,57 @@ QA 失败路径的第一轮安全修复 `a097c1a` 合入后，代码 SHA `39fb0f
 - **已安装 Desktop-host 锁开启 smoke（4.2 子闸门 PASS）**：用户在原本就开启编辑锁的正式 Electron Desktop 0.2.0-rc.2（macOS 15.8 arm64、PID 30453、单实例端口 19387）中，以外部工作区 `/Users/young/WeirDesktopSmoke-IMViJUJU` 的两个会话完成 A gen1 `hash_edit` → B 的 `edit_lock_acquire`／受管 `write` 因活 owner 双拒且字节不变 → A 正常 release → B gen2 受管 `write` 成功 → B release，最终 `ws/probe.txt` 为 `desktop=3`。经用户授权仅只读核对两份原生 Session 日志与父目录真实权威：revision 21、两条 confirmed updated、锁 0、unresolved 0、无管理员恢复；详见 `.weir/stable-gate/desktop-smoke-20261012.md`。用户选择保持原本开启的设置；存活预约不可手动删除。Desktop 证据与三平台 Web 各自独立，并已纳入 4.2 整体 APPROVE。标签代码变更不会自动重启或重配现有正式 Desktop profile；旧窗口若未重新载入可能仍显示旧文案，不据此推断锁未执行。
 - **稳定标签的隔离 GUI 核验（4.1）**：合入标签代码后的 HEAD `96c6ffb` 在已安装 DSH 0.2.0-rc.2 上用两独立 macOS Web 进程复验 `--opt-out`，报告 **22 PASS/0 FAIL/1 SKIP**；深／浅主题各两张设置页图可见「编辑锁」而非「编辑锁（实验）」、重启提示及关闭期间覆盖风险（`.weir/stable-gate/stable-label-gui-safe-96c6ffb/`）。这不是新的 Linux/Win32 或正式 Electron Desktop UI 截图；正式 profile 未重新应用或重启。
 
-## 回归基线（edit-lock-rebuild 阶段 0）
+## 回归基线（edit-lock-rebuild）
 
-### A 层——重写后必须逐字不变
+> 本节记录**切换后仍然成立**的验收基线。阶段 0 的 5 个场景基线已随 3.8 的原子切换重写：断言里凡属已删除机制的，一律删除；保留的只有编辑行为本身与仍然存在的租约语义。切换后主分支不再挂载旧 `edit-lock` 行，`tools/pre-execute` 守卫随之消失，受管 `write`／`hash_edit`／`lsp_rename` 不再被拒。
 
-重写必须让下列安装版场景原样通过：场景文件、prompt、env 与断言都不动。
+### 保留的 4 个场景（改造后）
 
-| 场景 | 锁定的行为（重写后必须逐字不变） |
+| 场景 | 断言面（切换后） |
 |---|---|
-| `editlock-hashline-negatives` | 锚点命中（受管 `write` 建立目标、`hash_edit` 经锁发布）与锚点未命中（整次调用 `>>> mismatch` 拒绝、目标字节不变）；版本 CAS 在派发后被拒（`file changed since it was read`），已发布字节恰为 `hash_edit` 所写；`hash_edit applied …` 报告的 diff 输出；域内但会话沙箱外的写入到达后端拒绝 `[sandbox: file access denied under workspace-write mode]`，且目标字节前后一致 |
-| `editlock-lsp-rename` | 整批预检先于任何派发；任一冲突即零写入（`resource owned`、`missing`／`mixed` 的缺失目标、`duplicate` 的别名入口）；失败报告如实列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 三清单并声明 `ownership retained (no rollback)`，含 `midbatch` 与 `duplicate` 两组；无跨文件回滚 |
-| `editlock-delegate-resume`、`editlock-delegate-settle` | 子代理编辑行为：受监督 resume 后同一 Session ID 在旧 Agent 处置后冷替换、旧锁转待确认、新 epoch 建新文件；一次性子代理在终态仍持 active 锁时，父会话早于保留到期即拿到 generation+1，全程无人工解锁、无子会话自助释放 |
-| `editlock-preset-switch` | 预设切换后继续编辑：空窗口 A→B→A 互切后三次受管写仍全部准入、epoch 恒 1、锁保留、零启动失败 |
+| `editlock` | 工具面（stock `edit`／`write` 隐藏、受管 `write` 与 `hash_edit` 存在、五个所有权工具、无待答请求时 `edit_lock_reply` 不出现）；受管 `write` 建立目标后 `hash_edit` 发布；`edit_lock_status` 报告本会话持有；`edit_lock_hold` 把持有延到回合之后；`edit_lock_release` 归还；干净退出 |
+| `editlock-hashline-negatives` | 锚点命中（受管 `write` + `hash_edit`）与未命中（整次调用 `>>> mismatch`、目标字节不变）；非普通文件（目录）在 stat 即拒绝；会话沙箱外的真实目标到达后端拒绝 `[sandbox: file access denied under workspace-write mode]` 且字节前后一致；版本 CAS 在派发后被拒（`file changed since it was read`），已发布字节恰为 `hash_edit` 所写 |
+| `editlock-lsp-rename` | 整批预检先于任何派发（`missing`／`mixed` 的缺失目标零写入）；**跨进程**外来租约使整批在写前被拒（零字节、零声明）；失败报告如实列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 并声明 `no rollback`，含 `midbatch`（写边界中断）一组；无跨文件回滚 |
+| `editlock-lsp-uncertain` | 第二批发布丢失 ack 时中途失败，仍如实列出三清单、声明 `ownership retained (no rollback)`，已落盘的第一份文件保留 |
 
-**车道内会话编辑当前没有既有资产**：`worktree`、`lane-resumable`、`zombie-lane` 均不驱动受管编辑，因此没有可逐字不变的断言面。它将作为阶段 3 新增的基线断言，不属于本阶段成果。
+从保留场景中**删除**的断言（对应机制已不存在，而不是不可达）：`.weir/.edit-lock.publisher-reservation` 与 authority 文件拒写、`edit_lock_pause`；authority 快照的 created/updated/unknown 操作数、resource fence、保留锁；snapshot 的 locks/operations/generation；「域外编辑被拒」；回合末收尾通知；`duplicate canonical rename target`（该写前去重属于旧机制，新实现未保留）。
 
-本次实测（2026-10-20，`WEIR_IT_DSH_EXEC` 指向安装版 CLI，断言未改动）：第一组 `editlock-hashline-negatives` + `editlock-lsp-rename` **67/67**；第二组 `editlock-delegate-resume` + `editlock-delegate-settle` + `editlock-preset-switch` **34/34**。
+### 场景处置：19 删 / 4 改造
+
+- **改造保留（4 个）**：上表 4 个。
+- **改为「新验收」（3 个）**：`editlock-delegate-resume`、`editlock-delegate-settle`、`editlock-preset-switch` 的探针编码的是已删除机制（子代理终态处置与受信继续、跨进程绑定转让、共享域与预设切换重绑定），因此阶段 5 将以新场景重建并作为**新验收**登记，不冒充回归。
+- **随语义删除（16 个）**：`editlock-auto-resume`、`editlock-auto-resume-off`、`editlock-binding-auto-retry`、`editlock-binding-reclaim`、`editlock-binding-transfer`、`editlock-cold-view`、`editlock-crash-recovery`、`editlock-negotiation`、`editlock-recovery-ux`、`editlock-revoked-repair`、`editlock-stale-sweep`、`editlock-stale-sweep-off`、`editlock-stop-predispatch`、`editlock-stop-publication`、`editlock-stop-staged`、`editlock-stop-update`。
+
+改造后的实测（`WEIR_IT_DSH_EXEC` 指向安装版 CLI）：见本节末尾「切换后实测」。
 
 ### B 层——新验收，不得称为回归
 
-这些语义**今天不存在或不同**，重写后是**新行为**：验收时按新项立项，不得拿「与今天的实现一致」当作回归通过的证据。
+这些语义在旧实现里**不存在或不同**：验收时按新项立项，不得拿「与旧实现一致」当作回归通过的证据。
 
-- **回合结束释放**：回合结束即释放本回合占用的文件，不依赖今天的回合末续推、提醒次数与兜底处置链路。
-- **模型间协商（`try_steal` / `reply`）**：占用请求与答复改写为模型之间的协商语义，与今天由持有者在回合内答复、超时即过期的形状不同。
-- **`hold` 跨回合保留**：保留跨回合有效；今天「一开始新回合，全部保留立刻解除」的语义不再成立。
-- **仲裁器不可用时降级放行**：publisher 或管理域不可用时按降级语义继续写入；今天在这些条件下 fail-closed 拒绝，两者不同。
+- **回合结束释放**：回合结束即释放本回合占用的文件，不依赖旧的回合末续推、提醒次数与兜底处置链路。
+- **模型间协商（`try_steal` / `reply`）**：占用请求与答复是模型之间的协商，与旧的「持有者在回合内答复、超时即过期、绑定 generation」形状不同。
+- **`hold` 跨回合保留**：保留跨回合有效；旧实现「一开始新回合，全部保留立刻解除」不再成立。
+- **仲裁器不可用时降级放行**：`weir-editlockd` 不可达时按降级语义继续写入并记一条审计；旧实现在这些条件下 fail-closed 拒绝。
 
 ### 主动放弃的能力
 
-`editlock-lsp-uncertain` 中被**刻意放弃**的断言有两条：`unknown` 发布的 resource fence，以及「失败批次保留双锁」（失败批次的临时锁以 `user-interrupted` 保留、中断执行态留存）。重写后不再要求这两者成立——这是**能力放弃**，不是回归失败；本节不得从文档中消失，删掉它等于把这次放弃伪装成从未发生。
+`editlock-lsp-uncertain` 中被**刻意放弃**的断言有两条：`unknown` 发布的 resource fence，以及「失败批次保留双锁」（失败批次的临时锁以 `user-interrupted` 保留、中断执行态留存）。重写后不再要求这两者成立——这是**能力放弃**，不是回归失败；本节不得从文档中消失，删掉它等于把这次放弃伪装成从未发生。已知限制同时写入 [edit-lock.md 的「边界与失败语义」] 与规格 D12。
 
 保留的是同一场景里更根本的诚实性断言：`lsp_rename` 在第二批发布丢失 ack 时中途失败，仍如实列出 `filesAlreadyWritten`／`filesNotWritten`／`filesUncertain` 三清单、声明 `ownership retained (no rollback)`，已落盘的第一份文件不回滚。
+
+### 切换后实测
+
+首次切换后实测（2026-10-20，`WEIR_IT_DSH_EXEC` 指向安装版 CLI，运行根为 lane 内 `.weir/it-root`，租约 socket 为运行私有地址，未触碰机器级仲裁器）：
+
+| 保留场景 | 检查数 |
+|---|---|
+| `editlock` | 9/9 |
+| `editlock-hashline-negatives` | 14/14 |
+| `editlock-lsp-rename` | 19/19 |
+| `editlock-lsp-uncertain` | 6/6 |
+
+四个保留场景合计 **48/48**。同一次 `node run.mjs` 全量运行（52 个场景）**592/592 全绿，0 FAIL、0 SKIP，exit 0**（日志 `integration-full`，运行根 lane 内 `.weir/it-root`）。
+
+同一批次的产品/装置门禁：`pnpm --filter weir-harness run check` 0 错误；产品单测 3156 项（3149 通过 / 7 跳过 / 0 失败）；装置单测 428/428。
+
+**切换解除的过渡破态**：旧预设挂 `edit-lock` 时，`src/edit-lock/index.js` 注册的 `tools/pre-execute` 守卫会拦截 `write`／`edit`／`hash_edit`／`lsp_rename`／`str_replace_editor`，而重写后的编辑器已不再向该服务 `claim`，因此受管编辑一律被拒。两个预设改挂 `file-lease` 后该行不再存在，守卫无从注册（全树只有该模块注册 `tools/pre-execute`；`src/capabilities/mcp-admission.js` 只在注释里提到它），三个受管编辑工具在真实预设下不再被拒。运行证据来自同一组合面的镜像：`editlock` 场景的受管 `write`／`hash_edit` 与 `editlock-lsp-*` 的 `lsp_rename` 全绿（装置 patch 与生产预设行结构一致，均不再有 `edit-lock` 行）。
