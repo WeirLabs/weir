@@ -68,9 +68,6 @@ function apply(ctx, config = {}) {
     }
   }
 
-  // Edit Lock (when enabled) owns session interruption: only its trusted
-  // resume re-arms editing work, never an ordinary user message or retry.
-  const editLockBlocks = (agent) => ctx.get?.('weirEditLock')?.blocksContinuation?.(agent) === true
   const compactionBlocks = (agent) => agent && ctx.get?.('weirCompactionCoordinator')?.blocksContinuation(agent) === true
   /** Delayed followup continuation for the provider-error path. */
   function scheduleRetry(session, delayMs) {
@@ -82,7 +79,6 @@ function apply(ctx, config = {}) {
       if (remaining.length === 0) return
       if (!stateOf(session.id).armed) return
       if (jobsRunningOf(agent.session)) return
-      if (editLockBlocks(agent)) return
       if (compactionBlocks(agent)) return
       injectOrWarn(ctx, `todo-driver: could not queue continuation for "${session.id}"`, () => {
         agent.followup(userTextMessage(renderContinuation(remaining), 'weir-todo-driver'))
@@ -95,7 +91,7 @@ function apply(ctx, config = {}) {
 
   // The sanctioned continuation boundary: steer and the turn runs on.
   function continueAtBoundary({ agent, signal }) {
-    if (compactionBlocks(agent) || editLockBlocks(agent)) return
+    if (compactionBlocks(agent)) return
     if (!opts.enabled) return
     const state = stateOf(agent.id)
     const remaining = remainingTodos(agent.session)
@@ -106,7 +102,6 @@ function apply(ctx, config = {}) {
       error: providerErrorPending.get(agent.id),
     })
     if (decision.kind !== 'continue') return
-    if (editLockBlocks(agent)) return
     injectOrWarn(ctx, `todo-driver: could not steer continuation for "${agent.id}"`, () => {
       agent.steer(userTextMessage(renderContinuation(remaining), 'weir-todo-driver'))
     })

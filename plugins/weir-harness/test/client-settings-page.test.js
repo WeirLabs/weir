@@ -153,19 +153,24 @@ describe('client.settings-page chunk', () => {
     return dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','editLockEnabled','editLockAutoResume','editLockStaleSweep','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
   const MAIN_GROUPS = ['intent', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify']
   const ROUTING_GROUPS = ['routingCategories', 'routingAgents', 'routingSupervision']
   const ROUTING_FIELD_NAMES = ['delegateCategoryChains', 'delegateDisabledCategories', 'delegateAgentChains', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs']
 
-  // The six boolean product defaults shipped after BOOLEAN_DEFAULTS was first
-  // written. Their module/bundle defaults are all ON (cordis.patch.yml
-  // weir-settings row; src/notify/policy.js DEFAULTS.enabled/onComplete/
-  // onAttention/sound), and a profile-level row replaces the bundle row
-  // wholesale — so a key the profile never saved arrives unset and must still
-  // read ON for the Switch AND for the `when` conditions of its children.
-  const MIRRORED_ON_BOOLEANS = ['editLockAutoResume', 'editLockStaleSweep', 'notifyEnabled', 'notifyOnComplete', 'notifyOnAttention', 'notifySound']
+  // The boolean product defaults that are ON in the bundle yet have no saved
+  // value in a profile that never touched them (src/notify/policy.js DEFAULTS).
+  // A profile-level row replaces the bundle row wholesale, so an unset key must
+  // still read ON for the Switch AND for the `when` conditions of its children.
+  // The Edit Lock switches left this list with their settings keys
+  // (edit-lock-rebuild task 4.4).
+  const MIRRORED_ON_BOOLEANS = ['notifyEnabled', 'notifyOnComplete', 'notifyOnAttention', 'notifySound']
+
+  // Retired with the Edit Lock mechanism (edit-lock-rebuild task 4.4): the three
+  // rows the eight editLock* settings keys rode, and the copy only they used.
+  const RETIRED_EDIT_LOCK_FIELDS = ['editLockEnabled', 'editLockAutoResume', 'editLockStaleSweep']
+  const RETIRED_EDIT_LOCK_COPY = ['editLockEnabled', 'editLockEnabledHint', 'editLockOptOutWarning', 'editLockAutoResume', 'editLockAutoResumeHint', 'editLockStaleSweep', 'editLockStaleSweepHint']
 
   /** The picker chunk's exports, as the composition root hands them down. */
   const PICKER_STUB = {
@@ -259,7 +264,7 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(cards, 'intent')).toEqual(['intentGateClassifier'])
     expect(rowKeys(cards, 'todo')).toEqual(['todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax'])
     expect(rowKeys(cards, 'guard')).toEqual(['guardEnabled', 'guardSoftThreshold', 'guardHardThreshold'])
-    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockEnabled', 'editLockAutoResume', 'editLockStaleSweep', 'editLockMaintenance'])
+    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockMaintenance'])
     expect(rowKeys(cards, 'worktree')).toEqual(['worktreeEnabled', 'worktreeAutoSetup', 'worktreeMaxActive', 'worktreeRoot', 'worktreeWatchTimeoutMinutes', 'worktreeAutoApprove'])
     expect(rowKeys(cards, 'robash')).toEqual(['robashEnabled', 'robashAllow', 'robashGitAllow', 'robashDeny'])
     expect(rowKeys(cards, 'lsp')).toEqual(['lspEnabled'])
@@ -289,37 +294,21 @@ describe('client.settings-page chunk', () => {
     }
   })
 
-  it('keeps opt-out risk at the switch and diagnostics reachable in off, saved-off, and on states in both locales', async () => {
+  it('keeps the Edit Lock diagnostics seat and renders no retired editLock* row, in both locales', async () => {
     const { exports, editors } = await loadPage()
     const dicts = await loadDictionaries()
     for (const locale of ['en', 'zh']) {
-      const t = (key) => dicts[locale][key] ?? key
-      for (const [name, patch, warning] of [
-        ['default-on', {}, false],
-        ['saved-off', { text: 'false', saved: false, overridden: true }, true],
-        ['disable-requested', { text: 'false', saved: true }, true],
-        ['on', { text: 'true', saved: true }, false],
-      ]) {
-        const tree = renderCard(exports, editors, { fields: makeFields({ editLockEnabled: patch }), env: { status: 'ready', facts: {} } })
-        const rows = rowKeys(cardsOf(tree), 'editing')
-        expect(rows, name).toContain('editLockMaintenance')
-        const maintenance = findAll(tree.children, (node) => node.__type === editors.EditLockMaintenanceField)
-        expect(maintenance, name).toHaveLength(1)
-        const choice = findAll(tree.children, (node) => node.descriptor?.field === 'editLockEnabled')[0]
-        const rendered = choice.__type({ ...choice, t })
-        const text = JSON.stringify(rendered)
-        expect(text.includes(t('editLockOptOutWarning')), `${locale}/${name} warning`).toBe(warning)
-        const alerts = findAll(rendered, (node) => node.role === 'alert')
-        expect(alerts, `${locale}/${name} alert count`).toHaveLength(warning ? 1 : 0)
-        if (warning) {
-          expect(alerts[0].style.color).toBe('var(--dsw-alias-state-warn-primary)')
-          expect(alerts[0].style.borderLeft).toBe('2px solid var(--dsw-alias-state-warn-primary)')
-          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'UNPROTECTED' : '不受保护')
-          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'overwrite' : '覆盖')
-          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 'restart' : '重启')
-          expect(t('editLockOptOutWarning')).toContain(locale === 'en' ? 're-enable' : '重新启用')
-        }
-      }
+      const tree = renderCard(exports, editors, { fields: makeFields(), env: { status: 'ready', facts: {} } })
+      const rows = rowKeys(cardsOf(tree), 'editing')
+      // The anchor-editing switch and the (unbound) diagnostics seat stay; none
+      // of the retired rows survives in either locale.
+      expect(rows, locale).toEqual(['hashlineHideStockEdit', 'editLockMaintenance'])
+      for (const field of RETIRED_EDIT_LOCK_FIELDS) expect(rows, `${locale} renders retired ${field}`).not.toContain(field)
+      const maintenance = findAll(tree.children, (node) => node.__type === editors.EditLockMaintenanceField)
+      expect(maintenance, locale).toHaveLength(1)
+      // The retired keys carry no dictionary entry either: t() falls back to the
+      // key itself, so a resurrected copy key would return a translated run.
+      for (const key of RETIRED_EDIT_LOCK_COPY) expect(dicts[locale][key], `${locale}.${key} must be retired copy`).toBe(undefined)
     }
   })
 
@@ -629,7 +618,6 @@ describe('client.settings-page chunk', () => {
     expect(choiceTag('todoEnabled')).toHaveLength(1)
     expect(choiceTag('guardEnabled')).toHaveLength(0)
     expect(choiceTag('hashlineHideStockEdit')).toHaveLength(1)
-    expect(choiceTag('editLockEnabled')).toHaveLength(1)
     // non-restart choice rows carry no tag
     expect(choiceTag('notifyEnabled')).toHaveLength(0)
     expect(choiceTag('worktreeEnabled')).toHaveLength(0)
@@ -649,7 +637,7 @@ describe('client.settings-page chunk', () => {
     const rendered = renderCard(exports, editors, {
       fields: makeFields(),
       env: { status: 'ready', facts: { platform: 'darwin' } },
-      restartReminder: ['todoEnabled', 'editLockEnabled'],
+      restartReminder: ['todoEnabled', 'hashlineHideStockEdit'],
     }, { dismissRestartReminder: () => dismissals.push('dismiss') })
     // the modal trails the cards column
     expect(rendered.children).toHaveLength(2)
@@ -662,7 +650,7 @@ describe('client.settings-page chunk', () => {
     modal.onClose()
     expect(dismissals).toEqual(['dismiss'])
     const tags = modal.children.children
-    expect(tags.map((tag) => tag.children)).toEqual(['todoEnabled', 'editLockEnabled'])
+    expect(tags.map((tag) => tag.children)).toEqual(['todoEnabled', 'hashlineHideStockEdit'])
     expect(tags.every((tag) => tag.tone === 'accent')).toBe(true)
     expect(modal.footer.variant).toBe('primary')
     expect(modal.footer.children).toBe('restartReminderAcknowledge')
@@ -834,9 +822,8 @@ describe('client.settings-page chunk', () => {
     const renderChoice = (name) => choiceByName[name].__type(choiceByName[name])
     const switchOf = (name) => findAll(renderChoice(name), (node) => node.__type === primitivesStub.Switch)[0]
     // product defaults through the SAME helper the conditions use:
-    // todoEnabled and editLockEnabled on (unset texts)
+    // todoEnabled on (unset text)
     expect(switchOf('todoEnabled').checked).toBe(true)
-    expect(switchOf('editLockEnabled').checked).toBe(true)
     expect(switchOf('lspEnabled').checked).toBe(false)
     expect(switchOf('worktreeEnabled').checked).toBe(true)
     // a staged draft flips the display the same way it flips the conditions
@@ -884,7 +871,7 @@ describe('client.settings-page chunk', () => {
     expect(findAll(readOnlyRow.__type(readOnlyRow), (node) => node.__type === 'select')[0].disabled).toBe(true)
   })
 
-  it('mirrors the six late boolean product defaults in the map, the helper and the conditions', async () => {
+  it('mirrors the late boolean product defaults in the map, the helper and the conditions', async () => {
     const { exports } = await loadPage()
     const { BOOLEAN_DEFAULTS, FIELDS, resolveEffectiveValue, evaluateCondition } = exports
     const descriptorByName = Object.fromEntries(FIELDS.map((descriptor) => [descriptor.field, descriptor]))
@@ -915,14 +902,11 @@ describe('client.settings-page chunk', () => {
     expect(Object.keys(FIELD_DEFAULTS).sort()).toEqual(Object.keys(SERVER_FIELD_DEFAULTS).sort())
     expect(FIELD_DEFAULTS).toEqual(SERVER_FIELD_DEFAULTS)
     // BOOLEAN_DEFAULTS is the derived boolean subset — exactly the previous
-    // hand-maintained literal (14 entries), never a second literal
+    // hand-maintained literal (11 entries), never a second literal
     expect(BOOLEAN_DEFAULTS).toEqual({
       todoEnabled: true,
       guardEnabled: true,
       hashlineHideStockEdit: true,
-      editLockEnabled: true,
-      editLockAutoResume: true,
-      editLockStaleSweep: true,
       worktreeEnabled: true,
       worktreeAutoSetup: true,
       robashEnabled: true,
@@ -1049,8 +1033,7 @@ describe('client.settings-page chunk', () => {
     // the conditional-visibility engine agrees: the children are on screen
     const cards = cardsOf(rendered)
     expect(rowKeys(cards, 'notify')).toEqual(['notifyEnabled', 'notifyOnComplete', 'notifyMinTurnSeconds', 'notifyOnAttention', 'notifySound', 'notifyForeground', 'notifyPermissions'])
-    expect(rowKeys(cards, 'editing')).toContain('editLockAutoResume')
-    expect(rowKeys(cards, 'editing')).toContain('editLockStaleSweep')
+    expect(rowKeys(cards, 'editing')).toEqual(['hashlineHideStockEdit', 'editLockMaintenance'])
   })
 
   it('renders the section as the nested item slot', async () => {
@@ -1111,7 +1094,7 @@ describe('client.settings-page chunk', () => {
     const { exports } = await loadPage()
     const { resolveEffectiveValue } = exports
     const boolean = { field: 'todoEnabled', kind: 'boolean' }
-    const lockBoolean = { field: 'editLockEnabled', kind: 'boolean' }
+    const robashBoolean = { field: 'robashEnabled', kind: 'boolean' }
     const number = { field: 'todoMaxConsecutive', kind: 'number' }
     const text = { field: 'worktreeRoot', kind: 'text' }
     const enumField = { field: 'intentGateClassifier', kind: 'enum', values: ['regex', 'llm', 'jev'] }
@@ -1122,7 +1105,7 @@ describe('client.settings-page chunk', () => {
     expect(resolveEffectiveValue(text, { text: 'custom/dir' }, 'old')).toBe('custom/dir')
     // empty draft is the clear gesture → product default
     expect(resolveEffectiveValue(boolean, { text: '' }, false)).toBe(true)
-    expect(resolveEffectiveValue(lockBoolean, { text: '' }, false)).toBe(true)
+    expect(resolveEffectiveValue(robashBoolean, { text: '' }, false)).toBe(true)
     expect(resolveEffectiveValue(number, { text: '' }, 4)).toBe(8)
     expect(resolveEffectiveValue(enumField, { text: '' }, 'llm')).toBe('regex')
     // unparseable draft falls back to the saved value (no visibility flicker)
@@ -1136,7 +1119,7 @@ describe('client.settings-page chunk', () => {
     // never set: every kind takes its concrete product default (booleans
     // via the derived BOOLEAN_DEFAULTS subset)
     expect(resolveEffectiveValue(boolean, { text: '' }, undefined)).toBe(true)
-    expect(resolveEffectiveValue(lockBoolean, { text: '' }, undefined)).toBe(true)
+    expect(resolveEffectiveValue(robashBoolean, { text: '' }, undefined)).toBe(true)
     expect(resolveEffectiveValue(number, { text: '' }, undefined)).toBe(8)
     expect(resolveEffectiveValue(enumField, { text: '' }, undefined)).toBe('regex')
     expect(resolveEffectiveValue(text, { text: '' }, undefined)).toBe('.weir/worktrees')
@@ -1390,16 +1373,16 @@ describe('client.settings-page chunk', () => {
   it('save flow: a landed save touching restart-required keys raises the reminder in registry order', async () => {
     const { controller, notifications, face } = await makeController()
     controller.form.planItems = [
-      { field: 'editLockEnabled', op: { op: 'set', path: ['editLockEnabled'], value: true } },
+      { field: 'hashlineHideStockEdit', op: { op: 'set', path: ['hashlineHideStockEdit'], value: false } },
       { field: 'todoEnabled', op: { op: 'set', path: ['todoEnabled'], value: false } },
       { field: 'supervisionMaxRetries', op: { op: 'set', path: ['supervisionMaxRetries'], value: 7 } },
       { field: 'guardHardThreshold', op: { op: 'set', path: ['guardHardThreshold'], value: 0.9 } },
     ]
     await face.save()
     expect(notifications).toEqual(['bump'])
-    // registry order (todoEnabled precedes editLockEnabled), not plan order
-    expect(controller.restartReminder).toEqual(['todoEnabled', 'editLockEnabled'])
-    expect(controller.projection().restartReminder).toEqual(['todoEnabled', 'editLockEnabled'])
+    // registry order (todoEnabled precedes hashlineHideStockEdit), not plan order
+    expect(controller.restartReminder).toEqual(['todoEnabled', 'hashlineHideStockEdit'])
+    expect(controller.projection().restartReminder).toEqual(['todoEnabled', 'hashlineHideStockEdit'])
     expect(controller.form.publishCount).toBe(1)
   })
 

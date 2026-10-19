@@ -332,8 +332,10 @@ describe('weir settings client half', () => {
       expect(typeof localeRegistrations[0].dicts.en[key], `en.${key} stays in NS`).toBe('string')
       expect(typeof localeRegistrations[0].dicts.zh[key], `zh.${key} stays in NS`).toBe('string')
     }
-    // Migrated (not deleted): the settings switch label and the Edit Lock
-    // panel keys now live in the chunk data faces and register on arrival.
+    // Migrated (not deleted): the settings switch labels now live in the chunk
+    // data faces and register on arrival. The eight editLock* settings keys —
+    // and the copy only their three rows used — left with the Edit Lock
+    // mechanism (edit-lock-rebuild task 4.4).
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }
       if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ __type: type, ...(props ?? {}) }), jsxs: (type, props) => ({ __type: type, ...(props ?? {}) }) }
@@ -341,8 +343,12 @@ describe('weir settings client half', () => {
       throw new Error(`unexpected require ${name}`)
     }
     const { exports: realSettingsPage } = await loadClientChunk('lib/client.settings-page.js', chunkRequire)
-    expect(realSettingsPage.dictionaries.en.editLockEnabled).toBe('Edit Lock')
-    expect(realSettingsPage.dictionaries.zh.editLockEnabled).toBe('编辑锁')
+    expect(realSettingsPage.dictionaries.en.worktreeEnabled).toBe('Worktree lanes')
+    expect(realSettingsPage.dictionaries.zh.worktreeEnabled).toBe('Worktree 车道')
+    for (const key of ['editLockEnabled', 'editLockEnabledHint', 'editLockOptOutWarning', 'editLockAutoResume', 'editLockAutoResumeHint', 'editLockStaleSweep', 'editLockStaleSweepHint']) {
+      expect(realSettingsPage.dictionaries.en[key], `en.${key} must be retired copy`).toBe(undefined)
+      expect(realSettingsPage.dictionaries.zh[key], `zh.${key} must be retired copy`).toBe(undefined)
+    }
     // The file-lease badge carries the whole ownership surface's strings, and
     // the entry renders none of them before the chunk arrives: every key it
     // reads is a data-face key, in both locales.
@@ -1255,7 +1261,7 @@ describe('weir settings client half', () => {
   })
 
   it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
-    // The frozen key set (746 keys): any key dropped in a future edit
+    // The frozen key set (739 keys): any key dropped in a future edit
     // of the data faces or the entry dictionary reddens here (the design's
     // 键集并集 pin), and any cross-slice duplicate inside the page merge would
     // silently shadow — pinned too.
@@ -1553,13 +1559,6 @@ describe('weir settings client half', () => {
     'disabledCategoriesInvalid',
     'disabledCategoriesPanelHint',
     'discardChanges',
-    'editLockAutoResume',
-    'editLockAutoResumeHint',
-    'editLockEnabled',
-    'editLockEnabledHint',
-    'editLockOptOutWarning',
-    'editLockStaleSweep',
-    'editLockStaleSweepHint',
     'effortProviderDefault',
     'fileLeaseArbiter_degraded',
     'fileLeaseArbiter_ok',

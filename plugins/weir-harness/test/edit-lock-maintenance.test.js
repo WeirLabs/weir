@@ -438,34 +438,38 @@ function settingsHarness(config, { agents } = {}) {
 }
 
 describe('settings row maintenance wiring', () => {
-  it('records enable/disable intent through shared audit on committed transitions only', () => {
+  it('retires the profile enable/disable intent with the eight editLock* keys', () => {
     const config = { editLockEnabled: false }
-    const { handlers, emitted } = settingsHarness(config)
-    // mounting emits nothing: the initial value is not an intent
+    const { handlers, emitted, service } = settingsHarness(config)
+    // Mounting emits nothing: the initial value is not an intent.
     assert.equal(emitted.length, 0)
+    // The retired keys are inert data now: a "committed transition" of the old
+    // switch records no enable/disable intent at all (edit-lock-rebuild 4.4).
     config.editLockEnabled = true
     handlers.get('loader/volatile-update')()
     config.editLockEnabled = false
     handlers.get('loader/volatile-update')()
-    // a repeated commit of the SAME value is not a new intent
     handlers.get('loader/volatile-update')()
-    const records = emitted.filter(([type]) => type === 'weir/edit-lock-maintenance').map(([, record]) => record)
-    assert.deepEqual(records.map(record => record.data.kind), ['enable-requested', 'disable-requested'])
-    assert.equal(records[0].data.scope, 'profile')
-    assert.equal(records[0].data.appliesAfterRestart, true)
-    assert.equal(records[0].session, null) // profile-level intent, no session log (S13)
+    const records = emitted.filter(([type]) => type === 'weir/edit-lock-maintenance')
+    assert.deepEqual(records, [])
+    // The section the intent used to read is gone too.
+    assert.equal(service.get('editLock'), undefined)
   })
 
-  it('an audit-channel failure cannot make a committed setting look failed', () => {
-    const config = { editLockEnabled: false }
+  it('a volatile commit never fails on a retired key and the committed value sticks', () => {
+    const config = { todoEnabled: false }
     const { handlers, service } = settingsHarness(config)
-    // break the audit channel after mount: audit() never throws by contract,
-    // and the observer runs after the commit — the saved value must stick.
-    service.get('editLock') // service healthy before
+    // The observer runs after the commit: nothing it does may make a committed
+    // setting look failed.
+    service.get('todoDriver') // service healthy before
     handlers.get('loader/volatile-update')() // baseline: no throw
-    config.editLockEnabled = true
+    config.todoEnabled = true
     handlers.get('loader/volatile-update')()
-    assert.equal(service.get('editLock').enabled, true)
+    assert.equal(service.get('todoDriver').enabled, true)
+    // The retired editLock keys stay inert: no throw, no section.
+    config.editLockEnabled = false
+    handlers.get('loader/volatile-update')()
+    assert.equal(service.get('editLock'), undefined)
   })
 
   it('reads retained unknown history across saved-off and effective-off without settling it', async (t) => {
@@ -482,6 +486,8 @@ describe('settings row maintenance wiring', () => {
       config.editLockEnabled = false
       harness.handlers.get('loader/volatile-update')()
       const requested = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
+      // The saved switch is retired: only the mount evidence can ask for a
+      // change, and it still cannot settle the retained history.
       assert.equal(requested.saved, false)
       assert.equal(requested.state, 'disable-requested')
       assert.equal(requested.restartRequired, true)
@@ -506,37 +512,41 @@ describe('settings row maintenance wiring', () => {
         const stillOld = (await call('/api/weir-edit-lock/maintenance/inspect', { root })).payload.value
         assert.deepEqual(stillOld.snapshot, old.snapshot)
         assert.deepEqual(await readFile(join(directory, 'snapshot.json')), before)
+        // A retired settings key cannot request enabling either: the status
+        // stays mount-evidence driven and no service appears.
         config.editLockEnabled = true
         harness.handlers.get('loader/volatile-update')()
         const requestedOn = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
-        assert.equal(requestedOn.state, 'enable-requested')
-        assert.equal(requestedOn.restartRequired, true)
+        assert.equal(requestedOn.state, 'disabled')
+        assert.equal(requestedOn.restartRequired, false)
         assert.equal(provided.has('weirEditLock'), false)
       } finally { disposeOff() }
     } finally { enabled.dispose(); harness.dispose() }
     assert.equal(routes.size, 0)
     assert.deepEqual(await readFile(join(directory, 'snapshot.json')), before)
   })
-  it('serves status reflecting saved value and row-reported mount evidence; disposes cleanly', async () => {
+  it('serves status driven by row-reported mount evidence; disposes cleanly', async () => {
     const config = { editLockEnabled: true }
     const { connection, call, routes } = fakeConnection()
     const harness = settingsHarness(config)
     const injection = harness.injections.find(entry => entry.names.join(',') === 'connection')
     assert.ok(injection, 'maintenance wiring requested the connection service')
     injection.callback({ connection })
-    // unknown until the preset row reports — the saved value alone is not proof
+    // unknown until the preset row reports — and the retired saved switch is
+    // never proof of anything
     let status = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
     assert.equal(status.state, 'unknown')
-    assert.equal(status.saved, true)
+    assert.equal(status.saved, false)
     // the preset row reports through the host-plane service recorder
     const disabled = harness.service.editLockEvidence.recordMount({ enabled: false, pinned: false, fixed: false })
     status = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
-    assert.equal(status.state, 'enable-requested')
-    assert.equal(status.restartRequired, true)
+    assert.equal(status.state, 'disabled')
+    assert.equal(status.restartRequired, false)
     disabled.dispose()
     const enabled = harness.service.editLockEvidence.recordMount({ enabled: true })
     status = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
-    assert.equal(status.state, 'enforced')
+    assert.equal(status.state, 'disable-requested')
+    assert.equal(status.restartRequired, true)
     enabled.dispose()
     status = (await call('/api/weir-edit-lock/maintenance/status')).payload.value
     assert.equal(status.state, 'unknown')

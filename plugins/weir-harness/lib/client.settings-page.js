@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
 		// scatter). test/client-settings-page.test.js pins this list to
 		// RESTART_KEYS from src/settings/sections.js, so a declaration
 		// change on either side cannot drift the two sides.
-		const RESTART_FIELDS = ["intentGateClassifier", "intentGateProvider", "intentGateModel", "intentGateReasoningEffort", "intentGateTimeoutMs", "jevEndpoint", "jevModel", "jevApiKeyEnv", "todoEnabled", "todoMaxConsecutive", "todoErrorRetryMax", "todoErrorBackoffBaseMs", "todoErrorBackoffCapMs", "hashlineHideStockEdit", "editLockEnabled"];
+		const RESTART_FIELDS = ["intentGateClassifier", "intentGateProvider", "intentGateModel", "intentGateReasoningEffort", "intentGateTimeoutMs", "jevEndpoint", "jevModel", "jevApiKeyEnv", "todoEnabled", "todoMaxConsecutive", "todoErrorRetryMax", "todoErrorBackoffBaseMs", "todoErrorBackoffCapMs", "hashlineHideStockEdit"];
 		// ---- condition declaration shorthands (frozen pure data, D2) ----
 		const enabledWhen = (key) => Object.freeze({ key, equals: true });
 		const CLASSIFIER_LLM = Object.freeze({ key: "intentGateClassifier", equals: "llm" });
@@ -107,10 +107,8 @@ window.__ModuleLoader__.load({
 			] },
 			{ id: "editing", fields: [
 				{ field: "hashlineHideStockEdit", kind: "boolean" },
-				{ field: "editLockEnabled", kind: "boolean" },
-				{ field: "editLockAutoResume", kind: "boolean", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				{ field: "editLockStaleSweep", kind: "boolean", parent: "editLockEnabled", when: enabledWhen("editLockEnabled") },
-				// Diagnostics must remain reachable when enforcement is off.
+				// Edit Lock diagnostics seat: the composition root binds no editor
+				// for it (edit-lock rebuild), so the row renders nothing.
 				{ kind: "custom", slot: "editLockMaintenance" }
 			] },
 			{ id: "worktree", fields: [
@@ -194,14 +192,6 @@ window.__ModuleLoader__.load({
 			guardSoftThreshold: 0.72,
 			guardHardThreshold: 0.88,
 			hashlineHideStockEdit: true,
-			editLockEnabled: true,
-			editLockHoldDefaultMinutes: 30,
-			editLockHoldSingleMaxMinutes: 30,
-			editLockHoldCumulativeMaxMinutes: 120,
-			editLockNudgeAttempts: 2,
-			editLockNudgeFallback: "release",
-			editLockAutoResume: true,
-			editLockStaleSweep: true,
 			robashEnabled: true,
 			lspEnabled: false,
 			lspIdleMs: 600000,
@@ -597,7 +587,6 @@ window.__ModuleLoader__.load({
 		const childLabelStyle = { ...labelStyle, fontSize: "13px" };
 		const labelTextStyle = { display: "inline-flex", alignItems: "center", gap: "6px" };
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
-		const optOutStyle = { ...hintStyle, color: "var(--dsw-alias-state-warn-primary)", borderLeft: "2px solid var(--dsw-alias-state-warn-primary)", paddingLeft: "8px", marginTop: "4px" };
 		// Card-based group sections (design D7): layered background, l1 border,
 		// radius, the group title inside the card top, hairline l2 separators
 		// between rows. Colors only from theme tokens; geometry hardcoded.
@@ -637,9 +626,6 @@ window.__ModuleLoader__.load({
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
 					labelWithTag(descriptor, t, depth > 0 ? childLabelStyle : labelStyle),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) }),
-					descriptor.field === "editLockEnabled" && resolveEffectiveValue(descriptor, field, field?.saved) !== true
-						? react_jsx_runtime.jsx("span", { style: optOutStyle, role: "alert", children: t("editLockOptOutWarning") })
-						: null
 				] }),
 				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
@@ -1117,13 +1103,6 @@ window.__ModuleLoader__.load({
 				guardHardThresholdHint: "Above this fill ratio compaction is requested (default 0.88; not a completion guarantee).",
 				hashlineHideStockEdit: "Anchor editing only",
 				hashlineHideStockEditHint: "Hides the built-in edit tool; file edits go through hash_edit anchors only.",
-				editLockEnabled: "Edit Lock",
-				editLockEnabledHint: "Sessions take turns editing the same files instead of overwriting each other.",
-				editLockOptOutWarning: "Edit Lock is set to off. After saving, restart DeepSeek Harness to apply the change. Once enforcement is off, ordinary editing is UNPROTECTED and can overwrite another session's work. Old fences and history are retained and may block files when you re-enable Edit Lock.",
-				editLockAutoResume: "Message resumes editing",
-				editLockAutoResumeHint: "After a session is stopped, sending any message restores its editing right and re-confirms its kept files (default on).",
-				editLockStaleSweep: "Sweep stale locks",
-				editLockStaleSweepHint: "Locks whose target file was deleted or moved are re-verified and released as you send messages (default on).",
 				worktreeEnabled: "Worktree lanes",
 				worktreeEnabledHint: "Lets the assistant work in isolated git worktrees: lane tools, the /worktree command, and the lanes panel.",
 				worktreeAutoSetup: "Auto-install in new lanes",
@@ -1252,13 +1231,6 @@ window.__ModuleLoader__.load({
 				guardHardThresholdHint: "上下文用量超过该比例时请求立即压缩（默认 0.88，不保证压缩完成）。",
 				hashlineHideStockEdit: "仅用锚点编辑",
 				hashlineHideStockEditHint: "隐藏内置 edit 工具，文件修改一律走 hash_edit 锚点编辑。",
-				editLockEnabled: "编辑锁",
-				editLockEnabledHint: "多个会话轮流编辑同一批文件，而不是互相覆盖。",
-				editLockOptOutWarning: "编辑锁已设为关闭。保存后须重启 DeepSeek Harness 才会生效。停用强制执行后，普通编辑不受保护，可能覆盖其他会话的工作。旧围栏与历史仍会保留，重新启用编辑锁时可能再次阻塞文件。",
-				editLockAutoResume: "发消息即恢复编辑",
-				editLockAutoResumeHint: "会话被停止后，发送任意消息即自动恢复其编辑权并确认保留的文件（默认开启）。",
-				editLockStaleSweep: "自动清理失效锁",
-				editLockStaleSweepHint: "目标文件已被删除或移动的锁，在你发消息时自动复核并释放（默认开启）。",
 				worktreeEnabled: "Worktree 车道",
 				worktreeEnabledHint: "让助手在隔离的 git worktree 中工作：车道工具、/worktree 命令与车道面板。",
 				worktreeAutoSetup: "新车道自动安装依赖",
