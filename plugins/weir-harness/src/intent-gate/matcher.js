@@ -20,6 +20,7 @@ export function stripQuotedRegions(text) {
  * @property {string} id
  * @property {RegExp[]} patterns - compiled matchers
  * @property {boolean} oncePerSession
+ * @property {string} [summary] - one-line catalog description for the semantic classifier
  * @property {{ kind: 'skill-pointer', skill: string }
  *   | { kind: 'message', text: string }
  *   | { kind: 'effort', reasoningEffort: string }} injection
@@ -76,6 +77,7 @@ export function compileIntentTable(raw) {
       id: entry.id,
       patterns,
       oncePerSession: entry.oncePerSession !== false,
+      ...(typeof entry.summary === 'string' && entry.summary.length > 0 ? { summary: entry.summary } : {}),
       injection,
     }
   })
@@ -90,6 +92,16 @@ export function compileIntentTable(raw) {
 export function matchIntents(stripped, intents) {
   return intents.filter((intent) => intent.patterns.some((pattern) => pattern.test(stripped)))
 }
+
+/** Verbatim directive injected on every writing intent hit. */
+export const WRITING_DIRECTIVE = `<intent-gate id="writing">
+Write the deliverable as the finished product, not as a record of producing it.
+- Keep the agent's thinking, implementation rationale, design reasoning, debugging narrative, and next-step plans out of the deliverable.
+- Do not write explanatory UI copy — "I will", "we can", "this page shows", "here you'll find", "used to illustrate", "implemented" — unless it is genuine product help text or empty-state copy.
+- Put implementation approach, verification method, limitations, and trade-offs only in the chat reply, code comments, the PR/MR description, docs, or plan files.
+- Exception: include design notes, methodology, implementation walkthrough, or a work log in the deliverable only when the user explicitly asks for them.
+- Unless there is a real need, a change leaves no trace: no comments, notes, markers, or any "why this changed" evidence. Code should look like it was always that way. The best change looks like no change was made — present the result, not the change itself.
+</intent-gate>`
 
 /** The default intent table (English templates; runtime content follows the session language). */
 export const DEFAULT_INTENTS = [
@@ -112,6 +124,21 @@ export const DEFAULT_INTENTS = [
     id: 'debug',
     matchers: ['\\bdebug\\b', '\\bdebugging\\b', '调试', '排查'],
     injection: { kind: 'skill-pointer', skill: 'debugging' },
+  },
+  {
+    id: 'writing',
+    matchers: [
+      '\\bwrite (?:a |an |the |some )?(?:[a-z][\\w-]* )?(?:doc|docs|document|documents|documentation|readme|guide|manual|report|spec)\\b',
+      '\\b(?:draft|compose|author|produce|prepare|rewrite|revise|update|polish) (?:a |an |the |some )?(?:[a-z][\\w-]* )?(?:doc|docs|document|documentation|readme|guide|manual|report)\\b',
+      '\\bwrite[- ]?up\\b',
+      '\\bdocument (?:the|this|these|a|an)\\b',
+      '(?:写|撰写|编写|起草|整理成|写成|润色|补全|更新)[^\\n]{0,8}(?:文档|说明|报告|指南|手册|教程|文案)',
+      '(?:写|撰写|编写|起草|润色|补全|更新)[^\\n]{0,8}readme',
+      '文档(?:撰写|编写|写作|润色|补全|更新)',
+    ],
+    oncePerSession: false,
+    summary: 'author a documentation-style deliverable (docs, README, guide, report) as the finished result',
+    injection: { kind: 'message', text: WRITING_DIRECTIVE },
   },
   {
     id: 'think',

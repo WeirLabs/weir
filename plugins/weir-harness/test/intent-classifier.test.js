@@ -59,6 +59,15 @@ describe('createClassifier', () => {
     expect(request.messages[0].content[0].text).toHaveLength(4000)
   })
 
+  it('describes the writing intent with its configured summary in the catalog', async () => {
+    const llm = fakeLlm('none')
+    const classify = createClassifier({ mode: 'llm', llm, routeOverride: OVERRIDE })
+    await classify('write a guide for the deployment flow', INTENTS, { agent: { id: 's1' } })
+    const system = llm.calls[0].system
+    expect(system).toContain('- writing: author a documentation-style deliverable (docs, README, guide, report) as the finished result')
+    expect(system).not.toContain('writing: custom intent')
+  })
+
   it('falls back to the session route when no override is configured', async () => {
     const llm = fakeLlm('none')
     const classify = createClassifier({ mode: 'llm', llm })

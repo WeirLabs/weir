@@ -6,6 +6,7 @@ import {
   renderReminder,
   renderSkillPointer,
   stripQuotedRegions,
+  WRITING_DIRECTIVE,
 } from '../src/intent-gate/matcher.js'
 import { apply } from '../src/intent-gate/index.js'
 
@@ -30,8 +31,24 @@ describe('stripQuotedRegions', () => {
 describe('compileIntentTable', () => {
   it('compiles the default table', () => {
     const table = compileIntentTable(DEFAULT_INTENTS)
-    expect(table).toHaveLength(5)
+    expect(table).toHaveLength(6)
     expect(table[0].id).toBe('deep-work')
+    const writing = table.find((intent) => intent.id === 'writing')
+    expect(writing.id).toBe('writing')
+    expect(writing.oncePerSession).toBe(false)
+    expect(writing.summary).toBe('author a documentation-style deliverable (docs, README, guide, report) as the finished result')
+    expect(writing.patterns).toHaveLength(7)
+  })
+
+  it('keeps a configured summary and omits an absent or empty one', () => {
+    const table = compileIntentTable([
+      { id: 'described', matchers: ['x'], summary: 'one-line catalog description', injection: { kind: 'message', text: 't' } },
+      { id: 'empty', matchers: ['y'], summary: '', injection: { kind: 'message', text: 't' } },
+      { id: 'absent', matchers: ['z'], injection: { kind: 'message', text: 't' } },
+    ])
+    expect(table[0].summary).toBe('one-line catalog description')
+    expect('summary' in table[1]).toBe(false)
+    expect('summary' in table[2]).toBe(false)
   })
 
   it('rejects invalid regexes with the intent id', () => {
@@ -120,6 +137,88 @@ describe('intent-gate plugin', () => {
     expect(second.messages[0].content[0].text).toContain('already armed')
 
     expect(ctx.emitted.filter((e) => e.type === 'weir/intent-hit')).toHaveLength(2)
+  })
+
+  it('injects the writing directive for a Chinese doc-writing request', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const prompt = promptMessage('帮我写一份部署说明')
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [prompt], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [prompt] }),
+    )
+    expect(result.messages).toHaveLength(2)
+    const text = result.messages[1].content[0].text
+    expect(text).toContain('<intent-gate id="writing">')
+    expect(text).toContain('no trace')
+    expect(text).toContain('explanatory UI copy')
+    expect(result.messages[0]).toBe(prompt)
+    expect(result.messages[0].content[0].text).toBe('帮我写一份部署说明')
+    const hits = ctx.emitted.filter((event) => event.type === 'weir/intent-hit')
+    expect(hits).toHaveLength(1)
+    expect(hits[0].record.data.intent).toBe('writing')
+  })
+
+  it('injects the writing directive for an English doc-writing request', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('write a deployment guide')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(1)
+    const text = result.messages[0].content[0].text
+    expect(text).toContain('<intent-gate id="writing">')
+    expect(text).toContain('finished product')
+    expect(ctx.emitted.filter((event) => event.type === 'weir/intent-hit')).toHaveLength(1)
+  })
+
+  it('re-injects the full writing directive on every doc-writing request', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const first = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('帮我写一份部署说明')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    const second = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('再写一篇 FAQ 文档')], turn: 2, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(first.messages).toHaveLength(1)
+    expect(second.messages).toHaveLength(1)
+    expect(first.messages[0].content[0].text).toContain('no trace')
+    expect(second.messages[0].content[0].text).toContain('no trace')
+    expect(second.messages[0].content[0].text).not.toContain('already armed')
+    const hits = ctx.emitted.filter((event) => event.type === 'weir/intent-hit' && event.record.data.intent === 'writing')
+    expect(hits).toHaveLength(2)
+    expect(hits.every((event) => event.record.data.first === true)).toBe(true)
+  })
+
+  it('passes through a doc-reading request without a writing verb', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('读一下这份文档，然后修掉这个 bug')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(0)
+    expect(ctx.emitted.filter((event) => event.type === 'weir/intent-hit')).toHaveLength(0)
+  })
+
+  it('passes through when the writing keyword sits inside a fenced code block', async () => {
+    const ctx = fakeCtx()
+    apply(ctx, {})
+    const agent = fakeAgent([])
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('```\n写文档\n```\n现在实现这个功能')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(0)
+    expect(ctx.emitted.filter((event) => event.type === 'weir/intent-hit')).toHaveLength(0)
   })
 
   it('uses an overlay route that becomes visible only after apply (rc.2 activation timing)', async () => {
@@ -236,5 +335,14 @@ describe('templates', () => {
     const text = renderReminder({ id: 'deep-work' })
     expect(text).toContain('deep-work')
     expect(text.split('\n')).toHaveLength(1)
+  })
+})
+
+describe('WRITING_DIRECTIVE', () => {
+  it('states the finished-product discipline as an English template', () => {
+    for (const lead of ['finished product', 'implementation rationale', 'explanatory UI copy', 'verification method', 'no trace']) {
+      expect(WRITING_DIRECTIVE).toContain(lead)
+    }
+    expect(/[\u4e00-\u9fff]/.test(WRITING_DIRECTIVE)).toBe(false)
   })
 })
