@@ -29,9 +29,32 @@ import { createLineageResolver } from './lineage.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
 import { getSharedLeaseClient } from './singleton.js'
+import { buildLeaseView } from './view.js'
 
 /** Plugin name (composition identity only; this row publishes no service). */
 const PLUGIN_NAME = 'weir-file-lease'
+
+/**
+ * The one read-only HTTP route of the feature (design D13). The path keeps the
+ * pre-rebuild name on purpose: the client chunk that reads it, the feature doc
+ * and the spec all name `/api/weir-edit-lock/view`, and a rename would buy
+ * nothing a reader could see.
+ */
+const VIEW_PATH = '/api/weir-edit-lock/view'
+
+/**
+ * The host's exact-duplicate-route refusal, and nothing else.
+ *
+ * Several preset mounts of this bundle live in ONE process (D11), while `fetch`
+ * routes are process-wide: the first mount owns the route and the host refuses
+ * a later mount's identical registration. Only that exact message is tolerated;
+ * every other registration error is a real fault and must surface.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function duplicateRouteRegistration(error) {
+  return messageOf(error) === `connection: exact Fetch route ${JSON.stringify(VIEW_PATH)} is already registered`
+}
 
 /** Producer tag every injected message carries (AGENTS §3.4). */
 const SOURCE_KIND = 'weir-file-lease'
@@ -239,6 +262,8 @@ export function createFileLeasePlugin(options = {}) {
      */
     const issued = new Map()
     let disposed = false
+    /** @type {() => void} this mount's read-only view route disposer (D13) */
+    let disposeView = () => {}
 
     /** @returns {any} the `agents` service, or undefined when it is not mounted */
     function agents() {
@@ -574,8 +599,99 @@ export function createFileLeasePlugin(options = {}) {
       ctx.logger?.warn?.(`file-lease: negotiation events are unavailable: ${messageOf(error)}`)
     }
 
-    // Unmount: drop this mount's tools, its listeners and its event
-    // subscription. The client and the daemon keep running (D11) — a sibling
+    /**
+     * The arbiter's health as the read-only surface reports it (D13): the client's
+     * own connection state, never a fresh probe, so looking cannot change a
+     * verdict. A client that cannot answer is `unavailable` — an unknown
+     * connection must never be presented as healthy.
+     * @returns {'ok' | 'degraded' | 'unavailable'}
+     */
+    function arbiterState() {
+      try {
+        const state = typeof client.connectionState === 'function' ? client.connectionState() : 'unavailable'
+        return state === 'ok' || state === 'degraded' || state === 'unavailable' ? state : 'unavailable'
+      } catch {
+        return 'unavailable'
+      }
+    }
+
+    // ---- The read-only ownership view (design D13) --------------------------
+    //
+    // The ONLY user-facing ownership read in the rebuild, and it reads. Nothing
+    // in this handler acquires, releases, retains, negotiates or records
+    // anything: no lease changes, no conversation entry, no audit row. Every
+    // ownership state resolves by itself (turn end, expiry, negotiation; D10),
+    // so a surface that could act would reintroduce exactly the "some state
+    // needs a human" the redesign deletes.
+    //
+    // `connection` is a host-plane service, so the preset realm cannot hide it.
+    // Its fetch routes are process-wide (D11), which is why a second mount's
+    // identical registration is tolerated below and nothing else is.
+    ctx.inject?.(['connection'], (/** @type {any} */ scope) => {
+      const fetchRegistry = scope?.connection?.fetch
+      if (!fetchRegistry?.register) return
+      const reply = (/** @type {any} */ payload, /** @type {number} */ status = 200) =>
+        new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } })
+      /** @type {(() => void) | undefined} */
+      let dispose
+      try {
+        dispose = fetchRegistry.register({
+          path: VIEW_PATH,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (/** @type {any} */ request) => {
+            let body
+            try {
+              body = await request.json()
+            } catch {
+              body = null
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            if (sessionId === '') {
+              return reply({ ok: false, error: { code: 'weir-edit-lock/invalid', message: 'body needs { sessionId }' } }, 400)
+            }
+            const agent = agentFor(sessionId)
+            const cwd = cwdOf(agent)
+            // A session with no live agent is its own lineage (D9), and its
+            // leases died with the process that held them (D10): the honest
+            // answer is "nothing held", never an error to act on.
+            const mineLineage = agent === undefined ? sessionId : ownerOf(agent).id
+            /** @type {any[]} */
+            let leases = []
+            try {
+              const snapshot = await client.status(cwd === undefined ? {} : { scope: cwd })
+              leases = Array.isArray(snapshot?.leases) ? snapshot.leases : []
+            } catch {
+              // An unreadable arbiter IS the degraded state (D7): answer with the
+              // same envelope so the panel reports it, and never claim "nothing
+              // held" on the strength of a failed read.
+              leases = []
+            }
+            return reply({ ok: true, value: buildLeaseView({ leases, mineLineage, cwd, arbiter: arbiterState(), now: now() }) })
+          },
+        })
+      } catch (error) {
+        // Duplicate-route tolerance (D11): the first mount in this process owns
+        // this process-wide route, and the host refuses a later mount's
+        // identical registration. Skipping ONLY that exact refusal keeps this
+        // mount's inject callback intact instead of aborting it mid-mount, and
+        // correctness never depends on mount order because the client and the
+        // owner rule are process-wide too.
+        if (!duplicateRouteRegistration(error)) throw error
+        return
+      }
+      disposeView = () => {
+        try {
+          dispose?.()
+        } catch {
+          // Already released by the injection scope's own teardown.
+        }
+      }
+      return disposeView
+    })
+
+    // Unmount: drop this mount's tools, its listeners, its event subscription and
+    // its view route. The client and the daemon keep running (D11) — a sibling
     // mount, or the next mount of this row, owns the connection.
     return () => {
       if (disposed) return
@@ -585,6 +701,12 @@ export function createFileLeasePlugin(options = {}) {
       } catch {
         // Already gone.
       }
+      try {
+        disposeView()
+      } catch {
+        // Already released by the injection scope's own teardown.
+      }
+      disposeView = () => {}
       for (const agent of [...replyAgents]) retireReplyTool(agent)
       replyAgents.clear()
       issued.clear()

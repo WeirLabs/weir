@@ -59,6 +59,7 @@ declare module 'node:child_process' {
 declare module 'react' {
   export class Component<P = { t?: (key: string) => string; children?: unknown }, S = unknown> { constructor(props: P); props: P; state: S }
   export function useState<S>(initial: S): [S, (next: S | ((previous: S) => S)) => void];
+  export function useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;
 }
 declare module 'react/jsx-runtime' {
   export function jsx(type: unknown, props: object, key?: string | number): unknown;

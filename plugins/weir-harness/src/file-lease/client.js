@@ -825,6 +825,27 @@ export function createLeaseClient({
   }
 
   /**
+   * Read-only connection health for the status surface (design D13).
+   *
+   * `ok` means the handshake stands right now, so a `status` read reaches the
+   * arbiter; `degraded` means this process HAS been arbitrated before but the
+   * connection is gone at this instant (the next write would degrade and
+   * proceed, D7); `unavailable` means it was never reached in this process.
+   *
+   * Reporting only: it opens nothing, closes nothing and retries nothing, so a
+   * reader can never change an arbitration verdict by looking.
+   *
+   * @returns {'ok' | 'degraded' | 'unavailable'}
+   */
+  function connectionState() {
+    if (closed) return 'unavailable'
+    if (connection !== null && greeted) return 'ok'
+    // `startedAt` is set by the first successful handshake and never cleared:
+    // its presence is exactly "this process once had an arbiter".
+    return startedAt === undefined ? 'unavailable' : 'degraded'
+  }
+
+  /**
    * Ask the holder of `path` to hand it over (negotiation, D4).
    * @param {string} path
    * @param {any} from the requesting owner
@@ -1033,6 +1054,7 @@ export function createLeaseClient({
     withLeases,
     hold,
     status,
+    connectionState,
     requestTransfer,
     reply,
     releaseSession,
