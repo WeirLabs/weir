@@ -185,10 +185,6 @@
               compaction: true
               toolResultPruner: true
               weirCompactionCoordinator: true
-              # 编辑锁服务：提供者 edit-lock 与消费者 todo-driver / hashline-edit /
-              # lsp 同在本组。预设服务必须 isolate，否则预设加载以
-              # "Preset services require isolate realms" 失败。
-              weirEditLock: true
               # Worktree lanes service: provider (worktree) and consumer
               # (delegate) share this realm (S24 / S26 S-A).
               weirWorktreeLanes: true
@@ -241,10 +237,10 @@
               # F4 todo 续推：空转续推 + 用户打断/供应商错误语义 + 逃生舱
               - id: todo-driver
                 name: 'weir-harness/todo-driver'
-              # 编辑锁（默认开）：显式保存 false 后重启才关闭；须在 hashline-edit / lsp 前挂载。
-              # 两个消费者挂载时捕获隔离组内的锁服务。
-              - id: edit-lock
-                name: 'weir-harness/edit-lock'
+              # 文件租约（编辑锁新实现）：进程内共享一个租约 client，发布五个所有权
+              # 工具；不发布 cordis 服务，因此不需要 isolate 组，也不再约束行序。
+              - id: file-lease
+                name: 'weir-harness/file-lease'
               # F7 锚点编辑：read 锚点增强 + fail-closed hash_edit 工具
               - id: hashline-edit
                 name: 'weir-harness/hashline-edit'
@@ -378,7 +374,6 @@
               compaction: true
               toolResultPruner: true
               weirCompactionCoordinator: true
-              weirEditLock: true
               weirWorktreeLanes: true
               weirBlackboard: true
             config:
@@ -418,9 +413,9 @@
                 name: 'weir-harness/blackboard'
               - id: todo-driver
                 name: 'weir-harness/todo-driver'
-              # Must precede hashline-edit / lsp (mount-time capture).
-              - id: edit-lock
-                name: 'weir-harness/edit-lock'
+              # File leases (the edit-lock rebuild): no service, no ordering constraint.
+              - id: file-lease
+                name: 'weir-harness/file-lease'
               - id: hashline-edit
                 name: 'weir-harness/hashline-edit'
                 config:

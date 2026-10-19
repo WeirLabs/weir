@@ -1,16 +1,19 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
 
-// Realm guard (S11 class, edit-lock acceptance incident): the preset registry
-// refuses a preset whose rows publish a service into the root realm
-// ("Preset services require isolate realms: weirEditLock"). The provider row
-// and every consumer row must sit in ONE cordis:group that isolates the
-// service. Text scan like settings-fields.test.js (the patch has !!js tags).
+// Realm/composition guard (S11 class): a preset row that publishes a service
+// into the root realm is refused by the preset registry, so provider and
+// consumers must share ONE isolated cordis:group. The Edit Lock service was
+// retired by the edit-lock rebuild (design D11): `hashline-edit` and `lsp` call
+// the lease client directly, so the row publishes nothing and needs no realm.
+// What remains pinned here is the new wiring — both presets mount the row, no
+// `weirEditLock` isolate survives (a dead service name in the patch is exactly
+// the class of silent error this file exists to catch), and the row keeps its
+// historical place ahead of the editors. Text scan like settings-fields.test.js
+// (the patch has !!js tags).
 
 const PATCH = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
-const SERVICE = 'weirEditLock'
-const PROVIDER = 'weir-harness/edit-lock'
-const CONSUMERS = ['weir-harness/todo-driver', 'weir-harness/hashline-edit', 'weir-harness/lsp']
+const ROW = 'weir-harness/file-lease'
 
 /** The enclosing group block (from its `- id:` line to the next sibling at
  * the same indentation) for the row naming `pluginName`. */
@@ -30,22 +33,24 @@ function enclosingGroup(pluginName) {
   return undefined
 }
 
-describe('preset realm composition for the Edit Lock service', () => {
-  it('provider and every consumer share one group that isolates the service', () => {
-    const group = enclosingGroup(PROVIDER)
-    expect(group, 'edit-lock row must be inside a cordis:group').toBeTruthy()
-    expect(group.id).toBe('delegation')
-    expect(group.text).toContain('name: cordis:group')
-    expect(new RegExp(`isolate:[\\s\\S]*?\\n\\s+${SERVICE}: true`).test(group.text), `group ${group.id} must isolate ${SERVICE}`).toBe(true)
-    for (const consumer of CONSUMERS) {
-      expect(enclosingGroup(consumer)?.id, `${consumer} must share the ${SERVICE} realm`).toBe(group.id)
-    }
+describe('preset composition for the file-lease row (edit-lock rebuild)', () => {
+  it('BOTH presets mount weir-harness/file-lease', () => {
+    expect(PATCH.split(`name: '${ROW}'`).length - 1).toBe(2)
+    expect(PATCH).not.toContain('- id: edit-lock')
   })
 
-  it('the provider row precedes its mount-time consumers', () => {
+  it('the retired weirEditLock service is not isolated anywhere', () => {
+    // The provider no longer exists, so an isolate entry would declare a realm
+    // for a service nobody provides.
+    expect(PATCH.includes('weirEditLock')).toBe(false)
+  })
+
+  it('the row sits in the delegation group, ahead of the editors it feeds', () => {
+    expect(enclosingGroup(ROW)?.id).toBe('delegation')
     const at = (name) => PATCH.indexOf(`name: '${name}'`)
-    expect(at(PROVIDER) < at('weir-harness/hashline-edit')).toBe(true)
-    expect(at(PROVIDER) < at('weir-harness/lsp')).toBe(true)
+    expect(at(ROW)).toBeGreaterThan(-1)
+    expect(at(ROW) < at('weir-harness/hashline-edit')).toBe(true)
+    expect(at(ROW) < at('weir-harness/lsp')).toBe(true)
   })
 })
 

@@ -320,3 +320,28 @@ describe('lsp_rename reports the three-way truth on failure', () => {
     expect(failure.message.toLowerCase()).not.toContain('reverted')
   })
 })
+
+
+describe('the lease-client seam never depends on an injected ctx property', () => {
+  it('constructs the tools against a cordis-like ctx that throws on undeclared reads', () => {
+    // The row injects tools/subprocess/fs — never `leaseClient`. A cordis context
+    // THROWS when an undeclared property is read, so probing `ctx.leaseClient`
+    // directly would make every lsp_rename fail at tool construction (observed
+    // in the installed integration run as `cannot get property "leaseClient"
+    // without inject`). The seam must therefore be optional all the way down.
+    const ctx = new Proxy({ tools: { register() {} }, get: () => undefined, inject: () => {} }, {
+      get(target, key) {
+        if (key in target) return Reflect.get(target, key)
+        throw new Error(`cannot get property "${String(key)}" without inject`)
+      },
+    })
+    const tools = createLspTools({ manager: {}, ctx, agent: AGENT })
+    expect(tools.map((tool) => tool.name)).toContain('lsp_rename')
+  })
+
+  it('an explicit leaseClient still wins and the surface stays five tools', () => {
+    const client = createFakeClient({})
+    const tools = createLspTools({ manager: {}, ctx: { get: () => undefined, inject: () => {} }, agent: AGENT, leaseClient: client })
+    expect(tools).toHaveLength(5)
+  })
+})
