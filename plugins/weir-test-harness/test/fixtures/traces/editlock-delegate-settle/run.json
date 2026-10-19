@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-delegate-settle",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "parent acquired after child settlement\n",
-  "stderr": "",
-  "sessionId": null
-}

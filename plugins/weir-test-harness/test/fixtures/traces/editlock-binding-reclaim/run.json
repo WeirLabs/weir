@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-binding-reclaim",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "Binding probe complete.\n",
-  "stderr": "",
-  "sessionId": null
-}

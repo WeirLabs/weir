@@ -13,10 +13,11 @@ import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
 import hashlineNegatives from '../src/scenarios/editlock-hashline-negatives.js'
 import lspRename from '../src/scenarios/editlock-lsp-rename.js'
 
+// The registry order after the edit-lock rebuild switch: the nineteen
+// editlock-* scenarios that encoded the retired mechanism are gone, the four
+// survivors keep their historical relative order at the end of the list.
 const EXPECTED_ORDER = ['deepwork', 'delegate', 'hashline', 'pressure', 'robash', 'semantic', 'grouped', 'escalate', 'background', 'terminate', 'rehydrate', 'lsp', 'targets', 'editlock', 'worktree', 'capstore']
-EXPECTED_ORDER.push('editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update')
 EXPECTED_ORDER.push('jobs-aware-todo')
-EXPECTED_ORDER.push('editlock-auto-resume', 'editlock-auto-resume-off')
 EXPECTED_ORDER.push('skill-composition-off', 'skill-composition-leak', 'skill-composition-host', 'skill-composition-office', 'skill-composition-migration')
 EXPECTED_ORDER.push('apply-transaction')
 EXPECTED_ORDER.push('cold-session')
@@ -30,7 +31,6 @@ EXPECTED_ORDER.push('worktree-watch')
 EXPECTED_ORDER.push('notify-worktree')
 EXPECTED_ORDER.push('worktree-auto-approve')
 EXPECTED_ORDER.push('child-prompt')
-EXPECTED_ORDER.push('editlock-stale-sweep', 'editlock-stale-sweep-off')
 EXPECTED_ORDER.push('capability-remote')
 // capability-remote-dual-preset is opt-in (src/scenarios/index.js pushes it
 // only when WEIR_IT_CAPABILITY_DUAL === '1', until the production routing fix
@@ -38,16 +38,10 @@ EXPECTED_ORDER.push('capability-remote')
 // capability-remote, so neither mode accepts the other's list.
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') EXPECTED_ORDER.push('capability-remote-dual-preset')
 EXPECTED_ORDER.push('continuable')
-EXPECTED_ORDER.push('editlock-crash-recovery')
-EXPECTED_ORDER.push('editlock-cold-view')
 EXPECTED_ORDER.push('zombie-lane')
 EXPECTED_ORDER.push('lane-resumable')
 EXPECTED_ORDER.push('blackboard')
 EXPECTED_ORDER.push('blackboard-promotion')
-EXPECTED_ORDER.push('editlock-recovery-ux')
-EXPECTED_ORDER.push('editlock-binding-reclaim')
-EXPECTED_ORDER.push('editlock-delegate-settle')
-EXPECTED_ORDER.push('editlock-delegate-resume')
 EXPECTED_ORDER.push('blackboard-persistence')
 EXPECTED_ORDER.push('blackboard-fork')
 EXPECTED_ORDER.push('preset-delegation-surface')
@@ -56,11 +50,6 @@ EXPECTED_ORDER.push('planned-compaction-busy', 'planned-compaction-wake', 'plann
 EXPECTED_ORDER.push('editlock-lsp-rename')
 EXPECTED_ORDER.push('editlock-lsp-uncertain')
 EXPECTED_ORDER.push('editlock-hashline-negatives')
-EXPECTED_ORDER.push('editlock-negotiation')
-EXPECTED_ORDER.push('editlock-revoked-repair')
-EXPECTED_ORDER.push('editlock-binding-auto-retry')
-EXPECTED_ORDER.push('editlock-binding-transfer')
-EXPECTED_ORDER.push('editlock-preset-switch')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -136,10 +125,9 @@ describe('scenario registry', () => {
 
   // Scenarios whose preconditions need driver-side work: rehydrate boots twice
   // with one session id; worktree initializes a git repository in the workspace.
-  const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'editlock-stop-predispatch', 'editlock-stop-staged', 'editlock-stop-publication', 'editlock-stop-update', 'editlock-auto-resume', 'editlock-auto-resume-off', 'editlock-stale-sweep', 'editlock-stale-sweep-off', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'editlock-crash-recovery', 'editlock-cold-view', 'zombie-lane', 'lane-resumable', 'editlock-recovery-ux']
+  const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'zombie-lane', 'lane-resumable']
   RUN_OVERRIDE.push('preset-delegation-surface')
   RUN_OVERRIDE.push('editlock-lsp-rename', 'editlock-lsp-uncertain')
-  RUN_OVERRIDE.push('editlock-revoked-repair', 'editlock-binding-auto-retry', 'editlock-binding-transfer')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {
@@ -147,7 +135,7 @@ describe('scenario registry', () => {
       else assert.equal(scenario.run, undefined, `${scenario.id} unexpectedly overrides run`)
     }
   })
-  it('editlock-lsp-rename alone uses a nested management domain and fresh protocol fixtures', () => {
+  it('editlock-lsp-rename uses its own workspace and drives a cross-process conflict', () => {
     assert.deepEqual(lspRename.env, { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_LSP_RENAME: '1' })
     const call = [...lspRename.decide({ messages: [] }, { transcript: `${lspRename.id}-conflict\nLSP semantic tools enabled` })]
       .find((chunk) => chunk.type === 'block-end').block
@@ -156,22 +144,28 @@ describe('scenario registry', () => {
     assert.equal(basename(target), 'probe.ts')
     assert.equal(basename(dirname(target)), lspRename.id)
     const scenarioSource = readFileSync(fileURLToPath(new URL('../src/scenarios/editlock-lsp-rename.js', import.meta.url)), 'utf8')
-    assert.match(scenarioSource, /WEIR_IT_AUTO_RESUME_TARGET: `\$\{id\}\/probe\.ts`/)
+    // The conflict boot is a REAL foreign claim from the driver's own broker
+    // connection; the midbatch boot is the write-boundary abort.
+    assert.match(scenarioSource, /withForeignHolder\(\[PROBE_OTHER\]/)
+    assert.match(scenarioSource, /WEIR_IT_WRITE_ABORT_PROBE: '1'/)
+    assert.match(scenarioSource, /WEIR_IT_WRITE_ABORT_TARGET: `\$\{id\}\/probe\.ts`/)
     const driver = readFileSync(fileURLToPath(new URL('../run.mjs', import.meta.url)), 'utf8')
     assert.match(driver, /join\(WS, 'editlock-lsp-rename'\)/)
-    assert.match(driver, /writeFileSync\(join\(rename, 'probe.ts'\), 'export const fixtureSymbol = 1\\n'\)/)
-    assert.match(driver, /writeFileSync\(join\(rename, 'probe-other.ts'\), 'import \{ fixtureSymbol \} from "\.\/probe"\\r\\nexport const useIt = fixtureSymbol \+ 1\\r\\n'\)/)
-    assert.match(driver, /copyFileSync\(join\(HERE, 'src', 'mock-lsp-server.js'\), join\(rename, 'mock-lsp-server.js'\)\)/)
+    assert.match(driver, /writeFileSync\(join\(rename, 'probe\.ts'\), 'export const fixtureSymbol = 1\\n'\)/)
+    assert.match(driver, /writeFileSync\(join\(rename, 'probe-other\.ts'\), 'import \{ fixtureSymbol \} from "\.\/probe"\\r\\nexport const useIt = fixtureSymbol \+ 1\\r\\n'\)/)
+    assert.match(driver, /copyFileSync\(join\(HERE, 'src', 'mock-lsp-server\.js'\), join\(rename, 'mock-lsp-server\.js'\)\)/)
     const patch = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
-    assert.match(patch, /WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename'/)
-    assert.match(patch, /WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename\/\.weir\/edit-lock'/)
+    // No managed authority is configured any more: the lease row takes only the
+    // composition `enabled` seam (edit-lock-rebuild D11).
+    assert.doesNotMatch(patch, /authorityDirectory/)
+    assert.doesNotMatch(patch, /root: !!js/)
     assert.match(patch, /WEIR_IT_LSP_RENAME === '1' \? 'editlock-lsp-rename\/'/)
   })
-  it('lock-on sandbox case targets an in-domain file through the narrowed real session policy', () => {
+  it('lock-on sandbox case targets an in-project file through the narrowed real session policy', () => {
     assert.deepEqual(hashlineNegatives.env, { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_SANDBOX_NARROW: '1' })
     const prior = [hashlineNegatives.prompt, 'Created file: /ws/narrow/cas-target.txt', 'hash_edit applied',
-      'Created file: /ws/narrow/mismatch.txt', 'hash_edit refused the call', 'Released',
-      'no regular file', 'outside management domain'].join('\n')
+      'Created file: /ws/narrow/mismatch.txt', 'hash_edit refused the call',
+      'no regular file'].join('\n')
     const emit = (history) => [...hashlineNegatives.decide({ messages: [] }, { transcript: history })]
     const first = emit(prior)
     const readCall = first.find((chunk) => chunk.type === 'block-end').block
@@ -184,7 +178,7 @@ describe('scenario registry', () => {
     const driver = readFileSync(fileURLToPath(new URL('../run.mjs', import.meta.url)), 'utf8')
     assert.match(driver, /env\.WEIR_IT_LSP_UNCERTAIN === '1' \? join\(WS, 'editlock-lsp-uncertain'\) : \(env\.WEIR_IT_SANDBOX_NARROW === '1' \? join\(WS, 'editlock-hashline-negatives', 'narrow'\) : WS\)/)
     const patch = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
-    assert.match(patch, /root: !!js "process\.env\.WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename' : \(process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives'/)
-    assert.match(patch, /authorityDirectory: !!js "process\.env\.WEIR_IT_LSP_RENAME === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-rename\/\.weir\/edit-lock' : \(process\.env\.WEIR_IT_LSP_UNCERTAIN === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-lsp-uncertain\/\.weir\/edit-lock' : \(process\.env\.WEIR_IT_SANDBOX_NARROW === '1' \? process\.env\.WEIR_IT_ROOT \+ '\/ws\/editlock-hashline-negatives\/\.weir\/edit-lock'/)
+    assert.match(patch, /name: 'weir-harness\/file-lease'/)
+    assert.doesNotMatch(patch, /authorityDirectory/)
   })
 })

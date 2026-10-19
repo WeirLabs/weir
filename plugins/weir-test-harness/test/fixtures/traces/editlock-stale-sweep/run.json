@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-stale-sweep",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "{\"type\":\"session\",\"sessionId\":\"session-f4b09639-9157-4179-a224-f9cb08796a96\",\"cwd\":\"/Users/young/Documents/Orrery/.weir/it-root/ws\"}\n{\"type\":\"status\",\"phase\":\"turn_start\",\"turn\":1}\n{\"type\":\"status\",\"phase\":\"step_start\",\"turn\":1,\"step\":1}\n{\"type\":\"tool_call\",\"callId\":\"mock-call-1\",\"tool\":\"edit_lock_status\",\"input\":{}}\n{\"type\":\"tool_result\",\"callId\":\"mock-call-1\",\"status\":\"completed\",\"result\":\"No Edit Lock ownership is held.\"}\n{\"type\":\"status\",\"phase\":\"step_end\",\"turn\":1,\"step\":1,\"usage\":{\"inputTokens\":600,\"outputTokens\":60}}\n{\"type\":\"status\",\"phase\":\"step_start\",\"turn\":1,\"step\":2}\n{\"type\":\"text\",\"text\":\"stale lock swept\"}\n{\"type\":\"status\",\"phase\":\"step_end\",\"turn\":1,\"step\":2,\"usage\":{\"inputTokens\":600,\"outputTokens\":60}}\n{\"type\":\"status\",\"phase\":\"turn_end\",\"turn\":1,\"reason\":{\"kind\":\"completed\"}}\n{\"type\":\"final\",\"text\":\"stale lock swept\"}\n",
-  "stderr": "\n",
-  "sessionId": "session-022421c3-ba38-4cad-831b-868d1dbbacd8"
-}

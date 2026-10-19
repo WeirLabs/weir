@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-binding-transfer",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "binding-transfer heal done\n",
-  "stderr": "\n\n",
-  "sessionId": "session-af784480-1555-42c2-a8ff-ad5600918ba5"
-}

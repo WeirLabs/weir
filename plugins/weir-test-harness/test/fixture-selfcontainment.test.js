@@ -77,17 +77,11 @@ function listFiles(dir) {
   return out
 }
 
-// The delegate lifecycle oracles have focused synthetic unit fixtures and
-// installed-CLI verification, not a committed replay trace in this task scope.
-// editlock-hashline-negatives has no committed fixture either: its oracle is a
-// live authority snapshot plus post-run bytes (precedent 62c0ee2).
-// editlock-negotiation runs its actual 120s timeout with a disposable Host
-// delivery fault and likewise has no committed replay fixture.
-// editlock-revoked-repair, editlock-binding-auto-retry and
-// editlock-binding-transfer drive live child processes (operator recovery,
-// holder publisher) whose liveness arbitration and multi-boot epoch chain a
-// committed trace cannot establish.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'editlock-negotiation', 'editlock-revoked-repair', 'editlock-binding-auto-retry', 'editlock-binding-transfer'].includes(scenario.id))
+// The four surviving edit-lock scenarios have no committed replay fixture: their
+// oracles are live lease state (a claim held by a running broker), live sandbox
+// policy and post-run target bytes. See assert-replay.test.js for the reasoning
+// shared by both lists.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives'].includes(scenario.id))
 
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {

@@ -21,9 +21,7 @@
     "./capability-remote-probe": "./src/capability-remote-probe.js",
     "./worktree-approve-probe": "./src/worktree-approve-probe.js",
     "./user-questions-stub": "./src/user-questions-stub.js",
-    "./blackboard-remote-probe": "./src/blackboard-remote-probe.js",
-    "./edit-lock-delegate-settle-probe": "./src/edit-lock-delegate-settle-probe.js",
-    "./edit-lock-delegate-resume-probe": "./src/edit-lock-delegate-resume-probe.js"
+    "./blackboard-remote-probe": "./src/blackboard-remote-probe.js"
   },
   "dsh": {
     "bundle": {

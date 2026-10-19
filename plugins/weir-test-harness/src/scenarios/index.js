@@ -2,6 +2,16 @@
 // index is the single registration point. SCENARIOS order is the historical
 // driver order (former run.mjs SCENARIOS list); byId is the lookup used by
 // both the mock LLM entry (WEIR_IT_SCENARIO) and the driver (argv filter).
+//
+// Edit-lock scope after the rebuild switch (edit-lock-rebuild 3.8 / 5.2): the
+// nineteen scenarios that encoded the retired mechanism (election, fencing,
+// unknown outcomes, recovery, auto-resume, stale sweep, binding transfer,
+// preset-switch rebinding, cold view, negotiation) are removed with it. The
+// four survivors assert only behaviour that still exists — the managed tool
+// surface and lease semantics (claim / retain / release / status), anchors and
+// version CAS, whole-batch rename preflight, and the honest three-list failure
+// report without rollback. The delegate/preset-switch acceptance those deleted
+// probes encoded is rebuilt as NEW scenarios in phase 5.
 import deepwork from './deepwork.js'
 import delegate from './delegate.js'
 import hashline from './hashline.js'
@@ -20,12 +30,6 @@ import targets from './targets.js'
 import editlock from './editlock.js'
 import worktree from './worktree.js'
 import capstore from './capstore.js'
-import stopPredispatch from './editlock-stop-predispatch.js'
-import stopStaged from './editlock-stop-staged.js'
-import stopPublication from './editlock-stop-publication.js'
-import stopUpdate from './editlock-stop-update.js'
-import autoResume from './editlock-auto-resume.js'
-import autoResumeOff from './editlock-auto-resume-off.js'
 import skillComposition from './skill-composition.js'
 import applyTransaction from './apply-transaction.js'
 import coldSession from './cold-session.js'
@@ -41,19 +45,11 @@ import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import worktreeAutoApprove from './worktree-auto-approve.js'
 import childPrompt from './child-prompt.js'
-import staleSweep from './editlock-stale-sweep.js'
-import staleSweepOff from './editlock-stale-sweep-off.js'
 import laneResumable from './lane-resumable.js'
 import continuable from './continuable.js'
-import crashRecovery from './editlock-crash-recovery.js'
-import coldView from './editlock-cold-view.js'
 import zombieLane from './zombie-lane.js'
 import blackboard from './blackboard.js'
 import blackboardPromotion from './blackboard-promotion.js'
-import recoveryUx from './editlock-recovery-ux.js'
-import bindingReclaim from './editlock-binding-reclaim.js'
-import delegateSettle from './editlock-delegate-settle.js'
-import delegateResume from './editlock-delegate-resume.js'
 import blackboardPersistence from './blackboard-persistence.js'
 import blackboardFork from './blackboard-fork.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
@@ -61,12 +57,7 @@ import presetDelegationSurface from './preset-delegation-surface.js'
 import editlockLspRename from './editlock-lsp-rename.js'
 import editlockLspUncertain from './editlock-lsp-uncertain.js'
 import editlockHashlineNegatives from './editlock-hashline-negatives.js'
-import editlockNegotiation from './editlock-negotiation.js'
-import editlockRevokedRepair from './editlock-revoked-repair.js'
-import editlockBindingAutoRetry from './editlock-binding-auto-retry.js'
-import editlockBindingTransfer from './editlock-binding-transfer.js'
-import editlockPresetSwitch from './editlock-preset-switch.js'
-const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, stopPredispatch, stopStaged, stopPublication, stopUpdate, jobsAwareTodo, autoResume, autoResumeOff]
+const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, jobsAwareTodo]
 SCENARIOS.push(...skillComposition)
 SCENARIOS.push(applyTransaction)
 SCENARIOS.push(coldSession)
@@ -80,22 +71,14 @@ SCENARIOS.push(worktreeWatch)
 SCENARIOS.push(notifyWorktree)
 SCENARIOS.push(worktreeAutoApprove)
 SCENARIOS.push(childPrompt)
-SCENARIOS.push(staleSweep)
-SCENARIOS.push(staleSweepOff)
 SCENARIOS.push(capabilityRemote)
 // Opt-in until the production routing fix lands: this fixture is intentionally RED.
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') SCENARIOS.push(capabilityRemoteDualPreset)
 SCENARIOS.push(continuable)
-SCENARIOS.push(crashRecovery)
-SCENARIOS.push(coldView)
 SCENARIOS.push(zombieLane)
 SCENARIOS.push(laneResumable)
 SCENARIOS.push(blackboard)
 SCENARIOS.push(blackboardPromotion)
-SCENARIOS.push(recoveryUx)
-SCENARIOS.push(bindingReclaim)
-SCENARIOS.push(delegateSettle)
-SCENARIOS.push(delegateResume)
 SCENARIOS.push(blackboardPersistence)
 SCENARIOS.push(blackboardFork)
 SCENARIOS.push(presetDelegationSurface)
@@ -104,11 +87,6 @@ SCENARIOS.push(plannedCase('busy'), plannedCase('wake'), plannedCase('cancel'), 
 SCENARIOS.push(editlockLspRename)
 SCENARIOS.push(editlockLspUncertain)
 SCENARIOS.push(editlockHashlineNegatives)
-SCENARIOS.push(editlockNegotiation)
-SCENARIOS.push(editlockRevokedRepair)
-SCENARIOS.push(editlockBindingAutoRetry)
-SCENARIOS.push(editlockBindingTransfer)
-SCENARIOS.push(editlockPresetSwitch)
 
 /**
  * Find a scenario entry by id.

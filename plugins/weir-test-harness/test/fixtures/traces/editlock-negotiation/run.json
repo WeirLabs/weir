@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-negotiation",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "NEGOTIATION_OWNER_COMPLETE\n",
-  "stderr": "",
-  "sessionId": null
-}

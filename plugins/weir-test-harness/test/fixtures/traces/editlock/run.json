@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "editlock done\n",
-  "stderr": "",
-  "sessionId": null
-}

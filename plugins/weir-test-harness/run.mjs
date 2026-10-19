@@ -22,7 +22,8 @@
 // (WEIR_IT_NODE) while the CLI resolves its own packages from WEIR_IT_DSH.
 import { execFileSync, execFile } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeRunView } from './src/run-view.js'
@@ -67,6 +68,21 @@ if (RUN_LOCK?.lockPath) process.on('exit', () => releaseRunLock(RUN_LOCK))
 const HOME = join(RUN_ROOT, 'home')
 const PROFILE = join(HOME, 'profiles', 'weir-it')
 const WS = join(RUN_ROOT, 'ws')
+// The lease broker's endpoint for this run (edit-lock-rebuild 3.8): the daemon
+// reads WEIR_EDITLOCKD_SOCKET and the client half honours the same variable, so
+// BOTH sides move to this run-private socket. Without it a headless boot would
+// dial (and possibly spawn against) the machine-level arbiter in os.tmpdir(),
+// i.e. the test would arbitrate against a real user's sessions.
+//
+// The path is deliberately NOT under RUN_ROOT: a unix socket address is limited
+// to the platform's `sun_path` (~104 bytes on macOS), and a lane/worktree root
+// already spends most of that budget (the bind then fails with EINVAL). A short
+// digest of RUN_ROOT keeps every run on its own endpoint while staying
+// universally addressable.
+const LEASE_SOCKET = process.platform === 'win32'
+  ? `\\\\.\\pipe\\weir-it-lease-${createHash('sha256').update(RUN_ROOT).digest('hex').slice(0, 12)}`
+  : join(tmpdir(), `weir-it-lease-${createHash('sha256').update(RUN_ROOT).digest('hex').slice(0, 12)}.sock`)
+process.env.WEIR_EDITLOCKD_SOCKET = LEASE_SOCKET
 
 // When set, each scenario's run record + trace + post-run workspace fixtures
 // are copied into this directory (assert-replay fixtures, task 4.2).
@@ -84,6 +100,10 @@ function setup() {
   } else {
     rmSync(RUN_ROOT, { recursive: true, force: true })
   }
+  // Unlink any residual socket file: the address is outside RUN_ROOT, so the
+  // wipe above cannot have removed it, and a daemon left over from an
+  // interrupted run must never answer for this one.
+  rmSync(LEASE_SOCKET, { force: true })
   mkdirSync(PROFILE, { recursive: true })
   mkdirSync(WS, { recursive: true })
   writeFileSync(
@@ -136,101 +156,6 @@ function setup() {
   copyFileSync(join(HERE, 'src', 'mock-lsp-server.js'), join(rename, 'mock-lsp-server.js'))
 }
 
-// Generated ONLY for editlock-negotiation, under this invocation's disposable
-// IT root. This is controlled Host delivery injection, NOT a network outage.
-// Patch the exact live holder instance for one notice and restore both methods
-// before the QA tool returns (and again on plugin dispose if a run aborts).
-const NEGOTIATION_FIXTURE = String.raw`import { appendFileSync, existsSync, readFileSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-export const name = 'weir-it-controlled-host-delivery-injection'
-export const inject = ['agents', 'tools']
-export function apply(ctx) {
-  const root = process.env.WEIR_IT_ROOT
-  const file = join(root, 'ws', 'negotiation-target.txt')
-  const snapshotFile = join(root, 'ws', '.weir', 'edit-lock', 'snapshot.json')
-  const reservation = join(root, 'ws', '.weir', '.edit-lock.publisher-reservation')
-  const trace = process.env.WEIR_IT_TRACE
-  let restore = () => {}
-  ctx.on('dispose', () => restore())
-  ctx.tools.register({
-    name: 'qa_editlock_negotiation',
-    description: 'QA only: exercise real try_steal with one controlled Host delivery injection and its full timeout.',
-    parameters: { type: 'object', properties: {}, required: [] },
-    output: { schema: { type: 'object' }, render: (_args, result) => [{ type: 'text', text: result.message }] },
-    timeoutMs: 150000,
-    async execute(_args, exec) {
-      const holder = exec.agent
-      const before = JSON.parse(readFileSync(snapshotFile, 'utf8')).payload.state
-      const bytesBefore = readFileSync(file, 'utf8')
-      const reservationBefore = existsSync(reservation)
-      const descriptors = new Map(['inject', 'followup'].map(method => [method, Object.getOwnPropertyDescriptor(holder, method)]))
-      const originals = new Map(['inject', 'followup'].map(method => [method, holder[method]]))
-      let attempts = 0, triggerCount = 0, method = null, busyStatus = null, expiryNotice = null, replyDelivered = false
-      let restored = false
-      restore = () => {
-        if (restored) return
-        for (const [key, descriptor] of descriptors) {
-          if (descriptor) Object.defineProperty(holder, key, descriptor)
-          else delete holder[key]
-        }
-        restored = holder.inject === originals.get('inject') && holder.followup === originals.get('followup')
-      }
-      const onInbox = payload => {
-        if (payload?.agent?.id === requester?.agent?.id) {
-          const text = JSON.stringify(payload.message)
-          if (text.includes('expired without a holder reply')) expiryNotice = text
-        }
-        if (payload?.agent === holder && JSON.stringify(payload.message).includes('Call edit_lock_reply')) replyDelivered = true
-      }
-      let requester
-      const offInbox = ctx.on('agent/inbox/inserted', onInbox)
-      try {
-        for (const key of ['inject', 'followup']) {
-          Object.defineProperty(holder, key, { configurable: true, writable: true, value: function (message, ...rest) {
-            const text = JSON.stringify(message)
-            if (text.includes('Edit Lock: session ') && text.includes('requests ownership of ') && text.includes('Call edit_lock_reply') && text.includes(file)) {
-              attempts++
-              method = key
-              busyStatus = holder.status
-              if (process.env.WEIR_IT_DELIVERY_FAULT !== 'off' && attempts === 1) {
-                triggerCount++
-                throw new Error('QA_CONTROLLED_HOST_DELIVERY_INJECTION')
-              }
-            }
-            return originals.get(key).call(this, message, ...rest)
-          } })
-        }
-        requester = await ctx.agents.create({ sessionId: randomUUID(), meta: { cwd: holder.session.header.cwd } })
-        const started = Date.now()
-        const outcome = await ctx.tools.execute({ name: 'edit_lock_try_steal', callId: randomUUID(), arguments: { file_path: file }, agent: requester.agent, signal: new AbortController().signal })
-        const pending = JSON.parse(readFileSync(snapshotFile, 'utf8')).payload.state
-        const bytesPending = readFileSync(file, 'utf8')
-        const reservationPending = existsSync(reservation)
-        // The production timer is 120_000 ms; this independent referenced wait
-        // merely keeps the headless Host alive until its real expiry notice lands.
-        await new Promise(resolve => setTimeout(resolve, 123000))
-        const after = JSON.parse(readFileSync(snapshotFile, 'utf8')).payload.state
-        const report = { kind: 'qa-editlock-negotiation', requester: requester.agent.id,
-          requestId: outcome.value?.requestId ?? null, toolError: outcome.isError ? outcome.error : null,
-          holder: outcome.value?.holder ?? null, holderStatus: outcome.value?.holderStatus ?? null,
-          attempts, triggerCount, method, busyStatus, expiryNotice, replyDelivered,
-          elapsedMs: Date.now() - started, before, pending, after, bytesBefore, bytesPending,
-          bytesAfter: readFileSync(file, 'utf8'), reservationBefore, reservationPending,
-          reservationAfter: existsSync(reservation), holderStillLive: ctx.agents.get(holder.id) === holder }
-        restore()
-        report.restored = restored
-        appendFileSync(trace, JSON.stringify(report) + '\n')
-        return { message: 'QA_NEGOTIATION_FINISHED' }
-      } finally {
-        restore()
-        offInbox()
-        if (requester) await requester.dispose()
-      }
-    },
-  })
-}
-`
 // ---------- spawn skeleton ----------
 
 /** Boot one headless run of the CLI; resolves with { code, stdout, stderr }. */
@@ -260,6 +185,9 @@ function scenarioEnv(scenarioId, trace, extra = {}) {
     WEIR_IT_SCENARIO: scenarioId,
     WEIR_IT_TRACE: trace,
     WEIR_IT_FIXTURE: join(WS, 'fixture.txt'),
+    // Run-private lease endpoint (both halves read it): no scenario may ever
+    // arbitrate against the machine-level socket in os.tmpdir().
+    WEIR_EDITLOCKD_SOCKET: LEASE_SOCKET,
     ...extra,
   }
 }
@@ -275,11 +203,9 @@ function runScenario(scenario) {
   }
   const trace = join(RUN_ROOT, `trace-${scenario.id}.jsonl`)
   const hostControl = scenario.env?.WEIR_IT_SKILL_COMPOSITION === 'HOST'
-  const negotiation = scenario.id === 'editlock-negotiation'
-  if (negotiation) writeFileSync(join(RUN_ROOT, 'editlock-negotiation-fault.mjs'), NEGOTIATION_FIXTURE)
   writeFileSync(join(PROFILE, 'cordis.patch.yml'), hostControl
     ? `- id: skill-filesystem\n  disabled: false\n  config:\n    customSkillDirs:\n      - ${JSON.stringify(join(WS, 'skill-roots'))}\n- id: tool-skill\n  disabled: false\n- id: weir-it-tool-skill\n  disabled: true\n`
-    : negotiation ? JSON.stringify([{ insert: [{ id: 'weir-it-controlled-host-delivery-injection', name: join(RUN_ROOT, 'editlock-negotiation-fault.mjs') }] }]) + '\n' : '[]\n')
+    : '[]\n')
   return spawnHeadless(['weir-it', scenario.prompt], scenarioEnv(scenario.id, trace, scenario.env)).then((outcome) => ({
     scenario: scenario.id,
     trace,
@@ -376,7 +302,7 @@ function recordRun(run) {
     // contender writer-held failure (task 5.5).
     for (const file of run.scenario === 'capability-remote-dual-preset'
       ? ['capability-dual-preset.json']
-      : ['blackboard-orphan-owner.json', 'blackboard-orphan-observed.json', 'fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'cold-session-seed.json', 'cold-session-open.json', 'cold-session-held-error.txt', 'lifecycle-report.json', 'lifecycle-catalog.json', 'mcp-gateway-report.json', 'capability-remote-log.json', 'mcp-calls.jsonl', 'mcp-server-log.jsonl', 'preset-defaults-report.json', 'preset-boot2-outcome.json', 'auto-resume-target.txt', 'auto-resume-target-off.txt', 'docs/spikes.md', 'editlock-preset-switch.json', 'preset-switch-1.txt', 'preset-switch-2.txt', 'preset-switch-3.txt', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
+      : ['blackboard-orphan-owner.json', 'blackboard-orphan-observed.json', 'fixture.txt', 'probe.ts', 'probe-other.ts', 'locked.txt', 'capstore-host.json', 'capstore-realm.json', 'apply-transaction.json', 'cold-session-seed.json', 'cold-session-open.json', 'cold-session-held-error.txt', 'lifecycle-report.json', 'lifecycle-catalog.json', 'mcp-gateway-report.json', 'capability-remote-log.json', 'mcp-calls.jsonl', 'mcp-server-log.jsonl', 'preset-defaults-report.json', 'preset-boot2-outcome.json', 'docs/spikes.md', ...['off', 'leak', 'host', 'office', 'migration'].map(mode => `skill-composition-${mode}.json`)]) {
       const source = join(WS, file)
       if (existsSync(source)) {
         // The blackboard-promotion scenario lands a nested durable doc.
@@ -400,14 +326,7 @@ function recordRun(run) {
           ? [[join('.weir', 'worktrees', 'lanes.json'), join('.weir', 'worktrees', 'lanes.json')]]
         : run.scenario === 'zombie-lane' || run.scenario === 'lane-resumable'
           ? [[join('.weir', 'worktrees', 'lanes.json'), join('.weir', 'worktrees', 'lanes.json')]]
-        : run.scenario.startsWith('editlock-stop-')
-          ? (() => {
-            const boundary = run.scenario.slice('editlock-stop-'.length)
-            return [join('.weir', `edit-lock-${boundary}`, 'snapshot.json'), join(`stop-${boundary}`, 'stop-target.txt'), `unrelated-${boundary}.txt`].map(path => [path, path])
-          })()
-          : run.scenario === 'editlock-lsp-rename'
-            ? ['probe.ts', 'probe-other.ts'].map(name => [join(run.scenario, name), join(run.scenario, name)])
-            : []
+          : []
     for (const [relative, stored] of extras) {
       const source = join(WS, relative)
       if (!existsSync(source)) continue

@@ -1,50 +1,49 @@
-// Scenario: editlock-lsp-rename — REAL multi-file lsp_rename turns with Edit
-// Lock enabled (WEIR_IT_EDIT_LOCK=1) in its own disposable management domain
-// <ws>/editlock-lsp-rename, driven over eight sequential headless boots against
-// the protocol-fixture LSP server (same mock-lsp-server.js used by lsp: a real
-// stdio JSON-RPC server, not a simulated rename adapter — the rename
-// path under test is the production client → server → WorkspaceEdit →
-// edit-lock publishBatch → host fs writeText chain).
+// Scenario: editlock-lsp-rename — REAL multi-file lsp_rename turns with the
+// file-lease row enabled (WEIR_IT_EDIT_LOCK=1) in its own disposable workspace
+// <ws>/editlock-lsp-rename, driven over five sequential headless boots against
+// the protocol-fixture LSP server (the same mock-lsp-server.js used by lsp: a
+// real stdio JSON-RPC server, so the path under test is the production
+// client → server → WorkspaceEdit → lease batch claim → host fs writeText chain).
 //
-//   freeze     Session A acquires probe-other.ts and keeps it (bounded hold),
-//              so the lock survives process exit as user-interrupted.
-//   conflict   Session B's cross-file rename hits A's retained lock: the whole
-//              batch is refused atomically — zero writes, zero new locks.
-//   thaw       Session A is adopted (--session-id); the message-driven
-//              auto-resume confirms the retained lock, then release frees it.
+//   conflict   A lease held by ANOTHER PROCESS (this driver opens its own
+//              broker connection and retains probe-other.ts) makes the whole
+//              batch refuse before any write: zero bytes, zero claims. This
+//              replaces the old retained-lock freeze/thaw boots: ownership no
+//              longer survives a process exit (spec "Ownership never survives a
+//              restart"), so a cross-process holder is the only honest way to
+//              produce a foreign claim.
 //   missing    WorkspaceEdit names only an absent target; preflight refuses.
 //   mixed      Valid existing targets precede an absent target; the entire
-//              batch still refuses without any publication or new ownership.
-//   apply      Session C's rename fixtureSymbol → renamedSymbol succeeds: both
-//              targets published through one batch, temporary locks released.
-//   duplicate  Session E's rename renamedSymbol → staleProbe carries the mock
-//              server's same-file alias entry; under Edit Lock the '/./' alias
-//              normalizes to the same canonical resource, so the batch is
-//              refused BEFORE any write ('duplicate canonical rename target')
-//              — the lock-off mid-write FS_STALE_VERSION hazard (lsp scenario)
-//              becomes a pre-write whole-batch refusal.
-//   midbatch   Session D's rename renamedSymbol → midBatch is aborted by the
-//              auto-resume probe (armed purely via env, wrapping the real
-//              ctx.fs.writeText) the moment the FIRST file's write lands:
-//              file one stays published (no rollback), file two is never
-//              dispatched, and the failed batch retains both temporary locks.
+//              batch still refuses without any publication.
+//   apply      The rename fixtureSymbol → renamedSymbol succeeds: both targets
+//              published through one batch claim.
+//   midbatch   The turn is aborted (user stop) the moment the FIRST file's
+//              write lands: file one stays published (no rollback), file two is
+//              never dispatched, and the failure report is honest about which
+//              list each target belongs to.
 //
 // Evidence channels: the mock-LLM trace caps tool text at 300 chars, so the
 // full failure reports are taken from each boot's `--json` stdout stream
-// (tool_call/tool_result pairs), per-boot fixture bytes are captured by the
-// driver between boots, and lock/operation state is read from the durable
-// authority snapshot after every boot.
+// (tool_call/tool_result pairs) and per-boot fixture bytes are captured by the
+// driver between boots. The durable authority snapshot is gone with the
+// mechanism — there is nothing to read after a boot.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { IT_ROOT, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 import { parseJsonlLines } from '../jsonl.js'
+import { createLeaseClient } from '../../../weir-harness/src/file-lease/client.js'
+import { defaultLeaseEndpoint } from '../../../weir-harness/src/file-lease/singleton.js'
 
 const id = 'editlock-lsp-rename'
-const prompt = `${id}-freeze`
+const prompt = `${id}-conflict`
 
 const WS = join(IT_ROOT, 'ws', id)
 const PROBE_TS = join(WS, 'probe.ts')
 const PROBE_OTHER = join(WS, 'probe-other.ts')
+
+// The foreign holder's identity: a different lineage (the arbiter only compares
+// ids), a label for the refusal text, and a session that is never live here.
+const FOREIGN = Object.freeze({ id: 'foreign-lineage-lsp-rename', session: 'foreign-session-lsp-rename', label: 'foreign harness' })
 
 // resourceId assertions compare basenames, never separators: the authority
 // stores platform-native absolute paths (POSIX '/' vs Windows '\\'), so the
@@ -58,13 +57,15 @@ export function baseName(resourceId) {
   return parts.length ? parts[parts.length - 1] : null
 }
 
-const BOOTS = ['freeze', 'conflict', 'thaw', 'missing', 'mixed', 'apply', 'duplicate', 'midbatch']
+const BOOTS = ['conflict', 'missing', 'mixed', 'apply', 'midbatch']
 
 const ORIGINAL_TS = 'export const fixtureSymbol = 1\n'
 const ORIGINAL_OTHER = 'import { fixtureSymbol } from "./probe"\r\nexport const useIt = fixtureSymbol + 1\r\n'
 const RENAMED_TS = 'export const renamedSymbol = 1\n'
 const RENAMED_OTHER = 'import { renamedSymbol } from "./probe"\r\nexport const useIt = renamedSymbol + 1\r\n'
 const MIDBATCH_TS = 'export const midBatch = 1\n'
+
+const env = { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_LSP_RENAME: '1' }
 
 /** The shared lsp_on → symbols → rename flow every fresh-session boot runs. */
 function lspRenameFlow(history, toolResults, newName, doneMarker, doneText) {
@@ -84,18 +85,8 @@ function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
   const toolResults = (options.messages ?? []).filter((message) => message.role === 'tool').length
 
-  // thaw reuses session A, so its transcript also carries the freeze markers —
-  // check it first. Every other boot is a fresh session with only its marker.
-  if (history.includes(`${id}-thaw`)) {
-    // freeze left two tool results (acquire + hold) in this session's history.
-    if (!history.includes('Released')) {
-      if (toolResults >= 3) return textChunks('thaw outcome unexpected')
-      return toolCallChunks('edit_lock_release', { file_path: PROBE_OTHER })
-    }
-    return textChunks('thawed')
-  }
   if (history.includes(`${id}-conflict`)) {
-    return lspRenameFlow(history, toolResults, 'conflictProbe', 'rename stopped', 'conflict refused')
+    return lspRenameFlow(history, toolResults, 'conflictProbe', 'refused before any write', 'conflict refused')
   }
   if (history.includes(`${id}-missing`)) {
     return lspRenameFlow(history, toolResults, 'missingProbe', 'no regular file', 'missing refused')
@@ -106,21 +97,8 @@ function decide(options, obs) {
   if (history.includes(`${id}-apply`)) {
     return lspRenameFlow(history, toolResults, 'renamedSymbol', 'across 2 file(s)', 'applied')
   }
-  if (history.includes(`${id}-duplicate`)) {
-    return lspRenameFlow(history, toolResults, 'staleProbe', 'duplicate canonical rename target', 'duplicate refused')
-  }
   if (history.includes(`${id}-midbatch`)) {
-    return lspRenameFlow(history, toolResults, 'midBatch', 'rename stopped', 'midbatch settled')
-  }
-  if (history.includes(`${id}-freeze`)) {
-    if (!history.includes('Acquired')) return toolCallChunks('edit_lock_acquire', { file_path: PROBE_OTHER })
-    // The turn-end settling notice (turn completed while holding): answer with
-    // a bounded reservation so the lock survives process exit; a plain text
-    // answer would burn the notice budget and dispose would RELEASE the lock.
-    if (history.includes('the turn ended while this session still held') && !history.includes('Keeping')) {
-      return toolCallChunks('edit_lock_hold', { minutes: 30 })
-    }
-    return textChunks('freeze done')
+    return lspRenameFlow(history, toolResults, 'midBatch', 'write failed for', 'midbatch settled')
   }
   return textChunks('unhandled editlock-lsp-rename turn')
 }
@@ -129,25 +107,6 @@ function observe(obs) {
   return {
     editLockToolsSeen: obs.toolNames.includes('edit_lock_acquire'),
     lspRenameSeen: obs.toolNames.includes('lsp_rename'),
-  }
-}
-
-/** Durable authority image (<ws>/editlock-lsp-rename/.weir/edit-lock/snapshot.json), reduced. */
-function snapshotState(root) {
-  const path = join(root, 'ws', id, '.weir', 'edit-lock', 'snapshot.json')
-  if (!existsSync(path)) return null
-  const state = JSON.parse(readFileSync(path, 'utf8'))?.payload?.state ?? null
-  return state && {
-    sessions: state.sessions?.map((s) => ({ sessionId: s.sessionId, interrupted: s.interrupted, epoch: s.executionEpoch })),
-    locks: state.locks?.map((lock) => ({ resourceId: lock.resourceId, owner: lock.owner, status: lock.status, generation: lock.generation })),
-    generations: state.generations,
-    issuedRequests: state.issuedRequests,
-    operations: state.operations?.map((o) => ({
-      sessionId: o.sessionId,
-      operationId: o.operationId,
-      phase: o.phase,
-      resourceId: o.binding?.target?.resourceId ?? null,
-    })),
   }
 }
 
@@ -161,6 +120,34 @@ function toolStream(stdout) {
   const calls = records.filter((entry) => entry?.type === 'tool_call')
   const results = records.filter((entry) => entry?.type === 'tool_result')
   return calls.map((call, index) => ({ tool: call.tool, status: results[index]?.status ?? null, result: results[index]?.result ?? null }))
+}
+
+/**
+ * Hold one path as a foreign owner for the duration of `fn`, from THIS process
+ * (a separate broker connection). The client dials, spawning the run's daemon
+ * on first use, and never touches the machine-level socket because the driver
+ * pinned WEIR_EDITLOCKD_SOCKET to the run root.
+ */
+async function withForeignHolder(paths, fn) {
+  const client = createLeaseClient({ socketPath: process.env.WEIR_EDITLOCKD_SOCKET ?? defaultLeaseEndpoint() })
+  try {
+    await client.acquire(FOREIGN, paths, WS)
+    // A 30-minute retention keeps the conflict alive for the whole boot even if
+    // the boot is much slower than the 120s turn lease.
+    await client.hold(paths, 30, FOREIGN)
+    return await fn()
+  } finally {
+    try {
+      await client.release(FOREIGN, paths)
+    } catch {
+      // Connection-close releases everything anyway.
+    }
+    try {
+      client.close()
+    } catch {
+      // Already gone.
+    }
+  }
 }
 
 async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
@@ -180,135 +167,79 @@ async function run({ IT_ROOT: root, spawnHeadless, scenarioEnv }) {
       files: { probeTs: readWs('probe.ts'), probeOther: readWs('probe-other.ts'), absent: readWs('probe-absent.ts') },
       bytes: { probeTs: readBytes('probe.ts'), probeOther: readBytes('probe-other.ts'), absent: readBytes('probe-absent.ts') },
     }) + '\n')
-    appendFileSync(trace, JSON.stringify({ kind: 'editlock-lsp-rename-snapshot', boot: label, state: snapshotState(root) }) + '\n')
     boots.push({ label, ...outcome })
     return outcome
   }
 
-  const freeze = await boot('freeze', ['weir-it', '--json', `${id}-freeze`])
-  const sessionA = sessionIdFrom(freeze.stdout)
-  await boot('conflict', ['weir-it', '--json', `${id}-conflict`])
-  if (sessionA) {
-    await boot('thaw', ['weir-it', '--json', '--session-id', sessionA, `${id}-thaw`])
-  } else {
-    appendFileSync(trace, JSON.stringify({ kind: 'editlock-lsp-rename-boot', boot: 'thaw', code: null, sessionId: null, skipped: 'no session id from freeze' }) + '\n')
-  }
+  // A foreign claim on probe-other.ts refuses the whole batch before any byte.
+  await withForeignHolder([PROBE_OTHER], () => boot('conflict', ['weir-it', '--json', `${id}-conflict`]))
   await boot('missing', ['weir-it', '--json', `${id}-missing`])
   await boot('mixed', ['weir-it', '--json', `${id}-mixed`])
   await boot('apply', ['weir-it', '--json', `${id}-apply`])
-  await boot('duplicate', ['weir-it', '--json', `${id}-duplicate`])
-  // The shipped auto-resume probe doubles as a deterministic mid-batch abort:
-  // armed only here, it cancels the turn the moment probe.ts's write lands.
+  // The write-boundary abort probe ends the turn the moment probe.ts's managed
+  // write lands, so probe-other.ts is never dispatched.
   const midbatch = await boot('midbatch', ['weir-it', '--json', `${id}-midbatch`], {
-    WEIR_IT_AUTO_RESUME_PROBE: '1',
-    WEIR_IT_AUTO_RESUME_TARGET: `${id}/probe.ts`,
+    WEIR_IT_WRITE_ABORT_PROBE: '1',
+    WEIR_IT_WRITE_ABORT_TARGET: `${id}/probe.ts`,
   })
   return {
     scenario: id, trace, code: midbatch.code,
     stdout: boots.map((b) => b.stdout).join('\n'),
     stderr: boots.map((b) => b.stderr).join('\n'),
-    sessionId: sessionA,
+    sessionId: sessionIdFrom(boots[0].stdout),
   }
 }
-
-const env = { WEIR_IT_EDIT_LOCK: '1', WEIR_IT_LSP_RENAME: '1' }
 
 function assert(run) {
   const records = run.records
   const bootRec = (label) => records.find((r) => r.kind === 'editlock-lsp-rename-boot' && r.boot === label)
   const detail = (label) => records.find((r) => r.kind === 'editlock-lsp-rename-detail' && r.boot === label)
-  const snap = (label) => records.find((r) => r.kind === 'editlock-lsp-rename-snapshot' && r.boot === label)?.state ?? null
-  const bootIdx = BOOTS.map((label) => records.findIndex((r) => r.kind === 'editlock-lsp-rename-boot' && r.boot === label))
-  const slice = (label) => {
-    const i = BOOTS.indexOf(label)
-    const from = i === 0 ? 0 : bootIdx[i - 1] + 1
-    const to = bootIdx[i] === -1 ? records.length : bootIdx[i] + 1
-    return records.slice(Math.max(from, 0), to)
-  }
-  const sliceText = (label) => slice(label)
-    .filter((r) => Array.isArray(r.emitted))
-    .map((r) => `${r.lastUser ?? ''}\n${r.lastTool ?? ''}`)
-    .join('\n')
   const readWs = (name) => (existsSync(join(run.ws, id, name)) ? readFileSync(join(run.ws, id, name), 'utf8') : '<missing>')
   const renameResult = (label) => detail(label)?.tools?.find((tool) => tool.tool === 'lsp_rename')?.result ?? ''
   const filesAfter = (label) => detail(label)?.files ?? {}
   const bytesAfter = (label) => detail(label)?.bytes ?? {}
-  const locksFor = (state, owner) => (state?.locks ?? []).filter((lock) => lock.owner === owner)
-  const generationOf = (state, name) => state?.generations?.find((g) => baseName(g.resourceId) === baseName(name))?.generation ?? null
-
-  const sessionA = bootRec('freeze')?.sessionId ?? null
-  const sessionD = bootRec('midbatch')?.sessionId ?? null
-
-  // ---- freeze: genuine retained foreign lock -------------------------------
-  run.check('freeze: session id captured', typeof sessionA === 'string' && sessionA.length > 0, JSON.stringify(bootRec('freeze')))
-  run.check('freeze: acquire and bounded hold went through the real owner tools', sliceText('freeze').includes('Acquired') && sliceText('freeze').includes('Keeping 1 file'), sliceText('freeze').slice(-600))
-  run.check('freeze: clean exit', bootRec('freeze')?.code === 0, JSON.stringify(bootRec('freeze')))
-  const freezeLock = locksFor(snap('freeze'), sessionA)
-  run.check('freeze: probe-other.ts lock retained after process exit', freezeLock.length === 1 && baseName(freezeLock[0].resourceId) === 'probe-other.ts' && freezeLock[0].status === 'user-interrupted', JSON.stringify(snap('freeze')?.locks))
 
   // ---- conflict: whole batch refused, zero writes ---------------------------
   const conflictResult = renameResult('conflict')
-  run.check('conflict: lsp_rename reached the lock-guarded batch and was refused', conflictResult.includes('rename stopped') && conflictResult.includes('resource owned'), conflictResult)
+  run.check('conflict: a foreign lease refused the lsp_rename batch', conflictResult.includes('refused before any write') && conflictResult.includes('held'), conflictResult)
   run.check('conflict: honest report — nothing written, both targets listed not-written, nothing uncertain, no rollback claimed',
     conflictResult.includes('filesAlreadyWritten: []') && conflictResult.includes('probe.ts') && conflictResult.includes('probe-other.ts') &&
-    conflictResult.includes('filesUncertain: []') && conflictResult.includes('no rollback'), conflictResult)
+    conflictResult.includes('filesNotWritten: [') && conflictResult.includes('filesUncertain: []') && conflictResult.includes('no rollback'), conflictResult)
   run.check('conflict: both fixtures byte-identical after the refusal (zero writes)', filesAfter('conflict').probeTs === ORIGINAL_TS && filesAfter('conflict').probeOther === ORIGINAL_OTHER, JSON.stringify(filesAfter('conflict')))
-  const conflictLocks = snap('conflict')?.locks ?? []
-  run.check('conflict: refusal acquired nothing (still exactly A\u2019s one lock)', conflictLocks.length === 1 && conflictLocks[0].owner === sessionA, JSON.stringify(conflictLocks))
   run.check('conflict: clean exit', bootRec('conflict')?.code === 0, JSON.stringify(bootRec('conflict')))
 
-  // ---- thaw: genuine resume of the interrupted owner, then release ----------
-  run.check('thaw: boot ran with the frozen session id', bootRec('thaw')?.sessionId === sessionA && bootRec('thaw')?.code === 0, JSON.stringify(bootRec('thaw')))
-  run.check('thaw: retained lock released through the owner tool', sliceText('thaw').includes('Released'), sliceText('thaw').slice(-600))
-  run.check('thaw: message-driven auto-resume minted a server requestId', snap('thaw')?.issuedRequests?.some((r) => r.sessionId === sessionA && typeof r.requestId === 'string' && r.requestId.startsWith('auto:user-message:')) === true, JSON.stringify(snap('thaw')?.issuedRequests))
-  run.check('thaw: authority holds no locks afterwards', (snap('thaw')?.locks ?? []).length === 0, JSON.stringify(snap('thaw')?.locks))
-
-  // ---- missing target: server supplies a nonexistent WorkspaceEdit target ----
+  // ---- missing / mixed: preflight refuses the WHOLE batch, zero writes ------
   for (const label of ['missing', 'mixed']) {
     const result = renameResult(label)
     run.check(`${label}: missing target rejected by lsp_rename preflight`, result.includes('no regular file') && result.includes('probe-absent.ts') && result.includes('preflight failed, no files were written'), result)
     run.check(`${label}: existing fixture bytes unchanged and absent target not created`, bytesAfter(label).probeTs === Buffer.from(ORIGINAL_TS).toString('base64') && bytesAfter(label).probeOther === Buffer.from(ORIGINAL_OTHER).toString('base64') && bytesAfter(label).absent === null, JSON.stringify(bytesAfter(label)))
-    run.check(`${label}: no locks acquired or durable operations published`, (snap(label)?.locks ?? []).length === 0 && (snap(label)?.operations ?? []).filter(o => o.sessionId === bootRec(label)?.sessionId).length === 0, JSON.stringify(snap(label)))
     run.check(`${label}: rename was invoked and turn settled cleanly`, detail(label)?.tools?.some(t => t.tool === 'lsp_rename') && bootRec(label)?.code === 0, JSON.stringify(bootRec(label)))
   }
-  // ---- apply: atomic acquire + per-file publish, temp locks released --------
+
+  // ---- apply: one batch claim, per-file publish -----------------------------
   const applyResult = renameResult('apply')
   run.check('apply: cross-file rename summary rendered', applyResult.includes('3 edit(s) across 2 file(s)'), applyResult.slice(-400))
   run.check('apply: both fixtures rewritten on disk', filesAfter('apply').probeTs === RENAMED_TS && filesAfter('apply').probeOther === RENAMED_OTHER, JSON.stringify(filesAfter('apply')))
   run.check('apply: CRLF fixture kept its line-ending style', (filesAfter('apply').probeOther ?? '').includes('\r\n') && (filesAfter('apply').probeOther ?? '').split('\r\n').every((line) => !line.includes('\n')), JSON.stringify(filesAfter('apply').probeOther))
-  const applyOps = (snap('apply')?.operations ?? []).filter((o) => o.sessionId === bootRec('apply')?.sessionId)
-  run.check('apply: two durable operations, one per target, both updated', applyOps.length === 2 && applyOps.every((o) => o.phase === 'updated') && applyOps.some((o) => baseName(o.resourceId) === 'probe.ts') && applyOps.some((o) => baseName(o.resourceId) === 'probe-other.ts'), JSON.stringify(applyOps))
-  run.check('apply: batch operation ids carry the lsp_rename marker', applyOps.every((o) => typeof o.operationId === 'string' && o.operationId.startsWith('["lsp_rename"')), JSON.stringify(applyOps))
-  run.check('apply: temporary batch locks released on success', (snap('apply')?.locks ?? []).length === 0, JSON.stringify(snap('apply')?.locks))
-  run.check('apply: lock generations advanced exactly once per target', generationOf(snap('apply'), '/probe.ts') === 1 && generationOf(snap('apply'), '/probe-other.ts') === 2, JSON.stringify(snap('apply')?.generations))
   run.check('apply: clean exit', bootRec('apply')?.code === 0, JSON.stringify(bootRec('apply')))
 
-  // ---- duplicate: same-file alias entry refused before any write ------------
-  const duplicateResult = renameResult('duplicate')
-  run.check('duplicate: alias entry refused as duplicate canonical target', duplicateResult.includes('duplicate canonical rename target'), duplicateResult)
-  run.check('duplicate: honest report — nothing written, nothing uncertain, no rollback claimed', duplicateResult.includes('filesAlreadyWritten: []') && duplicateResult.includes('filesUncertain: []') && duplicateResult.includes('no rollback'), duplicateResult)
-  run.check('duplicate: zero writes (renamedSymbol intact, no staleProbe bytes)', filesAfter('duplicate').probeTs === RENAMED_TS && filesAfter('duplicate').probeOther === RENAMED_OTHER, JSON.stringify(filesAfter('duplicate')))
-  run.check('duplicate: refusal acquired no locks', (snap('duplicate')?.locks ?? []).length === 0, JSON.stringify(snap('duplicate')?.locks))
-  run.check('duplicate: clean exit', bootRec('duplicate')?.code === 0, JSON.stringify(bootRec('duplicate')))
-
-  // ---- midbatch: abort after file one's write — partial, honest, retained ---
+  // ---- midbatch: abort after file one's write — partial, honest, no rollback -
   const midResult = renameResult('midbatch')
-  run.check('midbatch: probe aborted the turn after the first write', records.some((r) => r.kind === 'auto-resume-stop' && r.session === sessionD) && records.some((r) => r.kind === 'auto-resume-stopped' && r.session === sessionD), JSON.stringify(records.filter((r) => r.kind?.startsWith('auto-resume'))))
+  run.check('midbatch: probe aborted the turn after the first write', records.some((r) => r.kind === 'write-abort-stop') && records.some((r) => r.kind === 'write-abort-stopped'), JSON.stringify(records.filter((r) => r.kind?.startsWith('write-abort'))))
   run.check('midbatch: aborted turn exits with code 1', bootRec('midbatch')?.code === 1, JSON.stringify(bootRec('midbatch')))
-  run.check('midbatch: honest report — file one written, file two not, nothing uncertain, no rollback claimed',
+  // The abort happens after file one landed and before file two was dispatched,
+  // but an aborted turn makes the second write unprovable: it must appear in
+  // exactly one of filesNotWritten / filesUncertain — never in both, never in
+  // neither — and the report must never claim a rollback.
+  const classified = (list) => list.includes('probe-other.ts')
+  const notWritten = classified(midResult.split('filesNotWritten: ')[1]?.split(';')[0] ?? '')
+  const uncertain = classified(midResult.split('filesUncertain: ')[1]?.split(';')[0] ?? '')
+  run.check('midbatch: honest report — file one written, file two classified once, no rollback claimed',
     midResult.includes('filesAlreadyWritten: [') && midResult.includes('probe.ts') &&
-    midResult.includes('filesNotWritten: [') && midResult.includes('probe-other.ts') &&
-    midResult.includes('filesUncertain: []') && midResult.includes('no rollback'), midResult || '<rename result absent from aborted-turn stream>')
+    notWritten !== uncertain &&
+    midResult.includes('no rollback'), midResult || '<rename result absent from aborted-turn stream>')
   run.check('midbatch: file one stayed published on disk (no rollback)', readWs('probe.ts') === MIDBATCH_TS, JSON.stringify(readWs('probe.ts')))
   run.check('midbatch: file two never written', readWs('probe-other.ts') === RENAMED_OTHER && !readWs('probe-other.ts').includes('midBatch'), JSON.stringify(readWs('probe-other.ts')))
-  const midOps = (snap('midbatch')?.operations ?? []).filter((o) => o.sessionId === sessionD)
-  const midWritten = midOps.filter((o) => o.phase === 'updated')
-  const midOther = midOps.filter((o) => baseName(o.resourceId) === 'probe-other.ts')
-  run.check('midbatch: durable history records exactly the written file as updated', midWritten.length === 1 && baseName(midWritten[0].resourceId) === 'probe.ts', JSON.stringify(midOps))
-  run.check('midbatch: file two has no updated/unknown operation (never dispatched)', midOther.every((o) => o.phase === 'not-published'), JSON.stringify(midOther))
-  const midLocks = locksFor(snap('midbatch'), sessionD)
-  run.check('midbatch: failed batch retained both temporary locks', midLocks.length === 2 && midLocks.every((lock) => lock.status === 'user-interrupted'), JSON.stringify(snap('midbatch')?.locks))
-  run.check('midbatch: lock generations match the full scenario history', generationOf(snap('midbatch'), '/probe.ts') === 2 && generationOf(snap('midbatch'), '/probe-other.ts') === 3, JSON.stringify(snap('midbatch')?.generations))
 }
 
 export default { id, prompt, env, decide, observe, run, assert }
