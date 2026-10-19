@@ -71,11 +71,14 @@
     "src/lease-broker/entry.js",
     "src/lease-broker/node-contracts.d.ts",
     // File-lease CLIENT: the request/replay/degrade state machine, the daemon
-    // spawn helper, the lineage rule and the barrel, plus the client-only Node
-    // contracts they compile against (`node:url`, `spawn`, `execPath`).
+    // spawn helper, the lineage rule, the model-facing tool surface, the plugin
+    // row itself and the barrel, plus the client-only Node contracts they
+    // compile against (`node:url`, `spawn`, `execPath`).
     "src/file-lease/client.js",
     "src/file-lease/spawn.js",
     "src/file-lease/lineage.js",
+    "src/file-lease/tools.js",
+    "src/file-lease/plugin.js",
     "src/file-lease/index.js",
     "src/file-lease/node-contracts.d.ts",
   ]
