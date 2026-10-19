@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **意图门新增 `writing` 意图：要写文档时自动注入「按成品交付」的写作纪律**：提示词里出现写作动词 + 交付物名词（中文「帮我写一份部署说明」「再写一篇 FAQ 文档」，英文 `write a design doc`、`write a deployment guide`、`update the API documentation`）时，本步骤追加一段英文指令——交付物只呈现结果，思考过程、实现理由、设计推理、调试过程与下一步计划都不写进去；界面不出现「我将 / 本页面用于展示 / 这里会 / 实现了」这类解释型文案（真正的产品帮助文本与空状态文案除外）；实现思路、验证方式、限制与取舍只留在聊天回复、代码注释、PR/MR 描述、文档或计划文件；用户明确要求看设计说明、方法论、实现过程或工作记录时才写进交付物；改动不留痕——不加注释、标记或「这是为什么改的」痕迹，代码看起来本来就长这样。与既有意图不同，它**每一次**写文档请求都重新注入完整指令（不只在会话首次），长会话压缩后同样在场。只读引用文档（「读一下这份文档」）与代码块内的关键词不触发；不需要时在 intent-gate 行配置 `disabled: ['writing']` 关闭。详见 [意图门](docs/features/intent-gate.md)。
+
 ### Changed
 
 - **Windows 通知改由系统命令投递（来源显示为「Windows PowerShell」）**：此前 Windows 桌面宿主上系统通知**一条都不发、且没有任何告警**。根因是两条独立缺陷叠加：①页面腿弹不出——Electron 要求 Windows 通知必须有开始菜单快捷方式 + `AppUserModelID` + `ToastActivatorCLSID`，而 Weir 所在的宿主发布物没有声明任何应用身份（`app.asar` 全量扫描 `UserModelId` 命中 0 次），Chromium 对缺少该身份的 toast 只写一条 DLOG 就丢弃；②失败通道在 JS 侧结构性不可达——Blink 的 `Notification` 不因平台问题抛错，`error` 仅在「非安全上下文」或「权限未授予」时派发，而宿主以 `dsh-app:`（`standard + secure`）加载页面且除麦克风外一律授予权限，所以页面只能回报 `shown` / `pending`，两者都是终态，系统命令兜底永远轮不到执行。现在 Windows 不再走页面腿：新增平台谓词 `PAGE_DELIVERY_PLATFORMS`（`darwin` / `linux`）决定是否创建页面通道，`win32` 直接走 PowerShell WinRT toast——它的 AUMID 指向操作系统自己注册的「Windows PowerShell」快捷方式，因此能真正弹出。**代价**：Windows 通知来源显示为「Windows PowerShell」而非 DeepSeek Harness（带品牌名的路径需要宿主自己调用 `app.setAppUserModelId` 并在安装器里带 ToastActivatorCLSID，插件做不到，已登记为上游后续项）。页面端点（`web/pull` / `web/ack`）在 Windows 上不再注册。详见 [系统通知](docs/features/notify.md)。
@@ -16,6 +20,7 @@
 - **Windows toast 被系统开关拦下时完全无痕**：`ToastNotifier.Show()` 没有同步失败返回，异步的 `ToastNotification.Failed` 事件又无法被「发完即退出」的进程等待，所以脚本在弹出前先读 `ToastNotifier.Setting`——只要不是 `Enabled`（被用户全局、单应用、组策略或应用清单关掉），就把 `Windows toast notifications are unavailable: <Setting>` 写入 stderr 并以退出码 3 结束，宿主据此走既有的「每种失败原因只告警一次」路径，告警里带具体原因。
 - **页面回报「已发出但未确认」时不留痕迹**：页面回报 `pending`（把通知交给了浏览器但 2.5 秒内没得到确认）仍按「至多弹一次」视为终态、不兜底，但现在会经宿主日志告警一次（同一原因只报一次）——平台静默丢弃通知时这条日志是唯一线索，不再隐形。
 - **Windows 上 LSP 服务器目录回退到 macOS 安装提示**：语言服务器目录此前只有「一份配方 + 安装命令平台表」，内置目录没有任何 `win32` 行——Windows 宿主上安装规格解析为空，面板与工具错误于是回退到 `installHint`，C/C++ 族显示 `brew install llvm`、Lua 族显示 `brew install lua-language-server`；Linux 的 Lua 族同样只回退到 macOS 提示。现在平台是目录数据的**一等维度**：条目可声明 `platforms: { darwin?, linux?, win32?, default? }`，解析在注册表构建边界完成，manager／管理端点／面板只看到当前平台的命令与提示，未声明行的平台只会看到平台中立文案、绝不落到别的平台。内置目录补齐 cpp/lua 的 darwin/linux/win32 三行（Windows 走 winget：`LLVM.LLVM`、`LuaLS.lua-language-server`，带无人值守所需的 `--accept-source-agreements --accept-package-agreements`），Linux 的 Lua 明确「无平台安装器」并指向官方发布页；用户 `lspServers` 也可声明同形 `platforms` 覆盖（设置加载时校验，违规报错命名族与字段）。同时补齐 Windows 的扩展扫描目录（`%ProgramFiles%\LLVM\bin`、`%LOCALAPPDATA%\Programs\LLVM\bin`、WinGet 的 `Links` 与 `WindowsApps`）——LLVM 静默安装不写 PATH，缺了它们 winget 装完仍显示「未安装」。详见 [LSP 语义工具](docs/features/lsp-integration.md)。**验证边界**：平台行由平台参数化单测在 macOS 宿主上验证（darwin/linux/win32 三道断言），未在真实 Windows 桌面实机验收。
+- **意图条目的 `summary` 在编译时被丢弃**：「用 `summary` 覆盖语义目录描述」此前是文档化了但没接线的行为——`compileIntentTable` 只保留 `id`/`patterns`/`oncePerSession`/`injection`，`summary` 从未进入编译结果，llm 模式的语义分类目录因此把所有 `message` 型意图都描述成 `custom intent`。现在非空 `summary` 原样保留并进入分类器目录。
 
 > **实机验证边界**：本次修复依据 Electron / Chromium / Microsoft 的文档契约与发布物取证，**未在真实 Windows 桌面实机验证**。验收方法：把 `.weir/weir-notify-windows-diagnose.ps1` 拷到 Windows 上运行——第 4 节打印 PowerShell 发送方的 `ToastNotifier.Setting`（唯一的决定性一行），第 5 节发送与 Weir 完全同字节的载荷。若 `Setting` 不是 `Enabled` 或宿主以管理员权限运行，任何代码改动都不会让 toast 出现（后者是 Microsoft 明示的静默失败，两条腿同时失效）。
 
