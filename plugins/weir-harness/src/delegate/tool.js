@@ -5,7 +5,6 @@ import { parseEscalation } from './escalate.js'
 import { continuableLane, oneShotLane, spawnGuardedChild, supervisedLane } from './spawn-adapter.js'
 import { WORKTREE_CODES } from '../worktree/errors.js'
 import { contentText } from '../shared/content-text.js'
-import { settleDelegateEditLifecycle } from '../shared/delegate-edit-lifecycle.js'
 
 export const DELEGATE_TOOL_NAME = 'delegate'
 export const BATCH_LIMIT = 16
@@ -319,16 +318,9 @@ async function spawnBackground(item, args, deps, exec) {
   return { job_id: jobId, label }
 }
 
-async function settledResult(started, parent) {
-  try { return await started.result } finally {
-    // subagent/end is emit, not an awaited barrier. Explicitly join the
-    // incarnation's standard edit disposition before result/escalation/handoff.
-    await settleDelegateEditLifecycle(parent, started.id, started.agent)
-  }
-}
 /** Await one child, honoring the one-level ESCALATE contract. */
 async function withEscalation(started, item, deps, exec, binding = null) {
-  const first = await settledResult(started, exec.agent)
+  const first = await started.result
   const text = contentText(first.output)
   const escalation = parseEscalation(text)
   if (!escalation) {
@@ -345,7 +337,7 @@ async function withEscalation(started, item, deps, exec, binding = null) {
   // The escalated respawn works in the same lane under the same binding (the
   // lane's bound child stays the first child; it settles once, after this).
   const respawned = await spawnGuardedChild({ target, prompt, parent: exec.agent, signal: exec.signal, label: `${laneLabel(target.label, binding)} (escalated)`, laneGuard: laneGuardOf(binding, deps, exec) }, oneShotLane(), deps)
-  const second = await settledResult(respawned, exec.agent)
+  const second = await respawned.result
   return {
     id: respawned.id,
     status: second.stopReason,
