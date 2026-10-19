@@ -21,21 +21,9 @@ import { CONFIG_FILE, pathKey } from './lane-core.js'
 
 const SETUP_TIMEOUT_MS = 600_000
 
-/**
- * Model-facing English residue warning appended to cleanup/abandon tool
- * results (the human-facing card copy localizes its own in cards.js).
- * @param {{ operations: number, locks: number }} residue
- */
-function residueNote(residue) {
-  const parts = []
-  if (residue.operations > 0) parts.push(`${residue.operations} unresolved Edit Lock operation(s)`)
-  if (residue.locks > 0) parts.push(`${residue.locks} Edit Lock lock(s)`)
-  return `warning: the lane's session left ${parts.join(' and ')} in the management authority; locks are reclaimed by the stale-lock sweep, unresolved publications settle via crash self-heal (dead process) or the Edit Lock maintenance panel's one-click recovery`
-}
-
 /** @param {ReturnType<typeof import('./lane-core.js').createLaneCore>} core */
 export function createLaneWorkflows(core) {
-  const { deps, git, now, pid, asking, approveModeSafe, cwdOf, config, repoFor, laneOf, apply, patchLane, commitBinding, notifyOwner, residueOf, result, readConfig, logFile, refresh, reconcileNote, reconcileBinding, armWatch, disarmWatch } = core
+  const { deps, git, now, pid, asking, approveModeSafe, cwdOf, config, repoFor, laneOf, apply, patchLane, commitBinding, notifyOwner, result, readConfig, logFile, refresh, reconcileNote, reconcileBinding, armWatch, disarmWatch } = core
 
   // ─── open / setup ─────────────────────────────────────────────────────
 
@@ -263,7 +251,7 @@ export function createLaneWorkflows(core) {
         id: 'abandon',
         header: copy.abandonHeader,
         question: copy.abandonQuestion(lane.title),
-        detail: copy.abandonDisputedDetail(lane, lane.boundChild, reconciliation?.verdict ?? null, repo.mainRoot, residueOf(repo, lane)),
+        detail: copy.abandonDisputedDetail(lane, lane.boundChild, reconciliation?.verdict ?? null, repo.mainRoot),
         options: [
           { label: copy.forceReclaim, description: copy.forceReclaimDescription },
           { label: copy.cancel, description: copy.abandonDescriptions.cancel },
@@ -452,10 +440,9 @@ export function createLaneWorkflows(core) {
     }
     // Auto cleanup after the merge (design D3): auto-keep → mode worktree,
     // auto-clean → mode all. The existing cleanup() body runs unchanged —
-    // scratch sync first, never --force on an auto path, the Edit Lock residue
-    // probe feeding the summary. A blocked removal stays `landed` and is
-    // reported concisely with the typed --force retry instead of a false
-    // success (the user can clean up later).
+    // scratch sync first, never --force on an auto path. A blocked removal
+    // stays `landed` and is reported concisely with the typed --force retry
+    // instead of a false success (the user can clean up later).
     const cleanupMode = approveMode === 'auto-keep' ? 'worktree' : 'all'
     try {
       const cleaned = await cleanup(session, laneId, /** @type {'worktree' | 'all'} */ (cleanupMode), { by: 'host', auto: true, approveMode })
@@ -488,7 +475,7 @@ export function createLaneWorkflows(core) {
         id: 'cleanup',
         header: copy.cleanupHeader,
         question: copy.cleanupQuestion(lane.title),
-        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot, residueOf(repo, lane), dirtyCard ? dirty : null),
+        detail: copy.cleanupDetail(lane, lane.land?.stat ?? { files: 0, added: 0, removed: 0 }, repo.mainRoot, dirtyCard ? dirty : null),
         options: [
           { label: copy.choices.keep, description: copy.cleanupDescriptions.keep },
           { label: copy.choices.worktree, description: dirtyCard ? copy.cleanupDescriptionsDirty.worktree : copy.cleanupDescriptions.worktree },
@@ -539,9 +526,8 @@ export function createLaneWorkflows(core) {
    * Auto paths (design D3) reuse this exact body with `{ by: 'host', auto: true,
    * approveMode }`: the scratch sync, the removal (forced ONLY behind the
    * user's informed explicit choice — a disclosed card choice or a typed
-   * `--force`, never an auto/model path), the residue warning and the
-   * blocked-removal semantics are identical; only the audit payload gains the
-   * auto marker.
+   * `--force`, never an auto/model path) and the blocked-removal semantics are
+   * identical; only the audit payload gains the auto marker.
    * @param {any} session @param {string} laneId @param {'keep' | 'worktree' | 'all'} mode @param {{ by?: string, auto?: boolean, approveMode?: string, force?: boolean }} [options]
    */
   async function cleanup(session, laneId, mode, options = {}) {
@@ -557,9 +543,6 @@ export function createLaneWorkflows(core) {
       const kept = await apply(repo, laneId, { type: 'keep', by, patch: { cleanup: { mode: 'keep', at: now(), by } } })
       return result(kept, `kept ${kept.path}`)
     }
-    // Read-only residue probe BEFORE anything is removed (design D5): a
-    // warning only, never a gate, and it never mutates the authority.
-    const residue = residueOf(repo, lane)
     const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
     // `force` reaches git only from an informed explicit user choice (a
     // disclosed card choice via askCleanup, or the typed `--force`); auto and
@@ -591,7 +574,7 @@ export function createLaneWorkflows(core) {
       ? await patchLane(repo, laneId, () => ({ cleanup: record }))
       : await apply(repo, laneId, { type: 'clean', by, patch: { cleanup: record } })
     deps.audit('cleanup', { lane: laneId, mode, by, scratch, ...(force ? { forced: true } : {}), ...(options.auto === true ? { auto: true, approveMode: options.approveMode ?? null } : {}) }, repo.mainRoot, lane.ownerSession)
-    return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}${residue ? `; ${residueNote(residue)}` : ''}`)
+    return result(next, `removed ${lane.path}${branchNote}${scratch ? `; scratch copied to ${scratch}` : ''}`)
   }
 
   /**
@@ -651,7 +634,7 @@ export function createLaneWorkflows(core) {
           id: 'abandon',
           header: copy.abandonHeader,
           question: copy.abandonQuestion(lane.title),
-          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, residueOf(repo, lane), reconciliation?.settled ? { child: reconciliation.childId, forced: reconciliation.forced } : null, dirtyCard ? dirty : null),
+          detail: copy.abandonDetail(lane, unmerged, repo.mainRoot, reconciliation?.settled ? { child: reconciliation.childId, forced: reconciliation.forced } : null, dirtyCard ? dirty : null),
           options: [
             { label: copy.choices.keep, description: copy.abandonDescriptions.keep },
             { label: copy.choices.worktree, description: dirtyCard ? copy.abandonDescriptionsDirty.worktree : copy.abandonDescriptions.worktree },
@@ -678,10 +661,6 @@ export function createLaneWorkflows(core) {
     const auditExtra = { ...(auto ? { auto: true, approveMode } : {}), ...(force ? { forced: true } : {}) }
     const abandoned = await apply(repo, laneId, { type: 'abandon', by: auto ? 'host' : 'user', reason: auto ? `abandoned automatically (${approveMode} mode)` : 'abandoned by the user', audit: Object.keys(auditExtra).length > 0 ? auditExtra : undefined, patch: { cleanup: { mode, at: now(), by: auto ? 'host' : 'user' } } })
     if (mode === 'keep') return result(abandoned, `abandoned; ${abandoned.path} and ${abandoned.branch} are kept`)
-    // Read-only residue probe BEFORE anything is removed (design D5): a
-    // warning only, never a gate, and it never mutates the authority. The
-    // confirmation card already carried the warning when there was one.
-    const residue = residueOf(repo, lane)
     const scratch = existsSync(lane.path) ? syncScratch(repo, lane) : null
     if (existsSync(lane.path)) {
       try {
@@ -701,7 +680,7 @@ export function createLaneWorkflows(core) {
       branchNote = `; deleted ${lane.branch}${unmerged > 0 ? ` (${unmerged} unmerged commit(s) discarded)` : ''}`
     }
     const final = await patchLane(repo, laneId, (current) => ({ cleanup: { ...current.cleanup, scratch } }))
-    return result(final, `abandoned; removed ${lane.path}${branchNote}${residue ? `; ${residueNote(residue)}` : ''}`)
+    return result(final, `abandoned; removed ${lane.path}${branchNote}`)
   }
 
   // ─── watches (lane state subscriptions) ────────────────────────────────

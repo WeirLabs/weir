@@ -446,18 +446,6 @@ test('a blocked removal records the reason on the lane and names the dirty count
   }
 })
 
-test('cleanup appends the Edit Lock residue warning when the probe sees residue', async () => {
-  const world = makeWorld([{}, { authorityResidue: () => ({ operations: 1, locks: 2 }) }])
-  try {
-    await seedLane(world, 'l1', 'landed', { land: { commit: 'abc1234deadbeef', at: BASE_TIME, by: 'user', stat: null } })
-    const result = await world.workflows.cleanup(world.session, 'l1', 'all')
-    assert.equal(result.state, 'cleaned')
-    assert.match(result.summary, /warning: the lane's session left 1 unresolved Edit Lock operation\(s\) and 2 Edit Lock lock\(s\) in the management authority/)
-  } finally {
-    world.cleanup()
-  }
-})
-
 test('abandon refuses a finished lane and a typed-mode abandon on a bound lane', async () => {
   const world = makeWorld([{}, {
     bindingLiveness: async () => ({ childAlive: true, ownerAlive: true, terminalEvidence: null }),

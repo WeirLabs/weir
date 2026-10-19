@@ -16,7 +16,6 @@ import { normalizeRoot, parseRepoConfig } from './rules.js'
 import { reconcile } from './reconcile.js'
 import { createLedger } from './ledger.js'
 import { renderNotice, renderWatchExpired, renderWatchHit } from './prompts.js'
-import { authorityResidue } from './authority.js'
 
 export const CONFIG_FILE = '.config.json'
 const LOG_TAIL_LINES = 40
@@ -74,7 +73,6 @@ export function pathKey(path, platform = process.platform) {
  * @property {(handle: any) => void} [clearTimer]
  * @property {number} [pid] - this process id (tests)
  * @property {{ warn?: (message: string) => void }} [logger]
- * @property {(root: string, sessionId: string | null | undefined) => ({ operations: number, locks: number } | null)} [authorityResidue] - read-only Edit Lock residue probe feeding the cleanup/abandon warning (tests); defaults to the bounded snapshot read in ./authority.js
  * @property {(boundChild: string, ownerSession: string | null, context: { root: string }) => Promise<{ childAlive: boolean, ownerAlive: boolean, terminalEvidence: { source: string, detail: string } | null }>} [bindingLiveness] - read-only zombie-binding probe (design D2); absent = LANE_BUSY refusals stand unreconciled
  */
 
@@ -344,22 +342,6 @@ export function createLaneCore(deps) {
       deps.notify(lane.ownerSession, renderNotice(lane, detail))
     } catch (error) {
       deps.logger?.warn?.(`worktree: notification failed: ${/** @type {any} */ (error)?.message ?? error}`)
-    }
-  }
-
-  /**
-   * Best-effort Edit Lock authority-residue probe (design D5): does the
-   * lane's owner session still own unresolved operations or locks in the
-   * management domain? Warning input only — read-only, and a failed check
-   * is silent (never blocks the cleanup/abandon transition).
-   * @param {any} repo @param {any} lane @returns {{ operations: number, locks: number } | null}
-   */
-  function residueOf(repo, lane) {
-    try {
-      return (deps.authorityResidue ?? authorityResidue)(repo.mainRoot, lane?.ownerSession) ?? null
-    } catch (error) {
-      deps.logger?.warn?.(`worktree: authority-residue check failed: ${/** @type {any} */ (error)?.message ?? error}`)
-      return null
     }
   }
 
@@ -635,7 +617,7 @@ export function createLaneCore(deps) {
     approveModeSafe, approveModeSourceSafe,
     cwdOf, config, repoFor, repoCached,
     armWatch, disarmWatch,
-    laneOf, apply, patchLane, commitBinding, notifyOwner, residueOf, result, readConfig, logFile,
+    laneOf, apply, patchLane, commitBinding, notifyOwner, result, readConfig, logFile,
     refresh, reconcileNote, reconcileBinding, childSettled, check,
   }
 }

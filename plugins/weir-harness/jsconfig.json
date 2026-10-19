@@ -54,7 +54,6 @@
     "src/notify/policy.js",
     "src/notify/messages.js",
     "src/worktree/errors.js",
-    "src/worktree/authority.js",
     "src/worktree/state.js",
     "src/worktree/rules.js",
     "src/worktree/reconcile.js",

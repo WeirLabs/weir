@@ -284,8 +284,8 @@ describe('disputed-card copy (both locales)', () => {
   it('the mode card discloses a settled binding (forced and automatic wordings differ)', () => {
     for (const locale of ['en', 'zh']) {
       const copy = cardCopy(locale)
-      const forced = copy.abandonDetail(lane, 0, '/r', null, { child: 'child-9', forced: true })
-      const automatic = copy.abandonDetail(lane, 0, '/r', null, { child: 'child-9', forced: false })
+      const forced = copy.abandonDetail(lane, 0, '/r', { child: 'child-9', forced: true })
+      const automatic = copy.abandonDetail(lane, 0, '/r', { child: 'child-9', forced: false })
       assert.ok(forced.includes(copy.reconciledNote('child-9', true)))
       assert.ok(automatic.includes(copy.reconciledNote('child-9', false)))
       assert.notEqual(copy.reconciledNote('child-9', true), copy.reconciledNote('child-9', false))
