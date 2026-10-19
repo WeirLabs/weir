@@ -1,7 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { readFileSync } from 'node:fs'
 import { CONFIG_FACE_ONLY_KEYS, FIELD_DEFAULTS, FIELDS, RESTART_KEYS, computeSections } from '../src/settings/sections.js'
-import { EDIT_LOCK_DEFAULTS, editLockLimits } from '../src/edit-lock/limits.js'
 import { DEFAULT_CLASSIFIER_TIMEOUT_MS } from '../src/intent-gate/classifier.js'
 import { DEFAULT_SUPERVISION } from '../src/delegate/group-coordinator.js'
 import { DEFAULTS as TODO_DEFAULTS } from '../src/todo-driver/state-machine.js'
@@ -83,57 +82,6 @@ describe('CONFIG_FACE_ONLY_KEYS (config-face-only settings declaration)', () => 
 
   it('is frozen so consumers cannot widen or reorder it in place', () => {
     expect(Object.isFrozen(CONFIG_FACE_ONLY_KEYS)).toBe(true)
-  })
-})
-
-// Edit Lock retention policy: the defaults are the contract other sessions rely
-// on (how long a file stays locked after a turn ends), so a missing or unusable
-// value must fall back or fail loud — never be silently clamped.
-describe('editLockLimits (retention policy resolution)', () => {
-  it('falls back to the documented defaults when nothing is configured', () => {
-    expect(editLockLimits(undefined)).toEqual(EDIT_LOCK_DEFAULTS)
-    expect(editLockLimits({})).toEqual(EDIT_LOCK_DEFAULTS)
-    expect(EDIT_LOCK_DEFAULTS).toEqual({
-      holdDefaultMinutes: 30, holdSingleMaxMinutes: 30, holdCumulativeMaxMinutes: 120,
-      nudgeAttempts: 2, nudgeFallback: 'release',
-    })
-  })
-
-  it('overlays each configured value and accepts a value equal to its default', () => {
-    expect(editLockLimits({ holdSingleMaxMinutes: 30 }).holdSingleMaxMinutes).toBe(30)
-    expect(editLockLimits({ holdDefaultMinutes: 5, holdSingleMaxMinutes: 60, holdCumulativeMaxMinutes: 180 })
-      .holdDefaultMinutes).toBe(5)
-    expect(editLockLimits({ nudgeAttempts: 0 }).nudgeAttempts).toBe(0)
-    expect(editLockLimits({ nudgeFallback: 'abnormal' }).nudgeFallback).toBe('abnormal')
-  })
-
-  it('accepts a cumulative cap exactly equal to the single cap and rejects a smaller one', () => {
-    expect(editLockLimits({ holdSingleMaxMinutes: 30, holdCumulativeMaxMinutes: 30 }).holdCumulativeMaxMinutes).toBe(30)
-    expect(() => editLockLimits({ holdSingleMaxMinutes: 60, holdCumulativeMaxMinutes: 30 }))
-      .toThrow(/editLockHoldCumulativeMaxMinutes must be at least editLockHoldSingleMaxMinutes/)
-  })
-
-  it('names the flat settings key when a present value is unusable', () => {
-    expect(() => editLockLimits({ holdDefaultMinutes: 0 })).toThrow(/editLockHoldDefaultMinutes/)
-    expect(() => editLockLimits({ holdDefaultMinutes: 'soon' })).toThrow(/editLockHoldDefaultMinutes/)
-    expect(() => editLockLimits({ holdSingleMaxMinutes: -5 })).toThrow(/editLockHoldSingleMaxMinutes/)
-    expect(() => editLockLimits({ holdCumulativeMaxMinutes: Number.NaN })).toThrow(/editLockHoldCumulativeMaxMinutes/)
-    expect(() => editLockLimits({ nudgeAttempts: 1.5 })).toThrow(/editLockNudgeAttempts must be a non-negative integer/)
-    expect(() => editLockLimits({ nudgeAttempts: -1 })).toThrow(/editLockNudgeAttempts/)
-    expect(() => editLockLimits({ nudgeFallback: 'auto' })).toThrow(/editLockNudgeFallback must be "release" or "abnormal"/)
-  })
-
-  it('returns a frozen policy so callers cannot widen a cap in place', () => {
-    const limits = editLockLimits({})
-    expect(Object.isFrozen(limits)).toBe(true)
-    expect(() => { limits.holdSingleMaxMinutes = 9999 }).toThrow()
-  })
-})
-
-describe('editLockLimits default/single coherence', () => {
-  it('refuses a default retention longer than the single cap, so a plain hold is never refused', () => {
-    expect(() => editLockLimits({ holdDefaultMinutes: 45 })).toThrow(/editLockHoldDefaultMinutes must not exceed editLockHoldSingleMaxMinutes/)
-    expect(editLockLimits({ holdDefaultMinutes: 45, holdSingleMaxMinutes: 60, holdCumulativeMaxMinutes: 120 }).holdDefaultMinutes).toBe(45)
   })
 })
 

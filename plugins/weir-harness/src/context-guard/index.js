@@ -118,7 +118,7 @@ function apply(ctx, config = {}) {
     const request = state.request
     if (!live(agent) || request?.kind !== 'applied' || request.delivered) return
     fresh(agent)
-    if (request.kind !== 'applied' || request.controller.signal.aborted || ctx.get?.('weirEditLock')?.blocksContinuation?.(agent)) {
+    if (request.kind !== 'applied' || request.controller.signal.aborted) {
       state.blocked = true
       request.delivered = true
       record(agent, request, 'resume-blocked')
@@ -197,7 +197,7 @@ function apply(ctx, config = {}) {
     if (decision.kind !== 'enter') return decision
     let resume
     const current = state.request
-    if (current?.kind === 'applied' && !current.delivered && !signal?.aborted && !ctx.get?.('weirEditLock')?.blocksContinuation?.(agent)) {
+    if (current?.kind === 'applied' && !current.delivered && !signal?.aborted) {
       current.delivered = true
       current.detach?.(); current.detachMaintenance?.()
       resume = RESUME_AFTER_COMPACTION

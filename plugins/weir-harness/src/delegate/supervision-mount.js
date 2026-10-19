@@ -10,7 +10,6 @@ import { auditFilePathOf, isTerminalStatus, readAuditTail, readChildFinalText } 
 import { AUDIT_TYPES } from '../shared/audit.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { contentText } from '../shared/content-text.js'
-import { withSupervisedEditResume, settleDelegateEditLifecycle } from '../shared/delegate-edit-lifecycle.js'
 
 /**
  * Mount the supervision subsystem on the plugin ctx.
@@ -81,8 +80,8 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
           sendTo: async (childId, text) => {
             await ctx.subagents.sendMessage(parent, childId, [{ type: 'text', text }], { signal: new AbortController().signal })
           },
-          resumeTo: (childId, text) => withSupervisedEditResume(parent, childId, () =>
-            ctx.subagents.sendMessage(parent, childId, [{ type: 'text', text }], { signal: new AbortController().signal })),
+          resumeTo: (childId, text) =>
+            ctx.subagents.sendMessage(parent, childId, [{ type: 'text', text }], { signal: new AbortController().signal }),
           interruptChild: (childId) => {
             ctx.subagents.interrupt(childId, { kind: 'ancestor', agent: parent })
           },
@@ -107,8 +106,9 @@ export function mountSupervision({ ctx, audit, settings, supervisionNow, onChild
               const runtime = runtimeFor(fact.childId)
               // No observed quiescence means no automatic handoff, including
               // a cold bookkeeping fact. Lane reconciliation owns that case.
-              const disposition = settleDelegateEditLifecycle(parent, fact.childId, runtime.agent)
-              void Promise.all([runtime.promise, disposition])
+              // Runtime quiescence is the ONLY gate: the retired Edit Lock
+              // disposition acknowledgement used to join here as well.
+              void runtime.promise
                 .then(() => onChildSettled?.(fact.childId, parent))
                 .catch(error => {
                   const note = `child ${fact.childId}: terminal handoff failed; lane remains bound: ${error?.message ?? error}`

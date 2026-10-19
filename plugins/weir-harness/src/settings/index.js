@@ -14,31 +14,14 @@ import { configValue } from './volatile.js'
 import { computeSections } from './sections.js'
 import { wireLspAdmin } from '../lsp/admin.js'
 import { wireEnvAdmin } from './env-admin.js'
-import { createEditLockEvidence, wireEditLockMaintenance } from '../edit-lock/maintenance.js'
-import { managementRootFor } from '../edit-lock/domains.js'
-
-// Host lifetime, not settings-row lifetime: remounting settings must not forget
-// still-live preset rows. Weak keys isolate hosts and release stopped hosts.
-const evidenceByHost = new WeakMap()
 
 export { Config } from './sections.js'
 
 const name = 'weir-settings'
 const inject = []
 
-// Explicit resolver seam keeps root-discovery tests away from ancestor authorities.
-export function maintenanceRoots(agents, resolveRoot = managementRootFor) {
-  const roots = new Set()
-  for (const agent of agents?.roots?.() ?? []) {
-    const cwd = agent.session?.header?.cwd
-    if (typeof cwd !== 'string') continue
-    try { roots.add(resolveRoot(cwd)) } catch { /* unavailable root */ }
-  }
-  return [...roots]
-}
-/** @param {{ resolveRoot?: typeof managementRootFor }} [dependencies] */
-export function createSettingsPlugin({ resolveRoot = managementRootFor } = {}) {
 // Arrow apply: cordis must retain the returned endpoint disposer, not construct it.
+export function createSettingsPlugin() {
 return (ctx, config = {}) => {
   // The whitelist defaults cache: the defaults file is read once per process,
   // and an explicit reload entry (robashDefaultsReload) clears it. Nothing here
@@ -54,23 +37,9 @@ return (ctx, config = {}) => {
   // Compute eagerly: malformed categoryChains/lspServers/robash lists fail
   // activation loud.
   compute()
-  const host = ctx.root ?? ctx
-  let editLockEvidence = evidenceByHost.get(host)
-  if (!editLockEvidence) {
-    editLockEvidence = createEditLockEvidence()
-    evidenceByHost.set(host, editLockEvidence)
-  }
-  const candidateRoots = () => maintenanceRoots(ctx.get?.('agents'), resolveRoot)
-  // The eight editLock* settings keys are retired (edit-lock-rebuild task 4.4):
-  // no profile can save the old switch on or off, so the saved side of the
-  // maintenance status is permanently false until the edit-lock mechanism
-  // itself is deleted. Nothing here reads a setting for it.
-  const savedEnabled = () => false
-
   const listeners = new Set()
   // Host-plane service: preset modules read their override section on demand.
   ctx.reflect.provide('weirSettings', {
-    editLockEvidence,
     get(key) {
       return compute()[key]
     },
@@ -116,11 +85,10 @@ return (ctx, config = {}) => {
   // built-in catalog.
   const offLspAdmin = wireLspAdmin(ctx, () => compute().lsp?.servers)
 
-  const offMaintenance = wireEditLockMaintenance(ctx, { savedEnabled, evidence: editLockEvidence, candidateRoots })
   // Environment facts endpoint (settings-page `when: { env }` rows): same
   // settings-row wiring as the LSP endpoints above (S19).
   const offEnvAdmin = wireEnvAdmin(ctx)
-  return () => { offMaintenance(); offLspAdmin(); offEnvAdmin(); listeners.clear() }
+  return () => { offLspAdmin(); offEnvAdmin(); listeners.clear() }
 }
 }
 const apply = createSettingsPlugin()

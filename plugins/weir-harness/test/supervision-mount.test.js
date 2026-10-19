@@ -1,8 +1,8 @@
 import { describe, expect, it } from './helpers.js'
 import { mountSupervision } from '../src/delegate/supervision-mount.js'
-import { registerDelegateEditLifecycle } from '../src/shared/delegate-edit-lifecycle.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const flush = async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve() }
 
 // Duck ctx: only the four faces the mount consumes (on / subagents / get /
 // logger), plus the audit sink as a plain recorder.
@@ -345,70 +345,58 @@ describe('mountSupervision settings lifecycle', () => {
   })
 })
 
-describe('supervision Edit Lock lifecycle bridge', () => {
-  it('trusts only explicit resume, not nudges or scheduled provider retries', async () => {
-    const parent = fakeParent()
-    const calls = []
-    const off = registerDelegateEditLifecycle({
-      owns: candidate => candidate === parent,
-      resume: async childId => { calls.push(['resume', childId]); return async ok => calls.push(['finish', ok]) },
-      settle: async childId => calls.push(['settle', childId]),
-    })
-    try {
-      const { mount, sent } = makeMount({ supervisionNow: () => ({ initialBackoffMs: 1 }) })
-      const coordinator = await mount.coordinatorFor(parent)
-      coordinator.hydrate({ children: [{ id: 'c', name: 'c', group: 'g', status: 'running' }], groups: [], untracked: [], confidence: 'full' })
-      await coordinator.onTurnEnd('c', { kind: 'completed' })
-      await coordinator.onTurnEnd('c', { kind: 'error', error: { message: 'offline' } })
-      await sleep(20)
-      expect(sent).toHaveLength(2)
-      expect(calls).toEqual([])
-      await coordinator.onTurnEnd('c', { kind: 'aborted', reason: { kind: 'user' } })
-      await coordinator.resume('c', 'continue')
-      expect(calls).toEqual([['resume', 'c'], ['finish', true]])
-    } finally { off() }
-  })
-
-  it('awaits failed-delivery cleanup and leaves the member blocked', async () => {
-    const parent = fakeParent()
-    const calls = []
-    const off = registerDelegateEditLifecycle({
-      owns: candidate => candidate === parent,
-      resume: async () => async delivered => { await Promise.resolve(); calls.push(delivered) },
-      settle: async () => {},
-    })
-    try {
-      const { mount } = makeMount({ subagents: { sendMessage: async () => { throw new Error('delivery rejected') } } })
-      const coordinator = await mount.coordinatorFor(parent)
-      coordinator.hydrate({ children: [{ id: 'c', name: 'c', group: 'g', status: 'blocked' }], groups: [], untracked: [], confidence: 'full' })
-      await expect(() => coordinator.resume('c', 'continue')).rejects.toThrow(/delivery rejected/)
-      expect(calls).toEqual([false])
-      expect(coordinator.snapshot().children[0].status).toBe('blocked')
-    } finally { off() }
-  })
-
-  it('joins disposition for every terminal fact, including running termination, but never blocked', async () => {
-    const parent = fakeParent()
+describe('supervision without the retired Edit Lock lifecycle bridge', () => {
+  // The disposition acknowledgement that used to join the lane handoff is gone,
+  // so runtime quiescence (agent/disposed or a runId-bearing subagent/end) is
+  // the only gate. The D1 block above already proves a terminal fact alone
+  // frees nothing; these pin the two cases it cannot: stale quiescence from an
+  // earlier incarnation, and a release that itself fails.
+  it('ignores quiescence already observed by an earlier incarnation', async () => {
     const settled = []
-    const off = registerDelegateEditLifecycle({
-      owns: candidate => candidate === parent,
-      resume: async () => async () => {},
-      settle: async childId => settled.push(childId),
-    })
-    try {
-      const { mount } = makeMount()
-      const coordinator = await mount.coordinatorFor(parent)
-      coordinator.hydrate({ children: ['complete', 'blocked', 'running'].map(id => ({ id, name: id, group: 'g', status: 'running' })), groups: [], untracked: [], confidence: 'full' })
-      coordinator.noteAssistantText('complete', 'STATUS: completed\nREPORT: done')
-      await coordinator.onTurnEnd('complete', { kind: 'completed' })
-      coordinator.noteAssistantText('blocked', 'STATUS: blocked\nREPORT: need input')
-      await coordinator.onTurnEnd('blocked', { kind: 'completed' })
-      await Promise.resolve()
-      expect(settled).toEqual(['complete'])
-      coordinator.terminate('blocked', 'cancel')
-      coordinator.terminate('running', 'cancel')
-      await Promise.resolve()
-      expect(settled).toEqual(['complete', 'blocked', 'running'])
-    } finally { off() }
+    const { mount, handlers } = makeMount({ onChildSettled: (childId) => settled.push(childId) })
+    const first = { id: 'child' }
+    const second = { id: 'child' }
+    handlers.get('agent/created')({ agent: first })
+    const coordinator = await mount.coordinatorFor(fakeParent())
+    coordinator.registerMember({ id: 'child', name: 'child', group: 'g' })
+    coordinator.noteAssistantText('child', 'STATUS: blocked\nREPORT: wait')
+    await coordinator.onTurnEnd('child', { kind: 'completed' })
+    handlers.get('subagent/end')({ id: 'child', runId: 'old', stopReason: 'completed' })
+    await coordinator.resume('child', 'ready')
+    handlers.get('agent/created')({ agent: second })
+    coordinator.noteAssistantText('child', 'STATUS: completed\nREPORT: done')
+    await coordinator.onTurnEnd('child', { kind: 'completed' })
+    handlers.get('subagent/end')({ id: 'child', runId: 'old', stopReason: 'completed' })
+    handlers.get('agent/disposed')({ agent: first })
+    await flush()
+    expect(settled).toEqual([])
+    handlers.get('subagent/end')({ id: 'child', runId: 'new', stopReason: 'completed' })
+    await flush()
+    expect(settled).toEqual(['child'])
+  })
+
+  it('keeps the lane bound and reports a failed handoff', async () => {
+    const { mount, handlers, warnings, audits } = makeMount({ onChildSettled: () => { throw new Error('lane release refused') } })
+    const coordinator = await mount.coordinatorFor(fakeParent())
+    coordinator.hydrate({ children: [{ id: 'c1', name: 'c1', group: 'g', status: 'running' }], groups: [], untracked: [], confidence: 'full' })
+    coordinator.noteAssistantText('c1', 'STATUS: completed\nREPORT: done')
+    await coordinator.onTurnEnd('c1', { kind: 'completed' })
+    handlers.get('subagent/end')({ id: 'c1', runId: 'run-1', stopReason: 'completed' })
+    await flush()
+    expect(warnings.some((message) => /lane release refused/.test(message))).toBeTruthy()
+    expect(audits.some((entry) => entry.type === 'supervision' && /lane remains bound/.test(entry.payload.note))).toBeTruthy()
+  })
+
+  it('resume delivers the context directly and leaves the member blocked on failure', async () => {
+    const { mount } = makeMount()
+    const coordinator = await mount.coordinatorFor(fakeParent())
+    coordinator.hydrate({ children: [{ id: 'c', name: 'c', group: 'g', status: 'blocked' }], groups: [], untracked: [], confidence: 'full' })
+    expect((await coordinator.resume('c', 'continue')).status).toBe('running')
+
+    const failing = makeMount({ subagents: { sendMessage: async () => { throw new Error('delivery rejected') } } })
+    const strict = await failing.mount.coordinatorFor(fakeParent())
+    strict.hydrate({ children: [{ id: 'c', name: 'c', group: 'g', status: 'blocked' }], groups: [], untracked: [], confidence: 'full' })
+    await expect(() => strict.resume('c', 'continue')).rejects.toThrow(/delivery rejected/)
+    expect(strict.snapshot().children[0].status).toBe('blocked')
   })
 })

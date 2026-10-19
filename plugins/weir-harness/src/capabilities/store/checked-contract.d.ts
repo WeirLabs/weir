@@ -1,6 +1,6 @@
 // Augmentations of the narrow checked-graph platform contract
-// (types/platform.d.ts) for the capability-store liveness/lock modules: the
-// edit-lock reservation reuses them, which pulls them into the checked graph.
+// (types/platform.d.ts) for the capability-store liveness/lock modules: they
+// pull these declarations into the checked graph.
 // Same discipline as the base contract — runtime modules remain supplied by
 // Node; these declarations only describe what the checked graph uses.
 declare module 'node:fs' {

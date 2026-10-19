@@ -21,9 +21,8 @@ import { link, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/pr
 // Directory fsync is a POSIX crash-durability idiom: on Windows the directory
 // handle opens but sync fails EPERM (verified on Node v24, NTFS). The win32
 // store row (SUPPORTED_PLATFORMS in store.js) therefore commits with
-// file-level fsync + atomic rename only — the same platform stance the
-// edit-lock reservation already takes (reservation.js SYNC_SUPPORTED). The
-// durability tradeoff is documented in docs/features/session-capability-manager.md.
+// file-level fsync + atomic rename only. The durability tradeoff is documented
+// in docs/features/session-capability-manager.md.
 const DIR_SYNC_SUPPORTED = process.platform === 'darwin' || process.platform === 'linux'
 
 // Windows file-locking etiquette: antivirus and the search indexer briefly

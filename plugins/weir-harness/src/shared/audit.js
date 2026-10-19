@@ -23,7 +23,6 @@ export const AUDIT_TYPES = Object.freeze({
   compaction: 'compaction',
   supervision: 'supervision',
   worktree: 'worktree',
-  editLockMaintenance: 'edit-lock-maintenance',
   // Session capability manager (tasks 4.2+): one record per durable Apply
   // acceptance or receipt-query recovery; never commit evidence by itself.
   capabilityApply: 'capability-apply',
