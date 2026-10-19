@@ -60,6 +60,7 @@ import editlockHashlineNegatives from './editlock-hashline-negatives.js'
 import fileleaseTurnRelease from './filelease-turn-release.js'
 import fileleaseHold from './filelease-hold.js'
 import fileleaseDegrade from './filelease-degrade.js'
+import fileleaseNegotiation from './filelease-negotiation.js'
 import fileleaseFaultInjection from './filelease-fault-injection.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, jobsAwareTodo]
 SCENARIOS.push(...skillComposition)
@@ -94,6 +95,7 @@ SCENARIOS.push(editlockHashlineNegatives)
 SCENARIOS.push(fileleaseTurnRelease)
 SCENARIOS.push(fileleaseHold)
 SCENARIOS.push(fileleaseDegrade)
+SCENARIOS.push(fileleaseNegotiation)
 SCENARIOS.push(fileleaseFaultInjection)
 
 /**

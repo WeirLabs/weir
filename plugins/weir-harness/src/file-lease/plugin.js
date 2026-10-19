@@ -28,6 +28,7 @@
 import { createLineageResolver } from './lineage.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
+import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { getSharedLeaseClient } from './singleton.js'
 import { buildLeaseView } from './view.js'
 
@@ -206,6 +207,49 @@ function settledText(state, requestId, short) {
 }
 
 /**
+ * Adapt one degradation record from the lease client to the shared audit
+ * channel (design D7, `AUDIT_TYPES.fileLease`).
+ *
+ * The client calls its sink synchronously at the moment a managed write
+ * degrades, and rate limits it itself (one record per process window), so this
+ * adapter must never throttle again. `detail.session` is the owning session id;
+ * the shared channel takes the LIVE session object so the JSONL mirror lands in
+ * that session's workspace. A session this process can no longer resolve still
+ * emits the in-process event with `session: null` — audit is log-only and the
+ * degraded write proceeds either way.
+ *
+ * The client's detail is flat (`{code, session, lineage, scope, paths, at}`);
+ * the record names the owner under `owner` so a reader never depends on the
+ * client's internal field names. `paths` is a COUNT — no path content.
+ *
+ * @param {(session: any, type: string, data?: unknown) => void} audit the shared audit emitter
+ * @param {() => any} agents lazy `agents` service accessor
+ * @param {string} kind the degradation kind (`'degraded'`)
+ * @param {Record<string, any>} [detail] the client's degradation detail
+ */
+function auditLeaseDegradation(audit, agents, kind, detail) {
+  try {
+    const sessionId = text(detail?.session)
+    /** @type {any} */
+    let session = null
+    if (sessionId !== undefined) {
+      try {
+        session = agents()?.get?.(sessionId)?.session ?? null
+      } catch {
+        session = null
+      }
+    }
+    audit(session, AUDIT_TYPES.fileLease, {
+      kind,
+      ...detail,
+      owner: { session: sessionId ?? null, lineage: text(detail?.lineage) ?? null },
+    })
+  } catch {
+    // Audit is log-only: a broken sink must never break a managed write.
+  }
+}
+
+/**
  * Create one plugin instance. Every collaborator is injectable so a unit test
  * can drive the whole surface with a fake client and a fake ctx: the default
  * client is the process-wide singleton and the default cortex is a live cordis
@@ -213,6 +257,9 @@ function settledText(state, requestId, short) {
  *
  * @param {object} [options]
  * @param {any} [options.client] lease client (default: the process-wide singleton)
+ * @param {(overrides?: any) => any} [options.sharedClient] shared-client factory
+ *   (default: the process-wide singleton; injectable so a unit test can observe
+ *   the degradation-audit wiring without a socket)
  * @param {(agent: any) => { id: string, session: string, label: string }} [options.ownerOf] owner identity (default: the lineage rule)
  * @param {(agent: any, text: string, wake?: boolean) => any} [options.deliver] model-facing message channel
  * @param {() => number} [options.now] injected clock (epoch ms)
@@ -220,6 +267,7 @@ function settledText(state, requestId, short) {
  */
 export function createFileLeasePlugin(options = {}) {
   const injectedClient = options?.client ?? null
+  const sharedClient = typeof options?.sharedClient === 'function' ? options.sharedClient : getSharedLeaseClient
   const injectedOwnerOf = options?.ownerOf ?? null
   const injectedDeliver = options?.deliver ?? null
   const now = typeof options?.now === 'function' ? options.now : Date.now
@@ -276,7 +324,16 @@ export function createFileLeasePlugin(options = {}) {
 
     // The process-wide client (D11): shared with every other mount of this row
     // and never closed by an unmount. An injected client wins and creates nothing.
-    const client = injectedClient ?? getSharedLeaseClient()
+    //
+    // D7 wiring: the client's own degradation sink is already rate limited per
+    // process, so the adapter below only maps it onto the shared audit channel
+    // (never a second throttle). Only the SHARED client gets it — an injected
+    // client belongs to its embedder and keeps whatever sink it was built with.
+    const weirAudit = createAudit(ctx)
+    const client = injectedClient ?? sharedClient({
+      audit: (/** @type {string} */ kind, /** @type {Record<string, any>} */ detail) =>
+        auditLeaseDegradation(weirAudit, agents, kind, detail),
+    })
     const ownerOf = injectedOwnerOf ?? createOwnerResolver(agents)
     const deliver = injectedDeliver ?? defaultDeliver
 

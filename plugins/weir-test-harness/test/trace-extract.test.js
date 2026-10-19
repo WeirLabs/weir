@@ -285,7 +285,7 @@ describe('trace record key migration', () => {
     for (const scenario of SCENARIOS) {
       for (const key of Object.keys(scenario.observe?.(syntheticObs()) ?? {})) union.add(key)
     }
-    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, 'oneShotResultSeen', 'retiredGuidance', 'plannedSummaryRead', 'plannedResumeRead', 'plannedCheckpointIds', 'sessionId', ...(process.env.WEIR_IT_CAPABILITY_DUAL === '1' ? ['probeServed'] : [])].sort())
+    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, 'oneShotResultSeen', 'retiredGuidance', 'plannedSummaryRead', 'plannedResumeRead', 'plannedCheckpointIds', 'replyToolOffered', 'sessionId', ...(process.env.WEIR_IT_CAPABILITY_DUAL === '1' ? ['probeServed'] : [])].sort())
   })
 
   it('every scenario emits at least one observation key (no silent gap)', () => {

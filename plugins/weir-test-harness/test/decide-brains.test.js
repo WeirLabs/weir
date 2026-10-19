@@ -273,4 +273,28 @@ describe('filelease brains', () => {
     assert.equal(second.name, 'write')
     assert.notEqual(JSON.parse(second.arguments).file_path, firstPath)
   })
+
+  it('filelease-negotiation claims two paths, waits once, then answers release before keep', () => {
+    const probe = 'filelease-negotiation-probe'
+    const pathA = JSON.parse(blockEnds(run('filelease-negotiation', userOptions(probe)))[0].arguments).file_path
+    const second = JSON.parse(blockEnds(run('filelease-negotiation', userOptions(`${probe}\nCreated file: ${pathA}`)))[0].arguments)
+    assert.notEqual(second.file_path, pathA)
+    // One wait step is emitted after both claims; its marker is what a
+    // follow-up step keys on, never a role gate.
+    const wait = blockEnds(run('filelease-negotiation', userOptions(`${probe}\nCreated file: ${pathA}\nCreated file: ${second.file_path}`)))[0]
+    assert.equal(wait.name, SHELL)
+    assert.match(JSON.parse(wait.arguments).command, /WEIR_LEASE_NEGOTIATED_1/)
+    const notice = (id, name) => `Session "Second owner (integration driver)" (session session-weir-it-negotiation-driver) is asking to take over ${name}. Answer with edit_lock_reply: request_id "${id}", decision "release" to hand it over, or "keep" to hold on to it.`
+    const history = [probe, `Created file: ${pathA}`, `Created file: ${second.file_path}`, notice('req-1', 'lease-negotiation-a.txt'), notice('req-2', 'lease-negotiation-b.txt')].join('\n')
+    const release = blockEnds(run('filelease-negotiation', userOptions(history)))[0]
+    assert.equal(release.name, 'edit_lock_reply')
+    assert.deepEqual(JSON.parse(release.arguments), { request_id: 'req-1', decision: 'release' })
+    // The keep request is answered only after the first path's transfer landed.
+    const afterRelease = blockEnds(run('filelease-negotiation', userOptions(`${history}\nRequest req-1: transferred.`)))[0]
+    assert.equal(afterRelease.name, 'write')
+    assert.equal(JSON.parse(afterRelease.arguments).file_path, pathA)
+    const afterRefusal = blockEnds(run('filelease-negotiation', userOptions(`${history}\nRequest req-1: transferred.\nlease broker refused acquire: held`)))[0]
+    assert.equal(afterRefusal.name, 'edit_lock_reply')
+    assert.deepEqual(JSON.parse(afterRefusal.arguments), { request_id: 'req-2', decision: 'keep' })
+  })
 })

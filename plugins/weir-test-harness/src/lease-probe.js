@@ -15,6 +15,9 @@
 //   ←  {"ok":true,"protocol":1,"daemonVersion":"…","startedAt":…,"reqId":"p1"}\n
 //   →  {"op":"acquire","owner":{"id","session","label"},"scope":"…","paths":[…],"reqId":"p2"}\n
 //   ←  {"ok":false,"error":{"code":"held","conflicts":[{"path","holder","expiresAt","holdUntil"}]},"reqId":"p2"}\n
+//   →  {"op":"request","from":{"id","session","label"},"path":"…","reqId":"p3"}\n
+//   ←  {"ok":true,"state":"pending","requestId":"req-1","holder":{…},"expiresAt":…,"reqId":"p3"}\n
+//   ←  {"event":"settled","requestId":"req-1","path":"…","state":"transferred"}   (unsolicited)\n
 //
 // Two deliberate differences from the product client, both driver-shaped:
 //   - protocol refusals (`ok:false`) are RETURNED, not thrown: a scenario wants
@@ -156,6 +159,9 @@ export async function retryUntil(attempt, { timeoutMs = 10_000, stepMs = 50 } = 
  *   hello: () => Promise<any>,
  *   acquire: (owner: any, paths: string[], scope?: string) => Promise<any>,
  *   status: (filter?: { scope?: string, session?: string, path?: string }) => Promise<any>,
+ *   transfer: (from: any, path: string) => Promise<any>,
+ *   events: () => any[],
+ *   nextEvent: (eventName: string, predicate?: (event: any) => boolean, options?: { timeoutMs?: number }) => Promise<any>,
  *   release: (owner: any, paths: string[]) => Promise<any>,
  *   close: () => void,
  * }}
@@ -173,6 +179,10 @@ export function connectLeaseBroker(socketPath, { timeoutMs = DEFAULT_TIMEOUT_MS 
   const waiters = new Map()
   /** The handshake reply of the CURRENT connection (null until greeted). @type {{ protocol?: number, daemonVersion?: string, startedAt?: number } | null} */
   let greeting = null
+  /** Events the broker pushed to this connection so far, in arrival order. @type {any[]} */
+  const events = []
+  /** Pending `nextEvent` subscriptions. @type {{ name: string, predicate: (event: any) => boolean, resolve: (event: any) => void, reject: (error: any) => void, timer: any }[]} */
+  const eventWaiters = []
 
   /** @param {string} message @param {unknown} [cause] */
   function transportError(message, cause) {
@@ -205,6 +215,26 @@ export function connectLeaseBroker(socketPath, { timeoutMs = DEFAULT_TIMEOUT_MS 
       return
     }
     if (frame === null || typeof frame !== 'object') return
+    // Unsolicited events carry `event` and NO reqId (protocol EVENTS): record
+    // them and hand them to any waiting nextEvent(). Nothing else consumes them
+    // — a scenario decides what a push means.
+    if (typeof frame.event === 'string') {
+      events.push(frame)
+      for (const waiter of [...eventWaiters]) {
+        if (waiter.name !== frame.event) continue
+        let matched = false
+        try {
+          matched = waiter.predicate(frame) === true
+        } catch {
+          matched = false
+        }
+        if (!matched) continue
+        eventWaiters.splice(eventWaiters.indexOf(waiter), 1)
+        clearTimeout(waiter.timer)
+        waiter.resolve(frame)
+      }
+      return
+    }
     const reqId = typeof frame.reqId === 'string' ? frame.reqId : undefined
     if (reqId === undefined) return
     const waiter = waiters.get(reqId)
@@ -226,6 +256,12 @@ export function connectLeaseBroker(socketPath, { timeoutMs = DEFAULT_TIMEOUT_MS 
       // Already gone.
     }
     failWaiters(transportError(`lease broker connection closed (${socketPath})`))
+    // A waiter can never be satisfied by a connection that is gone: fail it
+    // now instead of letting the scenario's own deadline report it late.
+    for (const waiter of eventWaiters.splice(0)) {
+      clearTimeout(waiter.timer)
+      waiter.reject(transportError(`lease broker connection closed (${socketPath})`))
+    }
   }
 
   /** @returns {Promise<void>} */
@@ -374,6 +410,32 @@ export function connectLeaseBroker(socketPath, { timeoutMs = DEFAULT_TIMEOUT_MS 
     return payload
   }
 
+  /**
+   * Wait for one broker-pushed event (`request` / `settled`).
+   *
+   * Events already received are consulted first: a settlement can arrive
+   * between the request that triggered it and the caller's wait, and a waiter
+   * registered after that would otherwise never see it.
+   * @param {string} eventName
+   * @param {(event: any) => boolean} [predicate]
+   * @param {{ timeoutMs?: number }} [options]
+   * @returns {Promise<any>}
+   */
+  function nextEvent(eventName, predicate = () => true, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    const buffered = events.find((event) => event.event === eventName && predicate(event))
+    if (buffered !== undefined) return Promise.resolve(buffered)
+    return new Promise((resolve, reject) => {
+      /** @type {any} */
+      const entry = { name: eventName, predicate, resolve, reject, timer: null }
+      entry.timer = setTimeout(() => {
+        const index = eventWaiters.indexOf(entry)
+        if (index >= 0) eventWaiters.splice(index, 1)
+        reject(transportError(`no '${eventName}' event arrived within ${timeoutMs}ms`))
+      }, timeoutMs)
+      eventWaiters.push(entry)
+    })
+  }
+
   return Object.freeze({
     endpoint: socketPath,
     open,
@@ -389,6 +451,20 @@ export function connectLeaseBroker(socketPath, { timeoutMs = DEFAULT_TIMEOUT_MS 
         paths: normalizePaths(paths),
       }),
     status: (filter = {}) => request('status', statusFilterOf(filter)),
+    /**
+     * Ask the holder of `path` to hand it over (design D4). The broker answers
+     * `pending` immediately and pushes a `settled` event when the holder
+     * answers; this probe never waits for the answer itself.
+     * @param {string | { id?: unknown, session?: unknown, label?: unknown }} from
+     * @param {string} path
+     * @returns {Promise<any>}
+     */
+    transfer: (from, path) => {
+      if (!isNonEmptyString(path)) throw new TypeError('transfer requires a path')
+      return request('request', { from: normalizeOwner(from), path })
+    },
+    events: () => [...events],
+    nextEvent,
     release: (owner, paths) => request('release', { owner: normalizeOwner(owner), paths: normalizePaths(paths) }),
     close() {
       if (closed) return

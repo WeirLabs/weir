@@ -47,6 +47,12 @@ export const AUDIT_TYPES = Object.freeze({
   // spawn carrying the composition the child's creation window applies, so a
   // host restart can replay it — the shim itself is runtime-only state.
   delegate: 'delegate',
+  // File-lease degraded managed writes (edit-lock-rebuild D7): one record per
+  // degradation, carrying the kind, the owner (session and lineage), the path
+  // COUNT and the failure reason — never path contents. The lease client owns
+  // the per-process rate limit (one record per window); the emit site adds no
+  // throttle of its own and a failed emit never blocks a write.
+  fileLease: 'file-lease',
 })
 /**
  * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
