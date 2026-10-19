@@ -109,7 +109,9 @@ describe('weir settings client half', () => {
     const robashModelChunk = { marker: 'robash-model', dictionaries: markerDict('robash') }
     const lspModelChunk = { marker: 'lsp-model', dictionaries: markerDict('lsp') }
     const notifyPermissionsChunk = { NotifyPermissionsField: (props) => ({ __notifyPermissions: props }), dictionaries: markerDict('notifyPermissions') }
-    const editLockMaintenanceChunk = { EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }), dictionaries: markerDict('editLockMaintenance') }
+    // The file-lease ownership badge (edit-lock rebuild D13): a read-only
+    // composer entry, pulled lazily like every other feature chunk.
+    const fileLeaseBadgeChunk = { FileLeaseBadge: (props) => ({ __fileLeaseBadge: props }), dictionaries: markerDict('fileLeaseBadge') }
     const notifyWebChunk = { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => notifyWebStops.push(1) } } }
     const lspToggleChunk = { LspToggle: (props) => ({ __toggle: props }) }
     const hashEditViewChunk = { HashEditRow: (props) => ({ __row: props }) }
@@ -144,7 +146,7 @@ describe('weir settings client half', () => {
       './client.robash-model.js': robashModelChunk,
       './client.lsp-model.js': lspModelChunk,
       './client.notify-permissions.js': notifyPermissionsChunk,
-      './client.edit-lock-maintenance.js': editLockMaintenanceChunk,
+      './client.file-lease-badge.js': fileLeaseBadgeChunk,
       './client.notify-web.js': notifyWebChunk,
       './client.lsp-toggle.js': lspToggleChunk,
       './client.hash-edit-view.js': hashEditViewChunk,
@@ -292,7 +294,6 @@ describe('weir settings client half', () => {
     './client.robash-model.js',
     './client.lsp-model.js',
     './client.notify-permissions.js',
-    './client.edit-lock-maintenance.js',
   ]
 
   it('loads, exposes the plugin surface, and registers the page chain', async () => {
@@ -342,10 +343,13 @@ describe('weir settings client half', () => {
     const { exports: realSettingsPage } = await loadClientChunk('lib/client.settings-page.js', chunkRequire)
     expect(realSettingsPage.dictionaries.en.editLockEnabled).toBe('Edit Lock')
     expect(realSettingsPage.dictionaries.zh.editLockEnabled).toBe('编辑锁')
-    const { exports: realEditLockPanel } = await loadClientChunk('lib/client.edit-lock-panel.js', chunkRequire)
-    for (const key of ['editLockCleanupOnly', 'editLockRecoveryUsage', 'editLockPauseUsageHint', 'editLockPausedUntil', 'editLockOwnershipHint']) {
-      expect(typeof realEditLockPanel.dictionaries.en[key], `en.${key} in the edit-lock slice`).toBe('string')
-      expect(typeof realEditLockPanel.dictionaries.zh[key], `zh.${key} in the edit-lock slice`).toBe('string')
+    // The file-lease badge carries the whole ownership surface's strings, and
+    // the entry renders none of them before the chunk arrives: every key it
+    // reads is a data-face key, in both locales.
+    const { exports: realFileLeaseBadge } = await loadClientChunk('lib/client.file-lease-badge.js', chunkRequire)
+    for (const key of ['fileLeaseState_none', 'fileLeaseState_holding', 'fileLeaseState_degraded', 'fileLeaseMine', 'fileLeaseOthers', 'fileLeaseArbiter_ok', 'fileLeaseReadOnlyHint']) {
+      expect(typeof realFileLeaseBadge.dictionaries.en[key], `en.${key} in the file-lease slice`).toBe('string')
+      expect(typeof realFileLeaseBadge.dictionaries.zh[key], `zh.${key} in the file-lease slice`).toBe('string')
     }
     expect(whileServedCalls).toHaveLength(1)
     expect(whileServedCalls[0].namespaces).toEqual(['weir-settings'])
@@ -384,14 +388,17 @@ describe('weir settings client half', () => {
     expect(toolviewDef.locale).toBe('settings.weir')
     expect(typeof toolviewComponent).toBe('function')
 
-    // the Edit Lock composer entry (rendered only while /edit-lock exists)
+    // the file-lease ownership entry (edit-lock rebuild D13): read-only, so the
+    // injected props carry a session id and the one view read and NOTHING that
+    // could act — no command bridge, no verb, no acknowledgement path.
     slotInjects[2].fn()
-    const lockEntry = slotRegistrations.find((registration) => registration.definition.id === 'weir-edit-lock')
-    expect(lockEntry.definition.name).toBe('conversation.input.right')
-    expect(lockEntry.definition.inject()).toEqual({})
-    const lockVerbs = lockEntry.definition.inject('s1')
-    expect(lockVerbs.sessionId).toBe('s1')
-    expect(typeof lockVerbs.runEditLock).toBe('function')
+    const leaseEntry = slotRegistrations.find((registration) => registration.definition.id === 'weir-file-lease')
+    expect(leaseEntry.definition.name).toBe('conversation.input.right')
+    expect(leaseEntry.definition.inject()).toEqual({})
+    const leaseProps = leaseEntry.definition.inject('s1')
+    expect(leaseProps.sessionId).toBe('s1')
+    expect(typeof leaseProps.fetchView).toBe('function')
+    expect(Object.keys(leaseProps).sort()).toEqual(['fetchView', 'sessionId'])
 
     // the worktree surfaces: session row marker, header pill, and one keyed
     // tool view per lane tool
@@ -501,7 +508,9 @@ describe('weir settings client half', () => {
     expect(typeof settled.editors.RobashListEditorField).toBe('function')
     expect(typeof settled.editors.DisabledCategoriesEditorField).toBe('function')
     expect(typeof settled.editors.LspManagerField).toBe('function')
-    expect(typeof settled.editors.EditLockMaintenanceField).toBe('function')
+    // The maintenance seat is gone with its panel (edit-lock rebuild): the
+    // settings card renders nothing there instead of an unbound editor.
+    expect(settled.editors.EditLockMaintenanceField).toBe(undefined)
     // editors arrive pre-bound with their model chunks (stable identity)
     const boundChain = settled.editors.ChainEditorField({ text: 'x' })
     expect(boundChain.__type).toBe(chainEditorChunk.ChainEditorField)
@@ -1198,7 +1207,7 @@ describe('weir settings client half', () => {
     await flush()
     expect(events).toEqual(['register:settings.weir', 'register:settings.weir.page'])
     const pageRegistration = registrations.find((registration) => registration.ns === 'settings.weir.page')
-    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions', 'editLockMaintenance']) {
+    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions']) {
       expect(pageRegistration.dicts.en[`pageSentinel.${slice}`], `page merge carries the ${slice} slice`).toBe(`${slice} en`)
       expect(pageRegistration.dicts.zh[`pageSentinel.${slice}`], `page merge carries the ${slice} zh slice`).toBe(`${slice} zh`)
     }
@@ -1546,129 +1555,28 @@ describe('weir settings client half', () => {
     'discardChanges',
     'editLockAutoResume',
     'editLockAutoResumeHint',
-    'editLockBinding_cross-process',
-    'editLockBinding_revocation-failed',
-    'editLockBinding_serving',
-    'editLockBinding_transferable',
-    'editLockBinding_unknown',
-    'editLockCleanupOnly',
-    'editLockColdResumeAuto',
-    'editLockColdResumeManual',
-    'editLockColdRevokedAuto',
-    'editLockColdRevokedManual',
-    'editLockConfirmAll',
-    'editLockDetails',
     'editLockEnabled',
     'editLockEnabledHint',
-    'editLockHoldUntil',
-    'editLockLabel',
-    'editLockLoading',
-    'editLockMaint',
-    'editLockMaintAuthorityNo',
-    'editLockMaintAuthorityYes',
-    'editLockMaintBlocked',
-    'editLockMaintCounts',
-    'editLockMaintDomains',
-    'editLockMaintFailed',
-    'editLockMaintHint',
-    'editLockMaintHistory',
-    'editLockMaintHistoryHint',
-    'editLockMaintInspect',
-    'editLockMaintLoading',
-    'editLockMaintNoDomains',
-    'editLockMaintOffRisk',
-    'editLockMaintPinned',
-    'editLockMaintPresenceCorrupt',
-    'editLockMaintPresenceEmpty',
-    'editLockMaintPresenceJunk',
-    'editLockMaintPresenceNone',
-    'editLockMaintPresenceNotAFile',
-    'editLockMaintPresenceUnreadable',
-    'editLockMaintRecoverBusy',
-    'editLockMaintRecoverConfirm',
-    'editLockMaintRecoverDigest',
-    'editLockMaintRecoverDone',
-    'editLockMaintRecoverFailed',
-    'editLockMaintRecoverHint',
-    'editLockMaintRecoverOperations',
-    'editLockMaintRecoverOwner',
-    'editLockMaintRecoverReasonDispositionRecorded',
-    'editLockMaintRecoverReasonNoUnresolved',
-    'editLockMaintRecoverReasonNotInterrupted',
-    'editLockMaintRecoverReasonOwnerUnknown',
-    'editLockMaintRecoverReasonPreparedOutstanding',
-    'editLockMaintRecoverReasonPublishingOutstanding',
-    'editLockMaintRecoverReasonUnknown',
-    'editLockMaintRecoverRevision',
-    'editLockMaintRecoverRisk',
-    'editLockMaintRecoverRoot',
-    'editLockMaintRecoverUpgrade',
-    'editLockMaintRecoveries',
-    'editLockMaintRefresh',
-    'editLockMaintReservation',
-    'editLockMaintRestart',
-    'editLockMaintRetained',
-    'editLockMaintRetry',
-    'editLockMaintScopeDomain',
-    'editLockMaintScopeFile',
-    'editLockMaintScopeNone',
-    'editLockMaintScopeNote',
-    'editLockMaintScopeSubtree',
-    'editLockMaintStateDisableRequested',
-    'editLockMaintStateDisableRequestedHint',
-    'editLockMaintStateDisabled',
-    'editLockMaintStateDisabledHint',
-    'editLockMaintStateEnableRequested',
-    'editLockMaintStateEnableRequestedHint',
-    'editLockMaintStateEnforced',
-    'editLockMaintStateEnforcedHint',
-    'editLockMaintStateUnknown',
-    'editLockMaintStateUnknownHint',
-    'editLockMaintUnavailable',
-    'editLockMaintUnknownHistory',
-    'editLockMaintUnknownHistoryHint',
-    'editLockMaintUnknownRisk',
-    'editLockMaintUnresolved',
-    'editLockMaintUnresolvedNone',
-    'editLockMaintWarnKeepHistory',
-    'editLockMaintWarnUnlock',
     'editLockOptOutWarning',
-    'editLockOwnerOther',
-    'editLockOwnershipHint',
-    'editLockPanelTitle',
-    'editLockPauseUsageHint',
-    'editLockPausedUntil',
-    'editLockRecovery',
-    'editLockRecoveryUsage',
-    'editLockRefresh',
-    'editLockReleaseAll',
-    'editLockResume',
-    'editLockRetry',
-    'editLockRetryPending',
-    'editLockRevokeConfirm',
-    'editLockRevokedHint',
-    'editLockRow_confirm',
-    'editLockRow_release',
-    'editLockRow_unlock',
-    'editLockRow_unlockConfirm',
     'editLockStaleSweep',
     'editLockStaleSweepHint',
-    'editLockState_attention',
-    'editLockState_confirm',
-    'editLockState_editing',
-    'editLockState_failed',
-    'editLockState_holding',
-    'editLockState_idle',
-    'editLockState_revoked',
-    'editLockState_stopped',
-    'editLockState_unavailable',
-    'editLockStatus_abnormal',
-    'editLockStatus_active',
-    'editLockStatus_pending-confirmation',
-    'editLockStatus_user-interrupted',
-    'editLockStop',
-    'editLockTitle',
     'effortProviderDefault',
+    'fileLeaseArbiter_degraded',
+    'fileLeaseArbiter_ok',
+    'fileLeaseArbiter_unavailable',
+    'fileLeaseLabel',
+    'fileLeaseMine',
+    'fileLeaseMineEmpty',
+    'fileLeaseOthers',
+    'fileLeaseOthersEmpty',
+    'fileLeasePanelTitle',
+    'fileLeaseReadOnlyHint',
+    'fileLeaseRetainedFor',
+    'fileLeaseSince',
+    'fileLeaseState_degraded',
+    'fileLeaseState_holding',
+    'fileLeaseState_none',
+    'fileLeaseTitle',
     'groupEditing',
     'groupGuard',
     'groupIntent',
@@ -2025,12 +1933,11 @@ describe('weir settings client half', () => {
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
       ['lib/client.notify-permissions.js', chunkRequire],
-      ['lib/client.edit-lock-maintenance.js', chunkRequire],
+      ['lib/client.file-lease-badge.js', chunkRequire],
       ['lib/client.capability-model.js', undefined],
       ['lib/client.blackboard-model.js', undefined],
       ['lib/client.lsp-toggle.js', chunkRequire],
       ['lib/client.hash-edit-model.js', undefined],
-      ['lib/client.edit-lock-panel.js', chunkRequire],
       ['lib/client.worktree-model.js', undefined],
     ]
     const seen = new Map() // key -> home name (first writer)

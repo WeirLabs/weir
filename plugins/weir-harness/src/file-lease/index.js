@@ -22,6 +22,9 @@ export {
   DEFAULT_HOLD_MINUTES,
 } from './tools.js'
 export { createFileLeasePlugin, name, inject, apply } from './plugin.js'
+// The read-only ownership projection behind the status surface (D13). Pure, so a
+// caller can shape a snapshot without a client, a clock or a socket.
+export { buildLeaseView, VIEW_SCHEMA_VERSION, ARBITER_STATES } from './view.js'
 // D11 wiring: the process-wide client and the owner/scope rule the managed
 // editors share.
 export { getSharedLeaseClient, createEditorLease, defaultLeaseEndpoint } from './singleton.js'

@@ -34,7 +34,7 @@
     "src/edit-lock/maintenance.js",
     "src/edit-lock/snapshot.js",
     "src/settings/index.js",
-    "lib/client.edit-lock-maintenance.js",
+    "lib/client.file-lease-badge.js",
     "src/blackboard/kernel.js",
     "src/blackboard/storage.js",
     "src/blackboard/durable.js",
@@ -83,6 +83,7 @@
     "src/file-lease/tools.js",
     "src/file-lease/plugin.js",
     "src/file-lease/index.js",
+    "src/file-lease/view.js",
     "src/file-lease/node-contracts.d.ts",
   ]
 }

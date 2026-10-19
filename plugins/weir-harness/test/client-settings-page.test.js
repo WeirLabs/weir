@@ -142,7 +142,6 @@ describe('client.settings-page chunk', () => {
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
       ['lib/client.notify-permissions.js', chunkRequire],
-      ['lib/client.edit-lock-maintenance.js', chunkRequire],
     ]) {
       slices.push(await loadClientChunk(spec, ...(stub ? [stub] : [])))
     }

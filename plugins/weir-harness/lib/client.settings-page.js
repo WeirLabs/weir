@@ -925,9 +925,13 @@ window.__ModuleLoader__.load({
 						}));
 					}
 					if (node.slot === "editLockMaintenance") {
-						// Edit Lock maintenance: profile-wide switch status and
-						// read-only authority diagnostics (read-only).
-						return wrap(react_jsx_runtime.jsx(props.editors.EditLockMaintenanceField, { t }));
+						// The Edit Lock maintenance seat is GONE (edit-lock rebuild):
+						// the composition root no longer binds an editor for it, and
+						// the row disappears with the settings keys. An unbound seat
+						// must leave the card intact instead of rendering an undefined
+						// element type, so the row simply renders nothing here.
+						const MaintenanceField = props.editors?.EditLockMaintenanceField;
+						return typeof MaintenanceField === "function" ? wrap(react_jsx_runtime.jsx(MaintenanceField, { t })) : null;
 					}
 					// notifyPermissions: the macOS-only permission entry
 					return wrap(react_jsx_runtime.jsx(props.editors.NotifyPermissionsField, { t }));

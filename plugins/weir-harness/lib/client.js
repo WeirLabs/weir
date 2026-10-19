@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"6ffd703f498e0aa5cc8ac78f244402ec4ceee56d22d2a0e74c246799565776cc","client.capability-manager.js":"d22e8116922f98e61bbbdf36fc78bd81e8b47b0ee5e75ddb06bea4e204749b89","client.capability-model.js":"d2aef1aa2daaecad6c9a1b9d9a0ecf6fb37dd7ec80efff5d532cf3b8a6efa712","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.disabled-categories-editor.js":"f9103fd2e2691eda9afd199e1a5462189097a9f3dee0518be5fa3587d896e033","client.edit-lock-maintenance.js":"5e6933f3ad222ea99e890a06b94a223de1e864de058fca2a53954d62eaad9ab8","client.edit-lock-panel.js":"fa78a0762d2787e6322308dfff103aab3cdbd078d1ec22000d6deefe258153b1","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"d6af81be5e5b854e98563bbb9349a6db89834a9d7dee9cf0e97759ecb32090e8","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"2be9bdbeffef96baa3cbe4ce430ab30a1d1bf797782453d287d54602ea47db8e","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"b6524f04641793602e00bc42f1c86f7e8981b903e16a8493379126c359dbab96","client.worktree-model.js":"8bfbaaa080f20e90a0128afccb9b4e232514615a8f2fee3a32a42dde78b34a8f","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
+// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"6ffd703f498e0aa5cc8ac78f244402ec4ceee56d22d2a0e74c246799565776cc","client.capability-manager.js":"d22e8116922f98e61bbbdf36fc78bd81e8b47b0ee5e75ddb06bea4e204749b89","client.capability-model.js":"d2aef1aa2daaecad6c9a1b9d9a0ecf6fb37dd7ec80efff5d532cf3b8a6efa712","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.disabled-categories-editor.js":"f9103fd2e2691eda9afd199e1a5462189097a9f3dee0518be5fa3587d896e033","client.file-lease-badge.js":"96a04627905f548aba3b8f38308c634cf99af8e9dc1f86d3edc0a7a1dc47e4d0","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"d6af81be5e5b854e98563bbb9349a6db89834a9d7dee9cf0e97759ecb32090e8","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"2be9bdbeffef96baa3cbe4ce430ab30a1d1bf797782453d287d54602ea47db8e","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"62ba1084e52fce6c38239dce68b8710cf34a85f1c9a08c6e57e971f0d4fcee2f","client.worktree-model.js":"8bfbaaa080f20e90a0128afccb9b4e232514615a8f2fee3a32a42dde78b34a8f","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
 			register: null,
 			lspToggle: null,
 			hashEdit: null,
-			editLock: null,
+			fileLease: null,
 			worktree: null,
 		};
 		// ---- Package-local chunk wiring (composition root) ----
@@ -218,15 +218,15 @@ window.__ModuleLoader__.load({
 			if (!arrival?.chunks) return null;
 			return react_jsx_runtime.jsx(arrival.chunks.LspToggle, { ...props, settingsBus, t: chunkDictionaries.lspToggle ?? props.t });
 		}
-		const loadEditLockChunk = lazyChunks(() => require.async("./client.edit-lock-panel.js").then((chunk) => {
-			chunkDictionaries.register?.("settings.weir.edit-lock", chunk.dictionaries);
+		const loadFileLeaseChunk = lazyChunks(() => require.async("./client.file-lease-badge.js").then((chunk) => {
+			chunkDictionaries.register?.("settings.weir.file-lease", chunk.dictionaries);
 			return chunk;
 		}));
-		/** Composer-bar Edit Lock entry: nothing until its chunk arrives. */
-		function EditLockWrapper(props) {
-			const arrival = useChunkArrival(loadEditLockChunk, typeof props.sessionId === "string" && props.sessionId !== "");
+		/** Composer-bar file-lease entry: nothing until its chunk arrives. */
+		function FileLeaseBadgeWrapper(props) {
+			const arrival = useChunkArrival(loadFileLeaseChunk, typeof props.sessionId === "string" && props.sessionId !== "");
 			if (!arrival?.chunks) return null;
-			return react_jsx_runtime.jsx(arrival.chunks.EditLockPanel, { ...props, t: chunkDictionaries.editLock ?? props.t });
+			return react_jsx_runtime.jsx(arrival.chunks.FileLeaseBadge, { ...props, t: chunkDictionaries.fileLease ?? props.t });
 		}
 		// ---- Tab glyphs (ui-entries-and-icons) ----
 		// Three 16x16 stroke glyphs drawn in currentColor, matching the host
@@ -427,7 +427,7 @@ window.__ModuleLoader__.load({
 			chunkDictionaries.register = registerChunkDictionaries;
 			chunkDictionaries.lspToggle = ctx.locale.bind("settings.weir.lsp-toggle");
 			chunkDictionaries.hashEdit = ctx.locale.bind("settings.weir.hash-edit");
-			chunkDictionaries.editLock = ctx.locale.bind("settings.weir.edit-lock");
+			chunkDictionaries.fileLease = ctx.locale.bind("settings.weir.file-lease");
 			chunkDictionaries.worktree = ctx.locale.bind("settings.weir.worktree");
 			const pageT = ctx.locale.bind("settings.weir.page");
 			const capabilityT = ctx.locale.bind("settings.weir.capability");
@@ -619,28 +619,20 @@ window.__ModuleLoader__.load({
 				key: "hash_edit",
 				locale: NS
 			}, HashEditToolView)), "ui-weir-settings: hash_edit toolview");
-			// Edit Lock entry: renders only while the `edit-lock` command exists
-			// (feature enabled). Each action is an explicit human /edit-lock run.
+			// File-lease ownership entry (edit-lock rebuild D13): the read-only
+			// badge of the file-lease feature. It carries NO action verb and no
+			// command bridge — every ownership state resolves by itself (turn end,
+			// expiry, negotiation) — and its single read is the read-only view
+			// endpoint, so nothing in this surface can write to the conversation.
 			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
 				name: "conversation.input.right",
-				id: "weir-edit-lock",
+				id: "weir-file-lease",
 				order: 101,
 				locale: NS,
 				inject: (sessionId) => {
 					if (!sessionId) return {};
 					return {
 						sessionId,
-						runEditLock: async (verb) => {
-							if (!ctx.remote.commands?.execute) return { kind: "error", text: "unknown command: /edit-lock" };
-							const result = await ctx.remote.commands.execute(sessionId, `/edit-lock ${verb}`, []);
-							if (!result.ok) return { kind: "error", text: `${result.error.message} (${result.error.code})` };
-							if (result.value === undefined) return { kind: "error", text: "unknown command: /edit-lock" };
-							return result.value.result;
-						},
-						commandsList: (sid) => {
-							if (!ctx.remote.commands?.list) return Promise.resolve([]);
-							return ctx.remote.commands.list(sid).then((result) => (result.ok ? result.value : []));
-						},
 						// Structured view: read-only, never written to the conversation.
 						fetchView: async () => {
 							const result = await httpChannel("api/weir-edit-lock/view", { sessionId });
@@ -649,7 +641,7 @@ window.__ModuleLoader__.load({
 						}
 					};
 				}
-			}, EditLockWrapper)), "ui-weir-settings: edit lock entry");
+			}, FileLeaseBadgeWrapper)), "ui-weir-settings: file lease badge");
 			// ---- Worktree lane surfaces ----
 			// Each surface registers in its own effect so one failure cannot take
 			// down the others (same discipline as the hash_edit view). Reads go to
@@ -1064,15 +1056,14 @@ window.__ModuleLoader__.load({
 							require.async("./client.chain-model.js"),
 							require.async("./client.robash-model.js"),
 							require.async("./client.lsp-model.js"),
-							require.async("./client.notify-permissions.js"),
-							require.async("./client.edit-lock-maintenance.js")
-						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel, notifyPermissions, editLockMaintenance]) => {
+							require.async("./client.notify-permissions.js")
+						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel, notifyPermissions]) => {
 							// The whole settings card tree shares one t (the page
 							// namespace): every batch chunk's data face merges into ONE
 							// registration — a duplicate (namespace, locale) pair would
 							// throw, so per-feature namespaces are not an option here.
 							const pageDictionaries = { en: {}, zh: {} };
-							for (const chunk of [settingsPage, chainModel, robashModel, lspModel, disabledCategoriesEditor, notifyPermissions, editLockMaintenance]) {
+							for (const chunk of [settingsPage, chainModel, robashModel, lspModel, disabledCategoriesEditor, notifyPermissions]) {
 								Object.assign(pageDictionaries.en, chunk.dictionaries?.en);
 								Object.assign(pageDictionaries.zh, chunk.dictionaries?.zh);
 							}
@@ -1094,8 +1085,7 @@ window.__ModuleLoader__.load({
 								// The HTTP channel adapter reaches every fetch-talking editor
 								// through the same prop (composition-root injection: a chunk
 								// never builds its own carrier).
-								NotifyPermissionsField: (editorProps) => react_jsx_runtime.jsx(notifyPermissions.NotifyPermissionsField, { ...editorProps, channel: httpChannel }),
-								EditLockMaintenanceField: (editorProps) => react_jsx_runtime.jsx(editLockMaintenance.EditLockMaintenanceField, { ...editorProps, channel: httpChannel })
+								NotifyPermissionsField: (editorProps) => react_jsx_runtime.jsx(notifyPermissions.NotifyPermissionsField, { ...editorProps, channel: httpChannel })
 							};
 							return { settingsPage, editors };
 						}, (error) => {

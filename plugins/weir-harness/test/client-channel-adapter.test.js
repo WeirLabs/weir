@@ -94,7 +94,6 @@ describe('client channel adapters (composition root)', () => {
       './client.robash-model.js': {},
       './client.lsp-model.js': {},
       './client.notify-permissions.js': {},
-      './client.edit-lock-maintenance.js': {},
       './client.model-picker.js': {},
       './client.notify-web.js': { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => {} } } },
     }
@@ -344,12 +343,14 @@ describe('client channel adapters (composition root)', () => {
     }
   })
 
-  it('HTTP channel through the Edit Lock view face: failures throw with the folded message', async () => {
+  it('HTTP channel through the file-lease view face: failures throw with the folded message', async () => {
     const { surface } = await loadEntry()
     const { ctx, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
-    const lockEntry = registrationById(slotInjects, slotRegistrations, 'weir-edit-lock')
-    const fetchView = lockEntry.definition.inject('s1').fetchView
+    // The ownership entry: same HTTP channel, now the read-only file-lease
+    // badge (edit-lock rebuild D13).
+    const leaseEntry = registrationById(slotInjects, slotRegistrations, 'weir-file-lease')
+    const fetchView = leaseEntry.definition.inject('s1').fetchView
 
     const originalFetch = globalThis.fetch
     try {
