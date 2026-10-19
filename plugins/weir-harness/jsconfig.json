@@ -10,8 +10,8 @@
     "noEmit": true,
     "types": []
   },
-  // Pure modules plus the maintenance adapter and its client. Host and Node
-  // contracts live in types/ so checkJs also covers the integration boundaries.
+  // Pure modules plus the lease client surface. Host and Node contracts live in
+  // types/ so checkJs also covers the integration boundaries.
   "include": [
     "src/core/doctrine.js",
     "src/intent-gate/matcher.js",
@@ -29,11 +29,12 @@
     "src/todo-driver/state-machine.js",
     "src/context-guard/pressure.js",
     "src/context-guard/compaction-outcome.js",
-    "src/edit-lock/state.js",
-    "src/edit-lock/inspect.js",
-    "src/edit-lock/maintenance.js",
-    "src/edit-lock/snapshot.js",
     "src/settings/index.js",
+    // The narrow Node platform contract behind the checked graph's global
+    // `process`, `node:fs/promises`, timers and `Buffer`: it used to ride in as
+    // a `/// <reference>` from a deleted edit-lock module, so the dependency is
+    // listed here instead of staying accidental.
+    "src/capabilities/store/checked-contract.d.ts",
     "lib/client.file-lease-badge.js",
     "src/blackboard/kernel.js",
     "src/blackboard/storage.js",
