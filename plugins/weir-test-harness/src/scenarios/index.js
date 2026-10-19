@@ -57,6 +57,10 @@ import presetDelegationSurface from './preset-delegation-surface.js'
 import editlockLspRename from './editlock-lsp-rename.js'
 import editlockLspUncertain from './editlock-lsp-uncertain.js'
 import editlockHashlineNegatives from './editlock-hashline-negatives.js'
+import fileleaseTurnRelease from './filelease-turn-release.js'
+import fileleaseHold from './filelease-hold.js'
+import fileleaseDegrade from './filelease-degrade.js'
+import fileleaseFaultInjection from './filelease-fault-injection.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, jobsAwareTodo]
 SCENARIOS.push(...skillComposition)
 SCENARIOS.push(applyTransaction)
@@ -87,6 +91,10 @@ SCENARIOS.push(plannedCase('busy'), plannedCase('wake'), plannedCase('cancel'), 
 SCENARIOS.push(editlockLspRename)
 SCENARIOS.push(editlockLspUncertain)
 SCENARIOS.push(editlockHashlineNegatives)
+SCENARIOS.push(fileleaseTurnRelease)
+SCENARIOS.push(fileleaseHold)
+SCENARIOS.push(fileleaseDegrade)
+SCENARIOS.push(fileleaseFaultInjection)
 
 /**
  * Find a scenario entry by id.

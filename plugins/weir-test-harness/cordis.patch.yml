@@ -231,6 +231,14 @@
           name: 'weir-harness/file-lease'
           config:
             enabled: !!js process.env.WEIR_IT_EDIT_LOCK === '1'
+        # Turn-boundary lease probe (filelease-turn-release / filelease-hold):
+        # reads the arbiter table in-process right after `turn/end` and writes
+        # the snapshot the scenario asserts on. A reader only — it never
+        # acquires, releases or negotiates. Mounted inert for every other boot.
+        - id: weir-it-file-lease-turn-probe
+          name: 'weir-test-harness/file-lease-turn-probe'
+          config:
+            enabled: !!js process.env.WEIR_IT_LEASE_PROBE === '1'
         - id: weir-it-hashline-edit
           name: 'weir-harness/hashline-edit'
           config:

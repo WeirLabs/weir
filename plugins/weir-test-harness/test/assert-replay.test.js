@@ -24,7 +24,13 @@ function syntheticObs() {
 // (a claim held by an actually-running broker), live sandbox policy, and
 // post-run target bytes. A frozen trace cannot establish "who holds this path
 // right now", so re-recording one would only freeze a stale answer.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives'].includes(scenario.id))
+//
+// The filelease-* scenarios added for the new lease semantics (5.2/5.5/5.6) are
+// excluded for the same reason, plus one more: their records carry facts from
+// an in-process turn-boundary probe and from SIGKILLed/crippled arbiters — the
+// fixtures would freeze the probe's answer and the fault recipe, not replay a
+// decision the scenario's own assert could re-derive.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-fault-injection'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {

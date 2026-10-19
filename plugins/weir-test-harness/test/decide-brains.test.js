@@ -215,3 +215,62 @@ describe('capstore brain', () => {
     }
   }
 })
+
+// The filelease-* lease-semantics scenarios (edit-lock-rebuild 5.2/5.5/5.6) are
+// driven by the SAME mock brain in a headless boot; these in-process checks pin
+// the step order so a broken marker cannot silently skip a boundary (for
+// example, "hold before write" would be refused by the broker, and a missing
+// wait step would race the driver's fault injection).
+describe('filelease brains', () => {
+  const writeCall = (history) => {
+    const blocks = blockEnds(run('filelease-turn-release', userOptions(history)))
+    assert.equal(blocks[0].name, 'write')
+    return JSON.parse(blocks[0].arguments)
+  }
+
+  it('filelease-turn-release writes first, then holds the turn open for the driver', () => {
+    const first = writeCall('filelease-turn-release-probe')
+    assert.equal(first.file_path.endsWith('lease-target.txt'), true)
+    const afterWrite = blockEnds(run('filelease-turn-release', userOptions(
+      `filelease-turn-release-probe\nCreated file: ${first.file_path}`,
+    )))
+    assert.equal(afterWrite[0].name, SHELL)
+    assert.match(JSON.parse(afterWrite[0].arguments).command, /WEIR_LEASE_CONTENDED/)
+    const done = blockEnds(run('filelease-turn-release', userOptions(
+      `filelease-turn-release-probe\nCreated file: ${first.file_path}\nWEIR_LEASE_CONTENDED`,
+    )))
+    assert.equal(done[0].type, 'text')
+  })
+
+  it('filelease-hold writes, then retains the path it already owns', () => {
+    const first = blockEnds(run('filelease-hold', userOptions('filelease-hold-probe')))[0]
+    assert.equal(first.name, 'write')
+    const path = JSON.parse(first.arguments).file_path
+    const hold = blockEnds(run('filelease-hold', userOptions(`filelease-hold-probe\nCreated file: ${path}`)))[0]
+    assert.equal(hold.name, 'edit_lock_hold')
+    assert.deepEqual(JSON.parse(hold.arguments), { paths: [path], minutes: 30 })
+  })
+
+  it('filelease-degrade retries the write and then reads the degradation surface', () => {
+    const first = blockEnds(run('filelease-degrade', userOptions('filelease-degrade-probe')))[0]
+    assert.equal(first.name, 'write')
+    const path = JSON.parse(first.arguments).file_path
+    const second = JSON.parse(blockEnds(run('filelease-degrade', userOptions(`filelease-degrade-probe\nCreated file: ${path}`)))[0].arguments)
+    assert.equal(second.file_path, path)
+    assert.notEqual(second.content, JSON.parse(first.arguments).content)
+    const status = blockEnds(run('filelease-degrade', userOptions(`filelease-degrade-probe\nCreated file: ${path}\nUpdated file: ${path}`)))[0]
+    assert.equal(status.name, 'edit_lock_status')
+  })
+
+  it('filelease-fault-injection writes, waits, then writes the second target', () => {
+    const first = blockEnds(run('filelease-fault-injection', userOptions('filelease-fault-injection-probe')))[0]
+    assert.equal(first.name, 'write')
+    const firstPath = JSON.parse(first.arguments).file_path
+    const wait = blockEnds(run('filelease-fault-injection', userOptions(`filelease-fault-injection-probe\nCreated file: ${firstPath}`)))[0]
+    assert.equal(wait.name, SHELL)
+    assert.match(JSON.parse(wait.arguments).command, /WEIR_FAULT_INJECTED/)
+    const second = blockEnds(run('filelease-fault-injection', userOptions(`filelease-fault-injection-probe\nCreated file: ${firstPath}\nWEIR_FAULT_INJECTED`)))[0]
+    assert.equal(second.name, 'write')
+    assert.notEqual(JSON.parse(second.arguments).file_path, firstPath)
+  })
+})
