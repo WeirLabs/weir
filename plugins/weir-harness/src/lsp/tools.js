@@ -1,12 +1,14 @@
 // The LSP semantic tools: four read-only queries plus `lsp_rename`, the one
 // rewriting tool (cross-file WorkspaceEdit application through the fs version
-// guard). Pure-object definitions with object-rooted schemas; 1-based
-// positions in, structured text out; every LSP failure becomes an ordinary
-// tool error result, never a broken turn.
+// guard, under ONE batch file lease). Pure-object definitions with
+// object-rooted schemas; 1-based positions in, structured text out; every LSP
+// failure becomes an ordinary tool error result, never a broken turn.
 import { familyForLanguageId, languageIdForFile } from './registry.js'
 import { uriToPath } from './uri.js'
 import { applyTextEdits, detectLineEndings, extractChanges, normalizeLineEndings, restoreLineEndings } from './rename.js'
 import { unifiedDiff } from '../hashline-edit/diff.js'
+import { createEditorLease } from '../file-lease/singleton.js'
+import { isLeaseConflict } from '../file-lease/client.js'
 
 const SEVERITY = { 1: 'error', 2: 'warning', 3: 'information', 4: 'hint' }
 
@@ -34,9 +36,85 @@ function asLocationArray(result) {
     .filter(Boolean)
 }
 
-/** Build the five tool definitions for one calling agent's enable. */
-export function createLspTools({ manager, ctx, agent }) {
-  const editLock = ctx.get?.('weirEditLock')
+/**
+ * The sandbox denial marker the host backend raises, by prefix only: every
+ * effective mode ends with its own mode name, and a denial never moved bytes.
+ */
+const SANDBOX_DENIAL_MARKER = '[sandbox: file access denied under'
+
+/** @param {unknown} error @returns {boolean} */
+function isSandboxDenial(error) {
+  return String(/** @type {any} */ (error)?.message ?? '').includes(SANDBOX_DENIAL_MARKER)
+}
+
+/** @param {unknown} error @returns {string} */
+function messageOf(error) {
+  return String(/** @type {any} */ (error)?.message ?? error)
+}
+
+/**
+ * The three-way truth of a failed rename (design D12): which targets are on
+ * disk, which PROVABLY are not, and which cannot be proven either way.
+ *
+ * Only these three failures prove that no byte of a target landed: a refused
+ * claim (nothing ran), the filesystem version guard (the write was rejected
+ * before it moved bytes) and a sandbox denial (the backend refused the
+ * operation). Anything else — an I/O error, an abort, a backend that threw
+ * after a partial write — is UNPROVEN, and claiming it was not written would be
+ * a lie the model would act on.
+ *
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isProvablyUnwritten(error) {
+  if (isLeaseConflict(error)) return true
+  const value = /** @type {any} */ (error)
+  if (String(value?.code ?? '').includes('FS_STALE_VERSION')) return true
+  return String(value?.message ?? '').includes('FS_STALE_VERSION') || isSandboxDenial(error)
+}
+
+/**
+ * The honest failure report: three lists and no rollback claim. The identity of
+ * the caller's claim is stated truthfully too — a batch refused before the
+ * claim was granted holds nothing, while a batch that failed mid-write keeps its
+ * leases until the turn ends (design D2/D10).
+ *
+ * @param {{ failure: unknown, remaining: any[], written: any[], entered: boolean }} detail
+ * @returns {Error}
+ */
+function renameFailure({ failure, remaining, written, entered }) {
+  const list = (plans) => `[${plans.map((plan) => JSON.stringify(plan.target.displayPath)).join(', ')}]`
+  const proven = !entered || isProvablyUnwritten(failure)
+  const notWritten = proven ? remaining : []
+  const uncertain = proven ? [] : remaining
+  const failedPath = entered ? JSON.stringify(remaining[0]?.target.displayPath ?? '') : undefined
+  /** @type {Error & { cause?: unknown }} */
+  const error = new Error([
+    failedPath === undefined
+      ? `lsp_rename: the rename was refused before any write: ${messageOf(failure)}`
+      : `lsp_rename: write failed for ${failedPath}: ${messageOf(failure)}`,
+    `filesAlreadyWritten: ${list(written)};`,
+    `filesNotWritten: ${list(notWritten)};`,
+    `filesUncertain: ${list(uncertain)};`,
+    entered
+      ? 'ownership retained (no rollback)'
+      : 'no claim was taken for this batch (no rollback)',
+  ].join('\n'))
+  error.cause = failure
+  return error
+}
+
+/**
+ * Build the five tool definitions for one calling agent's enable.
+ *
+ * `leaseClient` is the injection seam; a ctx that carries one is accepted too,
+ * because this module's caller forwards only `{manager, ctx, agent}`. Nothing
+ * else in the row reads it: no service is published or consumed for leases
+ * (design D11) — the default is the process-wide client, resolved on the first
+ * managed write.
+ */
+export function createLspTools({ manager, ctx, agent, leaseClient }) {
+  const lease = createEditorLease({ leaseClient: leaseClient ?? ctx?.leaseClient, ctx })
   // Optional sandbox policy capture (S23, mirrors hashline-edit): the
   // sandboxed fs backend enforces the session policy only when the caller
   // passes it per call. Absent service (headless test compositions, other
@@ -179,7 +257,7 @@ export function createLspTools({ manager, ctx, agent }) {
     },
     {
       name: 'lsp_rename',
-      description: `Rename the symbol at a 1-based position across the workspace: the language server computes every edit location and the resulting WorkspaceEdit is applied to disk through the filesystem version guard. Every target file is preflighted before anything is written (a bad edit range aborts the call with zero writes); then files are written one by one and a mid-write failure (file changed on disk, sandbox denial, I/O) stops immediately, reporting exactly which files were already written and which were not. The original line-ending style (LF/CRLF) of each file is preserved.`,
+      description: `Rename the symbol at a 1-based position across the workspace: the language server computes every edit location and the resulting WorkspaceEdit is applied to disk through the filesystem version guard, under one file-lease claim covering every preflighted target. Every target file is preflighted before anything is written (a bad edit range aborts the call with zero writes); then files are written one by one and a mid-write failure (file changed on disk, sandbox denial, I/O) stops immediately, reporting exactly which files were already written, which were not written, and which could not be proven either way. Nothing is rolled back. The original line-ending style (LF/CRLF) of each file is preserved.`,
       parameters: {
         type: 'object',
         properties: {
@@ -254,25 +332,39 @@ export function createLspTools({ manager, ctx, agent }) {
           return { text: `lsp_rename: no-op — the server's edits leave every file unchanged; nothing was written.` }
         }
 
-        // Phase 2 — write pass: one atomic replaceIfVersion write per file.
-        // A failure stops the pass immediately and names both file lists.
+        // Phase 2 — write pass under ONE batch claim (design D2): the complete
+        // preflighted target set is acquired atomically before the first byte, so
+        // a conflict anywhere refuses the whole call with nothing written and no
+        // implicit takeover. The claim is NOT released here: it lives until the
+        // turn ends, like every other managed edit claim (D10), so the session's
+        // own later edits of these files cannot conflict with itself.
         const written = []
-        if (editLock) {
-          await editLock.publishBatch(exec, {cwd: resolveCwd, effectivePolicy: policy, args,
-            plans: writePlans.map(plan => ({filePath: plan.filePath, content: plan.after, version: plan.version}))})
-          written.push(...writePlans)
-        } else for (const plan of writePlans) {
-          try {
-            await ctx.fs.writeText(plan.target, plan.after, { kind: 'replaceIfVersion', version: plan.version }, exec.signal, policy)
-            written.push(plan)
-          } catch (error) {
-            const notWritten = writePlans.slice(written.length).map((plan) => plan.target.displayPath)
-            const already = written.map((plan) => plan.target.displayPath)
-            throw new Error(
-              `lsp_rename: write failed for ${plan.target.displayPath}: ${error?.message ?? error}\n` +
-                `Rename partially applied. filesAlreadyWritten: [${already.join(', ')}]; filesNotWritten: [${notWritten.join(', ')}]`,
-            )
-          }
+        let entered = false
+        /** @type {unknown} */
+        let failure = null
+        try {
+          await lease.client().withLeases(
+            lease.ownerOf(exec.agent),
+            plans.map((plan) => plan.target.displayPath),
+            lease.scopeOf(exec.agent, resolveCwd),
+            async () => {
+              entered = true
+              for (const plan of writePlans) {
+                await ctx.fs.writeText(plan.target, plan.after, { kind: 'replaceIfVersion', version: plan.version }, exec.signal, policy)
+                written.push(plan)
+              }
+            },
+          )
+        } catch (error) {
+          failure = error
+        }
+        if (failure !== null) {
+          // The failure report is the whole contract here (design D12): which
+          // files are provably on disk, which provably are not, which cannot be
+          // proven, and never a rollback claim. `written` holds exactly the
+          // files that returned from writeText, so the failing target is the
+          // head of the remaining slice.
+          throw renameFailure({ failure, remaining: writePlans.slice(written.length), written, entered })
         }
 
         const editCount = writePlans.reduce((sum, plan) => sum + plan.edits, 0)
@@ -284,8 +376,6 @@ export function createLspTools({ manager, ctx, agent }) {
       },
     },
   ]
-  // Only a definition built with the captured service is admitted by Edit Lock.
-  if (editLock) for (const tool of tools) if (tool.name === 'lsp_rename') editLock.claim?.(tool)
   return tools
 }
 

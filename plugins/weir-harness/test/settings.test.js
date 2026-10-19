@@ -481,13 +481,21 @@ describe('settings overlays in modules', () => {
     expect(restricted).toHaveLength(0)
   })
 
-  it('hashline-edit without the service keeps the row config behavior', () => {
+  it('hideStockEdit hides both stock editors and provides the managed write at the agent scope', () => {
     const listeners = {}
     const restrictedBy = []
+    const registered = []
     const ctx = {
       tools: {
         register: () => {},
-        get: (toolName, scope) => (toolName === 'edit' && scope ? { name: 'edit' } : undefined),
+        // The row registry resolves an agent's effective definition: the stock
+        // `edit` is visible before the replace (which is why the deny+install
+        // runs at all), and the own-scope registration wins afterwards.
+        get: (toolName, scope) => {
+          if (!scope) return undefined
+          if (toolName === 'edit') return { name: 'edit' }
+          return registered.find((definition) => definition.name === toolName)
+        },
         restrict: () => {},
       },
       fs: {},
@@ -496,9 +504,15 @@ describe('settings overlays in modules', () => {
       },
       get: () => undefined,
     }
-    applyHashline(ctx, { hideStockEdit: true })
+    applyHashline(ctx, { hideStockEdit: true, leaseClient: { withLeases: async (_owner, _paths, _scope, fn) => await fn() } })
     expect(typeof listeners['agent/created']).toBe('function')
-    listeners['agent/created']({ agent: { ctx: { tools: { restrict: (filter) => restrictedBy.push(filter) } } } })
-    expect(restrictedBy).toEqual([{ deny: ['edit'] }])
+    const agent = { ctx: { tools: {
+      restrict: (filter) => restrictedBy.push(filter),
+      register: (definition) => { registered.push(definition); return () => {} },
+    } } }
+    listeners['agent/created']({ agent })
+    // Both stock editors are denied, and OUR `write` is installed behind them.
+    expect(restrictedBy).toEqual([{ deny: ['edit', 'write'] }])
+    expect(registered.map((definition) => definition.name)).toEqual(['write'])
   })
 })

@@ -231,12 +231,31 @@ describe('anchorReadContent', () => {
 })
 
 describe('hash_edit tool', () => {
+  /**
+   * The lease seam (design D11): the fake client records the batch and then runs
+   * the managed write exactly as the real one does (acquire first, callback
+   * second). `conflict` refuses BEFORE the callback, like a refused claim.
+   * @param {{ conflict?: any }} [options]
+   */
+  function createFakeLease(options = {}) {
+    const calls = []
+    return {
+      calls,
+      async withLeases(owner, paths, scope, fn) {
+        calls.push({ owner, paths: [...paths], scope })
+        if (options.conflict) throw options.conflict
+        return await fn()
+      },
+    }
+  }
+
   function harness(fileContent, opts = {}) {
     const files = new Map([['/ws/a.js', fileContent]])
     const handlers = {}
     const registered = []
     const writes = []
     const injected = []
+    const lease = opts.lease ?? createFakeLease(opts.leaseOptions)
     const ctx = {
       tools: {
         register: (tool) => registered.push(tool),
@@ -266,50 +285,42 @@ describe('hash_edit tool', () => {
         injected.push({ deps, cb })
       },
     }
-    apply(ctx, {})
+    apply(ctx, { leaseClient: lease })
     const tool = registered.find((t) => t.name === HASH_EDIT_NAME)
     const exec = { agent: { session: { header: { cwd: '/ws' } } }, callId: 'call-1', signal: new AbortController().signal }
-    return { tool, files, exec, handlers, registered, writes, injected }
+    return { tool, files, exec, handlers, registered, writes, injected, lease }
   }
 
-  it('uses the captured lock publisher and never falls back after its rejection', async () => {
-    const calls = []
-    const services = { weirEditLock: { publish: async (exec, request) => {
-      calls.push({ exec, request })
-      throw new Error('lock conflict')
-    } } }
-    const { tool, exec, writes } = harness('alpha', { services })
-    delete services.weirEditLock
+  it('claims the target through the file lease and writes nothing when the claim is refused', async () => {
+    // A real conflict is the arbiter's answer: the edit is refused BEFORE any
+    // target-side effect and the error is not rewritten (design D7).
+    const conflict = Object.assign(new Error('another lineage holds /ws/a.js'), { code: 'held' })
+    const { tool, exec, writes, lease } = harness('alpha', { leaseOptions: { conflict } })
     let failure
     try { await tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'beta' }] }, exec) }
     catch (error) { failure = error }
-    expect(failure.message).toBe('lock conflict')
+    expect(failure).toBe(conflict)
     expect(writes.length).toBe(0)
-    expect(calls.length).toBe(1)
-    expect(calls[0].exec).toBe(exec)
-    expect(calls[0].request.content).toBe('beta')
-    expect(calls[0].request.expected.version).toBe('v1')
+    expect(lease.calls.length).toBe(1)
+    expect(lease.calls[0].paths).toEqual(['/ws/a.js'])
+    expect(lease.calls[0].scope).toBe('/ws')
   })
-  it('accepts a deferred lock provider and refuses direct writes after its removal', async () => {
-    const calls = []
+  it('never consults the retired weirEditLock service (design D11)', async () => {
+    const published = []
     const claimed = []
-    const { tool, exec, writes, injected } = harness('alpha')
-    const entry = injected.find((item) => item.deps[0] === 'weirEditLock')
-    const dispose = entry.cb({ weirEditLock: {
+    const services = { weirEditLock: {
       claim: (definition) => claimed.push(definition),
-      publish: async (_exec, request) => { calls.push(request); return { version: 'v2' } },
-    } })
-    expect(claimed[0]).toBe(tool)
-    const edit = { file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'beta' }] }
-    await tool.execute(edit, exec)
-    expect(calls.length).toBe(1)
-    expect(writes.length).toBe(0)
-    dispose()
-    let failure
-    try { await tool.execute(edit, exec) } catch (error) { failure = error }
-    expect(failure.message).toContain('removed')
-    expect(writes.length).toBe(0)
-    expect(calls.length).toBe(1)
+      publish: async () => { published.push(1); return { version: 'v2' } },
+    } }
+    const { tool, exec, writes, injected, files } = harness('alpha', { services })
+    // The only injected dependency is the sandbox policy: no lock service is
+    // captured, deferred or claimed any more.
+    expect(injected.map((entry) => entry.deps)).toEqual([['sandboxPolicy']])
+    await tool.execute({ file_path: '/ws/a.js', edits: [{ op: 'replace', pos: anchorFor(1, 'alpha'), text: 'beta' }] }, exec)
+    expect(claimed).toEqual([])
+    expect(published).toEqual([])
+    expect(writes.length).toBe(1)
+    expect(files.get('/ws/a.js')).toBe('beta')
   })
   it('applies a valid edit and returns a diff', async () => {
     const { tool, files, exec } = harness('alpha\nbeta\ngamma')
@@ -361,7 +372,7 @@ describe('hash_edit tool', () => {
 
   it('passes the session-resolved sandbox policy to writeText (S23)', async () => {
     const { tool, files, exec, injected, writes } = harness('alpha\nbeta\ngamma')
-    expect(injected.map((entry) => entry.deps)).toEqual([['sandboxPolicy'], ['weirEditLock']])
+    expect(injected.map((entry) => entry.deps)).toEqual([['sandboxPolicy']])
     const fakePolicy = { mode: 'workspace-write', workspaceRoot: '/ws', sessionId: 's1' }
     let resolvedReq = null
     injected[0].cb({ sandboxPolicy: { resolve: (req) => {
@@ -411,7 +422,7 @@ describe('hash_edit tool', () => {
     expect(typeof handlers['tools/post-execute']).toBe('function')
   })
 
-  it('hideStockEdit restricts the stock edit per created agent (uniform mechanism)', () => {
+  it('hideStockEdit restricts the stock editors per created agent (uniform mechanism)', () => {
     const restrictedBy = []
     const listeners = {}
     const ctx = {
@@ -431,10 +442,11 @@ describe('hash_edit tool', () => {
     expect(restrictedBy).toHaveLength(0)
     expect(typeof listeners['agent/created']).toBe('function')
     listeners['agent/created']({ agent: { ctx: { tools: { restrict: (filter) => restrictedBy.push(filter) } } } })
-    expect(restrictedBy).toEqual([{ deny: ['edit'] }])
+    // Both stock editors are denied — the managed `write` is what replaces them.
+    expect(restrictedBy).toEqual([{ deny: ['edit', 'write'] }])
   })
 
-  it('hideStockEdit skips agents whose view has no stock edit', () => {
+  it('hideStockEdit skips agents whose view has no stock editor at all', () => {
     const listeners = {}
     let restricted = 0
     const ctx = {
@@ -477,7 +489,7 @@ describe('hash_edit tool', () => {
     const agent = { ctx: { tools: { restrict: (filter) => restrictedBy.push(filter) } } }
     listeners['agent/created']({ agent })
     expect(getScope).toBe(agent)
-    expect(restrictedBy).toEqual([{ deny: ['edit'] }])
+    expect(restrictedBy).toEqual([{ deny: ['edit', 'write'] }])
   })
   it('advertises the escalation fields only under a confining backend', () => {
     const plain = harness('x')

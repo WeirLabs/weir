@@ -1,7 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { PassThrough } from 'node:stream'
 import { apply, foldLspState, LSP_PROJECTION_KEY } from '../src/lsp/index.js'
-import { createEditLockHost } from '../src/edit-lock/host.js'
 
 /** Scripted fake LSP server over PassThrough pipes (auto-handshakes). */
 function fakeSubprocess(options = {}) {
@@ -194,7 +193,20 @@ function fakeCtx(subprocess, config, services = {}) {
   const commandDefs = []
   const projectionDefs = []
   const settings = services.settings ?? fakeSettings()
+  // The lease seam (design D11): `createLspTools` resolves the client from this
+  // property, so these unit tests never construct the process-wide one (which
+  // would open a socket and keep the test process alive). `leaseCalls` records
+  // the batch exactly as the real `withLeases` receives it.
+  const leaseCalls = []
+  const leaseClient = services.leaseClient ?? {
+    async withLeases(owner, paths, scope, fn) {
+      leaseCalls.push({ owner, paths: [...paths], scope })
+      return await fn()
+    },
+  }
   return {
+    leaseClient,
+    leaseCalls,
     registered,
     handlers,
     commandDefs,
@@ -724,7 +736,7 @@ describe('lsp_rename tool', () => {
       expect(ctx.fs.files['/ws/absent.ts']).toBe(undefined)
     }
   })
-  it('lock-on lsp_rename reports a genuinely unknown second publication, not an empty uncertain list', async () => {
+  it('reports a genuinely unknown second write as uncertain, never as not-written', async () => {
     const ctx = fakeCtx(fakeSubprocess({
       capabilities: { renameProvider: true },
       renameResponder: () => ({ changes: {
@@ -735,27 +747,12 @@ describe('lsp_rename tool', () => {
     ctx.fs.files['/ws/a.ts'] = { text: 'const alphaFn = () => 1\n', version: 'v1' }
     ctx.fs.files['/ws/b.ts'] = { text: 'import { alphaFn } from "./a"\n', version: 'v9' }
     const agent = fakeAgent()
-    const history = new Map()
-    const published = []
-    const released = []
-    const runtime = {
-      control: { history: (_owner, id) => history.get(id), releaseMany: async tokens => released.push(...tokens) },
-      requests: {
-        acquireBatch: async () => ({ ordered: [{ resourceId: '/ws/a.ts' }, { resourceId: '/ws/b.ts' }], temporary: [{ resourceId: '/ws/a.ts' }, { resourceId: '/ws/b.ts' }] }),
-        prepare: async (_execution, request) => {
-          published.push(request.filePath)
-          const operation = { phase: published.length === 1 ? 'updated' : 'unknown', outcome: { version: 'v2' } }
-          history.set(request.operationId, operation)
-          return { kind: 'history', operation }
-        },
-      },
-      async close() {},
+    // A backend that acknowledged nothing and failed ambiguously: no bytes may be
+    // claimed absent for b.ts, so it belongs in `filesUncertain` (design D12).
+    const lost = Object.assign(new Error('QA_LOST_SECOND_WRITE_ACK_AFTER_BACKEND_COMPLETION'), { code: 'QA_LOST_ACK' })
+    ctx.fs.onWrite = (path) => {
+      if (path === '/ws/b.ts') throw lost
     }
-    const host = createEditLockHost(runtime, candidate => candidate === agent)
-    host.attach(agent, { sessionId: 'owner', managerIncarnation: 'manager', executionEpoch: 1 })
-    const get = ctx.get
-    ctx.get = name => name === 'weirEditLock' ? host : get(name)
-    ctx.inject = (_keys, callback) => callback({ sandboxPolicy: { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/ws' }) } })
     apply(ctx, { enabled: true })
     const rename = await renameTool(ctx, agent)
     const exec = { agent, callId: 'rename-unknown', signal: new AbortController().signal }
@@ -763,24 +760,18 @@ describe('lsp_rename tool', () => {
     try { await rename.execute({ file_path: '/ws/a.ts', line: 1, character: 7, new_name: 'betaFn' }, exec) }
     catch (error) { failure = error }
     expect(failure?.message.split('\n')).toEqual([
-      'rename stopped: Error: publication not acknowledged: unknown;',
+      'lsp_rename: write failed for "/ws/b.ts": QA_LOST_SECOND_WRITE_ACK_AFTER_BACKEND_COMPLETION',
       'filesAlreadyWritten: ["/ws/a.ts"];',
       'filesNotWritten: [];',
       'filesUncertain: ["/ws/b.ts"];',
       'ownership retained (no rollback)',
     ])
-    expect(failure?.message.replaceAll('\n', ' ')).toBe(
-      'rename stopped: Error: publication not acknowledged: unknown; filesAlreadyWritten: ["/ws/a.ts"]; filesNotWritten: []; filesUncertain: ["/ws/b.ts"]; ownership retained (no rollback)')
-    expect(failure?.cause?.message).toBe('publication not acknowledged: unknown')
-    expect(failure?.message).toContain('filesAlreadyWritten: ["/ws/a.ts"]')
-    expect(failure?.message).toContain('filesNotWritten: []')
-    expect(failure?.message).toContain('filesUncertain: ["/ws/b.ts"]')
-    expect(failure?.message).toContain('ownership retained (no rollback)')
-    expect(published).toEqual(['/ws/a.ts', '/ws/b.ts'])
-    expect([...history.values()].map(op => op.phase)).toEqual(['updated', 'unknown'])
-    expect(released).toEqual([])
-    expect(ctx.fs.writes).toEqual([]) // authority owns publication, not the tool's fs
-    await host.close()
+    expect(failure?.cause).toBe(lost)
+    // The whole preflighted set was claimed in ONE batch before the first byte.
+    expect(ctx.leaseCalls).toHaveLength(1)
+    expect(ctx.leaseCalls[0].paths).toEqual(['/ws/a.ts', '/ws/b.ts'])
+    expect(ctx.leaseCalls[0].scope).toBe('/ws')
+    expect(ctx.fs.writes).toEqual(['/ws/a.ts'])
   })
   it('a stale version mid-write stops immediately and names written/not-written files', async () => {
     const subprocess = fakeSubprocess({
@@ -812,8 +803,13 @@ describe('lsp_rename tool', () => {
     }
     expect(failure).toBeTruthy()
     expect(failure.message).toContain('FS_STALE_VERSION')
-    expect(failure.message).toContain('filesAlreadyWritten: [/ws/a.ts]')
-    expect(failure.message).toContain('filesNotWritten: [/ws/b.ts]')
+    // The three-list report (design D12): a stale version PROVES b.ts is intact.
+    expect(failure.message).toContain('filesAlreadyWritten: ["/ws/a.ts"];')
+    expect(failure.message).toContain('filesNotWritten: ["/ws/b.ts"];')
+    expect(failure.message).toContain('filesUncertain: [];')
+    expect(failure.message).toContain('no rollback')
+    expect(ctx.leaseCalls).toHaveLength(1)
+    expect(ctx.leaseCalls[0].paths).toEqual(['/ws/a.ts', '/ws/b.ts'])
     // a.ts was written; b.ts kept its original bytes; nothing further written
     expect(ctx.fs.files['/ws/a.ts'].text).toBe('const betaFn = () => 1\n')
     expect(ctx.fs.files['/ws/b.ts'].text).toBe('import { alphaFn } from "./a"\n')

@@ -4,28 +4,63 @@ import { anchorFor } from './anchors.js'
 import { applyOps, renderMismatch, validateOps } from './apply-ops.js'
 import { diffResult } from './diff.js'
 import { escalationHintMarker, probeEscalation, resolveCallPolicy, sandboxDenialMarker } from './sandbox.js'
+import { createManagedWriteTool, MANAGED_WRITE_NAME } from './write-tool.js'
+import { createEditorLease } from '../file-lease/singleton.js'
+import { isLeaseConflict } from '../file-lease/client.js'
 
 const name = 'weir-hashline-edit'
 const inject = ['tools', 'fs']
 
 export const HASH_EDIT_NAME = 'hash_edit'
 const STOCK_EDIT_NAME = 'edit'
+const STOCK_WRITE_NAME = 'write'
 
 /**
- * Hide the stock edit tool. Uniform mechanism: per-agent restriction on
- * creation. At an agent's scope the stock edit is always *inherited* (from
- * the global layer, or from the preset layer in preset compositions), and
- * inherited tools are restrictable — the agent's catalog hides it. This
- * covers host-level mounts (headless compositions) and preset mounts alike;
- * a mount-time restrict cannot work in either (unscoped at host level; at
- * preset standing scope the fs row's scoped edit is not restrictable).
- * Listeners are awaited before creation resolves, so the restriction lands
- * before the agent's first request.
+ * Install the managed editors on every created agent (design D11): hide the
+ * stock `edit` AND the stock `write`, then provide our own `write` at the SAME
+ * scope.
+ *
+ * Uniform mechanism: per-agent restriction on creation. At an agent's scope the
+ * stock tools are always *inherited* (from the global layer, or from the preset
+ * layer in preset compositions), and inherited tools are restrictable — the
+ * agent's catalog hides them — while a definition registered at that same scope
+ * wins over the denied name. This covers host-level mounts (headless
+ * compositions) and preset mounts alike; a mount-time restrict cannot work in
+ * either (unscoped at host level; at preset standing scope the fs row's scoped
+ * tools are not restrictable). Listeners are awaited before creation resolves,
+ * so the denial and the registration both land before the agent's first
+ * request.
+ *
+ * The two steps must stay in one listener: a deny without the registration
+ * leaves the agent with no writer at all, and a registration without the deny
+ * leaves the unmanaged stock writer reachable. The registration is verified —
+ * if our definition is not the one this agent resolves, it is disposed and the
+ * stock writers stay hidden, because an unmanaged write is exactly what this
+ * path exists to prevent.
+ * @param {any} ctx @param {any} lease @param {() => any} sandboxPolicy
  */
-function hideStockEdit(ctx) {
+function installManagedEditors(ctx, lease, sandboxPolicy) {
+  /** @type {WeakMap<object, any>} definitions this mount installed, per agent */
+  const installed = new WeakMap()
   ctx.on('agent/created', ({ agent }) => {
-    if (!ctx.tools.get(STOCK_EDIT_NAME, agent)) return // this agent has no stock edit
-    agent.ctx.tools.restrict({ deny: [STOCK_EDIT_NAME] })
+    const scope = agent?.ctx?.tools
+    if (typeof scope?.restrict !== 'function') return
+    // Nothing to replace: this agent sees neither stock editor (a composition
+    // without the host fs row). Registering our writer there would only add a
+    // tool whose observation guard could never be answered.
+    if (typeof ctx.tools?.get === 'function'
+      && !ctx.tools.get(STOCK_EDIT_NAME, agent)
+      && !ctx.tools.get(STOCK_WRITE_NAME, agent)) return
+    if (installed.has(agent)) return
+    scope.restrict({ deny: [STOCK_EDIT_NAME, STOCK_WRITE_NAME] })
+    const definition = createManagedWriteTool(ctx, lease, sandboxPolicy())
+    const dispose = typeof scope.register === 'function' ? scope.register(definition) : undefined
+    installed.set(agent, definition)
+    const resolved = typeof ctx.tools?.get === 'function' ? ctx.tools.get(MANAGED_WRITE_NAME, agent) : definition
+    if (resolved === definition) return
+    installed.delete(agent)
+    try { dispose?.() } catch { /* the scope's own teardown may have run first */ }
+    ctx.logger?.warn?.('hashline-edit: the managed write was not installed for this agent; the stock writers stay hidden')
   })
 }
 
@@ -87,11 +122,11 @@ function isSandboxDenial(error) {
 }
 
 function apply(ctx, config = {}) {
-  // Capture once: disposal of managed editing must fail closed, not downgrade.
-  // A sibling row's service becomes visible only after its own apply, so a
-  // deferred provider is accepted too (see the inject after registration).
-  let editLock = ctx.get?.('weirEditLock')
-  let editLockRemoved = false
+  // The injection seam (unit tests, embedders): an explicit client wins and
+  // creates no singleton. Read BEFORE the settings overlay so a settings value
+  // can never shadow it. Default: the process-wide client (D11), resolved on
+  // the first managed write.
+  const leaseClient = config.leaseClient
   // Settings overlay (absent service = no-op): hashlineEdit section wins over row config.
   const settingsOverride = ctx.get?.('weirSettings')?.get('hashlineEdit')
   if (settingsOverride && typeof settingsOverride === 'object') {
@@ -104,6 +139,7 @@ function apply(ctx, config = {}) {
   ctx.inject?.(['sandboxPolicy'], (scope) => {
     sandboxPolicyRef = scope.sandboxPolicy
   })
+  const lease = createEditorLease({ leaseClient, ctx })
 
   // Sandbox escalation capability fact (mirrors the stock fs tools): a
   // confining backend exposes ctx.fs.sandboxMode; only then does hash_edit
@@ -120,9 +156,9 @@ function apply(ctx, config = {}) {
     return { ...downstream, content: rewritten }
   })
 
-  // Optional: hide the stock edit tool from this preset's agents.
+  // Managed editors: hide the stock `edit` and `write`, provide our `write`.
   if (config.hideStockEdit === true) {
-    hideStockEdit(ctx)
+    installManagedEditors(ctx, lease, () => sandboxPolicyRef)
   }
 
   const definition = {
@@ -199,21 +235,31 @@ function apply(ctx, config = {}) {
       }
 
       const after = applyOps(lines, args.edits).join('\n')
-      if (editLockRemoved) throw new Error('hash_edit: the Edit Lock service was removed; refusing an unmanaged write.')
+      // Managed commit (design D2, D11): the lease is acquired for this lineage
+      // BEFORE the write and kept for the remainder of the turn, so a sibling
+      // session is refused with the target untouched. A real conflict is never
+      // rewritten as anything else; an unhealthy arbiter degrades and this edit
+      // proceeds (D7). Anchors, the version guard and the sandbox policy are
+      // unchanged by the wrap.
       let outcome
       try {
-        outcome = editLock ? await editLock.publish(exec, {
-          tool: 'hash_edit', filePath: args.file_path, args, content: after,
-          expected: { kind: 'replaceIfVersion', version: info.version },
-          cwd: resolveCwd, effectivePolicy: policy,
-        }) : await ctx.fs.writeText(
-          target,
-          after,
-          { kind: 'replaceIfVersion', version: info.version },
-          exec.signal,
-          policy,
+        outcome = await lease.client().withLeases(
+          lease.ownerOf(exec.agent),
+          [target.displayPath],
+          lease.scopeOf(exec.agent, resolveCwd),
+          () => ctx.fs.writeText(
+            target,
+            after,
+            { kind: 'replaceIfVersion', version: info.version },
+            exec.signal,
+            policy,
+          ),
         )
       } catch (error) {
+        // A refused claim is the arbiter's answer: pass it through untouched so
+        // the model sees the conflict (and never a stale-version or sandbox
+        // story that did not happen).
+        if (isLeaseConflict(error)) throw error
         if (String(error?.code ?? error?.message ?? '').includes('FS_STALE_VERSION')) {
           throw new Error('hash_edit: the file changed on disk between your read and this edit. Re-read it and copy the current anchors before retrying.')
         }
@@ -235,19 +281,7 @@ function apply(ctx, config = {}) {
       }
     },
   }
-  // Managed mounts claim their exact definition; Edit Lock denies any
-  // unclaimed hash_edit so a mis-ordered composition cannot bypass it.
-  editLock?.claim?.(definition)
   ctx.tools.register(definition)
-  if (!editLock) {
-    ctx.inject?.(['weirEditLock'], (scope) => {
-      if (editLock || editLockRemoved) return
-      editLock = scope.weirEditLock
-      editLock?.claim?.(definition)
-      // Once managed, removal never re-enables direct writes.
-      return () => { editLockRemoved = true }
-    })
-  }
 }
 
 export { name, inject, apply }
