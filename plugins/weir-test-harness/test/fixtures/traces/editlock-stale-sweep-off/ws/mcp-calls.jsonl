@@ -1,2 +1,0 @@
-{"name":"mcp__docs__echo","before":0,"after":1,"outcome":"ok"}
-{"name":"mcp__docs__echo","before":2,"after":2,"outcome":"refused","error":"MCP server \"docs\" is not enabled for this agent (admission refused at generation 1)","startErrors":[],"globalView":null,"agentView":false,"gammaControl":null}

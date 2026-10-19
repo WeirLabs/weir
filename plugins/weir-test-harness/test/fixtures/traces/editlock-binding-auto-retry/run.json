@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-binding-auto-retry",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "binding-auto-retry phase-B done\n",
-  "stderr": "\n\n\n",
-  "sessionId": "session-b40de356-3191-4fa2-824b-69ad1ed288e4"
-}

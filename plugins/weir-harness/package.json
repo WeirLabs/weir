@@ -44,6 +44,7 @@
     "./context-guard": "./src/context-guard/index.js",
     "./hashline-edit": "./src/hashline-edit/index.js",
     "./edit-lock": "./src/edit-lock/index.js",
+    "./file-lease": "./src/file-lease/plugin.js",
     "./blackboard": "./src/blackboard/index.js",
     "./blackboard-remote": "./src/blackboard/remote.js",
     "./worktree": "./src/worktree/index.js",

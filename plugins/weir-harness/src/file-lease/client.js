@@ -170,6 +170,16 @@ function defaultConnect(socketPath) {
       connected = true
       settled = true
       socket.setNoDelay(true)
+      // A lease connection is process state (design D11), not a pending task: it
+      // must never keep an otherwise-finished Node process alive. Without this
+      // an idle client pins the event loop, so a headless CLI turn that ended
+      // normally only dies when its caller times out (observed as a hung
+      // integration boot), and a graceful host shutdown would wait forever.
+      // `unref` is part of Node's net.Socket but not modelled by the hand-written
+      // node contracts this bundle compiles against (`types: []`), and the
+      // connection is an injectable stub in tests — hence the guarded call.
+      const timer = /** @type {{ unref?: () => void }} */ (/** @type {unknown} */ (socket))
+      if (typeof timer.unref === 'function') timer.unref()
       resolve(wrapSocket(socket))
     })
     socket.once('error', (error) => {

@@ -38,7 +38,7 @@
       disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION)"
     - id: weir-it-agent-presets
       name: '@deepseek-ai/dsh-agent-preset-registry'
-      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_PRESET_SWITCH)"
+      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL)"
       config:
         default: weir-it-selection
     - id: weir-it-skill-composition-probe
@@ -110,23 +110,8 @@
       config:
         intentGateProvider: mock
         intentGateModel: mock-1
-        # Message-driven auto-resume counter-case: the live gate is switched off
-        # only when the scenario asks for it (default stays ON everywhere else).
-        editLockAutoResume: !!js "process.env.WEIR_IT_AUTO_RESUME === 'off' ? false : undefined"
-        # Message-driven binding self-heal counter-case companion: the stale
-        # sweep would add unbounded remote bursts to the binding-auto-retry
-        # scenario's exact attempt counts; off only when a scenario asks.
-        editLockStaleSweep: !!js "process.env.WEIR_IT_STALE_SWEEP === 'off' ? false : undefined"
     - id: weir-it-event-tap
       name: 'weir-test-harness/event-tap'
-    # Edit Lock preset-switch probe (editlock-preset-switch scenario only):
-    # composes two Edit-Lock preset revisions in one headless process and
-    # drives the blank-window switch flow. Host level, never in a realm.
-    - id: weir-it-edit-lock-preset-switch-probe
-      name: './src/edit-lock-preset-switch-probe.js'
-      disabled: !!js process.env.WEIR_IT_PRESET_SWITCH !== '1'
-      config:
-        enabled: !!js process.env.WEIR_IT_PRESET_SWITCH === '1'
     # Capability-store probe, host level: the baseline the isolated row below
     # is compared against (capstore scenario only).
     - id: weir-it-capstore-probe-host
@@ -205,16 +190,14 @@
       name: 'weir-test-harness/blackboard-remote-probe'
       config:
         enabled: !!js process.env.WEIR_IT_BLACKBOARD === '1'
-    # Mirror the preset realm structure for the Edit Lock service: provider
-    # (edit-lock) and consumers (todo-driver, hashline-edit, lsp) share one
-    # isolated realm, exactly like the preset's delegation group. A consumer
-    # outside the realm would not see the service and its edits would be
-    # denied by the guard, so the editlock scenario fails on a realm mistake.
+    # Mirror the preset's editing realm. The file-lease row publishes no
+    # service (design D11), so unlike the retired edit-lock provider there is
+    # nothing here that would refuse to mount outside an isolate realm; the
+    # compaction services below still need this group.
     - id: weir-it-editing
       name: cordis:group
       group: true
       isolate:
-        weirEditLock: true
         compaction: true
         toolResultPruner: true
         weirCompactionCoordinator: true
@@ -236,33 +219,18 @@
           config:
             label: realm
             enabled: !!js process.env.WEIR_IT_CAPSTORE === '1'
-        # QA fault must mount before edit-lock captures fs.writeText.bind(fs).
-        - id: weir-it-edit-lock-unknown-probe
-          name: './src/edit-lock-unknown-probe.js'
+        # QA lost-ack fault. Row-mounted (not installed by the event tap) so it
+        # wraps fs.writeText BEFORE hashline-edit / lsp capture the bound write.
+        - id: weir-it-lsp-uncertain-fault
+          name: './src/lsp-uncertain-fault-probe.js'
           disabled: !!js process.env.WEIR_IT_LSP_UNCERTAIN !== '1'
-        # Edit Lock row in preset order (before hashline-edit). Enabled only for
-        # the editlock scenario so every other scenario keeps today's behavior.
-        - id: weir-it-edit-lock
-          name: 'weir-harness/edit-lock'
+        # File-lease row in preset order (before hashline-edit). The `enabled`
+        # key is the composition seam, not a setting: every scenario that is not
+        # an edit-lock scenario mounts the row switched off.
+        - id: weir-it-file-lease
+          name: 'weir-harness/file-lease'
           config:
             enabled: !!js process.env.WEIR_IT_EDIT_LOCK === '1'
-            # Fixed authority for multi-boot suites; only rename and uncertain
-            # own dedicated nested domains, leaving all prior scenarios unchanged.
-            root: !!js "process.env.WEIR_IT_LSP_RENAME === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-rename' : (process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives' : ((process.env.WEIR_IT_STOP_BOUNDARY || process.env.WEIR_IT_AUTO_RESUME || process.env.WEIR_IT_EDIT_LOCK === '1') ? process.env.WEIR_IT_ROOT + '/ws' : undefined)))"
-            authorityDirectory: !!js "process.env.WEIR_IT_LSP_RENAME === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-rename/.weir/edit-lock' : (process.env.WEIR_IT_LSP_UNCERTAIN === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-lsp-uncertain/.weir/edit-lock' : (process.env.WEIR_IT_SANDBOX_NARROW === '1' ? process.env.WEIR_IT_ROOT + '/ws/editlock-hashline-negatives/.weir/edit-lock' : (process.env.WEIR_IT_STOP_BOUNDARY ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-' + process.env.WEIR_IT_STOP_BOUNDARY : (process.env.WEIR_IT_AUTO_RESUME ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-auto-resume' + (process.env.WEIR_IT_AUTO_RESUME === 'off' ? '-off' : '') : (process.env.WEIR_IT_REVOKED_REPAIR === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-revoked-repair' : (process.env.WEIR_IT_BINDING_AUTO_RETRY === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-binding-auto-retry' : (process.env.WEIR_IT_BINDING_TRANSFER === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock-binding-transfer' : (process.env.WEIR_IT_EDIT_LOCK === '1' ? process.env.WEIR_IT_ROOT + '/ws/.weir/edit-lock' : undefined))))))))"
-        # Dev-only trusted reservation for editlock-delegate-settle: the real
-        # child's managed write happened earlier. The serial stopping hook
-        # records the hold ACK before turn/end; no owner tool is exposed.
-        - id: weir-it-edit-lock-delegate-settle-probe
-          name: 'weir-test-harness/edit-lock-delegate-settle-probe'
-          disabled: !!js process.env.WEIR_IT_SCENARIO !== 'editlock-delegate-settle'
-          config:
-            enabled: !!js process.env.WEIR_IT_SCENARIO === 'editlock-delegate-settle'
-        - id: weir-it-edit-lock-delegate-resume-probe
-          name: 'weir-test-harness/edit-lock-delegate-resume-probe'
-          disabled: !!js process.env.WEIR_IT_SCENARIO !== 'editlock-delegate-resume'
-          config:
-            enabled: !!js process.env.WEIR_IT_SCENARIO === 'editlock-delegate-resume'
         - id: weir-it-hashline-edit
           name: 'weir-harness/hashline-edit'
           config:

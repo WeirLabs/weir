@@ -2,7 +2,7 @@ import { describe, expect, it } from './helpers.js'
 import { apply as applyHashline, HASH_EDIT_NAME } from '../src/hashline-edit/index.js'
 import { anchorFor } from '../src/hashline-edit/anchors.js'
 import { isLeaseConflict } from '../src/file-lease/client.js'
-import { getSharedLeaseClient } from '../src/file-lease/singleton.js'
+import { getSharedLeaseClient, defaultLeaseEndpoint } from '../src/file-lease/singleton.js'
 
 // The three managed editors' lease wiring (edit-lock-rebuild 3C step 1): the
 // managed `write` and `hash_edit` must CLAIM the target through
@@ -422,5 +422,24 @@ describe('the process-wide client is one per endpoint and never dials on creatio
     const b = getSharedLeaseClient({ socketPath: `/tmp/weir-lease-b-${process.pid}.sock` })
     expect(a).not.toBe(b)
     expect(a.endpoint).not.toBe(b.endpoint)
+  })
+
+  it('moves the default endpoint with WEIR_EDITLOCKD_SOCKET so both halves agree', () => {
+    // The daemon entry reads this variable (lease-broker/entry.js). The client
+    // half reading it too is what lets the integration harness move BOTH sides
+    // to a run-private socket instead of arbitrating on the machine-level one.
+    const previous = process.env.WEIR_EDITLOCKD_SOCKET
+    try {
+      process.env.WEIR_EDITLOCKD_SOCKET = '/run/weir/test-lease.sock'
+      expect(defaultLeaseEndpoint()).toBe('/run/weir/test-lease.sock')
+      process.env.WEIR_EDITLOCKD_SOCKET = ''
+      // Empty is not an endpoint: fall back to the protocol's default address.
+      expect(defaultLeaseEndpoint().includes('weir-editlockd-')).toBe(true)
+      delete process.env.WEIR_EDITLOCKD_SOCKET
+      expect(defaultLeaseEndpoint().includes('weir-editlockd-')).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_EDITLOCKD_SOCKET
+      else process.env.WEIR_EDITLOCKD_SOCKET = previous
+    }
   })
 })

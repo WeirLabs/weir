@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-revoked-repair",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "revoked-repair phase-3 done\n",
-  "stderr": "\n\n\n\n",
-  "sessionId": "session-1bb42ab4-886e-464f-8e70-27ed81819b8e"
-}

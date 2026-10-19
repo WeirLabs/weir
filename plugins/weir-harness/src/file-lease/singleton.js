@@ -18,6 +18,7 @@
 // Nothing here connects, spawns or audits on import: creating a client allocates
 // state, and its first request is what dials.
 
+import process from 'node:process'
 import { createLeaseClient } from './client.js'
 import { createLineageResolver } from './lineage.js'
 import { defaultSocketPath } from '../lease-broker/server.js'
@@ -45,9 +46,16 @@ function text(value) {
 
 /**
  * The endpoint this bundle's protocol major arbitrates on.
+ *
+ * `WEIR_EDITLOCKD_SOCKET` wins when set. The daemon entry reads the same
+ * variable, so a composer that owns a private root (the integration harness) can
+ * move BOTH halves to one private socket with a single knob; leaving it unset
+ * keeps the machine-level per-user default. Nothing else consults the variable.
  * @returns {string}
  */
 export function defaultLeaseEndpoint() {
+  const override = text(process.env.WEIR_EDITLOCKD_SOCKET)
+  if (override !== undefined) return override
   return defaultSocketPath({ protocol: PROTOCOL })
 }
 

@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-hashline-negatives",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "leaving the fenced lock for the fallback disposition\n",
-  "stderr": "",
-  "sessionId": null
-}

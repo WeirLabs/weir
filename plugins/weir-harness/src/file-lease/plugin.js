@@ -193,7 +193,7 @@ function settledText(state, requestId, short) {
  * @param {(agent: any) => { id: string, session: string, label: string }} [options.ownerOf] owner identity (default: the lineage rule)
  * @param {(agent: any, text: string, wake?: boolean) => any} [options.deliver] model-facing message channel
  * @param {() => number} [options.now] injected clock (epoch ms)
- * @returns {{ name: string, inject: string[], apply: (ctx: any) => () => void }}
+ * @returns {{ name: string, inject: string[], apply: (ctx: any, config?: { enabled?: boolean }) => (() => void) | undefined }}
  */
 export function createFileLeasePlugin(options = {}) {
   const injectedClient = options?.client ?? null
@@ -202,10 +202,26 @@ export function createFileLeasePlugin(options = {}) {
   const now = typeof options?.now === 'function' ? options.now : Date.now
 
   /**
+   * Mount this row.
+   *
+   * `config.enabled === false` is a COMPOSITION-LAYER SEAM, not a user setting
+   * and not a feature flag: it exists so a test composition (or an embedder) can
+   * mount this row switched off for one boot without deleting it from the patch.
+   * The production presets never write that key — the feature is always on there
+   * — so no settings schema, no command and no documentation promises it. With
+   * the seam off the mount does nothing at all: no tool is registered and no
+   * event is subscribed, which is exactly what "this row is not here" means.
+   * Every other value (including omitted) is enabled.
+   *
    * @param {any} ctx the row's cordis context
-   * @returns {() => void} the unmount disposer
+   * @param {{ enabled?: boolean }} [config] composition config (`enabled` seam only)
+   * @returns {(() => void) | undefined} the unmount disposer
    */
-  function apply(ctx) {
+  function apply(ctx, config) {
+    // The seam is checked before anything touches the ctx: a disabled mount must
+    // leave no tool, no listener and no subscription behind (design D11 mount
+    // lifetime), so there is nothing to return a disposer for.
+    if (config?.enabled === false) return undefined
     /** @type {(() => void)[]} */
     const disposers = []
     /** @type {WeakMap<object, Map<string, { path: string, from: any }>>} */

@@ -256,6 +256,27 @@ describe('file-lease plugin row', () => {
     expect(ctx.listenerCount('agent/disposed')).toBe(1)
     dispose()
   })
+
+  it('apply(ctx, { enabled: false }) is a composition seam that mounts nothing', () => {
+    // Seam contract (edit-lock-rebuild 3.8): a test composition can carry the row
+    // switched off. "Off" means absent: no tool, no listener, no client
+    // subscription, and no disposer to hand back.
+    const ctx = createCtx()
+    const client = createFakeClient()
+    const plugin = createFileLeasePlugin({ client, deliver: () => true })
+    const dispose = plugin.apply(ctx, { enabled: false })
+    expect(dispose).toBeUndefined()
+    expect(registeredNames(ctx)).toEqual([])
+    expect(ctx.listenerCount('turn/end')).toBe(0)
+    expect(ctx.listenerCount('session/event')).toBe(0)
+    expect(ctx.listenerCount('agent/disposed')).toBe(0)
+    expect(client.subscriberCount()).toBe(0)
+
+    // The default is enabled: an omitted or empty config changes nothing, so the
+    // production presets (which never write the key) keep the full surface.
+    plugin.apply(ctx, {})
+    expect(registeredNames(ctx)).toHaveLength(5)
+  })
 })
 
 describe('turn lifecycle release (D10)', () => {

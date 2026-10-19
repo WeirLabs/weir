@@ -10,13 +10,9 @@ import { defaultItRoot } from './it-root.js'
 // Single-sourced audit vocabulary (design D4): relative cross-package import,
 // proven resolvable under the link-installed headless profile by every IT run.
 import { AUDIT_TYPES, AUDIT_SUBTYPES } from '../../weir-harness/src/shared/audit.js'
-import { installStopProbe } from './edit-lock-stop-probe.js'
-import { installAutoResumeProbe } from './edit-lock-auto-resume-probe.js'
-import { installStaleSweepProbe } from './edit-lock-stale-sweep-probe.js'
-import { installColdViewProbe } from './edit-lock-cold-view-probe.js'
-import { installBindingProbe } from './edit-lock-binding-probe.js'
-import { installBindingTransferProbe } from './edit-lock-binding-transfer-probe.js'
-import { installRepairFaultProbe } from './edit-lock-repair-fault-probe.js'
+// Write-boundary abort probe (mid-batch lsp_rename: the turn ends after the
+// first managed write lands, so the published file must stay published).
+import { installWriteAbortProbe } from './write-abort-probe.js'
 import { installBlackboardColdProbe } from './blackboard-cold-probe.js'
 import { installBlackboardPersistenceProbe } from './blackboard-persistence-probe.js'
 import { installBlackboardForkProbe } from './blackboard-fork-probe.js'
@@ -56,13 +52,7 @@ function apply(ctx) {
   installBlackboardPersistenceProbe(ctx, tap)
   installBlackboardColdProbe(ctx, tap)
   installBlackboardForkProbe(ctx, tap)
-  installStopProbe(ctx, tap)
-  installAutoResumeProbe(ctx, tap)
-  installStaleSweepProbe(ctx, tap)
-  installColdViewProbe(ctx, tap)
-  installBindingProbe(ctx, tap)
-  installBindingTransferProbe(ctx, tap)
-  installRepairFaultProbe(ctx, tap)
+  installWriteAbortProbe(ctx, tap)
   // Cordis audit channel (cold-safe; session logs stay clean).
   for (const type of AUDIT_SUBSCRIPTIONS) {
     ctx.on(`weir/${type}`, (record) => {

@@ -1,8 +1,0 @@
-{
-  "scenario": "editlock-cold-view",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
-  "code": 0,
-  "stdout": "cold view resume editing restored\n",
-  "stderr": "\n\n",
-  "sessionId": "session-2a3acec5-a4ec-4e43-a755-5ba4692e7901"
-}

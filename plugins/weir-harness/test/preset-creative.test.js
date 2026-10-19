@@ -96,7 +96,11 @@ describe('weir-creative preset declaration', () => {
   })
 
   it('the shared groups keep identical isolate tables', () => {
-    for (const service of ['weirMcpGate', 'weirMcpManager', 'planMode', 'compaction', 'toolResultPruner', 'weirEditLock', 'weirWorktreeLanes', 'weirBlackboard']) {
+    // The retired weirEditLock service is deliberately absent: the edit-lock
+    // rebuild (design D11) replaced the provider row with `weir-harness/file-lease`,
+    // which publishes no service — a surviving isolate entry on either side
+    // would declare a realm for a service nobody provides.
+    for (const service of ['weirMcpGate', 'weirMcpManager', 'planMode', 'compaction', 'toolResultPruner', 'weirWorktreeLanes', 'weirBlackboard']) {
       const marker = `${service}: true`
       expect(creative.includes(marker), `creative lost isolated service ${service}`).toBe(weir.includes(marker))
     }

@@ -105,16 +105,36 @@ function renameFailure({ failure, remaining, written, entered }) {
 }
 
 /**
+ * The optional `leaseClient` seam on a scope that may not declare it.
+ *
+ * A cordis context THROWS on reading a property it does not inject
+ * ("cannot get property \"leaseClient\" without inject"), so probing it directly
+ * makes the seam a trap: `lsp` injects `tools`/`subprocess`/`fs`, never a lease
+ * client, and every `lsp_rename` would fail at tool construction. An explicit
+ * argument (unit tests, an embedder) always wins; the probe only ever answers
+ * `undefined` when the composition does not carry one.
+ * @param {any} scope
+ * @returns {any}
+ */
+function optionalLeaseClient(scope) {
+  try {
+    return scope?.leaseClient
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Build the five tool definitions for one calling agent's enable.
  *
- * `leaseClient` is the injection seam; a ctx that carries one is accepted too,
+ * `leaseClient` is the injection seam (explicit argument or a carrying ctx),
  * because this module's caller forwards only `{manager, ctx, agent}`. Nothing
  * else in the row reads it: no service is published or consumed for leases
  * (design D11) — the default is the process-wide client, resolved on the first
  * managed write.
  */
 export function createLspTools({ manager, ctx, agent, leaseClient }) {
-  const lease = createEditorLease({ leaseClient: leaseClient ?? ctx?.leaseClient, ctx })
+  const lease = createEditorLease({ leaseClient: leaseClient ?? optionalLeaseClient(ctx), ctx })
   // Optional sandbox policy capture (S23, mirrors hashline-edit): the
   // sandboxed fs backend enforces the session policy only when the caller
   // passes it per call. Absent service (headless test compositions, other

@@ -19,18 +19,12 @@ function syntheticObs() {
   return { transcript: '', lastUser: '', lastTool: '', system: '', toolNames: [], toolDefs: [], messages: [] }
 }
 
-// These live lifecycle scenarios intentionally have no recorded authority snapshot
-// in the scoped fixture set. Its oracle is exercised by the focused unit test
-// and by an installed-CLI run, not a frozen timestamp/manager incarnation.
-// editlock-hashline-negatives likewise asserts a live authority snapshot and
-// post-run bytes, so it has no committed replay fixture (precedent 62c0ee2).
-// editlock-negotiation needs an actual 120s Host timeout and disposable fault
-// fixture; a frozen trace cannot establish delivery failure or holder liveness.
-// editlock-revoked-repair, editlock-binding-auto-retry and
-// editlock-binding-transfer drive live operator / holder child processes
-// against the real authority; a frozen trace cannot establish the child's
-// liveness arbitration or the multi-boot epoch chain.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock-delegate-settle', 'editlock-delegate-resume', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'editlock-negotiation', 'editlock-revoked-repair', 'editlock-binding-auto-retry', 'editlock-binding-transfer'].includes(scenario.id))
+// The four surviving edit-lock scenarios have no committed replay fixture, and
+// that is deliberate (edit-lock-rebuild 3.8): their oracles are live lease state
+// (a claim held by an actually-running broker), live sandbox policy, and
+// post-run target bytes. A frozen trace cannot establish "who holds this path
+// right now", so re-recording one would only freeze a stale answer.
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {

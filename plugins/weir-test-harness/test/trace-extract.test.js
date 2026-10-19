@@ -48,7 +48,6 @@ const PRE_MIGRATION_KEYS = [
   'sawTerminateProbe',
   'rehydrateResumeContextSeen',
   'editLockToolsSeen',
-  'bindingProbeSeen',
   // worktree scenario observations (lane contract, guard refusal, writer)
   'worktreeChild',
   'childSawLaneContract',
@@ -206,13 +205,11 @@ const PRE_MIGRATION_KEYS = [
   'keepLaneLanded',
 ]
 
-// Additional observation fields introduced by the one-shot child settlement
-// scenario (the original pre-registry key set above must remain unchanged).
-const DELEGATE_SETTLE_KEYS = [
-  'lockRole', 'refused', 'childResultSeen', 'acquiredSeen', 'releasedSeen',
-  'readSeen', 'updatedSeen', 'settleNoticeSeen', 'observedAt',
-  'authorityLock', 'authoritySession', 'managerIncarnation', 'targetContent',
-]
+// The one-shot child settlement scenario (and the edit-lock delegate scenarios
+// that shared its observation keys) was removed with the edit-lock rebuild, so
+// its observation fields no longer appear in the union. The gate below tracks
+// the REGISTERED scenarios; adding such a scenario back must add its keys here
+// again rather than silently widening the union.
 
 const GENERIC_KEYS = ['seq', 'scenario', 'purpose', 'tools', 'emitted', 'emittedNames', 'lastUser', 'lastTool']
 
@@ -288,7 +285,7 @@ describe('trace record key migration', () => {
     for (const scenario of SCENARIOS) {
       for (const key of Object.keys(scenario.observe?.(syntheticObs()) ?? {})) union.add(key)
     }
-    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, ...DELEGATE_SETTLE_KEYS, 'authorityLocks', 'authoritySessions', 'freshContent', 'resumed', 'oneShotResultSeen', 'retiredGuidance', 'plannedSummaryRead', 'plannedResumeRead', 'plannedCheckpointIds', 'sessionId', 'selfHealGuidanceSeen', 'transferGuidanceSeen', 'probeSeen', ...(process.env.WEIR_IT_CAPABILITY_DUAL === '1' ? ['probeServed'] : [])].sort())
+    assert.deepEqual([...union].sort(), [...PRE_MIGRATION_KEYS, 'oneShotResultSeen', 'retiredGuidance', 'plannedSummaryRead', 'plannedResumeRead', 'plannedCheckpointIds', 'sessionId', ...(process.env.WEIR_IT_CAPABILITY_DUAL === '1' ? ['probeServed'] : [])].sort())
   })
 
   it('every scenario emits at least one observation key (no silent gap)', () => {
