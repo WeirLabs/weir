@@ -62,5 +62,9 @@
     "src/worktree/projection.js",
     "src/worktree/cards.js",
     "src/worktree/pkgmgr.js",
+    // Edit-lock lease broker: the wire protocol and the pure arbitration
+    // kernel (no IO, injected clock).
+    "src/lease-broker/protocol.js",
+    "src/lease-broker/state.js",
   ]
 }
