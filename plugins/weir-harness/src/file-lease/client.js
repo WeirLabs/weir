@@ -29,7 +29,6 @@ import { isAbsolute } from 'node:path'
 import { createConnection } from 'node:net'
 import { PROTOCOL } from '../lease-broker/protocol.js'
 import { defaultSocketPath } from '../lease-broker/server.js'
-import { diag } from './diag.js'
 import { spawnDaemon as defaultSpawnDaemon } from './spawn.js'
 
 /** Per-request deadline. A slow arbiter is an unhealthy arbiter (D7). */
@@ -680,7 +679,6 @@ export function createLeaseClient({
         holdUntil: typeof lease.holdUntil === 'number' ? lease.holdUntil : null,
       })
     }
-    diag('remember session=' + owner.session + ' granted=' + (granted?.length ?? -1) + ' ledger=' + ledger.size)
   }
 
   /**
@@ -715,7 +713,6 @@ export function createLeaseClient({
     const holder = normalizeOwner(owner)
     const list = normalizePaths(paths)
     const leaseScope = requireScope(scope)
-    diag('acquire session=' + holder.session + ' lineage=' + holder.id + ' paths=' + list.length)
     const reply = await request('acquire', { owner: holder, scope: leaseScope, paths: list })
     if (Array.isArray(reply.granted)) remember(reply.granted, holder, leaseScope)
     return reply
@@ -902,7 +899,6 @@ export function createLeaseClient({
    * @returns {Promise<{ released: string[] }>}
    */
   async function releaseMatching(match) {
-    diag('releaseMatching ledger=' + ledger.size)
     /** @type {Map<string, { session: string, paths: string[] }>} */
     const groups = new Map()
     for (const [path, record] of [...ledger]) {
@@ -915,16 +911,13 @@ export function createLeaseClient({
       group.paths.push(path)
       groups.set(record.lineage, group)
     }
-    diag('releaseMatching groups=' + groups.size)
     /** @type {string[]} */
     const released = []
     for (const [lineage, group] of groups) {
       try {
         const response = await request('release', { owner: ownerOf(lineage, group.session), paths: group.paths })
         if (Array.isArray(response.released)) released.push(...response.released)
-        diag('release lineage=' + lineage + ' paths=' + group.paths.length + ' released=' + (Array.isArray(response?.released) ? response.released.length : 'none'))
-      } catch (error) {
-        diag('release failed lineage=' + lineage + ' error=' + String(/** @type {any} */ (error)?.message ?? error))
+      } catch {
         // See above: never throw at a turn boundary, never keep state to retry.
       }
     }

@@ -31,7 +31,6 @@ import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { getSharedLeaseClient } from './singleton.js'
 import { buildLeaseView } from './view.js'
-import { diag } from './diag.js'
 
 /** Plugin name (composition identity only; this row publishes no service). */
 const PLUGIN_NAME = 'weir-file-lease'
@@ -73,18 +72,6 @@ const SOURCE_KIND = 'weir-file-lease'
  * @type {WeakMap<object, Set<string>>}
  */
 const noticedByAgent = new WeakMap()
-
-/**
- * `session/event` types the root-context liveness probe has already logged.
- *
- * The probe below logs EVERY event type that reaches the root context on
- * purpose: that line is the evidence the channel is alive, and a silent channel
- * is exactly the defect it exists to detect. Unmetered it would flood the log of
- * a long session, so each type is logged once per process — the set is
- * module-level because every mount of this row in this process shares the log.
- * @type {Set<string>}
- */
-const diagRootEventTypes = new Set()
 
 /** @param {unknown} value @returns {string | undefined} */
 function text(value) {
@@ -302,7 +289,6 @@ export function createFileLeasePlugin(options = {}) {
    * @returns {(() => void) | undefined} the unmount disposer
    */
   function apply(ctx, config) {
-    diag('plugin mounted pid=' + process.pid)
     // The seam is checked before anything touches the ctx: a disabled mount must
     // leave no tool, no listener and no subscription behind (design D11 mount
     // lifetime), so there is nothing to return a disposer for.
@@ -500,7 +486,6 @@ export function createFileLeasePlugin(options = {}) {
      * @param {any} agent
      */
     function releaseOnTurnEnd(agent) {
-      diag('releaseOnTurnEnd session=' + String(sessionIdOf(agent)))
       const session = sessionIdOf(agent)
       // The reply tool exists for one turn's pending answers; the boundary ends
       // that window whether or not the holder replied.
@@ -643,53 +628,17 @@ export function createFileLeasePlugin(options = {}) {
     // `turn/end` session event, so both feed the ONE handler (release is
     // idempotent per protocol, so a host that emits both is harmless).
     const offTurnEnd = ctx.on?.('turn/end', (/** @type {any} */ payload) => {
-      diag('cordis turn/end agent=' + (payload?.agent ? 'yes' : 'no'))
       releaseOnTurnEnd(payload?.agent)
     })
     if (typeof offTurnEnd === 'function') disposers.push(offTurnEnd)
 
     const offSession = ctx.on?.('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
       if (event?.type !== 'turn/end') return
-      diag('session/event turn/end sessionId=' + String(session?.id))
       const agent = agentFor(text(session?.id))
-      diag('session/event agent=' + (agent === undefined ? 'no' : 'yes'))
       if (agent === undefined) return
       releaseOnTurnEnd(agent)
     })
     if (typeof offSession === 'function') disposers.push(offSession)
-
-    // The same boundary heard on the ROOT context (a fix attempt for the live
-    // defect: `session/event` never reached the inline subscription above — a
-    // turn ended and not one probe line appeared). The row's own `ctx` is a
-    // scope-local context; `ctx.root` is the application-wide one every mount
-    // shares, already used as the cross-mount host key by the old edit lock's
-    // `sharedDomainRegistryFor`. BOTH subscriptions stay on: the inline pair is
-    // the control group that says which channel actually delivered. Releasing
-    // twice is harmless — `releaseOnTurnEnd` is idempotent, and so is the
-    // protocol's `release`. Nothing here decides anything new: the same handler,
-    // the same verdicts, the same timing.
-    //
-    // `root === ctx` means the host exposes no separate root (a plain emitter in a
-    // test composition, an already-root row): the inline pair above then IS the
-    // root subscription, and registering the same handler twice on one emitter
-    // would only duplicate probe lines and release calls — a blind double would
-    // erase the evidence of WHICH channel delivered.
-    const root = ctx.root ?? ctx
-    const offRootSession = root === ctx
-      ? undefined
-      : root.on?.('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
-        const type = String(event?.type)
-        if (!diagRootEventTypes.has(type)) {
-          diagRootEventTypes.add(type)
-          diag('root session/event type=' + type)
-        }
-        if (event?.type !== 'turn/end') return
-        const agent = agentFor(text(session?.id))
-        diag('root session/event agent=' + (agent === undefined ? 'no' : 'yes'))
-        if (agent === undefined) return
-        releaseOnTurnEnd(agent)
-      })
-    if (typeof offRootSession === 'function') disposers.push(offRootSession)
 
     const offDisposed = ctx.on?.('agent/disposed', (/** @type {any} */ payload) => {
       releaseOnDisposed(payload?.agent)
