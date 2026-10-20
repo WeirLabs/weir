@@ -203,6 +203,13 @@ const PRE_MIGRATION_KEYS = [
   'viewKeepOk',
   'cleanLaneLanded',
   'keepLaneLanded',
+  // filelease-lineage / filelease-wake observations (edit-lock-rebuild 3.3/3.5):
+  // which agent made the request, whether the delegated task or its report is
+  // in history, and whether the transfer notice was ever delivered.
+  'sawParentPrompt',
+  'sawChildTask',
+  'sawChildDone',
+  'noticeDelivered',
 ]
 
 // The one-shot child settlement scenario (and the edit-lock delegate scenarios

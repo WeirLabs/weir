@@ -62,6 +62,9 @@ import fileleaseHold from './filelease-hold.js'
 import fileleaseDegrade from './filelease-degrade.js'
 import fileleaseNegotiation from './filelease-negotiation.js'
 import fileleaseFaultInjection from './filelease-fault-injection.js'
+import fileleaseLineage from './filelease-lineage.js'
+import fileleaseWake from './filelease-wake.js'
+import fileleaseHolderDeath from './filelease-holder-death.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, jobsAwareTodo]
 SCENARIOS.push(...skillComposition)
 SCENARIOS.push(applyTransaction)
@@ -97,6 +100,12 @@ SCENARIOS.push(fileleaseHold)
 SCENARIOS.push(fileleaseDegrade)
 SCENARIOS.push(fileleaseNegotiation)
 SCENARIOS.push(fileleaseFaultInjection)
+// Edit-lock-rebuild 3.3 / 3.5 / 5.6 (the last three integration gaps): lineage
+// sharing across a delegation, in-turn wake delivery, and a held lease that
+// dies with its holder process.
+SCENARIOS.push(fileleaseLineage)
+SCENARIOS.push(fileleaseWake)
+SCENARIOS.push(fileleaseHolderDeath)
 
 /**
  * Find a scenario entry by id.

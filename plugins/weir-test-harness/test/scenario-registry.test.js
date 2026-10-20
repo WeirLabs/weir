@@ -55,6 +55,9 @@ EXPECTED_ORDER.push('editlock-hashline-negatives')
 // carry run overrides except filelease-hold (the in-process probe supplies its
 // only driver-independent observation).
 EXPECTED_ORDER.push('filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection')
+// The 3.3 / 3.5 / 5.6 gaps appended with the rest of phase 5; all three need
+// driver-side preconditions (a delegation, a mid-turn request, a killed holder).
+EXPECTED_ORDER.push('filelease-lineage', 'filelease-wake', 'filelease-holder-death')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -134,6 +137,7 @@ describe('scenario registry', () => {
   RUN_OVERRIDE.push('preset-delegation-surface')
   RUN_OVERRIDE.push('editlock-lsp-rename', 'editlock-lsp-uncertain')
 RUN_OVERRIDE.push('filelease-turn-release', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection')
+RUN_OVERRIDE.push('filelease-lineage', 'filelease-wake', 'filelease-holder-death')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {
