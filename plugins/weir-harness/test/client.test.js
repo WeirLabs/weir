@@ -353,7 +353,7 @@ describe('weir settings client half', () => {
     // the entry renders none of them before the chunk arrives: every key it
     // reads is a data-face key, in both locales.
     const { exports: realFileLeaseBadge } = await loadClientChunk('lib/client.file-lease-badge.js', chunkRequire)
-    for (const key of ['fileLeaseState_none', 'fileLeaseState_holding', 'fileLeaseState_degraded', 'fileLeaseMine', 'fileLeaseOthers', 'fileLeaseArbiter_ok', 'fileLeaseReadOnlyHint']) {
+    for (const key of ['fileLeaseLabel', 'fileLeaseTitle', 'fileLeasePanelTitle', 'fileLeaseState_holding', 'fileLeaseState_degraded', 'fileLeaseMine', 'fileLeaseOthers', 'fileLeaseEmpty', 'fileLeaseDegradedHint', 'fileLeaseRetainedFor']) {
       expect(typeof realFileLeaseBadge.dictionaries.en[key], `en.${key} in the file-lease slice`).toBe('string')
       expect(typeof realFileLeaseBadge.dictionaries.zh[key], `zh.${key} in the file-lease slice`).toBe('string')
     }
@@ -1261,7 +1261,7 @@ describe('weir settings client half', () => {
   })
 
   it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
-    // The frozen key set (739 keys): any key dropped in a future edit
+    // The frozen key set (632 keys): any key dropped in a future edit
     // of the data faces or the entry dictionary reddens here (the design's
     // 键集并集 pin), and any cross-slice duplicate inside the page merge would
     // silently shadow — pinned too.
@@ -1560,21 +1560,15 @@ describe('weir settings client half', () => {
     'disabledCategoriesPanelHint',
     'discardChanges',
     'effortProviderDefault',
-    'fileLeaseArbiter_degraded',
-    'fileLeaseArbiter_ok',
-    'fileLeaseArbiter_unavailable',
+    'fileLeaseDegradedHint',
+    'fileLeaseEmpty',
     'fileLeaseLabel',
     'fileLeaseMine',
-    'fileLeaseMineEmpty',
     'fileLeaseOthers',
-    'fileLeaseOthersEmpty',
     'fileLeasePanelTitle',
-    'fileLeaseReadOnlyHint',
     'fileLeaseRetainedFor',
-    'fileLeaseSince',
     'fileLeaseState_degraded',
     'fileLeaseState_holding',
-    'fileLeaseState_none',
     'fileLeaseTitle',
     'groupEditing',
     'groupGuard',
