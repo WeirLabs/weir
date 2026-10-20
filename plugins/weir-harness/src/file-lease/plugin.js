@@ -74,6 +74,18 @@ const SOURCE_KIND = 'weir-file-lease'
  */
 const noticedByAgent = new WeakMap()
 
+/**
+ * `session/event` types the root-context liveness probe has already logged.
+ *
+ * The probe below logs EVERY event type that reaches the root context on
+ * purpose: that line is the evidence the channel is alive, and a silent channel
+ * is exactly the defect it exists to detect. Unmetered it would flood the log of
+ * a long session, so each type is logged once per process — the set is
+ * module-level because every mount of this row in this process shares the log.
+ * @type {Set<string>}
+ */
+const diagRootEventTypes = new Set()
+
 /** @param {unknown} value @returns {string | undefined} */
 function text(value) {
   return typeof value === 'string' && value.length > 0 ? value : undefined
@@ -645,6 +657,39 @@ export function createFileLeasePlugin(options = {}) {
       releaseOnTurnEnd(agent)
     })
     if (typeof offSession === 'function') disposers.push(offSession)
+
+    // The same boundary heard on the ROOT context (a fix attempt for the live
+    // defect: `session/event` never reached the inline subscription above — a
+    // turn ended and not one probe line appeared). The row's own `ctx` is a
+    // scope-local context; `ctx.root` is the application-wide one every mount
+    // shares, already used as the cross-mount host key by the old edit lock's
+    // `sharedDomainRegistryFor`. BOTH subscriptions stay on: the inline pair is
+    // the control group that says which channel actually delivered. Releasing
+    // twice is harmless — `releaseOnTurnEnd` is idempotent, and so is the
+    // protocol's `release`. Nothing here decides anything new: the same handler,
+    // the same verdicts, the same timing.
+    //
+    // `root === ctx` means the host exposes no separate root (a plain emitter in a
+    // test composition, an already-root row): the inline pair above then IS the
+    // root subscription, and registering the same handler twice on one emitter
+    // would only duplicate probe lines and release calls — a blind double would
+    // erase the evidence of WHICH channel delivered.
+    const root = ctx.root ?? ctx
+    const offRootSession = root === ctx
+      ? undefined
+      : root.on?.('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
+        const type = String(event?.type)
+        if (!diagRootEventTypes.has(type)) {
+          diagRootEventTypes.add(type)
+          diag('root session/event type=' + type)
+        }
+        if (event?.type !== 'turn/end') return
+        const agent = agentFor(text(session?.id))
+        diag('root session/event agent=' + (agent === undefined ? 'no' : 'yes'))
+        if (agent === undefined) return
+        releaseOnTurnEnd(agent)
+      })
+    if (typeof offRootSession === 'function') disposers.push(offRootSession)
 
     const offDisposed = ctx.on?.('agent/disposed', (/** @type {any} */ payload) => {
       releaseOnDisposed(payload?.agent)
