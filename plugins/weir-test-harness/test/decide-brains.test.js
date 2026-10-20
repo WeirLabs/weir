@@ -298,3 +298,62 @@ describe('filelease brains', () => {
     assert.deepEqual(JSON.parse(afterRefusal.arguments), { request_id: 'req-2', decision: 'keep' })
   })
 })
+
+// The 3.3 / 3.5 / 5.6 scenarios. Same in-process step pinning as above: a
+// broken marker must fail here, not as a hung headless boot.
+describe('filelease lineage / wake / holder-death brains', () => {
+  it('filelease-lineage writes, holds the window open, then delegates', () => {
+    const probe = 'filelease-lineage-probe'
+    const first = blockEnds(run('filelease-lineage', userOptions(probe)))[0]
+    assert.equal(first.name, 'write')
+    const path = JSON.parse(first.arguments).file_path
+    const wait = blockEnds(run('filelease-lineage', userOptions(`${probe}\nCreated file: ${path}`)))[0]
+    assert.equal(wait.name, SHELL)
+    assert.match(JSON.parse(wait.arguments).command, /WEIR_LEASE_LINEAGE_WINDOW/)
+    const delegated = blockEnds(run('filelease-lineage', userOptions(`${probe}\nCreated file: ${path}\nWEIR_LEASE_LINEAGE_WINDOW`)))[0]
+    assert.equal(delegated.name, 'delegate')
+    assert.equal(JSON.parse(delegated.arguments).category, 'quick')
+  })
+
+  it('filelease-lineage child reads before its managed overwrite, then reports the marker', () => {
+    // A child session's history never contains the parent prompt: that absence
+    // is the discriminator, exactly as in `robash`.
+    const path = JSON.parse(blockEnds(run('filelease-lineage', userOptions('filelease-lineage-probe')))[0].arguments).file_path
+    const task = 'filelease-lineage-child-task'
+    const read = blockEnds(run('filelease-lineage', userOptions(task)))[0]
+    assert.equal(read.name, 'read')
+    assert.equal(JSON.parse(read.arguments).file_path, path)
+    const edited = blockEnds(run('filelease-lineage', userOptions(`${task}\n1#AB| parent claim written inside the parent turn`)))[0]
+    assert.equal(edited.name, 'write')
+    assert.notEqual(JSON.parse(edited.arguments).content, 'parent claim written inside the parent turn\n')
+    const done = blockEnds(run('filelease-lineage', userOptions(`${task}\n1#AB| parent claim written inside the parent turn\nUpdated file: ${path}`)))[0]
+    assert.match(done.text, /MARKER_CHILD_LINEAGE_EDIT_OK/)
+  })
+
+  it('filelease-wake keeps the turn open, then answers the request notice with release', () => {
+    const probe = 'filelease-wake-probe'
+    const first = blockEnds(run('filelease-wake', userOptions(probe)))[0]
+    assert.equal(first.name, 'write')
+    const path = JSON.parse(first.arguments).file_path
+    const wait = blockEnds(run('filelease-wake', userOptions(`${probe}\nCreated file: ${path}`)))[0]
+    assert.equal(wait.name, SHELL)
+    assert.match(JSON.parse(wait.arguments).command, /WEIR_LEASE_WAKE_WINDOW/)
+    // No notice yet: the SAME turn stays open with the bounded marker wait.
+    const stillWaiting = blockEnds(run('filelease-wake', userOptions(`${probe}\nCreated file: ${path}\nWEIR_LEASE_WAKE_WINDOW`)))[0]
+    assert.equal(stillWaiting.name, SHELL)
+    assert.match(JSON.parse(stillWaiting.arguments).command, /WEIR_WAIT_1/)
+    const notice = 'Session "Second owner (integration driver)" (session session-weir-it-wake-driver) is asking to take over lease-wake-target.txt. Answer with edit_lock_reply: request_id "req-9", decision "release" to hand it over, or "keep" to hold on to it.'
+    const reply = blockEnds(run('filelease-wake', userOptions(`${probe}\nCreated file: ${path}\nWEIR_LEASE_WAKE_WINDOW\n${notice}`)))[0]
+    assert.equal(reply.name, 'edit_lock_reply')
+    assert.deepEqual(JSON.parse(reply.arguments), { request_id: 'req-9', decision: 'release' })
+  })
+
+  it('filelease-holder-death only bootstraps the arbiter with one managed write', () => {
+    const first = blockEnds(run('filelease-holder-death', userOptions('filelease-holder-death-probe')))[0]
+    assert.equal(first.name, 'write')
+    const path = JSON.parse(first.arguments).file_path
+    assert.equal(path.endsWith('lease-holder-death-boot.txt'), true)
+    const afterWrite = blockEnds(run('filelease-holder-death', userOptions(`filelease-holder-death-probe\nCreated file: ${path}`)))[0]
+    assert.equal(afterWrite.type, 'text')
+  })
+})
