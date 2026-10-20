@@ -7,27 +7,36 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
-		// ---- File-lease ownership Badge (conversation composer bar) ----
-		// The ONLY user-visible ownership surface of the edit-lock rebuild
-		// (design D13). It is read-only by construction, not by convention:
+		// ---- Edit-lock Badge (conversation composer bar) ----
+		// The ONLY user-visible surface of the edit-lock mechanism (design D13).
+		// It is read-only by construction, not by convention:
 		//
-		//   - the badge has exactly three states — not holding, holding N,
-		//     degraded — and each one resolves by itself (turn end, expiry,
-		//     negotiation). None of them asks the user for anything;
-		//   - the panel lists claims and holders and the arbiter's health, and
-		//     deliberately contains NO button, NO command input, NO confirmation
-		//     step and no clickable row. The one interaction in this chunk is
-		//     expand/collapse; every ownership change belongs to the model's
-		//     tools. A control here would reintroduce the "some state needs a
-		//     human" that the rebuild exists to delete;
+		//   - the badge has exactly three states — idle, holding N, unprotected
+		//     — and each one resolves by itself (turn end, expiry, negotiation).
+		//     None of them asks the user for anything. The badge names the
+		//     surface, and appends a fact only when there is one: how many files
+		//     this session holds, or that protection is off. An idle badge is
+		//     just its name — never a status word standing in for "nothing";
+		//   - the panel speaks only when there is something to say. With no
+		//     claim and no degraded protection it is ONE line; each group's
+		//     heading appears only above a non-empty list, and the protection
+		//     notice only when protection is degraded. There are no headings over
+		//     empty lists and no disclaimer about what cannot be clicked: a
+		//     surface with no controls needs no sentence saying so;
+		//   - it contains NO button besides its own toggle, NO command input, NO
+		//     confirmation step and no clickable row. Expand/collapse is the one
+		//     interaction in this chunk; every ownership change belongs to the
+		//     model's tools. A control here would reintroduce the "some state
+		//     needs a human" that the rebuild exists to delete;
 		//   - it never writes to the conversation and never notifies. The read
 		//     goes to the one read-only endpoint through the composition root's
 		//     `fetchView` prop; nothing else is called.
 		//
 		// Everything shown arrives pre-shaped by the server-side view
-		// (`src/file-lease/view.js`): short path names, when a hold started, how
-		// long a retention has left. This chunk renders that and derives only the
-		// presentation state — it never parses prose and never invents a fact.
+		// (`src/file-lease/view.js`): short path names, holder labels, and how
+		// long a retention has left. This chunk renders that and derives only
+		// the presentation state — it never parses prose and never invents a
+		// fact.
 		const STATE_NONE = "none";
 		const STATE_HOLDING = "holding";
 		const STATE_DEGRADED = "degraded";
@@ -70,22 +79,18 @@ window.__ModuleLoader__.load({
 			lineHeight: "18px"
 		};
 		const mutedStyle = { color: "var(--dsw-alias-label-secondary)" };
-		const sectionStyle = { marginTop: "8px", fontWeight: 600 };
+		/** A group heading: bold, and spaced only when something precedes it. */
+		const headStyle = { fontWeight: 600 };
+		// The degraded notice: amber (the same token the dot uses) at the panel's
+		// own weight — a status line, not an alarm.
+		const noticeStyle = { color: "var(--dsw-alias-state-warn-primary)" };
 		const rowStyle = { display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "8px", padding: "3px 0", borderTop: "1px solid var(--dsw-alias-border-l2)" };
 		const nameStyle = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" };
 		const dot = (state) => react_jsx_runtime.jsx("span", { "aria-hidden": true, style: { display: "inline-block", width: "7px", height: "7px", borderRadius: "50%", background: dotColor[state], flex: "none" } });
-		/** Clock time in the user's locale; a bad instant renders nothing, not "Invalid Date". */
-		function clock(at) {
-			try {
-				return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-			} catch {
-				return "";
-			}
-		}
 		/**
 		 * The badge state of a view. Anything unreadable is `degraded`: an
-		 * unreadable ownership surface must never be presented as "not holding",
-		 * which reads like a fact the panel cannot actually vouch for.
+		 * unreadable surface must never be presented as "nothing held", which
+		 * reads like a fact the panel cannot actually vouch for.
 		 * @param {any} view the server-shaped view
 		 * @returns {"none" | "holding" | "degraded"}
 		 */
@@ -156,15 +161,17 @@ window.__ModuleLoader__.load({
 				};
 			}, [open]);
 			if (!sessionId) return null;
-			// Before the first read settles the entry shows the not-holding state:
+			// Before the first read settles the entry shows the idle state:
 			// ownership does not survive the process (D10), so "nothing held" is
 			// the honest answer for a session that has not been read yet.
 			const state = view === null ? STATE_NONE : stateOf(view);
 			const mine = rowsOf(view, "mine");
 			const others = rowsOf(view, "others");
-			const summary = state === STATE_HOLDING
+			// The badge suffix: a fact when there is one, nothing when there is
+			// not. An idle badge never says "not holding" — it simply is idle.
+			const suffix = state === STATE_HOLDING
 				? t("fileLeaseState_holding").replace("{n}", String(mine.length))
-				: state === STATE_DEGRADED ? t("fileLeaseState_degraded") : t("fileLeaseState_none");
+				: state === STATE_DEGRADED ? t("fileLeaseState_degraded") : "";
 			const arbiter = view && typeof view.arbiter === "string" ? view.arbiter : "unavailable";
 			const at = Date.now();
 			const toggle = () => {
@@ -182,9 +189,6 @@ window.__ModuleLoader__.load({
 			}, `${key}:${entry.path}`);
 			const mineRows = mine.map((entry) => {
 				const trailing = [];
-				if (typeof entry.heldSince === "number") {
-					trailing.push(react_jsx_runtime.jsx("span", { style: mutedStyle, "data-weir-file-lease-since": entry.path, children: t("fileLeaseSince").replace("{time}", clock(entry.heldSince)) }, "since"));
-				}
 				const minutes = retainedMinutes(entry.holdUntil, at);
 				if (minutes !== null) {
 					trailing.push(react_jsx_runtime.jsx("span", { style: mutedStyle, "data-weir-file-lease-retained": entry.path, children: t("fileLeaseRetainedFor").replace("{n}", String(minutes)) }, "retained"));
@@ -195,19 +199,37 @@ window.__ModuleLoader__.load({
 				const label = entry.holder && typeof entry.holder.label === "string" ? entry.holder.label : "";
 				return row(entry, "others", [react_jsx_runtime.jsx("span", { style: mutedStyle, "data-weir-file-lease-holder": entry.path, children: label }, "holder")]);
 			});
-			const empty = (key) => react_jsx_runtime.jsx("div", { style: mutedStyle, "data-weir-file-lease-empty": key, children: key === "mine" ? t("fileLeaseMineEmpty") : t("fileLeaseOthersEmpty") }, `empty:${key}`);
-			const panelChildren = [
-				react_jsx_runtime.jsx("div", {
-					style: { fontWeight: 600 },
+			// The panel is assembled as blocks so that spacing, and the existence
+			// of a heading, both follow from what is actually there.
+			const blocks = [];
+			if (state === STATE_DEGRADED) {
+				blocks.push(react_jsx_runtime.jsx("div", {
+					style: noticeStyle,
 					"data-weir-file-lease-arbiter": arbiter,
-					children: t(`fileLeaseArbiter_${arbiter}`)
-				}, "arbiter"),
-				react_jsx_runtime.jsx("div", { style: sectionStyle, children: t("fileLeaseMine") }, "mine-head"),
-				mineRows.length > 0 ? react_jsx_runtime.jsx("div", { "data-weir-file-lease-section": "mine", children: mineRows }, "mine") : empty("mine"),
-				react_jsx_runtime.jsx("div", { style: sectionStyle, children: t("fileLeaseOthers") }, "others-head"),
-				otherRows.length > 0 ? react_jsx_runtime.jsx("div", { "data-weir-file-lease-section": "others", children: otherRows }, "others") : empty("others"),
-				react_jsx_runtime.jsx("div", { style: { ...mutedStyle, marginTop: "10px" }, "data-weir-file-lease-hint": "", children: t("fileLeaseReadOnlyHint") }, "hint")
-			];
+					children: t("fileLeaseDegradedHint")
+				}, "notice"));
+			}
+			const head = (key, text) => react_jsx_runtime.jsx("div", {
+				style: blocks.length === 0 ? headStyle : { ...headStyle, marginTop: "10px" },
+				children: text
+			}, `${key}-head`);
+			if (mineRows.length > 0) {
+				blocks.push(head("mine", t("fileLeaseMine")));
+				blocks.push(react_jsx_runtime.jsx("div", { "data-weir-file-lease-section": "mine", children: mineRows }, "mine"));
+			}
+			if (otherRows.length > 0) {
+				blocks.push(head("others", t("fileLeaseOthers")));
+				blocks.push(react_jsx_runtime.jsx("div", { "data-weir-file-lease-section": "others", children: otherRows }, "others"));
+			}
+			// Nothing held anywhere: one plain line, and (when protection is
+			// degraded) one notice above it — never a section skeleton.
+			if (mineRows.length === 0 && otherRows.length === 0) {
+				blocks.push(react_jsx_runtime.jsx("div", {
+					style: blocks.length === 0 ? mutedStyle : { ...mutedStyle, marginTop: "6px" },
+					"data-weir-file-lease-empty": "",
+					children: t("fileLeaseEmpty")
+				}, "empty"));
+			}
 			return react_jsx_runtime.jsxs("span", {
 				style: rootStyle,
 				"data-weir-file-lease-root": "",
@@ -219,11 +241,11 @@ window.__ModuleLoader__.load({
 						"aria-expanded": open,
 						"data-weir-file-lease": "",
 						"data-weir-file-lease-state": state,
-						title: `${t("fileLeaseTitle")}: ${summary}`,
+						title: t("fileLeaseTitle"),
 						children: [
 							dot(state),
 							react_jsx_runtime.jsx("span", { children: t("fileLeaseLabel") }),
-							react_jsx_runtime.jsx("span", { "data-weir-file-lease-summary": "", children: summary })
+							suffix === "" ? null : react_jsx_runtime.jsx("span", { "data-weir-file-lease-summary": "", children: suffix })
 						]
 					}),
 					open ? react_jsx_runtime.jsx("div", {
@@ -232,7 +254,7 @@ window.__ModuleLoader__.load({
 						style: panelStyle,
 						"data-weir-file-lease-panel": "",
 						onKeyDown: (event) => { if (event?.key === "Escape") setOpen(false); },
-						children: panelChildren
+						children: blocks
 					}) : null
 				]
 			});
@@ -243,42 +265,35 @@ window.__ModuleLoader__.load({
 		// "settings.weir.file-lease" inside a ctx.effect when this chunk arrives
 		// (lib/client.js registerChunkDictionaries). Pinned by test/client.test.js's
 		// dictionary union pin.
+		//
+		// Copy rules: plain user-facing words only — no internal vocabulary, no
+		// "read-only" disclaimers, no status word for the idle state. Badge
+		// suffixes carry their own leading separator so the badge reads as one
+		// string in both locales.
 		const dictionaries = {
 			en: {
 				fileLeaseLabel: "Edit Lock",
-				fileLeaseTitle: "Files this session holds (read-only)",
-				fileLeasePanelTitle: "File ownership (read-only)",
-				fileLeaseState_none: "not holding",
-				fileLeaseState_holding: "holding {n}",
-				fileLeaseState_degraded: "degraded",
-				fileLeaseMine: "Held by this session",
-				fileLeaseOthers: "Held by other sessions",
-				fileLeaseMineEmpty: "This session holds no files.",
-				fileLeaseOthersEmpty: "No other session holds a file here.",
-				fileLeaseArbiter_ok: "Arbiter: ok",
-				fileLeaseArbiter_degraded: "Arbiter: degraded — edits proceed without mutual exclusion",
-				fileLeaseArbiter_unavailable: "Arbiter: unavailable — edits proceed without mutual exclusion",
-				fileLeaseSince: "since {time}",
-				fileLeaseRetainedFor: "retained for {n} more min",
-				fileLeaseReadOnlyHint: "Read-only: ownership changes only through the assistant's tools. Nothing here is an action."
+				fileLeaseTitle: "Files in use",
+				fileLeasePanelTitle: "Files in use",
+				fileLeaseState_holding: " · {n}",
+				fileLeaseState_degraded: " · unprotected",
+				fileLeaseMine: "You are editing",
+				fileLeaseOthers: "Another session is editing",
+				fileLeaseEmpty: "No files in use.",
+				fileLeaseDegradedHint: "Protection is temporarily unavailable; editing continues.",
+				fileLeaseRetainedFor: "{n} min left"
 			},
 			zh: {
 				fileLeaseLabel: "编辑锁",
-				fileLeaseTitle: "本会话持有的文件（只读）",
-				fileLeasePanelTitle: "文件归属（只读）",
-				fileLeaseState_none: "未持有",
-				fileLeaseState_holding: "持有 {n}",
-				fileLeaseState_degraded: "降级",
-				fileLeaseMine: "本会话持有",
-				fileLeaseOthers: "其他会话持有",
-				fileLeaseMineEmpty: "本会话未持有任何文件。",
-				fileLeaseOthersEmpty: "此目录下没有其他会话持有文件。",
-				fileLeaseArbiter_ok: "仲裁器：正常",
-				fileLeaseArbiter_degraded: "仲裁器：降级——编辑仍可进行，但暂时没有互斥",
-				fileLeaseArbiter_unavailable: "仲裁器：不可用——编辑仍可进行，没有互斥",
-				fileLeaseSince: "自 {time}",
-				fileLeaseRetainedFor: "保留剩余 {n} 分钟",
-				fileLeaseReadOnlyHint: "只读面板：所有权只经助手的工具变更，这里没有任何动作。"
+				fileLeaseTitle: "文件占用",
+				fileLeasePanelTitle: "文件占用",
+				fileLeaseState_holding: " · {n}",
+				fileLeaseState_degraded: " · 未加锁",
+				fileLeaseMine: "你正在编辑",
+				fileLeaseOthers: "其他会话正在编辑",
+				fileLeaseEmpty: "暂无文件占用。",
+				fileLeaseDegradedHint: "保护暂不可用，编辑不受影响。",
+				fileLeaseRetainedFor: "保留 {n} 分钟"
 			}
 		};
 
