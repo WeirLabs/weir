@@ -1,5 +1,5 @@
 // Integration driver for weir-harness: boots a real headless DSH runtime
-// (bundled node + extracted dsh CLI) with a scripted mock LLM, runs one
+// (bundled node + a discovered dsh CLI) with a scripted mock LLM, runs one
 // scenario per invocation, and asserts on the mock trace, the durable session
 // log, and fixture files. Dev-only; writes everything under the IT_ROOT below.
 //
@@ -12,11 +12,18 @@
 // Runtime override (the mechanism for verifying a DSH version OTHER than the
 // installed app — e.g. the 0.2.1 npm tree while the desktop app stays on
 // 0.2.0):
-//   WEIR_IT_NODE  node binary used for pnpm + the headless boot
-//   WEIR_IT_DSH   the dsh CLI entry (lib/bin.js) of the tree under test
-//   WEIR_IT_PNPM  pnpm entry used to install the profile
+//   WEIR_IT_NODE      node binary used for pnpm + the headless boot
+//   WEIR_IT_DSH       the dsh CLI entry (lib/bin.js) of the tree under test
+//   WEIR_IT_DSH_EXEC  a self-contained CLI launcher (desktop runtime/cli/bin/dsh),
+//                     spawned directly instead of NODE + WEIR_IT_DSH
+//   WEIR_IT_PNPM      pnpm entry used to install the profile
 // Each defaults to the installed app's bundled toolchain, so the normal dev
 // loop is unchanged and no version-specific path is ever hardcoded here.
+// With neither dsh variable set the launcher is AUTO-DISCOVERED by
+// src/launcher.js (the extracted /tmp/dsh-src reference first, then the desktop
+// app's CLI), so a machine with the app installed needs no override at all.
+// When no candidate exists the run exits up front listing every path it tried —
+// never one `node <missing bin.js>` → MODULE_NOT_FOUND per scenario.
 // Native-addon caveat: a TeamID-signed bundled node cannot dlopen npm native
 // addons, so a foreign npm tree is normally verified with a plain nvm node
 // (WEIR_IT_NODE) while the CLI resolves its own packages from WEIR_IT_DSH.
@@ -29,6 +36,7 @@ import { fileURLToPath } from 'node:url'
 import { makeRunView } from './src/run-view.js'
 import { SCENARIOS, byId } from './src/scenarios/index.js'
 import { defaultItRoot } from './src/it-root.js'
+import { resolveDshLauncher } from './src/launcher.js'
 import { LOCK_NAME, acquireRunLock, releaseRunLock } from './src/run-lock.js'
 import { makeVerdicts } from './src/run-verdict.js'
 
@@ -48,13 +56,9 @@ const PNPM =
   (IS_WINDOWS
     ? join(homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
     : '/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs')
-// The extracted-DSH reference (/tmp/dsh-src) is POSIX-only. Windows uses the
-// npm-global install of the same dsh version instead.
-const DSH_BIN =
-  process.env.WEIR_IT_DSH ??
-  (IS_WINDOWS
-    ? join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-    : '/tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js')
+// The dsh launcher is resolved once, in main(), by src/launcher.js: explicit
+// env overrides first, then platform discovery. No volatile path is hardcoded
+// here — /tmp/dsh-src is one candidate among several, not a requirement.
 // Keep the default inside this repository/worktree, outside system temp roots
 // so sandbox-mirroring regressions remain observable. Explicit overrides win.
 const IT_ROOT = process.env.WEIR_IT_ROOT ?? defaultItRoot()
@@ -159,15 +163,19 @@ function setup() {
 // ---------- spawn skeleton ----------
 
 /** Boot one headless run of the CLI; resolves with { code, stdout, stderr }. */
-// WEIR_IT_DSH_EXEC: a self-contained CLI launcher (for example the desktop
-// app's runtime/cli/bin/dsh) spawned directly instead of NODE + DSH_BIN.
-const DSH_EXEC = process.env.WEIR_IT_DSH_EXEC ?? null
+// Resolved once, in main(), by src/launcher.js — before any scenario starts, so
+// a missing CLI is one actionable error instead of a MODULE_NOT_FOUND per run.
+// `kind: 'exec'` spawns the launcher itself (self-contained, no node prefix);
+// `kind: 'node'` boots NODE on the CLI entry (the WEIR_IT_DSH semantics).
+let launcher = null
 
 function spawnHeadless(args, env) {
+  if (launcher === null) throw new Error('spawnHeadless: the dsh launcher has not been resolved yet')
+  const [command, argv] = launcher.kind === 'exec' ? [launcher.path, args] : [NODE, [launcher.path, ...args]]
   return new Promise((resolvePromise) => {
     execFile(
-      DSH_EXEC ?? NODE,
-      DSH_EXEC ? args : [DSH_BIN, ...args],
+      command,
+      argv,
       { cwd: env.WEIR_IT_LSP_RENAME === '1' ? join(WS, 'editlock-lsp-rename') : (env.WEIR_IT_LSP_UNCERTAIN === '1' ? join(WS, 'editlock-lsp-uncertain') : (env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS)), env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
         resolvePromise({ code: error?.code ?? 0, stdout, stderr })
@@ -348,6 +356,17 @@ function recordRun(run) {
 }
 
 async function main() {
+  // Resolve the dsh launcher FIRST: with a volatile candidate path, a missing
+  // CLI used to surface as one MODULE_NOT_FOUND per scenario with an empty
+  // requireStack. Now it is a single actionable message, before setup() wipes
+  // the IT root and long before any scenario boots.
+  try {
+    launcher = resolveDshLauncher()
+  } catch (error) {
+    console.error(error?.message ?? String(error))
+    process.exit(1)
+  }
+  console.log(`[setup] dsh launcher: ${launcher.source} -> ${launcher.path} (${launcher.kind})`)
   const ids = process.argv.slice(2)
   // Unknown scenario ids fail loudly and cheaply — before setup() wipes and
   // reinstalls the IT root (spec: 未知场景显式失败).

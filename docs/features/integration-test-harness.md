@@ -24,7 +24,7 @@
 - `pnpm --filter weir-test-harness run test:integration` 跑全部 12 个场景，逐条打印 `PASS`/`FAIL`，末尾给出通过计数；有失败则退出码非 0。
 - 也可以只跑指定场景：`node run.mjs lsp robash`。
 - 场景清单的权威来源是 `src/scenarios/index.js` 的有序 `SCENARIOS`：`deepwork`、`delegate`、`hashline`、`pressure`、`robash`、`semantic`、`grouped`、`escalate`、`background`、`terminate`、`rehydrate`、`lsp`。新增场景 = 新增一个场景模块并在索引登记一处（registry conformance 测试钉住齐备性）；**未知场景 id 是响亮失败**：`node run.mjs no-such-scenario` 在 setup 前退出码 1 并点名该 id。
-- `pnpm --filter weir-test-harness test` 跑装置自身的单元测试（shell 契约 / registry / brains / replay / audit-types / trace-extract / jsonl / message-text 各套件）。
+- `pnpm --filter weir-test-harness test` 跑装置自身的单元测试（shell 契约 / registry / brains / replay / audit-types / trace-extract / jsonl / message-text / launcher 发现各套件）。
 - `pnpm --filter weir-test-harness run record` 重录断言回放夹具（一次绿跑后把 `trace-<scenario>.jsonl` 拷入 `test/fixtures/traces/`，入库）。
 - 每次运行会把测试根目录整体删除重建（持有咨询锁时锁文件本身除外，见「并发运行隔离」）；默认产物位于当前仓库或 lane 的 `.weir/it-root/`（已忽略、不入库）。lane 清理时该 scratch 随 `.weir/` 归档到主仓库的 `.weir/lanes/<lane-id>/`。
 
@@ -46,7 +46,7 @@
 
 ### 原会话绑定恢复回归
 
-`node plugins/weir-test-harness/run.mjs editlock-binding-reclaim`（从仓库根运行；macOS 设 `WEIR_IT_DSH_EXEC="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"`）启用测试组合中的真实 Edit Lock 行与开发专用探针。探针在真实 AgentFactory 的 setup 阶段先建立远程通道，故意延迟 nonce 登记与旧通道清理；随后 dispose/resume 同 Session ID，使 publisher-local 挂载先失败、状态工具只读报告，再补充宿主旧身份并经真实 `/edit-lock retry` → `/edit-lock resume` → 受管 `write` 恢复。
+`node plugins/weir-test-harness/run.mjs editlock-binding-reclaim`（从仓库根运行；装有桌面应用的 macOS 无需设 `WEIR_IT_DSH_EXEC`，装置会自动发现其 CLI，见「运行时选择」）启用测试组合中的真实 Edit Lock 行与开发专用探针。探针在真实 AgentFactory 的 setup 阶段先建立远程通道，故意延迟 nonce 登记与旧通道清理；随后 dispose/resume 同 Session ID，使 publisher-local 挂载先失败、状态工具只读报告，再补充宿主旧身份并经真实 `/edit-lock retry` → `/edit-lock resume` → 受管 `write` 恢复。
 
 10 项断言包含：两代真实 Agent、serving/unknown 拒绝、原对象工具不重装、绑定后仍 interrupted、失败诊断清除、锁/generation/manager incarnation/publisher reservation 不变、迟到 EOF 与第三会话可用。旧产品路径上为红（`agent has no authenticated edit execution`，2/10），新实现为绿（10/10）；回放证据收在 `test/fixtures/traces/editlock-binding-reclaim/`。组件级补充 `edit-lock-cross-mode-safety.test.js`、duplicate-binding/attestation 套件，覆盖延迟/失败 durable ACK、未决围栏与恢复/保留预算、poisoned manager、跨进程/无 token，以及最终 start await 后申请者失效：必须 revoke＋forget，不能残留 release 清理权限。此场景不是 GUI 人工验收，也不把超时或管理员 override 当作静止证明。
 
@@ -59,12 +59,60 @@
 | `WEIR_IT_ROOT` | `<仓库或 lane 根>/.weir/it-root` | 从装置自身安装位置推导，与 cwd 无关；显式环境变量原样覆盖。profile/home/ws/trace 全在其下 |
 | `WEIR_IT_NODE` | 捆绑运行时绝对路径（按平台推导） | 启动 profile 的解释器 |
 | `WEIR_IT_PNPM` | 捆绑 pnpm 绝对路径（按平台推导） | 生成 profile 后做 `link:` 安装 |
-| `WEIR_IT_DSH` | POSIX：`/tmp/dsh-src/...`；win32：桌面应用 `resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js`（见下方运行时选择） | 被启动的 `dsh` CLI 入口 |
+| `WEIR_IT_DSH_EXEC` | 未设置（自动发现，见下方运行时选择） | 自包含 CLI launcher（如桌面应用的 `runtime/cli/bin/dsh`），直接 spawn；**不检查是否存在**。优先于 `WEIR_IT_DSH` 与全部候选 |
+| `WEIR_IT_DSH` | 自动发现（见下方运行时选择） | 被启动的 `dsh` CLI 入口（`.js`，即 `lib/bin.js`），配合 `WEIR_IT_NODE` 引导 |
 | `WEIR_IT_SCENARIO` | `deepwork` | 场景 id（驱动注入，mock 读取） |
 | `WEIR_IT_TRACE` | `<IT_ROOT>/trace.jsonl` | 该场景的 trace 输出 |
 | `WEIR_IT_FIXTURE` | `<IT_ROOT>/ws/fixture.txt` | `hashline`/`robash` 的磁盘夹具 |
 | `WEIR_IT_TSFIXTURE` | `<IT_ROOT>/ws/probe.ts` | `lsp` 场景的 TS 夹具 |
 | `WEIR_IT_WINDOW` | `128000` | mock 模型上报的上下文窗口（`pressure` 用它把阈值压小） |
+
+### 运行时选择
+
+表格里的两条 `dsh` 变量是**覆盖**，不是前置条件：装置先自动发现，发现不到才要求显式指定。解析逻辑集中在 `src/launcher.js` 的 `resolveDshLauncher()`（纯函数，注入 `env`/`platform`/`exists`/`home` 即可单测）。
+
+**1. 自动发现（默认路径，无需任何环境变量）**——按序尝试，命中即返回；候选必须 `exists` 通过才被采用：
+
+| 顺序 | 平台 | 候选 | 启动方式 |
+|---|---|---|---|
+| a | POSIX | `/tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js` | `node`（`NODE <bin.js> …args`） |
+| b | POSIX | `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh` | `exec`（直接 spawn） |
+| c | POSIX | `~/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh` | `exec` |
+| a | win32 | `%APPDATA%\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | `node` |
+| b | win32 | `%ProgramFiles%\DeepSeek Harness\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js` | `node` |
+
+`/tmp/dsh-src` 是 AGENTS §2 登记的**易失参考**，它只是历史优先的第一候选：它消失不再让整套测试失效——桌面应用内的 CLI（b/c，macOS；win32 的 app.asar 树）在装有应用的机器上本来就在。`~` 取自 `os.homedir()`；win32 的 `%APPDATA%` 缺省为 `<home>\AppData\Roaming`，`%ProgramFiles%` 缺省为 `C:\Program Files`。
+
+**2. 显式覆盖（依次尝试，命中即用）**
+
+- `WEIR_IT_DSH_EXEC`：自包含 launcher（例如桌面应用的 `runtime/cli/bin/dsh`），直接 spawn；**不检查是否存在**——显式覆盖视为调用方负责。命中来源记 `env:WEIR_IT_DSH_EXEC`。
+- `WEIR_IT_DSH`：CLI 入口 `.js`（`lib/bin.js`），配合 `WEIR_IT_NODE` 引导。命中来源记 `env:WEIR_IT_DSH`。
+- 显式覆盖优先于全部候选，且 `WEIR_IT_DSH_EXEC` 优先于 `WEIR_IT_DSH`；空串/纯空白视为未设置。
+
+因此在**装有桌面应用的机器上 `WEIR_IT_DSH_EXEC` 不再是必需**：不设任何变量即可跑（自动发现到 b）。`run.mjs` 启动时打印命中来源与路径，便于确认到底用了哪一个：
+
+```
+[setup] dsh launcher: candidate:/Applications/DeepSeek Harness.app -> /Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh (exec)
+```
+
+**3. 全部落空时**：`run.mjs` 在 `main()` 开头解析 launcher，失败即把完整诊断打到 stderr 并 `exit 1`——在 `setup()` 清空测试根之前、在任何场景启动之前。不会再出现「每个场景一条 `MODULE_NOT_FOUND`、`requireStack` 为空」的假象。错误原文形如：
+
+```
+no dsh launcher found: cannot locate a dsh CLI to boot the headless integration profile.
+
+Set one explicitly:
+  WEIR_IT_DSH_EXEC  a self-contained CLI launcher (spawned as-is), e.g. the desktop app:
+    WEIR_IT_DSH_EXEC="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+  WEIR_IT_DSH       the dsh CLI entry (lib/bin.js), booted with WEIR_IT_NODE
+
+Candidate paths tried on platform "darwin" (none exists):
+  candidate:/tmp/dsh-src: /tmp/dsh-src/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js
+  candidate:/Applications/DeepSeek Harness.app: /Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh
+  candidate:/Users/<user>/Applications/DeepSeek Harness.app: /Users/<user>/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh
+
+Install the desktop app (its CLI is the launcher shown above), re-extract DSH to /tmp/dsh-src,
+or point WEIR_IT_DSH_EXEC at an existing launcher.
+```
 
 **运行时必须与 bundle 的 peer 区间相容（Windows 必读）**：`%APPDATA%\npm` 里那份全局 `dsh` CLI 未必与桌面应用同版本（本机是 0.1.7-rc.2，而 `weir-harness` 声明 `>=0.2.0-rc.2 <0.3.0`）。用它启动时**每一行 `weir-harness/*` 都会被兼容闸门整行禁用**（stderr 一行 `disabling profile plugin row … is incompatible with dsh …`），套件于是以「插件根本没挂上」的形式大面积失败——这类结果没有诊断价值，别当成回归。把工具链指向正在使用的桌面运行时：
 
@@ -76,6 +124,8 @@ node run.mjs [scenario …]
 ```
 
 `resources/runtime/cli/bin/dsh.cmd` 是同一入口的批处理包装；`execFile` 不能直接执行 `.cmd`，所以上面把解释器（`WEIR_IT_NODE`）与入口（`WEIR_IT_DSH`）拆成两个变量。生产 profile（`desktop`）由 Electron 应用独占，headless 不得直接启动它（`dsh: error: profile "desktop" is managed exclusively by the Electron application`）——验证发布产物请另建一个临时 profile。
+
+**自动发现与这条注意事项的交互**：win32 的候选 a 正是 `%APPDATA%\npm` 那份全局 CLI；版本不相容时它仍会被自动选中，于是又落回「插件根本没挂上」的大面积失败。因此在 Windows 上验证 Weir 请显式给出 `WEIR_IT_NODE` + `WEIR_IT_DSH`（或指向桌面应用自包含 launcher 的 `WEIR_IT_DSH_EXEC`），不要依赖自动发现。
 
 ## 设计细节
 
@@ -118,6 +168,6 @@ patch 层把 compaction 子组嵌入 editing 组，在外层统一 isolate `comp
 
 - 单元测试（`plugins/weir-test-harness/test/`）：`shell.test.js` —— 钉死平台工具名、五个操作的 POSIX/win32 命令字面量、输入卫生（未知操作/未知平台/非法秒数/可夹带语法的标记与路径一律抛错），以及**三张表键集一致**（每个动词在两侧都有 builder、且都有校验器）；期望值是独立字面量而非重算。`scenario-registry.test.js` —— registry 条目齐备性（id/prompt/decide/assert、id === 文件名、id 集与顺序钉死）。`decide-brains.test.js` —— 进程内直调各场景 `decide`，断言 chunk 序列关键点（不启动 headless profile；mock 的 decide 逻辑首次有单测）。`assert-replay.test.js` —— 录制 trace（`test/fixtures/traces/`，入库）经 `makeRunView` 回放各场景 `assert`，结论与原始运行一致，且 fixture 的 trace key 集与当前 writer 一致性校验（形状漂移即红）。`audit-types.test.js` —— 三路 conformance：tap 订阅集 === `Object.values(AUDIT_TYPES)` + `AUDIT_SUBTYPES` 展开、产品 emit 文件不得携带注册表外字面量、协调器 `onFact` kind 集 === `AUDIT_SUBTYPES.supervision`。`trace-extract.test.js` —— 每请求恰好一次 extract、trace record key 集与迁移前一致。`jsonl.test.js` 与 `message-text.test.js` —— 共享 helper 的容错与双形态语义。
 `fixture-selfcontainment.test.js` —— 回放夹具自包含 conformance（契约见「边界与失败语义」）：通配忽略规则对每个已注册场景的夹具 ws 恰好放行枚举内状态文件种类、夹具消费文件全部受 git 跟踪、`ws/.weir/` 下无枚举外未忽略文件。
-`wait-primitive.test.js` —— 交错容忍等待原语直测：标记出现即 advance、未现即 wait（盖递增 `WEIR_WAIT_<n>` 标记）、预算耗尽才 exhausted、重试计数从历史重建、尾随快照不错位。`run-lock.test.js` —— 咨询锁行为：占用分流（含响亮提示行）、残锁/垃圾锁静默接管、退出只删自己的锁、显式 `WEIR_IT_ROOT` 绕过（源码钉住 run.mjs 接线）。
+`wait-primitive.test.js` —— 交错容忍等待原语直测：标记出现即 advance、未现即 wait（盖递增 `WEIR_WAIT_<n>` 标记）、预算耗尽才 exhausted、重试计数从历史重建、尾随快照不错位。`run-lock.test.js` —— 咨询锁行为：占用分流（含响亮提示行）、残锁/垃圾锁静默接管、退出只删自己的锁、显式 `WEIR_IT_ROOT` 绕过（源码钉住 run.mjs 接线）。`launcher.test.js` —— dsh launcher 发现契约：`WEIR_IT_DSH_EXEC` > `WEIR_IT_DSH` > 候选的优先级、显式覆盖不检查存在性、POSIX/win32 候选顺序与 `source` 命中标签、全部落空时错误消息包含两条变量与每个真实尝试路径；全部用例注入 `env`/`platform`/`exists`/`home`，不 spawn 任何进程。
 - 默认根契约：`it-root.test.js` 断言根为包目录上两级下的 `.weir/it-root`，三处消费者引用同一 helper、默认值一致且显式覆盖不变。产品 capability-store 的单进程测试注入可编程 liveness 替身；独立 process 套件先探测 Node/ps 派生能力，不可用时逐用例显式 skip（附原因），可用时执行真实跨进程竞争、SIGKILL 恢复和 ps 探测。
 - 集成测试：`pnpm --filter weir-test-harness run test:integration` —— 装置自身就是那一层；12 个场景即验收门。
