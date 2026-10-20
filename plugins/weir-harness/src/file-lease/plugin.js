@@ -31,6 +31,7 @@ import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { getSharedLeaseClient } from './singleton.js'
 import { buildLeaseView } from './view.js'
+import { diag } from './diag.js'
 
 /** Plugin name (composition identity only; this row publishes no service). */
 const PLUGIN_NAME = 'weir-file-lease'
@@ -289,6 +290,7 @@ export function createFileLeasePlugin(options = {}) {
    * @returns {(() => void) | undefined} the unmount disposer
    */
   function apply(ctx, config) {
+    diag('plugin mounted pid=' + process.pid)
     // The seam is checked before anything touches the ctx: a disabled mount must
     // leave no tool, no listener and no subscription behind (design D11 mount
     // lifetime), so there is nothing to return a disposer for.
@@ -486,6 +488,7 @@ export function createFileLeasePlugin(options = {}) {
      * @param {any} agent
      */
     function releaseOnTurnEnd(agent) {
+      diag('releaseOnTurnEnd session=' + String(sessionIdOf(agent)))
       const session = sessionIdOf(agent)
       // The reply tool exists for one turn's pending answers; the boundary ends
       // that window whether or not the holder replied.
@@ -628,13 +631,16 @@ export function createFileLeasePlugin(options = {}) {
     // `turn/end` session event, so both feed the ONE handler (release is
     // idempotent per protocol, so a host that emits both is harmless).
     const offTurnEnd = ctx.on?.('turn/end', (/** @type {any} */ payload) => {
+      diag('cordis turn/end agent=' + (payload?.agent ? 'yes' : 'no'))
       releaseOnTurnEnd(payload?.agent)
     })
     if (typeof offTurnEnd === 'function') disposers.push(offTurnEnd)
 
     const offSession = ctx.on?.('session/event', (/** @type {any} */ session, /** @type {any} */ event) => {
       if (event?.type !== 'turn/end') return
+      diag('session/event turn/end sessionId=' + String(session?.id))
       const agent = agentFor(text(session?.id))
+      diag('session/event agent=' + (agent === undefined ? 'no' : 'yes'))
       if (agent === undefined) return
       releaseOnTurnEnd(agent)
     })
