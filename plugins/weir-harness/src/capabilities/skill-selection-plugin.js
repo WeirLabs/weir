@@ -102,6 +102,11 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             if (inherited.kind === 'ok') return inherited.payload?.skills
             if (inherited.kind !== 'absent') throw new Error(`Inherited skill snapshot is ${inherited.kind}`)
             if (isDelegatedChild) throw new Error('Inherited skill snapshot is absent')
+            // Root initialization is only for a PROVEN absent source. A depth-0
+            // fork whose capture or existing policy already became BLOCKED must
+            // keep the inherited-snapshot failure, never bypass it with a fresh
+            // baseline; an explicit accepted Apply remains the recovery path.
+            if (lifecycle?.snapshotFor?.(sessionId)?.state === 'blocked') throw new Error('Inherited skill snapshot is absent')
             return initialSelection(options)
           }
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)

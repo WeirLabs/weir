@@ -546,7 +546,7 @@ const writeSkill = (dir, name) => {
 }
 
 /** Mount the /capabilities command over a hermetic two-workspace fixture. */
-const mountApply = (root, { customSkillDirs = [], supplementalSkillDirs = [], agentsHome, inventory } = {}) => {
+const mountApply = (root, { customSkillDirs = [], supplementalSkillDirs = [], agentsHome, inventory, sessionId = 'sess-ws-b', config = {} } = {}) => {
   const registeredCommands = []
   let provider
   const ctx = {
@@ -570,9 +570,10 @@ const mountApply = (root, { customSkillDirs = [], supplementalSkillDirs = [], ag
     supplementalSkillDirs,
     agentsHome,
     dshHome: join(root, 'profile'),
+    ...config,
   })
   const command = registeredCommands.find(entry => entry.name === 'capabilities')
-  const agent = { id: 'sess-ws-b', session: { id: 'sess-ws-b', header: { cwd: root } } }
+  const agent = { id: sessionId, session: { id: sessionId, header: { cwd: root } } }
   const call = async rawInput => JSON.parse((await command.handler({ agent, rawInput })).text)
   return { command, agent, call }
 }
@@ -780,4 +781,280 @@ test('cross-workspace partition helper: evidence gates, reasons and ordering', a
   expect(canonicalPathKey('/WS/Skills', 'win32')).toBe(canonicalPathKey('/ws/skills', 'win32'))
   expect(canonicalPathKey('/ws-b/.dsh/skills', 'darwin')).toBe('/ws-b/.dsh/skills')
   expect(canonicalPathKey('/ws-b/.dsh/skills/../skills', 'darwin')).toBe('/ws-b/.dsh/skills/../skills')
+})
+
+// --- Capability gate follow-up (reviewer regression gates) -------------------
+// Three CONTRACT pins: an identity-shaped profile-supplemental (Creative)
+// entry is known by NAME like its legacy string form; a project root that
+// cannot be resolved canonically proves nothing about another workspace; and a
+// depth-0 fork whose capture FAILED keeps the fail-closed root rule, where an
+// explicit accepted Apply is the only recovery path.
+
+test('preset applicability partition: identity-shaped supplemental entries skip by name while unprovable roots hard-fail', async () => {
+  const { partitionUnresolvedSkills, canonicalPathKey, workspaceProjectSkillRoots, isForeignProjectIdentity,
+    NOT_APPLICABLE_IN_WORKSPACE, NOT_APPLICABLE_IN_PRESET } = await import('../src/capabilities/skill-applicability.js')
+  const { createSkillIdentity } = await import('../src/capabilities/skill-identity.js')
+  const roots = [
+    { key: 'project-dsh', root: { path: '/ws-b/.dsh/skills', source: 'project-dsh', scope: 'project', rank: 100, projectRoot: '/ws-b' }, complete: true, stale: false, candidates: [] },
+  ]
+  const rootKeys = workspaceProjectSkillRoots(roots)
+  const knownSupplemental = name => name === 'creative-only'
+  const foreign = { scope: 'project', root: '/ws-a/.dsh/skills', name: 'travel', opaqueId: 'foreign-travel' }
+  // The identity a workspace default saved from an APPLIED creative session
+  // carries: scope custom, the preset's own supplemental root, no portability.
+  const creativeIdentity = createSkillIdentity({ scope: 'custom', root: '/profile/creative/skills', name: 'creative-only', opaqueId: 'local-creative' })
+
+  // (1) An identity-shaped entry is known by NAME, exactly like the string form.
+  expect(partitionUnresolvedSkills([creativeIdentity], { roots, complete: true, knownSupplemental }))
+    .toEqual({ skipped: [{ name: 'creative-only', reason: NOT_APPLICABLE_IN_PRESET }], unknown: [] })
+  // Both shapes in one draft: the skips follow draft order and duplicates.
+  expect(partitionUnresolvedSkills(['creative-only', creativeIdentity, foreign, 'nowhere'], { roots, complete: true, knownSupplemental }))
+    .toEqual({
+      skipped: [
+        { name: 'creative-only', reason: NOT_APPLICABLE_IN_PRESET },
+        { name: 'creative-only', reason: NOT_APPLICABLE_IN_PRESET },
+        { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
+      ],
+      unknown: ['nowhere'],
+    })
+  // Precedence is pinned: a name resolvable in a profile inventory is the
+  // KNOWN-but-inapplicable class, so the preset reason wins over the path one.
+  expect(partitionUnresolvedSkills([{ ...foreign, name: 'creative-only' }], { roots, complete: true, knownSupplemental }))
+    .toEqual({ skipped: [{ name: 'creative-only', reason: NOT_APPLICABLE_IN_PRESET }], unknown: [] })
+
+  // (2) A root that cannot be canonicalized proves NOTHING: its lexical key
+  // necessarily differs from every absolute current root, so it must never read
+  // as "another workspace" — the reference stays a hard failure.
+  const relativeKey = canonicalPathKey('relative-unresolved-root', 'darwin')
+  expect(relativeKey).toBe('relative-unresolved-root')
+  expect(rootKeys.has(relativeKey)).toBe(false)
+  for (const [index, relativeRoot] of ['relative-unresolved-root', '.', '..', 'sibling/.dsh/skills', './checks/.dsh/skills'].entries()) {
+    const malformed = createSkillIdentity({ scope: 'project', root: relativeRoot, name: `ghost-${index}`, opaqueId: `ghost-${index}` })
+    expect(isForeignProjectIdentity(malformed, rootKeys)).toBe(false)
+    expect(partitionUnresolvedSkills([malformed], { roots, complete: true }))
+      .toEqual({ skipped: [], unknown: [`ghost-${index}`] })
+  }
+  // Absolute roots keep the established classification: a genuinely foreign
+  // root skips, while a root that IS this workspace's project root stays a
+  // missing LOCAL identity.
+  expect(isForeignProjectIdentity(foreign, rootKeys)).toBe(true)
+  expect(partitionUnresolvedSkills([foreign], { roots, complete: true }).skipped)
+    .toEqual([{ name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE }])
+  const localMissing = { scope: 'project', root: '/ws-b/.dsh/skills', name: 'deleted', opaqueId: 'deleted' }
+  expect(partitionUnresolvedSkills([localMissing], { roots, complete: true }))
+    .toEqual({ skipped: [], unknown: ['deleted'] })
+})
+
+test('preset applicability: identity-shaped Creative entries skip with the preset reason and the preset round-trip stays lossless', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-identity-supp-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const custom = join(root, 'custom-skills')
+    const supplemental = join(root, 'supplemental')
+    writeSkill(custom, 'alpha')
+    writeSkill(supplemental, 'creative-only')
+    // The plain Weir session enumerates the custom root only; the creative one
+    // enumerates the SAME directory as both its custom root and the profile-
+    // supplemental classification root (the shipped weir-creative rows).
+    const plain = mountApply(root, { customSkillDirs: [custom], supplementalSkillDirs: [supplemental], agentsHome: host.agentsHome })
+    const creative = mountApply(root, {
+      customSkillDirs: [custom, supplemental],
+      supplementalSkillDirs: [supplemental],
+      agentsHome: host.agentsHome,
+      sessionId: 'sess-creative',
+      config: { baselineScopes: ['weir-builtin', 'custom'] },
+    })
+    const creativeIdentity = identityOf(await creative.call('list'), 'creative-only', 'custom')
+    expect(creativeIdentity === null).toBe(false)
+    const alphaIdentity = identityOf(await plain.call('list'), 'alpha', 'custom')
+    expect(alphaIdentity === null).toBe(false)
+
+    // The identity-shaped entry ALONE: skipped with the preset reason while the
+    // explicitly empty remainder still commits (one action, no failure banner).
+    const sole = await plain.call(`apply ${JSON.stringify({ requestId: 'supp-1', expectedRevision: 0, skills: [creativeIdentity], mcpServers: [] })}`)
+    expect(sole.status).toBe('applied')
+    expect(sole.skipped).toEqual([{ name: 'creative-only', reason: 'not applicable in this agent preset' }])
+    expect(sole.effective.skills).toEqual([])
+    expect((await plain.call('receipt')).revision).toBe(1)
+
+    // Identity + legacy string + a resolvable identity in ONE action: both
+    // shapes skip, the resolvable remainder commits, order follows the draft.
+    const mixed = await plain.call(`apply ${JSON.stringify({ requestId: 'supp-2', expectedRevision: 1, skills: [creativeIdentity, 'creative-only', alphaIdentity], mcpServers: [] })}`)
+    expect(mixed.status).toBe('applied')
+    expect(mixed.skipped).toEqual([
+      { name: 'creative-only', reason: 'not applicable in this agent preset' },
+      { name: 'creative-only', reason: 'not applicable in this agent preset' },
+    ])
+    const afterMixed = await plain.call('receipt')
+    expect(afterMixed.revision).toBe(2)
+    expect(afterMixed.effective.skills).toEqual(['alpha'])
+
+    // Round-trip: a preset saved from this draft keeps the identity verbatim,
+    // and applying it again rewrites neither the reference nor the record.
+    const saved = await plain.call(`preset-save ${JSON.stringify({ scope: 'global', presetId: 'creative-carry', name: 'Creative carry', from: 'draft', skills: [creativeIdentity], mcpServers: [] })}`)
+    expect(saved.status).toBe('created')
+    const loaded = await plain.call(`preset-load ${JSON.stringify({ scope: 'global', presetId: 'creative-carry' })}`)
+    expect(loaded.status).toBe('ok')
+    expect(loaded.document.selection.skills).toEqual([creativeIdentity])
+    const replay = await plain.call(`apply ${JSON.stringify({ requestId: 'supp-3', expectedRevision: 2, skills: loaded.document.selection.skills, mcpServers: [] })}`)
+    expect(replay.status).toBe('applied')
+    expect(replay.skipped).toEqual([{ name: 'creative-only', reason: 'not applicable in this agent preset' }])
+    expect((await plain.call(`preset-load ${JSON.stringify({ scope: 'global', presetId: 'creative-carry' })}`)).document.selection.skills).toEqual([creativeIdentity])
+
+    // The unchanged reference resolves in the creative session it belongs to —
+    // lossless because nothing was rewritten for applicability.
+    const inCreative = await creative.call(`apply ${JSON.stringify({ requestId: 'supp-4', expectedRevision: 0, skills: [creativeIdentity], mcpServers: [] })}`)
+    expect(inCreative.status).toBe('applied')
+    expect(inCreative.skipped).toBeUndefined()
+    // The apply RESPONSE reports identities (the engine's effective set); the
+    // receipt reports names.
+    expect(inCreative.effective.skills.map(skill => skill.name)).toEqual(['creative-only'])
+  } finally {
+    host.restore()
+  }
+})
+
+test('cross-workspace: a project identity whose root cannot be resolved is never skipped and writes nothing', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-xws-root-'))
+    const workspaceA = mkdtempSync(join(tmpdir(), 'weir-cmd-xws-root-a-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const { createSkillIdentity } = await import('../src/capabilities/skill-identity.js')
+    writeSkill(join(root, '.dsh', 'skills'), 'kept')
+    const { call } = mountApply(root, { agentsHome: host.agentsHome })
+    const revisionOf = async () => (await call('receipt')).revision
+    expect(await revisionOf()).toBe(0)
+
+    // Relative/malformed roots are accepted by identity normalization but prove
+    // NOTHING about another workspace: hard failure, zero writes.
+    for (const [index, relativeRoot] of ['relative-unresolved-root', '.', '..', 'sibling/.dsh/skills'].entries()) {
+      const identity = createSkillIdentity({ scope: 'project', root: relativeRoot, name: `ghost-${index}`, opaqueId: `ghost-${index}` })
+      const refused = await call(`apply ${JSON.stringify({ requestId: `malformed-${index}`, expectedRevision: await revisionOf(), skills: [identity], mcpServers: [] })}`)
+      expect(refused).toEqual({ status: 'missing', missing: [identity.name] })
+      expect(await revisionOf()).toBe(0)
+    }
+
+    // Control: an ABSOLUTE foreign root is still a proven skip …
+    const foreign = { scope: 'project', root: join(workspaceA, '.dsh', 'skills'), name: 'travel', provenance: null, opaqueId: 'foreign-travel', portable: false }
+    const skipped = await call(`apply ${JSON.stringify({ requestId: 'foreign', expectedRevision: 0, skills: [foreign], mcpServers: [] })}`)
+    expect(skipped.status).toBe('applied')
+    expect(skipped.skipped).toEqual([{ name: 'travel', reason: 'not applicable in this workspace' }])
+    expect(await revisionOf()).toBe(1)
+
+    // … while an absolute root that IS this workspace's project root stays a
+    // missing LOCAL identity: a nonzero accepted revision is never advanced.
+    const localMissing = { scope: 'project', root: join(root, '.dsh', 'skills'), name: 'deleted', provenance: null, opaqueId: 'deleted', portable: false }
+    const missing = await call(`apply ${JSON.stringify({ requestId: 'local-missing', expectedRevision: 1, skills: [localMissing], mcpServers: [] })}`)
+    expect(missing).toEqual({ status: 'missing', missing: ['deleted'] })
+    expect(await revisionOf()).toBe(1)
+  } finally {
+    host.restore()
+  }
+})
+
+test('resume incarnation: a depth-0 fork blocked by a failed capture never falls into root initialization, and an accepted Apply heals it', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-fork-blocked-'))
+    const profileContext = { home: join(root, 'profile'), name: 'it' }
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const { skillSelectionFor } = await import('../src/capabilities/skill-selection-plugin.js')
+    const { openCapabilityStore } = await import('../src/capabilities/store/store.js')
+    writeSkill(join(root, 'custom-skills'), 'alpha')
+    // The fork's SOURCE carries an undecodable accepted record: the creation-
+    // time capture fails and the fork is marked BLOCKED under the ROOT rule.
+    const parentDir = join(profileContext.home, 'weir', 'profiles', 'it', 'capabilities', 'sessions', 'sess-parent')
+    mkdirSync(parentDir, { recursive: true })
+    writeFileSync(join(parentDir, 'selection.json'), '{"schemaVersion":1,"revision":1,"payload":CORRUPT')
+    const registeredCommands = []
+    let provider
+    const listeners = new Map()
+    const ctx = {
+      skills: {
+        registerProvider(create) { provider = create({ invalidate() {} }) },
+        async list(options) { return (await provider.list(options)).candidates },
+        layers: { global: { providers: new Map() } },
+      },
+      on(event, listener) { listeners.set(event, [...(listeners.get(event) ?? []), listener]) },
+      effect(fn) { fn(); return () => {} },
+      logger: { warn() {} },
+      get(name) {
+        if (name === 'profileContext') return profileContext
+        if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+        return undefined
+      },
+    }
+    // Production wiring: the DEFAULT readSelection and the DEFAULT lifecycle.
+    createSkillSelectionPlugin()(ctx, {
+      machineId: 'weir-it-machine',
+      customSkillDirs: [join(root, 'custom-skills')],
+      agentsHome: host.agentsHome,
+      dshHome: profileContext.home,
+    })
+    const command = registeredCommands.find(entry => entry.name === 'capabilities')
+    const face = skillSelectionFor(ctx)
+    const store = openCapabilityStore({ profileContext })
+    const forkId = 'sess-fork-blocked'
+    const forkAgent = { id: forkId, session: { id: forkId, header: { cwd: root, delegationDepth: 0, parentSession: 'sess-parent' } } }
+    // The host dispatches agent/created SERIALLY with bail-on-value semantics:
+    // every listener must return undefined.
+    const dispatch = payload => { for (const listener of listeners.get('agent/created') ?? []) expect(listener(payload)).toBeUndefined() }
+
+    dispatch({ agent: { session: forkAgent.session } })
+    expect(face.lifecycle.peek(forkId)?.state).toBe('blocked')
+    // Creation wrote nothing: no empty inheritance, no initialized baseline.
+    expect((await store.read({ kind: 'selection', sessionId: forkId })).kind).toBe('absent')
+    expect((await store.read({ kind: 'inherited', sessionId: forkId })).kind).toBe('absent')
+
+    // The first read keeps the fail-closed root rule: root initialization is NOT
+    // a recovery path for a fork whose capture failed.
+    const blockedListing = await command.handler({ agent: forkAgent, rawInput: 'list' })
+    expect(blockedListing.kind).toBe('success')
+    const blockedPayload = JSON.parse(blockedListing.text)
+    expect(blockedPayload.skills.length > 0).toBe(true)
+    expect(blockedPayload.skills.some(row => row.name === 'alpha')).toBe(true)
+    // The gate itself is the discriminator: WITHOUT it this read succeeds by
+    // initializing the builtin baseline and reports no error at all.
+    expect(Boolean(blockedPayload.selectionError)).toBe(true)
+    expect(blockedPayload.selectionError?.error).toContain('Inherited skill snapshot is absent')
+    expect(blockedPayload.selectionError?.reason).toBe('inherited-snapshot-unavailable')
+    expect(blockedPayload.skills.every(row => row.selected === false)).toBe(true)
+    expect((await store.read({ kind: 'selection', sessionId: forkId })).kind).toBe('absent')
+    const blockedReceipt = JSON.parse((await command.handler({ agent: forkAgent, rawInput: 'receipt' })).text)
+    expect(blockedReceipt.revision).toBe(0)
+    expect(blockedReceipt.warnings).toEqual(['inherited-snapshot-unavailable'])
+
+    // An explicit accepted Apply (the manager's recovery gesture) heals it: the
+    // accepted snapshot replaces the blocked marker and the view resolves again.
+    const seedAgent = { id: 'sess-seed', session: { id: 'sess-seed', header: { cwd: root } } }
+    const alphaIdentity = JSON.parse((await command.handler({ agent: seedAgent, rawInput: 'list' })).text).skills.find(row => row.name === 'alpha').identity
+    const healed = JSON.parse((await command.handler({
+      agent: forkAgent,
+      rawInput: `apply ${JSON.stringify({ requestId: 'fork-heal', expectedRevision: 0, skills: [alphaIdentity], mcpServers: [] })}`,
+    })).text)
+    expect(healed.status).toBe('applied')
+    expect(healed.revision).toBe(1)
+    expect(face.lifecycle.peek(forkId)?.state).toBe('ready')
+    const healedListing = JSON.parse((await command.handler({ agent: forkAgent, rawInput: 'list' })).text)
+    expect(healedListing.selectionError).toBeUndefined()
+    expect(healedListing.skills.find(row => row.name === 'alpha')?.selected).toBe(true)
+
+    // Control: a fork whose source is PROVEN absent (no record at all) is the
+    // one depth-0 case allowed to run its own root initialization once — and it
+    // still persists no empty inheritance.
+    const cleanId = 'sess-fork-clean'
+    const cleanAgent = { id: cleanId, session: { id: cleanId, header: { cwd: root, delegationDepth: 0, parentSession: 'sess-parent-clean' } } }
+    dispatch({ agent: { session: cleanAgent.session } })
+    expect(face.lifecycle.peek(cleanId)).toBeNull()
+    const cleanPayload = JSON.parse((await command.handler({ agent: cleanAgent, rawInput: 'list' })).text)
+    expect(cleanPayload.selectionError).toBeUndefined()
+    expect(cleanPayload.skills.filter(row => row.selected === true).length > 0).toBe(true)
+    expect(face.lifecycle.peek(cleanId)?.state).toBe('ready')
+    expect(face.lifecycle.peek(cleanId)?.revision).toBe(0)
+    expect((await store.read({ kind: 'inherited', sessionId: cleanId })).kind).toBe('absent')
+  } finally {
+    host.restore()
+  }
 })

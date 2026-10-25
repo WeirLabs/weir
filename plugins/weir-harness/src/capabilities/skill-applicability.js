@@ -25,7 +25,7 @@
 // identity whose root IS one of this workspace's project roots but which the
 // inventory did not resolve stays a hard failure: it is missing, not external.
 import { realpathSync } from 'node:fs'
-import { basename, dirname, join, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 
 /** Reason reported for a project identity proven to belong to another workspace. */
 export const NOT_APPLICABLE_IN_WORKSPACE = 'not applicable in this workspace'
@@ -109,7 +109,7 @@ export function isForeignProjectIdentity(identity, projectRoots, options = {}) {
   const value = /** @type {Record<string, unknown> | null} */ (
     identity && typeof identity === 'object' ? identity : null)
   if (!value || value.scope !== 'project') return false
-  if (typeof value.root !== 'string' || value.root.length === 0) return false
+  if (typeof value.root !== 'string' || value.root.length === 0 || !isAbsolute(value.root)) return false
   return !projectRoots.has(canonicalPathKey(value.root, options.platform ?? process.platform))
 }
 
@@ -120,7 +120,7 @@ export function isForeignProjectIdentity(identity, projectRoots, options = {}) {
  *
  * - an identity proven to be a project identity of another workspace →
  *   `skipped` with `not applicable in this workspace`
- * - a legacy name known to a profile-supplemental preset root → `skipped` with
+ * - a legacy name or identity name known to a profile-supplemental preset root →
  *   `not applicable in this agent preset` (the pre-existing contract)
  * - everything else → `unknown` (the caller keeps the hard-failure contract and
  *   preserves the draft)
@@ -156,6 +156,10 @@ export function partitionUnresolvedSkills(entries, options = {}) {
       continue
     }
     const name = typeof identity.name === 'string' && identity.name.length > 0 ? identity.name : String(entry)
+    if (knownSupplemental(name)) {
+      skipped.push({ name, reason: NOT_APPLICABLE_IN_PRESET })
+      continue
+    }
     if (canProveForeign && isForeignProjectIdentity(identity, projectRoots, options)) {
       skipped.push({ name, reason: NOT_APPLICABLE_IN_WORKSPACE })
       continue
