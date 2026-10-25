@@ -45,21 +45,27 @@ const PROJECT_SKILL_SUFFIXES = Object.freeze(['.dsh/skills', '.agents/skills'])
  * modules never depend on the worktree feature's internals.)
  * @param {unknown} path
  * @param {string} [platform]
- * @returns {string}
+ * @returns {string | null} canonical key, or null when the path cannot be resolved safely
  */
 export function canonicalPathKey(path, platform = process.platform) {
   const lexical = String(path)
   let real = lexical
+  const missing = error => error?.code === 'ENOENT' || error?.code === 'ENOTDIR'
   try {
     real = realpathSync.native(lexical)
-  } catch {
+  } catch (error) {
+    // Only a genuinely absent path may be reconstructed through its deepest
+    // existing ancestor. EINVAL/EACCES/ELOOP/etc. prove nothing and must not
+    // become a lexical key that could authorize a cross-workspace skip.
+    if (!missing(error)) return null
     let parent = dirname(lexical)
     const tail = [basename(lexical)]
     while (parent !== dirname(parent)) {
       try {
         real = join(realpathSync.native(parent), ...tail.reverse())
         break
-      } catch {
+      } catch (ancestorError) {
+        if (!missing(ancestorError)) return null
         tail.push(basename(parent))
         parent = dirname(parent)
       }
@@ -86,12 +92,20 @@ export function workspaceProjectSkillRoots(roots, options = {}) {
     if (!root || root.scope !== 'project') continue
     if (typeof root.projectRoot === 'string' && root.projectRoot.length > 0) {
       const projectRoot = canonicalPathKey(root.projectRoot, platform)
-      for (const suffix of PROJECT_SKILL_SUFFIXES) keys.add(canonicalPathKey(join(projectRoot, suffix), platform))
+      if (projectRoot !== null) {
+        for (const suffix of PROJECT_SKILL_SUFFIXES) {
+          const key = canonicalPathKey(join(projectRoot, suffix), platform)
+          if (key !== null) keys.add(key)
+        }
+      }
     }
     // The observed root itself is canonicalized by discovery (a symlinked
     // project Skill root keeps ITS OWN identity), so it names this workspace
     // too: a broken local Skill must fail as missing, never read as external.
-    if (typeof root.path === 'string' && root.path.length > 0) keys.add(canonicalPathKey(root.path, platform))
+    if (typeof root.path === 'string' && root.path.length > 0) {
+      const key = canonicalPathKey(root.path, platform)
+      if (key !== null) keys.add(key)
+    }
   }
   return keys
 }
@@ -110,7 +124,8 @@ export function isForeignProjectIdentity(identity, projectRoots, options = {}) {
     identity && typeof identity === 'object' ? identity : null)
   if (!value || value.scope !== 'project') return false
   if (typeof value.root !== 'string' || value.root.length === 0 || !isAbsolute(value.root)) return false
-  return !projectRoots.has(canonicalPathKey(value.root, options.platform ?? process.platform))
+  const key = canonicalPathKey(value.root, options.platform ?? process.platform)
+  return key !== null && !projectRoots.has(key)
 }
 
 /**

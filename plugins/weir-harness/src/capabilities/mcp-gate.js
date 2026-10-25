@@ -58,7 +58,9 @@ export function createMcpGate({ registry, lifecycle, sessionMcpServers }) {
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string' || sessionId.length === 0) return false
     let snapshot = lifecycle.snapshotFor(sessionId)
-    if (snapshot?.state !== 'ready') {
+    // Only an ABSENT own snapshot may use the creation-race parent fallback.
+    // A BLOCKED snapshot is a definitive fail-closed verdict, never a race.
+    if (snapshot == null) {
       const parentId = agent?.session?.header?.parentSession
       if (typeof parentId === 'string' && parentId.length > 0) snapshot = lifecycle.snapshotFor(parentId)
     }

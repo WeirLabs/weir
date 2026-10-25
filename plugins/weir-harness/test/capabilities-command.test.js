@@ -954,6 +954,92 @@ test('cross-workspace: a project identity whose root cannot be resolved is never
   }
 })
 
+// --- Capability gate re-review (d4ce98a follow-up) ---------------------------
+// Two fail-closed gaps found by the independent re-review: an ABSOLUTE project
+// root the OS itself cannot resolve must never become a lexical "other
+// workspace" proof, and a memory-BLOCKED depth-0 fork must never borrow the
+// ready parent's managed-MCP visibility. The same tests pin the narrow
+// controls that keep the fixes from over-blocking.
+
+test('preset applicability: an OS-invalid absolute root has no canonical key and is never a cross-workspace skip', async () => {
+  const { partitionUnresolvedSkills, canonicalPathKey, workspaceProjectSkillRoots, isForeignProjectIdentity,
+    NOT_APPLICABLE_IN_WORKSPACE } = await import('../src/capabilities/skill-applicability.js')
+  const { createSkillIdentity } = await import('../src/capabilities/skill-identity.js')
+  const roots = [
+    { key: 'project-dsh', root: { path: '/ws-b/.dsh/skills', source: 'project-dsh', scope: 'project', rank: 100, projectRoot: '/ws-b' }, complete: true, stale: false, candidates: [] },
+  ]
+  const rootKeys = workspaceProjectSkillRoots(roots, { platform: 'darwin' })
+
+  // The OS refuses these paths outright (NUL byte): no realpath and no lexical
+  // stand-in key. An unprovable root stays a hard failure, never a skip.
+  for (const [index, invalidRoot] of ['/bad\0root', '/bad\0root/.dsh/skills'].entries()) {
+    expect(canonicalPathKey(invalidRoot, 'darwin')).toBeNull()
+    const identity = createSkillIdentity({ scope: 'project', root: invalidRoot, name: `ghost-${index}`, opaqueId: `ghost-${index}` })
+    expect(isForeignProjectIdentity(identity, rootKeys, { platform: 'darwin' })).toBe(false)
+    expect(partitionUnresolvedSkills([identity], { roots, complete: true, platform: 'darwin' }))
+      .toEqual({ skipped: [], unknown: [`ghost-${index}`] })
+  }
+
+  // Control: an ABSENT absolute root still canonicalizes through its deepest
+  // EXISTING ancestor (including the macOS /var → /private/var alias), so the
+  // narrow rejection above did not break the legitimate reconstruction.
+  const absent = join(tmpdir(), `weir-absent-root-${process.pid}`, '.dsh', 'skills')
+  expect(canonicalPathKey(absent, 'darwin'))
+    .toBe(`${canonicalPathKey(tmpdir(), 'darwin')}/weir-absent-root-${process.pid}/.dsh/skills`)
+  // … and an absent absolute root OUTSIDE this workspace is still proven
+  // foreign: only the unprovable case is refused, never the legitimate skip.
+  expect(partitionUnresolvedSkills([createSkillIdentity({ scope: 'project', root: absent, name: 'travel', opaqueId: 'absent-foreign' })],
+    { roots, complete: true, platform: 'darwin' }))
+    .toEqual({ skipped: [{ name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE }], unknown: [] })
+})
+
+test('cross-workspace: an OS-invalid absolute root stays status:missing with revision and selection untouched', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-xws-invalid-'))
+    const workspaceA = mkdtempSync(join(tmpdir(), 'weir-cmd-xws-invalid-a-'))
+    writeSkill(join(root, '.dsh', 'skills'), 'kept')
+    const { call } = mountApply(root, { agentsHome: host.agentsHome })
+    const { openCapabilityStore } = await import('../src/capabilities/store/store.js')
+    const store = openCapabilityStore({ profileContext: { home: join(root, 'profile'), name: 'it' } })
+    const recordOf = () => store.read({ kind: 'selection', sessionId: 'sess-ws-b' })
+    const before = await call('receipt')
+    expect(before.revision).toBe(0)
+    expect((await recordOf()).kind).toBe('absent')
+
+    // '/bad\0root' is OS-invalid: canonicalization refuses it, so it must yield
+    // NO canonical key. Before the fix its lexical form necessarily differed
+    // from every current root and authorized a foreign-workspace skip that
+    // COMMITTED — a real zero-write violation, not a label issue.
+    for (const [index, invalidRoot] of ['/bad\0root', '/bad\0root/.dsh/skills'].entries()) {
+      const identity = { scope: 'project', root: invalidRoot, name: `ghost-${index}`, provenance: null, opaqueId: `ghost-${index}`, portable: false }
+      const refused = await call(`apply ${JSON.stringify({ requestId: `invalid-${index}`, expectedRevision: 0, skills: [identity], mcpServers: [] })}`)
+      expect(refused).toEqual({ status: 'missing', missing: [`ghost-${index}`] })
+      // Zero writes: neither the receipt nor the accepted-record store moved.
+      expect(await call('receipt')).toEqual(before)
+      expect((await recordOf()).kind).toBe('absent')
+    }
+
+    // Control 1: a legitimate ABSENT absolute root under an EXISTING ancestor
+    // still canonicalizes and still skips — a null key here would hard-fail.
+    const absentForeign = { scope: 'project', root: join(workspaceA, 'not-created-yet', '.dsh', 'skills'), name: 'travel', provenance: null, opaqueId: 'absent-foreign', portable: false }
+    const absentSkip = await call(`apply ${JSON.stringify({ requestId: 'absent-foreign', expectedRevision: 0, skills: [absentForeign], mcpServers: [] })}`)
+    expect(absentSkip.status).toBe('applied')
+    expect(absentSkip.skipped).toEqual([{ name: 'travel', reason: 'not applicable in this workspace' }])
+    expect((await call('receipt')).revision).toBe(1)
+
+    // Control 2: a legitimate EXISTING absolute foreign root skips identically.
+    mkdirSync(join(workspaceA, '.dsh', 'skills'), { recursive: true })
+    const existingForeign = { scope: 'project', root: join(workspaceA, '.dsh', 'skills'), name: 'travel-existing', provenance: null, opaqueId: 'existing-foreign', portable: false }
+    const existingSkip = await call(`apply ${JSON.stringify({ requestId: 'existing-foreign', expectedRevision: 1, skills: [existingForeign], mcpServers: [] })}`)
+    expect(existingSkip.status).toBe('applied')
+    expect(existingSkip.skipped).toEqual([{ name: 'travel-existing', reason: 'not applicable in this workspace' }])
+    expect((await call('receipt')).revision).toBe(2)
+  } finally {
+    host.restore()
+  }
+})
+
 test('resume incarnation: a depth-0 fork blocked by a failed capture never falls into root initialization, and an accepted Apply heals it', { skip }, async () => {
   const host = pinHermeticHostRoots()
   try {

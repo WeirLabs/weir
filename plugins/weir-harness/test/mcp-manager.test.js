@@ -4,6 +4,11 @@
 import { test, expect } from './helpers.js'
 import { partitionMcpRows, hostRowHoldingReservation, createMcpManager } from '../src/capabilities/mcp-manager.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
+import { createMcpGate } from '../src/capabilities/mcp-gate.js'
+import { createLifecycleSnapshots } from '../src/capabilities/lifecycle-snapshot.js'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('8.8 partition: our groups are managed, stock client rows elsewhere are unmanaged', () => {
   const rows = [
@@ -82,4 +87,54 @@ test('8.6 engine seam: a composition without a manager drain reports the empty t
   const handle = adapter.begin(['docs'], 'sess-a')
   expect(handle.snapshot()).toEqual([{ server: 'docs', state: 'settled', inFlight: 0 }])
   handle.abort() // a no-op that must not throw
+})
+
+// --- Capability gate re-review (d4ce98a follow-up) ---------------------------
+// The creation-time schema-hiding consumer (8.4③) reads gate.enabledFor. A
+// memory-BLOCKED depth-0 fork must deny the READY parent's public names; only
+// the creation race (own snapshot absent) may still see the parent's set.
+
+test('8.4 creation-time schema hiding: a BLOCKED depth-0 fork denies the ready parent public names', () => {
+  const lifecycle = createLifecycleSnapshots({ root: mkdtempSync(join(tmpdir(), 'weir-mgr-blocked-')), platform: 'darwin' })
+  lifecycle.publish('parent', { revision: 1, skills: [], mcpServers: ['docs'] })
+  lifecycle.markBlocked('fork-blocked', 'unreadable')
+  // The REAL gate over the REAL lifecycle: this is the seam the manager wires.
+  const gate = createMcpGate({
+    registry: { async read() { return { kind: 'ok', revision: 1, servers: { docs: { generation: 1 }, web: { generation: 1 } } } } },
+    lifecycle,
+  })
+  const restricted = []
+  const listeners = new Map()
+  const services = new Map()
+  const manager = createMcpManager({
+    gate,
+    listEntryIds: () => [],
+    listRows: () => [],
+    store: { read: async () => ({ kind: 'absent' }), commit: async () => ({ status: 'committed' }) },
+  })
+  const ctx = {
+    get: () => undefined,
+    on(event, listener) { listeners.set(event, [...(listeners.get(event) ?? []), listener]) },
+    reflect: { provide: (name, face) => services.set(name, face) },
+    logger: { warn: () => {} },
+  }
+  manager(ctx, {})
+  const face = services.get('weirMcpManager')
+  face.publicNames.set('mcp__docs__echo', 'docs')
+  face.publicNames.set('mcp__web__search', 'web')
+  const dispatch = session => {
+    const agent = { session, ctx: { tools: { restrict(input) { restricted.push(input) } } } }
+    for (const listener of listeners.get('agent/created') ?? []) listener({ agent })
+  }
+
+  // BLOCKED own + READY parent: BOTH public names are denied — the fork's
+  // effective set is empty, never the parent's ['docs'].
+  dispatch({ id: 'fork-blocked', header: { delegationDepth: 0, parentSession: 'parent' } })
+  expect(restricted).toEqual([{ deny: ['mcp__docs__echo', 'mcp__web__search'] }])
+
+  // Control: only the creation race (own snapshot absent) retains the parent's
+  // docs visibility, so only the genuinely non-accepted web is denied.
+  restricted.length = 0
+  dispatch({ id: 'fork-racing', header: { delegationDepth: 0, parentSession: 'parent' } })
+  expect(restricted).toEqual([{ deny: ['mcp__web__search'] }])
 })

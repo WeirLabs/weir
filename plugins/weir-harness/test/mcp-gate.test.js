@@ -227,3 +227,72 @@ test('gate: a fork of an inherited source still admits the same set (consecutive
   expect(gate.enabledFor(agentOf('fork-2'), 'docs')).toBe(true)
   expect(gate.enabledFor(agentOf('fork-2'), 'web')).toBe(true)
 })
+
+// --- Capability gate re-review (d4ce98a follow-up) ---------------------------
+// A memory-BLOCKED depth-0 fork is a definitive fail-closed verdict, never the
+// creation race: it must not borrow the ready parent's managed-MCP visibility.
+// The creation-race fallback itself stays: an ABSENT own snapshot (the capture
+// listener has not run yet) may use the parent's accepted set for VISIBILITY,
+// while admission still refuses a session with no initialized snapshot.
+
+test('gate: a BLOCKED depth-0 fork never borrows the ready parent; an ABSENT own snapshot keeps the creation-race fallback', async () => {
+  const registry = registryWith({ docs: { identity: 'docs', generation: 1 } })
+  const parent = { state: 'ready', mcpServers: ['docs'] }
+  const blockedAgent = { session: { id: 'fork-blocked', header: { delegationDepth: 0, parentSession: 'parent' } } }
+  const racingAgent = { session: { id: 'fork-racing', header: { delegationDepth: 0, parentSession: 'parent' } } }
+  const gate = createMcpGate({
+    registry,
+    lifecycle: lifecycleWith({
+      parent,
+      'fork-blocked': { state: 'blocked', reason: 'unreadable' },
+    }),
+  })
+  // BLOCKED own + READY parent: the parent's accepted set is NOT this fork's
+  // set — neither visibility nor admission may leak through the fallback.
+  expect(gate.enabledFor(blockedAgent, 'docs')).toBe(false)
+  expect(await gate.admit(blockedAgent, 'docs', 1)).toBe(false)
+  // Control: the OWN snapshot is simply absent (the creation-time capture
+  // listener races creation), so the parent's set stands in for visibility —
+  // admission still refuses a session with no initialized snapshot.
+  expect(gate.enabledFor(racingAgent, 'docs')).toBe(true)
+  expect(await gate.admit(racingAgent, 'docs', 1)).toBe(false)
+  // A BLOCKED parent grants nothing either.
+  const blockedParent = createMcpGate({
+    registry,
+    lifecycle: lifecycleWith({ parent: { state: 'blocked', reason: 'unreadable' } }),
+  })
+  expect(blockedParent.enabledFor(racingAgent, 'docs')).toBe(false)
+})
+
+test('gate + facade: a BLOCKED fork omits MCP instructions while a creation-race child still sees the parent set', async () => {
+  // Real lifecycle store (the blackboard re-review probe): the BLOCKED marker
+  // and the ready parent coexist in memory, which is exactly the state the
+  // review reproduced. The facade's per-prompt section is the instruction-facing
+  // surface that consumed the leaked verdict.
+  const lifecycle = createLifecycleSnapshots({ root: mkdtempSync(join(tmpdir(), 'weir-gate-blocked-')), platform: 'darwin' })
+  lifecycle.publish('parent', { revision: 1, skills: [], mcpServers: ['docs'] })
+  lifecycle.markBlocked('fork-blocked', 'unreadable')
+  const gate = createMcpGate({ registry: registryWith({ docs: { identity: 'docs', generation: 1 } }), lifecycle })
+  let section
+  const facade = createMcpFacade({
+    host: { systemPrompt: { section: definition => (section = definition) } },
+    identity: 'docs',
+    generation: 1,
+    admit: agent => gate.admit(agent, 'docs', 1),
+    isEnabledFor: agent => gate.enabledFor(agent, 'docs'),
+  })
+  facade.systemPrompt.section({ render: () => 'DOCS INSTRUCTIONS' })
+  const blocked = { session: { id: 'fork-blocked', header: { delegationDepth: 0, parentSession: 'parent' } } }
+  const racing = { session: { id: 'fork-racing', header: { delegationDepth: 0, parentSession: 'parent' } } }
+
+  expect(lifecycle.snapshotFor('fork-blocked')?.state).toBe('blocked')
+  expect(gate.enabledFor(blocked, 'docs')).toBe(false)
+  expect(await gate.admit(blocked, 'docs', 1)).toBe(false)
+  expect(await section.render(blocked)).toBe('')
+
+  // The creation race is the ONLY case the parent fallback serves.
+  expect(lifecycle.snapshotFor('fork-racing')).toBeNull()
+  expect(gate.enabledFor(racing, 'docs')).toBe(true)
+  expect(await gate.admit(racing, 'docs', 1)).toBe(false)
+  expect(await section.render(racing)).toBe('DOCS INSTRUCTIONS')
+})
