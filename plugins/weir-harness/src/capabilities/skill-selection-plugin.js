@@ -15,6 +15,7 @@ import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
+import { partitionUnresolvedSkills } from './skill-applicability.js'
 import { workspaceKeyOf, createPresetVerbs } from './preset-library.js'
 import { createDefaultsVerbs } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
@@ -84,8 +85,14 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             // between the host's session publication and our capture, or a
             // hand-built session) is REFUSED — never granted the root
             // baseline (6.4 subagent rule; explicit resume recaptures).
+            //
+            // Only a TRUE delegated child (depth > 0) is refused: a depth-0
+            // fork also carries a parentSession header, and when its source
+            // never established any effective snapshot the creation-time
+            // capture is skipped on purpose so that this read performs the
+            // ordinary root initialization for the fork itself.
             const header = options.scope?.session?.header ?? {}
-            const isSubagent = (header.delegationDepth ?? 0) > 0 || typeof header.parentSession === 'string'
+            const isDelegatedChild = (header.delegationDepth ?? 0) > 0
             let inherited
             try {
               inherited = await store.read({ kind: 'inherited', sessionId })
@@ -94,7 +101,12 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (inherited.kind === 'ok') return inherited.payload?.skills
             if (inherited.kind !== 'absent') throw new Error(`Inherited skill snapshot is ${inherited.kind}`)
-            if (isSubagent) throw new Error('Inherited skill snapshot is absent')
+            if (isDelegatedChild) throw new Error('Inherited skill snapshot is absent')
+            // Root initialization is only for a PROVEN absent source. A depth-0
+            // fork whose capture or existing policy already became BLOCKED must
+            // keep the inherited-snapshot failure, never bypass it with a fresh
+            // baseline; an explicit accepted Apply remains the recovery path.
+            if (lifecycle?.snapshotFor?.(sessionId)?.state === 'blocked') throw new Error('Inherited skill snapshot is absent')
             return initialSelection(options)
           }
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)
@@ -151,8 +163,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           }
           let builtinIdentities = []
           let enabledMcpIdentities = []
+          // Only a FULLY formed initial result may become a lifecycle snapshot:
+          // a baseline or a name binding derived from an incomplete inventory is
+          // a best-effort view, never an inheritable set (D2).
+          let complete = true
           if (defaultsRecord.kind === 'absent') {
             const snapshot = await inventory(options)
+            complete = snapshot?.complete !== false
             // Baseline scopes are row-configurable (default builtin-only);
             // the weir-creative preset adds 'custom' for its fused skills.
             builtinIdentities = baselineSkillIdentities(snapshot?.candidates, config.baselineScopes)
@@ -171,6 +188,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           // entirely — it still only runs on the builtin-baseline path.
           if (resolved.source === 'workspace-default' && resolved.selection.skills.some(entry => typeof entry === 'string')) {
             const snapshot = await inventory(options)
+            complete = complete && snapshot?.complete !== false
             const bound = bindDefaultSkillNames(resolved.selection.skills, snapshot?.candidates)
             resolved.selection.skills = bound.skills
             resolved.missing = [...resolved.missing, ...bound.missing]
@@ -178,6 +196,22 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           const sessionId = options.scope?.session?.id
           if (typeof sessionId === 'string' && sessionId.length) {
             initialReports.set(sessionId, { source: resolved.source, missing: resolved.missing, mcpServers: resolved.selection.mcpServers })
+            // Effective-set publication for Fork inheritance: a depth-0 fork of a
+            // session whose initial set was already resolved must inherit THAT
+            // set, not an empty one. The result is published as the session's
+            // revision-0 lifecycle snapshot — never persisted, never an accepted
+            // record. A snapshot that appeared while this async resolution was
+            // in flight (an accepted Apply, a captured inheritance) wins, and a
+            // partially resolved/incomplete result is not published at all.
+            if (complete && lifecycle && typeof lifecycle.peek === 'function' && typeof lifecycle.publish === 'function'
+              && lifecycle.peek(sessionId) === null) {
+              lifecycle.publish(sessionId, {
+                revision: 0,
+                skills: resolved.selection.skills,
+                mcpServers: resolved.selection.mcpServers,
+                captured: null,
+              })
+            }
           }
           return resolved.selection.skills
         })
@@ -403,6 +437,11 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               matches.push(candidate)
               parsedByName.set(candidate.name, matches)
             }
+            // The unresolved draft entries keep their ORIGINAL shape: a legacy
+            // name string is not an identity and cannot be classified by
+            // workspace, while an identity object carries the scope/root the
+            // cross-workspace partition needs. Collapsing both to a name here
+            // is what made a foreign project reference unactionable.
             const missing = []
             const identities = []
             const admitted = new Set()
@@ -415,7 +454,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               } else {
                 const identity = createSkillIdentity(entry)
                 candidate = byKey.get(skillIdentityKey(identity))
-                if (!candidate) missing.push(identity.name)
+                if (!candidate) missing.push(identity)
               }
               if (!candidate) continue
               const key = skillIdentityKey(candidate.identity)
@@ -423,19 +462,26 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               admitted.add(key)
               identities.push(candidate.identity)
             }
-            // preset-skill-applicability (D2): partition the missing names —
-            // KNOWN-BUT-INAPPLICABLE (resolvable in a profile-supplemental
-            // directory, e.g. creative-preset skills carried by a workspace
-            // default) are SKIPPED with a per-name reason while the
-            // resolvable remainder commits; genuinely unknown names keep the
-            // hard-failure contract. Records are never rewritten for
-            // applicability, so a preset round-trip stays lossless.
-            const unknown = []
-            const skipped = []
-            for (const name of missing) {
-              if (supplementalSkillKnown(config.supplementalSkillDirs, name)) skipped.push({ name, reason: 'not applicable in this agent preset' })
-              else unknown.push(name)
-            }
+            // preset applicability partition (D2 + cross-workspace D4):
+            // - KNOWN-BUT-INAPPLICABLE names (resolvable in a profile-supplemental
+            //   directory, e.g. creative-preset skills carried by a workspace
+            //   default) are SKIPPED with a per-name reason;
+            // - a project identity PROVEN to belong to another workspace (its
+            //   canonical root is outside every current project Skill root of a
+            //   COMPLETE inventory) is SKIPPED as not applicable in this
+            //   workspace — the preset contract, not a same-name conflict, and
+            //   never a local same-name substitute;
+            // - everything else keeps the hard-failure contract with the draft
+            //   preserved (a local identity the inventory no longer resolves, a
+            //   project identity of THIS workspace, an incomplete inventory, or
+            //   an unresolvable current-workspace root set authorizes no skip).
+            // Records are never rewritten for applicability, so a preset
+            // round-trip stays lossless.
+            const { skipped, unknown } = partitionUnresolvedSkills(missing, {
+              roots: inventoryResult?.roots,
+              complete: inventoryResult?.complete,
+              knownSupplemental: name => supplementalSkillKnown(config.supplementalSkillDirs, name),
+            })
             if (unknown.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: unknown, ...(skipped.length > 0 ? { skipped } : {}) }) }
             const response = await face.applySelection(
               { sessionId: agent.id, cwd: agent.session?.header?.cwd, presetId: 'weir' },

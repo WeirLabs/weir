@@ -8,6 +8,14 @@
 // captureInherited the agent/created listener invokes at an explicit resume
 // — child-previous ∩ current-parent (6.3) — and the parent corrupts its own
 // record to prove the root fail-closed rule (6.4).
+// The final phase (fix-capability-fork-and-preset-workspaces task 3.1) adds
+// REAL `agents.create` depth-0 forks — an accepted source, a fork of that fork
+// (the immediate source then has only its inherited unit), and a source whose
+// initial set was merely resolved — and reads each fork before it can take a
+// turn: the durable inherited unit, the Skill catalog the model would see, the
+// memory and cold lifecycle snapshots, and the production MCP admission verdict
+// over the real registry. That evidence lands in capability-fork-report.json.
+//
 // Evidence notes: the subagent resume/escalation ∩ semantics are pinned by
 // test/lifecycle-inheritance.test.js (the CLI refuses to drive subagent
 // sessions directly, and send_message handles are not stable in this mock);
@@ -78,6 +86,14 @@ function decide(options, obs) {
 
   // ---- main parent brain ----
   if (lastTool.includes('LIFECYCLE_PROBE error')) return textChunks(`probe halted: ${lastTool.slice(0, 200)}`)
+  // Managed MCP identities for the real-fork phase: registered first so both
+  // applies carry fork-gate in their accepted set.
+  if (!history.includes('done register-fork-accepted')) {
+    return toolCallChunks('lifecycle_probe', { op: 'registerMcp', identity: 'fork-gate', marker: 'register-fork-accepted' })
+  }
+  if (!history.includes('done register-fork-unaccepted')) {
+    return toolCallChunks('lifecycle_probe', { op: 'registerMcp', identity: 'fork-gate-other', marker: 'register-fork-unaccepted' })
+  }
   if (!history.includes('done corruptSelf')) {
     return toolCallChunks('lifecycle_probe', { op: 'corruptSelf' })
   }
@@ -88,7 +104,7 @@ function decide(options, obs) {
     return toolCallChunks('lifecycle_probe', { op: 'repairSelf' })
   }
   if (!history.includes('done apply:[fixture-a+fixture-b]')) {
-    return toolCallChunks('lifecycle_probe', { op: 'apply', skills: ['fixture-a', 'fixture-b'] })
+    return toolCallChunks('lifecycle_probe', { op: 'apply', skills: ['fixture-a', 'fixture-b'], mcpServers: ['fork-gate'] })
   }
   if (!history.includes('MARKER_ONESHOT')) {
     return toolCallChunks('delegate', { category: 'quick', prompt: 'CHILD_ONESHOT\nTASK: reply with the exact marker text MARKER_ONESHOT\nDELIVERABLE: the marker\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done' })
@@ -129,6 +145,27 @@ function decide(options, obs) {
   if (!history.includes('done recapture')) {
     return toolCallChunks('lifecycle_probe', { op: 'recapture' })
   }
+  // ---- real agents.create depth-0 forks (task 3.1) ----
+  // After the narrowing apply the caller's accepted set is fixture-a +
+  // fork-gate; the forks below must inherit exactly that.
+  if (!history.includes('done fork-accepted')) {
+    return toolCallChunks('lifecycle_probe', { op: 'fork', parentSessionLabel: 'main', label: 'fork-accepted', marker: 'fork-accepted' })
+  }
+  if (!history.includes('done fork-inherited')) {
+    return toolCallChunks('lifecycle_probe', { op: 'fork', parentSessionLabel: 'fork-accepted', label: 'fork-inherited', marker: 'fork-inherited' })
+  }
+  if (!history.includes('done create-initial-source')) {
+    return toolCallChunks('lifecycle_probe', { op: 'createSession', label: 'initial', marker: 'create-initial-source' })
+  }
+  if (!history.includes('done resolve-initial-source')) {
+    return toolCallChunks('lifecycle_probe', { op: 'resolveSession', label: 'initial', marker: 'resolve-initial-source' })
+  }
+  if (!history.includes('done fork-initial')) {
+    return toolCallChunks('lifecycle_probe', { op: 'fork', parentSessionLabel: 'initial', label: 'fork-initial', marker: 'fork-initial' })
+  }
+  if (!history.includes('done forkReport')) {
+    return toolCallChunks('lifecycle_probe', { op: 'forkReport' })
+  }
   if (!lastTool.includes('done report')) {
     return toolCallChunks('lifecycle_probe', { op: 'report' })
   }
@@ -165,16 +202,59 @@ function assert(run) {
   // the cold-session pattern.
   const itRoot = join(run.ws, '..')
   const report = readJson(join(run.ws, 'lifecycle-report.json'))
+  const forkReport = readJson(join(run.ws, 'capability-fork-report.json'))
   run.check('main run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
   run.check('parent observed the lifecycle report', run.stdout.includes('parent observed lifecycle report'), run.stdout.slice(-400))
   run.check('probe report landed', Boolean(report), JSON.stringify(report ?? null).slice(0, 300))
 
-  const inherited = Object.entries(report?.sessions ?? {}).filter(([, entry]) => entry.inherited?.revision >= 1)
-  run.check('every spawn path produced a durable inherited capture', inherited.length >= 6, JSON.stringify(inherited.map(([session, entry]) => [session, entry.inherited])).slice(0, 600))
-  run.check('every capture links the accepted parent', inherited.every(([, entry]) => entry.inherited.origin === 'inherited' && entry.inherited.parent?.sessionId === report.caller), JSON.stringify(inherited).slice(0, 400))
-  run.check('every capture stays within the accepted set', inherited.every(([, entry]) => (entry.inherited.skillNames ?? []).every(name => ['fixture-a', 'fixture-b'].includes(name))), JSON.stringify(inherited.map(([, entry]) => entry.inherited.skillNames)))
+  // The REAL-fork phase writes its own records: a fork of a fork links the
+  // first fork (not the caller), and an initial-source fork inherits the
+  // baseline instead of the caller's accepted set. Both are outside the
+  // delegation-capture contract asserted below, so scope those checks to the
+  // delegation sessions by excluding the measured fork ids.
+  const forkRuns = new Map((forkReport?.runs ?? []).map(entry => [entry.label, entry]))
+  const forkIds = new Set([...forkRuns.values()].map(entry => entry.forkId))
+  const inherited = Object.entries(report?.sessions ?? {})
+    .filter(([session, entry]) => entry.inherited?.revision >= 1 && !forkIds.has(session))
+  run.check('every delegation spawn path produced a durable inherited capture', inherited.length >= 6, JSON.stringify(inherited.map(([session, entry]) => [session, entry.inherited])).slice(0, 600))
+  run.check('every delegation capture links the accepted parent', inherited.every(([, entry]) => entry.inherited.origin === 'inherited' && entry.inherited.parent?.sessionId === report.caller), JSON.stringify(inherited).slice(0, 400))
+  run.check('every delegation capture stays within the accepted set', inherited.every(([, entry]) => (entry.inherited.skillNames ?? []).every(name => ['fixture-a', 'fixture-b'].includes(name))), JSON.stringify(inherited.map(([, entry]) => entry.inherited.skillNames)))
 
   run.check('the explicit recapture is child-previous ∩ current-parent (6.3)', report?.recapture?.revision === 2 && (report?.recapture?.skillNames ?? []).join(',') === 'fixture-a', JSON.stringify(report?.recapture ?? null))
+
+  // ---- real agents.create depth-0 forks (task 3.1) ----
+  // The fork phase runs after the delegation phase, immediately before the
+  // final report, so a run that reached its closing marker always executed it.
+  // Recorded replay traces predate the phase and carry no fork report: they
+  // skip these checks instead of asserting a phase they never ran, while the
+  // delegation/lifecycle contract above keeps replaying green.
+  const forkRan = Boolean(forkReport)
+  const accepted = forkRuns.get('fork-accepted')
+  const inheritedFork = forkRuns.get('fork-inherited')
+  const initialFork = forkRuns.get('fork-initial')
+  const sameSet = (left, right) => Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && [...left].sort().join(',') === [...right].sort().join(',')
+  if (forkRan) {
+  run.check('the real-fork phase produced its report', Boolean(forkReport), JSON.stringify(forkReport ?? null).slice(0, 300))
+  run.check('the probe measured all three real forks', forkRuns.size === 3, JSON.stringify(forkReport ?? null).slice(0, 300))
+  run.check('a real fork of an accepted source captured the effective set', accepted?.inherited?.kind === 'ok'
+    && accepted?.inherited?.origin === 'inherited' && sameSet(accepted?.inherited?.names, ['fixture-a']), JSON.stringify(accepted?.inherited ?? null))
+  run.check('the real fork inherited the managed MCP identity', sameSet(accepted?.inherited?.mcpServers, ['fork-gate']), JSON.stringify(accepted?.inherited?.mcpServers ?? null))
+  run.check('the real fork links the source session it was created from', accepted?.inherited?.parent?.sessionId === accepted?.parentSession, JSON.stringify({ parent: accepted?.inherited?.parent, source: accepted?.parentSession }))
+  run.check('the real fork holds no accepted record (inheritance only)', accepted?.selectionRecord === 'absent', String(accepted?.selectionRecord))
+  run.check("the fork's catalog lists the inherited Skill before any request", sameSet(accepted?.catalog, ['fixture-a']), JSON.stringify(accepted?.catalog ?? null))
+  run.check('the memory and COLD lifecycle snapshots agree with the catalog', accepted?.memory?.kind === 'ready' && accepted?.cold?.kind === 'ready'
+    && sameSet(accepted?.cold?.names, ['fixture-a']) && sameSet(accepted?.cold?.mcpServers, ['fork-gate']), JSON.stringify({ memory: accepted?.memory, cold: accepted?.cold }))
+  run.check('the production MCP gate admits the inherited managed server (memory and COLD)', accepted?.mcp?.admit === true && accepted?.mcp?.coldAdmit === true && accepted?.mcp?.enabled === true, JSON.stringify(accepted?.mcp ?? null))
+  run.check('a registered managed server the source never accepted stays refused', accepted?.mcp?.otherRefused === false, JSON.stringify(accepted?.mcp ?? null))
+  run.check('a fork of a fork inherits its immediate source inherited unit', inheritedFork?.inherited?.kind === 'ok'
+    && inheritedFork?.inherited?.parent?.sessionId === accepted?.forkId && sameSet(inheritedFork?.inherited?.names, ['fixture-a']), JSON.stringify(inheritedFork?.inherited ?? null))
+  run.check('the consecutive fork keeps the MCP set and admits the same server', sameSet(inheritedFork?.inherited?.mcpServers, ['fork-gate']) && inheritedFork?.mcp?.admit === true, JSON.stringify({ mcp: inheritedFork?.mcp, inherited: inheritedFork?.inherited?.mcpServers }))
+  run.check('a source that only resolved its initial set is inherited verbatim', initialFork?.inherited?.kind === 'ok'
+    && initialFork?.source?.record === 'absent' && initialFork?.source?.snapshot?.kind === 'ready'
+    && sameSet(initialFork?.inherited?.names, initialFork?.source?.snapshot?.names), JSON.stringify(initialFork ?? null).slice(0, 400))
+  run.check("the initial-source fork resolves the same catalog before any request", sameSet(initialFork?.catalog, initialFork?.source?.snapshot?.names), JSON.stringify(initialFork?.catalog ?? null))
+  }
 
   const blocked = readJson(join(run.ws, 'lifecycle-catalog.json'))
   run.check('a corrupt record before any acceptance fails closed with the classified reason (6.4)', blocked?.statusReason === 'policy-unreadable:corrupt', JSON.stringify(blocked))

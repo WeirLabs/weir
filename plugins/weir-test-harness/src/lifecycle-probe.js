@@ -11,18 +11,40 @@
 // The full report lands in <ws>/lifecycle-report.json (the traced tool
 // result is truncated at 300 chars, so the file is the assertion surface).
 // Enabled only when WEIR_IT_LIFECYCLE=1. Dev-only.
+//
+// The `capability-fork` scenario (fix-capability-fork-and-preset-workspaces
+// task 3.1) drives the SAME mounted plugin through real `agents.create` forks
+// (`fork` / `forkReport` ops): a depth-0 fork of an accepted source, of an
+// inherited source (fork of a fork), of a source whose initial set was already
+// resolved, and of a source that never resolved one. Each measurement is taken
+// before the fork can take a turn — the inherited record, the Skill catalog the
+// model would see, the memory and COLD lifecycle snapshots, and the production
+// MCP admission verdict over the real registry — and lands in
+// <ws>/capability-fork-report.json.
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from '../../weir-harness/src/capabilities/store/store.js'
 import * as selectionPlugin from '../../weir-harness/src/capabilities/skill-selection-plugin.js'
 import { createApplyEngine } from '../../weir-harness/src/capabilities/apply-engine.js'
 import { createSelectionDraft } from '../../weir-harness/src/capabilities/selection-draft.js'
 import { decodeRecord } from '../../weir-harness/src/capabilities/store/record.js'
+import { createLifecycleSnapshots } from '../../weir-harness/src/capabilities/lifecycle-snapshot.js'
+import { createMcpGate } from '../../weir-harness/src/capabilities/mcp-gate.js'
+import { createMcpRegistry } from '../../weir-harness/src/capabilities/mcp-registry.js'
+import { randomUUID } from 'node:crypto'
 import { IT_ROOT } from './mock-kit.js'
 
 const FIXTURES = ['fixture-a', 'fixture-b', 'unselected-skill']
 
 const namesOf = skills => (Array.isArray(skills) ? skills : []).map(identity => identity?.name ?? null)
+
+/** The assertion-relevant shape of a lifecycle snapshot (never the record envelope). */
+const snapshotShape = snapshot => (snapshot === null || snapshot === undefined
+  ? { kind: 'absent' }
+  : snapshot.state === 'ready'
+    ? { kind: 'ready', revision: snapshot.revision, names: namesOf(snapshot.skills), mcpServers: [...(snapshot.mcpServers ?? [])], captured: snapshot.captured ?? null }
+    : { kind: 'blocked', reason: snapshot.reason ?? null })
 
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
@@ -43,20 +65,29 @@ function apply(ctx, config = {}) {
   })
   /** The latest recapture outcome, merged into the next report op. */
   let lastRecapture = null
+  /** Real-fork measurements for the capability-fork scenario (report surface). */
+  const forkState = { mcpIdentity: null, mcpOtherIdentity: null, runs: [], handles: [], sessions: {} }
   ctx.tools.register({
     name: 'lifecycle_probe',
     description: 'Integration probe: drive the group-6 lifecycle surfaces (accepted-selection seeding, inherited capture readback, root fail-closed, report).',
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['apply', 'catalog', 'report', 'corruptSelf', 'repairSelf', 'recapture'] },
+        op: { type: 'string', enum: ['apply', 'catalog', 'report', 'corruptSelf', 'repairSelf', 'recapture', 'registerMcp', 'createSession', 'resolveSession', 'fork', 'forkReport'] },
         skills: { type: 'array', items: { type: 'string' } },
+        mcpServers: { type: 'array', items: { type: 'string' } },
+        identity: { type: 'string' },
+        label: { type: 'string' },
+        marker: { type: 'string' },
+        parentSession: { type: 'string' },
+        parentSessionLabel: { type: 'string' },
+        sessionIdArg: { type: 'string' },
       },
       required: ['op'],
     },
     output: {
       schema: { type: 'object' },
-      render: (args, value) => [{ type: 'text', text: `LIFECYCLE_PROBE ${value.completed ? `done ${value.op}${value.op === 'apply' ? `:[${(args?.skills ?? []).join('+')}]` : ''}` : `error:${String(value.error ?? 'unknown').slice(0, 240)}`}` }],
+      render: (args, value) => [{ type: 'text', text: `LIFECYCLE_PROBE ${value.completed ? `done ${args?.marker ?? value.op}${value.op === 'apply' ? `:[${(args?.skills ?? []).join('+')}]` : ''}` : `error:${String(value.error ?? 'unknown').slice(0, 240)}`}` }],
     },
     async execute(args, exec) {
       const report = { completed: false, op: args?.op ?? null }
@@ -87,17 +118,19 @@ function apply(ctx, config = {}) {
           })
           const current = await store.read({ kind: 'selection', sessionId })
           const applied = current.kind === 'ok' ? (current.payload?.skills ?? []) : []
-          const draft = createSelectionDraft({ baseRevision: current.kind === 'ok' ? current.revision : 0, applied: { skills: applied, mcpServers: [] } })
+          const appliedMcp = current.kind === 'ok' && Array.isArray(current.payload?.mcpServers) ? current.payload.mcpServers : []
+          const draft = createSelectionDraft({ baseRevision: current.kind === 'ok' ? current.revision : 0, applied: { skills: applied, mcpServers: appliedMcp } })
           const wanted = new Set(Array.isArray(args.skills) ? args.skills : [])
           for (const [name, identity] of identities) {
             if (name !== 'unselected-skill') draft.toggle(identity, wanted.has(name))
           }
+          for (const server of Array.isArray(args.mcpServers) ? args.mcpServers : []) draft.toggleServer(server, true)
           const outcome = await engine.apply({ sessionId, cwd }, { requestId: `lifecycle-${sessionId}-${Date.now()}`, ...draft.toApplyPayload() })
           if (outcome.status === 'applied') {
             // Mirror the production publishSnapshot hook (6.1): the mounted
             // lifecycle memory must see the acceptance, or a later recapture
             // intersects against a stale parent revision.
-            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(draft.toApplyPayload().selection.skills), mcpServers: [] })
+            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(draft.toApplyPayload().selection.skills), mcpServers: [...draft.toApplyPayload().selection.mcpServers] })
           }
           report.apply = { status: outcome.status, revision: outcome.revision ?? null }
           if (outcome.status !== 'applied') throw new Error(`engine apply rejected: ${outcome.status} ${outcome.reason ?? ''} ${JSON.stringify(outcome.conflicts ?? outcome.missing ?? '')}`) 
@@ -195,6 +228,139 @@ function apply(ctx, config = {}) {
           report.completed = true
           return report
         }
+        // ---- real agents.create forks (capability-fork scenario, task 3.1) ----
+        // Every measurement is taken BEFORE the fork can take a turn: the
+        // durable inherited record, the Skill catalog the model would see, the
+        // memory and COLD lifecycle snapshots, and the production MCP admission
+        // verdict over the REAL registry. No fabricated agent/created payload.
+        if (args.op === 'registerMcp') {
+          const registry = createMcpRegistry({ store })
+          const current = await registry.read()
+          const identity = typeof args.identity === 'string' && args.identity.length ? args.identity : 'fork-gate'
+          const outcome = await registry.register({
+            identity,
+            label: `IT fork gate ${identity}`,
+            owner: { kind: 'workspace', key: 'ws' },
+            generation: 0,
+            configuredAt: 0,
+            transport: { kind: 'stdio', ref: `mock://${identity}` },
+            client: { transport: 'stdio', serverName: identity, command: process.execPath, args: [fileURLToPath(new URL('mock-mcp-server.mjs', import.meta.url)), identity], reconnect: { enabled: true } },
+          }, current.kind === 'ok' ? current.revision : 0)
+          if (forkState.mcpIdentity !== null) forkState.mcpOtherIdentity = identity
+          else forkState.mcpIdentity = identity
+          const written = await registry.read()
+          report.register = { identity, status: outcome.status, generation: written.kind === 'ok' ? written.servers?.[identity]?.generation ?? null : null }
+          report.completed = outcome.status === 'committed'
+          return report
+        }
+        if (args.op === 'createSession') {
+          // A REAL root session (no parentSession), exactly the shape the host
+          // creates for a new chat: no accepted and no inherited record.
+          const label = typeof args.label === 'string' && args.label.length ? args.label : 'session'
+          const created = await ctx.agents.create({ sessionId: randomUUID(), meta: { cwd } })
+          const id = created.agent.session.id
+          forkState.sessions[label] = id
+          forkState.handles.push(created)
+          report.session = { label, sessionId: id }
+          report.completed = true
+          return report
+        }
+        if (args.op === 'resolveSession') {
+          // The source's initial set resolution (the first catalog read of an
+          // unapplied session): publishes the revision-0 lifecycle snapshot the
+          // synchronous fork capture then reads.
+          const label = typeof args.label === 'string' && args.label.length ? args.label : 'session'
+          const target = args.sessionIdArg ?? forkState.sessions[label]
+          if (typeof target !== 'string') throw new Error(`resolveSession: unknown session label ${label}`)
+          const view = { cwd, scope: { session: { id: target } } }
+          const names = (await ctx.skills.list(view)).map(skill => skill.name)
+          const snapshot = selection.lifecycle.snapshotFor(target)
+          report.resolved = { label, sessionId: target, names, snapshot: snapshotShape(snapshot) }
+          report.completed = true
+          return report
+        }
+        if (args.op === 'fork') {
+          const label = typeof args.label === 'string' && args.label.length ? args.label : 'fork'
+          const parentSession = typeof args.parentSession === 'string' && args.parentSession.length
+            ? args.parentSession
+            : forkState.sessions[args.parentSessionLabel] ?? sessionId
+          const forkId = `session-${randomUUID()}`
+          // The REAL host fork path (the exact meta shape DSH's session
+          // controller produces): depth stays 0, parentSession lands in the
+          // header, and the product agent/created listener captures synchronously
+          // while this call is still in flight.
+          const handle = await ctx.agents.create({ sessionId: forkId, seed: [], inheritedEventCount: 0, meta: { cwd, parentSession, isSeeded: true } })
+          const sourceSnapshot = snapshotShape(selection.lifecycle.snapshotFor(parentSession))
+          const sourceRecord = (await store.read({ kind: 'selection', sessionId: parentSession })).kind
+          const run = { label, forkId, parentSession, source: { snapshot: sourceSnapshot, record: sourceRecord } }
+          forkState.sessions[label] = forkId
+          const inherited = await store.read({ kind: 'inherited', sessionId: forkId })
+          run.inherited = inherited.kind === 'ok'
+            ? { kind: 'ok', revision: inherited.revision, names: namesOf(inherited.payload?.skills), mcpServers: inherited.payload?.mcpServers ?? [], parent: inherited.payload?.parent ?? null, origin: inherited.payload?.origin ?? null }
+            : { kind: inherited.kind }
+          run.selectionRecord = (await store.read({ kind: 'selection', sessionId: forkId })).kind
+          // Contract / specification: the effective set the fork's first
+          // catalog read (and therefore its first prompt) sees.
+          const view = { cwd, scope: { session: { id: forkId, header: { cwd, delegationDepth: 0, parentSession } } } }
+          run.memory = snapshotShape(selection.lifecycle.snapshotFor(forkId))
+          const listed = await ctx.skills.list(view)
+          run.catalogAll = listed.map(skill => skill.name)
+          // Only model-invocable rows are the effective catalog: the office
+          // denials list as explicitly non-selectable placeholders.
+          run.catalog = listed.filter(skill => skill.invocation?.modelInvocable !== false).map(skill => skill.name)
+          // Post-read snapshot: for a fork whose source had no effective set this
+          // is the fork's own revision-0 root initialization.
+          run.afterRead = snapshotShape(selection.lifecycle.snapshotFor(forkId))
+          const cold = createLifecycleSnapshots({ profileContext: ctx.get('profileContext') })
+          run.cold = snapshotShape(cold.snapshotFor(forkId))
+          const registry = createMcpRegistry({ store })
+          const identity = forkState.mcpIdentity ?? 'fork-gate'
+          const otherIdentity = forkState.mcpOtherIdentity ?? `${identity}-other`
+          const gate = createMcpGate({ registry, lifecycle: selection.lifecycle })
+          const coldGate = createMcpGate({ registry, lifecycle: cold })
+          const asAgent = { session: { id: forkId, header: { cwd, delegationDepth: 0, parentSession } } }
+          const current = await registry.read()
+          const generationOf = name => (current.kind === 'ok' ? current.servers?.[name]?.generation ?? null : null)
+          const generation = generationOf(identity)
+          const otherGeneration = generationOf(otherIdentity)
+          run.mcp = {
+            identity,
+            generation,
+            admit: await gate.admit(asAgent, identity, generation),
+            enabled: gate.enabledFor(asAgent, identity),
+            coldAdmit: await coldGate.admit(asAgent, identity, generation),
+            // A managed server the source never accepted stays refused even
+            // though it is registered under the current generation.
+            otherIdentity,
+            otherGeneration,
+            otherRefused: otherGeneration === null ? null : await gate.admit(asAgent, otherIdentity, otherGeneration),
+          }
+          forkState.runs.push(run)
+          // The fork never takes a turn in this scenario: dispose it so no
+          // system-reminder wake can make the mock answer for it.
+          forkState.handles.push(handle)
+          report.fork = run
+          report.completed = true
+          return report
+        }
+        if (args.op === 'forkReport') {
+          // The scenario never sends a turn to these sessions (a system-reminder
+          // wake would make the mock answer for a fork), so dispose them here.
+          for (const handle of forkState.handles) {
+            try { await handle.dispose?.() } catch { /* the measurement is already recorded */ }
+          }
+          forkState.handles.length = 0
+          mkdirSync(join(IT_ROOT, 'ws'), { recursive: true })
+          writeFileSync(join(IT_ROOT, 'ws', 'capability-fork-report.json'), JSON.stringify({
+            mcpIdentity: forkState.mcpIdentity,
+            mcpOtherIdentity: forkState.mcpOtherIdentity,
+            sessions: forkState.sessions,
+            runs: forkState.runs,
+          }, null, 2) + '\n')
+          report.runs = forkState.runs.length
+          report.completed = true
+          return report
+        }
         throw new Error(`unknown op: ${String(args.op)}`)
       } catch (cause) {
         report.error = cause instanceof Error ? cause.message : String(cause)
@@ -205,5 +371,5 @@ function apply(ctx, config = {}) {
 }
 
 export const name = 'weir-it-lifecycle-probe'
-export const inject = ['tools', 'skills']
+export const inject = ['tools', 'skills', 'agents']
 export { apply }

@@ -472,8 +472,18 @@ test('same-name preflight distinguishes selected identities from unresolved lega
   expect(check.selected[0].identities).toHaveLength(2)
   expect(check.unresolved[0].state).toBe('ambiguous')
   expect(model.skillDraftConflicts({ skills: [a] }, listing).selected).toHaveLength(0)
+  // Two identities the CURRENT listing resolves both participate in the conflict.
   const otherScope = { ...b, scope: 'user' }
-  expect(model.skillDraftConflicts({ skills: [a, otherScope] }, listing).selected[0].identities).toHaveLength(2)
+  const withOtherScope = { skills: [...listing.skills, { name: 'same', status: 'parsed', identity: otherScope }] }
+  expect(model.skillDraftConflicts({ skills: [a, otherScope] }, withOtherScope).selected[0].identities).toHaveLength(2)
+  // A draft reference the listing does not resolve to a parsed candidate never
+  // participates: an inapplicable preset entry must not disable Apply, and it
+  // stays in the draft untouched (the server classifies it).
+  expect(model.skillDraftConflicts({ skills: [a, otherScope] }, listing).selected).toHaveLength(0)
+  expect(model.skillDraftConflicts({ skills: [a, otherScope] }, listing).unresolved).toHaveLength(0)
+  // Unparsed rows carry no resolvable identity either.
+  const unparsed = { skills: [...listing.skills, { name: 'same', status: 'unparsed', identity: otherScope }] }
+  expect(model.skillDraftConflicts({ skills: [a, otherScope] }, unparsed).selected).toHaveLength(0)
   expect(model.skillDraftConflicts({ skills: ['same', a] }, listing).selected).toHaveLength(0)
   expect(model.skillDraftConflicts({ skills: ['same'] }, { skills: [] }).unresolved[0].state).toBe('unknown')
   expect(model.skillDraftConflicts({ skills: ['same'] }, null).unresolved[0].state).toBe('unavailable')

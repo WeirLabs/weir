@@ -6,6 +6,11 @@ import { createMcpGate } from '../src/capabilities/mcp-gate.js'
 import { createMcpToolWrapper } from '../src/capabilities/mcp-admission.js'
 import { createMcpFacade } from '../src/capabilities/mcp-facade.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
+import { createLifecycleSnapshots } from '../src/capabilities/lifecycle-snapshot.js'
+import { openCapabilityStore } from '../src/capabilities/store/store.js'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const registryWith = servers => ({
   async read() { return { kind: 'ok', revision: 1, servers } },
@@ -181,4 +186,113 @@ test('8.6 wiring: a removal through the engine seam closes the session gate for 
   handle.abort()
   expect(await registered.request({}, { agent: agentA })).toBe('body')
   expect(rpcs).toBe(3)
+})
+
+test('gate: a cold fork admits exactly the inherited managed set (no accepted record)', async () => {
+  // The fork was created by a depth-0 capture; the process then restarted, so
+  // the gate's lifecycle has no memory snapshot and must read the durable
+  // inherited unit — the same effective set the Skill catalog reports.
+  const root = mkdtempSync(join(tmpdir(), 'weir-gate-fork-'))
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  await store.commit({ kind: 'selection', sessionId: 'fork-source' }, 0, () => ({ skills: [], mcpServers: ['docs'] }))
+  createLifecycleSnapshots({ root, platform: 'darwin' }).agentCreated({
+    agent: { session: { id: 'fork-cold', header: { delegationDepth: 0, parentSession: 'fork-source' } } },
+  })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const gate = createMcpGate({
+    registry: registryWith({ docs: { identity: 'docs', generation: 1 }, web: { identity: 'web', generation: 1 } }),
+    lifecycle: cold,
+  })
+  expect(gate.enabledFor(agentOf('fork-cold'), 'docs')).toBe(true)
+  expect(await gate.admit(agentOf('fork-cold'), 'docs', 1)).toBe(true)
+  // Nothing was inherited beyond the source's accepted set.
+  expect(gate.enabledFor(agentOf('fork-cold'), 'web')).toBe(false)
+  expect(await gate.admit(agentOf('fork-cold'), 'web', 1)).toBe(false)
+  const inherited = await store.read({ kind: 'inherited', sessionId: 'fork-cold' })
+  expect(inherited.payload.mcpServers).toEqual(['docs'])
+})
+
+test('gate: a fork of an inherited source still admits the same set (consecutive fork)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-gate-fork2-'))
+  await openCapabilityStore({ root, platform: 'darwin' })
+    .commit({ kind: 'selection', sessionId: 'root-source' }, 0, () => ({ skills: [], mcpServers: ['docs', 'web'] }))
+  const writer = createLifecycleSnapshots({ root, platform: 'darwin' })
+  writer.agentCreated({ agent: { session: { id: 'fork-1', header: { delegationDepth: 0, parentSession: 'root-source' } } } })
+  writer.agentCreated({ agent: { session: { id: 'fork-2', header: { delegationDepth: 0, parentSession: 'fork-1' } } } })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const gate = createMcpGate({
+    registry: registryWith({ docs: { identity: 'docs', generation: 1 }, web: { identity: 'web', generation: 1 } }),
+    lifecycle: cold,
+  })
+  expect(gate.enabledFor(agentOf('fork-2'), 'docs')).toBe(true)
+  expect(gate.enabledFor(agentOf('fork-2'), 'web')).toBe(true)
+})
+
+// --- Capability gate re-review (d4ce98a follow-up) ---------------------------
+// A memory-BLOCKED depth-0 fork is a definitive fail-closed verdict, never the
+// creation race: it must not borrow the ready parent's managed-MCP visibility.
+// The creation-race fallback itself stays: an ABSENT own snapshot (the capture
+// listener has not run yet) may use the parent's accepted set for VISIBILITY,
+// while admission still refuses a session with no initialized snapshot.
+
+test('gate: a BLOCKED depth-0 fork never borrows the ready parent; an ABSENT own snapshot keeps the creation-race fallback', async () => {
+  const registry = registryWith({ docs: { identity: 'docs', generation: 1 } })
+  const parent = { state: 'ready', mcpServers: ['docs'] }
+  const blockedAgent = { session: { id: 'fork-blocked', header: { delegationDepth: 0, parentSession: 'parent' } } }
+  const racingAgent = { session: { id: 'fork-racing', header: { delegationDepth: 0, parentSession: 'parent' } } }
+  const gate = createMcpGate({
+    registry,
+    lifecycle: lifecycleWith({
+      parent,
+      'fork-blocked': { state: 'blocked', reason: 'unreadable' },
+    }),
+  })
+  // BLOCKED own + READY parent: the parent's accepted set is NOT this fork's
+  // set — neither visibility nor admission may leak through the fallback.
+  expect(gate.enabledFor(blockedAgent, 'docs')).toBe(false)
+  expect(await gate.admit(blockedAgent, 'docs', 1)).toBe(false)
+  // Control: the OWN snapshot is simply absent (the creation-time capture
+  // listener races creation), so the parent's set stands in for visibility —
+  // admission still refuses a session with no initialized snapshot.
+  expect(gate.enabledFor(racingAgent, 'docs')).toBe(true)
+  expect(await gate.admit(racingAgent, 'docs', 1)).toBe(false)
+  // A BLOCKED parent grants nothing either.
+  const blockedParent = createMcpGate({
+    registry,
+    lifecycle: lifecycleWith({ parent: { state: 'blocked', reason: 'unreadable' } }),
+  })
+  expect(blockedParent.enabledFor(racingAgent, 'docs')).toBe(false)
+})
+
+test('gate + facade: a BLOCKED fork omits MCP instructions while a creation-race child still sees the parent set', async () => {
+  // Real lifecycle store (the blackboard re-review probe): the BLOCKED marker
+  // and the ready parent coexist in memory, which is exactly the state the
+  // review reproduced. The facade's per-prompt section is the instruction-facing
+  // surface that consumed the leaked verdict.
+  const lifecycle = createLifecycleSnapshots({ root: mkdtempSync(join(tmpdir(), 'weir-gate-blocked-')), platform: 'darwin' })
+  lifecycle.publish('parent', { revision: 1, skills: [], mcpServers: ['docs'] })
+  lifecycle.markBlocked('fork-blocked', 'unreadable')
+  const gate = createMcpGate({ registry: registryWith({ docs: { identity: 'docs', generation: 1 } }), lifecycle })
+  let section
+  const facade = createMcpFacade({
+    host: { systemPrompt: { section: definition => (section = definition) } },
+    identity: 'docs',
+    generation: 1,
+    admit: agent => gate.admit(agent, 'docs', 1),
+    isEnabledFor: agent => gate.enabledFor(agent, 'docs'),
+  })
+  facade.systemPrompt.section({ render: () => 'DOCS INSTRUCTIONS' })
+  const blocked = { session: { id: 'fork-blocked', header: { delegationDepth: 0, parentSession: 'parent' } } }
+  const racing = { session: { id: 'fork-racing', header: { delegationDepth: 0, parentSession: 'parent' } } }
+
+  expect(lifecycle.snapshotFor('fork-blocked')?.state).toBe('blocked')
+  expect(gate.enabledFor(blocked, 'docs')).toBe(false)
+  expect(await gate.admit(blocked, 'docs', 1)).toBe(false)
+  expect(await section.render(blocked)).toBe('')
+
+  // The creation race is the ONLY case the parent fallback serves.
+  expect(lifecycle.snapshotFor('fork-racing')).toBeNull()
+  expect(gate.enabledFor(racing, 'docs')).toBe(true)
+  expect(await gate.admit(racing, 'docs', 1)).toBe(false)
+  expect(await section.render(racing)).toBe('DOCS INSTRUCTIONS')
 })

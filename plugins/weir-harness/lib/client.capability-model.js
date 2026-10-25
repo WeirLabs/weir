@@ -152,7 +152,13 @@ window.__ModuleLoader__.load({
 			next.dirty = !same(next.skills.map(skillEntryKeyOf), draft.applied.skills.map(skillEntryKeyOf)) || !same(next.mcpServers, draft.applied.mcpServers);
 			return next;
 		}
-		/** Preflight the complete draft against the unfiltered inventory. Strings are not identities. */
+		/** Preflight the complete draft against the unfiltered inventory. Strings are not identities.
+		 * Only a reference the CURRENT listing resolves to a parsed candidate can
+		 * take part in a local same-name conflict: a preset entry rooted in another
+		 * workspace (or otherwise unresolved here) has no applicable row, so it is
+		 * not a second selection this session could apply and it never disables
+		 * Apply. It stays in the draft untouched — the server decides whether it is
+		 * inapplicable (skipped, warned) or genuinely unknown (hard failure). */
 		function skillDraftConflicts(draft, listing) {
 			const byName = new Map(), names = new Set();
 			for (const entry of Array.isArray(draft?.skills) ? draft.skills : []) {
@@ -162,8 +168,16 @@ window.__ModuleLoader__.load({
 				if (!byName.has(entry.name)) byName.set(entry.name, new Map());
 				byName.get(entry.name).set(key, entry);
 			}
-			const selected = [...byName].filter(([, group]) => group.size > 1).map(([name, group]) => ({ name, identities: [...group.values()] }));
 			const rows = Array.isArray(listing?.skills) ? listing.skills : null;
+			const resolvable = new Set();
+			for (const row of rows ?? []) {
+				if (row?.status !== "parsed") continue;
+				const key = skillIdentityKeyOf(row.identity);
+				if (key !== null) resolvable.add(key);
+			}
+			const selected = [...byName]
+				.map(([name, group]) => ({ name, identities: [...group].filter(([key]) => resolvable.has(key)).map(([, entry]) => entry) }))
+				.filter((item) => item.identities.length > 1);
 			const unresolved = [...names].map(name => {
 				if (!rows) return { name, state: "unavailable", candidates: [] };
 				const candidates = [...new Map(rows.filter(row => row?.status === "parsed" && row.name === name && skillIdentityKeyOf(row.identity) !== null)

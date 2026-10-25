@@ -13,6 +13,7 @@ import { resolveInitialSelection, bindDefaultSkillNames } from '../src/capabilit
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
+import { createLifecycleSnapshots } from '../src/capabilities/lifecycle-snapshot.js'
 
 const home = () => mkdtempSync(join(tmpdir(), 'weir-init-'))
 const rootOf = home => join(home, 'weir', 'profiles', 'it', 'capabilities')
@@ -104,7 +105,7 @@ test('default binding: a non-array candidates value is tolerated', () => {
   expect(bound.missing).toEqual([{ kind: 'skill', ref: 'deep-work', reason: 'no longer in the inventory' }])
 })
 
-function mount(home, { inventoryCandidates }) {
+function mount(home, { inventoryCandidates, lifecycle }) {
   let registered
   const ctx = {
     skills: { registerProvider(create) { registered = create({ invalidate() {} }) } },
@@ -114,7 +115,7 @@ function mount(home, { inventoryCandidates }) {
   createSkillSelectionPlugin({
     inventory: async () => ({ complete: true, candidates: inventoryCandidates }),
     office: async () => ({ complete: true, candidates: [] }),
-    lifecycle: { agentCreated: () => undefined },
+    lifecycle: lifecycle ?? { agentCreated: () => undefined },
   })(ctx)
   return registered
 }
@@ -203,4 +204,96 @@ test('6.4 mounted: an undecodable inherited snapshot fails closed, never overwri
   const status = provider.status(options)
   expect(status.reason ?? status.note?.reason).toBe('inherited-snapshot-unavailable')
   expect((await provider.list(options)).candidates.every(item => !item.invocation.modelInvocable)).toBe(true)
+})
+
+// --- Resolved initial set as an inheritable lifecycle snapshot (fork group 1) ---
+// A session whose initial set was resolved (workspace default or builtin
+// baseline) publishes it as a revision-0 lifecycle snapshot, so a synchronous
+// depth-0 fork of a still-unapplied source captures that set instead of an
+// empty one. Nothing is persisted for the source; a snapshot that appeared
+// while the async resolution was in flight wins; an incomplete inventory is
+// never published as an inheritable set.
+
+test('fork: a resolved initial set is published at revision 0 and never persisted', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const lifecycle = createLifecycleSnapshots({ root: rootOf(dir), platform: 'darwin' })
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA), candidateOf(builtinB)], lifecycle })
+  await provider.list(options('sess-init', null))
+  const snapshot = lifecycle.snapshotFor('sess-init')
+  expect(snapshot?.state).toBe('ready')
+  expect(snapshot?.revision).toBe(0)
+  expect(snapshot?.skills.map(identity => identity.name)).toEqual(['deep-work', 'research'])
+  expect(snapshot?.captured).toBeNull()
+  const store = openCapabilityStore({ root: rootOf(dir), platform: 'darwin' })
+  expect((await store.read({ kind: 'selection', sessionId: 'sess-init' })).kind).toBe('absent')
+  expect((await store.read({ kind: 'inherited', sessionId: 'sess-init' })).kind).toBe('absent')
+})
+
+test('fork: the resolved initial set carries the workspace default sets, MCP included', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const store = openCapabilityStore({ root: rootOf(dir), platform: 'darwin' })
+  await store.commit({ kind: 'defaults', workspaceKey: 'ws-fork' }, 0, () => ({ skills: [alpha], mcpServers: ['docs'], unresolvedRefs: [] }))
+  const lifecycle = createLifecycleSnapshots({ root: rootOf(dir), platform: 'darwin' })
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(alpha), candidateOf(builtinA)], lifecycle })
+  await provider.list(options('sess-default-fork', 'ws-fork'))
+  const snapshot = lifecycle.snapshotFor('sess-default-fork')
+  expect(snapshot?.revision).toBe(0)
+  expect(snapshot?.skills.map(identity => identity.name)).toEqual(['alpha'])
+  expect(snapshot?.mcpServers).toEqual(['docs'])
+})
+
+test('fork: a snapshot that appears during the async resolution wins (no late overwrite)', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const lifecycle = createLifecycleSnapshots({ root: rootOf(dir), platform: 'darwin' })
+  let provider
+  const ctx = {
+    skills: { registerProvider(create) { provider = create({ invalidate() {} }) } },
+    on() {},
+    get(name) { return name === 'profileContext' ? { home: dir, name: 'it' } : undefined },
+  }
+  createSkillSelectionPlugin({
+    // The Apply/inheritance publication that races the initial resolution.
+    inventory: async () => {
+      lifecycle.publish('sess-race', { revision: 5, skills: [alpha], mcpServers: ['web'], captured: null })
+      return { complete: true, candidates: [candidateOf(builtinA)] }
+    },
+    office: async () => ({ complete: true, candidates: [] }),
+    lifecycle,
+  })(ctx)
+  await provider.list(options('sess-race', null))
+  const snapshot = lifecycle.snapshotFor('sess-race')
+  expect(snapshot?.revision).toBe(5)
+  expect(snapshot?.skills.map(identity => identity.name)).toEqual(['alpha'])
+  expect(snapshot?.mcpServers).toEqual(['web'])
+})
+
+test('fork: an incomplete inventory is never published as an inheritable initial set', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const lifecycle = createLifecycleSnapshots({ root: rootOf(dir), platform: 'darwin' })
+  let provider
+  const ctx = {
+    skills: { registerProvider(create) { provider = create({ invalidate() {} }) } },
+    on() {},
+    get(name) { return name === 'profileContext' ? { home: dir, name: 'it' } : undefined },
+  }
+  createSkillSelectionPlugin({
+    inventory: async () => ({ complete: false, candidates: [candidateOf(builtinA)] }),
+    office: async () => ({ complete: true, candidates: [] }),
+    lifecycle,
+  })(ctx)
+  await provider.list(options('sess-partial', null))
+  expect(lifecycle.snapshotFor('sess-partial')).toBeNull()
+})
+
+test('fork: a depth-0 fork with no effective snapshot resolves its own root initialization', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const lifecycle = createLifecycleSnapshots({ root: rootOf(dir), platform: 'darwin' })
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA)], lifecycle })
+  const forkOptions = { cwd: '/ws', scope: { session: { id: 'fork-root-init', header: { delegationDepth: 0, parentSession: 'ghost-parent' } } } }
+  const list = await provider.list(forkOptions)
+  expect(list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)).toEqual(['deep-work'])
+  expect(provider.status(forkOptions).error ?? null).toBe(null)
+  const snapshot = lifecycle.snapshotFor('fork-root-init')
+  expect(snapshot?.revision).toBe(0)
+  expect(snapshot?.skills.map(identity => identity.name)).toEqual(['deep-work'])
 })
