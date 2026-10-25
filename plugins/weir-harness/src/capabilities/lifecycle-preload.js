@@ -60,9 +60,15 @@ export async function preloadLifecycleSnapshots({ lifecycle, profileContext, pla
     if (!isSegment(name)) continue
     // A fresher in-memory publication (e.g. an Apply accepted while this
     // preload was in flight) always wins over the disk record it came from.
-    if (lifecycle.peek(name)) continue
+    // Capture the exact observed object so EVERY post-await publication or
+    // blocked marker can be gated on the same freshness proof.
+    const observed = lifecycle.peek(name) ?? null
+    if (observed) continue
     try {
       const record = await active.read({ kind: 'selection', sessionId: name })
+      // The first await may have allowed an accepted Apply (or another
+      // publisher) to replace the memory snapshot. Never publish/mark stale.
+      if (lifecycle.peek(name) !== observed) continue
       if (record.kind === 'ok') {
         const payload = record.payload ?? {}
         lifecycle.publish(name, {
@@ -83,6 +89,9 @@ export async function preloadLifecycleSnapshots({ lifecycle, profileContext, pla
       // not decode — the session must not look uninitialized (and be handed a
       // fresh initial baseline) merely because its inheritance is damaged.
       const inherited = await active.read({ kind: 'inherited', sessionId: name })
+      // A second independent read creates another interleaving window: an
+      // accepted Apply here MUST outrank the older inherited unit.
+      if (lifecycle.peek(name) !== observed) continue
       if (inherited.kind === 'ok') {
         const payload = /** @type {Record<string, unknown>} */ (inherited.payload ?? {})
         const parent = payload.parent && typeof payload.parent === 'object'

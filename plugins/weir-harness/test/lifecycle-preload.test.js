@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createLifecycleSnapshots, INHERITED_ORIGIN } from '../src/capabilities/lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from '../src/capabilities/lifecycle-preload.js'
+import { createNodeFs, instrumentFs } from '../src/capabilities/store/fs-adapter.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createSkillIdentity } from '../src/capabilities/skill-identity.js'
 
@@ -32,6 +33,34 @@ const preload = async (root, lifecycle) => preloadLifecycleSnapshots({
   lifecycle,
   store: openCapabilityStore({ root, platform: 'darwin' }),
 })
+
+// ---- final-gate race: preload vs an accepted Apply --------------------------
+// Production runs preload and Apply on SEPARATE stores (skill-selection-
+// plugin.js): the preload read cannot see Apply's locks, and every publish or
+// BLOCKED marker below lands after at least one await. These tests hold a real
+// store read open, accept an Apply through an independent store plus the memory
+// publish seam while it is in flight, then release it. The freshness recheck
+// must keep the accepted snapshot authoritative.
+const deferred = () => {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return { promise, resolve }
+}
+
+/** Hold the first async read of one session unit open until `release`. */
+const delayedRead = (root, sessionId, unitName) => {
+  const entered = deferred()
+  const release = deferred()
+  let held = false
+  const fs = instrumentFs(createNodeFs(), async (op, args, phase) => {
+    if (phase !== 'before' || op !== 'readText' || held) return
+    if (args[0] !== join(root, 'sessions', sessionId, `${unitName}.json`)) return
+    held = true
+    entered.resolve()
+    await release.promise
+  })
+  return { fs, entered, release }
+}
 
 test('6.1 preload: an inherited-only session loads its effective set and captured metadata', async () => {
   const root = base()
@@ -114,4 +143,109 @@ test('6.1 preload: an unsupported store reports without touching memory', async 
   expect(result.loaded).toBe(0)
   expect(result.blocked).toBe(0)
   expect(result.unsupported).toBe('platform-unsupported:freebsd')
+})
+
+test('6.1 preload: an accepted Apply during the delayed inherited read survives and the next fork inherits it', async () => {
+  const root = base()
+  const session = 'fork-race-inherited'
+  await seedInherited(root, session, { skills: [alpha], mcpServers: ['docs'], parent: { sessionId: 'parent', revision: 1 } })
+  const held = delayedRead(root, session, 'inherited')
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const pending = preloadLifecycleSnapshots({
+    lifecycle,
+    store: openCapabilityStore({ root, platform: 'darwin', fs: held.fs }),
+  })
+  await held.entered.promise
+  // The accepted-Apply seam: an independent store commits revision 1 and the
+  // engine publishes the accepted snapshot into the memory authority.
+  const writer = openCapabilityStore({ root, platform: 'darwin' })
+  const committed = await writer.commit({ kind: 'selection', sessionId: session }, 0, () => ({ skills: [beta], mcpServers: ['web'] }))
+  expect(committed.status).toBe('committed')
+  const accepted = lifecycle.publish(session, { revision: committed.revision, skills: [beta], mcpServers: ['web'] })
+  held.release.resolve()
+  const result = await pending
+  expect(result.loaded).toBe(0)
+  expect(result.blocked).toBe(0)
+  expect(lifecycle.peek(session)).toBe(accepted)
+  expect(lifecycle.snapshotFor(session)).toBe(accepted)
+  expect(lifecycle.snapshotFor(session)?.skills.map(identity => identity.name)).toEqual(['beta'])
+  // The next depth-0 fork inherits the accepted set — never the older
+  // inherited record the in-flight preload had already read.
+  const child = 'fork-of-fork-race'
+  lifecycle.agentCreated({ agent: { session: { id: child, header: { delegationDepth: 0, parentSession: session } } } })
+  const childSnapshot = lifecycle.snapshotFor(child)
+  expect(childSnapshot?.state).toBe('ready')
+  expect(childSnapshot?.skills.map(identity => identity.name)).toEqual(['beta'])
+  expect(childSnapshot?.mcpServers).toEqual(['web'])
+  const inherited = await writer.read({ kind: 'inherited', sessionId: child })
+  expect(inherited.kind).toBe('ok')
+  expect(inherited.payload.skills.map(identity => identity.name)).toEqual(['beta'])
+  expect(inherited.payload.mcpServers).toEqual(['web'])
+  expect(inherited.payload.parent.sessionId).toBe(session)
+})
+
+test('6.1 preload: an accepted Apply during the delayed accepted-selection read is not overwritten by the stale record', async () => {
+  const root = base()
+  const session = 'apply-race-selection'
+  await seedSelection(root, session, { skills: [alpha], mcpServers: ['docs'] })
+  const held = delayedRead(root, session, 'selection')
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const pending = preloadLifecycleSnapshots({
+    lifecycle,
+    store: openCapabilityStore({ root, platform: 'darwin', fs: held.fs }),
+  })
+  await held.entered.promise
+  const writer = openCapabilityStore({ root, platform: 'darwin' })
+  const committed = await writer.commit({ kind: 'selection', sessionId: session }, 1, () => ({ skills: [beta], mcpServers: ['web'] }))
+  expect(committed.status).toBe('committed')
+  const accepted = lifecycle.publish(session, { revision: committed.revision, skills: [beta], mcpServers: ['web'] })
+  held.release.resolve()
+  const result = await pending
+  expect(result.loaded).toBe(0)
+  expect(result.blocked).toBe(0)
+  expect(lifecycle.peek(session)).toBe(accepted)
+  expect(lifecycle.snapshotFor(session)?.skills.map(identity => identity.name)).toEqual(['beta'])
+  expect(lifecycle.snapshotFor(session)?.mcpServers).toEqual(['web'])
+})
+
+test('6.1 preload: a delayed corrupt accepted record never marks a fresher ready snapshot BLOCKED', async () => {
+  const root = base()
+  const session = 'torn-race-selection'
+  mkdirSync(join(root, 'sessions', session), { recursive: true })
+  writeFileSync(join(root, 'sessions', session, 'selection.json'), '{')
+  const held = delayedRead(root, session, 'selection')
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const pending = preloadLifecycleSnapshots({
+    lifecycle,
+    store: openCapabilityStore({ root, platform: 'darwin', fs: held.fs }),
+  })
+  await held.entered.promise
+  const accepted = lifecycle.publish(session, { revision: 4, skills: [beta], mcpServers: ['web'] })
+  held.release.resolve()
+  const result = await pending
+  expect(result.loaded).toBe(0)
+  expect(result.blocked).toBe(0)
+  expect(lifecycle.peek(session)).toBe(accepted)
+  expect(lifecycle.snapshotFor(session)?.state).toBe('ready')
+})
+
+test('6.1 preload: a delayed corrupt inherited record never marks a fresher ready snapshot BLOCKED', async () => {
+  const root = base()
+  const session = 'torn-race-inherited'
+  mkdirSync(join(root, 'sessions', session), { recursive: true })
+  writeFileSync(join(root, 'sessions', session, 'inherited.json'), '{')
+  const held = delayedRead(root, session, 'inherited')
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const pending = preloadLifecycleSnapshots({
+    lifecycle,
+    store: openCapabilityStore({ root, platform: 'darwin', fs: held.fs }),
+  })
+  await held.entered.promise
+  const accepted = lifecycle.publish(session, { revision: 2, skills: [beta], mcpServers: ['web'] })
+  held.release.resolve()
+  const result = await pending
+  expect(result.loaded).toBe(0)
+  expect(result.blocked).toBe(0)
+  expect(lifecycle.peek(session)).toBe(accepted)
+  expect(lifecycle.snapshotFor(session)?.state).toBe('ready')
 })
