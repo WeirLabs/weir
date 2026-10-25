@@ -15,6 +15,7 @@ import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
+import { partitionUnresolvedSkills } from './skill-applicability.js'
 import { workspaceKeyOf, createPresetVerbs } from './preset-library.js'
 import { createDefaultsVerbs } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
@@ -431,6 +432,11 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               matches.push(candidate)
               parsedByName.set(candidate.name, matches)
             }
+            // The unresolved draft entries keep their ORIGINAL shape: a legacy
+            // name string is not an identity and cannot be classified by
+            // workspace, while an identity object carries the scope/root the
+            // cross-workspace partition needs. Collapsing both to a name here
+            // is what made a foreign project reference unactionable.
             const missing = []
             const identities = []
             const admitted = new Set()
@@ -443,7 +449,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               } else {
                 const identity = createSkillIdentity(entry)
                 candidate = byKey.get(skillIdentityKey(identity))
-                if (!candidate) missing.push(identity.name)
+                if (!candidate) missing.push(identity)
               }
               if (!candidate) continue
               const key = skillIdentityKey(candidate.identity)
@@ -451,19 +457,26 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               admitted.add(key)
               identities.push(candidate.identity)
             }
-            // preset-skill-applicability (D2): partition the missing names —
-            // KNOWN-BUT-INAPPLICABLE (resolvable in a profile-supplemental
-            // directory, e.g. creative-preset skills carried by a workspace
-            // default) are SKIPPED with a per-name reason while the
-            // resolvable remainder commits; genuinely unknown names keep the
-            // hard-failure contract. Records are never rewritten for
-            // applicability, so a preset round-trip stays lossless.
-            const unknown = []
-            const skipped = []
-            for (const name of missing) {
-              if (supplementalSkillKnown(config.supplementalSkillDirs, name)) skipped.push({ name, reason: 'not applicable in this agent preset' })
-              else unknown.push(name)
-            }
+            // preset applicability partition (D2 + cross-workspace D4):
+            // - KNOWN-BUT-INAPPLICABLE names (resolvable in a profile-supplemental
+            //   directory, e.g. creative-preset skills carried by a workspace
+            //   default) are SKIPPED with a per-name reason;
+            // - a project identity PROVEN to belong to another workspace (its
+            //   canonical root is outside every current project Skill root of a
+            //   COMPLETE inventory) is SKIPPED as not applicable in this
+            //   workspace — the preset contract, not a same-name conflict, and
+            //   never a local same-name substitute;
+            // - everything else keeps the hard-failure contract with the draft
+            //   preserved (a local identity the inventory no longer resolves, a
+            //   project identity of THIS workspace, an incomplete inventory, or
+            //   an unresolvable current-workspace root set authorizes no skip).
+            // Records are never rewritten for applicability, so a preset
+            // round-trip stays lossless.
+            const { skipped, unknown } = partitionUnresolvedSkills(missing, {
+              roots: inventoryResult?.roots,
+              complete: inventoryResult?.complete,
+              knownSupplemental: name => supplementalSkillKnown(config.supplementalSkillDirs, name),
+            })
             if (unknown.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: unknown, ...(skipped.length > 0 ? { skipped } : {}) }) }
             const response = await face.applySelection(
               { sessionId: agent.id, cwd: agent.session?.header?.cwd, presetId: 'weir' },

@@ -443,3 +443,48 @@ test('first degraded open requires explicit overwrite confirmation before recove
   findAll(render(), node => node.__type === 'button' && node.children === 'Apply')[0].onClick()
   expect(writes).toBe(1)
 })
+
+test('a preset reference the listing cannot resolve never disables Apply and reports the skipped set', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  // The local identity exists here; the workspace-A identity is the same
+  // invocation name saved in another workspace and has no applicable row.
+  const local = { scope: 'project', root: '/ws-b/.dsh/skills', name: 'travel', provenance: null, opaqueId: 'local-travel', portable: false }
+  const foreign = { scope: 'project', root: '/ws-a/.dsh/skills', name: 'travel', provenance: null, opaqueId: 'foreign-travel', portable: false }
+  let applied = null
+  const props = {
+    shell: 'sidebar', sessionId: 's', model,
+    fetchListing: async () => ({ skills: [{ name: 'travel', scope: 'project', status: 'parsed', identity: local, selected: false }], mcpServers: [] }),
+    fetchConditions: async () => ({ conditions: [] }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] }, warnings: [] }),
+    applySelection: async (_sessionId, request) => {
+      applied = request
+      return { status: 'applied', revision: 2, skipped: [{ name: 'travel', reason: 'not applicable in this workspace' }] }
+    },
+  }
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render(); await flush()
+  let tree = render()
+  tree.children[0].children[2].onClick() // Presets tab
+  tree = render()
+  findAll(tree, node => typeof node.__type === 'function' && node.stagePreset)[0]
+    .stagePreset({ selection: { skills: [local, foreign], mcpServers: [] } })
+  tree = render()
+  // No same-name warning: only the resolvable local identity participates.
+  expect(findAll(tree, node => node.role === 'alert')).toHaveLength(0)
+  tree.children[0].children[0].onClick() // Skills tab
+  tree = render()
+  const apply = findAll(tree, node => node.__type === 'button' && node.children === 'Apply')[0]
+  expect(apply.disabled).toBe(false)
+  apply.onClick()
+  await flush()
+  // The draft travels verbatim (order is the model's identity sort): the
+  // server owns the skip-vs-unknown decision.
+  expect(applied.skills.map(entry => entry.root).sort()).toEqual([foreign.root, local.root])
+  tree = render()
+  expect(findAll(tree, node => node.children === 'skipped 1 (not applicable here)')).toHaveLength(1)
+  const chip = findAll(tree, node => node.__type === 'span' && typeof node.title === 'string' && node.title.includes('not applicable in this workspace'))
+  expect(chip).toHaveLength(1)
+})

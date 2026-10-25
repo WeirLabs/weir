@@ -531,3 +531,253 @@ test('/capabilities receipt on a cold fork reports the inherited sets with an ac
   }
 })
 
+// --- Cross-workspace preset applicability (fix-capability-fork-and-preset-workspaces) ---
+// A global preset may carry a project-scoped Skill identity rooted in another
+// workspace. That identity does not exist in this workspace at all, so the
+// preset contract applies: skip it, warn, keep the rest — never an
+// unactionable same-name conflict with a local Skill, never a substitution,
+// never a rewrite of the stored reference. Absence alone is never proof: an
+// incomplete inventory or an unresolvable current root set authorizes no skip.
+
+const writeSkill = (dir, name) => {
+  mkdirSync(join(dir, name), { recursive: true })
+  writeFileSync(join(dir, name, 'SKILL.md'), `---\nname: ${name}\ndescription: cross-workspace fixture ${name}\n---\nCONTENT_${name}\n`)
+  return join(dir, name, 'SKILL.md')
+}
+
+/** Mount the /capabilities command over a hermetic two-workspace fixture. */
+const mountApply = (root, { customSkillDirs = [], supplementalSkillDirs = [], agentsHome, inventory } = {}) => {
+  const registeredCommands = []
+  let provider
+  const ctx = {
+    skills: {
+      registerProvider(create) { provider = create({ invalidate() {} }) },
+      async list(options) { return (await provider.list(options)).candidates },
+      layers: { global: { providers: new Map() } },
+    },
+    on() {},
+    effect(fn) { fn(); return () => {} },
+    logger: { warn() {} },
+    get(name) {
+      if (name === 'profileContext') return { home: join(root, 'profile'), name: 'it' }
+      if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      return undefined
+    },
+  }
+  createSkillSelectionPlugin(inventory ? { inventory } : {})(ctx, {
+    machineId: 'weir-it-machine',
+    customSkillDirs,
+    supplementalSkillDirs,
+    agentsHome,
+    dshHome: join(root, 'profile'),
+  })
+  const command = registeredCommands.find(entry => entry.name === 'capabilities')
+  const agent = { id: 'sess-ws-b', session: { id: 'sess-ws-b', header: { cwd: root } } }
+  const call = async rawInput => JSON.parse((await command.handler({ agent, rawInput })).text)
+  return { command, agent, call }
+}
+
+const identityOf = (listing, name, scope) =>
+  listing.skills.find(row => row.name === name && row.status === 'parsed' && row.identity?.scope === scope)?.identity ?? null
+
+test('cross-workspace: a preset entry rooted in another workspace is skipped and the rest commits', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-xws-'))
+    const workspaceA = mkdtempSync(join(tmpdir(), 'weir-cmd-xws-a-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    writeSkill(join(root, '.dsh', 'skills'), 'travel')
+    writeSkill(join(root, 'custom-skills'), 'local-other')
+    writeSkill(join(workspaceA, '.dsh', 'skills'), 'travel')
+    const { call } = mountApply(root, { customSkillDirs: [join(root, 'custom-skills')], agentsHome: host.agentsHome })
+    const listing = await call('list')
+    const localTravel = identityOf(listing, 'travel', 'project')
+    const localOther = identityOf(listing, 'local-other', 'custom')
+    expect(localTravel === null).toBe(false)
+    expect(localOther === null).toBe(false)
+    // The identity a global preset saved in workspace A carries: same invocation
+    // name, different workspace root, machine-local opaque id.
+    const foreignTravel = { scope: 'project', root: join(workspaceA, '.dsh', 'skills'), name: 'travel', provenance: null, opaqueId: 'foreign-travel', portable: false }
+
+    // Sole foreign entry: the external reference is skipped with a warning and
+    // the normal Apply contract commits the (explicitly empty) Skill set.
+    const sole = await call(`apply ${JSON.stringify({ requestId: 'xws-1', expectedRevision: 0, skills: [foreignTravel], mcpServers: [] })}`)
+    expect(sole.status).toBe('applied')
+    expect(sole.skipped).toEqual([{ name: 'travel', reason: 'not applicable in this workspace' }])
+    expect(sole.effective.skills).toEqual([])
+    const afterSole = await call('receipt')
+    expect(afterSole.effective.skills).toEqual([])
+
+    // Foreign + local same-name + a resolvable remainder: all in one action,
+    // no same-name conflict, no silent substitution of the local Skill.
+    const mixed = await call(`apply ${JSON.stringify({ requestId: 'xws-2', expectedRevision: 1, skills: [foreignTravel, localTravel, localOther], mcpServers: [] })}`)
+    expect(mixed.status).toBe('applied')
+    expect(mixed.skipped).toEqual([{ name: 'travel', reason: 'not applicable in this workspace' }])
+    const mixedReceipt = await call('receipt')
+    expect(mixedReceipt.revision).toBe(2)
+    expect(mixedReceipt.effective.skillIdentities.map(identity => identity.name).sort()).toEqual(['local-other', 'travel'])
+    // Only the explicitly selected local identity was written — never swapped in
+    // for the external reference, and the external reference is not stored.
+    const travelIdentities = mixedReceipt.effective.skillIdentities.filter(identity => identity.name === 'travel')
+    expect(travelIdentities).toEqual([localTravel])
+    // The listing still shows the local candidate with its own provenance.
+    const after = await call('list')
+    expect(after.skills.filter(row => row.name === 'travel').map(row => row.scope)).toEqual(['project'])
+  } finally {
+    host.restore()
+  }
+})
+
+test('cross-workspace: two locally resolvable same-name identities still hard-fail with the draft kept', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-dup-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    writeSkill(join(root, '.dsh', 'skills'), 'dup')
+    writeSkill(join(root, 'custom-skills'), 'dup')
+    const { call } = mountApply(root, { customSkillDirs: [join(root, 'custom-skills')], agentsHome: host.agentsHome })
+    const listing = await call('list')
+    const candidates = listing.skills.filter(row => row.name === 'dup').map(row => row.identity)
+    expect(candidates).toHaveLength(2)
+    const rejected = await call(`apply ${JSON.stringify({ requestId: 'dup-1', expectedRevision: 0, skills: candidates, mcpServers: [] })}`)
+    expect(rejected.status).toBe('rejected')
+    expect(rejected.reason).toBe('same-name-conflict')
+    expect(rejected.conflicts.map(entry => entry.name)).toEqual(['dup'])
+    // Zero writes: the previous accepted selection (none) is unchanged.
+    expect((await call('receipt')).revision).toBe(0)
+  } finally {
+    host.restore()
+  }
+})
+
+test('cross-workspace: unknown and same-workspace-missing identities keep the hard failure', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-unknown-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    writeSkill(join(root, '.dsh', 'skills'), 'kept')
+    const { call } = mountApply(root, { agentsHome: host.agentsHome })
+    const unknownUser = { scope: 'user', root: '/not-in-this-inventory', name: 'ghost', provenance: null, opaqueId: 'ghost', portable: false }
+    const unknown = await call(`apply ${JSON.stringify({ requestId: 'u-1', expectedRevision: 0, skills: [unknownUser], mcpServers: [] })}`)
+    expect(unknown).toEqual({ status: 'missing', missing: ['ghost'] })
+    // A project identity rooted in THIS workspace's project Skill root is missing,
+    // not external: the workspace root set proves where it belongs.
+    const localMissing = { scope: 'project', root: join(root, '.dsh', 'skills'), name: 'deleted', provenance: null, opaqueId: 'deleted', portable: false }
+    const missing = await call(`apply ${JSON.stringify({ requestId: 'u-2', expectedRevision: 0, skills: [localMissing], mcpServers: [] })}`)
+    expect(missing).toEqual({ status: 'missing', missing: ['deleted'] })
+  } finally {
+    host.restore()
+  }
+})
+
+test('cross-workspace: an incomplete inventory or an unresolvable root set authorizes no skip', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-partial-'))
+    const workspaceA = mkdtempSync(join(tmpdir(), 'weir-cmd-partial-a-'))
+    const foreign = { scope: 'project', root: join(workspaceA, '.dsh', 'skills'), name: 'travel', provenance: null, opaqueId: 'foreign-travel', portable: false }
+    const projectRoot = { path: join(root, '.dsh', 'skills'), source: 'project-dsh', scope: 'project', rank: 100, projectRoot: root }
+    const rootsOf = complete => [{ key: 'project-dsh', root: projectRoot, complete, stale: !complete, candidates: [] }]
+
+    // Control: a COMPLETE inventory proves the identity belongs elsewhere.
+    const completeMount = mountApply(root, {
+      agentsHome: host.agentsHome,
+      inventory: async () => ({ complete: true, roots: rootsOf(true), candidates: [] }),
+    })
+    const skipped = await completeMount.call(`apply ${JSON.stringify({ requestId: 'p-1', expectedRevision: 0, skills: [foreign], mcpServers: [] })}`)
+    expect(skipped.status).toBe('applied')
+    expect(skipped.skipped).toEqual([{ name: 'travel', reason: 'not applicable in this workspace' }])
+
+    // Incomplete: absence is not proof, so the reference stays a hard failure.
+    const partialRoot = mkdtempSync(join(tmpdir(), 'weir-cmd-partial-b-'))
+    const partialMount = mountApply(partialRoot, {
+      agentsHome: host.agentsHome,
+      inventory: async () => ({ complete: false, roots: rootsOf(false), candidates: [] }),
+    })
+    const partial = await partialMount.call(`apply ${JSON.stringify({ requestId: 'p-2', expectedRevision: 0, skills: [foreign], mcpServers: [] })}`)
+    expect(partial).toEqual({ status: 'missing', missing: ['travel'] })
+
+    // No resolvable current project root: same conservative failure.
+    const bareRoot = mkdtempSync(join(tmpdir(), 'weir-cmd-partial-c-'))
+    const bareMount = mountApply(bareRoot, {
+      agentsHome: host.agentsHome,
+      inventory: async () => ({ complete: true, roots: [{ key: 'custom', root: { path: join(bareRoot, 'custom'), scope: 'custom', source: 'custom', rank: 300 }, complete: true, stale: false, candidates: [] }], candidates: [] }),
+    })
+    const bare = await bareMount.call(`apply ${JSON.stringify({ requestId: 'p-3', expectedRevision: 0, skills: [foreign], mcpServers: [] })}`)
+    expect(bare).toEqual({ status: 'missing', missing: ['travel'] })
+  } finally {
+    host.restore()
+  }
+})
+
+test('cross-workspace: a canonical path alias of this workspace is never misread as external', { skip: skip || (process.platform === 'win32' ? 'directory symlinks need privileges on Windows' : false) }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-alias-'))
+    const { mkdirSync, writeFileSync, symlinkSync } = await import('node:fs')
+    writeSkill(join(root, '.dsh', 'skills'), 'aliased')
+    // A lexical alias of the SAME workspace (a symlinked checkout): the saved
+    // identity spells the root through the link, discovery canonicalizes it.
+    const aliasRoot = join(mkdtempSync(join(tmpdir(), 'weir-cmd-alias-link-')), 'linked-ws')
+    symlinkSync(root, aliasRoot, 'dir')
+    const { call } = mountApply(root, { agentsHome: host.agentsHome })
+    const listing = await call('list')
+    const canonical = identityOf(listing, 'aliased', 'project')
+    expect(canonical === null).toBe(false)
+    const aliased = { ...canonical, root: join(aliasRoot, '.dsh', 'skills') }
+    // Not external: the alias resolves to this workspace's own project root, so
+    // the reference is a missing local identity — a hard failure, never a skip.
+    const result = await call(`apply ${JSON.stringify({ requestId: 'alias-1', expectedRevision: 0, skills: [aliased], mcpServers: [] })}`)
+    expect(result).toEqual({ status: 'missing', missing: ['aliased'] })
+  } finally {
+    host.restore()
+  }
+})
+
+test('cross-workspace partition helper: evidence gates, reasons and ordering', async () => {
+  const { partitionUnresolvedSkills, canonicalPathKey, workspaceProjectSkillRoots, isForeignProjectIdentity,
+    NOT_APPLICABLE_IN_WORKSPACE, NOT_APPLICABLE_IN_PRESET } = await import('../src/capabilities/skill-applicability.js')
+  const roots = [
+    { key: 'project-dsh', root: { path: '/ws-b/.dsh/skills', source: 'project-dsh', scope: 'project', rank: 100, projectRoot: '/ws-b' }, complete: true, stale: false, candidates: [] },
+    { key: 'project-agents', root: { path: '/ws-b/.agents/skills', source: 'project-agents', scope: 'project', rank: 200, projectRoot: '/ws-b' }, complete: true, stale: false, candidates: [] },
+  ]
+  const foreign = { scope: 'project', root: '/ws-a/.dsh/skills', name: 'travel', opaqueId: 'foreign' }
+  const local = { scope: 'project', root: '/ws-b/.dsh/skills', name: 'travel', opaqueId: 'local' }
+  const unknownUser = { scope: 'user', root: '/home/skills', name: 'ghost', opaqueId: 'ghost' }
+
+  const partitioned = partitionUnresolvedSkills([foreign, local, unknownUser, 'creative-only', 'nowhere'],
+    { roots, complete: true, knownSupplemental: name => name === 'creative-only' })
+  expect(partitioned).toEqual({
+    skipped: [
+      { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
+      { name: 'creative-only', reason: NOT_APPLICABLE_IN_PRESET },
+    ],
+    unknown: ['travel', 'ghost', 'nowhere'],
+  })
+
+  // Absence authorizes nothing without a COMPLETE inventory and a resolvable root set.
+  expect(partitionUnresolvedSkills([foreign], { roots, complete: false }).unknown).toEqual(['travel'])
+  expect(partitionUnresolvedSkills([foreign], { roots: [], complete: true }).unknown).toEqual(['travel'])
+  expect(partitionUnresolvedSkills([foreign], { roots: [{ key: 'c', root: { path: '/ws-b/custom', scope: 'custom', source: 'custom', rank: 300 } }], complete: true }).unknown).toEqual(['travel'])
+  // Duplicates and order follow the draft: the receipt reports the request as received.
+  expect(partitionUnresolvedSkills([foreign, foreign, local, foreign], { roots, complete: true }).skipped).toEqual([
+    { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
+    { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
+    { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
+  ])
+
+  const rootKeys = workspaceProjectSkillRoots(roots)
+  expect(rootKeys.size).toBe(2)
+  expect(isForeignProjectIdentity(foreign, rootKeys)).toBe(true)
+  expect(isForeignProjectIdentity(local, rootKeys)).toBe(false)
+  expect(isForeignProjectIdentity(unknownUser, rootKeys)).toBe(false)
+  // A project identity without a root cannot be proven external.
+  expect(isForeignProjectIdentity({ scope: 'project', name: 'travel' }, rootKeys)).toBe(false)
+  // Root observations are accepted in both shapes (bare root or observation).
+  expect(workspaceProjectSkillRoots([roots[0].root]).size).toBe(2)
+  // Platform normalization compares canonically — never a string prefix — so a
+  // win32 case variant of this very workspace is not another workspace.
+  expect(canonicalPathKey('/WS/Skills', 'win32')).toBe(canonicalPathKey('/ws/skills', 'win32'))
+  expect(canonicalPathKey('/ws-b/.dsh/skills', 'darwin')).toBe('/ws-b/.dsh/skills')
+  expect(canonicalPathKey('/ws-b/.dsh/skills/../skills', 'darwin')).toBe('/ws-b/.dsh/skills/../skills')
+})
