@@ -84,8 +84,14 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             // between the host's session publication and our capture, or a
             // hand-built session) is REFUSED — never granted the root
             // baseline (6.4 subagent rule; explicit resume recaptures).
+            //
+            // Only a TRUE delegated child (depth > 0) is refused: a depth-0
+            // fork also carries a parentSession header, and when its source
+            // never established any effective snapshot the creation-time
+            // capture is skipped on purpose so that this read performs the
+            // ordinary root initialization for the fork itself.
             const header = options.scope?.session?.header ?? {}
-            const isSubagent = (header.delegationDepth ?? 0) > 0 || typeof header.parentSession === 'string'
+            const isDelegatedChild = (header.delegationDepth ?? 0) > 0
             let inherited
             try {
               inherited = await store.read({ kind: 'inherited', sessionId })
@@ -94,7 +100,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             }
             if (inherited.kind === 'ok') return inherited.payload?.skills
             if (inherited.kind !== 'absent') throw new Error(`Inherited skill snapshot is ${inherited.kind}`)
-            if (isSubagent) throw new Error('Inherited skill snapshot is absent')
+            if (isDelegatedChild) throw new Error('Inherited skill snapshot is absent')
             return initialSelection(options)
           }
           if (record.kind !== 'ok') throw new Error(`Skill selection policy is ${record.kind}`)
@@ -151,8 +157,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           }
           let builtinIdentities = []
           let enabledMcpIdentities = []
+          // Only a FULLY formed initial result may become a lifecycle snapshot:
+          // a baseline or a name binding derived from an incomplete inventory is
+          // a best-effort view, never an inheritable set (D2).
+          let complete = true
           if (defaultsRecord.kind === 'absent') {
             const snapshot = await inventory(options)
+            complete = snapshot?.complete !== false
             // Baseline scopes are row-configurable (default builtin-only);
             // the weir-creative preset adds 'custom' for its fused skills.
             builtinIdentities = baselineSkillIdentities(snapshot?.candidates, config.baselineScopes)
@@ -171,6 +182,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           // entirely — it still only runs on the builtin-baseline path.
           if (resolved.source === 'workspace-default' && resolved.selection.skills.some(entry => typeof entry === 'string')) {
             const snapshot = await inventory(options)
+            complete = complete && snapshot?.complete !== false
             const bound = bindDefaultSkillNames(resolved.selection.skills, snapshot?.candidates)
             resolved.selection.skills = bound.skills
             resolved.missing = [...resolved.missing, ...bound.missing]
@@ -178,6 +190,22 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           const sessionId = options.scope?.session?.id
           if (typeof sessionId === 'string' && sessionId.length) {
             initialReports.set(sessionId, { source: resolved.source, missing: resolved.missing, mcpServers: resolved.selection.mcpServers })
+            // Effective-set publication for Fork inheritance: a depth-0 fork of a
+            // session whose initial set was already resolved must inherit THAT
+            // set, not an empty one. The result is published as the session's
+            // revision-0 lifecycle snapshot — never persisted, never an accepted
+            // record. A snapshot that appeared while this async resolution was
+            // in flight (an accepted Apply, a captured inheritance) wins, and a
+            // partially resolved/incomplete result is not published at all.
+            if (complete && lifecycle && typeof lifecycle.peek === 'function' && typeof lifecycle.publish === 'function'
+              && lifecycle.peek(sessionId) === null) {
+              lifecycle.publish(sessionId, {
+                revision: 0,
+                skills: resolved.selection.skills,
+                mcpServers: resolved.selection.mcpServers,
+                captured: null,
+              })
+            }
           }
           return resolved.selection.skills
         })

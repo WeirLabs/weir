@@ -6,6 +6,11 @@ import { createMcpGate } from '../src/capabilities/mcp-gate.js'
 import { createMcpToolWrapper } from '../src/capabilities/mcp-admission.js'
 import { createMcpFacade } from '../src/capabilities/mcp-facade.js'
 import { createMcpDrain, createSessionDrainAdapter } from '../src/capabilities/mcp-drain.js'
+import { createLifecycleSnapshots } from '../src/capabilities/lifecycle-snapshot.js'
+import { openCapabilityStore } from '../src/capabilities/store/store.js'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const registryWith = servers => ({
   async read() { return { kind: 'ok', revision: 1, servers } },
@@ -181,4 +186,44 @@ test('8.6 wiring: a removal through the engine seam closes the session gate for 
   handle.abort()
   expect(await registered.request({}, { agent: agentA })).toBe('body')
   expect(rpcs).toBe(3)
+})
+
+test('gate: a cold fork admits exactly the inherited managed set (no accepted record)', async () => {
+  // The fork was created by a depth-0 capture; the process then restarted, so
+  // the gate's lifecycle has no memory snapshot and must read the durable
+  // inherited unit — the same effective set the Skill catalog reports.
+  const root = mkdtempSync(join(tmpdir(), 'weir-gate-fork-'))
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  await store.commit({ kind: 'selection', sessionId: 'fork-source' }, 0, () => ({ skills: [], mcpServers: ['docs'] }))
+  createLifecycleSnapshots({ root, platform: 'darwin' }).agentCreated({
+    agent: { session: { id: 'fork-cold', header: { delegationDepth: 0, parentSession: 'fork-source' } } },
+  })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const gate = createMcpGate({
+    registry: registryWith({ docs: { identity: 'docs', generation: 1 }, web: { identity: 'web', generation: 1 } }),
+    lifecycle: cold,
+  })
+  expect(gate.enabledFor(agentOf('fork-cold'), 'docs')).toBe(true)
+  expect(await gate.admit(agentOf('fork-cold'), 'docs', 1)).toBe(true)
+  // Nothing was inherited beyond the source's accepted set.
+  expect(gate.enabledFor(agentOf('fork-cold'), 'web')).toBe(false)
+  expect(await gate.admit(agentOf('fork-cold'), 'web', 1)).toBe(false)
+  const inherited = await store.read({ kind: 'inherited', sessionId: 'fork-cold' })
+  expect(inherited.payload.mcpServers).toEqual(['docs'])
+})
+
+test('gate: a fork of an inherited source still admits the same set (consecutive fork)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-gate-fork2-'))
+  await openCapabilityStore({ root, platform: 'darwin' })
+    .commit({ kind: 'selection', sessionId: 'root-source' }, 0, () => ({ skills: [], mcpServers: ['docs', 'web'] }))
+  const writer = createLifecycleSnapshots({ root, platform: 'darwin' })
+  writer.agentCreated({ agent: { session: { id: 'fork-1', header: { delegationDepth: 0, parentSession: 'root-source' } } } })
+  writer.agentCreated({ agent: { session: { id: 'fork-2', header: { delegationDepth: 0, parentSession: 'fork-1' } } } })
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const gate = createMcpGate({
+    registry: registryWith({ docs: { identity: 'docs', generation: 1 }, web: { identity: 'web', generation: 1 } }),
+    lifecycle: cold,
+  })
+  expect(gate.enabledFor(agentOf('fork-2'), 'docs')).toBe(true)
+  expect(gate.enabledFor(agentOf('fork-2'), 'web')).toBe(true)
 })

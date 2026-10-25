@@ -1,11 +1,19 @@
-// Task 6.1 preload (design D6): at plugin apply, load the accepted
-// selections of KNOWN sessions into the lifecycle memory snapshot, so the
-// agent/created listener's synchronous read hits memory instead of disk.
-// This module is the async boundary — it runs at mount time, NEVER inside
-// the agent/created listener. A slow or failed preload costs one blocking
-// synchronous disk read per agent creation (the listener's miss path),
-// never correctness. Records that do not decode are pre-marked BLOCKED, so
-// the fail-closed state is ready before the first agent is created.
+// Task 6.1 preload (design D6): at plugin apply, load the EFFECTIVE selections
+// of KNOWN sessions into the lifecycle memory snapshot, so the agent/created
+// listener's synchronous read hits memory instead of disk. This module is the
+// async boundary — it runs at mount time, NEVER inside the agent/created
+// listener. A slow or failed preload costs one blocking synchronous disk read
+// per agent creation (the listener's miss path), never correctness. Records
+// that do not decode are pre-marked BLOCKED, so the fail-closed state is ready
+// before the first agent is created.
+//
+// "Effective" is the same priority the synchronous read path applies: the
+// accepted selection when one exists, otherwise the durable inherited snapshot
+// (a fork of a fork, or a fork whose source only resolved an initial set). Both
+// are loaded here, because a cold session read (Badge/manager receipt, MCP
+// gate, Skill catalog) must report the inherited set rather than an empty one
+// until the fork's agent is recreated. A corrupt record of EITHER unit blocks
+// the session — never a fall-through to the other one.
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isSegment } from './store/paths.js'
@@ -14,10 +22,17 @@ import { openCapabilityStore } from './store/store.js'
 /** @param {unknown} error */
 const message = error => (error instanceof Error ? error.message : String(error))
 
+/** @param {unknown} payload @returns {number} capturedAt used by the inherited restore */
+const capturedAtOf = payload => {
+  const value = /** @type {Record<string, unknown>} */ (payload ?? {}).capturedAt
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
 /**
  * @param {{
  *   lifecycle: {
- *     publish(sessionId: string, next: { revision: number, skills?: unknown[], mcpServers?: string[] }): unknown,
+ *     publish(sessionId: string, next: { revision: number, skills?: unknown[], mcpServers?: string[],
+ *       captured?: { parentSessionId: string, parentRevision: number | null, capturedAt: number } | null }): unknown,
  *     markBlocked(sessionId: string, reason: 'corrupt'|'unknown-schema'|'torn'|'unreadable'): unknown,
  *     peek(sessionId: string): unknown,
  *   },
@@ -56,8 +71,40 @@ export async function preloadLifecycleSnapshots({ lifecycle, profileContext, pla
           mcpServers: Array.isArray(payload.mcpServers) ? payload.mcpServers : [],
         })
         loaded++
-      } else if (record.kind === 'corrupt' || record.kind === 'unknown-schema' || record.kind === 'torn') {
+        continue
+      }
+      if (record.kind !== 'absent') {
         lifecycle.markBlocked(name, record.kind)
+        blocked++
+        continue
+      }
+      // No accepted record: the effective set may be the durable inherited
+      // snapshot. Same fail-closed treatment for a record that exists but does
+      // not decode — the session must not look uninitialized (and be handed a
+      // fresh initial baseline) merely because its inheritance is damaged.
+      const inherited = await active.read({ kind: 'inherited', sessionId: name })
+      if (inherited.kind === 'ok') {
+        const payload = /** @type {Record<string, unknown>} */ (inherited.payload ?? {})
+        const parent = payload.parent && typeof payload.parent === 'object'
+          ? /** @type {Record<string, unknown>} */ (payload.parent)
+          : null
+        lifecycle.publish(name, {
+          revision: inherited.revision,
+          skills: Array.isArray(payload.skills) ? payload.skills : [],
+          mcpServers: Array.isArray(payload.mcpServers) ? payload.mcpServers : [],
+          captured: parent && typeof parent.sessionId === 'string' && parent.sessionId.length > 0
+            ? {
+              parentSessionId: parent.sessionId,
+              parentRevision: Number.isSafeInteger(parent.revision) ? /** @type {number} */ (parent.revision) : null,
+              capturedAt: capturedAtOf(payload),
+            }
+            : null,
+        })
+        loaded++
+        continue
+      }
+      if (inherited.kind !== 'absent') {
+        lifecycle.markBlocked(name, inherited.kind)
         blocked++
       }
     } catch (error) {

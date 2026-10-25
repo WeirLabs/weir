@@ -3,7 +3,7 @@
 // receipt and listing verbs must unwrap it (candidates.filter is not a
 // function was the user-visible failure).
 import { test, expect, storePlatformSkip, pinHermeticHostRoots } from './helpers.js'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
@@ -462,3 +462,72 @@ test('/capabilities apply wires the manager drain: a removal reports the real in
     host.restore()
   }
 })
+
+test('/capabilities receipt on a cold fork reports the inherited sets with an accepted revision of 0', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-fork-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    mkdirSync(join(root, 'custom-skills', 'alpha'), { recursive: true })
+    writeFileSync(join(root, 'custom-skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: fork fixture\n---\nALPHA\n')
+    let registeredCommands = []
+    let provider
+    const ctx = {
+      skills: {
+        registerProvider(create) { provider = create({ invalidate() {} }) },
+        async list(options) { return (await provider.list(options)).candidates },
+        layers: { global: { providers: new Map() } },
+      },
+      on() {},
+      effect(fn) { fn(); return () => {} },
+      logger: { warn() {} },
+      get(name) {
+        if (name === 'profileContext') return { home: root, name: 'it' }
+        if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+        return undefined
+      },
+    }
+    createSkillSelectionPlugin()(ctx, {
+      machineId: 'weir-it-machine',
+      customSkillDirs: [join(root, 'custom-skills')],
+      agentsHome: host.agentsHome,
+      dshHome: root,
+    })
+    const command = registeredCommands.find(entry => entry.name === 'capabilities')
+    // A separate session resolves the fixture identity; the fork itself never
+    // resolves an initial set here, so its effective state is the inheritance.
+    const seedAgent = { id: 'sess-fork-seed', session: { id: 'sess-fork-seed', header: { cwd: root } } }
+    const alphaIdentity = JSON.parse((await command.handler({ agent: seedAgent, rawInput: 'list' })).text).skills.find(row => row.name === 'alpha').identity
+    const forkAgent = { id: 'sess-fork', session: { id: 'sess-fork', header: { cwd: root, delegationDepth: 0, parentSession: 'sess-parent' } } }
+    // Exactly what a depth-0 capture writes (origin inherited + lineage metadata).
+    const { openCapabilityStore } = await import('../src/capabilities/store/store.js')
+    await openCapabilityStore({ profileContext: { home: root, name: 'it' }, platform: 'darwin' })
+      .commit({ kind: 'inherited', sessionId: 'sess-fork' }, 0, () => ({
+        skills: [alphaIdentity], mcpServers: ['docs'], origin: 'inherited', parent: { sessionId: 'sess-parent', revision: 3 }, capturedAt: 1,
+      }))
+
+    const receipt = JSON.parse((await command.handler({ agent: forkAgent, rawInput: 'receipt' })).text)
+    expect(receipt.status).toBe('applied')
+    expect(receipt.warnings).toEqual([])
+    // The inherited unit's revision is lineage metadata, never the accepted CAS
+    // token: a first explicit Apply on the fork must submit expectedRevision 0.
+    expect(receipt.revision).toBe(0)
+    expect(receipt.effective.skills).toEqual(['alpha'])
+    expect(receipt.effective.mcpServers).toEqual(['docs'])
+    const listing = JSON.parse((await command.handler({ agent: forkAgent, rawInput: 'list' })).text)
+    expect(listing.skills.find(row => row.name === 'alpha')?.selected).toBe(true)
+    // Manager/lifecycle/catalog agree, so the first Apply is a normal revision-0 commit.
+    const applied = JSON.parse((await command.handler({
+      agent: forkAgent,
+      rawInput: `apply ${JSON.stringify({ requestId: 'fork-apply', expectedRevision: 0, skills: [alphaIdentity], mcpServers: ['docs'] })}`,
+    })).text)
+    expect(applied.status).toBe('applied')
+    expect(applied.revision).toBe(1)
+    const after = JSON.parse((await command.handler({ agent: forkAgent, rawInput: 'receipt' })).text)
+    expect(after.revision).toBe(1)
+    expect(after.effective.skills).toEqual(['alpha'])
+  } finally {
+    host.restore()
+  }
+})
+

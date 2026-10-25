@@ -309,3 +309,158 @@ test('D1 incarnation: an own accepted record wins — no capture, the user selec
   const store = openCapabilityStore({ root, platform: 'darwin' })
   expect((await store.read({ kind: 'inherited', sessionId: 'incarnation-3' })).kind).toBe('absent')
 })
+
+// --- Fork effective-set inheritance (fix-capability-fork-and-preset-workspaces) ---
+// A depth-0 fork inherits the source's EFFECTIVE set: the accepted selection
+// when one exists, otherwise the source's own durable inherited snapshot, and
+// when neither exists but the source already resolved its initial set, that
+// resolved revision-0 snapshot. Only a source PROVEN to have no effective
+// snapshot at all is not an inheritance: the fork then runs the ordinary root
+// initialization instead of committing an empty inherited record.
+
+const seedInherited = (root, sessionId, skills, mcpServers, parent) =>
+  openCapabilityStore({ root, platform: 'darwin' }).commit({ kind: 'inherited', sessionId }, 0, () => ({
+    skills,
+    mcpServers,
+    origin: INHERITED_ORIGIN,
+    parent: parent ?? null,
+    capturedAt: 1000,
+  }))
+
+test('Fork: a source with only an inherited snapshot is inherited, never an empty set', async () => {
+  const root = base()
+  await seedInherited(root, 'source-fork', [alpha, beta], ['docs'], { sessionId: 'grandparent', revision: 4 })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  expect(lifecycle.agentCreated(incarnationPayload('fork-1', 'source-fork'))).toBeUndefined()
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  const record = await store.read({ kind: 'inherited', sessionId: 'fork-1' })
+  expect(record.kind).toBe('ok')
+  expect(record.payload.skills.map(s => s.name)).toEqual(['alpha', 'beta'])
+  expect(record.payload.mcpServers).toEqual(['docs'])
+  // The inherited unit's own revision is the lineage base, not an accepted CAS token.
+  expect(record.payload.parent).toEqual({ sessionId: 'source-fork', revision: 1 })
+  const captured = lifecycle.snapshotFor('fork-1')?.captured
+  expect(captured?.parentSessionId).toBe('source-fork')
+  expect(captured?.parentRevision).toBe(1)
+  expect(captured?.capturedAt).toBeGreaterThan(0)
+})
+
+test('Fork: a cold read restores the inherited set and its lineage metadata', async () => {
+  const root = base()
+  await seedInherited(root, 'fork-cold', [alpha], ['docs'], { sessionId: 'parent', revision: 3 })
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const snapshot = lifecycle.snapshotFor('fork-cold')
+  expect(snapshot?.state).toBe('ready')
+  expect(snapshot?.revision).toBe(1)
+  expect(snapshot?.skills.map(s => s.name)).toEqual(['alpha'])
+  expect(snapshot?.mcpServers).toEqual(['docs'])
+  expect(snapshot?.captured?.parentSessionId).toBe('parent')
+  expect(snapshot?.captured?.parentRevision).toBe(3)
+})
+
+test('Fork: a source whose initial set was already resolved publishes at revision 0 and is inherited', async () => {
+  const root = base()
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const resolvedInitial = { revision: 0, skills: [alpha], mcpServers: ['docs'], captured: null }
+  lifecycle.publish('source-initial', resolvedInitial)
+  expect(lifecycle.agentCreated(incarnationPayload('fork-2', 'source-initial'))).toBeUndefined()
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  const record = await store.read({ kind: 'inherited', sessionId: 'fork-2' })
+  expect(record.kind).toBe('ok')
+  expect(record.payload.skills.map(s => s.name)).toEqual(['alpha'])
+  expect(record.payload.mcpServers).toEqual(['docs'])
+  expect(record.payload.parent).toEqual({ sessionId: 'source-initial', revision: 0 })
+  // The source's own revision-0 snapshot is an in-memory initial resolution, not
+  // an accepted record: nothing was persisted for the source.
+  expect((await store.read({ kind: 'selection', sessionId: 'source-initial' })).kind).toBe('absent')
+})
+
+test('Consecutive forks preserve the effective set across both captures and cold reads', async () => {
+  const root = base()
+  await seedSelection(root, 'root-parent', 2, [alpha, beta], ['docs', 'web'])
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  lifecycle.agentCreated(incarnationPayload('fork-a', 'root-parent'))
+  lifecycle.agentCreated(incarnationPayload('fork-b', 'fork-a'))
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  for (const [sessionId, parent] of [['fork-a', 'root-parent'], ['fork-b', 'fork-a']]) {
+    const record = await store.read({ kind: 'inherited', sessionId })
+    expect(record.kind).toBe('ok')
+    expect(record.payload.skills.map(s => s.name)).toEqual(['alpha', 'beta'])
+    expect(record.payload.mcpServers).toEqual(['docs', 'web'])
+    expect(record.payload.parent.sessionId).toBe(parent)
+  }
+  // Cold: a fresh process restores the same set for both forks from their own records.
+  const cold = createLifecycleSnapshots({ root, platform: 'darwin' })
+  for (const sessionId of ['fork-a', 'fork-b']) {
+    const snapshot = cold.snapshotFor(sessionId)
+    expect(snapshot?.state).toBe('ready')
+    expect(snapshot?.skills.map(s => s.name)).toEqual(['alpha', 'beta'])
+    expect(snapshot?.mcpServers).toEqual(['docs', 'web'])
+  }
+  expect(cold.snapshotFor('fork-b')?.captured?.parentSessionId).toBe('fork-a')
+})
+
+test('Fork: a source with no effective snapshot writes no empty inherited record', async () => {
+  const root = base()
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  expect(lifecycle.agentCreated(incarnationPayload('fork-empty', 'ghost-parent'))).toBeUndefined()
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  expect((await store.read({ kind: 'inherited', sessionId: 'fork-empty' })).kind).toBe('absent')
+  // No snapshot and no block: the first readSelection runs the ordinary root
+  // initialization for this fork instead of inheriting an empty set.
+  expect(lifecycle.snapshotFor('fork-empty')).toBeNull()
+})
+
+test('Fork: a fork that accepted its own Apply keeps it verbatim (no parent capture)', async () => {
+  const root = base()
+  await seedSelection(root, 'parent-apply', 1, [alpha], ['docs'])
+  await seedSelection(root, 'fork-own', 3, [alpha, beta], ['docs', 'web'])
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  expect(lifecycle.agentCreated(incarnationPayload('fork-own', 'parent-apply'))).toBeUndefined()
+  const snapshot = lifecycle.snapshotFor('fork-own')
+  expect(snapshot?.revision).toBe(3)
+  expect(snapshot?.skills.map(s => s.name)).toEqual(['alpha', 'beta'])
+  expect(snapshot?.mcpServers).toEqual(['docs', 'web'])
+  expect(snapshot?.captured).toBeNull()
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  expect((await store.read({ kind: 'inherited', sessionId: 'fork-own' })).kind).toBe('absent')
+})
+
+test('Fork: a corrupt inherited source blocks under the root rule and writes nothing', async () => {
+  const root = base()
+  mkdirSync(join(root, 'sessions', 'source-broken'), { recursive: true })
+  writeFileSync(join(root, 'sessions', 'source-broken', 'inherited.json'), '{')
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  expect(lifecycle.agentCreated(incarnationPayload('fork-blocked', 'source-broken'))).toBeUndefined()
+  const snapshot = lifecycle.snapshotFor('fork-blocked')
+  expect(snapshot?.state).toBe('blocked')
+  expect(snapshot?.reason).toBe('unreadable')
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  expect((await store.read({ kind: 'inherited', sessionId: 'fork-blocked' })).kind).toBe('absent')
+})
+
+test('Fork: an unknown-schema inherited record blocks the effective read (no fall-through)', async () => {
+  const root = base()
+  mkdirSync(join(root, 'sessions', 'fork-schema'), { recursive: true })
+  writeFileSync(join(root, 'sessions', 'fork-schema', 'inherited.json'), JSON.stringify({ schemaVersion: 99, revision: 1, payload: {}, receipts: [], digest: 'x' }))
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  expect(lifecycle.snapshotFor('fork-schema')?.state).toBe('blocked')
+  expect(lifecycle.snapshotFor('fork-schema')?.reason).toBe('unknown-schema')
+  // A delegated child whose only snapshot is unreadable is still refused.
+  expect((await openCapabilityStore({ root, platform: 'darwin' }).read({ kind: 'inherited', sessionId: 'fork-schema' })).kind).toBe('unknown-schema')
+})
+
+test('Fork: an inherited record is never reported as an accepted revision', async () => {
+  const root = base()
+  await seedInherited(root, 'fork-cas', [alpha], [], { sessionId: 'parent', revision: 5 })
+  const { buildReceiptPayload } = await import('../src/capabilities/read-payloads.js')
+  const lifecycle = createLifecycleSnapshots({ root, platform: 'darwin' })
+  const store = openCapabilityStore({ root, platform: 'darwin' })
+  const receipt = await buildReceiptPayload({
+    provider: { status: () => ({ error: null }), list: async () => ({ candidates: [{ name: 'alpha', identity: alpha, selected: true }], complete: true }) },
+    lifecycle,
+    store,
+  }, { scope: { session: { id: 'fork-cas' } } })
+  expect(receipt.revision).toBe(0)
+  expect(receipt.effective.skills).toEqual(['alpha'])
+})

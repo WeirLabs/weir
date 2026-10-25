@@ -9,13 +9,15 @@
 // never yields: no promise chains, no async helpers, only blocking
 // synchronous file I/O where durability is required.
 //
-// 6.1 — in-memory snapshot: accepted selections are loaded into memory at
-// plugin apply (lifecycle-preload.js) and after every Apply acceptance (the
-// apply-engine publishSnapshot hook, invoked inside the same non-async
-// segment as the internal snapshot swap). The listener reads the memory
-// snapshot synchronously (measured ≈0.2 ms in G4b); on a memory miss it
-// falls back to ONE blocking synchronous read of the session record (never
-// the host storageDomain — a promise interface, unusable here, CITED).
+// 6.1 — in-memory snapshot: the session's EFFECTIVE capability set is loaded
+// into memory at plugin apply (lifecycle-preload.js) and after every Apply
+// acceptance (the apply-engine publishSnapshot hook, invoked inside the same
+// non-async segment as the internal snapshot swap). The listener reads the
+// memory snapshot synchronously (measured ≈0.2 ms in G4b); on a memory miss it
+// falls back to blocking synchronous reads of the session records — the
+// accepted selection FIRST, then the durable inherited snapshot when no
+// accepted record exists (a fork of a fork, a resumed incarnation), never the
+// host storageDomain (a promise interface, unusable here, CITED).
 //
 // 6.2 — synchronous durable capture: a subagent's inherited snapshot is
 // written inside the listener through the capability store's SYNC commit path
@@ -39,19 +41,29 @@
 //   decoded does NOT throw — the session is created/resumed as usual and
 //   the memory snapshot becomes BLOCKED (empty Skill view, all managed MCP
 //   calls refused, recovery entry visible). Never a full-discovery
-//   fallback; the original file is never rewritten.
+//   fallback; the original file is never rewritten. An inherited record is
+//   consulted ONLY when no accepted record exists, and an existing record
+//   that cannot be decoded blocks just as hard — a corrupt higher-priority
+//   record is never skipped in favour of a lower-priority one or of the
+//   initial baseline.
 // - resume/fork incarnation (depth 0 yet a parentSession header): the named
-//   parent's accepted snapshot is captured best-effort under the SAME root
-//   rule — a failed capture never throws and never rejects the session; the
-//   session runs BLOCKED like an unreadable root record, with the manager
-//   naming an explicit Apply as the recovery gesture.
-// - subagent (one-shot / background / supervised member / escalation /
-//   fork child): a parent snapshot that cannot be read, or a capture that
-//   cannot be written, makes the listener THROW. The host dispatches
-//   agent/created serially and a listener failure rejects the creation, so
-//   throwing is the INTENTIONAL bail that refuses the subagent while the
-//   parent session continues and learns the reason through the delegation
-//   result. Never an unrestricted pass.
+//   parent's EFFECTIVE snapshot (accepted, inherited, or the already-resolved
+//   initial one) is captured best-effort under the SAME root rule — a failed
+//   capture never throws and never rejects the session; the session runs
+//   BLOCKED like an unreadable root record, with the manager naming an
+//   explicit Apply as the recovery gesture. A parent with NO effective
+//   snapshot at all (proven absent on supported storage) is not an empty
+//   set: the capture is skipped and the fork resolves the ordinary root
+//   initialization policy for itself.
+// - subagent (one-shot / background / supervised member / escalation; a
+//   depth-0 fork child is handled by the incarnation rule above): a parent
+//   snapshot that cannot be read, or a capture that cannot be written, makes
+//   the listener THROW. The host dispatches agent/created serially and a
+//   listener failure rejects the creation, so throwing is the INTENTIONAL
+//   bail that refuses the subagent while the parent session continues and
+//   learns the reason through the delegation result. Never an unrestricted
+//   pass, and never the root-initialization fallback (that is a depth-0 fork
+//   affordance only).
 import { isSegment } from './store/paths.js'
 import { openCapabilityStore } from './store/store.js'
 import { skillIdentityKey } from './skill-identity.js'
@@ -146,11 +158,14 @@ export function createLifecycleSnapshots(options = {}) {
 
   /**
    * THE synchronous read path (6.1): memory hit returns immediately; a
-   * miss performs ONE blocking synchronous read of the durable record —
-   * the store's sync read, never a promise, never a yield. An absent record
-   * returns null (no accepted selection; initialization priority for
-   * brand-new root sessions is task 6.5). An undecodable record becomes
-   * BLOCKED.
+   * miss performs blocking synchronous reads of the durable records — the
+   * store's sync read, never a promise, never a yield. The effective snapshot
+   * is the accepted selection when one exists, otherwise the durable inherited
+   * snapshot (a fork whose source only ever resolved an initial set, or a fork
+   * of a fork). An absent pair returns null (no effective snapshot; the fork's
+   * own root initialization is layered above this mechanism). Any record that
+   * exists and does not decode becomes BLOCKED — a corrupt higher-priority
+   * record never falls through to a lower-priority one.
    * @param {string} sessionId
    * @returns {LifecycleSnapshot | null}
    */
@@ -166,8 +181,6 @@ export function createLifecycleSnapshots(options = {}) {
       // closed BLOCKED (6.4), never a guessed full authorization.
       return markBlocked(sessionId, 'unreadable')
     }
-    // No accepted record yet — a legitimate cold state, not a failure.
-    if (record.kind === 'absent') return null
     if (record.kind === 'ok') {
       const payload = /** @type {Record<string, unknown>} */ (record.payload ?? {})
       return publish(sessionId, {
@@ -178,7 +191,50 @@ export function createLifecycleSnapshots(options = {}) {
     }
     // corrupt / unknown-schema / torn / unsupported: fail closed BLOCKED
     // (6.4 root rule). The original file is never rewritten from this path.
-    return markBlocked(sessionId, /** @type {BlockedSnapshot['reason']} */ (record.kind))
+    if (record.kind !== 'absent') return markBlocked(sessionId, /** @type {BlockedSnapshot['reason']} */ (record.kind))
+    // No accepted record — a legitimate cold state. The EFFECTIVE set may still
+    // be the durable inherited snapshot this session was created with.
+    return snapshotFromInherited(sessionId)
+  }
+
+  /**
+   * The inherited fallback of {@link snapshotFor}: no accepted record exists,
+   * so the effective set is whatever durable inheritance the session was given
+   * at creation. The snapshot keeps the inherited revision and restores the
+   * parent/captured metadata — it is NEVER reported as an accepted revision
+   * (the receipt's CAS token stays accepted-only, 0 when absent). A record
+   * that exists but does not decode blocks exactly like a corrupt selection
+   * record: no fall-through to the initial baseline.
+   * @param {string} sessionId
+   * @returns {LifecycleSnapshot | null}
+   */
+  function snapshotFromInherited(sessionId) {
+    let inherited
+    try {
+      inherited = store.readSync({ kind: 'inherited', sessionId })
+    } catch {
+      return markBlocked(sessionId, 'unreadable')
+    }
+    if (inherited.kind !== 'ok') {
+      if (inherited.kind === 'absent') return null
+      return markBlocked(sessionId, /** @type {BlockedSnapshot['reason']} */ (inherited.kind))
+    }
+    const payload = /** @type {Record<string, unknown>} */ (inherited.payload ?? {})
+    const parent = /** @type {Record<string, unknown> | null} */ (
+      payload.parent && typeof payload.parent === 'object' ? payload.parent : null)
+    const capturedAt = typeof payload.capturedAt === 'number' && Number.isFinite(payload.capturedAt) ? payload.capturedAt : 0
+    return publish(sessionId, {
+      revision: inherited.revision,
+      skills: Array.isArray(payload.skills) ? payload.skills : [],
+      mcpServers: Array.isArray(payload.mcpServers) ? /** @type {string[]} */ (payload.mcpServers) : [],
+      captured: parent && typeof parent.sessionId === 'string' && parent.sessionId.length > 0
+        ? {
+          parentSessionId: parent.sessionId,
+          parentRevision: Number.isSafeInteger(parent.revision) ? /** @type {number} */ (parent.revision) : null,
+          capturedAt,
+        }
+        : null,
+    })
   }
 
   /**
@@ -219,13 +275,15 @@ export function createLifecycleSnapshots(options = {}) {
   }
 
   /**
-   * Durably capture a subagent's inherited snapshot (6.2), synchronously.
+   * Durably capture a session's inherited snapshot (6.2), synchronously.
    * The inherited sets follow creation-time inheritance (6.3): verbatim
    * parent at creation, child-previous ∩ current-parent on an explicit
    * resume/escalation, narrowed by delegation constraints — never widened.
-   * A parent without any accepted record yields
-   * an empty inherited set (the no-policy initialization priority of task
-   * 6.5 is a root-session concern layered above this mechanism).
+   * The parent's EFFECTIVE set is its accepted selection when one exists,
+   * otherwise its own inherited snapshot (a fork of a fork). A parent with NO
+   * effective snapshot at all is not an empty inheritance: the depth-0 fork
+   * caller skips this capture entirely (see `agentCreated`) and lets that fork
+   * run the ordinary root initialization instead.
    *
    * NOT ATOMIC with the host's session publication (see the module header):
    * a crash between the two durable acts leaves a child session without a
@@ -320,7 +378,7 @@ export function createLifecycleSnapshots(options = {}) {
         // record becomes BLOCKED inside snapshotFor — this path NEVER throws.
         const own = snapshotFor(sessionId)
         // Resume/fork incarnation (D1): depth zero yet a parentSession
-        // header. The read side demands an inherited snapshot for such a
+        // header. The read side demands an effective snapshot for such a
         // session exactly when it carries NO accepted record of its own, so
         // the capture side aligns with that gate: an incarnation WITH its
         // own accepted record keeps it verbatim (an explicit user Apply is
@@ -331,12 +389,25 @@ export function createLifecycleSnapshots(options = {}) {
         // parentSession equal to the session id is no parent (defensive).
         const parentSessionId = session.header?.parentSession
         if (own === null && typeof parentSessionId === 'string' && parentSessionId.length > 0 && parentSessionId !== sessionId) {
-          try {
-            captureInherited(sessionId, parentSessionId)
-          } catch (captureError) {
-            warn(`resume incarnation capture failed for session "${sessionId}": ${message(captureError)}`)
-            markBlocked(sessionId, 'unreadable')
+          // The fork inherits the source's EFFECTIVE set: accepted, else
+          // inherited, else the already-resolved initial snapshot. Only a
+          // parent snapshot PROVEN absent (null on supported storage) is not a
+          // set to copy — an unsupported store proves nothing, so that case
+          // keeps the old attempt-and-block shape instead of silently
+          // initializing the fork.
+          const parent = snapshotFor(parentSessionId)
+          const provenAbsent = parent === null && support.supported
+          if (!provenAbsent) {
+            try {
+              captureInherited(sessionId, parentSessionId)
+            } catch (captureError) {
+              warn(`resume incarnation capture failed for session "${sessionId}": ${message(captureError)}`)
+              markBlocked(sessionId, 'unreadable')
+            }
           }
+          // provenAbsent: no capture and no empty inherited record. The first
+          // readSelection then runs the ordinary root initialization for this
+          // depth-0 fork and publishes its own revision-0 snapshot.
         }
         return undefined
       }
