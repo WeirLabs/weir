@@ -1,28 +1,22 @@
-// Task 8.2/8.4/8.5/8.8/8.9 of the session-capability-manager change: the MCP
-// manager row. It owns the registry-backed runtime mounts, the shared
-// (agent, server) drain, the realm-visible gate the facades consume, the
-// creation-time schema hiding, the managed/unmanaged listing and the
-// explicit adopt flow. Host-configured, ACP-mounted and other presets'
-// servers are UNMANAGED: listed, never given a close switch, never counted
-// as closed (8.8).
+// Registry-backed managed MCP runtime. Startup and targeted add/edit/restart/
+// remove/probe share reconcileOne(); siblings are never used as replacement
+// collateral. Status joins only prove registry/runtime/mount/readback facts.
 import { openCapabilityStore } from './store/store.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { createMcpGate } from './mcp-gate.js'
 import { createMcpDrain } from './mcp-drain.js'
-import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX } from './mcp-mount.js'
+import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree } from './mcp-mount.js'
 import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
 import { skillSelectionFor } from './skill-selection-plugin.js'
+import { createMcpRuntime } from './mcp-runtime.js'
+import { materializeMcpClientConfig } from './mcp-credentials.js'
+import { hasMcpSecrets } from './mcp-config.js'
+import { createMcpProcessAdapter } from './mcp-process.js'
+import { mcpDiagnostic, sanitizeMcpText } from './mcp-diagnostics.js'
 
 const message = error => (error instanceof Error ? error.message : String(error))
+const now = () => Date.now()
 
-/**
- * Managed vs unmanaged rows in a flat entry listing (8.8). A row is managed
- * when its group id carries our prefix; stock dsh-mcp-client rows anywhere
- * else are unmanaged.
- * @param {Array<{ id?: string, name?: string, config?: { serverName?: string } }>} rows
- * @param {Map<string, { groupId: string, generation: number }>} mounted
- * @param {Record<string, { label?: string, generation: number }>} registryServers
- */
 export function partitionMcpRows(rows, mounted, registryServers) {
   const managed = []
   const unmanaged = []
@@ -32,21 +26,12 @@ export function partitionMcpRows(rows, mounted, registryServers) {
       const registry = registryServers[identity]
       managed.push({ identity, groupId: row.id, label: registry?.label ?? identity, generation: mounted.get(identity)?.generation ?? registry?.generation ?? null, state: mounted.has(identity) ? 'mounted' : 'registered' })
     } else if (row?.name === '@deepseek-ai/dsh-mcp-client' && !(typeof row.id === 'string' && row.id.startsWith(MCP_GROUP_PREFIX))) {
-      // Stock client rows OUTSIDE our groups: host-configured, ACP-mounted
-      // or other presets' servers — listed, never closable (8.8).
-      unmanaged.push({ serverName: row.config?.serverName ?? row.id ?? 'unknown', state: 'unmanaged' })
+      unmanaged.push({ serverName: row.config?.serverName ?? row.id ?? 'unknown', state: 'unmanaged', readOnly: true })
     }
   }
   return { managed, unmanaged }
 }
 
-/**
- * The adopt-conflict decision (8.9): a same-named host row holds the
- * first-come serverName reservation, so mounting is ineffective until the
- * user disables it (1.14 S5a/S5b) — surface a conflict, never a success.
- * @param {Array<{ id?: string, name?: string, config?: { serverName?: string } }>} rows
- * @param {string} serverName
- */
 export function hostRowHoldingReservation(rows, serverName) {
   return rows.find(row => row?.name === '@deepseek-ai/dsh-mcp-client' && row.config?.serverName === serverName
     && !(typeof row.id === 'string' && row.id.startsWith(MCP_GROUP_PREFIX))) ?? null
@@ -57,103 +42,205 @@ export function createMcpManager(dependencies = {}) {
     const profileContext = ctx.get?.('profileContext')
     const store = dependencies.store ?? openCapabilityStore({ profileContext })
     const registry = dependencies.registry ?? createMcpRegistry({ store })
-    // The selection face is resolved LAZILY on every gate verdict: mount
-    // order inside one apply batch is not contractual (sibling rows import
-    // concurrently), so a face captured here can be a permanently-null
-    // fallback that refuses every managed call. Late arrival must converge
-    // exactly like the intent-gate route override (rc.2 lesson).
     const lifecycle = dependencies.lifecycle ?? {
       snapshotFor: sessionId => skillSelectionFor(ctx)?.lifecycle?.snapshotFor(sessionId) ?? null,
     }
-    const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle })
+    const runtime = dependencies.runtime ?? createMcpRuntime()
     const drain = dependencies.drain ?? createMcpDrain({ timeoutMs: config.drainTimeoutMs ?? 30_000 })
-    // The loader store is the flat id → entry map of every activated row
-    // (CITED 1.14 manager usage); options carry each row's name/config.
-    // Loader extends EntryTree (CITED): entries() walks static rows AND
-    // nested subtrees; the store holds runtime-created entries only.
-    const defaultListRows = () => [...(loader?.entries?.() ?? [])].map(entry => ({
-      id: entry?.options?.id ?? null,
-      name: entry?.options?.name ?? null,
-      config: entry?.options?.config ?? {},
-    }))
+    const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle, runtime, registrationFor: runtime.registrationFor })
+    const loader = dependencies.loader ?? ctx.get?.('loader')
+    const defaultListRows = () => [...(loader?.entries?.() ?? [])].map(entry => ({ id: entry?.options?.id ?? entry?.id ?? null, name: entry?.options?.name ?? null, config: entry?.options?.config ?? {} }))
     const listEntryIds = dependencies.listEntryIds ?? (() => defaultListRows().map(row => row.id).filter(Boolean))
     const listRows = dependencies.listRows ?? defaultListRows
-    const onError = (reason, cause) => ctx.logger?.warn?.(`${reason}${cause ? `: ${message(cause)}` : ''}`)
-
-    const loader = dependencies.loader ?? ctx.get?.('loader')
-    // Readiness by the child client's fiber after loader.await() (1.14
-    // must-fix): a group child resolves as '<group>-client' in the tree.
+    const startErrors = []
+    const onError = (reason, cause) => ctx.logger?.warn?.(sanitizeMcpText(`${reason}${cause ? `: ${message(cause)}` : ''}`))
     const defaultFiberOf = async groupId => {
-      // Readiness the 1.14 way: resolve the client entry, then AWAIT its own
-      // fiber lifecycle — a group child whose connection never comes up or
-      // whose activation errored surfaces HERE, not as a blind success.
       for (const candidate of [`${groupId}:${groupId}-client`, `${groupId}-client`]) {
         let entry = null
-        try {
-          entry = loader?.resolve?.(candidate)
-        } catch { /* try the next shape */ }
+        try { entry = loader?.resolve?.(candidate) } catch { /* next shape */ }
         if (entry?.fiber) {
-          try {
-            if (typeof entry.fiber.await === 'function') await entry.fiber.await()
-            return { state: 'running' }
-          } catch (cause) {
-            startErrors.push({ identity: null, reason: `fiber-await-failed:${groupId}:${message(cause)}` })
-            return null
-          }
+          await entry.fiber.await()
+          return { state: 'running' }
         }
       }
       return null
     }
-    const mount = dependencies.mount ?? createMcpMount({ loader, onError })
+    const mount = dependencies.mount ?? createMcpMount({ loader, onError, startupTimeoutMs: config.startupTimeoutMs ?? 15_000, cleanupTimeoutMs: config.cleanupTimeoutMs ?? 15_000 })
     const fiberOf = dependencies.fiberOf ?? defaultFiberOf
-    /** publicName → identity, fed by facade registrations (creation-time schema hiding + managed listing). */
-    const publicNames = new Map()
-
+    const processAdapter = dependencies.processAdapter ?? createMcpProcessAdapter({ subprocess: dependencies.subprocess ?? ctx.get?.('subprocess') })
+    const credentialsFor = () => dependencies.credentials ?? ctx.get?.('credentials')
+    const publicNames = new Map() // publicName → { identity, generation }
+    const bridges = new Map() // groupId → { identity, generation, release }
+    const receipts = { mount: new Map(), test: new Map() }
     const host = {
       tools: dependencies.hostTools ?? ctx.get?.('tools'),
       systemPrompt: dependencies.hostSystemPrompt ?? ctx.get?.('systemPrompt'),
       mcpResources: dependencies.hostMcpResources ?? ctx.get?.('mcpResources'),
     }
 
-    /** The realm-visible gate face (8.2): facades consume it from inside their groups. */
-    const gateFace = {
-      admit: (agent, identity, generation) => gate.admit(agent, identity, generation),
-      enabledFor: (agent, identity) => gate.enabledFor(agent, identity),
-      drain,
+    function releaseBridge(groupId) {
+      const bridge = bridges.get(groupId)
+      if (!bridge) return
+      bridges.delete(groupId)
+      for (const [name, owner] of publicNames) {
+        if (owner.identity === bridge.identity && owner.generation === bridge.generation) publicNames.delete(name)
+      }
+      bridge.release()
     }
-    try { ctx.reflect?.provide?.('weirMcpGate', gateFace) } catch { /* an older row already provides it */ }
-
-    async function mountOne(identity, entry) {
-      const generation = entry.generation
-      const groupId = `${MCP_GROUP_PREFIX}${identity}`
+    function registerBridge(groupId, identity, generation) {
       const release = registerMcpFacadeBridge(groupId, {
-        host,
-        identity,
-        generation,
-        admit: agent => gate.admit(agent, identity, generation),
+        host, identity, generation,
+        admit: agent => gate.permit(agent, identity, generation),
+        assertPermit: gate.assertPermit,
         isEnabledFor: agent => gate.enabledFor(agent, identity),
         drain,
-        onRegister: name => publicNames.set(name, identity),
+        onRegister: name => publicNames.set(name, { identity, generation }),
         onError,
       })
-      try {
-        await mount.mount({ identity, generation, client: entry.client ?? entry.transport, fiberOf })
-        // A fiber is not health: the stock client may carry an activation
-        // error (bad import, failed connect). Surface it like the 1.14
-        // entryState check instead of reporting a blind success.
-        const clientEntry = loader?.store?.[`${groupId}-client`]
-        if (clientEntry?.error) {
-          throw new Error(`mcp client entry error for "${identity}": ${message(clientEntry.error)}`)
-        }
-      } catch (cause) {
-        release()
-        throw cause
-      }
-      return { groupId, release }
+      bridges.set(groupId, { identity, generation, release })
+    }
+    function discoveryFor(identity, generation) {
+      const names = [...publicNames.entries()].filter(([, owner]) => owner.identity === identity && owner.generation === generation).map(([name]) => name).sort()
+      return { toolCount: names.length, toolNamesPreview: names.slice(0, 20), truncated: names.length > 20 }
     }
 
-    /** Startup: sweep residue, then mount every registered server. */
+    function beginOperation(identity, phase = 'replacing', details = {}) {
+      const token = runtime.begin(identity, { phase, ...details })
+      drain.closeAll(identity)
+      return token
+    }
+    function abortOperation(token) {
+      const previousPhase = token.previous?.phase
+      const restored = runtime.restore(token)
+      if (restored && previousPhase === 'mounted') drain.reopenAll(token.identity)
+      return restored
+    }
+    async function waitForDrain(identity) {
+      const result = await drain.drainAll(identity)
+      if (!result.drained) {
+        const error = new Error(`MCP server "${identity}" still has ${result.inFlight} admitted call(s); replacement cannot prove quiescence`)
+        error.code = 'cleanup-unknown'
+        throw error
+      }
+    }
+
+    async function prepare(entry) {
+      const credentials = credentialsFor()
+      const secretBearing = hasMcpSecrets(entry)
+      if (Object.keys(entry?.secretRefs ?? {}).length > 0 && typeof credentials?.resolve !== 'function') {
+        const error = new Error('secret-bearing MCP materialization requires DSH credentials')
+        error.code = 'unsupported'
+        throw error
+      }
+      const materialized = await materializeMcpClientConfig(entry, credentials)
+      const prepared = await processAdapter.prepare(materialized.client)
+      return { ...prepared, secrets: materialized.resolvedSecrets, secretBearing }
+    }
+
+    async function reconcileOne(identity, entry, suppliedToken = null) {
+      const token = suppliedToken ?? beginOperation(identity)
+      try {
+        const current = await registry.read()
+        const registered = current.kind === 'ok' ? current.servers[identity] : null
+        if (!registered || registered.generation !== entry.generation || (registered.incarnation ?? null) !== (entry.incarnation ?? null)) {
+          const error = new Error(`MCP registry/mount readback rejected ${identity} generation ${entry.generation}`)
+          error.code = 'generation-readback-failed'
+          throw error
+        }
+        await waitForDrain(identity)
+        if (mount.mounted.has(identity)) {
+          const removed = await mount.unmount(identity)
+          if (removed.status !== 'cleaned') {
+            runtime.finish(token, removed.status, { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            return { status: removed.status, identity, cleanup: removed, saved: true }
+          }
+          releaseBridge(`${MCP_GROUP_PREFIX}${identity}`)
+        }
+        const prepared = await prepare(entry)
+        const groupId = `${MCP_GROUP_PREFIX}${identity}`
+        const result = await mount.mount({
+          identity,
+          generation: entry.generation,
+          client: prepared.client,
+          secrets: prepared.secrets,
+          secretBearing: prepared.secretBearing,
+          fiberOf,
+          beforeCreate: () => registerBridge(groupId, identity, entry.generation),
+          afterCleanup: () => releaseBridge(groupId),
+          discovery: () => discoveryFor(identity, entry.generation),
+          readback: async () => {
+            const readback = await registry.read()
+            const actual = readback.kind === 'ok' ? readback.servers[identity] : null
+            if (!actual || actual.generation !== entry.generation || (actual.incarnation ?? null) !== (entry.incarnation ?? null)) throw new Error('registry generation/incarnation changed during mount')
+          },
+        })
+        const observed = mount.mounted.get(identity)
+        if (!observed || observed.generation !== entry.generation) throw new Error('mounted generation readback failed')
+        runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+        drain.reopenAll(identity)
+        const receipt = { time: now(), status: 'mounted', generation: entry.generation, discovery: result.discovery }
+        receipts.mount.set(identity, receipt)
+        return { status: 'mounted', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, mount: { state: 'mounted', observedGeneration: observed.generation }, discovery: result.discovery, execution: result.execution ?? null }
+      } catch (cause) {
+        const cleanupStatus = ['cleanup-failed', 'cleanup-unknown'].includes(cause?.status) ? cause.status : null
+        const status = cleanupStatus ?? (cause?.code === 'unsupported' ? 'unsupported' : 'saved-degraded')
+        runtime.finish(token, cleanupStatus ?? 'saved-degraded', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+        const diagnostic = mcpDiagnostic(cause, { code: cause?.code, action: cleanupStatus ? 'recover-residue' : 'retry' })
+        receipts.mount.set(identity, { time: now(), status, diagnostic })
+        startErrors.push({ identity, reason: diagnostic.message })
+        onError(`mcp-mount-${status}:${identity}`, cause)
+        return { status, identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, error: diagnostic, mount: { state: cleanupStatus ?? 'degraded' }, next: { action: cleanupStatus ? 'recover-residue' : 'retry-or-edit' } }
+      }
+    }
+
+    async function removeRuntime(identity, suppliedToken = null) {
+      const token = suppliedToken ?? beginOperation(identity, 'removing')
+      try {
+        await waitForDrain(identity)
+        const cleanup = await mount.unmount(identity)
+        if (cleanup.status !== 'cleaned') {
+          runtime.finish(token, cleanup.status)
+          return { status: cleanup.status, identity, cleanup, error: cleanup.diagnostic, next: { action: 'recover-residue' } }
+        }
+        releaseBridge(`${MCP_GROUP_PREFIX}${identity}`)
+        runtime.finish(token, 'unknown', { generation: null, incarnation: null })
+        return { status: 'removed', identity, removed: true }
+      } catch (cause) {
+        const status = cause?.code === 'cleanup-timeout' ? 'cleanup-unknown' : 'cleanup-failed'
+        runtime.finish(token, status)
+        return { status, identity, error: mcpDiagnostic(cause, { code: status, action: 'recover-residue' }), next: { action: 'recover-residue' } }
+      }
+    }
+
+    async function probe(entry, { targetIdentity = entry.identity } = {}) {
+      try {
+        const prepared = await prepare(entry)
+        const result = await mount.probe({
+          identity: undefined,
+          generation: 0,
+          client: prepared.client,
+          secretBearing: prepared.secretBearing,
+          secrets: prepared.secrets,
+          fiberOf,
+          beforeCreate: ({ groupId, identity, generation }) => registerBridge(groupId, identity, generation),
+          afterCleanup: ({ groupId }) => releaseBridge(groupId),
+          discovery: ({ identity, generation }) => discoveryFor(identity, generation),
+        })
+        const outcome = { status: result.status, identity: targetIdentity, discovery: result.discovery, cleanup: result.cleanup }
+        receipts.test.set(targetIdentity, { time: now(), status: outcome.status, discovery: outcome.discovery })
+        return outcome
+      } catch (cause) {
+        const status = ['cleanup-failed', 'cleanup-unknown'].includes(cause?.status) ? cause.status : 'probe-failed'
+        const outcome = { status, identity: targetIdentity, error: mcpDiagnostic(cause, { code: cause?.code ?? status }), cleanup: cause?.cleanup }
+        receipts.test.set(targetIdentity, { time: now(), status, error: outcome.error })
+        return outcome
+      }
+    }
+
+    let started = false
     async function start() {
+      if (started) return { mounted: mount.mounted.size, alreadyStarted: true }
+      started = true
       const swept = await mount.sweepResidue(listEntryIds())
       const current = await registry.read()
       if (current.kind !== 'ok') {
@@ -167,83 +254,119 @@ export function createMcpManager(dependencies = {}) {
       }
       let mountedCount = 0
       for (const entry of Object.values(current.servers)) {
-        try {
-          await mountOne(entry.identity, entry)
-          mountedCount += 1
-        } catch (cause) {
-          startErrors.push({ identity: entry.identity, reason: message(cause) })
-          onError(`mcp-mount-failed:${entry.identity}`, cause)
-        }
+        const result = await reconcileOne(entry.identity, entry)
+        if (result.status === 'mounted') mountedCount += 1
+        else if (result.status !== 'saved-degraded') startErrors.push({ identity: entry.identity, reason: result.status })
       }
       return { mounted: mountedCount }
+
+    }
+    async function recoverResidue() {
+      const swept = await mount.sweepResidue(listEntryIds())
+      const current = await registry.read()
+      if (current.kind !== 'ok') return { swept, mounted: 0, skipped: current.kind }
+      const results = []
+      for (const entry of Object.values(current.servers)) {
+        if (runtime.snapshot(entry.identity).phase === 'mounted' && mount.mounted.has(entry.identity)) continue
+        results.push(await reconcileOne(entry.identity, entry))
+      }
+      return { swept, mounted: results.filter(result => result.status === 'mounted').length, results }
     }
 
-    /**
-     * Explicit adopt flow (8.9): never an automatic takeover. The identity is
-     * registered first; a same-named host row still holding the reservation
-     * makes the outcome a visible conflict (the user disables the host row,
-     * then the managed client mounts), never a claimed success.
-     */
     async function adopt(entry) {
+      const holder = hostRowHoldingReservation(listRows(), entry.client?.serverName ?? entry.transport?.serverName ?? entry.identity)
+      if (holder) return { status: 'conflict', reason: `host row "${holder.id ?? entry.identity}" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged.` }
       const current = await registry.read()
       const revision = current.kind === 'ok' ? current.revision : 0
+      const token = beginOperation(entry.identity)
       const registered = await registry.register(entry, revision)
-      if (registered.status !== 'committed') return { status: 'registry-failed', result: registered.status }
-      const holder = hostRowHoldingReservation(listRows(), entry.transport?.serverName ?? entry.identity)
-      if (holder) {
-        return {
-          status: 'conflict',
-          reason: `host row "${holder.id ?? entry.identity}" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged.`,
-        }
-      }
-      try {
-        await mountOne(entry.identity, (await registry.read()).servers[entry.identity])
-        return { status: 'mounted' }
-      } catch (cause) {
-        return { status: 'mount-failed', reason: message(cause) }
-      }
+      if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
+      const latest = await registry.read()
+      const result = await reconcileOne(entry.identity, latest.servers[entry.identity], token)
+      return result
     }
 
-    /** Creation-time schema hiding (8.4③): per-agent deny of public names whose server is not accepted. */
     function agentCreated(payload) {
       const agent = payload?.agent
       if (publicNames.size === 0) return
-      const deny = [...publicNames.entries()].filter(([, identity]) => !gate.enabledFor(agent, identity)).map(([name]) => name)
+      const deny = [...publicNames.entries()].filter(([, owner]) => !gate.enabledFor(agent, typeof owner === 'string' ? owner : owner.identity)).map(([name]) => name)
       if (deny.length > 0) {
         try { agent?.ctx?.tools?.restrict?.({ deny }) } catch (cause) { onError('mcp-schema-restrict-failed', cause) }
       }
     }
     ctx.on?.('agent/created', payload => { agentCreated(payload) })
 
-    /** Visible startup/mount errors (manager UI + probes). */
-    const startErrors = []
-    const face = {
-      start,
-      startErrors,
-      adopt,
-      gate: gateFace,
+    async function list() {
+      const current = await registry.read()
+      const rows = listRows()
+      const partitioned = partitionMcpRows(rows, mount.mounted, current.kind === 'ok' ? current.servers : {})
+      if (current.kind !== 'ok') return { managed: [], unmanaged: partitioned.unmanaged, unavailable: { status: current.kind } }
+      const defaults = new Set(current.enabled)
+      const managed = Object.values(current.servers).map(entry => {
+        const phase = runtime.snapshot(entry.identity)
+        const mountedRecord = mount.mounted.get(entry.identity)
+        const mounted = phase.phase === 'mounted' && phase.generation === entry.generation && mountedRecord?.generation === entry.generation
+        const holder = hostRowHoldingReservation(rows, entry.client?.serverName ?? entry.identity)
+        const state = holder ? 'conflict' : mounted ? 'mounted' : phase.phase === 'saved-degraded' ? 'degraded' : ['cleanup-failed', 'cleanup-unknown'].includes(phase.phase) ? phase.phase : 'registered'
+        const discovery = discoveryFor(entry.identity, entry.generation)
+        return {
+          identity: entry.identity,
+          label: entry.label,
+          serverName: entry.client?.serverName ?? entry.identity,
+          transport: entry.transport?.kind ?? entry.client?.transport ?? 'unknown',
+          incarnation: entry.incarnation ?? null,
+          generation: entry.generation,
+          defaultEnabled: defaults.has(entry.identity),
+          state,
+          statusSource: mounted ? 'registry-runtime-mount-readback' : holder ? 'serverName-reservation' : 'registry-runtime',
+          runtimePhase: phase.phase,
+          discovery: mounted ? discovery : { toolCount: null, toolNamesPreview: [], truncated: false },
+          lastMount: receipts.mount.get(entry.identity) ?? null,
+          lastTest: receipts.test.get(entry.identity) ?? null,
+          startErrors: startErrors.filter(error => error.identity === entry.identity).map(error => ({ reason: error.reason })),
+          liveReconnect: 'unknown',
+          processExit: 'unknown',
+          stderr: 'unknown',
+          readOnly: false,
+        }
+      })
+      return { managed, unmanaged: partitioned.unmanaged, warnings: current.warnings }
+    }
+
+    const gateFace = {
+      admit: (agent, identity, generation) => gate.admit(agent, identity, generation),
+      permit: (agent, identity, generation) => gate.permit(agent, identity, generation),
+      assertPermit: gate.assertPermit,
+      enabledFor: (agent, identity) => gate.enabledFor(agent, identity),
       drain,
-      registry,
-      list: () => partitionMcpRows(listRows(), mount.mounted, {}),
+    }
+    try { ctx.reflect?.provide?.('weirMcpGate', gateFace) } catch { /* older row */ }
+    const face = {
+      start, startErrors, adopt, gate: gateFace, drain, registry, runtime,
+      recoverResidue,
+      list,
       publicNames,
-      remove: identity => mount.unmount(identity, dependencies.unmountGuards),
+      mounted: mount.mounted,
+      beginOperation, abortOperation, reconcileOne, removeRuntime, probe,
+      remove: identity => removeRuntime(identity),
+      support: () => {
+        const credentials = credentialsFor()
+        return { credentials: typeof credentials?.set === 'function' && typeof credentials?.resolve === 'function', ephemeral: resolveEphemeralMcpTree(loader).kind === 'ok' }
+      },
+      serverNameConflict: (serverName, identity) => {
+        const holder = hostRowHoldingReservation(listRows(), serverName)
+        return holder ? `host row "${holder.id ?? identity}" already reserves serverName "${serverName}"` : null
+      },
+      prepare,
+      mcpGroupOptions,
     }
     try { ctx.reflect?.provide?.('weirMcpManager', face) } catch { /* older row */ }
-
-    // Startup mounting is fire-and-forget (like the 6.1 preload): a slow or
-    // failed start only costs one visible error per server, never a broken
-    // preset row.
-    void Promise.resolve()
-      .then(() => face.start())
-      .catch(cause => {
-        startErrors.push({ identity: null, reason: `start-failed:${message(cause)}` })
-        onError('mcp-manager-start-failed', cause)
-      })
-
-    // Fail closed on the dispose/reload window (8.5): managed calls are
-    // refused because the gate has no initialized authority anymore.
+    void Promise.resolve().then(() => face.start()).catch(cause => {
+      startErrors.push({ identity: null, reason: `start-failed:${message(cause)}` })
+      onError('mcp-manager-start-failed', cause)
+    })
     return () => {
-      try { ctx.reflect?.provide?.('weirMcpGate', { admit: async () => false, enabledFor: () => false, drain }) } catch { /* best effort */ }
+      try { ctx.reflect?.provide?.('weirMcpGate', { admit: async () => false, permit: async () => null, assertPermit: () => false, enabledFor: () => false, drain }) } catch { /* best effort */ }
     }
   }
 }
@@ -251,4 +374,4 @@ export function createMcpManager(dependencies = {}) {
 export const name = 'weir-mcp-manager'
 export const inject = ['loader', 'tools', 'systemPrompt', 'mcpResources']
 export const apply = createMcpManager()
-export const __message = message // test seam
+export const __message = message

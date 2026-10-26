@@ -32,21 +32,25 @@ export function createMcpGate({ registry, lifecycle, sessionMcpServers, registra
     return snapshot.mcpServers
   }
 
-  async function admit(agent, identity, generation) {
+  async function permit(agent, identity, generation) {
     const sessionId = agent?.session?.id
-    if (typeof sessionId !== 'string' || sessionId.length === 0) return false
-    if (runtime?.enabledFor && runtime.enabledFor(identity) === false) return false
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+    if (runtime?.enabledFor && runtime.enabledFor(identity) === false) return null
     const snapshot = acceptedSnapshot(lifecycle, agent)
-    if (!snapshot) return false
+    if (!snapshot) return null
     const accepted = acceptedOf(sessionId)
-    if (!Array.isArray(accepted) || !accepted.includes(identity)) return false
-    if (runtime?.beforeRead && runtime.beforeRead(identity) === false) return false
+    if (!Array.isArray(accepted) || !accepted.includes(identity)) return null
+    if (runtime?.beforeRead && runtime.beforeRead(identity) === false) return null
     const current = await registry.read()
-    if (current.kind !== 'ok') return false
+    if (current.kind !== 'ok') return null
     const entry = current.servers[identity]
-    if (!entry || entry.generation !== generation || !mcpIncarnationMatches(snapshot, identity, entry)) return false
-    if (runtime?.afterRead && runtime.afterRead(identity) === false) return false
-    return true
+    if (!entry || entry.generation !== generation || !mcpIncarnationMatches(snapshot, identity, entry)) return null
+    if (runtime?.afterRead && runtime.afterRead(identity) === false) return null
+    if (runtime?.permit) return runtime.permit(identity, { generation, incarnation: entry.incarnation ?? null })
+    return { identity, generation, incarnation: entry.incarnation ?? null, operationId: null }
+  }
+  async function admit(agent, identity, generation) {
+    return (await permit(agent, identity, generation)) !== null
   }
 
   function enabledFor(agent, identity) {
@@ -62,5 +66,5 @@ export function createMcpGate({ registry, lifecycle, sessionMcpServers, registra
     return mcpIncarnationMatches(snapshot, identity, registrationFor(identity))
   }
 
-  return { admit, enabledFor }
+  return { admit, permit, enabledFor, assertPermit: value => runtime?.assertPermit ? runtime.assertPermit(value) : Boolean(value) }
 }

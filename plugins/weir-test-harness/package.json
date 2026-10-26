@@ -16,6 +16,7 @@
     "./cold-session-probe": "./src/cold-session-probe.js",
     "./lifecycle-probe": "./src/lifecycle-probe.js",
     "./mcp-probe": "./src/mcp-probe.js",
+    "./mcp-management-probe": "./src/mcp-management-probe.js",
     "./preset-probe": "./src/preset-probe.js",
     "./preset-surface-probe": "./src/preset-surface-probe.js",
     "./capability-remote-probe": "./src/capability-remote-probe.js",

@@ -54,8 +54,9 @@ export const isMcpResidueId = id => typeof id === 'string' && id.startsWith(MCP_
  */
 export function resolveEphemeralMcpTree(loader) {
   const root = loader?.root
-  if (root?.tree !== loader || typeof root.create !== 'function' || typeof root.remove !== 'function'
-    || typeof loader?.await !== 'function' || typeof loader?.resolve !== 'function') {
+  const tree = root?.tree
+  if (tree?.root !== root || typeof root.create !== 'function' || typeof root.remove !== 'function'
+    || typeof tree?.await !== 'function' || typeof tree?.resolve !== 'function') {
     return { kind: 'unsupported', reason: 'ephemeral-loader-unavailable' }
   }
   return {

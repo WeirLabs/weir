@@ -20,3 +20,20 @@ export async function seedMcpRegistrations(root, identities = ['docs']) {
   }
   return registry
 }
+
+export function createCommandMcpManager({ status = 'mounted' } = {}) {
+  const calls = { mount: 0, probe: 0, remove: 0, begin: 0 }
+  return {
+    calls,
+    support: () => ({ credentials: true, ephemeral: true }),
+    serverNameConflict: () => null,
+    beginOperation(identity, phase) { calls.begin += 1; return { identity, phase, operationId: `op-${calls.begin}`, previous: null } },
+    abortOperation: () => true,
+    async reconcileOne(identity, entry) {
+      calls.mount += 1
+      return { status, identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, succeeded: status === 'mounted', mount: { state: status === 'mounted' ? 'mounted' : 'degraded', observedGeneration: entry.generation }, discovery: { toolCount: 0, toolNamesPreview: [], truncated: false } }
+    },
+    async probe(identity) { calls.probe += 1; return { status: 'mounted', identity, discovery: { toolCount: 0, toolNamesPreview: [], truncated: false }, cleanup: { status: 'cleaned' } } },
+    async removeRuntime(identity) { calls.remove += 1; return { status: 'removed', identity, removed: true } },
+  }
+}

@@ -22,6 +22,11 @@
     mode: workspace-write
     workspaceRoot: !!js (process.env.WEIR_IT_ROOT ?? '/Users/young/.weir-it') + '/outside'
 - insert:
+    - id: weir-it-credentials
+      name: '@deepseek-ai/dsh-credentials-local'
+      disabled: !!js process.env.WEIR_IT_MCP_MANAGEMENT !== '1'
+      config:
+        path: !!js process.env.WEIR_IT_ROOT + '/home/credentials.yaml'
     # Desktop/web archive provider, only for the durable blackboard probe.
     - id: weir-it-blackboard-workspace
       name: '@deepseek-ai/dsh-workspace'
@@ -30,7 +35,7 @@
       name: 'weir-test-harness/mock-llm'
     - id: weir-skill-selection
       name: 'weir-test-harness/skill-selection'
-      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_APPLY_TX || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_LIFECYCLE || process.env.WEIR_IT_MCP || process.env.WEIR_IT_PRESET || process.env.WEIR_IT_PRESET_SURFACE)"
+      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_APPLY_TX || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_LIFECYCLE || process.env.WEIR_IT_MCP || process.env.WEIR_IT_MCP_MANAGEMENT || process.env.WEIR_IT_PRESET || process.env.WEIR_IT_PRESET_SURFACE)"
       config:
         readPresetId: weir
     - id: weir-it-tool-skill
@@ -66,10 +71,16 @@
       config:
         - id: weir-mcp-manager
           name: 'weir-harness/mcp-manager'
+          config:
+            startupTimeoutMs: !!js Number(process.env.WEIR_IT_MCP_STARTUP_TIMEOUT_MS || 15000)
         - id: weir-it-mcp-probe
           name: 'weir-test-harness/mcp-probe'
           config:
             enabled: !!js process.env.WEIR_IT_MCP === '1'
+        - id: weir-it-mcp-management-probe
+          name: 'weir-test-harness/mcp-management-probe'
+          config:
+            enabled: !!js process.env.WEIR_IT_MCP_MANAGEMENT === '1'
     - id: weir-it-preset-probe
       name: 'weir-test-harness/preset-probe'
       config:

@@ -13,7 +13,7 @@
  *   admit: (agent: unknown) => Promise<boolean>,
  *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void } }} config
  */
-export function createMcpToolWrapper({ identity, generation, admit, drain }) {
+export function createMcpToolWrapper({ identity, generation, admit, drain, assertPermit }) {
   /**
    * Wrap one tool definition with the last-moment check.
    * @param {{ name?: unknown, execute?: unknown, [key: string]: unknown }} definition
@@ -33,7 +33,7 @@ export function createMcpToolWrapper({ identity, generation, admit, drain }) {
        */
       async execute(args, exec) {
         const admitted = await admit(exec?.agent)
-        if (!admitted) {
+        if (!admitted || (assertPermit && !assertPermit(admitted))) {
           const error = new Error(`MCP server "${identity}" is not enabled for this agent (admission refused at generation ${generation})`)
           throw Object.assign(error, { code: 'mcp-admission-refused' })
         }

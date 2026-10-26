@@ -74,16 +74,19 @@ function reconnectOf(value) {
 }
 
 function secretInput(value, field, surface) {
-  if (surface !== 'ui') fail(field, 'literal secrets are accepted only by the Host mutation channel; use a credential reference')
   if (!object(value)) {
     if (value === '') return { action: 'keep' }
+    if (surface !== 'ui') fail(field, 'literal secrets are accepted only by the Host mutation channel; use a credential reference')
     if (typeof value !== 'string') fail(field, 'secret values must be strings')
     return { action: 'replace', value }
   }
   known(value, new Set(['action', 'value']), field)
   const action = value.action ?? 'replace'
   if (!['keep', 'replace', 'remove'].includes(action)) fail(`${field}.action`, 'must be keep, replace or remove')
-  if (action === 'replace' && (typeof value.value !== 'string' || value.value.length === 0)) fail(`${field}.value`, 'replacement secrets must be non-empty strings; blank means keep')
+  if (action === 'replace') {
+    if (surface !== 'ui') fail(field, 'literal secrets are accepted only by the Host mutation channel; use a credential reference')
+    if (typeof value.value !== 'string' || value.value.length === 0) fail(`${field}.value`, 'replacement secrets must be non-empty strings; blank means keep')
+  }
   return { action, ...(action === 'replace' ? { value: value.value } : {}) }
 }
 
@@ -99,6 +102,7 @@ function secretMap(input, field, limit, surface) {
       // New UI/JSON literal env/header values are staged credentials. The
       // registry adapter may explicitly preserve a legacy record instead.
       if (surface === 'legacy') legacy[key] = value
+      else if (surface === 'refs' && value !== '') fail(`${field}.${key}`, 'literal secrets are not accepted; use a credential reference')
       else values[key] = value === '' ? { action: 'keep' } : { action: 'replace', value }
     } else if (object(value) && typeof value.ref === 'string') refs[key] = ref(value, `${field}.${key}`)
     else values[key] = secretInput(value, `${field}.${key}`, surface)
@@ -205,7 +209,6 @@ export function normalizeMcpServer(raw, options = {}) {
     Object.assign(legacy.headers, headers.legacy)
   }
   if (raw.secretValues !== undefined) {
-    if (surface !== 'ui') fail('secretValues', 'literal secrets are not accepted by this surface')
     if (!object(raw.secretValues)) fail('secretValues', 'must be an object')
     known(raw.secretValues, new Set(['env', 'headers', 'args', 'url']), 'secretValues')
     for (const [field, limit] of [['env', MCP_LIMITS.env], ['headers', MCP_LIMITS.headers], ['args', MCP_LIMITS.args]]) {

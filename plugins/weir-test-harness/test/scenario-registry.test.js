@@ -24,6 +24,7 @@ EXPECTED_ORDER.push('cold-session')
 EXPECTED_ORDER.push('lifecycle-inheritance')
 EXPECTED_ORDER.push('delegate-preflight')
 EXPECTED_ORDER.push('mcp-gateway')
+EXPECTED_ORDER.push('mcp-management')
 EXPECTED_ORDER.push('preset-defaults')
 EXPECTED_ORDER.push('capability-presets-surface')
 EXPECTED_ORDER.push('resume-incarnation')
@@ -136,7 +137,7 @@ describe('scenario registry', () => {
 
   // Scenarios whose preconditions need driver-side work: rehydrate boots twice
   // with one session id; worktree initializes a git repository in the workspace.
-  const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'zombie-lane', 'lane-resumable']
+  const RUN_OVERRIDE = ['blackboard-persistence', 'rehydrate', 'worktree', 'cold-session', 'lifecycle-inheritance', 'mcp-gateway', 'mcp-management', 'preset-defaults', 'capability-presets-surface', 'resume-incarnation', 'worktree-watch', 'notify-worktree', 'worktree-auto-approve', 'capability-remote', 'zombie-lane', 'lane-resumable']
   RUN_OVERRIDE.push('preset-delegation-surface')
   RUN_OVERRIDE.push('editlock-lsp-rename', 'editlock-lsp-uncertain')
 RUN_OVERRIDE.push('filelease-turn-release', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection')

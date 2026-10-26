@@ -21,6 +21,7 @@ import { openCapabilityStore } from './store/store.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload, buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
 import { PRESET_SELECTED_EVENT } from './preset-invalidation.js'
 import { createAudit } from '../shared/audit.js'
+import { mcpDiagnostic, sanitizeMcpPayload } from './mcp-diagnostics.js'
 
 /** The host-root service key the typert gateway resolves (S27: ctx.get from the host root). */
 export const CAPABILITY_READ_SERVICE_KEY = 'weirCapabilityRead'
@@ -185,6 +186,110 @@ export function createCapabilityReadService(dependencies = {}) {
   }
 }
 
+export const CAPABILITY_MUTATION_SERVICE_KEY = 'weirCapabilityMutation'
+export const CAPABILITY_MUTATION_NAMESPACE = 'weirCapabilityMutations'
+export const CAPABILITY_MUTATION_METHODS = ['mutate', 'batch']
+
+function sameMutationOwner(first, second) {
+  const profile = value => value ? `${value.home ?? ''}\0${value.name ?? ''}` : ''
+  return first.owner.presetId === second.owner.presetId
+    && first.owner.cwd === second.owner.cwd
+    && first.feed === second.feed
+    && profile(first.profile) === profile(second.profile)
+}
+
+/** Session-preset/profile/feed ownership for mutations; selectionSeq is not compared. */
+export function createCapabilityMutationService(dependencies = {}) {
+  const bridgeFor = dependencies.bridge ?? soleFeed
+  const ensure = dependencies.ensureRegistered ?? (() => true)
+  const observeSession = dependencies.observeSession ?? (sessionId => dependencies.sessionQuery?.()?.observeSession(sessionId))
+  const observe = async sessionId => {
+    let lease
+    try {
+      lease = await observeSession(sessionId)
+      if (!lease || typeof lease[Symbol.dispose] !== 'function') throw new CapabilityReadError('owner-unavailable', 'capability mutation: session observation unavailable')
+      const owner = ownership(lease, sessionId)
+      const feed = bridgeFor(owner.presetId)
+      if (!feed) throw new CapabilityReadError('bridge-absent', `capability mutation: no feed for preset ${owner.presetId}`)
+      const faces = feed.faces ?? feed
+      return { lease, owner, feed, faces, profile: faces.profileContext?.() }
+    } catch (cause) {
+      lease?.[Symbol.dispose]?.()
+      if (cause instanceof CapabilityReadError) throw cause
+      throw new CapabilityReadError('unknown-session', `capability mutation: cannot observe session ${JSON.stringify(sessionId)}`, { cause })
+    }
+  }
+  async function mutate(sessionId, request, batch = false) {
+    if (!ensure()) throw new CapabilityReadError('channel-unavailable', 'capability mutation channel is not registered')
+    const first = await observe(sessionId)
+    try {
+      const assertOwner = async () => {
+        const current = await observe(sessionId)
+        try {
+          if (!sameMutationOwner(first, current)) throw new CapabilityReadError('owner-changed', 'capability mutation: session preset/profile/feed owner changed')
+        } finally { current.lease[Symbol.dispose]() }
+      }
+      if (typeof first.faces.mcpOperations !== 'function') throw new CapabilityReadError('bridge-absent', 'capability mutation: owning preset has no MCP operations')
+      const operations = first.faces.mcpOperations({ id: sessionId, header: { cwd: first.owner.cwd } }, { assertOwner })
+      let result
+      try {
+        result = batch ? await operations.executeBatch(request) : request?.action === 'preview' ? await operations.preview(request) : await operations.execute(request)
+      } catch (cause) {
+        result = { status: cause?.code === 'owner-changed' ? 'owner-changed' : 'validation-failed', saved: false, error: mcpDiagnostic(cause, { code: cause?.code ?? 'validation-failed' }) }
+      }
+      // A response may be stale by the time it is serialized. Never claim a
+      // rollback; return the operation's actual saved facts with owner-changed.
+      try {
+        await assertOwner()
+      } catch (cause) {
+        if (result.status !== 'owner-changed') {
+          return sanitizeMcpPayload({
+            ...result,
+            status: 'owner-changed',
+            ownerChanged: true,
+            actual: {
+              status: result.status,
+              saved: result.saved === true,
+              registryRevision: result.registryRevision ?? null,
+              generation: result.generation ?? null,
+              incarnation: result.incarnation ?? null,
+            },
+            error: mcpDiagnostic(cause, { code: 'owner-changed' }),
+          })
+        }
+      }
+      return sanitizeMcpPayload(result)
+    } finally {
+      first.lease[Symbol.dispose]()
+    }
+  }
+  return {
+    mutate: (sessionId, request) => mutate(sessionId, request, false),
+    batch: (sessionId, request) => mutate(sessionId, request, true),
+  }
+}
+
+export function capabilityMutationContribution() {
+  return {
+    package: 'weir-harness',
+    face: 'host-mutations',
+    schemas: [],
+    model: { services: [], events: [], objects: [] },
+    invocations: CAPABILITY_MUTATION_METHODS.map(method => ({
+      id: `weir-harness.${CAPABILITY_MUTATION_NAMESPACE}.${method}`,
+      service: CAPABILITY_MUTATION_SERVICE_KEY,
+      namespace: CAPABILITY_MUTATION_NAMESPACE,
+      method,
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } },
+        { name: 'request', wire: 'request', source: 'json', codec: { mode: 'src-json' } },
+      ],
+      result: { mode: 'src-json' },
+    })),
+  }
+}
+
 /**
  * The hand-written typert contribution (S27: empty schemas/model, src-json
  * codecs, no zod, no generated artifacts). Parameters and results are plain
@@ -236,26 +341,28 @@ export function apply(ctx) {
     warn('weir capability remote: typert service is unavailable in this composition; capability reads stay unavailable on the client')
     return
   }
-  // Idempotent, self-healing registration. The registry rejects a duplicate
-  // package contribution, so a re-mount that races the previous fiber's
-  // disposal must not treat "already registered" as fatal when the endpoints
-  // are actually live — and a later withdrawal (that previous fiber finally
-  // disposing) must be repaired on the next read rather than left dead.
-  const endpointLive = () => {
-    try { return Boolean(typert.local?.get?.(`${CAPABILITY_READ_NAMESPACE}/receipt`)) } catch { return false }
+  // Idempotent, self-healing registration of EVERY read and mutation endpoint.
+  // A live receipt says nothing about write availability.
+  const endpointLive = (namespace, method) => {
+    try { return Boolean(typert.local?.get?.(`${namespace}/${method}`)) } catch { return false }
+  }
+  const endpointsLive = (namespace, methods) => methods.every(method => endpointLive(namespace, method))
+  const ensureContribution = (namespace, methods, contribution) => {
+    if (endpointsLive(namespace, methods)) return true
+    try {
+      typert.register(contribution())
+    } catch (cause) {
+      if (!endpointsLive(namespace, methods)) {
+        warn(`weir capability remote: registration failed (${cause instanceof Error ? cause.message : String(cause)}); capability endpoints stay unavailable on the client`)
+        return false
+      }
+    }
+    return endpointsLive(namespace, methods)
   }
   const ensureRegistered = () => {
-    if (endpointLive()) return true
-    try {
-      typert.register(capabilityReadContribution())
-      return true
-    } catch (cause) {
-      // Duplicate-package race: a previous generation's registration still
-      // serves the endpoints — that is success, not a warning.
-      if (endpointLive()) return true
-      warn(`weir capability remote: registration failed (${cause instanceof Error ? cause.message : String(cause)}); capability reads stay unavailable on the client`)
-      return false
-    }
+    const reads = ensureContribution(CAPABILITY_READ_NAMESPACE, CAPABILITY_READ_METHODS, capabilityReadContribution)
+    const mutations = ensureContribution(CAPABILITY_MUTATION_NAMESPACE, CAPABILITY_MUTATION_METHODS, capabilityMutationContribution)
+    return reads && mutations
   }
   try {
     const audit = createAudit(ctx)
@@ -264,15 +371,13 @@ export function apply(ctx) {
       audit({ id: facts.sessionId, header: { cwd: facts.cwd } }, 'capability-read', facts)
     }
     const service = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), onDegraded })
-    // The exact frozen binding validateBinding requires (S27): { service,
-    // serviceKey, namespace } — built by hand, no protocol import.
-    service.typertRemote = Object.freeze({
-      service,
-      serviceKey: CAPABILITY_READ_SERVICE_KEY,
-      namespace: CAPABILITY_READ_NAMESPACE,
-    })
+    service.typertRemote = Object.freeze({ service, serviceKey: CAPABILITY_READ_SERVICE_KEY, namespace: CAPABILITY_READ_NAMESPACE })
     Object.freeze(service)
     ctx.root.reflect.provide(CAPABILITY_READ_SERVICE_KEY, service)
+    const mutations = createCapabilityMutationService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery') })
+    mutations.typertRemote = Object.freeze({ service: mutations, serviceKey: CAPABILITY_MUTATION_SERVICE_KEY, namespace: CAPABILITY_MUTATION_NAMESPACE })
+    Object.freeze(mutations)
+    ctx.root.reflect.provide(CAPABILITY_MUTATION_SERVICE_KEY, mutations)
     ensureRegistered()
   } catch (cause) {
     warn(`weir capability remote: setup failed (${cause instanceof Error ? cause.message : String(cause)}); capability reads stay unavailable on the client`)

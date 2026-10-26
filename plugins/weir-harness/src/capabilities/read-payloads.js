@@ -79,7 +79,7 @@ export async function buildListPayload(deps, options) {
     if (!candidate.selected || !candidate.identity) continue
     try { selectedKeys.add(skillIdentityKey(candidate.identity)) } catch { /* an unstamped shape carries no mark */ }
   }
-  const listing = deps.mcpManager?.list?.() ?? { managed: [], unmanaged: [] }
+  const listing = await (deps.mcpManager?.list?.() ?? Promise.resolve({ managed: [], unmanaged: [] }))
   return {
     skills: candidates.map(candidate => {
       /** @type {string | null} */
@@ -96,8 +96,8 @@ export async function buildListPayload(deps, options) {
       }
     }),
     mcpServers: [
-      ...(listing.managed ?? []).map(server => ({ identity: server.identity, state: server.state })),
-      ...(listing.unmanaged ?? []).map(server => ({ serverName: server.serverName, state: 'unmanaged' })),
+      ...(listing.managed ?? []).map(server => ({ ...server })),
+      ...(listing.unmanaged ?? []).map(server => ({ ...server, state: 'unmanaged', readOnly: true })),
     ],
   }
 }

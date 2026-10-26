@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 import { seedMcpRegistrations } from './helpers/mcp-registry.js'
+import { createCommandMcpManager } from './helpers/mcp-registry.js'
 
 // The store-backed command surface (receipt/list/apply/mcp-add) persists
 // through the Weir capability store, whose platform matrix (C-1.10) enables
@@ -347,6 +348,7 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
   const host = pinHermeticHostRoots()
   try {
     const root = mkdtempSync(join(tmpdir(), 'weir-cmd-mcp-'))
+    const mcpManager = createCommandMcpManager()
     let registeredCommands = []
     let provider
     const ctx = {
@@ -361,6 +363,7 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
       get(name) {
         if (name === 'profileContext') return { home: root, name: 'it' }
         if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+        if (name === 'weirMcpManager') return mcpManager
         return undefined
       },
     }
@@ -376,7 +379,7 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
     const added = await command.handler({ agent, rawInput: `mcp-add ${JSON.stringify({ identity: 'my-docs', label: 'My Docs', command: 'npx', args: ['-y', '@org/docs-mcp'] })}` })
     expect(added.kind).toBe('success')
     const result = JSON.parse(added.text)
-    expect(result.status).toBe('registered')
+    expect(result.status).toBe('mounted')
     expect(result.identity).toBe('my-docs')
     expect(result.generation).toBe(1)
     // The entry is durably in the registry with the client config verbatim.

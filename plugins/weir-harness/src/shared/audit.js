@@ -34,6 +34,9 @@ export const AUDIT_TYPES = Object.freeze({
   // identity, feed census and provider status, never skill names; the receipt
   // itself stays the only effective-state authority.
   capabilityRead: 'capability-read',
+  // MCP management mutations: operation/status/identity/generation/incarnation
+  // only. Never config, credential refs or values, argv, URLs, or raw errors.
+  capabilityMcp: 'capability-mcp',
   // The pending model-facing capability notice (durable-pending-notice D7):
   // queue / degrade / deliver / clear outcomes of the durable notice unit.
   // Counts only, never names — the same rule as capability-read above; the

@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 import { seedMcpRegistrations } from './helpers/mcp-registry.js'
+import { createCommandMcpManager } from './helpers/mcp-registry.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'weir-cmd-pin-'))
 
@@ -98,11 +99,17 @@ test('pin 1.7: a missing owning agent is a fixed error, whatever the verb', asyn
 
 test('pin 1.7: unknown and empty verbs fall through to the usage line', async () => {
   const { call } = mountCapabilities(tmp())
-  const usage = 'Usage: /capabilities receipt|list|conditions|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear'
-  for (const rawInput of ['bogus-verb', 'receipt extra words', 'apply', 'preset-save']) {
+  const usage = 'Usage: /capabilities receipt|list|apply|mcp-preview|mcp-add|mcp-batch|mcp-edit|mcp-remove|mcp-restart|mcp-test|mcp-default|presets|default-get|default-save|default-clear'
+  const expected = {
+    'bogus-verb': usage,
+    'receipt extra words': usage,
+    apply: 'Usage: /capabilities apply <json selection>',
+    'preset-save': 'Usage: /capabilities preset-save <json>',
+  }
+  for (const rawInput of Object.keys(expected)) {
     const result = await call(rawInput)
     expect(result.kind).toBe('error')
-    expect(result.text).toBe(usage)
+    expect(result.text).toBe(expected[rawInput])
   }
 })
 
@@ -289,26 +296,28 @@ test("pin 1.2: default-save from:'applied' without expectedRevision read-modify-
 
 // ---- 1.5 mcp-add: full success payload, manager start, conflicts, texts -----
 
-test('pin 1.5: mcp-add success payload, manager.start wiring and validation texts', { skip: storePlatformSkip }, async () => {
+test('pin 1.5: mcp-add returns the real strict mount outcome and legacy secret warning', { skip: storePlatformSkip }, async () => {
   const host = pinHermeticHostRoots()
   try {
     const root = tmp()
-    let starts = 0
-    const manager = { start: async () => { starts += 1 } }
+    const manager = createCommandMcpManager()
     const { callJson } = mountCapabilities(root, { dshHome: root }, undefined, undefined, manager)
-
     const added = await callJson('mcp-add', { identity: 'docs', label: 'Docs', command: 'npx', args: ['-y', 'docs-mcp'], env: { A: '1' } })
     expect(added.kind).toBe('success')
-    expect(Object.keys(added.payload)).toEqual(['status', 'identity', 'generation', 'mounted'])
-    expect(added.payload).toEqual({ status: 'registered', identity: 'docs', generation: 1, mounted: true })
-    expect(starts).toBe(1)
+    expect(added.payload.status).toBe('mounted')
+    expect(added.payload.identity).toBe('docs')
+    expect(added.payload.generation).toBe(1)
+    expect(added.payload.saved).toBe(true)
+    expect(added.payload.mount.observedGeneration).toBe(1)
+    expect(added.payload.warnings).toEqual(['legacy-literal-secrets-in-command-history'])
+    expect(manager.calls.mount).toBe(1)
+    expect(manager.calls.begin).toBe(1)
 
-    // Without a manager face the same registration reports mounted:false.
     const bare = mountCapabilities(tmp(), { dshHome: root })
     const noManager = await bare.callJson('mcp-add', { identity: 'docs', label: 'Docs', command: 'npx' })
-    expect(noManager.payload.mounted).toBe(false)
+    expect(noManager.payload.status).toBe('validation-failed')
+    expect(noManager.payload.saved).toBe(false)
 
-    // The identity/label/command validation text.
     for (const spec of [{ label: 'L', command: 'c' }, { identity: 'i', command: 'c' }, { identity: 'i', label: 'L' }, { identity: 'i', label: 'L', command: '' }]) {
       const refused = await callJson('mcp-add', spec)
       expect(refused.kind).toBe('error')
@@ -319,9 +328,10 @@ test('pin 1.5: mcp-add success payload, manager.start wiring and validation text
   }
 })
 
+
 test('pin 1.5: a non-committed registry write surfaces as {status} error payload', { skip: storePlatformSkip }, async () => {
   const root = tmp()
-  const { callJson } = mountCapabilities(root)
+  const { callJson } = mountCapabilities(root, {}, undefined, undefined, createCommandMcpManager())
   // Poison the registry record: the CAS read-modify-write fails closed as
   // 'unreadable' and the verb relays the bare status.
   const dir = join(root, 'weir', 'profiles', 'it', 'capabilities', 'mcp')
@@ -329,7 +339,8 @@ test('pin 1.5: a non-committed registry write surfaces as {status} error payload
   writeFileSync(join(dir, 'registry.json'), '{corrupt')
   const result = await callJson('mcp-add', { identity: 'docs', label: 'Docs', command: 'npx' })
   expect(result.kind).toBe('error')
-  expect(result.payload).toEqual({ status: 'unreadable' })
+  expect(result.payload.status).toBe('indeterminate')
+  expect(result.payload.error.code).toBe('registry-unavailable')
 })
 
 // ---- 1.4 success response field lists ---------------------------------------
@@ -446,6 +457,7 @@ test('pin 1.4: preset-export package and document payload field lists', { skip: 
 test('pin 1.4: preset-import v1 and v2 payload field lists', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { callJson } = mountCapabilities(root)
+  await seedMcpRegistrations(root)
   await callJson('mcp-add', { identity: 'docs', label: 'Docs', command: 'npx' })
 
   const v1 = {
@@ -487,7 +499,7 @@ test('pin 1.4: default-get field lists for absent and saved states', { skip: sto
 
 // ---- 1.8 per-verb catch prefixes ---------------------------------------------
 
-test('pin 1.8: every verb catch carries the "capabilities <verb> failed: " prefix', { skip: storePlatformSkip }, async () => {
+test('pin 1.8: legacy verb catch prefixes stay stable; MCP failures use shared structured statuses', { skip: storePlatformSkip }, async () => {
   const root = tmp()
   const { call, callJson, armCtxFailure } = mountCapabilities(root)
   armCtxFailure()
@@ -497,7 +509,6 @@ test('pin 1.8: every verb catch carries the "capabilities <verb> failed: " prefi
     ['receipt', undefined, 'capabilities receipt failed: injected ctx failure'],
     ['list', undefined, 'capabilities list failed: injected ctx failure'],
     ['apply', { requestId: 'r', expectedRevision: 0, skills: [], mcpServers: [] }, 'capabilities apply failed: injected ctx failure'],
-    ['mcp-add', { identity: 'i', label: 'L', command: 'c' }, 'capabilities mcp-add failed: injected ctx failure'],
     ['presets', undefined, 'capabilities presets failed: injected ctx failure'],
     ['preset-save', { scope: 'global', name: 'X', from: 'draft', skills: [], mcpServers: [], unresolvedRefs: [] }, 'capabilities preset-save failed: injected ctx failure'],
     ['preset-rename', { scope: 'global', presetId: 'p', expectedRevision: 1, name: 'N' }, 'capabilities preset-rename failed: injected ctx failure'],
@@ -515,6 +526,11 @@ test('pin 1.8: every verb catch carries the "capabilities <verb> failed: " prefi
     expect(result.kind).toBe('error')
     expect(result.text).toBe(text)
   }
+  const mcpFailure = await call('mcp-add', { identity: 'i', label: 'L', command: 'c' })
+  expect(mcpFailure.kind).toBe('error')
+  const mcpPayload = JSON.parse(mcpFailure.text)
+  expect(mcpPayload.status).toBe('validation-failed')
+  expect(mcpPayload.error.message).toBe('injected ctx failure')
   // The v1 import path shares the same verb prefix.
   const v1 = await callJson('preset-import', { scope: 'global', document: { version: 1, scope: 'global', presetId: 'p', name: 'P', selection: { skills: [], mcpServers: [], unresolvedRefs: [] } } })
   expect(v1.kind).toBe('error')

@@ -475,9 +475,11 @@ export function spawnArgv(command, args = [], platform = process.platform, optio
       // Unknown shim, but nothing here can be re-parsed: let cmd run it.
       return ['cmd.exe', '/d', '/c', command, ...args]
     }
+    const subject = options.subject ?? 'lsp'
+    const setting = options.setting ?? 'lspServers'
     throw new Error(
-      `lsp: cannot start '${command}' on Windows — its .cmd shim could not be unwrapped and the path or an argument contains characters cmd.exe would re-parse. ` +
-        `Install the server as a plain .exe, or point lspServers at its node entry point.`,
+      `${subject}: cannot start '${command}' on Windows — its .cmd shim could not be unwrapped and the path or an argument contains characters cmd.exe would re-parse. ` +
+        `Install the server as a plain .exe, or point ${setting} at its node entry point.`,
     )
   }
   return [command, ...args]
