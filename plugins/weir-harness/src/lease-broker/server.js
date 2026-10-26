@@ -6,7 +6,7 @@
 // Wire shape: newline-delimited JSON, one frame per line, in both directions.
 // Requests carry `op`; replies carry `ok` plus either the result fields or
 // `error: {code, ...details}` and always echo the client's `reqId` when it sent
-// one. Unsolicited events carry `event` ('request' | 'settled').
+// one. Unsolicited events carry `event` ('request' | 'settled' | 'released').
 //
 // Process lifetime (design D1/D8): the daemon is a cache, so it is allowed to
 // die. It exits after `idleMs` with no connected client, and stays alive as
@@ -18,7 +18,7 @@ import { unlinkSync } from 'node:fs'
 import { homedir as osHomedir, tmpdir as osTmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
-import { PROTOCOL, validateFrame } from './protocol.js'
+import { EVENTS, PROTOCOL, validateFrame } from './protocol.js'
 
 /** Idle window before a client-less daemon exits. */
 export const DEFAULT_IDLE_MS = 60_000
@@ -237,7 +237,10 @@ export async function startServer({
         return
       }
       state.greeted = true
-      writeFrame(socket, toWire({ ok: true, protocol, daemonVersion, startedAt }, hello.reqId))
+      // The handshake advertises the push events this incarnation supports,
+      // inside major 1: a client that needs one (a release subscription) can
+      // fail explicitly instead of waiting for an event this broker never sends.
+      writeFrame(socket, toWire({ ok: true, protocol, daemonVersion, startedAt, events: [...EVENTS] }, hello.reqId))
       return
     }
     if (!parsed.ok) {

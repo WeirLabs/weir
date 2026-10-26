@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
-import { createLeaseTools, DEFAULT_HOLD_MINUTES, MAX_HOLD_MINUTES, REPLY_TOOL } from '../src/file-lease/tools.js'
+import { createLeaseTools, DEFAULT_HOLD_MINUTES, MAX_HOLD_MINUTES, REPLY_TOOL, WATCH_TOOL } from '../src/file-lease/tools.js'
+import { createWatchRegistry } from '../src/file-lease/watch.js'
 
 // Unit tests for the model-facing tool surface (design D4/D5, spec: "Explicit
 // claim, release and status tools", "Model-to-model transfer negotiation",
@@ -56,6 +57,9 @@ function createFakeClient(answers = {}) {
     status: (filter) => answer('status', { filter }),
     requestTransfer: (path, from) => answer('requestTransfer', { path, from }),
     reply: (input) => answer('reply', { ...input }),
+    // A capable broker by default: the release-event advertisement is a
+    // property of the handshake, and an absent query reads as unsupported.
+    supportsEvent: (name) => (typeof answers.supportsEvent === 'function' ? answers.supportsEvent(name) : true),
   }
 }
 
@@ -97,7 +101,7 @@ function heldFailure(conflicts) {
 const tools = () => createLeaseTools({ client: createFakeClient(), ownerOf: () => OWNER })
 
 describe('file-lease tool schemas', () => {
-  it('offers exactly the six documented tools', () => {
+  it('offers exactly the seven documented tools', () => {
     const definitions = tools()
     expect(definitions.map((definition) => definition.name)).toEqual([
       'edit_lock_acquire',
@@ -106,6 +110,7 @@ describe('file-lease tool schemas', () => {
       'edit_lock_try_steal',
       REPLY_TOOL,
       'edit_lock_status',
+      WATCH_TOOL,
     ])
   })
 
@@ -127,6 +132,7 @@ describe('file-lease tool schemas', () => {
     expect(tool(definitions, 'edit_lock_try_steal').parameters.required).toEqual(['file_path'])
     expect(tool(definitions, REPLY_TOOL).parameters.required).toEqual(['request_id', 'decision'])
     expect(tool(definitions, 'edit_lock_status').parameters.required).toEqual([])
+    expect(tool(definitions, WATCH_TOOL).parameters.required).toEqual(['file_path'])
   })
 
   it('makes paths a non-empty string array and minutes an optional number', () => {
@@ -144,6 +150,10 @@ describe('file-lease tool schemas', () => {
     expect(decision.enum).toEqual(['release', 'keep'])
     expect(tool(definitions, 'edit_lock_try_steal').parameters.properties.file_path.type).toBe('string')
     expect(tool(definitions, 'edit_lock_status').parameters.properties).toEqual({})
+    const watchPath = tool(definitions, WATCH_TOOL).parameters.properties.file_path
+    expect(watchPath.type).toBe('string')
+    // One path per subscription: the batch shape belongs to acquire/release.
+    expect(tool(definitions, WATCH_TOOL).parameters.properties.paths).toBeUndefined()
   })
 })
 
@@ -409,5 +419,154 @@ describe('session working directory', () => {
     const definition = tool(createLeaseTools({ client: createFakeClient(), ownerOf: () => OWNER }), 'edit_lock_acquire')
     const message = await rejectionOf(definition, { paths: ['src/a.js'] }, execFor({ id: 'sess-a', session: { id: 'sess-a', header: {} } }))
     expect(message).toContain('working directory')
+  })
+})
+
+describe('edit_lock_watch', () => {
+  /** A lease row held by the other session on this path. */
+  function heldByOther(path = `${CWD}/src/a.js`) {
+    return { ok: true, leases: [{ path, owner: { ...OTHER }, scope: CWD, acquiredAt: 1, expiresAt: Date.now() + 90_000, holdUntil: null }] }
+  }
+
+  /**
+   * @param {Record<string, any>} [answers]
+   * @param {ReturnType<typeof createWatchRegistry>} [registry]
+   */
+  function watchTool(answers = {}, registry = createWatchRegistry()) {
+    const client = createFakeClient({ status: () => heldByOther(), ...answers })
+    return { definition: tool(createLeaseTools({ client, ownerOf: () => OWNER, watchRegistry: registry }), WATCH_TOOL), registry, client }
+  }
+
+  it('subscribes once for a path another session holds and names the holder and the next step', async () => {
+    const { definition, registry, client } = watchTool()
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+
+    // The authority was asked, never the ledger, and with the resolved path.
+    expect(lastCall(client).filter).toEqual({ path: `${CWD}/src/a.js` })
+    expect(result.state).toBe('watching')
+    expect(result.file_path).toBe('src/a.js')
+    expect(result.holder).toEqual({ label: OTHER.label, session: OTHER.session })
+    expect(result.message).toContain('src/a.js')
+    expect(result.message).toContain('edit_lock_acquire')
+    expect(result.message).toContain('not an ownership grant')
+    // It is a subscription, not a claim: nothing was acquired.
+    expect(client.calls.some((call) => call.op === 'acquire')).toBe(false)
+    // One active entry keyed by session and path.
+    expect(registry.size()).toBe(1)
+    expect(registry.entries()).toEqual([{ sessionId: OWNER.session, path: `${CWD}/src/a.js`, state: 'watching', settledByTool: false }])
+    // No absolute path in the model-facing answer.
+    expect(result.message).not.toContain(CWD)
+  })
+
+  it('is idempotent: a repeated call reuses one entry, so one release can only consume it once', async () => {
+    const { definition, registry } = watchTool()
+    await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    await definition.execute({ file_path: `${CWD}/src/a.js` }, execFor(agentFor()))
+    expect(registry.size()).toBe(1)
+
+    const consumed = registry.consumePath(`${CWD}/src/a.js`)
+    expect(consumed).toHaveLength(1)
+    expect(registry.consumePath(`${CWD}/src/a.js`)).toHaveLength(0)
+  })
+
+  it('returns free and keeps no subscription when nobody holds the path', async () => {
+    const { definition, registry } = watchTool({ status: () => ({ ok: true, leases: [] }) })
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.state).toBe('free')
+    expect(result.message).toContain('edit_lock_acquire')
+    expect(result.message).toContain('no release subscription was kept')
+    expect(registry.size()).toBe(0)
+  })
+
+  it('returns self and keeps no subscription when this session already owns the path', async () => {
+    const { definition, registry } = watchTool({
+      status: () => ({ ok: true, leases: [{ path: `${CWD}/src/a.js`, owner: { ...OWNER }, scope: CWD, acquiredAt: 1, expiresAt: Date.now() + 1000, holdUntil: null }] }),
+    })
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.state).toBe('self')
+    expect(registry.size()).toBe(0)
+  })
+
+  it('reports the absence of release events explicitly and keeps no silent entry', async () => {
+    const { definition, registry } = watchTool({ supportsEvent: () => false })
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.degraded).toBe(true)
+    expect(result.code).toBe('release-events-unsupported')
+    expect(result.message).toContain('release-events-unsupported')
+    expect(result.message).toContain('no release subscription was created')
+    expect(registry.size()).toBe(0)
+  })
+
+  it('reports an unreadable arbiter as degradation and keeps no entry', async () => {
+    const { definition, registry } = watchTool({
+      status: () => {
+        throw Object.assign(new Error('lease broker is unreachable'), { code: 'transport' })
+      },
+    })
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.degraded).toBe(true)
+    expect(result.code).toBe('transport')
+    expect(result.message).toContain('no release subscription was created')
+    expect(registry.size()).toBe(0)
+  })
+
+  it('sees a release that raced the registration and reports it once instead of a stale watching', async () => {
+    const registry = createWatchRegistry()
+    const { definition } = watchTool(
+      {
+        // The release lands while the authoritative read is in flight: the
+        // plugin's event callback consumes the entry first.
+        status: () => {
+          const consumed = registry.consumePath(`${CWD}/src/a.js`)
+          expect(consumed).toHaveLength(1)
+          return heldByOther()
+        },
+      },
+      registry,
+    )
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.state).toBe('released')
+    expect(result.message).toContain('happened while this subscription was being established')
+    expect(result.message).toContain('opportunity, not an ownership grant')
+    // The running tool already told the model: the deferred notice must not
+    // repeat it, and nothing stale is left behind.
+    expect(registry.size()).toBe(0)
+    expect(registry.peek(OWNER.session, `${CWD}/src/a.js`)).toBeUndefined()
+  })
+
+  it('reports a connection reset during registration as a re-check, never as a release', async () => {
+    const registry = createWatchRegistry()
+    const { definition } = watchTool(
+      {
+        status: () => {
+          registry.resetAll()
+          return heldByOther()
+        },
+      },
+      registry,
+    )
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.state).toBe('reset')
+    expect(result.message).toContain('Re-check with edit_lock_status')
+    expect(result.message).toContain('still held by another session')
+    expect(result.message).not.toContain('no longer held')
+    expect(registry.size()).toBe(0)
+  })
+
+  it('reports a subscription cancelled underneath it instead of pretending to wait', async () => {
+    const registry = createWatchRegistry()
+    const { definition } = watchTool(
+      {
+        status: () => {
+          registry.cancelSession(OWNER.session)
+          return heldByOther()
+        },
+      },
+      registry,
+    )
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.degraded).toBe(true)
+    expect(result.code).toBe('watch-cancelled')
+    expect(registry.size()).toBe(0)
   })
 })

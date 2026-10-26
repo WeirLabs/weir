@@ -694,3 +694,117 @@ describe('file-lease client: passthrough surface (D8 field discipline)', () => {
     client.close()
   })
 })
+
+describe('file-lease client: release push capability (D3)', () => {
+  it('records the events the current handshake advertises and forgets them on a reset', async () => {
+    const broker = createFakeBroker()
+    broker.setAnswer((frame) => {
+      if (frame.op === 'hello') return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000, events: ['request', 'settled', 'released'] }
+      if (frame.op === 'status') return { ok: true, leases: [] }
+      return { ok: true }
+    })
+    const client = createClient(broker)
+
+    // Before any handshake nothing is known, and unknown must read as
+    // unsupported: a caller may never wait for an event it cannot receive.
+    expect(client.supportsEvent('released')).toBe(false)
+    await client.status({ path: P('a') })
+    expect(client.supportsEvent('released')).toBe(true)
+    expect(client.supportsEvent('settled')).toBe(true)
+    expect(client.supportsEvent('some-future-event')).toBe(false)
+    expect(client.supportsEvent(undefined)).toBe(false)
+
+    broker.last.reset()
+    expect(client.supportsEvent('released')).toBe(false)
+
+    // The next request re-handshakes and re-learns the capability of the new
+    // connection — nothing is cached across incarnations.
+    await client.status({ path: P('a') })
+    expect(client.supportsEvent('released')).toBe(true)
+    client.close()
+    expect(client.supportsEvent('released')).toBe(false)
+  })
+
+  it('reports an older broker without the advertisement as unsupported while its operations keep working', async () => {
+    // The fake broker's default hello carries no `events` field: exactly an
+    // older daemon from the client's point of view.
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    let ran = 0
+    await client.withLeases(OWNER, [P('a')], SCOPE, () => {
+      ran += 1
+    })
+    expect(ran).toBe(1)
+    expect(client.supportsEvent('released')).toBe(false)
+    client.close()
+  })
+
+  it('ignores an unknown pushed event without losing the connection', async () => {
+    const broker = createFakeBroker()
+    broker.setAnswer((frame) => {
+      if (frame.op === 'hello') return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000, events: ['request', 'settled', 'released', 'future-event'] }
+      if (frame.op === 'status') return { ok: true, leases: [] }
+      return { ok: true }
+    })
+    const client = createClient(broker)
+    await client.status({ path: P('a') })
+    /** @type {string[]} */
+    const seen = []
+    client.onEvent((event) => seen.push(event.event))
+
+    // A newer broker may push a name this build does not interpret: it is data
+    // for whoever asked, never a protocol failure.
+    broker.last.push({ event: 'future-event', path: P('a') })
+    expect(seen).toEqual(['future-event'])
+    expect((await client.status({ path: P('a') })).ok).toBe(true)
+    client.close()
+  })
+})
+
+describe('file-lease client: connection reset lifecycle (D5)', () => {
+  it('notifies each current-connection reset exactly once and never for an explicit close', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    let resets = 0
+    const off = client.onReset(() => {
+      resets += 1
+    })
+
+    await client.status({ path: P('a') })
+    expect(resets).toBe(0)
+
+    const first = broker.last
+    first.reset()
+    // The transport wrapper makes its close notification once-only, so a second
+    // close of the same socket is silence rather than a duplicate reset.
+    first.reset()
+    expect(resets).toBe(1)
+
+    await client.status({ path: P('a') })
+    const second = broker.last
+    expect(second).not.toBe(first)
+    // A stale connection's late close is not the CURRENT connection's reset.
+    first.reset()
+    expect(resets).toBe(1)
+
+    second.reset()
+    expect(resets).toBe(2)
+
+    // An intentional shutdown is not a reset: nothing was lost unexpectedly, so
+    // a subscription holder is never told to re-check for that reason.
+    await client.status({ path: P('a') })
+    client.close()
+    expect(resets).toBe(2)
+
+    off()
+    broker.last.reset()
+    expect(resets).toBe(2)
+    client.close()
+  })
+
+  it('rejects a non-function reset handler instead of silently ignoring it', () => {
+    const client = createClient(createFakeBroker())
+    expect(() => client.onReset(null)).toThrow(/onReset requires a handler/)
+    client.close()
+  })
+})

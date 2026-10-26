@@ -196,6 +196,31 @@ describe('file-lease client over a real socket', () => {
     broker.closeClients()
   })
 
+  it('learns the release-event capability from the real handshake and reports a reset exactly once', async (t) => {
+    const broker = startBroker(t, { idleMs: 2_000 })
+    const client = broker.clientFor()
+    await client.status({ path: TARGET })
+
+    // The real daemon advertises its push events inside protocol major 1.
+    expect(client.supportsEvent('released')).toBe(true)
+    expect(client.supportsEvent('settled')).toBe(true)
+    expect(client.supportsEvent('no-such-event')).toBe(false)
+
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+    // A broker that is SIGKILLed cannot announce anything: the client's own
+    // transport is the only source of this fact.
+    broker.daemon.kill('SIGKILL')
+    await waitFor(() => resets === 1, 'one reset notification')
+    await delay(100)
+    expect(resets).toBe(1)
+    // The advertised capability died with the connection it belonged to.
+    expect(client.supportsEvent('released')).toBe(false)
+    client.close()
+  })
+
   it('spawns a real daemon, survives its idle exit, and leaves no socket behind', async (t) => {
     const broker = startBroker(t, { idleMs: 300 })
     const first = broker.clientFor()

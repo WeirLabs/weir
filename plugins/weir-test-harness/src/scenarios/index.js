@@ -65,6 +65,8 @@ import fileleaseFaultInjection from './filelease-fault-injection.js'
 import fileleaseLineage from './filelease-lineage.js'
 import fileleaseWake from './filelease-wake.js'
 import fileleaseHolderDeath from './filelease-holder-death.js'
+import fileleaseReleaseWatch from './filelease-release-watch.js'
+import fileleaseWatchReset from './filelease-watch-reset.js'
 const SCENARIOS = [deepwork, delegate, hashline, pressure, robash, semantic, grouped, escalate, background, terminate, rehydrate, lsp, targets, editlock, worktree, capstore, jobsAwareTodo]
 SCENARIOS.push(...skillComposition)
 SCENARIOS.push(applyTransaction)
@@ -106,6 +108,11 @@ SCENARIOS.push(fileleaseFaultInjection)
 SCENARIOS.push(fileleaseLineage)
 SCENARIOS.push(fileleaseWake)
 SCENARIOS.push(fileleaseHolderDeath)
+// Edit-lock-release-watch 3.1 / 3.2: the release-subscription feature end to
+// end — one real broadcast consumed by two waiters that then compete, and a
+// broker reset that ends a subscription without pretending it was a release.
+SCENARIOS.push(fileleaseReleaseWatch)
+SCENARIOS.push(fileleaseWatchReset)
 
 /**
  * Find a scenario entry by id.

@@ -465,6 +465,20 @@ export function connectLeaseBroker(socketPath, { timeoutMs = DEFAULT_TIMEOUT_MS 
     },
     events: () => [...events],
     nextEvent,
+    /**
+     * Answer a pending transfer request as the holder (the `reply` op). The
+     * probe never waits for a settlement: the outcome is pushed to the
+     * requesting connection and a scenario asserts on that event.
+     * @param {string | { id?: unknown, session?: unknown, label?: unknown }} owner
+     * @param {string} requestId
+     * @param {'release' | 'keep'} decision
+     * @returns {Promise<any>}
+     */
+    reply: (owner, requestId, decision) => {
+      if (!isNonEmptyString(requestId)) throw new TypeError('reply requires a request id')
+      if (decision !== 'release' && decision !== 'keep') throw new TypeError("reply decision must be 'release' or 'keep'")
+      return request('reply', { owner: normalizeOwner(owner), requestId, decision })
+    },
     release: (owner, paths) => request('release', { owner: normalizeOwner(owner), paths: normalizePaths(paths) }),
     close() {
       if (closed) return

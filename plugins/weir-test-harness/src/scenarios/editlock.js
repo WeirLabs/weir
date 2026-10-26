@@ -4,7 +4,7 @@
 // What this asserts after the rebuild (edit-lock-rebuild 3.8), i.e. only
 // behaviour that still exists:
 //   - the managed editor surface: stock `edit`/`write` are replaced, `write` and
-//     `hash_edit` are the managed editors, and the five ownership tools exist;
+//     `hash_edit` are the managed editors, and the six ownership tools exist;
 //   - a managed edit claims its target implicitly, `edit_lock_status` reports it
 //     as held by this session, `edit_lock_hold` retains it past the turn, and
 //     `edit_lock_release` gives it back.
@@ -23,7 +23,7 @@ const prompt = 'editlock-probe'
 const WS = join(IT_ROOT, 'ws')
 const TARGET = join(WS, 'locked.txt')
 
-const OWNER_TOOLS = ['edit_lock_acquire', 'edit_lock_hold', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal']
+const OWNER_TOOLS = ['edit_lock_acquire', 'edit_lock_hold', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal', 'edit_lock_watch']
 
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
@@ -63,6 +63,9 @@ function assert(run) {
   const target = join(run.ws, 'locked.txt')
   run.check('file lease owner tools advertised', run.requests.some((r) => r.editLockToolsSeen) && OWNER_TOOLS.every((name) => tools.includes(name)), JSON.stringify([...new Set(tools)]))
   run.check('the negotiation reply tool stays out of the catalog with nothing pending', !tools.includes('edit_lock_reply'), JSON.stringify([...new Set(tools)]))
+  // The release subscription is a peer of the ownership verbs: always present,
+  // and unavailable to children through the shared deny list.
+  run.check('release subscription tool advertised', tools.includes('edit_lock_watch'), JSON.stringify([...new Set(tools)]))
   run.check('stock edit and write hidden, managed write and hash_edit present', !tools.includes('edit') && tools.includes('write') && tools.includes('hash_edit'))
   run.check('managed write then hash_edit published', existsSync(target) && readFileSync(target, 'utf8') === 'second\n', existsSync(target) ? readFileSync(target, 'utf8') : 'missing')
   run.check('status reported this session as the holder', text.some((t) => t.includes('Held by this session')), text.join('\n').slice(-800))

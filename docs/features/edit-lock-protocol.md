@@ -41,7 +41,7 @@
 
 | op | 入参 | 回包 | 错误码 |
 |---|---|---|---|
-| `hello` | `protocol` | `protocol`、`daemonVersion`、`startedAt` | `protocol-mismatch`、`bad-request` |
+| `hello` | `protocol` | `protocol`、`daemonVersion`、`startedAt`、`events` | `protocol-mismatch`、`bad-request` |
 | `acquire` | `owner`、`scope`、`paths`、`ttlMs?` | `granted[]`（每项 `path`、`owner`、`scope`、`acquiredAt`、`expiresAt`、`holdUntil`） | `held`、`invalid-path`、`bad-request` |
 | `release` | `owner`、`paths` | `released[]`、`notOwned[]` | `invalid-path`、`bad-request` |
 | `hold` | `owner`、`paths`、`minutes` | `held[]`（每项 `path`、`expiresAt`、`holdUntil`） | `not-owned`、`limit`、`invalid-path`、`bad-request` |
@@ -51,11 +51,11 @@
 
 逐条要点：
 
-- **`hello`**：必须首帧。主版本相符则回 `{ok:true, protocol, daemonVersion, startedAt}`；不符则回 `protocol-mismatch`（带 `supported: [protocol]`）并关闭连接。`startedAt` 是本次进程的启动时刻，客户端据此判断「仲裁器换过一代」。
+- **`hello`**：必须首帧。主版本相符则回 `{ok:true, protocol, daemonVersion, startedAt, events}`；不符则回 `protocol-mismatch`（带 `supported: [protocol]`）并关闭连接。`startedAt` 是本次进程的启动时刻，客户端据此判断「仲裁器换过一代」。`events` 是本化身支持的主动推送事件名清单（`request`、`settled`、`released`）：客户端按它判断自己需要的推送是否受支持，而不是靠版本号猜。旧客户端忽略这个新字段，既有操作不受影响。
 - **`acquire`**：整批**全有或全无**。路径先去重再排序后求值（确定性顺序，两个重叠请求不会互相等死），任一被他人持有且未过期则一个都不授予，返回 `held` 与全部冲突项（含持有者 `owner`、`expiresAt`、`holdUntil`）。同一 `owner.id` 且同一连接的重复申请是**收养**：刷新 `expiresAt`，不重设 `acquiredAt`，保留 `holdUntil`。`ttlMs` 可覆盖本条申请的 TTL。
-- **`release`**：只按「该连接 + 该 `owner.id`」判定归属。`notOwned` **不是错误**（仲裁器重启后所有路径本就自由），因此重复释放是安全空操作。租约一旦被他人取得，释放会落到 `notOwned` 而不是误删别人的租约。
+- **`release`**：只按「该连接 + 该 `owner.id`」判定归属。`notOwned` **不是错误**（仲裁器重启后所有路径本就自由），因此重复释放是安全空操作。租约一旦被他人取得，释放会落到 `notOwned` 而不是误删别人的租约。真正被移除的每一条租约都会产生一次 `released` 广播（见「事件」）。
 - **`hold`**：把有效期推到 `now + minutes`，`minutes` 必须为正数且不超过固定上限（60）。**只延长不缩短**：`holdUntil = max(旧 holdUntil, 新期限)`，要求该批路径**全部**属于本连接且仍在有效期内，否则整批 `not-owned`。到期就是到期，无人通知。
-- **`status`**：只读，过滤器可叠加（`scope`、`session`、`path` 同时给出即同时满足），返回副本。已过有效期的租约**不出现在结果里**——它们在语义上已经自由，只是内存里那一行可能还没被 sweep 回收。
+- **`status`**：只读，过滤器可叠加（`scope`、`session`、`path` 同时给出即同时满足），返回副本。已过有效期的租约**不出现在结果里**——它们在语义上已经自由，只是内存里那一行可能还没被 sweep 回收。只读指的是「不取得、不释放任何有效租约」：观察到一个已由时钟判死的记录时，它会被回收并广播 `expired`（与 sweep 同一出口），因此一次查询不会改变任何仍然有效的所有权。
 - **`request`**：请求持有者转交。路径无租约或租约已过期 → `free`（直接 acquire 即可，不需要协商）；持有者就是自己 → `self`。成功时创建一个有界窗口（默认 120s）的待答请求，并把 `request` 事件**只**投给持有者连接。同一 `(from.id, path)` 至多一条待答请求：重复请求复用同一 `requestId` 与同一窗口；若期间路径已易主，则丢弃旧条目并新建，让请求落到真正的持有者。
 - **`reply`**：由持有者应答。`keep` 保留所有权并把请求标记 `declined`；`release` 就地转移所有权给请求方并把请求标记 `transferred`（见下）。判定顺序固定为 **`expired` → `stale` → `not-holder`**：请求不存在或窗口已过是 `expired`；租约已消失或已易主是 `stale`（所有权不变）；应答不来自持有者连接或 `owner.id` 不符是 `not-holder`，且该请求**保持待答**（外人不能替别人消费掉一条请求）。转移时 `owner` 改为请求方、`connectionId` 改为请求方连接、`acquiredAt = now`、`expiresAt = now + ttl`、`holdUntil` 清空。
 
@@ -67,8 +67,26 @@
 |---|---|---|
 | `request` | 仲裁器 → 持有者连接 | `requestId`、`path`、`from`、`expiresAt` |
 | `settled` | 仲裁器 → 请求方连接 | `requestId`、`path`、`state`（`transferred` / `declined` / `expired`） |
+| `released` | 仲裁器 → 每条在线连接 | `path`、`reason`（`released` / `disconnected` / `expired`） |
 
 投递是尽力而为：连接不存在时事件被静默丢弃，事件只影响「谁被通知」，**从不影响裁决结果**。`settled` 只在这四种时刻发出：转移成功、持有者 `keep`、窗口过期（含 sweep 回收时）、持有者连接断开。
+
+### 释放事实（`released`）
+
+每当仲裁器让一条路径**不再有持有者**时，它在**删除该租约之后**向每一条在线连接各发一次 `released`，`reason` 说明是哪条路径造成的：
+
+| reason | 触发时刻 |
+|---|---|
+| `released` | 持有者显式 `release`（含释放一条已过有效期但尚未回收的记录） |
+| `disconnected` | 持有者连接关闭，该连接名下每条租约各一条 |
+| `expired` | 仲裁器观察到或 sweep 回收一条有效期已过的记录 |
+
+- **原子转交不广播**：`reply(release)` 就地改写归属，路径从未变成无主，因此没有释放事实可发。
+- **空操作不广播**：重复释放落到 `notOwned`、`acquire` 的收养/刷新、`hold` 的延长都改变不了「谁拥有」，一条都不发。
+- **每条记录只播一次**：广播在删除之后，后续观察同一路径找不到记录，因此不会重复。
+- **只是一个事实**：broker 不做订阅表、不排队、不选主、不预留归属；谁收到、收到后做什么，全在客户端。收件方缺失或断开只是被跳过，不重试、不持久化。
+
+客户端侧（例如编辑锁的释放订阅）据此在内存里做一次性订阅，重启或断连都不会被重建——仲裁器根本不记得谁在等。
 
 ## `owner` 与 `scope` 的不透明约定
 
@@ -117,6 +135,12 @@
 - 客户端因此只保留一份**内存租约清单**（`path → 租约`），且它**只用于重放、从不用于裁决**：连接重置或 `startedAt` 变化时，客户端对 `holdUntil > now` 的条目重放 `acquire + hold`，失败的条目直接剔除。裁决永远只在仲裁器一处。
 - 本进程的生命周期由空闲窗口决定：最后一个连接断开后开始计时，到点自行退出，进程结束后不会留下任何需要清理的东西（POSIX 残留的 socket 文件由下一次启动的 `EADDRINUSE` 恢复路径回收）。有连接在线时**绝不退出**——连接就是「还有人在用仲裁器」的唯一证据。测试可用 `WEIR_EDITLOCKD_IDLE_MS` 与 `WEIR_EDITLOCKD_SWEEP_MS` 覆盖两个间隔。
 
+## 向后兼容
+
+- 协议主版本保持 `1`：`released` 事件与 `hello` 的 `events` 清单都是**向后兼容的扩展**。旧客户端忽略未知事件与未知回包字段，既有 acquire/release/hold/status/request/reply 语义一字不变。
+- 不 bump major 的理由是地址：socket 名含主版本，不同主版本**互不仲裁**。为了一个新事件把新旧 Harness 分到两个仲裁器里，等于用失去跨版本互斥换取一个可选能力。
+- 新客户端连到旧 broker（没有 `events`）时不是「重启 daemon 升级」——主动杀仲裁器会清空全部租约。正确行为是该能力显式不可用（释放订阅报告 unsupported），其他编辑锁行为照常；旧 daemon 自然空闲退出后，新 daemon 自动获得该能力。
+
 ## 客户端降级放行（不在本协议内实现）
 
 仲裁器永远**不是**受管写入的前置条件：协议本身不含任何阻塞要求，一个连不上或答不上来的仲裁器不能阻止写入。客户端在自身超时（2s）后杀进程重启、重试一次，仍失败则放行本次写入并记一条审计（同进程内限流）。关键区分是**基础设施失败**（连不上、超时、协议不匹配）才降级放行，**真实冲突**（`held`）永远拒绝。
@@ -134,5 +158,6 @@
 ## 测试
 
 - `plugins/weir-harness/test/lease-broker-state.test.js`：内核单测——全有或全无、收养与滑动有效期、过期夺权、保留的延长/上限/非所有者、协商四结局、`requestId` 复用、断连释放、跨连接同 id 冲突、过滤器叠加、sweep 回收。
-- `plugins/weir-harness/test/lease-broker-server.test.js`：真实 IPC 往返——握手、acquire/status/release、协议主版本不符、断连释放、空闲自退与「有连接不退出」、残留 socket 回收、事件投递与 `reqId` 回带。
+- `plugins/weir-harness/test/lease-broker-server.test.js`：真实 IPC 往返——握手与 `events` 能力清单、acquire/status/release、协议主版本不符、断连释放、空闲自退与「有连接不退出」、残留 socket 回收、事件投递（含向所有连接广播 `released`）与 `reqId` 回带。
 - `plugins/weir-harness/test/lease-broker-protocol-doc.test.js`：本文件与 `protocol.js` 的双向对拍（操作名、事件名、错误码闭集），并断言实现源码里出现的错误码不超出闭集。
+- `plugins/weir-harness/test/lease-broker-state.test.js` 的「release facts」一组：删除后广播、三个 reason、每条只播一次、全连接可达、原子转交与空操作静默、单个 sink 抛错不影响仲裁。

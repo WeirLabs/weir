@@ -152,6 +152,8 @@ function createFakeClient(answers = {}) {
   const releasedAll = []
   /** @type {Set<(event: any) => void>} */
   const handlers = new Set()
+  /** @type {Set<() => void>} */
+  const resetHandlers = new Set()
   /** @type {any[]} */
   const calls = []
   const client = {
@@ -167,6 +169,23 @@ function createFakeClient(answers = {}) {
       return () => {
         handlers.delete(handler)
       }
+    },
+    onReset(/** @type {() => void} */ handler) {
+      resetHandlers.add(handler)
+      return () => {
+        resetHandlers.delete(handler)
+      }
+    },
+    /** Simulate the transport dropping the current connection. */
+    pushReset() {
+      for (const handler of [...resetHandlers]) handler()
+    },
+    resetSubscriberCount() {
+      return resetHandlers.size
+    },
+    supportsEvent(/** @type {string} */ name) {
+      if (typeof answers.supportsEvent === 'function') return answers.supportsEvent(name)
+      return name === 'request' || name === 'settled' || name === 'released'
     },
     /** @param {any} event */
     push(event) {
@@ -241,7 +260,7 @@ describe('file-lease plugin row', () => {
     expect(typeof instance.apply).toBe('function')
   })
 
-  it('registers the five always-on tools and not the conditional reply tool', () => {
+  it('registers the six always-on tools and not the conditional reply tool', () => {
     const ctx = createCtx()
     const plugin = createFileLeasePlugin({ client: createFakeClient(), deliver: () => true })
     const dispose = plugin.apply(ctx)
@@ -251,6 +270,7 @@ describe('file-lease plugin row', () => {
       'edit_lock_release',
       'edit_lock_status',
       'edit_lock_try_steal',
+      'edit_lock_watch',
     ])
     expect(ctx.listenerCount('turn/end')).toBe(1)
     expect(ctx.listenerCount('agent/disposed')).toBe(1)
@@ -275,7 +295,7 @@ describe('file-lease plugin row', () => {
     // The default is enabled: an omitted or empty config changes nothing, so the
     // production presets (which never write the key) keep the full surface.
     plugin.apply(ctx, {})
-    expect(registeredNames(ctx)).toHaveLength(5)
+    expect(registeredNames(ctx)).toHaveLength(6)
   })
 })
 
@@ -657,9 +677,10 @@ describe('mount lifetime (D11)', () => {
       'edit_lock_release',
       'edit_lock_status',
       'edit_lock_try_steal',
+      'edit_lock_watch',
     ])
     disposeSecond()
-    expect(registeredNames(ctx)).toHaveLength(5)
+    expect(registeredNames(ctx)).toHaveLength(6)
     disposeFirst()
     expect(registeredNames(ctx)).toHaveLength(0)
   })
@@ -757,8 +778,8 @@ describe('two preset mounts share one client (D11)', () => {
     const disposeB = mountB.apply(ctxB)
 
     // Each mount scopes its own tool surface...
-    expect(registeredNames(ctxA)).toHaveLength(5)
-    expect(registeredNames(ctxB)).toHaveLength(5)
+    expect(registeredNames(ctxA)).toHaveLength(6)
+    expect(registeredNames(ctxB)).toHaveLength(6)
 
     // ...but the request event reaches both through the shared client, and the
     // holder must be woken exactly once (spec: "Idle holder is woken once").
@@ -861,6 +882,252 @@ describe('degraded-write audit wiring (D7)', () => {
     })
     const dispose = plugin.apply(createCtx())
     expect(sharedCalls).toBe(0)
+    dispose()
+  })
+})
+
+describe('release subscriptions (D2, D4, D5)', () => {
+  const TARGET = `${CWD}/src/a.js`
+
+  /** An authoritative read that says another session holds the target. */
+  function heldByOther() {
+    return { ok: true, leases: [{ path: TARGET, owner: { ...OTHER }, scope: CWD, acquiredAt: 1, expiresAt: Date.now() + 60_000, holdUntil: null }] }
+  }
+
+  /** The release fact the broker broadcasts. */
+  function releasedEvent(overrides = {}) {
+    return { event: 'released', path: TARGET, reason: 'released', ...overrides }
+  }
+
+  /** @param {any} ctx @param {any} agent @param {string} [filePath] */
+  async function subscribe(ctx, agent, filePath = 'src/a.js') {
+    return await execute(ctx.tools.get('edit_lock_watch'), { file_path: filePath }, { agent })
+  }
+
+  /**
+   * One mounted plugin with an idle agent and a recording delivery channel.
+   * @param {Record<string, any>} [answers]
+   */
+  function mount(answers = {}) {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    /** @type {{ agent: any, text: string, wake: boolean }[]} */
+    const delivered = []
+    const client = createFakeClient({ status: heldByOther, ...answers })
+    const plugin = createFileLeasePlugin({
+      client,
+      ownerOf: () => OWNER,
+      deliver: (agent, text, wake) => {
+        delivered.push({ agent, text, wake })
+        return true
+      },
+    })
+    const agent = createAgent(OWNER.session, { status: 'running' })
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+    return { ctx, client, agent, agents, delivered, dispose }
+  }
+
+  it('delivers one deferred notice for a release and consumes the subscription', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    const result = await subscribe(ctx, agent)
+    expect(result.state).toBe('watching')
+    expect(delivered).toEqual([])
+
+    client.push(releasedEvent())
+    // Nothing is delivered from inside the socket callback: the notice is
+    // timer-deferred so an injection can never re-enter the transport.
+    expect(delivered).toEqual([])
+    await flush()
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].agent).toBe(agent)
+    expect(delivered[0].wake).toBe(false)
+    expect(delivered[0].text).toContain('src/a.js')
+    expect(delivered[0].text).toContain('edit_lock_acquire')
+    expect(delivered[0].text).toContain('not a grant of ownership')
+    expect(delivered[0].text).toContain('edit_lock_watch')
+    expect(delivered[0].text).not.toContain(CWD)
+    for (const forbidden of ['/edit-lock', 'panel', 'settings', 'admin', 'maintenance']) {
+      expect(delivered[0].text).not.toContain(forbidden)
+    }
+
+    // A duplicate or repeated observation of the same release finds nothing.
+    client.push(releasedEvent())
+    client.push(releasedEvent({ reason: 'expired' }))
+    await flush()
+    expect(delivered).toHaveLength(1)
+    dispose()
+  })
+
+  it('wakes an idle subscriber exactly once with a full UserMessage', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    const client = createFakeClient({ status: heldByOther })
+    // No injected delivery channel: the product's own followup/steer path runs.
+    const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER })
+    const agent = createAgent(OWNER.session, { status: 'idle' })
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    await subscribe(ctx, agent)
+    client.push(releasedEvent())
+    await flush()
+
+    expect(agent.sent).toHaveLength(1)
+    expect(agent.sent[0].channel).toBe('followup')
+    const message = agent.sent[0].message
+    expect(message.role).toBe('user')
+    expect(message.source.kind).toBe('weir-file-lease')
+    expect(message.content[0].type).toBe('text')
+    expect(message.content[0].text).toContain('src/a.js')
+    dispose()
+  })
+
+  it('routes a release to the mount that registered it, once, when two mounts share one client', async () => {
+    const agents = new Map()
+    const ctxA = createCtx(agents)
+    const ctxB = createCtx(agents)
+    const client = createFakeClient({ status: heldByOther })
+    /** @type {{ mount: string, text: string }[]} */
+    const delivered = []
+    const mountA = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'a', text }); return true } })
+    const mountB = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'b', text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const disposeA = mountA.apply(ctxA)
+    const disposeB = mountB.apply(ctxB)
+
+    // The subscription lives on mount A only: B also hears the broadcast, but
+    // has no entry to consume, so it must stay silent.
+    await subscribe(ctxA, agent)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].mount).toBe('a')
+    disposeA()
+    disposeB()
+  })
+
+  it('cancels the subscription on a connection reset and reports a re-check, not a release', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    client.pushReset()
+    await flush()
+    expect(delivered).toHaveLength(1)
+    const text = delivered[0].text
+    expect(text).toContain('connection was reset')
+    expect(text).toContain('Re-check with edit_lock_status')
+    expect(text).toContain('still held by another session')
+    // A reset claims nothing about ownership: no release, no free path, no grant.
+    for (const forbidden of ['no longer held', 'is now free', 'you own', 'was transferred']) {
+      expect(text).not.toContain(forbidden)
+    }
+
+    // The old subscription is over: a release after the reset delivers nothing.
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    dispose()
+  })
+
+  it('delivers nothing to a disposed agent and drops its subscription', async () => {
+    const { ctx, client, agent, agents, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    // Disposal ends the subscription; even a release observed before the timer
+    // fires must not reach the agent that is gone.
+    ctx.emit('agent/disposed', { agent })
+    agents.delete(OWNER.session)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toEqual([])
+
+    // A fresh watch after disposal is a new subscription, not a revival.
+    agents.set(OWNER.session, agent)
+    await subscribe(ctx, agent)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    dispose()
+  })
+
+  it('cancels every subscription when the mount is disposed', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+    dispose()
+
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toEqual([])
+    expect(client.subscriberCount()).toBe(0)
+    expect(client.resetSubscriberCount()).toBe(0)
+  })
+
+  it('cancels a waiting subscription when a transfer settles as transferred', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    // The session asked for the same path and the holder handed it over: the
+    // wait is over because the goal was reached by another route.
+    const steal = ctx.tools.get('edit_lock_try_steal')
+    await execute(steal, { file_path: 'src/a.js' }, { agent })
+    client.push({ event: 'settled', requestId: 'r-default', path: TARGET, state: 'transferred' })
+    await flush()
+    const afterTransfer = delivered.length
+    expect(delivered.some((entry) => entry.text.includes('transferred'))).toBe(true)
+
+    // A release broadcast for the path afterwards must not resurrect the wait.
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(afterTransfer)
+    dispose()
+  })
+
+  it('keeps a subscription when the transfer is declined', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    const steal = ctx.tools.get('edit_lock_try_steal')
+    await execute(steal, { file_path: 'src/a.js' }, { agent })
+    client.push({ event: 'settled', requestId: 'r-default', path: TARGET, state: 'declined' })
+    await flush()
+    expect(delivered.some((entry) => entry.text.includes('kept'))).toBe(true)
+
+    // Still subscribed: the next release is the moment this session was waiting for.
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered.some((entry) => entry.text.includes('no longer held'))).toBe(true)
+    dispose()
+  })
+
+  it('reports a release that raced the tool as a synchronous result without repeating it', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    /** @type {{ text: string }[]} */
+    const delivered = []
+    let releaseOnStatus = true
+    const client = createFakeClient({
+      status: () => {
+        // The release lands while the authoritative read is in flight.
+        if (releaseOnStatus) {
+          releaseOnStatus = false
+          client.push(releasedEvent())
+        }
+        return heldByOther()
+      },
+    })
+    const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    const result = await subscribe(ctx, agent)
+    expect(result.state).toBe('released')
+    await flush()
+    // The tool already told the model, so the deferred notice was suppressed.
+    expect(delivered).toEqual([])
     dispose()
   })
 })

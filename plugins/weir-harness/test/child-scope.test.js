@@ -30,7 +30,7 @@ describe('CHILD_DENY_TOOLS', () => {
       'worktree_open', 'worktree_land', 'worktree_cleanup', 'worktree_abandon', 'worktree_check',
       'exit_plan_mode',
       'ask_user_question', 'present',
-      'edit_lock_acquire', 'edit_lock_hold', 'edit_lock_pause', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal',
+      'edit_lock_acquire', 'edit_lock_hold', 'edit_lock_pause', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal', 'edit_lock_watch',
     ]
     expect(CHILD_DENY_TOOLS).toEqual(expected)
     expect(new Set(CHILD_DENY_TOOLS).size).toBe(CHILD_DENY_TOOLS.length)

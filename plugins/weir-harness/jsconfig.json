@@ -81,6 +81,7 @@
     "src/file-lease/lineage.js",
     "src/file-lease/singleton.js",
     "src/file-lease/tools.js",
+    "src/file-lease/watch.js",
     "src/file-lease/plugin.js",
     "src/file-lease/index.js",
     "src/file-lease/view.js",
