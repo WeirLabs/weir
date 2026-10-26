@@ -163,6 +163,9 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           }
           let builtinIdentities = []
           let enabledMcpIdentities = []
+          const registry = await createMcpRegistry({ store }).read()
+          if (registry.kind !== 'ok' && registry.kind !== 'absent') throw new Error(`MCP registry is ${registry.kind}`)
+          const registryServers = registry.kind === 'ok' ? registry.servers : {}
           // Only a FULLY formed initial result may become a lifecycle snapshot:
           // a baseline or a name binding derived from an incomplete inventory is
           // a best-effort view, never an inheritable set (D2).
@@ -173,13 +176,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             // Baseline scopes are row-configurable (default builtin-only);
             // the weir-creative preset adds 'custom' for its fused skills.
             builtinIdentities = baselineSkillIdentities(snapshot?.candidates, config.baselineScopes)
-            try {
-              const registry = await store.read({ kind: 'mcp-registry' })
-              const payload = registry.kind === 'ok' ? registry.payload ?? {} : {}
-              enabledMcpIdentities = Array.isArray(/** @type {Record<string, unknown>} */ (payload).enabled) ? /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (payload).enabled) : []
-            } catch { /* an unreadable registry enables no managed identity by default */ }
+            enabledMcpIdentities = registry.kind === 'ok' ? registry.enabled : []
           }
           const resolved = resolveInitialSelection({ defaultsRecord, builtinIdentities, enabledMcpIdentities })
+          for (const identity of resolved.selection.mcpServers) {
+            if (!registryServers[identity]) resolved.missing.push({ kind: 'mcp', ref: identity, reason: 'configured default is not registered' })
+          }
+          resolved.selection.mcpIncarnations = Object.fromEntries(resolved.selection.mcpServers.filter(identity => registryServers[identity]).map(identity => [identity, registryServers[identity].incarnation ?? null]))
           // Name-string skill entries in a workspace default (the client
           // draft's wire shape, written by default-save from:'draft') bind
           // against the live inventory by unique name; unbindable entries
@@ -209,6 +212,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 revision: 0,
                 skills: resolved.selection.skills,
                 mcpServers: resolved.selection.mcpServers,
+                mcpIncarnations: resolved.selection.mcpIncarnations,
                 captured: null,
               })
             }
@@ -296,6 +300,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         locateSession: session => session,
         inventory: (options) => inventory(options),
         provider,
+        mcpRegistry: createMcpRegistry({ store: storeFor() }),
         ...applyEngineHooks({ ctx, lifecycle, notifier, audit }),
       })
       return sharedEngine

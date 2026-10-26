@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
+import { seedMcpRegistrations } from './helpers/mcp-registry.js'
 
 // The store-backed command surface (receipt/list/apply/mcp-add) persists
 // through the Weir capability store, whose platform matrix (C-1.10) enables
@@ -443,6 +444,7 @@ test('/capabilities apply wires the manager drain: a removal reports the real in
 
     // The session accepts the managed server, then has a call in flight on it
     // (the manager drain's enter/exit is the handoff ledger, mcp-admission).
+    await seedMcpRegistrations(root)
     const accepted = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: ['docs'] })}` })
     expect(JSON.parse(accepted.text).status).toBe('applied')
     const token = managerDrain.enter('sess-drain', 'docs', 'slow-call')
@@ -500,6 +502,7 @@ test('/capabilities receipt on a cold fork reports the inherited sets with an ac
     const alphaIdentity = JSON.parse((await command.handler({ agent: seedAgent, rawInput: 'list' })).text).skills.find(row => row.name === 'alpha').identity
     const forkAgent = { id: 'sess-fork', session: { id: 'sess-fork', header: { cwd: root, delegationDepth: 0, parentSession: 'sess-parent' } } }
     // Exactly what a depth-0 capture writes (origin inherited + lineage metadata).
+    await seedMcpRegistrations(root)
     const { openCapabilityStore } = await import('../src/capabilities/store/store.js')
     await openCapabilityStore({ profileContext: { home: root, name: 'it' }, platform: 'darwin' })
       .commit({ kind: 'inherited', sessionId: 'sess-fork' }, 0, () => ({

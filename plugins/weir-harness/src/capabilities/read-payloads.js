@@ -50,6 +50,7 @@ export async function buildReceiptPayload(deps, options) {
       skills: selected.map(candidate => candidate.name),
       skillIdentities,
       mcpServers,
+      ...(snapshot?.mcpIncarnations && typeof snapshot.mcpIncarnations === 'object' ? { mcpIncarnations: structuredClone(snapshot.mcpIncarnations) } : {}),
       digest: effectiveSelectionDigest(skillIdentities, mcpServers),
     },
     warnings: result?.complete === false || status?.error

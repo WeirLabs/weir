@@ -154,7 +154,7 @@ export function resolveSkillNamesForSave(names, candidates, appliedSkills) {
   return { identities, missing, ambiguous }
 }
 
-export function resolveInitialSelection({ defaultsRecord, builtinIdentities = [], enabledMcpIdentities = [] }) {
+export function resolveInitialSelection({ defaultsRecord, builtinIdentities = [], enabledMcpIdentities = [], mcpIncarnations }) {
   // A cleared marker is an explicit removal (9.4): it behaves as ABSENT —
   // clearing is never an explicit empty set, which stays a savable choice.
   const cleared = defaultsRecord && defaultsRecord.kind === 'ok'
@@ -169,13 +169,14 @@ export function resolveInitialSelection({ defaultsRecord, builtinIdentities = []
       selection: {
         skills: Array.isArray(payload.skills) ? structuredClone(payload.skills) : [],
         mcpServers: Array.isArray(payload.mcpServers) ? /** @type {string[]} */ (payload.mcpServers).slice() : [],
+        ...((mcpIncarnations ?? payload.mcpIncarnations) ? { mcpIncarnations: structuredClone(mcpIncarnations ?? payload.mcpIncarnations) } : {}),
       },
       missing: Array.isArray(payload.unresolvedRefs) ? payload.unresolvedRefs.slice() : [],
     }
   }
   return {
     source: 'builtin-baseline',
-    selection: { skills: builtinIdentities.slice(), mcpServers: enabledMcpIdentities.slice() },
+    selection: { skills: builtinIdentities.slice(), mcpServers: enabledMcpIdentities.slice(), ...(mcpIncarnations ? { mcpIncarnations: structuredClone(mcpIncarnations) } : {}) },
     missing: [],
   }
 }

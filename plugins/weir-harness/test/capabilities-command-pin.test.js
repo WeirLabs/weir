@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
+import { seedMcpRegistrations } from './helpers/mcp-registry.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'weir-cmd-pin-'))
 
@@ -235,6 +236,7 @@ test("pin 1.2: default-save from:'applied' is server-authoritative — client se
     const root = tmp()
     plantAlpha(root)
     const { callJson } = mountCapabilities(root, { customSkillDirs: [join(root, 'custom')], dshHome: root })
+    await seedMcpRegistrations(root)
     const applied = await callJson('apply', { requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: ['docs'] })
     expect(applied.payload.status).toBe('applied')
 
@@ -344,7 +346,7 @@ test('pin 1.4: receipt/list/conditions payload field lists', { skip: storePlatfo
     expect(Object.keys(receipt.payload)).toEqual(['status', 'revision', 'effective', 'warnings'])
     expect(receipt.payload.status).toBe('applied')
     expect(receipt.payload.revision).toBe(0)
-    expect(Object.keys(receipt.payload.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers', 'digest'])
+    expect(Object.keys(receipt.payload.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers', 'mcpIncarnations', 'digest'])
     expect(receipt.payload.effective.digest).toMatch(/^[0-9a-f]{64}$/)
     expect(receipt.payload.warnings).toEqual([])
 
@@ -373,7 +375,7 @@ test('pin 1.4: apply success payload field list (no removal → no draining fiel
     expect(applied.payload.status).toBe('applied')
     expect(applied.payload.revision).toBe(1)
     expect(Object.keys(applied.payload.receipt).sort()).toEqual(['acceptedAt', 'requestDigest', 'requestId', 'revision'])
-    expect(Object.keys(applied.payload.effective)).toEqual(['skills', 'mcpServers'])
+    expect(Object.keys(applied.payload.effective)).toEqual(['skills', 'mcpServers', 'mcpIncarnations'])
     expect(applied.payload.effective.skills.map(identity => identity.name)).toEqual(['alpha'])
     expect(applied.payload.unresolvedWarnings).toEqual([])
   } finally {

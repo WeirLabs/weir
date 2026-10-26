@@ -203,7 +203,7 @@ export function digestApplyRequest(normalized) {
  */
 export function createApplyEngine(options) {
   const {
-    store, locateSession, inventory, provider,
+    store, locateSession, inventory, provider, mcpRegistry,
     fence = createAdmissionFence(),
     drain = createDrainCoordinator(),
     conditions = () => [],
@@ -365,6 +365,19 @@ export function createApplyEngine(options) {
     const missing = normalized.skills.filter(key => (byKey.get(key) ?? []).length !== 1)
     if (missing.length) return { status: 'rejected', reason: 'selected-identity-missing', step: 2, missing }
 
+    let mcpIncarnations
+    if (mcpRegistry) {
+      let current
+      try { current = await mcpRegistry.read() } catch (error) {
+        return { status: 'rejected', reason: `mcp-registry-unavailable:${message(error)}`, step: 2 }
+      }
+      if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'rejected', reason: `mcp-registry-unavailable:${current.kind}`, step: 2 }
+      const servers = current.kind === 'ok' ? current.servers : {}
+      const missingMcp = normalized.mcpServers.filter(identity => !servers[identity])
+      if (missingMcp.length) return { status: 'rejected', reason: 'unregistered-mcp', step: 2, missing: missingMcp }
+      mcpIncarnations = Object.fromEntries(normalized.mcpServers.map(identity => [identity, servers[identity].incarnation ?? null]))
+    }
+
     // Step 3: prepare a pure snapshot, filtered view and verified content
     // handles. Nothing is published, installed or notified here.
     let prepared
@@ -388,7 +401,7 @@ export function createApplyEngine(options) {
 
     const previousSets = record.kind === 'ok' ? safeSets(record.payload) : { skills: [], mcpServers: [] }
     const removedServers = previousSets.mcpServers.filter(server => !normalized.mcpServers.includes(server))
-    const payload = { skills: prepared.identities, mcpServers: normalized.mcpServers, origin: 'apply' }
+    const payload = { skills: prepared.identities, mcpServers: normalized.mcpServers, ...(mcpIncarnations ? { mcpIncarnations } : {}), origin: 'apply' }
     const requestDigest = digestApplyRequest(normalized)
 
     // Step 4: enter the admission fence, close removed-server gates, start draining.
@@ -496,7 +509,7 @@ export function createApplyEngine(options) {
         status: 'applied',
         revision: result.revision,
         receipt: result.receipt,
-        effective: { skills: structuredClone(prepared.identities), mcpServers: [...normalized.mcpServers] },
+        effective: { skills: structuredClone(prepared.identities), mcpServers: [...normalized.mcpServers], ...(mcpIncarnations ? { mcpIncarnations } : {}) },
         unresolvedWarnings: normalized.unresolved.map(entry => ({ ...entry })),
         ...(draining.length ? { draining } : {}),
         ...(warnings.length ? { warnings } : {}),
@@ -564,6 +577,7 @@ export function createApplyEngine(options) {
     return {
       skills: Array.isArray(value.skills) ? value.skills : [],
       mcpServers: Array.isArray(value.mcpServers) ? /** @type {string[]} */ (value.mcpServers) : [],
+      ...(value.mcpIncarnations && typeof value.mcpIncarnations === 'object' && !Array.isArray(value.mcpIncarnations) ? { mcpIncarnations: structuredClone(value.mcpIncarnations) } : {}),
     }
   }
 
@@ -613,7 +627,7 @@ export function createApplyEngine(options) {
     // just-committed record — reported, never fatal.
     try {
       const sets = safeSets(payload)
-      publishSnapshot?.(sessionId, { revision, skills: structuredClone(sets.skills), mcpServers: [...sets.mcpServers] })
+      publishSnapshot?.(sessionId, { revision, skills: structuredClone(sets.skills), mcpServers: [...sets.mcpServers], ...(sets.mcpIncarnations ? { mcpIncarnations: structuredClone(sets.mcpIncarnations) } : {}) })
     } catch (error) {
       degraded('snapshot-publication-degraded', error)
     }
