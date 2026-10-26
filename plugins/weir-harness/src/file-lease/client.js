@@ -306,6 +306,14 @@ export function createLeaseClient({
   let lastDegradedAt = null
   /** @type {string | undefined} */
   let lastScope
+  /**
+   * The push events the CURRENT handshake advertised. Empty until a handshake
+   * answers and after the connection is gone, so "not advertised" and "not
+   * connected" both read as unsupported: a caller must never wait for an event
+   * this incarnation cannot send.
+   * @type {Set<string>}
+   */
+  let eventCapabilities = new Set()
 
   /**
    * The replay ledger. `path -> {session, lineage, holdUntil}` — nothing more.
@@ -317,6 +325,10 @@ export function createLeaseClient({
   const labels = new Map()
   /** @type {Set<(event: any) => void>} */
   const eventHandlers = new Set()
+  /** Connection-reset lifecycle listeners (D5). Separate from the wire events
+   * above on purpose: a reset is a property of THIS client's transport, not a
+   * fact the broker can send. @type {Set<() => void>} */
+  const resetHandlers = new Set()
   /**
    * @type {Map<string, {
    *   resolve: (reply: any) => void,
@@ -386,6 +398,24 @@ export function createLeaseClient({
     }
   }
 
+  /**
+   * Tell every listener that the current connection is gone.
+   *
+   * Deliberately separate from wire events: a broker that is SIGKILLed cannot
+   * announce that it died, so a client that only listened to `EVENTS` would
+   * wait forever. Called exactly once per connection (the socket wrapper makes
+   * its close notification once-only) and never for an intentional `close()`.
+   */
+  function notifyReset() {
+    for (const handler of [...resetHandlers]) {
+      try {
+        handler()
+      } catch {
+        // A listener is a consumer; it must never break the transport.
+      }
+    }
+  }
+
   /** @param {string} line */
   function handleFrame(line) {
     /** @type {any} */
@@ -430,10 +460,15 @@ export function createLeaseClient({
     if (connection !== target) return
     connection = null
     greeted = false
+    // The advertised capabilities belonged to that connection.
+    eventCapabilities = new Set()
     // D6: a reset connection means the daemon may have died and come back with
     // an empty table, so retained leases have to be replayed on the next dial.
     if (ledger.size > 0) replayPending = true
     failWaiters(transportError('lease broker connection closed'))
+    // D5: a reset is a terminal state for anything waiting on this connection,
+    // and the only moment a vanished broker can be reported at all.
+    notifyReset()
   }
 
   /**
@@ -545,6 +580,11 @@ export function createLeaseClient({
       throw transportError(`lease broker refused the handshake (${code})`)
     }
     greeted = true
+    // The handshake is the ONLY source of the push-event list, and an older
+    // broker simply does not carry the field: empty means "not advertised".
+    eventCapabilities = new Set(
+      Array.isArray(hello.events) ? hello.events.filter((entry) => typeof entry === 'string' && entry.length > 0) : [],
+    )
     const reported = typeof hello.startedAt === 'number' ? hello.startedAt : previousStartedAt
     startedAt = reported
     const restarted = replayPending || (previousStartedAt !== undefined && previousStartedAt !== reported)
@@ -1014,7 +1054,7 @@ export function createLeaseClient({
   }
 
   /**
-   * Subscribe to broker-pushed `request` / `settled` events.
+   * Subscribe to broker-pushed `request` / `settled` / `released` events.
    * @param {(event: any) => void} handler
    * @returns {() => void} unsubscribe
    */
@@ -1027,6 +1067,33 @@ export function createLeaseClient({
   }
 
   /**
+   * Subscribe to connection resets (D5). A reset means the current connection
+   * is gone, so anything that was waiting on a push from it is over — there is
+   * nothing to replay and no fact to infer about ownership.
+   * @param {() => void} handler
+   * @returns {() => void} unsubscribe
+   */
+  function onReset(handler) {
+    if (typeof handler !== 'function') throw new TypeError('onReset requires a handler')
+    resetHandlers.add(handler)
+    return () => {
+      resetHandlers.delete(handler)
+    }
+  }
+
+  /**
+   * Read-only capability query: did the CURRENT handshake advertise this push
+   * event? An older broker, a closed client and a dropped connection all answer
+   * `false` — the caller must report the capability as unavailable instead of
+   * waiting for an event that cannot arrive.
+   * @param {string} name
+   * @returns {boolean}
+   */
+  function supportsEvent(name) {
+    return typeof name === 'string' && eventCapabilities.has(name)
+  }
+
+  /**
    * Close the connection. The daemon keeps running: it is shared with every other
    * client on this machine, and its own idle window is what ends it.
    */
@@ -1036,6 +1103,7 @@ export function createLeaseClient({
     const target = connection
     connection = null
     greeted = false
+    eventCapabilities = new Set()
     ledger.clear()
     failWaiters(transportError('lease client closed'))
     if (target !== null) {
@@ -1061,6 +1129,8 @@ export function createLeaseClient({
     releaseAll,
     replayHolds,
     onEvent,
+    onReset,
+    supportsEvent,
     close,
   })
 }
