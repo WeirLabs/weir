@@ -14,6 +14,7 @@ const steps = [
   ['edit-keep', { op: 'edit', identity: 'docs', mode: 'keep' }, 'edit-keep'],
   ['edit-replace', { op: 'edit', identity: 'docs', mode: 'replace' }, 'edit-replace'],
   ['restart', { op: 'restart', identity: 'docs' }, 'restart'],
+  ['replacement-fence', { op: 'replacementFence', identity: 'docs' }, 'replacement-fence'],
   ['default', { op: 'default', identity: 'docs' }, 'default'],
   ['probe', { op: 'probe', identity: 'probe-only' }, 'probe'],
   ['remote', { op: 'remote', identity: 'docs-remote' }, 'remote'],
@@ -21,7 +22,17 @@ const steps = [
   ['http-probe', { op: 'httpProbe', identity: 'http-probe' }, 'http-probe'],
   ['http-failure', { op: 'httpFailure', identity: 'http-failure' }, 'http-failure'],
   ['http-timeout', { op: 'httpTimeout', identity: 'http-timeout' }, 'http-timeout'],
+  ['ai-seed', { op: 'aiSeed', identity: 'docs-ai' }, 'ai-seed'],
+  ['ai-preview', { op: 'aiPreview', identity: 'docs-ai' }, 'ai-preview'],
+  ['ai-cancel', { op: 'aiCancel', identity: 'docs-ai', answer: 'custom' }, 'ai-cancel'],
+  ['ai-approve', { op: 'aiApprove', identity: 'docs-ai' }, 'ai-approve'],
   ['remove-docs', { op: 'remove', identity: 'docs' }, 'remove-docs'],
+  ['readd-docs', { op: 'add', identity: 'docs' }, 'readd-docs'],
+  ['old-access', { op: 'oldAccess', identity: 'docs' }, 'old-access'],
+  ['apply-readded', { op: 'apply', identity: 'docs' }, 'apply-readded'],
+  ['new-access', { op: 'newAccess', identity: 'docs' }, 'new-access'],
+  ['remove-readded', { op: 'remove', identity: 'docs' }, 'remove-readded'],
+  ['remove-ai', { op: 'remove', identity: 'docs-ai' }, 'remove-ai'],
   ['remove-remote', { op: 'remove', identity: 'docs-remote' }, 'remove-remote'],
   ['remove-http', { op: 'remove', identity: 'docs-http' }, 'remove-http'],
   ['canary', { op: 'canary' }, 'canary'],
@@ -32,7 +43,7 @@ function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
   const lastTool = lastOfRole(options, 'tool')
   if (lastTool.includes('unknown tool')) return textChunks('management probe unavailable')
-  if (lastTool.includes('MCP_MANAGEMENT error:')) return textChunks('management operation failed')
+  if (lastTool.includes('MCP_MANAGEMENT error:') || lastTool.startsWith('Error:')) return textChunks('management operation failed')
   for (const [marker, args] of steps) {
     if (!history.includes(`done ${marker}`)) return toolCallChunks('mcp_management_probe', { ...args, _marker: marker })
   }
@@ -66,13 +77,20 @@ function assert(run) {
   run.check('selection and managed call work', outcome('apply').status === 'applied' && at('call').callObserved === true, JSON.stringify(at('call')))
   run.check('blank keep and replace preserve incarnation and advance generation', outcome('edit-keep').incarnation === outcome('add').incarnation && outcome('edit-replace').incarnation === outcome('add').incarnation && outcome('edit-keep').generation === 2 && outcome('edit-replace').generation === 3, '')
   run.check('restart preserves incarnation and default', outcome('restart').generation === 4 && outcome('restart').incarnation === outcome('add').incarnation && outcome('default').status === 'saved', '')
+  run.check('replacement closes old and new admission until strict readiness', at('replacement-fence').before === true && at('replacement-fence').during === false && at('replacement-fence').after === true, JSON.stringify(at('replacement-fence')))
   run.check('uncommitted stdio probe does not register', outcome('probe').status === 'mounted' && at('probe').registryHasIdentity === false, JSON.stringify(at('probe')))
   run.check('remote mutation tolerates unrelated Apply', at('remote').remote?.status === 'mounted' && at('remote').unrelatedApply === 'applied', JSON.stringify(at('remote')))
   run.check('Streamable HTTP mounts', outcome('http').status === 'mounted' && at('http').httpRequests > 0, JSON.stringify(at('http')))
   run.check('zero-tool HTTP probe succeeds without registry write', outcome('http-probe').status === 'mounted' && outcome('http-probe').discovery.toolCount === 0 && at('http-probe').registryHasIdentity === false, JSON.stringify(at('http-probe')))
   run.check('HTTP authorization failure is a probe failure without registration', outcome('http-failure').status === 'probe-failed' && at('http-failure').registryHasIdentity === false, JSON.stringify(at('http-failure')))
   run.check('HTTP timeout is bounded and cleaned without registration', outcome('http-timeout').status === 'probe-failed' && at('http-timeout').registryHasIdentity === false, JSON.stringify(at('http-timeout')))
+  run.check('AI preview is side-effect free', outcome('ai-preview').status === 'preview' && at('ai-preview').unchanged === true && at('ai-preview').registryHasIdentity === false && !at('ai-preview').selection.includes('docs-ai'), JSON.stringify(at('ai-preview')))
+  run.check('custom AI confirmation cancels without probe or write', outcome('ai-cancel').status === 'cancelled' && at('ai-cancel').unchanged === true && at('ai-cancel').registryHasIdentity === false, JSON.stringify(at('ai-cancel')))
+  run.check('approved AI install probes and mounts without enabling anything', outcome('ai-approve').status === 'mounted' && outcome('ai-approve').generation === 1 && outcome('ai-approve').discovery.toolCount === 1 && outcome('ai-approve').next.action === 'select-and-apply' && !at('ai-approve').selection.includes('docs-ai') && !at('ai-approve').defaults.includes('docs-ai'), JSON.stringify(at('ai-approve')))
   run.check('remove reports defaultRemoved', outcome('remove-docs').status === 'removed' && outcome('remove-docs').defaultRemoved === true, JSON.stringify(outcome('remove-docs')))
+  run.check('remove and re-add uses a fresh incarnation and old access stays denied', outcome('readd-docs').incarnation !== outcome('add').incarnation && at('old-access').admitted === false, JSON.stringify({ before: outcome('add'), after: outcome('readd-docs'), access: at('old-access') }))
+  run.check('only explicit re-Apply authorizes the new incarnation', outcome('apply-readded').status === 'applied' && at('new-access').admitted === true, JSON.stringify(at('new-access')))
+  run.check('re-added and AI registrations are removed cleanly', outcome('remove-readded').status === 'removed' && outcome('remove-ai').status === 'removed', JSON.stringify({ readded: outcome('remove-readded'), ai: outcome('remove-ai') }))
   for (const surface of ['registry', 'profile', 'residue', 'audit', 'remote', 'session']) {
     run.check(`secret canary absent from ${surface} after remove/recovery`, report.canary[surface] === false, JSON.stringify(report.canary))
   }

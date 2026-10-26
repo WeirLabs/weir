@@ -10,6 +10,7 @@ import * as selectionPlugin from '../../weir-harness/src/capabilities/skill-sele
 import { createPresetLibrary, workspaceKeyOf } from '../../weir-harness/src/capabilities/preset-library.js'
 import { createDefaultsTransaction } from '../../weir-harness/src/capabilities/defaults-transaction.js'
 import { validatePortableDocument, bindImportedSelection } from '../../weir-harness/src/capabilities/portable-refs.js'
+import { createMcpRegistry } from '../../weir-harness/src/capabilities/mcp-registry.js'
 import { IT_ROOT } from './mock-kit.js'
 
 const FIXTURES = ['fixture-a']
@@ -125,6 +126,8 @@ function apply(ctx, config = {}) {
         }
         if (args.op === 'report') {
           mkdirSync(join(IT_ROOT, 'ws'), { recursive: true })
+          const mcp = await createMcpRegistry({ store }).read()
+          report.mcpRegistry = { kind: mcp.kind, servers: Object.keys(mcp.servers ?? {}), enabled: [...(mcp.enabled ?? [])] }
           writeFileSync(join(IT_ROOT, 'ws', 'preset-defaults-report.json'), JSON.stringify(report, null, 2) + '\n')
           report.completed = true
           return report

@@ -107,6 +107,7 @@ function assert(run) {
   run.check('the fresh session resolved the saved default', requests2.some(r => r.fixtureEnabled), JSON.stringify(requests2.map(r => [r.fixtureEnabled])).slice(0, 200))
   run.check('the rejected import left no preset behind', run.requests.some(r => (r.lastTool ?? '').includes('presetLoad:poisoned:absent')), '')
   run.check('unresolved imports never leaked into any catalog', requests2.every(r => !r.strangerLeaked) && run.requests.every(r => !r.strangerLeaked), '')
+  run.check('portable imports never register MCP configuration or defaults', (report?.mcpRegistry?.servers ?? []).length === 0 && (report?.mcpRegistry?.enabled ?? []).length === 0, JSON.stringify(report?.mcpRegistry ?? null))
   const boot2Outcome = readJson(join(run.ws, 'preset-boot2-outcome.json'))
   run.check('boot2 exited cleanly', boot2Outcome?.code === 0 || boot2Outcome?.code === null, JSON.stringify(boot2Outcome))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
