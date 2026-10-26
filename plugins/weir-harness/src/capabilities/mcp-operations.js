@@ -159,7 +159,9 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
       const existing = currentServers(current)[identity]
       if (options.resolveExisting) normalized = await options.resolveExisting(existing, current)
       const expectedFingerprint = options.targetFingerprint ?? normalized.targetFingerprint ?? (existing ? fingerprintMcpEntry(existing) : null)
-      if (!options.batch && Number.isSafeInteger(request.expectedRevision) && current.revision !== request.expectedRevision) return finish(revisionConflict(current), { beforeCommit: true, provenUncommitted: true })
+      // An absent registry has no raw revision while preview reports 0; compare the
+      // same normalized value or the first UI Add/Test carrying expectedRevision 0 falsely conflicts.
+      if (!options.batch && Number.isSafeInteger(request.expectedRevision) && (current.revision ?? 0) !== request.expectedRevision) return finish(revisionConflict(current), { beforeCommit: true, provenUncommitted: true })
       if (action === 'add' || action === 'installFromAgent') {
         if (existing) return finish({ status: 'conflict', saved: false, error: { code: 'name-conflict', message: `MCP identity "${identity}" already exists` } }, { beforeCommit: true, provenUncommitted: true })
       } else if (action === 'edit' || action === 'restart' || action === 'remove') {

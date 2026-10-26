@@ -209,6 +209,38 @@ test('stale revision and external target fingerprint conflicts do not write or p
   expect(JSON.stringify(await f.registry.read())).toBe(JSON.stringify(before))
 })
 
+test('absent registry accepts expectedRevision 0 so first Add and Test reach probe and mount', async () => {
+  const f = fixture()
+  const preview = await f.operations.preview({ document: { mcpServers: { docs: config('docs') } } })
+  expect((await f.registry.read()).kind).toBe('absent')
+  expect(preview.registryRevision).toBe(0)
+  const tested = await f.operations.test({ identity: 'docs', expectedRevision: preview.registryRevision, config: config('docs') })
+  expect(tested.status, JSON.stringify(tested)).toBe('mounted')
+  expect(tested.probe).toBe(true)
+  expect(tested.saved).toBe(false)
+  expect(f.calls.probe).toBe(1)
+  expect((await f.registry.read()).kind).toBe('absent')
+  const added = await f.operations.add({ identity: 'docs', expectedRevision: preview.registryRevision, config: config('docs') })
+  expect(added.status, JSON.stringify(added)).toBe('mounted')
+  expect(added.saved).toBe(true)
+  expect(added.registryRevision).toBe(1)
+  expect((await f.registry.read()).servers.docs.generation).toBe(1)
+})
+
+test('a committed registry still rejects a stale expectedRevision without writing or probing', async () => {
+  const f = fixture()
+  const first = await f.operations.add({ identity: 'docs', expectedRevision: 0, config: config('docs') })
+  expect(first.status, JSON.stringify(first)).toBe('mounted')
+  const before = await f.registry.read()
+  expect(before.revision).toBe(1)
+  const stale = await f.operations.test({ identity: 'other', expectedRevision: 0, config: config('other') })
+  expect(stale.status).toBe('revision-conflict')
+  expect(stale.saved).toBe(false)
+  expect(stale.registryRevision).toBe(before.revision)
+  expect(f.calls.probe).toBe(0)
+  expect(JSON.stringify(await f.registry.read())).toBe(JSON.stringify(before))
+})
+
 test('lost post-write response is indeterminate with actual saved facts and retained refs', async () => {
   const f = fixture()
   const original = f.registry.register
