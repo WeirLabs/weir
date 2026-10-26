@@ -362,7 +362,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
 
     {
       name: 'edit_lock_hold',
-      description: `Keep paths this session already owns past the end of this turn, for up to ${MAX_HOLD_MINUTES} minutes from now. Use it when the work continues after this turn; the paths stay yours and other sessions are refused until the deadline. A longer request is clamped, not ignored. When the deadline passes the paths become available and nothing is announced.`,
+      description: `Keep paths this session already owns past the end of this turn, for up to ${MAX_HOLD_MINUTES} minutes from now. Use it when the work continues after this turn; the paths stay yours and other sessions are refused until the deadline. A longer request is clamped, not ignored. When the deadline passes the paths become available again, and the expiry is announced only to a session that explicitly subscribed to that path's release with edit_lock_watch: a matching subscriber gets the usual notice that it may claim the path again, while with no subscriber nothing is announced.`,
       parameters: {
         type: 'object',
         properties: {
@@ -404,7 +404,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           // not even in a structured field the model also reads.
           held: held.map((/** @type {any} */ row) => ({ path: shortName(String(row?.path ?? ''), cwd), holdUntil: row?.holdUntil ?? null })),
           message: entries.length > 0
-            ? `Kept ${entries.length} path(s) past this turn: ${entries.join(', ')}. At most ${MAX_HOLD_MINUTES} minutes per request; a deadline that passes announces nothing — the paths simply become available.`
+            ? `Kept ${entries.length} path(s) past this turn: ${entries.join(', ')}. At most ${MAX_HOLD_MINUTES} minutes per request; a deadline that passes simply makes the paths available, and the expiry is announced only to a session that explicitly subscribed to that path with edit_lock_watch — a matching subscriber gets the usual chance to claim it again, while with no subscriber nothing is announced.`
             : 'Nothing was retained.',
         }
       },

@@ -7,7 +7,7 @@ import { createBroker } from '../src/lease-broker/state.js'
 // claim, release and status tools", "Model-to-model transfer negotiation",
 // "Refusal is addressed to the model").
 //
-// The five contracts pinned here, and why each one is worth a test:
+// The six contracts pinned here, and why each one is worth a test:
 //
 //  - Every `parameters` schema is object-rooted with the documented `required`
 //    set: a strict provider rejects anything else outright (S12), and a schema
@@ -22,6 +22,9 @@ import { createBroker } from '../src/lease-broker/state.js'
 //  - Every model-supplied path is normalized lexically before it reaches the
 //    arbiter or the subscription table, so one file has one claim and one
 //    subscription however the model spelled it (`..`, `.`, doubled separators).
+//  - A retention expiry is announced only to a session that explicitly
+//    subscribed to that path's release: with no subscriber nothing is
+//    announced, and unconditional silence is the obsolete contract.
 //
 // Two sections drive the SAME assertions through the real arbitration kernel,
 // because a scripted client answer cannot show what a live broker does with two
@@ -265,6 +268,14 @@ describe('edit_lock_release', () => {
 })
 
 describe('edit_lock_hold', () => {
+  it('describes expiry as reaching only an explicit release subscriber', () => {
+    const description = tool(tools(), 'edit_lock_hold').description
+    expect(description).toContain('only to a session that explicitly subscribed')
+    expect(description).toContain('edit_lock_watch')
+    // The old unconditional claim must not come back.
+    expect(description).not.toContain('become available and nothing is announced')
+  })
+
   it('extends by the requested minutes and reports the deadline', async () => {
     const until = Date.now() + 30 * 60_000
     const client = createFakeClient({ hold: () => ({ ok: true, held: [{ path: `${CWD}/src/a.js`, expiresAt: until, holdUntil: until }] }) })
@@ -278,7 +289,11 @@ describe('edit_lock_hold', () => {
     expect(result.held).toEqual([{ path: 'src/a.js', holdUntil: until }])
     expect(result.message).toContain('src/a.js until')
     expect(result.message).toContain('about 30m from now')
-    expect(result.message).toContain('nothing')
+    // Superseded wording: a deadline is not unconditionally silent. The expiry is
+    // announced only to a session that explicitly subscribed to the release.
+    expect(result.message).toContain('only to a session that explicitly subscribed')
+    expect(result.message).toContain('edit_lock_watch')
+    expect(result.message).toContain('with no subscriber nothing is announced')
   })
 
   it('clamps an over-long request to the fixed maximum instead of ignoring it', async () => {
