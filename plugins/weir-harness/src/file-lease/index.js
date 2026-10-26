@@ -22,9 +22,9 @@ export {
   MAX_HOLD_MINUTES,
   DEFAULT_HOLD_MINUTES,
 } from './tools.js'
-// The in-memory release-subscription registry behind `edit_lock_watch` (D2):
-// pure, mount-scoped, and never persisted.
-export { createWatchRegistry, WATCH_STATES } from './watch.js'
+// The in-memory release-subscription coordinator behind `edit_lock_watch` (D2):
+// one per lease client, never persisted.
+export { createWatchCoordinator, WATCH_STATES } from './watch.js'
 export { createFileLeasePlugin, name, inject, apply } from './plugin.js'
 // The read-only ownership projection behind the status surface (D13). Pure, so a
 // caller can shape a snapshot without a client, a clock or a socket.

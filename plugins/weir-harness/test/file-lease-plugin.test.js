@@ -1130,4 +1130,101 @@ describe('release subscriptions (D2, D4, D5)', () => {
     expect(delivered).toEqual([])
     dispose()
   })
+
+  it('delivers one notice when two mounts subscribe the same session and path', async () => {
+    const agents = new Map()
+    const ctxA = createCtx(agents)
+    const ctxB = createCtx(agents)
+    const client = createFakeClient({ status: heldByOther })
+    /** @type {{ mount: string, text: string }[]} */
+    const delivered = []
+    const mountA = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'a', text }); return true } })
+    const mountB = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'b', text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const disposeA = mountA.apply(ctxA)
+    const disposeB = mountB.apply(ctxB)
+
+    // Both mounts subscribe the same session and path. One client means one
+    // coordinator, one entry and one notice — not one per mount.
+    await subscribe(ctxA, agent)
+    await subscribe(ctxB, agent)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].mount).toBe('a')
+    disposeA()
+    disposeB()
+  })
+
+  it("keeps a sibling mount's live wait (and its notice) when one mount unmounts", async () => {
+    const agents = new Map()
+    const ctxA = createCtx(agents)
+    const ctxB = createCtx(agents)
+    const client = createFakeClient({ status: heldByOther })
+    /** @type {{ mount: string, text: string }[]} */
+    const delivered = []
+    const mountA = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'a', text }); return true } })
+    const mountB = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'b', text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const disposeA = mountA.apply(ctxA)
+    const disposeB = mountB.apply(ctxB)
+    await subscribe(ctxA, agent)
+    await subscribe(ctxB, agent)
+
+    // One mount leaves: the entry belongs to both, so it survives and the
+    // notice transfers to the surviving reference.
+    disposeA()
+    expect(client.subscriberCount()).toBe(1)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].mount).toBe('b')
+
+    // The LAST unmount removes the client listeners as well.
+    disposeB()
+    expect(client.subscriberCount()).toBe(0)
+    expect(client.resetSubscriberCount()).toBe(0)
+  })
+
+  it('cancels a consumed notice that has not been delivered yet when the agent is disposed', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    // Consumed (`hit`) but the deferred timer has not fired: the entry is in
+    // pendingDelivery, which is exactly the window disposal must still close.
+    client.push(releasedEvent())
+    ctx.emit('agent/disposed', { agent })
+    // The agent stays resolvable in the registry on purpose: the cancellation,
+    // not a missing agent, is what must keep the notice away.
+    await flush()
+    expect(delivered).toEqual([])
+    dispose()
+  })
+
+  it('ends an in-flight wait when a transfer settles in the same chunk as the read', async () => {
+    /** @type {(value?: any) => void} */
+    let resolveStatus = () => {}
+    const gate = new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+    const { ctx, client, agent, delivered, dispose } = mount({ status: () => gate.then(() => heldByOther()) })
+
+    const pending = subscribe(ctx, agent)
+    // The outcome arrives while the authoritative read is still in flight — the
+    // same transport chunk — and it names the requester session itself, so the
+    // wait ends even though no turn boundary remembered a request id.
+    client.push({ event: 'settled', requestId: 'r-transfer', path: TARGET, session: OWNER.session, state: 'transferred' })
+    resolveStatus()
+
+    const result = await pending
+    expect(result.state).toBe('self')
+    expect(result.message).toContain('already owns')
+    // The wait is gone: a later release for the path notifies nobody.
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toEqual([])
+    dispose()
+  })
 })

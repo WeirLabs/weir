@@ -21,7 +21,7 @@
 
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { isLeaseConflict } from './client.js'
-import { createWatchRegistry } from './watch.js'
+import { createWatchCoordinator } from './watch.js'
 
 /** Retention bound in minutes; the protocol clamps here and so does the tool. */
 export const MAX_HOLD_MINUTES = 60
@@ -182,6 +182,70 @@ export function describeConflicts(error, cwd, at) {
 }
 
 /**
+ * The synchronous answer for a subscription that is already over. Every await in
+ * the watch tool re-reads this first (design D2): a release, a reset or a
+ * transfer that landed while the authoritative read was in flight is the truth,
+ * and a late read result or failure may neither overwrite it nor cancel its
+ * pending notice.
+ * @param {import('./watch.js').WatchEntry} entry
+ * @param {string} short
+ * @returns {any | undefined}
+ */
+function terminalOutcome(entry, short) {
+  if (entry.state === 'hit') {
+    entry.settledByTool = true
+    return {
+      state: 'released',
+      file_path: short,
+      message: `The release of ${short} happened while this subscription was being established, so nothing is pending. Claim it with edit_lock_acquire if you still need it — a release is an opportunity, not an ownership grant.`,
+    }
+  }
+  if (entry.state === 'reset') {
+    entry.settledByTool = true
+    return {
+      state: 'reset',
+      file_path: short,
+      message: `The ownership arbiter connection was reset while this subscription was being established, so nothing is pending and nothing is known about ownership. Re-check with edit_lock_status, and call edit_lock_watch again if ${short} is still held by another session.`,
+    }
+  }
+  if (entry.state === 'self') {
+    entry.settledByTool = true
+    return {
+      state: 'self',
+      file_path: short,
+      message: `This session already owns ${short} — ownership arrived while this subscription was being established — so no release subscription was kept and there is nothing to wait for.`,
+    }
+  }
+  return undefined
+}
+
+/**
+ * The degraded answer for a wait that ended without an ownership fact.
+ * @param {string} short
+ * @returns {any}
+ */
+function cancelledOutcome(short) {
+  return {
+    degraded: true,
+    code: 'watch-cancelled',
+    message: `The release subscription for ${short} was cancelled before it could be established (this agent or the feature was shut down), so nothing is pending. Call edit_lock_watch again in a live agent if you still need the path.`,
+  }
+}
+
+/**
+ * Whether one entry is still the active wait it was. `watching` may only be
+ * reported for the SAME object that is currently registered (design D2): an
+ * overlapping call, a transfer or a disposal can end the wait while a read is
+ * in flight, and a stale entry must never come back as `watching`.
+ * @param {import('./watch.js').WatchCoordinator} watches
+ * @param {import('./watch.js').WatchEntry} entry
+ * @returns {boolean}
+ */
+function stillWatching(watches, entry) {
+  return entry.state === 'watching' && watches.peek(entry.sessionId, entry.path) === entry
+}
+
+/**
  * Create the tool definitions.
  *
  * @param {object} options
@@ -189,14 +253,15 @@ export function describeConflicts(error, cwd, at) {
  * @param {(agent: any) => { id: string, session: string, label: string }} options.ownerOf
  * @param {(agent: any, text: string) => any} [options.deliverNotice] model-facing
  *   notice channel, used only where a tool result cannot carry the outcome
- * @param {ReturnType<typeof createWatchRegistry>} [options.watchRegistry] the
- *   mount's subscription registry (shared with the plugin's event routing);
- *   omitted only by callers that never use `edit_lock_watch`
+ * @param {import('./watch.js').WatchCoordinator} [options.watchCoordinator] the
+ *   subscription coordinator shared with the plugin's event routing
+ * @param {import('./watch.js').WatchMount} [options.mount] the mount reference
+ *   that owns this call's subscription, when a mount is in play
  * @returns {any[]} seven definitions, `REPLY_TOOL` included (the plugin decides
  *   when that one becomes visible)
  */
-export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, watchRegistry = createWatchRegistry() }) {
-  const watches = watchRegistry
+export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, watchCoordinator = createWatchCoordinator(), mount }) {
+  const watches = watchCoordinator
   return [
     {
       name: 'edit_lock_acquire',
@@ -467,48 +532,39 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         // registration and the authoritative read is caught by the event
         // callback, and one that landed before it is caught by the read below.
         // The opposite order would leave a permanent hole for that release.
-        const entry = watches.register(owner.session, path)
+        const entry = watches.register(owner.session, path, mount, exec?.agent)
 
+        /** @type {any} */
         let reply
         try {
-          reply = await client.status({ path })
+          // ONE read per entry: an overlapping call for the same session and
+          // path joins this flight instead of running its own, so both calls
+          // judge the same answer and the same entry object.
+          reply = await watches.shareStatus(entry, () => client.status({ path }))
         } catch (error) {
+          // A terminal outcome wins over any failure (D2): a release, a reset or
+          // a transfer that landed while the read was in flight IS the answer,
+          // and its pending notice must survive. A late rejection may only
+          // cancel a plain wait.
+          const terminal = terminalOutcome(entry, short)
+          if (terminal !== undefined) return terminal
           // No authoritative answer means no subscription: never leave a
           // record that could wait forever for a release nobody described.
-          watches.cancel(owner.session, path)
+          // The removal is conditional on THIS entry still being active, so a
+          // late caller can never cancel a newer episode.
+          watches.cancel(owner.session, path, entry)
           if (isTransport(error)) return unavailable(error, 'no release subscription was created')
           throw error
         }
 
-        // The release raced the registration: the event callback already
-        // consumed the entry, so report it synchronously instead of claiming a
-        // subscription that is already over (and suppress its deferred notice).
-        if (entry.state === 'hit') {
-          entry.settledByTool = true
-          return {
-            state: 'released',
-            file_path: short,
-            message: `The release of ${short} happened while this subscription was being established, so nothing is pending. Claim it with edit_lock_acquire if you still need it — a release is an opportunity, not an ownership grant.`,
-          }
-        }
-        if (entry.state === 'reset') {
-          return {
-            state: 'reset',
-            file_path: short,
-            message: `The ownership arbiter connection was reset while this subscription was being established, so nothing is pending and nothing is known about ownership. Re-check with edit_lock_status, and call edit_lock_watch again if ${short} is still held by another session.`,
-          }
-        }
-        if (entry.state === 'cancelled') {
-          return {
-            degraded: true,
-            code: 'watch-cancelled',
-            message: `The release subscription for ${short} was cancelled before it could be established (this agent or the feature was shut down), so nothing is pending. Call edit_lock_watch again in a live agent if you still need the path.`,
-          }
-        }
+        // Same precedence on the success path: the entry may have been consumed
+        // or ended while the read was in flight, whatever the read now says.
+        const terminal = terminalOutcome(entry, short)
+        if (terminal !== undefined) return terminal
 
         const leases = Array.isArray(reply?.leases) ? reply.leases : []
         if (leases.length === 0) {
-          watches.cancel(owner.session, path)
+          watches.cancel(owner.session, path, entry)
           return {
             state: 'free',
             file_path: short,
@@ -518,7 +574,10 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         const holder = leases[0]?.owner ?? {}
         const mine = text(holder.id) === owner.id || text(holder.session) === owner.session
         if (mine) {
-          watches.cancel(owner.session, path)
+          // `self` is terminal, not merely cancelled: an overlapping call that
+          // shares this entry must read the same verdict instead of reporting a
+          // wait that no longer exists.
+          watches.cancel(owner.session, path, entry, 'self')
           return {
             state: 'self',
             file_path: short,
@@ -526,13 +585,17 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           }
         }
         if (typeof client.supportsEvent !== 'function' || client.supportsEvent('released') !== true) {
-          watches.cancel(owner.session, path)
+          watches.cancel(owner.session, path, entry)
           return {
             degraded: true,
             code: 'release-events-unsupported',
             message: `The connected arbiter does not announce release events (release-events-unsupported), so no release subscription was created for ${short}. Only this subscription is unavailable: conflicts, managed edits and negotiation behave exactly as before, and this tool can be used again once the arbiter restarts with the capability.`,
           }
         }
+        // `watching` is only claimed while THIS entry is still the active one:
+        // an overlapping call or a disposal may have ended the wait while the
+        // read was in flight, and a stale entry must never read as a live wait.
+        if (!stillWatching(watches, entry)) return terminalOutcome(entry, short) ?? cancelledOutcome(short)
         const label = text(holder.label) ?? 'another session'
         const session = text(holder.session) ?? 'unknown'
         return {

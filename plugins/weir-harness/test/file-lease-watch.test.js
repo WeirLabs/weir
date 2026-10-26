@@ -1,119 +1,299 @@
 import { describe, expect, it } from './helpers.js'
-import { createWatchRegistry, WATCH_STATES } from '../src/file-lease/watch.js'
+import { createWatchCoordinator, WATCH_STATES } from '../src/file-lease/watch.js'
 
-// The release-subscription registry (design D2): a pure state machine, so every
-// race the plugin and the tool have to survive can be driven without a socket.
+// The release-subscription coordinator (design D2/D4/D5): one per lease client,
+// so every race the plugin and the tool have to survive can be driven without a
+// socket.
 //
 // The contracts pinned here:
-//  - one active entry per (session, path), so repeating a subscription can never
-//    double-notify;
+//  - one active entry per (session, path), so repeating a subscription — from
+//    the same mount or another one — can never double-notify;
 //  - consumption is one-way and happens before delivery, so a duplicate release
 //    observation finds nothing;
-//  - `reset` and `cancelled` are terminal and claim NOTHING about ownership;
-//  - a mount can end everything it created, and nothing revives afterwards.
+//  - `hit`, `reset`, `self` and `cancelled` are terminal and only `self` implies
+//    anything about ownership;
+//  - a consumed entry stays in `pendingDelivery` until its timer finishes, so a
+//    disposal between the hit and the notice still cancels it;
+//  - one mount leaving preserves a wait another mount still holds, and the last
+//    mount leaving clears everything.
 
 const SESSION = 'sess-a'
 const OTHER_SESSION = 'sess-b'
 const PATH = '/work/project/src/a.js'
 const OTHER_PATH = '/work/project/src/b.js'
 
-describe('watch registry', () => {
-  it('keeps a closed state vocabulary', () => {
-    expect([...WATCH_STATES]).toEqual(['watching', 'hit', 'reset', 'cancelled'])
+/** @param {number} [ms] */
+function delay(ms = 5) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * A mount handle plus the notices it was asked to deliver.
+ * @param {string} [name]
+ * @param {Map<string, any>} [agents]
+ */
+function createMount(name = 'mount-a', agents = new Map()) {
+  /** @type {{ mount: string, entry: any, agent: any }[] } */
+  const delivered = []
+  /** @type {any} */
+  const mount = {
+    disposed: false,
+    agentFor: (/** @type {string} */ sessionId) => agents.get(sessionId),
+    notify: (/** @type {any} */ entry, /** @type {any} */ agent) => {
+      delivered.push({ mount: name, entry, agent })
+    },
+  }
+  agents.set(SESSION, { id: SESSION })
+  return { mount, delivered, agents }
+}
+
+describe('watch coordinator', () => {
+  it('keeps a closed state vocabulary that includes the owned terminal state', () => {
+    expect([...WATCH_STATES]).toEqual(['watching', 'hit', 'reset', 'self', 'cancelled'])
   })
 
-  it('registers one entry per session and path, idempotently', () => {
-    const registry = createWatchRegistry()
-    const first = registry.register(SESSION, PATH)
-    const again = registry.register(SESSION, PATH)
+  it('registers one entry per session and path, idempotently, across mounts', () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    const b = createMount('b')
+    const first = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
+    const again = coordinator.register(SESSION, PATH, b.mount, b.agents.get(SESSION))
     expect(again).toBe(first)
-    expect(registry.size()).toBe(1)
-    expect(registry.peek(SESSION, PATH)).toBe(first)
+    expect(coordinator.size()).toBe(1)
+    expect(coordinator.peek(SESSION, PATH)).toBe(first)
     expect(first.state).toBe('watching')
     expect(first.settledByTool).toBe(false)
 
     // A different session, or a different path, is a different subscription.
-    registry.register(OTHER_SESSION, PATH)
-    registry.register(SESSION, OTHER_PATH)
-    expect(registry.size()).toBe(3)
-    expect(registry.entries().map((entry) => `${entry.sessionId}:${entry.path}`).sort()).toEqual([
+    coordinator.register(OTHER_SESSION, PATH, a.mount)
+    coordinator.register(SESSION, OTHER_PATH, a.mount)
+    expect(coordinator.size()).toBe(3)
+    expect(coordinator.entries().map((entry) => `${entry.sessionId}:${entry.path}`).sort()).toEqual([
       `${SESSION}:${PATH}`,
       `${SESSION}:${OTHER_PATH}`,
       `${OTHER_SESSION}:${PATH}`,
     ])
+    // The projection never leaks mounts, flights or timers.
+    expect(Object.keys(coordinator.entries()[0]).sort()).toEqual(['path', 'sessionId', 'settledByTool', 'state'])
   })
 
-  it('consumes every subscription for a path once, in hit, before anything is delivered', () => {
-    const registry = createWatchRegistry()
-    registry.register(SESSION, PATH)
-    registry.register(OTHER_SESSION, PATH)
-    registry.register(SESSION, OTHER_PATH)
+  it('consumes every subscription for a path once, in hit, before anything is delivered', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    const b = createMount('b')
+    // Both sessions must be live in this process for their notices to land.
+    a.agents.set(OTHER_SESSION, { id: OTHER_SESSION })
+    coordinator.join(a.mount)
+    coordinator.join(b.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+    coordinator.register(OTHER_SESSION, PATH, a.mount)
+    coordinator.register(SESSION, OTHER_PATH, a.mount)
 
-    const consumed = registry.consumePath(PATH)
+    const consumed = coordinator.consumePath(PATH)
     expect(consumed).toHaveLength(2)
     for (const entry of consumed) expect(entry.state).toBe('hit')
-    expect(registry.size()).toBe(1)
+    expect(coordinator.size()).toBe(1)
+    // Consumed but not yet delivered: this is the window a disposal must still
+    // be able to close.
+    expect(coordinator.pendingSize()).toBe(2)
+    expect(a.delivered).toEqual([])
 
-    // A duplicate observation of the same release finds nothing to consume, so
-    // no subscriber can be notified twice for one release.
-    expect(registry.consumePath(PATH)).toEqual([])
+    // A duplicate observation of the same release finds nothing to consume.
+    expect(coordinator.consumePath(PATH)).toEqual([])
+    await delay()
+    expect(a.delivered).toHaveLength(2)
+    expect(a.delivered.map((notice) => notice.entry.state)).toEqual(['hit', 'hit'])
+    expect(coordinator.pendingSize()).toBe(0)
   })
 
-  it('returns the same entry object the tool holds, so a race is observable', () => {
-    const registry = createWatchRegistry()
-    const entry = registry.register(SESSION, PATH)
-    // This is exactly the D2 race: the event callback consumes the entry while
-    // the tool is still waiting for its authoritative read.
-    registry.consumePath(PATH)
-    expect(entry.state).toBe('hit')
-    // The tool can suppress the deferred notice it no longer needs.
+  it('never delivers a consumed notice once the entry was cancelled', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+
+    coordinator.consumePath(PATH)
+    expect(coordinator.pendingSize()).toBe(1)
+    expect(coordinator.cancelSession(SESSION)).toHaveLength(1)
+    expect(coordinator.pendingSize()).toBe(0)
+
+    await delay()
+    expect(a.delivered).toEqual([])
+  })
+
+  it('never delivers a notice a running tool already reported', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount)
+
+    coordinator.consumePath(PATH)
     entry.settledByTool = true
+    await delay()
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(0)
   })
 
-  it('cancels one subscription, a session, or everything, terminally', () => {
-    const registry = createWatchRegistry()
-    const mine = registry.register(SESSION, PATH)
-    const other = registry.register(OTHER_SESSION, PATH)
+  it('re-checks the live agent identity before delivering a notice', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const original = a.agents.get(SESSION)
+    coordinator.register(SESSION, PATH, a.mount, original)
 
-    expect(registry.cancel(SESSION, PATH)).toBe(mine)
-    expect(mine.state).toBe('cancelled')
-    expect(registry.peek(SESSION, PATH)).toBeUndefined()
-    // Cancelling an unknown pair is a no-op, not an error.
-    expect(registry.cancel(SESSION, PATH)).toBeUndefined()
-
-    registry.register(SESSION, OTHER_PATH)
-    expect(registry.cancelSession(SESSION).map((entry) => entry.path)).toEqual([OTHER_PATH])
-    expect(registry.size()).toBe(1)
-    expect(other.state).toBe('watching')
-
-    expect(registry.clear().map((entry) => entry.state)).toEqual(['cancelled'])
-    expect(registry.size()).toBe(0)
-    expect(registry.peek(OTHER_SESSION, PATH)).toBeUndefined()
+    coordinator.consumePath(PATH)
+    // A new agent now answers for the same session: the notice belonged to the
+    // subscription the old one made, so it must not land on its replacement.
+    a.agents.set(SESSION, { id: SESSION, replacement: true })
+    await delay()
+    expect(a.delivered).toEqual([])
   })
 
-  it('resets every active subscription with no claim about ownership', () => {
-    const registry = createWatchRegistry()
-    registry.register(SESSION, PATH)
-    registry.register(OTHER_SESSION, PATH)
+  it('resets every active subscription with no claim about ownership', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    a.agents.set(OTHER_SESSION, { id: OTHER_SESSION })
+    coordinator.join(a.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+    coordinator.register(OTHER_SESSION, PATH, a.mount)
 
-    const reset = registry.resetAll()
+    const reset = coordinator.resetAll()
     expect(reset).toHaveLength(2)
-    for (const entry of reset) {
-      expect(entry.state).toBe('reset')
-      // A reset ends a subscription; it never re-describes the path.
-      expect(Object.keys(entry).sort()).toEqual(['path', 'sessionId', 'settledByTool', 'state'])
-    }
-    expect(registry.size()).toBe(0)
-    expect(registry.resetAll()).toEqual([])
+    for (const entry of reset) expect(entry.state).toBe('reset')
+    expect(coordinator.size()).toBe(0)
+    expect(coordinator.resetAll()).toEqual([])
+
+    await delay()
+    expect(a.delivered.map((notice) => notice.entry.state)).toEqual(['reset', 'reset'])
   })
 
-  it('never hands out live objects through the projection', () => {
-    const registry = createWatchRegistry()
-    registry.register(SESSION, PATH)
-    const snapshot = registry.entries()
+  it('ends one subscription conditionally on the same entry object', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount)
+
+    // A stale caller cannot cancel an entry it no longer owns.
+    const stale = { sessionId: SESSION, path: PATH, state: 'watching' }
+    expect(coordinator.cancel(SESSION, PATH, /** @type {any} */ (stale))).toBeUndefined()
+    expect(coordinator.peek(SESSION, PATH)).toBe(entry)
+
+    expect(coordinator.cancel(SESSION, PATH, entry)).toBe(entry)
+    expect(entry.state).toBe('cancelled')
+    expect(coordinator.peek(SESSION, PATH)).toBeUndefined()
+    // Cancelling an unknown pair is a no-op, not an error.
+    expect(coordinator.cancel(SESSION, PATH)).toBeUndefined()
+  })
+
+  it('marks a transferred wait as owned instead of a plain cancellation', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount)
+
+    expect(coordinator.settleSelf(SESSION, PATH)).toBe(entry)
+    expect(entry.state).toBe('self')
+    expect(coordinator.size()).toBe(0)
+    expect(coordinator.settleSelf(SESSION, PATH)).toBeUndefined()
+  })
+
+  it('cancels a pending notice when the same path is acquired by transfer', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+
+    coordinator.consumePath(PATH)
+    expect(coordinator.pendingSize()).toBe(1)
+    coordinator.settleSelf(SESSION, PATH)
+    expect(coordinator.pendingSize()).toBe(0)
+
+    await delay()
+    expect(a.delivered).toEqual([])
+  })
+
+  it('shares one status flight per entry between overlapping callers', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount)
+
+    let runs = 0
+    /** @type {(value: any) => void} */
+    let release = () => {}
+    const gate = new Promise((resolve) => {
+      release = resolve
+    })
+    const run = () => {
+      runs += 1
+      return gate
+    }
+    const first = coordinator.shareStatus(entry, run)
+    const second = coordinator.shareStatus(entry, run)
+    expect(second).toBe(first)
+    release('answer')
+    expect(await first).toBe('answer')
+    expect(await second).toBe('answer')
+    expect(runs).toBe(1)
+
+    // Once it settles, a new call reads again instead of reusing a stale answer.
+    const third = coordinator.shareStatus(entry, () => {
+      runs += 1
+      return 'fresh'
+    })
+    expect(await third).toBe('fresh')
+    expect(runs).toBe(2)
+  })
+
+  it('keeps a wait alive when one mount leaves and another still owns it', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    const b = createMount('b')
+    coordinator.join(a.mount)
+    coordinator.join(b.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+    coordinator.register(SESSION, PATH, b.mount)
+    expect(coordinator.size()).toBe(1)
+
+    coordinator.leave(a.mount)
+    expect(a.mount.disposed).toBe(true)
+    // The entry is still wanted by b, so it survives and b delivers the notice.
+    expect(coordinator.size()).toBe(1)
+    expect(coordinator.mountCount()).toBe(1)
+    coordinator.consumePath(PATH)
+    await delay()
+    expect(a.delivered).toEqual([])
+    expect(b.delivered).toHaveLength(1)
+  })
+
+  it('clears everything when the last mount leaves', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+
+    coordinator.consumePath(PATH)
+    expect(coordinator.pendingSize()).toBe(1)
+    coordinator.leave(a.mount)
+    expect(coordinator.mountCount()).toBe(0)
+    expect(coordinator.size()).toBe(0)
+    expect(coordinator.pendingSize()).toBe(0)
+
+    await delay()
+    expect(a.delivered).toEqual([])
+  })
+
+  it('never hands out live objects through the projections', () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    coordinator.register(SESSION, PATH, a.mount)
+    const snapshot = coordinator.entries()
     snapshot[0].state = 'hit'
     snapshot[0].path = '/mutated'
-    const live = registry.entries()
+    const live = coordinator.entries()
     expect(live).toHaveLength(1)
     expect(live[0].state).toBe('watching')
     expect(live[0].path).toBe(PATH)

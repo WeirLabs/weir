@@ -16,10 +16,11 @@
 //     to a session that is mid-turn simply lands inside that turn and costs no
 //     extra wake. A request for a session that is not here (another process, a
 //     disposed agent) is silently dropped: the arbiter will expire it.
-//  4. Release subscriptions (D2, D4, D5): the mount owns one in-memory registry.
-//     A broadcast `released` fact is consumed here (once) and delivered as a
-//     timer-deferred full UserMessage; a connection reset is a terminal state
-//     that tells each subscriber to re-check, never that the path is free.
+//  4. Release subscriptions (D2, D4, D5): ONE in-memory coordinator per lease
+//     client, shared by every mount of this bundle. A broadcast `released` fact
+//     is consumed once and delivered as a timer-deferred full UserMessage; a
+//     connection reset is a terminal state that tells each subscriber to
+//     re-check, never that the path is free.
 //
 // The transport is process-wide (D8/D11). Two preset mounts of this bundle
 // share ONE client per socket path, and unmounting must never close it — that
@@ -32,7 +33,7 @@
 import { createLineageResolver } from './lineage.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
-import { createWatchRegistry } from './watch.js'
+import { createWatchCoordinator } from './watch.js'
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { getSharedLeaseClient } from './singleton.js'
 import { buildLeaseView } from './view.js'
@@ -100,6 +101,31 @@ function noticedFor(agent) {
 /** @param {unknown} error @returns {string} */
 function messageOf(error) {
   return String(/** @type {any} */ (error)?.message ?? error)
+}
+
+/**
+ * ONE release-subscription coordinator per lease client (design D2/D4).
+ *
+ * The client is process-wide, so its view of who waits for which path must be
+ * too: keying the coordinator by the client makes two preset mounts share one
+ * entry, one status flight and one notice, and lets either mount deliver a
+ * pending notice after the other one is gone. The map is weak because the
+ * coordinator — like the client — lives exactly as long as something holds it.
+ * @type {WeakMap<object, import('./watch.js').WatchCoordinator>}
+ */
+const watchCoordinators = new WeakMap()
+
+/**
+ * @param {object} client
+ * @returns {import('./watch.js').WatchCoordinator}
+ */
+function coordinatorFor(client) {
+  let coordinator = watchCoordinators.get(client)
+  if (coordinator === undefined) {
+    coordinator = createWatchCoordinator()
+    watchCoordinators.set(client, coordinator)
+  }
+  return coordinator
 }
 
 /**
@@ -340,19 +366,14 @@ export function createFileLeasePlugin(options = {}) {
     /** @type {Set<any>} agents whose reply tool this mount registered */
     const replyAgents = new Set()
     /**
-     * `requestId -> the session that asked for it`. A `settled` event carries no
-     * session (it is pushed to the requesting connection, which every session of
-     * this process shares), so this map is the only way to address the outcome.
-     * It is routing state, never authority: the arbiter decides (D6).
+     * `requestId -> the session that asked for it`. A `settled` event names the
+     * requester's session, but a broker older than that field pushes the outcome
+     * only to the requesting connection (which every session of this process
+     * shares), so this map remains the fallback route. It is routing state,
+     * never authority: the arbiter decides (D6).
      * @type {Map<string, { session: string, path: string }>}
      */
     const issued = new Map()
-    /**
-     * This mount's release subscriptions. It is also the routing fact when two
-     * mounts share one client: both hear a broadcast, but only the mount that
-     * registered an entry can consume it, so one release yields one notice.
-     */
-    const watches = createWatchRegistry()
     let disposed = false
     /** @type {() => void} this mount's read-only view route disposer (D13) */
     let disposeView = () => {}
@@ -380,6 +401,28 @@ export function createFileLeasePlugin(options = {}) {
     })
     const ownerOf = injectedOwnerOf ?? createOwnerResolver(agents)
     const deliver = injectedDeliver ?? defaultDeliver
+    /**
+     * This client's release subscriptions (D2/D4). ONE coordinator per client,
+     * not per mount: two mounts that subscribe the same session and path share
+     * one entry, one status flight and one notice, and one mount's teardown
+     * cannot cancel a wait another mount still owns.
+     */
+    const watches = coordinatorFor(client)
+    /**
+     * This mount's reference on the shared coordinator plus the notice channel it
+     * speaks through. The coordinator maintains `disposed`; `notify` only renders
+     * the outcome it has already re-checked (a release fact or a reset).
+     * @type {import('./watch.js').WatchMount}
+     */
+    const watchMount = {
+      disposed: false,
+      agentFor: (/** @type {string} */ session) => agentFor(session),
+      notify: (/** @type {import('./watch.js').WatchEntry} */ entry, /** @type {any} */ agent) => {
+        const short = shortName(entry.path, cwdOf(agent))
+        notify(agent, entry.state === 'reset' ? resetNoticeText(short) : releasedNoticeText(short), agent?.status === 'idle')
+      },
+    }
+    watches.join(watchMount)
 
     /**
      * Deliver a notice without letting delivery break the caller: both channels
@@ -547,8 +590,8 @@ export function createFileLeasePlugin(options = {}) {
       const session = sessionIdOf(agent)
       retireReplyTool(agent)
       forgetIssued(session)
-      // A disposed agent never comes back: its subscriptions end with it, and a
-      // deferred notice checks the agent's liveness before delivering.
+      // A disposed agent never comes back: its subscriptions end with it — the
+      // active waits AND the consumed notices still waiting for their timer.
       if (session !== undefined) watches.cancelSession(session)
       if (session === undefined) return
       quiet(() => client.releaseAll(session))
@@ -604,78 +647,54 @@ export function createFileLeasePlugin(options = {}) {
     function onSettled(event) {
       const requestId = text(event?.requestId)
       if (requestId === undefined) return
+      const state = text(event?.state) ?? 'expired'
       const entry = issued.get(requestId)
       issued.delete(requestId)
-      // A request issued by another process settles in that process.
-      if (entry === undefined) return
-      const state = text(event?.state) ?? 'expired'
       // The transfer made this session an owner by another route, so a later
       // release notice for the same path would wake it for nothing: the wait is
-      // over because the goal was reached, not because a release happened.
-      if (state === 'transferred') watches.cancel(entry.session, entry.path)
+      // over because the goal was reached, not because a release happened. The
+      // event names the requester, so this holds even when a turn boundary or an
+      // unmount already forgot the request; an older broker without that field
+      // falls back to the issued record. The wait ends BEFORE the outcome is
+      // routed, so the cancellation can never be lost to a cleared route.
+      const session = text(event?.session) ?? entry?.session
+      const path = text(event?.path) ?? entry?.path
+      if (state === 'transferred' && session !== undefined && path !== undefined) {
+        watches.settleSelf(session, path)
+      }
+      // A request issued by another process settles in that process.
+      if (entry === undefined) return
       const agent = agentFor(entry.session)
       if (!agent) return
       notify(agent, settledText(state, requestId, shortName(entry.path, cwdOf(agent))), agent?.status === 'idle')
     }
 
     /**
-     * Deliver one subscription outcome as a timer-deferred full UserMessage.
-     *
-     * Deferred because the caller is a socket callback: injecting a message
-     * synchronously from inside the transport's publish stack is exactly the
-     * re-entrancy AGENTS §3.4 forbids. The timer re-checks EVERY condition that
-     * could have ended the subscription in the meantime (mount disposed, entry
-     * consumed/cancelled, the agent gone), so a late timer can never revive one.
-     *
-     * @param {import('./watch.js').WatchEntry} entry
-     * @param {(agent: any) => string} build message text, built at delivery time
-     */
-    function deferNotice(entry, build) {
-      const timer = setTimeout(() => {
-        if (disposed) return
-        if (entry.state !== 'hit' && entry.state !== 'reset') return
-        if (entry.settledByTool === true) return
-        const agent = agentFor(entry.sessionId)
-        // The agent was disposed (or never lived in this process): no delivery,
-        // no persistence, and nothing to replay later.
-        if (!agent) return
-        notify(agent, build(agent), agent?.status === 'idle')
-      }, 0)
-      // A subscription must never be the reason a finished process stays alive.
-      const handle = /** @type {{ unref?: () => void }} */ (/** @type {unknown} */ (timer))
-      if (typeof handle.unref === 'function') handle.unref()
-    }
-
-    /**
      * One release fact from the broker (D1/D2).
      *
-     * Consumption happens HERE and now, before anything is scheduled: the entry
-     * leaves the active map in `hit`, so a duplicate or repeated observation of
-     * the same release finds nothing to consume and delivers nothing. The fact
-     * carries no session, so every subscription of this mount for that path is
-     * consumed — the broker never chooses a winner.
+     * Consumption happens inside the coordinator, before anything is scheduled:
+     * the entry leaves the active map in `hit`, so a duplicate or repeated
+     * observation of the same release finds nothing to consume and delivers
+     * nothing. The fact carries no session, so every subscription of this client
+     * for that path is consumed — the arbiter never chooses a winner.
      * @param {any} event
      */
     function onReleased(event) {
       const path = text(event?.path)
-      if (path === undefined) return
-      for (const entry of watches.consumePath(path)) {
-        deferNotice(entry, (agent) => releasedNoticeText(shortName(entry.path, cwdOf(agent))))
-      }
+      if (path !== undefined) watches.consumePath(path)
     }
 
     /**
      * The connection that could have delivered a release is gone (D5).
      *
      * Every active subscription ends in `reset` — a terminal state that claims
-     * nothing about ownership — and each live subscriber is told to re-check and
-     * re-subscribe, never that the path became free.
+     * nothing about ownership — and the coordinator's deferred notice tells each
+     * live subscriber to re-check and re-subscribe, never that the path became
+     * free.
      */
     function onConnectionReset() {
       if (disposed) return
-      for (const entry of watches.resetAll()) {
-        deferNotice(entry, (agent) => resetNoticeText(shortName(entry.path, cwdOf(agent))))
-      }
+      watches.resetAll()
     }
 
     /** @param {any} event */
@@ -691,11 +710,11 @@ export function createFileLeasePlugin(options = {}) {
     }
 
     /**
-     * The tools see the client through this narrow facade for one reason: a
-     * `settled` event carries no session, so the plugin has to remember which
-     * session issued which requestId at the moment the request is made. The
-     * facade adds that bookkeeping and nothing else — every call still ends in
-     * the arbiter.
+     * The tools see the client through this narrow facade for one reason: the
+     * requester of a transfer has to be remembered from the moment the request
+     * is made, because a broker older than `settled.session` pushes the outcome
+     * without naming it. The facade adds that routing memo and nothing else —
+     * every call still ends in the arbiter.
      */
     const routedClient = Object.freeze({
       acquire: (/** @type {any} */ owner, /** @type {any} */ paths, /** @type {any} */ scope) => client.acquire(owner, paths, scope),
@@ -721,7 +740,8 @@ export function createFileLeasePlugin(options = {}) {
       client: routedClient,
       ownerOf,
       deliverNotice: (agent, text) => notify(agent, text, false),
-      watchRegistry: watches,
+      watchCoordinator: watches,
+      mount: watchMount,
     })
     const replyDefinition = definitions.find((definition) => definition?.name === REPLY_TOOL)
     const staticDefinitions = definitions.filter((definition) => definition?.name !== REPLY_TOOL)
@@ -894,9 +914,10 @@ export function createFileLeasePlugin(options = {}) {
       } catch {
         // Already gone.
       }
-      // Every subscription of this mount ends here; a scheduled notice checks
-      // `disposed` and the entry state, so none of them can be delivered later.
-      watches.clear()
+      // This mount's references leave the shared coordinator. A wait another
+      // mount still owns survives, and a pending notice transfers to a surviving
+      // reference; the last mount's teardown clears everything that is left.
+      watches.leave(watchMount)
       try {
         disposeView()
       } catch {
