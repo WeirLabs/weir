@@ -15,24 +15,24 @@
 ## 2. `scripts/release.mjs`
 
 ```sh
-node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it] [--no-publish]
+node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it]
 ```
 
 - **前置**：工作树干净、`vX.Y.Z` tag 尚不存在；版本号必须是精确 `X.Y.Z`（不接受区间与 prerelease 版本号）。
-- **动作顺序**：固化 CHANGELOG → bump manifest → 门禁（静态检查 → 单元测试 → 集成测试）→ 提交（`chore: release vX.Y.Z`，只暂存 CHANGELOG 与 manifest）→ 轻量 tag → 发布。
-- **`--dry-run`**：全部计算与门禁照跑，但不写文件、不提交、不打 tag、不发布。
+- **动作顺序**：固化 CHANGELOG → bump manifest → 门禁（静态检查 → 单元测试 → 集成测试）→ 提交（`chore: release vX.Y.Z`，只暂存 CHANGELOG 与 manifest）→ 轻量 tag → 输出 GitHub handoff。
+- **`--dry-run`**：全部计算与门禁照跑，但不写文件、不提交、不打 tag；完成文案只预告真实运行的 commit/tag 与 GitHub handoff。
 - **`--skip-it`**：跳过集成测试门禁；打版前仍必须确保全量集成测试已实际运行并通过（见 [testing.md](testing.md)）。
-- **`--no-publish`**：跳过本地 `npm publish`——日常打版都用它，发布交给 GitHub 管线（见 §3）。
+- **迁移兼容**：旧调用中的 `--no-publish` 仍被接受，但只发出弃用提示且不影响任何选项或步骤；新调用不要传该参数。
 
 ## 3. npm 发布管线
 
-发布一律走 GitHub 发版管线，**本地不登录 npm**：
+npm 发布只能由 GitHub Actions 执行，使用 OIDC Trusted Publishing：
 
-1. 以 `--no-publish` 跑 `release.mjs`，得到 release 提交与 `vX.Y.Z` tag；
-2. `git push origin main` + `git push origin vX.Y.Z`；
-3. `.github/workflows/release.yml` 由 tag 推送触发：先校验 tag 与 manifest 版本一致（防手工乱打 tag），再经 npm OIDC Trusted Publishing 以 `--provenance --access public` 发布 `weir-harness`，最后用 CHANGELOG 对应版本段自动创建 GitHub Release。
+1. 运行 `node scripts/release.mjs <X.Y.Z>`，得到 release 提交与 `vX.Y.Z` tag；
+2. 执行 `git push origin main`，再执行 `git push origin vX.Y.Z`；
+3. `.github/workflows/release.yml` 由 tag 推送触发：先校验 tag 与 manifest 版本一致（防手工乱打 tag），再由 `prepare release notes` 提取 CHANGELOG 对应版本段并校验非空，随后经 npm OIDC Trusted Publishing 以 `--provenance --access public` 发布 `weir-harness`，最后只用已验证的 `/tmp/release-notes.md` 创建 GitHub Release。
 
-本地裸跑 `release.mjs`（无凭证且不带 `--no-publish`）会在 publish 步报 404/401，但当时的提交与 tag 已经落盘——直接推送即可，**不要重复打 tag**。
+GitHub 工作流任一步失败时，只能修复工作流或预检输入后重跑该工作流；不得回退到本地 npm/pnpm publish，也不得为同一版本重复打 tag。
 
 发布后必须验证两件事均已就位：registry 的 `dist-tags.latest`，以及 GitHub Release（notes 取自 CHANGELOG 对应版本段）。
 

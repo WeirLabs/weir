@@ -26,7 +26,7 @@ Weir 以 `weir-harness` 包发布到公共 npm registry。DSH 的插件管理原
 - `dsh.bundle.patch` 指向 `cordis.patch.yml`——DSH 认定 bundle 的唯一必需字段。
 - `peerDependencies: { "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0" }`——DSH 的兼容性检查只认 `peerDependencies` 中 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 条目（`dsh-app-boot/lib/index.js:286-313`，`includePrerelease: true`）；不声明等于放弃闸门，`@deepseek-ai/cordis` peer 被检查器无视。区间取显式上下界：精确 pin 会让每次 rc bump 都要求用户豁免。
 - `files` 白名单：`src/`、`lib/`、`skills/`、`cordis.patch.yml`、`whitelist-defaults.json`（README/LICENSE 由 npm 自动附带，`src/vendor/THIRD-PARTY.md` 随 `src/` 进包）。白名单可枚举、可测试，优于 `.npmignore` 黑名单（易误带 `test/` 与杂散文件）。
-- `prepack` 钩子串联 `check && test && build`，保证任何 `npm/pnpm pack`、`npm publish` 产出的 tarball 都含新鲜构建的 client——即便绕过 CI 手工发布。
+- `prepack` 钩子串联 `check && test && build`，保证 GitHub 发布工作流的 `npm publish` 与发布前 `npm/pnpm pack` 验证都产出含新鲜构建 client 的 tarball。
 - 禁止 `dependencies`/`devDependencies` 引入 `@deepseek-ai/*`（AGENTS.md §3.8）：DSH profile 的 pnpm 配置 `autoInstallPeers: false`，peer 只作闸门不作拉取。
 
 **为什么 npm 安装后运行时代码零改动**：patch 路径相对 installed 包根解析，patch 内相对 `insert[].name` 锚定 patch 所在目录；bundle 的 skills 经 `import.meta.url` 相对定位（`src/capabilities/skill-selection-plugin.js`）；`whitelist-defaults.json` 从包根读取。这些路径语义在 link 安装与 registry 安装（node_modules 内）下完全一致。client 半边满足 DSH 的双重契约：`dsh.client.platform === "web"` 且 `exports["./client"]` 指向包内文件。
@@ -35,10 +35,13 @@ Weir 以 `weir-harness` 包发布到公共 npm registry。DSH 的插件管理原
 
 **Registry 安装的两道校验**：装前 preflight（`pnpm view` 读 peer，仅 registry spec 触发）与装后校验（恰好新增一个依赖、patch 可加载、peer 复查；失败回滚 profile 的 `package.json` + `pnpm-lock.yaml`）。路径/tarball 安装只有装后校验。
 
-**打版四位一体**：`scripts/release.mjs` 编排——工作树干净检查 → CHANGELOG Unreleased 固化为版本段 → manifest version bump → check + 单测 + 集成测试门禁 → `git tag vX.Y.Z` → `npm publish`。tag 推送后由 `.github/workflows/release.yml` 接管：先校验 tag 与 manifest 版本一致（防手工乱打 tag），再经 npm Trusted Publishing（OIDC）带 `--provenance` 发布，最后从 CHANGELOG 对应版本段自动生成 GitHub Release notes。日常门禁由 `.github/workflows/ci.yml` 承担：push/PR 触发静态检查、单元测试、release 脚本测试与 pack 冒烟（prepack 门禁 + tarball 形状断言）。集成测试因依赖桌面运行时留在本地 release 门禁，不进 CI。
+**打版与发布分工**：`scripts/release.mjs` 编排——工作树干净检查 → CHANGELOG Unreleased 固化为版本段 → manifest version bump → check + 单测 + 集成测试门禁 → release commit → `git tag vX.Y.Z`，成功后只提示 `git push origin main` 与 `git push origin <tag>`。tag 推送后由 `.github/workflows/release.yml` 接管：先校验 tag 与 manifest 版本一致（防手工乱打 tag），再由 `prepare release notes` 提取 CHANGELOG 对应版本段并校验非空，随后经 npm Trusted Publishing（OIDC）带 `--provenance` 发布，最后只消费已验证的 `/tmp/release-notes.md` 创建 GitHub Release。
+
+日常门禁由 `.github/workflows/ci.yml` 承担：push/PR 触发静态检查、单元测试、release 脚本测试与 pack 冒烟（prepack 门禁 + tarball 形状断言）。集成测试因依赖桌面运行时留在本地 release 门禁，不进 CI。
 
 ## 边界与失败语义
 
+- GitHub 发布工作流失败时，只能修复工作流或预检输入后重跑；不得回退到本地 npm/pnpm publish，也不得为同一版本重复打 tag。
 - 重复 `install_bundle` 同一包被幂等拒绝（DSH ≥ 0.2.1 为装前 `already-installed`，更早版本为装后 `ambiguous-install`）——bundle 改动重应用走 `set_bundle` 先禁后启（开发者）或 `weir-harness@新版本`（用户）。
 - 兼容性豁免（`compatibility.json`）以精确 `name@version` → 精确 DSH 版本数组登记，需 `acceptRisk: true`；不可读/不可解析的豁免文件不授权任何豁免。
 - tarball/路径安装绕过装前 preflight，兼容性问题只在装后暴露（仍回滚）——文档统一引导 registry 安装，tarball 仅用于发布前验证。
@@ -51,5 +54,5 @@ Weir 以 `weir-harness` 包发布到公共 npm registry。DSH 的插件管理原
 
 - 单元测试：`plugins/weir-harness/test/packaging.test.js`——manifest 无 `private`、`files` 覆盖五个运行时必需路径且路径存在于磁盘、peer 区间是合法 semver、`prepack` 钩子存在。
 - 分发自包含：`plugins/weir-harness/test/patch-rows.test.js`——patch 中每个模块说明符都可解析（本包 `exports` + `files` 白名单，或运行时 `@deepseek-ai/*`），且每个 `exports` 目标都在 `files` 内；另有两组反例钉（`weir-model-picker` 事故形状、未导出/未随包的子路径）。
-- `scripts/release.mjs` 的纯逻辑（版本解析、CHANGELOG 固化文本变换）有配套单测（`scripts/release.test.mjs`）。
+- `scripts/release.mjs` 的纯逻辑（版本解析、CHANGELOG 固化文本变换、参数归一化与 GitHub handoff 文案）及发布工作流预检顺序有配套契约测试（`scripts/release.test.mjs`）。
 - 发布前手工验证路径：`pnpm pack` → 开发 profile 卸 link 换 tarball 绝对路径 `install_bundle` → preset/设置页/技能/client UI 验证 → 恢复 link。发布后：registry spec 真机安装验证（触发 preflight 路径）。
