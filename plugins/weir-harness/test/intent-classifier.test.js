@@ -182,6 +182,17 @@ describe('intent-gate with a semantic classifier', () => {
   }
   const promptMessage = (text) => ({ id: 'm1', role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } })
   const agentOf = (appended) => ({ id: 'session-1', session: { append: (type, data) => appended.push({ type, data }) } })
+  const eligibleSelection = {
+    selectionFor: () => ({
+      provider: {
+        list: async () => ({
+          candidates: ['mcp-server-setup', 'deep-work', 'research'].map(name => ({
+            name, provider: 'weir-selected', invocation: { modelInvocable: true, userInvocable: true },
+          })),
+        }),
+      },
+    }),
+  }
 
   it('regex hit short-circuits the sidecar in llm mode', async () => {
     const llm = fakeLlm('research')
@@ -197,7 +208,7 @@ describe('intent-gate with a semantic classifier', () => {
   it('semantic hit injects like a keyword hit', async () => {
     const llm = fakeLlm('deep-work')
     const ctx = fakeCtx(llm)
-    apply(ctx, { classifier: 'llm', classifierProvider: 'mock', classifierModel: 'mock-1' })
+    apply(ctx, { classifier: 'llm', classifierProvider: 'mock', classifierModel: 'mock-1' }, eligibleSelection)
     const result = await ctx.handlers['agent/pre-step'](
       { agent: agentOf([]), messages: [promptMessage('grind this task to full completion with evidence')], turn: 1, step: 1 },
       async () => ({ kind: 'enter', messages: [] }),
@@ -232,6 +243,18 @@ describe('intent-gate with a semantic classifier', () => {
     expect(ctx.emitted.some((e) => e.type === 'weir/intent-classify' && e.record.data.fallback)).toBe(true)
   })
 
+  it('does not semantically revive negated MCP setup wording', async () => {
+    const llm = fakeLlm('mcp-server-setup')
+    const ctx = fakeCtx(llm)
+    apply(ctx, { classifier: 'llm', classifierProvider: 'mock', classifierModel: 'mock-1' }, eligibleSelection)
+    const result = await ctx.handlers['agent/pre-step'](
+      { agent: agentOf([]), messages: [promptMessage('do not install an MCP server')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(result.messages).toHaveLength(0)
+    expect(llm.calls).toHaveLength(1)
+    expect(llm.calls[0].system).not.toContain('- mcp-server-setup:')
+  })
   it('regex mode never touches the sidecar', async () => {
     const llm = fakeLlm('deep-work')
     const ctx = fakeCtx(llm)

@@ -31,8 +31,8 @@ describe('stripQuotedRegions', () => {
 describe('compileIntentTable', () => {
   it('compiles the default table', () => {
     const table = compileIntentTable(DEFAULT_INTENTS)
-    expect(table).toHaveLength(6)
-    expect(table[0].id).toBe('deep-work')
+    expect(table).toHaveLength(7)
+    expect(table[1].id).toBe('deep-work')
     const writing = table.find((intent) => intent.id === 'writing')
     expect(writing.id).toBe('writing')
     expect(writing.oncePerSession).toBe(false)
@@ -88,6 +88,38 @@ describe('matchIntents', () => {
     const hits = matchIntents('调研 then deep work', table)
     expect(hits.map((i) => i.id)).toEqual(['deep-work', 'research'])
   })
+  it('matches genuine English and Chinese MCP setup requests only', () => {
+    const positive = [
+      'please install an MCP server',
+      'add the filesystem MCP server',
+      'set up GitHub MCP',
+      'configure the remote MCP server',
+      '请安装一个 MCP 服务器',
+      '配置 GitHub MCP 服务器',
+    ]
+    for (const text of positive) expect(matchIntents(text, table).map(intent => intent.id)).toContain('mcp-server-setup')
+    const negative = [
+      'do not install an MCP server',
+      'don’t install an MCP server',
+      'never add an MCP server',
+      '不要安装 MCP 服务器',
+      'what does MCP configuration mean?',
+      'explain how to configure an MCP server',
+      'call the existing MCP server tool',
+      'troubleshoot the configured MCP server',
+      'MCP server installation is unavailable',
+    ]
+    for (const text of negative) expect(matchIntents(text, table).map(intent => intent.id)).not.toContain('mcp-server-setup')
+  })
+
+  it('suppresses quoted and unclosed MCP configuration examples', () => {
+    const examples = [
+      '> please install an MCP server',
+      '```json\n{"mcpServers":{"docs":{"command":"install MCP"}}}',
+      'example: `install an MCP server',
+    ]
+    for (const text of examples) expect(matchIntents(stripQuotedRegions(text), table).map(intent => intent.id)).not.toContain('mcp-server-setup')
+  })
 })
 
 describe('intent-gate plugin', () => {
@@ -111,13 +143,25 @@ describe('intent-gate plugin', () => {
       session: { append: (type, data) => appended.push({ type, data }) },
     }
   }
+  const eligibleSelection = {
+    selectionFor: () => ({
+      provider: {
+        list: async () => ({
+          candidates: ['mcp-server-setup', 'deep-work', 'research', 'review-work', 'debugging'].map(name => ({
+            name, provider: 'weir-selected', invocation: { modelInvocable: true, userInvocable: true },
+          })),
+        }),
+      },
+    }),
+  }
+  const applyEligible = (ctx, config = {}) => apply(ctx, config, eligibleSelection)
   function promptMessage(text) {
     return { id: 'm1', role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } }
   }
 
   it('injects the full payload on first hit and a reminder on repeat', async () => {
     const ctx = fakeCtx()
-    apply(ctx, {})
+    applyEligible(ctx, {})
     const agent = fakeAgent([])
 
     const first = await ctx.handlers['agent/pre-step'](
@@ -235,7 +279,7 @@ describe('intent-gate plugin', () => {
     }
     // The settings service is still invisible at apply (rc.2 cordis activates
     // providers after the apply batch).
-    apply(ctx, { classifier: 'llm' })
+    applyEligible(ctx, { classifier: 'llm' })
     service = { get: (section) => (section === 'intentGate' ? { classifierProvider: 'mock', classifierModel: 'mock-1' } : undefined) }
     const agent = fakeAgent([])
     const result = await ctx.handlers['agent/pre-step'](
@@ -261,7 +305,7 @@ describe('intent-gate plugin', () => {
 
   it('scans past injected messages to the newest genuine user prompt', async () => {
     const ctx = fakeCtx()
-    apply(ctx, {})
+    applyEligible(ctx, {})
     const agent = fakeAgent([])
     const settled = {
       id: 's1',
@@ -318,6 +362,60 @@ describe('intent-gate plugin', () => {
     expect(untouched.reasoningEffort).toBeUndefined()
   })
 
+  it('injects the MCP setup pointer once with cold-safe audit and reminders', async () => {
+    const ctx = fakeCtx()
+    const appended = []
+    applyEligible(ctx, {})
+    const agent = fakeAgent(appended)
+    const first = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('please install an MCP server')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(first.messages).toHaveLength(1)
+    expect(first.messages[0].content[0].text).toContain('mcp-server-setup')
+    expect(first.messages[0].content[0].text).toContain('skill(name="mcp-server-setup")')
+    const second = await ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('add another MCP server')], turn: 2, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect(second.messages[0].content[0].text).toContain('already armed')
+    expect(appended).toEqual([])
+    const hits = ctx.emitted.filter(event => event.type === 'weir/intent-hit' && event.record.data.intent === 'mcp-server-setup')
+    expect(hits.map(hit => hit.record.data.first)).toEqual([true, false])
+  })
+
+  it('suppresses missing, throwing, and non-explicit eligibility without arming MCP setup', async () => {
+    const ctx = fakeCtx()
+    let mode = 'missing'
+    const selectionFor = () => {
+      if (mode === 'missing') return null
+      if (mode === 'throw') return { provider: { list: async () => { throw new Error('view unavailable') } } }
+      if (mode === 'truthy') return {
+        provider: {
+          list: async () => ({ candidates: [{ name: 'mcp-server-setup', provider: 'weir-selected', invocation: { modelInvocable: 'yes', userInvocable: true } }] }),
+        },
+      }
+      return eligibleSelection.selectionFor()
+    }
+    apply(ctx, {}, { selectionFor })
+    const agent = fakeAgent([])
+    const hit = () => ctx.handlers['agent/pre-step'](
+      { agent, messages: [promptMessage('install an MCP server')], turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    expect((await hit()).messages).toHaveLength(0)
+    mode = 'truthy'
+    expect((await hit()).messages).toHaveLength(0)
+    mode = 'throw'
+    expect((await hit()).messages).toHaveLength(0)
+    mode = 'eligible'
+    const recovered = await hit()
+    expect(recovered.messages).toHaveLength(1)
+    expect(recovered.messages[0].content[0].text).not.toContain('already armed')
+    const audits = ctx.emitted.filter(event => event.type === 'weir/intent-hit' && event.record.data.intent === 'mcp-server-setup')
+    expect(audits.slice(0, 3).every(event => event.record.data.first === false && event.record.data.suppressed)).toBe(true)
+    expect(audits.at(-1).record.data.first).toBe(true)
+  })
   it('rejects invalid config at activation', () => {
     expect(() => apply(fakeCtx(), { intents: [{ id: 'x', matchers: ['(['], injection: { kind: 'message', text: 't' } }] }))
       .toThrow(/invalid matcher/)

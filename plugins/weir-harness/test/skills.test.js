@@ -30,9 +30,18 @@ describe('bundle skills structure', () => {
 
   it('ships at least the contracted catalog', () => {
     const names = entries.map((entry) => entry.dir).sort()
-    for (const required of ['debugging', 'deep-work', 'research', 'review-work']) {
+    for (const required of ['debugging', 'deep-work', 'mcp-server-setup', 'research', 'review-work']) {
       expect(names).toContain(required)
     }
+  })
+
+  it('ships the MCP setup workflow with refs-only confirmation and separate Apply', () => {
+    const body = readFileSync(join(SKILLS_DIR, 'mcp-server-setup', 'SKILL.md'), 'utf8')
+    expect(body).toContain('mcp_install')
+    expect(body).toContain('credential reference')
+    expect(body).toContain('Only the user can approve')
+    expect(body).toMatch(/Select for this\s+session/)
+    expect(body).toContain('saved-degraded')
   })
 
   for (const { dir, path } of entries) {
