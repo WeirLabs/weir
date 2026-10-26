@@ -18,8 +18,9 @@ export const PROTOCOL = 1
 /** Request operations accepted after the handshake (`hello` is the handshake). */
 export const OPS = Object.freeze(['hello', 'acquire', 'release', 'hold', 'status', 'request', 'reply'])
 
-/** Unsolicited events pushed by the broker to one connection. */
-export const EVENTS = Object.freeze(['request', 'settled'])
+/** Unsolicited events pushed by the broker. `request` and `settled` go to one
+ * connection; `released` is a fact offered to every connected client. */
+export const EVENTS = Object.freeze(['request', 'settled', 'released'])
 
 /** Closed error vocabulary. No code may describe an operator action: every
  * refusal either resolves by negotiation or by validity elapsing. */

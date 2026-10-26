@@ -408,6 +408,65 @@ describe('lease broker server: connection ownership', () => {
   })
 })
 
+describe('lease broker server: release facts', () => {
+  it('advertises the supported push events in the handshake, inside major 1', async (t) => {
+    const daemon = startDaemon(t)
+    await daemon.ready
+    const client = createClient(daemon.socketPath)
+    t.after(() => {
+      void client.close()
+    })
+    const hello = await client.request({ op: 'hello', protocol: 1, reqId: 'h-1' })
+    expect(hello.ok).toBe(true)
+    expect(hello.protocol).toBe(1)
+    // The advertisement is the only way a client learns the capability, and an
+    // older client that does not read it keeps every pre-existing operation.
+    expect(hello.events).toEqual(['request', 'settled', 'released'])
+  })
+
+  it('broadcasts one released event per removed lease to every connected client', async (t) => {
+    const daemon = startDaemon(t)
+    await daemon.ready
+    const holder = await greet(t, daemon.socketPath, 'h-holder')
+    const watcher = await greet(t, daemon.socketPath, 'h-watcher')
+    const bystander = await greet(t, daemon.socketPath, 'h-bystander')
+
+    expect((await holder.request({ op: 'acquire', owner: OWNER_A, scope: SCOPE, paths: [P('a'), P('b')] })).ok).toBe(true)
+    const released = await holder.request({ op: 'release', reqId: 'r-1', owner: OWNER_A, paths: [P('a'), P('b')] })
+    expect(released.released).toEqual([P('a'), P('b')])
+
+    for (const client of [holder, watcher, bystander]) {
+      const first = await client.nextEvent((frame) => frame.event === 'released')
+      const second = await client.nextEvent((frame) => frame.event === 'released')
+      expect(first).toEqual({ event: 'released', path: P('a'), reason: 'released' })
+      expect(second).toEqual({ event: 'released', path: P('b'), reason: 'released' })
+    }
+  })
+
+  it('broadcasts disconnected when a holder connection closes, and nothing for an atomic transfer', async (t) => {
+    const daemon = startDaemon(t)
+    await daemon.ready
+    const alice = await greet(t, daemon.socketPath)
+    const bob = await greet(t, daemon.socketPath)
+
+    expect((await alice.request({ op: 'acquire', owner: OWNER_A, scope: SCOPE, paths: [P('a'), P('b')] })).ok).toBe(true)
+
+    // Atomic transfer first: ownership moves inside one verdict, so the path is
+    // never unowned and no release fact is broadcast.
+    const pending = await bob.request({ op: 'request', from: OWNER_B, path: P('a') })
+    await alice.request({ op: 'reply', owner: OWNER_A, requestId: pending.requestId, decision: 'release' })
+    expect((await bob.request({ op: 'status' })).leases.map((lease) => lease.path)).toEqual([P('a'), P('b')])
+
+    await alice.close()
+    await waitFor(async () => (await bob.request({ op: 'status' })).leases.map((lease) => lease.path).join(',') === P('a'), 'holding connection leaves the table')
+
+    // Only P('b') was still Alice's: the transferred P('a') produced nothing.
+    const event = await bob.nextEvent((frame) => frame.event === 'released')
+    expect(event).toEqual({ event: 'released', path: P('b'), reason: 'disconnected' })
+    expect(bob.events.filter((frame) => frame.event === 'released')).toEqual([])
+  })
+})
+
 describe('lease broker server: process lifetime', () => {
   it('exits on its own after the idle window with no client', async (t) => {
     const daemon = startDaemon(t, { idleMs: 250 })

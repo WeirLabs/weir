@@ -15,7 +15,8 @@ const SOURCE_DIR = new URL('../src/lease-broker/', import.meta.url)
 const DOC = readFileSync(DOC_URL, 'utf8')
 
 /**
- * Lines of one `## <heading…>` section, excluding the heading itself.
+ * Lines of one `## <heading…>` section (its own sub-headings excluded), so a
+ * nested table can never leak into the parent section's token set.
  * @param {string} markdown
  * @param {string} heading fragment that must appear in the heading line
  * @returns {string[]}
@@ -26,7 +27,7 @@ function section(markdown, heading) {
   if (start < 0) throw new Error(`protocol doc is missing the "${heading}" section`)
   const collected = []
   for (let index = start + 1; index < lines.length; index += 1) {
-    if (/^##\s/.test(lines[index])) break
+    if (/^#{2,3}\s/.test(lines[index])) break
     collected.push(lines[index])
   }
   return collected
