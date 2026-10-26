@@ -65,6 +65,7 @@ flowchart LR
 |---|---|
 | `deep-work` | 证据驱动的端到端完成，不以「看起来对了」为完成 |
 | `research` | 并行检索代码、文档与网络，产出带引用的综述 |
+| `mcp-server-setup` | 通过 AI 生成 MCP 安装计划；经你确认后探测并安装，不自动启用 |
 | `review-work` | 完工把关：实际验证，再审目标覆盖、代码质量与安全 |
 | `debugging` | 先复现、排序假设、用最低成本实验定位根因 |
 | `git-master` | 原子提交、rebase、squash、bisect、历史考古 |
@@ -75,6 +76,8 @@ flowchart LR
 | `remove-deadcode` | 验证后原子提交式删除死代码 |
 
 Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；能力集合可存为预设、日后改名或重新保存，也可导入导出。→ [会话能力管理器](docs/features/session-capability-manager.md)
+
+**MCP server 管理**：在 Capabilities 面板添加、编辑、测试、重启或删除 `stdio` / `streamable-http` server，支持粘贴 JSON、凭据引用、批量预览与真实错误诊断。安装、当前会话启用、新会话默认彼此独立；直接说「安装某个 MCP server」，主 Orchestrator 会生成计划并请你确认。→ [MCP server 管理](docs/features/mcp-server-management.md)
 
 ## 安装
 
