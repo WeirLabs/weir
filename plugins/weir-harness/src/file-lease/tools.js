@@ -18,8 +18,16 @@
 // short paths against the session cwd on the way in and render short names
 // relative to that same cwd on the way out. An absolute path never lands in a
 // message body.
+//
+// Normalization is lexical and it happens HERE, for every tool input: `resolve`
+// folds `.`, `..`, repeated and trailing separators and keeps an absolute input
+// absolute, so one file has one spelling for arbitration and for the
+// subscription table. The broker deliberately does not normalize — there string
+// equality IS a path (docs/features/edit-lock-protocol.md) — so a verbatim `..`
+// spelling would be granted a SECOND lease on a file another session holds, and
+// `edit_lock_watch` would miss the held canonical path entirely.
 
-import { basename, isAbsolute, relative, resolve } from 'node:path'
+import { basename, relative, resolve } from 'node:path'
 import { isLeaseConflict } from './client.js'
 import { createWatchCoordinator } from './watch.js'
 
@@ -97,8 +105,29 @@ export function shortName(path, cwd) {
 }
 
 /**
- * Resolve the model's path batch to the absolute, de-duplicated list the
- * protocol accepts.
+ * One file, one spelling: the lexical normalization every tool input passes
+ * through before it can become a claim, a retention, a release, a transfer
+ * request or a release subscription.
+ *
+ * `resolve` is the right instrument and no other is needed: it folds `.`,
+ * `..`, repeated and trailing separators, keeps an absolute input absolute
+ * (the base is then ignored) and resolves a relative one against the session
+ * cwd. It touches no filesystem, so symlinks and case are left alone — the
+ * protocol makes that the client's call, and it keys leases by string equality,
+ * which is exactly why `/p/src/../src/a.js` and `/p/src/a.js` must never reach
+ * it as two paths.
+ * @param {string} raw
+ * @param {string} cwd
+ * @returns {string}
+ */
+function canonicalPath(raw, cwd) {
+  return resolve(cwd, raw)
+}
+
+/**
+ * Resolve the model's path batch to the canonical, de-duplicated list the
+ * protocol accepts. Normalization happens before the de-duplication, so two
+ * spellings of one file collapse into one entry instead of becoming two claims.
  * @param {unknown} paths
  * @param {string} cwd
  * @returns {string[]}
@@ -110,13 +139,15 @@ function absoluteBatch(paths, cwd) {
   for (const entry of paths) {
     const raw = text(entry)
     if (raw === undefined) throw new Error('every entry of paths must be a non-empty string')
-    const absolute = isAbsolute(raw) ? raw : resolve(cwd, raw)
+    const absolute = canonicalPath(raw, cwd)
     if (!out.includes(absolute)) out.push(absolute)
   }
   return out
 }
 
 /**
+ * The single-path form of {@link absoluteBatch}: normalize before the path can
+ * reach the arbiter or the subscription coordinator.
  * @param {unknown} filePath
  * @param {string} cwd
  * @returns {string}
@@ -124,7 +155,7 @@ function absoluteBatch(paths, cwd) {
 function absoluteOne(filePath, cwd) {
   const raw = text(filePath)
   if (raw === undefined) throw new Error('file_path must be a non-empty string')
-  return isAbsolute(raw) ? raw : resolve(cwd, raw)
+  return canonicalPath(raw, cwd)
 }
 
 /** `2026-05-05T12:00:00.000Z` for a validity instant. @param {number} at epoch ms */
@@ -331,7 +362,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
 
     {
       name: 'edit_lock_hold',
-      description: `Keep paths this session already owns past the end of this turn, for up to ${MAX_HOLD_MINUTES} minutes from now. Use it when the work continues after this turn; the paths stay yours and other sessions are refused until the deadline. A longer request is clamped, not ignored. When the deadline passes the paths become available and nothing is announced.`,
+      description: `Keep paths this session already owns past the end of this turn, for up to ${MAX_HOLD_MINUTES} minutes from now. Use it when the work continues after this turn; the paths stay yours and other sessions are refused until the deadline. A longer request is clamped, not ignored. When the deadline passes the paths become available again, and the expiry is announced only to a session that explicitly subscribed to that path's release with edit_lock_watch: a matching subscriber gets the usual notice that it may claim the path again, while with no subscriber nothing is announced.`,
       parameters: {
         type: 'object',
         properties: {
@@ -373,7 +404,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           // not even in a structured field the model also reads.
           held: held.map((/** @type {any} */ row) => ({ path: shortName(String(row?.path ?? ''), cwd), holdUntil: row?.holdUntil ?? null })),
           message: entries.length > 0
-            ? `Kept ${entries.length} path(s) past this turn: ${entries.join(', ')}. At most ${MAX_HOLD_MINUTES} minutes per request; a deadline that passes announces nothing — the paths simply become available.`
+            ? `Kept ${entries.length} path(s) past this turn: ${entries.join(', ')}. At most ${MAX_HOLD_MINUTES} minutes per request; a deadline that passes simply makes the paths available, and the expiry is announced only to a session that explicitly subscribed to that path with edit_lock_watch — a matching subscriber gets the usual chance to claim it again, while with no subscriber nothing is announced.`
             : 'Nothing was retained.',
         }
       },

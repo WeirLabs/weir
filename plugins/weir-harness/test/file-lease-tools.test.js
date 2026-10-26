@@ -1,12 +1,13 @@
 import { describe, expect, it } from './helpers.js'
 import { createLeaseTools, DEFAULT_HOLD_MINUTES, MAX_HOLD_MINUTES, REPLY_TOOL, WATCH_TOOL } from '../src/file-lease/tools.js'
 import { createWatchCoordinator } from '../src/file-lease/watch.js'
+import { createBroker } from '../src/lease-broker/state.js'
 
 // Unit tests for the model-facing tool surface (design D4/D5, spec: "Explicit
 // claim, release and status tools", "Model-to-model transfer negotiation",
 // "Refusal is addressed to the model").
 //
-// The four contracts pinned here, and why each one is worth a test:
+// The six contracts pinned here, and why each one is worth a test:
 //
 //  - Every `parameters` schema is object-rooted with the documented `required`
 //    set: a strict provider rejects anything else outright (S12), and a schema
@@ -18,6 +19,23 @@ import { createWatchCoordinator } from '../src/file-lease/watch.js'
 //    ownership state requires a human").
 //  - The status answer is read-only ownership: no epoch, generation or recovery
 //    counter may appear, because none of those concepts exist any more.
+//  - Every model-supplied path is normalized lexically before it reaches the
+//    arbiter or the subscription table, so one file has one claim and one
+//    subscription however the model spelled it (`..`, `.`, doubled separators).
+//  - A retention expiry is announced only to a session that explicitly
+//    subscribed to that path's release: with no subscriber nothing is
+//    announced, and unconditional silence is the obsolete contract.
+//
+// Two sections drive the SAME assertions through the real arbitration kernel,
+// because a scripted client answer cannot show what a live broker does with two
+// spellings of one file: it keeps two separate lease rows.
+
+/** One macrotask, so a deferred subscription notice can fire. @param {number} [ms] */
+function delay(ms = 0) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
 
 const CWD = '/work/project'
 const OWNER = Object.freeze({ id: 'lineage-a', session: 'sess-a', label: 'orchestrator' })
@@ -170,11 +188,17 @@ describe('edit_lock_acquire', () => {
     }
     const definition = tool(createLeaseTools({ client, ownerOf }), 'edit_lock_acquire')
     const agent = agentFor()
-    const result = await definition.execute({ paths: ['src/a.js', `${CWD}/src/b.js`, 'src/a.js'] }, execFor(agent))
+    // `..`, `.` and doubled separators are spellings of the same file: the batch
+    // reaches the arbiter canonical and de-duplicated, so an alias cannot open a
+    // second claim on a path this session (or another one) already holds.
+    const result = await definition.execute(
+      { paths: ['src/a.js', `${CWD}/src/b.js`, 'src/a.js', `${CWD}/src/../src/a.js`, `${CWD}//src/./b.js`] },
+      execFor(agent),
+    )
 
     expect(seen).toEqual([agent])
     expect(lastCall(client).owner).toEqual({ id: 'lineage-x', session: 'sess-x', label: 'label-x' })
-    // Relative paths resolve against the session cwd and duplicates collapse.
+    // Relative paths resolve against the session cwd and every alias collapses.
     expect(lastCall(client).paths).toEqual([`${CWD}/src/a.js`, `${CWD}/src/b.js`])
     expect(lastCall(client).scope).toBe(CWD)
     // The result renders short names, never the absolute forms.
@@ -229,11 +253,12 @@ describe('edit_lock_release', () => {
       request: () => ({ ok: true, released: [`${CWD}/src/a.js`], notOwned: [`${CWD}/src/b.js`] }),
     })
     const definition = tool(createLeaseTools({ client, ownerOf: () => OWNER }), 'edit_lock_release')
-    const result = await definition.execute({ paths: ['src/a.js', 'src/b.js'] }, execFor(agentFor()))
+    const result = await definition.execute({ paths: ['src/a.js', `${CWD}/src/../src/a.js`, `${CWD}//src/./b.js`] }, execFor(agentFor()))
 
     const call = lastCall(client)
     expect(call.op).toBe('release')
     expect(call.owner).toEqual(OWNER)
+    // One canonical entry per file: the aliased spellings never reach the broker.
     expect(call.paths).toEqual([`${CWD}/src/a.js`, `${CWD}/src/b.js`])
     expect(result.released).toEqual(['src/a.js'])
     expect(result.notOwned).toEqual(['src/b.js'])
@@ -243,18 +268,32 @@ describe('edit_lock_release', () => {
 })
 
 describe('edit_lock_hold', () => {
+  it('describes expiry as reaching only an explicit release subscriber', () => {
+    const description = tool(tools(), 'edit_lock_hold').description
+    expect(description).toContain('only to a session that explicitly subscribed')
+    expect(description).toContain('edit_lock_watch')
+    // The old unconditional claim must not come back.
+    expect(description).not.toContain('become available and nothing is announced')
+  })
+
   it('extends by the requested minutes and reports the deadline', async () => {
     const until = Date.now() + 30 * 60_000
     const client = createFakeClient({ hold: () => ({ ok: true, held: [{ path: `${CWD}/src/a.js`, expiresAt: until, holdUntil: until }] }) })
     const definition = tool(createLeaseTools({ client, ownerOf: () => OWNER }), 'edit_lock_hold')
-    const result = await definition.execute({ paths: ['src/a.js'], minutes: 30 }, execFor(agentFor()))
+    const result = await definition.execute({ paths: ['src/a.js', `${CWD}/src/../src/a.js`], minutes: 30 }, execFor(agentFor()))
 
+    // Retention names the same canonical paths as the claim did.
+    expect(lastCall(client).paths).toEqual([`${CWD}/src/a.js`])
     expect(lastCall(client).minutes).toBe(30)
     expect(lastCall(client).owner).toEqual(OWNER)
     expect(result.held).toEqual([{ path: 'src/a.js', holdUntil: until }])
     expect(result.message).toContain('src/a.js until')
     expect(result.message).toContain('about 30m from now')
-    expect(result.message).toContain('nothing')
+    // Superseded wording: a deadline is not unconditionally silent. The expiry is
+    // announced only to a session that explicitly subscribed to the release.
+    expect(result.message).toContain('only to a session that explicitly subscribed')
+    expect(result.message).toContain('edit_lock_watch')
+    expect(result.message).toContain('with no subscriber nothing is announced')
   })
 
   it('clamps an over-long request to the fixed maximum instead of ignoring it', async () => {
@@ -292,8 +331,10 @@ describe('edit_lock_try_steal', () => {
     const expiresAt = Date.now() + 120_000
     const client = createFakeClient({ requestTransfer: () => ({ ok: true, state: 'pending', requestId: 'r-1', holder: { ...OTHER }, expiresAt }) })
     const definition = tool(createLeaseTools({ client, ownerOf: () => OWNER }), 'edit_lock_try_steal')
-    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    const result = await definition.execute({ file_path: `${CWD}/src/../src/a.js` }, execFor(agentFor()))
 
+    // The negotiation names the canonical path, so the holder's own spelling of
+    // the same file cannot make the request miss (or duplicate) its mailbox.
     expect(lastCall(client).path).toBe(`${CWD}/src/a.js`)
     expect(lastCall(client).from).toEqual(OWNER)
     expect(result.state).toBe('pending')
@@ -461,12 +502,33 @@ describe('edit_lock_watch', () => {
   it('is idempotent: a repeated call reuses one entry, so one release can only consume it once', async () => {
     const { definition, registry } = watchTool()
     await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
-    await definition.execute({ file_path: `${CWD}/src/a.js` }, execFor(agentFor()))
+    // The second spelling is an alias of the same file, not a second wait.
+    await definition.execute({ file_path: `${CWD}/src/../src/a.js` }, execFor(agentFor()))
     expect(registry.size()).toBe(1)
 
     const consumed = registry.consumePath(`${CWD}/src/a.js`)
     expect(consumed).toHaveLength(1)
     expect(registry.consumePath(`${CWD}/src/a.js`)).toHaveLength(0)
+  })
+
+  // Spec: "Equivalent path spellings share one subscription" — A holds the
+  // canonical path, B subscribes with `/p/src/../src/a.js` and still gets one
+  // `watching` subscription on the canonical path, so one release notifies once.
+  it('treats an aliased spelling as the held canonical path (one subscription)', async () => {
+    const { definition, registry, client } = watchTool()
+    const alias = `${CWD}/src/../src/a.js`
+    const result = await definition.execute({ file_path: alias }, execFor(agentFor()))
+
+    // The authority is asked for the canonical path, never for the spelling.
+    expect(lastCall(client).filter).toEqual({ path: `${CWD}/src/a.js` })
+    expect(result.state).toBe('watching')
+    expect(result.file_path).toBe('src/a.js')
+    // One entry under the canonical key: the alias cannot create a second
+    // subscription that a single release would then have to notify separately.
+    expect(registry.size()).toBe(1)
+    expect(registry.entries()).toEqual([{ sessionId: OWNER.session, path: `${CWD}/src/a.js`, state: 'watching', settledByTool: false }])
+    expect(registry.consumePath(alias)).toHaveLength(0)
+    expect(registry.consumePath(`${CWD}/src/a.js`)).toHaveLength(1)
   })
 
   it('returns free and keeps no subscription when nobody holds the path', async () => {
@@ -671,14 +733,161 @@ describe('edit_lock_watch', () => {
       },
       registry,
     )
+    // Two spellings, one file: the second call joins the FIRST entry and its
+    // in-flight authoritative read instead of starting a second episode.
     const [first, second] = await Promise.all([
       definition.execute({ file_path: 'src/a.js' }, execFor(agentFor())),
-      definition.execute({ file_path: `${CWD}/src/a.js` }, execFor(agentFor())),
+      definition.execute({ file_path: `${CWD}/src/../src/a.js` }, execFor(agentFor())),
     ])
     expect(reads).toBe(1)
     expect(first.state).toBe('watching')
     expect(second.state).toBe('watching')
     expect(registry.size()).toBe(1)
-    expect(registry.entries()).toHaveLength(1)
+    expect(registry.entries()).toEqual([{ sessionId: OWNER.session, path: `${CWD}/src/a.js`, state: 'watching', settledByTool: false }])
+  })
+})
+
+/**
+ * The real arbitration kernel behind the client surface the tools consume.
+ *
+ * Every verdict here comes from the string-keyed lease table a live broker
+ * keeps, so a spelling that is not normalized becomes a SECOND lease row —
+ * something a scripted client answer can never show. The adapter only unwraps
+ * the kernel's `{ok, ...}` verdicts into the client's `resolve`/`throw` shape.
+ * @param {string} connectionId
+ * @param {ReturnType<typeof createBroker>} broker
+ * @returns {any}
+ */
+function createKernelClient(connectionId, broker) {
+  broker.connect(connectionId)
+  /** @param {any} result */
+  const refuse = (result) => {
+    throw Object.assign(new Error(`lease broker refused: ${String(result?.code)}`), result)
+  }
+  return {
+    acquire: (owner, paths, scope) => {
+      const result = broker.acquire({ connectionId, owner, paths, scope })
+      return result.ok === true ? result : refuse(result)
+    },
+    hold: (paths, minutes, owner) => {
+      const result = broker.hold({ connectionId, owner, paths, minutes })
+      return result.ok === true ? result : refuse(result)
+    },
+    request: (op, payload) => {
+      if (op !== 'release') throw new Error(`the kernel client does not serve ${String(op)}`)
+      const result = broker.release({ connectionId, owner: payload?.owner, paths: payload?.paths })
+      return result.ok === true ? result : refuse(result)
+    },
+    status: (filter) => broker.status(filter ?? {}),
+    requestTransfer: (path, from) => {
+      const result = broker.request({ connectionId, from, path })
+      return result.ok === true ? result : refuse(result)
+    },
+    reply: (input) => {
+      const result = broker.reply({ connectionId, owner: input?.owner, requestId: input?.requestId, decision: input?.decision })
+      return result.ok === true ? result : refuse(result)
+    },
+    supportsEvent: () => true,
+  }
+}
+
+describe('edit_lock against the real arbitration kernel', () => {
+  const ALIAS = `${CWD}/src/../src/a.js`
+
+  /** Acquire one canonical path as one lineage on one connection. @param {any} broker @param {any} owner @param {string} [path] */
+  async function claim(broker, owner, path = `${CWD}/src/a.js`) {
+    const definition = tool(createLeaseTools({ client: createKernelClient(`conn-${owner.id}`, broker), ownerOf: () => owner }), 'edit_lock_acquire')
+    return await definition.execute({ paths: [path] }, execFor(agentFor(owner.session)))
+  }
+
+  it('refuses an aliased spelling while another lineage holds the canonical path', async () => {
+    const broker = createBroker()
+    await claim(broker, OTHER)
+
+    const contender = createKernelClient('conn-contender', broker)
+    const message = await rejectionOf(
+      tool(createLeaseTools({ client: contender, ownerOf: () => OWNER }), 'edit_lock_acquire'),
+      { paths: [ALIAS] },
+      execFor(agentFor()),
+    )
+
+    expect(message).toContain('reviewer')
+    expect(message).toContain('src/a.js')
+    // One row, under the canonical spelling: the alias never became a second lock.
+    expect(broker.status({}).leases.map((lease) => lease.path)).toEqual([`${CWD}/src/a.js`])
+  })
+
+  it('releases a canonical claim through an aliased spelling and reports the normalized path', async () => {
+    const broker = createBroker()
+    const client = createKernelClient('conn-a', broker)
+    const definitions = createLeaseTools({ client, ownerOf: () => OWNER })
+    await tool(definitions, 'edit_lock_acquire').execute({ paths: [`${CWD}/src/a.js`] }, execFor(agentFor()))
+
+    const released = await tool(definitions, 'edit_lock_release').execute(
+      { paths: [ALIAS, `${CWD}//src/./a.js`] },
+      execFor(agentFor()),
+    )
+    expect(released.released).toEqual(['src/a.js'])
+    expect(released.notOwned).toEqual([])
+    expect(broker.status({}).leases).toEqual([])
+  })
+
+  it('retains a canonical claim through an aliased spelling', async () => {
+    const broker = createBroker()
+    const client = createKernelClient('conn-a', broker)
+    const definitions = createLeaseTools({ client, ownerOf: () => OWNER })
+    await tool(definitions, 'edit_lock_acquire').execute({ paths: [`${CWD}/src/a.js`] }, execFor(agentFor()))
+
+    const result = await tool(definitions, 'edit_lock_hold').execute({ paths: [ALIAS], minutes: 30 }, execFor(agentFor()))
+    expect(result.held.map((row) => row.path)).toEqual(['src/a.js'])
+    const [lease] = broker.status({}).leases
+    expect(lease.holdUntil).toBeGreaterThan(Date.now())
+  })
+
+  it('watches a canonical claim through an aliased spelling and hears the real release broadcast once', async () => {
+    const registry = createWatchCoordinator()
+    /** @type {string[]} */
+    const notices = []
+    const agent = agentFor()
+    const broker = createBroker({
+      onEvent: (connectionId, event) => {
+        // The plugin routes one connection's events into the shared coordinator;
+        // this test does the same for the watching connection only.
+        if (connectionId === 'conn-b' && event?.event === 'released') registry.consumePath(event.path)
+      },
+    })
+    const mount = {
+      disposed: false,
+      agentFor: () => agent,
+      notify: (/** @type {any} */ entry) => notices.push(entry.path),
+    }
+    const watcherClient = createKernelClient('conn-b', broker)
+    await claim(broker, OTHER)
+
+    const definition = tool(
+      createLeaseTools({ client: watcherClient, ownerOf: () => OWNER, watchCoordinator: registry, mount }),
+      WATCH_TOOL,
+    )
+    const result = await definition.execute({ file_path: ALIAS }, execFor(agent))
+    expect(result.state).toBe('watching')
+    expect(result.file_path).toBe('src/a.js')
+    expect(registry.entries()).toEqual([{ sessionId: OWNER.session, path: `${CWD}/src/a.js`, state: 'watching', settledByTool: false }])
+
+    // The owner releases with the same aliased spelling; the kernel removes the
+    // canonical row and broadcasts the fact, which consumes the subscription.
+    const released = await tool(
+      createLeaseTools({ client: createKernelClient(`conn-${OTHER.id}`, broker), ownerOf: () => OTHER }),
+      'edit_lock_release',
+    ).execute({ paths: [ALIAS] }, execFor(agentFor(OTHER.session)))
+    expect(released.released).toEqual(['src/a.js'])
+
+    await delay(5)
+    expect(notices).toEqual([`${CWD}/src/a.js`])
+    expect(registry.size()).toBe(0)
+
+    // A repeated observation of the same release delivers nothing more.
+    registry.consumePath(`${CWD}/src/a.js`)
+    await delay(5)
+    expect(notices).toHaveLength(1)
   })
 })
