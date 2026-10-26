@@ -29,8 +29,10 @@
 | Worktree 车道 | [git-worktree.md](git-worktree.md) | `weir-harness/worktree` + `delegate` 的 `worktree` 参数（设置 `worktree*`） |
 | 系统通知 | [notify.md](notify.md) | `weir-harness/notify`（profile 级，设置 `notify*`） |
 | 会话能力管理器 | [session-capability-manager.md](session-capability-manager.md) | `weir-harness/capabilities`（实施中，已落地持久化存储层） |
+| MCP server 管理 | [mcp-server-management.md](mcp-server-management.md) | `weir-harness/capabilities` + `lib/client.mcp-manager.js`（两种 transport、秘密安全、AI 确认与完整管理 UX） |
 | 会话黑板 | [blackboard.md](blackboard.md) | `weir-harness/blackboard`（设计中，设置 `blackboard*`） |
 | npm 公共分发 | [npm-distribution.md](npm-distribution.md) | `plugins/weir-harness/package.json`（manifest 契约）+ `scripts/release.mjs` |
 - [Skill 分发（已撤回）](skill-distribution.md)：第三方 Skill 受管分发从未交付，代码与声明已于 2026-10-16 撤回；实际等价路径为 v2 预设包导入、npm bundle 更新与本地技能发现根。
 - [会话能力管理器](session-capability-manager.md)：会话级能力选择、Apply 事务、MCP 会话级关闭、预设库与默认值、管理界面与通知。
+- [MCP server 管理](mcp-server-management.md)：完整生命周期、registry incarnation、strict mount/disposal、批量预览、credential refs、AI Host 确认与 Select/Apply 边界。
 - [会话黑板](blackboard.md)：会话内 Agent 协作的知识交换所——发现即写、仲裁写入、类型枚举、用量可计量，晋升评估由用户一键发起并逐项裁决。

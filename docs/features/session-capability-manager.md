@@ -43,7 +43,7 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 - **按身份精确加载**：只在 Weir 自有清单内按候选身份加载，同名未选项不替代、不按显示名猜测；**软化范围**：宿主 `ctx.skills.get` 仍只按名称解析，精确性只在 Weir 清单内成立。多个选中身份同名时呈现冲突、须用户显式解冲突，Apply 不任意取胜者。
 - **挂载不抛出**：挂载路径只做同步、不会失败的登记（挂载抛错会让整个预设 broken、所有会话无法创建）；读取／解析失败 fail closed 为「空选择 + 可见错误状态」（`skillSelectionFor(ctx)` 可读出状态供管理器与 Badge 显示原因）。Apply 被接受后调用 `control.invalidate()`（带重入闸门：N 次连续失效与同步 raw→selected 回波只进入一次重枚举，在途枚举不得重发已被撤销的选择）。
 - **组合要求**：宿主层 `skill-filesystem` 与 `tool-skill` 由 Weir patch 行显式 `disabled: true`（宿主行不禁用时，宿主 fs 会把工作区 Skill 注入全局层、宿主 tool-skill 会删除预设模型目录）；预设自有的 `skill-filesystem` 行及其 `customSkillDirs` 已移除（其候选会漏进同一预设层）。宿主内置 Skill provider（如 office）不经 `skill-filesystem`，其条目由 [skill-office-adapter.js](<../../plugins/weir-harness/src/capabilities/skill-office-adapter.js>) 纳入 Weir 枚举与选择，未选项以同名候选遮蔽为不可模型调用、不可用户调用（`!m!u`），加载返回显式不可用错误。
-- **内置 Skill 迁移**：bundle 的 `skills` 目录由 provider 枚举并标注为 **Weir 内置**（不沿用宿主 `source:"bundled"` 与 bundled 根 rank 600）；首次运行迁移检查核对 10 个内置 Skill 均被发现、名称／来源标签／rank 与原 `customSkillDirs`（custom／rank 300）语义等价，不等价时 fail closed 并显示原因。`skills/` 目录字节不变。
+- **内置 Skill 迁移**：bundle 的 `skills` 目录由 provider 枚举并标注为 **Weir 内置**（不沿用宿主 `source:"bundled"` 与 bundled 根 rank 600）；首次运行迁移检查核对当前契约中的 11 个内置 Skill 均被发现，名称／来源标签／rank 与原 `customSkillDirs`（custom／rank 300）语义等价，不等价时 fail closed 并显示原因。`mcp-server-setup` 按同一目录、frontmatter 与英文模板契约纳入；目录变化必须显式评审，不再声称目录字节冻结。
 
 ### Apply 事务
 
@@ -131,10 +131,11 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 | 宿主直接配置／ACP／其他预设挂载的 server | **不提供任何保证**：一律显示为 **unmanaged**，管理器不提供关闭开关、不声称已关闭、不计入关闭统计 |
 
 **软化条款（如实记录）**：准入基于 Weir 注册层派生的 configured identity 与 registration generation（重连以同 identity 的新 generation 续接，同名不同 identity 不继承授权），范围限于 Weir 管理的 server；宿主发布的权威身份/generation 与 SDK 最终准入是未授权的后续依赖。`tools/pre-execute` 只作额外早拒，唯一防线是包装定义的最后一刻校验。资源请求的排空围栏依赖 manager 注入的 drain（facade 构造参数）：未挂 manager 行的组合没有受管 server 与资源面，该排空保证在那类组合中属 **unsupported**（准入保持仅 admit 行为），不被沉默声称。
+  完整替换生命周期、registration incarnation、strict readiness、异步 disposal 与 secret containment 见 [MCP server 管理](mcp-server-management.md)：edit/restart 保留 incarnation，remove/re-add 强制重新 Apply，替换期间新旧 generation 都在 readiness 前拒绝。
 
 **组合期歧义**：一个 configured name 是另一个的 `__` 前缀、或同一公开名被两个 server 声明时 fail closed 拒挂其一（不猜测）；facade 遇到未知宿主方法时该 server fail closed 并可见报错。崩溃残留 `weir-mcp-*` 行启动时识别并清理。
 
-**新增受管 server**：面板 MCP 页签的「+ Add managed MCP server」表单或 `/capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>`——写入注册表（owner 为 global/installation、generation 1）后立即经 manager 挂载；注册只使它**可管理**，各会话仍需在选择里勾选才启用。
+**完整管理面（mcp-server-management）**：MCP 页签现支持两种官方 transport 的添加、编辑、测试、重启、删除、Basic/Advanced 与 JSON 批量预览；严格 mount 结果、真实 generation/incarnation、默认与 Select/Apply 分离。独立 `weirCapabilityMutations/mutate|batch` 通道承载秘密配置，避免进入 session command 记录；`/capabilities mcp-add` 仅保留 legacy 兼容并警告 literal secret 命令历史。完整契约见 [MCP server 管理](mcp-server-management.md)。
 
 **纳入 Weir 管理（adopt）**：现有宿主配置不被自动接管；用户确认后才在注册表创建 identity——宿主原条目仍持有先到先得 `serverName` 保留时显示为**冲突**（提示用户自行停用宿主条目，之后由 managed client 接管），绝不显示为成功。便携式 MCP ref 只指向 Weir 管理的逻辑 binding。
 
