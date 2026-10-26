@@ -91,7 +91,7 @@ import { bareSetupCommand } from './pkgmgr.js'
  * Lockfile-derived package MANAGER, or null when the repository has none.
  * Only the manager is decided here: how it is invoked (system tool, DSH
  * bundled runtime, or nothing available) is resolved separately so a bare
- * `pnpm` is never assumed to exist on PATH (AGENTS.md §2, S21).
+ * `pnpm` is never assumed to exist on PATH (docs/contributing/development.md §1, S21).
  * @param {Iterable<string>} fileNames - names present at the lane root
  * @returns {'pnpm' | 'bun' | 'yarn' | 'npm' | null}
  */

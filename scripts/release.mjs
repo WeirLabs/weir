@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Release orchestrator for weir-harness (AGENTS.md §4.4).
+// Release orchestrator for weir-harness (docs/contributing/releasing.md).
 //
 //   node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it] [--no-publish]
 //

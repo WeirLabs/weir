@@ -1,7 +1,7 @@
 # Weir 特性细节文档
 
 本目录是 Weir 各特性的权威细节文档：行为、配置、设计、失败语义、测试。
-写作规范与更新时机见 [AGENTS.md §5](../../AGENTS.md)；新文档一律从
+写作规范与更新时机见 [文档规范](../contributing/documentation.md)；新文档一律从
 [_template.md](_template.md) 复制骨架并在此索引登记。
 
 > README 只讲"用户得到什么"，本目录讲"具体怎么行为、怎么配置、为什么这么设计"。

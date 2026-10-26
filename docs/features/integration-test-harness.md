@@ -149,7 +149,7 @@ profile 的 patch 层把部署级 `workspaceRoot` 钉到 `<IT_ROOT>/outside`，�
 
 ### 与预设 realm 结构的镜像
 
-patch 层把 compaction 子组嵌入 editing 组，在外层统一 isolate `compaction`、`toolResultPruner`、`weirCompactionCoordinator` 与 `weirEditLock`，让压缩提供者、guard 与 todo-driver 同 realm。两种生产预设相应嵌入 delegation。AGENTS.md §6.4 要求生产与镜像同步；真实预设另以 `preset-delegation-surface` 新会话验证，不能仅信 host 镜像。
+patch 层把 compaction 子组嵌入 editing 组，在外层统一 isolate `compaction`、`toolResultPruner`、`weirCompactionCoordinator` 与 `weirEditLock`，让压缩提供者、guard 与 todo-driver 同 realm。两种生产预设相应嵌入 delegation。[AGENTS.md](../../AGENTS.md) §3.3 要求生产与镜像同步；真实预设另以 `preset-delegation-surface` 新会话验证，不能仅信 host 镜像。
 
 ## 边界与失败语义
 
