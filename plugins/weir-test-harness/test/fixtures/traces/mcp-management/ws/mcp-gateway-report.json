@@ -1,0 +1,105 @@
+{
+  "completed": false,
+  "op": "report",
+  "rpcCount": 4,
+  "adopt": {
+    "status": "conflict",
+    "reason": "host row \"weir-it-host-gamma\" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged."
+  },
+  "listing": {
+    "managed": [
+      {
+        "identity": "docs",
+        "label": "IT docs server",
+        "serverName": "docs",
+        "transport": "stdio",
+        "incarnation": "257282d6-fb84-4769-b1ba-1fd7209782eb",
+        "generation": 1,
+        "defaultEnabled": false,
+        "state": "mounted",
+        "statusSource": "registry-runtime-mount-readback",
+        "runtimePhase": "mounted",
+        "discovery": {
+          "toolCount": 1,
+          "toolNamesPreview": [
+            "mcp__docs__echo"
+          ],
+          "truncated": false
+        },
+        "lastMount": {
+          "time": 1793015973207,
+          "status": "mounted",
+          "generation": 1,
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          }
+        },
+        "lastTest": null,
+        "startErrors": [],
+        "liveReconnect": "unknown",
+        "processExit": "unknown",
+        "stderr": "unknown",
+        "readOnly": false,
+        "config": {
+          "identity": "docs",
+          "label": "IT docs server",
+          "owner": {
+            "kind": "workspace",
+            "key": "ws"
+          },
+          "generation": 1,
+          "configuredAt": 1793015971755,
+          "transport": {
+            "kind": "stdio",
+            "ref": "mock://docs"
+          },
+          "client": {
+            "transport": "stdio",
+            "serverName": "docs",
+            "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+            "args": [
+              "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+              "docs"
+            ],
+            "env": {
+              "WEIR_IT_MCP_LOG": "[redacted]",
+              "WEIR_IT_MCP_ORIGIN": "[redacted]"
+            },
+            "reconnect": {
+              "enabled": true
+            }
+          },
+          "incarnation": "257282d6-fb84-4769-b1ba-1fd7209782eb"
+        },
+        "fingerprint": "6bbcd28cd24e78677f39a10e5d3ba3219d92870b98f9c119080530c8cb02d885"
+      }
+    ],
+    "unmanaged": [
+      {
+        "serverName": "gamma",
+        "state": "unmanaged",
+        "readOnly": true
+      }
+    ],
+    "warnings": [],
+    "registryRevision": 1,
+    "capabilities": {
+      "credentials": false,
+      "ephemeral": true
+    }
+  },
+  "publicNames": [
+    [
+      "mcp__docs__echo",
+      {
+        "identity": "docs",
+        "generation": 1
+      }
+    ]
+  ],
+  "startErrors": []
+}

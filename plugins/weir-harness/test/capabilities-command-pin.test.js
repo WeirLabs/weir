@@ -362,7 +362,7 @@ test('pin 1.4: receipt/list/conditions payload field lists', { skip: storePlatfo
     expect(receipt.payload.warnings).toEqual([])
 
     const list = await callJson('list')
-    expect(Object.keys(list.payload)).toEqual(['skills', 'mcpServers'])
+    expect(Object.keys(list.payload)).toEqual(['skills', 'mcpServers', 'mcpWarnings', 'mcpUnavailable', 'mcpCapabilities', 'mcpRegistryRevision'])
     const alphaRow = list.payload.skills.find(row => row.name === 'alpha')
     expect(Object.keys(alphaRow)).toEqual(['name', 'description', 'scope', 'status', 'selected', 'conflict', 'identity'])
     expect(alphaRow.selected).toBe(false)

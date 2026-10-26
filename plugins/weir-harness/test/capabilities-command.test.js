@@ -82,16 +82,16 @@ test('/capabilities receipt and list unwrap provider.list candidates', { skip },
     // the builtin baseline (6.5), so the receipt must name those skills, not
     // filter them away on a `selected` flag the contract never carried.
     expect(receiptPayload.warnings).toEqual([])
-    expect(receiptPayload.effective.skills).toHaveLength(10)
+    expect(receiptPayload.effective.skills).toHaveLength(11)
     expect(receiptPayload.effective.skills).toContain('debugging')
     const listing = await command.handler({ agent, rawInput: 'list' })
     expect(listing.kind).toBe('success')
     const listingPayload = JSON.parse(listing.text)
     expect(Array.isArray(listingPayload.skills)).toBe(true)
     expect(Array.isArray(listingPayload.mcpServers)).toBe(true)
-    // Manager rows: the 10 baseline skills are selected; the 3 Office denial
+    // Manager rows: the 11 baseline skills are selected; the 3 Office denial
     // placeholders list as unselected.
-    expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(10)
+    expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(11)
     expect(listingPayload.skills.filter(row => row.selected !== true)).toHaveLength(3)
   } finally {
     host.restore()

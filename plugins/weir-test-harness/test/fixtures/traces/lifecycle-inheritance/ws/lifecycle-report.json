@@ -1,9 +1,9 @@
 {
   "completed": false,
   "op": "report",
-  "caller": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+  "caller": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
   "sessions": {
-    "2111c9cf-9725-4d7e-a8d7-63fc61d6a326": {
+    "18a3b1ed-fce4-4afc-b770-cb7e8697c4ee": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -12,13 +12,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971641562
+        "capturedAt": 1793016260270
       }
     },
-    "2a22de9c-9d5d-44a8-9526-fbb034d722dc": {
+    "2868047a-57a2-4cd0-930c-c9d2413211b2": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -27,13 +27,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971643813
+        "capturedAt": 1793016260339
       }
     },
-    "437bf55d-fa70-4ddb-903e-427ac79285c3": {
+    "38b15e12-b3b9-4834-9794-e01874d4e849": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -42,13 +42,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971641937
+        "capturedAt": 1793016260176
       }
     },
-    "52a29db2-f51d-4379-8728-8cf0a71383a3": {
+    "43341d82-ad68-496c-bf4d-c1a669ff7d35": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -57,13 +57,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971641888
+        "capturedAt": 1793016258897
       }
     },
-    "71bbddfa-a07a-4e25-99e1-fe34dc2ab494": {
+    "4710307a-bbba-41aa-adab-a82905c47451": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -72,13 +72,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971643243
+        "capturedAt": 1793016258768
       }
     },
-    "8400fda0-8905-4289-b753-df62bc8d71ee": {
+    "4fa5503c-f42c-4f65-ab1f-789e0ffb55e6": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -87,13 +87,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971643568
+        "capturedAt": 1793016260104
       }
     },
-    "9158470e-707e-4d14-a2dc-da28bd77daa2": {
+    "58d6316d-f0c9-409c-92d8-d19afeac2ada": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -102,13 +102,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971643334
+        "capturedAt": 1793016260562
       }
     },
-    "b905d5e0-d8e7-46e7-93aa-c3cb7bb77c4e": {
+    "74ce4011-dc6f-492c-acd4-e82f2fa5f66e": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -117,13 +117,13 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971643687
+        "capturedAt": 1793016258969
       }
     },
-    "c904782d-1cf5-4c94-84df-1ccf08a9b850": {
+    "8968fa52-2bed-45ba-b3cb-98c781c6754c": {
       "inherited": {
         "revision": 1,
         "skillNames": [
@@ -132,13 +132,43 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 1
         },
-        "capturedAt": 1791971643450
+        "capturedAt": 1793016260477
       }
     },
-    "cefebbfa-3ad4-49df-ab78-378eea922ccc": {
+    "eaa1d507-83d5-4f62-b1e3-6ca18bd1b9d0": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "revision": 1
+        },
+        "capturedAt": 1793016260410
+      }
+    },
+    "f05d5087-feba-41ee-87d8-fab6aa8ff48c": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "fixture-a",
+          "fixture-b"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "revision": 1
+        },
+        "capturedAt": 1793016258931
+      }
+    },
+    "f46e97a0-6fce-4b14-85ba-1ea8ae380c2a": {
       "inherited": {
         "revision": 2,
         "skillNames": [
@@ -146,43 +176,41 @@
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
           "revision": 2
         },
-        "capturedAt": 1791971644243
+        "capturedAt": 1793016260812
       }
     },
-    "d9c82b36-e3f7-4fcd-80ee-962a3980eb04": {
+    "session-2d8a5eaf-c382-4d2b-a5dd-9628725b6551": {
       "inherited": {
         "revision": 1,
         "skillNames": [
-          "fixture-a",
-          "fixture-b"
+          "fixture-a"
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
+          "sessionId": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
           "revision": 1
         },
-        "capturedAt": 1791971642001
+        "capturedAt": 1793016260946
       }
     },
-    "f619b3fa-7d0f-4c86-9f83-8a2c4052198d": {
+    "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c": {
       "inherited": {
         "revision": 1,
         "skillNames": [
-          "fixture-a",
-          "fixture-b"
+          "fixture-a"
         ],
         "origin": "inherited",
         "parent": {
-          "sessionId": "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce",
-          "revision": 1
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "revision": 2
         },
-        "capturedAt": 1791971643924
+        "capturedAt": 1793016260866
       }
     },
-    "session-2100d733-5ebd-4c92-9c07-d0e4c2c9c8ce": {
+    "session-a818322e-6d5e-4923-9fd0-607ddcef42d1": {
       "selection": {
         "revision": 2,
         "skillNames": [
@@ -192,10 +220,34 @@
         "parent": null,
         "capturedAt": null
       }
+    },
+    "session-b1df10c3-1bb4-46dc-bb89-a6c4e59aeaf3": {
+      "inherited": {
+        "revision": 1,
+        "skillNames": [
+          "debugging",
+          "deep-work",
+          "git-master",
+          "mcp-server-setup",
+          "programming",
+          "refactor",
+          "remove-ai-slops",
+          "remove-deadcode",
+          "research",
+          "review-work",
+          "work-with-pr"
+        ],
+        "origin": "inherited",
+        "parent": {
+          "sessionId": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+          "revision": 0
+        },
+        "capturedAt": 1793016261136
+      }
     }
   },
   "recapture": {
-    "child": "cefebbfa-3ad4-49df-ab78-378eea922ccc",
+    "child": "f46e97a0-6fce-4b14-85ba-1ea8ae380c2a",
     "revision": 2,
     "skillNames": [
       "fixture-a"

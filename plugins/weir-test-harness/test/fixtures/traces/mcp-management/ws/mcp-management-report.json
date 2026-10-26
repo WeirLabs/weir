@@ -1,0 +1,1046 @@
+{
+  "responses": [
+    {
+      "op": "add",
+      "value": {
+        "completed": true,
+        "op": "add",
+        "_marker": "add",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs",
+          "generation": 1,
+          "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 1
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 1,
+          "saved": true,
+          "succeeded": true
+        }
+      }
+    },
+    {
+      "op": "list",
+      "value": {
+        "completed": true,
+        "op": "list",
+        "_marker": "list",
+        "listing": {
+          "managed": [
+            {
+              "identity": "docs",
+              "label": "Managed docs",
+              "serverName": "docs",
+              "transport": "stdio",
+              "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f",
+              "generation": 1,
+              "defaultEnabled": false,
+              "state": "mounted",
+              "statusSource": "registry-runtime-mount-readback",
+              "runtimePhase": "mounted",
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__docs__echo"
+                ],
+                "truncated": false
+              },
+              "lastMount": {
+                "time": 1793016546542,
+                "status": "mounted",
+                "generation": 1,
+                "discovery": {
+                  "toolCount": 1,
+                  "toolNamesPreview": [
+                    "mcp__docs__echo"
+                  ],
+                  "truncated": false
+                }
+              },
+              "lastTest": null,
+              "startErrors": [],
+              "liveReconnect": "unknown",
+              "processExit": "unknown",
+              "stderr": "unknown",
+              "readOnly": false,
+              "config": {
+                "identity": "docs",
+                "label": "Managed docs",
+                "owner": {
+                  "kind": "global",
+                  "key": "installation"
+                },
+                "generation": 1,
+                "configuredAt": 1793016546199,
+                "transport": {
+                  "kind": "stdio",
+                  "ref": "cmd:/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"
+                },
+                "client": {
+                  "transport": "stdio",
+                  "serverName": "docs",
+                  "failOnStartupError": true,
+                  "reconnect": {
+                    "enabled": true
+                  },
+                  "command": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+                  "args": [
+                    "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                    "docs"
+                  ],
+                  "env": {}
+                },
+                "secretRefs": {
+                  "env": {
+                    "WEIR_IT_MCP_LOG": {
+                      "ref": "WEIR_MCP_46b42b4229cd_G1_529f6aa105f847fb_541d63a2b536"
+                    },
+                    "WEIR_IT_MCP_ORIGIN": {
+                      "ref": "WEIR_MCP_46b42b4229cd_G1_529f6aa105f847fb_274cca135ac4"
+                    },
+                    "WEIR_IT_CANARY": {
+                      "ref": "WEIR_MCP_46b42b4229cd_G1_529f6aa105f847fb_d343a30c68ca"
+                    }
+                  }
+                },
+                "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f"
+              },
+              "fingerprint": "fc298efc1c0336eb2f6fb33820cfae79533e0b2a16cf522986192851c2039d01"
+            }
+          ],
+          "unmanaged": [
+            {
+              "serverName": "gamma",
+              "state": "unmanaged",
+              "readOnly": true
+            }
+          ],
+          "warnings": [],
+          "registryRevision": 1,
+          "capabilities": {
+            "credentials": true,
+            "ephemeral": true
+          }
+        }
+      }
+    },
+    {
+      "op": "apply",
+      "value": {
+        "completed": true,
+        "op": "apply",
+        "_marker": "apply",
+        "outcome": {
+          "status": "applied",
+          "revision": 1,
+          "receipt": {
+            "requestId": "mcp-apply-1793016546642",
+            "requestDigest": "1984b3de7728885d148ac7e2556bbc0e00f82d851c267e781dd9382f7ff3ac5b",
+            "revision": 1,
+            "acceptedAt": 1793016546660
+          },
+          "effective": {
+            "skills": [],
+            "mcpServers": [
+              "docs"
+            ],
+            "mcpIncarnations": {
+              "docs": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f"
+            }
+          },
+          "unresolvedWarnings": []
+        }
+      }
+    },
+    {
+      "op": "call",
+      "value": {
+        "completed": true,
+        "op": "call",
+        "_marker": "call",
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "RESULT server=[redacted] origin=[redacted] pid=[redacted] text=[redacted]"
+            }
+          ]
+        },
+        "callObserved": true
+      }
+    },
+    {
+      "op": "edit-keep",
+      "value": {
+        "completed": true,
+        "op": "edit",
+        "_marker": "edit-keep",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs",
+          "generation": 2,
+          "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 2
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 2,
+          "saved": true,
+          "succeeded": true
+        }
+      }
+    },
+    {
+      "op": "edit-replace",
+      "value": {
+        "completed": true,
+        "op": "edit",
+        "_marker": "edit-replace",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs",
+          "generation": 3,
+          "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 3
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 3,
+          "saved": true,
+          "succeeded": true
+        }
+      }
+    },
+    {
+      "op": "restart",
+      "value": {
+        "completed": true,
+        "op": "restart",
+        "_marker": "restart",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs",
+          "generation": 4,
+          "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 4
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 4,
+          "saved": true,
+          "succeeded": true
+        }
+      }
+    },
+    {
+      "op": "replacement-fence",
+      "value": {
+        "completed": true,
+        "op": "replacementFence",
+        "_marker": "replacement-fence",
+        "before": true,
+        "during": false,
+        "after": true,
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs",
+          "generation": 5,
+          "incarnation": "60b66f45-4d87-4aa6-af56-3e84ee36dd8f",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 5
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 5,
+          "saved": true,
+          "succeeded": true
+        }
+      }
+    },
+    {
+      "op": "default",
+      "value": {
+        "completed": true,
+        "op": "default",
+        "_marker": "default",
+        "outcome": {
+          "status": "saved",
+          "identity": "docs",
+          "saved": true,
+          "defaultEnabled": true,
+          "registryRevision": 6
+        }
+      }
+    },
+    {
+      "op": "probe",
+      "value": {
+        "completed": true,
+        "op": "probe",
+        "_marker": "probe",
+        "outcome": {
+          "status": "mounted",
+          "identity": "probe-only",
+          "saved": false,
+          "probe": true,
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__probe134fcd9f1b4c4962__echo"
+            ],
+            "truncated": false
+          },
+          "cleanup": {
+            "status": "cleaned",
+            "removed": true,
+            "groupId": "weir-mcp-probe-134fcd9f1b4c4962"
+          },
+          "next": {
+            "action": "add-or-edit"
+          },
+          "registryRevision": 6
+        },
+        "registryKind": "ok",
+        "registryHasIdentity": false
+      }
+    },
+    {
+      "op": "remote",
+      "value": {
+        "completed": true,
+        "op": "remote",
+        "_marker": "remote",
+        "remote": {
+          "status": "mounted",
+          "identity": "docs-remote",
+          "generation": 1,
+          "incarnation": "20a93ca1-5207-431e-9c90-8782ca6500da",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 1
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs-remote__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 7,
+          "saved": true,
+          "succeeded": true
+        },
+        "unrelatedApply": "applied"
+      }
+    },
+    {
+      "op": "http",
+      "value": {
+        "completed": true,
+        "op": "http",
+        "_marker": "http",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs-http",
+          "generation": 1,
+          "incarnation": "fff6d7f7-1d25-4b43-b807-194549ea9235",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 1
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs-http__echo"
+            ],
+            "truncated": false
+          },
+          "execution": null,
+          "registryRevision": 8,
+          "saved": true,
+          "succeeded": true
+        },
+        "httpRequests": 4
+      }
+    },
+    {
+      "op": "http-probe",
+      "value": {
+        "completed": true,
+        "op": "httpProbe",
+        "_marker": "http-probe",
+        "outcome": {
+          "status": "mounted",
+          "identity": "http-probe",
+          "saved": false,
+          "probe": true,
+          "discovery": {
+            "toolCount": 0,
+            "toolNamesPreview": [],
+            "truncated": false
+          },
+          "cleanup": {
+            "status": "cleaned",
+            "removed": true,
+            "groupId": "weir-mcp-probe-19016fb5e2be436d"
+          },
+          "next": {
+            "action": "add-or-edit"
+          },
+          "registryRevision": 8
+        },
+        "registryKind": "ok",
+        "registryHasIdentity": false
+      }
+    },
+    {
+      "op": "http-failure",
+      "value": {
+        "completed": true,
+        "op": "httpFailure",
+        "_marker": "http-failure",
+        "outcome": {
+          "status": "probe-failed",
+          "identity": "http-failure",
+          "error": {
+            "code": "http-unauthorized",
+            "message": "mcp-client(probe0c4469c4f1b14701): initial connection or tool synchronization failed",
+            "hint": "Retry after correcting the cause.",
+            "recovery": {
+              "action": "retry"
+            },
+            "causes": [
+              "mcp-client(probe0c4469c4f1b14701): initial connection or tool synchronization failed",
+              "mcp-client(probe0c4469c4f1b14701): initial connection or tool synchronization failed",
+              "Version negotiation failed: the server requires authorization (HTTP 401)"
+            ]
+          },
+          "cleanup": {
+            "status": "cleaned",
+            "removed": true,
+            "groupId": "weir-mcp-probe-0c4469c4f1b14701"
+          },
+          "saved": false,
+          "next": {
+            "action": "edit-and-retry"
+          },
+          "registryRevision": 8
+        },
+        "registryKind": "ok",
+        "registryHasIdentity": false
+      }
+    },
+    {
+      "op": "http-timeout",
+      "value": {
+        "completed": true,
+        "op": "httpTimeout",
+        "_marker": "http-timeout",
+        "outcome": {
+          "status": "probe-failed",
+          "identity": "http-timeout",
+          "error": {
+            "code": "timeout",
+            "message": "MCP Loader await probe-2882a30b6a6a4178 timed out after 1000ms",
+            "hint": "Retry after correcting the cause.",
+            "recovery": {
+              "action": "retry"
+            },
+            "causes": [
+              "MCP Loader await probe-2882a30b6a6a4178 timed out after 1000ms",
+              "MCP Loader await probe-2882a30b6a6a4178 timed out after 1000ms"
+            ]
+          },
+          "cleanup": {
+            "status": "cleaned",
+            "removed": true,
+            "groupId": "weir-mcp-probe-2882a30b6a6a4178"
+          },
+          "saved": false,
+          "next": {
+            "action": "edit-and-retry"
+          },
+          "registryRevision": 8
+        },
+        "registryKind": "ok",
+        "registryHasIdentity": false
+      }
+    },
+    {
+      "op": "ai-seed",
+      "value": {
+        "completed": true,
+        "op": "aiSeed",
+        "_marker": "ai-seed",
+        "seeded": true
+      }
+    },
+    {
+      "op": "ai-preview",
+      "value": {
+        "completed": true,
+        "op": "aiPreview",
+        "_marker": "ai-preview",
+        "outcome": {
+          "status": "preview",
+          "plan": [
+            {
+              "index": 0,
+              "identity": "docs-ai",
+              "entry": {
+                "identity": "docs-ai",
+                "label": "AI docs-ai",
+                "owner": {
+                  "kind": "global",
+                  "key": "installation"
+                },
+                "generation": 0,
+                "configuredAt": 0,
+                "transport": {
+                  "kind": "stdio",
+                  "ref": "cmd:/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"
+                },
+                "client": {
+                  "transport": "stdio",
+                  "serverName": "docs-ai",
+                  "failOnStartupError": true,
+                  "reconnect": {
+                    "enabled": true
+                  },
+                  "command": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+                  "args": [
+                    "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                    "docs-ai"
+                  ],
+                  "env": {}
+                },
+                "secretRefs": {
+                  "env": {
+                    "WEIR_IT_MCP_LOG": {
+                      "ref": "WEIR_IT_MCP_LOG"
+                    },
+                    "WEIR_IT_MCP_ORIGIN": {
+                      "ref": "WEIR_IT_MCP_ORIGIN"
+                    },
+                    "WEIR_IT_CANARY": {
+                      "ref": "WEIR_IT_CANARY"
+                    }
+                  }
+                }
+              },
+              "fingerprint": "5252f934c6ca0de3d36663464154d03bf3763a5e746cc3fe332e994046ec5543"
+            }
+          ],
+          "digest": "6546ae4bfaece3c5011b69780a45d006bff37c33d7fa7690e4950516c8ed0b3c",
+          "targets": [
+            {
+              "identity": "docs-ai",
+              "fingerprint": null,
+              "generation": null,
+              "incarnation": null,
+              "conflict": null,
+              "namespaceConflict": null
+            }
+          ],
+          "registryRevision": 8,
+          "capabilities": {
+            "credentials": true,
+            "ephemeral": true
+          },
+          "saved": false,
+          "next": {
+            "action": "review-plan-then-install"
+          }
+        },
+        "unchanged": true,
+        "selection": [],
+        "defaults": [
+          "docs"
+        ],
+        "registryHasIdentity": false
+      }
+    },
+    {
+      "op": "ai-cancel",
+      "value": {
+        "completed": true,
+        "op": "aiCancel",
+        "_marker": "ai-cancel",
+        "outcome": {
+          "status": "cancelled",
+          "saved": false,
+          "error": {
+            "code": "confirmation-not-approved",
+            "message": "The exact approval option was not selected alone; no probe or write occurred.",
+            "hint": "Retry after correcting the cause.",
+            "recovery": {
+              "action": "retry"
+            },
+            "causes": [
+              "The exact approval option was not selected alone; no probe or write occurred."
+            ]
+          }
+        },
+        "unchanged": true,
+        "selection": [],
+        "defaults": [
+          "docs"
+        ],
+        "registryHasIdentity": false
+      }
+    },
+    {
+      "op": "ai-approve",
+      "value": {
+        "completed": true,
+        "op": "aiApprove",
+        "_marker": "ai-approve",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs-ai",
+          "generation": 1,
+          "incarnation": "c1c0b824-3ec4-4b0f-8c17-182ef1730b8b",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 1
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs-ai__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 9,
+          "saved": true,
+          "succeeded": true,
+          "next": {
+            "action": "select-and-apply"
+          }
+        },
+        "unchanged": false,
+        "selection": [],
+        "defaults": [
+          "docs"
+        ],
+        "registryHasIdentity": true
+      }
+    },
+    {
+      "op": "remove-docs",
+      "value": {
+        "completed": true,
+        "op": "remove",
+        "_marker": "remove-docs",
+        "outcome": {
+          "status": "removed",
+          "identity": "docs",
+          "removed": true,
+          "saved": true,
+          "defaultRemoved": true,
+          "registryRevision": 10
+        }
+      }
+    },
+    {
+      "op": "readd-docs",
+      "value": {
+        "completed": true,
+        "op": "add",
+        "_marker": "readd-docs",
+        "outcome": {
+          "status": "mounted",
+          "identity": "docs",
+          "generation": 1,
+          "incarnation": "0f02cc6d-cf46-47aa-b806-d454c10c45d6",
+          "mount": {
+            "state": "mounted",
+            "observedGeneration": 1
+          },
+          "discovery": {
+            "toolCount": 1,
+            "toolNamesPreview": [
+              "mcp__docs__echo"
+            ],
+            "truncated": false
+          },
+          "execution": {
+            "requestedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "resolvedCommand": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+            "argumentCount": 2,
+            "windowsShim": false
+          },
+          "registryRevision": 11,
+          "saved": true,
+          "succeeded": true
+        }
+      }
+    },
+    {
+      "op": "old-access",
+      "value": {
+        "completed": true,
+        "op": "oldAccess",
+        "_marker": "old-access",
+        "admitted": false,
+        "incarnation": "0f02cc6d-cf46-47aa-b806-d454c10c45d6",
+        "generation": 1
+      }
+    },
+    {
+      "op": "apply-readded",
+      "value": {
+        "completed": true,
+        "op": "apply",
+        "_marker": "apply-readded",
+        "outcome": {
+          "status": "applied",
+          "revision": 3,
+          "receipt": {
+            "requestId": "mcp-apply-1793016550328",
+            "requestDigest": "6e34cf71b8b90eb3d36ddb8ec4684e0ef08c70f07ee05fa7e8e2663e2fba9a1f",
+            "revision": 3,
+            "acceptedAt": 1793016550342
+          },
+          "effective": {
+            "skills": [],
+            "mcpServers": [
+              "docs"
+            ],
+            "mcpIncarnations": {
+              "docs": "0f02cc6d-cf46-47aa-b806-d454c10c45d6"
+            }
+          },
+          "unresolvedWarnings": [],
+          "draining": [
+            {
+              "server": "docs-remote",
+              "state": "settled",
+              "inFlight": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "op": "new-access",
+      "value": {
+        "completed": true,
+        "op": "newAccess",
+        "_marker": "new-access",
+        "admitted": true,
+        "incarnation": "0f02cc6d-cf46-47aa-b806-d454c10c45d6",
+        "generation": 1
+      }
+    },
+    {
+      "op": "remove-readded",
+      "value": {
+        "completed": true,
+        "op": "remove",
+        "_marker": "remove-readded",
+        "outcome": {
+          "status": "removed",
+          "identity": "docs",
+          "removed": true,
+          "saved": true,
+          "defaultRemoved": false,
+          "registryRevision": 12
+        }
+      }
+    },
+    {
+      "op": "remove-ai",
+      "value": {
+        "completed": true,
+        "op": "remove",
+        "_marker": "remove-ai",
+        "outcome": {
+          "status": "removed",
+          "identity": "docs-ai",
+          "removed": true,
+          "saved": true,
+          "defaultRemoved": false,
+          "registryRevision": 13
+        }
+      }
+    },
+    {
+      "op": "remove-remote",
+      "value": {
+        "completed": true,
+        "op": "remove",
+        "_marker": "remove-remote",
+        "outcome": {
+          "status": "removed",
+          "identity": "docs-remote",
+          "removed": true,
+          "saved": true,
+          "defaultRemoved": false,
+          "registryRevision": 14
+        }
+      }
+    },
+    {
+      "op": "remove-http",
+      "value": {
+        "completed": true,
+        "op": "remove",
+        "_marker": "remove-http",
+        "outcome": {
+          "status": "removed",
+          "identity": "docs-http",
+          "removed": true,
+          "saved": true,
+          "defaultRemoved": false,
+          "registryRevision": 15
+        }
+      }
+    },
+    {
+      "op": "canary",
+      "value": {
+        "completed": true,
+        "op": "canary",
+        "_marker": "canary",
+        "canary": {
+          "registry": false,
+          "profile": false,
+          "residue": false,
+          "audit": false,
+          "remote": false,
+          "session": false
+        }
+      }
+    },
+    {
+      "op": "residue",
+      "value": {
+        "completed": true,
+        "op": "residue",
+        "_marker": "residue",
+        "recovery": {
+          "swept": [
+            "weir-mcp-manager",
+            "weir-mcp-crash-docs"
+          ],
+          "mounted": 0,
+          "results": []
+        },
+        "canary": {
+          "registry": false,
+          "profile": false,
+          "residue": false,
+          "audit": false,
+          "remote": false,
+          "session": false
+        }
+      }
+    }
+  ],
+  "registry": {},
+  "lastEntries": {
+    "docs": {
+      "identity": "docs",
+      "label": "Managed docs",
+      "owner": {
+        "kind": "global",
+        "key": "installation"
+      },
+      "generation": 1,
+      "configuredAt": 1793016550080,
+      "transport": {
+        "kind": "stdio",
+        "ref": "cmd:/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"
+      },
+      "client": {
+        "transport": "stdio",
+        "serverName": "docs",
+        "failOnStartupError": true,
+        "reconnect": {
+          "enabled": true
+        },
+        "command": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+        "args": [
+          "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+          "docs"
+        ],
+        "env": {}
+      },
+      "secretRefs": {
+        "env": {
+          "WEIR_IT_MCP_LOG": {
+            "ref": "WEIR_MCP_46b42b4229cd_G1_3f71f28e8fc34b41_541d63a2b536"
+          },
+          "WEIR_IT_MCP_ORIGIN": {
+            "ref": "WEIR_MCP_46b42b4229cd_G1_3f71f28e8fc34b41_274cca135ac4"
+          },
+          "WEIR_IT_CANARY": {
+            "ref": "WEIR_MCP_46b42b4229cd_G1_3f71f28e8fc34b41_d343a30c68ca"
+          }
+        }
+      },
+      "incarnation": "0f02cc6d-cf46-47aa-b806-d454c10c45d6"
+    },
+    "docs-http": {
+      "identity": "docs-http",
+      "label": "HTTP docs-http",
+      "owner": {
+        "kind": "global",
+        "key": "installation"
+      },
+      "generation": 1,
+      "configuredAt": 1793016548331,
+      "transport": {
+        "kind": "streamable-http",
+        "ref": "http:http://127.0.0.1:63717/mcp"
+      },
+      "client": {
+        "transport": "streamable-http",
+        "serverName": "docs-http",
+        "failOnStartupError": true,
+        "toolCallTimeoutMs": 2000,
+        "url": "http://127.0.0.1:63717/mcp",
+        "headers": {}
+      },
+      "secretRefs": {
+        "headers": {
+          "Authorization": {
+            "ref": "WEIR_MCP_33f40b9c6acd_G1_327f55b0ad2f4e08_283354bd6a89"
+          }
+        }
+      },
+      "incarnation": "fff6d7f7-1d25-4b43-b807-194549ea9235"
+    },
+    "docs-ai": {
+      "identity": "docs-ai",
+      "label": "AI docs-ai",
+      "owner": {
+        "kind": "global",
+        "key": "installation"
+      },
+      "generation": 1,
+      "configuredAt": 1793016549821,
+      "transport": {
+        "kind": "stdio",
+        "ref": "cmd:/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness"
+      },
+      "client": {
+        "transport": "stdio",
+        "serverName": "docs-ai",
+        "failOnStartupError": true,
+        "reconnect": {
+          "enabled": true
+        },
+        "command": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+        "args": [
+          "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+          "docs-ai"
+        ],
+        "env": {}
+      },
+      "secretRefs": {
+        "env": {
+          "WEIR_IT_MCP_LOG": {
+            "ref": "WEIR_IT_MCP_LOG"
+          },
+          "WEIR_IT_MCP_ORIGIN": {
+            "ref": "WEIR_IT_MCP_ORIGIN"
+          },
+          "WEIR_IT_CANARY": {
+            "ref": "WEIR_IT_CANARY"
+          }
+        }
+      },
+      "incarnation": "c1c0b824-3ec4-4b0f-8c17-182ef1730b8b"
+    }
+  },
+  "hasSecrets": [],
+  "canary": {
+    "registry": false,
+    "profile": false,
+    "residue": false,
+    "audit": false,
+    "remote": false,
+    "session": false
+  },
+  "events": 61
+}

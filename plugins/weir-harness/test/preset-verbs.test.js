@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 import { effectiveSelectionDigest } from '../src/capabilities/read-payloads.js'
-import { seedMcpRegistrations } from './helpers/mcp-registry.js'
+import { seedMcpRegistrations, createCommandMcpManager } from './helpers/mcp-registry.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'weir-verbs-'))
 
@@ -28,6 +28,7 @@ const mountCapabilities = (root, config = {}, profileContext, dependencies = {})
     get(name) {
       if (name === 'profileContext') return profileContext ?? { home: root, name: 'it' }
       if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      if (name === 'weirMcpManager') return createCommandMcpManager()
       return undefined
     },
   }

@@ -39,6 +39,14 @@ const steps = [
   ['residue', { op: 'residue', identity: 'docs' }, 'residue'],
   ['report', { op: 'report' }, 'report'],
 ]
+function observe(obs) {
+  const history = obs?.transcript ?? ''
+  return {
+    managementComplete: history.includes('mcp management complete'),
+    aiApproved: history.includes('done ai-approve'),
+    incarnationRebound: history.includes('done new-access'),
+  }
+}
 function decide(options, obs) {
   const history = obs?.transcript ?? transcript(options)
   const lastTool = lastOfRole(options, 'tool')
@@ -57,7 +65,7 @@ async function run(ctx) {
   const trace = join(ctx.IT_ROOT, `trace-${id}.jsonl`)
   const main = await ctx.spawnHeadless(['weir-it', prompt], ctx.scenarioEnv(id, trace, {
     WEIR_IT_MCP_MANAGEMENT: '1',
-    WEIR_IT_MCP_STARTUP_TIMEOUT_MS: '250',
+    WEIR_IT_MCP_STARTUP_TIMEOUT_MS: '1000',
     WEIR_IT_MCP_CANARY: 'weir-mcp-canary-primary-value',
     WEIR_IT_MCP_CANARY_EDIT: 'weir-mcp-canary-edit-value',
   }))
@@ -98,4 +106,4 @@ function assert(run) {
   run.check('crash residue recovery ran', at('residue').recovery && !Object.values(at('residue').canary).some(Boolean), JSON.stringify(at('residue')))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-500)}`)
 }
-export default { id, prompt, decide, run, assert, env: { WEIR_IT_MCP_MANAGEMENT: '1' } }
+export default { id, prompt, decide, observe, run, assert, env: { WEIR_IT_MCP_MANAGEMENT: '1' } }
