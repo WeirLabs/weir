@@ -5,6 +5,10 @@
 // command/run + command/done events from those reads — asserted both in-band
 // (probe counters) and against the durable decoded session log afterwards,
 // (c) payload parity with the deliberate `/capabilities receipt` command.
+// (d) the `registration` op proves the production lifecycle instead of a
+// direct mirror: the SHIPPED host row against the real Typert registry and the
+// real typertGateway service, before/after a real Cordis fiber restart and
+// after a withdrawal with no survivor (S27.5 gateway/definition-unavailable).
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import zlib from 'node:zlib'
@@ -21,6 +25,7 @@ function decide(options, obs) {
   if (!history.includes('done counts-pre')) return toolCallChunks('capability_remote_probe', { op: 'logCounts', _marker: 'counts-pre' })
   if (!history.includes('done parity')) return toolCallChunks('capability_remote_probe', { op: 'parity', _marker: 'parity' })
   if (!history.includes('done counts-post')) return toolCallChunks('capability_remote_probe', { op: 'logCounts', _marker: 'counts-post' })
+  if (!history.includes('done registration')) return toolCallChunks('capability_remote_probe', { op: 'registration', _marker: 'registration' })
   return textChunks('capability remote done')
 }
 
@@ -128,6 +133,28 @@ function assert(run) {
   run.check('zero command lifecycle events before the deliberate parity command', any('preZero'), '')
   run.check('remote receipt is byte-identical to /capabilities receipt', any('parityOk'), '')
   run.check('exactly the deliberate parity commands recorded in-band', any('postThree'), '')
+
+  // (d) The real lifecycle proof: shipped row + real registry + real gateway.
+  // The gate reads the recorded trace: a run whose transcript shows the op
+  // result MUST have written the report (a live failure surfaces here, and a
+  // flow that never requested the op already fails the completion check above).
+  // The committed replay fixture predates the op, so replay adds no checks and
+  // can never fake a pass.
+  const registrationServed = run.requests.some(request => String(request.lastTool ?? '').includes('CAPABILITY_PROBE done registration'))
+  let registration = null
+  if (registrationServed) {
+    try { registration = JSON.parse(readFileSync(join(run.ws, 'capability-remote-registration.json'), 'utf8')) } catch { /* reported below */ }
+    run.check('the registration lifecycle report was written', registration !== null, 'capability-remote-registration.json')
+  }
+  if (registration !== null) {
+    run.check('the shipped row fiber was found and its real gateway service is callable', registration?.rowFiber?.found === true && registration?.gateway?.dispatch === true, JSON.stringify({ rowFiber: registration?.rowFiber, gateway: registration?.gateway }).slice(0, 300))
+    run.check('all five read AND both mutation endpoints are registered before any remount', registration?.endpoints?.before === '1111111' && registration?.package?.before === true, JSON.stringify({ endpoints: registration?.endpoints, package: registration?.package }).slice(0, 300))
+    run.check('a real gateway read and mutation reach the bridge spy faces', registration?.dispatch?.readBefore?.ok === true && registration?.dispatch?.mutationBefore?.ok === true && registration?.dispatch?.mutationBefore?.value?.status === 'preview' && registration?.spies?.before?.reads === 1 && registration?.spies?.before?.mutations === 1, JSON.stringify({ read: registration?.dispatch?.readBefore, mutation: registration?.dispatch?.mutationBefore, spies: registration?.spies?.before }).slice(0, 400))
+    run.check('a real Cordis fiber restart leaves every endpoint and the package face live', registration?.endpoints?.afterRestart === '1111111' && registration?.package?.afterRestart === true, JSON.stringify({ endpoints: registration?.endpoints, package: registration?.package, seen: registration?.hasSeen }).slice(0, 300))
+    run.check('dispatch still reaches the row after the restart instead of definition-unavailable', registration?.dispatch?.readAfterRestart?.ok === true && registration?.dispatch?.mutationAfterRestart?.ok === true && registration?.spies?.afterRestart?.reads === 2 && registration?.spies?.afterRestart?.mutations === 2, JSON.stringify({ read: registration?.dispatch?.readAfterRestart, mutation: registration?.dispatch?.mutationAfterRestart, spies: registration?.spies }).slice(0, 400))
+    run.check('a withdrawal with no survivor leaves no endpoint or package face behind', registration?.endpoints?.afterDisposal === '0000000' && registration?.package?.afterDisposal === false && registration?.hasSeen?.afterDisposal === '1111111', JSON.stringify({ endpoints: registration?.endpoints?.afterDisposal, package: registration?.package?.afterDisposal, seen: registration?.hasSeen?.afterDisposal }).slice(0, 300))
+    run.check('a withdrawn strict definition rejects with gateway/definition-unavailable before either spy', registration?.dispatch?.readAfterDisposal?.ok === false && registration?.dispatch?.readAfterDisposal?.code === 'gateway/definition-unavailable' && registration?.dispatch?.mutationAfterDisposal?.code === 'gateway/definition-unavailable' && JSON.stringify(registration?.spies?.afterDisposal) === JSON.stringify(registration?.spies?.afterRestart), JSON.stringify({ read: registration?.dispatch?.readAfterDisposal, mutation: registration?.dispatch?.mutationAfterDisposal, spies: registration?.spies }).slice(0, 400))
+  }
 
   // Durable session log: the reads left no trace; exactly the one deliberate
   // parity command did (design D4).

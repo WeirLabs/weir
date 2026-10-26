@@ -272,48 +272,60 @@ export function createCapabilityMutationService(dependencies = {}) {
   }
 }
 
-export function capabilityMutationContribution() {
-  return {
-    package: 'weir-harness',
-    face: 'host-mutations',
-    schemas: [],
-    model: { services: [], events: [], objects: [] },
-    invocations: CAPABILITY_MUTATION_METHODS.map(method => ({
-      id: `weir-harness.${CAPABILITY_MUTATION_NAMESPACE}.${method}`,
-      service: CAPABILITY_MUTATION_SERVICE_KEY,
-      namespace: CAPABILITY_MUTATION_NAMESPACE,
-      method,
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } },
-        { name: 'request', wire: 'request', source: 'json', codec: { mode: 'src-json' } },
-      ],
-      result: { mode: 'src-json' },
-    })),
-  }
-}
+/**
+ * Every endpoint the gateway resolves through this package's ONE host-face
+ * contribution, in contribution order. A live read says nothing about write
+ * availability, so liveness is always checked across this whole set.
+ */
+export const CAPABILITY_ENDPOINTS = [
+  ...CAPABILITY_READ_METHODS.map(method => `${CAPABILITY_READ_NAMESPACE}/${method}`),
+  ...CAPABILITY_MUTATION_METHODS.map(method => `${CAPABILITY_MUTATION_NAMESPACE}/${method}`),
+]
 
 /**
  * The hand-written typert contribution (S27: empty schemas/model, src-json
  * codecs, no zod, no generated artifacts). Parameters and results are plain
  * JSON; the envelope validates the argument name only.
+ *
+ * ALL five read and two mutation invocations live in ONE contribution, because
+ * the registry keys exactly one record per package+face and rejects any second
+ * registration while that record is live: two separate `weir-harness` host-face
+ * contributions could never overlap generations, and the face the mutation half
+ * used to declare (`host-mutations`) is not a face the registry accepts at all —
+ * register() threw and apply() swallowed it into a warning, so the write channel
+ * was silently dead. One atomic batch also means recovery restores every
+ * endpoint or none.
  */
-export function capabilityReadContribution() {
+export function capabilityContribution() {
   return {
-    // The registry's validatePackage requires both (missing = silently dead registration): it validates the package name and keys the package record by face.
+    // The registry's validatePackage requires both (missing = silently dead registration): it validates the package name, rejects any face except host/client, and keys the package record by face.
     package: 'weir-harness',
     face: 'host',
     schemas: [],
     model: { services: [], events: [], objects: [] },
-    invocations: CAPABILITY_READ_METHODS.map(method => ({
-      id: `weir-harness.${CAPABILITY_READ_NAMESPACE}.${method}`,
-      service: CAPABILITY_READ_SERVICE_KEY,
-      namespace: CAPABILITY_READ_NAMESPACE,
-      method,
-      invocation: { kind: 'direct' },
-      parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } }],
-      result: { mode: 'src-json' },
-    })),
+    invocations: [
+      ...CAPABILITY_READ_METHODS.map(method => ({
+        id: `weir-harness.${CAPABILITY_READ_NAMESPACE}.${method}`,
+        service: CAPABILITY_READ_SERVICE_KEY,
+        namespace: CAPABILITY_READ_NAMESPACE,
+        method,
+        invocation: { kind: 'direct' },
+        parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } }],
+        result: { mode: 'src-json' },
+      })),
+      ...CAPABILITY_MUTATION_METHODS.map(method => ({
+        id: `weir-harness.${CAPABILITY_MUTATION_NAMESPACE}.${method}`,
+        service: CAPABILITY_MUTATION_SERVICE_KEY,
+        namespace: CAPABILITY_MUTATION_NAMESPACE,
+        method,
+        invocation: { kind: 'direct' },
+        parameters: [
+          { name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } },
+          { name: 'request', wire: 'request', source: 'json', codec: { mode: 'src-json' } },
+        ],
+        result: { mode: 'src-json' },
+      })),
+    ],
   }
 }
 
@@ -330,6 +342,20 @@ export function capabilityReadContribution() {
  * gateway dispatch resolves through it as well, so the loader must order this
  * row after the typert provider — including a composition where a user-layer
  * patch injects typert after the bundle rows (S27).
+ *
+ * Registration lifecycle (S27.5, gateway/definition-unavailable): a fiber
+ * reload runs apply() again while the previous incarnation's effects are still
+ * unwinding, so BOTH the service provision and the contribution registration can
+ * lose that race, and the old incarnation then withdraws what the new one
+ * skipped. Because the gateway refuses a withdrawn strict definition before it
+ * ever reaches a service method (hasSeen + no live definition), the recovery
+ * must live in this plugin's own fiber: it subscribes to `typert.local` changes
+ * and re-attempts provision+registration on a coalesced microtask while the
+ * endpoints are incomplete. Every one of those facts is per-fiber state: a
+ * pending retry, the disposal latch and the warning latch belong to THIS
+ * generation, so an old generation can never consume the survivor's retry, and
+ * a disposed fiber cannot resurrect the endpoints (Cordis rejects its effect
+ * creation with INACTIVE_EFFECT — the final barrier, never a retry loop).
  */
 export function apply(ctx) {
   const warn = text => ctx.logger?.warn?.(text)
@@ -344,46 +370,104 @@ export function apply(ctx) {
     warn('weir capability remote: typert service is unavailable in this composition; capability reads stay unavailable on the client')
     return
   }
-  // Idempotent, self-healing registration of EVERY read and mutation endpoint.
-  // A live receipt says nothing about write availability.
-  const endpointLive = (namespace, method) => {
-    try { return Boolean(typert.local?.get?.(`${namespace}/${method}`)) } catch { return false }
+  // Per-fiber lifecycle state. NEVER module-global: the previous incarnation's
+  // listener and this one can both observe the same withdrawal.
+  let disposed = false
+  let retryQueued = false
+  let registrationWarned = false
+  const endpointLive = endpoint => {
+    try { return Boolean(typert.local?.get?.(endpoint)) } catch { return false }
   }
-  const endpointsLive = (namespace, methods) => methods.every(method => endpointLive(namespace, method))
-  const ensureContribution = (namespace, methods, contribution) => {
-    if (endpointsLive(namespace, methods)) return true
+  const endpointsComplete = () => CAPABILITY_ENDPOINTS.every(endpointLive)
+  let readService
+  let mutationService
+  // Provide one service unless another incarnation still holds the host-root
+  // key. A host-root provide lives on the ROOT fiber (S27: the gateway resolves
+  // ctx.get from the host root), so the first incarnation's receiver survives
+  // every reload; replacing it is neither possible nor needed. A lost race is
+  // not fatal — the retry below keeps every endpoint self-healing.
+  const ensureService = (key, service) => {
     try {
-      typert.register(contribution())
+      const current = typeof ctx.get === 'function' ? ctx.get(key) : undefined
+      if (current === service) return true
+      if (current !== undefined) return false
+      ctx.root.reflect.provide(key, service)
+      return true
+    } catch { return false }
+  }
+  const ensureServices = () => {
+    const read = ensureService(CAPABILITY_READ_SERVICE_KEY, readService)
+    const mutation = ensureService(CAPABILITY_MUTATION_SERVICE_KEY, mutationService)
+    return read && mutation
+  }
+  // Exactly ONE register attempt per call: the registry rejects the whole batch
+  // or commits all of it, so looping could only repeat the same rejection.
+  const ensureContribution = () => {
+    if (endpointsComplete()) return true
+    try {
+      typert.register(capabilityContribution())
     } catch (cause) {
-      if (!endpointsLive(namespace, methods)) {
-        warn(`weir capability remote: registration failed (${cause instanceof Error ? cause.message : String(cause)}); capability endpoints stay unavailable on the client`)
+      if (!endpointsComplete()) {
+        // A disposed fiber's rejection is terminal (the survivor owns the retry).
+        if (cause?.code === 'INACTIVE_EFFECT') {
+          disposed = true
+          return false
+        }
+        if (!registrationWarned) {
+          registrationWarned = true
+          warn(`weir capability remote: registration failed (${cause instanceof Error ? cause.message : String(cause)}); capability endpoints stay unavailable on the client`)
+        }
         return false
       }
     }
-    return endpointsLive(namespace, methods)
+    return endpointsComplete()
   }
-  const ensureRegistered = () => {
-    const reads = ensureContribution(CAPABILITY_READ_NAMESPACE, CAPABILITY_READ_METHODS, capabilityReadContribution)
-    const mutations = ensureContribution(CAPABILITY_MUTATION_NAMESPACE, CAPABILITY_MUTATION_METHODS, capabilityMutationContribution)
-    return reads && mutations
+  const ensureRegistered = () => ensureContribution()
+  // Coalesce a burst of registry changes into one microtask. Waiting a turn also
+  // lets the disposing incarnation finish synchronously releasing its service
+  // keys, which a synchronous retry inside the change callback would still see.
+  const queueRetry = () => {
+    if (disposed || retryQueued) return
+    retryQueued = true
+    queueMicrotask(() => {
+      retryQueued = false
+      if (disposed || endpointsComplete()) return
+      ensureServices()
+      ensureContribution()
+    })
   }
+  // Latch disposal as early as the fiber allows, before a queued retry can run
+  // against a fiber Cordis has already detached. A fiber that is already gone
+  // needs no latch: its next register() is rejected with INACTIVE_EFFECT.
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(() => () => { disposed = true })
+  } catch { /* detached fiber: the effect rejection is the barrier */ }
   try {
     const audit = createAudit(ctx)
     const onDegraded = facts => {
       warn(`weir capability read degraded: method=${facts.method} session=${facts.sessionId} preset=${facts.presetId} header=${facts.headerPreset} source=${facts.source} warnings=${facts.warnings.join(';')} provider=${facts.providerReason ?? '-'}: ${facts.providerError ?? '-'}`)
       audit({ id: facts.sessionId, header: { cwd: facts.cwd } }, 'capability-read', facts)
     }
-    const service = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), onDegraded })
-    service.typertRemote = Object.freeze({ service, serviceKey: CAPABILITY_READ_SERVICE_KEY, namespace: CAPABILITY_READ_NAMESPACE })
-    Object.freeze(service)
-    ctx.root.reflect.provide(CAPABILITY_READ_SERVICE_KEY, service)
-    const mutations = createCapabilityMutationService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery') })
-    mutations.typertRemote = Object.freeze({ service: mutations, serviceKey: CAPABILITY_MUTATION_SERVICE_KEY, namespace: CAPABILITY_MUTATION_NAMESPACE })
-    Object.freeze(mutations)
-    ctx.root.reflect.provide(CAPABILITY_MUTATION_SERVICE_KEY, mutations)
-    ensureRegistered()
+    readService = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), onDegraded })
+    readService.typertRemote = Object.freeze({ service: readService, serviceKey: CAPABILITY_READ_SERVICE_KEY, namespace: CAPABILITY_READ_NAMESPACE })
+    Object.freeze(readService)
+    mutationService = createCapabilityMutationService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery') })
+    mutationService.typertRemote = Object.freeze({ service: mutationService, serviceKey: CAPABILITY_MUTATION_SERVICE_KEY, namespace: CAPABILITY_MUTATION_NAMESPACE })
+    Object.freeze(mutationService)
   } catch (cause) {
     warn(`weir capability remote: setup failed (${cause instanceof Error ? cause.message : String(cause)}); capability reads stay unavailable on the client`)
+    return
+  }
+  // Provision BEFORE registering: the gateway resolves the service key of a
+  // live definition, so an endpoint must never outlive its receiver.
+  ensureServices()
+  ensureContribution()
+  // Independent per-fiber subscription: hosts without it keep the older
+  // self-heal-on-call behaviour (each service call still checks the endpoints).
+  try {
+    typert.local?.subscribe?.(() => { if (!endpointsComplete()) queueRetry() })
+  } catch (cause) {
+    warn(`weir capability remote: registration watch failed (${cause instanceof Error ? cause.message : String(cause)}); the capability channel only self-heals on the next call`)
   }
 }
 
