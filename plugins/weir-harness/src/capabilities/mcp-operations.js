@@ -253,7 +253,7 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     if (action === 'setDefault') {
       try {
         const current = await read()
-        if (Number.isSafeInteger(request.expectedRevision) && current.revision !== request.expectedRevision) return finalize(action, revisionConflict(current), request.identity)
+        if (Number.isSafeInteger(request.expectedRevision) && (current.revision ?? 0) !== request.expectedRevision) return finalize(action, revisionConflict(current), request.identity)
         await owner('CAS')
         const result = await registry.setDefault(request.identity, request.enabled === true, current.revision ?? 0)
         if (!committed(result)) return finalize(action, revisionConflict(current), request.identity)

@@ -227,6 +227,17 @@ test('absent registry accepts expectedRevision 0 so first Add and Test reach pro
   expect((await f.registry.read()).servers.docs.generation).toBe(1)
 })
 
+test('absent registry accepts expectedRevision 0 for setDefault and reaches the unregistered validation', async () => {
+  const f = fixture()
+  const before = await f.registry.read()
+  expect(before.kind).toBe('absent')
+  const result = await f.operations.setDefault({ identity: 'docs', enabled: true, expectedRevision: 0 })
+  expect(result.status, JSON.stringify(result)).toBe('validation-failed')
+  expect(result.saved).toBe(false)
+  expect(result.error.code).toBe('identity-unregistered')
+  expect(JSON.stringify(await f.registry.read())).toBe(JSON.stringify(before))
+})
+
 test('a committed registry still rejects a stale expectedRevision without writing or probing', async () => {
   const f = fixture()
   const first = await f.operations.add({ identity: 'docs', expectedRevision: 0, config: config('docs') })
@@ -238,6 +249,12 @@ test('a committed registry still rejects a stale expectedRevision without writin
   expect(stale.saved).toBe(false)
   expect(stale.registryRevision).toBe(before.revision)
   expect(f.calls.probe).toBe(0)
+  const staleDefault = await f.operations.setDefault({ identity: 'docs', enabled: true, expectedRevision: 0 })
+  expect(staleDefault.status, JSON.stringify(staleDefault)).toBe('revision-conflict')
+  expect(staleDefault.registryRevision).toBe(before.revision)
+  const staleDefaultNonzero = await f.operations.setDefault({ identity: 'docs', enabled: true, expectedRevision: 5 })
+  expect(staleDefaultNonzero.status, JSON.stringify(staleDefaultNonzero)).toBe('revision-conflict')
+  expect((await f.registry.read()).enabled).toEqual([])
   expect(JSON.stringify(await f.registry.read())).toBe(JSON.stringify(before))
 })
 
