@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 // Release orchestrator for weir-harness (docs/contributing/releasing.md).
 //
-//   node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it] [--no-publish]
+//   node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it]
 //
 // Sequence: clean-worktree check → CHANGELOG finalize → manifest bump →
-// gates (check, unit tests, integration tests) → commit → tag → publish.
-// The official npm publish path is the GitHub release pipeline
-// (.github/workflows/release.yml, OIDC Trusted Publishing, triggered by the
-// pushed tag): run this script with --no-publish, then push main and the tag.
-// Local publish only works with a logged-in npm; without credentials it fails
-// 401/404 AFTER the commit and tag are already on disk — push, do not re-tag.
+// gates (check, unit tests, integration tests) → commit → tag.
+// npm publication runs only through GitHub Actions after main and the tag are pushed.
+// --no-publish is accepted as a deprecated no-op.
 // --dry-run computes everything in memory, still runs the gates, and never
 // writes files, commits, tags, or publishes.
 
@@ -24,6 +21,39 @@ const CHANGELOG = join(ROOT, 'CHANGELOG.md')
 const MANIFEST = join(ROOT, 'plugins/weir-harness/package.json')
 
 // ---------- pure logic (unit-tested) ----------
+export const USAGE = 'usage: node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it]'
+
+export function parseReleaseArgs(args) {
+  const flags = new Set(args.filter(a => a.startsWith('--')))
+  return {
+    versionArg: args.find(a => !a.startsWith('--')),
+    dryRun: flags.has('--dry-run'),
+    skipIt: flags.has('--skip-it'),
+    warnings: flags.has('--no-publish')
+      ? ['--no-publish is deprecated and has no effect; npm publication runs only through GitHub Actions.']
+      : [],
+  }
+}
+
+export function releaseCompletion(tag, { dryRun = false } = {}) {
+  const handoff = [
+    '  git push origin main',
+    `  git push origin ${tag}`,
+    'GitHub Actions will publish the npm package with OIDC Trusted Publishing and create the GitHub Release.',
+  ]
+  if (dryRun) {
+    return [
+      'dry-run complete: all gates green. No files were written and no commit or tag was created.',
+      `A real run would create the release commit and tag ${tag}, then hand off to GitHub:`,
+      ...handoff,
+    ].join('\n')
+  }
+  return [
+    `release ${tag} prepared: release commit and tag created.`,
+    'Push the release to GitHub:',
+    ...handoff,
+  ].join('\n')
+}
 
 export function parseVersion(input) {
   const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(input ?? '').trim())
@@ -83,15 +113,13 @@ function gitClean() {
 // ---------- main ----------
 
 export async function main(argv) {
-  const args = argv.slice(2)
-  const flags = new Set(args.filter(a => a.startsWith('--')))
-  const versionArg = args.find(a => !a.startsWith('--'))
+  const { versionArg, dryRun, skipIt, warnings } = parseReleaseArgs(argv.slice(2))
   if (!versionArg) {
-    console.error('usage: node scripts/release.mjs <X.Y.Z> [--dry-run] [--skip-it] [--no-publish]')
+    console.error(USAGE)
     return 2
   }
+  for (const warning of warnings) console.warn(`warning: ${warning}`)
   const version = parseVersion(versionArg).text
-  const dryRun = flags.has('--dry-run')
   const tag = `v${version}`
 
   // 1. preconditions
@@ -117,11 +145,11 @@ export async function main(argv) {
   // 4. gates (always run, even in dry-run)
   runPnpm(['--filter', 'weir-harness', 'run', 'check'], 'gate: static check')
   runPnpm(['--filter', 'weir-harness', 'test'], 'gate: unit tests')
-  if (flags.has('--skip-it')) console.log('\n=== gate: integration tests SKIPPED (--skip-it)')
+  if (skipIt) console.log('\n=== gate: integration tests SKIPPED (--skip-it)')
   else runPnpm(['--filter', 'weir-test-harness', 'run', 'test:integration'], 'gate: integration tests')
 
   if (dryRun) {
-    console.log(`\ndry-run complete: all gates green. Real run would commit, tag ${tag}, and publish.`)
+    console.log(`\n${releaseCompletion(tag, { dryRun: true })}`)
     return 0
   }
 
@@ -130,11 +158,7 @@ export async function main(argv) {
   run('git', ['commit', '-m', `chore: release ${tag}`], 'release commit')
   run('git', ['tag', tag], 'tag')
 
-  // 6. publish
-  if (flags.has('--no-publish')) console.log('\npublish skipped (--no-publish); run `pnpm --filter weir-harness publish` when ready')
-  else runPnpm(['--filter', 'weir-harness', 'publish'], 'npm publish')
-
-  console.log(`\nrelease ${tag} complete`)
+  console.log(`\n${releaseCompletion(tag)}`)
   return 0
 }
 

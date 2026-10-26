@@ -35,15 +35,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # prepack (check + unit tests + client build) runs inside npm publish,
-      # so the published tarball always carries a freshly built client.
-      - run: npm publish --provenance --access public
-        working-directory: plugins/weir-harness
-
       # Release notes = this version's CHANGELOG section, verbatim.
-      - name: create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: prepare release notes
         run: |
           # index()-based extraction: mawk (ubuntu default) treats \[ in a
           # dynamic regex as a character class, so $0 ~ ver never matches.
@@ -56,4 +49,14 @@ jobs:
             echo "no CHANGELOG section found for ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
+
+      # prepack (check + unit tests + client build) runs inside npm publish,
+      # so the published tarball always carries a freshly built client.
+      - run: npm publish --provenance --access public
+        working-directory: plugins/weir-harness
+
+      - name: create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
