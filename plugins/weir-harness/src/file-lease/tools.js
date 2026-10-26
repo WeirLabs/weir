@@ -1,6 +1,6 @@
 // The model-facing tool surface of the file-lease feature (design D4, D5, D13).
 //
-// Six pure definitions. They own no state: the arbiter is the only authority
+// Seven pure definitions. They own no state: the arbiter is the only authority
 // (D6/D8), so a tool translates a model intent into one protocol call and
 // translates the verdict back into something a model can act on. Nothing here
 // re-derives ownership, remembers it, or waits for it.
@@ -21,12 +21,16 @@
 
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { isLeaseConflict } from './client.js'
+import { createWatchRegistry } from './watch.js'
 
 /** Retention bound in minutes; the protocol clamps here and so does the tool. */
 export const MAX_HOLD_MINUTES = 60
 
 /** The negotiation reply tool: registered only while a request is pending. */
 export const REPLY_TOOL = 'edit_lock_reply'
+
+/** The release-subscription tool: one path, one in-memory subscription. */
+export const WATCH_TOOL = 'edit_lock_watch'
 
 /** Default retention when the model asks for one without a length. */
 export const DEFAULT_HOLD_MINUTES = MAX_HOLD_MINUTES
@@ -185,10 +189,14 @@ export function describeConflicts(error, cwd, at) {
  * @param {(agent: any) => { id: string, session: string, label: string }} options.ownerOf
  * @param {(agent: any, text: string) => any} [options.deliverNotice] model-facing
  *   notice channel, used only where a tool result cannot carry the outcome
- * @returns {any[]} six definitions, `REPLY_TOOL` included (the plugin decides
+ * @param {ReturnType<typeof createWatchRegistry>} [options.watchRegistry] the
+ *   mount's subscription registry (shared with the plugin's event routing);
+ *   omitted only by callers that never use `edit_lock_watch`
+ * @returns {any[]} seven definitions, `REPLY_TOOL` included (the plugin decides
  *   when that one becomes visible)
  */
-export function createLeaseTools({ client, ownerOf, deliverNotice = () => {} }) {
+export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, watchRegistry = createWatchRegistry() }) {
+  const watches = watchRegistry
   return [
     {
       name: 'edit_lock_acquire',
@@ -435,6 +443,104 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {} }) 
           }
         }
         return { mine: mine.map((/** @type {any} */ lease) => shortName(String(lease?.path ?? ''), cwd)), message: lines.join('\n') }
+      },
+    },
+
+    {
+      name: WATCH_TOOL,
+      description:
+        'Wait for the next release of one contested path without polling it. Use it after an acquisition conflict or a declined/expired transfer request. The answer says whether anything is actually pending: a path that is already free or already yours returns that immediately and keeps no subscription. While it is held by another session, this subscribes once for this session and the next release arrives as a message; a release is only an opportunity to call edit_lock_acquire, never a grant of ownership, and another waiting session may claim it first. Repeating the call is idempotent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string', description: 'The contested file to watch for a release, absolute or relative to the session working directory.' },
+        },
+        required: ['file_path'],
+      },
+      output: textOutput('message'),
+      async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+        const owner = ownerOf(exec?.agent)
+        const cwd = requireCwd(exec)
+        const path = absoluteOne(args?.file_path, cwd)
+        const short = shortName(path, cwd)
+        // Registration comes FIRST (D2): a release that lands between the
+        // registration and the authoritative read is caught by the event
+        // callback, and one that landed before it is caught by the read below.
+        // The opposite order would leave a permanent hole for that release.
+        const entry = watches.register(owner.session, path)
+
+        let reply
+        try {
+          reply = await client.status({ path })
+        } catch (error) {
+          // No authoritative answer means no subscription: never leave a
+          // record that could wait forever for a release nobody described.
+          watches.cancel(owner.session, path)
+          if (isTransport(error)) return unavailable(error, 'no release subscription was created')
+          throw error
+        }
+
+        // The release raced the registration: the event callback already
+        // consumed the entry, so report it synchronously instead of claiming a
+        // subscription that is already over (and suppress its deferred notice).
+        if (entry.state === 'hit') {
+          entry.settledByTool = true
+          return {
+            state: 'released',
+            file_path: short,
+            message: `The release of ${short} happened while this subscription was being established, so nothing is pending. Claim it with edit_lock_acquire if you still need it — a release is an opportunity, not an ownership grant.`,
+          }
+        }
+        if (entry.state === 'reset') {
+          return {
+            state: 'reset',
+            file_path: short,
+            message: `The ownership arbiter connection was reset while this subscription was being established, so nothing is pending and nothing is known about ownership. Re-check with edit_lock_status, and call edit_lock_watch again if ${short} is still held by another session.`,
+          }
+        }
+        if (entry.state === 'cancelled') {
+          return {
+            degraded: true,
+            code: 'watch-cancelled',
+            message: `The release subscription for ${short} was cancelled before it could be established (this agent or the feature was shut down), so nothing is pending. Call edit_lock_watch again in a live agent if you still need the path.`,
+          }
+        }
+
+        const leases = Array.isArray(reply?.leases) ? reply.leases : []
+        if (leases.length === 0) {
+          watches.cancel(owner.session, path)
+          return {
+            state: 'free',
+            file_path: short,
+            message: `Nobody holds ${short} right now, so no release subscription was kept. Claim it with edit_lock_acquire (or just edit it) before working on it.`,
+          }
+        }
+        const holder = leases[0]?.owner ?? {}
+        const mine = text(holder.id) === owner.id || text(holder.session) === owner.session
+        if (mine) {
+          watches.cancel(owner.session, path)
+          return {
+            state: 'self',
+            file_path: short,
+            message: `This session already owns ${short}, so no release subscription was kept and there is nothing to wait for.`,
+          }
+        }
+        if (typeof client.supportsEvent !== 'function' || client.supportsEvent('released') !== true) {
+          watches.cancel(owner.session, path)
+          return {
+            degraded: true,
+            code: 'release-events-unsupported',
+            message: `The connected arbiter does not announce release events (release-events-unsupported), so no release subscription was created for ${short}. Only this subscription is unavailable: conflicts, managed edits and negotiation behave exactly as before, and this tool can be used again once the arbiter restarts with the capability.`,
+          }
+        }
+        const label = text(holder.label) ?? 'another session'
+        const session = text(holder.session) ?? 'unknown'
+        return {
+          state: 'watching',
+          file_path: short,
+          holder: { label, session },
+          message: `Watching ${short} for its next release; "${label}" (session ${session}) holds it now. A release notice will arrive as a message: it means only that the path is free to compete for, so call edit_lock_acquire then. It is not an ownership grant and it reserves nothing — another waiting session may claim the path first, and the ordinary holder conflict applies.`,
+        }
       },
     },
   ]

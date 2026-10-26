@@ -51,6 +51,7 @@ export const CHILD_DENY_TOOLS = [
   'edit_lock_release',
   'edit_lock_status',
   'edit_lock_try_steal',
+  'edit_lock_watch',
 ]
 
 /**
