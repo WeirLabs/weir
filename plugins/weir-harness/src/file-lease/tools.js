@@ -44,13 +44,184 @@ export const WATCH_TOOL = 'edit_lock_watch'
 export const DEFAULT_HOLD_MINUTES = MAX_HOLD_MINUTES
 
 /**
- * Single-field text rendering, the shape every tool in this bundle uses.
- * @param {string} field
+ * UI-only presentation data handed from `execute` to `presentationMeta`
+ * (openspec edit-lock-tool-cards, design D1). The conversation cards need a
+ * few facts the model never reads — the try_steal deadline, the per-row
+ * validity of a status answer, the paths of a degraded call — and the hard
+ * constraint is that the result object stays field-for-field what it was. So
+ * those facts never become result fields: `execute` files them here and
+ * `presentationMeta` takes them out again.
+ *
+ * The handoff is keyed by the result's JSON text, not by object identity: the
+ * tool registry snapshots the value `execute` returned (a lossless-JSON copy,
+ * then deep-frozen) and hands that COPY to `render` and `presentationMeta`, so
+ * an identity-keyed WeakMap never hits. A copy serializes to the same text,
+ * so the same key finds the entry. Each entry is taken once (a queue per key
+ * keeps two identical concurrent answers apart), the table is bounded, and a
+ * result with no entry still gets the subset its own fields can carry.
+ * @type {Map<string, Record<string, any>[]>}
  */
-function textOutput(field) {
+const presented = new Map()
+
+/** Upper bound on filed-but-never-read entries (a result the host dropped). */
+const MAX_PRESENTED = 256
+
+/** @param {unknown} value @returns {string | undefined} */
+function presentationKey(value) {
+  if (value === null || typeof value !== 'object') return undefined
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return undefined
+  }
+}
+
+/** @param {unknown} value @returns {Record<string, any> | undefined} */
+function takePresented(value) {
+  const key = presentationKey(value)
+  if (key === undefined) return undefined
+  const queue = presented.get(key)
+  if (queue === undefined) return undefined
+  const fields = queue.shift()
+  if (queue.length === 0) presented.delete(key)
+  return fields
+}
+
+/** Presentation metadata schema version; the client narrows on it. */
+export const LEASE_META_VERSION = 1
+
+/**
+ * The closed state set per tool (design D1). Anything outside it is never
+ * emitted, so the client can treat an unknown state as malformed metadata.
+ * @type {Record<string, readonly string[]>}
+ */
+export const LEASE_META_STATES = Object.freeze({
+  edit_lock_acquire: Object.freeze(['claimed', 'degraded']),
+  edit_lock_release: Object.freeze(['released', 'degraded']),
+  edit_lock_hold: Object.freeze(['held', 'degraded']),
+  edit_lock_status: Object.freeze(['status', 'degraded']),
+  edit_lock_try_steal: Object.freeze(['pending', 'free', 'self', 'degraded']),
+  edit_lock_reply: Object.freeze(['transferred', 'declined', 'degraded']),
+  edit_lock_watch: Object.freeze(['watching', 'free', 'self', 'released', 'reset', 'unsupported', 'cancelled', 'degraded']),
+})
+
+/**
+ * File the presentation data for one result and hand the result back
+ * untouched: nothing is added to the object the model reads.
+ * @template {object} T
+ * @param {T} value
+ * @param {Record<string, any> | undefined} fields
+ * @returns {T}
+ */
+function present(value, fields) {
+  const key = presentationKey(value)
+  if (fields === undefined || key === undefined) return value
+  const queue = presented.get(key)
+  if (queue === undefined) presented.set(key, [fields])
+  else queue.push(fields)
+  // Insertion order is age order: drop the oldest key once over the bound.
+  if (presented.size > MAX_PRESENTED) {
+    const oldest = presented.keys().next().value
+    if (oldest !== undefined) presented.delete(oldest)
+  }
+  return value
+}
+
+/**
+ * File a degraded (arbiter-unreachable) answer: the card shows "protection
+ * temporarily unavailable", never a refusal, plus what the call was about.
+ * @template {{ code: string }} T
+ * @param {T} value
+ * @param {Record<string, any>} about
+ * @returns {T}
+ */
+function presentDegraded(value, about) {
+  return present(value, { state: 'degraded', code: value.code, ...about })
+}
+
+/** @param {unknown} list @returns {string[]} */
+function strings(list) {
+  return Array.isArray(list) ? list.filter((entry) => typeof entry === 'string') : []
+}
+
+/** @param {any} holder */
+function holderOf(holder) {
+  return holder && typeof holder === 'object' && typeof holder.label === 'string' && typeof holder.session === 'string'
+    ? { label: holder.label, session: holder.session }
+    : undefined
+}
+
+/**
+ * The presentation fields one result's OWN fields can carry. This is both the
+ * base every `execute` extends and the whole answer for a result that has no
+ * filed entry.
+ * @param {string} tool
+ * @param {any} value
+ * @returns {Record<string, any> | undefined}
+ */
+function derivedFields(tool, value) {
+  if (value === null || typeof value !== 'object') return undefined
+  if (value.degraded === true) {
+    const code = typeof value.code === 'string' ? value.code : 'internal'
+    // A watch without release events or one cancelled underneath it is not an
+    // unreachable arbiter, and the card must not read it as one.
+    if (tool === WATCH_TOOL && code === 'release-events-unsupported') return { state: 'unsupported', code }
+    if (tool === WATCH_TOOL && code === 'watch-cancelled') return { state: 'cancelled', code }
+    return { state: 'degraded', code }
+  }
+  switch (tool) {
+    case 'edit_lock_acquire':
+      return { state: 'claimed', paths: strings(value.paths) }
+    case 'edit_lock_release':
+      return { state: 'released', released: strings(value.released), notOwned: strings(value.notOwned) }
+    case 'edit_lock_hold':
+      return {
+        state: 'held',
+        held: (Array.isArray(value.held) ? value.held : []).map((/** @type {any} */ row) => ({ path: String(row?.path ?? ''), holdUntil: typeof row?.holdUntil === 'number' ? row.holdUntil : null })),
+      }
+    case 'edit_lock_status':
+      return { state: 'status', mine: strings(value.mine).map((path) => ({ path })), others: [] }
+    case 'edit_lock_try_steal': {
+      if (!['pending', 'free', 'self'].includes(value.state)) return undefined
+      const holder = holderOf(value.holder)
+      return { state: value.state, ...(typeof value.request_id === 'string' ? { requestId: value.request_id } : {}), ...(holder ? { holder } : {}) }
+    }
+    case REPLY_TOOL:
+      return {
+        state: value.state === 'transferred' ? 'transferred' : 'declined',
+        ...(typeof value.request_id === 'string' ? { requestId: value.request_id } : {}),
+        ...(typeof value.decision === 'string' ? { decision: value.decision } : {}),
+      }
+    case WATCH_TOOL: {
+      if (!LEASE_META_STATES[WATCH_TOOL].includes(value.state)) return undefined
+      const holder = holderOf(value.holder)
+      return { state: value.state, ...(typeof value.file_path === 'string' ? { path: value.file_path } : {}), ...(holder ? { holder } : {}) }
+    }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * The output contract of every edit-lock tool. `render` is byte-identical to
+ * the single-field text rendering it replaces (the model reads `message` and
+ * nothing else from the text channel); `presentationMeta` is the UI-only
+ * channel the conversation cards read from the persisted tool result.
+ * Short names only and epoch-ms instants: an absolute path never appears
+ * here either.
+ * @param {string} tool
+ */
+function leaseOutput(tool) {
   return {
     schema: { type: 'object' },
-    render: (/** @type {any} */ _args, /** @type {any} */ result) => [{ type: 'text', text: result[field] }],
+    render: (/** @type {any} */ _args, /** @type {any} */ result) => [{ type: 'text', text: result.message }],
+    // `null`, never `undefined`, for a value it cannot describe: the registry
+    // rejects a non-JSON projection, which would turn the call into an error.
+    presentationMeta: (/** @type {any} */ _args, /** @type {any} */ value) => {
+      const fields = takePresented(value) ?? derivedFields(tool, value)
+      if (fields === undefined || !LEASE_META_STATES[tool]?.includes(fields.state)) return null
+      return { editLock: { v: LEASE_META_VERSION, tool, ...fields } }
+    },
   }
 }
 
@@ -305,7 +476,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         },
         required: ['paths'],
       },
-      output: textOutput('message'),
+      output: leaseOutput('edit_lock_acquire'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const cwd = requireCwd(exec)
@@ -314,15 +485,16 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           const reply = await client.acquire(owner, paths, cwd)
           const granted = Array.isArray(reply?.granted) ? reply.granted : []
           const claimed = granted.map((/** @type {any} */ lease) => shortName(String(lease?.path ?? ''), cwd))
-          return {
+          const result = {
             paths: claimed,
             message: claimed.length > 0
               ? `Claimed ${claimed.length} path(s) for this turn: ${claimed.join(', ')}.`
               : 'Nothing was claimed.',
           }
+          return present(result, { state: 'claimed', paths: [...claimed] })
         } catch (error) {
           if (isLeaseConflict(error)) throw new Error(describeConflicts(error, cwd, Date.now()))
-          if (isTransport(error)) return unavailable(error, 'nothing was claimed')
+          if (isTransport(error)) return presentDegraded(unavailable(error, 'nothing was claimed'), { paths: paths.map((path) => shortName(path, cwd)) })
           throw error
         }
       },
@@ -339,7 +511,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         },
         required: ['paths'],
       },
-      output: textOutput('message'),
+      output: leaseOutput('edit_lock_release'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const cwd = requireCwd(exec)
@@ -348,7 +520,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         try {
           reply = await client.request('release', { owner, paths })
         } catch (error) {
-          if (isTransport(error)) return unavailable(error, 'the release was not confirmed')
+          if (isTransport(error)) return presentDegraded(unavailable(error, 'the release was not confirmed'), { paths: paths.map((path) => shortName(path, cwd)) })
           throw error
         }
         const released = (Array.isArray(reply?.released) ? reply.released : []).map((/** @type {any} */ path) => shortName(String(path), cwd))
@@ -356,7 +528,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         const lines = []
         lines.push(released.length > 0 ? `Released ${released.length} path(s): ${released.join(', ')}.` : 'Released nothing.')
         if (notOwned.length > 0) lines.push(`Not held by this session, so there was nothing to release: ${notOwned.join(', ')}.`)
-        return { released, notOwned, message: lines.join('\n') }
+        return present({ released, notOwned, message: lines.join('\n') }, { state: 'released', released: [...released], notOwned: [...notOwned] })
       },
     },
 
@@ -374,7 +546,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         },
         required: ['paths'],
       },
-      output: textOutput('message'),
+      output: leaseOutput('edit_lock_hold'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const cwd = requireCwd(exec)
@@ -390,23 +562,26 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           if (code === 'not-owned') {
             throw new Error(`This session does not own ${paths.map((path) => shortName(path, cwd)).join(', ')}. Retention only extends ownership that already exists — claim the paths with edit_lock_acquire first.`)
           }
-          if (isTransport(error)) return unavailable(error, 'no retention was recorded')
+          if (isTransport(error)) return presentDegraded(unavailable(error, 'no retention was recorded'), { paths: paths.map((path) => shortName(path, cwd)) })
           throw error
         }
         const held = Array.isArray(reply?.held) ? reply.held : []
         const at = Date.now()
+        /** @type {{ path: string, holdUntil: number }[]} */
+        const shown = []
         const entries = held.map((/** @type {any} */ row) => {
           const until = typeof row?.holdUntil === 'number' ? row.holdUntil : typeof row?.expiresAt === 'number' ? row.expiresAt : at
+          shown.push({ path: shortName(String(row?.path ?? ''), cwd), holdUntil: until })
           return `${shortName(String(row?.path ?? ''), cwd)} until ${instant(until)} (about ${Math.ceil(secondsUntil(until, at) / 60)}m from now)`
         })
-        return {
+        return present({
           // Short names only: an absolute path never appears in a tool result,
           // not even in a structured field the model also reads.
           held: held.map((/** @type {any} */ row) => ({ path: shortName(String(row?.path ?? ''), cwd), holdUntil: row?.holdUntil ?? null })),
           message: entries.length > 0
             ? `Kept ${entries.length} path(s) past this turn: ${entries.join(', ')}. At most ${MAX_HOLD_MINUTES} minutes per request; a deadline that passes simply makes the paths available, and the expiry is announced only to a session that explicitly subscribed to that path with edit_lock_watch — a matching subscriber gets the usual chance to claim it again, while with no subscriber nothing is announced.`
             : 'Nothing was retained.',
-        }
+        }, { state: 'held', held: shown })
       },
     },
 
@@ -421,7 +596,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         },
         required: ['file_path'],
       },
-      output: textOutput('message'),
+      output: leaseOutput('edit_lock_try_steal'),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const cwd = requireCwd(exec)
@@ -432,9 +607,9 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           reply = await client.requestTransfer(path, owner)
         } catch (error) {
           const code = codeOf(error)
-          if (code === 'free') return { state: 'free', message: `Nobody holds ${short} right now: edit it directly, or claim it with edit_lock_acquire so another session cannot take it mid-work.` }
-          if (code === 'self') return { state: 'self', message: `This session already owns ${short}; no transfer is needed.` }
-          if (isTransport(error)) return unavailable(error, 'no transfer request was created')
+          if (code === 'free') return present({ state: 'free', message: `Nobody holds ${short} right now: edit it directly, or claim it with edit_lock_acquire so another session cannot take it mid-work.` }, { state: 'free', path: short })
+          if (code === 'self') return present({ state: 'self', message: `This session already owns ${short}; no transfer is needed.` }, { state: 'self', path: short })
+          if (isTransport(error)) return presentDegraded(unavailable(error, 'no transfer request was created'), { path: short })
           throw error
         }
         const requestId = text(reply?.requestId) ?? ''
@@ -442,12 +617,12 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         const label = text(holder.label) ?? 'the holder'
         const session = text(holder.session) ?? 'unknown'
         const expiresAt = typeof reply?.expiresAt === 'number' ? reply.expiresAt : Date.now()
-        return {
+        return present({
           state: 'pending',
           request_id: requestId,
           holder: { label, session },
           message: `Request ${requestId} for ${short} is pending with "${label}" (session ${session}). Do not modify ${short} until ownership is granted — a pending request is not an approval, and edits keep being refused meanwhile. The holder answers with edit_lock_reply (release hands it over, keep keeps it); an unanswered request expires in about ${secondsUntil(expiresAt, Date.now())}s and ownership stays where it is. A message will tell you how it settled.`,
-        }
+        }, { state: 'pending', path: short, requestId, holder: { label, session }, expiresAt })
       },
     },
 
@@ -463,7 +638,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         },
         required: ['request_id', 'decision'],
       },
-      output: textOutput('message'),
+      output: leaseOutput(REPLY_TOOL),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const requestId = text(args?.request_id)
@@ -478,7 +653,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           if (code === 'expired') throw new Error(`Request ${requestId} has expired and ownership is unchanged. The requester can ask again later if it still needs the path.`)
           if (code === 'stale') throw new Error(`Request ${requestId} is stale: ownership changed before the answer arrived, so nothing was transferred.`)
           if (code === 'not-holder') throw new Error(`Request ${requestId} is not addressed to this session; only the current holder can answer it.`)
-          if (isTransport(error)) return unavailable(error, 'the answer was not delivered')
+          if (isTransport(error)) return presentDegraded(unavailable(error, 'the answer was not delivered'), { requestId, decision })
           throw error
         }
         const state = text(reply?.state) ?? 'declined'
@@ -488,14 +663,14 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           // result it may have already reasoned past.
           deliverNotice(exec?.agent, `Ownership handed over: request ${requestId} is settled and this session no longer holds that path. Claim it again with edit_lock_acquire if you still need it.`)
         }
-        return {
+        return present({
           request_id: requestId,
           decision,
           state,
           message: state === 'transferred'
             ? `Request ${requestId}: transferred. The requester owns the path now; this session no longer holds it.`
             : `Request ${requestId}: declined. Ownership is unchanged and the path is still this session's.`,
-        }
+        }, { state: state === 'transferred' ? 'transferred' : 'declined', requestId, decision })
       },
     },
 
@@ -504,7 +679,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
       description:
         'Read-only ownership report: the paths this session holds, and the sessions that currently hold paths in this working directory. Grants nothing and changes nothing. Ownership is arbitrated centrally, so the answer covers other processes too.',
       parameters: { type: 'object', properties: {}, required: [] },
-      output: textOutput('message'),
+      output: leaseOutput('edit_lock_status'),
       async execute(/** @type {any} */ _args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const cwd = requireCwd(exec)
@@ -512,7 +687,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         try {
           reply = await client.status({ scope: cwd })
         } catch (error) {
-          if (isTransport(error)) return unavailable(error, 'no ownership could be read')
+          if (isTransport(error)) return presentDegraded(unavailable(error, 'no ownership could be read'), {})
           throw error
         }
         const leases = Array.isArray(reply?.leases) ? reply.leases : []
@@ -520,12 +695,18 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         const mine = leases.filter((/** @type {any} */ lease) => text(lease?.owner?.id) === owner.id || text(lease?.owner?.session) === owner.session)
         const others = leases.filter((/** @type {any} */ lease) => !mine.includes(lease))
         const lines = []
+        /** @type {{ path: string, until: number, retained: boolean }[]} */
+        const shownMine = []
+        /** @type {{ path: string, label: string, session: string, until: number, lapsed: boolean }[]} */
+        const shownOthers = []
         lines.push(mine.length > 0 ? `Held by this session (${mine.length}):` : 'This session holds nothing.')
         for (const lease of mine) {
           const until = retainedUntil(lease)
+          const expiresAt = typeof lease?.expiresAt === 'number' ? lease.expiresAt : at
           const validity = until === undefined
-            ? `valid for about ${secondsUntil(typeof lease?.expiresAt === 'number' ? lease.expiresAt : at, at)}s`
+            ? `valid for about ${secondsUntil(expiresAt, at)}s`
             : `retained until ${instant(until)}`
+          shownMine.push({ path: shortName(String(lease?.path ?? ''), cwd), until: until ?? expiresAt, retained: until !== undefined })
           lines.push(`- ${shortName(String(lease?.path ?? ''), cwd)} — ${validity}`)
         }
         if (others.length > 0) {
@@ -535,10 +716,14 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
             const label = text(holder.label) ?? 'another session'
             const session = text(holder.session) ?? 'unknown'
             const target = Math.max(typeof lease?.expiresAt === 'number' ? lease.expiresAt : 0, typeof lease?.holdUntil === 'number' ? lease.holdUntil : 0)
+            shownOthers.push({ path: shortName(String(lease?.path ?? ''), cwd), label, session, until: target, lapsed: !(target > at) })
             lines.push(`- ${shortName(String(lease?.path ?? ''), cwd)} — "${label}" (session ${session}), ${target > at ? `about ${secondsUntil(target, at)}s left` : 'lapsed, claimable'}`)
           }
         }
-        return { mine: mine.map((/** @type {any} */ lease) => shortName(String(lease?.path ?? ''), cwd)), message: lines.join('\n') }
+        return present(
+          { mine: mine.map((/** @type {any} */ lease) => shortName(String(lease?.path ?? ''), cwd)), message: lines.join('\n') },
+          { state: 'status', at, mine: shownMine, others: shownOthers },
+        )
       },
     },
 
@@ -553,12 +738,15 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         },
         required: ['file_path'],
       },
-      output: textOutput('message'),
+      output: leaseOutput(WATCH_TOOL),
       async execute(/** @type {any} */ args, /** @type {any} */ exec) {
         const owner = ownerOf(exec?.agent)
         const cwd = requireCwd(exec)
         const path = absoluteOne(args?.file_path, cwd)
         const short = shortName(path, cwd)
+        // Every answer below carries the watched short path for the card, the
+        // degraded ones included (their result object has no path field).
+        const settle = (/** @type {any} */ value) => present(value, { ...derivedFields(WATCH_TOOL, value), path: short })
         // Registration comes FIRST (D2): a release that lands between the
         // registration and the authoritative read is caught by the event
         // callback, and one that landed before it is caught by the read below.
@@ -578,29 +766,29 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           // and its pending notice must survive. A late rejection may only
           // cancel a plain wait.
           const terminal = terminalOutcome(entry, short)
-          if (terminal !== undefined) return terminal
+          if (terminal !== undefined) return settle(terminal)
           // No authoritative answer means no subscription: never leave a
           // record that could wait forever for a release nobody described.
           // The removal is conditional on THIS entry still being active, so a
           // late caller can never cancel a newer episode.
           watches.cancel(owner.session, path, entry)
-          if (isTransport(error)) return unavailable(error, 'no release subscription was created')
+          if (isTransport(error)) return settle(unavailable(error, 'no release subscription was created'))
           throw error
         }
 
         // Same precedence on the success path: the entry may have been consumed
         // or ended while the read was in flight, whatever the read now says.
         const terminal = terminalOutcome(entry, short)
-        if (terminal !== undefined) return terminal
+        if (terminal !== undefined) return settle(terminal)
 
         const leases = Array.isArray(reply?.leases) ? reply.leases : []
         if (leases.length === 0) {
           watches.cancel(owner.session, path, entry)
-          return {
+          return settle({
             state: 'free',
             file_path: short,
             message: `Nobody holds ${short} right now, so no release subscription was kept. Claim it with edit_lock_acquire (or just edit it) before working on it.`,
-          }
+          })
         }
         const holder = leases[0]?.owner ?? {}
         const mine = text(holder.id) === owner.id || text(holder.session) === owner.session
@@ -609,32 +797,32 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           // shares this entry must read the same verdict instead of reporting a
           // wait that no longer exists.
           watches.cancel(owner.session, path, entry, 'self')
-          return {
+          return settle({
             state: 'self',
             file_path: short,
             message: `This session already owns ${short}, so no release subscription was kept and there is nothing to wait for.`,
-          }
+          })
         }
         if (typeof client.supportsEvent !== 'function' || client.supportsEvent('released') !== true) {
           watches.cancel(owner.session, path, entry)
-          return {
+          return settle({
             degraded: true,
             code: 'release-events-unsupported',
             message: `The connected arbiter does not announce release events (release-events-unsupported), so no release subscription was created for ${short}. Only this subscription is unavailable: conflicts, managed edits and negotiation behave exactly as before, and this tool can be used again once the arbiter restarts with the capability.`,
-          }
+          })
         }
         // `watching` is only claimed while THIS entry is still the active one:
         // an overlapping call or a disposal may have ended the wait while the
         // read was in flight, and a stale entry must never read as a live wait.
-        if (!stillWatching(watches, entry)) return terminalOutcome(entry, short) ?? cancelledOutcome(short)
+        if (!stillWatching(watches, entry)) return settle(terminalOutcome(entry, short) ?? cancelledOutcome(short))
         const label = text(holder.label) ?? 'another session'
         const session = text(holder.session) ?? 'unknown'
-        return {
+        return settle({
           state: 'watching',
           file_path: short,
           holder: { label, session },
           message: `Watching ${short} for its next release; "${label}" (session ${session}) holds it now. A release notice will arrive as a message: it means only that the path is free to compete for, so call edit_lock_acquire then. It is not an ownership grant and it reserves nothing — another waiting session may claim the path first, and the ordinary holder conflict applies.`,
-        }
+        })
       },
     },
   ]

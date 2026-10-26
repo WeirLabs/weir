@@ -1,5 +1,5 @@
 import { describe, expect, it } from './helpers.js'
-import { createLeaseTools, REPLY_TOOL, WATCH_TOOL } from '../src/file-lease/tools.js'
+import { createLeaseTools, LEASE_META_STATES, LEASE_META_VERSION, REPLY_TOOL, WATCH_TOOL } from '../src/file-lease/tools.js'
 import { createWatchCoordinator } from '../src/file-lease/watch.js'
 
 // The edit-lock conversation cards (openspec edit-lock-tool-cards, design D1)
@@ -259,4 +259,142 @@ describe('edit-lock tools: the model-visible result is unchanged', () => {
       expect(observation).toEqual(/** @type {any} */ (BASELINE)[name])
     })
   }
+})
+
+/** @template T @param {T} value @returns {T} */
+function deepFreeze(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const entry of Object.values(value)) deepFreeze(entry)
+    Object.freeze(value)
+  }
+  return value
+}
+
+it('two identical concurrent answers each get their own filed entry', async () => {
+  const args = CASES['try_steal/pending'].args
+  // Drain what earlier tests filed without reading (the registry always reads).
+  const drain = await runCase('try_steal/pending')
+  while (drain.definition.output.presentationMeta(args, drain.value).editLock.expiresAt !== undefined) { /* drain */ }
+  const first = await runCase('try_steal/pending')
+  const second = await runCase('try_steal/pending')
+  expect(first.observation.json).toBe(second.observation.json)
+  expect(first.definition.output.presentationMeta(args, structuredClone(first.value)).editLock.expiresAt).toBe(T0 + 60_000)
+  expect(second.definition.output.presentationMeta(args, structuredClone(second.value)).editLock.expiresAt).toBe(T0 + 60_000)
+  // both entries are taken: a third read only has the result's own fields
+  expect(second.definition.output.presentationMeta(args, structuredClone(second.value)).editLock.expiresAt).toBe(undefined)
+})
+
+const meta = (/** @type {string} */ tool, /** @type {Record<string, any>} */ fields) => ({ editLock: { v: LEASE_META_VERSION, tool, ...fields } })
+
+/** What the cards receive for every non-throwing outcome (design D1 table). */
+const EXPECTED_META = {
+  'acquire/claimed': meta('edit_lock_acquire', { state: 'claimed', paths: ['src/a.js', 'src/b.js'] }),
+  'acquire/nothing': meta('edit_lock_acquire', { state: 'claimed', paths: [] }),
+  'acquire/degraded': meta('edit_lock_acquire', { state: 'degraded', code: 'transport', paths: ['src/a.js'] }),
+  'release/mixed': meta('edit_lock_release', { state: 'released', released: ['src/a.js'], notOwned: ['src/b.js'] }),
+  'release/nothing': meta('edit_lock_release', { state: 'released', released: [], notOwned: [] }),
+  'release/degraded': meta('edit_lock_release', { state: 'degraded', code: 'transport', paths: ['src/a.js'] }),
+  // The deadline the message names: holdUntil, else the plain validity.
+  'hold/held': meta('edit_lock_hold', { state: 'held', held: [{ path: 'src/a.js', holdUntil: T0 + 30 * 60_000 }, { path: 'src/b.js', holdUntil: T0 + 5000 }] }),
+  'hold/nothing': meta('edit_lock_hold', { state: 'held', held: [] }),
+  'hold/degraded': meta('edit_lock_hold', { state: 'degraded', code: 'transport', paths: ['src/a.js'] }),
+  'try_steal/pending': meta('edit_lock_try_steal', { state: 'pending', path: 'src/a.js', requestId: 'req-1', holder: { label: 'reviewer', session: 'sess-b' }, expiresAt: T0 + 60_000 }),
+  'try_steal/free': meta('edit_lock_try_steal', { state: 'free', path: 'src/a.js' }),
+  'try_steal/self': meta('edit_lock_try_steal', { state: 'self', path: 'src/a.js' }),
+  'try_steal/degraded': meta('edit_lock_try_steal', { state: 'degraded', code: 'transport', path: 'src/a.js' }),
+  'reply/transferred': meta(REPLY_TOOL, { state: 'transferred', requestId: 'req-1', decision: 'release' }),
+  'reply/declined': meta(REPLY_TOOL, { state: 'declined', requestId: 'req-1', decision: 'keep' }),
+  'reply/degraded': meta(REPLY_TOOL, { state: 'degraded', code: 'transport', requestId: 'req-1', decision: 'keep' }),
+  'status/full': meta('edit_lock_status', {
+    state: 'status',
+    at: T0,
+    mine: [{ path: 'src/a.js', until: T0 + 87_000, retained: false }, { path: 'src/b.js', until: T0 + 20 * 60_000, retained: true }],
+    others: [
+      { path: 'src/c.js', label: 'reviewer', session: 'sess-b', until: T0 + 42_000, lapsed: false },
+      { path: 'src/d.js', label: 'reviewer', session: 'sess-b', until: T0 - 1000, lapsed: true },
+    ],
+  }),
+  'status/empty': meta('edit_lock_status', { state: 'status', at: T0, mine: [], others: [] }),
+  'status/degraded': meta('edit_lock_status', { state: 'degraded', code: 'transport' }),
+  'watch/watching': meta(WATCH_TOOL, { state: 'watching', path: 'src/a.js', holder: { label: 'reviewer', session: 'sess-b' } }),
+  'watch/free': meta(WATCH_TOOL, { state: 'free', path: 'src/a.js' }),
+  'watch/self': meta(WATCH_TOOL, { state: 'self', path: 'src/a.js' }),
+  'watch/unsupported': meta(WATCH_TOOL, { state: 'unsupported', code: 'release-events-unsupported', path: 'src/a.js' }),
+  'watch/degraded': meta(WATCH_TOOL, { state: 'degraded', code: 'transport', path: 'src/a.js' }),
+  'watch/released': meta(WATCH_TOOL, { state: 'released', path: 'src/a.js' }),
+  'watch/reset': meta(WATCH_TOOL, { state: 'reset', path: 'src/a.js' }),
+  'watch/cancelled': meta(WATCH_TOOL, { state: 'cancelled', code: 'watch-cancelled', path: 'src/a.js' }),
+}
+
+describe('edit-lock tools: presentation metadata for the conversation cards', () => {
+  const throwing = Object.keys(BASELINE).filter((name) => /** @type {any} */ (BASELINE)[name].kind === 'throw')
+
+  it('pins metadata for exactly the outcomes that return a value', () => {
+    expect([...Object.keys(EXPECTED_META), ...throwing].sort()).toEqual(Object.keys(CASES).sort())
+  })
+
+  it('covers every state of every tool, and only the closed state set', () => {
+    const seen = new Map()
+    for (const expected of Object.values(EXPECTED_META)) {
+      const { tool, state } = expected.editLock
+      expect(LEASE_META_STATES[tool], `${tool} has a closed state set`).toBeTruthy()
+      expect(LEASE_META_STATES[tool].includes(state), `${tool}/${state} is in the closed set`).toBe(true)
+      seen.set(tool, [...(seen.get(tool) ?? []), state])
+    }
+    for (const [tool, states] of Object.entries(LEASE_META_STATES)) {
+      expect([...new Set(seen.get(tool))].sort(), `${tool} states covered`).toEqual([...states].sort())
+    }
+  })
+
+  for (const name of Object.keys(EXPECTED_META)) {
+    it(`${name}: presentationMeta carries the card data, read from the registry's frozen copy`, async () => {
+      const { definition, value } = await runCase(name)
+      // The tool registry hands render/presentationMeta a lossless-JSON
+      // snapshot of the value, deep-frozen — never the object execute returned.
+      const presented = definition.output.presentationMeta(CASES[name].args, deepFreeze(structuredClone(value)))
+      expect(presented).toEqual(/** @type {any} */ (EXPECTED_META)[name])
+      // Short names only: an absolute path never reaches the persisted meta.
+      expect(JSON.stringify(presented)).not.toContain(CWD)
+    })
+
+    it(`${name}: with no filed entry the result still yields its own-field subset`, async () => {
+      const { definition, value } = await runCase(name)
+      definition.output.presentationMeta(CASES[name].args, value) // takes the one filed entry
+      const fallback = definition.output.presentationMeta(CASES[name].args, value)
+      const expected = /** @type {any} */ (EXPECTED_META)[name].editLock
+      expect(fallback.editLock.v).toBe(LEASE_META_VERSION)
+      expect(fallback.editLock.tool).toBe(expected.tool)
+      expect(fallback.editLock.state).toBe(expected.state)
+      expect(JSON.stringify(fallback)).not.toContain(CWD)
+    })
+  }
+
+  it('throw paths stay throws: no value, so the card falls back to the call arguments', async () => {
+    for (const name of throwing) {
+      const { value, observation } = await runCase(name)
+      expect(value, name).toBe(undefined)
+      expect(observation.kind, name).toBe('throw')
+    }
+  })
+
+  it('declines a value it cannot describe instead of inventing a state', () => {
+    const definitions = createLeaseTools({ client: createFakeClient({}), ownerOf: () => OWNER })
+    const watch = definitions.find((entry) => entry.name === WATCH_TOOL)
+    const steal = definitions.find((entry) => entry.name === 'edit_lock_try_steal')
+    // null, not undefined: the registry rejects a non-JSON projection.
+    expect(watch.output.presentationMeta({}, null)).toBe(null)
+    expect(watch.output.presentationMeta({}, 'text')).toBe(null)
+    expect(watch.output.presentationMeta({}, { state: 'mystery', message: 'x' })).toBe(null)
+    expect(steal.output.presentationMeta({}, { state: 'granted', message: 'x' })).toBe(null)
+  })
+
+  it('every tool declares the same output contract: object schema, message-only render, presentationMeta', () => {
+    const definitions = createLeaseTools({ client: createFakeClient({}), ownerOf: () => OWNER })
+    expect(definitions).toHaveLength(7)
+    for (const definition of definitions) {
+      expect(definition.output.schema).toEqual({ type: 'object' })
+      expect(definition.output.render({}, { message: 'm', extra: 'never rendered' })).toEqual([{ type: 'text', text: 'm' }])
+      expect(typeof definition.output.presentationMeta).toBe('function')
+    }
+  })
 })
