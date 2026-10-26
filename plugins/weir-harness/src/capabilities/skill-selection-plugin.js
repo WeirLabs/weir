@@ -664,13 +664,16 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       const tools = ctx.get?.('tools')
       if (tools?.register) {
         const sessionQuery = () => ctx.get?.('sessionQuery')
-        const mutations = createCapabilityMutationService({ sessionQuery })
+        // Two retained revisions of this preset may feed the bridge at once;
+        // the owner is resolved per session through the agent's own revision.
+        const runtime = { agents: () => ctx.get?.('agents'), agentPresets: () => ctx.get?.('agentPresets') }
+        const mutations = createCapabilityMutationService({ sessionQuery, ...runtime })
         const captureOwnership = async sessionId => {
           const lease = await sessionQuery()?.observeSession?.(sessionId)
           if (!lease || typeof lease[Symbol.dispose] !== 'function') throw Object.assign(new Error('MCP install session observation is unavailable'), { code: 'owner-unavailable' })
           try {
             const owner = capabilityOwnership(lease, sessionId)
-            const feed = capabilityReadFeed(owner.presetId)
+            const feed = capabilityReadFeed(owner.presetId, sessionId, runtime)
             const faces = feed.faces ?? feed
             return { owner, feed, profile: faces.profileContext?.() }
           } finally { lease[Symbol.dispose]() }

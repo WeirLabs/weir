@@ -72,15 +72,71 @@ export function capabilityReadBridge(presetId) {
   return feeds?.size === 1 ? [...feeds][0].faces : null
 }
 
-function soleFeed(presetId) {
-  const feeds = bridgeFeeds.get(presetId)
-  if (!feeds?.size) throw new CapabilityReadError('bridge-absent', `capability read: no feed for preset ${presetId}`)
-  if (feeds.size !== 1) throw new CapabilityReadError('owner-ambiguous', `capability read: overlapping feeds for preset ${presetId}`)
-  return [...feeds][0]
+/**
+ * The isolated `weirMcpManager` owned by the exact preset revision a live
+ * session's Agent retains, or undefined when that cannot be proven. The
+ * registry's `serviceFor(agent, name)` reads `agent.ctx`'s retained mount, so
+ * an old session keeps resolving its old revision after a config change or a
+ * bundle toggle remounted the preset next to it. Everything is read through
+ * caller-supplied ctx getters (never a static runtime import).
+ * @param {string} sessionId
+ * @param {{ agents?: () => any, agentPresets?: () => any }} [runtime]
+ */
+function sessionManager(sessionId, runtime) {
+  try {
+    const agent = runtime?.agents?.()?.get?.(sessionId)
+    // A cold or unknown session has no live Agent and hence no retained mount.
+    if (!agent?.ctx || agent.id !== sessionId) return undefined
+    const registry = runtime?.agentPresets?.()
+    if (typeof registry?.serviceFor !== 'function') return undefined
+    return registry.serviceFor(agent, 'weirMcpManager') ?? undefined
+  } catch { return undefined }
 }
 
-/** Exact feed token used by mutation ownership snapshots and their rechecks. */
-export function capabilityReadFeed(presetId) { return soleFeed(presetId) }
+/**
+ * Resolve the feed owning ONE session's read/mutation.
+ *
+ * A single feed is the fast path (no agent lookup). Several feeds for one
+ * preset are legitimate — two retained revisions of the same preset stay
+ * mounted while old sessions still use the old one — so the owner is the
+ * unique feed whose `faces.mcpManager()` IS the manager the session's own
+ * revision provides. Every other outcome fails closed with `owner-ambiguous`:
+ * no runtime seam, a cold/unknown agent, a revision without a manager, no
+ * matching feed, or several feeds sharing that manager (overlapping
+ * generations of one revision). Never newest-wins.
+ * @param {string} presetId
+ * @param {string} sessionId
+ * @param {{ agents?: () => any, agentPresets?: () => any }} [runtime]
+ */
+function sessionFeed(presetId, sessionId, runtime) {
+  const feeds = bridgeFeeds.get(presetId)
+  if (!feeds?.size) throw new CapabilityReadError('bridge-absent', `capability read: no feed for preset ${presetId}`)
+  if (feeds.size === 1) return [...feeds][0]
+  const ambiguous = reason => new CapabilityReadError('owner-ambiguous', `capability read: overlapping feeds for preset ${presetId}: ${reason}`)
+  const manager = sessionManager(sessionId, runtime)
+  if (manager === undefined) throw ambiguous(`session ${JSON.stringify(sessionId)} has no live agent with a preset-owned MCP manager`)
+  const matches = [...feeds].filter(feed => {
+    try { return feed.faces?.mcpManager?.() === manager } catch { return false }
+  })
+  if (matches.length === 0) throw ambiguous(`no feed belongs to the revision of session ${JSON.stringify(sessionId)}`)
+  if (matches.length > 1) throw ambiguous(`${matches.length} feeds share the manager of session ${JSON.stringify(sessionId)}`)
+  return matches[0]
+}
+
+/**
+ * Exact feed token used by mutation ownership snapshots and their rechecks.
+ * @param {string} presetId
+ * @param {string} sessionId
+ * @param {{ agents?: () => any, agentPresets?: () => any }} [runtime] ctx getters for the host `agents` and `agentPresets` services
+ */
+export function capabilityReadFeed(presetId, sessionId, runtime = undefined) { return sessionFeed(presetId, sessionId, runtime) }
+
+/** @param {{ bridge?: Function, agents?: () => any, agentPresets?: () => any }} dependencies */
+function feedResolver(dependencies) {
+  if (dependencies.bridge) return dependencies.bridge
+  const runtime = { agents: dependencies.agents, agentPresets: dependencies.agentPresets }
+  return (presetId, sessionId) => sessionFeed(presetId, sessionId, runtime)
+}
 
 /** Extract the current projected owner and its last committed selection generation. */
 export function capabilityOwnership(observation, sessionId) {
@@ -99,7 +155,7 @@ export function capabilityOwnership(observation, sessionId) {
 
 /** Create the host read service. Observations are caller-owned leases, always disposed. */
 export function createCapabilityReadService(dependencies = {}) {
-  const bridgeFor = dependencies.bridge ?? soleFeed
+  const bridgeFor = feedResolver(dependencies)
   const storeFor = dependencies.store ?? (profileContext => openCapabilityStore({ profileContext }))
   const ensure = dependencies.ensureRegistered ?? (() => true)
   const onDegraded = dependencies.onDegraded ?? (() => {})
@@ -121,7 +177,7 @@ export function createCapabilityReadService(dependencies = {}) {
     const first = await observe(sessionId)
     try {
       const { presetId, cwd, selectionSeq } = first.owner
-      const feed = bridgeFor(presetId)
+      const feed = bridgeFor(presetId, sessionId)
       if (!feed) throw new CapabilityReadError('bridge-absent', `capability read: no feed for preset ${presetId}`)
       const faces = feed.faces ?? feed
       const options = { cwd, scope: { session: { id: sessionId } } }
@@ -153,7 +209,7 @@ export function createCapabilityReadService(dependencies = {}) {
       }
       const second = await observe(sessionId)
       try {
-        if (second.owner.presetId !== presetId || second.owner.cwd !== cwd || second.owner.selectionSeq !== selectionSeq || bridgeFor(presetId) !== feed) {
+        if (second.owner.presetId !== presetId || second.owner.cwd !== cwd || second.owner.selectionSeq !== selectionSeq || bridgeFor(presetId, sessionId) !== feed) {
           throw new CapabilityReadError('owner-changed', 'capability read: owner or feed changed during read')
         }
         return payload
@@ -203,7 +259,7 @@ export function sameMutationOwner(first, second) {
 
 /** Session-preset/profile/feed ownership for mutations; selectionSeq is not compared. */
 export function createCapabilityMutationService(dependencies = {}) {
-  const bridgeFor = dependencies.bridge ?? soleFeed
+  const bridgeFor = feedResolver(dependencies)
   const ensure = dependencies.ensureRegistered ?? (() => true)
   const observeSession = dependencies.observeSession ?? (sessionId => dependencies.sessionQuery?.()?.observeSession(sessionId))
   const observe = async sessionId => {
@@ -212,7 +268,7 @@ export function createCapabilityMutationService(dependencies = {}) {
       lease = await observeSession(sessionId)
       if (!lease || typeof lease[Symbol.dispose] !== 'function') throw new CapabilityReadError('owner-unavailable', 'capability mutation: session observation unavailable')
       const owner = capabilityOwnership(lease, sessionId)
-      const feed = bridgeFor(owner.presetId)
+      const feed = bridgeFor(owner.presetId, sessionId)
       if (!feed) throw new CapabilityReadError('bridge-absent', `capability mutation: no feed for preset ${owner.presetId}`)
       const faces = feed.faces ?? feed
       return { lease, owner, feed, faces, profile: faces.profileContext?.() }
@@ -448,10 +504,13 @@ export function apply(ctx) {
       warn(`weir capability read degraded: method=${facts.method} session=${facts.sessionId} preset=${facts.presetId} header=${facts.headerPreset} source=${facts.source} warnings=${facts.warnings.join(';')} provider=${facts.providerReason ?? '-'}: ${facts.providerError ?? '-'}`)
       audit({ id: facts.sessionId, header: { cwd: facts.cwd } }, 'capability-read', facts)
     }
-    readService = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), onDegraded })
+    // Per-session owner resolution reads the host agents registry and the
+    // preset registry lazily (both host-root services; no mount-time inject).
+    const runtime = { agents: () => ctx.get?.('agents'), agentPresets: () => ctx.get?.('agentPresets') }
+    readService = createCapabilityReadService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), onDegraded, ...runtime })
     readService.typertRemote = Object.freeze({ service: readService, serviceKey: CAPABILITY_READ_SERVICE_KEY, namespace: CAPABILITY_READ_NAMESPACE })
     Object.freeze(readService)
-    mutationService = createCapabilityMutationService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery') })
+    mutationService = createCapabilityMutationService({ ensureRegistered, sessionQuery: () => ctx.get?.('sessionQuery'), ...runtime })
     mutationService.typertRemote = Object.freeze({ service: mutationService, serviceKey: CAPABILITY_MUTATION_SERVICE_KEY, namespace: CAPABILITY_MUTATION_NAMESPACE })
     Object.freeze(mutationService)
   } catch (cause) {
