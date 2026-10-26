@@ -136,14 +136,47 @@ export function createWatchCoordinator() {
    * Consume one entry and schedule its notice: it joins `pendingDelivery` first,
    * so a disposal between now and the timer still cancels it.
    *
+   * A notice consumed while an authoritative read is still outstanding waits for
+   * that read to settle. The read's awaiting callers resume as microtasks and can
+   * then report the same episode as a tool result (`released` / `reset`), while
+   * this notice needs a macrotask to be delivered; arming after the flight is
+   * therefore enough for the tool's own answer to win, and a zero-delay timer
+   * can never duplicate it.
+   * @param {WatchEntry} entry
+   */
+  function scheduleNotice(entry) {
+    pendingDelivery.add(entry)
+    const flight = entry.statusFlight
+    if (flight === null) {
+      armNotice(entry)
+      return
+    }
+    // Both outcomes arm: a rejected read is caught by the tool as well, and its
+    // terminal rules run before this reaction's timer can fire.
+    void flight.then(
+      () => armNotice(entry),
+      () => armNotice(entry),
+    )
+  }
+
+  /**
+   * Start the one deferred timer for a consumed entry. The pending set is the
+   * source of truth: a disposal, unmount or transfer may have ended the entry
+   * while the read was still outstanding, and that must win over the notice.
+   *
    * The timer re-checks everything that could have ended the subscription in the
    * meantime — the terminal state, the mount references, and the live agent
    * identity — so a late notice can never revive one or land on a replacement
    * agent (design D4/D5).
    * @param {WatchEntry} entry
    */
-  function scheduleNotice(entry) {
-    pendingDelivery.add(entry)
+  function armNotice(entry) {
+    if (!pendingDelivery.has(entry)) return
+    if (entry.state !== 'hit' && entry.state !== 'reset') {
+      pendingDelivery.delete(entry)
+      return
+    }
+    if (entry.timer !== null) return
     const timer = setTimeout(() => {
       entry.timer = null
       pendingDelivery.delete(entry)

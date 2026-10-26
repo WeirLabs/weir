@@ -298,4 +298,92 @@ describe('watch coordinator', () => {
     expect(live[0].state).toBe('watching')
     expect(live[0].path).toBe(PATH)
   })
+
+  it('holds a consumed notice until the in-flight read settles, then lets the tool win', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
+
+    /** @type {(value?: any) => void} */
+    let fulfil = () => {}
+    const gate = new Promise((resolve) => {
+      fulfil = resolve
+    })
+    const flight = coordinator.shareStatus(entry, () => gate)
+    // The tool's own continuation: it resumes when the read settles and reports
+    // the episode as a result, which must suppress the deferred notice.
+    const reported = flight.then(() => {
+      entry.settledByTool = true
+    })
+    coordinator.consumePath(PATH)
+    expect(coordinator.pendingSize()).toBe(1)
+
+    // The zero-delay timer window passes while the read is outstanding: no
+    // message may be delivered before the tool had its chance to answer.
+    await delay(15)
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(1)
+
+    fulfil({ ok: true })
+    await reported
+    await delay(15)
+    // Exactly one model-facing outcome: the tool's. Nothing is left pending.
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(0)
+  })
+
+  it('holds a consumed notice until a rejecting read settles, then lets the tool win', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
+
+    /** @type {(error: any) => void} */
+    let fail = () => {}
+    const gate = new Promise((_resolve, reject) => {
+      fail = reject
+    })
+    const flight = coordinator.shareStatus(entry, () => gate)
+    // The tool's catch block reports the terminal outcome just like its success
+    // path does; either way the notice must not repeat it.
+    const reported = flight.catch(() => {
+      entry.settledByTool = true
+    })
+    coordinator.consumePath(PATH)
+
+    await delay(15)
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(1)
+
+    fail(new Error('lease broker connection closed'))
+    await reported
+    await delay(15)
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(0)
+  })
+
+  it('drops a gated notice whose entry is cancelled before the read settles', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
+
+    /** @type {(value?: any) => void} */
+    let fulfil = () => {}
+    const gate = new Promise((resolve) => {
+      fulfil = resolve
+    })
+    const flight = coordinator.shareStatus(entry, () => gate)
+    coordinator.consumePath(PATH)
+    coordinator.cancelSession(SESSION)
+    expect(coordinator.pendingSize()).toBe(0)
+
+    fulfil({ ok: true })
+    await flight
+    await delay(15)
+    // The gate must not re-arm a cancelled entry or leak a pending record.
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(0)
+  })
 })
