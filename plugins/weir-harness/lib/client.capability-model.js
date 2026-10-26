@@ -651,7 +651,7 @@ window.__ModuleLoader__.load({
 				if (!key || row.action === "keep") continue;
 				if (row.action === "remove") { values[kind][key] = { action: "remove" }; continue; }
 				if (row.source === "ref") refs[kind][key] = { ref: String(row.ref ?? "").trim(), ...(row.prefix ? { prefix: row.prefix } : {}) };
-				else if (String(row.value ?? "").length > 0) values[kind][key] = { action: "replace", value: row.value };
+				else if (String(row.value ?? "").length > 0) values[kind][key] = { action: "replace", value: row.value, ...(row.prefix ? { prefix: row.prefix } : row.prefixDirty === true ? { prefix: "" } : {}) };
 			}
 		}
 

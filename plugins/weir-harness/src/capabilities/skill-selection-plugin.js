@@ -525,7 +525,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               : operation === 'batch'
                 ? await operations.executeBatch(request)
                 : await operations.execute(request)
-            const successful = new Set(['preview', 'mounted', 'saved', 'removed', 'partial'])
+            const successful = new Set(['preview', 'mounted', 'saved', 'removed'])
             return { kind: successful.has(result.status) ? 'success' : 'error', text: JSON.stringify(result) }
           } catch (cause) {
             return { kind: 'error', text: JSON.stringify({ status: 'validation-failed', saved: false, error: mcpDiagnostic(cause, { code: cause?.code ?? 'validation-failed' }) }) }

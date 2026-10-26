@@ -58,7 +58,7 @@ export function createMcpRegistry({ store, now = Date.now, newIncarnation = () =
         ...clone(entry),
         // A legacy registration remains legacy across edit/restart so legacy
         // selections keep working. Creation/re-add gets a fresh incarnation.
-        incarnation: existing ? (existing.incarnation ?? null) : (entry.incarnation ?? newIncarnation()),
+        incarnation: existing ? (existing.incarnation ?? null) : newIncarnation(),
         generation: (existing?.generation ?? 0) + 1,
         configuredAt: existing?.configuredAt ?? now(),
       }

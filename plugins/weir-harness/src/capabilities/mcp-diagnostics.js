@@ -5,6 +5,17 @@ const CAUSE_LIMIT = 6
 
 const MESSAGE = value => value instanceof Error ? value.message : String(value ?? 'unknown error')
 
+/** Known-secret metadata is internal, inherited through wrapped causes, and never enumerated on the wire. */
+function errorSecrets(error, initial = []) {
+  const secrets = [...initial]
+  let current = error
+  for (let depth = 0; current && depth < CAUSE_LIMIT; depth += 1) {
+    if (Array.isArray(current?.secrets)) secrets.push(...current.secrets)
+    current = current?.cause
+  }
+  return secrets
+}
+
 /** Replace every known secret before applying pattern-based redaction. */
 export function sanitizeMcpText(value, secrets = []) {
   let text = String(value ?? '')
@@ -59,6 +70,7 @@ const RULES = [
 ]
 
 export function classifyMcpError(error, secrets = []) {
+  secrets = errorSecrets(error, secrets)
   const evidence = []
   let current = error
   for (let depth = 0; current && depth < CAUSE_LIMIT; depth += 1) {
@@ -81,7 +93,7 @@ function boundedMessage(text, max = 4096) {
  * individual strings and the complete JSON projection are bounded to 8 KiB.
  */
 export function mcpDiagnostic(error, options = {}) {
-  const secrets = options.secrets ?? []
+  const secrets = errorSecrets(error, options.secrets ?? [])
   const classified = options.code ? { code: options.code, hint: options.hint } : classifyMcpError(error, secrets)
   const causes = []
   let current = error
@@ -109,12 +121,14 @@ export function mcpDiagnostic(error, options = {}) {
 
 export class McpLifecycleError extends Error {
   constructor(code, error, options = {}) {
-    const diagnostic = mcpDiagnostic(error, { ...options, code, hint: options.hint })
+    const secrets = errorSecrets(error, options.secrets ?? [])
+    const diagnostic = mcpDiagnostic(error, { ...options, secrets, code, hint: options.hint })
     super(diagnostic.message, options.cause === undefined && error instanceof Error ? { cause: error } : {})
     this.name = 'McpLifecycleError'
     this.code = code
     this.status = options.status ?? code
     this.diagnostic = diagnostic
-    this.cleanup = options.cleanup
+    Object.defineProperty(this, 'secrets', { value: Object.freeze([...new Set(secrets.filter(secret => typeof secret === 'string' && secret.length > 0))]), enumerable: false })
+    this.cleanup = options.cleanup === undefined ? undefined : sanitizeMcpPayload(options.cleanup, secrets)
   }
 }

@@ -238,3 +238,26 @@ test('diagnostics redact bounded cause chains, sensitive URLs, bearer/JWT, autho
   const giant = mcpDiagnostic(new Error(`x${'a'.repeat(20000)}`), { secrets: [] })
   assert.ok(Buffer.byteLength(JSON.stringify(giant)) <= MCP_DIAGNOSTIC_LIMIT)
 })
+test('failed first-mount cleanup persists its state and blocks any second same-name create', async () => {
+  const fixture = loaderFixture()
+  fixture.awaitError = new Error('injected startup failure')
+  fixture.removeError = new Error('injected cleanup failure')
+  const mount = createMcpMount({ loader: fixture.loader })
+  await assert.rejects(mount.mount(mountedInput(fixture)), error => error.status === 'cleanup-failed')
+  const creates = fixture.created.length
+  await assert.rejects(mount.mount(mountedInput(fixture, { generation: 2 })), error => error.status === 'cleanup-failed')
+  expect(fixture.created.length).toBe(creates)
+  expect(mount.mounted.get('docs')?.state).toBe('cleanup-failed')
+})
+
+test('residue sweep derives identity and clears stale mounted facts even when Loader rows are already gone', async () => {
+  const fixture = loaderFixture()
+  const mount = createMcpMount({ loader: fixture.loader })
+  await mount.mount(mountedInput(fixture))
+  expect(await mount.sweepResidue(['weir-mcp-docs'])).toEqual(['weir-mcp-docs'])
+  expect(mount.mounted.has('docs')).toBe(false)
+  mount.mounted.set('docs', { groupId: 'weir-mcp-docs', generation: 1, state: 'mounted' })
+  expect(fixture.entries.size).toBe(0)
+  await mount.sweepResidue(['weir-mcp-docs'])
+  expect(mount.mounted.has('docs')).toBe(false)
+})

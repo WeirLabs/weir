@@ -80,14 +80,15 @@ function secretInput(value, field, surface) {
     if (typeof value !== 'string') fail(field, 'secret values must be strings')
     return { action: 'replace', value }
   }
-  known(value, new Set(['action', 'value']), field)
+  known(value, new Set(['action', 'value', 'prefix']), field)
   const action = value.action ?? 'replace'
+  if (value.prefix !== undefined && typeof value.prefix !== 'string') fail(`${field}.prefix`, 'must be a string')
   if (!['keep', 'replace', 'remove'].includes(action)) fail(`${field}.action`, 'must be keep, replace or remove')
   if (action === 'replace') {
     if (surface !== 'ui') fail(field, 'literal secrets are accepted only by the Host mutation channel; use a credential reference')
     if (typeof value.value !== 'string' || value.value.length === 0) fail(`${field}.value`, 'replacement secrets must be non-empty strings; blank means keep')
   }
-  return { action, ...(action === 'replace' ? { value: value.value } : {}) }
+  return { action, ...(action === 'replace' ? { value: value.value, ...(value.prefix !== undefined ? { prefix: value.prefix } : {}) } : {}) }
 }
 
 function secretMap(input, field, limit, surface) {

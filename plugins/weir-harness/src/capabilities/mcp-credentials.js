@@ -113,8 +113,9 @@ export async function stageMcpCredentials({ entry, secretValues = {}, credential
       if (action.action !== 'replace') throw new McpLifecycleError('invalid-config', new Error(`unknown secret action for ${kind}.${key}`), { status: 'validation-failed' })
       ensureWritable()
       const reference = attempt.refFor(`${kind}.${key}`)
+      const prefix = Object.hasOwn(action, 'prefix') ? action.prefix : next.secretRefs?.[kind]?.[key]?.prefix
       next.secretRefs[kind] ??= {}
-      next.secretRefs[kind][key] = { ref: reference }
+      next.secretRefs[kind][key] = { ref: reference, ...(prefix ? { prefix } : {}) }
       if (kind === 'env' && next.client?.env) delete next.client.env[key]
       if (kind === 'headers' && next.client?.headers) delete next.client.headers[key]
       if (kind === 'args' && next.client?.args?.[key] !== undefined) next.client.args[key] = ''
@@ -138,6 +139,7 @@ export async function stageMcpCredentials({ entry, secretValues = {}, credential
   if (next.secretRefs && Object.keys(next.secretRefs).length === 0) delete next.secretRefs
   try {
     for (const write of writes) await credentials.set(write.ref, write.value)
+    Object.defineProperty(attempt, 'secrets', { value: Object.freeze(writes.map(write => write.value)), enumerable: false })
     return { status: 'staged', entry: next, attempt }
   } catch (cause) {
     const cleanup = await compensateMcpCredentialAttempt({ attempt, registry, credentials, provenUncommitted: true })

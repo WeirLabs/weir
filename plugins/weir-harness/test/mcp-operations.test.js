@@ -9,6 +9,7 @@ import { createMcpRuntime } from '../src/capabilities/mcp-runtime.js'
 import { createMcpDrain } from '../src/capabilities/mcp-drain.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { fingerprintMcpEntry } from '../src/capabilities/mcp-config.js'
+import { materializeMcpClientConfig } from '../src/capabilities/mcp-credentials.js'
 
 const secret = 'operation-canary-secret'
 function fixture(options = {}) {
@@ -51,7 +52,7 @@ function fixture(options = {}) {
     },
     async probe(entry) {
       calls.probe += 1
-      const status = options.probeStatus ?? 'mounted'
+      const status = typeof options.probeStatus === 'function' ? await options.probeStatus(entry, calls.probe) : options.probeStatus ?? 'mounted'
       return status === 'mounted'
         ? { status, discovery: { toolCount: 0, toolNamesPreview: [], truncated: false }, cleanup: { status: 'cleaned' } }
         : { status, error: { code: 'timeout', message: 'injected probe failure' } }
@@ -68,7 +69,7 @@ function fixture(options = {}) {
     async resolve(ref) { return values.has(ref) ? { value: values.get(ref) } : undefined },
   }
   const operations = createMcpOperations({ registry, manager, credentials, audit: (_session, type, data) => audit.push({ type, data }), assertOwner: options.assertOwner })
-  return { root, store, registry, manager, runtime, drain, values, sets, unsets, calls, audit, support, operations }
+  return { root, store, registry, manager, runtime, drain, values, sets, unsets, calls, audit, support, credentials, operations }
 }
 const config = (identity, extras = {}) => ({ identity, label: identity, command: process.execPath, args: [], env: { TOKEN: secret }, ...extras })
 
@@ -230,4 +231,187 @@ test('unsupported ephemeral support rejects secret work before credential or reg
   expect(f.sets).toEqual([])
   expect(f.calls.probe).toBe(0)
   expect((await f.registry.read()).kind).toBe('absent')
+})
+test('credential backend causes cannot leak known secrets through operation payloads or audit', async () => {
+  const f = fixture()
+  const known = 's3cr3t-do-not-leak'
+  f.credentials.set = async () => { throw new Error(`credential backend rejected ${known}`) }
+  const result = await f.operations.add({ identity: 'docs', config: config('docs', { env: { TOKEN: known } }) })
+  expect(result.status).toBe('validation-failed')
+  expect(result.error.causes.length).toBeGreaterThan(1)
+  expect(JSON.stringify({ result, audit: f.audit })).not.toContain(known)
+})
+test('identical external attempt IDs never share refs or let loser compensation unset a winner', async () => {
+  let markFirstStaged, markBothStaged, releaseWinner
+  const firstStaged = new Promise(resolve => { markFirstStaged = resolve })
+  const bothStaged = new Promise(resolve => { markBothStaged = resolve })
+  const winnerProbe = new Promise(resolve => { releaseWinner = resolve })
+  const f = fixture({ probeStatus: async (_entry, call) => {
+    if (call === 1) { await bothStaged; return 'probe-failed' }
+    await winnerProbe
+    return 'mounted'
+  } })
+  const originalSet = f.credentials.set
+  f.credentials.set = async (...args) => {
+    await originalSet(...args)
+    if (f.sets.length === 1) markFirstStaged()
+    if (f.sets.length === 2) markBothStaged()
+  }
+  const loser = f.operations.test({ identity: 'docs', config: config('docs'), attemptId: 'deadbeef' })
+  await firstStaged
+  const winner = f.operations.test({ identity: 'docs', config: config('docs'), attemptId: 'deadbeef' })
+  try {
+    await bothStaged
+    expect((await loser).status).toBe('probe-failed')
+    const [loserRef, winnerRef] = f.sets.map(([ref]) => ref)
+    expect(winnerRef).not.toBe(loserRef)
+    expect(f.values.get(winnerRef)).toBe(secret)
+  } finally {
+    releaseWinner()
+    await winner
+  }
+})
+test('new-value secret prefixes survive parsing, staging and replacement with the existing prefix preserved', async () => {
+  const f = fixture()
+  const added = await f.operations.add({ identity: 'docs', config: {
+    identity: 'docs', command: process.execPath, args: [''], env: {},
+    secretValues: {
+      env: { TOKEN: { action: 'replace', value: 'old-token', prefix: 'Bearer ' } },
+      args: { 0: { action: 'replace', value: 'next-token', prefix: 'Bearer ' } },
+    },
+  } })
+  expect(added.status, JSON.stringify(added)).toBe('mounted')
+  let registered = (await f.registry.read()).servers.docs
+  expect(registered.secretRefs.env.TOKEN.prefix).toBe('Bearer ')
+  expect(registered.secretRefs.args[0].prefix).toBe('Bearer ')
+  const edited = await f.operations.edit({ identity: 'docs', expectedRevision: (await f.registry.read()).revision, config: {
+    secretValues: { env: { TOKEN: { action: 'replace', value: 'next-token' } } },
+  } })
+  expect(edited.status, JSON.stringify(edited)).toBe('mounted')
+  registered = (await f.registry.read()).servers.docs
+  const effective = await materializeMcpClientConfig(registered, f.credentials)
+  expect(effective.client.env.TOKEN).toBe('Bearer next-token')
+  expect(effective.client.args[0]).toBe('Bearer next-token')
+})
+test('restart and remove revalidate the target fingerprint against the immediate pre-CAS read', async () => {
+  for (const action of ['restart', 'remove']) {
+    const f = fixture()
+    await f.operations.add({ identity: 'docs', config: config('docs') })
+    const before = await f.registry.read()
+    const originalRead = f.registry.read
+    const originalRegister = f.registry.register
+    const originalRemove = f.registry.remove
+    let reads = 0
+    let writes = 0
+    f.registry.read = async () => {
+      reads += 1
+      if (reads === 2) {
+        const latest = await originalRead()
+        await originalRegister({ ...latest.servers.docs, label: 'external-edit' }, latest.revision)
+      }
+      return originalRead()
+    }
+    f.registry.register = async (...args) => { writes += 1; return originalRegister(...args) }
+    f.registry.remove = async (...args) => { writes += 1; return originalRemove(...args) }
+    const result = await f.operations[action]({
+      identity: 'docs', expectedRevision: before.revision, targetFingerprint: fingerprintMcpEntry(before.servers.docs),
+    })
+    expect(result.status, `${action}: ${JSON.stringify(result)}`).toBe('revision-conflict')
+    expect(writes, `${action} must not overwrite the external edit`).toBe(0)
+    const after = await originalRead()
+    expect(after.servers.docs.label).toBe('external-edit')
+    expect(after.servers.docs.generation).toBe(2)
+  }
+})
+test('ownership flips during the add and approved-AI pre-CAS reads prevent every registry write', async () => {
+  for (const action of ['add', 'installFromAgent']) {
+    let owned = true
+    const f = fixture({ assertOwner: async () => { if (!owned) throw new Error('preset changed') } })
+    const originalRead = f.registry.read
+    const originalRegister = f.registry.register
+    let reads = 0
+    let writes = 0
+    f.registry.read = async () => {
+      const current = await originalRead()
+      reads += 1
+      if (reads === 2) owned = false
+      return current
+    }
+    f.registry.register = async (...args) => { writes += 1; return originalRegister(...args) }
+    const result = action === 'add'
+      ? await f.operations.add({ identity: 'docs', config: config('docs') })
+      : await f.operations.installFromAgent({ identity: 'docs', config: { identity: 'docs', command: 'node', env: { TOKEN: { ref: 'USER_TOKEN' } } } })
+    expect(result.status, `${action}: ${JSON.stringify(result)}`).toBe('owner-changed')
+    expect(result.saved).toBe(false)
+    expect(writes, `${action} wrote after ownership was lost`).toBe(0)
+    expect((await originalRead()).kind).toBe('absent')
+  }
+})
+
+test('ownership flip during the remove pre-CAS read leaves the registration intact', async () => {
+  let owned = true
+  const f = fixture({ assertOwner: async () => { if (!owned) throw new Error('preset changed') } })
+  await f.operations.add({ identity: 'docs', config: config('docs') })
+  const originalRead = f.registry.read
+  const originalRemove = f.registry.remove
+  let reads = 0
+  let writes = 0
+  f.registry.read = async () => {
+    const current = await originalRead()
+    reads += 1
+    if (reads === 2) owned = false
+    return current
+  }
+  f.registry.remove = async (...args) => { writes += 1; return originalRemove(...args) }
+  const result = await f.operations.remove({ identity: 'docs' })
+  expect(result.status, JSON.stringify(result)).toBe('owner-changed')
+  expect(result.saved).toBe(false)
+  expect(writes).toBe(0)
+  expect((await originalRead()).servers.docs).toBeTruthy()
+})
+
+test('ownership flip during the setDefault read prevents the defaults write', async () => {
+  let owned = true
+  const f = fixture({ assertOwner: async () => { if (!owned) throw new Error('preset changed') } })
+  await f.operations.add({ identity: 'docs', config: config('docs') })
+  const originalRead = f.registry.read
+  const originalSetDefault = f.registry.setDefault
+  let reads = 0
+  let writes = 0
+  f.registry.read = async () => {
+    const current = await originalRead()
+    reads += 1
+    if (reads === 1) owned = false
+    return current
+  }
+  f.registry.setDefault = async (...args) => { writes += 1; return originalSetDefault(...args) }
+  const result = await f.operations.setDefault({ identity: 'docs', enabled: true })
+  expect(result.status, JSON.stringify(result)).toBe('owner-changed')
+  expect(result.saved).toBe(false)
+  expect(writes).toBe(0)
+  expect((await originalRead()).enabled).toEqual([])
+})
+test('batch stages and probes every item before CAS and continues after a probe failure', async () => {
+  const f = fixture({ probeStatus: entry => {
+    const ref = entry.secretRefs?.env?.TOKEN?.ref
+    if (!ref || f.values.get(ref) !== secret) throw new Error('probe ran before credential staging')
+    return entry.identity === 'bad' ? 'probe-failed' : 'mounted'
+  } })
+  const result = await f.operations.executeBatch({ document: { mcpServers: { first: config('first'), bad: config('bad'), last: config('last') } } })
+  expect(result.status, JSON.stringify(result)).toBe('partial')
+  expect(result.items.map(item => item.status)).toEqual(['mounted', 'probe-failed', 'mounted'])
+  expect(f.calls.probe).toBe(3)
+  expect(f.calls.mount).toBe(2)
+  expect(f.sets).toHaveLength(3)
+  const current = await f.registry.read()
+  expect(current.servers.bad).toBeUndefined()
+  expect(Object.keys(current.servers)).toEqual(['first', 'last'])
+  expect(current.revision).toBe(2)
+})
+test('cleanup diagnostics retain attempt-secret metadata without serializing that metadata', async () => {
+  const f = fixture({ probeStatus: 'probe-failed' })
+  f.credentials.unset = async () => { throw new Error(`credential cleanup rejected ${secret}`) }
+  const result = await f.operations.test({ identity: 'docs', config: config('docs') })
+  expect(result.status).toBe('cleanup-failed')
+  expect(JSON.stringify({ result, audit: f.audit })).not.toContain(secret)
 })

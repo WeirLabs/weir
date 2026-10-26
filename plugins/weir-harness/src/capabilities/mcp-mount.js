@@ -114,6 +114,12 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
     return null
   }
 
+  function forgetGroup(groupId, generation) {
+    for (const [identity, entry] of mounted) {
+      if (entry.groupId === groupId && (!generation || entry.generation === generation)) mounted.delete(identity)
+    }
+  }
+
   /**
    * Capture and settle group/client/descendant fibers BEFORE removing rows.
    * remove() is not the barrier: its return does not await async plugin
@@ -123,7 +129,10 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
   async function disposeGroup(groupId, context = {}) {
     const tree = context.tree ?? treeFor(Boolean(context.secretBearing))
     const captured = entriesFor(groupId)
-    if (captured?.length === 0) return { status: 'cleaned', removed: false, groupId }
+    if (captured?.length === 0) {
+      forgetGroup(groupId, context.generation)
+      return { status: 'cleaned', removed: false, groupId }
+    }
     if (captured === null && context.requireCapture === true) {
       return { status: 'cleanup-unknown', removed: false, groupId, diagnostic: mcpDiagnostic(new Error('cannot capture Loader fibers for disposal'), { code: 'cleanup-unknown', action: 'recover-residue' }) }
     }
@@ -159,16 +168,14 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
     if (!closeConfirmed || remaining === null && context.requireCapture === true) {
       return { status: 'cleanup-unknown', removed: false, groupId, diagnostic: mcpDiagnostic(new Error('MCP transport closure or Loader row removal could not be confirmed'), { code: 'cleanup-unknown', action: 'recover-residue' }) }
     }
-    if (mounted.get(groupId)?.groupId === groupId || mounted.get(context.identity)?.groupId === groupId) {
-      for (const [identity, entry] of mounted) if (entry.groupId === groupId && (!context.generation || entry.generation === context.generation)) mounted.delete(identity)
-    }
+    forgetGroup(groupId, context.generation)
     return { status: 'cleaned', removed: true, groupId }
   }
 
   async function sweepResidue(candidateIds) {
     const removed = []
     for (const id of candidateIds.filter(isMcpResidueId)) {
-      const cleanup = await disposeGroup(id, { tree: treeFor(false) })
+      const cleanup = await disposeGroup(id, { tree: treeFor(false), identity: id.slice(MCP_GROUP_PREFIX.length) })
       if (cleanup.status === 'cleaned') removed.push(id)
       else onError(`residue-sweep-${cleanup.status}:${id}`, cleanup.diagnostic)
     }
@@ -205,6 +212,7 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
       return result
     } catch (cause) {
       const cleanup = await disposeGroup(options.id, { tree, identity, generation, secretBearing, confirmClosed: input.confirmClosed })
+      if (!probe && cleanup.status !== 'cleaned') mounted.set(identity, { groupId: options.id, generation, state: cleanup.status })
       const diagnostic = mcpDiagnostic(cause, { secrets: input.secrets, action: cleanup.status === 'cleaned' ? 'retry' : 'recover-residue' })
       throw new McpLifecycleError(cleanup.status === 'cleaned' ? diagnostic.code : cleanup.status, cause, {
         status: cleanup.status === 'cleaned' ? (probe ? 'probe-failed' : 'mount-failed') : cleanup.status,

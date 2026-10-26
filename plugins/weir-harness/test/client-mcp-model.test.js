@@ -70,11 +70,16 @@ test('redacted edit config supports blank-keep, ref replacement, secret replacem
 
   const replacedSecret = model.mcpConfigFromEditor({
     ...editor,
-    envRows: editor.envRows.map(row => row.key === 'TOKEN' ? { ...row, action: 'replace', source: 'value', value: 'new-canary' } : row),
-    secretArgRows: editor.secretArgRows.map(row => ({ ...row, action: 'replace', source: 'value', value: 'arg-canary' })),
+    envRows: editor.envRows.map(row => row.key === 'TOKEN' ? { ...row, action: 'replace', source: 'value', value: 'new-canary', prefix: 'Bearer ' } : row),
+    secretArgRows: editor.secretArgRows.map(row => ({ ...row, action: 'replace', source: 'value', value: 'arg-canary', prefix: 'Bearer ' })),
   })
-  expect(replacedSecret.secretValues.env.TOKEN).toEqual({ action: 'replace', value: 'new-canary' })
-  expect(replacedSecret.secretValues.args[1]).toEqual({ action: 'replace', value: 'arg-canary' })
+  expect(replacedSecret.secretValues.env.TOKEN).toEqual({ action: 'replace', value: 'new-canary', prefix: 'Bearer ' })
+  expect(replacedSecret.secretValues.args[1]).toEqual({ action: 'replace', value: 'arg-canary', prefix: 'Bearer ' })
+  const clearedPrefix = model.mcpConfigFromEditor({
+    ...editor,
+    envRows: editor.envRows.map(row => row.key === 'TOKEN' ? { ...row, action: 'replace', source: 'value', value: 'next-canary', prefix: '', prefixDirty: true } : row),
+  })
+  expect(clearedPrefix.secretValues.env.TOKEN).toEqual({ action: 'replace', value: 'next-canary', prefix: '' })
   expect(replacedSecret.client).toBeUndefined()
 
   const removed = model.mcpConfigFromEditor({

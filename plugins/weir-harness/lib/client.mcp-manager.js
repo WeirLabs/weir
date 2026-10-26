@@ -310,7 +310,7 @@ window.__ModuleLoader__.load({
 							react_jsx_runtime.jsx("input", {
 								style: S.input, value: row.prefix ?? "", disabled: editor.busy || row.action === "remove",
 								placeholder: t("capability.mcp.prefix", "optional non-secret prefix"), "aria-label": t("capability.mcp.prefix", "optional non-secret prefix"), ...ring,
-								onChange: event => updateRows(field, index, { prefix: event.target.value, action: row.configured && row.action === "keep" ? "replace" : row.action }),
+								onChange: event => updateRows(field, index, { prefix: event.target.value, prefixDirty: true, action: row.configured && row.action === "keep" ? "replace" : row.action }),
 							}),
 							rowError ? react_jsx_runtime.jsx("span", { style: S.error, children: rowError }) : null,
 						] }, `${field}:${index}`);

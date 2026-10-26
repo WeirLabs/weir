@@ -12,7 +12,7 @@ import { openCapabilityStore } from '../src/capabilities/store/store.js'
 const entry = (incarnation = null) => ({ identity: 'docs', label: 'Docs', owner: { kind: 'global', key: 'installation' }, generation: 0, configuredAt: 0, transport: { kind: 'stdio', ref: 'cmd:node' }, client: { transport: 'stdio', serverName: 'docs', command: 'node' }, ...(incarnation ? { incarnation } : {}) })
 const agent = { session: { id: 's1' } }
 
-test('remove/re-add denies old snapshots until Apply; edit/restart needs no reauthorization', async () => {
+test('remove/re-add ignores a forged old incarnation and denies old snapshots until Apply; edit/restart needs no reauthorization', async () => {
   const incarnations = ['inc-a', 'inc-b']
   let index = 0
   const registry = createMcpRegistry({ store: openCapabilityStore({ root: mkdtempSync(join(tmpdir(), 'weir-inc-gate-')), platform: 'darwin' }), newIncarnation: () => incarnations[index++] })
@@ -28,9 +28,10 @@ test('remove/re-add denies old snapshots until Apply; edit/restart needs no reau
   expect(await gate.admit(agent, 'docs', 1)).toBe(false)
   await registry.remove('docs', current.revision)
   current = await registry.read()
-  await registry.register(entry(), current.revision)
+  await registry.register(entry('inc-a'), current.revision) // forged caller incarnation must not be reused
   current = await registry.read()
   expect(current.servers.docs.incarnation).toBe('inc-b')
+  expect(index).toBe(2)
   expect(await gate.admit(agent, 'docs', 1)).toBe(false)
   const reapplied = createMcpGate({ registry, lifecycle: { snapshotFor: () => ({ state: 'ready', mcpServers: ['docs'], mcpIncarnations: { docs: 'inc-b' } }) } })
   expect(await reapplied.admit(agent, 'docs', 1)).toBe(true)

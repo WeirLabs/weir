@@ -10,6 +10,8 @@ import {
   createCapabilityMutationService,
   feedCapabilityReadBridge,
 } from '../src/capabilities/capability-remote.js'
+import { createMcpOperations } from '../src/capabilities/mcp-operations.js'
+import { createCommandMcpManager } from './helpers/mcp-registry.js'
 
 const secret = 'remote-canary-secret'
 function fixture() {
@@ -168,5 +170,32 @@ test('host self-healing verifies every read and write endpoint independently', a
     live.delete(`${CAPABILITY_READ_NAMESPACE}/receipt`)
     await mutation.mutate('s1', { action: 'preview' })
     expect(live.has(`${CAPABILITY_READ_NAMESPACE}/receipt`)).toBe(true)
+  } finally { f.unregister() }
+})
+test('remote mutation diagnostics and audit never expose arbitrary credential-backend secrets', async () => {
+  const f = fixture()
+  const audit = []
+  try {
+    f.faces.mcpOperations = (_session, { assertOwner }) => createMcpOperations({
+      registry: {
+        read: async () => ({ kind: 'absent', enabled: [], warnings: [] }),
+        register: async () => { throw new Error('unexpected registry write') },
+      },
+      manager: createCommandMcpManager(),
+      credentials: {
+        set: async () => { throw new Error(`credential backend rejected ${secret}`) },
+        resolve: async () => undefined,
+        unset: async () => {},
+      },
+      audit: (_session, type, data) => audit.push({ type, data }),
+      assertOwner,
+    })
+    const result = await f.service.mutate('s1', {
+      action: 'add', identity: 'docs', surface: 'ui',
+      config: { identity: 'docs', command: 'node', secretValues: { env: { TOKEN: { action: 'replace', value: secret } } } },
+    })
+    expect(result.status).toBe('validation-failed')
+    expect(result.error.causes.length).toBeGreaterThan(1)
+    expect(JSON.stringify({ result, audit })).not.toContain(secret)
   } finally { f.unregister() }
 })

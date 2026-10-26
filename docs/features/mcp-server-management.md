@@ -29,7 +29,7 @@ Weir 的 MCP 管理面以注册表为唯一配置权威，覆盖官方 `stdio` �
 ### JSON 预览与批量结果
 
 - Paste JSON 接受单 server object 或标准 `mcpServers` 文档。表单与 JSON 共用 Host preview，先返回规范化、脱敏 plan 和 digest，再由用户确认；preview 不启动进程、不联网、不写凭据/注册表、不改选择。
-- 批量执行**不是原子事务**：每项使用执行时的当前 registry revision 与目标 fingerprint。前一项自己的提交不会误伤后一项；外部修改目标会产生冲突。entry-local 失败之后，安全的后续项继续。
+- 批量执行**不是原子事务**：每项都按 staged credential → probe → CAS 顺序执行，并使用执行时的当前 registry revision 与目标 fingerprint。前一项自己的提交不会误伤后一项；外部修改目标会产生冲突。entry-local 失败之后，安全的后续项继续。
 - 只有 `mounted` 是该项成功；`saved-degraded` 是 `failed + saved:true`。`not-attempted` 仅用于 owner 丢失、注册表不可读等 batch-scope abort。结果逐项显示 saved/not-attempted/retry/edit，不宣称整批成功或回滚。
 - Portable capability preset 仍只携带逻辑 binding identity/label，不是可执行 MCP 配置格式；JSON 导入不会改写 portable preset 或任何会话选择。
 
@@ -87,8 +87,8 @@ Weir 的 MCP 管理面以注册表为唯一配置权威，覆盖官方 `stdio` �
 1. 完整 parse/normalize/redact preview，核对输入边界；
 2. 校验 session preset/cwd/profile/feed ownership、credentials 与 ephemeral 支持；
 3. 按 attempt 分配含随机 ID 的 credential refs，并暂存新秘密；
-4. 可选 bounded probe（AI 必须 probe；手动 Test 可选）；
-5. CAS 前重读 registry，核对当前 revision、target fingerprint、identity 与 `serverName` 保留；
+4. 按操作执行 bounded probe（AI、batch 的每个条目与手动 Test 必须先成功）；
+5. CAS 前重读 registry，核对当前 revision、target fingerprint、identity 与 `serverName` 保留，并再次校验 ownership，随后才 register/remove/setDefault；
 6. 严格 targeted mount、registry/generation/incarnation readback，最后才开放准入。
 
 Add/Edit 可先保存再 mount，因此保存成功但 mount 失败返回 `saved-degraded`。结果同时保留 saved、registryRevision、mount、discovery 和下一步；`owner-changed` 或 `indeterminate` 不宣称回滚或零副作用。批量复用同一管线，UI、命令与 remote 的状态分类一致。

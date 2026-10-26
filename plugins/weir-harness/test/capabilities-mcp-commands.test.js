@@ -8,7 +8,7 @@ import { createMcpRegistry } from '../src/capabilities/mcp-registry.js'
 import { createMcpOperations } from '../src/capabilities/mcp-operations.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 
-function mount(root, manager = createCommandMcpManager()) {
+function mount(root, manager = createCommandMcpManager(), credentials) {
   const registered = []
   const emitted = []
   const ctx = {
@@ -19,6 +19,7 @@ function mount(root, manager = createCommandMcpManager()) {
       if (name === 'profileContext') return { home: root, name: 'it' }
       if (name === 'commands') return { register(command) { registered.push(command); return () => {} } }
       if (name === 'weirMcpManager') return manager
+      if (name === 'credentials') return credentials
       return undefined
     },
   }
@@ -107,5 +108,44 @@ test('UI and command report the same stale revision conflict; usage names every 
     expect(usage.text).toContain('Usage: /capabilities mcp-test')
     const help = await h.command.handler({ agent: h.agent, rawInput: 'unknown' })
     for (const verb of ['mcp-preview', 'mcp-add', 'mcp-batch', 'mcp-edit', 'mcp-remove', 'mcp-restart', 'mcp-test', 'mcp-default']) expect(help.text).toContain(verb)
+  } finally { host.restore() }
+})
+test('partial MCP batch results use the domain-failure command shape without losing item outcomes', { skip: storePlatformSkip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-mcp-verbs-partial-'))
+    const manager = createCommandMcpManager()
+    const mounted = manager.reconcileOne
+    manager.reconcileOne = async (identity, entry, token) => identity === 'bad'
+      ? { status: 'saved-degraded', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, mount: { state: 'degraded' } }
+      : mounted(identity, entry, token)
+    const h = mount(root, manager)
+    const result = await h.call('mcp-batch', { mcpServers: { good: { command: 'node' }, bad: { command: 'node' } } })
+    expect(result.kind, JSON.stringify(result.payload)).toBe('error')
+    expect(result.payload.status).toBe('partial')
+    expect(result.payload.succeeded).toBe(false)
+    expect(result.payload.items.map(item => item.status)).toEqual(['mounted', 'saved-degraded'])
+  } finally { host.restore() }
+})
+test('command diagnostics and audit never expose arbitrary credential-backend secrets', { skip: storePlatformSkip }, async () => {
+  const host = pinHermeticHostRoots()
+  const known = 'command-s3cr3t-do-not-leak'
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-mcp-verbs-secret-'))
+    const credentials = {
+      set: async () => { throw new Error(`credential backend rejected ${known}`) },
+      resolve: async () => undefined,
+      unset: async () => {},
+    }
+    const h = mount(root, createCommandMcpManager(), credentials)
+    await h.call('mcp-add', { identity: 'docs', label: 'Docs', command: 'node' })
+    const result = await h.call('mcp-edit', {
+      identity: 'docs', expectedRevision: 1, surface: 'ui',
+      secretValues: { env: { TOKEN: { action: 'replace', value: known } } },
+    })
+    expect(result.kind).toBe('error')
+    expect(result.payload.status).toBe('validation-failed')
+    expect(result.payload.error.causes.length).toBeGreaterThan(1)
+    expect(JSON.stringify({ result, emitted: h.emitted })).not.toContain(known)
   } finally { host.restore() }
 })

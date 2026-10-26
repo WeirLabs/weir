@@ -129,12 +129,13 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     let actualRevision = null
     const secrets = []
     const finish = async (result, { beforeCommit = false, provenUncommitted = false } = {}) => {
+      const projectedSecrets = () => [...secrets, ...(attempt?.secrets ?? [])]
       if (beforeCommit) manager.abortOperation(token)
       if (attempt && !committedWrite) {
         const cleanup = await compensate(attempt, provenUncommitted)
-        if (cleanup.status !== 'cleaned') return finalize(action, { ...result, status: cleanup.status, cleanup, saved: committedWrite || result.saved === true }, identity, secrets)
+        if (cleanup.status !== 'cleaned') return finalize(action, { ...result, status: cleanup.status, cleanup, saved: committedWrite || result.saved === true }, identity, projectedSecrets())
       }
-      return finalize(action, { ...result, registryRevision: result.registryRevision ?? actualRevision }, identity, secrets)
+      return finalize(action, { ...result, registryRevision: result.registryRevision ?? actualRevision }, identity, projectedSecrets())
     }
     const indeterminateAfterWrite = async cause => {
       let observed = null
@@ -175,7 +176,7 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
 
       if (action !== 'remove' && action !== 'restart') {
         await owner('credentials')
-        const staged = await stageMcpCredentials({ entry: normalized.entry, secretValues: normalized.secretValues, credentials, registry, generation: (existing?.generation ?? 0) + 1, attemptId: request.attemptId })
+        const staged = await stageMcpCredentials({ entry: normalized.entry, secretValues: normalized.secretValues, credentials, registry, generation: (existing?.generation ?? 0) + 1 })
         normalized.entry = staged.entry
         attempt = staged.attempt
       }
@@ -189,6 +190,9 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
       }
 
       if (action === 'remove') {
+        current = await read()
+        const latest = currentServers(current)[identity]
+        if (!latest || fingerprintMcpEntry(latest) !== expectedFingerprint) return finish(revisionConflict(current), { beforeCommit: true, provenUncommitted: true })
         await owner('CAS')
         let written
         try { written = await registry.remove(identity, current.revision ?? 0) } catch (cause) {
@@ -202,13 +206,13 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
         return finish({ ...removed, identity, saved: true, removed: removed.status === 'removed', defaultRemoved: Boolean(written.defaultRemoved), registryRevision: actualRevision }, { provenUncommitted: false })
       }
 
-      await owner('CAS')
       current = await read()
       const latest = currentServers(current)[identity]
       if ((action === 'add' || action === 'installFromAgent') && latest) return finish({ status: 'conflict', saved: false, error: { code: 'name-conflict', message: `MCP identity "${identity}" was created during the operation` } }, { beforeCommit: true, provenUncommitted: true })
-      if (action === 'edit' && (!latest || fingerprintMcpEntry(latest) !== expectedFingerprint)) return finish(revisionConflict(current), { beforeCommit: true, provenUncommitted: true })
+      if (['edit', 'restart'].includes(action) && (!latest || fingerprintMcpEntry(latest) !== expectedFingerprint)) return finish(revisionConflict(current), { beforeCommit: true, provenUncommitted: true })
       const latestConflict = action === 'restart' ? null : namespaceConflict(current, normalized.entry)
       if (latestConflict) return finish({ status: 'conflict', saved: false, error: { code: 'name-conflict', message: latestConflict } }, { beforeCommit: true, provenUncommitted: true })
+      await owner('CAS')
       let written
       try {
         written = await registry.register(normalized.entry, current.revision ?? 0)
@@ -246,9 +250,9 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     if (action === 'preview') return finalize('preview', await preview(request), null)
     if (action === 'setDefault') {
       try {
-        await owner('CAS')
         const current = await read()
         if (Number.isSafeInteger(request.expectedRevision) && current.revision !== request.expectedRevision) return finalize(action, revisionConflict(current), request.identity)
+        await owner('CAS')
         const result = await registry.setDefault(request.identity, request.enabled === true, current.revision ?? 0)
         if (!committed(result)) return finalize(action, revisionConflict(current), request.identity)
         return finalize(action, { status: 'saved', identity: request.identity, saved: true, defaultEnabled: request.enabled === true, registryRevision: result.revision }, request.identity)
@@ -298,7 +302,7 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
       }
       const normalized = parsed.entries[index]
       const action = request.mode === 'edit' ? 'edit' : 'add'
-      const result = await mutateOne(action, { ...request, identity: normalized.entry.identity, expectedRevision: undefined }, normalized, { batch: true, targetFingerprint: planned.targets[index]?.fingerprint })
+      const result = await mutateOne(action, { ...request, identity: normalized.entry.identity, expectedRevision: undefined }, normalized, { batch: true, requireProbe: true, targetFingerprint: planned.targets[index]?.fingerprint })
       items.push(resultForBatch(result))
       if (['owner-changed', 'indeterminate'].includes(result.status) || result.error?.code === 'registry-unavailable') aborted = `batch aborted after ${normalized.entry.identity}: ${result.status}`
     }
