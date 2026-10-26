@@ -19,8 +19,9 @@ import {
   CAPABILITY_READ_SERVICE_KEY,
   CapabilityReadError,
   apply as remoteApply,
+  CAPABILITY_ENDPOINTS,
   capabilityReadBridge,
-  capabilityReadContribution,
+  capabilityContribution,
   createCapabilityReadService,
   feedCapabilityReadBridge,
 } from '../src/capabilities/capability-remote.js'
@@ -536,7 +537,7 @@ test('second observation with invalid owner disposes both leases exactly once', 
     expect(fixture.observations).toEqual(['normal-session', 'normal-session'])
   } finally { release() }
 })
-test('host apply publishes the frozen binding and registers the hand-written contribution', () => {
+test('host apply publishes the frozen bindings and registers the one host-face contribution', () => {
   const provided = []
   const registered = []
   const ctx = {
@@ -562,32 +563,33 @@ test('host apply publishes the frozen binding and registers the hand-written con
   expect(Object.isFrozen(provided[1].service)).toBe(true)
   expect(typeof provided[1].service.mutate).toBe('function')
   expect(typeof provided[1].service.batch).toBe('function')
+  expect(provided[1].service.typertRemote.serviceKey).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
+  expect(provided[1].service.typertRemote.namespace).toBe(CAPABILITY_MUTATION_NAMESPACE)
 
-  expect(registered).toHaveLength(2)
+  // ONE registration carrying every read AND mutation endpoint: the registry
+  // accepts exactly one package record per face, and a dropped endpoint could
+  // otherwise only be restored by a second, rejected registration.
+  expect(registered).toHaveLength(1)
   const contribution = registered[0]
+  expect(contribution.package).toBe('weir-harness')
+  expect(contribution.face).toBe('host')
   expect(contribution.schemas).toEqual([])
   expect(contribution.model).toEqual({ services: [], events: [], objects: [] })
-  expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length)
+  expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length + CAPABILITY_MUTATION_METHODS.length)
   for (const invocation of contribution.invocations) {
-    expect(invocation.service).toBe(CAPABILITY_READ_SERVICE_KEY)
-    expect(invocation.namespace).toBe(CAPABILITY_READ_NAMESPACE)
-    expect(invocation.id).toBe(`weir-harness.${CAPABILITY_READ_NAMESPACE}.${invocation.method}`)
     expect(invocation.invocation).toEqual({ kind: 'direct' })
-    expect(invocation.parameters).toEqual([{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } }])
     expect(invocation.result).toEqual({ mode: 'src-json' })
+    expect(invocation.parameters.every(parameter => parameter.source === 'json' && parameter.codec.mode === 'src-json')).toBe(true)
   }
-  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
-  const mutation = registered[1]
-  expect(mutation.invocations).toHaveLength(CAPABILITY_MUTATION_METHODS.length)
-  expect(mutation.invocations.map(entry => entry.method)).toEqual(['mutate', 'batch'])
-  for (const invocation of mutation.invocations) {
-    expect(invocation.service).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
-    expect(invocation.namespace).toBe(CAPABILITY_MUTATION_NAMESPACE)
-    expect(invocation.parameters.map(parameter => parameter.name)).toEqual(['sessionId', 'request'])
-  }
+  expect(contribution.invocations.map(entry => `${entry.namespace}/${entry.method}`)).toEqual(CAPABILITY_ENDPOINTS)
+  expect(contribution.invocations.slice(0, CAPABILITY_READ_METHODS.length).every(entry => entry.service === CAPABILITY_READ_SERVICE_KEY)).toBe(true)
+  expect(contribution.invocations.slice(CAPABILITY_READ_METHODS.length).map(entry => [entry.service, entry.method, entry.parameters.map(parameter => parameter.name)])).toEqual([
+    [CAPABILITY_MUTATION_SERVICE_KEY, 'mutate', ['sessionId', 'request']],
+    [CAPABILITY_MUTATION_SERVICE_KEY, 'batch', ['sessionId', 'request']],
+  ])
 })
 
-test('host apply stays inert with a warning when typert is unavailable or registration throws', () => {
+test('host apply stays inert with a single warning when typert is unavailable or registration throws', () => {
   // No typert service: warn, no provide, no throw.
   const warnings = []
   const silent = {
@@ -599,15 +601,18 @@ test('host apply stays inert with a warning when typert is unavailable or regist
   expect(warnings).toHaveLength(1)
   expect(warnings[0]).toContain('typert service is unavailable')
 
-  // A throwing typert.register: warn and stay inert, never break the host.
+  // A throwing typert.register: warn ONCE and stay inert, never break the host.
+  // The pre-fix split attempted two registrations and warned twice.
   const warnings2 = []
+  let registrations = 0
   const throwing = {
-    get: name => (name === 'typert' ? { register: () => { throw new Error('duplicate contribution') } } : undefined),
+    get: name => (name === 'typert' ? { register: () => { registrations += 1; throw new Error('duplicate contribution') } } : undefined),
     root: { reflect: { provide: () => {} } },
     logger: { warn: text => warnings2.push(text) },
   }
   remoteApply(throwing)
-  expect(warnings2).toHaveLength(2)
+  expect(registrations).toBe(1)
+  expect(warnings2).toHaveLength(1)
   expect(warnings2[0]).toContain('registration failed')
   expect(warnings2[0]).toContain('duplicate contribution')
 
@@ -623,22 +628,27 @@ test('host apply stays inert with a warning when typert is unavailable or regist
 })
 
 test('the contribution factory is standalone-stable for the gateway claim check', () => {
-  const contribution = capabilityReadContribution()
+  const contribution = capabilityContribution()
   expect(contribution.invocations.map(entry => `${entry.namespace}/${entry.method}`)).toEqual([
     'weirCapabilities/receipt',
     'weirCapabilities/list',
     'weirCapabilities/conditions',
     'weirCapabilities/presets',
     'weirCapabilities/defaultGet',
+    'weirCapabilityMutations/mutate',
+    'weirCapabilityMutations/batch',
   ])
+  // The gateway claims an endpoint from get() OR hasSeen(): every endpoint this
+  // package can ever withdraw must belong to the same committed batch.
+  expect(CAPABILITY_ENDPOINTS).toEqual(contribution.invocations.map(entry => `${entry.namespace}/${entry.method}`))
 })
 
 // S27.2: the real registry's register → validatePackage requires a nonempty '#'-free
 // `package` and keys the package record by `face`. A contribution missing either passes
 // every direct-service test and then dies silently at typert.register inside apply()'s
 // catch (which only warns), so the declared shape and the mock registry are pinned apart.
-test('the read contribution carries the package and face the registry validates', () => {
-  const contribution = capabilityReadContribution()
+test('the shipped contribution carries the package, face and both channels the registry validates', () => {
+  const contribution = capabilityContribution()
   expect(contribution.package).toBe('weir-harness')
   expect(contribution.face).toBe('host')
   expect(contribution.schemas).toEqual([])
@@ -646,30 +656,38 @@ test('the read contribution carries the package and face the registry validates'
   // Exactly this key set: a dropped or renamed top-level field is a registry-side contract change.
   expect(Object.keys(contribution).sort()).toEqual(['face', 'invocations', 'model', 'package', 'schemas'])
 
-  expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length)
-  expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
+  expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length + CAPABILITY_MUTATION_METHODS.length)
+  expect(contribution.invocations.map(entry => `${entry.namespace}/${entry.method}`)).toEqual([
+    'weirCapabilities/receipt', 'weirCapabilities/list', 'weirCapabilities/conditions', 'weirCapabilities/presets', 'weirCapabilities/defaultGet',
+    'weirCapabilityMutations/mutate', 'weirCapabilityMutations/batch',
+  ])
   for (const invocation of contribution.invocations) {
     expect(invocation.id.startsWith('weir-harness.')).toBe(true)
-    expect(invocation.id).toBe(`weir-harness.${CAPABILITY_READ_NAMESPACE}.${invocation.method}`)
+    expect(invocation.id).toBe(`weir-harness.${invocation.namespace}.${invocation.method}`)
     // Literal wire names: the gateway resolves these strings, not this module's constants.
-    expect(invocation.service).toBe('weirCapabilityRead')
-    expect(invocation.namespace).toBe('weirCapabilities')
+    expect(['weirCapabilityRead', 'weirCapabilityMutation']).toContain(invocation.service)
     expect(invocation.invocation).toEqual({ kind: 'direct' })
-    expect(invocation.parameters).toEqual([{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'src-json' } }])
     expect(invocation.result).toEqual({ mode: 'src-json' })
   }
+  const read = contribution.invocations.filter(entry => entry.namespace === 'weirCapabilities')
+  expect(read.every(entry => entry.service === 'weirCapabilityRead')).toBe(true)
+  expect(read.every(entry => entry.parameters.length === 1 && entry.parameters[0].name === 'sessionId')).toBe(true)
+  const mutation = contribution.invocations.filter(entry => entry.namespace === 'weirCapabilityMutations')
+  expect(mutation.every(entry => entry.service === 'weirCapabilityMutation')).toBe(true)
+  expect(mutation.map(entry => entry.parameters.map(parameter => parameter.name))).toEqual([['sessionId', 'request'], ['sessionId', 'request']])
 })
 
 test('the shipped contribution survives the registry validatePackage, so registration cannot die silently', () => {
   const warnings = []
   const provided = []
   const captured = []
-  // The real registry's validatePackage, reproduced: a nonempty '#'-free package name, and
-  // the package record keyed by face. It throws instead of silently dropping the contribution.
+  // The real registry's validatePackage, reproduced: a nonempty '#'-free package name,
+  // a face restricted to host/client, and the package record keyed by face. It throws
+  // instead of silently dropping the contribution.
   const typert = {
     register(contribution) {
       if (typeof contribution?.package !== 'string' || contribution.package.length === 0 || contribution.package.includes('#')) throw new TypeError('validatePackage: bad package')
-      if (typeof contribution?.face !== 'string') throw new TypeError('validatePackage: bad face')
+      if (contribution?.face !== 'host' && contribution?.face !== 'client') throw new TypeError('validatePackage: bad face')
       captured.push(contribution)
     },
   }
@@ -680,24 +698,28 @@ test('the shipped contribution survives the registry validatePackage, so registr
   }
   remoteApply(ctx)
 
-  // apply() swallows a rejected registration into a warning: the pre-fix code left this silent.
+  // apply() swallows a rejected registration into one warning: the pre-fix code left the write channel silently dead.
   expect(warnings).toEqual([])
-  expect(captured).toHaveLength(2)
+  expect(captured).toHaveLength(1)
   expect(captured[0].package).toBe('weir-harness')
   expect(captured[0].face).toBe('host')
-  expect(captured[0].invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
-  expect(captured[1].invocations.map(entry => entry.method)).toEqual(CAPABILITY_MUTATION_METHODS)
+  expect(captured[0].invocations.map(entry => `${entry.namespace}/${entry.method}`)).toEqual(CAPABILITY_ENDPOINTS)
   expect(provided).toHaveLength(2)
   expect(provided[0].key).toBe(CAPABILITY_READ_SERVICE_KEY)
   expect(provided[0].service.typertRemote.namespace).toBe(CAPABILITY_READ_NAMESPACE)
+  expect(provided[1].service.typertRemote.namespace).toBe(CAPABILITY_MUTATION_NAMESPACE)
 
-  // Control: the rejector is not vacuous — the S27.2 shape dies exactly as it did in production.
-  const noPackage = capabilityReadContribution()
+  // Control: the rejector is not vacuous — the S27.2 shapes die exactly as they did in production.
+  const noPackage = capabilityContribution()
   delete noPackage.package
   expect(() => typert.register(noPackage)).toThrow(/validatePackage: bad package/)
-  const noFace = capabilityReadContribution()
+  const noFace = capabilityContribution()
   delete noFace.face
   expect(() => typert.register(noFace)).toThrow(/validatePackage: bad face/)
+  // The retired fake face: the real registry rejects it before any invocation is committed.
+  const legacyMutationFace = capabilityContribution()
+  legacyMutationFace.face = 'host-mutations'
+  expect(() => typert.register(legacyMutationFace)).toThrow(/validatePackage: bad face/)
 })
 
 {
@@ -741,7 +763,7 @@ test('the read channel self-heals a withdrawn typert registration', () => {
   }
   const ensureRegistered = () => {
     if (live) return true
-    try { typert.register(capabilityReadContribution()); return true } catch { return live }
+    try { typert.register(capabilityContribution()); return true } catch { return live }
   }
    const faces = {
      provider: { status: () => ({}), list: async () => ({ candidates: [], complete: true }) },
@@ -762,16 +784,26 @@ test('the read channel self-heals a withdrawn typert registration', () => {
   })
 })
 
-test('a duplicate registration race with live endpoints is success, never a warning', () => {
-  const endpointLive = true
+test('a duplicate registration race with every endpoint live is success, never a warning', () => {
+  // Reproduces the ordinary reload overlap at the apply seam: another
+  // incarnation already owns all seven endpoints, so the new generation must
+  // neither re-register nor warn — its own listener owns the later recovery.
+  const endpoints = new Set(CAPABILITY_ENDPOINTS)
+  const warnings = []
   let registerCalls = 0
   const typert = {
-    local: { get: () => (endpointLive ? { id: 'x' } : undefined) },
-    register: () => { registerCalls += 1; throw new Error('typert: Remote package "weir-harness" is already registered') },
+    local: { get: endpoint => (endpoints.has(endpoint) ? { id: endpoint } : undefined), hasSeen: endpoint => endpoints.has(endpoint), subscribe() {} },
+    register: () => { registerCalls += 1; throw new Error('typert: package face "weir-harness#host" is already registered') },
   }
-  // The apply path's ensure logic: endpoint already live → no registration attempted.
-  expect(typert.local.get()).toBeTruthy()
+  const ctx = {
+    get: name => (name === 'typert' ? typert : undefined),
+    root: { reflect: { provide: () => {} } },
+    logger: { warn: text => warnings.push(text) },
+    effect: fn => fn(),
+  }
+  remoteApply(ctx)
   expect(registerCalls).toBe(0)
+  expect(warnings).toEqual([])
 })
 
 {

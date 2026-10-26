@@ -6,7 +6,7 @@ import {
   CAPABILITY_READ_METHODS,
   CAPABILITY_READ_NAMESPACE,
   apply as remoteApply,
-  capabilityMutationContribution,
+  capabilityContribution,
   createCapabilityMutationService,
   feedCapabilityReadBridge,
 } from '../src/capabilities/capability-remote.js'
@@ -125,15 +125,19 @@ test('the exact current preset owns the mutation feed; sibling presets stay isol
   } finally { unregisterCreative(); f.unregister() }
 })
 
-test('mutation contribution is a separate object-rooted request channel with sessionId and request', () => {
-  const contribution = capabilityMutationContribution()
-  expect(contribution.face).toBe('host-mutations')
-  expect(contribution.invocations.map(entry => entry.method)).toEqual(CAPABILITY_MUTATION_METHODS)
-  for (const invocation of contribution.invocations) {
+test('the mutation channel rides the one host-face contribution with sessionId and request', () => {
+  const contribution = capabilityContribution()
+  // The registry accepts only host/client faces; the retired `host-mutations`
+  // face made every mutation registration throw, so the write channel was dead.
+  expect(contribution.package).toBe('weir-harness')
+  expect(contribution.face).toBe('host')
+  const mutations = contribution.invocations.filter(invocation => invocation.namespace === CAPABILITY_MUTATION_NAMESPACE)
+  expect(mutations.map(entry => entry.method)).toEqual(CAPABILITY_MUTATION_METHODS)
+  for (const invocation of mutations) {
     expect(invocation.service).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
-    expect(invocation.namespace).toBe(CAPABILITY_MUTATION_NAMESPACE)
     expect(invocation.parameters.map(parameter => parameter.name)).toEqual(['sessionId', 'request'])
   }
+  expect(contribution.invocations.filter(invocation => invocation.namespace === CAPABILITY_READ_NAMESPACE)).toHaveLength(CAPABILITY_READ_METHODS.length)
 })
 
 test('host self-healing verifies every read and write endpoint independently', async () => {
@@ -141,7 +145,7 @@ test('host self-healing verifies every read and write endpoint independently', a
   const registrations = []
   const provided = []
   const typert = {
-    local: { get: key => live.has(key) ? { id: key } : undefined },
+    local: { get: key => live.has(key) ? { id: key } : undefined, hasSeen: key => live.has(key), subscribe() {} },
     register(contribution) {
       registrations.push(contribution)
       for (const invocation of contribution.invocations) live.add(`${invocation.namespace}/${invocation.method}`)
@@ -153,23 +157,31 @@ test('host self-healing verifies every read and write endpoint independently', a
     root: { reflect: { provide: (key, service) => provided.push({ key, service }) } },
     logger: { warn() {} },
     emit() {},
+    effect: fn => fn(),
   }
   remoteApply(ctx)
   const f = fixture()
   try {
     for (const method of CAPABILITY_READ_METHODS) expect(live.has(`${CAPABILITY_READ_NAMESPACE}/${method}`)).toBe(true)
     for (const method of CAPABILITY_MUTATION_METHODS) expect(live.has(`${CAPABILITY_MUTATION_NAMESPACE}/${method}`)).toBe(true)
-    const initial = registrations.length
+    // ONE contribution carries both channels, so a lost write endpoint is
+    // restored by the same batch that carries the reads.
+    expect(registrations).toHaveLength(1)
+    expect(registrations[0].invocations.map(entry => `${entry.namespace}/${entry.method}`)).toEqual([
+      ...CAPABILITY_READ_METHODS.map(method => `${CAPABILITY_READ_NAMESPACE}/${method}`),
+      ...CAPABILITY_MUTATION_METHODS.map(method => `${CAPABILITY_MUTATION_NAMESPACE}/${method}`),
+    ])
+    const mutation = provided.find(entry => entry.key === CAPABILITY_MUTATION_SERVICE_KEY).service
     live.delete(`${CAPABILITY_MUTATION_NAMESPACE}/mutate`)
     live.delete(`${CAPABILITY_MUTATION_NAMESPACE}/batch`)
-    const mutation = provided.find(entry => entry.key === CAPABILITY_MUTATION_SERVICE_KEY).service
     await mutation.mutate('s1', { action: 'preview' })
     expect(live.has(`${CAPABILITY_MUTATION_NAMESPACE}/mutate`)).toBe(true)
     expect(live.has(`${CAPABILITY_MUTATION_NAMESPACE}/batch`)).toBe(true)
-    expect(registrations.length).toBeGreaterThan(initial)
+    expect(registrations.length).toBe(2)
     live.delete(`${CAPABILITY_READ_NAMESPACE}/receipt`)
     await mutation.mutate('s1', { action: 'preview' })
     expect(live.has(`${CAPABILITY_READ_NAMESPACE}/receipt`)).toBe(true)
+    expect(live.has(`${CAPABILITY_MUTATION_NAMESPACE}/mutate`)).toBe(true)
   } finally { f.unregister() }
 })
 test('remote mutation diagnostics and audit never expose arbitrary credential-backend secrets', async () => {
