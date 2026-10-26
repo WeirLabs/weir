@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **编辑锁释放订阅**：模型在编辑冲突、转交被拒或请求过期后，可用 `edit_lock_watch` 等待指定文件的下一次释放；显式释放、持有者断连和租约过期都会通知订阅者。通知只提示可以重新抢锁，不代表已经取得所有权；多个等待者公平竞争、先到先得，输家可重新协调或订阅，全程不需要用户解锁。详见 [编辑锁](docs/features/edit-lock.md)。
+
 ### Fixed
 
 - **能力管理：Fork 会话现在继承源会话的有效 Skill/MCP 配置**：无论源配置来自显式 Apply、已有继承快照，还是尚未 Apply 的初始默认值，Fork 与连续 Fork 都不会再被清空；冷读、预载、MCP 准入与面板回执使用同一集合，首次显式 Apply 仍从正确的 accepted revision 提交。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
