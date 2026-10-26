@@ -40,7 +40,10 @@
  * @typedef {{ path: string, owner: Owner, scope: string, acquiredAt: number, expiresAt: number, holdUntil: number | null }} LeaseView
  * @typedef {{ requestId: string, path: string, from: Owner, connectionId: string, holderConnectionId: string, holderId: string, expiresAt: number }} PendingRequest
  * @typedef {{ event: 'request', requestId: string, path: string, from: Owner, expiresAt: number }} RequestEvent
- * @typedef {{ event: 'settled', requestId: string, path: string, state: 'transferred' | 'declined' | 'expired' }} SettledEvent
+ * @typedef {{ event: 'settled', requestId: string, path: string, session: string, state: 'transferred' | 'declined' | 'expired' }} SettledEvent
+ * `session` is the requester's own session (copied from the request's `from`),
+ * carried so a client can route the outcome to that session's agent without
+ * depending on a turn-scoped table of request ids.
  * @typedef {{ event: 'released', path: string, reason: 'released' | 'disconnected' | 'expired' }} ReleasedEvent
  * @typedef {{ connectionId: string, owner: Owner, scope: string, paths: string[], ttlMs?: number }} AcquireInput
  * @typedef {{ connectionId: string, owner: Owner, paths: string[] }} ReleaseInput
@@ -165,7 +168,13 @@ export function createBroker({
    * @param {'transferred' | 'declined' | 'expired'} state
    */
   function settle(record, state) {
-    deliver(record.connectionId, { event: 'settled', requestId: record.requestId, path: record.path, state })
+    deliver(record.connectionId, {
+      event: 'settled',
+      requestId: record.requestId,
+      path: record.path,
+      session: record.from.session,
+      state,
+    })
   }
 
   /** @param {string[]} paths */

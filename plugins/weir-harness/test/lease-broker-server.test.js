@@ -397,9 +397,11 @@ describe('lease broker server: connection ownership', () => {
     expect(reply.ok).toBe(true)
     expect(reply.state).toBe('transferred')
 
-    // `settled` goes to the requester connection only.
+    // `settled` goes to the requester connection only, and names the requester
+    // session so a client can route it without a turn-scoped table of ids.
     const settled = await bob.nextEvent((frame) => frame.event === 'settled')
     expect(settled.requestId).toBe(pending.requestId)
+    expect(settled.session).toBe(OWNER_B.session)
     expect(settled.state).toBe('transferred')
 
     // Ownership moved with the connection: Bob can release it, Alice cannot.
