@@ -52,7 +52,7 @@ test('readiness is judged after loader.await() by the fiber state, never at crea
     mount.mount({ identity: 'docs', generation: 1, client: {}, fiberOf: () => null }),
     /no fiber after loader\.await/,
   )
-  expect(calls).toEqual(['create', 'await'])
+  expect(calls).toEqual(['create', 'await', 'remove']) // failed strict readiness still awaits the cleanup path
   const { loader: second } = loaderFixture()
   const ok = createMcpMount({ loader: second })
   const result = await ok.mount({ identity: 'docs', generation: 1, client: {}, fiberOf: () => ({ state: 'running' }) })
