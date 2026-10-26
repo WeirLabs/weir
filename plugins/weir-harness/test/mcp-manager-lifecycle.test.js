@@ -145,3 +145,13 @@ test('probe cleans bridge/public facts and changes no registry or selection', as
   expect(JSON.stringify(await f.registry.read())).toBe(beforeRegistry)
   expect((await f.store.read({ kind: 'selection', sessionId: 's1' })).payload.mcpServers).toEqual(['docs'])
 })
+
+test('an absent registry is a healthy empty inventory with support facts, not an unavailable warning', async () => {
+  const f = await fixture({ entries: [] })
+  const listing = await f.face.list()
+  expect(listing.managed).toEqual([])
+  expect(listing.unavailable).toBeUndefined()
+  expect(listing.registryRevision).toBe(0)
+  expect(listing.warnings).toEqual([])
+  expect(listing.capabilities).toEqual({ credentials: false, ephemeral: false })
+})

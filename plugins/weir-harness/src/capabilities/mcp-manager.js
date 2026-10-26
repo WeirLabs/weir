@@ -10,7 +10,7 @@ import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
 import { skillSelectionFor } from './skill-selection-plugin.js'
 import { createMcpRuntime } from './mcp-runtime.js'
 import { materializeMcpClientConfig } from './mcp-credentials.js'
-import { hasMcpSecrets } from './mcp-config.js'
+import { hasMcpSecrets, redactMcpEntry, fingerprintMcpEntry } from './mcp-config.js'
 import { createMcpProcessAdapter } from './mcp-process.js'
 import { mcpDiagnostic, sanitizeMcpText } from './mcp-diagnostics.js'
 
@@ -69,6 +69,10 @@ export function createMcpManager(dependencies = {}) {
     const fiberOf = dependencies.fiberOf ?? defaultFiberOf
     const processAdapter = dependencies.processAdapter ?? createMcpProcessAdapter({ subprocess: dependencies.subprocess ?? ctx.get?.('subprocess') })
     const credentialsFor = () => dependencies.credentials ?? ctx.get?.('credentials')
+    const support = () => {
+      const credentials = credentialsFor()
+      return { credentials: typeof credentials?.set === 'function' && typeof credentials?.resolve === 'function', ephemeral: resolveEphemeralMcpTree(loader).kind === 'ok' }
+    }
     const publicNames = new Map() // publicName → { identity, generation }
     const bridges = new Map() // groupId → { identity, generation, release }
     const receipts = { mount: new Map(), test: new Map() }
@@ -313,7 +317,8 @@ export function createMcpManager(dependencies = {}) {
       const current = await registry.read()
       const rows = listRows()
       const partitioned = partitionMcpRows(rows, mount.mounted, current.kind === 'ok' ? current.servers : {})
-      if (current.kind !== 'ok') return { managed: [], unmanaged: partitioned.unmanaged, unavailable: { status: current.kind } }
+      if (current.kind === 'absent') return { managed: [], unmanaged: partitioned.unmanaged, warnings: [], registryRevision: 0, capabilities: support() }
+      if (current.kind !== 'ok') return { managed: [], unmanaged: partitioned.unmanaged, unavailable: { status: current.kind }, registryRevision: current.revision ?? 0, capabilities: support() }
       const defaults = new Set(current.enabled)
       const managed = Object.values(current.servers).map(entry => {
         const phase = runtime.snapshot(entry.identity)
@@ -341,9 +346,11 @@ export function createMcpManager(dependencies = {}) {
           processExit: 'unknown',
           stderr: 'unknown',
           readOnly: false,
+          config: redactMcpEntry(entry),
+          fingerprint: fingerprintMcpEntry(entry),
         }
       })
-      return { managed, unmanaged: partitioned.unmanaged, warnings: current.warnings }
+      return { managed, unmanaged: partitioned.unmanaged, warnings: current.warnings, registryRevision: current.revision, capabilities: support() }
     }
 
     const gateFace = {
@@ -362,10 +369,7 @@ export function createMcpManager(dependencies = {}) {
       mounted: mount.mounted,
       beginOperation, abortOperation, reconcileOne, removeRuntime, probe,
       remove: identity => removeRuntime(identity),
-      support: () => {
-        const credentials = credentialsFor()
-        return { credentials: typeof credentials?.set === 'function' && typeof credentials?.resolve === 'function', ephemeral: resolveEphemeralMcpTree(loader).kind === 'ok' }
-      },
+      support,
       serverNameConflict: (serverName, identity) => {
         const holder = hostRowHoldingReservation(listRows(), serverName)
         return holder ? `host row "${holder.id ?? identity}" already reserves serverName "${serverName}"` : null

@@ -71,7 +71,7 @@ window.__ModuleLoader__.load({
 			const mcp = Array.isArray(listing?.mcpServers) ? listing.mcpServers : [];
 			return {
 				skills,
-				mcpManaged: mcp.filter((server) => server?.state === "mounted" || server?.state === "registered"),
+				mcpManaged: mcp.filter((server) => server?.state !== "unmanaged"),
 				mcpUnmanaged: mcp.filter((server) => server?.state === "unmanaged"),
 			};
 		}
@@ -566,6 +566,257 @@ window.__ModuleLoader__.load({
 			return `${base}.json`;
 		}
 
+		// ---- Managed MCP inventory, editor, preview and batch model ----
+		const MCP_STATES = new Set(["unknown", "registered", "mounted", "degraded", "cleanup-failed", "cleanup-unknown", "conflict"]);
+		const MCP_SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/;
+		const MCP_CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/;
+		const MCP_DOCUMENT_LIMIT = 1024 * 1024;
+
+		function mcpStateOf(server) {
+			return MCP_STATES.has(server?.state) ? server.state : "unknown";
+		}
+
+		function mcpListingAfterRead(current, incoming) {
+			if (incoming && incoming.error !== true) return incoming;
+			return current ? { ...current, stale: true, refreshError: true } : { error: true };
+		}
+
+		function mcpSecretRowsOf(config, kind) {
+			const refs = config?.secretRefs?.[kind] ?? {};
+			const literals = config?.client?.[kind] ?? {};
+			const keys = [...new Set([...Object.keys(refs), ...Object.keys(literals)])].sort();
+			return keys.map((key) => ({
+				key, action: "keep", source: refs[key] ? "ref" : "value",
+				ref: refs[key]?.ref ?? "", prefix: refs[key]?.prefix ?? "", value: "", configured: true,
+			}));
+		}
+
+		function mcpPublicArgsOf(config) {
+			const secret = new Set(Object.keys(config?.secretRefs?.args ?? {}).map(Number));
+			return (config?.client?.args ?? []).map((value, index) => secret.has(index) ? "" : value);
+		}
+
+		function mcpEditorFromServer(server, registryRevision = 0) {
+			const config = server?.config ?? {};
+			const client = config.client ?? {};
+			const transport = config.transport?.kind ?? client.transport ?? server?.transport ?? "stdio";
+			const reconnect = client.reconnect ?? {};
+			const legacySensitiveUrl = client.url === "[redacted-url]";
+			const secretUrl = config.secretRefs?.url;
+			return {
+				mode: server ? "edit" : "add",
+				identity: server?.identity ?? "", label: server?.label ?? "", serverName: client.serverName ?? server?.serverName ?? server?.identity ?? "",
+				originalServerName: client.serverName ?? server?.serverName ?? server?.identity ?? "",
+				transport,
+				command: client.command ?? "", argsText: JSON.stringify(mcpPublicArgsOf(config)), cwd: client.cwd ?? "",
+				url: legacySensitiveUrl ? "" : client.url ?? "", urlRef: secretUrl?.ref ?? "", urlPrefix: secretUrl?.prefix ?? "",
+				urlMode: secretUrl ? "ref" : legacySensitiveUrl ? "legacy" : "literal", urlAction: server ? "keep" : "replace",
+				envRows: mcpSecretRowsOf(config, "env"), headerRows: mcpSecretRowsOf(config, "headers"),
+				secretArgRows: Object.entries(config.secretRefs?.args ?? {}).map(([index, item]) => ({ index, action: "keep", source: "ref", ref: item.ref ?? "", prefix: item.prefix ?? "", value: "", configured: true })),
+				toolCallTimeoutMs: client.toolCallTimeoutMs == null ? "" : String(client.toolCallTimeoutMs),
+				maxInstructionBytes: client.maxInstructionBytes == null ? "" : String(client.maxInstructionBytes),
+				reconnectConfigured: Boolean(client.reconnect), reconnectEnabled: reconnect.enabled === true,
+				reconnectInitialDelayMs: reconnect.initialDelayMs == null ? "" : String(reconnect.initialDelayMs),
+				reconnectMaxDelayMs: reconnect.maxDelayMs == null ? "" : String(reconnect.maxDelayMs),
+				reconnectMaxAttempts: reconnect.maxAttempts == null ? "" : String(reconnect.maxAttempts),
+				registryRevision, targetFingerprint: server?.fingerprint ?? null,
+			};
+		}
+
+		function mcpParseArgs(text) {
+			const raw = String(text ?? "").trim();
+			if (!raw) return [];
+			if (!raw.startsWith("[")) return raw.split(/\s+/).filter(Boolean);
+			let parsed;
+			try { parsed = JSON.parse(raw); } catch { throw Object.assign(new Error("Arguments must be a JSON array or space-separated text"), { field: "args" }); }
+			if (!Array.isArray(parsed) || parsed.length > 128 || parsed.some((value) => typeof value !== "string")) throw Object.assign(new Error("Arguments must be at most 128 strings"), { field: "args" });
+			return parsed;
+		}
+
+		function mcpSensitiveUrl(value) {
+			const text = String(value ?? "");
+			return /[?#]/.test(text) || /^https?:\/\/[^/\s]*@/i.test(text);
+		}
+
+		function mcpPositiveNumber(value, field, integer = false) {
+			if (value === "" || value == null) return undefined;
+			const parsed = Number(value);
+			if (!Number.isFinite(parsed) || parsed <= 0 || (integer && !Number.isSafeInteger(parsed))) throw Object.assign(new Error(`${field} must be a positive number`), { field });
+			return parsed;
+		}
+
+		function mcpApplySecretRows(rows, kind, refs, values) {
+			for (const row of rows ?? []) {
+				const key = String(kind === "args" ? row.index : row.key ?? "").trim();
+				if (!key || row.action === "keep") continue;
+				if (row.action === "remove") { values[kind][key] = { action: "remove" }; continue; }
+				if (row.source === "ref") refs[kind][key] = { ref: String(row.ref ?? "").trim(), ...(row.prefix ? { prefix: row.prefix } : {}) };
+				else if (String(row.value ?? "").length > 0) values[kind][key] = { action: "replace", value: row.value };
+			}
+		}
+
+		function mcpConfigFromEditor(editor) {
+			const identity = String(editor.identity ?? "").trim();
+			const config = {
+				identity, label: String(editor.label ?? "").trim() || identity,
+				transport: editor.transport,
+				serverName: String(editor.serverName ?? "").trim() || identity,
+			};
+			for (const key of ["toolCallTimeoutMs", "maxInstructionBytes"]) {
+				const value = mcpPositiveNumber(editor[key], key, key === "maxInstructionBytes");
+				if (value !== undefined) config[key] = value;
+			}
+			if (editor.reconnectConfigured || editor.reconnectEnabled || editor.reconnectInitialDelayMs || editor.reconnectMaxDelayMs || editor.reconnectMaxAttempts) {
+				config.reconnect = { enabled: editor.reconnectEnabled === true };
+				for (const [field, target] of [["reconnectInitialDelayMs", "initialDelayMs"], ["reconnectMaxDelayMs", "maxDelayMs"], ["reconnectMaxAttempts", "maxAttempts"]]) {
+					const value = mcpPositiveNumber(editor[field], field, target === "maxAttempts");
+					if (value !== undefined) config.reconnect[target] = value;
+				}
+			}
+			const secretRefs = {}, secretValues = {};
+			if (editor.transport === "stdio") {
+				config.command = String(editor.command ?? "").trim();
+				config.args = mcpParseArgs(editor.argsText);
+				if (String(editor.cwd ?? "").length > 0) config.cwd = editor.cwd;
+				secretRefs.env = {}; secretValues.env = {};
+				mcpApplySecretRows(editor.envRows, "env", secretRefs, secretValues);
+				secretRefs.args = {}; secretValues.args = {};
+				mcpApplySecretRows(editor.secretArgRows, "args", secretRefs, secretValues);
+			} else {
+				secretRefs.headers = {}; secretValues.headers = {};
+				mcpApplySecretRows(editor.headerRows, "headers", secretRefs, secretValues);
+				if (editor.urlAction === "remove") secretValues.url = { action: "remove" };
+				else if (editor.urlAction === "replace" || editor.mode === "add") {
+					if (editor.urlMode === "ref") secretRefs.url = { ref: String(editor.urlRef ?? "").trim(), ...(editor.urlPrefix ? { prefix: editor.urlPrefix } : {}) };
+					else if (mcpSensitiveUrl(editor.url)) secretValues.url = { action: "replace", value: editor.url };
+					else config.url = String(editor.url ?? "").trim();
+				}
+			}
+			for (const kind of ["env", "headers", "args"]) {
+				if (secretRefs[kind] && Object.keys(secretRefs[kind]).length === 0) delete secretRefs[kind];
+				if (secretValues[kind] && Object.keys(secretValues[kind]).length === 0) delete secretValues[kind];
+			}
+			if (Object.keys(secretRefs).length > 0) config.secretRefs = secretRefs;
+			if (Object.values(secretValues).some((value) => Object.keys(value).length > 0) || secretValues.url) config.secretValues = secretValues;
+			return config;
+		}
+
+		function mcpEditorHasSecrets(editor) {
+			const rows = [...(editor.envRows ?? []), ...(editor.headerRows ?? []), ...(editor.secretArgRows ?? [])];
+			if (rows.some((row) => row.configured || row.action === "remove" || (row.action !== "keep" && (row.source === "ref" || String(row.value ?? "").length > 0)))) return true;
+			return editor.urlMode === "ref" || editor.urlMode === "legacy" || mcpSensitiveUrl(editor.url);
+		}
+
+		function mcpEditorErrorsOf(editor) {
+			const errors = {};
+			const identity = String(editor.identity ?? "").trim();
+			if (!identity) errors.identity = "required";
+			else if (!SEGMENT.test(identity)) errors.identity = "invalid";
+			const serverName = String(editor.serverName ?? "").trim() || identity;
+			if (!MCP_SERVER_NAME.test(serverName)) errors.serverName = "invalid";
+			try { mcpPositiveNumber(editor.toolCallTimeoutMs, "toolCallTimeoutMs"); } catch { errors.toolCallTimeoutMs = "invalid"; }
+			try { mcpPositiveNumber(editor.maxInstructionBytes, "maxInstructionBytes", true); } catch { errors.maxInstructionBytes = "invalid"; }
+			try {
+				const initial = mcpPositiveNumber(editor.reconnectInitialDelayMs, "reconnectInitialDelayMs");
+				const max = mcpPositiveNumber(editor.reconnectMaxDelayMs, "reconnectMaxDelayMs");
+				mcpPositiveNumber(editor.reconnectMaxAttempts, "reconnectMaxAttempts", true);
+				if ((initial ?? 500) > (max ?? 30000)) errors.reconnect = "invalid";
+			} catch { errors.reconnect = "invalid"; }
+			let argumentCount = null;
+			if (editor.transport === "stdio") {
+				if (!String(editor.command ?? "").trim()) errors.command = "required";
+				try { argumentCount = mcpParseArgs(editor.argsText).length; } catch { errors.args = "invalid"; }
+			} else if (editor.urlAction === "remove") errors.url = "required";
+			else if (editor.urlAction === "replace" || editor.mode === "add") {
+				if (editor.urlMode === "ref" && !MCP_CREDENTIAL_REF.test(String(editor.urlRef ?? "").trim())) errors.url = "invalid";
+				if (editor.urlMode !== "ref" && !String(editor.url ?? "").trim()) errors.url = "required";
+			}
+			for (const [field, rows] of [["env", editor.envRows], ["headers", editor.headerRows], ["args", editor.secretArgRows]]) {
+				if ((rows ?? []).length > 64 && field !== "args") errors[field] = "too-many";
+				const seen = new Set();
+				for (const [index, row] of (rows ?? []).entries()) {
+					const key = String(field === "args" ? row.index : row.key ?? "").trim();
+					if (!key && !row.value && !row.ref) continue;
+					if (!key && (row.action !== "keep" || row.value || row.ref)) errors[`${field}.${index}`] = "required";
+					if (seen.has(key)) errors[`${field}.${index}`] = "duplicate";
+					seen.add(key);
+					if (row.action !== "keep" && row.action !== "remove" && row.source === "ref" && !MCP_CREDENTIAL_REF.test(String(row.ref ?? "").trim())) errors[`${field}.${index}`] = "invalid-ref";
+					if (field === "args" && (!Number.isInteger(Number(key)) || Number(key) < 0 || Number(key) >= (argumentCount ?? 0))) errors[`${field}.${index}`] = "invalid-index";
+				}
+			}
+			return errors;
+		}
+
+		function mcpPreviewSupportOf(preview, secretBearing) {
+			if (!secretBearing) return [];
+			const unsupported = [];
+			if (preview?.capabilities?.credentials === false) unsupported.push("credentials-unavailable");
+			if (preview?.capabilities?.ephemeral === false) unsupported.push("ephemeral-loader-unavailable");
+			return unsupported;
+		}
+
+		function mcpPreviewHasSecrets(preview) {
+			return (preview?.plan ?? []).some((item) => {
+				const entry = item?.entry ?? {};
+				if (Object.keys(entry.secretRefs ?? {}).length > 0 || entry.transport?.ref === "http:credential-ref") return true;
+				if (Object.keys(entry.client?.env ?? {}).length > 0 || Object.keys(entry.client?.headers ?? {}).length > 0) return true;
+				return entry.client?.url === "[redacted-url]" || mcpSensitiveUrl(entry.client?.url);
+			});
+		}
+
+		function mcpDocumentHasSecrets(text) {
+			const guarded = mcpJsonGuard(text);
+			if (!guarded.ok) return false;
+			const servers = guarded.value.mcpServers ? Object.values(guarded.value.mcpServers) : [guarded.value];
+			return servers.some((server) => {
+				if (Object.keys(server?.secretRefs ?? {}).length > 0 || Object.keys(server?.secretValues ?? {}).length > 0) return true;
+				const client = server?.client ?? server;
+				if (Object.keys(client?.env ?? {}).length > 0 || Object.keys(client?.headers ?? {}).length > 0 || Object.keys(client?.secretArgs ?? {}).length > 0) return true;
+				if ((client?.args ?? []).some((value) => value && typeof value === "object" && typeof value.ref === "string")) return true;
+				return (client?.url && typeof client.url === "object" && typeof client.url.ref === "string") || mcpSensitiveUrl(client?.url);
+			});
+		}
+
+		function mcpUtf8Bytes(text) {
+			let bytes = 0;
+			const value = String(text ?? "");
+			for (let index = 0; index < value.length; index += 1) {
+				const code = value.charCodeAt(index);
+				if (code < 0x80) bytes += 1;
+				else if (code < 0x800) bytes += 2;
+				else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) { bytes += 4; index += 1; }
+				else bytes += 3;
+			}
+			return bytes;
+		}
+
+		function mcpJsonGuard(text) {
+			if (mcpUtf8Bytes(text) > MCP_DOCUMENT_LIMIT) return { ok: false, code: "document-too-large" };
+			try {
+				const value = JSON.parse(text);
+				if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, code: "invalid-document" };
+				return { ok: true, value };
+			} catch { return { ok: false, code: "invalid-json" }; }
+		}
+
+		function mcpDocumentEntryOf(text, identity) {
+			const guarded = mcpJsonGuard(text);
+			if (!guarded.ok) return null;
+			if (guarded.value.mcpServers) {
+				const entry = guarded.value.mcpServers[identity];
+				return entry && typeof entry === "object" && !Array.isArray(entry) ? { ...entry, identity: entry.identity ?? identity } : null;
+			}
+			const entry = guarded.value;
+			return (entry.identity ?? identity) === identity ? { ...entry, identity: entry.identity ?? identity } : null;
+		}
+
+		function mcpBatchItemsOf(response) {
+			return (response?.items ?? []).map((item) => ({
+				...item, succeeded: item.status === "mounted", failed: item.status !== "mounted",
+				notAttempted: item.status === "not-attempted", saved: item.saved === true,
+			}));
+		}
+
 		// Locale data face (pure data, NO ctx calls — a chunk factory re-executes
 		// under HMR, so a chunk-local register would throw on the duplicate
 		// (namespace, locale) pair): the entry registers these under "settings.weir.capability"
@@ -621,6 +872,77 @@ window.__ModuleLoader__.load({
 				"capability.mcp.cancel": "Cancel",
 				"capability.mcp.errorRequired": "Required.",
 				"capability.mcp.errorIdentityInvalid": "Letters, digits, \"-\" and \"_\" only; start with a letter or digit.",
+				"capability.mcp.boundary": "MCP management could not be rendered. Other capability controls remain available.",
+				"capability.mcp.unavailableView": "MCP management is unavailable on this client.",
+				"capability.mcp.unavailableRegistry": "MCP registry unavailable: {status}. Last-good rows, when present, are stale.",
+				"capability.mcp.stale": "stale — last good inventory",
+				"capability.mcp.refresh": "Refresh",
+				"capability.mcp.pasteJson": "Paste JSON",
+				"capability.mcp.secretArgIndex": "argument index",
+				"capability.mcp.secretKey": "secret key",
+				"capability.mcp.secretAction": "secret action",
+				"capability.mcp.keep": "keep",
+				"capability.mcp.replace": "replace",
+				"capability.mcp.removeSecret": "remove",
+				"capability.mcp.secretSource": "secret source",
+				"capability.mcp.secretValueSource": "new value",
+				"capability.mcp.secretRefSource": "credential ref",
+				"capability.mcp.removeRow": "Remove row",
+				"capability.mcp.ref": "credential reference",
+				"capability.mcp.secretBlankKeep": "blank keeps the configured secret",
+				"capability.mcp.secretValue": "secret value",
+				"capability.mcp.prefix": "optional non-secret prefix",
+				"capability.mcp.addSecret": "+ Add secret/reference",
+				"capability.mcp.saved": "saved",
+				"capability.mcp.notAttempted": "not attempted",
+				"capability.mcp.defaultRemoved": "default removed",
+				"capability.mcp.discovery": "Discovery: {count} tool(s)",
+				"capability.mcp.nonAtomic": "Batch results are per server; no atomic rollback is claimed.",
+				"capability.mcp.planDigest": "Plan digest: {digest}",
+				"capability.mcp.editTitle": "Edit MCP server",
+				"capability.mcp.transport": "transport",
+				"capability.mcp.basic": "Basic",
+				"capability.mcp.advanced": "Advanced",
+				"capability.mcp.serverName": "public server name",
+				"capability.mcp.argsJson": "args (JSON array or space-separated)",
+				"capability.mcp.cwd": "working directory (optional)",
+				"capability.mcp.sensitiveConfigured": "Sensitive URL configured; its value is hidden.",
+				"capability.mcp.urlMode": "URL source",
+				"capability.mcp.urlLiteral": "URL",
+				"capability.mcp.urlRef": "URL credential reference",
+				"capability.mcp.url": "MCP URL",
+				"capability.mcp.namespacePending": "The public namespace changes; separate confirmation is required.",
+				"capability.mcp.preview": "Preview",
+				"capability.mcp.confirm": "Confirm",
+				"capability.mcp.test": "Test",
+				"capability.mcp.pasteTitle": "Paste MCP JSON (single or mcpServers batch)",
+				"capability.mcp.pasteLabel": "MCP JSON document",
+				"capability.mcp.tooLarge": "JSON exceeds the 1 MiB limit; no preview or write occurred.",
+				"capability.mcp.confirmBatch": "Confirm batch",
+				"capability.mcp.retryEdit": "Retry / edit",
+				"capability.mcp.selectSession": "Select {identity} for this session",
+				"capability.mcp.default": "default",
+				"capability.mcp.selected": "selected",
+				"capability.mcp.toolsUnknown": "Tools: unknown",
+				"capability.mcp.toolsCount": "Tools: {count}",
+				"capability.mcp.liveUnknown": "Live reconnect/process/stderr: unknown",
+				"capability.mcp.lastMount": "Last mount: {status} / generation {generation}",
+				"capability.mcp.lastTest": "Last test: {status}",
+				"capability.mcp.edit": "Edit",
+				"capability.mcp.restart": "Restart",
+				"capability.mcp.defaultOff": "Disable default",
+				"capability.mcp.defaultOn": "Enable default",
+				"capability.mcp.remove": "Remove",
+				"capability.mcp.pending": "Pending…",
+				"capability.mcp.removeTitle": "Remove MCP server?",
+				"capability.mcp.namespaceTitle": "Change public namespace?",
+				"capability.mcp.batchTitle": "Install this MCP batch?",
+				"capability.mcp.removeConfirm": "Remove {identity}, close admission, await disposal, and remove its new-session default. Draft and accepted session selections are not rewritten.",
+				"capability.mcp.namespaceConfirm": "Change public serverName from {from} to {to}? Existing tool names and calls change after the strict replacement is ready.",
+				"capability.mcp.batchConfirm": "Probe and install {count} server(s) independently using digest {digest}. Results may be partial; there is no atomic rollback.",
+				"capability.mcp.removeConfirmButton": "Remove server",
+				"capability.mcp.credentials-unavailable": "Credentials are unavailable; secret-bearing MCP work is disabled. Use a secret-free configuration or enable DSH credentials.",
+				"capability.mcp.ephemeral-loader-unavailable": "Safe ephemeral mounting is unavailable; secret-bearing MCP work is disabled.",
 				"capability.diff.addSkills": "+{n} skills",
 				"capability.diff.removeSkills": "−{n} skills",
 				"capability.diff.addMcp": "+{n} MCP",
@@ -805,6 +1127,77 @@ window.__ModuleLoader__.load({
 				"capability.mcp.cancel": "取消",
 				"capability.mcp.errorRequired": "必填。",
 				"capability.mcp.errorIdentityInvalid": "仅限字母、数字、\"-\"、\"_\"，且以字母或数字开头。",
+				"capability.mcp.boundary": "MCP 管理界面渲染失败；其他能力控件仍可使用。",
+				"capability.mcp.unavailableView": "此客户端无法使用 MCP 管理。",
+				"capability.mcp.unavailableRegistry": "MCP 注册表不可用：{status}。如有上次成功清单，现已标记为过期。",
+				"capability.mcp.stale": "已过期——上次成功清单",
+				"capability.mcp.refresh": "刷新",
+				"capability.mcp.pasteJson": "粘贴 JSON",
+				"capability.mcp.secretArgIndex": "参数索引",
+				"capability.mcp.secretKey": "秘密键名",
+				"capability.mcp.secretAction": "秘密操作",
+				"capability.mcp.keep": "保留",
+				"capability.mcp.replace": "替换",
+				"capability.mcp.removeSecret": "移除",
+				"capability.mcp.secretSource": "秘密来源",
+				"capability.mcp.secretValueSource": "新值",
+				"capability.mcp.secretRefSource": "凭据引用",
+				"capability.mcp.removeRow": "移除此行",
+				"capability.mcp.ref": "凭据引用",
+				"capability.mcp.secretBlankKeep": "留空则保留已配置的秘密",
+				"capability.mcp.secretValue": "秘密值",
+				"capability.mcp.prefix": "可选非秘密前缀",
+				"capability.mcp.addSecret": "+ 添加秘密/引用",
+				"capability.mcp.saved": "已保存",
+				"capability.mcp.notAttempted": "未尝试",
+				"capability.mcp.defaultRemoved": "默认值已移除",
+				"capability.mcp.discovery": "发现：{count} 个工具",
+				"capability.mcp.nonAtomic": "批量结果按 server 分别报告；不承诺原子回滚。",
+				"capability.mcp.planDigest": "计划摘要：{digest}",
+				"capability.mcp.editTitle": "编辑 MCP server",
+				"capability.mcp.transport": "传输方式",
+				"capability.mcp.basic": "基本",
+				"capability.mcp.advanced": "高级",
+				"capability.mcp.serverName": "公开 server 名称",
+				"capability.mcp.argsJson": "参数（JSON 数组或空格分隔）",
+				"capability.mcp.cwd": "工作目录（可选）",
+				"capability.mcp.sensitiveConfigured": "已配置敏感 URL；其值保持隐藏。",
+				"capability.mcp.urlMode": "URL 来源",
+				"capability.mcp.urlLiteral": "URL",
+				"capability.mcp.urlRef": "URL 凭据引用",
+				"capability.mcp.url": "MCP URL",
+				"capability.mcp.namespacePending": "公开命名空间将改变；需要单独确认。",
+				"capability.mcp.preview": "预览",
+				"capability.mcp.confirm": "确认",
+				"capability.mcp.test": "测试",
+				"capability.mcp.pasteTitle": "粘贴 MCP JSON（单个或 mcpServers 批量）",
+				"capability.mcp.pasteLabel": "MCP JSON 文档",
+				"capability.mcp.tooLarge": "JSON 超过 1 MiB 上限；未预览或写入。",
+				"capability.mcp.confirmBatch": "确认批量安装",
+				"capability.mcp.retryEdit": "重试 / 编辑",
+				"capability.mcp.selectSession": "为本会话选择 {identity}",
+				"capability.mcp.default": "默认",
+				"capability.mcp.selected": "已选择",
+				"capability.mcp.toolsUnknown": "工具数：未知",
+				"capability.mcp.toolsCount": "工具数：{count}",
+				"capability.mcp.liveUnknown": "实时重连/进程/stderr：未知",
+				"capability.mcp.lastMount": "上次挂载：{status} / generation {generation}",
+				"capability.mcp.lastTest": "上次测试：{status}",
+				"capability.mcp.edit": "编辑",
+				"capability.mcp.restart": "重启",
+				"capability.mcp.defaultOff": "取消默认",
+				"capability.mcp.defaultOn": "设为默认",
+				"capability.mcp.remove": "移除",
+				"capability.mcp.pending": "处理中…",
+				"capability.mcp.removeTitle": "移除 MCP server？",
+				"capability.mcp.namespaceTitle": "更改公开命名空间？",
+				"capability.mcp.batchTitle": "安装此 MCP 批次？",
+				"capability.mcp.removeConfirm": "移除 {identity}，关闭准入并等待清理，同时移除其新会话默认值。草稿和已接受的会话选择不会被改写。",
+				"capability.mcp.namespaceConfirm": "将公开 serverName 从 {from} 改为 {to}？严格替换就绪后，现有工具名与调用将使用新命名空间。",
+				"capability.mcp.batchConfirm": "使用摘要 {digest} 逐项探测并安装 {count} 个 server。结果可能部分成功；不进行原子回滚。",
+				"capability.mcp.removeConfirmButton": "移除 server",
+				"capability.mcp.credentials-unavailable": "凭据服务不可用；已禁用含秘密的 MCP 操作。请使用无秘密配置或启用 DSH credentials。",
+				"capability.mcp.ephemeral-loader-unavailable": "安全临时挂载不可用；已禁用含秘密的 MCP 操作。",
 				"capability.diff.addSkills": "+{n} 个技能",
 				"capability.diff.removeSkills": "−{n} 个技能",
 				"capability.diff.addMcp": "+{n} 个 MCP",
@@ -963,6 +1356,20 @@ window.__ModuleLoader__.load({
 		exports.filterSkillRows = filterSkillRows;
 		exports.draftDiffOf = draftDiffOf;
 		exports.mcpAddErrorsOf = mcpAddErrorsOf;
+		exports.mcpStateOf = mcpStateOf;
+		exports.mcpListingAfterRead = mcpListingAfterRead;
+		exports.mcpEditorFromServer = mcpEditorFromServer;
+		exports.mcpConfigFromEditor = mcpConfigFromEditor;
+		exports.mcpEditorHasSecrets = mcpEditorHasSecrets;
+		exports.mcpEditorErrorsOf = mcpEditorErrorsOf;
+		exports.mcpPreviewSupportOf = mcpPreviewSupportOf;
+		exports.mcpPreviewHasSecrets = mcpPreviewHasSecrets;
+		exports.mcpDocumentHasSecrets = mcpDocumentHasSecrets;
+		exports.mcpSensitiveUrl = mcpSensitiveUrl;
+		exports.mcpUtf8Bytes = mcpUtf8Bytes;
+		exports.mcpJsonGuard = mcpJsonGuard;
+		exports.mcpDocumentEntryOf = mcpDocumentEntryOf;
+		exports.mcpBatchItemsOf = mcpBatchItemsOf;
 		exports.draftFromPreset = draftFromPreset;
 		exports.presetRowOf = presetRowOf;
 		exports.groupPresets = groupPresets;

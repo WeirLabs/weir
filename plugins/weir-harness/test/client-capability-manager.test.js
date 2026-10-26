@@ -57,7 +57,7 @@ function findAll(node, pred, out = []) {
 
 const SKELETON_BG = 'var(--dsw-alias-bg-skeleton, rgba(127,127,127,.12))'
 
-test('the panel keeps an identical hook count across the loading→loaded→mcp-tab→add-form renders', async () => {
+test('the panel keeps an identical hook count across loading, loaded and MCP view renders', async () => {
   const counts = { useState: 0, useEffect: 0 }
   const reactStub = makeReactStub(counts)
   const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(reactStub))
@@ -70,23 +70,20 @@ test('the panel keeps an identical hook count across the loading→loaded→mcp-
     fetchConditions: async () => ({ conditions: [] }),
     fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: ['a'], mcpServers: ['docs'] }, warnings: [] }),
     applySelection: async () => ({ status: 'applied', revision: 2 }),
-    mcpAdd: async () => ({ status: 'registered', identity: 'x', generation: 1 }),
+    McpManagerView: () => null,
   }
   reactStub.reset()
   const renders = []
   const renderOnce = () => { counts.useState = 0; counts.useEffect = 0; reactStub.begin(); const out = CapabilityManagerPanel(props); renders.push({ useState: counts.useState, useEffect: counts.useEffect }); return out }
-  renderOnce() // loading (listing null)
-  await flush()
-  const loaded = renderOnce() // loaded
-  const header = loaded.children[0]
-  header.children[1].onClick() // MCP tab
-  const mcp = renderOnce()
-  const addBlock = mcp.children[1]
-  addBlock.children[0].onClick() // open the add form
   renderOnce()
+  await flush()
+  const loaded = renderOnce()
+  loaded.children[0].children[1].onClick()
+  const mcp = renderOnce()
+  expect(findAll(mcp, node => typeof node.__type === 'function' && node.managed)).toHaveLength(1)
   const hookCounts = renders.map(render => `${render.useState}/${render.useEffect}`)
   expect(new Set(hookCounts).size).toBe(1)
-  expect(hookCounts[0]).toBe('8/1')
+  expect(hookCounts[0]).toBe('7/1')
 })
 
 // Visual polish (capabilities-panel-visual-polish): additive structural
@@ -105,7 +102,7 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
     fetchConditions: async () => ({ conditions: [] }),
     fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: ['a'], mcpServers: ['docs'] }, warnings: [] }),
     applySelection: async () => ({ status: 'applied', revision: 2 }),
-    mcpAdd: async () => ({ status: 'registered', identity: 'x', generation: 1 }),
+    McpManagerView: () => null,
   }
 
   // Loading: skeleton rows replace the plain text line (the text survives for
@@ -172,17 +169,18 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   const sourceTag = findAll(loaded, (node) => node.__type === 'span' && node.children === 'user' && node.style && typeof node.style.border === 'string' && node.style.border.includes('--dsw-alias-state-success-primary'))
   expect(sourceTag).toHaveLength(1)
 
-  // MCP tab: managed/unmanaged groups render as cards with count badges.
+  // The MCP tab delegates to the isolated view with the exact managed/unmanaged data.
   header.children[1].onClick()
   reactStub.begin()
   const mcp = CapabilityManagerPanel(props)
   const mcpScroll = mcp.children[1]
   expect(mcpScroll.style.overflowY).toBe('auto')
-  const cards = findAll(mcp, (node) => node.style && node.style.background === 'var(--dsw-alias-bg-base, #fff)' && node.style.borderRadius === 'var(--dsw-radius-md, 8px)')
-  expect(cards.length).toBeGreaterThanOrEqual(2)
-  expect(findAll(mcp, (node) => node.children === 'Weir managed')).toHaveLength(1)
-  expect(findAll(mcp, (node) => node.children === 'Unmanaged')).toHaveLength(1)
-  expect(findAll(mcp, (node) => node.__type === 'span' && node.children === 'mounted')).toHaveLength(1)
+  const mcpView = findAll(mcp, node => typeof node.__type === 'function' && node.managed)[0]
+  expect(mcpView).toBeTruthy()
+  expect(mcpView.managed).toHaveLength(1)
+  expect(mcpView.unmanaged).toHaveLength(1)
+  expect(mcpView.listing.mcpServers[0].state).toBe('mounted')
+  expect(typeof mcpView.refreshAll).toBe('function')
 })
 
 
@@ -259,7 +257,7 @@ test('legacy name needs an explicit exact-source action; checkbox does not consu
   const props = { sessionId: 's', model, fetchConditions: async () => ({ conditions: [] }),
     fetchListing: async () => ({ skills: [a, b].map(identity => ({ name: 'same', scope: identity.scope, status: 'parsed', identity })), mcpServers: [{ identity: 'docs', state: 'mounted' }] }),
     fetchReceipt: async () => ({ revision: 1, effective: { skills: [], skillIdentities: [], mcpServers: [] } }),
-    applySelection: async () => ({ status: 'missing', missing: ['same'] }) }
+    McpManagerView: () => null, applySelection: async () => ({ status: 'missing', missing: ['same'] }) }
   const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
   render(); await new Promise(resolve => setTimeout(resolve, 0))
   let tree = render()
@@ -288,8 +286,10 @@ test('legacy name needs an explicit exact-source action; checkbox does not consu
   tree = render()
   expect(findAll(tree, node => node.role === 'alert')).toHaveLength(0)
   expect(findAll(tree, node => node.type === 'checkbox').map(box => box.checked)).toEqual([false, false])
-  tree.children[0].children[1].onClick(); tree = render()
-  expect(findAll(tree, node => node.type === 'checkbox')[0].checked).toBe(true)
+  tree.children[0].children[1].onClick()
+  tree = render()
+  const mcpView = findAll(tree, node => typeof node.__type === 'function' && node.managed)[0]
+  expect(mcpView.draft.mcpServers).toContain('docs')
 })
 
 test('stale server conflict and missing replies show named accessible guidance while retaining the draft', async () => {
@@ -365,20 +365,15 @@ test('manager ignores an older initial receipt after a newer degraded refresh', 
   const props = { sessionId: 's', shell: 'sidebar', model,
     fetchListing: async () => ({ skills: [], mcpServers: [] }), fetchConditions: async () => ({ conditions: [] }),
     fetchReceipt: () => new Promise(resolve => pending.push(resolve)),
-    mcpAdd: async () => ({ status: 'registered' }), applySelection: () => { throw new Error('no Apply expected') } }
+    McpManagerView: () => null, applySelection: () => { throw new Error('no Apply expected') } }
   const flush = () => new Promise(resolve => setTimeout(resolve, 0))
   const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
   render(); await flush()
   let tree = render()
   tree.children[0].children[1].onClick()
   tree = render()
-  findAll(tree, node => node.__type === 'button' && node.children === '+ Add managed MCP server')[0].onClick()
-  tree = render()
-  findAll(tree, node => node.__type === 'input' && node.placeholder === 'identity (e.g. my-docs)')[0].onChange({ target: { value: 'docs' } })
-  tree = render()
-  findAll(tree, node => node.__type === 'input' && node.placeholder === 'command (e.g. npx)')[0].onChange({ target: { value: 'npx' } })
-  tree = render()
-  findAll(tree, node => node.__type === 'button' && node.children === 'Add')[0].onClick()
+  const mcpView = findAll(tree, node => typeof node.__type === 'function' && node.managed)[0]
+  void mcpView.refreshAll()
   await flush()
   expect(pending).toHaveLength(2)
   pending[1]({ status: 'applied', revision: 10, effective: { skills: [], mcpServers: [] }, warnings: ['selection-unavailable'] })

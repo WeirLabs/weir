@@ -99,6 +99,10 @@ export async function buildListPayload(deps, options) {
       ...(listing.managed ?? []).map(server => ({ ...server })),
       ...(listing.unmanaged ?? []).map(server => ({ ...server, state: 'unmanaged', readOnly: true })),
     ],
+    mcpWarnings: Array.isArray(listing.warnings) ? [...listing.warnings] : [],
+    mcpUnavailable: listing.unavailable ?? null,
+    mcpCapabilities: listing.capabilities ?? null,
+    mcpRegistryRevision: Number.isSafeInteger(listing.registryRevision) ? listing.registryRevision : 0,
   }
 }
 
