@@ -54,6 +54,26 @@ function socketError(code) {
 }
 
 /**
+ * A connection whose close report the TEST controls: closing it destroys the
+ * socket but does not report the close, so a late transport callback can be
+ * replayed after the client has already replaced the connection.
+ * @param {(frame: any, connection: any) => any} answer
+ */
+function createLateCloseConnection(answer) {
+  const connection = createFakeConnection(answer)
+  /** @type {(() => void)[]} */
+  const closeHandlers = []
+  connection.onClose = (/** @type {() => void} */ handler) => {
+    closeHandlers.push(handler)
+  }
+  /** Replay the socket's close report, late. */
+  connection.fireClose = () => {
+    for (const handler of [...closeHandlers]) handler()
+  }
+  return connection
+}
+
+/**
  * One fake connection: records every frame the client writes and lets the test
  * answer (or refuse to answer, or hang up) deterministically.
  * @param {(frame: any, connection: any) => any} answer
@@ -145,6 +165,8 @@ function createFakeBroker() {
     if (frame.op === 'status') return { ok: true, leases: [] }
     return { ok: true }
   }
+  /** @type {(answer: (frame: any, connection: any) => any) => any} */
+  let createConnection = createFakeConnection
   return {
     connections,
     connectErrors,
@@ -162,6 +184,10 @@ function createFakeBroker() {
     setAnswer(fn) {
       answer = fn
     },
+    /** @param {(answer: (frame: any, connection: any) => any) => any} factory */
+    setConnectionFactory(factory) {
+      createConnection = factory
+    },
     /** @param {string} code @param {number} [times] */
     failNextDials(code, times = 1) {
       for (let index = 0; index < times; index += 1) connectErrors.push(/** @type {any} */ (socketError(code)))
@@ -170,7 +196,7 @@ function createFakeBroker() {
       dialAttempts += 1
       const failure = connectErrors.shift()
       if (failure !== undefined) throw failure
-      const connection = createFakeConnection((frame, live) => answer(frame, live))
+      const connection = createConnection((frame, live) => answer(frame, live))
       connections.push(connection)
       return connection
     },
@@ -762,7 +788,7 @@ describe('file-lease client: release push capability (D3)', () => {
 })
 
 describe('file-lease client: connection reset lifecycle (D5)', () => {
-  it('notifies each current-connection reset exactly once and never for an explicit close', async () => {
+  it('notifies each current-connection reset exactly once, including an explicit close', async () => {
     const broker = createFakeBroker()
     const client = createClient(broker)
     let resets = 0
@@ -790,16 +816,316 @@ describe('file-lease client: connection reset lifecycle (D5)', () => {
     second.reset()
     expect(resets).toBe(2)
 
-    // An intentional shutdown is not a reset: nothing was lost unexpectedly, so
-    // a subscription holder is never told to re-check for that reason.
+    // An intentional shutdown ends the connection like any other loss: a
+    // subscription waiting on it must be told, not left waiting forever.
     await client.status({ path: P('a') })
     client.close()
-    expect(resets).toBe(2)
+    expect(resets).toBe(3)
+    // Disposing twice is idempotent: no current connection is left to invalidate.
+    client.close()
+    expect(resets).toBe(3)
 
     off()
     broker.last.reset()
+    expect(resets).toBe(3)
+  })
+
+  it('invalidates a deliberate drop and a later close instead of bypassing the reset', async () => {
+    const broker = createFakeBroker()
+    broker.setConnectionFactory(createLateCloseConnection)
+    let attempts = 0
+    broker.setAnswer((frame) => {
+      if (frame.op === 'hello') {
+        return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000, events: ['request', 'settled', 'released'] }
+      }
+      if (frame.op === 'acquire') {
+        attempts += 1
+        // The first attempt wedges, which is exactly what makes the client drop
+        // the connection and retry on a fresh one (D7).
+        return attempts === 1 ? null : { ok: true, granted: [] }
+      }
+      return { ok: true }
+    })
+    const client = createClient(broker, { timeoutMs: 15 })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+
+    await client.withLeases(OWNER, [P('a')], SCOPE, () => {})
+    expect(attempts).toBe(2)
+    // One reset for the connection the retry deliberately dropped — not zero
+    // (a drop must not bypass the notification) and not two (the socket close
+    // that follows the invalidation is stale and must be a no-op).
+    expect(resets).toBe(1)
+
+    const dropped = broker.connections[0]
+    const live = broker.connections[1]
+    await client.status({ path: P('a') })
+    expect(client.connectionState()).toBe('ok')
+    expect(client.supportsEvent('released')).toBe(true)
+
+    // A late report from the superseded socket cannot clear the current
+    // connection's state or notify a second time.
+    dropped.fireClose()
+    expect(resets).toBe(1)
+    expect(client.connectionState()).toBe('ok')
+    expect(client.supportsEvent('released')).toBe(true)
+
+    live.fireClose()
     expect(resets).toBe(2)
+
+    await client.status({ path: P('a') })
     client.close()
+    expect(resets).toBe(3)
+  })
+
+  it('closes a late dial instead of adopting it when close lands mid-dial', async () => {
+    /** @param {any} frame */
+    const answer = (frame) => {
+      if (frame.op === 'hello') {
+        return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000, events: ['request', 'settled', 'released'] }
+      }
+      if (frame.op === 'acquire') {
+        return { ok: true, granted: frame.paths.map((path) => ({ path, owner: { ...frame.owner }, scope: frame.scope, acquiredAt: 1_000, expiresAt: Date.now() + 60_000, holdUntil: null })) }
+      }
+      if (frame.op === 'hold') {
+        return { ok: true, held: frame.paths.map((path) => ({ path, expiresAt: Date.now() + 60_000, holdUntil: Date.now() + frame.minutes * 60_000 })) }
+      }
+      if (frame.op === 'status') return { ok: true, leases: [] }
+      if (frame.op === 'release') return { ok: true, released: [...frame.paths], notOwned: [] }
+      return { ok: true }
+    }
+    const live = createFakeConnection(answer)
+    /** @type {((connection: any) => void)[]} */
+    const dials = []
+    let defer = false
+    const client = createLeaseClient({
+      socketPath: '/fake/weir-editlockd.sock',
+      connect: () => {
+        if (!defer) return Promise.resolve(live)
+        return new Promise((resolve) => {
+          dials.push(resolve)
+        })
+      },
+      spawnDaemon: () => null,
+      timeoutMs: 200,
+      connectRetryMs: 2,
+      connectRetryBudgetMs: 20,
+    })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+
+    await client.acquire(OWNER, [P('a')], SCOPE)
+    await client.hold([P('a')], 30)
+    expect(live.frames.filter((frame) => frame.op === 'hold')).toHaveLength(1)
+    // The connection dies with a retention in the ledger: a handshake that could
+    // still be adopted after close would replay it.
+    live.reset()
+    expect(resets).toBe(1)
+
+    defer = true
+    const attempted = client.status({ path: P('a') }).catch((error) => error)
+    await waitFor(() => dials.length === 1, 'the deferred dial')
+    client.close()
+    // The close itself is the second transport loss, reported once.
+    expect(resets).toBe(2)
+
+    const late = createFakeConnection(answer)
+    dials[0](late)
+    const failure = await attempted
+    expect(failure?.code).toBe('transport')
+    // The late socket was closed, never installed, handshaken or replayed on.
+    expect(late.closed).toBe(true)
+    expect(late.frames).toEqual([])
+    expect(client.connectionState()).toBe('unavailable')
+
+    // Close is terminal: no request or lease succeeds, nothing is replayed or
+    // repopulated from the cleared ledger.
+    expect((await client.status({ path: P('a') }).catch((error) => error))?.code).toBe('transport')
+    expect((await client.acquire(OWNER, [P('a')], SCOPE).catch((error) => error))?.code).toBe('transport')
+    expect(await client.releaseAll(OWNER.session)).toEqual({ released: [] })
+    expect(late.frames).toEqual([])
+    expect(resets).toBe(2)
+
+    // Closing twice is idempotent.
+    client.close()
+    expect(resets).toBe(2)
+  })
+
+  it('invalidates an in-flight handshake on close and never greets, replays or serves after it', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+    await client.acquire(OWNER, [P('a')], SCOPE)
+    await client.hold([P('a')], 30)
+    const first = broker.last
+    first.reset()
+    expect(resets).toBe(1)
+
+    // From now on the handshake stays unanswered: the client is inside the
+    // dial+handshake window when it is closed.
+    broker.setAnswer((frame) => (frame.op === 'hello' ? null : { ok: true }))
+    const attempted = client.status({ path: P('a') }).catch((error) => error)
+    await waitFor(() => broker.last !== first && broker.last.frames.length > 0, 'the handshake frame')
+    const handshaking = broker.last
+    const hello = handshaking.frames[0]
+
+    client.close()
+    expect(resets).toBe(2)
+    const failure = await attempted
+    expect(failure?.code).toBe('transport')
+    expect(handshaking.closed).toBe(true)
+    // The handshake was the only frame: no acquire/hold replay, no release, and
+    // no post-close request was served.
+    expect(handshaking.frames).toEqual([hello])
+    expect(client.connectionState()).toBe('unavailable')
+    expect(client.supportsEvent('released')).toBe(false)
+
+    // A late hello reply cannot resurrect the connection either.
+    handshaking.push({ ...hello, ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000 })
+    await delay(5)
+    expect(client.connectionState()).toBe('unavailable')
+    expect(resets).toBe(2)
+    expect((await client.status({ path: P('a') }).catch((error) => error))?.code).toBe('transport')
+
+    client.close()
+    expect(resets).toBe(2)
+  })
+
+  it('settles pending callers immediately when close lands on a dial that never settles', async () => {
+    let dials = 0
+    const client = createLeaseClient({
+      socketPath: '/fake/weir-editlockd.sock',
+      connect: () => {
+        dials += 1
+        return new Promise(() => {})
+      },
+      spawnDaemon: () => null,
+      timeoutMs: 200,
+      connectRetryMs: 2,
+      connectRetryBudgetMs: 20,
+    })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+
+    // Both callers share the one dial; neither may outlive the close. The dial
+    // itself is never resolved or rejected: the injected connect has no abort.
+    const first = client.status({ path: P('a') }).catch((error) => error)
+    const second = client.acquire(OWNER, [P('a')], SCOPE).catch((error) => error)
+    await waitFor(() => dials === 1, 'the never-settling dial')
+    client.close()
+    expect(resets).toBe(1)
+
+    const settled = await Promise.race([
+      Promise.all([first, second]).then(([status, acquire]) => ({ status, acquire })),
+      delay(500).then(() => 'timeout'),
+    ])
+    expect(settled).not.toBe('timeout')
+    if (settled === 'timeout') return
+    expect(settled.status?.code).toBe('transport')
+    expect(settled.acquire?.code).toBe('transport')
+
+    // The one reset is not repeated by a second close.
+    client.close()
+    expect(resets).toBe(1)
+  })
+
+  it('handles a dial that resolves only after close without an unhandled rejection', async () => {
+    /** @type {any[]} */
+    const rejections = []
+    const onUnhandled = (reason) => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      /** @type {((connection: any) => void)[]} */
+      const dials = []
+      const client = createLeaseClient({
+        socketPath: '/fake/weir-editlockd.sock',
+        connect: () => new Promise((resolve) => {
+          dials.push(resolve)
+        }),
+        spawnDaemon: () => null,
+        timeoutMs: 200,
+        connectRetryMs: 2,
+        connectRetryBudgetMs: 20,
+      })
+      const attempted = client.status({ path: P('a') }).catch((error) => error)
+      await waitFor(() => dials.length === 1, 'the deferred dial')
+      client.close()
+      // The caller settles before the dial ever returns, so bound this wait: a
+      // client that inherits the dial must fail here instead of hanging.
+      const settled = await Promise.race([attempted, delay(500).then(() => 'timeout')])
+      expect(settled).not.toBe('timeout')
+      if (settled === 'timeout') return
+      expect(settled?.code).toBe('transport')
+
+      const late = createFakeConnection((frame) => {
+        if (frame.op === 'hello') return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000 }
+        return { ok: true }
+      })
+      dials[0](late)
+      // Give the detached establish every chance to surface a rejection.
+      await delay(30)
+      expect(late.closed).toBe(true)
+      expect(late.frames).toEqual([])
+      expect(rejections).toEqual([])
+      expect((await client.status({ path: P('a') }).catch((error) => error))?.code).toBe('transport')
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  it('consumes a dial that only rejects after close without an unhandled rejection', async () => {
+    /** @type {any[]} */
+    const rejections = []
+    const onUnhandled = (reason) => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      /** @type {((error: any) => void)[]} */
+      const dials = []
+      const client = createLeaseClient({
+        socketPath: '/fake/weir-editlockd.sock',
+        connect: () => new Promise((_resolve, reject) => {
+          dials.push(reject)
+        }),
+        spawnDaemon: () => null,
+        timeoutMs: 200,
+        connectRetryMs: 2,
+        connectRetryBudgetMs: 20,
+      })
+      let resets = 0
+      client.onReset(() => {
+        resets += 1
+      })
+      const attempted = client.status({ path: P('a') }).catch((error) => error)
+      await waitFor(() => dials.length === 1, 'the deferred dial')
+      client.close()
+      const settled = await Promise.race([attempted, delay(500).then(() => 'timeout')])
+      expect(settled).not.toBe('timeout')
+      if (settled === 'timeout') return
+      expect(settled?.code).toBe('transport')
+
+      // The abandoned dial failing later is consumed, never surfaced: no caller
+      // waits on it and the close already answered everything.
+      dials[0](Object.assign(new Error('dial lost'), { code: 'ECONNRESET' }))
+      await delay(30)
+      expect(rejections).toEqual([])
+      expect(resets).toBe(1)
+      expect(client.connectionState()).toBe('unavailable')
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 
   it('rejects a non-function reset handler instead of silently ignoring it', () => {

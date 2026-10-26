@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { createFileLeasePlugin, apply as defaultApply, inject as defaultInject, name as defaultName } from '../src/file-lease/plugin.js'
+import { createLeaseClient } from '../src/file-lease/client.js'
 
 // Unit tests for the file-lease plugin row (design D4 wake delivery, D10 release
 // table, D11 mount lifetime), driven by a fake client and a fake cordis ctx: no
@@ -32,6 +33,65 @@ function delay(ms = 0) {
 async function flush() {
   await delay(0)
   await delay(0)
+}
+
+/**
+ * Poll until a condition holds. Used only where the production code waits on a
+ * real asynchronous boundary (a dial) that no seam lets the test resolve.
+ * @param {() => boolean} predicate @param {string} label @param {number} [ms]
+ */
+async function waitFor(predicate, label, ms = 2_000) {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await delay(5)
+  }
+  throw new Error(`timed out waiting for ${label}`)
+}
+
+/**
+ * One in-process socket for a real lease client: enough surface for `establish`
+ * to install it, and a record of every frame it was asked to write.
+ */
+function createSocket() {
+  /** @type {any} */
+  const socket = {
+    closed: false,
+    /** @type {any[]} */
+    frames: [],
+    /** @type {((chunk: string) => void)[]} */
+    dataHandlers: [],
+    /** @type {(() => void)[]} */
+    closeHandlers: [],
+    /** @param {string} text */
+    write(text) {
+      if (socket.closed) throw new Error('write on a closed socket')
+      for (const line of text.split('\n')) {
+        if (line.trim() === '') continue
+        socket.frames.push(JSON.parse(line))
+      }
+    },
+    /** @param {(chunk: string) => void} handler */
+    onData(handler) {
+      socket.dataHandlers.push(handler)
+    },
+    /** @param {() => void} handler */
+    onClose(handler) {
+      socket.closeHandlers.push(handler)
+    },
+    close() {
+      if (socket.closed) return
+      socket.closed = true
+      for (const handler of socket.closeHandlers.splice(0)) handler()
+    },
+    /** @param {any} frame */
+    push(frame) {
+      if (socket.closed) return
+      const text = `${JSON.stringify(frame)}\n`
+      for (const handler of [...socket.dataHandlers]) handler(text)
+    },
+  }
+  return socket
 }
 
 /**
@@ -1128,6 +1188,265 @@ describe('release subscriptions (D2, D4, D5)', () => {
     await flush()
     // The tool already told the model, so the deferred notice was suppressed.
     expect(delivered).toEqual([])
+    dispose()
+  })
+
+  it('delivers one notice when two mounts subscribe the same session and path', async () => {
+    const agents = new Map()
+    const ctxA = createCtx(agents)
+    const ctxB = createCtx(agents)
+    const client = createFakeClient({ status: heldByOther })
+    /** @type {{ mount: string, text: string }[]} */
+    const delivered = []
+    const mountA = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'a', text }); return true } })
+    const mountB = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'b', text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const disposeA = mountA.apply(ctxA)
+    const disposeB = mountB.apply(ctxB)
+
+    // Both mounts subscribe the same session and path. One client means one
+    // coordinator, one entry and one notice — not one per mount.
+    await subscribe(ctxA, agent)
+    await subscribe(ctxB, agent)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].mount).toBe('a')
+    disposeA()
+    disposeB()
+  })
+
+  it("keeps a sibling mount's live wait (and its notice) when one mount unmounts", async () => {
+    const agents = new Map()
+    const ctxA = createCtx(agents)
+    const ctxB = createCtx(agents)
+    const client = createFakeClient({ status: heldByOther })
+    /** @type {{ mount: string, text: string }[]} */
+    const delivered = []
+    const mountA = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'a', text }); return true } })
+    const mountB = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'b', text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const disposeA = mountA.apply(ctxA)
+    const disposeB = mountB.apply(ctxB)
+    await subscribe(ctxA, agent)
+    await subscribe(ctxB, agent)
+
+    // One mount leaves: the entry belongs to both, so it survives and the
+    // notice transfers to the surviving reference.
+    disposeA()
+    expect(client.subscriberCount()).toBe(1)
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].mount).toBe('b')
+
+    // The LAST unmount removes the client listeners as well.
+    disposeB()
+    expect(client.subscriberCount()).toBe(0)
+    expect(client.resetSubscriberCount()).toBe(0)
+  })
+
+  it('cancels a consumed notice that has not been delivered yet when the agent is disposed', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    // Consumed (`hit`) but the deferred timer has not fired: the entry is in
+    // pendingDelivery, which is exactly the window disposal must still close.
+    client.push(releasedEvent())
+    ctx.emit('agent/disposed', { agent })
+    // The agent stays resolvable in the registry on purpose: the cancellation,
+    // not a missing agent, is what must keep the notice away.
+    await flush()
+    expect(delivered).toEqual([])
+    dispose()
+  })
+
+  it('ends an in-flight wait when a transfer settles in the same chunk as the read', async () => {
+    /** @type {(value?: any) => void} */
+    let resolveStatus = () => {}
+    const gate = new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+    const { ctx, client, agent, delivered, dispose } = mount({ status: () => gate.then(() => heldByOther()) })
+
+    const pending = subscribe(ctx, agent)
+    // The outcome arrives while the authoritative read is still in flight — the
+    // same transport chunk — and it names the requester session itself, so the
+    // wait ends even though no turn boundary remembered a request id.
+    client.push({ event: 'settled', requestId: 'r-transfer', path: TARGET, session: OWNER.session, state: 'transferred' })
+    resolveStatus()
+
+    const result = await pending
+    expect(result.state).toBe('self')
+    expect(result.message).toContain('already owns')
+    // The wait is gone: a later release for the path notifies nobody.
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered).toEqual([])
+    dispose()
+  })
+
+  it('delivers one outcome when a release is consumed while the read is still in flight', async () => {
+    /** @type {(value?: any) => void} */
+    let resolveStatus = () => {}
+    const gate = new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+    const { ctx, client, agent, delivered, dispose } = mount({ status: () => gate.then(() => heldByOther()) })
+
+    const pending = subscribe(ctx, agent)
+    client.push(releasedEvent())
+    // The zero-delay timer window passes while the read is outstanding: the
+    // notice must stay pending until the tool has had its terminal-outcome turn.
+    await delay(20)
+    expect(delivered).toEqual([])
+
+    resolveStatus()
+    const result = await pending
+    expect(result.state).toBe('released')
+    await flush()
+    // Exactly one model-facing outcome: the tool result, never a second notice.
+    expect(delivered).toEqual([])
+    dispose()
+  })
+
+  it('delivers one outcome when a release is consumed and the read later rejects', async () => {
+    /** @type {(error: any) => void} */
+    let rejectStatus = () => {}
+    const gate = new Promise((_resolve, reject) => {
+      rejectStatus = reject
+    })
+    const { ctx, client, agent, delivered, dispose } = mount({ status: () => gate })
+
+    const pending = subscribe(ctx, agent)
+    client.push(releasedEvent())
+    await delay(20)
+    expect(delivered).toEqual([])
+
+    rejectStatus(Object.assign(new Error('lease broker connection closed'), { code: 'transport' }))
+    const result = await pending
+    expect(result.state).toBe('released')
+    await flush()
+    expect(delivered).toEqual([])
+    dispose()
+  })
+
+  it('turns an in-flight subscription into a reset when the client is closed mid-dial', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    /** @type {((socket: any) => void)[]} */
+    const dials = []
+    const client = createLeaseClient({
+      socketPath: '/fake/weir-editlockd.sock',
+      connect: () => new Promise((resolve) => {
+        dials.push(resolve)
+      }),
+      spawnDaemon: () => null,
+      timeoutMs: 200,
+      connectRetryMs: 2,
+      connectRetryBudgetMs: 20,
+    })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+    /** @type {{ text: string }[]} */
+    const delivered = []
+    const plugin = createFileLeasePlugin({
+      client,
+      ownerOf: () => OWNER,
+      deliver: (_agent, text) => {
+        delivered.push({ text })
+        return true
+      },
+    })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    const pending = subscribe(ctx, agent)
+    await waitFor(() => dials.length === 1, 'the first dial')
+    client.close()
+    expect(resets).toBe(1)
+
+    const late = createSocket()
+    dials[0](late)
+    const result = await pending
+    // The transport ended before any handshake, so the watch can never report
+    // `watching`: the terminal outcome is a reset, reported by the tool itself.
+    expect(result.state).toBe('reset')
+    expect(late.closed).toBe(true)
+    expect(late.frames).toEqual([])
+    expect(client.connectionState()).toBe('unavailable')
+    await flush()
+    expect(delivered).toEqual([])
+
+    // Nothing succeeds after close, and the one reset is not repeated.
+    const after = await client.status({ path: TARGET }).catch((error) => error)
+    expect(after?.code).toBe('transport')
+    expect(resets).toBe(1)
+    dispose()
+  })
+
+  it('settles an in-flight watch immediately when close lands on a dial that never returns', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    let dials = 0
+    const client = createLeaseClient({
+      socketPath: '/fake/weir-editlockd.sock',
+      connect: () => {
+        dials += 1
+        return new Promise(() => {})
+      },
+      spawnDaemon: () => null,
+      timeoutMs: 200,
+      connectRetryMs: 2,
+      connectRetryBudgetMs: 20,
+    })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+    /** @type {{ text: string }[]} */
+    const delivered = []
+    const plugin = createFileLeasePlugin({
+      client,
+      ownerOf: () => OWNER,
+      deliver: (_agent, text) => {
+        delivered.push({ text })
+        return true
+      },
+    })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    const pending = subscribe(ctx, agent)
+    await waitFor(() => dials === 1, 'the never-returning dial')
+    client.close()
+    expect(resets).toBe(1)
+
+    // The watch settles now, without the dial ever resolving or rejecting.
+    const settled = await Promise.race([pending, delay(500).then(() => 'timeout')])
+    expect(settled).not.toBe('timeout')
+    if (settled === 'timeout') return
+    expect(settled.state).toBe('reset')
+    expect(client.connectionState()).toBe('unavailable')
+
+    // A follow-up acquire is refused immediately instead of hanging too.
+    const after = await Promise.race([
+      client.acquire(OWNER, [TARGET], CWD).catch((error) => error),
+      delay(500).then(() => 'timeout'),
+    ])
+    expect(after).not.toBe('timeout')
+    if (after === 'timeout') return
+    expect(after?.code).toBe('transport')
+
+    await flush()
+    expect(delivered).toEqual([])
+    expect(resets).toBe(1)
     dispose()
   })
 })

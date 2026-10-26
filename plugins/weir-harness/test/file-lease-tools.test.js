@@ -1,6 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { createLeaseTools, DEFAULT_HOLD_MINUTES, MAX_HOLD_MINUTES, REPLY_TOOL, WATCH_TOOL } from '../src/file-lease/tools.js'
-import { createWatchRegistry } from '../src/file-lease/watch.js'
+import { createWatchCoordinator } from '../src/file-lease/watch.js'
 
 // Unit tests for the model-facing tool surface (design D4/D5, spec: "Explicit
 // claim, release and status tools", "Model-to-model transfer negotiation",
@@ -430,11 +430,11 @@ describe('edit_lock_watch', () => {
 
   /**
    * @param {Record<string, any>} [answers]
-   * @param {ReturnType<typeof createWatchRegistry>} [registry]
+   * @param {ReturnType<typeof createWatchCoordinator>} [registry]
    */
-  function watchTool(answers = {}, registry = createWatchRegistry()) {
+  function watchTool(answers = {}, registry = createWatchCoordinator()) {
     const client = createFakeClient({ status: () => heldByOther(), ...answers })
-    return { definition: tool(createLeaseTools({ client, ownerOf: () => OWNER, watchRegistry: registry }), WATCH_TOOL), registry, client }
+    return { definition: tool(createLeaseTools({ client, ownerOf: () => OWNER, watchCoordinator: registry }), WATCH_TOOL), registry, client }
   }
 
   it('subscribes once for a path another session holds and names the holder and the next step', async () => {
@@ -511,7 +511,7 @@ describe('edit_lock_watch', () => {
   })
 
   it('sees a release that raced the registration and reports it once instead of a stale watching', async () => {
-    const registry = createWatchRegistry()
+    const registry = createWatchCoordinator()
     const { definition } = watchTool(
       {
         // The release lands while the authoritative read is in flight: the
@@ -535,7 +535,7 @@ describe('edit_lock_watch', () => {
   })
 
   it('reports a connection reset during registration as a re-check, never as a release', async () => {
-    const registry = createWatchRegistry()
+    const registry = createWatchCoordinator()
     const { definition } = watchTool(
       {
         status: () => {
@@ -554,7 +554,7 @@ describe('edit_lock_watch', () => {
   })
 
   it('reports a subscription cancelled underneath it instead of pretending to wait', async () => {
-    const registry = createWatchRegistry()
+    const registry = createWatchCoordinator()
     const { definition } = watchTool(
       {
         status: () => {
@@ -568,5 +568,117 @@ describe('edit_lock_watch', () => {
     expect(result.degraded).toBe(true)
     expect(result.code).toBe('watch-cancelled')
     expect(registry.size()).toBe(0)
+  })
+
+  it('keeps a release that lands during a failing read and never cancels its notice', async () => {
+    const registry = createWatchCoordinator()
+    const { definition } = watchTool(
+      {
+        // The release is consumed while the read is in flight, then the read
+        // itself fails: the terminal state must win over the late rejection,
+        // and the pending notice must not be cancelled by the cleanup.
+        status: () => {
+          expect(registry.consumePath(`${CWD}/src/a.js`)).toHaveLength(1)
+          throw Object.assign(new Error('lease broker connection closed'), { code: 'transport' })
+        },
+      },
+      registry,
+    )
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.state).toBe('released')
+    expect(result.message).toContain('happened while this subscription was being established')
+    // Consumed and reported by the tool: the notice stays consumed-and-muted
+    // rather than being cancelled back to nothing.
+    expect(registry.size()).toBe(0)
+    expect(registry.pendingSize()).toBe(1)
+    expect(registry.pendingEntries()[0].settledByTool).toBe(true)
+  })
+
+  it('keeps a reset that lands during a failing read and reports a re-check', async () => {
+    const registry = createWatchCoordinator()
+    const { definition } = watchTool(
+      {
+        status: () => {
+          registry.resetAll()
+          throw Object.assign(new Error('lease broker connection closed'), { code: 'transport' })
+        },
+      },
+      registry,
+    )
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.state).toBe('reset')
+    expect(result.message).toContain('Re-check with edit_lock_status')
+    expect(result.message).not.toContain('no longer held')
+    expect(registry.size()).toBe(0)
+    expect(registry.pendingSize()).toBe(1)
+  })
+
+  it('cancels only a plain wait when the read fails with no terminal state', async () => {
+    const registry = createWatchCoordinator()
+    const { definition } = watchTool(
+      {
+        status: () => {
+          throw Object.assign(new Error('lease broker is unreachable'), { code: 'transport' })
+        },
+      },
+      registry,
+    )
+    const result = await definition.execute({ file_path: 'src/a.js' }, execFor(agentFor()))
+    expect(result.degraded).toBe(true)
+    expect(result.code).toBe('transport')
+    expect(registry.size()).toBe(0)
+    expect(registry.pendingSize()).toBe(0)
+  })
+
+  it('shares one authoritative read between overlapping calls and never resurrects a settled wait', async () => {
+    const registry = createWatchCoordinator()
+    let reads = 0
+    let transfer = true
+    const { definition } = watchTool(
+      {
+        status: () => {
+          reads += 1
+          if (transfer) {
+            transfer = false
+            // The transfer settles while the read is in flight: both callers
+            // see the same terminal `self`, and neither may claim to be waiting.
+            registry.settleSelf(OWNER.session, `${CWD}/src/a.js`)
+          }
+          return heldByOther()
+        },
+      },
+      registry,
+    )
+    const [first, second] = await Promise.all([
+      definition.execute({ file_path: 'src/a.js' }, execFor(agentFor())),
+      definition.execute({ file_path: 'src/a.js' }, execFor(agentFor())),
+    ])
+    expect(reads).toBe(1)
+    expect(first.state).toBe('self')
+    expect(second.state).toBe('self')
+    expect(registry.size()).toBe(0)
+  })
+
+  it('is idempotent across overlapping calls: one flight, one entry, two watching answers', async () => {
+    const registry = createWatchCoordinator()
+    let reads = 0
+    const { definition } = watchTool(
+      {
+        status: async () => {
+          reads += 1
+          return heldByOther()
+        },
+      },
+      registry,
+    )
+    const [first, second] = await Promise.all([
+      definition.execute({ file_path: 'src/a.js' }, execFor(agentFor())),
+      definition.execute({ file_path: `${CWD}/src/a.js` }, execFor(agentFor())),
+    ])
+    expect(reads).toBe(1)
+    expect(first.state).toBe('watching')
+    expect(second.state).toBe('watching')
+    expect(registry.size()).toBe(1)
+    expect(registry.entries()).toHaveLength(1)
   })
 })

@@ -28,7 +28,7 @@ function P(name) {
  */
 function harness(overrides = {}) {
   const clock = { now: START }
-  /** @type {{ connectionId: string, event: string, requestId?: string, path?: string, state?: string, from?: any, expiresAt?: number }[]} */
+  /** @type {{ connectionId: string, event: string, requestId?: string, path?: string, state?: string, session?: string, from?: any, expiresAt?: number }[]} */
   const events = []
   const broker = createBroker({
     now: () => clock.now,
@@ -239,7 +239,16 @@ describe('lease broker kernel: negotiation', () => {
     expect(lease.acquiredAt).toBe(START)
     expect(lease.expiresAt).toBe(START + TTL_MS)
     expect(lease.holdUntil).toBeNull()
-    expect(events.at(-1)).toEqual({ connectionId: 'c2', event: 'settled', requestId: requested.requestId, path: P('a'), state: 'transferred' })
+    // A `settled` outcome names the requester's session, so the receiving side
+    // can route it — and retire a matching wait — without a turn-scoped index.
+    expect(events.at(-1)).toEqual({
+      connectionId: 'c2',
+      event: 'settled',
+      requestId: requested.requestId,
+      path: P('a'),
+      session: OWNER_B.session,
+      state: 'transferred',
+    })
     // The requester now owns it through its own connection.
     expect(broker.release({ connectionId: 'c2', owner: OWNER_B, paths: [P('a')] }).released).toEqual([P('a')])
   })
@@ -274,7 +283,14 @@ describe('lease broker kernel: negotiation', () => {
     advance(30_000)
     const swept = broker.sweep()
     expect(swept.droppedRequests).toBe(1)
-    expect(events.at(-1)).toEqual({ connectionId: 'c2', event: 'settled', requestId: requested.requestId, path: P('a'), state: 'expired' })
+    expect(events.at(-1)).toEqual({
+      connectionId: 'c2',
+      event: 'settled',
+      requestId: requested.requestId,
+      path: P('a'),
+      session: OWNER_B.session,
+      state: 'expired',
+    })
     // Ownership unchanged; a late reply is refused as expired.
     expect(broker.status().leases[0].owner.id).toBe('lineage-a')
     const late = broker.reply({ connectionId: 'c1', owner: OWNER_A, requestId: requested.requestId, decision: 'release' })
@@ -383,7 +399,14 @@ describe('lease broker kernel: connections', () => {
     broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
     const requested = broker.request({ connectionId: 'c2', from: OWNER_B, path: P('a') })
     broker.disconnect('c1')
-    expect(events.at(-1)).toEqual({ connectionId: 'c2', event: 'settled', requestId: requested.requestId, path: P('a'), state: 'expired' })
+    expect(events.at(-1)).toEqual({
+      connectionId: 'c2',
+      event: 'settled',
+      requestId: requested.requestId,
+      path: P('a'),
+      session: OWNER_B.session,
+      state: 'expired',
+    })
     expect(broker.reply({ connectionId: 'c1', owner: OWNER_A, requestId: requested.requestId, decision: 'release' }).code).toBe('expired')
   })
 
