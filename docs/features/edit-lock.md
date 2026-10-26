@@ -74,10 +74,10 @@
 
 | 模块 | 行数 | 职责 |
 |---|---|---|
-| `client.js` | 1161 | 连接、`withLeases`、降级、事件能力、统一失效入口、内存清单与重连重放 |
+| `client.js` | 1217 | 连接、`withLeases`、降级、事件能力、统一失效入口（含拨号/握手期间关闭）、内存清单与重连重放 |
 | `plugin.js` | 949 | 预设行：7 个工具、回合释放、唤醒投递、共享订阅协调器接线、只读 view 端点、审计接线 |
 | `tools.js` | 628 | 工具定义（6 个恒在 + `edit_lock_reply` 动态） |
-| `watch.js` | 440 | 共享释放订阅协调器（watching/hit/reset/self/cancelled、共享 status flight、pendingDelivery） |
+| `watch.js` | 473 | 共享释放订阅协调器（watching/hit/reset/self/cancelled、共享 status flight、pendingDelivery 与在飞读门控） |
 | `lineage.js` | 207 | lineage 与短标签推导 |
 | `singleton.js` | 155 | 进程级共享客户端（永不关闭，D11） |
 | `view.js` | 144 | 纯函数视图（三态 + 两组列表），无 IO/时钟 |
@@ -100,12 +100,12 @@
 1. `edit_lock_watch` **先登记**、再通过共享 client 读 `status`（权威所有权只由 broker 回答）；同一 `(session, 路径)` 只有一条活跃 entry，重复调用（同一挂载或跨挂载）复用同一条 entry 与**同一次在飞的 `status` 读**，所以同一次释放不可能通知两次，并发调用也不会一个取消、另一个误报 `watching`；
 2. 每次 `await` 之后——无论 `status` 成功还是失败——都先看终态：`hit` 返回 `released`、`reset` 返回重查结果、转交得到的 `self` 返回自有结果；这些终态**及其待投递通知**不会被后来的失败清理覆盖，清理只取消仍是 `watching` 的等待；
 3. 只有 entry 仍以**同一对象**留在活跃表时，才按 `status` 回答 `watching` / `free` / `self`（`free`、`self` 终结并移除 entry）；已被替代的旧 entry 绝不会被并发调用误报为活跃；
-4. 命中（`hit`）即从活跃表摘除并进入 `pendingDelivery`，通知在 `setTimeout(0)` 里延迟投递，**先消费后投递**，重复观察不会第二次通知；`pendingDelivery` 保留到 timer 完成，因此 agent 销毁能同时取消活跃订阅与尚未投递的命中/重置通知；timer 触发时再检查终态、挂载引用与当前 live agent 身份，绝不把通知投给已销毁或被替换的 agent；
+4. 命中（`hit`）即从活跃表摘除并进入 `pendingDelivery`，通知在 `setTimeout(0)` 里延迟投递，**先消费后投递**，重复观察不会第二次通知；若命中时那条权威 `status` 读还在飞，通知会等它落地后才武装 timer，让该读的调用方先有机会用 `released`/`reset` 工具结果报告同一集——同一集只会有一个模型可见结果；`pendingDelivery` 保留到 timer 完成，因此 agent 销毁能同时取消活跃订阅与尚未投递的命中/重置通知；timer 触发时再检查终态、挂载引用与当前 live agent 身份，绝不把通知投给已销毁或被替换的 agent；
 5. 路径已空闲或已归本会话时立即返回且不留下订阅；握手没有声明 `released` 能力、或 `status` 读不到时，显式报告不可用并清掉刚登记的条目。
 
 通知走编辑锁既有的消息通道：完整 UserMessage、运行中 `steer`、空闲时 `followup` 唤醒一次。**一个 client 一份协调器、一条 entry、一次 status 读、一条通知**：两个挂载同时订阅同一 `(session, 路径)` 也只投递一次；单个挂载卸载只移除自己的引用，其他挂载仍共享的订阅与待投递通知转给存活引用，最后一个挂载卸载时才移除该 client 的 event/reset 监听并清空协调器。agent 被销毁后它的订阅随之消失，任何延迟中的通知都不会投递给已销毁的 agent。派生子代理拿不到这个工具，与其它所有权工具一致（子代理继续共享发起会话的归属，不需要也不能等待释放）。
 
-`reset` 是终态：连接失效——socket 关闭、主动 drop/重试、显式 `close()`，以及 broker 被 SIGKILL（它根本无法广播）——都会把活跃订阅标成 `reset`，给仍存活的会话投递「重新检查、必要时重新订阅」的提示，**绝不说路径已空闲**。同一连接恰好只发一次重置：失效入口只有一个，旧连接的迟到关闭是空操作。订阅不恢复、不重连重订、不持久化；agent 销毁、挂载卸载、以及一次成功的 `transferred` 结算都会取消对应等待，避免已经用另一条路拿到所有权的会话被自己的释放通知唤醒。`settled` 事件自带 requester session，所以即使回合结束或挂载卸载已经清掉 requestId 路由，转交成功仍能按 `(session, 路径)` 终结等待（旧 broker 不发该字段时回退到 requestId 路由）。
+`reset` 是终态：连接失效——socket 关闭、主动 drop/重试、显式 `close()`（包括拨号或握手尚未完成的窗口：迟到的 socket 会被关闭而不是采用，等待中的请求被拒绝，且不重放、不回填清单），以及 broker 被 SIGKILL（它根本无法广播）——都会把活跃订阅标成 `reset`，给仍存活的会话投递「重新检查、必要时重新订阅」的提示，**绝不说路径已空闲**。同一连接恰好只发一次重置：失效入口只有一个，旧连接的迟到关闭是空操作。订阅不恢复、不重连重订、不持久化；agent 销毁、挂载卸载、以及一次成功的 `transferred` 结算都会取消对应等待，避免已经用另一条路拿到所有权的会话被自己的释放通知唤醒。`settled` 事件自带 requester session，所以即使回合结束或挂载卸载已经清掉 requestId 路由，转交成功仍能按 `(session, 路径)` 终结等待（旧 broker 不发该字段时回退到 requestId 路由）。
 
 | 工具结果 | 含义 |
 |---|---|
@@ -160,7 +160,7 @@
 
 | 层 | 规模 | 覆盖 |
 |---|---|---|
-| 产品单测 | 2748 pass / 1 skip | 协议与内核（含释放事实与 `settled.session`）、客户端能力/统一失效/lineage/真实 IPC、共享订阅协调器与工具面/插件、视图与 chunk、编辑器接线、旧 profile 兼容 |
+| 产品单测 | 2756 pass / 1 skip | 协议与内核（含释放事实与 `settled.session`）、客户端能力/统一失效（含拨号/握手期间关闭）/lineage/真实 IPC、共享订阅协调器与在飞读门控/工具面/插件、视图与 chunk、编辑器接线、旧 profile 兼容 |
 | 装置单测 | 368 pass | 场景注册、探针、断言回放 |
 | 集成场景 | 63 个场景 / 724 条检查 | 其中 14 个与编辑锁相关 |
 
