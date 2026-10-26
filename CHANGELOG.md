@@ -11,6 +11,7 @@
 
 - **能力管理：Fork 会话现在继承源会话的有效 Skill/MCP 配置**：无论源配置来自显式 Apply、已有继承快照，还是尚未 Apply 的初始默认值，Fork 与连续 Fork 都不会再被清空；冷读、预载、MCP 准入与面板回执使用同一集合，首次显式 Apply 仍从正确的 accepted revision 提交。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 - **能力管理：跨工作区预设不再出现无法处理的同名阻断**：全局预设中属于另一工作区的项目 Skill 会按当前环境不适用自动跳过并显示警告，其余能力可直接 Apply；不会静默替换成本地同名 Skill，原预设保持不变，当前工作区内两个真实可选的同名身份仍须显式解冲突。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+- **发布流程：npm 发布已收敛为仅 GitHub Actions**：本地 release 脚本只完成门禁、release commit 与 tag 并提示推送，不再执行或建议本地 publish；旧 `--no-publish` 仅作为弃用无操作参数兼容。GitHub 工作流会在发布前校验 tag/manifest 与对应 CHANGELOG 版本段，工作流失败只能修复后重跑。详见 [npm 公共分发](docs/features/npm-distribution.md)。
 
 ## [2.0.0] - 2026-10-20
 
