@@ -1389,4 +1389,64 @@ describe('release subscriptions (D2, D4, D5)', () => {
     expect(resets).toBe(1)
     dispose()
   })
+
+  it('settles an in-flight watch immediately when close lands on a dial that never returns', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    let dials = 0
+    const client = createLeaseClient({
+      socketPath: '/fake/weir-editlockd.sock',
+      connect: () => {
+        dials += 1
+        return new Promise(() => {})
+      },
+      spawnDaemon: () => null,
+      timeoutMs: 200,
+      connectRetryMs: 2,
+      connectRetryBudgetMs: 20,
+    })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+    /** @type {{ text: string }[]} */
+    const delivered = []
+    const plugin = createFileLeasePlugin({
+      client,
+      ownerOf: () => OWNER,
+      deliver: (_agent, text) => {
+        delivered.push({ text })
+        return true
+      },
+    })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    const pending = subscribe(ctx, agent)
+    await waitFor(() => dials === 1, 'the never-returning dial')
+    client.close()
+    expect(resets).toBe(1)
+
+    // The watch settles now, without the dial ever resolving or rejecting.
+    const settled = await Promise.race([pending, delay(500).then(() => 'timeout')])
+    expect(settled).not.toBe('timeout')
+    if (settled === 'timeout') return
+    expect(settled.state).toBe('reset')
+    expect(client.connectionState()).toBe('unavailable')
+
+    // A follow-up acquire is refused immediately instead of hanging too.
+    const after = await Promise.race([
+      client.acquire(OWNER, [TARGET], CWD).catch((error) => error),
+      delay(500).then(() => 'timeout'),
+    ])
+    expect(after).not.toBe('timeout')
+    if (after === 'timeout') return
+    expect(after?.code).toBe('transport')
+
+    await flush()
+    expect(delivered).toEqual([])
+    expect(resets).toBe(1)
+    dispose()
+  })
 })

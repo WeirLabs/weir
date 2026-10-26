@@ -294,6 +294,13 @@ export function createLeaseClient({
   /** @type {Promise<LeaseConnection> | null} */
   let connecting = null
   let closed = false
+  /**
+   * Waits that a close answers instead of the dial. `connect` has no abort
+   * contract — an injected one may never settle at all — so a close must
+   * release these itself; nothing here waits for a socket (D5).
+   * @type {Set<() => void>}
+   */
+  const closeWaiters = new Set()
   /** @type {number | undefined} */
   let startedAt
   /** A connection reset means the daemon may have restarted with an empty table (D6). */
@@ -456,6 +463,15 @@ export function createLeaseClient({
   }
 
   /**
+   * Answer every wait the close latch owns. A close is terminal for the whole
+   * transport lifetime, so a caller parked on a dial is told now rather than
+   * inheriting a dial that may never return.
+   */
+  function notifyCloseWaiters() {
+    for (const waiter of [...closeWaiters]) waiter()
+  }
+
+  /**
    * The ONE connection-invalidation outlet (D5).
    *
    * A connection ends in three ways — the socket closed under us, we dropped it
@@ -520,10 +536,68 @@ export function createLeaseClient({
     return invalidated
   }
 
-  /** @returns {Promise<{ connection: LeaseConnection | null, error: any }>} */
+  /**
+   * Wait for `work`, but never past `close()`.
+   *
+   * The transport has no abort contract, so a close answers the wait itself:
+   * the dial is left to whatever it does, and nobody inherits a promise that
+   * may never settle. The waiter is removed as soon as either side answers, and
+   * `work` is always consumed — an abandoned dial that fails later can never
+   * surface as an unhandled rejection.
+   *
+   * @template T
+   * @param {Promise<T>} work
+   * @returns {Promise<T>}
+   */
+  function untilClosed(work) {
+    return new Promise((resolve, reject) => {
+      let waiting = true
+      /** @param {() => void} settle */
+      const finish = (settle) => {
+        if (!waiting) return
+        waiting = false
+        closeWaiters.delete(onClose)
+        settle()
+      }
+      const onClose = () => finish(() => reject(transportError('lease client is closed')))
+      closeWaiters.add(onClose)
+      // Attach first: a close may already have fired, and `work`'s outcome must
+      // still be handled when this wait is answered by the latch instead.
+      Promise.resolve(work).then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      )
+      if (closed) onClose()
+    })
+  }
+
+  /**
+   * Dial once, but not past a close.
+   *
+   * A socket that only arrives after the close is closed on arrival: it can
+   * never be adopted, greeted, replayed or used to serve a request, and the
+   * caller was already answered by the latch.
+   * @returns {Promise<{ connection: LeaseConnection | null, error: any }>}
+   */
   async function attemptConnect() {
+    /** @type {LeaseConnection | Promise<LeaseConnection>} */
+    let started
     try {
-      return { connection: await connect(endpoint), error: null }
+      // Started synchronously: the dial is the caller's, not a later task's.
+      started = connect(endpoint)
+    } catch (error) {
+      return { connection: null, error }
+    }
+    /** @type {Promise<LeaseConnection>} */
+    const dial = Promise.resolve(started).then((connection) => {
+      if (closed) {
+        closeSocket(connection)
+        throw transportError('lease client is closed')
+      }
+      return connection
+    })
+    try {
+      return { connection: await untilClosed(dial), error: null }
     } catch (error) {
       return { connection: null, error }
     }
@@ -551,6 +625,10 @@ export function createLeaseClient({
    * be able to start the daemon again on the next call, because "the daemon is
    * gone" is a transient condition, not a decision to stop arbitrating.
    *
+   * The wait is bounded by this client's lifetime, never by a dial timeout: a
+   * close answers it through the latch, and `connect` is left to settle on its
+   * own. A dial that never returns therefore cannot park a caller.
+   *
    * @returns {Promise<LeaseConnection>}
    */
   async function openConnection() {
@@ -574,7 +652,7 @@ export function createLeaseClient({
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       if (closed) throw transportError('lease client closed')
       if (now() >= deadline) break
-      await delay(connectRetryMs)
+      await untilClosed(delay(connectRetryMs))
       if (closed) throw transportError('lease client closed')
       const retry = await attemptConnect()
       if (closed) {
@@ -1171,9 +1249,11 @@ export function createLeaseClient({
    * client on this machine, and its own idle window is what ends it.
    *
    * A close is terminal for the whole transport lifetime, including a dial or
-   * handshake that is still in flight: that attempt is invalidated, its late
-   * socket is closed instead of adopted, and any subscription waiting on it is
-   * told with exactly one reset notification.
+   * handshake that is still in flight: the callers waiting on that attempt are
+   * settled with a transport failure the moment the close lands (even when the
+   * underlying dial never returns), the late socket is closed instead of
+   * adopted, and any subscription waiting on it is told with exactly one reset
+   * notification.
    */
   function close() {
     if (closed) return
@@ -1185,15 +1265,17 @@ export function createLeaseClient({
       // a subscription waiting on it is told instead of waiting forever.
       invalidateConnection(target, true)
       closeSocket(target)
+      notifyCloseWaiters()
       return
     }
     // No connection is installed yet, but a dial or handshake may still be in
-    // flight. `establish` closes its late socket rather than adopting it; the
-    // callers waiting on that attempt are rejected, and the reset is reported
-    // here because no connection exists to be invalidated later.
+    // flight. `establish` closes its late socket rather than adopting it and the
+    // latch answers the callers now; the reset is reported here because no
+    // connection exists to be invalidated later.
     const dialing = connecting !== null
     failWaiters(transportError('lease client closed'))
     if (dialing) notifyReset()
+    notifyCloseWaiters()
   }
 
   return Object.freeze({
