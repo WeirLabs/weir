@@ -495,6 +495,20 @@ export function createLeaseClient({
   }
 
   /**
+   * Close a socket without touching client state. Used where the connection is
+   * already invalidated (or was never adopted) and only the transport is left.
+   * @param {LeaseConnection | null} target
+   */
+  function closeSocket(target) {
+    if (target === null) return
+    try {
+      target.close()
+    } catch {
+      // Already gone.
+    }
+  }
+
+  /**
    * @param {LeaseConnection} target
    * @returns {boolean} whether this target was the current connection
    */
@@ -502,11 +516,7 @@ export function createLeaseClient({
     // Invalidate first: closing the socket reports its close synchronously, and
     // that report must find nothing left to invalidate (exactly-once reset).
     const invalidated = invalidateConnection(target)
-    try {
-      target.close()
-    } catch {
-      // Already gone.
-    }
+    closeSocket(target)
     return invalidated
   }
 
@@ -544,7 +554,14 @@ export function createLeaseClient({
    * @returns {Promise<LeaseConnection>}
    */
   async function openConnection() {
+    // A close requested before or during the dial is terminal: never spawn,
+    // adopt or keep waiting for an arbiter on behalf of a client that is gone.
+    if (closed) throw transportError('lease client closed')
     const first = await attemptConnect()
+    if (closed) {
+      closeSocket(first.connection)
+      throw transportError('lease client closed')
+    }
     if (first.connection !== null) return first.connection
     if (!isAbsentEndpoint(first.error)) {
       throw transportError(`lease broker is unreachable at ${endpoint}`, first.error)
@@ -555,9 +572,15 @@ export function createLeaseClient({
     // attempt count is what actually bounds the wait.
     const maxAttempts = Math.max(1, Math.ceil(connectRetryBudgetMs / Math.max(1, connectRetryMs))) + 2
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (closed) throw transportError('lease client closed')
       if (now() >= deadline) break
       await delay(connectRetryMs)
+      if (closed) throw transportError('lease client closed')
       const retry = await attemptConnect()
+      if (closed) {
+        closeSocket(retry.connection)
+        throw transportError('lease client closed')
+      }
       if (retry.connection !== null) return retry.connection
       if (!isAbsentEndpoint(retry.error)) {
         throw transportError(`lease broker is unreachable at ${endpoint}`, retry.error)
@@ -573,6 +596,12 @@ export function createLeaseClient({
    */
   async function establish() {
     const fresh = await openConnection()
+    // A close during the dial owns the socket now: it is closed instead of
+    // installed, so no handshake, replay or lease can happen after close.
+    if (closed) {
+      closeSocket(fresh)
+      throw transportError('lease client closed')
+    }
     const previousStartedAt = startedAt
     connection = fresh
     greeted = false
@@ -595,6 +624,12 @@ export function createLeaseClient({
     } catch (error) {
       dropConnection(fresh)
       throw transportError(`lease broker handshake failed at ${endpoint}`, error)
+    }
+    // A close may have invalidated this connection while the hello was in
+    // flight; even an already-delivered reply must not resurrect it.
+    if (closed) {
+      dropConnection(fresh)
+      throw transportError('lease client closed')
     }
     if (hello.ok !== true) {
       // A protocol mismatch is infrastructure, not a conflict: the write goes
@@ -621,16 +656,26 @@ export function createLeaseClient({
   }
 
   /** @returns {Promise<LeaseConnection>} */
-  function ensureConnection() {
-    if (closed) return Promise.reject(transportError('lease client is closed'))
-    if (connection !== null && greeted) return Promise.resolve(connection)
-    if (connecting !== null) return connecting
-    /** @type {Promise<LeaseConnection>} */
-    const attempt = establish().finally(() => {
-      if (connecting === attempt) connecting = null
-    })
-    connecting = attempt
-    return attempt
+  async function ensureConnection() {
+    if (closed) throw transportError('lease client is closed')
+    /** @type {LeaseConnection} */
+    let target
+    if (connection !== null && greeted) {
+      target = connection
+    } else if (connecting !== null) {
+      target = await connecting
+    } else {
+      /** @type {Promise<LeaseConnection>} */
+      const attempt = establish().finally(() => {
+        if (connecting === attempt) connecting = null
+      })
+      connecting = attempt
+      target = await attempt
+    }
+    // A close that landed while this dial was in flight is terminal: a caller
+    // resuming afterwards must never speak on the abandoned connection.
+    if (closed) throw transportError('lease client is closed')
+    return target
   }
 
   /**
@@ -642,11 +687,14 @@ export function createLeaseClient({
   async function request(op, payload = {}) {
     if (typeof op !== 'string' || op.length === 0) throw new TypeError('lease request requires an operation name')
     const target = await ensureConnection()
+    if (closed) throw transportError('lease client is closed')
     if (replayQueued) {
       // Flush before the caller's own frame so an observe-after-reconnect call
       // reports the world the replay has already restored.
       replayQueued = false
       await runReplay()
+      // The replay is wire I/O too: a close during it stops this request as well.
+      if (closed) throw transportError('lease client is closed')
     }
     return await exchange(target, op, payload)
   }
@@ -996,6 +1044,7 @@ export function createLeaseClient({
    */
   async function replayHolds() {
     await ensureConnection()
+    if (closed) throw transportError('lease client is closed')
     // An explicit replay satisfies a queued one: never send the same retention
     // twice just because a reconnect happened to arm it.
     replayQueued = false
@@ -1118,26 +1167,33 @@ export function createLeaseClient({
   }
 
   /**
-   * Close the connection. The daemon keeps running: it is shared with every other
+   * Close the client. The daemon keeps running: it is shared with every other
    * client on this machine, and its own idle window is what ends it.
+   *
+   * A close is terminal for the whole transport lifetime, including a dial or
+   * handshake that is still in flight: that attempt is invalidated, its late
+   * socket is closed instead of adopted, and any subscription waiting on it is
+   * told with exactly one reset notification.
    */
   function close() {
     if (closed) return
     closed = true
     ledger.clear()
     const target = connection
-    if (target === null) {
-      failWaiters(transportError('lease client closed'))
+    if (target !== null) {
+      // An intentional close ends the current connection like any other loss, so
+      // a subscription waiting on it is told instead of waiting forever.
+      invalidateConnection(target, true)
+      closeSocket(target)
       return
     }
-    // An intentional close ends the current connection like any other loss, so
-    // a subscription waiting on it is told the truth instead of waiting forever.
-    invalidateConnection(target, true)
-    try {
-      target.close()
-    } catch {
-      // Already gone.
-    }
+    // No connection is installed yet, but a dial or handshake may still be in
+    // flight. `establish` closes its late socket rather than adopting it; the
+    // callers waiting on that attempt are rejected, and the reset is reported
+    // here because no connection exists to be invalidated later.
+    const dialing = connecting !== null
+    failWaiters(transportError('lease client closed'))
+    if (dialing) notifyReset()
   }
 
   return Object.freeze({

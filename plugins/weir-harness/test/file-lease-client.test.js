@@ -880,6 +880,124 @@ describe('file-lease client: connection reset lifecycle (D5)', () => {
     expect(resets).toBe(3)
   })
 
+  it('closes a late dial instead of adopting it when close lands mid-dial', async () => {
+    /** @param {any} frame */
+    const answer = (frame) => {
+      if (frame.op === 'hello') {
+        return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000, events: ['request', 'settled', 'released'] }
+      }
+      if (frame.op === 'acquire') {
+        return { ok: true, granted: frame.paths.map((path) => ({ path, owner: { ...frame.owner }, scope: frame.scope, acquiredAt: 1_000, expiresAt: Date.now() + 60_000, holdUntil: null })) }
+      }
+      if (frame.op === 'hold') {
+        return { ok: true, held: frame.paths.map((path) => ({ path, expiresAt: Date.now() + 60_000, holdUntil: Date.now() + frame.minutes * 60_000 })) }
+      }
+      if (frame.op === 'status') return { ok: true, leases: [] }
+      if (frame.op === 'release') return { ok: true, released: [...frame.paths], notOwned: [] }
+      return { ok: true }
+    }
+    const live = createFakeConnection(answer)
+    /** @type {((connection: any) => void)[]} */
+    const dials = []
+    let defer = false
+    const client = createLeaseClient({
+      socketPath: '/fake/weir-editlockd.sock',
+      connect: () => {
+        if (!defer) return Promise.resolve(live)
+        return new Promise((resolve) => {
+          dials.push(resolve)
+        })
+      },
+      spawnDaemon: () => null,
+      timeoutMs: 200,
+      connectRetryMs: 2,
+      connectRetryBudgetMs: 20,
+    })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+
+    await client.acquire(OWNER, [P('a')], SCOPE)
+    await client.hold([P('a')], 30)
+    expect(live.frames.filter((frame) => frame.op === 'hold')).toHaveLength(1)
+    // The connection dies with a retention in the ledger: a handshake that could
+    // still be adopted after close would replay it.
+    live.reset()
+    expect(resets).toBe(1)
+
+    defer = true
+    const attempted = client.status({ path: P('a') }).catch((error) => error)
+    await waitFor(() => dials.length === 1, 'the deferred dial')
+    client.close()
+    // The close itself is the second transport loss, reported once.
+    expect(resets).toBe(2)
+
+    const late = createFakeConnection(answer)
+    dials[0](late)
+    const failure = await attempted
+    expect(failure?.code).toBe('transport')
+    // The late socket was closed, never installed, handshaken or replayed on.
+    expect(late.closed).toBe(true)
+    expect(late.frames).toEqual([])
+    expect(client.connectionState()).toBe('unavailable')
+
+    // Close is terminal: no request or lease succeeds, nothing is replayed or
+    // repopulated from the cleared ledger.
+    expect((await client.status({ path: P('a') }).catch((error) => error))?.code).toBe('transport')
+    expect((await client.acquire(OWNER, [P('a')], SCOPE).catch((error) => error))?.code).toBe('transport')
+    expect(await client.releaseAll(OWNER.session)).toEqual({ released: [] })
+    expect(late.frames).toEqual([])
+    expect(resets).toBe(2)
+
+    // Closing twice is idempotent.
+    client.close()
+    expect(resets).toBe(2)
+  })
+
+  it('invalidates an in-flight handshake on close and never greets, replays or serves after it', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+    await client.acquire(OWNER, [P('a')], SCOPE)
+    await client.hold([P('a')], 30)
+    const first = broker.last
+    first.reset()
+    expect(resets).toBe(1)
+
+    // From now on the handshake stays unanswered: the client is inside the
+    // dial+handshake window when it is closed.
+    broker.setAnswer((frame) => (frame.op === 'hello' ? null : { ok: true }))
+    const attempted = client.status({ path: P('a') }).catch((error) => error)
+    await waitFor(() => broker.last !== first && broker.last.frames.length > 0, 'the handshake frame')
+    const handshaking = broker.last
+    const hello = handshaking.frames[0]
+
+    client.close()
+    expect(resets).toBe(2)
+    const failure = await attempted
+    expect(failure?.code).toBe('transport')
+    expect(handshaking.closed).toBe(true)
+    // The handshake was the only frame: no acquire/hold replay, no release, and
+    // no post-close request was served.
+    expect(handshaking.frames).toEqual([hello])
+    expect(client.connectionState()).toBe('unavailable')
+    expect(client.supportsEvent('released')).toBe(false)
+
+    // A late hello reply cannot resurrect the connection either.
+    handshaking.push({ ...hello, ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000 })
+    await delay(5)
+    expect(client.connectionState()).toBe('unavailable')
+    expect(resets).toBe(2)
+    expect((await client.status({ path: P('a') }).catch((error) => error))?.code).toBe('transport')
+
+    client.close()
+    expect(resets).toBe(2)
+  })
+
   it('rejects a non-function reset handler instead of silently ignoring it', () => {
     const client = createClient(createFakeBroker())
     expect(() => client.onReset(null)).toThrow(/onReset requires a handler/)
