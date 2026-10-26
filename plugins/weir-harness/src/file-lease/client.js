@@ -455,35 +455,59 @@ export function createLeaseClient({
     }
   }
 
-  /** @param {LeaseConnection} target */
-  function handleDisconnect(target) {
-    if (connection !== target) return
+  /**
+   * The ONE connection-invalidation outlet (D5).
+   *
+   * A connection ends in three ways — the socket closed under us, we dropped it
+   * to retry, or the client is closing — and all three must leave the same state
+   * behind: no current connection, no handshake, no advertised capabilities, no
+   * waiter still believing an answer is coming, and exactly one reset
+   * notification for the connection that just went away.
+   *
+   * Only the CURRENT target may do that. A stale target — a handshake that lost
+   * a race, or a socket already replaced by a retry — is a no-op: its late close
+   * must not clear the live connection's state or notify a second time.
+   *
+   * @param {LeaseConnection | null} target
+   * @param {boolean} [closing] true for an intentional client close: the ledger is
+   *   already gone, so nothing is queued for replay
+   * @returns {boolean} whether this target was the current connection
+   */
+  function invalidateConnection(target, closing = false) {
+    if (target === null || connection !== target) return false
     connection = null
     greeted = false
     // The advertised capabilities belonged to that connection.
     eventCapabilities = new Set()
     // D6: a reset connection means the daemon may have died and come back with
     // an empty table, so retained leases have to be replayed on the next dial.
-    if (ledger.size > 0) replayPending = true
-    failWaiters(transportError('lease broker connection closed'))
+    if (!closing && ledger.size > 0) replayPending = true
+    failWaiters(transportError(closing ? 'lease client closed' : 'lease broker connection closed'))
     // D5: a reset is a terminal state for anything waiting on this connection,
     // and the only moment a vanished broker can be reported at all.
     notifyReset()
+    return true
+  }
+
+  /** @param {LeaseConnection} target */
+  function handleDisconnect(target) {
+    invalidateConnection(target)
   }
 
   /**
    * @param {LeaseConnection} target
+   * @returns {boolean} whether this target was the current connection
    */
   function dropConnection(target) {
-    if (connection === target) {
-      connection = null
-      greeted = false
-    }
+    // Invalidate first: closing the socket reports its close synchronously, and
+    // that report must find nothing left to invalidate (exactly-once reset).
+    const invalidated = invalidateConnection(target)
     try {
       target.close()
     } catch {
       // Already gone.
     }
+    return invalidated
   }
 
   /** @returns {Promise<{ connection: LeaseConnection | null, error: any }>} */
@@ -1100,18 +1124,19 @@ export function createLeaseClient({
   function close() {
     if (closed) return
     closed = true
-    const target = connection
-    connection = null
-    greeted = false
-    eventCapabilities = new Set()
     ledger.clear()
-    failWaiters(transportError('lease client closed'))
-    if (target !== null) {
-      try {
-        target.close()
-      } catch {
-        // Already gone.
-      }
+    const target = connection
+    if (target === null) {
+      failWaiters(transportError('lease client closed'))
+      return
+    }
+    // An intentional close ends the current connection like any other loss, so
+    // a subscription waiting on it is told the truth instead of waiting forever.
+    invalidateConnection(target, true)
+    try {
+      target.close()
+    } catch {
+      // Already gone.
     }
   }
 

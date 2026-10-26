@@ -54,6 +54,26 @@ function socketError(code) {
 }
 
 /**
+ * A connection whose close report the TEST controls: closing it destroys the
+ * socket but does not report the close, so a late transport callback can be
+ * replayed after the client has already replaced the connection.
+ * @param {(frame: any, connection: any) => any} answer
+ */
+function createLateCloseConnection(answer) {
+  const connection = createFakeConnection(answer)
+  /** @type {(() => void)[]} */
+  const closeHandlers = []
+  connection.onClose = (/** @type {() => void} */ handler) => {
+    closeHandlers.push(handler)
+  }
+  /** Replay the socket's close report, late. */
+  connection.fireClose = () => {
+    for (const handler of [...closeHandlers]) handler()
+  }
+  return connection
+}
+
+/**
  * One fake connection: records every frame the client writes and lets the test
  * answer (or refuse to answer, or hang up) deterministically.
  * @param {(frame: any, connection: any) => any} answer
@@ -145,6 +165,8 @@ function createFakeBroker() {
     if (frame.op === 'status') return { ok: true, leases: [] }
     return { ok: true }
   }
+  /** @type {(answer: (frame: any, connection: any) => any) => any} */
+  let createConnection = createFakeConnection
   return {
     connections,
     connectErrors,
@@ -162,6 +184,10 @@ function createFakeBroker() {
     setAnswer(fn) {
       answer = fn
     },
+    /** @param {(answer: (frame: any, connection: any) => any) => any} factory */
+    setConnectionFactory(factory) {
+      createConnection = factory
+    },
     /** @param {string} code @param {number} [times] */
     failNextDials(code, times = 1) {
       for (let index = 0; index < times; index += 1) connectErrors.push(/** @type {any} */ (socketError(code)))
@@ -170,7 +196,7 @@ function createFakeBroker() {
       dialAttempts += 1
       const failure = connectErrors.shift()
       if (failure !== undefined) throw failure
-      const connection = createFakeConnection((frame, live) => answer(frame, live))
+      const connection = createConnection((frame, live) => answer(frame, live))
       connections.push(connection)
       return connection
     },
@@ -762,7 +788,7 @@ describe('file-lease client: release push capability (D3)', () => {
 })
 
 describe('file-lease client: connection reset lifecycle (D5)', () => {
-  it('notifies each current-connection reset exactly once and never for an explicit close', async () => {
+  it('notifies each current-connection reset exactly once, including an explicit close', async () => {
     const broker = createFakeBroker()
     const client = createClient(broker)
     let resets = 0
@@ -790,16 +816,68 @@ describe('file-lease client: connection reset lifecycle (D5)', () => {
     second.reset()
     expect(resets).toBe(2)
 
-    // An intentional shutdown is not a reset: nothing was lost unexpectedly, so
-    // a subscription holder is never told to re-check for that reason.
+    // An intentional shutdown ends the connection like any other loss: a
+    // subscription waiting on it must be told, not left waiting forever.
     await client.status({ path: P('a') })
     client.close()
-    expect(resets).toBe(2)
+    expect(resets).toBe(3)
+    // Disposing twice is idempotent: no current connection is left to invalidate.
+    client.close()
+    expect(resets).toBe(3)
 
     off()
     broker.last.reset()
+    expect(resets).toBe(3)
+  })
+
+  it('invalidates a deliberate drop and a later close instead of bypassing the reset', async () => {
+    const broker = createFakeBroker()
+    broker.setConnectionFactory(createLateCloseConnection)
+    let attempts = 0
+    broker.setAnswer((frame) => {
+      if (frame.op === 'hello') {
+        return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: 1_000, events: ['request', 'settled', 'released'] }
+      }
+      if (frame.op === 'acquire') {
+        attempts += 1
+        // The first attempt wedges, which is exactly what makes the client drop
+        // the connection and retry on a fresh one (D7).
+        return attempts === 1 ? null : { ok: true, granted: [] }
+      }
+      return { ok: true }
+    })
+    const client = createClient(broker, { timeoutMs: 15 })
+    let resets = 0
+    client.onReset(() => {
+      resets += 1
+    })
+
+    await client.withLeases(OWNER, [P('a')], SCOPE, () => {})
+    expect(attempts).toBe(2)
+    // One reset for the connection the retry deliberately dropped — not zero
+    // (a drop must not bypass the notification) and not two (the socket close
+    // that follows the invalidation is stale and must be a no-op).
+    expect(resets).toBe(1)
+
+    const dropped = broker.connections[0]
+    const live = broker.connections[1]
+    await client.status({ path: P('a') })
+    expect(client.connectionState()).toBe('ok')
+    expect(client.supportsEvent('released')).toBe(true)
+
+    // A late report from the superseded socket cannot clear the current
+    // connection's state or notify a second time.
+    dropped.fireClose()
+    expect(resets).toBe(1)
+    expect(client.connectionState()).toBe('ok')
+    expect(client.supportsEvent('released')).toBe(true)
+
+    live.fireClose()
     expect(resets).toBe(2)
+
+    await client.status({ path: P('a') })
     client.close()
+    expect(resets).toBe(3)
   })
 
   it('rejects a non-function reset handler instead of silently ignoring it', () => {
