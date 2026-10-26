@@ -66,10 +66,12 @@
 | event | 方向 | 载荷 |
 |---|---|---|
 | `request` | 仲裁器 → 持有者连接 | `requestId`、`path`、`from`、`expiresAt` |
-| `settled` | 仲裁器 → 请求方连接 | `requestId`、`path`、`state`（`transferred` / `declined` / `expired`） |
+| `settled` | 仲裁器 → 请求方连接 | `requestId`、`path`、`session`（请求方自己的会话）、`state`（`transferred` / `declined` / `expired`） |
 | `released` | 仲裁器 → 每条在线连接 | `path`、`reason`（`released` / `disconnected` / `expired`） |
 
 投递是尽力而为：连接不存在时事件被静默丢弃，事件只影响「谁被通知」，**从不影响裁决结果**。`settled` 只在这四种时刻发出：转移成功、持有者 `keep`、窗口过期（含 sweep 回收时）、持有者连接断开。
+
+`settled.session` 是请求方自己的会话（取自该请求的 `from.session`），不是持有者会话：客户端据此把结果路由给该会话，并能在回合边界或卸载已经清掉 requestId 表之后，仍然按 `(session, path)` 终结一条等待中的释放订阅。`requestId` 仍保留，供客户端做幂等关联与旧化身的兼容回退。
 
 ### 释放事实（`released`）
 
@@ -137,9 +139,9 @@
 
 ## 向后兼容
 
-- 协议主版本保持 `1`：`released` 事件与 `hello` 的 `events` 清单都是**向后兼容的扩展**。旧客户端忽略未知事件与未知回包字段，既有 acquire/release/hold/status/request/reply 语义一字不变。
+- 协议主版本保持 `1`：`released` 事件、`hello` 的 `events` 清单与 `settled.session` 字段都是**向后兼容的扩展**。旧客户端忽略未知事件与未知回包/事件字段，既有 acquire/release/hold/status/request/reply 语义一字不变。
 - 不 bump major 的理由是地址：socket 名含主版本，不同主版本**互不仲裁**。为了一个新事件把新旧 Harness 分到两个仲裁器里，等于用失去跨版本互斥换取一个可选能力。
-- 新客户端连到旧 broker（没有 `events`）时不是「重启 daemon 升级」——主动杀仲裁器会清空全部租约。正确行为是该能力显式不可用（释放订阅报告 unsupported），其他编辑锁行为照常；旧 daemon 自然空闲退出后，新 daemon 自动获得该能力。
+- 新客户端连到旧 broker（没有 `events`、`settled` 也不带 `session`）时不是「重启 daemon 升级」——主动杀仲裁器会清空全部租约。正确行为是该能力显式不可用（释放订阅报告 unsupported），`settled` 路由回退到客户端自己的 requestId 表，其他编辑锁行为照常；旧 daemon 自然空闲退出后，新 daemon 自动获得该能力。
 
 ## 客户端降级放行（不在本协议内实现）
 
@@ -157,7 +159,7 @@
 
 ## 测试
 
-- `plugins/weir-harness/test/lease-broker-state.test.js`：内核单测——全有或全无、收养与滑动有效期、过期夺权、保留的延长/上限/非所有者、协商四结局、`requestId` 复用、断连释放、跨连接同 id 冲突、过滤器叠加、sweep 回收。
-- `plugins/weir-harness/test/lease-broker-server.test.js`：真实 IPC 往返——握手与 `events` 能力清单、acquire/status/release、协议主版本不符、断连释放、空闲自退与「有连接不退出」、残留 socket 回收、事件投递（含向所有连接广播 `released`）与 `reqId` 回带。
+- `plugins/weir-harness/test/lease-broker-state.test.js`：内核单测——全有或全无、收养与滑动有效期、过期夺权、保留的延长/上限/非所有者、协商四结局、`requestId` 复用、断连释放、跨连接同 id 冲突、过滤器叠加、sweep 回收，以及 `settled` 携带 requester session。
+- `plugins/weir-harness/test/lease-broker-server.test.js`：真实 IPC 往返——握手与 `events` 能力清单、acquire/status/release、协议主版本不符、断连释放、空闲自退与「有连接不退出」、残留 socket 回收、事件投递（含向所有连接广播 `released`、`settled.session`）与 `reqId` 回带。
 - `plugins/weir-harness/test/lease-broker-protocol-doc.test.js`：本文件与 `protocol.js` 的双向对拍（操作名、事件名、错误码闭集），并断言实现源码里出现的错误码不超出闭集。
 - `plugins/weir-harness/test/lease-broker-state.test.js` 的「release facts」一组：删除后广播、三个 reason、每条只播一次、全连接可达、原子转交与空操作静默、单个 sink 抛错不影响仲裁。
