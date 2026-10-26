@@ -15,8 +15,10 @@ import { createLeaseClient } from '../src/file-lease/client.js'
 //    too — both best-effort, so a failing client must not throw into the event;
 //  - a request wakes an idle holder exactly once (followup) and merely steers a
 //    running one; a holder that is not live in this process is dropped silently;
-//  - `settled` reaches the requester by its own request id, and applying twice
-//    to one ctx (two preset mounts) neither throws nor duplicates a tool.
+//  - `settled` reaches the requester by its request id or — once a turn boundary
+//    has cleared that route — by the session the event itself names, exactly once
+//    however many mounts hear it, and applying twice to one ctx (two preset
+//    mounts) neither throws nor duplicates a tool.
 
 const CWD = '/work/project'
 const OWNER = Object.freeze({ id: 'lineage-a', session: 'sess-a', label: 'orchestrator' })
@@ -619,16 +621,100 @@ describe('negotiation delivery (D4)', () => {
     }
   })
 
-  it('ignores a settled event for a request this process never issued', async () => {
+  it('ignores a settled event with no session and no issued route', async () => {
     const ctx = createCtx()
     const client = createFakeClient()
     let delivered = 0
     const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: () => { delivered += 1; return true } })
     const dispose = plugin.apply(ctx)
 
+    // Nothing addresses this outcome: the event names no session and this mount
+    // never issued the request, so it belongs to the process that did.
     client.push({ event: 'settled', requestId: 'not-ours', path: `${CWD}/src/a.js`, state: 'expired' })
     await flush()
     expect(delivered).toBe(0)
+    dispose()
+  })
+
+  it('delivers the declined outcome after a turn boundary cleared the request route', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    const client = createFakeClient()
+    /** @type {string[]} */
+    const texts = []
+    const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { texts.push(text); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    const steal = ctx.tools.get('edit_lock_try_steal')
+    await execute(steal, { file_path: 'src/a.js' }, { agent })
+    // The request outlives the turn that made it: the boundary drops this mount's
+    // request-id route, and the session the event names is all that is left.
+    ctx.emit('turn/end', { agent, reason: { kind: 'completed' } })
+    client.push({ event: 'settled', requestId: 'r-default', path: `${CWD}/src/a.js`, session: OWNER.session, state: 'declined' })
+    await flush()
+
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain('kept')
+    expect(texts[0]).toMatch(/ownership is unchanged/iu)
+
+    // Repeated observation of the same outcome is nobody's, route or no route.
+    client.push({ event: 'settled', requestId: 'r-default', path: `${CWD}/src/a.js`, session: OWNER.session, state: 'declined' })
+    await flush()
+    expect(texts).toHaveLength(1)
+    dispose()
+  })
+
+  it('delivers one outcome when two mounts hear the same settled event', async () => {
+    const agents = new Map()
+    const ctxA = createCtx(agents)
+    const ctxB = createCtx(agents)
+    const client = createFakeClient()
+    /** @type {{ mount: string, text: string }[]} */
+    const delivered = []
+    const mountA = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'a', text }); return true } })
+    const mountB = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { delivered.push({ mount: 'b', text }); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const disposeA = mountA.apply(ctxA)
+    const disposeB = mountB.apply(ctxB)
+
+    const steal = ctxA.tools.get('edit_lock_try_steal')
+    await execute(steal, { file_path: 'src/a.js' }, { agent })
+    // Both mounts see the host's turn boundary and drop the request route, so the
+    // event's session is the only address either of them can use.
+    for (const ctx of [ctxA, ctxB]) ctx.emit('turn/end', { agent, reason: { kind: 'completed' } })
+    client.push({ event: 'settled', requestId: 'r-default', path: `${CWD}/src/a.js`, session: OWNER.session, state: 'expired' })
+    await flush()
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].text).toContain('expired')
+    disposeA()
+    disposeB()
+  })
+
+  it('takes a request id from a new broker incarnation as a new request', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    const client = createFakeClient()
+    /** @type {string[]} */
+    const texts = []
+    const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: (_agent, text) => { texts.push(text); return true } })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    // The daemon counts request ids from its own zero, so a restarted broker hands
+    // `req-1` out again: that is a different request, not a repeat of the old one.
+    client.push({ event: 'settled', requestId: 'req-1', path: `${CWD}/src/a.js`, session: OWNER.session, state: 'declined' })
+    await flush()
+    expect(texts).toHaveLength(1)
+    client.pushReset()
+    client.push({ event: 'settled', requestId: 'req-1', path: `${CWD}/src/a.js`, session: OWNER.session, state: 'expired' })
+    await flush()
+    expect(texts).toHaveLength(2)
+    expect(texts[1]).toContain('expired')
     dispose()
   })
 })
@@ -1145,6 +1231,30 @@ describe('release subscriptions (D2, D4, D5)', () => {
     dispose()
   })
 
+  it('ends an armed release notice when the transfer settles with no request route left', async () => {
+    const { ctx, client, agent, delivered, dispose } = mount()
+    await subscribe(ctx, agent)
+
+    // The release is consumed and its notice is armed for the next tick...
+    client.push(releasedEvent())
+    // ...when the holder hands the path over instead, after the requesting turn
+    // ended, so no mount remembers the request id. A session that owns the path by
+    // transfer must not be woken for the release it was waiting on.
+    ctx.emit('turn/end', { agent, reason: { kind: 'completed' } })
+    client.push({ event: 'settled', requestId: 'r-transfer', path: TARGET, session: OWNER.session, state: 'transferred' })
+    await flush()
+
+    const texts = delivered.map((entry) => entry.text)
+    expect(texts.filter((text) => text.includes('no longer held'))).toEqual([])
+    expect(texts.filter((text) => text.includes('transferred'))).toHaveLength(1)
+
+    // The wait ended with the outcome: a later release notifies nobody.
+    client.push(releasedEvent())
+    await flush()
+    expect(delivered.map((entry) => entry.text).filter((text) => text.includes('no longer held'))).toEqual([])
+    dispose()
+  })
+
   it('keeps a subscription when the transfer is declined', async () => {
     const { ctx, client, agent, delivered, dispose } = mount()
     await subscribe(ctx, agent)
@@ -1281,10 +1391,13 @@ describe('release subscriptions (D2, D4, D5)', () => {
     const result = await pending
     expect(result.state).toBe('self')
     expect(result.message).toContain('already owns')
-    // The wait is gone: a later release for the path notifies nobody.
+    // The wait is gone, and the outcome is the one message the requester gets:
+    // a later release for the path notifies nobody.
     client.push(releasedEvent())
     await flush()
-    expect(delivered).toEqual([])
+    const texts = delivered.map((entry) => entry.text)
+    expect(texts.filter((text) => text.includes('no longer held'))).toEqual([])
+    expect(texts.filter((text) => text.includes('transferred'))).toHaveLength(1)
     dispose()
   })
 

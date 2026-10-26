@@ -98,6 +98,57 @@ function noticedFor(agent) {
   return noticed
 }
 
+/**
+ * The settled outcomes this process has already delivered, per requesting agent.
+ *
+ * One `settled` event is one process-wide fact, but every mount hears it and the
+ * requester must be told exactly once (D4). `issued` cannot dedupe it: a turn
+ * boundary clears that map while the outcome is allowed to arrive afterwards —
+ * which is exactly when this memo is the only thing that keeps a second mount
+ * from delivering the same outcome a second time. It is keyed by the live agent
+ * because that is this process's handle on the requesting session, and it is
+ * bounded because the arbiter settles a request exactly once: forgetting an old
+ * id can only lose a repeat that never comes.
+ * @type {WeakMap<object, Map<string, number>>}
+ */
+const settledNoticesByAgent = new WeakMap()
+
+/** How many delivered outcomes one agent's memo remembers (bounded, FIFO). */
+const SETTLED_NOTICE_MEMO_LIMIT = 64
+
+/**
+ * The broker incarnation every memo entry belongs to.
+ *
+ * Request ids come from the daemon's own counter, which starts over whenever a
+ * new daemon takes the socket, so a live session can be handed an id this
+ * process already delivered an outcome for. A transport reset is the boundary
+ * between two incarnations: nothing recorded before it says anything about an id
+ * issued after it.
+ */
+let settledEpoch = 0
+
+/**
+ * Claim the one model-facing delivery of a settled outcome (D4).
+ * @param {object} agent @param {string} requestId
+ * @returns {boolean} whether this caller is the one that may deliver it
+ */
+function claimSettledNotice(agent, requestId) {
+  let notices = settledNoticesByAgent.get(agent)
+  if (notices === undefined) {
+    notices = new Map()
+    settledNoticesByAgent.set(agent, notices)
+  }
+  if (notices.get(requestId) === settledEpoch) return false
+  notices.set(requestId, settledEpoch)
+  if (notices.size > SETTLED_NOTICE_MEMO_LIMIT) {
+    // Oldest first: the ids evicted here belong to outcomes the arbiter already
+    // announced once and will never announce again.
+    const [oldest] = notices.keys()
+    if (oldest !== undefined) notices.delete(oldest)
+  }
+  return true
+}
+
 /** @param {unknown} error @returns {string} */
 function messageOf(error) {
   return String(/** @type {any} */ (error)?.message ?? error)
@@ -643,7 +694,16 @@ export function createFileLeasePlugin(options = {}) {
       notify(agent, requestText({ requestId, short: shortName(path, cwdOf(agent)), label, fromSession, seconds }), agent?.status === 'idle')
     }
 
-    /** @param {any} event */
+    /**
+     * One negotiation outcome from the broker (D4).
+     *
+     * The event names the requester (`session`) and the path it asked about, and
+     * that pair is the routing address: a request outlives the turn that made it,
+     * while this mount's `issued` memo does not — a turn boundary clears it — so
+     * `issued` only routes an older broker's event, which names no session. An
+     * event that names neither is another process's outcome and is ignored here.
+     * @param {any} event
+     */
     function onSettled(event) {
       const requestId = text(event?.requestId)
       if (requestId === undefined) return
@@ -653,20 +713,21 @@ export function createFileLeasePlugin(options = {}) {
       // The transfer made this session an owner by another route, so a later
       // release notice for the same path would wake it for nothing: the wait is
       // over because the goal was reached, not because a release happened. The
-      // event names the requester, so this holds even when a turn boundary or an
-      // unmount already forgot the request; an older broker without that field
-      // falls back to the issued record. The wait ends BEFORE the outcome is
-      // routed, so the cancellation can never be lost to a cleared route.
+      // wait ends BEFORE the outcome is routed, so the cancellation can never be
+      // lost to a cleared route.
       const session = text(event?.session) ?? entry?.session
       const path = text(event?.path) ?? entry?.path
       if (state === 'transferred' && session !== undefined && path !== undefined) {
         watches.settleSelf(session, path)
       }
-      // A request issued by another process settles in that process.
-      if (entry === undefined) return
-      const agent = agentFor(entry.session)
+      // No session and no route: the request was issued in another process.
+      if (session === undefined || path === undefined) return
+      const agent = agentFor(session)
       if (!agent) return
-      notify(agent, settledText(state, requestId, shortName(entry.path, cwdOf(agent))), agent?.status === 'idle')
+      // ONE delivery per request in this process, however many mounts hear this
+      // event — including the mount whose `issued` entry routed it here.
+      if (!claimSettledNotice(agent, requestId)) return
+      notify(agent, settledText(state, requestId, shortName(path, cwdOf(agent))), agent?.status === 'idle')
     }
 
     /**
@@ -693,6 +754,9 @@ export function createFileLeasePlugin(options = {}) {
      * free.
      */
     function onConnectionReset() {
+      // A reset also ends the broker incarnation that allocated the request ids
+      // already answered in this process: the next one counts from its own zero.
+      settledEpoch += 1
       if (disposed) return
       watches.resetAll()
     }
