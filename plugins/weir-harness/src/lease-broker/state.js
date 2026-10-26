@@ -20,7 +20,14 @@
 //   connection is a different owner for arbitration purposes (spec: "Same
 //   owner identifier from another connection").
 // - Validity is `max(expiresAt, holdUntil ?? 0)`. Once `now() >=` that instant
-//   the path is free for anyone, without negotiation and without notification.
+//   the path is free for anyone, without negotiation and without notification
+//   unless a session explicitly subscribed on its own side.
+// - Removal has exactly one outlet (`removeLease`): the row is deleted first and
+//   then the fact is announced as `released` to every connected client. Explicit
+//   release, holder disconnect, and expiry observed by
+//   acquire/status/request/reply/hold/sweep all pass through it, so a lapsed row
+//   can never be silently overwritten by a new grant. An atomic transfer never
+//   comes through it because the path never becomes unowned.
 // - `release` judges identity only (a lapsed row still belongs to its owner, so
 //   releasing it is `released`, keeping the call idempotent), while `hold`
 //   additionally requires the row to still be valid — you cannot extend
@@ -34,6 +41,7 @@
  * @typedef {{ requestId: string, path: string, from: Owner, connectionId: string, holderConnectionId: string, holderId: string, expiresAt: number }} PendingRequest
  * @typedef {{ event: 'request', requestId: string, path: string, from: Owner, expiresAt: number }} RequestEvent
  * @typedef {{ event: 'settled', requestId: string, path: string, state: 'transferred' | 'declined' | 'expired' }} SettledEvent
+ * @typedef {{ event: 'released', path: string, reason: 'released' | 'disconnected' | 'expired' }} ReleasedEvent
  * @typedef {{ connectionId: string, owner: Owner, scope: string, paths: string[], ttlMs?: number }} AcquireInput
  * @typedef {{ connectionId: string, owner: Owner, paths: string[] }} ReleaseInput
  * @typedef {{ connectionId: string, owner: Owner, paths: string[], minutes: number }} HoldInput
@@ -71,7 +79,7 @@ function view(lease) {
  * @param {number} [options.ttlMs] default lease time-to-live
  * @param {number} [options.requestWindowMs] bounded negotiation window
  * @param {number} [options.holdMaxMinutes] retention bound in minutes
- * @param {(connectionId: string, event: RequestEvent | SettledEvent) => void} [options.onEvent] event sink; a missing connection or a throwing sink never affects arbitration
+ * @param {(connectionId: string, event: RequestEvent | SettledEvent | ReleasedEvent) => void} [options.onEvent] event sink; a missing connection or a throwing sink never affects arbitration
  */
 export function createBroker({
   now = Date.now,
@@ -118,7 +126,7 @@ export function createBroker({
    * Deliver one event. Delivery is best effort by contract: an unknown
    * connection is a silent drop and a throwing sink cannot break arbitration.
    * @param {string} connectionId
-   * @param {RequestEvent | SettledEvent} event
+   * @param {RequestEvent | SettledEvent | ReleasedEvent} event
    */
   function deliver(connectionId, event) {
     if (!connections.has(connectionId)) return
@@ -127,6 +135,28 @@ export function createBroker({
     } catch {
       // The sink is a transport; it must never be able to corrupt the table.
     }
+  }
+
+  /**
+   * The ONE removal outlet for a lease row.
+   *
+   * The row is deleted before anything is announced, so a later observation of
+   * the same lapsed record finds nothing to announce (no duplicate), and every
+   * receiver sees the path as unowned at the moment it hears about it. Delivery
+   * is a best-effort fact to every currently connected client: a missing or
+   * disconnected recipient is skipped, one throwing sink cannot affect the
+   * others, and the verdict that caused the removal is already decided.
+   *
+   * @param {string} path
+   * @param {'released' | 'disconnected' | 'expired'} reason
+   * @returns {boolean} whether a row was removed
+   */
+  function removeLease(path, reason) {
+    if (!leases.delete(path)) return false
+    for (const connectionId of [...connections]) {
+      deliver(connectionId, { event: 'released', path, reason })
+    }
+    return true
   }
 
   /**
@@ -159,7 +189,7 @@ export function createBroker({
   function disconnect(connectionId) {
     connections.delete(connectionId)
     for (const [path, lease] of [...leases]) {
-      if (lease.connectionId === connectionId) leases.delete(path)
+      if (lease.connectionId === connectionId) removeLease(path, 'disconnected')
     }
     for (const [requestId, record] of [...pending]) {
       if (record.connectionId === connectionId) {
@@ -192,6 +222,10 @@ export function createBroker({
     for (const path of normalize(paths)) {
       const lease = leases.get(path)
       if (!lease || !isValid(lease)) {
+        // A lapsed row nobody observed yet is a free path whose record is still
+        // in the table: reclaim it through the ONE removal outlet so the release
+        // is announced instead of being silently overwritten by the grant below.
+        if (lease !== undefined) removeLease(path, 'expired')
         fresh.push(path)
         continue
       }
@@ -247,7 +281,9 @@ export function createBroker({
     for (const path of normalize(paths)) {
       const lease = leases.get(path)
       if (lease && lease.connectionId === connectionId && lease.owner.id === owner.id) {
-        leases.delete(path)
+        // Even a lapsed row belongs to its owner until removed, so the explicit
+        // release is what takes it out of the table and what gets announced.
+        removeLease(path, 'released')
         released.push(path)
       } else {
         notOwned.push(path)
@@ -273,6 +309,7 @@ export function createBroker({
     const missing = []
     for (const path of targets) {
       const lease = leases.get(path)
+      if (lease !== undefined && !isValid(lease)) removeLease(path, 'expired')
       if (!lease || lease.connectionId !== connectionId || lease.owner.id !== owner.id || !isValid(lease)) missing.push(path)
     }
     if (missing.length > 0) return { ok: false, code: 'not-owned', paths: missing }
@@ -298,13 +335,21 @@ export function createBroker({
   function status(filter = {}) {
     /** @type {LeaseView[]} */
     const out = []
+    /** @type {string[]} */
+    const lapsed = []
     for (const lease of leases.values()) {
-      if (!isValid(lease)) continue
+      if (!isValid(lease)) {
+        // Read-only means "takes no valid lease": a record the clock already
+        // made free is reclaimed and announced here, exactly like a sweep.
+        lapsed.push(lease.path)
+        continue
+      }
       if (filter.scope !== undefined && lease.scope !== filter.scope) continue
       if (filter.session !== undefined && lease.owner.session !== filter.session) continue
       if (filter.path !== undefined && lease.path !== filter.path) continue
       out.push(view(lease))
     }
+    for (const path of lapsed) removeLease(path, 'expired')
     out.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
     return { ok: true, leases: out }
   }
@@ -321,7 +366,10 @@ export function createBroker({
   function request({ connectionId, from, path }) {
     const at = now()
     const lease = leases.get(path)
-    if (!lease || !isValid(lease)) return { ok: false, code: 'free' }
+    if (!lease || !isValid(lease)) {
+      if (lease !== undefined) removeLease(path, 'expired')
+      return { ok: false, code: 'free' }
+    }
     if (lease.owner.id === from.id) return { ok: false, code: 'self' }
     const key = requestKey(path, from.id)
     const knownId = pendingKeys.get(key)
@@ -370,6 +418,7 @@ export function createBroker({
     }
     const lease = leases.get(record.path)
     if (!lease || !isValid(lease)) {
+      if (lease !== undefined) removeLease(record.path, 'expired')
       dropRequest(requestId)
       settle(record, 'expired')
       return { ok: false, code: 'stale' }
@@ -407,8 +456,7 @@ export function createBroker({
     let droppedRequests = 0
     for (const [path, lease] of [...leases]) {
       if (at >= validUntil(lease)) {
-        leases.delete(path)
-        droppedLeases += 1
+        if (removeLease(path, 'expired')) droppedLeases += 1
       }
     }
     for (const [requestId, record] of [...pending]) {

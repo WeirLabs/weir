@@ -458,3 +458,171 @@ describe('lease broker kernel: status and sweep', () => {
     expect(broker.status().leases[0].owner.id).toBe('lineage-a')
   })
 })
+
+describe('lease broker kernel: release facts', () => {
+  /** Release broadcasts recorded by the harness sink, in delivery order. @param {{ connectionId: string, event: string, path?: string, reason?: string }[]} events */
+  function released(events) {
+    return events.filter((event) => event.event === 'released')
+  }
+
+  it('announces an explicit release once, to every connection, after the row is gone', () => {
+    const clock = { now: START }
+    /** @type {{ connectionId: string, path: string, rowStillThere: boolean }[]} */
+    const seen = []
+    const broker = createBroker({
+      now: () => clock.now,
+      onEvent: (connectionId, event) => {
+        if (event.event !== 'released') return
+        // Queried from INSIDE the sink: the lease must already be gone, so the
+        // broadcast can never be observed as ownership that still exists.
+        seen.push({ connectionId, path: event.path, rowStillThere: broker.status({ path: event.path }).leases.length > 0 })
+      },
+    })
+    for (const connectionId of ['c1', 'c2', 'c3']) broker.connect(connectionId)
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    const result = broker.release({ connectionId: 'c1', owner: OWNER_A, paths: [P('a')] })
+
+    expect(result).toEqual({ ok: true, released: [P('a')], notOwned: [] })
+    expect(seen).toEqual([
+      { connectionId: 'c1', path: P('a'), rowStillThere: false },
+      { connectionId: 'c2', path: P('a'), rowStillThere: false },
+      { connectionId: 'c3', path: P('a'), rowStillThere: false },
+    ])
+  })
+
+  it('carries the released reason and stays silent for a no-op release', () => {
+    const { broker, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+
+    broker.release({ connectionId: 'c1', owner: OWNER_A, paths: [P('a')] })
+    expect(released(events).map((event) => event.reason)).toEqual(['released', 'released', 'released'])
+
+    // The same release again changes no lease: the existing notOwned answer is
+    // returned and nothing is announced.
+    const repeat = broker.release({ connectionId: 'c1', owner: OWNER_A, paths: [P('a')] })
+    expect(repeat).toEqual({ ok: true, released: [], notOwned: [P('a')] })
+    expect(released(events)).toHaveLength(3)
+  })
+
+  it('announces an explicit release of an already-lapsed row as released', () => {
+    // A lapsed row is free by the clock but still belongs to its owner until
+    // removed: the owner's release is what removes it, so it is announced.
+    const { broker, advance, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    advance(TTL_MS)
+    const result = broker.release({ connectionId: 'c1', owner: OWNER_A, paths: [P('a')] })
+    expect(result.released).toEqual([P('a')])
+    expect(released(events).map((event) => event.reason)).toEqual(['released', 'released', 'released'])
+  })
+
+  it('announces each lease a departed holder owned, once, and not to the departed connection', () => {
+    const { broker, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a'), P('b')] })
+    broker.disconnect('c1')
+
+    expect(released(events)).toEqual([
+      { connectionId: 'c2', event: 'released', path: P('a'), reason: 'disconnected' },
+      { connectionId: 'c3', event: 'released', path: P('a'), reason: 'disconnected' },
+      { connectionId: 'c2', event: 'released', path: P('b'), reason: 'disconnected' },
+      { connectionId: 'c3', event: 'released', path: P('b'), reason: 'disconnected' },
+    ])
+    // No expiry wait: the freed paths are acquirable at once and the departed
+    // connection's own row is gone from the table.
+    expect(broker.acquire({ connectionId: 'c2', owner: OWNER_B, scope: SCOPE, paths: [P('a')] }).ok).toBe(true)
+  })
+
+  it('announces an expired lease when status observes it, and the later sweep adds nothing', () => {
+    const { broker, advance, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    advance(TTL_MS)
+
+    expect(broker.status({ path: P('a') }).leases).toEqual([])
+    expect(released(events).map((event) => ({ reason: event.reason, path: event.path }))).toEqual([
+      { reason: 'expired', path: P('a') },
+      { reason: 'expired', path: P('a') },
+      { reason: 'expired', path: P('a') },
+    ])
+
+    // The record is gone, so the reclaiming sweep has nothing left to announce.
+    expect(broker.sweep()).toEqual({ droppedLeases: 0, droppedRequests: 0 })
+    expect(released(events)).toHaveLength(3)
+  })
+
+  it('announces an expired record before granting the path to a new owner', () => {
+    const { broker, advance, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    advance(TTL_MS)
+
+    const taken = broker.acquire({ connectionId: 'c2', owner: OWNER_B, scope: SCOPE, paths: [P('a')] })
+    expect(taken.ok).toBe(true)
+    expect(released(events)).toHaveLength(3)
+    expect(released(events)[0]).toEqual({ connectionId: 'c1', event: 'released', path: P('a'), reason: 'expired' })
+  })
+
+  it('announces expiry observed by request, reply and hold', () => {
+    const first = harness()
+    first.broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    first.advance(TTL_MS)
+    expect(first.broker.request({ connectionId: 'c2', from: OWNER_B, path: P('a') })).toEqual({ ok: false, code: 'free' })
+    expect(released(first.events).map((event) => event.reason)).toEqual(['expired', 'expired', 'expired'])
+
+    // A short ttl inside the still-open request window: the lease lapses, the
+    // request does not, so the answer is the lease-shaped `stale`.
+    const second = harness({ ttlMs: 60_000 })
+    second.broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    const requested = second.broker.request({ connectionId: 'c2', from: OWNER_B, path: P('a') })
+    second.advance(60_000)
+    expect(second.broker.reply({ connectionId: 'c1', owner: OWNER_A, requestId: requested.requestId, decision: 'release' }).code).toBe('stale')
+    expect(released(second.events).map((event) => event.reason)).toEqual(['expired', 'expired', 'expired'])
+
+    const third = harness()
+    third.broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    third.advance(TTL_MS)
+    expect(third.broker.hold({ connectionId: 'c1', owner: OWNER_A, paths: [P('a')], minutes: 5 })).toEqual({ ok: false, code: 'not-owned', paths: [P('a')] })
+    expect(released(third.events).map((event) => event.reason)).toEqual(['expired', 'expired', 'expired'])
+  })
+
+  it('announces expiries reclaimed by a sweep without duplicates', () => {
+    const { broker, advance, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a'), P('b')] })
+    advance(TTL_MS)
+    expect(broker.sweep()).toEqual({ droppedLeases: 2, droppedRequests: 0 })
+    expect(broker.sweep()).toEqual({ droppedLeases: 0, droppedRequests: 0 })
+    expect(released(events)).toHaveLength(6)
+    for (const event of released(events)) expect(event.reason).toBe('expired')
+  })
+
+  it('stays silent for an atomic transfer: the path never becomes unowned', () => {
+    const { broker, events } = harness()
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    const requested = broker.request({ connectionId: 'c2', from: OWNER_B, path: P('a') })
+    const transfer = broker.reply({ connectionId: 'c1', owner: OWNER_A, requestId: requested.requestId, decision: 'release' })
+    expect(transfer.state).toBe('transferred')
+    expect(broker.status().leases[0].owner.id).toBe('lineage-b')
+    expect(released(events)).toHaveLength(0)
+  })
+
+  it('skips only the failing sink: a throwing receiver cannot hide the fact from the others', () => {
+    /** @type {{ connectionId: string, path: string }[]} */
+    const seen = []
+    const broker = createBroker({
+      now: () => START,
+      onEvent: (connectionId, event) => {
+        if (event.event !== 'released') return
+        if (connectionId === 'c2') throw new Error('this receiver is broken')
+        seen.push({ connectionId, path: event.path })
+      },
+    })
+    for (const connectionId of ['c1', 'c2', 'c3']) broker.connect(connectionId)
+    broker.acquire({ connectionId: 'c1', owner: OWNER_A, scope: SCOPE, paths: [P('a')] })
+    const result = broker.release({ connectionId: 'c1', owner: OWNER_A, paths: [P('a')] })
+
+    expect(result.released).toEqual([P('a')])
+    expect(seen).toEqual([
+      { connectionId: 'c1', path: P('a') },
+      { connectionId: 'c3', path: P('a') },
+    ])
+    // Still usable afterwards: the fault was transport-shaped, not arbitration.
+    expect(broker.acquire({ connectionId: 'c3', owner: OWNER_C, scope: SCOPE, paths: [P('a')] }).ok).toBe(true)
+  })
+})
