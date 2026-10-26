@@ -24,8 +24,11 @@ import { createApplyEngine } from './apply-engine.js'
 import { createSessionDrainAdapter } from './mcp-drain.js'
 import { createSelectionNotifier } from './selection-notify.js'
 import { createMcpRegistry } from './mcp-registry.js'
+import { createMcpOperations } from './mcp-operations.js'
+import { mcpDiagnostic } from './mcp-diagnostics.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
-import { feedCapabilityReadBridge } from './capability-remote.js'
+import { feedCapabilityReadBridge, capabilityReadFeed, capabilityOwnership, createCapabilityMutationService, sameMutationOwner } from './capability-remote.js'
+import { createMcpInstallTool } from './mcp-install-tool.js'
 import { parseFrontmatter } from './frontmatter.js'
 import { createAudit } from '../shared/audit.js'
 
@@ -163,6 +166,9 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           }
           let builtinIdentities = []
           let enabledMcpIdentities = []
+          const registry = await createMcpRegistry({ store }).read()
+          if (registry.kind !== 'ok' && registry.kind !== 'absent') throw new Error(`MCP registry is ${registry.kind}`)
+          const registryServers = registry.kind === 'ok' ? registry.servers : {}
           // Only a FULLY formed initial result may become a lifecycle snapshot:
           // a baseline or a name binding derived from an incomplete inventory is
           // a best-effort view, never an inheritable set (D2).
@@ -173,13 +179,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             // Baseline scopes are row-configurable (default builtin-only);
             // the weir-creative preset adds 'custom' for its fused skills.
             builtinIdentities = baselineSkillIdentities(snapshot?.candidates, config.baselineScopes)
-            try {
-              const registry = await store.read({ kind: 'mcp-registry' })
-              const payload = registry.kind === 'ok' ? registry.payload ?? {} : {}
-              enabledMcpIdentities = Array.isArray(/** @type {Record<string, unknown>} */ (payload).enabled) ? /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (payload).enabled) : []
-            } catch { /* an unreadable registry enables no managed identity by default */ }
+            enabledMcpIdentities = registry.kind === 'ok' ? registry.enabled : []
           }
           const resolved = resolveInitialSelection({ defaultsRecord, builtinIdentities, enabledMcpIdentities })
+          for (const identity of resolved.selection.mcpServers) {
+            if (!registryServers[identity]) resolved.missing.push({ kind: 'mcp', ref: identity, reason: 'configured default is not registered' })
+          }
+          resolved.selection.mcpIncarnations = Object.fromEntries(resolved.selection.mcpServers.filter(identity => registryServers[identity]).map(identity => [identity, registryServers[identity].incarnation ?? null]))
           // Name-string skill entries in a workspace default (the client
           // draft's wire shape, written by default-save from:'draft') bind
           // against the live inventory by unique name; unbindable entries
@@ -209,6 +215,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 revision: 0,
                 skills: resolved.selection.skills,
                 mcpServers: resolved.selection.mcpServers,
+                mcpIncarnations: resolved.selection.mcpIncarnations,
                 captured: null,
               })
             }
@@ -296,6 +303,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         locateSession: session => session,
         inventory: (options) => inventory(options),
         provider,
+        mcpRegistry: createMcpRegistry({ store: storeFor() }),
         ...applyEngineHooks({ ctx, lifecycle, notifier, audit }),
       })
       return sharedEngine
@@ -494,41 +502,33 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           }
         }
 
-        /**
-         * mcp-add: register a new managed MCP server and mount it
-         * immediately (8.1 registry + manager start). Payload:
-         * {identity, label, command, args?: [], env?: {}, serverName?}
-         */
-        const mcpAddVerb = async (spec) => {
+        const mcpVerb = (action) => async (spec, { agent }) => {
           try {
-            if (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0) {
+            if (action === 'mcp-add' && (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0)) {
               return { kind: 'error', text: 'mcp-add needs identity, label and command strings' }
             }
-            const store = openStore()
-            const registry = createMcpRegistry({ store })
-            const current = await registry.read()
-            const expectedRevision = current.kind === 'ok' ? current.revision : 0
-            const entry = {
-              identity: spec.identity,
-              label: spec.label,
-              owner: { kind: 'global', key: 'installation' },
-              transport: { kind: 'stdio', ref: `cmd:${spec.command}` },
-              client: {
-                transport: 'stdio',
-                serverName: typeof spec.serverName === 'string' && spec.serverName.length ? spec.serverName : spec.identity,
-                command: spec.command,
-                args: Array.isArray(spec.args) ? spec.args.map(String) : [],
-                env: spec.env && typeof spec.env === 'object' && !Array.isArray(spec.env) ? spec.env : {},
-                reconnect: { enabled: true },
-              },
+            const { expectedRevision, confirmNamespaceChange, targetFingerprint, attemptId, batch, mode, refsOnly, surface, ...fields } = spec
+            const operation = action === 'mcp-default' ? 'setDefault' : action === 'mcp-preview' ? 'preview' : action === 'mcp-batch' ? 'batch' : action.slice(4)
+            const request = {
+              ...spec,
+              action: operation === 'batch' ? 'add' : operation,
+              refsOnly: action === 'mcp-add' ? false : true,
+              surface: action === 'mcp-add' ? 'legacy' : surface ?? 'refs',
             }
-            const committed = await registry.register(entry, expectedRevision)
-            if (committed.status !== 'committed') return { kind: 'error', text: JSON.stringify({ status: committed.status }) }
-            const manager = ctx.get?.('weirMcpManager')
-            if (manager?.start) await manager.start()
-            return { kind: 'success', text: JSON.stringify({ status: 'registered', identity: entry.identity, generation: 1, mounted: Boolean(manager?.start) }) }
+            if (!spec.config && !spec.document && !['remove', 'restart', 'setDefault'].includes(operation)) {
+              if (operation === 'batch' || fields.mcpServers) request.document = fields
+              else request.config = fields
+            }
+            const operations = face.mcpOperations(agent.session)
+            const result = operation === 'preview'
+              ? await operations.preview(request)
+              : operation === 'batch'
+                ? await operations.executeBatch(request)
+                : await operations.execute(request)
+            const successful = new Set(['preview', 'mounted', 'saved', 'removed'])
+            return { kind: successful.has(result.status) ? 'success' : 'error', text: JSON.stringify(result) }
           } catch (cause) {
-            return { kind: 'error', text: `capabilities mcp-add failed: ${cause instanceof Error ? cause.message : String(cause)}` }
+            return { kind: 'error', text: JSON.stringify({ status: 'validation-failed', saved: false, error: mcpDiagnostic(cause, { code: cause?.code ?? 'validation-failed' }) }) }
           }
         }
 
@@ -544,7 +544,14 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           receipt: { payload: 'none', run: receiptVerb },
           list: { payload: 'none', run: listVerb },
           apply: { payload: 'required', usage: 'Usage: /capabilities apply <json selection>', run: applyVerb },
-          'mcp-add': { payload: 'required', usage: 'Usage: /capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>', run: mcpAddVerb },
+          'mcp-add': { payload: 'required', usage: 'Usage: /capabilities mcp-add <json {identity,label,command,args?,env?,serverName?}>', run: mcpVerb('mcp-add') },
+          'mcp-preview': { payload: 'required', usage: 'Usage: /capabilities mcp-preview <json server|{mcpServers:{...}}>', run: mcpVerb('mcp-preview') },
+          'mcp-batch': { payload: 'required', usage: 'Usage: /capabilities mcp-batch <json {mcpServers:{...},mode?:"add"|"edit"}>', run: mcpVerb('mcp-batch') },
+          'mcp-edit': { payload: 'required', usage: 'Usage: /capabilities mcp-edit <json {identity,expectedRevision,...config}>', run: mcpVerb('mcp-edit') },
+          'mcp-remove': { payload: 'required', usage: 'Usage: /capabilities mcp-remove <json {identity,expectedRevision}>', run: mcpVerb('mcp-remove') },
+          'mcp-restart': { payload: 'required', usage: 'Usage: /capabilities mcp-restart <json {identity,expectedRevision}>', run: mcpVerb('mcp-restart') },
+          'mcp-test': { payload: 'required', usage: 'Usage: /capabilities mcp-test <json config>', run: mcpVerb('mcp-test') },
+          'mcp-default': { payload: 'required', usage: 'Usage: /capabilities mcp-default <json {identity,enabled,expectedRevision?}>', run: mcpVerb('mcp-default') },
           presets: { payload: 'none', run: presetVerbs.presets },
           'preset-save': { payload: 'required', usage: 'Usage: /capabilities preset-save <json>', run: presetVerbs['preset-save'] },
           'preset-rename': { payload: 'required', usage: 'Usage: /capabilities preset-rename <json>', run: presetVerbs['preset-rename'] },
@@ -561,7 +568,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
 
         ctx.effect(() => commands.register({
           name: 'capabilities',
-          description: 'Session capability surface for the Weir Badge and manager (receipt | list | conditions | presets | preset-save | preset-rename | preset-resave | preset-load | preset-delete | preset-export | preset-import | default-get | default-save | default-clear).',
+          description: 'Session capability surface (receipt | list | apply | mcp-preview | mcp-add | mcp-batch | mcp-edit | mcp-remove | mcp-restart | mcp-test | mcp-default | presets and workspace defaults).',
           handler: async (invocation) => {
             const agent = invocation?.agent
             if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
@@ -574,8 +581,11 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             const head = verb.split(' ', 1)[0]
             const entry = verbTable[head]
             const hasArgs = verb.length > head.length
-            if (!entry || (entry.payload === 'none' && hasArgs) || (entry.payload === 'required' && !hasArgs)) {
-              return { kind: 'error', text: 'Usage: /capabilities receipt|list|conditions|presets|preset-save|preset-load|preset-delete|preset-export|preset-import|default-get|default-save|default-clear' }
+            if (!entry || (entry.payload === 'none' && hasArgs)) {
+              return { kind: 'error', text: 'Usage: /capabilities receipt|list|apply|mcp-preview|mcp-add|mcp-batch|mcp-edit|mcp-remove|mcp-restart|mcp-test|mcp-default|presets|default-get|default-save|default-clear' }
+            }
+            if (entry.payload === 'required' && !hasArgs) {
+              return { kind: 'error', text: entry.usage ?? 'Usage: /capabilities <verb> <json>' }
             }
             let spec
             if (entry.payload !== 'none' && hasArgs) {
@@ -618,6 +628,14 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       clearFailure: options => provider?.clearFailure(options),
       /** Shared Apply entry (group 12 manager UI commits here). */
       applySelection: (session, request, options) => engineFor().apply(session, request, options),
+      mcpOperations: (session, options = {}) => createMcpOperations({
+        registry: createMcpRegistry({ store: storeFor() }),
+        manager: ctx.get?.('weirMcpManager'),
+        credentials: ctx.get?.('credentials'),
+        audit,
+        session,
+        assertOwner: options.assertOwner,
+      }),
       /** 12.4 diagnostics: whether a removal notice is queued for a session. */
       hasPendingNotification: sessionId => notifier.has(sessionId),
     }
@@ -633,10 +651,44 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         inventory: (options, previous) => inventory(options, previous),
         lifecycle,
         mcpManager: () => ctx.get?.('weirMcpManager'),
+        mcpOperations: face.mcpOperations,
         profileContext: () => ctx.get?.('profileContext'),
       }), 'weir-capability-read-bridge')
     } catch (cause) {
       ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+    // Primary-Orchestrator AI installation rides the same selection row. All
+    // Host services are resolved lazily; missing confirmation/ownership support
+    // disables install without affecting inert preview or manual management.
+    try {
+      const tools = ctx.get?.('tools')
+      if (tools?.register) {
+        const sessionQuery = () => ctx.get?.('sessionQuery')
+        const mutations = createCapabilityMutationService({ sessionQuery })
+        const captureOwnership = async sessionId => {
+          const lease = await sessionQuery()?.observeSession?.(sessionId)
+          if (!lease || typeof lease[Symbol.dispose] !== 'function') throw Object.assign(new Error('MCP install session observation is unavailable'), { code: 'owner-unavailable' })
+          try {
+            const owner = capabilityOwnership(lease, sessionId)
+            const feed = capabilityReadFeed(owner.presetId)
+            const faces = feed.faces ?? feed
+            return { owner, feed, profile: faces.profileContext?.() }
+          } finally { lease[Symbol.dispose]() }
+        }
+        const tool = createMcpInstallTool({
+          operationsFor: session => face.mcpOperations(session),
+          mutate: (sessionId, request) => mutations.mutate(sessionId, request),
+          captureOwnership,
+          sameOwnership: sameMutationOwner,
+          describeExecution: entry => ctx.get?.('weirMcpManager')?.describeExecution?.(entry),
+          userQuestions: () => ctx.get?.('userQuestions'),
+          isLiveRoot: agent => Boolean(agent && ctx.get?.('agents')?.get?.(agent.id) === agent),
+        })
+        if (typeof ctx.effect === 'function') ctx.effect(() => tools.register(tool), 'weir-mcp-install-tool')
+        else tools.register(tool)
+      }
+    } catch (cause) {
+      ctx.logger?.warn?.(`MCP install tool registration failed: ${cause instanceof Error ? cause.message : String(cause)}`)
     }
   }
 }

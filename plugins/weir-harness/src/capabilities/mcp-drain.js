@@ -14,12 +14,13 @@
 export function createMcpDrain({ timeoutMs = 30_000, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   /** @type {Map<string, { count: number, calls: Map<number, string>, closed: boolean }>} */
   const flights = new Map()
+  const closedServers = new Set()
   let sequence = 0
 
   const keyOf = (agentId, server) => `${agentId ?? 'unknown'}${server}`
   const stateOf = (agentId, server) => {
     const key = keyOf(agentId, server)
-    if (!flights.has(key)) flights.set(key, { count: 0, calls: new Map(), closed: false })
+    if (!flights.has(key)) flights.set(key, { server, count: 0, calls: new Map(), closed: false })
     return flights.get(key)
   }
 
@@ -30,7 +31,7 @@ export function createMcpDrain({ timeoutMs = 30_000, now = Date.now, sleep = ms 
    */
   function enter(agentId, server, label = 'call') {
     const state = stateOf(agentId, server)
-    if (state.closed) return null
+    if (state.closed || closedServers.has(server)) return null
     sequence += 1
     state.count += 1
     state.calls.set(sequence, label)
@@ -68,7 +69,7 @@ export function createMcpDrain({ timeoutMs = 30_000, now = Date.now, sleep = ms 
   }
 
   function isClosed(agentId, server) {
-    return stateOf(agentId, server).closed
+    return stateOf(agentId, server).closed || closedServers.has(server)
   }
 
   /** The Apply-time snapshot the response carries (sent at response time). */
@@ -77,7 +78,20 @@ export function createMcpDrain({ timeoutMs = 30_000, now = Date.now, sleep = ms 
     return { server, state: state.count === 0 ? 'settled' : 'draining', inFlight: state.count }
   }
 
-  return { enter, exit, close, reopen, isClosed, drain, snapshot }
+  function closeAll(server) { closedServers.add(server) }
+  function reopenAll(server) { closedServers.delete(server) }
+  async function drainAll(server) {
+    const states = [...flights.values()].filter(state => state.server === server)
+    const started = now()
+    const totals = () => ({ count: states.reduce((sum, state) => sum + state.count, 0), calls: states.flatMap(state => [...state.calls.values()]) })
+    while (totals().count > 0 && now() - started < timeoutMs) await sleep(Math.min(50, timeoutMs))
+    const current = totals()
+    return current.count === 0
+      ? { drained: true, waitedMs: now() - started }
+      : { drained: false, inFlight: current.count, calls: current.calls, waitedMs: now() - started }
+  }
+
+  return { enter, exit, close, reopen, isClosed, drain, snapshot, closeAll, reopenAll, drainAll }
 }
 
 /**

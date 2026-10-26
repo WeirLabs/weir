@@ -541,46 +541,55 @@ window.__ModuleLoader__.load({
 			const [draft, setDraft] = react.useState(null);
 			const [receiptState, setReceiptState] = react.useState(null);
 			const receiptRequest = react.useRef(0);
+			const listingRequest = react.useRef(0);
 			const applying = react.useRef(false);
 			const [commit, setCommit] = react.useState(null);
-			// Managed MCP add form (8.1/8.2): per-field errors are derived by the
-			// pure model (mcpAddErrorsOf) and shown after the first submit
-			// attempt; the hook lives with the others — a hook after an early
-			// return crashes with React #310.
-			const [addForm, setAddForm] = react.useState({ open: false, identity: "", label: "", command: "", args: "", showErrors: false, error: null, busy: false });
 
-			const refreshReceipt = () => {
-				if (typeof props.fetchReceipt !== "function") return;
+			const refreshReceipt = async () => {
+				if (typeof props.fetchReceipt !== "function") return null;
 				const request = ++receiptRequest.current;
-				props.fetchReceipt(props.sessionId).then((receipt) => {
-					if (request !== receiptRequest.current) return;
-					setReceiptState(model.badgeStateOf(receipt, null));
-					setDraft(current => model.draftAfterRefresh(current, receipt));
-				}).catch(() => {
+				try {
+					const receipt = await props.fetchReceipt(props.sessionId);
+					if (request === receiptRequest.current) {
+						setReceiptState(model.badgeStateOf(receipt, null));
+						setDraft(current => model.draftAfterRefresh(current, receipt));
+					}
+					return receipt;
+				} catch {
 					if (request === receiptRequest.current) {
 						setReceiptState(null);
 						setDraft(current => model.draftAfterRefresh(current, null));
 					}
-				});
-			};
-			const refreshAll = () => {
-				if (typeof props.fetchListing === "function") {
-					props.fetchListing(props.sessionId).then((data) => setListing(data ?? { error: true })).catch(() => setListing({ error: true }));
+					return null;
 				}
-				refreshReceipt();
+			};
+			const refreshListing = async () => {
+				if (typeof props.fetchListing !== "function") return null;
+				const request = ++listingRequest.current;
+				try {
+					const data = await props.fetchListing(props.sessionId);
+					const folded = model.mcpListingAfterRead(listing, data ?? { error: true });
+					if (request === listingRequest.current) setListing(folded);
+					return folded;
+				} catch {
+					const folded = model.mcpListingAfterRead(listing, { error: true });
+					if (request === listingRequest.current) setListing(folded);
+					return folded;
+				}
+			};
+			const refreshAll = async () => {
+				const [freshListing] = await Promise.all([refreshListing(), refreshReceipt()]);
+				return { listing: freshListing };
 			};
 			react.useEffect(() => {
 				let alive = true;
-				if (typeof props.fetchListing === "function") {
-					// A failed or absent verb settles into an explicit error
-					// state — never a perpetual loading panel (12.2).
-					props.fetchListing(props.sessionId).then((data) => { if (alive) setListing(data ?? { error: true }); }).catch(() => { if (alive) setListing({ error: true }); });
-				}
+				setListing(null);
+				setConditions(null);
+				void refreshAll();
 				if (typeof props.fetchConditions === "function") {
 					props.fetchConditions(props.sessionId).then((data) => { if (alive) setConditions(data); }).catch(() => {});
 				}
-				refreshReceipt();
-				return () => { alive = false; ++receiptRequest.current; };
+				return () => { alive = false; ++receiptRequest.current; ++listingRequest.current; };
 			}, [props.sessionId]);
 			const toggle = (kind, name) => {
 				if (draft && commit?.phase !== "submitting") { setDraft(model.draftToggle(draft, kind, name)); setCommit(null); }
@@ -622,31 +631,6 @@ window.__ModuleLoader__.load({
 				};
 				setDraft(model.draftFromPreset(document, draft, resolveName));
 				setCommit(null);
-			};
-			// Managed MCP add form (8.1/8.2): registers a stdio server and mounts
-			// it immediately via /capabilities mcp-add. Client-side per-field
-			// validation first; the server's own status still surfaces verbatim.
-			const addErrors = model.mcpAddErrorsOf(addForm);
-			const submitAdd = () => {
-				if (typeof props.mcpAdd !== "function" || addForm.busy) return;
-				if (Object.keys(addErrors).length > 0) {
-					setAddForm({ ...addForm, showErrors: true, error: null });
-					return;
-				}
-				setAddForm({ ...addForm, busy: true, error: null });
-				props.mcpAdd(props.sessionId, {
-					identity: addForm.identity.trim(),
-					label: addForm.label.trim() || addForm.identity.trim(),
-					command: addForm.command.trim(),
-					args: addForm.args.trim() ? addForm.args.trim().split(/\s+/) : [],
-				}).then((result) => {
-					if (result && result.status === "registered") {
-						setAddForm({ open: false, identity: "", label: "", command: "", args: "", showErrors: false, error: null, busy: false });
-						refreshAll();
-					} else {
-						setAddForm({ ...addForm, busy: false, error: (result && result.status) || "add failed" });
-					}
-				}).catch((cause) => setAddForm({ ...addForm, busy: false, error: String(cause) }));
 			};
 			const frameStyle = props.shell === "sidebar" ? S.frame.sidebar : S.frame.popover;
 			const conditionState = model.managerConditionState(conditions?.conditions ?? conditions);
@@ -734,61 +718,8 @@ window.__ModuleLoader__.load({
 					.replace("{name}", item.name).replace("{sources}", item.candidates.map(sourceOf).join(", "))),
 				...unknown.map(item => t("capability.unknownLegacyName", "{name}: no matching Skill in the current listing. Refresh the listing or remove this legacy name.").replace("{name}", item.name))
 			];
-			const draftHas = (kind, name) => draft !== null && draft[kind].includes(name);
 			const selectionDisabled = draft === null || commit?.phase === "submitting";
-			const fieldError = (code) => code === "invalid"
-				? t("capability.mcp.errorIdentityInvalid", "Letters, digits, \"-\" and \"_\" only; start with a letter or digit.")
-				: t("capability.mcp.errorRequired", "Required.");
-			const addField = (key, placeholder, errorCode) => react_jsx_runtime.jsxs("div", {
-				children: [
-					react_jsx_runtime.jsx("input", {
-						style: S.form.input,
-						placeholder,
-						value: addForm[key],
-						"aria-invalid": errorCode ? true : undefined,
-						...ring,
-						onChange: (event) => setAddForm({ ...addForm, [key]: event.target.value })
-					}),
-					errorCode ? react_jsx_runtime.jsx("div", { style: S.form.error, children: fieldError(errorCode) }) : null
-				]
-			}, key);
-			const addBlock = tab === "mcp" ? react_jsx_runtime.jsxs("div", { style: S.form.wrap, children: [
-				!addForm.open
-					? react_jsx_runtime.jsx("button", {
-						type: "button",
-						style: S.form.addButton,
-						...ring,
-						...hover(HOVER_BG, "none"),
-						onClick: () => setAddForm({ ...addForm, open: true, showErrors: false, error: null }),
-						children: t("capability.mcp.add", "+ Add managed MCP server")
-					})
-					: react_jsx_runtime.jsxs("div", { style: S.form.box, children: [
-						react_jsx_runtime.jsx("div", { style: S.form.title, children: t("capability.mcp.addTitle", "Add managed MCP server") }),
-						addField("identity", t("capability.mcp.identity", "identity (e.g. my-docs)"), addForm.showErrors ? addErrors.identity : undefined),
-						addField("label", t("capability.mcp.label", "label (display name, optional)"), undefined),
-						addField("command", t("capability.mcp.command", "command (e.g. npx)"), addForm.showErrors ? addErrors.command : undefined),
-						addField("args", t("capability.mcp.args", "args, space-separated (optional)"), undefined),
-						react_jsx_runtime.jsxs("div", { style: S.form.actions, children: [
-							react_jsx_runtime.jsx("button", {
-								type: "button",
-								style: addForm.busy ? { ...S.form.primary, ...S.footer.disabled } : S.form.primary,
-								...ring,
-								disabled: addForm.busy,
-								onClick: submitAdd,
-								children: addForm.busy ? t("capability.mcp.adding", "Adding…") : t("capability.mcp.addConfirm", "Add")
-							}),
-							react_jsx_runtime.jsx("button", {
-								type: "button",
-								style: S.form.ghost,
-								...ring,
-								...hover(HOVER_BG, "none"),
-								onClick: () => setAddForm({ ...addForm, open: false, showErrors: false, error: null }),
-								children: t("capability.mcp.cancel", "Cancel")
-							}),
-							addForm.error ? react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.warn }, children: String(addForm.error) }) : null
-						] })
-					] })
-			] }) : null;
+			const addBlock = null;
 			const skillRow = (skill, index) => {
 				const selected = skillKeys.has(model.skillEntryKeyOf(skill.identity ?? skill.name));
 				const selectedConflict = selectedKeys.has(model.skillEntryKeyOf(skill.identity));
@@ -820,45 +751,6 @@ window.__ModuleLoader__.load({
 					]
 				}, `${model.skillIdentityKeyOf(skill.identity) ?? `${skill.scopeKey}:${skill.name}`}:${index}`);
 			};
-			const mcpRow = (server) => {
-				const name = server.identity ?? server.serverName ?? "unknown";
-				const selected = draftHas("mcpServers", name);
-				const rest = selected ? tint(ACCENT, 8) : "transparent";
-				const mounted = server.state === "mounted";
-				return react_jsx_runtime.jsxs("label", {
-					style: { ...S.row.base, background: rest },
-					...ring,
-					...hover(selected ? tint(ACCENT, 12) : HOVER_BG, rest),
-					children: [
-						react_jsx_runtime.jsx("input", {
-							type: "checkbox",
-							style: S.row.checkbox,
-							checked: selected,
-							disabled: selectionDisabled,
-							"aria-label": name,
-							onChange: () => toggle("mcpServers", name)
-						}),
-						react_jsx_runtime.jsxs("span", { style: { ...S.row.nameLine, flex: 1 }, children: [
-							react_jsx_runtime.jsx("span", { style: S.row.name, title: name, children: name }),
-							react_jsx_runtime.jsx("span", {
-								style: { ...S.tag.base, ...(mounted ? S.tag.ok : S.tag.neutral) },
-								children: mounted ? t("capability.mcp.stateMounted", "mounted") : t("capability.mcp.stateRegistered", "registered")
-							})
-						] })
-					]
-				}, name);
-			};
-			const unmanagedRow = (server) => {
-				const name = server.serverName ?? "unknown";
-				return react_jsx_runtime.jsxs("div", {
-					style: { ...S.row.base, alignItems: "center", cursor: "default" },
-					title: t("capability.mcp.unmanagedHint", "Configured outside Weir; the selection cannot govern it."),
-					children: [
-						react_jsx_runtime.jsx("span", { style: { ...S.row.name, flex: 1 }, children: name }),
-						react_jsx_runtime.jsx("span", { style: { ...S.tag.base, ...S.tag.neutral }, children: t("capability.unmanaged", "unmanaged") })
-					]
-				}, name);
-			};
 			const legacyActions = [...ambiguous, ...unknown].map(item => react_jsx_runtime.jsxs("div", { style: S.list.card, children: [
 				react_jsx_runtime.jsx("div", { style: S.form.title, children: t("capability.unresolvedNameTitle", "Choose a source for legacy name {name}").replace("{name}", item.name) }),
 				react_jsx_runtime.jsxs("div", { style: S.form.actions, children: [
@@ -883,43 +775,18 @@ window.__ModuleLoader__.load({
 						}, group.key))), ...legacyActions]
 					})
 				: tab === "mcp"
-					? react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
-						children: [
-							partition.mcpManaged.length > 0
-								? react_jsx_runtime.jsxs("div", {
-									style: S.list.card,
-									children: [
-										react_jsx_runtime.jsxs("div", {
-											style: S.list.cardHead,
-											children: [
-												react_jsx_runtime.jsx("span", { children: t("capability.mcp.groupManaged", "Weir managed") }),
-												react_jsx_runtime.jsx("span", { style: S.list.count, children: String(partition.mcpManaged.length) })
-											]
-										}),
-										...partition.mcpManaged.map(mcpRow)
-									]
-								}, "managed")
-								: null,
-							partition.mcpUnmanaged.length > 0
-								? react_jsx_runtime.jsxs("div", {
-									style: S.list.card,
-									children: [
-										react_jsx_runtime.jsxs("div", {
-											style: S.list.cardHead,
-											children: [
-												react_jsx_runtime.jsx("span", { children: t("capability.mcp.groupUnmanaged", "Unmanaged") }),
-												react_jsx_runtime.jsx("span", { style: S.list.count, children: String(partition.mcpUnmanaged.length) })
-											]
-										}),
-										...partition.mcpUnmanaged.map(unmanagedRow)
-									]
-								}, "unmanaged")
-								: null,
-							partition.mcpManaged.length === 0 && partition.mcpUnmanaged.length === 0
-								? react_jsx_runtime.jsx(StatePanel, { icon: "blocks", title: t("capability.mcp.none", "No MCP servers configured.") })
-								: null
-						]
-					})
+					? (() => {
+						if (typeof props.McpManagerView !== "function") return react_jsx_runtime.jsx(StatePanel, { icon: "warn", color: WARN_TEXT, title: t("capability.mcp.unavailableView", "MCP management is unavailable on this client.") });
+						const content = react_jsx_runtime.jsx(props.McpManagerView, {
+							sessionId: props.sessionId, model, t, listing,
+							managed: partition.mcpManaged, unmanaged: partition.mcpUnmanaged,
+							draft, toggle, selectionDisabled, refreshAll,
+							mcpPreview: props.mcpPreview, mcpMutate: props.mcpMutate, mcpBatch: props.mcpBatch,
+						});
+						return typeof props.McpManagerBoundary === "function"
+							? react_jsx_runtime.jsx(props.McpManagerBoundary, { t, children: content })
+							: content;
+					})()
 					: react_jsx_runtime.jsx(LazyCapabilityPresets, {
 						sessionId: props.sessionId,
 						model,

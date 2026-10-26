@@ -233,6 +233,8 @@ window.__ModuleLoader__.load({
 							// would sit on the perpetual loading surface (12.2).
 							fetchListing: props.fetchListing, fetchConditions: props.fetchConditions,
 							fetchReceipt: props.fetchReceipt, applySelection: props.applySelection, mcpAdd: props.mcpAdd,
+							mcpPreview: props.mcpPreview, mcpMutate: props.mcpMutate, mcpBatch: props.mcpBatch,
+							McpManagerView: props.McpManagerView, McpManagerBoundary: props.McpManagerBoundary,
 							// The preset/workspace-default verbs and the presets-chunk
 							// loader travel the same prop bridge (D3); an old composition
 							// root leaves them undefined and the view degrades to its

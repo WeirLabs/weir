@@ -33,7 +33,7 @@ export default ['OFF', 'LEAK', 'HOST', 'OFFICE', 'MIGRATION'].map(mode => ({
     }
     run.check('first-run builtin migration check passes on the real bundle', report?.builtinMigration?.ok === true, JSON.stringify(report?.builtinMigration))
     const labeled = WEIR_BUILTIN_SKILLS.map(name => report?.inventory?.find(c => c.name === name))
-    run.check('all 10 builtin skills keep the pre-migration name/source/rank labels', labeled.every(c => c && c.scope === 'weir-builtin' && c.source === 'custom' && c.rank === 300), JSON.stringify(labeled))
+    run.check('all 11 builtin skills keep the pre-migration name/source/rank labels', labeled.every(c => c && c.scope === 'weir-builtin' && c.source === 'custom' && c.rank === 300), JSON.stringify(labeled))
     const selected = mode === 'OFFICE' ? 'office-docx' : 'selected-fixture'
     const unselected = mode === 'OFFICE' ? 'office-pptx' : 'unselected-fixture'
     const leaks = mode === 'LEAK' || mode === 'HOST'

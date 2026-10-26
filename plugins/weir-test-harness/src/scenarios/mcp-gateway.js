@@ -154,7 +154,7 @@ function assert(run) {
   run.check('adopt of the host-held name is a visible conflict, never a success', report?.adopt?.status === 'conflict', JSON.stringify(report?.adopt ?? null).slice(0, 300))
   run.check('the host row stays labeled unmanaged (8.8)', (listing.unmanaged ?? []).some(entry => entry.serverName === 'gamma'), JSON.stringify(listing.unmanaged ?? []))
   run.check('the managed server lists as mounted with its generation (8.8)', (listing.managed ?? []).some(entry => entry.identity === 'docs' && entry.state === 'mounted'), JSON.stringify(listing.managed ?? []))
-  run.check('the facade bound the public name to the configured identity at registration', (report?.publicNames ?? []).some(([name, identity]) => name === 'mcp__docs__echo' && identity === 'docs'), JSON.stringify(report?.publicNames ?? []))
+  run.check('the facade bound the public name to the configured identity at registration', (report?.publicNames ?? []).some(([name, owner]) => name === 'mcp__docs__echo' && owner?.identity === 'docs' && owner?.generation === 1), JSON.stringify(report?.publicNames ?? []))
   run.check('the mock server process actually served RPC', serverLog.some(entry => entry.kind === 'mcp-server-rpc' && entry.method === 'tools/call'), JSON.stringify(serverLog).slice(0, 200))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }

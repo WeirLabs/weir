@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"6ffd703f498e0aa5cc8ac78f244402ec4ceee56d22d2a0e74c246799565776cc","client.capability-manager.js":"d22e8116922f98e61bbbdf36fc78bd81e8b47b0ee5e75ddb06bea4e204749b89","client.capability-model.js":"73b10d3fecd804f4f8f1cbe307c85db650b5206e7ad6393b34213f77cccc8312","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.disabled-categories-editor.js":"f9103fd2e2691eda9afd199e1a5462189097a9f3dee0518be5fa3587d896e033","client.file-lease-badge.js":"cd30546307c91c94fe05484557e46f58c53fe55657f62b0a0415a072dfb3b582","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"d6af81be5e5b854e98563bbb9349a6db89834a9d7dee9cf0e97759ecb32090e8","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"2be9bdbeffef96baa3cbe4ce430ab30a1d1bf797782453d287d54602ea47db8e","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f3c04a5b33cdb963357bc653f7050e598f19efc4cc833694379a4ba055e949d3","client.worktree-model.js":"8bfbaaa080f20e90a0128afccb9b4e232514615a8f2fee3a32a42dde78b34a8f","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
+// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"f5c5d21293360d00815446beb8455794a1778ae033e270af37e436329ac09185","client.capability-manager.js":"f02e08174487f2f70e90a5c50a4a44cbeb4d462f115a2d2ab8a52ed8b4e70aee","client.capability-model.js":"d572781ee1bd58f8490797810b56013f020c85991edbce8602413d29d0d09ef3","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.disabled-categories-editor.js":"f9103fd2e2691eda9afd199e1a5462189097a9f3dee0518be5fa3587d896e033","client.file-lease-badge.js":"cd30546307c91c94fe05484557e46f58c53fe55657f62b0a0415a072dfb3b582","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"d6af81be5e5b854e98563bbb9349a6db89834a9d7dee9cf0e97759ecb32090e8","client.mcp-manager.js":"5a615c596f997b456b8bbcb6c91d1fd59b6df466558575b3c46b09e8fb065c0f","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"2be9bdbeffef96baa3cbe4ce430ab30a1d1bf797782453d287d54602ea47db8e","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f3c04a5b33cdb963357bc653f7050e598f19efc4cc833694379a4ba055e949d3","client.worktree-model.js":"8bfbaaa080f20e90a0128afccb9b4e232514615a8f2fee3a32a42dde78b34a8f","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -802,6 +802,11 @@ window.__ModuleLoader__.load({
 				const result = await capabilityChannel(`weirCapabilities/${method}`, { args: { sessionId: sid } });
 				return result.ok === true ? result.value : fallback;
 			};
+			const capabilityMutation = async (method, sid, request) => {
+				const result = await capabilityChannel(`weirCapabilityMutations/${method}`, { args: { sessionId: sid, request } });
+				if (result.ok === true) return result.value;
+				return { status: result.error?.code ?? "call-failed", saved: false, error: result.error ?? { code: "call-failed", message: "MCP mutation failed" } };
+			};
 			// The presets & workspace-default view is its own chunk, pulled only
 			// when the Presets view is first selected (D3) — the composition root
 			// owns every require.async specifier (no chunk-to-chunk waterfall).
@@ -829,6 +834,9 @@ window.__ModuleLoader__.load({
 				// (explicit error surface) — a null payload maps to the error state.
 				applySelection: (sid, draft) => capabilityPayload(sid, `/capabilities apply ${JSON.stringify(draft)}`, true),
 				mcpAdd: (sid, spec) => capabilityPayload(sid, `/capabilities mcp-add ${JSON.stringify(spec)}`),
+				mcpPreview: (sid, request) => capabilityMutation("mutate", sid, request),
+				mcpMutate: (sid, request) => capabilityMutation("mutate", sid, request),
+				mcpBatch: (sid, request) => capabilityMutation("batch", sid, request),
 				fetchListing: (sid) => capabilityRead("list", sid, { error: true }),
 				fetchConditions: (sid) => capabilityRead("conditions", sid, { error: true }),
 				// The manager forwards only its established props. Adapt the lazy view
@@ -859,14 +867,19 @@ window.__ModuleLoader__.load({
 				const [impl, setImpl] = react.useState(null);
 				react.useEffect(() => {
 					let alive = true;
-					Promise.all([require.async("./client.capability-badge.js"), require.async("./client.capability-model.js"), require.async("./client.capability-manager.js")]).then(([badge, model, panel]) => {
+					Promise.all([
+						require.async("./client.capability-badge.js"),
+						require.async("./client.capability-model.js"),
+						require.async("./client.capability-manager.js"),
+						require.async("./client.mcp-manager.js").catch(() => null),
+					]).then(([badge, model, panel, mcp]) => {
 						registerChunkDictionaries("settings.weir.capability", model.dictionaries);
-						if (alive) setImpl(() => ({ Badge: badge.CapabilityBadge, model, Panel: panel.CapabilityManagerPanel }));
+						if (alive) setImpl(() => ({ Badge: badge.CapabilityBadge, model, Panel: panel.CapabilityManagerPanel, McpManagerView: mcp?.McpManagerView, McpManagerBoundary: mcp?.McpManagerBoundary }));
 					});
 					return () => { alive = false; };
 				}, [props.sessionId]);
 				if (!impl) return null;
-				return react_jsx_runtime.jsx(impl.Badge, { ...props, t: capabilityT, model: impl.model, ManagerPanel: impl.Panel });
+				return react_jsx_runtime.jsx(impl.Badge, { ...props, t: capabilityT, model: impl.model, ManagerPanel: impl.Panel, McpManagerView: impl.McpManagerView, McpManagerBoundary: impl.McpManagerBoundary });
 			};
 			ctx.effect(() => ctx.slots.inject("conversation.input.right", () => ctx.slots.register({
 				name: "conversation.input.right",
@@ -895,7 +908,8 @@ window.__ModuleLoader__.load({
 			// view tree.
 			const loadCapabilityPanelChunks = lazyChunks(() => Promise.all([
 				require.async("./client.capability-model.js"),
-				require.async("./client.capability-manager.js")
+				require.async("./client.capability-manager.js"),
+				require.async("./client.mcp-manager.js").catch(() => null),
 			]).then((chunks) => {
 				registerChunkDictionaries("settings.weir.capability", chunks[0].dictionaries);
 				return chunks;
@@ -903,10 +917,10 @@ window.__ModuleLoader__.load({
 			function CapabilityPanelWrapper(props) {
 				const arrival = useChunkArrival(loadCapabilityPanelChunks, typeof props.sessionId === "string" && props.sessionId !== "");
 				if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: typeof props.t === "function" ? props.t("capability.loading") : "" });
-				const [model, panel] = arrival.chunks;
+				const [model, panel, mcp] = arrival.chunks;
 				// The same view tree the composer popover renders — the sidebar is
 				// just the outer frame (D1). No onClose: the pane chrome owns closing.
-				return react_jsx_runtime.jsx(panel.CapabilityManagerPanel, { ...props, t: capabilityT, model, shell: "sidebar" });
+				return react_jsx_runtime.jsx(panel.CapabilityManagerPanel, { ...props, t: capabilityT, model, shell: "sidebar", McpManagerView: mcp?.McpManagerView, McpManagerBoundary: mcp?.McpManagerBoundary });
 			}
 			ctx.inject?.(["sidebarRightTabs"], (sidebarScope) => {
 				capabilitySidebarTab = true;

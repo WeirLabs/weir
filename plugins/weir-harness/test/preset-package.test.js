@@ -13,6 +13,7 @@ import {
 } from '../src/capabilities/preset-package.js'
 import { installBundledSkills, renameSkillContent } from '../src/capabilities/preset-package-install.js'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
+import { createCommandMcpManager } from './helpers/mcp-registry.js'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'weir-pkg-'))
 
@@ -468,6 +469,7 @@ const mountCapabilities = (root, config = {}) => {
     get(name) {
       if (name === 'profileContext') return { home: root, name: 'it' }
       if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+      if (name === 'weirMcpManager') return createCommandMcpManager()
       return undefined
     },
   }

@@ -101,7 +101,7 @@ describe('OFFICE success replay fixture (spec: 能力存在时断言矩阵逐字
     assert.deepEqual(checks.map((entry) => entry.label), [
       'real preset agents.create succeeds',
       'first-run builtin migration check passes on the real bundle',
-      'all 10 builtin skills keep the pre-migration name/source/rank labels',
+      'all 11 builtin skills keep the pre-migration name/source/rank labels',
       'model: selected is visible',
       'empty model: unselected is denied',
       'live model: unselected is denied',

@@ -32,8 +32,8 @@ const message = error => (error instanceof Error ? error.message : String(error)
  *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void },
  *   onError?: (reason: string, cause?: unknown) => void }} config
  */
-export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onError = () => {} }) {
-  const wrapper = createMcpToolWrapper({ identity, generation, admit, drain })
+export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onError = () => {}, assertPermit }) {
+  const wrapper = createMcpToolWrapper({ identity, generation, admit, drain, assertPermit })
 
   const unknown = (service, method) => {
     const reason = `facade-unknown-method:${service}.${method}`
@@ -91,7 +91,7 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
       const gated = typeof request === 'function'
         ? { ...provider, async request(args, exec) {
             const admitted = await admit(exec?.agent)
-            if (!admitted) {
+            if (!admitted || (assertPermit && !assertPermit(admitted))) {
               const error = new Error(`MCP server "${identity}" resources are not enabled for this agent`)
               throw Object.assign(error, { code: 'mcp-admission-refused' })
             }

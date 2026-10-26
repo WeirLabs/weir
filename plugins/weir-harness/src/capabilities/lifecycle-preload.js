@@ -75,6 +75,7 @@ export async function preloadLifecycleSnapshots({ lifecycle, profileContext, pla
           revision: record.revision,
           skills: Array.isArray(payload.skills) ? payload.skills : [],
           mcpServers: Array.isArray(payload.mcpServers) ? payload.mcpServers : [],
+          mcpIncarnations: payload.mcpIncarnations,
         })
         loaded++
         continue
@@ -101,6 +102,7 @@ export async function preloadLifecycleSnapshots({ lifecycle, profileContext, pla
           revision: inherited.revision,
           skills: Array.isArray(payload.skills) ? payload.skills : [],
           mcpServers: Array.isArray(payload.mcpServers) ? payload.mcpServers : [],
+          mcpIncarnations: payload.mcpIncarnations,
           captured: parent && typeof parent.sessionId === 'string' && parent.sessionId.length > 0
             ? {
               parentSessionId: parent.sessionId,

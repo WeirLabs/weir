@@ -13,7 +13,7 @@ test('8.8 partition: our groups are managed, stock client rows elsewhere are unm
   ]
   const { managed, unmanaged } = partitionMcpRows(rows, new Map([['docs', { groupId: 'weir-mcp-docs', generation: 2 }]]), {})
   expect(managed).toEqual([{ identity: 'docs', groupId: 'weir-mcp-docs', label: 'docs', generation: 2, state: 'mounted' }])
-  expect(unmanaged).toEqual([{ serverName: 'web', state: 'unmanaged' }])
+  expect(unmanaged).toEqual([{ serverName: 'web', state: 'unmanaged', readOnly: true }])
 })
 
 test('8.9 adopt conflict: a same-named host row holds the reservation and is never called a success', () => {

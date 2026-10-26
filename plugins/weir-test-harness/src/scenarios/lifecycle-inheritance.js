@@ -240,16 +240,19 @@ function assert(run) {
   run.check('a real fork of an accepted source captured the effective set', accepted?.inherited?.kind === 'ok'
     && accepted?.inherited?.origin === 'inherited' && sameSet(accepted?.inherited?.names, ['fixture-a']), JSON.stringify(accepted?.inherited ?? null))
   run.check('the real fork inherited the managed MCP identity', sameSet(accepted?.inherited?.mcpServers, ['fork-gate']), JSON.stringify(accepted?.inherited?.mcpServers ?? null))
+  run.check('the real fork inherits the registration incarnation', accepted?.inherited?.mcpIncarnations?.['fork-gate'] === accepted?.mcp?.incarnation && typeof accepted?.mcp?.incarnation === 'string', JSON.stringify({ inherited: accepted?.inherited, mcp: accepted?.mcp }))
   run.check('the real fork links the source session it was created from', accepted?.inherited?.parent?.sessionId === accepted?.parentSession, JSON.stringify({ parent: accepted?.inherited?.parent, source: accepted?.parentSession }))
   run.check('the real fork holds no accepted record (inheritance only)', accepted?.selectionRecord === 'absent', String(accepted?.selectionRecord))
   run.check("the fork's catalog lists the inherited Skill before any request", sameSet(accepted?.catalog, ['fixture-a']), JSON.stringify(accepted?.catalog ?? null))
   run.check('the memory and COLD lifecycle snapshots agree with the catalog', accepted?.memory?.kind === 'ready' && accepted?.cold?.kind === 'ready'
     && sameSet(accepted?.cold?.names, ['fixture-a']) && sameSet(accepted?.cold?.mcpServers, ['fork-gate']), JSON.stringify({ memory: accepted?.memory, cold: accepted?.cold }))
+  run.check('memory and COLD snapshots bind the same registration incarnation', accepted?.memory?.mcpIncarnations?.['fork-gate'] === accepted?.mcp?.incarnation && accepted?.cold?.mcpIncarnations?.['fork-gate'] === accepted?.mcp?.incarnation, JSON.stringify({ memory: accepted?.memory, cold: accepted?.cold, mcp: accepted?.mcp }))
   run.check('the production MCP gate admits the inherited managed server (memory and COLD)', accepted?.mcp?.admit === true && accepted?.mcp?.coldAdmit === true && accepted?.mcp?.enabled === true, JSON.stringify(accepted?.mcp ?? null))
   run.check('a registered managed server the source never accepted stays refused', accepted?.mcp?.otherRefused === false, JSON.stringify(accepted?.mcp ?? null))
   run.check('a fork of a fork inherits its immediate source inherited unit', inheritedFork?.inherited?.kind === 'ok'
     && inheritedFork?.inherited?.parent?.sessionId === accepted?.forkId && sameSet(inheritedFork?.inherited?.names, ['fixture-a']), JSON.stringify(inheritedFork?.inherited ?? null))
   run.check('the consecutive fork keeps the MCP set and admits the same server', sameSet(inheritedFork?.inherited?.mcpServers, ['fork-gate']) && inheritedFork?.mcp?.admit === true, JSON.stringify({ mcp: inheritedFork?.mcp, inherited: inheritedFork?.inherited?.mcpServers }))
+  run.check('the consecutive fork preserves the registration incarnation', inheritedFork?.inherited?.mcpIncarnations?.['fork-gate'] === accepted?.mcp?.incarnation, JSON.stringify({ inherited: inheritedFork?.inherited, mcp: accepted?.mcp }))
   run.check('a source that only resolved its initial set is inherited verbatim', initialFork?.inherited?.kind === 'ok'
     && initialFork?.source?.record === 'absent' && initialFork?.source?.snapshot?.kind === 'ready'
     && sameSet(initialFork?.inherited?.names, initialFork?.source?.snapshot?.names), JSON.stringify(initialFork ?? null).slice(0, 400))

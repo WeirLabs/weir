@@ -1,0 +1,411 @@
+{
+  "mcpIdentity": "fork-gate",
+  "mcpOtherIdentity": "fork-gate-other",
+  "sessions": {
+    "fork-accepted": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+    "fork-inherited": "session-2d8a5eaf-c382-4d2b-a5dd-9628725b6551",
+    "initial": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+    "fork-initial": "session-b1df10c3-1bb4-46dc-bb89-a6c4e59aeaf3"
+  },
+  "runs": [
+    {
+      "label": "fork-accepted",
+      "forkId": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+      "parentSession": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+      "source": {
+        "snapshot": {
+          "kind": "ready",
+          "revision": 2,
+          "names": [
+            "fixture-a"
+          ],
+          "mcpServers": [
+            "fork-gate"
+          ],
+          "mcpIncarnations": {
+            "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+          },
+          "captured": null
+        },
+        "record": "ok"
+      },
+      "inherited": {
+        "kind": "ok",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "parent": {
+          "sessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "revision": 2
+        },
+        "origin": "inherited"
+      },
+      "selectionRecord": "absent",
+      "memory": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "captured": {
+          "parentSessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "parentRevision": 2,
+          "capturedAt": 1793016260866
+        }
+      },
+      "catalogAll": [
+        "fixture-a",
+        "office-docx",
+        "office-pptx",
+        "office-xlsx"
+      ],
+      "catalog": [
+        "fixture-a"
+      ],
+      "afterRead": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "captured": {
+          "parentSessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "parentRevision": 2,
+          "capturedAt": 1793016260866
+        }
+      },
+      "cold": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "captured": {
+          "parentSessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+          "parentRevision": 2,
+          "capturedAt": 1793016260866
+        }
+      },
+      "mcp": {
+        "identity": "fork-gate",
+        "incarnation": "398ab71a-140f-4e9f-8485-92460c1975e8",
+        "generation": 1,
+        "admit": true,
+        "enabled": true,
+        "coldAdmit": true,
+        "otherIdentity": "fork-gate-other",
+        "otherGeneration": 1,
+        "otherRefused": false
+      }
+    },
+    {
+      "label": "fork-inherited",
+      "forkId": "session-2d8a5eaf-c382-4d2b-a5dd-9628725b6551",
+      "parentSession": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+      "source": {
+        "snapshot": {
+          "kind": "ready",
+          "revision": 1,
+          "names": [
+            "fixture-a"
+          ],
+          "mcpServers": [
+            "fork-gate"
+          ],
+          "mcpIncarnations": {
+            "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+          },
+          "captured": {
+            "parentSessionId": "session-a818322e-6d5e-4923-9fd0-607ddcef42d1",
+            "parentRevision": 2,
+            "capturedAt": 1793016260866
+          }
+        },
+        "record": "absent"
+      },
+      "inherited": {
+        "kind": "ok",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "parent": {
+          "sessionId": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+          "revision": 1
+        },
+        "origin": "inherited"
+      },
+      "selectionRecord": "absent",
+      "memory": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "captured": {
+          "parentSessionId": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+          "parentRevision": 1,
+          "capturedAt": 1793016260946
+        }
+      },
+      "catalogAll": [
+        "fixture-a",
+        "office-docx",
+        "office-pptx",
+        "office-xlsx"
+      ],
+      "catalog": [
+        "fixture-a"
+      ],
+      "afterRead": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "captured": {
+          "parentSessionId": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+          "parentRevision": 1,
+          "capturedAt": 1793016260946
+        }
+      },
+      "cold": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "fixture-a"
+        ],
+        "mcpServers": [
+          "fork-gate"
+        ],
+        "mcpIncarnations": {
+          "fork-gate": "398ab71a-140f-4e9f-8485-92460c1975e8"
+        },
+        "captured": {
+          "parentSessionId": "session-6db7e37b-6e20-40d3-9531-9d44a956fc1c",
+          "parentRevision": 1,
+          "capturedAt": 1793016260946
+        }
+      },
+      "mcp": {
+        "identity": "fork-gate",
+        "incarnation": "398ab71a-140f-4e9f-8485-92460c1975e8",
+        "generation": 1,
+        "admit": true,
+        "enabled": true,
+        "coldAdmit": true,
+        "otherIdentity": "fork-gate-other",
+        "otherGeneration": 1,
+        "otherRefused": false
+      }
+    },
+    {
+      "label": "fork-initial",
+      "forkId": "session-b1df10c3-1bb4-46dc-bb89-a6c4e59aeaf3",
+      "parentSession": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+      "source": {
+        "snapshot": {
+          "kind": "ready",
+          "revision": 0,
+          "names": [
+            "debugging",
+            "deep-work",
+            "git-master",
+            "mcp-server-setup",
+            "programming",
+            "refactor",
+            "remove-ai-slops",
+            "remove-deadcode",
+            "research",
+            "review-work",
+            "work-with-pr"
+          ],
+          "mcpServers": [],
+          "mcpIncarnations": {},
+          "captured": null
+        },
+        "record": "absent"
+      },
+      "inherited": {
+        "kind": "ok",
+        "revision": 1,
+        "names": [
+          "debugging",
+          "deep-work",
+          "git-master",
+          "mcp-server-setup",
+          "programming",
+          "refactor",
+          "remove-ai-slops",
+          "remove-deadcode",
+          "research",
+          "review-work",
+          "work-with-pr"
+        ],
+        "mcpServers": [],
+        "mcpIncarnations": {},
+        "parent": {
+          "sessionId": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+          "revision": 0
+        },
+        "origin": "inherited"
+      },
+      "selectionRecord": "absent",
+      "memory": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "debugging",
+          "deep-work",
+          "git-master",
+          "mcp-server-setup",
+          "programming",
+          "refactor",
+          "remove-ai-slops",
+          "remove-deadcode",
+          "research",
+          "review-work",
+          "work-with-pr"
+        ],
+        "mcpServers": [],
+        "mcpIncarnations": {},
+        "captured": {
+          "parentSessionId": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+          "parentRevision": 0,
+          "capturedAt": 1793016261136
+        }
+      },
+      "catalogAll": [
+        "debugging",
+        "deep-work",
+        "git-master",
+        "mcp-server-setup",
+        "office-docx",
+        "office-pptx",
+        "office-xlsx",
+        "programming",
+        "refactor",
+        "remove-ai-slops",
+        "remove-deadcode",
+        "research",
+        "review-work",
+        "work-with-pr"
+      ],
+      "catalog": [
+        "debugging",
+        "deep-work",
+        "git-master",
+        "mcp-server-setup",
+        "programming",
+        "refactor",
+        "remove-ai-slops",
+        "remove-deadcode",
+        "research",
+        "review-work",
+        "work-with-pr"
+      ],
+      "afterRead": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "debugging",
+          "deep-work",
+          "git-master",
+          "mcp-server-setup",
+          "programming",
+          "refactor",
+          "remove-ai-slops",
+          "remove-deadcode",
+          "research",
+          "review-work",
+          "work-with-pr"
+        ],
+        "mcpServers": [],
+        "mcpIncarnations": {},
+        "captured": {
+          "parentSessionId": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+          "parentRevision": 0,
+          "capturedAt": 1793016261136
+        }
+      },
+      "cold": {
+        "kind": "ready",
+        "revision": 1,
+        "names": [
+          "debugging",
+          "deep-work",
+          "git-master",
+          "mcp-server-setup",
+          "programming",
+          "refactor",
+          "remove-ai-slops",
+          "remove-deadcode",
+          "research",
+          "review-work",
+          "work-with-pr"
+        ],
+        "mcpServers": [],
+        "mcpIncarnations": {},
+        "captured": {
+          "parentSessionId": "e55f1796-acd3-4cf8-afa7-15a4699ca9c0",
+          "parentRevision": 0,
+          "capturedAt": 1793016261136
+        }
+      },
+      "mcp": {
+        "identity": "fork-gate",
+        "incarnation": "398ab71a-140f-4e9f-8485-92460c1975e8",
+        "generation": 1,
+        "admit": false,
+        "enabled": false,
+        "coldAdmit": false,
+        "otherIdentity": "fork-gate-other",
+        "otherGeneration": 1,
+        "otherRefused": false
+      }
+    }
+  ]
+}

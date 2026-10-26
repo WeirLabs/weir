@@ -11,6 +11,7 @@ import {
   compileIntentTable,
   DEFAULT_INTENTS,
   matchIntents,
+  intentSuppressed,
   renderReminder,
   renderSkillPointer,
   stripQuotedRegions,
@@ -36,7 +37,7 @@ function latestUserText(messages) {
   return undefined
 }
 
-function apply(ctx, config = {}) {
+function apply(ctx, config = {}, dependencies = {}) {
   const audit = createAudit(ctx)
   const rowConfig = config
   const nestKeys = { jev: { endpoint: 'jevEndpoint', model: 'jevModel', apiKeyEnv: 'jevApiKeyEnv' } }
@@ -45,6 +46,7 @@ function apply(ctx, config = {}) {
   const table = compileIntentTable(config.intents ?? DEFAULT_INTENTS)
   const disabled = new Set(Array.isArray(config.disabled) ? config.disabled : [])
   const intents = table.filter((intent) => !disabled.has(intent.id))
+  const selectionFor = dependencies.selectionFor ?? skillSelectionFor
 
   // Semantic classifier: null in regex mode (regex-only behavior, zero cost).
   const classifier = createClassifier({
@@ -78,15 +80,18 @@ function apply(ctx, config = {}) {
     let hits = matchIntents(stripped, intents)
 
     // Semantic front-end: only when regex missed entirely (short-circuit).
-    if (hits.length === 0 && classifier) {
-      const semanticHit = await classifier(stripped, intents, {
+    // Negated/discussion-only setup wording is removed from its catalog too,
+    // so a semantic hit cannot undo an explicit suppression.
+    const semanticIntents = intents.filter(intent => !intentSuppressed(stripped, intent))
+    if (hits.length === 0 && classifier && semanticIntents.length > 0) {
+      const semanticHit = await classifier(stripped, semanticIntents, {
         agent,
         onAudit: (event) => {
           audit(agent.session, AUDIT_TYPES.intentClassify, event)
         },
       })
       if (semanticHit) {
-        const intent = intents.find((entry) => entry.id === semanticHit)
+        const intent = semanticIntents.find((entry) => entry.id === semanticHit)
         if (intent) hits = [intent]
       }
     }
@@ -105,11 +110,14 @@ function apply(ctx, config = {}) {
     // stays unarmed (the ledger below never sees it), so a later hit once
     // the skill is available still injects the full initial pointer; nothing
     // is injected in its place and nothing already injected is withdrawn.
-    const selection = skillSelectionFor(ctx)
-    const skillView = selection?.provider ? createSkillConsumerView({ provider: selection.provider }) : null
-    const eligibility = skillView
-      ? skill => skillView.conclusion({ cwd: agent.session?.header?.cwd, scope: { session: { id: sessionId } } }, skill, 'model')
-      : null
+    let eligibility = null
+    try {
+      const selection = selectionFor(ctx)
+      const skillView = selection?.provider ? createSkillConsumerView({ provider: selection.provider }) : null
+      eligibility = skillView
+        ? skill => skillView.conclusion({ cwd: agent.session?.header?.cwd, scope: { session: { id: sessionId } } }, skill, 'model')
+        : null
+    } catch { eligibility = null }
 
     const injections = []
     for (const intent of hits) {
@@ -123,9 +131,18 @@ function apply(ctx, config = {}) {
         record(ctx, agent, intent, true)
         continue
       }
-      if (intent.injection.kind === 'skill-pointer' && eligibility) {
-        const verdict = await eligibility(intent.injection.skill)
-        if (!verdict?.invocable) {
+      if (intent.injection.kind === 'skill-pointer') {
+        if (!eligibility) {
+          record(ctx, agent, intent, false, { suppressed: 'provider-unavailable' })
+          continue
+        }
+        let verdict
+        try { verdict = await eligibility(intent.injection.skill) }
+        catch {
+          record(ctx, agent, intent, false, { suppressed: 'view-unavailable' })
+          continue
+        }
+        if (verdict?.invocable !== true) {
           record(ctx, agent, intent, false, { suppressed: verdict?.reason ?? 'not-selected' })
           continue
         }

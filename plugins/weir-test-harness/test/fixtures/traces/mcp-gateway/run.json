@@ -1,6 +1,6 @@
 {
   "scenario": "mcp-gateway",
-  "home": "/Users/young/Documents/Orrery/.weir/it-root/home",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/.weir/it-root/home",
   "code": 0,
   "stdout": "parent observed mcp gateway\n",
   "stderr": "",

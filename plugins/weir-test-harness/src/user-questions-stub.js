@@ -14,6 +14,7 @@ const inject = []
 const ANSWERED = new Set(['merge', 'abandon', 'cleanup'])
 /** The blackboard promotion adjudication question id (the injected brief's ask, slice 3). */
 const PROMOTION_QUESTION_ID = 'blackboard-promotion'
+const MCP_INSTALL_QUESTION_ID = 'mcp-install-confirmation'
 
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
@@ -22,6 +23,17 @@ function apply(ctx, config = {}) {
     if (!Array.isArray(questions)) return next()
     const answers = []
     for (const question of questions) {
+      if (question?.id === MCP_INSTALL_QUESTION_ID) {
+        const mode = process.env.WEIR_IT_MCP_AI_ANSWER ?? 'approve'
+        if (mode === 'close') throw Object.assign(new Error('scripted confirmation close'), { code: 'ASK_CANCELLED' })
+        const approve = question?.options?.[0]?.label
+        const cancel = question?.options?.[1]?.label
+        if (mode === 'custom') answers.push({ id: question.id, selected: [approve], custom: 'scripted custom text is not approval' })
+        else if (mode === 'extra') answers.push({ id: question.id, selected: [approve, cancel] })
+        else if (mode === 'cancel') answers.push({ id: question.id, selected: [cancel] })
+        else answers.push({ id: question.id, selected: [approve] })
+        continue
+      }
       // The promotion brief asks one question per candidate (stable id); the
       // scripted headless user picks the FIRST option — the recommended
       // destination the scripted agent put first.

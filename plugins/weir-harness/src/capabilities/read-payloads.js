@@ -50,6 +50,7 @@ export async function buildReceiptPayload(deps, options) {
       skills: selected.map(candidate => candidate.name),
       skillIdentities,
       mcpServers,
+      ...(snapshot?.mcpIncarnations && typeof snapshot.mcpIncarnations === 'object' ? { mcpIncarnations: structuredClone(snapshot.mcpIncarnations) } : {}),
       digest: effectiveSelectionDigest(skillIdentities, mcpServers),
     },
     warnings: result?.complete === false || status?.error
@@ -78,7 +79,7 @@ export async function buildListPayload(deps, options) {
     if (!candidate.selected || !candidate.identity) continue
     try { selectedKeys.add(skillIdentityKey(candidate.identity)) } catch { /* an unstamped shape carries no mark */ }
   }
-  const listing = deps.mcpManager?.list?.() ?? { managed: [], unmanaged: [] }
+  const listing = await (deps.mcpManager?.list?.() ?? Promise.resolve({ managed: [], unmanaged: [] }))
   return {
     skills: candidates.map(candidate => {
       /** @type {string | null} */
@@ -95,9 +96,13 @@ export async function buildListPayload(deps, options) {
       }
     }),
     mcpServers: [
-      ...(listing.managed ?? []).map(server => ({ identity: server.identity, state: server.state })),
-      ...(listing.unmanaged ?? []).map(server => ({ serverName: server.serverName, state: 'unmanaged' })),
+      ...(listing.managed ?? []).map(server => ({ ...server })),
+      ...(listing.unmanaged ?? []).map(server => ({ ...server, state: 'unmanaged', readOnly: true })),
     ],
+    mcpWarnings: Array.isArray(listing.warnings) ? [...listing.warnings] : [],
+    mcpUnavailable: listing.unavailable ?? null,
+    mcpCapabilities: listing.capabilities ?? null,
+    mcpRegistryRevision: Number.isSafeInteger(listing.registryRevision) ? listing.registryRevision : 0,
   }
 }
 

@@ -67,6 +67,7 @@ function apply(ctx, config = {}) {
             locateSession: async session => session,
             inventory: options => selection.inventory(options),
             provider: selection.provider,
+            mcpRegistry: createMcpRegistry({ store }),
           })
           const current = await store.read({ kind: 'selection', sessionId })
           const applied = current.kind === 'ok' ? (current.payload?.skills ?? []) : []
@@ -80,7 +81,7 @@ function apply(ctx, config = {}) {
           payload.selection.mcpServers = Array.isArray(args.mcpServers) ? args.mcpServers : []
           const outcome = await engine.apply({ sessionId, cwd }, { requestId: `mcp-${sessionId}-${Date.now()}`, ...payload })
           if (outcome.status === 'applied') {
-            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(payload.selection.skills), mcpServers: [...payload.selection.mcpServers] })
+            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(payload.selection.skills), mcpServers: [...payload.selection.mcpServers], mcpIncarnations: structuredClone(outcome.effective?.mcpIncarnations) })
           }
           report.apply = { status: outcome.status, reason: outcome.reason ?? null, revision: outcome.revision ?? null }
           report.completed = outcome.status === 'applied'
@@ -114,7 +115,7 @@ function apply(ctx, config = {}) {
         }
         if (args.op === 'list') {
           if (!manager) throw new Error('weirMcpManager not mounted')
-          persisted.listing = manager.list()
+          persisted.listing = await manager.list()
           persisted.publicNames = [...manager.publicNames.entries()]
           persisted.startErrors = manager.startErrors ?? []
           report.listing = persisted.listing

@@ -127,6 +127,7 @@ describe('weir settings client half', () => {
     const capabilityBadgeChunk = { CapabilityBadge: (props) => ({ __badge: props }) }
     const capabilityModelChunk = { marker: 'capability-model', dictionaries: { en: { 'capability.sentinel': 'cap en' }, zh: { 'capability.sentinel': 'cap zh' } } }
     const capabilityManagerChunk = { CapabilityManagerPanel: (props) => ({ __capabilityPanel: props }) }
+    const mcpManagerChunk = { McpManagerView: () => null, McpManagerBoundary: () => null }
     const blackboardModelChunk = { marker: 'blackboard-model', dictionaries: { en: { 'blackboard.sentinel': 'board en' }, zh: { 'blackboard.sentinel': 'board zh' } } }
     const blackboardPanelChunk = { BlackboardPanel: (props) => ({ __blackboardPanel: props }) }
     const chunkModules = {
@@ -134,6 +135,7 @@ describe('weir settings client half', () => {
       './client.capability-badge.js': capabilityBadgeChunk,
       './client.capability-model.js': capabilityModelChunk,
       './client.capability-manager.js': capabilityManagerChunk,
+      './client.mcp-manager.js': mcpManagerChunk,
       './client.blackboard-model.js': blackboardModelChunk,
       './client.blackboard-panel.js': blackboardPanelChunk,
       './client.settings-page.js': settingsPageChunk,
@@ -976,7 +978,7 @@ describe('weir settings client half', () => {
     expect(pane.definition.inject()).toEqual({})
     const paneVerbs = pane.definition.inject('s9')
     expect(paneVerbs.sessionId).toBe('s9')
-    for (const verb of ['fetchReceipt', 'subscribeFrames', 'applySelection', 'mcpAdd', 'fetchListing', 'fetchConditions', 'loadPresets', 'fetchPresets', 'presetSave', 'presetLoad', 'presetDelete', 'presetExport', 'presetImport', 'defaultGet', 'defaultSave', 'defaultClear']) {
+    for (const verb of ['fetchReceipt', 'subscribeFrames', 'applySelection', 'mcpAdd', 'mcpPreview', 'mcpMutate', 'mcpBatch', 'fetchListing', 'fetchConditions', 'loadPresets', 'fetchPresets', 'presetSave', 'presetLoad', 'presetDelete', 'presetExport', 'presetImport', 'defaultGet', 'defaultSave', 'defaultClear']) {
       expect(typeof paneVerbs[verb]).toBe('function')
     }
 
@@ -1030,6 +1032,27 @@ describe('weir settings client half', () => {
     expect('openPanel' in badgeVerbs).toBe(false)
   })
 
+  it('an MCP-only lazy chunk failure leaves the composer Badge and other capability controls mounted', async () => {
+    const { surface, reactStub, failChunk } = await loadEntry()
+    failChunk('./client.mcp-manager.js', new Error('mcp chunk down'))
+    const { ctx, slotInjects, slotRegistrations, localeRegistrations } = makeCtx()
+    surface.apply(ctx)
+    slotInjects[11].fn()
+    const badge = slotRegistrations.find((registration) => registration.definition.id === 'weir-capability-badge')
+    reactStub.begin()
+    expect(badge.component({ sessionId: 's1' })).toBe(null)
+    await flush()
+    await flush()
+    reactStub.begin()
+    const wrapped = badge.component({ sessionId: 's1' })
+    expect(wrapped).not.toBe(null)
+    expect(typeof wrapped.ManagerPanel).toBe('function')
+    expect(wrapped.McpManagerView).toBeUndefined()
+    expect(localeRegistrations.some((registration) => registration.ns === 'settings.weir.capability')).toBe(true)
+    const direct = wrapped.__type(wrapped)
+    expect(direct.__badge.McpManagerView).toBeUndefined()
+    expect(typeof direct.__badge.ManagerPanel).toBe('function')
+  })
   it('capability read verbs travel as raw gateway calls over the shared connection, never the command channel', async () => {
     const { surface } = await loadEntry()
     const { ctx, slotInjects, slotRegistrations, executed, rpcCalls, connection, eventSubscriptions } = makeCtx()
@@ -1097,6 +1120,29 @@ describe('weir settings client half', () => {
     expect(await verbs.fetchReceipt('s7')).toEqual(receiptPayload)
   })
 
+  it('MCP mutations use the independent request channel with exact sessionId/request envelopes', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, executed, rpcCalls, connection } = makeCtx()
+    connection.rpcBehavior = (_channel, endpoint) => {
+      if (endpoint.endsWith('/batch')) return { ok: true, value: { status: 'partial', items: [] } }
+      if (endpoint.endsWith('/mutate')) return { ok: true, value: { status: 'mounted', saved: true } }
+      return { ok: false, error: { code: 'gateway/unknown', message: 'unknown endpoint' } }
+    }
+    surface.apply(ctx)
+    slotInjects[11].fn()
+    const badgeEntry = slotRegistrations.find((registration) => registration.definition.id === 'weir-capability-badge')
+    const verbs = badgeEntry.definition.inject('s7')
+    const previewRequest = { action: 'preview', config: { secretValues: { env: { TOKEN: 'client-canary' } } } }
+    expect(await verbs.mcpPreview('s7', previewRequest)).toEqual({ status: 'mounted', saved: true })
+    expect(await verbs.mcpMutate('s7', { action: 'edit', identity: 'docs', expectedRevision: 4 })).toEqual({ status: 'mounted', saved: true })
+    expect(await verbs.mcpBatch('s7', { mode: 'add', document: '{"mcpServers":{}}' })).toEqual({ status: 'partial', items: [] })
+    expect(rpcCalls).toEqual([
+      { channel: '/api', endpoint: 'weirCapabilityMutations/mutate', payload: { args: { sessionId: 's7', request: previewRequest } } },
+      { channel: '/api', endpoint: 'weirCapabilityMutations/mutate', payload: { args: { sessionId: 's7', request: { action: 'edit', identity: 'docs', expectedRevision: 4 } } } },
+      { channel: '/api', endpoint: 'weirCapabilityMutations/batch', payload: { args: { sessionId: 's7', request: { mode: 'add', document: '{"mcpServers":{}}' } } } },
+    ])
+    expect(executed).toEqual([])
+  })
   it('a rejecting rpc channel never breaks apply, and the read path settles on its existing fallbacks', async () => {
     const { surface } = await loadEntry()
     const { ctx, localeRegistrations, slotInjects, slotRegistrations, connection } = makeCtx()
@@ -1361,6 +1407,77 @@ describe('weir settings client half', () => {
     'capability.mcp.command',
     'capability.mcp.errorIdentityInvalid',
     'capability.mcp.errorRequired',
+    'capability.mcp.boundary',
+    'capability.mcp.unavailableView',
+    'capability.mcp.unavailableRegistry',
+    'capability.mcp.stale',
+    'capability.mcp.refresh',
+    'capability.mcp.pasteJson',
+    'capability.mcp.secretArgIndex',
+    'capability.mcp.secretKey',
+    'capability.mcp.secretAction',
+    'capability.mcp.keep',
+    'capability.mcp.replace',
+    'capability.mcp.removeSecret',
+    'capability.mcp.secretSource',
+    'capability.mcp.secretValueSource',
+    'capability.mcp.secretRefSource',
+    'capability.mcp.removeRow',
+    'capability.mcp.ref',
+    'capability.mcp.secretBlankKeep',
+    'capability.mcp.secretValue',
+    'capability.mcp.prefix',
+    'capability.mcp.addSecret',
+    'capability.mcp.saved',
+    'capability.mcp.notAttempted',
+    'capability.mcp.defaultRemoved',
+    'capability.mcp.discovery',
+    'capability.mcp.nonAtomic',
+    'capability.mcp.planDigest',
+    'capability.mcp.editTitle',
+    'capability.mcp.transport',
+    'capability.mcp.basic',
+    'capability.mcp.advanced',
+    'capability.mcp.serverName',
+    'capability.mcp.argsJson',
+    'capability.mcp.cwd',
+    'capability.mcp.sensitiveConfigured',
+    'capability.mcp.urlMode',
+    'capability.mcp.urlLiteral',
+    'capability.mcp.urlRef',
+    'capability.mcp.url',
+    'capability.mcp.namespacePending',
+    'capability.mcp.preview',
+    'capability.mcp.confirm',
+    'capability.mcp.test',
+    'capability.mcp.pasteTitle',
+    'capability.mcp.pasteLabel',
+    'capability.mcp.tooLarge',
+    'capability.mcp.confirmBatch',
+    'capability.mcp.retryEdit',
+    'capability.mcp.selectSession',
+    'capability.mcp.default',
+    'capability.mcp.selected',
+    'capability.mcp.toolsUnknown',
+    'capability.mcp.toolsCount',
+    'capability.mcp.liveUnknown',
+    'capability.mcp.lastMount',
+    'capability.mcp.lastTest',
+    'capability.mcp.edit',
+    'capability.mcp.restart',
+    'capability.mcp.defaultOff',
+    'capability.mcp.defaultOn',
+    'capability.mcp.remove',
+    'capability.mcp.pending',
+    'capability.mcp.removeTitle',
+    'capability.mcp.namespaceTitle',
+    'capability.mcp.batchTitle',
+    'capability.mcp.removeConfirm',
+    'capability.mcp.namespaceConfirm',
+    'capability.mcp.batchConfirm',
+    'capability.mcp.removeConfirmButton',
+    'capability.mcp.credentials-unavailable',
+    'capability.mcp.ephemeral-loader-unavailable',
     'capability.mcp.groupManaged',
     'capability.mcp.groupUnmanaged',
     'capability.mcp.identity',

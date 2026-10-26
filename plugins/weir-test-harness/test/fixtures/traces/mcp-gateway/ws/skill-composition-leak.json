@@ -41,6 +41,13 @@
       "scope": "weir-builtin"
     },
     {
+      "name": "mcp-server-setup",
+      "provider": "filesystem",
+      "source": "custom",
+      "rank": 300,
+      "scope": "weir-builtin"
+    },
+    {
       "name": "programming",
       "provider": "filesystem",
       "source": "custom",
@@ -515,6 +522,13 @@
         }
       },
       {
+        "name": "mcp-server-setup",
+        "invocation": {
+          "modelInvocable": true,
+          "userInvocable": true
+        }
+      },
+      {
         "name": "migrate-to-shoehorn",
         "invocation": {
           "modelInvocable": true,
@@ -765,6 +779,7 @@
       "git-guardrails-claude-code",
       "git-master",
       "grilling",
+      "mcp-server-setup",
       "migrate-to-shoehorn",
       "pr",
       "programming",
@@ -805,6 +820,7 @@
       "implement-spec",
       "improve-codebase-architecture",
       "loop-me",
+      "mcp-server-setup",
       "migrate-to-shoehorn",
       "pr",
       "programming",
@@ -1261,7 +1277,7 @@
       "provider": "weir-selected",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.weir/it-root/ws/skill-roots/selected-fixture"
+        "path": "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/.weir/it-root/ws/skill-roots/selected-fixture"
       },
       "content": "CONTENT_selected-fixture"
     },
@@ -1270,7 +1286,7 @@
       "provider": "filesystem",
       "resourceBase": {
         "kind": "directory",
-        "path": "/Users/young/Documents/Orrery/.weir/it-root/ws/skill-roots/unselected-fixture"
+        "path": "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/.weir/it-root/ws/skill-roots/unselected-fixture"
       },
       "content": "CONTENT_unselected-fixture"
     }

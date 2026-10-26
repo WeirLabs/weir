@@ -8,8 +8,11 @@ export function stripQuotedRegions(text) {
     text
       // fenced code blocks (``` or ~~~, optional info string)
       .replace(/(^|\n)[ \t]*(```|~~~)[\s\S]*?\2[ \t]*(?=\n|$)/g, '$1')
-      // inline code spans
+      // Any remaining opener starts an unclosed example: blank through EOF.
+      .replace(/(^|\n)[ \t]*(```|~~~)[\s\S]*$/g, '$1')
+      // inline code spans, including an unclosed trailing span
       .replace(/`[^`\n]*`/g, ' ')
+      .replace(/`[^`\n]*$/gm, ' ')
       // blockquote lines
       .replace(/^[ \t]*>.*$/gm, '')
   )
@@ -21,6 +24,7 @@ export function stripQuotedRegions(text) {
  * @property {RegExp[]} patterns - compiled matchers
  * @property {boolean} oncePerSession
  * @property {string} [summary] - one-line catalog description for the semantic classifier
+ * @property {RegExp[]} [suppressed] - negation/discussion matchers that also suppress semantic hits
  * @property {{ kind: 'skill-pointer', skill: string }
  *   | { kind: 'message', text: string }
  *   | { kind: 'effort', reasoningEffort: string }} injection
@@ -54,6 +58,12 @@ export function compileIntentTable(raw) {
         throw new Error(`intent-gate: intent "${entry.id}" has an invalid matcher ${JSON.stringify(matcher)}: ${String(error)}`)
       }
     })
+    if (entry.suppressedMatchers !== undefined && !Array.isArray(entry.suppressedMatchers)) throw new Error(`intent-gate: intent "${entry.id}" suppressedMatchers must be an array`)
+    const suppressed = (entry.suppressedMatchers ?? []).map((matcher) => {
+      if (typeof matcher !== 'string' || matcher.length === 0) throw new Error(`intent-gate: intent "${entry.id}" has a non-string suppressed matcher`)
+      try { return new RegExp(matcher, 'i') }
+      catch (error) { throw new Error(`intent-gate: intent "${entry.id}" has an invalid suppressed matcher ${JSON.stringify(matcher)}: ${String(error)}`) }
+    })
     const injection = entry.injection
     if (!injection || typeof injection !== 'object') {
       throw new Error(`intent-gate: intent "${entry.id}" needs an injection object`)
@@ -78,6 +88,7 @@ export function compileIntentTable(raw) {
       patterns,
       oncePerSession: entry.oncePerSession !== false,
       ...(typeof entry.summary === 'string' && entry.summary.length > 0 ? { summary: entry.summary } : {}),
+      ...(suppressed.length > 0 ? { suppressed } : {}),
       injection,
     }
   })
@@ -90,7 +101,12 @@ export function compileIntentTable(raw) {
  * @returns {IntentEntry[]} matched intents in table order
  */
 export function matchIntents(stripped, intents) {
-  return intents.filter((intent) => intent.patterns.some((pattern) => pattern.test(stripped)))
+  return intents.filter((intent) => !intentSuppressed(stripped, intent) && intent.patterns.some((pattern) => pattern.test(stripped)))
+}
+
+/** Explicit negation/discussion suppression, also applied before semantic classification. */
+export function intentSuppressed(stripped, intent) {
+  return Boolean(intent.suppressed?.some(pattern => pattern.test(stripped)))
 }
 
 /** Verbatim directive injected on every writing intent hit. */
@@ -105,6 +121,24 @@ Write the deliverable as the finished product, not as a record of producing it.
 
 /** The default intent table (English templates; runtime content follows the session language). */
 export const DEFAULT_INTENTS = [
+  {
+    id: 'mcp-server-setup',
+    matchers: [
+      '\\b(?:install|add|configure|set[ \\t]+up)\\b[^\\n.!?]{0,80}\\bmcp(?:[ \\t]+server)?\\b',
+      '\\bmcp(?:[ \\t]+server)?\\b[^\\n.!?]{0,60}\\b(?:install|add|configure|set[ \\t]+up)\\b',
+      '(?:安装|添加|配置)[^\\n。！？]{0,40}mcp(?:服务器)?',
+      'mcp(?:服务器)?[^\\n。！？]{0,40}(?:安装|添加|配置)',
+    ],
+    suppressedMatchers: [
+      '\\b(?:do[ \\t]+not|don[\'’]t|never|should[ \\t]+not|shouldn[\'’]t)\\b[^\\n.!?]{0,40}\\b(?:install|add|configure|set[ \\t]+up)\\b[^\\n.!?]{0,80}\\bmcp\\b',
+      '(?:不要|不用|别|请勿|禁止)[^\\n。！？]{0,30}(?:安装|添加|配置)[^\\n。！？]{0,40}mcp',
+      '(?:^|\\n)[ \\t]*(?:what|why|explain|discuss|describe|tell[ \\t]+me[ \\t]+about)\\b[^\\n]{0,100}\\bmcp\\b',
+      '\\b(?:explain|discuss|describe)\\b[^\\n.!?]{0,80}\\b(?:install|add|configure|set[ \\t]+up)\\b[^\\n.!?]{0,80}\\bmcp\\b',
+      '(?:^|\\n)[ \\t]*(?:什么是|解释|讨论|介绍|说明)[^\\n。！？]{0,80}mcp',
+    ],
+    summary: 'install, add, or configure a new MCP server; not for calling or troubleshooting an existing MCP tool or general MCP discussion',
+    injection: { kind: 'skill-pointer', skill: 'mcp-server-setup' },
+  },
   {
     id: 'deep-work',
     matchers: ['\\bdeep[- ]?work\\b', '深度工作', '深度作业'],

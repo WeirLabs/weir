@@ -43,7 +43,7 @@ const namesOf = skills => (Array.isArray(skills) ? skills : []).map(identity => 
 const snapshotShape = snapshot => (snapshot === null || snapshot === undefined
   ? { kind: 'absent' }
   : snapshot.state === 'ready'
-    ? { kind: 'ready', revision: snapshot.revision, names: namesOf(snapshot.skills), mcpServers: [...(snapshot.mcpServers ?? [])], captured: snapshot.captured ?? null }
+    ? { kind: 'ready', revision: snapshot.revision, names: namesOf(snapshot.skills), mcpServers: [...(snapshot.mcpServers ?? [])], mcpIncarnations: snapshot.mcpIncarnations ? { ...snapshot.mcpIncarnations } : null, captured: snapshot.captured ?? null }
     : { kind: 'blocked', reason: snapshot.reason ?? null })
 
 function apply(ctx, config = {}) {
@@ -115,6 +115,7 @@ function apply(ctx, config = {}) {
             locateSession: async session => session,
             inventory: options => selection.inventory(options),
             provider: selection.provider,
+            mcpRegistry: createMcpRegistry({ store }),
           })
           const current = await store.read({ kind: 'selection', sessionId })
           const applied = current.kind === 'ok' ? (current.payload?.skills ?? []) : []
@@ -130,7 +131,7 @@ function apply(ctx, config = {}) {
             // Mirror the production publishSnapshot hook (6.1): the mounted
             // lifecycle memory must see the acceptance, or a later recapture
             // intersects against a stale parent revision.
-            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(draft.toApplyPayload().selection.skills), mcpServers: [...draft.toApplyPayload().selection.mcpServers] })
+            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(draft.toApplyPayload().selection.skills), mcpServers: [...draft.toApplyPayload().selection.mcpServers], mcpIncarnations: structuredClone(outcome.effective?.mcpIncarnations) })
           }
           report.apply = { status: outcome.status, revision: outcome.revision ?? null }
           if (outcome.status !== 'applied') throw new Error(`engine apply rejected: ${outcome.status} ${outcome.reason ?? ''} ${JSON.stringify(outcome.conflicts ?? outcome.missing ?? '')}`) 
@@ -249,7 +250,7 @@ function apply(ctx, config = {}) {
           if (forkState.mcpIdentity !== null) forkState.mcpOtherIdentity = identity
           else forkState.mcpIdentity = identity
           const written = await registry.read()
-          report.register = { identity, status: outcome.status, generation: written.kind === 'ok' ? written.servers?.[identity]?.generation ?? null : null }
+          report.register = { identity, status: outcome.status, generation: written.kind === 'ok' ? written.servers?.[identity]?.generation ?? null : null, incarnation: written.kind === 'ok' ? written.servers?.[identity]?.incarnation ?? null : null }
           report.completed = outcome.status === 'committed'
           return report
         }
@@ -296,7 +297,7 @@ function apply(ctx, config = {}) {
           forkState.sessions[label] = forkId
           const inherited = await store.read({ kind: 'inherited', sessionId: forkId })
           run.inherited = inherited.kind === 'ok'
-            ? { kind: 'ok', revision: inherited.revision, names: namesOf(inherited.payload?.skills), mcpServers: inherited.payload?.mcpServers ?? [], parent: inherited.payload?.parent ?? null, origin: inherited.payload?.origin ?? null }
+            ? { kind: 'ok', revision: inherited.revision, names: namesOf(inherited.payload?.skills), mcpServers: inherited.payload?.mcpServers ?? [], mcpIncarnations: inherited.payload?.mcpIncarnations ? { ...inherited.payload.mcpIncarnations } : null, parent: inherited.payload?.parent ?? null, origin: inherited.payload?.origin ?? null }
             : { kind: inherited.kind }
           run.selectionRecord = (await store.read({ kind: 'selection', sessionId: forkId })).kind
           // Contract / specification: the effective set the fork's first
@@ -325,6 +326,7 @@ function apply(ctx, config = {}) {
           const otherGeneration = generationOf(otherIdentity)
           run.mcp = {
             identity,
+            incarnation: current.kind === 'ok' ? current.servers?.[identity]?.incarnation ?? null : null,
             generation,
             admit: await gate.admit(asAgent, identity, generation),
             enabled: gate.enabledFor(asAgent, identity),

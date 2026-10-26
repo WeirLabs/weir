@@ -12,6 +12,9 @@ import zlib from 'node:zlib'
 import { createSkillSelectionPlugin, resolveSessionCwd, persistedSessionCwd } from '../src/capabilities/skill-selection-plugin.js'
 import {
   CAPABILITY_READ_METHODS,
+  CAPABILITY_MUTATION_METHODS,
+  CAPABILITY_MUTATION_NAMESPACE,
+  CAPABILITY_MUTATION_SERVICE_KEY,
   CAPABILITY_READ_NAMESPACE,
   CAPABILITY_READ_SERVICE_KEY,
   CapabilityReadError,
@@ -90,7 +93,7 @@ test('remote receipt/list/conditions are byte-identical to the /capabilities ver
     // The effective selection digest is a required receipt field (backend corrective
     // lane): the applied preset resave flow takes it from the receipt back to the
     // server, so the exact key list and the sha256 hex shape are wire contract.
-    expect(Object.keys(remoteReceipt.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers', 'digest'])
+    expect(Object.keys(remoteReceipt.effective)).toEqual(['skills', 'skillIdentities', 'mcpServers', 'mcpIncarnations', 'digest'])
     expect(remoteReceipt.effective.digest).toMatch(/^[0-9a-f]{64}$/)
 
     const remoteList = await service.list('sess-remote')
@@ -543,7 +546,7 @@ test('host apply publishes the frozen binding and registers the hand-written con
   }
   remoteApply(ctx)
 
-  expect(provided).toHaveLength(1)
+  expect(provided).toHaveLength(2)
   expect(provided[0].key).toBe(CAPABILITY_READ_SERVICE_KEY)
   const service = provided[0].service
   // validateBinding's exact shape (S27): a frozen { service, serviceKey, namespace }.
@@ -555,8 +558,12 @@ test('host apply publishes the frozen binding and registers the hand-written con
   expect(typeof service.receipt).toBe('function')
   expect(typeof service.list).toBe('function')
   expect(typeof service.conditions).toBe('function')
+  expect(provided[1].key).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
+  expect(Object.isFrozen(provided[1].service)).toBe(true)
+  expect(typeof provided[1].service.mutate).toBe('function')
+  expect(typeof provided[1].service.batch).toBe('function')
 
-  expect(registered).toHaveLength(1)
+  expect(registered).toHaveLength(2)
   const contribution = registered[0]
   expect(contribution.schemas).toEqual([])
   expect(contribution.model).toEqual({ services: [], events: [], objects: [] })
@@ -570,6 +577,14 @@ test('host apply publishes the frozen binding and registers the hand-written con
     expect(invocation.result).toEqual({ mode: 'src-json' })
   }
   expect(contribution.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
+  const mutation = registered[1]
+  expect(mutation.invocations).toHaveLength(CAPABILITY_MUTATION_METHODS.length)
+  expect(mutation.invocations.map(entry => entry.method)).toEqual(['mutate', 'batch'])
+  for (const invocation of mutation.invocations) {
+    expect(invocation.service).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
+    expect(invocation.namespace).toBe(CAPABILITY_MUTATION_NAMESPACE)
+    expect(invocation.parameters.map(parameter => parameter.name)).toEqual(['sessionId', 'request'])
+  }
 })
 
 test('host apply stays inert with a warning when typert is unavailable or registration throws', () => {
@@ -592,7 +607,7 @@ test('host apply stays inert with a warning when typert is unavailable or regist
     logger: { warn: text => warnings2.push(text) },
   }
   remoteApply(throwing)
-  expect(warnings2).toHaveLength(1)
+  expect(warnings2).toHaveLength(2)
   expect(warnings2[0]).toContain('registration failed')
   expect(warnings2[0]).toContain('duplicate contribution')
 
@@ -648,14 +663,14 @@ test('the read contribution carries the package and face the registry validates'
 test('the shipped contribution survives the registry validatePackage, so registration cannot die silently', () => {
   const warnings = []
   const provided = []
-  let captured = null
+  const captured = []
   // The real registry's validatePackage, reproduced: a nonempty '#'-free package name, and
   // the package record keyed by face. It throws instead of silently dropping the contribution.
   const typert = {
     register(contribution) {
       if (typeof contribution?.package !== 'string' || contribution.package.length === 0 || contribution.package.includes('#')) throw new TypeError('validatePackage: bad package')
       if (typeof contribution?.face !== 'string') throw new TypeError('validatePackage: bad face')
-      captured = contribution
+      captured.push(contribution)
     },
   }
   const ctx = {
@@ -667,11 +682,12 @@ test('the shipped contribution survives the registry validatePackage, so registr
 
   // apply() swallows a rejected registration into a warning: the pre-fix code left this silent.
   expect(warnings).toEqual([])
-  expect(captured).toBeTruthy()
-  expect(captured.package).toBe('weir-harness')
-  expect(captured.face).toBe('host')
-  expect(captured.invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
-  expect(provided).toHaveLength(1)
+  expect(captured).toHaveLength(2)
+  expect(captured[0].package).toBe('weir-harness')
+  expect(captured[0].face).toBe('host')
+  expect(captured[0].invocations.map(entry => entry.method)).toEqual(['receipt', 'list', 'conditions', 'presets', 'defaultGet'])
+  expect(captured[1].invocations.map(entry => entry.method)).toEqual(CAPABILITY_MUTATION_METHODS)
+  expect(provided).toHaveLength(2)
   expect(provided[0].key).toBe(CAPABILITY_READ_SERVICE_KEY)
   expect(provided[0].service.typertRemote.namespace).toBe(CAPABILITY_READ_NAMESPACE)
 

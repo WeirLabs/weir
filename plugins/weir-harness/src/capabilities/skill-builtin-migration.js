@@ -14,6 +14,7 @@ export const WEIR_BUILTIN_SKILLS = Object.freeze([
   'debugging',
   'deep-work',
   'git-master',
+  'mcp-server-setup',
   'programming',
   'refactor',
   'remove-ai-slops',
@@ -33,7 +34,7 @@ export const MIGRATION_FAILURE = 'Weir builtin skill migration check failed'
 /**
  * Verify a discovery snapshot against the pre-migration contract: exactly one
  * readable weir-builtin root whose parsed candidates are exactly the
- * contracted ten, each carrying the custom source label and rank 300.
+ * contracted catalog, each carrying the custom source label and rank 300.
  * @param {{ roots?: Array<{ root: Record<string, unknown>, complete: boolean, error?: string }>,
  *   candidates?: Array<Record<string, any>> }} snapshot
  * @returns {{ ok: true } | { ok: false, reason: string }}

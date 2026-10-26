@@ -1,0 +1,8 @@
+{
+  "scenario": "mcp-management",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/mcp-server-management-232/.weir/it-root/home",
+  "code": 0,
+  "stdout": "mcp management complete\n",
+  "stderr": "",
+  "sessionId": null
+}

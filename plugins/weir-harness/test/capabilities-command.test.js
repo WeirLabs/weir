@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
+import { seedMcpRegistrations } from './helpers/mcp-registry.js'
+import { createCommandMcpManager } from './helpers/mcp-registry.js'
 
 // The store-backed command surface (receipt/list/apply/mcp-add) persists
 // through the Weir capability store, whose platform matrix (C-1.10) enables
@@ -80,16 +82,16 @@ test('/capabilities receipt and list unwrap provider.list candidates', { skip },
     // the builtin baseline (6.5), so the receipt must name those skills, not
     // filter them away on a `selected` flag the contract never carried.
     expect(receiptPayload.warnings).toEqual([])
-    expect(receiptPayload.effective.skills).toHaveLength(10)
+    expect(receiptPayload.effective.skills).toHaveLength(11)
     expect(receiptPayload.effective.skills).toContain('debugging')
     const listing = await command.handler({ agent, rawInput: 'list' })
     expect(listing.kind).toBe('success')
     const listingPayload = JSON.parse(listing.text)
     expect(Array.isArray(listingPayload.skills)).toBe(true)
     expect(Array.isArray(listingPayload.mcpServers)).toBe(true)
-    // Manager rows: the 10 baseline skills are selected; the 3 Office denial
+    // Manager rows: the 11 baseline skills are selected; the 3 Office denial
     // placeholders list as unselected.
-    expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(10)
+    expect(listingPayload.skills.filter(row => row.selected === true)).toHaveLength(11)
     expect(listingPayload.skills.filter(row => row.selected !== true)).toHaveLength(3)
   } finally {
     host.restore()
@@ -346,6 +348,7 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
   const host = pinHermeticHostRoots()
   try {
     const root = mkdtempSync(join(tmpdir(), 'weir-cmd-mcp-'))
+    const mcpManager = createCommandMcpManager()
     let registeredCommands = []
     let provider
     const ctx = {
@@ -360,6 +363,7 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
       get(name) {
         if (name === 'profileContext') return { home: root, name: 'it' }
         if (name === 'commands') return { register(command) { registeredCommands.push(command); return () => {} } }
+        if (name === 'weirMcpManager') return mcpManager
         return undefined
       },
     }
@@ -375,7 +379,7 @@ test('/capabilities mcp-add registers a stdio server into the Weir registry', { 
     const added = await command.handler({ agent, rawInput: `mcp-add ${JSON.stringify({ identity: 'my-docs', label: 'My Docs', command: 'npx', args: ['-y', '@org/docs-mcp'] })}` })
     expect(added.kind).toBe('success')
     const result = JSON.parse(added.text)
-    expect(result.status).toBe('registered')
+    expect(result.status).toBe('mounted')
     expect(result.identity).toBe('my-docs')
     expect(result.generation).toBe(1)
     // The entry is durably in the registry with the client config verbatim.
@@ -443,6 +447,7 @@ test('/capabilities apply wires the manager drain: a removal reports the real in
 
     // The session accepts the managed server, then has a call in flight on it
     // (the manager drain's enter/exit is the handoff ledger, mcp-admission).
+    await seedMcpRegistrations(root)
     const accepted = await command.handler({ agent, rawInput: `apply ${JSON.stringify({ requestId: 'r-1', expectedRevision: 0, skills: ['alpha'], mcpServers: ['docs'] })}` })
     expect(JSON.parse(accepted.text).status).toBe('applied')
     const token = managerDrain.enter('sess-drain', 'docs', 'slow-call')
@@ -500,6 +505,7 @@ test('/capabilities receipt on a cold fork reports the inherited sets with an ac
     const alphaIdentity = JSON.parse((await command.handler({ agent: seedAgent, rawInput: 'list' })).text).skills.find(row => row.name === 'alpha').identity
     const forkAgent = { id: 'sess-fork', session: { id: 'sess-fork', header: { cwd: root, delegationDepth: 0, parentSession: 'sess-parent' } } }
     // Exactly what a depth-0 capture writes (origin inherited + lineage metadata).
+    await seedMcpRegistrations(root)
     const { openCapabilityStore } = await import('../src/capabilities/store/store.js')
     await openCapabilityStore({ profileContext: { home: root, name: 'it' }, platform: 'darwin' })
       .commit({ kind: 'inherited', sessionId: 'sess-fork' }, 0, () => ({

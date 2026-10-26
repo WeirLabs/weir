@@ -72,16 +72,27 @@ import { skillIdentityKey } from './skill-identity.js'
 export const INHERITED_ORIGIN = 'inherited'
 
 /**
- * @typedef {{ state: 'ready', sessionId: string, revision: number, skills: unknown[], mcpServers: string[],
+ * @typedef {{ state: 'ready', sessionId: string, revision: number, skills: unknown[], mcpServers: string[], mcpIncarnations?: Record<string, string|null>,
  *   captured: { parentSessionId: string, parentRevision: number | null, capturedAt: number } | null }} ReadySnapshot
  * @typedef {{ state: 'blocked', sessionId: string, reason: 'corrupt'|'unknown-schema'|'torn'|'unreadable' }} BlockedSnapshot
  * @typedef {ReadySnapshot | BlockedSnapshot} LifecycleSnapshot
- * @typedef {{ revision: number, skills?: unknown[], mcpServers?: string[],
+ * @typedef {{ revision: number, skills?: unknown[], mcpServers?: string[], mcpIncarnations?: Record<string, string|null>,
  *   captured?: { parentSessionId: string, parentRevision: number | null, capturedAt: number } | null }} SnapshotInput
  */
 
 /** @param {unknown} error */
 const message = error => (error instanceof Error ? error.message : String(error))
+
+export function normalizeMcpIncarnations(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return Object.fromEntries(Object.entries(value).filter(([, incarnation]) => incarnation === null || typeof incarnation === 'string'))
+}
+
+export function mcpIncarnationsFor(servers, mapping) {
+  const normalized = normalizeMcpIncarnations(mapping)
+  if (!normalized) return undefined
+  return Object.fromEntries(servers.filter(identity => Object.hasOwn(normalized, identity)).map(identity => [identity, normalized[identity]]))
+}
 
 /**
  * In-memory lifecycle snapshots plus the synchronous read/capture paths.
@@ -130,6 +141,7 @@ export function createLifecycleSnapshots(options = {}) {
       revision: next.revision,
       skills: Object.freeze(structuredClone(Array.isArray(next.skills) ? next.skills : [])),
       mcpServers: Object.freeze((Array.isArray(next.mcpServers) ? next.mcpServers : []).slice()),
+      ...(normalizeMcpIncarnations(next.mcpIncarnations) ? { mcpIncarnations: Object.freeze(normalizeMcpIncarnations(next.mcpIncarnations)) } : {}),
       captured: next.captured ? Object.freeze({ ...next.captured }) : null,
     })
     snapshots.set(sessionId, snapshot)
@@ -187,6 +199,7 @@ export function createLifecycleSnapshots(options = {}) {
         revision: record.revision,
         skills: Array.isArray(payload.skills) ? payload.skills : [],
         mcpServers: Array.isArray(payload.mcpServers) ? /** @type {string[]} */ (payload.mcpServers) : [],
+        mcpIncarnations: normalizeMcpIncarnations(payload.mcpIncarnations),
       })
     }
     // corrupt / unknown-schema / torn / unsupported: fail closed BLOCKED
@@ -227,6 +240,7 @@ export function createLifecycleSnapshots(options = {}) {
       revision: inherited.revision,
       skills: Array.isArray(payload.skills) ? payload.skills : [],
       mcpServers: Array.isArray(payload.mcpServers) ? /** @type {string[]} */ (payload.mcpServers) : [],
+      mcpIncarnations: normalizeMcpIncarnations(payload.mcpIncarnations),
       captured: parent && typeof parent.sessionId === 'string' && parent.sessionId.length > 0
         ? {
           parentSessionId: parent.sessionId,
@@ -328,9 +342,11 @@ export function createLifecycleSnapshots(options = {}) {
       : null
     let mcpServers = previousMcp == null ? parentMcp.slice() : intersectStrings(previousMcp, parentMcp)
     if (Array.isArray(constraints.allowMcpServers)) mcpServers = intersectStrings(mcpServers, constraints.allowMcpServers)
+    const mcpIncarnations = mcpIncarnationsFor(mcpServers, parent?.mcpIncarnations)
     const payload = {
       skills: structuredClone(skills),
       mcpServers,
+      ...(mcpIncarnations ? { mcpIncarnations } : {}),
       origin: INHERITED_ORIGIN,
       parent: { sessionId: parentSessionId, revision: parent ? parent.revision : null },
       capturedAt,
@@ -348,6 +364,7 @@ export function createLifecycleSnapshots(options = {}) {
       revision: result.revision,
       skills: payload.skills,
       mcpServers: payload.mcpServers,
+      mcpIncarnations: normalizeMcpIncarnations(payload.mcpIncarnations),
       captured: { parentSessionId, parentRevision: payload.parent.revision, capturedAt },
     })
   }
