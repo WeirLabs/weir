@@ -137,6 +137,18 @@ export function createMcpManager(dependencies = {}) {
       return { ...prepared, secrets: materialized.resolvedSecrets, secretBearing }
     }
 
+    /** Resolve only non-secret execution metadata for an exact confirmation card. */
+    async function describeExecution(entry) {
+      if (entry?.client?.transport !== 'stdio') return null
+      const secretArgs = new Set(Object.keys(entry?.secretRefs?.args ?? {}).map(Number))
+      const client = {
+        ...entry.client,
+        args: (entry.client.args ?? []).map((value, index) => secretArgs.has(index) ? '' : value),
+        env: {},
+      }
+      return (await processAdapter.prepare(client)).execution
+    }
+
     async function reconcileOne(identity, entry, suppliedToken = null) {
       const token = suppliedToken ?? beginOperation(identity)
       try {
@@ -164,6 +176,7 @@ export function createMcpManager(dependencies = {}) {
           client: prepared.client,
           secrets: prepared.secrets,
           secretBearing: prepared.secretBearing,
+          execution: prepared.execution,
           fiberOf,
           beforeCreate: () => registerBridge(groupId, identity, entry.generation),
           afterCleanup: () => releaseBridge(groupId),
@@ -357,7 +370,7 @@ export function createMcpManager(dependencies = {}) {
         const holder = hostRowHoldingReservation(listRows(), serverName)
         return holder ? `host row "${holder.id ?? identity}" already reserves serverName "${serverName}"` : null
       },
-      prepare,
+      prepare, describeExecution,
       mcpGroupOptions,
     }
     try { ctx.reflect?.provide?.('weirMcpManager', face) } catch { /* older row */ }

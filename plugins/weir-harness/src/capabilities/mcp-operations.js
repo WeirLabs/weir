@@ -92,6 +92,7 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
         generation: existing?.generation ?? null,
         incarnation: existing?.incarnation ?? null,
         conflict: mode === 'add' && existing ? 'identity-exists' : mode === 'edit' && !existing ? 'identity-unregistered' : null,
+        namespaceConflict: namespaceConflict(current, item.entry),
       }
     })
     return {

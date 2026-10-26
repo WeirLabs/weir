@@ -79,8 +79,11 @@ function soleFeed(presetId) {
   return [...feeds][0]
 }
 
+/** Exact feed token used by mutation ownership snapshots and their rechecks. */
+export function capabilityReadFeed(presetId) { return soleFeed(presetId) }
+
 /** Extract the current projected owner and its last committed selection generation. */
-function ownership(observation, sessionId) {
+export function capabilityOwnership(observation, sessionId) {
   if (!observation || observation.header?.id !== sessionId) {
     throw new CapabilityReadError('unknown-session', `capability read: unknown session ${JSON.stringify(sessionId)}`)
   }
@@ -106,7 +109,7 @@ export function createCapabilityReadService(dependencies = {}) {
     try {
       lease = await observeSession(sessionId)
       if (!lease || typeof lease[Symbol.dispose] !== 'function') throw new CapabilityReadError('owner-unavailable', 'capability read: session observation is unavailable')
-      return { lease, owner: ownership(lease, sessionId) }
+      return { lease, owner: capabilityOwnership(lease, sessionId) }
     } catch (cause) {
       lease?.[Symbol.dispose]?.()
       if (cause instanceof CapabilityReadError) throw cause
@@ -190,7 +193,7 @@ export const CAPABILITY_MUTATION_SERVICE_KEY = 'weirCapabilityMutation'
 export const CAPABILITY_MUTATION_NAMESPACE = 'weirCapabilityMutations'
 export const CAPABILITY_MUTATION_METHODS = ['mutate', 'batch']
 
-function sameMutationOwner(first, second) {
+export function sameMutationOwner(first, second) {
   const profile = value => value ? `${value.home ?? ''}\0${value.name ?? ''}` : ''
   return first.owner.presetId === second.owner.presetId
     && first.owner.cwd === second.owner.cwd
@@ -208,7 +211,7 @@ export function createCapabilityMutationService(dependencies = {}) {
     try {
       lease = await observeSession(sessionId)
       if (!lease || typeof lease[Symbol.dispose] !== 'function') throw new CapabilityReadError('owner-unavailable', 'capability mutation: session observation unavailable')
-      const owner = ownership(lease, sessionId)
+      const owner = capabilityOwnership(lease, sessionId)
       const feed = bridgeFor(owner.presetId)
       if (!feed) throw new CapabilityReadError('bridge-absent', `capability mutation: no feed for preset ${owner.presetId}`)
       const faces = feed.faces ?? feed

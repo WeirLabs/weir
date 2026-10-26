@@ -29,7 +29,7 @@ describe('CHILD_DENY_TOOLS', () => {
       'resume_agent', 'terminate_agent', 'supervised_status', 'interrupt_agent', 'list_agents', 'send_message',
       'worktree_open', 'worktree_land', 'worktree_cleanup', 'worktree_abandon', 'worktree_check',
       'exit_plan_mode',
-      'ask_user_question', 'present',
+      'ask_user_question', 'mcp_install', 'present',
       'edit_lock_acquire', 'edit_lock_hold', 'edit_lock_pause', 'edit_lock_release', 'edit_lock_status', 'edit_lock_try_steal', 'edit_lock_watch',
     ]
     expect(CHILD_DENY_TOOLS).toEqual(expected)

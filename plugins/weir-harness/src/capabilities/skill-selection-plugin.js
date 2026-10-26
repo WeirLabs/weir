@@ -27,7 +27,8 @@ import { createMcpRegistry } from './mcp-registry.js'
 import { createMcpOperations } from './mcp-operations.js'
 import { mcpDiagnostic } from './mcp-diagnostics.js'
 import { buildReceiptPayload, buildListPayload, buildConditionsPayload } from './read-payloads.js'
-import { feedCapabilityReadBridge } from './capability-remote.js'
+import { feedCapabilityReadBridge, capabilityReadFeed, capabilityOwnership, createCapabilityMutationService, sameMutationOwner } from './capability-remote.js'
+import { createMcpInstallTool } from './mcp-install-tool.js'
 import { parseFrontmatter } from './frontmatter.js'
 import { createAudit } from '../shared/audit.js'
 
@@ -655,6 +656,39 @@ export function createSkillSelectionPlugin(dependencies = {}) {
       }), 'weir-capability-read-bridge')
     } catch (cause) {
       ctx.logger?.warn?.(`capability read bridge feed failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+    // Primary-Orchestrator AI installation rides the same selection row. All
+    // Host services are resolved lazily; missing confirmation/ownership support
+    // disables install without affecting inert preview or manual management.
+    try {
+      const tools = ctx.get?.('tools')
+      if (tools?.register) {
+        const sessionQuery = () => ctx.get?.('sessionQuery')
+        const mutations = createCapabilityMutationService({ sessionQuery })
+        const captureOwnership = async sessionId => {
+          const lease = await sessionQuery()?.observeSession?.(sessionId)
+          if (!lease || typeof lease[Symbol.dispose] !== 'function') throw Object.assign(new Error('MCP install session observation is unavailable'), { code: 'owner-unavailable' })
+          try {
+            const owner = capabilityOwnership(lease, sessionId)
+            const feed = capabilityReadFeed(owner.presetId)
+            const faces = feed.faces ?? feed
+            return { owner, feed, profile: faces.profileContext?.() }
+          } finally { lease[Symbol.dispose]() }
+        }
+        const tool = createMcpInstallTool({
+          operationsFor: session => face.mcpOperations(session),
+          mutate: (sessionId, request) => mutations.mutate(sessionId, request),
+          captureOwnership,
+          sameOwnership: sameMutationOwner,
+          describeExecution: entry => ctx.get?.('weirMcpManager')?.describeExecution?.(entry),
+          userQuestions: () => ctx.get?.('userQuestions'),
+          isLiveRoot: agent => Boolean(agent && ctx.get?.('agents')?.get?.(agent.id) === agent),
+        })
+        if (typeof ctx.effect === 'function') ctx.effect(() => tools.register(tool), 'weir-mcp-install-tool')
+        else tools.register(tool)
+      }
+    } catch (cause) {
+      ctx.logger?.warn?.(`MCP install tool registration failed: ${cause instanceof Error ? cause.message : String(cause)}`)
     }
   }
 }

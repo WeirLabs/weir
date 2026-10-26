@@ -55,7 +55,7 @@ export const isMcpResidueId = id => typeof id === 'string' && id.startsWith(MCP_
 export function resolveEphemeralMcpTree(loader) {
   const root = loader?.root
   const tree = root?.tree
-  if (tree?.root !== root || typeof root.create !== 'function' || typeof root.remove !== 'function'
+  if (tree?.root !== root || typeof root?.create !== 'function' || typeof root?.remove !== 'function'
     || typeof tree?.await !== 'function' || typeof tree?.resolve !== 'function') {
     return { kind: 'unsupported', reason: 'ephemeral-loader-unavailable' }
   }
@@ -199,7 +199,7 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
       if (clientEntry?.error) throw clientEntry.error
       if (typeof input.readback === 'function') await input.readback({ groupId: options.id, identity, generation, probe })
       const discovery = typeof input.discovery === 'function' ? await input.discovery({ groupId: options.id, identity, generation, probe }) : { toolCount: null, toolNamesPreview: [], truncated: false }
-      const result = { status: 'mounted', groupId: options.id, identity, generation, probe, discovery }
+      const result = { status: 'mounted', groupId: options.id, identity, generation, probe, discovery, execution: input.execution ?? null }
       if (!probe) mounted.set(identity, { groupId: options.id, generation, state: 'mounted' })
       succeeded = true
       return result

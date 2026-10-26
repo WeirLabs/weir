@@ -44,6 +44,7 @@ export const CHILD_DENY_TOOLS = [
   'worktree_check',
   'exit_plan_mode',
   'ask_user_question',
+  'mcp_install',
   'present',
   'edit_lock_acquire',
   'edit_lock_hold',
