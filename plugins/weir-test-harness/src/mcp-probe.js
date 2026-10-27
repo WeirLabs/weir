@@ -5,9 +5,9 @@
 // file. Enabled only when WEIR_IT_MCP=1. Dev-only.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { openCapabilityStore } from '../../weir-harness/src/capabilities/store/store.js'
 import * as selectionPlugin from '../../weir-harness/src/capabilities/skill-selection-plugin.js'
-import { createApplyEngine } from '../../weir-harness/src/capabilities/apply-engine.js'
 import { createSelectionDraft } from '../../weir-harness/src/capabilities/selection-draft.js'
 import { createMcpRegistry } from '../../weir-harness/src/capabilities/mcp-registry.js'
 import { IT_ROOT } from './mock-kit.js'
@@ -31,7 +31,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['apply', 'call', 'list', 'adopt', 'register', 'removeManaged', 'report'] },
+        op: { type: 'string', enum: ['apply', 'call', 'list', 'adopt', 'install', 'register', 'removeManaged', 'report'] },
         skills: { type: 'array', items: { type: 'string' } },
         mcpServers: { type: 'array', items: { type: 'string' } },
         name: { type: 'string' },
@@ -62,13 +62,6 @@ function apply(ctx, config = {}) {
         const rpcCount = () => { try { return readFileSync(logPath, 'utf8').split('\n').filter(line => line.includes('"tools/call"')).length } catch { return 0 } }
 
         if (args.op === 'apply') {
-          const engine = createApplyEngine({
-            store,
-            locateSession: async session => session,
-            inventory: options => selection.inventory(options),
-            provider: selection.provider,
-            mcpRegistry: createMcpRegistry({ store }),
-          })
           const current = await store.read({ kind: 'selection', sessionId })
           const applied = current.kind === 'ok' ? (current.payload?.skills ?? []) : []
           const inventory = await selection.inventory({ cwd, scope: { session: { id: sessionId } } })
@@ -79,10 +72,13 @@ function apply(ctx, config = {}) {
           for (const [name, identity] of identities) draft.toggle(identity, (args.skills ?? []).includes(name))
           const payload = draft.toApplyPayload()
           payload.selection.mcpServers = Array.isArray(args.mcpServers) ? args.mcpServers : []
-          const outcome = await engine.apply({ sessionId, cwd }, { requestId: `mcp-${sessionId}-${Date.now()}`, ...payload })
-          if (outcome.status === 'applied') {
-            selection.lifecycle.publish(sessionId, { revision: outcome.revision, skills: structuredClone(payload.selection.skills), mcpServers: [...payload.selection.mcpServers], mcpIncarnations: structuredClone(outcome.effective?.mcpIncarnations) })
-          }
+          // Drive the production Apply entry so its lifecycle/visibility hooks
+          // are the ones under test, not a probe-local engine and manual publish.
+          const outcome = await selection.applySelection(
+            { sessionId, cwd, presetId: 'weir' },
+            { requestId: `mcp-${sessionId}-${Date.now()}`, ...payload },
+            { cwd, scope: { session: { id: sessionId } } },
+          )
           report.apply = { status: outcome.status, reason: outcome.reason ?? null, revision: outcome.revision ?? null }
           report.completed = outcome.status === 'applied'
           if (!report.completed) report.error = `engine apply rejected: ${outcome.status} ${outcome.reason ?? ''}`
@@ -140,6 +136,35 @@ function apply(ctx, config = {}) {
           }, current.kind === 'ok' ? current.revision : 0)
           report.register = { status: outcome.status }
           report.completed = outcome.status === 'committed'
+          return report
+        }
+        if (args.op === 'install') {
+          if (!manager) throw new Error('weirMcpManager not mounted')
+          const identity = args.identity
+          const outcome = await manager.adopt({
+            identity,
+            label: `IT server ${identity}`,
+            owner: { kind: 'workspace', key: 'ws' },
+            generation: 0,
+            configuredAt: 0,
+            transport: { kind: 'stdio', ref: `mock://${identity}` },
+            client: {
+              transport: 'stdio', serverName: identity, command: process.execPath,
+              args: [fileURLToPath(new URL('./mock-mcp-server.mjs', import.meta.url)), identity],
+              env: { WEIR_IT_MCP_LOG: logPath, WEIR_IT_MCP_ORIGIN: 'managed' },
+              reconnect: { enabled: true },
+            },
+          })
+          report.install = { status: outcome.status, reason: outcome.reason ?? null }
+          if (outcome.status !== 'mounted') throw new Error(`managed install failed: ${outcome.status} ${outcome.reason ?? ''}`)
+          const publicName = `mcp__${identity}__echo`
+          // Registration readiness only; schema visibility is asserted from the
+          // same root's later LLM request toolNames, never from this Host map.
+          for (let attempt = 0; !manager.publicNames.has(publicName) && attempt < 20; attempt += 1) {
+            await new Promise(resolve => setTimeout(resolve, 500))
+          }
+          if (!manager.publicNames.has(publicName)) throw new Error(`managed tool registration did not settle: ${publicName}`)
+          report.completed = true
           return report
         }
         if (args.op === 'adopt') {

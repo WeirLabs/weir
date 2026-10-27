@@ -105,12 +105,16 @@ test('default binding: a non-array candidates value is tolerated', () => {
   expect(bound.missing).toEqual([{ kind: 'skill', ref: 'deep-work', reason: 'no longer in the inventory' }])
 })
 
-function mount(home, { inventoryCandidates, lifecycle }) {
+function mount(home, { inventoryCandidates, lifecycle, manager = null }) {
   let registered
   const ctx = {
     skills: { registerProvider(create) { registered = create({ invalidate() {} }) } },
     on() {},
-    get(name) { return name === 'profileContext' ? { home, name: 'it' } : undefined },
+    get(name) {
+      if (name === 'profileContext') return { home, name: 'it' }
+      if (name === 'weirMcpManager') return manager
+      return undefined
+    },
   }
   createSkillSelectionPlugin({
     inventory: async () => ({ complete: true, candidates: inventoryCandidates }),
@@ -296,4 +300,29 @@ test('fork: a depth-0 fork with no effective snapshot resolves its own root init
   const snapshot = lifecycle.snapshotFor('fork-root-init')
   expect(snapshot?.revision).toBe(0)
   expect(snapshot?.skills.map(identity => identity.name)).toEqual(['deep-work'])
+})
+
+test('live visibility: initial selection syncs the current session immediately after lifecycle publication', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const lifecycle = createLifecycleSnapshots({ root: rootOf(dir), platform: 'darwin' })
+  const order = []
+  const publish = lifecycle.publish
+  lifecycle.publish = (sessionId, snapshot) => {
+    order.push(`publish:${sessionId}`)
+    return publish(sessionId, snapshot)
+  }
+  const manager = {
+    syncSession(sessionId) {
+      expect(lifecycle.snapshotFor(sessionId)?.state).toBe('ready')
+      order.push(`sync:${sessionId}`)
+    },
+  }
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(builtinA)], lifecycle, manager })
+  await provider.list(options('sess-initial-visibility', null))
+  order.push('response')
+  expect(order).toEqual([
+    'publish:sess-initial-visibility',
+    'sync:sess-initial-visibility',
+    'response',
+  ])
 })

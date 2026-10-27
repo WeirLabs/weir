@@ -160,6 +160,128 @@ test('production wiring: the hook assembly audits a committed Apply and a recove
   expect(await notifier.pending(SESSION)).toBeNull()
 })
 
+test('live visibility: committed Apply enable/disable syncs only the current session after lifecycle publication', { skip }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-wiring-live-visibility-'))
+  const store = openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  const snapshots = new Map()
+  const order = []
+  const synced = []
+  const lifecycle = {
+    publish(sessionId, snapshot) {
+      snapshots.set(sessionId, snapshot)
+      order.push(`publish:${snapshot.mcpServers.includes('docs') ? 'enable' : 'disable'}`)
+    },
+    snapshotFor: sessionId => snapshots.get(sessionId) ?? null,
+  }
+  const manager = {
+    syncSession(sessionId) {
+      if (!snapshots.has(sessionId)) throw new Error('visibility synced before lifecycle publication')
+      synced.push(sessionId)
+      order.push(`sync:${snapshots.get(sessionId).mcpServers.includes('docs') ? 'enable' : 'disable'}`)
+    },
+  }
+  const ctx = {
+    emit() {},
+    get: name => name === 'weirMcpManager' ? manager : undefined,
+    logger: { warn() {}, debug() {} },
+  }
+  const engine = createApplyEngine({
+    store,
+    locateSession: () => ({ sessionId: SESSION, cwd: '/server-workspace', presetId: 'weir' }),
+    inventory: async () => ({ complete: true, candidates: [] }),
+    provider: { acceptSelection: () => ({ accepted: true, conflicts: [] }) },
+    ...applyEngineHooks({ ctx, lifecycle, notifier: { queueSync() {} }, audit() {} }),
+  })
+
+  const enabled = await engine.apply(auth, { requestId: 'live-enable', expectedRevision: 0, selection: { skills: [], mcpServers: ['docs'] }, unresolved: [] })
+  const disabled = await engine.apply(auth, { requestId: 'live-disable', expectedRevision: 1, selection: { skills: [], mcpServers: [] }, unresolved: [] })
+  expect(enabled.status).toBe('applied')
+  expect(disabled.status).toBe('applied')
+  expect(synced).toEqual([SESSION, SESSION])
+  expect(order).toEqual(['publish:enable', 'sync:enable', 'publish:disable', 'sync:disable'])
+})
+
+test('live visibility: receipt recovery syncs after lifecycle publication and before provider publication and fence release', { skip }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-wiring-live-recovery-'))
+  const store = openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  const lossy = { ...store, commit: async (...args) => {
+    await store.commit(...args)
+    throw new Error('response lost after durable acceptance')
+  } }
+  const snapshots = new Map()
+  const synced = []
+  const order = []
+  const lifecycle = {
+    publish(sessionId, snapshot) {
+      snapshots.set(sessionId, snapshot)
+      order.push('publish')
+    },
+  }
+  const manager = {
+    syncSession(sessionId) {
+      if (!snapshots.has(sessionId)) throw new Error('recovery synced before lifecycle publication')
+      synced.push(sessionId)
+      order.push('sync')
+    },
+  }
+  const ctx = {
+    emit() {},
+    get: name => name === 'weirMcpManager' ? manager : undefined,
+    logger: { warn() {}, debug() {} },
+  }
+  let held = false
+  const fence = {
+    enter() {
+      held = true
+      order.push('fence-enter')
+      return { release() { held = false; order.push('fence-release') } }
+    },
+    isHeld: () => held,
+  }
+  const engine = createApplyEngine({
+    store: lossy, fence,
+    locateSession: () => ({ sessionId: SESSION, cwd: '/server-workspace', presetId: 'weir' }),
+    inventory: async () => ({ complete: true, candidates: [] }),
+    provider: { acceptSelection: () => { order.push('provider'); return { accepted: true, conflicts: [] } } },
+    ...applyEngineHooks({ ctx, lifecycle, notifier: { queueSync() {} }, audit() {} }),
+  })
+
+  const pending = await engine.apply(auth, { requestId: 'live-recovery', expectedRevision: 0, selection: { skills: [], mcpServers: ['docs'] }, unresolved: [] })
+  expect(pending.status).toBe('indeterminate')
+  expect(order).toEqual(['fence-enter'])
+  const recovered = await engine.queryReceipt(auth, 'live-recovery')
+  order.push('response')
+  expect(recovered.recovery).toBe('published')
+  expect(synced).toEqual([SESSION])
+  expect(order).toEqual(['fence-enter', 'publish', 'sync', 'provider', 'fence-release', 'response'])
+})
+
+test('live visibility: a sync failure keeps durable Apply acceptance and uses snapshot-publication-degraded', { skip }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-wiring-live-degraded-'))
+  const store = openCapabilityStore({ root, platform: 'darwin', liveness: createStubLiveness() })
+  const snapshots = new Map()
+  let providerPublications = 0
+  const lifecycle = { publish: (sessionId, snapshot) => { snapshots.set(sessionId, snapshot) } }
+  const ctx = {
+    emit() {},
+    get: name => name === 'weirMcpManager' ? { syncSession() { throw new Error('injected live sync failure') } } : undefined,
+    logger: { warn() {}, debug() {} },
+  }
+  const engine = createApplyEngine({
+    store,
+    locateSession: () => ({ sessionId: SESSION, cwd: '/server-workspace', presetId: 'weir' }),
+    inventory: async () => ({ complete: true, candidates: [] }),
+    provider: { acceptSelection: () => { providerPublications++; return { accepted: true, conflicts: [] } } },
+    ...applyEngineHooks({ ctx, lifecycle, notifier: { queueSync() {} }, audit() {} }),
+  })
+  const result = await engine.apply(auth, { requestId: 'live-degraded', expectedRevision: 0, selection: { skills: [], mcpServers: ['docs'] }, unresolved: [] })
+  expect(result.status).toBe('applied')
+  expect(result.warnings).toContain('snapshot-publication-degraded')
+  expect(snapshots.get(SESSION).mcpServers).toEqual(['docs'])
+  expect(providerPublications).toBe(1)
+  expect((await store.read({ kind: 'selection', sessionId: SESSION })).kind).toBe('ok')
+})
+
 // --- durable-pending-notice group 3.4: the delivery seam ----------------------
 // The `agent/pre-step` listener becomes read → build → inject → clear: the
 // obligation is cleared only AFTER the message landed in the request, so a

@@ -30,9 +30,10 @@ const message = error => (error instanceof Error ? error.message : String(error)
  *   admit: (agent: unknown) => Promise<boolean>,
  *   isEnabledFor: (agent: unknown) => boolean,
  *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void },
+ *   onRegister?: (name: string) => void, onUnregister?: (name: string) => void,
  *   onError?: (reason: string, cause?: unknown) => void }} config
  */
-export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onError = () => {}, assertPermit }) {
+export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onUnregister, onError = () => {}, assertPermit }) {
   const wrapper = createMcpToolWrapper({ identity, generation, admit, drain, assertPermit })
 
   const unknown = (service, method) => {
@@ -43,14 +44,33 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
 
   const tools = {
     register(definition) {
-      // Bind the public name to this configured identity at registration
-      // time, then wrap the definition with the last-moment admission check.
+      // Host registration happens first, then the generation-owned fact and
+      // every live agent converge in this same synchronous segment.
       const wrapped = wrapper.wrap(definition)
       const registration = /** @type {{ register(d: unknown): unknown }} */ (host.tools).register(wrapped)
-      // Report the binding back to the manager (creation-time schema hiding
-      // and the managed listing read this map).
-      if (typeof wrapped?.name === 'string') onRegister?.(wrapped.name)
-      return registration
+      if (typeof wrapped?.name !== 'string') return registration
+      const name = wrapped.name
+      const disposeHost = typeof registration === 'function' ? registration : () => {}
+      try {
+        onRegister?.(name)
+      } catch (cause) {
+        // Never leave a facade-rejected tool registered without its owner fact.
+        try { disposeHost() } catch (rollbackError) { onError('facade-host-registration-rollback-failed', rollbackError) }
+        throw cause
+      }
+      let hostRemoved = false
+      let completed = false
+      return () => {
+        if (completed) return
+        if (!hostRemoved) {
+          // Host-first is fail-closed: if removal throws, the manager fact and
+          // deny stay in place. A later retry does not double-dispose the Host.
+          disposeHost()
+          hostRemoved = true
+        }
+        onUnregister?.(name)
+        completed = true
+      }
     },
     get(...args) { return /** @type {{ get(...a: unknown[]): unknown }} */ (host.tools).get(...args) },
     list(...args) { return /** @type {{ list(...a: unknown[]): unknown }} */ (host.tools).list(...args) },

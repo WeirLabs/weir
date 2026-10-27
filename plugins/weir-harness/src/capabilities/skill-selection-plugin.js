@@ -218,6 +218,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
                 mcpIncarnations: resolved.selection.mcpIncarnations,
                 captured: null,
               })
+              ctx.get?.('weirMcpManager')?.syncSession?.(sessionId)
             }
           }
           return resolved.selection.skills
@@ -725,7 +726,14 @@ export function applyEngineHooks({ ctx, lifecycle, notifier, audit = createAudit
     // manager row has no managed servers to drain and the adapter reports
     // the empty truth.
     drain: createSessionDrainAdapter(() => ctx.get?.('weirMcpManager')?.drain),
-    publishSnapshot: (sessionId, snapshot) => lifecycle?.publish?.(sessionId, snapshot),
+    publishSnapshot: (sessionId, snapshot) => {
+      lifecycle?.publish?.(sessionId, snapshot)
+      // Committed Apply and receipt recovery share this hook. Reconcile the
+      // current live agent after lifecycle publication and before the engine's
+      // provider invalidation/fence release; thrown failures retain the
+      // engine's existing snapshot-publication-degraded semantics.
+      ctx.get?.('weirMcpManager')?.syncSession?.(sessionId)
+    },
     onAccepted: (sessionId, delta, info) => notifier.queueSync(sessionId, delta, info),
     // The Apply-path convergence emission (5.2 parity with agent/created):
     // an accepted Apply re-emits the preset invalidation event so every

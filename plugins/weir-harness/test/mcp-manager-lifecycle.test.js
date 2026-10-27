@@ -44,7 +44,7 @@ function mountFixture() {
   }
   return mount
 }
-async function fixture({ entries = ['docs', 'web'], mount = mountFixture(), mountStatus } = {}) {
+async function fixture({ entries = ['docs', 'web'], mount = mountFixture(), agents = null, selectionFor = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'weir-mcp-manager-life-'))
   const store = openCapabilityStore({ root, platform: 'darwin' })
   const registry = createMcpRegistry({ store, newIncarnation: () => null })
@@ -55,18 +55,38 @@ async function fixture({ entries = ['docs', 'web'], mount = mountFixture(), moun
   }
   const listeners = new Map()
   const services = new Map()
-  const lifecycle = { snapshotFor: () => ({ state: 'ready', mcpServers: ['docs', 'web'], mcpIncarnations: Object.fromEntries(entries.map(identity => [identity, null])) }) }
-  const manager = createMcpManager({ registry, mount, lifecycle, listRows: () => [], listEntryIds: () => [] })
+  const lifecycle = { snapshotFor: sessionId => selectionFor
+    ? selectionFor(sessionId)
+    : { state: 'ready', mcpServers: ['docs', 'web'], mcpIncarnations: Object.fromEntries(entries.map(identity => [identity, null])) } }
+  const manager = createMcpManager({ registry, mount, lifecycle, agents, listRows: () => [], listEntryIds: () => [] })
   const ctx = {
-    get: () => undefined,
+    get: name => name === 'agents' ? agents : undefined,
     on(name, listener) { listeners.set(name, [...(listeners.get(name) ?? []), listener]) },
     reflect: { provide: (key, value) => services.set(key, value) },
     logger: { warn() {} },
   }
-  manager(ctx, {})
+  const dispose = manager(ctx, {})
   const face = services.get('weirMcpManager')
   await face.start()
-  return { root, store, registry, mount, listeners, services, face, lifecycle }
+  return { root, store, registry, mount, listeners, services, face, lifecycle, dispose }
+}
+
+function visibilityAgent(sessionId) {
+  const state = { calls: [], disposals: [], failRestrict: false }
+  const agent = {
+    session: { id: sessionId },
+    ctx: { tools: { restrict(input) {
+      state.calls.push(input)
+      if (state.failRestrict) throw new Error(`injected restrict failure for ${sessionId}`)
+      let active = true
+      return () => {
+        if (!active) return
+        active = false
+        state.disposals.push(input.deny[0])
+      }
+    } } },
+  }
+  return { agent, state }
 }
 
 test('startup and targeted reconcile share strict readback; siblings never remount', async () => {
@@ -183,4 +203,210 @@ test('a failed Test leaves its sanitized diagnostic on the row where the panel r
   expect(row.lastTest.status).toBe('probe-failed')
   expect(row.lastTest.diagnostic.message).toContain('injected probe failure')
   expect(row.lastTest.diagnostic.code).toBe(result.error.code)
+})
+
+test('live visibility: a managed tool registered after agent creation is denied on the live non-selected agent', async () => {
+  const f = await fixture({ entries: [] })
+  f.lifecycle.snapshotFor = () => ({ state: 'ready', mcpServers: [], mcpIncarnations: {} })
+  const restricted = []
+  const agent = {
+    session: { id: 's1' },
+    ctx: { tools: { restrict(input) { restricted.push(input); return () => {} } } },
+  }
+  // The agent is already live before the facade reports any public tool name.
+  for (const listener of f.listeners.get('agent/created')) listener({ agent })
+
+  await f.registry.register(entry('docs'), 0)
+  const result = await f.face.reconcileOne('docs', (await f.registry.read()).servers.docs)
+  expect(result.status).toBe('mounted')
+  expect(f.face.publicNames.has('mcp__docs__echo')).toBe(true)
+  expect(restricted).toEqual([{ deny: ['mcp__docs__echo'] }])
+})
+
+test('live visibility: agents.list bootstraps existing agents, mounted releases only selected agents, and syncSession is A/B scoped', async () => {
+  const a = visibilityAgent('session-a')
+  const b = visibilityAgent('session-b')
+  const live = [a.agent, b.agent]
+  const selected = { 'session-a': [], 'session-b': ['docs'] }
+  const agents = {
+    list: () => [...live],
+    get: sessionId => live.find(agent => agent.session.id === sessionId),
+  }
+  const f = await fixture({
+    entries: ['docs'], agents,
+    selectionFor: sessionId => ({
+      state: 'ready', mcpServers: [...(selected[sessionId] ?? [])],
+      mcpIncarnations: Object.fromEntries((selected[sessionId] ?? []).map(identity => [identity, null])),
+    }),
+  })
+  const name = 'mcp__docs__echo'
+  // Registration happened during replacing, so both were denied first; only
+  // the selected agent's deny is released by the actual mounted transition.
+  expect(a.state.calls).toEqual([{ deny: [name] }])
+  expect(b.state.calls).toEqual([{ deny: [name] }])
+  expect(a.state.disposals).toEqual([])
+  expect(b.state.disposals).toEqual([name])
+  f.face.syncSession('session-a')
+  f.face.syncSession('session-b')
+  expect(a.state.calls).toHaveLength(1)
+  expect(b.state.calls).toHaveLength(1)
+  expect(b.state.disposals).toEqual([name])
+
+  selected['session-a'] = ['docs']
+  f.face.syncSession('session-a')
+  expect(a.state.disposals).toEqual([name])
+  expect(b.state.calls).toHaveLength(1)
+  expect(b.state.disposals).toEqual([name])
+  selected['session-b'] = []
+  f.face.syncSession('session-a') // must not fan out to B
+  expect(b.state.calls).toHaveLength(1)
+  f.face.syncSession('session-b')
+  expect(b.state.calls).toEqual([{ deny: [name] }, { deny: [name] }])
+  expect(a.state.calls).toHaveLength(1)
+})
+
+test('live visibility: disposal removes only the exact agent object and manager teardown keeps unconfirmed denies', async () => {
+  const oldA = visibilityAgent('session-a')
+  const newA = visibilityAgent('session-a')
+  const b = visibilityAgent('session-b')
+  const live = [oldA.agent, b.agent]
+  const agents = {
+    list: () => [...live],
+    get: sessionId => live.find(agent => agent.session.id === sessionId),
+  }
+  const f = await fixture({
+    entries: ['docs'], agents,
+    selectionFor: () => ({ state: 'ready', mcpServers: [], mcpIncarnations: {} }),
+  })
+  const name = 'mcp__docs__echo'
+  expect(oldA.state.calls).toEqual([{ deny: [name] }])
+  expect(b.state.calls).toEqual([{ deny: [name] }])
+
+  live[0] = newA.agent
+  for (const listener of f.listeners.get('agent/created')) listener({ agent: newA.agent })
+  expect(newA.state.calls).toEqual([{ deny: [name] }])
+  for (const listener of f.listeners.get('agent/disposed')) listener({ agent: oldA.agent })
+  expect(oldA.state.disposals).toEqual([name])
+  expect(newA.state.disposals).toEqual([])
+  expect(b.state.disposals).toEqual([])
+  f.face.syncSession('session-a')
+  expect(newA.state.calls).toHaveLength(1)
+
+  for (const listener of f.listeners.get('agent/disposed')) listener({ agent: newA.agent })
+  expect(newA.state.disposals).toEqual([name])
+  expect(b.state.disposals).toEqual([])
+  f.dispose()
+  // The public tool was never confirmed unregistered, so teardown must not
+  // lift B's manager-owned deny merely to release memory.
+  expect(b.state.disposals).toEqual([])
+})
+
+test('live visibility: unregister/re-register converges denies and stale-generation cleanup cannot touch the replacement', async () => {
+  const a = visibilityAgent('session-a')
+  const agents = { list: () => [a.agent], get: () => a.agent }
+  const f = await fixture({
+    entries: ['docs'], agents,
+    selectionFor: () => ({ state: 'ready', mcpServers: [], mcpIncarnations: {} }),
+  })
+  const name = 'mcp__docs__echo'
+  const oldBridge = mcpFacadeBridgeFor('weir-mcp-docs')
+  expect(a.state.calls).toEqual([{ deny: [name] }])
+
+  const current = await f.registry.read()
+  await f.registry.register(current.servers.docs, current.revision)
+  const remounted = await f.face.reconcileOne('docs', (await f.registry.read()).servers.docs)
+  expect(remounted.status).toBe('mounted')
+  expect(f.face.publicNames.get(name).generation).toBe(2)
+  expect(a.state.calls).toHaveLength(2)
+  expect(a.state.disposals).toEqual([name])
+
+  oldBridge.onUnregister(name)
+  expect(f.face.publicNames.get(name).generation).toBe(2)
+  expect(a.state.disposals).toEqual([name])
+  expect((await f.face.removeRuntime('docs')).status).toBe('removed')
+  expect(f.face.publicNames.has(name)).toBe(false)
+  expect(a.state.disposals).toEqual([name, name])
+
+  const reregistered = await f.face.reconcileOne('docs', (await f.registry.read()).servers.docs)
+  expect(reregistered.status).toBe('mounted')
+  expect(f.face.publicNames.get(name).generation).toBe(2)
+  expect(a.state.calls).toHaveLength(3)
+  expect(a.state.disposals).toEqual([name, name])
+  f.face.syncSession('session-a')
+  expect(a.state.calls).toHaveLength(3)
+})
+
+test('live visibility: failed registration rolls back the new fact and every partial deny before a later retry', async () => {
+  const good = visibilityAgent('session-good')
+  const bad = visibilityAgent('session-bad')
+  bad.state.failRestrict = true
+  const live = [good.agent, bad.agent]
+  const agents = {
+    list: () => [...live],
+    get: sessionId => live.find(agent => agent.session.id === sessionId),
+  }
+  const f = await fixture({
+    entries: [], agents,
+    selectionFor: () => ({ state: 'ready', mcpServers: [], mcpIncarnations: {} }),
+  })
+  const name = 'mcp__docs__echo'
+  await f.registry.register(entry('docs'), 0)
+  const registered = (await f.registry.read()).servers.docs
+  const failed = await f.face.reconcileOne('docs', registered)
+  expect(failed.status).toBe('saved-degraded')
+  expect(f.face.publicNames.has(name)).toBe(false)
+  expect(good.state.calls).toEqual([{ deny: [name] }])
+  expect(good.state.disposals).toEqual([name])
+  expect(bad.state.calls).toEqual([{ deny: [name] }])
+  expect(bad.state.disposals).toEqual([])
+
+  bad.state.failRestrict = false
+  const retried = await f.face.reconcileOne('docs', registered)
+  expect(retried.status).toBe('mounted')
+  expect(f.face.publicNames.has(name)).toBe(true)
+  expect(good.state.calls).toHaveLength(2)
+  expect(bad.state.calls).toHaveLength(2)
+  expect(good.state.disposals).toEqual([name])
+})
+
+test('live visibility: selected mount stays denied while degraded, recovers on mounted, and stale abort cannot reopen it', async () => {
+  const mount = mountFixture()
+  mount.state.wrongGeneration = true
+  const a = visibilityAgent('session-a')
+  const agents = { list: () => [a.agent], get: () => a.agent }
+  const f = await fixture({
+    entries: ['docs'], mount, agents,
+    selectionFor: () => ({ state: 'ready', mcpServers: ['docs'], mcpIncarnations: { docs: null } }),
+  })
+  const name = 'mcp__docs__echo'
+  expect(f.face.runtime.snapshot('docs').phase).toBe('saved-degraded')
+  expect(f.face.gate.enabledFor(a.agent, 'docs')).toBe(false)
+  expect(a.state.calls).toEqual([{ deny: [name] }])
+  expect(a.state.disposals).toEqual([])
+
+  mount.state.wrongGeneration = false
+  const current = await f.registry.read()
+  await f.registry.register(current.servers.docs, current.revision)
+  const recovery = await f.face.recoverResidue({ identity: 'docs' })
+  expect(recovery.status).toBe('recovered')
+  expect(recovery.results.map(result => result.status)).toEqual(['mounted'])
+  expect(f.face.gate.enabledFor(a.agent, 'docs')).toBe(true)
+  expect(a.state.calls).toHaveLength(2)
+  expect(a.state.disposals).toEqual([name, name])
+
+  const restoring = f.face.beginOperation('docs')
+  expect(a.state.calls).toHaveLength(3)
+  expect(f.face.abortOperation(restoring)).toBe(true)
+  expect(f.face.gate.enabledFor(a.agent, 'docs')).toBe(true)
+  expect(a.state.disposals).toHaveLength(3)
+
+  const stale = f.face.beginOperation('docs')
+  const currentOwner = f.face.beginOperation('docs')
+  expect(a.state.calls).toHaveLength(4)
+  expect(f.face.abortOperation(stale)).toBe(false)
+  expect(f.face.gate.enabledFor(a.agent, 'docs')).toBe(false)
+  expect(a.state.disposals).toHaveLength(3)
+  expect(f.face.abortOperation(currentOwner)).toBe(true)
+  expect(f.face.gate.enabledFor(a.agent, 'docs')).toBe(false)
+  expect(a.state.disposals).toHaveLength(3)
 })

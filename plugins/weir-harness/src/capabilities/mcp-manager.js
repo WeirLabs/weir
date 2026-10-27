@@ -87,13 +87,152 @@ export function createMcpManager(dependencies = {}) {
       systemPrompt: dependencies.hostSystemPrompt ?? ctx.get?.('systemPrompt'),
       mcpResources: dependencies.hostMcpResources ?? ctx.get?.('mcpResources'),
     }
+    const agentsService = dependencies.agents ?? ctx.get?.('agents')
+    const seenAgents = new Set() // compatibility fallback; actual agent objects, never session ids
+    const restrictions = new Map() // agent → Map(publicName → { owner, dispose })
 
-    function releaseBridge(groupId) {
+    const identityOf = owner => typeof owner === 'string' ? owner : owner?.identity
+    const sameOwner = (owner, identity, generation) => typeof owner === 'string'
+      ? owner === identity // legacy test facts carried no generation
+      : owner?.identity === identity && owner?.generation === generation
+    const isAgent = agent => (typeof agent === 'object' && agent !== null) || typeof agent === 'function'
+    function rememberAgent(agent) {
+      if (!isAgent(agent)) return null
+      seenAgents.add(agent)
+      return agent
+    }
+    function liveAgents() {
+      if (typeof agentsService?.list !== 'function') return [...seenAgents]
+      const listed = agentsService.list()
+      if (!Array.isArray(listed)) throw new TypeError('agents.list() must return an array')
+      for (const agent of listed) rememberAgent(agent)
+      return listed
+    }
+
+    /**
+     * Reconcile only actual differences. Every held entry owns exactly one
+     * independent deny disposer; absent public names never reach restrict().
+     * `added` is the registration transaction's rollback journal.
+     */
+    function reconcileAgent(agent, matches = () => true, added = null) {
+      if (!isAgent(agent)) return
+      let held = restrictions.get(agent)
+      const names = new Set()
+      for (const [name, owner] of publicNames) if (matches(name, owner)) names.add(name)
+      for (const [name, record] of held ?? []) if (matches(name, record.owner)) names.add(name)
+      let failure = null
+      for (const name of names) {
+        try {
+          const present = publicNames.has(name)
+          const owner = publicNames.get(name)
+          const existing = held?.get(name)
+          const shouldDeny = present && !gate.enabledFor(agent, identityOf(owner))
+          if (shouldDeny && !existing) {
+            const restrict = agent?.ctx?.tools?.restrict
+            if (typeof restrict !== 'function') throw new Error(`cannot restrict MCP tool "${name}" without agent tools`)
+            const disposer = restrict.call(agent.ctx.tools, { deny: [name] })
+            if (!held) {
+              held = new Map()
+              restrictions.set(agent, held)
+            }
+            const record = { owner, dispose: typeof disposer === 'function' ? disposer : null }
+            held.set(name, record)
+            added?.push({ agent, name, record })
+          } else if (!shouldDeny && existing) {
+            existing.dispose?.()
+            held.delete(name)
+          } else if (shouldDeny && existing) {
+            // A replacement may reuse the public name. Keep the exact deny and
+            // update only its ownership metadata; never dispose/recreate it.
+            existing.owner = owner
+          }
+        } catch (cause) {
+          failure ??= cause
+        }
+      }
+      if (held?.size === 0) restrictions.delete(agent)
+      if (failure) throw failure
+    }
+
+    function reconcileAgents(matches, added = null) {
+      let failure = null
+      for (const agent of liveAgents()) {
+        try { reconcileAgent(agent, matches, added) } catch (cause) { failure ??= cause }
+      }
+      if (failure) throw failure
+    }
+    const syncName = (name, added = null) => reconcileAgents(candidate => candidate === name, added)
+    const syncIdentity = identity => reconcileAgents((_name, owner) => identityOf(owner) === identity)
+
+    function syncSession(sessionId) {
+      let agent
+      if (typeof agentsService?.get === 'function') agent = agentsService.get(sessionId)
+      else agent = [...seenAgents].find(candidate => candidate?.session?.id === sessionId)
+      if (rememberAgent(agent)) reconcileAgent(agent)
+    }
+
+    function registerPublicName(name, identity, generation) {
+      const hadPrevious = publicNames.has(name)
+      const previous = publicNames.get(name)
+      const added = []
+      publicNames.set(name, { identity, generation })
+      try {
+        syncName(name, added)
+      } catch (cause) {
+        if (hadPrevious) publicNames.set(name, previous)
+        else publicNames.delete(name)
+        for (const { agent, name: deniedName, record } of added.reverse()) {
+          const held = restrictions.get(agent)
+          if (held?.get(deniedName) !== record) continue
+          try {
+            record.dispose?.()
+            held.delete(deniedName)
+          } catch (rollbackError) {
+            // A failed disposer may still be active: retain its ownership fact.
+            onError(`mcp-schema-rollback-failed:${deniedName}`, rollbackError)
+          }
+          if (held.size === 0) restrictions.delete(agent)
+        }
+        throw cause
+      }
+    }
+
+    function unregisterPublicName(name, identity, generation) {
+      if (!sameOwner(publicNames.get(name), identity, generation)) return false
+      publicNames.delete(name)
+      try { syncName(name) } catch (cause) { onError(`mcp-schema-cleanup-failed:${name}`, cause) }
+      return true
+    }
+
+    function disposeAgentRestrictions(agent, { onlyAbsent = false } = {}) {
+      const held = restrictions.get(agent)
+      if (!held) return
+      for (const [name, record] of held) {
+        if (onlyAbsent && publicNames.has(name)) continue
+        try {
+          record.dispose?.()
+          held.delete(name)
+        } catch (cause) {
+          // Cleanup is fail-closed: an unconfirmed disposer stays owned here.
+          onError(`mcp-schema-dispose-failed:${name}`, cause)
+        }
+      }
+      if (held.size === 0) restrictions.delete(agent)
+    }
+
+    // Agents that predate this manager are authoritative through the Host
+    // registry. No public names exist yet, so bootstrap only records identity.
+    if (typeof agentsService?.list === 'function') {
+      try { liveAgents() } catch (cause) { onError('mcp-agent-bootstrap-failed', cause) }
+    }
+
+    function releaseBridge(groupId, expected = null) {
       const bridge = bridges.get(groupId)
       if (!bridge) return
+      if (expected && (bridge.identity !== expected.identity || bridge.generation !== expected.generation)) return
       bridges.delete(groupId)
-      for (const [name, owner] of publicNames) {
-        if (owner.identity === bridge.identity && owner.generation === bridge.generation) publicNames.delete(name)
+      for (const [name, owner] of [...publicNames]) {
+        if (sameOwner(owner, bridge.identity, bridge.generation)) unregisterPublicName(name, bridge.identity, bridge.generation)
       }
       bridge.release()
     }
@@ -104,7 +243,8 @@ export function createMcpManager(dependencies = {}) {
         assertPermit: gate.assertPermit,
         isEnabledFor: agent => gate.enabledFor(agent, identity),
         drain,
-        onRegister: name => publicNames.set(name, { identity, generation }),
+        onRegister: name => registerPublicName(name, identity, generation),
+        onUnregister: name => unregisterPublicName(name, identity, generation),
         onError,
       })
       bridges.set(groupId, { identity, generation, release })
@@ -114,16 +254,35 @@ export function createMcpManager(dependencies = {}) {
       return { toolCount: names.length, toolNamesPreview: names.slice(0, 20), truncated: names.length > 20 }
     }
 
+    /** Every manager-owned runtime mutation converges visibility after the actual state change. */
+    function transitionRuntime(identity, change) {
+      const before = runtime.snapshot(identity)
+      const result = change()
+      const after = runtime.snapshot(identity)
+      const changed = before.phase !== after.phase || before.generation !== after.generation
+        || (before.incarnation ?? null) !== (after.incarnation ?? null) || before.operationId !== after.operationId
+      if (changed) {
+        try { syncIdentity(identity) } catch (cause) { onError(`mcp-visibility-sync-failed:${identity}`, cause) }
+      }
+      return result
+    }
+    function finishOperation(token, phase, details = {}) {
+      return transitionRuntime(token.identity, () => runtime.finish(token, phase, details))
+    }
     function beginOperation(identity, phase = 'replacing', details = {}) {
-      const token = runtime.begin(identity, { phase, ...details })
-      drain.closeAll(identity)
-      return token
+      return transitionRuntime(identity, () => {
+        const token = runtime.begin(identity, { phase, ...details })
+        drain.closeAll(identity)
+        return token
+      })
     }
     function abortOperation(token) {
       const previousPhase = token.previous?.phase
-      const restored = runtime.restore(token)
-      if (restored && previousPhase === 'mounted') drain.reopenAll(token.identity)
-      return restored
+      return transitionRuntime(token.identity, () => {
+        const restored = runtime.restore(token)
+        if (restored && previousPhase === 'mounted') drain.reopenAll(token.identity)
+        return restored
+      })
     }
     async function waitForDrain(identity) {
       const result = await drain.drainAll(identity)
@@ -173,7 +332,7 @@ export function createMcpManager(dependencies = {}) {
         if (mount.mounted.has(identity)) {
           const removed = await mount.unmount(identity)
           if (removed.status !== 'cleaned') {
-            runtime.finish(token, removed.status, { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            finishOperation(token, removed.status, { generation: entry.generation, incarnation: entry.incarnation ?? null })
             return { status: removed.status, identity, cleanup: removed, saved: true }
           }
           releaseBridge(`${MCP_GROUP_PREFIX}${identity}`)
@@ -189,7 +348,7 @@ export function createMcpManager(dependencies = {}) {
           execution: prepared.execution,
           fiberOf,
           beforeCreate: () => registerBridge(groupId, identity, entry.generation),
-          afterCleanup: () => releaseBridge(groupId),
+          afterCleanup: () => releaseBridge(groupId, { identity, generation: entry.generation }),
           discovery: () => discoveryFor(identity, entry.generation),
           readback: async () => {
             const readback = await registry.read()
@@ -201,7 +360,7 @@ export function createMcpManager(dependencies = {}) {
         if (!observed || observed.generation !== entry.generation) throw new Error('mounted generation readback failed')
         // Only the fence owner may report mounted and reopen admission: a
         // superseded token means another operation now owns this identity.
-        if (!runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })) {
+        if (!finishOperation(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })) {
           const diagnostic = mcpDiagnostic(new Error(`MCP operation on ${identity} was superseded before it could report mounted`), { code: 'operation-superseded', action: 'reread-registry' })
           receipts.mount.set(identity, { time: now(), status: 'indeterminate', diagnostic })
           return { status: 'indeterminate', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, error: diagnostic, mount: { state: 'superseded', observedGeneration: observed.generation }, next: { action: 'reread-registry' } }
@@ -214,7 +373,7 @@ export function createMcpManager(dependencies = {}) {
       } catch (cause) {
         const cleanupStatus = ['cleanup-failed', 'cleanup-unknown'].includes(cause?.status) ? cause.status : null
         const status = cleanupStatus ?? (cause?.code === 'unsupported' ? 'unsupported' : 'saved-degraded')
-        runtime.finish(token, cleanupStatus ?? 'saved-degraded', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+        finishOperation(token, cleanupStatus ?? 'saved-degraded', { generation: entry.generation, incarnation: entry.incarnation ?? null })
         const diagnostic = mcpDiagnostic(cause, { code: cause?.code, action: cleanupStatus ? 'recover-residue' : 'retry' })
         receipts.mount.set(identity, { time: now(), status, diagnostic })
         startErrors.push({ identity, reason: diagnostic.message })
@@ -229,15 +388,15 @@ export function createMcpManager(dependencies = {}) {
         await waitForDrain(identity)
         const cleanup = await mount.unmount(identity)
         if (cleanup.status !== 'cleaned') {
-          runtime.finish(token, cleanup.status)
+          finishOperation(token, cleanup.status)
           return { status: cleanup.status, identity, cleanup, error: cleanup.diagnostic, next: { action: 'recover-residue' } }
         }
         releaseBridge(`${MCP_GROUP_PREFIX}${identity}`)
-        runtime.finish(token, 'unknown', { generation: null, incarnation: null })
+        finishOperation(token, 'unknown', { generation: null, incarnation: null })
         return { status: 'removed', identity, removed: true }
       } catch (cause) {
         const status = cause?.code === 'cleanup-timeout' ? 'cleanup-unknown' : 'cleanup-failed'
-        runtime.finish(token, status)
+        finishOperation(token, status)
         return { status, identity, error: mcpDiagnostic(cause, { code: status, action: 'recover-residue' }), next: { action: 'recover-residue' } }
       }
     }
@@ -253,7 +412,7 @@ export function createMcpManager(dependencies = {}) {
           secrets: prepared.secrets,
           fiberOf,
           beforeCreate: ({ groupId, identity, generation }) => registerBridge(groupId, identity, generation),
-          afterCleanup: ({ groupId }) => releaseBridge(groupId),
+          afterCleanup: ({ groupId, identity, generation }) => releaseBridge(groupId, { identity, generation }),
           discovery: ({ identity, generation }) => discoveryFor(identity, generation),
         })
         const outcome = { status: result.status, identity: targetIdentity, discovery: result.discovery, cleanup: result.cleanup }
@@ -323,7 +482,7 @@ export function createMcpManager(dependencies = {}) {
         if (!mount.mounted.has(identity) && residuePresent) {
           const swept = await mount.sweepResidue([groupId])
           if (!swept.includes(groupId)) {
-            runtime.finish(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            finishOperation(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
             const diagnostic = mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
             receipts.mount.set(identity, { time: now(), status: 'cleanup-failed', diagnostic })
             return { status: 'cleanup-failed', identity, generation: entry.generation, saved: true, error: diagnostic, next: { action: 'recover-residue' } }
@@ -334,7 +493,7 @@ export function createMcpManager(dependencies = {}) {
           try { await assertOwner('mount') } catch (cause) {
             // Cleanup may already have removed the old mount. Keep admission
             // closed without stranding the queue fence in `replacing`.
-            runtime.finish(token, 'unknown', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            finishOperation(token, 'unknown', { generation: entry.generation, incarnation: entry.incarnation ?? null })
             throw cause
           }
         }
@@ -388,14 +547,23 @@ export function createMcpManager(dependencies = {}) {
     }
 
     function agentCreated(payload) {
+      const agent = rememberAgent(payload?.agent)
+      if (!agent) return
+      // Creation remains non-throwing for visibility failures; admission is an
+      // independent hard gate. Registration itself uses the throwing path so
+      // its facade transaction can roll back.
+      try { reconcileAgent(agent) } catch (cause) { onError('mcp-schema-restrict-failed', cause) }
+    }
+    function agentDisposed(payload) {
       const agent = payload?.agent
-      if (publicNames.size === 0) return
-      const deny = [...publicNames.entries()].filter(([, owner]) => !gate.enabledFor(agent, typeof owner === 'string' ? owner : owner.identity)).map(([name]) => name)
-      if (deny.length > 0) {
-        try { agent?.ctx?.tools?.restrict?.({ deny }) } catch (cause) { onError('mcp-schema-restrict-failed', cause) }
-      }
+      if (!isAgent(agent)) return
+      // Object identity is load-bearing: a delayed disposal from an old
+      // incarnation must never clean the replacement agent of the same session.
+      seenAgents.delete(agent)
+      disposeAgentRestrictions(agent)
     }
     ctx.on?.('agent/created', payload => { agentCreated(payload) })
+    ctx.on?.('agent/disposed', payload => { agentDisposed(payload) })
 
     async function list() {
       const current = await registry.read()
@@ -448,7 +616,7 @@ export function createMcpManager(dependencies = {}) {
     const face = {
       start, startErrors, adopt, gate: gateFace, drain, registry, runtime,
       recoverResidue,
-      list,
+      list, syncSession,
       publicNames,
       mounted: mount.mounted,
       beginOperation, abortOperation, reconcileOne, removeRuntime, probe,
@@ -470,11 +638,15 @@ export function createMcpManager(dependencies = {}) {
     })
     return () => {
       try { ctx.reflect?.provide?.('weirMcpGate', { admit: async () => false, permit: async () => null, assertPermit: () => false, enabledFor: () => false, drain }) } catch { /* best effort */ }
+      // Child-group disposal normally unregisters tools first. If any public
+      // fact remains, unregistration was not confirmed: KEEP its deny instead
+      // of exposing a still-registered tool during manager teardown.
+      for (const agent of [...restrictions.keys()]) disposeAgentRestrictions(agent, { onlyAbsent: true })
     }
   }
 }
 
 export const name = 'weir-mcp-manager'
-export const inject = ['loader', 'tools', 'systemPrompt', 'mcpResources']
+export const inject = ['loader', 'tools', 'systemPrompt', 'mcpResources', 'agents']
 export const apply = createMcpManager()
 export const __message = message
