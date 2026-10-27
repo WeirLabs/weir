@@ -284,8 +284,9 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
       try {
         if (typeof manager.recoverResidue !== 'function') return finalize(action, failure('unsupported', 'recover-unavailable', new Error('this MCP manager cannot recover residue')), identity)
         await owner('mount')
-        const result = await manager.recoverResidue({ identity })
-        return finalize(action, { ...result, saved: false, next: { action: result.status === 'recovered' ? 'none' : 'inspect-diagnostics' } }, identity)
+        const result = await manager.recoverResidue({ identity, assertOwner: owner })
+        const next = result.status === 'recovered' ? 'none' : result.status === 'owner-changed' ? 'inspect-actual-state' : 'inspect-diagnostics'
+        return finalize(action, { ...result, saved: false, next: { action: next } }, identity)
       } catch (cause) {
         const status = cause?.code === 'owner-changed' ? 'owner-changed' : 'indeterminate'
         return finalize(action, failure(status, cause?.code ?? status, cause, { next: { action: 'inspect-actual-state' } }), identity)
