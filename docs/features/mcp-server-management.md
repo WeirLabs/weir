@@ -36,6 +36,7 @@ Weir 的 MCP 管理面以注册表为唯一配置权威，覆盖官方 `stdio` �
 ### Default、Select 与 Apply
 
 - **Select for this session** 只修改本地草稿；随后仍需显式 Apply。安装、编辑、测试、重启、删除都不会代替这一步。
+- **工具 schema 与 accepted set 同步**：安装或重连发现新工具不会把它们注入未启用的 live 会话；Select 后完成 Apply 才会显示。当前 agent 在启用、禁用或再次启用 Apply 后的下一次模型请求立即反映工具增减，无需重建会话。历史消息与模型记住的旧工具名不会因此被擦除，调用仍由 admission 门禁独立拦截。
 - **Default for new sessions** 是独立设置，只影响之后且没有工作区默认的会话；它不改变当前草稿、当前 accepted set 或已有显式选择。Edit/Restart 保留 default；Remove 在同一 registry mutation 中删除 default 并报告 `defaultRemoved`，不改写 accepted/draft 或 saved workspace-default。
 - Apply preparation 拒绝当时未注册或 unmanaged 的 identity，保留旧 accepted set 和用户草稿。注册表与选择是独立存储：准备后并发 Remove 可产生 rejected Apply 或 committed-but-missing selection，但门禁始终拒绝已删除 identity。
 
@@ -110,6 +111,8 @@ Managed mount 和 probe 都强制 strict。startup timeout、连接失败或 dis
 
 每个 identity 都有同步 runtime phase 和 `{identity,generation,incarnation,operationId}` permit。操作在任何 await 前关闭新旧 generation 与 drain entry；准入在 registry read 后及 transport handoff 前再次复核。旧 transport 已接收的调用可按既有 running-operation 边界结束，替换完成前的新调用一律拒绝。启动全量 mount 与运行期 add/edit/restart/remove 共用 `reconcileOne`，不重挂 sibling；public tool facts 按 `{identity,generation}` 精确清理。
 
+工具可见性由 live agent 维度的差分控制器维护：每个实际 agent 与 public tool name 只保留一条必要的 deny disposer。初次发现、重连/动态注册与注销、runtime phase 转换、initial selection 以及普通/恢复 Apply 都会按当前 accepted snapshot 收敛；`mounted` 才释放 mount 期间对 selected agent 的临时隐藏。Apply 在 lifecycle 发布后、响应前只同步目标 session，注册与 runtime 变化才逐个同步 live agents。旧 generation 的延迟 disposer 不能清除新 generation 的 facts 或限制，agent disposal 也只清理该 agent 自己持有的限制。
+
 ### Host/UI/命令线协议
 
 读取继续使用 `weirCapabilities`；MCP mutation 使用独立 service `weirCapabilityMutation` 与 namespace `weirCapabilityMutations`：
@@ -162,9 +165,9 @@ GUI 启动环境 PATH 通过既有 `resolveExecutable`/`spawnArgv`/`childEnviron
 
 ## 测试
 
-- 单元测试：`mcp-lifecycle`、`mcp-config`、`mcp-credentials`、`mcp-registry-incarnation`、`mcp-incarnation`、`mcp-runtime`、`mcp-manager-lifecycle`、`mcp-operations`、`mcp-process`、`capability-mutation-remote`、`capabilities-mcp-commands` 覆盖 Loader/disposal/strict/readback、秘密补偿、replacement permit、批量、remote ownership 与命令一致性。
+- 单元测试：`mcp-lifecycle`、`mcp-config`、`mcp-credentials`、`mcp-registry-incarnation`、`mcp-incarnation`、`mcp-runtime`、`mcp-manager-lifecycle`、`mcp-operations`、`mcp-process`、`capability-mutation-remote`、`capabilities-mcp-commands` 覆盖 Loader/disposal/strict/readback、秘密补偿、replacement permit、批量、remote ownership 与命令一致性；manager/facade/Apply wiring 另覆盖 live agent 差分限制、注册失败回滚、generation 精确清理、runtime readiness 与普通/恢复 Apply 的同步顺序。
 - AI/intent：`mcp-install-tool` 覆盖 preview、exact approval、stored-plan digest、取消/超时/liveness/plan/ownership/revision/namespace、probe/CAS/mount 与 delegated child；`intent-gate`/`intent-classifier`/`skills` 覆盖中英文命中、否定/讨论/已有 server、quoted/unclosed、显式资格与冷安全审计。
 - Client：`client-mcp-model`、`client-mcp-manager`、`client-capability-*`、`client.test` 覆盖库存/stale、Basic/Advanced、blank-keep/replace/remove、batch/retry、Select/default/Remove、focus、字典、错误边界、mutation wire 与 chunk digest。
 - 集成场景 `mcp-management` 使用真实 stdio 与 loopback Streamable HTTP fixtures，覆盖 mount/probe/disposal、零工具、401、bounded timeout、replacement fence、incarnation/re-Apply、AI preview/cancel/approve、remote ownership 和 add/edit/probe/restart/remove/crash recovery 的秘密 canary。
-- 回归场景 `mcp-gateway`、`lifecycle-inheritance`、`preset-defaults`、`capability-presets-surface` 验证既有 gateway/继承/portable preset 语义不扩大权限。
-- 本 lane 不宣称完成真实 Desktop GUI 验收；GUI npx/npm-shim、`env node` shebang、截图与真实浏览器交互属于单独的 8.3 验证，不以单元或 headless 证据代替。
+- 回归场景 `mcp-gateway` 直接断言同一 live root 后续真实请求的 `toolNames`：late install 不向未选中会话注入工具，enable → disable → re-enable 精确增删 schema，并保留 admission、zero-RPC 与新 agent 检查；A/B 会话隔离由 manager 单元测试和下方 Desktop 验收覆盖，**不由 `mcp-gateway` 断言**。`lifecycle-inheritance`、`preset-defaults`、`capability-presets-surface` 继续验证继承与 portable preset 语义不扩大权限。
+- Desktop 验收（`fix-mcp-live-tool-visibility`）：在真实 Weir 会话安装本地 stdio fixture，经 Host `Tool.listTools` 逐阶段确认未 Select/Apply 不注入、Apply 后出现、禁用后移除、再次启用恢复；实际 `echo` 调用成功，禁用后旧名称不再可调用。持续子会话在父会话启用前后保持相同 32 项工具目录，证明 A/B 隔离。最后取消选择并 Remove，preview 复核 `fingerprint:null / conflict:null`，无测试注册残留。Desktop 证据独立于此前的单元与 headless 结果。
