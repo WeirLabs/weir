@@ -71,3 +71,33 @@ export function createMcpRuntime() {
     states,
   }
 }
+
+/**
+ * Per-identity FIFO for every operation that opens a runtime fence
+ * (runtime.begin). Same-identity operations run strictly one after another
+ * (design D6), so a Restart can never begin while an edit-mode Test holds the
+ * fence and leave the server mounted but refusing calls. A task's failure never
+ * poisons the queue; different identities never wait on each other. Not
+ * reentrant: callers already inside serialize() pass their token instead.
+ */
+export function createMcpIdentityLock() {
+  const tails = new Map()
+  return function serialize(identity, task) {
+    const previous = tails.get(identity) ?? Promise.resolve()
+    const run = previous.then(() => task())
+    const tail = run.then(() => {}, () => {})
+    tails.set(identity, tail)
+    void tail.then(() => { if (tails.get(identity) === tail) tails.delete(identity) })
+    return run
+  }
+}
+
+const fallbackLocks = new WeakMap()
+/** The manager's own lock, or one stable lock per manager object for fakes/older faces. */
+export function mcpIdentityLockFor(manager) {
+  if (typeof manager?.serialize === 'function') return (identity, task) => manager.serialize(identity, task)
+  if (!manager || (typeof manager !== 'object' && typeof manager !== 'function')) return createMcpIdentityLock()
+  let lock = fallbackLocks.get(manager)
+  if (!lock) { lock = createMcpIdentityLock(); fallbackLocks.set(manager, lock) }
+  return lock
+}

@@ -352,3 +352,36 @@ test('stale inventory and the MCP-only error boundary stay explicit', async () =
   expect(fallback.role).toBe('alert')
   expect(fallback.children).toContain('Other capability controls remain available')
 })
+
+test('row lifecycle actions are disabled while an edit-mode Test is in flight', async () => {
+  let resolveTest
+  const f = await fixture({ mutate: request => request.action === 'test'
+    ? new Promise(resolve => { resolveTest = () => resolve({ status: 'mounted', identity: 'docs', saved: false, probe: true }) })
+    : undefined }).init()
+  click(f.render(), 'Edit')
+  click(f.render(), 'Preview')
+  await flush()
+  click(f.render(), 'Test')
+  const busy = f.render()
+  for (const label of ['Restart', 'Remove', 'Edit', 'Disable default']) expect(buttons(busy, label)[0].disabled, label).toBe(true)
+  resolveTest()
+  await flush()
+  const idle = f.render()
+  for (const label of ['Restart', 'Remove', 'Edit', 'Disable default']) expect(buttons(idle, label)[0].disabled, label).toBe(false)
+})
+
+test('a row with residue offers Recover through the shared mutation; a healthy row does not', async () => {
+  const healthy = await fixture({ server: { state: 'mounted', lastMount: { status: 'mounted', generation: 3 } } }).init()
+  expect(buttons(healthy.render(), 'Recover')).toHaveLength(0)
+  const f = await fixture({
+    server: { state: 'cleanup-unknown' },
+    mutate: request => ({ status: 'recovered', recovered: 1, results: [{ identity: request.identity, status: 'mounted' }] }),
+  }).init()
+  click(f.render(), 'Recover')
+  await flush()
+  expect(f.calls.mutate).toHaveLength(1)
+  expect(f.calls.mutate[0].action).toBe('recover')
+  expect(f.calls.mutate[0].identity).toBe('docs')
+  expect(findAll(f.render(), node => node.role === 'status')).toHaveLength(1)
+  expect(f.calls.refresh).toBeGreaterThan(0)
+})

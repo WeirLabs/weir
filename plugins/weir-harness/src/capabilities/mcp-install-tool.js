@@ -151,6 +151,7 @@ function questionFor(stored, execution) {
   const detail = [
     `Plan digest: ${stored.digest}`,
     effect,
+    ...(transport === 'stdio' ? [`Arguments (exact argv; credential-referenced positions show [redacted]): ${JSON.stringify(stored.plan?.[0]?.entry?.client?.args ?? [])}`] : []),
     'Default for new sessions: off. No session selection or Apply is changed.',
     `Exact redacted plan:\n${JSON.stringify(stored.plan, null, 2)}`,
   ].join('\n')

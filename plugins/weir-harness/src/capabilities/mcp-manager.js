@@ -8,7 +8,7 @@ import { createMcpDrain } from './mcp-drain.js'
 import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree } from './mcp-mount.js'
 import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
 import { skillSelectionFor } from './skill-selection-plugin.js'
-import { createMcpRuntime } from './mcp-runtime.js'
+import { createMcpRuntime, createMcpIdentityLock } from './mcp-runtime.js'
 import { materializeMcpClientConfig } from './mcp-credentials.js'
 import { hasMcpSecrets, redactMcpEntry, fingerprintMcpEntry } from './mcp-config.js'
 import { createMcpProcessAdapter } from './mcp-process.js'
@@ -46,6 +46,8 @@ export function createMcpManager(dependencies = {}) {
       snapshotFor: sessionId => skillSelectionFor(ctx)?.lifecycle?.snapshotFor(sessionId) ?? null,
     }
     const runtime = dependencies.runtime ?? createMcpRuntime()
+    // Every runtime.begin path runs inside this per-identity queue (design D6).
+    const serialize = createMcpIdentityLock()
     const drain = dependencies.drain ?? createMcpDrain({ timeoutMs: config.drainTimeoutMs ?? 30_000 })
     const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle, runtime, registrationFor: runtime.registrationFor })
     const loader = dependencies.loader ?? ctx.get?.('loader')
@@ -53,6 +55,10 @@ export function createMcpManager(dependencies = {}) {
     const listEntryIds = dependencies.listEntryIds ?? (() => defaultListRows().map(row => row.id).filter(Boolean))
     const listRows = dependencies.listRows ?? defaultListRows
     const startErrors = []
+    /** A strict mount of this identity supersedes its earlier start/mount failures. */
+    const clearStartErrors = identity => {
+      for (let index = startErrors.length - 1; index >= 0; index -= 1) if (startErrors[index].identity === identity) startErrors.splice(index, 1)
+    }
     const onError = (reason, cause) => ctx.logger?.warn?.(sanitizeMcpText(`${reason}${cause ? `: ${message(cause)}` : ''}`))
     const defaultFiberOf = async groupId => {
       for (const candidate of [`${groupId}:${groupId}-client`, `${groupId}-client`]) {
@@ -193,8 +199,15 @@ export function createMcpManager(dependencies = {}) {
         })
         const observed = mount.mounted.get(identity)
         if (!observed || observed.generation !== entry.generation) throw new Error('mounted generation readback failed')
-        runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+        // Only the fence owner may report mounted and reopen admission: a
+        // superseded token means another operation now owns this identity.
+        if (!runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })) {
+          const diagnostic = mcpDiagnostic(new Error(`MCP operation on ${identity} was superseded before it could report mounted`), { code: 'operation-superseded', action: 'reread-registry' })
+          receipts.mount.set(identity, { time: now(), status: 'indeterminate', diagnostic })
+          return { status: 'indeterminate', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, error: diagnostic, mount: { state: 'superseded', observedGeneration: observed.generation }, next: { action: 'reread-registry' } }
+        }
         drain.reopenAll(identity)
+        clearStartErrors(identity)
         const receipt = { time: now(), status: 'mounted', generation: entry.generation, discovery: result.discovery }
         receipts.mount.set(identity, receipt)
         return { status: 'mounted', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, mount: { state: 'mounted', observedGeneration: observed.generation }, discovery: result.discovery, execution: result.execution ?? null }
@@ -244,12 +257,13 @@ export function createMcpManager(dependencies = {}) {
           discovery: ({ identity, generation }) => discoveryFor(identity, generation),
         })
         const outcome = { status: result.status, identity: targetIdentity, discovery: result.discovery, cleanup: result.cleanup }
-        receipts.test.set(targetIdentity, { time: now(), status: outcome.status, discovery: outcome.discovery })
+        // Receipts share one shape with lastMount: the row reads `diagnostic`.
+        receipts.test.set(targetIdentity, { time: now(), status: outcome.status, discovery: outcome.discovery, ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}) })
         return outcome
       } catch (cause) {
         const status = ['cleanup-failed', 'cleanup-unknown'].includes(cause?.status) ? cause.status : 'probe-failed'
         const outcome = { status, identity: targetIdentity, error: mcpDiagnostic(cause, { code: cause?.code ?? status }), cleanup: cause?.cleanup }
-        receipts.test.set(targetIdentity, { time: now(), status, error: outcome.error })
+        receipts.test.set(targetIdentity, { time: now(), status, diagnostic: outcome.error })
         return outcome
       }
     }
@@ -271,36 +285,86 @@ export function createMcpManager(dependencies = {}) {
       }
       let mountedCount = 0
       for (const entry of Object.values(current.servers)) {
-        const result = await reconcileOne(entry.identity, entry)
+        const result = await serialize(entry.identity, () => reconcileOne(entry.identity, entry))
         if (result.status === 'mounted') mountedCount += 1
         else if (result.status !== 'saved-degraded') startErrors.push({ identity: entry.identity, reason: result.status })
       }
       return { mounted: mountedCount }
 
     }
-    async function recoverResidue() {
-      const swept = await mount.sweepResidue(listEntryIds())
+    const healthy = identity => runtime.snapshot(identity).phase === 'mounted' && mount.mounted.has(identity)
+      && (mount.mounted.get(identity)?.state ?? 'mounted') === 'mounted'
+
+    /** Recover one identity inside its queue slot: sweep untracked residue, then strictly remount. */
+    function recoverOne(identity) {
+      return serialize(identity, async () => {
+        // Re-read inside the slot: an earlier queued operation may have
+        // remounted, edited or removed this identity meanwhile.
+        const current = await registry.read()
+        if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', identity, skipped: current.kind }
+        const entry = current.kind === 'ok' ? current.servers[identity] ?? null : null
+        if (entry && healthy(identity)) return { status: 'mounted', identity, generation: entry.generation, alreadyHealthy: true }
+        const groupId = `${MCP_GROUP_PREFIX}${identity}`
+        const residuePresent = listEntryIds().includes(groupId)
+        if (!entry) {
+          // Orphan residue of an identity that is no longer registered.
+          const swept = residuePresent ? await mount.sweepResidue([groupId]) : []
+          const cleaned = !residuePresent || swept.includes(groupId)
+          if (cleaned) releaseBridge(groupId)
+          return cleaned
+            ? { status: 'removed', identity, swept: residuePresent }
+            : { status: 'cleanup-failed', identity, error: mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' }), next: { action: 'recover-residue' } }
+        }
+        const token = beginOperation(identity)
+        // A tracked failed mount record is retried by reconcileOne's unmount; a
+        // Loader row the mount map no longer tracks is swept first, or the
+        // same-name replacement could never be created.
+        if (!mount.mounted.has(identity) && residuePresent) {
+          const swept = await mount.sweepResidue([groupId])
+          if (!swept.includes(groupId)) {
+            runtime.finish(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            const diagnostic = mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
+            receipts.mount.set(identity, { time: now(), status: 'cleanup-failed', diagnostic })
+            return { status: 'cleanup-failed', identity, generation: entry.generation, saved: true, error: diagnostic, next: { action: 'recover-residue' } }
+          }
+          releaseBridge(groupId)
+        }
+        return reconcileOne(identity, entry, token)
+      })
+    }
+
+    /**
+     * Residue recovery (user-triggered via the capabilities command verb
+     * mcp-recover, the mcp mutation action 'recover' and the panel's Recover
+     * row action). Healthy mounted identities are never touched; every other
+     * registered identity is strictly remounted and every orphan residue row is
+     * removed. `identity` scopes the work to one server.
+     */
+    async function recoverResidue({ identity = null } = {}) {
       const current = await registry.read()
-      if (current.kind !== 'ok') return { swept, mounted: 0, skipped: current.kind }
+      if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', skipped: current.kind, results: [] }
+      const servers = current.kind === 'ok' ? current.servers : {}
+      const orphans = listEntryIds().filter(isMcpResidueId).map(id => id.slice(MCP_GROUP_PREFIX.length)).filter(id => !servers[id])
+      let candidates = [...new Set([...Object.keys(servers).filter(id => !healthy(id)), ...orphans])]
+      if (identity !== null) candidates = candidates.filter(id => id === identity)
       const results = []
-      for (const entry of Object.values(current.servers)) {
-        if (runtime.snapshot(entry.identity).phase === 'mounted' && mount.mounted.has(entry.identity)) continue
-        results.push(await reconcileOne(entry.identity, entry))
-      }
-      return { swept, mounted: results.filter(result => result.status === 'mounted').length, results }
+      for (const id of candidates) results.push(await recoverOne(id))
+      const recovered = results.filter(result => result.status === 'mounted' || result.status === 'removed').length
+      return { status: recovered === results.length ? 'recovered' : 'recovery-incomplete', recovered, results }
     }
 
     async function adopt(entry) {
       const holder = hostRowHoldingReservation(listRows(), entry.client?.serverName ?? entry.transport?.serverName ?? entry.identity)
       if (holder) return { status: 'conflict', reason: `host row "${holder.id ?? entry.identity}" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged.` }
-      const current = await registry.read()
-      const revision = current.kind === 'ok' ? current.revision : 0
-      const token = beginOperation(entry.identity)
-      const registered = await registry.register(entry, revision)
-      if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
-      const latest = await registry.read()
-      const result = await reconcileOne(entry.identity, latest.servers[entry.identity], token)
-      return result
+      return serialize(entry.identity, async () => {
+        const current = await registry.read()
+        const revision = current.kind === 'ok' ? current.revision : 0
+        const token = beginOperation(entry.identity)
+        const registered = await registry.register(entry, revision)
+        if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
+        const latest = await registry.read()
+        return reconcileOne(entry.identity, latest.servers[entry.identity], token)
+      })
     }
 
     function agentCreated(payload) {
@@ -368,7 +432,9 @@ export function createMcpManager(dependencies = {}) {
       publicNames,
       mounted: mount.mounted,
       beginOperation, abortOperation, reconcileOne, removeRuntime, probe,
-      remove: identity => removeRuntime(identity),
+      remove: identity => serialize(identity, () => removeRuntime(identity)),
+      /** Run one same-identity operation after every earlier one settled. */
+      serialize,
       support,
       serverNameConflict: (serverName, identity) => {
         const holder = hostRowHoldingReservation(listRows(), serverName)

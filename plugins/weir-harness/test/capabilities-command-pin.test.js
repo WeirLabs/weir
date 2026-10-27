@@ -99,7 +99,7 @@ test('pin 1.7: a missing owning agent is a fixed error, whatever the verb', asyn
 
 test('pin 1.7: unknown and empty verbs fall through to the usage line', async () => {
   const { call } = mountCapabilities(tmp())
-  const usage = 'Usage: /capabilities receipt|list|apply|mcp-preview|mcp-add|mcp-batch|mcp-edit|mcp-remove|mcp-restart|mcp-test|mcp-default|presets|default-get|default-save|default-clear'
+  const usage = 'Usage: /capabilities receipt|list|apply|mcp-preview|mcp-add|mcp-batch|mcp-edit|mcp-remove|mcp-restart|mcp-test|mcp-default|mcp-recover|presets|default-get|default-save|default-clear'
   const expected = {
     'bogus-verb': usage,
     'receipt extra words': usage,

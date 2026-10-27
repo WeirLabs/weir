@@ -321,7 +321,7 @@ window.__ModuleLoader__.load({
 
 			const resultView = (result) => {
 				if (!result) return null;
-				const failed = result.status !== "mounted" && result.status !== "saved" && result.status !== "removed";
+				const failed = result.status !== "mounted" && result.status !== "saved" && result.status !== "removed" && result.status !== "recovered";
 				return react_jsx_runtime.jsxs("div", { role: failed ? "alert" : "status", style: { ...S.card, borderColor: failed ? DANGER : SUCCESS }, children: [
 					react_jsx_runtime.jsxs("div", { style: S.row, children: [
 						tag(result.status, failed ? DANGER : SUCCESS),
@@ -468,6 +468,12 @@ window.__ModuleLoader__.load({
 				const selected = props.draft?.mcpServers?.includes(identity) === true;
 				const state = model.mcpStateOf(server);
 				const discovery = server.discovery?.toolCount;
+				// Row lifecycle actions stay disabled while an editor action (Preview/
+				// Confirm/Test) is in flight; the Host serializes same-identity work too.
+				const rowBusy = pending !== null || editor?.busy === true;
+				// Residue exists when cleanup failed or could not be confirmed; the
+				// Host's mcp 'recover' action sweeps it and strictly remounts.
+				const residue = state === "cleanup-failed" || state === "cleanup-unknown" || server.lastMount?.diagnostic?.recovery?.action === "recover-residue";
 				return react_jsx_runtime.jsxs("div", { style: S.card, children: [
 					react_jsx_runtime.jsxs("div", { style: S.row, children: [
 						react_jsx_runtime.jsx("input", {
@@ -490,10 +496,11 @@ window.__ModuleLoader__.load({
 					server.lastTest?.diagnostic?.message ? react_jsx_runtime.jsx("span", { style: S.error, children: server.lastTest.diagnostic.message }) : null,
 					(server.startErrors ?? []).map((error, index) => react_jsx_runtime.jsx("span", { style: S.error, children: error.reason }, index)),
 					react_jsx_runtime.jsxs("div", { style: S.toolbar, children: [
-						button(t("capability.mcp.edit", "Edit"), { disabled: pending !== null, onClick: () => openForm(server) }),
-						button(t("capability.mcp.restart", "Restart"), { disabled: pending !== null, onClick: () => rowOperation("restart", server) }),
-						button(server.defaultEnabled ? t("capability.mcp.defaultOff", "Disable default") : t("capability.mcp.defaultOn", "Enable default"), { disabled: pending !== null, onClick: () => rowOperation("setDefault", server) }),
-						button(t("capability.mcp.remove", "Remove"), { disabled: pending !== null, ref: originRef(`remove:${identity}`), onClick: () => setConfirmation({ kind: "remove", identity, origin: `remove:${identity}` }) }),
+						button(t("capability.mcp.edit", "Edit"), { disabled: rowBusy, onClick: () => openForm(server) }),
+						button(t("capability.mcp.restart", "Restart"), { disabled: rowBusy, onClick: () => rowOperation("restart", server) }),
+						button(server.defaultEnabled ? t("capability.mcp.defaultOff", "Disable default") : t("capability.mcp.defaultOn", "Enable default"), { disabled: rowBusy, onClick: () => rowOperation("setDefault", server) }),
+						residue ? button(t("capability.mcp.recover", "Recover"), { disabled: rowBusy, onClick: () => rowOperation("recover", server) }) : null,
+						button(t("capability.mcp.remove", "Remove"), { disabled: rowBusy, ref: originRef(`remove:${identity}`), onClick: () => setConfirmation({ kind: "remove", identity, origin: `remove:${identity}` }) }),
 						pending?.endsWith(`:${identity}`) ? react_jsx_runtime.jsx("span", { style: S.meta, children: t("capability.mcp.pending", "Pending…") }) : null,
 					] }),
 				] }, identity);

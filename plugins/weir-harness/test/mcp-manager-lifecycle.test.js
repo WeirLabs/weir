@@ -34,6 +34,7 @@ function mountFixture() {
     },
     async probe(options) {
       calls.push(['probe', options.identity])
+      if (state.failProbe) throw new Error('injected probe failure: connection refused')
       const identity = 'probe-1'
       await options.beforeCreate?.({ groupId: 'weir-mcp-probe-1', identity, generation: 0 })
       const discovery = await options.discovery?.({ identity, generation: 0 })
@@ -154,4 +155,32 @@ test('an absent registry is a healthy empty inventory with support facts, not an
   expect(listing.registryRevision).toBe(0)
   expect(listing.warnings).toEqual([])
   expect(listing.capabilities).toEqual({ credentials: false, ephemeral: false })
+})
+
+test('a later successful mount clears that identity\'s stale start errors and keeps siblings\' errors', async () => {
+  const mount = mountFixture()
+  mount.state.failMount = true
+  const f = await fixture({ entries: ['docs', 'web'], mount })
+  let rows = (await f.face.list()).managed
+  expect(rows.every(row => row.startErrors.length > 0)).toBe(true)
+  mount.state.failMount = false
+  const current = await f.registry.read()
+  await f.registry.register(current.servers.docs, current.revision)
+  const result = await f.face.reconcileOne('docs', (await f.registry.read()).servers.docs)
+  expect(result.status).toBe('mounted')
+  rows = (await f.face.list()).managed
+  expect(rows.find(row => row.identity === 'docs').startErrors).toEqual([])
+  expect(rows.find(row => row.identity === 'web').startErrors.length).toBeGreaterThan(0)
+})
+
+test('a failed Test leaves its sanitized diagnostic on the row where the panel reads it', async () => {
+  const mount = mountFixture()
+  const f = await fixture({ entries: ['docs'], mount })
+  mount.state.failProbe = true
+  const result = await f.face.probe((await f.registry.read()).servers.docs)
+  expect(result.status).toBe('probe-failed')
+  const row = (await f.face.list()).managed[0]
+  expect(row.lastTest.status).toBe('probe-failed')
+  expect(row.lastTest.diagnostic.message).toContain('injected probe failure')
+  expect(row.lastTest.diagnostic.code).toBe(result.error.code)
 })

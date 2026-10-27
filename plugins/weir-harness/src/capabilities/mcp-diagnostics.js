@@ -16,7 +16,27 @@ function errorSecrets(error, initial = []) {
   return secrets
 }
 
-/** Replace every known secret before applying pattern-based redaction. */
+/** Replace known secrets, then reduce sensitive URL tails to scheme/host/path. */
+function redactKnownAndUrls(text, secrets) {
+  const known = [...new Set(secrets.filter(secret => typeof secret === 'string' && secret.length > 0))]
+    .sort((a, b) => b.length - a.length)
+  for (const secret of known) text = text.split(secret).join('[redacted]')
+  // Any sensitive URL component makes the whole userinfo/query/fragment tail
+  // sensitive. Preserve only scheme/host/path for actionable diagnostics.
+  return text.replace(/\b(?:https?|wss?):\/\/[^\s<>"']+/gi, candidate => {
+    const trailing = candidate.match(/[.,;:!?)]*$/)?.[0] ?? ''
+    const raw = trailing ? candidate.slice(0, -trailing.length) : candidate
+    try {
+      const url = new URL(raw)
+      if (!url.username && !url.password && !url.search && !url.hash) return candidate
+      return `${url.protocol}//${url.host}${url.pathname}[redacted-url]${trailing}`
+    } catch {
+      return '[redacted-url]'
+    }
+  })
+}
+
+/** Free text: replace every known secret before applying pattern-based redaction. */
 export function sanitizeMcpText(value, secrets = []) {
   let text = String(value ?? '')
   const known = [...new Set(secrets.filter(secret => typeof secret === 'string' && secret.length > 0))]
@@ -29,26 +49,41 @@ export function sanitizeMcpText(value, secrets = []) {
   text = text.replace(/\b(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|client[-_]?secret)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, (_match, key, separator) => `${key}${separator}[redacted]`)
   // Shell/environment assignments. Values may be quoted; the key remains useful.
   text = text.replace(/\b[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)/g, assignment => `${assignment.slice(0, assignment.indexOf('='))}=[redacted]`)
-  // Any sensitive URL component makes the whole userinfo/query/fragment tail
-  // sensitive. Preserve only scheme/host/path for actionable diagnostics.
-  text = text.replace(/\b(?:https?|wss?):\/\/[^\s<>"']+/gi, candidate => {
-    const trailing = candidate.match(/[.,;:!?)]*$/)?.[0] ?? ''
-    const raw = trailing ? candidate.slice(0, -trailing.length) : candidate
-    try {
-      const url = new URL(raw)
-      if (!url.username && !url.password && !url.search && !url.hash) return candidate
-      return `${url.protocol}//${url.host}${url.pathname}[redacted-url]${trailing}`
-    } catch {
-      return '[redacted-url]'
-    }
-  })
-  return text
+  return redactKnownAndUrls(text, [])
+}
+
+/**
+ * Structured MCP configuration fields (argv, command, cwd, label, refs) are
+ * exact values the user must be able to read, edit and approve. Secret-bearing
+ * positions are already replaced structurally (secretRefs-indexed args, env/
+ * header values, sensitive URLs); here only known secret values and sensitive
+ * URL tails are removed. The generic KEY=VALUE patterns are for free text only:
+ * applying them to argv turned `--port=8080` into `--port=[redacted]`.
+ */
+export function sanitizeMcpConfigText(value, secrets = []) {
+  return redactKnownAndUrls(String(value ?? ''), secrets)
+}
+
+// Config projections produced by redactMcpEntry. Membership is process-local and
+// lost on clone/serialization, which only falls back to the stricter free-text
+// sanitizer — never to less redaction.
+const CONFIG_PROJECTIONS = new WeakSet()
+export function markMcpConfigProjection(value) {
+  if (value && typeof value === 'object') CONFIG_PROJECTIONS.add(value)
+  return value
+}
+function sanitizeConfigProjection(value, secrets) {
+  if (typeof value === 'string') return sanitizeMcpConfigText(value, secrets)
+  if (Array.isArray(value)) return value.map(item => sanitizeConfigProjection(item, secrets))
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeConfigProjection(item, secrets)]))
+  return value
 }
 
 export function sanitizeMcpPayload(value, secrets = []) {
   if (typeof value === 'string') return sanitizeMcpText(value, secrets)
   if (Array.isArray(value)) return value.map(item => sanitizeMcpPayload(item, secrets))
   if (value && typeof value === 'object') {
+    if (CONFIG_PROJECTIONS.has(value)) return markMcpConfigProjection(sanitizeConfigProjection(value, secrets))
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeMcpPayload(item, secrets)]))
   }
   return value

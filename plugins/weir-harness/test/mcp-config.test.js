@@ -89,3 +89,15 @@ test('blank secrets keep, remove differs from replace, and legacy literals remai
   expect(fingerprintMcpEntry(legacy.entry)).toMatch(/^[a-f0-9]{64}$/)
   expect(hasMcpSecrets(normalizeMcpServer({ identity: 'plain', command: 'node' }).entry)).toBe(false)
 })
+
+test('redaction projection keeps plain argv exact and redacts only secret-indexed args and sensitive URLs', () => {
+  const { entry } = normalizeMcpServer({
+    identity: 'docs', command: 'node',
+    args: ['--port=8080', 'FOO=bar', { ref: 'MCP_CLI_TOKEN' }, 'https://user:pw@example.test/x?token=1'],
+  }, { surface: 'refs' })
+  const projected = redactMcpEntry(entry)
+  expect(projected.client.args).toEqual(['--port=8080', 'FOO=bar', '[redacted]', 'https://example.test/x[redacted-url]'])
+  expect(projected.secretRefs.args[2].ref).toBe('MCP_CLI_TOKEN')
+  // Known secret values are still removed from structured fields.
+  expect(redactMcpEntry({ ...entry, label: `label ${secret}` }, [secret]).label).toBe('label [redacted]')
+})
