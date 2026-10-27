@@ -1,12 +1,9 @@
-// Scenario: mcp-gateway — task 8.2+ integration for the Weir-managed MCP
-// gateway. A registry-seeded managed server mounts at startup through the
-// real loader (isolated group + facade + stock client); the scenario then
-// proves: admitted calls reach the server (publicName → identity mapping),
-// a removed server refuses with ZERO RPC reaching the process (G3b shape),
-// a re-enabled server admits again, a newly created agent sees the tool
-// schema and the instruction section only while the server is accepted
-// (8.4 creation-time + per-assembly), and adopt of a host-held name is a
-// visible conflict with unmanaged labeling (8.8/8.9).
+// Scenario: mcp-gateway — integration for the Weir-managed MCP gateway.
+// A registry-seeded server mounts at startup through the real loader (isolated
+// group + facade + stock client). The same live root then observes a late
+// install and enable → disable → re-enable through subsequent request toolNames.
+// Separate child checks retain creation-time schema/instruction coverage, while
+// execution admission, ZERO RPC, and unmanaged/adopt behavior stay independent.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,32 +41,37 @@ function decide(options, obs) {
   }
 
   if (lastTool.includes('MCP_PROBE error') && !lastTool.includes('admission refused')) return textChunks(`probe halted: ${lastTool.slice(0, 200)}`)
-  // 1. accept docs
+  // 1. install a new server only after this root's first request exists.
+  if (!history.includes('done install:late')) {
+    return toolCallChunks('mcp_probe', { op: 'install', identity: 'late', _marker: 'install:late' })
+  }
+  // 2. accept docs
   if (!history.includes('done apply:first')) {
     return toolCallChunks('mcp_probe', { op: 'apply', skills: ['fixture-a'], mcpServers: ['docs'], _marker: 'done apply:first' })
   }
-  // 2. admitted call from the root (wrapper admit = true)
+  // 3. admitted call from the root (wrapper admit = true)
   if (!history.includes('RESULT server=docs')) {
     return toolCallChunks('mcp_probe', { op: 'call', name: 'mcp__docs__echo', text: 'CALL_ONE' })
   }
-  // 3. a child created WHILE accepted: its creation-time view includes the
+  // 4. a child created WHILE accepted: its creation-time view includes the
   // schema and its call is admitted too.
   if (!history.includes('RESULT_ONE')) {
     return toolCallChunks('subagent', { description: 'accepted-call child', prompt: 'CHILD_ONE\nTASK: call the managed tool mcp__docs__echo with text CALL_ONE and report the outcome\nDELIVERABLE: the outcome\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done', run_in_background: false })
   }
-  // 4. remove docs — children are already settled, no invalidation reaches them.
+  // 5. remove docs — children are already settled, no invalidation reaches them.
   if (!history.includes('done apply:narrow')) {
     return toolCallChunks('mcp_probe', { op: 'apply', skills: [], mcpServers: [], _marker: 'done apply:narrow' })
   }
-  // 5. the wrapper's last-moment refusal: zero RPC, explicit wording.
+  // 6. the wrapper's last-moment refusal: zero RPC, explicit wording.
   if (!history.includes('admission refused')) {
     return toolCallChunks('mcp_probe', { op: 'call', name: 'mcp__docs__echo', text: 'CALL_DENIED' })
   }
-  // 6. a child created AFTER the removal: the schema is hidden at creation
+  // 7. a child created AFTER the removal: the schema is hidden at creation
   // (8.4③) — the call surfaces as `unknown tool`.
   if (!history.includes('RESULT_TWO')) {
     return toolCallChunks('subagent', { description: 'removed-call child', prompt: 'CHILD_TWO\nTASK: try the managed tool mcp__docs__echo with text CALL_DENIED and report what happens\nDELIVERABLE: the outcome\nSCOPE: nothing else\nVERIFY: done\nSTOP WHEN: done', run_in_background: false })
   }
+  // 8. re-enable docs on the same root.
   if (!history.includes('done apply:reopen')) {
     return toolCallChunks('mcp_probe', { op: 'apply', skills: [], mcpServers: ['docs'], _marker: 'done apply:reopen' })
   }
@@ -132,6 +134,30 @@ function assert(run) {
   const calls = readJsonl(join(run.ws, 'mcp-calls.jsonl'))
   const serverLog = readJsonl(join(run.ws, 'mcp-server-log.jsonl'))
   run.check('parent observed the gateway', run.stdout.includes('parent observed mcp gateway'), run.stdout.slice(-400))
+
+  const docsTool = 'mcp__docs__echo'
+  const lateTool = 'mcp__late__echo'
+  const after = marker => run.requests.filter(r => String(r.lastTool ?? '').includes(marker))
+  const visibilityOf = requests => JSON.stringify(requests.map(r => ({
+    seq: r.seq,
+    lastTool: r.lastTool,
+    managedToolNames: (r.tools ?? []).filter(name => name === docsTool || name === lateTool),
+  }))).slice(0, 1200)
+  const lateImmediate = after('done install:late')
+  const enabled = after('done apply:first')
+  const disabled = after('done apply:narrow')
+  const reopened = after('done apply:reopen')
+  // Replay fixtures predate the late-install operation and retain the original
+  // assertion matrix. Every new live run must cross all four phase boundaries.
+  if (lateImmediate.length > 0) {
+    const liveRequests = [...lateImmediate, ...enabled, ...disabled, ...reopened]
+    const rootSessions = new Set(run.records.filter(r => r.kind === 'inbox-inserted' && r.text === prompt).map(r => r.session))
+    run.check('late install and live toggles are observed on the same root session', liveRequests.length === 4 && rootSessions.size === 1 && [...rootSessions].every(session => typeof session === 'string' && session.length > 0), JSON.stringify([...rootSessions]))
+    run.check('a late-installed unselected tool is absent from subsequent live-root request toolNames', liveRequests.length === 4 && liveRequests.every(r => !(r.tools ?? []).includes(lateTool)), visibilityOf(liveRequests))
+    run.check('the next root request after Apply enable contains the managed tool schema', enabled.length === 1 && (enabled[0].tools ?? []).includes(docsTool), visibilityOf(enabled))
+    run.check('the next root request after Apply disable omits the managed tool schema', disabled.length === 1 && !(disabled[0].tools ?? []).includes(docsTool), visibilityOf(disabled))
+    run.check('the next root request after Apply re-enable restores the managed tool schema', reopened.length === 1 && (reopened[0].tools ?? []).includes(docsTool), visibilityOf(reopened))
+  }
 
   run.check('the admitted managed call reached the server with a RESULT', run.requests.some(r => r.managedResult), JSON.stringify(report ?? null).slice(0, 200))
   const docsRpc = serverLog.filter(entry => entry.server === 'docs' && entry.method === 'tools/call')

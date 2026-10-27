@@ -296,3 +296,77 @@ test('gate + facade: a BLOCKED fork omits MCP instructions while a creation-race
   expect(await gate.admit(racing, 'docs', 1)).toBe(false)
   expect(await section.render(racing)).toBe('DOCS INSTRUCTIONS')
 })
+
+test('facade: live registration sync follows Host registration and Host removal precedes generation cleanup', () => {
+  const order = []
+  const facade = createMcpFacade({
+    host: { tools: { register() {
+      order.push('host-register')
+      return () => { order.push('host-unregister') }
+    } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true,
+    isEnabledFor: () => true,
+    onRegister: name => { order.push(`owner-register:${name}`) },
+    onUnregister: name => { order.push(`owner-unregister:${name}`) },
+  })
+  const dispose = facade.tools.register({ name: 'mcp__docs__echo', execute: async () => {} })
+  expect(order).toEqual(['host-register', 'owner-register:mcp__docs__echo'])
+  dispose()
+  dispose()
+  expect(order).toEqual([
+    'host-register', 'owner-register:mcp__docs__echo',
+    'host-unregister', 'owner-unregister:mcp__docs__echo',
+  ])
+})
+
+test('facade: a synchronous visibility failure rolls back Host registration before surfacing the error', () => {
+  const registered = new Set()
+  const order = []
+  const facade = createMcpFacade({
+    host: { tools: { register(definition) {
+      registered.add(definition.name)
+      order.push('host-register')
+      return () => {
+        registered.delete(definition.name)
+        order.push('host-rollback')
+      }
+    } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true,
+    isEnabledFor: () => true,
+    onRegister() { order.push('owner-sync-failed'); throw new Error('injected visibility sync failure') },
+  })
+  assert.throws(
+    () => facade.tools.register({ name: 'mcp__docs__echo', execute: async () => {} }),
+    /injected visibility sync failure/,
+  )
+  expect(order).toEqual(['host-register', 'owner-sync-failed', 'host-rollback'])
+  expect([...registered]).toEqual([])
+})
+
+test('facade: failed Host removal retains owner cleanup for a safe retry', () => {
+  let failRemoval = true
+  let hostAttempts = 0
+  let ownerCleanups = 0
+  const facade = createMcpFacade({
+    host: { tools: { register() {
+      return () => {
+        hostAttempts++
+        if (failRemoval) throw new Error('injected Host removal failure')
+      }
+    } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true,
+    isEnabledFor: () => true,
+    onUnregister() { ownerCleanups++ },
+  })
+  const dispose = facade.tools.register({ name: 'mcp__docs__echo', execute: async () => {} })
+  assert.throws(dispose, /injected Host removal failure/)
+  expect(ownerCleanups).toBe(0)
+  failRemoval = false
+  dispose()
+  dispose()
+  expect(hostAttempts).toBe(2)
+  expect(ownerCleanups).toBe(1)
+})
