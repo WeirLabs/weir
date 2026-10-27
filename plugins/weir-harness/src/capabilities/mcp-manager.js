@@ -55,6 +55,10 @@ export function createMcpManager(dependencies = {}) {
     const listEntryIds = dependencies.listEntryIds ?? (() => defaultListRows().map(row => row.id).filter(Boolean))
     const listRows = dependencies.listRows ?? defaultListRows
     const startErrors = []
+    /** A strict mount of this identity supersedes its earlier start/mount failures. */
+    const clearStartErrors = identity => {
+      for (let index = startErrors.length - 1; index >= 0; index -= 1) if (startErrors[index].identity === identity) startErrors.splice(index, 1)
+    }
     const onError = (reason, cause) => ctx.logger?.warn?.(sanitizeMcpText(`${reason}${cause ? `: ${message(cause)}` : ''}`))
     const defaultFiberOf = async groupId => {
       for (const candidate of [`${groupId}:${groupId}-client`, `${groupId}-client`]) {
@@ -203,6 +207,7 @@ export function createMcpManager(dependencies = {}) {
           return { status: 'indeterminate', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, error: diagnostic, mount: { state: 'superseded', observedGeneration: observed.generation }, next: { action: 'reread-registry' } }
         }
         drain.reopenAll(identity)
+        clearStartErrors(identity)
         const receipt = { time: now(), status: 'mounted', generation: entry.generation, discovery: result.discovery }
         receipts.mount.set(identity, receipt)
         return { status: 'mounted', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, mount: { state: 'mounted', observedGeneration: observed.generation }, discovery: result.discovery, execution: result.execution ?? null }

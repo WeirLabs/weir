@@ -155,3 +155,19 @@ test('an absent registry is a healthy empty inventory with support facts, not an
   expect(listing.warnings).toEqual([])
   expect(listing.capabilities).toEqual({ credentials: false, ephemeral: false })
 })
+
+test('a later successful mount clears that identity\'s stale start errors and keeps siblings\' errors', async () => {
+  const mount = mountFixture()
+  mount.state.failMount = true
+  const f = await fixture({ entries: ['docs', 'web'], mount })
+  let rows = (await f.face.list()).managed
+  expect(rows.every(row => row.startErrors.length > 0)).toBe(true)
+  mount.state.failMount = false
+  const current = await f.registry.read()
+  await f.registry.register(current.servers.docs, current.revision)
+  const result = await f.face.reconcileOne('docs', (await f.registry.read()).servers.docs)
+  expect(result.status).toBe('mounted')
+  rows = (await f.face.list()).managed
+  expect(rows.find(row => row.identity === 'docs').startErrors).toEqual([])
+  expect(rows.find(row => row.identity === 'web').startErrors.length).toBeGreaterThan(0)
+})
