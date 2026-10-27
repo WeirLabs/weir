@@ -257,12 +257,13 @@ export function createMcpManager(dependencies = {}) {
           discovery: ({ identity, generation }) => discoveryFor(identity, generation),
         })
         const outcome = { status: result.status, identity: targetIdentity, discovery: result.discovery, cleanup: result.cleanup }
-        receipts.test.set(targetIdentity, { time: now(), status: outcome.status, discovery: outcome.discovery })
+        // Receipts share one shape with lastMount: the row reads `diagnostic`.
+        receipts.test.set(targetIdentity, { time: now(), status: outcome.status, discovery: outcome.discovery, ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}) })
         return outcome
       } catch (cause) {
         const status = ['cleanup-failed', 'cleanup-unknown'].includes(cause?.status) ? cause.status : 'probe-failed'
         const outcome = { status, identity: targetIdentity, error: mcpDiagnostic(cause, { code: cause?.code ?? status }), cleanup: cause?.cleanup }
-        receipts.test.set(targetIdentity, { time: now(), status, error: outcome.error })
+        receipts.test.set(targetIdentity, { time: now(), status, diagnostic: outcome.error })
         return outcome
       }
     }
