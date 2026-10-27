@@ -352,3 +352,20 @@ test('stale inventory and the MCP-only error boundary stay explicit', async () =
   expect(fallback.role).toBe('alert')
   expect(fallback.children).toContain('Other capability controls remain available')
 })
+
+test('row lifecycle actions are disabled while an edit-mode Test is in flight', async () => {
+  let resolveTest
+  const f = await fixture({ mutate: request => request.action === 'test'
+    ? new Promise(resolve => { resolveTest = () => resolve({ status: 'mounted', identity: 'docs', saved: false, probe: true }) })
+    : undefined }).init()
+  click(f.render(), 'Edit')
+  click(f.render(), 'Preview')
+  await flush()
+  click(f.render(), 'Test')
+  const busy = f.render()
+  for (const label of ['Restart', 'Remove', 'Edit', 'Disable default']) expect(buttons(busy, label)[0].disabled, label).toBe(true)
+  resolveTest()
+  await flush()
+  const idle = f.render()
+  for (const label of ['Restart', 'Remove', 'Edit', 'Disable default']) expect(buttons(idle, label)[0].disabled, label).toBe(false)
+})

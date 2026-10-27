@@ -4,6 +4,7 @@
 import { parseMcpDocument, normalizeMcpServer, fingerprintMcpEntry, hasMcpSecrets, assertMcpPlanSize, resolveMcpEditArgs } from './mcp-config.js'
 import { stageMcpCredentials, compensateMcpCredentialAttempt } from './mcp-credentials.js'
 import { mcpDiagnostic, sanitizeMcpPayload } from './mcp-diagnostics.js'
+import { mcpIdentityLockFor } from './mcp-runtime.js'
 import { AUDIT_TYPES } from '../shared/audit.js'
 
 const has = value => value && typeof value === 'object' && !Array.isArray(value)
@@ -47,6 +48,7 @@ function editSource(existing, raw) {
 
 export function createMcpOperations({ registry, manager, credentials, audit, assertOwner = async () => {}, session = null }) {
   if (!registry || !manager) throw new TypeError('MCP operations require registry and manager')
+  const serialize = mcpIdentityLockFor(manager)
   const emit = (action, result, identity) => {
     try {
       audit?.(session, AUDIT_TYPES.capabilityMcp, {
@@ -123,16 +125,29 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     return compensateMcpCredentialAttempt({ attempt, registry, credentials, provenUncommitted })
   }
 
+  /**
+   * Every operation that fences a registered identity runs inside the
+   * manager's per-identity queue, so overlapping same-identity operations are
+   * strictly serialized. A Test of a fresh (add-mode) config is probe-only: it
+   * uses a throwaway probe identity, never fences or closes admission of the
+   * named identity, and therefore needs no queue slot.
+   */
   async function mutateOne(action, request, normalized, options = {}) {
     const identity = normalized.entry.identity
-    const token = manager.beginOperation(identity, action === 'remove' ? 'removing' : 'replacing')
+    if (action === 'test' && options.liveTarget !== true) return runOne(action, request, normalized, options, false)
+    return serialize(identity, () => runOne(action, request, normalized, options, true))
+  }
+
+  async function runOne(action, request, normalized, options, fenced) {
+    const identity = normalized.entry.identity
+    const token = fenced ? manager.beginOperation(identity, action === 'remove' ? 'removing' : 'replacing') : null
     let attempt = null
     let committedWrite = false
     let actualRevision = null
     const secrets = []
     const finish = async (result, { beforeCommit = false, provenUncommitted = false } = {}) => {
       const projectedSecrets = () => [...secrets, ...(attempt?.secrets ?? [])]
-      if (beforeCommit) manager.abortOperation(token)
+      if (beforeCommit && token) manager.abortOperation(token)
       if (attempt && !committedWrite) {
         const cleanup = await compensate(attempt, provenUncommitted)
         if (cleanup.status !== 'cleaned') return finalize(action, { ...result, status: cleanup.status, cleanup, saved: committedWrite || result.saved === true }, identity, projectedSecrets())
@@ -276,6 +291,7 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     if (action === 'edit' || (action === 'test' && request.mode === 'edit')) {
       return mutateOne(action, request, unresolved(), {
         targetFingerprint: request.targetFingerprint,
+        liveTarget: true,
         resolveExisting: existing => {
           if (!existing) return unresolved()
           const normalized = normalizeMcpServer(editSource(existing, request.config ?? request.document ?? {}), { surface, identity: request.identity })

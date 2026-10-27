@@ -8,7 +8,7 @@ import { createMcpDrain } from './mcp-drain.js'
 import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree } from './mcp-mount.js'
 import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
 import { skillSelectionFor } from './skill-selection-plugin.js'
-import { createMcpRuntime } from './mcp-runtime.js'
+import { createMcpRuntime, createMcpIdentityLock } from './mcp-runtime.js'
 import { materializeMcpClientConfig } from './mcp-credentials.js'
 import { hasMcpSecrets, redactMcpEntry, fingerprintMcpEntry } from './mcp-config.js'
 import { createMcpProcessAdapter } from './mcp-process.js'
@@ -46,6 +46,8 @@ export function createMcpManager(dependencies = {}) {
       snapshotFor: sessionId => skillSelectionFor(ctx)?.lifecycle?.snapshotFor(sessionId) ?? null,
     }
     const runtime = dependencies.runtime ?? createMcpRuntime()
+    // Every runtime.begin path runs inside this per-identity queue (design D6).
+    const serialize = createMcpIdentityLock()
     const drain = dependencies.drain ?? createMcpDrain({ timeoutMs: config.drainTimeoutMs ?? 30_000 })
     const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle, runtime, registrationFor: runtime.registrationFor })
     const loader = dependencies.loader ?? ctx.get?.('loader')
@@ -193,7 +195,13 @@ export function createMcpManager(dependencies = {}) {
         })
         const observed = mount.mounted.get(identity)
         if (!observed || observed.generation !== entry.generation) throw new Error('mounted generation readback failed')
-        runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+        // Only the fence owner may report mounted and reopen admission: a
+        // superseded token means another operation now owns this identity.
+        if (!runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })) {
+          const diagnostic = mcpDiagnostic(new Error(`MCP operation on ${identity} was superseded before it could report mounted`), { code: 'operation-superseded', action: 'reread-registry' })
+          receipts.mount.set(identity, { time: now(), status: 'indeterminate', diagnostic })
+          return { status: 'indeterminate', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, error: diagnostic, mount: { state: 'superseded', observedGeneration: observed.generation }, next: { action: 'reread-registry' } }
+        }
         drain.reopenAll(identity)
         const receipt = { time: now(), status: 'mounted', generation: entry.generation, discovery: result.discovery }
         receipts.mount.set(identity, receipt)
@@ -271,7 +279,7 @@ export function createMcpManager(dependencies = {}) {
       }
       let mountedCount = 0
       for (const entry of Object.values(current.servers)) {
-        const result = await reconcileOne(entry.identity, entry)
+        const result = await serialize(entry.identity, () => reconcileOne(entry.identity, entry))
         if (result.status === 'mounted') mountedCount += 1
         else if (result.status !== 'saved-degraded') startErrors.push({ identity: entry.identity, reason: result.status })
       }
@@ -285,7 +293,7 @@ export function createMcpManager(dependencies = {}) {
       const results = []
       for (const entry of Object.values(current.servers)) {
         if (runtime.snapshot(entry.identity).phase === 'mounted' && mount.mounted.has(entry.identity)) continue
-        results.push(await reconcileOne(entry.identity, entry))
+        results.push(await serialize(entry.identity, () => reconcileOne(entry.identity, entry)))
       }
       return { swept, mounted: results.filter(result => result.status === 'mounted').length, results }
     }
@@ -293,14 +301,15 @@ export function createMcpManager(dependencies = {}) {
     async function adopt(entry) {
       const holder = hostRowHoldingReservation(listRows(), entry.client?.serverName ?? entry.transport?.serverName ?? entry.identity)
       if (holder) return { status: 'conflict', reason: `host row "${holder.id ?? entry.identity}" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged.` }
-      const current = await registry.read()
-      const revision = current.kind === 'ok' ? current.revision : 0
-      const token = beginOperation(entry.identity)
-      const registered = await registry.register(entry, revision)
-      if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
-      const latest = await registry.read()
-      const result = await reconcileOne(entry.identity, latest.servers[entry.identity], token)
-      return result
+      return serialize(entry.identity, async () => {
+        const current = await registry.read()
+        const revision = current.kind === 'ok' ? current.revision : 0
+        const token = beginOperation(entry.identity)
+        const registered = await registry.register(entry, revision)
+        if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
+        const latest = await registry.read()
+        return reconcileOne(entry.identity, latest.servers[entry.identity], token)
+      })
     }
 
     function agentCreated(payload) {
@@ -368,7 +377,9 @@ export function createMcpManager(dependencies = {}) {
       publicNames,
       mounted: mount.mounted,
       beginOperation, abortOperation, reconcileOne, removeRuntime, probe,
-      remove: identity => removeRuntime(identity),
+      remove: identity => serialize(identity, () => removeRuntime(identity)),
+      /** Run one same-identity operation after every earlier one settled. */
+      serialize,
       support,
       serverNameConflict: (serverName, identity) => {
         const holder = hostRowHoldingReservation(listRows(), serverName)
