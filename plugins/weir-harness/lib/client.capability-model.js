@@ -608,7 +608,7 @@ window.__ModuleLoader__.load({
 				identity: server?.identity ?? "", label: server?.label ?? "", serverName: client.serverName ?? server?.serverName ?? server?.identity ?? "",
 				originalServerName: client.serverName ?? server?.serverName ?? server?.identity ?? "",
 				transport,
-				command: client.command ?? "", argsText: JSON.stringify(mcpPublicArgsOf(config)), cwd: client.cwd ?? "",
+				command: client.command ?? "", argsText: JSON.stringify(mcpPublicArgsOf(config)), originalArgsText: server ? JSON.stringify(mcpPublicArgsOf(config)) : null, cwd: client.cwd ?? "",
 				url: legacySensitiveUrl ? "" : client.url ?? "", urlRef: secretUrl?.ref ?? "", urlPrefix: secretUrl?.prefix ?? "",
 				urlMode: secretUrl ? "ref" : legacySensitiveUrl ? "legacy" : "literal", urlAction: server ? "keep" : "replace",
 				envRows: mcpSecretRowsOf(config, "env"), headerRows: mcpSecretRowsOf(config, "headers"),
@@ -676,7 +676,9 @@ window.__ModuleLoader__.load({
 			const secretRefs = {}, secretValues = {};
 			if (editor.transport === "stdio") {
 				config.command = String(editor.command ?? "").trim();
-				config.args = mcpParseArgs(editor.argsText);
+				// An unchanged edit never resends the displayed (projected) argv: the
+				// Host keeps the stored arguments and their secret slots.
+				if (!(editor.mode === "edit" && editor.originalArgsText != null && editor.argsText === editor.originalArgsText)) config.args = mcpParseArgs(editor.argsText);
 				if (String(editor.cwd ?? "").length > 0) config.cwd = editor.cwd;
 				secretRefs.env = {}; secretValues.env = {};
 				mcpApplySecretRows(editor.envRows, "env", secretRefs, secretValues);

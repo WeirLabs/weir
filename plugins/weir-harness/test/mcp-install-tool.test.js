@@ -343,3 +343,18 @@ test('the existing selection row registers mcp_install without a new package exp
   createSkillSelectionPlugin({ office: async () => ({ complete: true, candidates: [] }) })(ctx, { machineId: 'install-tool-test' })
   expect(registered.some(tool => tool.name === 'mcp_install')).toBe(true)
 })
+
+test('the confirmation card shows the exact non-secret argv and the plan digest stays stable', async () => {
+  const h = harness()
+  const argvPlan = { ...plan(), args: ['--port=8080', 'FOO=bar', { ref: 'MCP_CLI_TOKEN' }] }
+  const preview = await h.tool.execute({ action: 'preview', plan: argvPlan }, h.exec)
+  expect(preview.plan[0].entry.client.args).toEqual(['--port=8080', 'FOO=bar', '[redacted]'])
+  const result = await h.tool.execute({ action: 'install', plan: argvPlan }, h.exec)
+  expect(result.status, JSON.stringify(result)).toBe('mounted')
+  const detail = h.questions[0].questions[0].detail
+  expect(detail).toContain('Arguments (exact argv; credential-referenced positions show [redacted]): ["--port=8080","FOO=bar","[redacted]"]')
+  expect(detail).not.toContain('--port=[redacted]')
+  const stored = (await h.registry.read()).servers.docs
+  expect(stored.client.args).toEqual(['--port=8080', 'FOO=bar', ''])
+  expect(stored.secretRefs.args[2].ref).toBe('MCP_CLI_TOKEN')
+})

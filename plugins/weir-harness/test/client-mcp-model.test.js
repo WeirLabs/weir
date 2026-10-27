@@ -153,3 +153,16 @@ test('batch results count only mounted as success and preserve saved/not-attempt
   expect(items[1].saved).toBe(true)
   expect(items[2].notAttempted).toBe(true)
 })
+
+test('an unchanged edit omits args so the Host keeps the stored argv; a changed edit sends them', () => {
+  const server = managedServer()
+  server.config.client.args = ['--port=8080', 'FOO=bar', '[redacted]']
+  server.config.secretRefs.args = { 2: { ref: 'CLI_TOKEN' } }
+  const editor = model.mcpEditorFromServer(server, 1)
+  expect(editor.argsText).toBe('["--port=8080","FOO=bar",""]')
+  expect(Object.hasOwn(model.mcpConfigFromEditor({ ...editor, label: 'Renamed' }), 'args')).toBe(false)
+  const changed = model.mcpConfigFromEditor({ ...editor, argsText: '["--port=9090","FOO=bar",""]' })
+  expect(changed.args).toEqual(['--port=9090', 'FOO=bar', ''])
+  const added = model.mcpConfigFromEditor({ ...model.mcpEditorFromServer(null, 0), identity: 'x', command: 'node', argsText: '["a"]' })
+  expect(added.args).toEqual(['a'])
+})

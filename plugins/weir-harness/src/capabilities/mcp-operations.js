@@ -1,7 +1,7 @@
 // Shared Host MCP operations. UI mutations, user commands and AI installation
 // converge here: normalized preview → ownership/support checks → staged refs →
 // optional probe → current-read fingerprint/CAS → strict targeted mount/readback.
-import { parseMcpDocument, normalizeMcpServer, fingerprintMcpEntry, hasMcpSecrets, assertMcpPlanSize } from './mcp-config.js'
+import { parseMcpDocument, normalizeMcpServer, fingerprintMcpEntry, hasMcpSecrets, assertMcpPlanSize, resolveMcpEditArgs } from './mcp-config.js'
 import { stageMcpCredentials, compensateMcpCredentialAttempt } from './mcp-credentials.js'
 import { mcpDiagnostic, sanitizeMcpPayload } from './mcp-diagnostics.js'
 import { AUDIT_TYPES } from '../shared/audit.js'
@@ -34,7 +34,9 @@ function editSource(existing, raw) {
   source.serverName ??= existing.client?.serverName
   if (existing.transport?.kind === 'stdio' || existing.client?.transport === 'stdio') {
     source.command ??= existing.client?.command
-    source.args ??= clone(existing.client?.args ?? [])
+    // Omitted args keep the stored argv; supplied args resolve projection
+    // placeholders back to the stored values and refuse any other placeholder.
+    source.args = source.args == null ? clone(existing.client?.args ?? []) : resolveMcpEditArgs(existing, source.args)
   } else {
     source.url ??= clone(existing.secretRefs?.url ?? existing.client?.url)
     source.headers ??= undefined

@@ -464,3 +464,28 @@ test('cleanup diagnostics retain attempt-secret metadata without serializing tha
   expect(result.status).toBe('cleanup-failed')
   expect(JSON.stringify({ result, audit: f.audit })).not.toContain(secret)
 })
+
+test('an unchanged stdio edit round-trips plain args byte-identical and keeps secret-indexed refs', async () => {
+  const { redactMcpEntry } = await import('../src/capabilities/mcp-config.js')
+  const f = fixture()
+  const added = await f.operations.add({ identity: 'docs', config: config('docs', { args: ['--port=8080', 'FOO=bar', { ref: 'MCP_CLI_TOKEN' }] }) })
+  expect(added.status, JSON.stringify(added)).toBe('mounted')
+  const before = (await f.registry.read()).servers.docs
+  expect(before.client.args).toEqual(['--port=8080', 'FOO=bar', ''])
+  // The inventory projection is what the edit form displays and may resend.
+  const projected = redactMcpEntry(before)
+  expect(projected.client.args).toEqual(['--port=8080', 'FOO=bar', '[redacted]'])
+  for (const args of [undefined, projected.client.args]) {
+    const current = await f.registry.read()
+    const edited = await f.operations.edit({ identity: 'docs', expectedRevision: current.revision, config: { label: 'Renamed', ...(args ? { args } : {}) } })
+    expect(edited.status, JSON.stringify(edited)).toBe('mounted')
+    const after = (await f.registry.read()).servers.docs
+    expect(after.client.args).toEqual(['--port=8080', 'FOO=bar', ''])
+    expect(after.secretRefs.args[2]).toEqual(before.secretRefs.args[2])
+  }
+  // A stray placeholder that does not match the stored projection is refused.
+  const current = await f.registry.read()
+  const refused = await f.operations.edit({ identity: 'docs', expectedRevision: current.revision, config: { args: ['--port=[redacted]'] } })
+  expect(refused.status).toBe('validation-failed')
+  expect((await f.registry.read()).servers.docs.client.args).toEqual(['--port=8080', 'FOO=bar', ''])
+})

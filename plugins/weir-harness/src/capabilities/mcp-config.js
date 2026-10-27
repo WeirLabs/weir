@@ -3,7 +3,7 @@
 // any operation side effect; secret values never appear in the returned plan.
 import { createHash } from 'node:crypto'
 import { isSegment } from './store/paths.js'
-import { sanitizeMcpText } from './mcp-diagnostics.js'
+import { sanitizeMcpConfigText, markMcpConfigProjection } from './mcp-diagnostics.js'
 
 export const MCP_LIMITS = Object.freeze({
   documentBytes: 1024 * 1024,
@@ -282,20 +282,48 @@ export function parseMcpDocument(input, options = {}) {
   return result
 }
 
+/**
+ * Display/edit projection of a stored entry. Only structurally secret positions
+ * are replaced: env/header values, secretRefs-indexed args and sensitive URLs.
+ * Every other string keeps its exact value apart from known secrets and
+ * sensitive URL tails, so plain argv such as `--port=8080` or `FOO=bar` survives
+ * an edit round-trip and an approval card byte-identical.
+ */
 export function redactMcpEntry(entry, secrets = []) {
   const out = clone(entry)
-  if (out?.client?.env) for (const key of Object.keys(out.client.env)) out.client.env[key] = '[redacted]'
-  if (out?.client?.headers) for (const key of Object.keys(out.client.headers)) out.client.headers[key] = '[redacted]'
-  for (const index of Object.keys(out?.secretRefs?.args ?? {})) if (out.client?.args?.[index] !== undefined) out.client.args[index] = '[redacted]'
+  if (out?.client?.env) for (const key of Object.keys(out.client.env)) out.client.env[key] = MCP_REDACTED
+  if (out?.client?.headers) for (const key of Object.keys(out.client.headers)) out.client.headers[key] = MCP_REDACTED
+  for (const index of Object.keys(out?.secretRefs?.args ?? {})) if (out.client?.args?.[index] !== undefined) out.client.args[index] = MCP_REDACTED
   if (out?.client?.url && sensitiveUrl(out.client.url)) out.client.url = '[redacted-url]'
   delete out.secretValues
-  return sanitizeMcpTextProjection(out, secrets)
+  return markMcpConfigProjection(sanitizeMcpConfigProjection(out, secrets))
 }
-function sanitizeMcpTextProjection(value, secrets) {
-  if (typeof value === 'string') return sanitizeMcpText(value, secrets)
-  if (Array.isArray(value)) return value.map(item => sanitizeMcpTextProjection(item, secrets))
-  if (object(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeMcpTextProjection(item, secrets)]))
+function sanitizeMcpConfigProjection(value, secrets) {
+  if (typeof value === 'string') return sanitizeMcpConfigText(value, secrets)
+  if (Array.isArray(value)) return value.map(item => sanitizeMcpConfigProjection(item, secrets))
+  if (object(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeMcpConfigProjection(item, secrets)]))
   return value
+}
+export const MCP_REDACTED = '[redacted]'
+const PLACEHOLDER = /\[redacted(?:-[a-z]+)?\]/
+
+/**
+ * Edit input for stdio args is resolved against the stored record: an element
+ * equal to the redaction projection at the same index means "unchanged" and
+ * takes the stored value back (secret slots stay '' with their refs). Any other
+ * placeholder is a redacted value round-tripped as literal input and is refused
+ * instead of being saved.
+ */
+export function resolveMcpEditArgs(existing, incoming) {
+  if (!Array.isArray(incoming)) return incoming
+  const stored = existing?.client?.args ?? []
+  const projected = redactMcpEntry(existing)?.client?.args ?? []
+  return incoming.map((value, index) => {
+    if (typeof value !== 'string') return value
+    if (index < stored.length && value === projected[index]) return stored[index]
+    if (PLACEHOLDER.test(value)) fail(`args.${index}`, 'contains a redaction placeholder; omit args to keep the stored arguments or enter the real value')
+    return value
+  })
 }
 
 /** Hash the full record (including legacy literals) without returning those literals. */
