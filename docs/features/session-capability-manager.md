@@ -127,7 +127,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 | 对象 | 保证 |
 |---|---|
 | Weir 管理的 server | **网关级强制**：工具调用在**包装后定义的 `execute` 最开头**按「注册表 configured identity + registration generation + 会话已接受集合 + lifecycle 快照」准入（被拒调用零 RPC 到达 server，G3b 语义）；三个资源操作（list/templates/read，经 facade 的 `mcpResources.register` 请求路径）按目标 server 在派发时门控，且与工具调用走**同一个排空闸**：Apply 移除关闸后、提交发布前到达的资源请求以 `mcp-gate-closed` 拒绝（零 RPC 到达 provider），不再被旧 provider 服务；`mcp:<server>` 指令段每次 prompt 组装时按 agent 过滤；Apply 移除后「关闸 → 等待在途 → 超时只报告仍在途」，不承诺强制取消，外部副作用不可撤销 |
-| 工具 schema | **按 agent 在创建时隐藏**（`tools.restrict` 创建时快照）：只对 Apply 之后创建的 agent 成立；live Apply 后既有 agent 的旧 schema 可能仍可见，但每次派发都在任何 server 活动前被拒——不声称 schema 已从该 agent 的请求中消失 |
+| 工具 schema | **按 live agent 实时收敛**：manager 为每个实际 agent × public tool name 维护独立 deny；初次发现、late registration、动态注销/重注册与 runtime phase 变化都会差分同步。已接受 Apply 在响应前同步当前 agent：enable 撤销 deny、disable 增加 deny，因此同一 agent 的后续模型请求会按当前 accepted set 增删 schema，无需重建 agent；其他会话不被这次 Apply 改动。保证边界是后续模型请求的 per-agent 可见性，不把 Host 全局工具表的瞬时状态当作授权；历史消息与 remembered tool name 不清除，旧名调用仍由 execution admission 拒绝 |
 | 宿主直接配置／ACP／其他预设挂载的 server | **不提供任何保证**：一律显示为 **unmanaged**，管理器不提供关闭开关、不声称已关闭、不计入关闭统计 |
 
 **软化条款（如实记录）**：准入基于 Weir 注册层派生的 configured identity 与 registration generation（重连以同 identity 的新 generation 续接，同名不同 identity 不继承授权），范围限于 Weir 管理的 server；宿主发布的权威身份/generation 与 SDK 最终准入是未授权的后续依赖。`tools/pre-execute` 只作额外早拒，唯一防线是包装定义的最后一刻校验。资源请求的排空围栏依赖 manager 注入的 drain（facade 构造参数）：未挂 manager 行的组合没有受管 server 与资源面，该排空保证在那类组合中属 **unsupported**（准入保持仅 admit 行为），不被沉默声称。

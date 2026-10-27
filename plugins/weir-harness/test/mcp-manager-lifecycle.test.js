@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createMcpManager } from '../src/capabilities/mcp-manager.js'
 import { createMcpRegistry } from '../src/capabilities/mcp-registry.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
+import { createMcpFacade } from '../src/capabilities/mcp-facade.js'
 import { mcpFacadeBridgeFor } from '../src/capabilities/mcp-facade-plugin.js'
 
 const entry = (identity, incarnation = null) => ({ identity, label: identity, owner: { kind: 'global', key: 'installation' }, generation: 0, configuredAt: 0, transport: { kind: 'stdio', ref: 'cmd:node' }, client: { transport: 'stdio', serverName: identity, command: process.execPath, args: [], env: {} }, ...(incarnation ? { incarnation } : {}) })
@@ -87,6 +88,64 @@ function visibilityAgent(sessionId) {
     } } },
   }
   return { agent, state }
+}
+
+async function sameNameFailureFixture({ failHostRollback = false } = {}) {
+  const previous = visibilityAgent('session-previous')
+  const added = visibilityAgent('session-added')
+  const bad = visibilityAgent('session-bad')
+  bad.state.failRestrict = true
+  const live = [previous.agent]
+  const agents = {
+    list: () => [...live],
+    get: sessionId => live.find(agent => agent.session.id === sessionId),
+  }
+  const name = 'mcp__docs__echo'
+  const hostOwners = new Map([[name, []]])
+  const selected = {}
+  const mount = mountFixture()
+  mount.mount = async options => {
+    const groupId = `weir-mcp-${options.identity}`
+    await options.beforeCreate?.({ groupId, identity: options.identity, generation: options.generation })
+    const bridge = mcpFacadeBridgeFor(groupId)
+    const facade = createMcpFacade({
+      ...bridge,
+      host: { tools: { register(definition) {
+        const stack = hostOwners.get(name)
+        const record = { identity: options.identity, definition }
+        stack.push(record)
+        let active = true
+        return () => {
+          if (!active) return
+          if (options.identity === 'web' && failHostRollback) throw new Error('injected same-name Host rollback failure')
+          active = false
+          const index = stack.indexOf(record)
+          if (index >= 0) stack.splice(index, 1)
+        }
+      } } },
+    })
+    facade.tools.register({ name, execute: async () => {} })
+    await options.readback?.()
+    mount.mounted.set(options.identity, { groupId, generation: options.generation, state: 'mounted' })
+    return { status: 'mounted', groupId, generation: options.generation, discovery: await options.discovery() }
+  }
+  const f = await fixture({
+    entries: ['docs'], mount, agents,
+    selectionFor: sessionId => ({
+      state: 'ready',
+      mcpServers: [...(selected[sessionId] ?? [])],
+      mcpIncarnations: Object.fromEntries((selected[sessionId] ?? []).map(identity => [identity, null])),
+    }),
+  })
+
+  // The old Host registration and deny already exist. The replacement then
+  // reuses the old deny, adds one new deny, and fails on the final agent.
+  live.push(added.agent, bad.agent)
+  const current = await f.registry.read()
+  await f.registry.register(entry('web'), current.revision)
+  const registered = (await f.registry.read()).servers.web
+  const failed = await f.face.reconcileOne('web', registered)
+  return { ...f, previous, added, bad, name, hostOwners, failed, selected }
 }
 
 test('startup and targeted reconcile share strict readback; siblings never remount', async () => {
@@ -336,7 +395,7 @@ test('live visibility: unregister/re-register converges denies and stale-generat
   expect(a.state.calls).toHaveLength(3)
 })
 
-test('live visibility: failed registration rolls back the new fact and every partial deny before a later retry', async () => {
+test('live visibility: failed registration rolls back the new fact and every partial deny after confirmed Host cleanup', async () => {
   const good = visibilityAgent('session-good')
   const bad = visibilityAgent('session-bad')
   bad.state.failRestrict = true
@@ -345,11 +404,20 @@ test('live visibility: failed registration rolls back the new fact and every par
     list: () => [...live],
     get: sessionId => live.find(agent => agent.session.id === sessionId),
   }
+  const name = 'mcp__docs__echo'
+  const mount = mountFixture()
+  const strictMount = mount.mount
+  mount.mount = async options => {
+    try { return await strictMount(options) } catch (cause) {
+      // This mock has confirmed Host disposal; owner cleanup may now proceed.
+      mcpFacadeBridgeFor(`weir-mcp-${options.identity}`)?.onUnregister?.(name)
+      throw cause
+    }
+  }
   const f = await fixture({
-    entries: [], agents,
+    entries: [], mount, agents,
     selectionFor: () => ({ state: 'ready', mcpServers: [], mcpIncarnations: {} }),
   })
-  const name = 'mcp__docs__echo'
   await f.registry.register(entry('docs'), 0)
   const registered = (await f.registry.read()).servers.docs
   const failed = await f.face.reconcileOne('docs', registered)
@@ -367,6 +435,142 @@ test('live visibility: failed registration rolls back the new fact and every par
   expect(good.state.calls).toHaveLength(2)
   expect(bad.state.calls).toHaveLength(2)
   expect(good.state.disposals).toEqual([name])
+})
+
+test('live visibility: compound registration and Host rollback failure retains owner facts and every deny until confirmed cleanup', async () => {
+  const first = visibilityAgent('session-first')
+  const bad = visibilityAgent('session-bad')
+  const last = visibilityAgent('session-last')
+  bad.state.failRestrict = true
+  const live = [first.agent, bad.agent, last.agent]
+  const agents = {
+    list: () => [...live],
+    get: sessionId => live.find(agent => agent.session.id === sessionId),
+  }
+  const name = 'mcp__docs__echo'
+  const hostTools = new Set()
+  let failHostRemoval = true
+  let hostDisposer
+  const mount = mountFixture()
+  mount.mount = async options => {
+    const groupId = `weir-mcp-${options.identity}`
+    await options.beforeCreate?.({ groupId, identity: options.identity, generation: options.generation })
+    const bridge = mcpFacadeBridgeFor(groupId)
+    const facade = createMcpFacade({
+      ...bridge,
+      host: { tools: { register(definition) {
+        hostTools.add(definition.name)
+        hostDisposer = () => {
+          if (failHostRemoval) throw new Error('injected Host rollback failure')
+          hostTools.delete(definition.name)
+        }
+        return hostDisposer
+      } } },
+    })
+    facade.tools.register({ name, execute: async () => {} })
+  }
+  const f = await fixture({
+    entries: [], mount, agents,
+    selectionFor: () => ({ state: 'ready', mcpServers: [], mcpIncarnations: {} }),
+  })
+  await f.registry.register(entry('docs'), 0)
+  const registered = (await f.registry.read()).servers.docs
+  const failed = await f.face.reconcileOne('docs', registered)
+  expect(failed.status).toBe('saved-degraded')
+  expect({
+    hostTools: [...hostTools],
+    owner: f.face.publicNames.get(name),
+    firstDenies: first.state.calls,
+    firstDisposals: first.state.disposals,
+    lastDenies: last.state.calls,
+    lastDisposals: last.state.disposals,
+  }).toEqual({
+    hostTools: [name],
+    owner: { identity: 'docs', generation: 1 },
+    firstDenies: [{ deny: [name] }],
+    firstDisposals: [],
+    lastDenies: [{ deny: [name] }],
+    lastDisposals: [],
+  })
+
+  // Residue recovery may release the retained facts only after Host removal is
+  // actually confirmed; it must not expose an unowned still-registered tool.
+  failHostRemoval = false
+  hostDisposer()
+  expect([...hostTools]).toEqual([])
+  expect((await f.face.removeRuntime('docs')).status).toBe('removed')
+  expect(f.face.publicNames.has(name)).toBe(false)
+  expect(first.state.disposals).toEqual([name])
+  expect(last.state.disposals).toEqual([name])
+})
+
+test('live visibility: confirmed same-name rollback restores the previous Host owner and its deny', async () => {
+  const f = await sameNameFailureFixture()
+  expect(f.failed.status).toBe('saved-degraded')
+  expect(f.hostOwners.get(f.name).map(record => record.identity)).toEqual(['docs'])
+  expect({
+    owner: f.face.publicNames.get(f.name),
+    previousCalls: f.previous.state.calls,
+    previousDisposals: f.previous.state.disposals,
+  }).toEqual({
+    owner: { identity: 'docs', generation: 1 },
+    previousCalls: [{ deny: [f.name] }],
+    previousDisposals: [],
+  })
+  expect(f.added.state.calls).toEqual([{ deny: [f.name] }])
+  expect(f.added.state.disposals).toEqual([f.name])
+  expect(f.bad.state.disposals).toEqual([])
+
+  // Restored per-agent metadata belongs to docs too: an unrelated web runtime
+  // sync cannot touch it, while the explicit docs visibility sync still can.
+  f.selected['session-previous'] = ['docs']
+  f.face.beginOperation('web')
+  expect(f.previous.state.disposals).toEqual([])
+  f.face.syncSession('session-previous')
+  expect(f.previous.state.disposals).toEqual([f.name])
+})
+
+test('live visibility: same-name rollback recreates a previous deny removed during failed sync', async () => {
+  const previous = visibilityAgent('session-previous')
+  const added = visibilityAgent('session-added')
+  const bad = visibilityAgent('session-bad')
+  bad.state.failRestrict = true
+  const live = [previous.agent]
+  const agents = { list: () => [...live], get: () => null }
+  const selected = { 'session-previous': [] }
+  const f = await fixture({
+    entries: ['docs'], agents,
+    selectionFor: sessionId => ({
+      state: 'ready', mcpServers: [...(selected[sessionId] ?? [])], mcpIncarnations: { docs: null },
+    }),
+  })
+  const name = 'mcp__docs__echo'
+  selected['session-previous'] = ['docs']
+  live.push(added.agent, bad.agent)
+  const facade = createMcpFacade({
+    ...mcpFacadeBridgeFor('weir-mcp-docs'),
+    host: { tools: { register() { return () => {} } } },
+  })
+
+  // The selected agent's old deny is removed first, then a later agent fails.
+  // Confirmed Host rollback must restore that removed deny as well as the fact.
+  expect(() => facade.tools.register({ name, execute: async () => {} })).toThrow(/injected restrict failure/)
+  expect(f.face.publicNames.get(name)).toEqual({ identity: 'docs', generation: 1 })
+  expect(previous.state.calls).toEqual([{ deny: [name] }, { deny: [name] }])
+  expect(previous.state.disposals).toEqual([name])
+  expect(added.state.disposals).toEqual([name])
+})
+
+test('live visibility: unconfirmed same-name Host rollback retains replacement owner and all current denies', async () => {
+  const f = await sameNameFailureFixture({ failHostRollback: true })
+  expect(f.failed.status).toBe('saved-degraded')
+  expect(f.hostOwners.get(f.name).map(record => record.identity)).toEqual(['docs', 'web'])
+  expect(f.face.publicNames.get(f.name)).toEqual({ identity: 'web', generation: 1 })
+  expect(f.previous.state.calls).toEqual([{ deny: [f.name] }])
+  expect(f.previous.state.disposals).toEqual([])
+  expect(f.added.state.calls).toEqual([{ deny: [f.name] }])
+  expect(f.added.state.disposals).toEqual([])
+  expect(f.bad.state.disposals).toEqual([])
 })
 
 test('live visibility: selected mount stays denied while degraded, recovers on mounted, and stale abort cannot reopen it', async () => {
