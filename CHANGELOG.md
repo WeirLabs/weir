@@ -6,6 +6,9 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+
+## [2.1.1] - 2026-10-28
+
 ### Fixed
 
 - **MCP 工具表随安装与启停实时同步**：修复已打开会话在安装但未 Select/Apply 的 MCP server 后直接收到工具，以及禁用后旧工具仍残留的问题。现在未启用会话不会收到新发现的工具 schema；当前会话 Apply 启用、禁用或再次启用时，后续模型请求会立即增删对应工具，无需重建会话。历史消息中的旧工具名不受影响，调用仍受既有 admission 门禁保护。详见 [MCP server 管理](docs/features/mcp-server-management.md)。
