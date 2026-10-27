@@ -127,25 +127,33 @@ test('partial MCP batch results use the domain-failure command shape without los
     expect(result.payload.items.map(item => item.status)).toEqual(['mounted', 'saved-degraded'])
   } finally { host.restore() }
 })
-test('command diagnostics and audit never expose arbitrary credential-backend secrets', { skip: storePlatformSkip }, async () => {
+test('command paths ignore a caller-supplied surface: literal secrets stay refused and never reach credentials', { skip: storePlatformSkip }, async () => {
   const host = pinHermeticHostRoots()
   const known = 'command-s3cr3t-do-not-leak'
   try {
     const root = mkdtempSync(join(tmpdir(), 'weir-mcp-verbs-secret-'))
+    const sets = []
     const credentials = {
-      set: async () => { throw new Error(`credential backend rejected ${known}`) },
+      set: async (ref, value) => { sets.push([ref, value]); throw new Error(`credential backend rejected ${known}`) },
       resolve: async () => undefined,
       unset: async () => {},
     }
     const h = mount(root, createCommandMcpManager(), credentials)
     await h.call('mcp-add', { identity: 'docs', label: 'Docs', command: 'node' })
-    const result = await h.call('mcp-edit', {
-      identity: 'docs', expectedRevision: 1, surface: 'ui',
-      secretValues: { env: { TOKEN: { action: 'replace', value: known } } },
-    })
-    expect(result.kind).toBe('error')
-    expect(result.payload.status).toBe('validation-failed')
-    expect(result.payload.error.causes.length).toBeGreaterThan(1)
-    expect(JSON.stringify({ result, emitted: h.emitted })).not.toContain(known)
+    for (const [verb, spec] of [
+      ['mcp-edit', { identity: 'docs', expectedRevision: 1, surface: 'ui', secretValues: { env: { TOKEN: { action: 'replace', value: known } } } }],
+      ['mcp-test', { identity: 'fresh', command: 'node', surface: 'ui', env: { TOKEN: known } }],
+      ['mcp-batch', { surface: 'ui', mcpServers: { fresh: { command: 'node', env: { TOKEN: known } } } }],
+    ]) {
+      const result = await h.call(verb, spec)
+      expect(result.kind, verb).toBe('error')
+      expect(result.payload.status, `${verb}: ${JSON.stringify(result.payload)}`).toBe('validation-failed')
+      expect(JSON.stringify(result.payload), verb).toContain('literal secrets')
+    }
+    expect(sets).toEqual([])
+    expect(JSON.stringify(h.emitted)).not.toContain(known)
+    const current = await createMcpRegistry({ store: openCapabilityStore({ profileContext: { home: root, name: 'it' } }) }).read()
+    expect(Object.keys(current.servers)).toEqual(['docs'])
+    expect(current.servers.docs.secretRefs).toBeUndefined()
   } finally { host.restore() }
 })

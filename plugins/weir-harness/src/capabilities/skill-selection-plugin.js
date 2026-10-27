@@ -507,13 +507,16 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             if (action === 'mcp-add' && (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0)) {
               return { kind: 'error', text: 'mcp-add needs identity, label and command strings' }
             }
-            const { expectedRevision, confirmNamespaceChange, targetFingerprint, attemptId, batch, mode, refsOnly, surface, ...fields } = spec
+            const { expectedRevision, confirmNamespaceChange, targetFingerprint, attemptId, batch, mode, refsOnly, surface: _ignoredSurface, ...fields } = spec
             const operation = action === 'mcp-default' ? 'setDefault' : action === 'mcp-preview' ? 'preview' : action === 'mcp-batch' ? 'batch' : action.slice(4)
             const request = {
               ...spec,
               action: operation === 'batch' ? 'add' : operation,
               refsOnly: action === 'mcp-add' ? false : true,
-              surface: action === 'mcp-add' ? 'legacy' : surface ?? 'refs',
+              // The command channel is refs-only (legacy mcp-add aside). A
+              // caller-supplied `surface` is ignored here: only the Host UI
+              // mutation channel may accept transient literal secrets.
+              surface: action === 'mcp-add' ? 'legacy' : 'refs',
             }
             if (!spec.config && !spec.document && !['remove', 'restart', 'setDefault'].includes(operation)) {
               if (operation === 'batch' || fields.mcpServers) request.document = fields
