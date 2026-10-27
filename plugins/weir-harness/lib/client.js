@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"f5c5d21293360d00815446beb8455794a1778ae033e270af37e436329ac09185","client.capability-manager.js":"f02e08174487f2f70e90a5c50a4a44cbeb4d462f115a2d2ab8a52ed8b4e70aee","client.capability-model.js":"d572781ee1bd58f8490797810b56013f020c85991edbce8602413d29d0d09ef3","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.disabled-categories-editor.js":"f9103fd2e2691eda9afd199e1a5462189097a9f3dee0518be5fa3587d896e033","client.file-lease-badge.js":"cd30546307c91c94fe05484557e46f58c53fe55657f62b0a0415a072dfb3b582","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"d6af81be5e5b854e98563bbb9349a6db89834a9d7dee9cf0e97759ecb32090e8","client.mcp-manager.js":"5a615c596f997b456b8bbcb6c91d1fd59b6df466558575b3c46b09e8fb065c0f","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"2be9bdbeffef96baa3cbe4ce430ab30a1d1bf797782453d287d54602ea47db8e","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f3c04a5b33cdb963357bc653f7050e598f19efc4cc833694379a4ba055e949d3","client.worktree-model.js":"8bfbaaa080f20e90a0128afccb9b4e232514615a8f2fee3a32a42dde78b34a8f","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
+// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"c9d6a0f02623075fc884f3519f982574ad33ad871f7bcd7e8c36f12512f0de39","client.capability-badge.js":"f5c5d21293360d00815446beb8455794a1778ae033e270af37e436329ac09185","client.capability-manager.js":"f02e08174487f2f70e90a5c50a4a44cbeb4d462f115a2d2ab8a52ed8b4e70aee","client.capability-model.js":"d572781ee1bd58f8490797810b56013f020c85991edbce8602413d29d0d09ef3","client.capability-presets.js":"12ac8da3568d013abd76b67cfe473a329f4af2feaac9cd55a82d8881e5bc1017","client.chain-editor.js":"1e9a33bc68cabc43bc27b91ef83eab5028a33256596c147e15722d684687765b","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.disabled-categories-editor.js":"f9103fd2e2691eda9afd199e1a5462189097a9f3dee0518be5fa3587d896e033","client.file-lease-badge.js":"cd30546307c91c94fe05484557e46f58c53fe55657f62b0a0415a072dfb3b582","client.file-lease-tool-model.js":"f72d87b049454ec489b4dffac1f32dabc273947b8a4c55fe07c91ddf320bd899","client.file-lease-tool-view.js":"7004caa06b36d8497a1d2e448b6ce5e4c8efd22ad903d8b39e26220de64bb1fe","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"fc0f4dabddab9a48527553ad4232b3715e46e6863aab75e02ae2dcd6687265c2","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"61629a4d317dae9ed01c1cc0355632fb752788dc23f7606257188050734cd030","client.lsp-toggle.js":"d6af81be5e5b854e98563bbb9349a6db89834a9d7dee9cf0e97759ecb32090e8","client.mcp-manager.js":"5a615c596f997b456b8bbcb6c91d1fd59b6df466558575b3c46b09e8fb065c0f","client.model-picker.js":"57f96826e00b37ae6d6474a6750f31b4e128e5fdb37e302875a41cdb2e18f14a","client.notify-permissions.js":"2be9bdbeffef96baa3cbe4ce430ab30a1d1bf797782453d287d54602ea47db8e","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"cd6a283b72cb02598e32ca4ce03a1b8de5f328ecdd1f5f920377524f3bdcbe1c","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f3c04a5b33cdb963357bc653f7050e598f19efc4cc833694379a4ba055e949d3","client.worktree-model.js":"8bfbaaa080f20e90a0128afccb9b4e232514615a8f2fee3a32a42dde78b34a8f","client.worktree-view.js":"356c3f5f683b8509ae8679243a6460ca02957fd15e057a629b2ac4fdd12ed057"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -49,6 +49,17 @@ window.__ModuleLoader__.load({
 			worktreeLoading: "Loading lanes…",
 			hashEditInput: "Input",
 			hashEditOutput: "Output",
+			// Edit-lock conversation cards: the seven tool titles the pre-arrival
+			// placeholder reads synchronously. Byte-identical to the view chunk's
+			// data face ("settings.weir.file-lease-tools") — a documented
+			// cross-namespace duplicate pinned by test/client.test.js.
+			leaseToolTitle_edit_lock_acquire: "Claim edit lock",
+			leaseToolTitle_edit_lock_release: "Release edit lock",
+			leaseToolTitle_edit_lock_hold: "Keep edit lock",
+			leaseToolTitle_edit_lock_status: "Edit lock status",
+			leaseToolTitle_edit_lock_try_steal: "Request edit lock transfer",
+			leaseToolTitle_edit_lock_reply: "Answer transfer request",
+			leaseToolTitle_edit_lock_watch: "Watch for release",
 			// Session capability Badge + manager (12.x, D3/D4): the chunks carry
 			// the same strings as in-code fallbacks; these rows translate them.
 			capabilityTabLabel: "Capabilities",
@@ -84,6 +95,13 @@ window.__ModuleLoader__.load({
 			worktreeLoading: "正在加载车道…",
 			hashEditInput: "输入",
 			hashEditOutput: "输出",
+			leaseToolTitle_edit_lock_acquire: "申请编辑锁",
+			leaseToolTitle_edit_lock_release: "释放编辑锁",
+			leaseToolTitle_edit_lock_hold: "保留编辑锁",
+			leaseToolTitle_edit_lock_status: "编辑锁状态",
+			leaseToolTitle_edit_lock_try_steal: "请求转交编辑锁",
+			leaseToolTitle_edit_lock_reply: "答复转交请求",
+			leaseToolTitle_edit_lock_watch: "订阅释放",
 			capabilityTabLabel: "能力",
 			capabilityGuideTitle: "能力",
 			capabilityGuideDescription: "此会话的技能、MCP server 与预设。",
@@ -123,6 +141,7 @@ window.__ModuleLoader__.load({
 			lspToggle: null,
 			hashEdit: null,
 			fileLease: null,
+			fileLeaseTools: null,
 			worktree: null,
 		};
 		// ---- Package-local chunk wiring (composition root) ----
@@ -228,6 +247,59 @@ window.__ModuleLoader__.load({
 			if (!arrival?.chunks) return null;
 			return react_jsx_runtime.jsx(arrival.chunks.FileLeaseBadge, { ...props, t: chunkDictionaries.fileLease ?? props.t });
 		}
+		// ---- Edit-lock conversation cards (edit-lock-tool-cards D2) ----
+		// One view chunk plus one model chunk carry the seven keyed tool cards;
+		// the dictionaries ride the view chunk and register under their own
+		// namespace (the composer badge already owns "settings.weir.file-lease",
+		// and a namespace registers once per apply).
+		const FILE_LEASE_TOOL_NAMES = ["edit_lock_acquire", "edit_lock_release", "edit_lock_hold", "edit_lock_status", "edit_lock_try_steal", "edit_lock_reply", "edit_lock_watch"];
+		const loadFileLeaseToolChunks = lazyChunks(() => Promise.all([
+			require.async("./client.file-lease-tool-view.js"),
+			require.async("./client.file-lease-tool-model.js")
+		]).then((chunks) => {
+			chunkDictionaries.register?.("settings.weir.file-lease-tools", chunks[0].dictionaries);
+			return chunks;
+		}));
+		// Pre-arrival (or failed-load) placeholder: the localized title and the
+		// requested paths from the call arguments, so a card is never blank. The
+		// argument read mirrors the model chunk's argsPaths (same-package sync
+		// require is impossible, so the tiny parse is mirrored here, not shared).
+		const fileLeasePlaceholderStyle = { display: "flex", alignItems: "baseline", gap: "8px", minWidth: 0, padding: "8px 10px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md, 8px)", background: "var(--dsw-alias-bg-layer-1)" };
+		const fileLeasePlaceholderTitleStyle = { fontSize: "13px", lineHeight: "18px", fontWeight: 600, color: "var(--dsw-alias-label-primary)", whiteSpace: "nowrap" };
+		const fileLeasePlaceholderPathStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
+		const fileLeaseArgsPaths = (block) => {
+			const raw = typeof block?.argsRaw === "string" ? block.argsRaw : typeof block?.call?.argsRaw === "string" ? block.call.argsRaw : null;
+			if (raw === null) return [];
+			let args;
+			try {
+				args = JSON.parse(raw);
+			} catch {
+				return [];
+			}
+			if (Array.isArray(args?.paths)) return args.paths.filter((path) => typeof path === "string" && path !== "");
+			return typeof args?.file_path === "string" && args.file_path !== "" ? [args.file_path] : [];
+		};
+		function FileLeaseToolPlaceholder(props) {
+			const paths = fileLeaseArgsPaths(props.block);
+			const title = typeof props.t === "function" ? props.t(`leaseToolTitle_${props.toolName}`) : props.toolName;
+			return react_jsx_runtime.jsxs("div", { "data-tool": props.toolName, "data-weir-lease-placeholder": "", style: fileLeasePlaceholderStyle, children: [
+				react_jsx_runtime.jsx("span", { style: fileLeasePlaceholderTitleStyle, children: title }, "title"),
+				paths.length > 0 ? react_jsx_runtime.jsx("span", { style: fileLeasePlaceholderPathStyle, children: paths.length > 1 ? `${paths[0]} +${paths.length - 1}` : paths[0] }, "path") : null
+			] });
+		}
+		/** Keyed toolview wrapper for one edit_lock_* tool: the placeholder until
+		 * the view+model chunks arrive, then the read-only card. */
+		const fileLeaseToolView = (toolName) => {
+			function FileLeaseToolViewWrapper(props) {
+				const arrival = useChunkArrival(loadFileLeaseToolChunks);
+				if (arrival?.chunks) {
+					const [view, model] = arrival.chunks;
+					return react_jsx_runtime.jsx(view.FileLeaseToolRow, { ...props, toolName, t: chunkDictionaries.fileLeaseTools ?? props.t, model });
+				}
+				return react_jsx_runtime.jsx(FileLeaseToolPlaceholder, { ...props, toolName });
+			}
+			return FileLeaseToolViewWrapper;
+		};
 		// ---- Tab glyphs (ui-entries-and-icons) ----
 		// Three 16x16 stroke glyphs drawn in currentColor, matching the host
 		// CompassGlyph/CubeGlyph style (no strokeWidth, rounded caps/joins).
@@ -428,6 +500,7 @@ window.__ModuleLoader__.load({
 			chunkDictionaries.lspToggle = ctx.locale.bind("settings.weir.lsp-toggle");
 			chunkDictionaries.hashEdit = ctx.locale.bind("settings.weir.hash-edit");
 			chunkDictionaries.fileLease = ctx.locale.bind("settings.weir.file-lease");
+			chunkDictionaries.fileLeaseTools = ctx.locale.bind("settings.weir.file-lease-tools");
 			chunkDictionaries.worktree = ctx.locale.bind("settings.weir.worktree");
 			const pageT = ctx.locale.bind("settings.weir.page");
 			const capabilityT = ctx.locale.bind("settings.weir.capability");
@@ -1019,6 +1092,17 @@ window.__ModuleLoader__.load({
 					}
 				} : {})
 			}, BlackboardPill)), "ui-weir-settings: blackboard header pill");
+			// Edit-lock conversation cards (edit-lock-tool-cards D2): one keyed,
+			// read-only tool view per edit_lock_* tool, each in its own effect so
+			// one registration failure cannot take down the others. Registration
+			// pulls no chunk; the wrapper renders a title+paths placeholder first.
+			for (const toolName of FILE_LEASE_TOOL_NAMES) {
+				ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({
+					name: "tool.call.toolview",
+					key: toolName,
+					locale: NS
+				}, fileLeaseToolView(toolName))), `ui-weir-settings: ${toolName} toolview`);
+			}
 			// Top-level Settings section (same place as dsh-web-kimi and the
 			// built-in General/Models sections), with a nested item slot
 			// hosting the form — the single Weir settings entry.

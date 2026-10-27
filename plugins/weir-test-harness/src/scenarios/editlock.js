@@ -14,8 +14,16 @@
 // the publisher reservation file, `edit_lock_pause`, and edit-refusals for
 // authority files. The claim lives in the broker's memory for one connection;
 // nothing about it is written to disk.
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+//
+// Conversation cards (edit-lock-tool-cards 3.1): the persisted `tool/result`
+// of each ownership call carries the UI-only `meta.editLock` presentation
+// record (right tool, right state, short names only) while the model-visible
+// content stays the plain single-text message. The durable session log is the
+// oracle (located through the session ids the event tap recorded), because
+// the tap deliberately carries no tool-result content.
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import zlib from 'node:zlib'
 import { IT_ROOT, textChunks, toolCallChunks, transcript } from '../mock-kit.js'
 
 const id = 'editlock'
@@ -74,7 +82,83 @@ function assert(run) {
   run.check('retention tool advertised', tools.includes('edit_lock_hold'), JSON.stringify([...new Set(tools)]))
   run.check('bounded retention accepted', text.some((t) => /Kept 1 path\(s\) past this turn/.test(t)), text.join('\n').slice(-800))
   run.check('release gave the path back', text.some((t) => t.includes('Released 1 path(s)')), text.join('\n').slice(-800))
+  // Conversation-card metadata (edit-lock-tool-cards D1/D4): one persisted
+  // result per ownership call, each with its own editLock record, and the
+  // model content still the single plain text message it always was.
+  // The durable logs of THIS boot's sessions only (the IT home is shared by
+  // the suite): the session ids the event tap recorded name their log dirs.
+  const sessionIds = new Set(run.records.map((row) => row.session).filter((session) => typeof session === 'string' && session !== ''))
+  const logs = sessionLogs(join(dirname(run.ws), 'home', 'sessions')).filter((file) => sessionIds.has(basename(dirname(file))))
+  const results = leaseResults(logs)
+  const detail = JSON.stringify(results).slice(0, 1600)
+  const byTool = (tool) => results.filter((row) => row.meta?.editLock?.tool === tool)
+  const status = byTool('edit_lock_status').find((row) => row.meta.editLock.state === 'status')
+  const hold = byTool('edit_lock_hold').find((row) => row.meta.editLock.state === 'held')
+  const release = byTool('edit_lock_release').find((row) => row.meta.editLock.state === 'released')
+  run.check('persisted status result carries meta.editLock status with this session holding the short path',
+    status !== undefined && status.meta.editLock.v === 1 && status.meta.editLock.mine.some((row) => row.path === 'locked.txt' && typeof row.until === 'number'), detail)
+  run.check('persisted hold result carries meta.editLock held with an epoch-ms deadline',
+    hold !== undefined && hold.meta.editLock.v === 1 && hold.meta.editLock.held.some((row) => row.path === 'locked.txt' && typeof row.holdUntil === 'number'), detail)
+  run.check('persisted release result carries meta.editLock released',
+    release !== undefined && release.meta.editLock.v === 1 && release.meta.editLock.released.includes('locked.txt') && release.meta.editLock.notOwned.length === 0, detail)
+  run.check('edit-lock card metadata names no absolute path', results.length > 0 && results.every((row) => !JSON.stringify(row.meta ?? {}).includes(run.ws)), detail)
+  run.check('model-visible edit-lock results are unchanged: one plain text part, no metadata leaked',
+    [status, hold, release].every((row) => row !== undefined && !row.isError && row.parts.length === 1 && row.parts[0] === 'text' && !row.text.includes('editLock'))
+      && /^Held by this session \(1\):\n- locked\.txt — valid for about \d+s$/.test(status.text)
+      && /^Kept 1 path\(s\) past this turn: locked\.txt until \S+Z \(about 30m from now\)\./.test(hold.text)
+      && release.text === 'Released 1 path(s): locked.txt.', detail)
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
+}
+
+/** Every session.v4.jsonl.zstd under root, recursively. */
+function sessionLogs(root) {
+  const found = []
+  const walk = (dir) => {
+    let entries
+    try { entries = readdirSync(dir) } catch { return }
+    for (const entry of entries) {
+      const path = join(dir, entry)
+      let stat
+      try { stat = statSync(path) } catch { continue }
+      if (stat.isDirectory()) walk(path)
+      else if (entry === 'session.v4.jsonl.zstd') found.push(path)
+    }
+  }
+  walk(root)
+  return found
+}
+
+/** Multi-frame zstd decode of one append-only session log into its events. */
+function decodeEvents(file) {
+  const buf = readFileSync(file)
+  const parts = []
+  for (let i = 0; i + 4 <= buf.length; i++) {
+    if (buf[i] !== 0x28 || buf[i + 1] !== 0xb5 || buf[i + 2] !== 0x2f || buf[i + 3] !== 0xfd) continue
+    try { parts.push(zlib.zstdDecompressSync(buf.subarray(i)).toString('utf8')) } catch { /* trailing partial frame */ }
+  }
+  const events = []
+  for (const line of parts.join('').split('\n')) {
+    if (!line.trim()) continue
+    try { events.push(JSON.parse(line)) } catch { /* torn line */ }
+  }
+  return events
+}
+
+/** The persisted edit-lock tool results of the given logs: model content + UI meta. */
+function leaseResults(logs) {
+  const rows = []
+  for (const file of logs) {
+    for (const event of decodeEvents(file)) {
+      if (event?.type !== 'tool/result') continue
+      const message = event.data?.message
+      const meta = event.data?.meta ?? null
+      const content = Array.isArray(message?.content) ? message.content : []
+      const text = content.map((part) => (part?.type === 'text' ? part.text : '')).join('')
+      if (meta?.editLock === undefined && !/^(Held by this session|Kept \d+ path|Released \d+ path)/.test(text)) continue
+      rows.push({ isError: message?.isError === true, parts: content.map((part) => part?.type ?? null), text, meta })
+    }
+  }
+  return rows
 }
 
 export default { id, prompt, env: { WEIR_IT_EDIT_LOCK: '1' }, decide, observe, assert }
