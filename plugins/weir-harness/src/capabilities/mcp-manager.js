@@ -286,16 +286,65 @@ export function createMcpManager(dependencies = {}) {
       return { mounted: mountedCount }
 
     }
-    async function recoverResidue() {
-      const swept = await mount.sweepResidue(listEntryIds())
+    const healthy = identity => runtime.snapshot(identity).phase === 'mounted' && mount.mounted.has(identity)
+      && (mount.mounted.get(identity)?.state ?? 'mounted') === 'mounted'
+
+    /** Recover one identity inside its queue slot: sweep untracked residue, then strictly remount. */
+    function recoverOne(identity) {
+      return serialize(identity, async () => {
+        // Re-read inside the slot: an earlier queued operation may have
+        // remounted, edited or removed this identity meanwhile.
+        const current = await registry.read()
+        if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', identity, skipped: current.kind }
+        const entry = current.kind === 'ok' ? current.servers[identity] ?? null : null
+        if (entry && healthy(identity)) return { status: 'mounted', identity, generation: entry.generation, alreadyHealthy: true }
+        const groupId = `${MCP_GROUP_PREFIX}${identity}`
+        const residuePresent = listEntryIds().includes(groupId)
+        if (!entry) {
+          // Orphan residue of an identity that is no longer registered.
+          const swept = residuePresent ? await mount.sweepResidue([groupId]) : []
+          const cleaned = !residuePresent || swept.includes(groupId)
+          if (cleaned) releaseBridge(groupId)
+          return cleaned
+            ? { status: 'removed', identity, swept: residuePresent }
+            : { status: 'cleanup-failed', identity, error: mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' }), next: { action: 'recover-residue' } }
+        }
+        const token = beginOperation(identity)
+        // A tracked failed mount record is retried by reconcileOne's unmount; a
+        // Loader row the mount map no longer tracks is swept first, or the
+        // same-name replacement could never be created.
+        if (!mount.mounted.has(identity) && residuePresent) {
+          const swept = await mount.sweepResidue([groupId])
+          if (!swept.includes(groupId)) {
+            runtime.finish(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            const diagnostic = mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
+            receipts.mount.set(identity, { time: now(), status: 'cleanup-failed', diagnostic })
+            return { status: 'cleanup-failed', identity, generation: entry.generation, saved: true, error: diagnostic, next: { action: 'recover-residue' } }
+          }
+          releaseBridge(groupId)
+        }
+        return reconcileOne(identity, entry, token)
+      })
+    }
+
+    /**
+     * Residue recovery (user-triggered via the capabilities command verb
+     * mcp-recover, the mcp mutation action 'recover' and the panel's Recover
+     * row action). Healthy mounted identities are never touched; every other
+     * registered identity is strictly remounted and every orphan residue row is
+     * removed. `identity` scopes the work to one server.
+     */
+    async function recoverResidue({ identity = null } = {}) {
       const current = await registry.read()
-      if (current.kind !== 'ok') return { swept, mounted: 0, skipped: current.kind }
+      if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', skipped: current.kind, results: [] }
+      const servers = current.kind === 'ok' ? current.servers : {}
+      const orphans = listEntryIds().filter(isMcpResidueId).map(id => id.slice(MCP_GROUP_PREFIX.length)).filter(id => !servers[id])
+      let candidates = [...new Set([...Object.keys(servers).filter(id => !healthy(id)), ...orphans])]
+      if (identity !== null) candidates = candidates.filter(id => id === identity)
       const results = []
-      for (const entry of Object.values(current.servers)) {
-        if (runtime.snapshot(entry.identity).phase === 'mounted' && mount.mounted.has(entry.identity)) continue
-        results.push(await serialize(entry.identity, () => reconcileOne(entry.identity, entry)))
-      }
-      return { swept, mounted: results.filter(result => result.status === 'mounted').length, results }
+      for (const id of candidates) results.push(await recoverOne(id))
+      const recovered = results.filter(result => result.status === 'mounted' || result.status === 'removed').length
+      return { status: recovered === results.length ? 'recovered' : 'recovery-incomplete', recovered, results }
     }
 
     async function adopt(entry) {

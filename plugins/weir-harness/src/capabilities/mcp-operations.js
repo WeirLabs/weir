@@ -279,6 +279,18 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
         return finalize(action, failure(cause?.code === 'owner-changed' ? 'owner-changed' : 'validation-failed', cause?.code ?? 'default-failed', cause), request.identity)
       }
     }
+    if (action === 'recover') {
+      const identity = typeof request.identity === 'string' ? request.identity : null
+      try {
+        if (typeof manager.recoverResidue !== 'function') return finalize(action, failure('unsupported', 'recover-unavailable', new Error('this MCP manager cannot recover residue')), identity)
+        await owner('mount')
+        const result = await manager.recoverResidue({ identity })
+        return finalize(action, { ...result, saved: false, next: { action: result.status === 'recovered' ? 'none' : 'inspect-diagnostics' } }, identity)
+      } catch (cause) {
+        const status = cause?.code === 'owner-changed' ? 'owner-changed' : 'indeterminate'
+        return finalize(action, failure(status, cause?.code ?? status, cause, { next: { action: 'inspect-actual-state' } }), identity)
+      }
+    }
     const unresolved = () => ({ entry: { identity: request.identity, client: { serverName: request.identity } }, secretValues: {}, hasSecrets: false, legacyLiteralSecrets: false })
     if (action === 'remove' || action === 'restart') {
       return mutateOne(action, request, unresolved(), {
@@ -340,6 +352,7 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     restart: request => execute({ ...request, action: 'restart' }),
     test: request => execute({ ...request, action: 'test' }),
     setDefault: request => execute({ ...request, action: 'setDefault' }),
+    recover: request => execute({ ...request, action: 'recover' }),
     installFromAgent: request => execute({ ...request, action: 'installFromAgent', refsOnly: true, surface: 'refs' }),
   }
 }

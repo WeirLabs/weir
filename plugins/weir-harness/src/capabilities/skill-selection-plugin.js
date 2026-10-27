@@ -502,7 +502,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           }
         }
 
-        const mcpVerb = (action) => async (spec, { agent }) => {
+        const mcpVerb = (action) => async (spec = {}, { agent }) => {
           try {
             if (action === 'mcp-add' && (typeof spec.identity !== 'string' || typeof spec.label !== 'string' || typeof spec.command !== 'string' || spec.command.length === 0)) {
               return { kind: 'error', text: 'mcp-add needs identity, label and command strings' }
@@ -518,7 +518,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               // mutation channel may accept transient literal secrets.
               surface: action === 'mcp-add' ? 'legacy' : 'refs',
             }
-            if (!spec.config && !spec.document && !['remove', 'restart', 'setDefault'].includes(operation)) {
+            if (!spec.config && !spec.document && !['remove', 'restart', 'setDefault', 'recover'].includes(operation)) {
               if (operation === 'batch' || fields.mcpServers) request.document = fields
               else request.config = fields
             }
@@ -528,7 +528,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               : operation === 'batch'
                 ? await operations.executeBatch(request)
                 : await operations.execute(request)
-            const successful = new Set(['preview', 'mounted', 'saved', 'removed'])
+            const successful = new Set(['preview', 'mounted', 'saved', 'removed', 'recovered'])
             return { kind: successful.has(result.status) ? 'success' : 'error', text: JSON.stringify(result) }
           } catch (cause) {
             return { kind: 'error', text: JSON.stringify({ status: 'validation-failed', saved: false, error: mcpDiagnostic(cause, { code: cause?.code ?? 'validation-failed' }) }) }
@@ -555,6 +555,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
           'mcp-restart': { payload: 'required', usage: 'Usage: /capabilities mcp-restart <json {identity,expectedRevision}>', run: mcpVerb('mcp-restart') },
           'mcp-test': { payload: 'required', usage: 'Usage: /capabilities mcp-test <json config>', run: mcpVerb('mcp-test') },
           'mcp-default': { payload: 'required', usage: 'Usage: /capabilities mcp-default <json {identity,enabled,expectedRevision?}>', run: mcpVerb('mcp-default') },
+          'mcp-recover': { payload: 'optional', usage: 'Usage: /capabilities mcp-recover [json {identity?}]', run: mcpVerb('mcp-recover') },
           presets: { payload: 'none', run: presetVerbs.presets },
           'preset-save': { payload: 'required', usage: 'Usage: /capabilities preset-save <json>', run: presetVerbs['preset-save'] },
           'preset-rename': { payload: 'required', usage: 'Usage: /capabilities preset-rename <json>', run: presetVerbs['preset-rename'] },
@@ -571,7 +572,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
 
         ctx.effect(() => commands.register({
           name: 'capabilities',
-          description: 'Session capability surface (receipt | list | apply | mcp-preview | mcp-add | mcp-batch | mcp-edit | mcp-remove | mcp-restart | mcp-test | mcp-default | presets and workspace defaults).',
+          description: 'Session capability surface (receipt | list | apply | mcp-preview | mcp-add | mcp-batch | mcp-edit | mcp-remove | mcp-restart | mcp-test | mcp-default | mcp-recover | presets and workspace defaults).',
           handler: async (invocation) => {
             const agent = invocation?.agent
             if (!agent) return { kind: 'error', text: 'capabilities: requires an owning agent session' }
@@ -585,7 +586,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             const entry = verbTable[head]
             const hasArgs = verb.length > head.length
             if (!entry || (entry.payload === 'none' && hasArgs)) {
-              return { kind: 'error', text: 'Usage: /capabilities receipt|list|apply|mcp-preview|mcp-add|mcp-batch|mcp-edit|mcp-remove|mcp-restart|mcp-test|mcp-default|presets|default-get|default-save|default-clear' }
+              return { kind: 'error', text: 'Usage: /capabilities receipt|list|apply|mcp-preview|mcp-add|mcp-batch|mcp-edit|mcp-remove|mcp-restart|mcp-test|mcp-default|mcp-recover|presets|default-get|default-save|default-clear' }
             }
             if (entry.payload === 'required' && !hasArgs) {
               return { kind: 'error', text: entry.usage ?? 'Usage: /capabilities <verb> <json>' }

@@ -1372,7 +1372,7 @@ describe('weir settings client half', () => {
   })
 
   it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
-    // The frozen key set (632 keys): any key dropped in a future edit
+    // The frozen key set (633 keys): any key dropped in a future edit
     // of the data faces or the entry dictionary reddens here (the design's
     // 键集并集 pin), and any cross-slice duplicate inside the page merge would
     // silently shadow — pinned too.
@@ -1513,6 +1513,7 @@ describe('weir settings client half', () => {
     'capability.mcp.url',
     'capability.mcp.namespacePending',
     'capability.mcp.preview',
+    'capability.mcp.recover',
     'capability.mcp.confirm',
     'capability.mcp.test',
     'capability.mcp.pasteTitle',
