@@ -30,7 +30,7 @@ const message = error => (error instanceof Error ? error.message : String(error)
  *   admit: (agent: unknown) => Promise<boolean>,
  *   isEnabledFor: (agent: unknown) => boolean,
  *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void },
- *   onRegister?: (name: string) => void, onUnregister?: (name: string) => void,
+ *   onRegister?: (name: string, captureRollback: (rollback: () => void) => void) => void, onUnregister?: (name: string) => void,
  *   onError?: (reason: string, cause?: unknown) => void }} config
  */
 export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onUnregister, onError = () => {}, assertPermit }) {
@@ -51,11 +51,22 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
       if (typeof wrapped?.name !== 'string') return registration
       const name = wrapped.name
       const disposeHost = typeof registration === 'function' ? registration : () => {}
+      let rollbackRegistration = null
       try {
-        onRegister?.(name)
+        onRegister?.(name, rollback => { rollbackRegistration = rollback })
       } catch (cause) {
-        // Never leave a facade-rejected tool registered without its owner fact.
-        try { disposeHost() } catch (rollbackError) { onError('facade-host-registration-rollback-failed', rollbackError) }
+        // Host-first rollback is fail-closed: owner facts and partial denies
+        // stay in place unless Host removal is confirmed.
+        try { disposeHost() } catch (rollbackError) {
+          onError('facade-host-registration-rollback-failed', rollbackError)
+          throw cause
+        }
+        try {
+          if (typeof rollbackRegistration === 'function') rollbackRegistration()
+          else onUnregister?.(name) // legacy registration callbacks
+        } catch (rollbackError) {
+          onError('facade-owner-registration-rollback-failed', rollbackError)
+        }
         throw cause
       }
       let hostRemoved = false

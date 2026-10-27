@@ -345,6 +345,38 @@ test('facade: a synchronous visibility failure rolls back Host registration befo
   expect([...registered]).toEqual([])
 })
 
+test('facade: registration rollback follows Host disposal and restoration errors stay visible', () => {
+  const order = []
+  const errors = []
+  let legacyCleanups = 0
+  const facade = createMcpFacade({
+    host: { tools: { register() {
+      order.push('host-register')
+      return () => { order.push('host-rollback') }
+    } } },
+    identity: 'docs', generation: 1,
+    admit: async () => true,
+    isEnabledFor: () => true,
+    onRegister(_name, captureRollback) {
+      order.push('owner-sync-failed')
+      captureRollback(() => {
+        order.push('owner-rollback')
+        throw new Error('injected owner restoration failure')
+      })
+      throw new Error('injected visibility sync failure')
+    },
+    onUnregister() { legacyCleanups++ },
+    onError(reason, cause) { errors.push(`${reason}:${cause.message}`) },
+  })
+  assert.throws(
+    () => facade.tools.register({ name: 'mcp__docs__echo', execute: async () => {} }),
+    /injected visibility sync failure/,
+  )
+  expect(order).toEqual(['host-register', 'owner-sync-failed', 'host-rollback', 'owner-rollback'])
+  expect(legacyCleanups).toBe(0)
+  expect(errors).toEqual(['facade-owner-registration-rollback-failed:injected owner restoration failure'])
+})
+
 test('facade: failed Host removal retains owner cleanup for a safe retry', () => {
   let failRemoval = true
   let hostAttempts = 0

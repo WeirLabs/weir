@@ -112,7 +112,6 @@ export function createMcpManager(dependencies = {}) {
     /**
      * Reconcile only actual differences. Every held entry owns exactly one
      * independent deny disposer; absent public names never reach restrict().
-     * `added` is the registration transaction's rollback journal.
      */
     function reconcileAgent(agent, matches = () => true, added = null) {
       if (!isAgent(agent)) return
@@ -171,30 +170,62 @@ export function createMcpManager(dependencies = {}) {
       if (rememberAgent(agent)) reconcileAgent(agent)
     }
 
-    function registerPublicName(name, identity, generation) {
+    function registerPublicName(name, identity, generation, captureRollback) {
       const hadPrevious = publicNames.has(name)
       const previous = publicNames.get(name)
+      const attempted = { identity, generation }
+      const previousDenies = []
+      for (const [agent, held] of restrictions) {
+        const record = held.get(name)
+        if (record) previousDenies.push({ agent, record, owner: record.owner })
+      }
       const added = []
-      publicNames.set(name, { identity, generation })
-      try {
-        syncName(name, added)
-      } catch (cause) {
+      publicNames.set(name, attempted)
+      captureRollback?.(() => {
+        // Object identity distinguishes attempts even within one generation.
+        // A newer owner must never be overwritten by a stale Host rollback.
+        if (publicNames.get(name) !== attempted) return
+        let failure = null
+        const fail = cause => {
+          failure ??= cause
+          onError(`mcp-schema-rollback-failed:${name}`, cause)
+        }
         if (hadPrevious) publicNames.set(name, previous)
         else publicNames.delete(name)
-        for (const { agent, name: deniedName, record } of added.reverse()) {
+
+        // Recreate denies removed by the failed sync before reusing surviving
+        // records, then dispose only denies introduced by this attempt.
+        for (const { agent, owner } of previousDenies) {
+          if (restrictions.get(agent)?.has(name)) continue
+          try {
+            const restrict = agent?.ctx?.tools?.restrict
+            if (typeof restrict !== 'function') throw new Error(`cannot restrict MCP tool "${name}" without agent tools`)
+            const disposer = restrict.call(agent.ctx.tools, { deny: [name] })
+            let held = restrictions.get(agent)
+            if (!held) {
+              held = new Map()
+              restrictions.set(agent, held)
+            }
+            held.set(name, { owner, dispose: typeof disposer === 'function' ? disposer : null })
+          } catch (cause) { fail(cause) }
+        }
+        for (const { agent, record, owner } of previousDenies) {
+          if (restrictions.get(agent)?.get(name) === record) record.owner = owner
+        }
+        for (const { agent, record } of added.reverse()) {
           const held = restrictions.get(agent)
-          if (held?.get(deniedName) !== record) continue
+          if (held?.get(name) !== record) continue
           try {
             record.dispose?.()
-            held.delete(deniedName)
-          } catch (rollbackError) {
-            // A failed disposer may still be active: retain its ownership fact.
-            onError(`mcp-schema-rollback-failed:${deniedName}`, rollbackError)
-          }
-          if (held.size === 0) restrictions.delete(agent)
+            if (held.get(name) === record) held.delete(name)
+            if (held.size === 0) restrictions.delete(agent)
+          } catch (cause) { fail(cause) }
         }
-        throw cause
-      }
+        if (failure) throw failure
+      })
+      // Until confirmed Host disposal, retain the attempted owner and every
+      // partial deny. The facade invokes only this transaction's rollback.
+      syncName(name, added)
     }
 
     function unregisterPublicName(name, identity, generation) {
@@ -243,7 +274,7 @@ export function createMcpManager(dependencies = {}) {
         assertPermit: gate.assertPermit,
         isEnabledFor: agent => gate.enabledFor(agent, identity),
         drain,
-        onRegister: name => registerPublicName(name, identity, generation),
+        onRegister: (name, captureRollback) => registerPublicName(name, identity, generation, captureRollback),
         onUnregister: name => unregisterPublicName(name, identity, generation),
         onError,
       })

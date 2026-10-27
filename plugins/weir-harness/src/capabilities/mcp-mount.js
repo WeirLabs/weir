@@ -191,6 +191,7 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
     const options = mcpGroupOptions({ identity, generation, client: strictMcpClientConfig(input.client, { probe }) })
     const tree = treeFor(secretBearing)
     let bridgeReady = false
+    let cleanup = null
     let succeeded = false
     try {
       if (typeof input.beforeCreate === 'function') await input.beforeCreate({ groupId: options.id, identity, generation, probe, ephemeral: tree.ephemeral === true })
@@ -211,7 +212,7 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
       succeeded = true
       return result
     } catch (cause) {
-      const cleanup = await disposeGroup(options.id, { tree, identity, generation, secretBearing, confirmClosed: input.confirmClosed })
+      cleanup = await disposeGroup(options.id, { tree, identity, generation, secretBearing, confirmClosed: input.confirmClosed })
       if (!probe && cleanup.status !== 'cleaned') mounted.set(identity, { groupId: options.id, generation, state: cleanup.status })
       const diagnostic = mcpDiagnostic(cause, { secrets: input.secrets, action: cleanup.status === 'cleaned' ? 'retry' : 'recover-residue' })
       throw new McpLifecycleError(cleanup.status === 'cleaned' ? diagnostic.code : cleanup.status, cause, {
@@ -221,7 +222,7 @@ export function createMcpMount({ loader, onError = () => {}, startupTimeoutMs = 
         action: cleanup.status === 'cleaned' ? 'retry' : 'recover-residue',
       })
     } finally {
-      if (!succeeded && bridgeReady && typeof input.afterCleanup === 'function') await input.afterCleanup({ groupId: options.id, identity, generation, probe })
+      if (!succeeded && bridgeReady && cleanup?.status === 'cleaned' && typeof input.afterCleanup === 'function') await input.afterCleanup({ groupId: options.id, identity, generation, probe })
       if (succeeded && probe && typeof input.afterProbeReady === 'function') await input.afterProbeReady({ groupId: options.id, identity, generation })
     }
   }

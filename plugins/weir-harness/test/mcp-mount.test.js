@@ -83,3 +83,37 @@ test('unmount removes only the target and remounts a vanished sibling (1.14 S3 a
   expect(removed).toEqual(['weir-mcp-alpha'])
   expect(remounted).toEqual(['beta'])
 })
+
+test('failed mount does not run afterCleanup when disposal is cleanup-failed', async () => {
+  const { loader } = loaderFixture()
+  loader.remove = async () => { throw new Error('injected cleanup failure') }
+  const mount = createMcpMount({ loader })
+  let cleanups = 0
+  await assert.rejects(mount.mount({
+    identity: 'docs', generation: 1, client: {}, fiberOf: () => null,
+    beforeCreate: () => {}, afterCleanup: () => { cleanups++ },
+  }), error => error.status === 'cleanup-failed' && error.cleanup.status === 'cleanup-failed')
+  expect(cleanups).toBe(0)
+})
+
+test('failed mount does not run afterCleanup when disposal is cleanup-unknown', async () => {
+  const { loader } = loaderFixture()
+  const mount = createMcpMount({ loader })
+  let cleanups = 0
+  await assert.rejects(mount.mount({
+    identity: 'docs', generation: 1, client: {}, fiberOf: () => null,
+    beforeCreate: () => {}, afterCleanup: () => { cleanups++ },
+    confirmClosed: async () => false,
+  }), error => error.status === 'cleanup-unknown' && error.cleanup.status === 'cleanup-unknown')
+  expect(cleanups).toBe(0)
+})
+
+test('failed mount runs afterCleanup once after disposal is cleaned', async () => {
+  const { loader, calls } = loaderFixture()
+  const mount = createMcpMount({ loader })
+  await assert.rejects(mount.mount({
+    identity: 'docs', generation: 1, client: {}, fiberOf: () => null,
+    beforeCreate: () => {}, afterCleanup: () => { calls.push('after-cleanup') },
+  }), error => error.status === 'mount-failed' && error.cleanup.status === 'cleaned')
+  expect(calls).toEqual(['create', 'await', 'remove', 'after-cleanup'])
+})
