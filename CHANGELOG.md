@@ -11,6 +11,7 @@
 
 - **MCP server 全生命周期管理与 AI 安装**：Capabilities 面板现可添加、编辑、测试、重启、删除 `stdio` / `streamable-http` server，支持标准 JSON 单条/批量预览、真实挂载状态与可操作诊断。敏感值改由 DSH credentials 引用承载，不再写入注册表或 profile；严格 mount、异步清理、替换期准入和 incarnation 防重放共同守住调用边界。新增 `mcp-server-setup` intent 与 `mcp_install`：主 Orchestrator 可生成脱敏安装计划，经 Host 确认卡批准后先 probe 再安装；安装、当前会话 Select+Apply 与新会话 default 仍分别确认，绝不静默扩权。详见 [MCP server 管理](docs/features/mcp-server-management.md)。
 - **编辑锁释放订阅**：模型在编辑冲突、转交被拒或请求过期后，可用 `edit_lock_watch` 等待指定文件的下一次释放；显式释放、持有者断连和租约过期都会通知订阅者。通知只提示可以重新抢锁，不代表已经取得所有权；多个等待者公平竞争、先到先得，输家可重新协调或订阅，全程不需要用户解锁。详见 [编辑锁](docs/features/edit-lock.md)。
+- **编辑锁对话工具卡**：7 个编辑锁工具（申请、释放、保留、状态、转交请求、答复、订阅释放）在对话中不再显示为通用工具卡和英文大段说明，而是随界面语言本地化的只读卡片：一眼可见文件路径、结果状态、持有者与截止时间；`edit_lock_watch` 卡片说明正在等谁释放，并提示释放通知不代表已获得锁。卡片只是调用时刻的快照，除展开/收起外没有任何操作；被拒绝的调用与旧历史记录同样可读。模型看到的工具结果完全不变。详见 [编辑锁](docs/features/edit-lock.md)。
 
 ### Fixed
 
