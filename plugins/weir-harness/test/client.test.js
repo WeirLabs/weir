@@ -123,6 +123,8 @@ describe('weir settings client half', () => {
       WorktreeToolRow: (props) => ({ __worktreeTool: props }),
     }
     const worktreeModelChunk = { WORKTREE_PROJECTION_KEY: 'weirWorktree', marker: 'worktree-model' }
+    const fileLeaseToolViewChunk = { FileLeaseToolRow: (props) => ({ __leaseToolRow: props }), dictionaries: markerDict('fileLeaseTools') }
+    const fileLeaseToolModelChunk = { marker: 'file-lease-tool-model' }
     const presetChunk = { CapabilityPresetsView: () => null }
     const capabilityBadgeChunk = { CapabilityBadge: (props) => ({ __badge: props }) }
     const capabilityModelChunk = { marker: 'capability-model', dictionaries: { en: { 'capability.sentinel': 'cap en' }, zh: { 'capability.sentinel': 'cap zh' } } }
@@ -155,6 +157,8 @@ describe('weir settings client half', () => {
       './client.hash-edit-model.js': hashEditModelChunk,
       './client.worktree-view.js': worktreeViewChunk,
       './client.worktree-model.js': worktreeModelChunk,
+      './client.file-lease-tool-view.js': fileLeaseToolViewChunk,
+      './client.file-lease-tool-model.js': fileLeaseToolModelChunk,
     }
     let asyncFailure = null
     // Per-spec failures: the picker chunk must be failable on its own, without
@@ -186,6 +190,8 @@ describe('weir settings client half', () => {
       hashEditModelChunk,
       worktreeViewChunk,
       worktreeModelChunk,
+      fileLeaseToolViewChunk,
+      fileLeaseToolModelChunk,
       presetChunk,
       setAsyncFailure: (error) => {
         asyncFailure = error
@@ -375,6 +381,8 @@ describe('weir settings client half', () => {
       'conversation.input.right',
       // the blackboard header quick entry (order 20, after the worktree pill)
       'conversation.session.header.utilities',
+      // the seven read-only edit-lock conversation cards (edit-lock-tool-cards D2)
+      'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
       'settings.section', 'settings.weir.item',
       // the model-routing page: its own section + item slot registrations
       'settings.section', 'settings.weir-routing.item',
@@ -421,10 +429,22 @@ describe('weir settings client half', () => {
       'worktree_abandon', 'worktree_check', 'worktree_cleanup', 'worktree_land', 'worktree_open', 'worktree_watch',
     ])
 
+    // the edit-lock conversation cards: one keyed tool view per edit_lock_*
+    // tool (indices 13..19), registered literally under the entry namespace
+    for (const index of [13, 14, 15, 16, 17, 18, 19]) slotInjects[index].fn()
+    const leaseToolViews = slotRegistrations.filter((registration) => registration.definition.name === 'tool.call.toolview' && registration.definition.key.startsWith('edit_lock_'))
+    expect(leaseToolViews.map((registration) => registration.definition.key)).toEqual([
+      'edit_lock_acquire', 'edit_lock_release', 'edit_lock_hold', 'edit_lock_status', 'edit_lock_try_steal', 'edit_lock_reply', 'edit_lock_watch',
+    ])
+    for (const registration of leaseToolViews) {
+      expect(registration.definition.locale).toBe('settings.weir')
+      expect(typeof registration.component).toBe('function')
+    }
+
     // the top-level settings section registrations: the main page (order 40)
     // and the model-routing page (order 41)
-    slotInjects[13].fn()
-    slotInjects[15].fn()
+    slotInjects[20].fn()
+    slotInjects[22].fn()
     const sectionEntries = slotRegistrations.filter((registration) => registration.definition.name === 'settings.section')
     expect(sectionEntries).toHaveLength(2)
     const { definition: sectionDef, component: sectionComponent } = sectionEntries.find((registration) => registration.definition.id === 'weir-settings')
@@ -445,8 +465,8 @@ describe('weir settings client half', () => {
 
     // the item slot registrations hosting the form cards (the single entry
     // per page: no plugins.item registration anymore)
-    slotInjects[14].fn()
-    slotInjects[16].fn()
+    slotInjects[21].fn()
+    slotInjects[23].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const routingItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
     expect(routingItemEntry).toBeTruthy()
@@ -489,7 +509,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[14].fn()
+    slotInjects[21].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const injected = definition.inject()
 
@@ -545,7 +565,7 @@ describe('weir settings client half', () => {
 
     // the routing item renders the same WeirCard on the routing page against
     // the second controller's store
-    slotInjects[16].fn()
+    slotInjects[23].fn()
     const routingItem = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
     expect(routingItem.definition.inject().hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
     reactStub.reset()
@@ -582,7 +602,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[14].fn()
+    slotInjects[21].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
 
     const settle = async (props) => {
@@ -613,7 +633,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[14].fn()
+    slotInjects[21].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
 
     const settle = async (props) => {
@@ -644,7 +664,7 @@ describe('weir settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right', 'conversation.session.header.utilities'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('weir-lsp-toggle')
@@ -740,6 +760,51 @@ describe('weir settings client half', () => {
     expect(settled.model).toBe(hashEditModelChunk)
     expect(settled.phase).toBe('result')
     expect(settled.block).toBe(block)
+  })
+
+  it('edit-lock toolview wrappers render a title+paths placeholder before arrival and the card after', async () => {
+    const { surface, reactStub, asyncCalls, fileLeaseToolViewChunk, fileLeaseToolModelChunk } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations } = makeCtx()
+    surface.apply(ctx)
+    for (const index of [13, 14, 15, 16, 17, 18, 19]) slotInjects[index].fn()
+    // registration carries the literal keys — no chunk pull just to register
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual([])
+    const { component } = slotRegistrations.find((registration) => registration.definition.key === 'edit_lock_acquire')
+    const block = { call: { name: 'edit_lock_acquire', argsRaw: '{"paths":["src/a.js","src/b.js"]}' } }
+    const props = { phase: 'start', block, cwd: '/ws', t: (key) => `t:${key}` }
+
+    // pre-arrival: the localized title (entry namespace) and the argument paths
+    reactStub.begin()
+    const first = component(props)
+    expect(asyncCalls.filter((spec) => spec !== NOTIFY_WEB_SPEC)).toEqual(['./client.file-lease-tool-view.js', './client.file-lease-tool-model.js'])
+    expect(first.toolName).toBe('edit_lock_acquire')
+    const placeholder = first.__type(first)
+    expect(placeholder['data-tool']).toBe('edit_lock_acquire')
+    expect(placeholder.children[0].children).toBe('t:leaseToolTitle_edit_lock_acquire')
+    expect(placeholder.children[1].children).toBe('src/a.js +1')
+    // no paths in the arguments: the title alone, never a blank card
+    const bare = first.__type({ ...first, block: { argsRaw: '{' } })
+    expect(bare.children[0].children).toBe('t:leaseToolTitle_edit_lock_acquire')
+    expect(bare.children[1]).toBe(null)
+
+    // post-arrival: the view chunk's card with the model exports, the tool
+    // name and the feature-namespace t
+    await flush()
+    reactStub.begin()
+    const settled = component(props)
+    expect(settled.__type).toBe(fileLeaseToolViewChunk.FileLeaseToolRow)
+    expect(settled.model).toBe(fileLeaseToolModelChunk)
+    expect(settled.toolName).toBe('edit_lock_acquire')
+    expect(settled.block).toBe(block)
+    expect(typeof settled.t).toBe('function')
+    // the watch wrapper names its own tool from the same batch
+    const watch = slotRegistrations.find((registration) => registration.definition.key === 'edit_lock_watch')
+    reactStub.reset()
+    reactStub.begin()
+    watch.component(props)
+    await flush()
+    reactStub.begin()
+    expect(watch.component(props).toolName).toBe('edit_lock_watch')
   })
 
   it('worktree surfaces: gated arrival, one model chunk, and no host call before arrival', async () => {
@@ -2015,6 +2080,76 @@ describe('weir settings client half', () => {
     'worktreeWatchTimeoutMinutes',
     'worktreeWatchTimeoutMinutesHint',
     'worktreeWatching',
+    // the edit-lock conversation cards' data face (edit-lock-tool-cards D3);
+    // the seven tool titles also live in NS for the pre-arrival placeholder
+    'leaseToolClaimedPaths',
+    'leaseToolCode',
+    'leaseToolDegraded',
+    'leaseToolErrorText',
+    'leaseToolFailedDetail',
+    'leaseToolHeldUntil',
+    'leaseToolHolder',
+    'leaseToolHolderUnknown',
+    'leaseToolLapsed',
+    'leaseToolMine',
+    'leaseToolMineEmpty',
+    'leaseToolNotOwnedPaths',
+    'leaseToolNothingClaimed',
+    'leaseToolNothingHeld',
+    'leaseToolNothingReleased',
+    'leaseToolOthers',
+    'leaseToolPendingDetail',
+    'leaseToolPendingExpires',
+    'leaseToolRawOutput',
+    'leaseToolReadAt',
+    'leaseToolReleasedPaths',
+    'leaseToolReplyDeclined',
+    'leaseToolReplyTransferred',
+    'leaseToolRequest',
+    'leaseToolRequestedPaths',
+    'leaseToolRunning',
+    'leaseToolSnapshot',
+    'leaseToolState_cancelled',
+    'leaseToolState_claimed',
+    'leaseToolState_declined',
+    'leaseToolState_degraded',
+    'leaseToolState_failed',
+    'leaseToolState_free',
+    'leaseToolState_held',
+    'leaseToolState_pending',
+    'leaseToolState_raw',
+    'leaseToolState_released',
+    'leaseToolState_reset',
+    'leaseToolState_running',
+    'leaseToolState_self',
+    'leaseToolState_status',
+    'leaseToolState_stopped',
+    'leaseToolState_transferred',
+    'leaseToolState_unsupported',
+    'leaseToolState_watch_released',
+    'leaseToolState_watching',
+    'leaseToolStatusSummary',
+    'leaseToolStealFree',
+    'leaseToolStealSelf',
+    'leaseToolStoppedDetail',
+    'leaseToolTitle_edit_lock_acquire',
+    'leaseToolTitle_edit_lock_hold',
+    'leaseToolTitle_edit_lock_release',
+    'leaseToolTitle_edit_lock_reply',
+    'leaseToolTitle_edit_lock_status',
+    'leaseToolTitle_edit_lock_try_steal',
+    'leaseToolTitle_edit_lock_watch',
+    'leaseToolTitle_unknown',
+    'leaseToolUntil',
+    'leaseToolValidUntil',
+    'leaseToolWatchCancelled',
+    'leaseToolWatchFree',
+    'leaseToolWatchNote',
+    'leaseToolWatchReleased',
+    'leaseToolWatchReset',
+    'leaseToolWatchSelf',
+    'leaseToolWatchUnsupported',
+    'leaseToolWatchWaiting',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }
@@ -2049,6 +2184,7 @@ describe('weir settings client half', () => {
       ['lib/client.lsp-toggle.js', chunkRequire],
       ['lib/client.hash-edit-model.js', undefined],
       ['lib/client.worktree-model.js', undefined],
+      ['lib/client.file-lease-tool-view.js', chunkRequire],
     ]
     const seen = new Map() // key -> home name (first writer)
     const union = new Set()
@@ -2065,6 +2201,15 @@ describe('weir settings client half', () => {
       // NS (entry-side, sync-rendered); the chunk's own loading row reads it
       // from its feature namespace — byte-identical in both homes.
       ['worktreeLoading', ['NS (entry)', 'lib/client.worktree-model.js']],
+      // the edit-lock card titles: the pre-arrival placeholder reads them from
+      // NS, the card from its feature namespace — byte-identical in both homes
+      ['leaseToolTitle_edit_lock_acquire', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      ['leaseToolTitle_edit_lock_release', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      ['leaseToolTitle_edit_lock_hold', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      ['leaseToolTitle_edit_lock_status', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      ['leaseToolTitle_edit_lock_try_steal', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      ['leaseToolTitle_edit_lock_reply', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      ['leaseToolTitle_edit_lock_watch', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
     ])
     const entryDicts = registrations[0].dicts
     for (const [home, requireStub] of homes) {
