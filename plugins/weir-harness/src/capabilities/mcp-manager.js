@@ -296,11 +296,12 @@ export function createMcpManager(dependencies = {}) {
       && (mount.mounted.get(identity)?.state ?? 'mounted') === 'mounted'
 
     /** Recover one identity inside its queue slot: sweep untracked residue, then strictly remount. */
-    function recoverOne(identity) {
+    function recoverOne(identity, assertOwner) {
       return serialize(identity, async () => {
         // Re-read inside the slot: an earlier queued operation may have
         // remounted, edited or removed this identity meanwhile.
         const current = await registry.read()
+        if (assertOwner) await assertOwner('recover-cleanup')
         if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', identity, skipped: current.kind }
         const entry = current.kind === 'ok' ? current.servers[identity] ?? null : null
         if (entry && healthy(identity)) return { status: 'mounted', identity, generation: entry.generation, alreadyHealthy: true }
@@ -329,6 +330,14 @@ export function createMcpManager(dependencies = {}) {
           }
           releaseBridge(groupId)
         }
+        if (assertOwner) {
+          try { await assertOwner('mount') } catch (cause) {
+            // Cleanup may already have removed the old mount. Keep admission
+            // closed without stranding the queue fence in `replacing`.
+            runtime.finish(token, 'unknown', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+            throw cause
+          }
+        }
         return reconcileOne(identity, entry, token)
       })
     }
@@ -338,9 +347,10 @@ export function createMcpManager(dependencies = {}) {
      * mcp-recover, the mcp mutation action 'recover' and the panel's Recover
      * row action). Healthy mounted identities are never touched; every other
      * registered identity is strictly remounted and every orphan residue row is
-     * removed. `identity` scopes the work to one server.
+     * removed. `identity` scopes the work to one server. The optional owner
+     * callback runs inside every queue slot before cleanup and before remount.
      */
-    async function recoverResidue({ identity = null } = {}) {
+    async function recoverResidue({ identity = null, assertOwner = null } = {}) {
       const current = await registry.read()
       if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', skipped: current.kind, results: [] }
       const servers = current.kind === 'ok' ? current.servers : {}
@@ -348,7 +358,17 @@ export function createMcpManager(dependencies = {}) {
       let candidates = [...new Set([...Object.keys(servers).filter(id => !healthy(id)), ...orphans])]
       if (identity !== null) candidates = candidates.filter(id => id === identity)
       const results = []
-      for (const id of candidates) results.push(await recoverOne(id))
+      for (const id of candidates) {
+        try { results.push(await recoverOne(id, assertOwner)) } catch (cause) {
+          if (!assertOwner || cause?.code !== 'owner-changed') throw cause
+          const recovered = results.filter(result => result.status === 'mounted' || result.status === 'removed').length
+          return {
+            status: 'owner-changed', recovered, results,
+            error: mcpDiagnostic(cause, { code: 'owner-changed', action: 'inspect-actual-state' }),
+            next: { action: 'inspect-actual-state' },
+          }
+        }
+      }
       const recovered = results.filter(result => result.status === 'mounted' || result.status === 'removed').length
       return { status: recovered === results.length ? 'recovered' : 'recovery-incomplete', recovered, results }
     }

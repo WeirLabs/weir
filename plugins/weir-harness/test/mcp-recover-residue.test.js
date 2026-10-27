@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { createMcpManager } from '../src/capabilities/mcp-manager.js'
 import { createMcpOperations } from '../src/capabilities/mcp-operations.js'
 import { createMcpRegistry } from '../src/capabilities/mcp-registry.js'
+import { createMcpRuntime } from '../src/capabilities/mcp-runtime.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 
@@ -16,6 +17,12 @@ const record = identity => ({
   client: { transport: 'stdio', serverName: identity, command: process.execPath, args: [], env: {} },
 })
 
+const deferred = () => {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return { promise, resolve }
+}
+
 async function fixture(store) {
   const registry = createMcpRegistry({ store, newIncarnation: () => null })
   let revision = 0
@@ -23,12 +30,20 @@ async function fixture(store) {
   const mounted = new Map()
   const events = []
   const loaderRows = new Set()
+  const controls = { onListEntryIds: null, onSweepResidue: null }
+  const runtime = createMcpRuntime()
+  const begin = runtime.begin
+  runtime.begin = (identity, details) => {
+    events.push(['fence', identity])
+    return begin(identity, details)
+  }
   let failDocs = true
   const mount = {
     mounted,
     async sweepResidue(ids) {
       const swept = ids.filter(id => loaderRows.has(id))
       for (const id of swept) { events.push(['sweep', id]); loaderRows.delete(id) }
+      controls.onSweepResidue?.(ids, swept)
       return swept
     },
     async mount(options) {
@@ -54,14 +69,20 @@ async function fixture(store) {
   }
   const services = new Map()
   const lifecycle = { snapshotFor: () => ({ state: 'ready', mcpServers: ['docs', 'web'], mcpIncarnations: { docs: null, web: null } }) }
-  createMcpManager({ registry, mount, lifecycle, listRows: () => [], listEntryIds: () => [...loaderRows] })({
+  createMcpManager({
+    registry, mount, runtime, lifecycle, listRows: () => [],
+    listEntryIds: () => {
+      controls.onListEntryIds?.()
+      return [...loaderRows]
+    },
+  })({
     get: () => undefined, on() {}, reflect: { provide: (key, value) => services.set(key, value) }, logger: { warn() {} },
   }, {})
   const face = services.get('weirMcpManager')
   await face.start()
   // An orphan Loader row whose registration is gone appears after startup.
   loaderRows.add('weir-mcp-ghost')
-  return { registry, face, events, loaderRows }
+  return { registry, face, events, loaderRows, controls }
 }
 
 const state = async (face, identity) => (await face.list()).managed.find(row => row.identity === identity)?.state
@@ -77,11 +98,91 @@ test('the shared recover operation sweeps residue and strictly remounts without 
   expect(result.results.map(item => [item.identity, item.status]).sort()).toEqual([['docs', 'mounted'], ['ghost', 'removed']])
   expect(f.loaderRows.has('weir-mcp-ghost')).toBe(false)
   expect(await state(f.face, 'docs')).toBe('mounted')
-  expect(f.events.filter(([kind, identity]) => kind !== 'sweep' && identity === 'web')).toEqual([['mount', 'web']])
+  expect(f.events.filter(([kind, identity]) => kind !== 'sweep' && identity === 'web')).toEqual([['fence', 'web'], ['mount', 'web']])
   // Scoped and idempotent: a healthy identity is left alone.
   const again = await operations.recover({ identity: 'docs' })
   expect(again.status).toBe('recovered')
   expect(again.results).toEqual([])
+})
+
+test('manager recovery without an ownership callback keeps its existing behavior', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-mcp-recover-no-owner-'))
+  const f = await fixture(openCapabilityStore({ root, platform: 'darwin' }))
+  const result = await f.face.recoverResidue({})
+  expect(result.status, JSON.stringify(result)).toBe('recovered')
+  expect(result.results.map(item => [item.identity, item.status]).sort()).toEqual([['docs', 'mounted'], ['ghost', 'removed']])
+  expect(await state(f.face, 'docs')).toBe('mounted')
+})
+
+test('a preset switch before a queued recovery slot prevents every recovery side effect', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-mcp-recover-queued-owner-'))
+  const f = await fixture(openCapabilityStore({ root, platform: 'darwin' }))
+  let owned = true
+  const operations = createMcpOperations({
+    registry: f.registry, manager: f.face, credentials: undefined,
+    assertOwner: async () => { if (!owned) throw new Error('preset changed') },
+  })
+  const hold = deferred()
+  const blocker = f.face.serialize('docs', () => hold.promise)
+  const listed = deferred()
+  f.controls.onListEntryIds = () => listed.resolve()
+  const before = f.events.length
+  const recovering = operations.recover({})
+  await listed.promise
+  // Recover is now waiting behind the same-identity operation. Ownership is
+  // lost before its queue slot can read, fence, clean, or remount anything.
+  owned = false
+  hold.resolve()
+  const result = await recovering
+  await blocker
+  expect(result.status, JSON.stringify(result)).toBe('owner-changed')
+  expect(result.results).toEqual([])
+  expect(f.events.slice(before)).toEqual([])
+  expect(f.loaderRows.has('weir-mcp-ghost')).toBe(true)
+  expect(f.face.runtime.snapshot('docs').phase).toBe('cleanup-failed')
+})
+
+test('ownership loss after residue cleanup prevents remount and later candidates', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-mcp-recover-cleanup-owner-'))
+  const f = await fixture(openCapabilityStore({ root, platform: 'darwin' }))
+  // Keep the Loader residue but drop the tracked mount record so Recover must
+  // sweep it before reconcileOne can remount the registered identity.
+  f.face.mounted.delete('docs')
+  let owned = true
+  const operations = createMcpOperations({
+    registry: f.registry, manager: f.face, credentials: undefined,
+    assertOwner: async () => { if (!owned) throw new Error('preset changed') },
+  })
+  f.controls.onSweepResidue = ids => {
+    if (ids.includes('weir-mcp-docs')) owned = false
+  }
+  const before = f.events.length
+  const result = await operations.recover({})
+  expect(result.status, JSON.stringify(result)).toBe('owner-changed')
+  expect(result.results).toEqual([])
+  expect(f.events.slice(before)).toEqual([['fence', 'docs'], ['sweep', 'weir-mcp-docs']])
+  expect(f.loaderRows.has('weir-mcp-ghost')).toBe(true)
+  expect(f.face.runtime.snapshot('docs').phase).toBe('unknown')
+})
+
+test('ownership loss preserves completed recovery results and skips remaining candidates', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'weir-mcp-recover-partial-owner-'))
+  const f = await fixture(openCapabilityStore({ root, platform: 'darwin' }))
+  let ownerChecks = 0
+  const operations = createMcpOperations({
+    registry: f.registry, manager: f.face, credentials: undefined,
+    assertOwner: async () => {
+      ownerChecks += 1
+      // Initial operation check, two checks for docs, then the queued ghost.
+      if (ownerChecks === 4) throw new Error('preset changed')
+    },
+  })
+  const result = await operations.recover({})
+  expect(result.status, JSON.stringify(result)).toBe('owner-changed')
+  expect(result.recovered).toBe(1)
+  expect(result.results.map(item => [item.identity, item.status])).toEqual([['docs', 'mounted']])
+  expect(f.loaderRows.has('weir-mcp-ghost')).toBe(true)
+  expect(await state(f.face, 'docs')).toBe('mounted')
 })
 
 test('/capabilities mcp-recover reaches the manager recovery with and without an identity', { skip: storePlatformSkip }, async () => {
