@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-27
+
 ### Added
 
 - **MCP server 全生命周期管理与 AI 安装**：Capabilities 面板现可添加、编辑、测试、重启、删除 `stdio` / `streamable-http` server，支持标准 JSON 单条/批量预览、真实挂载状态与可操作诊断。敏感值改由 DSH credentials 引用承载，不再写入注册表或 profile；严格 mount、异步清理、替换期准入和 incarnation 防重放共同守住调用边界。新增 `mcp-server-setup` intent 与 `mcp_install`：主 Orchestrator 可生成脱敏安装计划，经 Host 确认卡批准后先 probe 再安装；安装、当前会话 Select+Apply 与新会话 default 仍分别确认，绝不静默扩权。详见 [MCP server 管理](docs/features/mcp-server-management.md)。
