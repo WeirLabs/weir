@@ -37,6 +37,7 @@ function createFakeClient(answers) {
   }
   return {
     acquire: (/** @type {any} */ owner, /** @type {any} */ paths, /** @type {any} */ scope) => answer('acquire', { owner, paths, scope }),
+    release: (/** @type {any} */ owner, /** @type {any} */ paths) => answer('release', { owner, paths }),
     hold: (/** @type {any} */ paths, /** @type {any} */ minutes, /** @type {any} */ owner) => answer('hold', { paths, minutes, owner }),
     request: (/** @type {string} */ op, /** @type {any} */ payload) => answer('request', { op, ...payload }),
     status: (/** @type {any} */ filter) => answer('status', { filter }),
@@ -74,9 +75,9 @@ const CASES = {
   'acquire/invalid-args': { tool: 'edit_lock_acquire', args: { paths: [] } },
   'acquire/no-cwd': { tool: 'edit_lock_acquire', args: { paths: ['src/a.js'] }, noCwd: true },
 
-  'release/mixed': { tool: 'edit_lock_release', args: { paths: ['src/a.js', 'src/b.js'] }, answers: () => ({ request: { ok: true, released: [A], notOwned: [B] } }) },
-  'release/nothing': { tool: 'edit_lock_release', args: { paths: ['src/a.js'] }, answers: () => ({ request: { ok: true, released: [], notOwned: [] } }) },
-  'release/degraded': { tool: 'edit_lock_release', args: { paths: ['src/a.js'] }, answers: () => ({ request: transport }) },
+  'release/mixed': { tool: 'edit_lock_release', args: { paths: ['src/a.js', 'src/b.js'] }, answers: () => ({ release: { ok: true, released: [A], notOwned: [B] } }) },
+  'release/nothing': { tool: 'edit_lock_release', args: { paths: ['src/a.js'] }, answers: () => ({ release: { ok: true, released: [], notOwned: [] } }) },
+  'release/degraded': { tool: 'edit_lock_release', args: { paths: ['src/a.js'] }, answers: () => ({ release: transport }) },
   'release/invalid-args': { tool: 'edit_lock_release', args: { paths: [''] } },
 
   'hold/held': {

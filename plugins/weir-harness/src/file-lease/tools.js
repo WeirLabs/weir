@@ -518,7 +518,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         const paths = absoluteBatch(args?.paths, cwd)
         let reply
         try {
-          reply = await client.request('release', { owner, paths })
+          reply = await client.release(owner, paths)
         } catch (error) {
           if (isTransport(error)) return presentDegraded(unavailable(error, 'the release was not confirmed'), { paths: paths.map((path) => shortName(path, cwd)) })
           throw error

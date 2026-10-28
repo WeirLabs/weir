@@ -782,6 +782,7 @@ export function createFileLeasePlugin(options = {}) {
      */
     const routedClient = Object.freeze({
       acquire: (/** @type {any} */ owner, /** @type {any} */ paths, /** @type {any} */ scope) => client.acquire(owner, paths, scope),
+      release: (/** @type {any} */ owner, /** @type {any} */ paths) => client.release(owner, paths),
       hold: (/** @type {any} */ paths, /** @type {any} */ minutes, /** @type {any} */ owner) => client.hold(paths, minutes, owner),
       status: (/** @type {any} */ filter) => client.status(filter),
       request: (/** @type {any} */ op, /** @type {any} */ payload) => client.request(op, payload),

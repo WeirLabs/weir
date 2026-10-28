@@ -70,6 +70,7 @@ function createFakeClient(answers = {}) {
   return {
     calls,
     acquire: (owner, paths, scope) => answer('acquire', { owner, paths, scope }),
+    release: (owner, paths) => answer('release', { owner, paths }),
     hold: (paths, minutes, owner) => answer('hold', { paths, minutes, owner }),
     request: (op, payload) => answer('request', { op, ...payload }),
     status: (filter) => answer('status', { filter }),
@@ -250,7 +251,7 @@ describe('edit_lock_acquire', () => {
 describe('edit_lock_release', () => {
   it('reports notOwned without treating it as an error', async () => {
     const client = createFakeClient({
-      request: () => ({ ok: true, released: [`${CWD}/src/a.js`], notOwned: [`${CWD}/src/b.js`] }),
+      release: () => ({ ok: true, released: [`${CWD}/src/a.js`], notOwned: [`${CWD}/src/b.js`] }),
     })
     const definition = tool(createLeaseTools({ client, ownerOf: () => OWNER }), 'edit_lock_release')
     const result = await definition.execute({ paths: ['src/a.js', `${CWD}/src/../src/a.js`, `${CWD}//src/./b.js`] }, execFor(agentFor()))
@@ -773,9 +774,8 @@ function createKernelClient(connectionId, broker) {
       const result = broker.hold({ connectionId, owner, paths, minutes })
       return result.ok === true ? result : refuse(result)
     },
-    request: (op, payload) => {
-      if (op !== 'release') throw new Error(`the kernel client does not serve ${String(op)}`)
-      const result = broker.release({ connectionId, owner: payload?.owner, paths: payload?.paths })
+    release: (owner, paths) => {
+      const result = broker.release({ connectionId, owner, paths })
       return result.ok === true ? result : refuse(result)
     },
     status: (filter) => broker.status(filter ?? {}),

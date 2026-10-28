@@ -1,5 +1,6 @@
 import { describe, expect, it } from './helpers.js'
 import { createLeaseClient, isLeaseConflict } from '../src/file-lease/client.js'
+import { createLeaseTools } from '../src/file-lease/tools.js'
 import { defaultSocketPath } from '../src/lease-broker/server.js'
 
 // Unit tests for the lease client's state machine, driven by a SCRIPTED
@@ -219,6 +220,24 @@ function createClient(broker, overrides = {}) {
     connectRetryBudgetMs: 10,
     ...overrides,
   })
+}
+
+/**
+ * Execute a real model-facing lease tool against a real client. The agent fixture
+ * carries only the session cwd and identity that the tool surface reads.
+ * @param {any} client
+ * @param {string} name
+ * @param {any} args
+ */
+async function runLeaseTool(client, name, args) {
+  const definitions = createLeaseTools({ client, ownerOf: () => OWNER })
+  const definition = definitions.find((entry) => entry?.name === name)
+  if (definition === undefined) throw new Error(`tool ${name} is missing from the surface`)
+  const agent = {
+    id: OWNER.session,
+    session: { id: OWNER.session, header: { id: OWNER.session, cwd: SCOPE, delegationDepth: 0 } },
+  }
+  return await definition.execute(args, { agent })
 }
 
 /**
@@ -462,6 +481,93 @@ describe('file-lease client: hold retention and replay (D6)', () => {
     expect(await outcome(client, [P('a')])).toBe('granted')
     phase = 'conflict'
     expect(await outcome(client, [P('a')])).toBe('held')
+    client.close()
+  })
+})
+
+describe('file-lease client: explicit release and replay (D6/D10)', () => {
+  it('does not replay a retention explicitly released through the tool', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    await client.acquire(OWNER, [P('a'), P('b')], SCOPE)
+    await client.hold([P('a'), P('b')], 30)
+    const first = broker.last
+
+    // The aliased spelling still denotes the canonical ledger key.
+    const release = await runLeaseTool(client, 'edit_lock_release', { paths: ['src/../a'] })
+    expect(release.released).toEqual(['a'])
+    expect(release.notOwned).toEqual([])
+    expect(first.frames.map((frame) => frame.op)).toEqual(['hello', 'acquire', 'hold', 'release'])
+
+    broker.setStartedAt(2_000)
+    first.reset()
+    const status = await client.status()
+    expect(status.ok).toBe(true)
+
+    const second = broker.last
+    expect(second).not.toBe(first)
+    const reacquired = second.frames.filter((frame) => frame.op === 'acquire').flatMap((frame) => frame.paths)
+    const reheld = second.frames.filter((frame) => frame.op === 'hold').flatMap((frame) => frame.paths)
+    // Explicit release retires only a; the unrelated b retention still replays.
+    expect(reacquired).toEqual([P('b')])
+    expect(reheld).toEqual([P('b')])
+    client.close()
+  })
+
+  it('forgets explicit release intent even when its transport fails', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    await client.acquire(OWNER, [P('a'), P('b')], SCOPE)
+    await client.hold([P('a'), P('b')], 30)
+    const first = broker.last
+
+    // The release cannot even dial. That makes its outcome unconfirmed; it must
+    // not undo the caller's explicit intent or resurrect a on the next connection.
+    first.reset()
+    broker.failNextDials('EACCES')
+    const release = await runLeaseTool(client, 'edit_lock_release', { paths: ['src/../a'] })
+    expect(release.degraded).toBe(true)
+    expect(release.code).toBe('transport')
+    expect(release.message).toContain('the release was not confirmed')
+
+    broker.setStartedAt(2_000)
+    const status = await client.status()
+    expect(status.ok).toBe(true)
+
+    const second = broker.last
+    const reacquired = second.frames.filter((frame) => frame.op === 'acquire').flatMap((frame) => frame.paths)
+    const reheld = second.frames.filter((frame) => frame.op === 'hold').flatMap((frame) => frame.paths)
+    expect(reacquired).toEqual([P('b')])
+    expect(reheld).toEqual([P('b')])
+    client.close()
+  })
+
+  it('does not infer stale hold ownership after an explicit tool release', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    await client.acquire(OWNER, [P('a')], SCOPE)
+    await client.hold([P('a')], 30)
+    const connection = broker.last
+
+    // Once released, the broker rejects a stale hold as not-owned. A correct
+    // client refuses the omitted-owner hold locally instead, without a wire call.
+    broker.setAnswer((frame) => {
+      if (frame.op === 'release') return { ok: true, released: [...frame.paths], notOwned: [] }
+      if (frame.op === 'hold') return { ok: false, error: { code: 'not-owned', paths: [...frame.paths] } }
+      return { ok: true }
+    })
+    const release = await runLeaseTool(client, 'edit_lock_release', { paths: ['src/../a'] })
+    expect(release.released).toEqual(['a'])
+
+    /** @type {any} */
+    let caught = null
+    try {
+      await client.hold([P('a')], 30)
+    } catch (error) {
+      caught = error
+    }
+    expect(caught?.code).toBe('not-owned')
+    expect(connection.frames.map((frame) => frame.op)).toEqual(['hello', 'acquire', 'hold', 'release'])
     client.close()
   })
 })

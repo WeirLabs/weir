@@ -1064,6 +1064,29 @@ export function createLeaseClient({
   // ---------------------------------------------------------------------
 
   /**
+   * Release an explicit batch for `owner` (the `edit_lock_release` form).
+   *
+   * The ledger entry goes BEFORE the frame, and it goes even when the frame
+   * never reaches the arbiter: an explicit release is the caller's intent, and
+   * an unconfirmed transport must not resurrect a path the caller already let
+   * go of — a replay on the next connection would re-take it. Only entries this
+   * owner's lineage holds are forgotten; which of the rest the broker actually
+   * released is still its verdict (`released` / `notOwned`).
+   * @param {any} owner
+   * @param {string[]} paths
+   * @returns {Promise<any>}
+   */
+  async function release(owner, paths) {
+    const holder = normalizeOwner(owner)
+    const list = normalizePaths(paths)
+    for (const path of list) {
+      const record = ledger.get(path)
+      if (record !== undefined && record.lineage === holder.id) ledger.delete(path)
+    }
+    return await request('release', { owner: holder, paths: list })
+  }
+
+  /**
    * Release everything this session holds EXCEPT retentions (design D10): the
    * `turn/end` rule. A failure is swallowed — turn-boundary release is an
    * optimisation, and the daemon's disconnect rule plus the TTL already cover it.
@@ -1290,6 +1313,7 @@ export function createLeaseClient({
     reply,
     releaseSession,
     releaseAll,
+    release,
     replayHolds,
     onEvent,
     onReset,
