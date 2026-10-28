@@ -650,9 +650,9 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           reply = await client.reply({ requestId, owner, decision })
         } catch (error) {
           const code = codeOf(error)
-          if (code === 'expired') throw new Error(`Request ${requestId} has expired and ownership is unchanged. The requester can ask again later if it still needs the path.`)
-          if (code === 'stale') throw new Error(`Request ${requestId} is stale: ownership changed before the answer arrived, so nothing was transferred.`)
-          if (code === 'not-holder') throw new Error(`Request ${requestId} is not addressed to this session; only the current holder can answer it.`)
+          if (code === 'expired') throw Object.assign(new Error(`Request ${requestId} has expired and ownership is unchanged. The requester can ask again later if it still needs the path.`), { code })
+          if (code === 'stale') throw Object.assign(new Error(`Request ${requestId} is stale: ownership changed before the answer arrived, so nothing was transferred.`), { code })
+          if (code === 'not-holder') throw Object.assign(new Error(`Request ${requestId} is not addressed to this session; only the current holder can answer it.`), { code })
           if (isTransport(error)) return presentDegraded(unavailable(error, 'the answer was not delivered'), { requestId, decision })
           throw error
         }

@@ -414,6 +414,32 @@ describe('edit_lock_reply', () => {
     expect(message).toContain('expired')
     expect(message).toContain('ownership is unchanged')
   })
+
+  it('preserves exact public errors while retaining structured broker codes', async () => {
+    const messages = {
+      expired: 'Request r-1 has expired and ownership is unchanged. The requester can ask again later if it still needs the path.',
+      stale: 'Request r-1 is stale: ownership changed before the answer arrived, so nothing was transferred.',
+      'not-holder': 'Request r-1 is not addressed to this session; only the current holder can answer it.',
+    }
+    for (const [code, expected] of Object.entries(messages)) {
+      const client = createFakeClient({
+        reply: () => {
+          throw Object.assign(new Error('broker detail must not replace the public message'), { code })
+        },
+      })
+      const definition = tool(createLeaseTools({ client, ownerOf: () => OWNER }), REPLY_TOOL)
+      /** @type {any} */
+      let caught = null
+      try {
+        await definition.execute({ request_id: 'r-1', decision: 'keep' }, execFor(agentFor()))
+      } catch (error) {
+        caught = error
+      }
+      expect(caught?.constructor).toBe(Error)
+      expect(caught?.message).toBe(expected)
+      expect(caught?.code).toBe(code)
+    }
+  })
 })
 
 describe('edit_lock_status', () => {
