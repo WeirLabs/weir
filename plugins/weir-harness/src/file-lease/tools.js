@@ -389,13 +389,14 @@ export function describeConflicts(error, cwd, at) {
  * transfer that landed while the authoritative read was in flight is the truth,
  * and a late read result or failure may neither overwrite it nor cancel its
  * pending notice.
+ * @param {import('./watch.js').WatchCoordinator} watches
  * @param {import('./watch.js').WatchEntry} entry
  * @param {string} short
  * @returns {any | undefined}
  */
-function terminalOutcome(entry, short) {
+function terminalOutcome(watches, entry, short) {
   if (entry.state === 'hit') {
-    entry.settledByTool = true
+    watches.report(entry)
     return {
       state: 'released',
       file_path: short,
@@ -403,7 +404,7 @@ function terminalOutcome(entry, short) {
     }
   }
   if (entry.state === 'reset') {
-    entry.settledByTool = true
+    watches.report(entry)
     return {
       state: 'reset',
       file_path: short,
@@ -411,7 +412,7 @@ function terminalOutcome(entry, short) {
     }
   }
   if (entry.state === 'self') {
-    entry.settledByTool = true
+    watches.report(entry)
     return {
       state: 'self',
       file_path: short,
@@ -765,7 +766,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
           // a transfer that landed while the read was in flight IS the answer,
           // and its pending notice must survive. A late rejection may only
           // cancel a plain wait.
-          const terminal = terminalOutcome(entry, short)
+          const terminal = terminalOutcome(watches, entry, short)
           if (terminal !== undefined) return settle(terminal)
           // No authoritative answer means no subscription: never leave a
           // record that could wait forever for a release nobody described.
@@ -778,7 +779,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
 
         // Same precedence on the success path: the entry may have been consumed
         // or ended while the read was in flight, whatever the read now says.
-        const terminal = terminalOutcome(entry, short)
+        const terminal = terminalOutcome(watches, entry, short)
         if (terminal !== undefined) return settle(terminal)
 
         const leases = Array.isArray(reply?.leases) ? reply.leases : []
@@ -814,7 +815,7 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         // `watching` is only claimed while THIS entry is still the active one:
         // an overlapping call or a disposal may have ended the wait while the
         // read was in flight, and a stale entry must never read as a live wait.
-        if (!stillWatching(watches, entry)) return settle(terminalOutcome(entry, short) ?? cancelledOutcome(short))
+        if (!stillWatching(watches, entry)) return settle(terminalOutcome(watches, entry, short) ?? cancelledOutcome(short))
         const label = text(holder.label) ?? 'another session'
         const session = text(holder.session) ?? 'unknown'
         return settle({

@@ -7,7 +7,8 @@
 // notices for one release — and would let one mount's teardown cancel a wait
 // another mount still owns.
 //
-// The coordinator holds three collections and nothing else:
+// The coordinator holds three collections, plus a WeakMap of private episode
+// records keyed by the stable opaque handles handed to callers:
 //
 //   active           one entry per `(session, normalized path)`, in `watching`
 //   pendingDelivery  consumed entries (`hit` / `reset`) whose notice has not
@@ -46,7 +47,21 @@ export const WATCH_STATES = Object.freeze(['watching', 'hit', 'reset', 'self', '
  */
 
 /**
+ * The stable opaque handle returned to callers. Its four public fields are
+ * live, getter-only views; all mutable state lives in the coordinator's WeakMap.
+ *
  * @typedef {object} WatchEntry
+ * @property {string} sessionId the session that subscribed
+ * @property {string} path normalized absolute path
+ * @property {WatchState} state
+ * @property {boolean} settledByTool true once a running tool already reported
+ *   this episode to the model, so a deferred notice would only repeat it
+ */
+
+/**
+ * The private mutable record behind one WatchEntry handle.
+ *
+ * @typedef {object} WatchEpisodeRecord
  * @property {string} sessionId the session that subscribed
  * @property {string} path normalized absolute path
  * @property {WatchState} state
@@ -96,10 +111,23 @@ export function createWatchCoordinator() {
   const pendingDelivery = new Set()
   /** @type {Set<WatchMount>} */
   const mounts = new Set()
+  /** @type {WeakMap<WatchEntry, WatchEpisodeRecord>} */
+  const records = new WeakMap()
 
   /** @param {string} sessionId @param {string} path @returns {string} */
   function keyOf(sessionId, path) {
     return `${sessionId}\u0000${path}`
+  }
+
+  /**
+   * Resolve the private record without exposing it on the stable public handle.
+   * @param {WatchEntry} entry
+   * @returns {WatchEpisodeRecord}
+   */
+  function recordOf(entry) {
+    const record = records.get(entry)
+    if (record === undefined) throw new TypeError('Unknown watch episode handle')
+    return record
   }
 
   /**
@@ -109,7 +137,8 @@ export function createWatchCoordinator() {
    * @returns {WatchProjection}
    */
   function project(entry) {
-    return { sessionId: entry.sessionId, path: entry.path, state: entry.state, settledByTool: entry.settledByTool }
+    const record = recordOf(entry)
+    return { sessionId: record.sessionId, path: record.path, state: record.state, settledByTool: record.settledByTool }
   }
 
   /**
@@ -120,16 +149,18 @@ export function createWatchCoordinator() {
    * @returns {WatchMount | undefined}
    */
   function liveMount(entry) {
-    for (const mount of entry.mounts) if (!mount.disposed) return mount
+    const record = recordOf(entry)
+    for (const mount of record.mounts) if (!mount.disposed) return mount
     for (const mount of mounts) if (!mount.disposed) return mount
     return undefined
   }
 
   /** @param {WatchEntry} entry */
   function cancelTimer(entry) {
-    if (entry.timer === null) return
-    clearTimeout(entry.timer)
-    entry.timer = null
+    const record = recordOf(entry)
+    if (record.timer === null) return
+    clearTimeout(record.timer)
+    record.timer = null
   }
 
   /**
@@ -146,7 +177,7 @@ export function createWatchCoordinator() {
    */
   function scheduleNotice(entry) {
     pendingDelivery.add(entry)
-    const flight = entry.statusFlight
+    const flight = recordOf(entry).statusFlight
     if (flight === null) {
       armNotice(entry)
       return
@@ -172,28 +203,29 @@ export function createWatchCoordinator() {
    */
   function armNotice(entry) {
     if (!pendingDelivery.has(entry)) return
-    if (entry.state !== 'hit' && entry.state !== 'reset') {
+    const record = recordOf(entry)
+    if (record.state !== 'hit' && record.state !== 'reset') {
       pendingDelivery.delete(entry)
       return
     }
-    if (entry.timer !== null) return
+    if (record.timer !== null) return
     const timer = setTimeout(() => {
-      entry.timer = null
+      record.timer = null
       pendingDelivery.delete(entry)
-      if (entry.state !== 'hit' && entry.state !== 'reset') return
-      if (entry.settledByTool === true) return
+      if (record.state !== 'hit' && record.state !== 'reset') return
+      if (record.settledByTool === true) return
       const mount = liveMount(entry)
       if (mount === undefined) return
-      const agent = mount.agentFor(entry.sessionId)
+      const agent = mount.agentFor(record.sessionId)
       if (agent === undefined || agent === null) return
-      if (entry.agent !== undefined && agent !== entry.agent) return
+      if (record.agent !== undefined && agent !== record.agent) return
       try {
         mount.notify(entry, agent)
       } catch {
         // A notice is best effort: delivery must never break the transport.
       }
     }, 0)
-    entry.timer = timer
+    record.timer = timer
     unrefTimer(timer)
   }
 
@@ -204,7 +236,7 @@ export function createWatchCoordinator() {
    */
   function endPending(entry, state) {
     if (pendingDelivery.delete(entry)) cancelTimer(entry)
-    entry.state = state
+    recordOf(entry).state = state
   }
 
   /**
@@ -229,12 +261,13 @@ export function createWatchCoordinator() {
     if (!mounts.delete(mount)) return
     mount.disposed = true
     for (const [key, entry] of [...active]) {
-      if (!entry.mounts.delete(mount)) continue
-      if (entry.mounts.size > 0) continue
+      const record = recordOf(entry)
+      if (!record.mounts.delete(mount)) continue
+      if (record.mounts.size > 0) continue
       active.delete(key)
-      entry.state = 'cancelled'
+      record.state = 'cancelled'
     }
-    for (const entry of [...pendingDelivery]) entry.mounts.delete(mount)
+    for (const entry of [...pendingDelivery]) recordOf(entry).mounts.delete(mount)
     if (mounts.size === 0) clear()
   }
 
@@ -253,12 +286,13 @@ export function createWatchCoordinator() {
     const key = keyOf(sessionId, path)
     const known = active.get(key)
     if (known !== undefined) {
-      if (mount !== undefined) known.mounts.add(mount)
-      if (agent !== undefined && agent !== null) known.agent = agent
+      const record = recordOf(known)
+      if (mount !== undefined) record.mounts.add(mount)
+      if (agent !== undefined && agent !== null) record.agent = agent
       return known
     }
-    /** @type {WatchEntry} */
-    const entry = {
+    /** @type {WatchEpisodeRecord} */
+    const record = {
       sessionId,
       path,
       state: 'watching',
@@ -268,7 +302,14 @@ export function createWatchCoordinator() {
       mounts: new Set(),
       timer: null,
     }
-    if (mount !== undefined) entry.mounts.add(mount)
+    const entry = /** @type {WatchEntry} */ (Object.freeze({
+      get sessionId() { return record.sessionId },
+      get path() { return record.path },
+      get state() { return record.state },
+      get settledByTool() { return record.settledByTool },
+    }))
+    records.set(entry, record)
+    if (mount !== undefined) record.mounts.add(mount)
     active.set(key, entry)
     return entry
   }
@@ -292,15 +333,23 @@ export function createWatchCoordinator() {
    * @returns {Promise<any>}
    */
   function shareStatus(entry, run) {
-    if (entry.statusFlight !== null) return entry.statusFlight
+    const record = recordOf(entry)
+    if (record.statusFlight !== null) return record.statusFlight
     /** @type {Promise<any>} */
     const flight = Promise.resolve()
       .then(run)
       .finally(() => {
-        if (entry.statusFlight === flight) entry.statusFlight = null
+        if (record.statusFlight === flight) record.statusFlight = null
       })
-    entry.statusFlight = flight
+    record.statusFlight = flight
     return flight
+  }
+
+  /** Record that the running tool reported this episode to the model.
+   * @param {WatchEntry} entry
+   */
+  function report(entry) {
+    recordOf(entry).settledByTool = true
   }
 
   /**
@@ -321,7 +370,7 @@ export function createWatchCoordinator() {
     if (expected !== undefined && entry !== expected) return undefined
     active.delete(key)
     if (pendingDelivery.delete(entry)) cancelTimer(entry)
-    entry.state = state
+    recordOf(entry).state = state
     return entry
   }
 
@@ -346,7 +395,7 @@ export function createWatchCoordinator() {
     const activeEntry = active.get(key)
     if (activeEntry !== undefined) {
       active.delete(key)
-      activeEntry.state = 'self'
+      recordOf(activeEntry).state = 'self'
       ended = ended ?? activeEntry
     }
     return ended
@@ -364,9 +413,10 @@ export function createWatchCoordinator() {
     /** @type {WatchEntry[]} */
     const consumed = []
     for (const [key, entry] of [...active]) {
-      if (entry.path !== path) continue
+      const record = recordOf(entry)
+      if (record.path !== path) continue
       active.delete(key)
-      entry.state = 'hit'
+      record.state = 'hit'
       scheduleNotice(entry)
       consumed.push(entry)
     }
@@ -383,7 +433,7 @@ export function createWatchCoordinator() {
     const entries = [...active.values()]
     active.clear()
     for (const entry of entries) {
-      entry.state = 'reset'
+      recordOf(entry).state = 'reset'
       scheduleNotice(entry)
     }
     return entries
@@ -399,9 +449,10 @@ export function createWatchCoordinator() {
     /** @type {WatchEntry[]} */
     const cancelled = []
     for (const [key, entry] of [...active]) {
-      if (entry.sessionId !== sessionId) continue
+      const record = recordOf(entry)
+      if (record.sessionId !== sessionId) continue
       active.delete(key)
-      entry.state = 'cancelled'
+      record.state = 'cancelled'
       cancelled.push(entry)
     }
     for (const entry of [...pendingDelivery]) {
@@ -423,7 +474,7 @@ export function createWatchCoordinator() {
     active.clear()
     for (const entry of [...pendingDelivery]) cancelTimer(entry)
     pendingDelivery.clear()
-    for (const entry of entries) entry.state = 'cancelled'
+    for (const entry of entries) recordOf(entry).state = 'cancelled'
     return entries
   }
 
@@ -458,6 +509,7 @@ export function createWatchCoordinator() {
     register,
     peek,
     shareStatus,
+    report,
     cancel,
     settleSelf,
     consumePath,

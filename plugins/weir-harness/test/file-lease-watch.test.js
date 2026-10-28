@@ -130,7 +130,7 @@ describe('watch coordinator', () => {
     const entry = coordinator.register(SESSION, PATH, a.mount)
 
     coordinator.consumePath(PATH)
-    entry.settledByTool = true
+    coordinator.report(entry)
     await delay()
     expect(a.delivered).toEqual([])
     expect(coordinator.pendingSize()).toBe(0)
@@ -299,6 +299,22 @@ describe('watch coordinator', () => {
     expect(live[0].path).toBe(PATH)
   })
 
+  it('does not expose mutable episode internals', () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
+
+    for (const key of ['state', 'settledByTool', 'statusFlight', 'mounts', 'agent', 'timer']) {
+      expect(() => { entry[key] = null }).toThrow(TypeError)
+    }
+    expect(entry.sessionId).toBe(SESSION)
+    expect(entry.path).toBe(PATH)
+    expect(entry.state).toBe('watching')
+    expect(entry.settledByTool).toBe(false)
+    expect(coordinator.entries()[0].state).toBe('watching')
+  })
+
   it('holds a consumed notice until the in-flight read settles, then lets the tool win', async () => {
     const coordinator = createWatchCoordinator()
     const a = createMount('a')
@@ -314,7 +330,7 @@ describe('watch coordinator', () => {
     // The tool's own continuation: it resumes when the read settles and reports
     // the episode as a result, which must suppress the deferred notice.
     const reported = flight.then(() => {
-      entry.settledByTool = true
+      coordinator.report(entry)
     })
     coordinator.consumePath(PATH)
     expect(coordinator.pendingSize()).toBe(1)
@@ -348,7 +364,7 @@ describe('watch coordinator', () => {
     // The tool's catch block reports the terminal outcome just like its success
     // path does; either way the notice must not repeat it.
     const reported = flight.catch(() => {
-      entry.settledByTool = true
+      coordinator.report(entry)
     })
     coordinator.consumePath(PATH)
 
