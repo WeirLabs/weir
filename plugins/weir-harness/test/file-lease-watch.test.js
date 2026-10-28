@@ -247,6 +247,59 @@ describe('watch coordinator', () => {
     expect(runs).toBe(2)
   })
 
+  it('shares the complete establishment outcome between overlapping status callers', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount)
+    const options = { owner: { id: 'lineage-a', session: SESSION }, supportsRelease: () => true }
+    let reads = 0
+
+    const first = coordinator.status(entry, () => {
+      reads += 1
+      return { ok: true, leases: [] }
+    }, options)
+    const second = coordinator.status(entry, () => {
+      reads += 1
+      return { ok: true, leases: [{ owner: { id: 'other', session: 'other' } }] }
+    }, options)
+
+    expect(second).toBe(first)
+    expect(await first).toEqual({ state: 'free' })
+    expect(await second).toEqual({ state: 'free' })
+    expect(reads).toBe(1)
+    expect(entry.state).toBe('cancelled')
+    expect(coordinator.size()).toBe(0)
+  })
+
+  it('gives every terminal episode precedence over fulfilled and rejected reads', async () => {
+    const terminals = [
+      { state: 'released', end: (/** @type {ReturnType<typeof createWatchCoordinator>} */ coordinator) => { coordinator.consumePath(PATH) } },
+      { state: 'reset', end: (/** @type {ReturnType<typeof createWatchCoordinator>} */ coordinator) => { coordinator.resetAll() } },
+      { state: 'self', end: (/** @type {ReturnType<typeof createWatchCoordinator>} */ coordinator) => { coordinator.settleSelf(SESSION, PATH) } },
+      { state: 'cancelled', end: (/** @type {ReturnType<typeof createWatchCoordinator>} */ coordinator) => { coordinator.cancelSession(SESSION) } },
+    ]
+    for (const terminal of terminals) {
+      for (const rejects of [false, true]) {
+        const coordinator = createWatchCoordinator()
+        const a = createMount('a')
+        coordinator.join(a.mount)
+        const entry = coordinator.register(SESSION, PATH, a.mount)
+        const outcome = await coordinator.status(entry, () => {
+          terminal.end(coordinator)
+          if (rejects) throw Object.assign(new Error('late transport failure'), { code: 'transport' })
+          return { ok: true, leases: [] }
+        }, { owner: { id: 'lineage-a', session: SESSION }, supportsRelease: () => true })
+
+        expect(outcome.state, `${terminal.state} / ${rejects ? 'reject' : 'fulfill'}`).toBe(terminal.state)
+        expect(coordinator.size()).toBe(0)
+        await delay()
+        expect(a.delivered).toEqual([])
+        expect(coordinator.pendingSize()).toBe(0)
+      }
+    }
+  })
+
   it('keeps a wait alive when one mount leaves and another still owns it', async () => {
     const coordinator = createWatchCoordinator()
     const a = createMount('a')
@@ -305,7 +358,7 @@ describe('watch coordinator', () => {
     coordinator.join(a.mount)
     const entry = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
 
-    for (const key of ['state', 'settledByTool', 'statusFlight', 'mounts', 'agent', 'timer']) {
+    for (const key of ['state', 'settledByTool', 'statusFlight', 'establishFlight', 'mounts', 'agent', 'timer']) {
       expect(() => { entry[key] = null }).toThrow(TypeError)
     }
     expect(entry.sessionId).toBe(SESSION)
@@ -313,6 +366,22 @@ describe('watch coordinator', () => {
     expect(entry.state).toBe('watching')
     expect(entry.settledByTool).toBe(false)
     expect(coordinator.entries()[0].state).toBe('watching')
+  })
+
+  it('reports a raced release through the coordinator instead of caller-mutated state', async () => {
+    const coordinator = createWatchCoordinator()
+    const a = createMount('a')
+    coordinator.join(a.mount)
+    const entry = coordinator.register(SESSION, PATH, a.mount, a.agents.get(SESSION))
+
+    coordinator.consumePath(PATH)
+    const outcome = coordinator.reconcile(entry)
+    expect(outcome).toEqual({ state: 'released' })
+    expect(entry.settledByTool).toBe(true)
+
+    await delay(15)
+    expect(a.delivered).toEqual([])
+    expect(coordinator.pendingSize()).toBe(0)
   })
 
   it('holds a consumed notice until the in-flight read settles, then lets the tool win', async () => {

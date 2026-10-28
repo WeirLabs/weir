@@ -384,45 +384,6 @@ export function describeConflicts(error, cwd, at) {
 }
 
 /**
- * The synchronous answer for a subscription that is already over. Every await in
- * the watch tool re-reads this first (design D2): a release, a reset or a
- * transfer that landed while the authoritative read was in flight is the truth,
- * and a late read result or failure may neither overwrite it nor cancel its
- * pending notice.
- * @param {import('./watch.js').WatchCoordinator} watches
- * @param {import('./watch.js').WatchEntry} entry
- * @param {string} short
- * @returns {any | undefined}
- */
-function terminalOutcome(watches, entry, short) {
-  if (entry.state === 'hit') {
-    watches.report(entry)
-    return {
-      state: 'released',
-      file_path: short,
-      message: `The release of ${short} happened while this subscription was being established, so nothing is pending. Claim it with edit_lock_acquire if you still need it — a release is an opportunity, not an ownership grant.`,
-    }
-  }
-  if (entry.state === 'reset') {
-    watches.report(entry)
-    return {
-      state: 'reset',
-      file_path: short,
-      message: `The ownership arbiter connection was reset while this subscription was being established, so nothing is pending and nothing is known about ownership. Re-check with edit_lock_status, and call edit_lock_watch again if ${short} is still held by another session.`,
-    }
-  }
-  if (entry.state === 'self') {
-    watches.report(entry)
-    return {
-      state: 'self',
-      file_path: short,
-      message: `This session already owns ${short} — ownership arrived while this subscription was being established — so no release subscription was kept and there is nothing to wait for.`,
-    }
-  }
-  return undefined
-}
-
-/**
  * The degraded answer for a wait that ended without an ownership fact.
  * @param {string} short
  * @returns {any}
@@ -436,16 +397,67 @@ function cancelledOutcome(short) {
 }
 
 /**
- * Whether one entry is still the active wait it was. `watching` may only be
- * reported for the SAME object that is currently registered (design D2): an
- * overlapping call, a transfer or a disposal can end the wait while a read is
- * in flight, and a stale entry must never come back as `watching`.
- * @param {import('./watch.js').WatchCoordinator} watches
- * @param {import('./watch.js').WatchEntry} entry
- * @returns {boolean}
+ * Translate the coordinator's structured establishment verdict into the exact
+ * model-facing result and metadata inputs this tool has always produced. All
+ * episode state, identity, cancellation and precedence decisions stay in the
+ * coordinator; this function only renders them.
+ *
+ * @param {import('./watch.js').WatchOutcome} outcome
+ * @param {string} short
+ * @returns {any}
  */
-function stillWatching(watches, entry) {
-  return entry.state === 'watching' && watches.peek(entry.sessionId, entry.path) === entry
+function watchOutcome(outcome, short) {
+  switch (outcome.state) {
+    case 'released':
+      return {
+        state: 'released',
+        file_path: short,
+        message: `The release of ${short} happened while this subscription was being established, so nothing is pending. Claim it with edit_lock_acquire if you still need it — a release is an opportunity, not an ownership grant.`,
+      }
+    case 'reset':
+      return {
+        state: 'reset',
+        file_path: short,
+        message: `The ownership arbiter connection was reset while this subscription was being established, so nothing is pending and nothing is known about ownership. Re-check with edit_lock_status, and call edit_lock_watch again if ${short} is still held by another session.`,
+      }
+    case 'self':
+      return {
+        state: 'self',
+        file_path: short,
+        message: outcome.raced === true
+          ? `This session already owns ${short} — ownership arrived while this subscription was being established — so no release subscription was kept and there is nothing to wait for.`
+          : `This session already owns ${short}, so no release subscription was kept and there is nothing to wait for.`,
+      }
+    case 'cancelled':
+      return cancelledOutcome(short)
+    case 'free':
+      return {
+        state: 'free',
+        file_path: short,
+        message: `Nobody holds ${short} right now, so no release subscription was kept. Claim it with edit_lock_acquire (or just edit it) before working on it.`,
+      }
+    case 'unsupported':
+      return {
+        degraded: true,
+        code: 'release-events-unsupported',
+        message: `The connected arbiter does not announce release events (release-events-unsupported), so no release subscription was created for ${short}. Only this subscription is unavailable: conflicts, managed edits and negotiation behave exactly as before, and this tool can be used again once the arbiter restarts with the capability.`,
+      }
+    case 'transport':
+      return unavailable(outcome.error, 'no release subscription was created')
+    case 'watching': {
+      const holder = outcome.holder ?? {}
+      const label = text(holder.label) ?? 'another session'
+      const session = text(holder.session) ?? 'unknown'
+      return {
+        state: 'watching',
+        file_path: short,
+        holder: { label, session },
+        message: `Watching ${short} for its next release; "${label}" (session ${session}) holds it now. A release notice will arrive as a message: it means only that the path is free to compete for, so call edit_lock_acquire then. It is not an ownership grant and it reserves nothing — another waiting session may claim the path first, and the ordinary holder conflict applies.`,
+      }
+    }
+    default:
+      throw new TypeError(`Unknown watch outcome: ${String(outcome?.state)}`)
+  }
 }
 
 /**
@@ -753,77 +765,14 @@ export function createLeaseTools({ client, ownerOf, deliverNotice = () => {}, wa
         // callback, and one that landed before it is caught by the read below.
         // The opposite order would leave a permanent hole for that release.
         const entry = watches.register(owner.session, path, mount, exec?.agent)
-
-        /** @type {any} */
-        let reply
-        try {
-          // ONE read per entry: an overlapping call for the same session and
-          // path joins this flight instead of running its own, so both calls
-          // judge the same answer and the same entry object.
-          reply = await watches.shareStatus(entry, () => client.status({ path }))
-        } catch (error) {
-          // A terminal outcome wins over any failure (D2): a release, a reset or
-          // a transfer that landed while the read was in flight IS the answer,
-          // and its pending notice must survive. A late rejection may only
-          // cancel a plain wait.
-          const terminal = terminalOutcome(watches, entry, short)
-          if (terminal !== undefined) return settle(terminal)
-          // No authoritative answer means no subscription: never leave a
-          // record that could wait forever for a release nobody described.
-          // The removal is conditional on THIS entry still being active, so a
-          // late caller can never cancel a newer episode.
-          watches.cancel(owner.session, path, entry)
-          if (isTransport(error)) return settle(unavailable(error, 'no release subscription was created'))
-          throw error
-        }
-
-        // Same precedence on the success path: the entry may have been consumed
-        // or ended while the read was in flight, whatever the read now says.
-        const terminal = terminalOutcome(watches, entry, short)
-        if (terminal !== undefined) return settle(terminal)
-
-        const leases = Array.isArray(reply?.leases) ? reply.leases : []
-        if (leases.length === 0) {
-          watches.cancel(owner.session, path, entry)
-          return settle({
-            state: 'free',
-            file_path: short,
-            message: `Nobody holds ${short} right now, so no release subscription was kept. Claim it with edit_lock_acquire (or just edit it) before working on it.`,
-          })
-        }
-        const holder = leases[0]?.owner ?? {}
-        const mine = text(holder.id) === owner.id || text(holder.session) === owner.session
-        if (mine) {
-          // `self` is terminal, not merely cancelled: an overlapping call that
-          // shares this entry must read the same verdict instead of reporting a
-          // wait that no longer exists.
-          watches.cancel(owner.session, path, entry, 'self')
-          return settle({
-            state: 'self',
-            file_path: short,
-            message: `This session already owns ${short}, so no release subscription was kept and there is nothing to wait for.`,
-          })
-        }
-        if (typeof client.supportsEvent !== 'function' || client.supportsEvent('released') !== true) {
-          watches.cancel(owner.session, path, entry)
-          return settle({
-            degraded: true,
-            code: 'release-events-unsupported',
-            message: `The connected arbiter does not announce release events (release-events-unsupported), so no release subscription was created for ${short}. Only this subscription is unavailable: conflicts, managed edits and negotiation behave exactly as before, and this tool can be used again once the arbiter restarts with the capability.`,
-          })
-        }
-        // `watching` is only claimed while THIS entry is still the active one:
-        // an overlapping call or a disposal may have ended the wait while the
-        // read was in flight, and a stale entry must never read as a live wait.
-        if (!stillWatching(watches, entry)) return settle(terminalOutcome(watches, entry, short) ?? cancelledOutcome(short))
-        const label = text(holder.label) ?? 'another session'
-        const session = text(holder.session) ?? 'unknown'
-        return settle({
-          state: 'watching',
-          file_path: short,
-          holder: { label, session },
-          message: `Watching ${short} for its next release; "${label}" (session ${session}) holds it now. A release notice will arrive as a message: it means only that the path is free to compete for, so call edit_lock_acquire then. It is not an ownership grant and it reserves nothing — another waiting session may claim the path first, and the ordinary holder conflict applies.`,
+        // The coordinator owns the complete episode: one shared status attempt,
+        // terminal precedence, identity-safe cancellation and every verdict.
+        // This adapter only renders the structured outcome it returns.
+        const outcome = await watches.status(entry, () => client.status({ path }), {
+          owner,
+          supportsRelease: () => typeof client.supportsEvent === 'function' && client.supportsEvent('released') === true,
         })
+        return settle(watchOutcome(outcome, short))
       },
     },
   ]

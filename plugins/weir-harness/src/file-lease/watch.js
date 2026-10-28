@@ -59,6 +59,27 @@ export const WATCH_STATES = Object.freeze(['watching', 'hit', 'reset', 'self', '
  */
 
 /**
+ * The coordinator's structured establishment verdict. Model-facing wording and
+ * presentation metadata stay in tools.js; this vocabulary describes decisions.
+ *
+ * @typedef {object} WatchOutcome
+ * @property {'watching' | 'free' | 'self' | 'released' | 'reset' | 'unsupported' | 'cancelled' | 'transport'} state
+ * @property {any} [holder] the current foreign holder for a watching outcome
+ * @property {unknown} [error] the transport failure for a transport outcome
+ * @property {boolean} [raced] ownership arrived asynchronously while establishing
+ */
+
+/**
+ * The lease-specific facts the coordinator needs to classify a status reply.
+ * The read and capability query remain injected, so this module has no socket.
+ *
+ * @typedef {object} WatchStatusOptions
+ * @property {{ id: string, session: string }} owner the subscribing identity
+ * @property {() => boolean} supportsRelease whether the CURRENT connection
+ *   announces released events
+ */
+
+/**
  * The private mutable record behind one WatchEntry handle.
  *
  * @typedef {object} WatchEpisodeRecord
@@ -71,6 +92,9 @@ export const WATCH_STATES = Object.freeze(['watching', 'hit', 'reset', 'self', '
  *   session and refuses to land on a replacement agent
  * @property {Promise<any> | null} statusFlight the ONE authoritative read this
  *   entry is currently sharing, so overlapping calls cannot disagree
+ * @property {Promise<WatchOutcome> | null} establishFlight the ONE complete
+ *   establishment attempt shared by overlapping callers; cleared after watching
+ *   so a later call performs a fresh authoritative read
  * @property {Set<WatchMount>} mounts the mount references that still want it
  * @property {ReturnType<typeof setTimeout> | null} timer the deferred notice
  */
@@ -97,6 +121,11 @@ export const WATCH_STATES = Object.freeze(['watching', 'hit', 'reset', 'self', '
 function unrefTimer(timer) {
   const handle = /** @type {{ unref?: () => void }} */ (/** @type {unknown} */ (timer))
   if (typeof handle.unref === 'function') handle.unref()
+}
+
+/** @param {unknown} error @returns {boolean} */
+function isTransport(error) {
+  return error !== null && typeof error === 'object' && /** @type {any} */ (error).code === 'transport'
 }
 
 /**
@@ -299,6 +328,7 @@ export function createWatchCoordinator() {
       settledByTool: false,
       agent,
       statusFlight: null,
+      establishFlight: null,
       mounts: new Set(),
       timer: null,
     }
@@ -350,6 +380,111 @@ export function createWatchCoordinator() {
    */
   function report(entry) {
     recordOf(entry).settledByTool = true
+  }
+
+  /**
+   * Reconcile one opaque entry at an await boundary. Terminal facts win over
+   * whatever the authoritative read now says, and `watching` is reserved for
+   * the SAME handle that is still active. Callers never re-implement either
+   * identity rule or mark terminal episodes themselves.
+   *
+   * @param {WatchEntry} entry
+   * @returns {WatchOutcome}
+   */
+  function reconcile(entry) {
+    const record = recordOf(entry)
+    if (record.state === 'hit') {
+      report(entry)
+      return { state: 'released' }
+    }
+    if (record.state === 'reset') {
+      report(entry)
+      return { state: 'reset' }
+    }
+    if (record.state === 'self') {
+      report(entry)
+      return { state: 'self', raced: true }
+    }
+    if (record.state === 'watching' && active.get(keyOf(record.sessionId, record.path)) === entry) {
+      return { state: 'watching' }
+    }
+    return { state: 'cancelled' }
+  }
+
+  /**
+   * Run the complete establishment episode after registration. The read is
+   * shared by shareStatus; every continuation reconciles the same entry before
+   * trusting a reply or failure. Only a plain, still-active wait may be removed
+   * by a late status verdict, and removal is conditional on that exact handle.
+   *
+   * @param {WatchEntry} entry
+   * @param {() => any} run the injected authoritative read
+   * @param {WatchStatusOptions} options
+   * @returns {Promise<WatchOutcome>}
+   */
+  async function establish(entry, run, options) {
+    const record = recordOf(entry)
+    /** @type {any} */
+    let reply
+    try {
+      reply = await shareStatus(entry, run)
+    } catch (error) {
+      const terminal = reconcile(entry)
+      if (terminal.state !== 'watching') return terminal
+      cancel(record.sessionId, record.path, entry)
+      if (isTransport(error)) return { state: 'transport', error }
+      throw error
+    }
+
+    let outcome = reconcile(entry)
+    if (outcome.state !== 'watching') return outcome
+
+    const leases = Array.isArray(reply?.leases) ? reply.leases : []
+    if (leases.length === 0) {
+      cancel(record.sessionId, record.path, entry)
+      return { state: 'free' }
+    }
+
+    const holder = leases[0]?.owner ?? {}
+    const mine = (typeof holder.id === 'string' && holder.id.length > 0 && holder.id === options.owner.id)
+      || (typeof holder.session === 'string' && holder.session.length > 0 && holder.session === options.owner.session)
+    if (mine) {
+      cancel(record.sessionId, record.path, entry, 'self')
+      return { state: 'self' }
+    }
+    if (options.supportsRelease() !== true) {
+      cancel(record.sessionId, record.path, entry)
+      return { state: 'unsupported' }
+    }
+
+    // A capability probe is injectable and may synchronously route an event.
+    // Reconcile once more before claiming that this exact wait is still live.
+    outcome = reconcile(entry)
+    if (outcome.state !== 'watching') return outcome
+    return { state: 'watching', holder }
+  }
+
+  /**
+   * Share the whole establishment attempt, not merely its read. In particular,
+   * two overlapping callers cannot turn one free/unsupported/error verdict into
+   * a second contradictory cancelled verdict. A watching attempt is cleared so
+   * idempotent later calls still refresh the authority; terminal attempts remain
+   * attached only to their private, now-inactive episode record.
+   *
+   * @param {WatchEntry} entry
+   * @param {() => any} run
+   * @param {WatchStatusOptions} options
+   * @returns {Promise<WatchOutcome>}
+   */
+  function status(entry, run, options) {
+    const record = recordOf(entry)
+    if (record.establishFlight !== null) return record.establishFlight
+    /** @type {Promise<WatchOutcome>} */
+    const flight = establish(entry, run, options).finally(() => {
+      if (record.establishFlight === flight && record.state === 'watching') record.establishFlight = null
+    })
+    record.establishFlight = flight
+    return flight
   }
 
   /**
@@ -509,6 +644,8 @@ export function createWatchCoordinator() {
     register,
     peek,
     shareStatus,
+    status,
+    reconcile,
     report,
     cancel,
     settleSelf,
