@@ -1,4 +1,4 @@
-import { orderState, record } from './capability-lifecycle-dual-state.js'
+import { orderState, record, snapshotSummary } from './capability-lifecycle-dual-state.js'
 
 export const name = 'capability-lifecycle-manager-observer'
 export const inject = ['weirMcpManager']
@@ -14,6 +14,15 @@ export function apply(ctx, config = {}) {
     const pending = Promise.resolve(start.apply(manager, args))
     state.managerStarts.set(presetId, pending)
     return pending
+  }
+  const syncSession = manager.syncSession
+  manager.syncSession = sessionId => {
+    record(orderId, 'manager-sync', {
+      presetId,
+      sessionId,
+      snapshot: snapshotSummary(state.selections.get(presetId)?.lifecycle.peek(sessionId)),
+    })
+    return syncSession.call(manager, sessionId)
   }
   record(orderId, 'manager-mounted', {
     presetId,

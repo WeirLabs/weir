@@ -33,10 +33,10 @@ EXPECTED_ORDER.push('notify-worktree')
 EXPECTED_ORDER.push('worktree-auto-approve')
 EXPECTED_ORDER.push('child-prompt')
 EXPECTED_ORDER.push('capability-remote')
-// capability-remote-dual-preset is opt-in (src/scenarios/index.js pushes it
-// only when WEIR_IT_CAPABILITY_DUAL === '1', until the production routing fix
-// lands): the expected order follows the same flag, immediately after
-// capability-remote, so neither mode accepts the other's list.
+// capability-remote-dual-preset is an opt-in real-Host routing control
+// (src/scenarios/index.js pushes it only when WEIR_IT_CAPABILITY_DUAL === '1').
+// The expected order follows the same flag, immediately after capability-remote,
+// so neither mode accepts the other's list.
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') EXPECTED_ORDER.push('capability-remote-dual-preset')
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') EXPECTED_ORDER.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
 EXPECTED_ORDER.push('continuable')

@@ -1,7 +1,7 @@
-// Formal real-Host regression for mcp-management-deepening task 1.2. Each case
-// boots a fresh headless Host through run.mjs; run the two ids separately for a
-// fresh DSH_HOME/profile per mount order. Correct behavior is ownership-based:
-// BOTH managers admit their own revision-0 session and complete one real RPC.
+// Formal real-Host regression for mcp-management-deepening tasks 1.2/1.4.
+// Each case boots a fresh headless Host through run.mjs; run the two ids
+// separately for a fresh DSH_HOME/profile per mount order. Revision-0 and RPC
+// ownership are asserted before phase-separated Apply transition checks.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -103,6 +103,67 @@ function assertFor(orderId, order, run) {
       && call?.resultObserved === true
       && call?.rpcDelta === 1
       && call?.matchingRpc?.length === 1, detail({ visibility: session?.steadyState?.visibility, call }))
+  }
+
+  const applySteps = [
+    { name: 'enable', revision: 1, admitted: true },
+    { name: 'disable', revision: 2, admitted: false },
+    { name: 're-enable', revision: 3, admitted: true },
+  ]
+  for (const presetId of NAMES) {
+    const session = report?.sessions?.find(entry => entry.presetId === presetId)
+    const identity = identityFor(presetId)
+    const ownTag = `${orderId}:${presetId}`
+    for (const step of applySteps) {
+      const transition = session?.applyTransitions?.find(entry => entry.name === step.name)
+      const label = `${order.join('>')}/${presetId}/Apply-${step.name}`
+      const expectedServers = step.admitted ? [identity] : []
+      const outcome = transition?.outcome
+      const memory = transition?.memory
+      const durable = transition?.durable
+      run.check(`${label} accepts the expected revision and owning accepted set`, outcome?.status === 'applied'
+        && outcome.revision === step.revision
+        && (outcome.warnings ?? []).length === 0
+        && memory?.state === 'ready'
+        && memory.revision === step.revision
+        && JSON.stringify(memory.mcpServers) === JSON.stringify(expectedServers)
+        && durable?.selection?.kind === 'ok'
+        && durable.selection.revision === step.revision
+        && JSON.stringify(durable.selection.mcpServers) === JSON.stringify(expectedServers)
+        && durable.inherited?.kind === 'absent'
+        && (!step.admitted || memory.mcpIncarnations?.[identity] === report?.registry?.servers?.[identity]?.incarnation), detail({ outcome, memory, durable }))
+
+      const publication = transition?.publication
+      run.check(`${label} publishes its owning lifecycle before exactly one manager synchronization`, publication?.publishCount === 1
+        && publication.syncCount === 1
+        && publication.publishSeq < publication.syncSeq
+        && publication.syncSnapshot?.revision === step.revision
+        && JSON.stringify(publication.syncSnapshot?.mcpServers) === JSON.stringify(expectedServers), detail(publication))
+
+      run.check(`${label} leaves the sibling lifecycle, durable selection, and admission unchanged`, transition?.sibling?.before != null
+        && JSON.stringify(transition.sibling.before) === JSON.stringify(transition.sibling.after), detail(transition?.sibling))
+
+      const gate = transition?.gate
+      run.check(`${label} subsequent admission follows the newly accepted set through the owning lifecycle`, gate?.enabledFor === step.admitted
+        && gate.admitted === step.admitted
+        && gate.assertPermit === step.admitted
+        && JSON.stringify(gate.lifecycle?.enabledFor) === JSON.stringify([ownTag])
+        && JSON.stringify(gate.lifecycle?.permit) === JSON.stringify([ownTag]), detail(gate))
+
+      const schema = transition?.visibility?.managedSchema
+      const call = transition?.call
+      const surfaceOk = step.admitted
+        ? transition?.visibility?.visible === true
+          && schema?.name === `mcp__${identity}__echo`
+          && schema?.parameters?.type === 'object'
+          && call?.resultObserved === true
+        : transition?.visibility?.visible === false
+          && call?.resultObserved === false
+          && (call.thrown !== null || call.outcome !== null)
+      run.check(`${label} real schema and RPC surface ${step.admitted ? 'admits exactly one call' : 'refuses before RPC'}`, surfaceOk
+        && call?.rpcDelta === (step.admitted ? 1 : 0)
+        && call.matchingRpc?.length === (step.admitted ? 1 : 0), detail({ visibility: transition?.visibility, call }))
+    }
   }
   run.check(`${orderId} fixture removed managed runtimes, disposed agents/presets, and exited every mock MCP process`, report?.cleanup?.errors?.length === 0
     && NAMES.every(id => report.cleanup?.removals?.[id]?.status === 'removed')

@@ -1,6 +1,6 @@
-// Real-Host dual-manager revision-0 discriminator. Each preset owns a distinct
-// selection lifecycle and manager in its own isolated group. No Apply, active
-// manager bridge, agent.ctx.get cross-realm lookup, or synthetic gate is used.
+// Real-Host dual-manager lifecycle regression. Each preset owns a distinct
+// selection lifecycle and manager in its own isolated group. Revision-0 is
+// measured before a phase-separated enable/disable/re-enable Apply sequence.
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -88,7 +88,15 @@ async function gateEvidence(state, manager, agent, identity, generation, phase) 
 async function durableFacts(store, sessionId) {
   const selection = await store.read({ kind: 'selection', sessionId })
   const inherited = await store.read({ kind: 'inherited', sessionId })
-  const compact = record => ({ kind: record.kind, revision: record.revision ?? 0, accepted: record.kind === 'ok' })
+  const compact = record => ({
+    kind: record.kind,
+    revision: record.revision ?? 0,
+    accepted: record.kind === 'ok',
+    ...(record.kind === 'ok' ? {
+      mcpServers: Array.isArray(record.payload?.mcpServers) ? [...record.payload.mcpServers] : null,
+      mcpIncarnations: record.payload?.mcpIncarnations ? { ...record.payload.mcpIncarnations } : null,
+    } : {}),
+  })
   return { selection: compact(selection), inherited: compact(inherited) }
 }
 
@@ -120,6 +128,38 @@ function visibility(ctx, agent, presetId) {
     schemaCount: schemas.length,
     managedSchema: managed ? clone(schema) : null,
     presentedSchema: schema ? clone(schema) : null,
+  }
+}
+
+async function transitionCall(ctx, state, { agent, presetId, phase, marker, serverLog }) {
+  const toolName = toolFor(presetId)
+  const before = await rpcCount(serverLog)
+  const eventMarker = state.events.length
+  setPhase(state.orderId, phase)
+  let outcome
+  let thrown = null
+  try {
+    outcome = await ctx.tools.execute({
+      callId: randomUUID(),
+      name: toolName,
+      arguments: { text: marker },
+      agent,
+      signal: new AbortController().signal,
+    })
+  } catch (error) { thrown = errorText(error) }
+  const after = await rpcCount(serverLog)
+  const matchingRpc = (await serverEntries(serverLog)).filter(entry => entry.method === 'tools/call' && JSON.stringify(entry.params ?? {}).includes(marker))
+  return {
+    toolName,
+    marker,
+    outcome: clone(outcome) ?? null,
+    thrown,
+    rpcBefore: before,
+    rpcAfter: after,
+    rpcDelta: after - before,
+    matchingRpc: clone(matchingRpc),
+    resultObserved: JSON.stringify(outcome ?? thrown ?? {}).includes(`RESULT server=${identityFor(presetId)}`),
+    lifecycleTags: lifecycleTags(state.events.slice(eventMarker), agent.id),
   }
 }
 
@@ -168,7 +208,7 @@ function serverEntry(presetId, serverLog) {
 export function apply(ctx) {
   ctx.tools.register({
     name: 'capability_lifecycle_revision_zero_probe',
-    description: 'Measure two independent preset managers and memory-only revision-0 lifecycles without Apply.',
+    description: 'Measure owning revision-0 admission, then real Apply enable/disable/re-enable transitions.',
     parameters: { type: 'object', properties: {}, required: [] },
     output: {
       schema: { type: 'object' },
@@ -402,6 +442,73 @@ export function apply(ctx) {
           allDurableSelectionsAbsent: report.sessions.every(session => session.steadyState.durable.selection.kind === 'absent'),
           allDurableInheritedAbsent: report.sessions.every(session => session.steadyState.durable.inherited.kind === 'absent'),
           allMemorySnapshotsRevision0: report.sessions.every(session => session.steadyState.memory.ownRevision0),
+        }
+
+        // The report.apply object above is the intact revision-0/no-Apply phase.
+        // Only now drive the real Apply public seam, with each transition and
+        // its events labeled by a later apply:* phase.
+        for (const presetId of NAMES) {
+          const agent = agents.get(presetId)
+          const manager = managers.get(presetId)
+          const selection = state.selections.get(presetId)
+          const identity = identityFor(presetId)
+          const generation = report.registry.servers[identity].generation
+          const session = sessionReports.get(presetId)
+          const siblingId = NAMES.find(id => id !== presetId)
+          const siblingAgent = agents.get(siblingId)
+          const siblingManager = managers.get(siblingId)
+          const siblingIdentity = identityFor(siblingId)
+          const skills = clone(selection.lifecycle.peek(agent.id)?.skills ?? [])
+          const siblingFacts = async () => ({
+            memory: memoryFacts(state, siblingId, siblingAgent.id).own,
+            durable: await durableFacts(store, siblingAgent.id),
+            enabledFor: siblingManager.gate.enabledFor(siblingAgent, siblingIdentity),
+          })
+          session.applyTransitions = []
+          const steps = [
+            { name: 'enable', expectedRevision: 0, mcpServers: [identity], admitted: true },
+            { name: 'disable', expectedRevision: 1, mcpServers: [], admitted: false },
+            { name: 're-enable', expectedRevision: 2, mcpServers: [identity], admitted: true },
+          ]
+          for (const step of steps) {
+            setPhase(orderId, `apply:${step.name}:${presetId}`)
+            const siblingBefore = await siblingFacts()
+            const eventMarker = state.events.length
+            const outcome = await selection.applySelection(
+              { sessionId: agent.id, cwd, presetId },
+              {
+                requestId: `${orderId}-${presetId}-${step.name}`,
+                expectedRevision: step.expectedRevision,
+                selection: { skills, mcpServers: step.mcpServers },
+                unresolved: [],
+              },
+            )
+            const applyEvents = state.events.slice(eventMarker)
+            const publishes = applyEvents.filter(event => event.kind === 'lifecycle-publish' && event.presetId === presetId && event.sessionId === agent.id)
+            const syncs = applyEvents.filter(event => event.kind === 'manager-sync' && event.presetId === presetId && event.sessionId === agent.id)
+            const transition = {
+              name: step.name,
+              outcome: clone(outcome),
+              memory: snapshotSummary(selection.lifecycle.peek(agent.id)),
+              durable: await durableFacts(store, agent.id),
+              publication: {
+                publishCount: publishes.length,
+                publishSeq: publishes[0]?.seq ?? null,
+                syncCount: syncs.length,
+                syncSeq: syncs[0]?.seq ?? null,
+                syncSnapshot: syncs[0]?.snapshot ?? null,
+              },
+              sibling: { before: siblingBefore, after: await siblingFacts() },
+              gate: await gateEvidence(state, manager, agent, identity, generation, `apply:${step.name}:gate:${presetId}`),
+              visibility: visibility(ctx, agent, presetId),
+            }
+            transition.call = await transitionCall(ctx, state, {
+              agent, presetId, serverLog,
+              phase: `apply:${step.name}:tool:${presetId}`,
+              marker: `APPLY_${step.name.toUpperCase()}_${orderId}_${presetId}`,
+            })
+            session.applyTransitions.push(transition)
+          }
         }
       } catch (error) {
         report.fixtureBlocker = errorText(error)
