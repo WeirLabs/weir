@@ -13,6 +13,7 @@ import { createMcpOperations } from '../src/capabilities/mcp-operations.js'
 import { createMcpRegistry } from '../src/capabilities/mcp-registry.js'
 import { createMcpRuntime } from '../src/capabilities/mcp-runtime.js'
 import { createMcpDrain } from '../src/capabilities/mcp-drain.js'
+import { createMcpOperationCoordinator } from '../src/capabilities/mcp-operation-coordinator.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { normalizeMcpServer } from '../src/capabilities/mcp-config.js'
 import { sameMutationOwner } from '../src/capabilities/capability-remote.js'
@@ -30,6 +31,7 @@ function harness(options = {}) {
   const registry = createMcpRegistry({ store })
   const runtime = createMcpRuntime()
   const drain = createMcpDrain()
+  const coordinator = createMcpOperationCoordinator({ runtime, drain })
   const calls = { preview: 0, ask: 0, mutate: 0, probe: 0, mount: 0, credentialSet: 0 }
   const questions = []
   const timers = []
@@ -43,16 +45,9 @@ function harness(options = {}) {
   const manager = {
     support: () => ({ credentials: true, ephemeral: true }),
     serverNameConflict: () => namespaceConflict,
-    beginOperation(identity, phase) {
-      const token = runtime.begin(identity, { phase })
-      drain.closeAll(identity)
-      return token
-    },
-    abortOperation(token) {
-      const restored = runtime.restore(token)
-      if (restored && token.previous?.phase === 'mounted') drain.reopenAll(token.identity)
-      return restored
-    },
+    beginOperation: coordinator.beginOperation,
+    abortOperation: coordinator.abortOperation,
+    serialize: coordinator.serialize,
     async probe() {
       calls.probe += 1
       const status = options.probeStatus ?? 'mounted'
@@ -64,11 +59,10 @@ function harness(options = {}) {
       calls.mount += 1
       const status = options.mountStatus ?? 'mounted'
       if (status === 'mounted') {
-        runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation })
-        drain.reopenAll(identity)
+        coordinator.finishOperation(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation })
         return { status, mount: { state: 'mounted', observedGeneration: entry.generation }, discovery: { toolCount: 1, toolNamesPreview: ['mcp__docs__echo'], truncated: false } }
       }
-      runtime.finish(token, status, { generation: entry.generation, incarnation: entry.incarnation })
+      coordinator.finishOperation(token, status, { generation: entry.generation, incarnation: entry.incarnation })
       return { status, saved: true, error: { code: 'connection-refused', message: 'injected mount failure' } }
     },
   }

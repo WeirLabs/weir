@@ -8,7 +8,8 @@ import { createMcpDrain } from './mcp-drain.js'
 import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree } from './mcp-mount.js'
 import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
 import { lifecycleFeedRegistry } from './lifecycle-feed.js'
-import { createMcpRuntime, createMcpIdentityLock } from './mcp-runtime.js'
+import { createMcpRuntime } from './mcp-runtime.js'
+import { createMcpOperationCoordinator } from './mcp-operation-coordinator.js'
 import { materializeMcpClientConfig } from './mcp-credentials.js'
 import { hasMcpSecrets, redactMcpEntry, fingerprintMcpEntry } from './mcp-config.js'
 import { createMcpProcessAdapter } from './mcp-process.js'
@@ -51,9 +52,9 @@ export function createMcpManager(dependencies = {}) {
       },
     }
     const runtime = dependencies.runtime ?? createMcpRuntime()
-    // Every runtime.begin path runs inside this per-identity queue (design D6).
-    const serialize = createMcpIdentityLock()
     const drain = dependencies.drain ?? createMcpDrain({ timeoutMs: config.drainTimeoutMs ?? 30_000 })
+    const coordinator = createMcpOperationCoordinator({ runtime, drain, transition: transitionRuntime })
+    const { serialize, beginOperation, finishOperation, abortOperation } = coordinator
     const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle, runtime, registrationFor: runtime.registrationFor })
     const loader = dependencies.loader ?? ctx.get?.('loader')
     const defaultListRows = () => [...(loader?.entries?.() ?? [])].map(entry => ({ id: entry?.options?.id ?? entry?.id ?? null, name: entry?.options?.name ?? null, config: entry?.options?.config ?? {} }))
@@ -302,24 +303,6 @@ export function createMcpManager(dependencies = {}) {
       }
       return result
     }
-    function finishOperation(token, phase, details = {}) {
-      return transitionRuntime(token.identity, () => runtime.finish(token, phase, details))
-    }
-    function beginOperation(identity, phase = 'replacing', details = {}) {
-      return transitionRuntime(identity, () => {
-        const token = runtime.begin(identity, { phase, ...details })
-        drain.closeAll(identity)
-        return token
-      })
-    }
-    function abortOperation(token) {
-      const previousPhase = token.previous?.phase
-      return transitionRuntime(token.identity, () => {
-        const restored = runtime.restore(token)
-        if (restored && previousPhase === 'mounted') drain.reopenAll(token.identity)
-        return restored
-      })
-    }
     async function waitForDrain(identity) {
       const result = await drain.drainAll(identity)
       if (!result.drained) {
@@ -354,8 +337,11 @@ export function createMcpManager(dependencies = {}) {
       return (await processAdapter.prepare(client)).execution
     }
 
-    async function reconcileOne(identity, entry, suppliedToken = null) {
-      const token = suppliedToken ?? beginOperation(identity)
+    function reconcileOne(identity, entry, suppliedToken = null) {
+      if (suppliedToken !== null) return reconcileFenced(identity, entry, suppliedToken)
+      return serialize(identity, () => reconcileFenced(identity, entry, beginOperation(identity)))
+    }
+    async function reconcileFenced(identity, entry, token) {
       try {
         const current = await registry.read()
         const registered = current.kind === 'ok' ? current.servers[identity] : null
@@ -401,7 +387,6 @@ export function createMcpManager(dependencies = {}) {
           receipts.mount.set(identity, { time: now(), status: 'indeterminate', diagnostic })
           return { status: 'indeterminate', identity, generation: entry.generation, incarnation: entry.incarnation ?? null, saved: true, error: diagnostic, mount: { state: 'superseded', observedGeneration: observed.generation }, next: { action: 'reread-registry' } }
         }
-        drain.reopenAll(identity)
         clearStartErrors(identity)
         const receipt = { time: now(), status: 'mounted', generation: entry.generation, discovery: result.discovery }
         receipts.mount.set(identity, receipt)
@@ -418,8 +403,11 @@ export function createMcpManager(dependencies = {}) {
       }
     }
 
-    async function removeRuntime(identity, suppliedToken = null) {
-      const token = suppliedToken ?? beginOperation(identity, 'removing')
+    function removeRuntime(identity, suppliedToken = null) {
+      if (suppliedToken !== null) return removeRuntimeFenced(identity, suppliedToken)
+      return serialize(identity, () => removeRuntimeFenced(identity, beginOperation(identity, 'removing')))
+    }
+    async function removeRuntimeFenced(identity, token) {
       try {
         await waitForDrain(identity)
         const cleanup = await mount.unmount(identity)
@@ -480,60 +468,81 @@ export function createMcpManager(dependencies = {}) {
       }
       let mountedCount = 0
       for (const entry of Object.values(current.servers)) {
-        const result = await serialize(entry.identity, () => reconcileOne(entry.identity, entry))
+        const result = await reconcileOne(entry.identity, entry)
         if (result.status === 'mounted') mountedCount += 1
         else if (result.status !== 'saved-degraded') startErrors.push({ identity: entry.identity, reason: result.status })
       }
       return { mounted: mountedCount }
 
     }
-    const healthy = identity => runtime.snapshot(identity).phase === 'mounted' && mount.mounted.has(identity)
+    const healthy = (identity, state = runtime.snapshot(identity)) => state?.phase === 'mounted' && mount.mounted.has(identity)
       && (mount.mounted.get(identity)?.state ?? 'mounted') === 'mounted'
 
     /** Recover one identity inside its queue slot: sweep untracked residue, then strictly remount. */
     function recoverOne(identity, assertOwner) {
       return serialize(identity, async () => {
-        // Re-read inside the slot: an earlier queued operation may have
-        // remounted, edited or removed this identity meanwhile.
-        const current = await registry.read()
+        // Ownership can still reject a queued no-op without touching admission.
+        // Once recovery is fenced, the fence precedes its identity reread.
         if (assertOwner) await assertOwner('recover-cleanup')
-        if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', identity, skipped: current.kind }
-        const entry = current.kind === 'ok' ? current.servers[identity] ?? null : null
-        if (entry && healthy(identity)) return { status: 'mounted', identity, generation: entry.generation, alreadyHealthy: true }
-        const groupId = `${MCP_GROUP_PREFIX}${identity}`
-        const residuePresent = listEntryIds().includes(groupId)
-        if (!entry) {
-          // Orphan residue of an identity that is no longer registered.
-          const swept = residuePresent ? await mount.sweepResidue([groupId]) : []
-          const cleaned = !residuePresent || swept.includes(groupId)
-          if (cleaned) releaseBridge(groupId)
-          return cleaned
-            ? { status: 'removed', identity, swept: residuePresent }
-            : { status: 'cleanup-failed', identity, error: mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' }), next: { action: 'recover-residue' } }
-        }
         const token = beginOperation(identity)
-        // A tracked failed mount record is retried by reconcileOne's unmount; a
-        // Loader row the mount map no longer tracks is swept first, or the
-        // same-name replacement could never be created.
-        if (!mount.mounted.has(identity) && residuePresent) {
-          const swept = await mount.sweepResidue([groupId])
-          if (!swept.includes(groupId)) {
-            finishOperation(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
-            const diagnostic = mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
-            receipts.mount.set(identity, { time: now(), status: 'cleanup-failed', diagnostic })
-            return { status: 'cleanup-failed', identity, generation: entry.generation, saved: true, error: diagnostic, next: { action: 'recover-residue' } }
+        let terminal = false
+        try {
+          // Re-read inside the slot: an earlier queued operation may have
+          // remounted, edited or removed this identity meanwhile.
+          const current = await registry.read()
+          if (current.kind !== 'ok' && current.kind !== 'absent') {
+            terminal = true
+            abortOperation(token)
+            return { status: 'unavailable', identity, skipped: current.kind }
           }
-          releaseBridge(groupId)
-        }
-        if (assertOwner) {
-          try { await assertOwner('mount') } catch (cause) {
-            // Cleanup may already have removed the old mount. Keep admission
-            // closed without stranding the queue fence in `replacing`.
-            finishOperation(token, 'unknown', { generation: entry.generation, incarnation: entry.incarnation ?? null })
-            throw cause
+          const entry = current.kind === 'ok' ? current.servers[identity] ?? null : null
+          if (entry && healthy(identity, token.previous)) {
+            terminal = true
+            abortOperation(token)
+            return { status: 'mounted', identity, generation: entry.generation, alreadyHealthy: true }
           }
+          const groupId = `${MCP_GROUP_PREFIX}${identity}`
+          const residuePresent = listEntryIds().includes(groupId)
+          if (!entry) {
+            // Orphan residue of an identity that is no longer registered.
+            const swept = residuePresent ? await mount.sweepResidue([groupId]) : []
+            const cleaned = !residuePresent || swept.includes(groupId)
+            terminal = true
+            finishOperation(token, cleaned ? 'unknown' : 'cleanup-failed', { generation: null, incarnation: null })
+            if (cleaned) releaseBridge(groupId)
+            return cleaned
+              ? { status: 'removed', identity, swept: residuePresent }
+              : { status: 'cleanup-failed', identity, error: mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' }), next: { action: 'recover-residue' } }
+          }
+          // A tracked failed mount record is retried by reconcileOne's unmount; a
+          // Loader row the mount map no longer tracks is swept first, or the
+          // same-name replacement could never be created.
+          if (!mount.mounted.has(identity) && residuePresent) {
+            const swept = await mount.sweepResidue([groupId])
+            if (!swept.includes(groupId)) {
+              terminal = true
+              finishOperation(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+              const diagnostic = mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
+              receipts.mount.set(identity, { time: now(), status: 'cleanup-failed', diagnostic })
+              return { status: 'cleanup-failed', identity, generation: entry.generation, saved: true, error: diagnostic, next: { action: 'recover-residue' } }
+            }
+            releaseBridge(groupId)
+          }
+          if (assertOwner) {
+            try { await assertOwner('mount') } catch (cause) {
+              // Cleanup may already have removed the old mount. Keep admission
+              // closed without stranding the queue fence in `replacing`.
+              terminal = true
+              finishOperation(token, 'unknown', { generation: entry.generation, incarnation: entry.incarnation ?? null })
+              throw cause
+            }
+          }
+          terminal = true // reconcileFenced owns every transition from here.
+          return reconcileOne(identity, entry, token)
+        } catch (cause) {
+          if (!terminal) abortOperation(token)
+          throw cause
         }
-        return reconcileOne(identity, entry, token)
       })
     }
 
@@ -572,13 +581,18 @@ export function createMcpManager(dependencies = {}) {
       const holder = hostRowHoldingReservation(listRows(), entry.client?.serverName ?? entry.transport?.serverName ?? entry.identity)
       if (holder) return { status: 'conflict', reason: `host row "${holder.id ?? entry.identity}" still holds the serverName reservation — disable it in the host configuration; the managed client mounts afterwards. Until then the server stays unmanaged.` }
       return serialize(entry.identity, async () => {
-        const current = await registry.read()
-        const revision = current.kind === 'ok' ? current.revision : 0
         const token = beginOperation(entry.identity)
-        const registered = await registry.register(entry, revision)
-        if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
-        const latest = await registry.read()
-        return reconcileOne(entry.identity, latest.servers[entry.identity], token)
+        try {
+          const current = await registry.read()
+          const revision = current.kind === 'ok' ? current.revision : 0
+          const registered = await registry.register(entry, revision)
+          if (registered.status !== 'committed') { abortOperation(token); return { status: 'registry-failed', result: registered.status } }
+          const latest = await registry.read()
+          return reconcileOne(entry.identity, latest.servers[entry.identity], token)
+        } catch (cause) {
+          abortOperation(token)
+          throw cause
+        }
       })
     }
 
@@ -656,7 +670,7 @@ export function createMcpManager(dependencies = {}) {
       publicNames,
       mounted: mount.mounted,
       beginOperation, abortOperation, reconcileOne, removeRuntime, probe,
-      remove: identity => serialize(identity, () => removeRuntime(identity)),
+      remove: identity => removeRuntime(identity),
       /** Run one same-identity operation after every earlier one settled. */
       serialize,
       support,

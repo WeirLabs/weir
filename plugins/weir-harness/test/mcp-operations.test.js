@@ -7,6 +7,7 @@ import { createMcpOperations } from '../src/capabilities/mcp-operations.js'
 import { createMcpRegistry } from '../src/capabilities/mcp-registry.js'
 import { createMcpRuntime } from '../src/capabilities/mcp-runtime.js'
 import { createMcpDrain } from '../src/capabilities/mcp-drain.js'
+import { createMcpOperationCoordinator } from '../src/capabilities/mcp-operation-coordinator.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { fingerprintMcpEntry } from '../src/capabilities/mcp-config.js'
 import { materializeMcpClientConfig } from '../src/capabilities/mcp-credentials.js'
@@ -18,6 +19,7 @@ function fixture(options = {}) {
   const registry = createMcpRegistry({ store })
   const runtime = createMcpRuntime()
   const drain = createMcpDrain()
+  const coordinator = createMcpOperationCoordinator({ runtime, drain })
   const values = new Map()
   const sets = []
   const unsets = []
@@ -27,27 +29,17 @@ function fixture(options = {}) {
   const manager = {
     support: () => support,
     serverNameConflict: () => null,
-    beginOperation(identity, phase) {
-      calls.begin += 1
-      const token = runtime.begin(identity, { phase })
-      drain.closeAll(identity)
-      return token
-    },
-    abortOperation(token) {
-      const mounted = token.previous?.phase === 'mounted'
-      const restored = runtime.restore(token)
-      if (mounted && restored) drain.reopenAll(token.identity)
-      return restored
-    },
+    beginOperation(identity, phase, details) { calls.begin += 1; return coordinator.beginOperation(identity, phase, details) },
+    abortOperation: coordinator.abortOperation,
+    serialize: coordinator.serialize,
     async reconcileOne(identity, entry, token) {
       calls.mount += 1
       const status = typeof options.mountStatus === 'function' ? options.mountStatus(identity, entry, calls.mount) : options.mountStatus ?? 'mounted'
       if (status === 'mounted') {
-        runtime.finish(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })
-        drain.reopenAll(identity)
+        coordinator.finishOperation(token, 'mounted', { generation: entry.generation, incarnation: entry.incarnation ?? null })
         return { status: 'mounted', mount: { state: 'mounted', observedGeneration: entry.generation }, discovery: { toolCount: 1, toolNamesPreview: ['mcp__docs__echo'], truncated: false } }
       }
-      runtime.finish(token, status === 'saved-degraded' ? 'saved-degraded' : status, { generation: entry.generation, incarnation: entry.incarnation ?? null })
+      coordinator.finishOperation(token, status === 'saved-degraded' ? 'saved-degraded' : status, { generation: entry.generation, incarnation: entry.incarnation ?? null })
       return { status, saved: true, error: { code: 'connection-refused', message: 'injected mount failure' } }
     },
     async probe(entry) {
@@ -59,7 +51,7 @@ function fixture(options = {}) {
     },
     async removeRuntime(identity, token) {
       calls.remove += 1
-      runtime.finish(token, 'unknown', { generation: null, incarnation: null })
+      coordinator.finishOperation(token, 'unknown', { generation: null, incarnation: null })
       return { status: 'removed', identity, removed: true }
     },
   }
