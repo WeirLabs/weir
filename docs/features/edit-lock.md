@@ -89,10 +89,11 @@
 
 | 模块 | 行数 | 职责 |
 |---|---|---|
-| `client.js` | 1299 | 连接、`withLeases`、降级、事件能力、统一失效入口（含拨号/握手期间关闭与关闭闩锁）、内存清单与重连重放 |
-| `plugin.js` | 1015 | 预设行：7 个工具、回合释放、唤醒投递、协商结果投递与去重、共享订阅协调器接线、只读 view 端点、审计接线 |
-| `tools.js` | 847 | 工具定义（6 个恒在 + `edit_lock_reply` 动态），工具入参的绝对化与词法规范化；`leaseOutput` 原样渲染 `message`，并经模块私有登记产出仅供界面的 `presentationMeta`（`editLock`） |
-| `watch.js` | 473 | 共享释放订阅协调器（watching/hit/reset/self/cancelled、共享 status flight、pendingDelivery 与在飞读门控） |
+| `client.js` | 1357 | 连接、`withLeases`、降级、事件能力、统一失效入口（含拨号/握手期间关闭与关闭闩锁）、Replay Ledger、显式释放与重连重放 |
+| `plugin.js` | 1015 | 预设行与事件适配：7 个工具、回合释放、唤醒投递、协商结果投递与去重、共享订阅协调器接线、只读 view 端点、审计接线 |
+| `tools.js` | 797 | 工具定义与输入/输出适配（6 个恒在 + `edit_lock_reply` 动态）；`leaseOutput` 原样渲染 `message`，并经模块私有登记产出仅供界面的 `presentationMeta`（`editLock`） |
+| `negotiation.js` | 89 | 每挂载的 Transfer Negotiation：pending request、Reply Window 与回复结果分类；不直接访问 broker |
+| `watch.js` | 662 | 共享 Release Watch Episode 协调器：稳定 opaque handle、WeakMap 私有状态、共享建立尝试、终态对账、pendingDelivery 与延迟单次通知 |
 | `lineage.js` | 207 | lineage 与短标签推导 |
 | `singleton.js` | 155 | 进程级共享客户端（永不关闭，D11） |
 | `view.js` | 144 | 纯函数视图（三态 + 两组列表），无 IO/时钟 |
@@ -103,7 +104,9 @@
 
 - **入参先做词法规范化**：`edit_lock_acquire` / `release` / `hold` / `try_steal` / `watch` 收到的每个路径都先经 `node:path` 的 `resolve` 折叠 `.`、`..`、重复与结尾分隔符（相对路径仍按会话 cwd 解析），批内去重发生在规范化之后。broker 只认字符串相等，所以 `/p/src/a.js` 与 `/p/src/../src/a.js` 在工具面是同一条路径：同一把锁、同一条订阅 entry、同一次在飞 `status` 读，别名既造不出第二把锁，也造不出第二个订阅。
 - **进程级单例**：整个进程一个连接、一份清单，两个预设挂载共用；**不随挂载卸载关闭**（否则两个挂载会互相踩踏）。会话级清理由 `agent/disposed` 与连接关闭保证。释放订阅协调器按同一 client 共享（`WeakMap client → coordinator`），所以“一份清单”也包括“一张订阅表”。
-- **内存清单只用于重放与释放，从不用于裁决**：裁决永远只在守护进程一处。`startedAt` 变化或连接重置时重放仍有效的保留；被他人抢走的条目直接剔除。
+- **Replay Ledger 只用于重放与释放，从不用于裁决**：裁决永远只在守护进程一处。`startedAt` 变化或连接重置时重放仍有效的保留；被他人抢走的条目直接剔除。
+- **显式释放先删除重放意图**：`edit_lock_release` 先按规范化路径与当前 lineage 删除匹配的 Replay Ledger 条目，再向 broker 发送 `release`；其他 lineage 的条目与其他 retention 不受影响。即使传输失败、释放结果未确认，已删除的条目也不会在重连或后续 `hold` 中复活；工具仍明确报告“未确认”，模型可用 `edit_lock_status` 核验真实归属。`released` / `notOwned` 仍完全来自 broker，回合结束与 agent 销毁使用的批量释放语义不变。
+- **在飞 replay 不得复活显式释放**：replay 在每次 acquire/hold 响应写回前校验快照记录仍与当前清单身份一致；已删除或已被更新意图替换的记录不得写回，迟到的失败也不能删除更新记录。已经发往 broker 的 acquire/hold 无法撤销；若其迟到 grant 到达时已没有更新的本地记录，client 会发送补偿 `release`，因此最终清单与后续重连都不会复活该路径。补偿本身若遇传输失败，本地释放意图仍不恢复，实际归属继续由 `status`、断连与 TTL 裁决。
 - **降级**：基础设施失败 → 一次重连重试 → 仍失败则无租约执行 + 审计（60 秒限流）。下一次调用必须重新尝试（不永久熔断）。
 - **审计**：`AUDIT_TYPES.fileLease`（`weir/file-lease`），在降级发生的那一刻写入，含 `kind`、`owner`、路径数量与原因。
 
@@ -113,15 +116,17 @@
 
 **broker 只广播事实。** 任何让路径**不再有持有者**的动作——显式 `release`、持有者连接断开、观察/回收一条过期记录——都在**删除租约之后**向每条在线连接各发一次 `released`，带 `path` 与 `reason`（`released` / `disconnected` / `expired`）。原子转交（`reply(release)`）不广播，因为路径从未变成无主；重复释放、`acquire` 收养、`hold` 延长同样不发。broker 没有订阅表、没有等待队列、不选主、不预留归属。
 
-**客户端自己做一次性订阅。** 整个进程只有一份**订阅协调器**，以共享 client 为键（`WeakMap client → coordinator`），因此两个预设挂载看到的是同一张 `(session, 规范化绝对路径)` 表。状态是闭集 `watching` / `hit` / `reset` / `self` / `cancelled`：
+**客户端自己做一次性订阅。** 整个进程只有一份**订阅协调器**，以共享 client 为键（`WeakMap client → coordinator`），因此两个预设挂载看到的是同一张 `(session, 规范化绝对路径)` 表。状态是闭集 `watching` / `hit` / `reset` / `self` / `cancelled`。
 
-1. `edit_lock_watch` **先登记**、再通过共享 client 读 `status`（权威所有权只由 broker 回答）；同一 `(session, 路径)` 只有一条活跃 entry，重复调用（同一挂载或跨挂载）复用同一条 entry 与**同一次在飞的 `status` 读**，所以同一次释放不可能通知两次，并发调用也不会一个取消、另一个误报 `watching`；
-2. 每次 `await` 之后——无论 `status` 成功还是失败——都先看终态：`hit` 返回 `released`、`reset` 返回重查结果、转交得到的 `self` 返回自有结果；这些终态**及其待投递通知**不会被后来的失败清理覆盖，清理只取消仍是 `watching` 的等待；
-3. 只有 entry 仍以**同一对象**留在活跃表时，才按 `status` 回答 `watching` / `free` / `self`（`free`、`self` 终结并移除 entry）；已被替代的旧 entry 绝不会被并发调用误报为活跃；
-4. 命中（`hit`）即从活跃表摘除并进入 `pendingDelivery`，通知在 `setTimeout(0)` 里延迟投递，**先消费后投递**，重复观察不会第二次通知；若命中时那条权威 `status` 读还在飞，通知会等它落地后才武装 timer，让该读的调用方先有机会用 `released`/`reset` 工具结果报告同一集——同一集只会有一个模型可见结果；`pendingDelivery` 保留到 timer 完成，因此 agent 销毁能同时取消活跃订阅与尚未投递的命中/重置通知；timer 触发时再检查终态、挂载引用与当前 live agent 身份，绝不把通知投给已销毁或被替换的 agent；
-5. 路径已空闲或已归本会话时立即返回且不留下订阅；握手没有声明 `released` 能力、或 `status` 读不到时，显式报告不可用并清掉刚登记的条目。
+每个 Release Watch Episode 都由稳定的 **Watch Episode Handle** 标识。`register` / `peek` 对同一活跃 episode 返回同一对象，`cancel(expected)` 只在它仍是当前活跃 handle 时生效。handle 被冻结，`sessionId`、`path`、`state`、`settledByTool` 是动态只读 getter；`statusFlight`、`establishFlight`、mount、timer、agent 等可变记录由协调器的 `WeakMap` 私有保存，外部赋值不能改写 episode，`entries()` / `pendingEntries()` 也只返回投影副本。
 
-通知走编辑锁既有的消息通道：完整 UserMessage、运行中 `steer`、空闲时 `followup` 唤醒一次。**一个 client 一份协调器、一条 entry、一次 status 读、一条通知**：两个挂载同时订阅同一 `(session, 路径)` 也只投递一次；单个挂载卸载只移除自己的引用，其他挂载仍共享的订阅与待投递通知转给存活引用，最后一个挂载卸载时才移除该 client 的 event/reset 监听并清空协调器。agent 被销毁后它的订阅随之消失，任何延迟中的通知都不会投递给已销毁的 agent。派生子代理拿不到这个工具，与其它所有权工具一致（子代理继续共享发起会话的归属，不需要也不能等待释放）。
+1. `edit_lock_watch` **先登记**，再由协调器执行完整建立流程；同一 `(session, 路径)` 只有一条活跃 episode。并发调用复用同一 handle、同一次完整建立尝试及其中的权威 `status` 读，得到同一结构化 outcome，因此同一次释放不可能通知两次，并发调用也不会一个取消、另一个误报 `watching`；
+2. 每次 `await` 之后都由协调器 `reconcile` 同一 handle：`hit` 对账为 `released`、`reset` 对账为重查结果、转交得到的 `self` 对账为自有结果；这些终态**及其待投递通知**不会被后来的读取失败覆盖，清理只取消仍是 `watching` 的等待；
+3. 只有同一 handle 仍以 `watching` 留在活跃表时，才按权威读取回答 `watching` / `free` / `self`（`free`、`self` 终结并移除 episode）；已被替代的旧 handle 绝不会取消新 episode 或被误报为活跃；
+4. 命中（`hit`）即从活跃表摘除并进入 `pendingDelivery`，通知在 `setTimeout(0)` 里延迟投递，**先消费后投递**，重复观察不会第二次通知；若命中时权威 `status` 读还在飞，通知会等它落地后才武装 timer，让该读的调用方先有机会用 `released` / `reset` 工具结果报告同一 episode。协调器的 `reconcile` / `report` 记录 `settledByTool`，timer 据此抑制重复通知；`pendingDelivery` 保留到 timer 完成，因此 agent 销毁能同时取消活跃订阅与尚未投递的命中/重置通知。timer 触发时再检查终态、挂载引用与当前 live agent 身份，绝不把通知投给已销毁或被替换的 agent；
+5. 路径已空闲或已归本会话时立即返回且不留下订阅；握手没有声明 `released` 能力、或 `status` 读不到时，显式报告不可用并只清理同一 handle 的普通等待。工具只把协调器的结构化 outcome 翻译成既有模型文本与 `meta.editLock`，不自行修改 episode 状态。
+
+通知走编辑锁既有的消息通道：完整 UserMessage、运行中 `steer`、空闲时 `followup` 唤醒一次。**一个 client 一份协调器、一条稳定 handle、一次共享建立尝试、一条延迟通知**：两个挂载同时订阅同一 `(session, 路径)` 也只投递一次；单个挂载卸载只移除自己的引用，其他挂载仍共享的订阅与待投递通知转给存活引用，最后一个挂载卸载时才移除该 client 的 event/reset 监听并清空协调器。agent 被销毁后它的订阅随之消失，任何延迟中的通知都不会投递给已销毁的 agent。派生子代理拿不到这个工具，与其它所有权工具一致（子代理继续共享发起会话的归属，不需要也不能等待释放）。
 
 `reset` 是终态：连接失效——socket 关闭、主动 drop/重试、显式 `close()`（包括拨号或握手尚未完成的窗口：关闭闩锁让共用这一次建立的所有调用方立刻以 `transport` 失败结算，底层 dial 永不返回也不会悬挂；之后才到达的 socket 只被关闭、不采用——不握手、不重放、不发请求、不回填清单；这一语义不引入任何拨号墙钟超时，被放弃的拨号留在后台收尾且其结果始终被消费），以及 broker 被 SIGKILL（它根本无法广播）——都会把活跃订阅标成 `reset`，给仍存活的会话投递「重新检查、必要时重新订阅」的提示，**绝不说路径已空闲**。同一连接恰好只发一次重置：失效入口只有一个，旧连接的迟到关闭是空操作。订阅不恢复、不重连重订、不持久化；agent 销毁、挂载卸载、以及一次成功的 `transferred` 结算都会取消对应等待，避免已经用另一条路拿到所有权的会话被自己的释放通知唤醒。
 
@@ -139,6 +144,20 @@
 `settled` 事件自带 requester session 与路径，**这两项就是投递地址**：请求方在发起请求的那个回合里得到 pending 回执，结果（`transferred` / `declined` / `expired`）不依赖那个回合是否还在。回合结束会清掉挂载内的 requestId 路由（那是路由备忘，不是所有权事实），而协商本身按 broker 的窗口活着——所以 `declined` / `expired` 仍会按 `(session, 路径)` 作为一条消息送达请求方；没有这条地址的旧 broker 才回退到 requestId 路由，两者都没有的事件属于别的进程，直接忽略。
 
 一次成功的 `transferred` 会在投递之前先按 `(session, 路径)` 终结对应等待（含已命中但尚未投递的释放通知）：路径已经归本会话，再被自己的释放通知唤醒没有意义。投递本身是**进程级至多一次**：同一进程中多个预设挂载会听到同一条事件，投递记账按 agent 保存已送达的 requestId（有界 FIFO），与 `issued` 路由无关，所以既不会因为回合结束而丢，也不会因为多挂载而重。记账以 broker 化身分界：新化身从自己的零重新分配 requestId，重置信号随即使旧记账失效，因此新请求的同号事件仍会正常送达。
+
+### Reply Window 的结果矩阵
+
+每个预设挂载拥有一个独立的 Transfer Negotiation，按 agent 与 requestId 管理本地 pending 请求；broker 仍是 Transfer Request 与所有权结算的唯一权威。多个 pending requestId 独立关闭，只有当前 agent 的本地 pending 集为空时才注销 `edit_lock_reply`。
+
+| 回复结果或生命周期事实 | 本地 Reply Window 行为 | broker 请求行为 |
+|---|---|---|
+| `transferred` / `declined` | 关闭对应 requestId | broker 已结算 |
+| `expired` / `stale` | 关闭对应 requestId，不再呈现可答复工具 | broker 请求已终结 |
+| `not-holder` | 只关闭当前无权限 agent 的本地窗口 | 不消费、不删除请求；真正持有者仍可答复 |
+| `transport` | 保留 pending 与回复工具，允许对同一 requestId 幂等重试 | 没有结算事实，不伪造终态 |
+| turn end / agent disposal / unmount | 独立关闭该 agent 的本地窗口 | 不改变 broker 自己的请求窗口 |
+
+未识别结果沿用既有的本地关闭行为，不新增重试承诺。这里关闭的是**持有方的本地答复能力**，不是上一节请求方的结果路由；`transferred` / `declined` / `expired` 的跨回合通知与进程级去重不变。
 
 ### 接线
 
@@ -162,6 +181,7 @@
 - **进程崩溃**：连接关闭 → 守护进程立即释放该连接全部租约。
 - **守护进程崩溃/被 kill**：全部租约消失；下一次受管编辑重新申请；客户端重连后重放自己的保留（抢不回来的剔除）。
 - **守护进程卡死/拉不起来**：连接超时 → 一次重试 → 降级放行 + 一条审计。整条路径不会挂死。
+- **显式释放传输失败**：工具返回“释放未确认”，但本地 Replay Ledger 不恢复该路径，因此重连不会撤销用户已经表达的释放意图；实际是否仍持有只由 broker 的 `status`、断连释放与 TTL 判定。
 - **协议主版本不匹配**：socket 名含主版本，不同主版本各自独立、互不仲裁；错配的连接被服务端以 `protocol-mismatch` 拒绝并关闭。
 - **跨进程**：仲裁器是中立枢纽，两个 Harness 实例共享同一 socket 与同一张表；互斥与协商都跨进程有效。
 - **可重入**：同一 lineage 的重复申请是 adopt + 刷新，不构成冲突。
@@ -184,9 +204,13 @@
 
 | 层 | 规模 | 覆盖 |
 |---|---|---|
-| 产品单测 | 2931 pass / 1 skip | 协议与内核（含释放事实与 `settled.session`）、客户端能力/统一失效（含拨号/握手期间关闭与永不返回的拨号）/lineage/真实 IPC、共享订阅协调器与在飞读门控/工具面/插件、模型可见结果基线对拍与展示元数据、视图与 chunk（含对话工具卡）、编辑器接线、旧 profile 兼容 |
-| 装置单测 | 368 pass | 场景注册、探针、断言回放 |
-| 集成场景 | 63 个场景 / 737 条检查 | 其中 14 个与编辑锁相关 |
+| 产品单测 | 2985 pass / 1 skip / 0 fail | 协议与内核（含释放事实与 `settled.session`）、客户端能力/统一失效（含拨号/握手期间关闭与永不返回的拨号）/lineage/真实 IPC、Replay Ledger（含在飞 replay 竞态）、Transfer Negotiation、Release Watch Episode、工具面/插件、模型可见结果基线对拍与展示元数据、视图与 chunk（含对话工具卡）、编辑器接线、旧 profile 兼容 |
+| 装置单测 | 368 pass / 0 fail | 场景注册、探针、断言回放 |
+| 集成场景 | 63 个场景 / 742 条检查 / 0 fail | 其中 14 个与编辑锁相关 |
+| 根脚本单测 | 11 pass / 0 fail | 发布脚本纯逻辑与 workflow 契约 |
+| 客户端构建 | 26 validated chunks | 构建成功，生成的 `lib/client.js` 与基线字节一致 |
+
+本次全量矩阵的静态检查为 0 错误。与实现前基线相比，产品单测由 2969 pass / 1 skip 增至 2985 pass / 1 skip（新增 16 个通过测试、2 个 suites，skip 与 fail 数不变）；装置、集成、根脚本与 chunk 数分别保持 368、742、11、26。
 
 与编辑锁相关的集成场景：
 
@@ -206,6 +230,14 @@
 | `filelease-holder-death` | 持有进程被 SIGKILL 后 1 秒内租约可被取得（实测 2ms），且无死进程残留行——走连接关闭释放，不等 TTL |
 | `filelease-release-watch` | 真实 broker 上两个等待会话：转交被拒 → 订阅 → 一次释放广播到每条连接 → 第二个等待者先抢到 → 订阅方收到一次通知、普通 `held` 冲突并成功再次订阅 |
 | `filelease-watch-reset` | 活跃订阅期间 SIGKILL broker：旧订阅显式终止、收到「重新检查」而非释放通知、重启后新化身上的释放广播不再触发任何旧通知 |
+
+聚焦回归按三个独立边界组织：
+
+- `file-lease-client.test.js`：两个 retention 中显式释放一个后，只有另一个在 broker 化身变化时重放；覆盖路径别名、传输失败仍删除意图、释放后不再用旧归属执行 `hold`、在飞 replay 的快照写回失效与迟到 grant 补偿释放，以及既有 `notOwned` 结果。
+- `file-lease-negotiation.test.js`、`file-lease-plugin.test.js` 与 `lease-broker-state.test.js`：覆盖完整 Reply Window 结果矩阵、多个 requestId 独立关闭、transport 后成功重试，以及 `not-holder` 后真正持有者仍可答复。
+- `file-lease-watch.test.js` 与 `file-lease-tools.test.js`：覆盖 opaque handle 的外部写入拒绝、动态只读视图、投影隔离、stale-call 保护、完整建立尝试共享、终态优先与至多一次延迟通知。
+
+`file-lease-tools.test.js` 固定 object-rooted 工具 schema；`file-lease-tool-meta.test.js` 对模型可见文本、结构化结果、通知和 `meta.editLock` 做基线对拍。本次实现未修改 `src/lease-broker/` 的 wire protocol，也未修改工具卡客户端；这些兼容断言与真实 broker 场景共同防止把内部收编变成公共行为变更。
 
 ### 回归基线（重写前后逐字不变的编辑行为）
 
