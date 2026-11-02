@@ -1064,6 +1064,29 @@ export function createLeaseClient({
   // ---------------------------------------------------------------------
 
   /**
+   * Release an explicit batch for `owner` (the `edit_lock_release` form).
+   *
+   * The ledger entry goes BEFORE the frame, and it goes even when the frame
+   * never reaches the arbiter: an explicit release is the caller's intent, and
+   * an unconfirmed transport must not resurrect a path the caller already let
+   * go of — a replay on the next connection would re-take it. Only entries this
+   * owner's lineage holds are forgotten; which of the rest the broker actually
+   * released is still its verdict (`released` / `notOwned`).
+   * @param {any} owner
+   * @param {string[]} paths
+   * @returns {Promise<any>}
+   */
+  async function release(owner, paths) {
+    const holder = normalizeOwner(owner)
+    const list = normalizePaths(paths)
+    for (const path of list) {
+      const record = ledger.get(path)
+      if (record !== undefined && record.lineage === holder.id) ledger.delete(path)
+    }
+    return await request('release', { owner: holder, paths: list })
+  }
+
+  /**
    * Release everything this session holds EXCEPT retentions (design D10): the
    * `turn/end` rule. A failure is swallowed — turn-boundary release is an
    * optimisation, and the daemon's disconnect rule plus the TTL already cover it.
@@ -1143,6 +1166,24 @@ export function createLeaseClient({
   }
 
   /**
+   * Reconcile a grant whose replay record was superseded while on the wire.
+   * A newer ledger record is newer intent and must not be released by this stale
+   * operation. No record means the path was released; a grant that nevertheless
+   * arrived late needs its own release because the explicit one may have won the
+   * broker race before the grant existed.
+   * @param {any} reply
+   * @param {'granted' | 'held'} field
+   * @param {{ id: string, session: string, label: string }} owner
+   * @param {string} path
+   */
+  async function releaseStaleReplayGrant(reply, field, owner, path) {
+    if (ledger.get(path) !== undefined) return
+    const grants = Array.isArray(reply?.[field]) ? reply[field] : []
+    if (!grants.some((entry) => entry?.path === path)) return
+    await request('release', { owner, paths: [path] })
+  }
+
+  /**
    * @returns {Promise<{ replayed: number, dropped: number }>}
    */
   async function replayOnce() {
@@ -1153,11 +1194,25 @@ export function createLeaseClient({
       if (record.holdUntil === null || record.holdUntil <= at) continue
       const owner = ownerOf(record.lineage, record.session)
       const scope = lastScope
+      let current = record
       try {
         // Re-acquire first: after a daemon restart the table is empty, so a bare
-        // `hold` would be `not-owned`. The pair is idempotent by protocol.
-        await acquire(owner, [path], requireScope(scope))
+        // `hold` would be `not-owned`. The pair is idempotent by protocol. Unlike
+        // an ordinary acquire, replay must prove its snapshot is still current
+        // before either response writes the path back into the ledger.
+        const leaseScope = requireScope(scope)
+        const acquired = await request('acquire', { owner, scope: leaseScope, paths: [path] })
+        if (ledger.get(path) !== record) {
+          await releaseStaleReplayGrant(acquired, 'granted', owner, path)
+          continue
+        }
+        if (Array.isArray(acquired.granted)) remember(acquired.granted, owner, leaseScope)
+        current = ledger.get(path) ?? record
         const response = await request('hold', { owner, paths: [path], minutes: holdMinutes(record.holdUntil - at) })
+        if (ledger.get(path) !== current) {
+          await releaseStaleReplayGrant(response, 'held', owner, path)
+          continue
+        }
         applyHold(response, owner)
         replayed += 1
       } catch (error) {
@@ -1166,7 +1221,9 @@ export function createLeaseClient({
           // rather than forgetting a retention nobody has seen fail.
           break
         }
-        ledger.delete(path)
+        // A late failure is stale for the same reason as a late grant: neither
+        // may delete a newer record installed after this snapshot was taken.
+        if (ledger.get(path) === current) ledger.delete(path)
         dropped += 1
       }
     }
@@ -1290,6 +1347,7 @@ export function createLeaseClient({
     reply,
     releaseSession,
     releaseAll,
+    release,
     replayHolds,
     onEvent,
     onReset,

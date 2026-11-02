@@ -80,6 +80,7 @@
     "src/file-lease/spawn.js",
     "src/file-lease/lineage.js",
     "src/file-lease/singleton.js",
+    "src/file-lease/negotiation.js",
     "src/file-lease/tools.js",
     "src/file-lease/watch.js",
     "src/file-lease/plugin.js",

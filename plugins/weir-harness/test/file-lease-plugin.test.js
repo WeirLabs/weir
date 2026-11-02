@@ -789,6 +789,27 @@ describe('dynamic edit_lock_reply registration', () => {
     dispose()
   })
 
+  it('retires an unanswered window independently on disposal and unmount', async () => {
+    for (const exit of ['disposal', 'unmount']) {
+      const agents = new Map()
+      const ctx = createCtx(agents)
+      const client = createFakeClient({
+        status: () => ({ ok: true, leases: [{ path: `${CWD}/src/a.js`, owner: { ...OWNER } }] }),
+      })
+      const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: () => true })
+      const agent = createAgent(OWNER.session)
+      agents.set(OWNER.session, agent)
+      const dispose = plugin.apply(ctx)
+
+      await pendingRequest(ctx, client, agent, `r-${exit}`)
+      expect(agent.ctx.tools.get('edit_lock_reply')).toBeTruthy()
+      if (exit === 'disposal') ctx.emit('agent/disposed', { agent })
+      else dispose()
+      expect(agent.ctx.tools.get('edit_lock_reply')).toBeUndefined()
+      dispose()
+    }
+  })
+
   it('registers idempotently: a second request does not throw', async () => {
     const agents = new Map()
     const ctx = createCtx(agents)
@@ -805,6 +826,72 @@ describe('dynamic edit_lock_reply registration', () => {
     expect(agent.ctx.tools.names().filter((name) => name === 'edit_lock_reply')).toEqual(['edit_lock_reply'])
     expect(ctx.warnings).toEqual([])
     dispose()
+  })
+  it('reply outcome matrix: transport keeps pending and permits an idempotent retry', async () => {
+    const agents = new Map()
+    const ctx = createCtx(agents)
+    let attempts = 0
+    const client = createFakeClient({
+      status: () => ({ ok: true, leases: [{ path: `${CWD}/src/a.js`, owner: { ...OWNER } }] }),
+      reply: (input) => {
+        attempts += 1
+        if (attempts === 1) throw Object.assign(new Error('reply transport failed'), { code: 'transport' })
+        return { ok: true, state: input.decision === 'release' ? 'transferred' : 'declined' }
+      },
+    })
+    const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: () => true })
+    const agent = createAgent(OWNER.session)
+    agents.set(OWNER.session, agent)
+    const dispose = plugin.apply(ctx)
+
+    await pendingRequest(ctx, client, agent, 'r-1')
+    await pendingRequest(ctx, client, agent, 'r-2')
+    const replyTool = agent.ctx.tools.get('edit_lock_reply')
+    expect(replyTool).toBeTruthy()
+
+    const failed = await execute(replyTool, { request_id: 'r-1', decision: 'keep' }, { agent })
+    expect(failed.degraded).toBe(true)
+    expect(failed.code).toBe('transport')
+    expect(failed.message).toContain('the answer was not delivered')
+    expect(agent.ctx.tools.get('edit_lock_reply')).toBeTruthy()
+
+    await execute(agent.ctx.tools.get('edit_lock_reply'), { request_id: 'r-2', decision: 'release' }, { agent })
+    expect(agent.ctx.tools.get('edit_lock_reply')).toBeTruthy()
+
+    const retried = await execute(agent.ctx.tools.get('edit_lock_reply'), { request_id: 'r-1', decision: 'keep' }, { agent })
+    expect(retried.state).toBe('declined')
+    expect(agent.ctx.tools.get('edit_lock_reply')).toBeUndefined()
+    expect(attempts).toBe(3)
+    dispose()
+  })
+
+  it('reply outcome matrix: expired, stale and not-holder close only the local window', async () => {
+    for (const code of ['expired', 'stale', 'not-holder']) {
+      const agents = new Map()
+      const ctx = createCtx(agents)
+      const client = createFakeClient({
+        status: () => ({ ok: true, leases: [{ path: `${CWD}/src/a.js`, owner: { ...OWNER } }] }),
+        reply: () => { throw Object.assign(new Error(`broker says ${code}`), { code }) },
+      })
+      const plugin = createFileLeasePlugin({ client, ownerOf: () => OWNER, deliver: () => true })
+      const agent = createAgent(OWNER.session)
+      agents.set(OWNER.session, agent)
+      const dispose = plugin.apply(ctx)
+
+      await pendingRequest(ctx, client, agent, 'r-domain')
+      /** @type {any} */
+      let caught = null
+      try {
+        await execute(agent.ctx.tools.get('edit_lock_reply'), { request_id: 'r-domain', decision: 'keep' }, { agent })
+      } catch (error) {
+        caught = error
+      }
+      expect(caught?.message).toContain({ expired: 'has expired', stale: 'is stale', 'not-holder': 'not addressed to this session' }[code])
+      expect(agent.ctx.tools.get('edit_lock_reply')).toBeUndefined()
+      dispose()
+    }
+    // lease-broker-state.test.js proves not-holder does NOT consume the broker
+    // request: the real holder can still answer afterwards.
   })
 })
 
@@ -933,6 +1020,13 @@ describe('two preset mounts share one client (D11)', () => {
     await flush()
     expect(delivered).toBe(1)
     expect(agent.ctx.tools.names()).toEqual(['edit_lock_reply'])
+
+    // The mount that opened the deduped local window also settles it; the
+    // sibling's mount-scoped negotiation state neither blocks nor duplicates it.
+    const reply = await execute(agent.ctx.tools.get('edit_lock_reply'), { request_id: 'r-1', decision: 'keep' }, { agent })
+    expect(reply.state).toBe('declined')
+    expect(agent.ctx.tools.get('edit_lock_reply')).toBeUndefined()
+    expect(delivered).toBe(1)
 
     disposeA()
     disposeB()

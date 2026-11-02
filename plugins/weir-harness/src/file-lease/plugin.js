@@ -33,6 +33,7 @@
 import { createLineageResolver } from './lineage.js'
 import { userTextMessage } from '../shared/user-message.js'
 import { createLeaseTools, REPLY_TOOL, shortName } from './tools.js'
+import { createTransferNegotiation } from './negotiation.js'
 import { createWatchCoordinator } from './watch.js'
 import { AUDIT_TYPES, createAudit } from '../shared/audit.js'
 import { getSharedLeaseClient } from './singleton.js'
@@ -410,8 +411,10 @@ export function createFileLeasePlugin(options = {}) {
     if (config?.enabled === false) return undefined
     /** @type {(() => void)[]} */
     const disposers = []
-    /** @type {WeakMap<object, Map<string, { path: string, from: any }>>} */
-    const pendingByAgent = new WeakMap()
+    // Pending requests and their outcome/lifetime rules belong to THIS mount,
+    // just like its conditional tool registrations (D11). Process-wide delivery
+    // dedupe stays in noticedByAgent; the broker remains the request authority.
+    const negotiation = createTransferNegotiation()
     /** @type {WeakMap<object, { dispose: () => void }>} */
     const replyTools = new WeakMap()
     /** @type {Set<any>} agents whose reply tool this mount registered */
@@ -520,15 +523,6 @@ export function createFileLeasePlugin(options = {}) {
       }
     }
 
-    /** @param {any} agent @returns {Map<string, { path: string, from: any }>} */
-    function pendingOf(agent) {
-      let pending = pendingByAgent.get(agent)
-      if (pending === undefined) {
-        pending = new Map()
-        pendingByAgent.set(agent, pending)
-      }
-      return pending
-    }
 
     /**
      * Register the reply tool on THIS AGENT's scope (not the mount's): the tool
@@ -569,25 +563,32 @@ export function createFileLeasePlugin(options = {}) {
       return {
         ...definition,
         async execute(/** @type {any} */ args, /** @type {any} */ exec) {
+          /** @type {any} */
+          let outcome
           try {
-            return await definition.execute(args, exec)
+            const result = await definition.execute(args, exec)
+            outcome = result
+            return result
+          } catch (error) {
+            // Domain errors retain their structured code through tools.js; no
+            // message parsing belongs in this registration adapter.
+            outcome = error
+            throw error
           } finally {
-            answered(agent, args?.request_id)
+            finishReply(agent, args?.request_id, outcome)
           }
         },
       }
     }
 
     /**
-     * One pending request is gone; the reply tool follows when none is left.
-     * @param {any} agent @param {unknown} requestId
+     * Reconcile one reply attempt with its own local request. The negotiation
+     * instance decides whether the window survives; the adapter only retires
+     * the registration when no request remains.
+     * @param {any} agent @param {unknown} requestId @param {any} outcome
      */
-    function answered(agent, requestId) {
-      const pending = pendingByAgent.get(agent)
-      if (pending === undefined) return
-      const id = text(requestId)
-      if (id !== undefined) pending.delete(id)
-      if (pending.size === 0) retireReplyTool(agent)
+    function finishReply(agent, requestId, outcome) {
+      if (negotiation.finishReply(agent, requestId, outcome) === 0) retireReplyTool(agent)
     }
 
     /**
@@ -600,7 +601,7 @@ export function createFileLeasePlugin(options = {}) {
       const registered = replyTools.get(agent)
       replyTools.delete(agent)
       replyAgents.delete(agent)
-      pendingByAgent.delete(agent)
+      negotiation.closeAgent(agent)
       noticedByAgent.delete(agent)
       if (registered === undefined) return
       try {
@@ -684,7 +685,7 @@ export function createFileLeasePlugin(options = {}) {
       const noticed = noticedFor(agent)
       if (noticed.has(requestId)) return
       noticed.add(requestId)
-      pendingOf(agent).set(requestId, { path, from: event?.from })
+      negotiation.openRequest(agent, requestId, { path, from: event?.from })
       registerReplyTool(agent)
       const from = event?.from ?? {}
       const label = text(from.label) ?? 'another session'
@@ -782,6 +783,7 @@ export function createFileLeasePlugin(options = {}) {
      */
     const routedClient = Object.freeze({
       acquire: (/** @type {any} */ owner, /** @type {any} */ paths, /** @type {any} */ scope) => client.acquire(owner, paths, scope),
+      release: (/** @type {any} */ owner, /** @type {any} */ paths) => client.release(owner, paths),
       hold: (/** @type {any} */ paths, /** @type {any} */ minutes, /** @type {any} */ owner) => client.hold(paths, minutes, owner),
       status: (/** @type {any} */ filter) => client.status(filter),
       request: (/** @type {any} */ op, /** @type {any} */ payload) => client.request(op, payload),
