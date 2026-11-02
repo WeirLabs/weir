@@ -514,6 +514,83 @@ describe('file-lease client: explicit release and replay (D6/D10)', () => {
     client.close()
   })
 
+  it('does not let an in-flight replay resurrect an explicitly released retention', async () => {
+    const broker = createFakeBroker()
+    const client = createClient(broker)
+    await client.acquire(OWNER, [P('a'), P('b')], SCOPE)
+    await client.hold([P('a'), P('b')], 30)
+    const first = broker.last
+
+    let incarnation = 2_000
+    let blockA = true
+    /** @type {null | (() => void)} */
+    let answerBlockedA = null
+    broker.setStartedAt(incarnation)
+    broker.setAnswer((frame, live) => {
+      if (frame.op === 'hello') return { ok: true, protocol: 1, daemonVersion: 'test', startedAt: incarnation }
+      if (frame.op === 'acquire') {
+        const granted = frame.paths.map((path) => ({
+          path,
+          owner: { ...frame.owner },
+          scope: frame.scope,
+          acquiredAt: 1_000,
+          expiresAt: Date.now() + 120_000,
+          holdUntil: null,
+        }))
+        if (blockA && frame.paths.includes(P('a'))) {
+          blockA = false
+          answerBlockedA = () => live.push({ ok: true, granted, reqId: frame.reqId })
+          return null
+        }
+        return { ok: true, granted }
+      }
+      if (frame.op === 'hold') {
+        return {
+          ok: true,
+          held: frame.paths.map((path) => ({ path, expiresAt: Date.now() + 120_000, holdUntil: Date.now() + frame.minutes * 60_000 })),
+        }
+      }
+      if (frame.op === 'release') return { ok: true, released: [...frame.paths], notOwned: [] }
+      if (frame.op === 'status') return { ok: true, leases: [] }
+      return { ok: true }
+    })
+
+    first.reset()
+    const replayedStatus = client.status()
+    await waitFor(() => answerBlockedA !== null, 'the blocked replay acquire for a')
+    const second = broker.last
+
+    // The real tool must finish its own release even though A's replay acquire is
+    // still in flight. The late acquire grant then needs its own reconciliation.
+    const release = await runLeaseTool(client, 'edit_lock_release', { paths: ['src/../a'] })
+    expect(release.released).toEqual(['a'])
+    expect(release.notOwned).toEqual([])
+    answerBlockedA()
+    expect((await replayedStatus).ok).toBe(true)
+
+    incarnation = 3_000
+    broker.setStartedAt(incarnation)
+    second.reset()
+    expect((await client.status()).ok).toBe(true)
+    const third = broker.last
+    const pathsFor = (connection, op) => connection.frames.filter((frame) => frame.op === op).flatMap((frame) => frame.paths)
+
+    expect({
+      secondHolds: pathsFor(second, 'hold'),
+      secondReleases: pathsFor(second, 'release'),
+      thirdAcquires: pathsFor(third, 'acquire'),
+      thirdHolds: pathsFor(third, 'hold'),
+    }).toEqual({
+      secondHolds: [P('b')],
+      // The explicit release raced an acquire that could not be cancelled. Its
+      // late grant must be released too, not merely omitted from the ledger.
+      secondReleases: [P('a'), P('a')],
+      thirdAcquires: [P('b')],
+      thirdHolds: [P('b')],
+    })
+    client.close()
+  })
+
   it('forgets explicit release intent even when its transport fails', async () => {
     const broker = createFakeBroker()
     const client = createClient(broker)
