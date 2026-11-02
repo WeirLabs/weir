@@ -44,6 +44,7 @@ import capabilityRemote from './capability-remote.js'
 import capabilityRemoteDualPreset from './capability-remote-dual-preset.js'
 import capabilityLifecycleRevisionZeroWeirFirst from './capability-lifecycle-revision-zero-weir-first.js'
 import capabilityLifecycleRevisionZeroCreativeFirst from './capability-lifecycle-revision-zero-creative-first.js'
+import capabilityLifecycleRetainedRevision from './capability-lifecycle-retained-revision.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import worktreeAutoApprove from './worktree-auto-approve.js'
@@ -90,6 +91,8 @@ SCENARIOS.push(capabilityRemote)
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') SCENARIOS.push(capabilityRemoteDualPreset)
 // Opt-in real-Host lifecycle admission regression; runs in both mount orders.
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') SCENARIOS.push(capabilityLifecycleRevisionZeroWeirFirst, capabilityLifecycleRevisionZeroCreativeFirst)
+// Opt-in same-preset retained-revision proof and separate facade diagnostic.
+if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') SCENARIOS.push(capabilityLifecycleRetainedRevision)
 SCENARIOS.push(continuable)
 SCENARIOS.push(zombieLane)
 SCENARIOS.push(laneResumable)

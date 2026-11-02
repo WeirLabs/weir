@@ -5,7 +5,7 @@ export const name = 'capability-lifecycle-selection-fixture'
 export const inject = ['skills']
 
 export function apply(ctx, config = {}) {
-  const { orderId, presetId, root } = config
+  const { orderId, presetId, root, baselineScopes } = config
   const state = orderState(orderId)
   const selection = createSkillSelectionPlugin()
   selection(ctx, {
@@ -13,7 +13,7 @@ export function apply(ctx, config = {}) {
     readPresetId: presetId,
     includeDefaultRoots: false,
     customSkillDirs: [root],
-    ...(presetId === 'weir-creative' ? { baselineScopes: ['weir-builtin', 'custom'] } : {}),
+    ...(baselineScopes ? { baselineScopes } : presetId === 'weir-creative' ? { baselineScopes: ['weir-builtin', 'custom'] } : {}),
   })
   const face = skillSelectionFor(ctx)
   if (!face?.lifecycle) throw new Error(`real selection lifecycle did not mount for ${presetId}`)

@@ -9,6 +9,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
 import dualPreset from '../src/scenarios/capability-remote-dual-preset.js'
+import retainedRevision from '../src/scenarios/capability-lifecycle-retained-revision.js'
 import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
 import hashlineNegatives from '../src/scenarios/editlock-hashline-negatives.js'
 import lspRename from '../src/scenarios/editlock-lsp-rename.js'
@@ -39,6 +40,7 @@ EXPECTED_ORDER.push('capability-remote')
 // so neither mode accepts the other's list.
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') EXPECTED_ORDER.push('capability-remote-dual-preset')
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') EXPECTED_ORDER.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
+if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') EXPECTED_ORDER.push('capability-lifecycle-retained-revision')
 EXPECTED_ORDER.push('continuable')
 EXPECTED_ORDER.push('zombie-lane')
 EXPECTED_ORDER.push('lane-resumable')
@@ -97,6 +99,9 @@ describe('scenario registry', () => {
       files.splice(files.indexOf('capability-lifecycle-revision-zero-weir-first'), 1)
       files.splice(files.indexOf('capability-lifecycle-revision-zero-creative-first'), 1)
     }
+    if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED !== '1') {
+      files.splice(files.indexOf('capability-lifecycle-retained-revision'), 1)
+    }
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
   })
 
@@ -111,6 +116,16 @@ describe('scenario registry', () => {
       // Not a mere env-unset assumption: the registry pushes the member on the
       // exact opt-in value '1' only (index.js), so any other value — including
       // a defined-but-non-'1' flag — must leave the member unregistered.
+      assert.equal(member, undefined)
+    }
+  })
+  it('registers the opt-in retained-revision scenario only under its flag', () => {
+    const member = byId('capability-lifecycle-retained-revision')
+    if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') {
+      assert.equal(member, retainedRevision)
+      const continuable = SCENARIOS.findIndex((s) => s.id === 'continuable')
+      assert.equal(SCENARIOS[continuable - 1], member)
+    } else {
       assert.equal(member, undefined)
     }
   })
@@ -149,6 +164,7 @@ RUN_OVERRIDE.push('filelease-turn-release', 'filelease-degrade', 'filelease-nego
 RUN_OVERRIDE.push('filelease-lineage', 'filelease-wake', 'filelease-holder-death')
 RUN_OVERRIDE.push('filelease-release-watch', 'filelease-watch-reset')
   RUN_OVERRIDE.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
+  RUN_OVERRIDE.push('capability-lifecycle-retained-revision')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {
