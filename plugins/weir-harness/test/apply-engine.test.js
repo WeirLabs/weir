@@ -353,6 +353,22 @@ test('the response returns while a slow in-flight call is still draining and rep
   assert.equal(drain.isClosed(SESSION, 'mcp-a'), true)
 })
 
+test('an accepted re-enable reopens the same session drain gate after an accepted removal', async t => {
+  const { engine, drain } = await fixture(t)
+  await engine.apply(auth, request({ selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  const removed = await engine.apply(auth, request({ requestId: 'req-remove', expectedRevision: 1, selection: { skills: [alpha], mcpServers: [] } }))
+  assert.equal(removed.status, 'applied')
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), true)
+  assert.equal(drain.enter(SESSION, 'mcp-a', 'while-removed'), null)
+
+  const restored = await engine.apply(auth, request({ requestId: 'req-restore', expectedRevision: 2, selection: { skills: [alpha], mcpServers: ['mcp-a'] } }))
+  assert.equal(restored.status, 'applied')
+  assert.equal(drain.isClosed(SESSION, 'mcp-a'), false)
+  const token = drain.enter(SESSION, 'mcp-a', 'after-restore')
+  assert.notEqual(token, null)
+  drain.exit(SESSION, 'mcp-a', token)
+})
+
 test('a definite write failure releases the fence, keeps the old snapshot and reopens drain gates', async t => {
   let failRename = false
   const fs = instrumentFs(createNodeFs(), async (op, args, phase) => {

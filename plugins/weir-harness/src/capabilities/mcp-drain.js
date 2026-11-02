@@ -130,5 +130,11 @@ export function createSessionDrainAdapter(resolveDrain) {
         abort: () => { for (const server of removed) drain.reopen(sessionId, server) },
       }
     },
+    /** Reopen only servers restored by an accepted Apply for this session. */
+    reopen(restored, sessionId) {
+      const drain = resolveDrain()
+      if (!drain) return
+      for (const server of restored) drain.reopen(sessionId, server)
+    },
   }
 }
