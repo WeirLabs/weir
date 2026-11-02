@@ -42,10 +42,11 @@ export const APPLY_AUDIT_TYPE = AUDIT_TYPES.capabilityApply
  * of the removed servers FOR THAT SESSION and returns a handle: snapshot()
  * reports the live in-flight counts (sent with the response, never awaited)
  * and abort() reopens exactly the gates begin() closed when the Apply does
- * not commit — abort() and begin() act on the SAME drain, so a failed Apply
- * never leaves a session permanently gated. Production wires the manager's
- * (agent, server)-keyed drain here (createSessionDrainAdapter, mcp-drain.js).
- * @typedef {{ begin(removed: string[], sessionId: string): { snapshot(): DrainStatus[], abort(): void } }} ApplyDrain
+ * not commit. After acceptance, reopen(restored, sessionId) opens only the
+ * servers the committed-over basis shows this Apply restored for that session.
+ * Production wires the manager's (agent, server)-keyed drain here
+ * (createSessionDrainAdapter, mcp-drain.js).
+ * @typedef {{ begin(removed: string[], sessionId: string): { snapshot(): DrainStatus[], abort(): void }, reopen(restored: string[], sessionId: string): void }} ApplyDrain
  * A step-tagged rejection keeps the old authority and the user's draft.
  * @typedef {{ status: 'applied', revision: number, receipt: unknown, effective: unknown, unresolvedWarnings: UnresolvedRef[], draining?: DrainStatus[], warnings?: string[] }
  *   | { status: 'duplicate', revision: number, receipt: unknown, effective: unknown, warnings?: string[] }
@@ -163,6 +164,9 @@ export function createDrainCoordinator() {
           for (const { state } of states) state.closed = false
         },
       }
+    },
+    reopen(restored) {
+      for (const server of restored) stateOf(server).closed = false
     },
   }
 }
@@ -607,6 +611,18 @@ export function createApplyEngine(options) {
    *   degraded: (code: string, error?: unknown) => void }} segment
    */
   function publishAccepted({ sessionId, revision, payload, prepared, viewOptions, basisSets, lease, settle = null, degraded }) {
+    // The accepted set, not the transaction-start read, owns restoration. This
+    // runs only after a durable commit (or receipt proof), inside the held fence
+    // and before lifecycle publication/manager synchronization. A reopen failure
+    // cannot reject or roll back the landed write: degrade the response honestly.
+    const restoredServers = safeSets(payload).mcpServers.filter(server => !basisSets.mcpServers.includes(server))
+    if (restoredServers.length) {
+      try {
+        drain.reopen(restoredServers, sessionId)
+      } catch (error) {
+        degraded('drain-reopen-degraded', error)
+      }
+    }
     // Task 12.4: the net accepted delta is known only HERE (durable pre-write
     // record vs the just-committed payload); notify consumers queue it for
     // the next safe request. durable-pending-notice D2: the acceptance revision
