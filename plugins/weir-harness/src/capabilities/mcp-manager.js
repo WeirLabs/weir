@@ -10,6 +10,7 @@ import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
 import { lifecycleFeedRegistry } from './lifecycle-feed.js'
 import { createMcpRuntime } from './mcp-runtime.js'
 import { createMcpOperationCoordinator } from './mcp-operation-coordinator.js'
+import { createMcpInventoryProjection, partitionMcpInventory } from './mcp-inventory.js'
 import { materializeMcpClientConfig } from './mcp-credentials.js'
 import { hasMcpSecrets, redactMcpEntry, fingerprintMcpEntry } from './mcp-config.js'
 import { createMcpProcessAdapter } from './mcp-process.js'
@@ -19,18 +20,7 @@ const message = error => (error instanceof Error ? error.message : String(error)
 const now = () => Date.now()
 
 export function partitionMcpRows(rows, mounted, registryServers) {
-  const managed = []
-  const unmanaged = []
-  for (const row of rows) {
-    if (typeof row?.id === 'string' && isMcpResidueId(row.id)) {
-      const identity = row.id.slice(MCP_GROUP_PREFIX.length)
-      const registry = registryServers[identity]
-      managed.push({ identity, groupId: row.id, label: registry?.label ?? identity, generation: mounted.get(identity)?.generation ?? registry?.generation ?? null, state: mounted.has(identity) ? 'mounted' : 'registered' })
-    } else if (row?.name === '@deepseek-ai/dsh-mcp-client' && !(typeof row.id === 'string' && row.id.startsWith(MCP_GROUP_PREFIX))) {
-      unmanaged.push({ serverName: row.config?.serverName ?? row.id ?? 'unknown', state: 'unmanaged', readOnly: true })
-    }
-  }
-  return { managed, unmanaged }
+  return partitionMcpInventory(rows, mounted, registryServers, { isResidue: isMcpResidueId, groupPrefix: MCP_GROUP_PREFIX })
 }
 
 export function hostRowHoldingReservation(rows, serverName) {
@@ -615,45 +605,13 @@ export function createMcpManager(dependencies = {}) {
     ctx.on?.('agent/created', payload => { agentCreated(payload) })
     ctx.on?.('agent/disposed', payload => { agentDisposed(payload) })
 
-    async function list() {
-      const current = await registry.read()
-      const rows = listRows()
-      const partitioned = partitionMcpRows(rows, mount.mounted, current.kind === 'ok' ? current.servers : {})
-      if (current.kind === 'absent') return { managed: [], unmanaged: partitioned.unmanaged, warnings: [], registryRevision: 0, capabilities: support() }
-      if (current.kind !== 'ok') return { managed: [], unmanaged: partitioned.unmanaged, unavailable: { status: current.kind }, registryRevision: current.revision ?? 0, capabilities: support() }
-      const defaults = new Set(current.enabled)
-      const managed = Object.values(current.servers).map(entry => {
-        const phase = runtime.snapshot(entry.identity)
-        const mountedRecord = mount.mounted.get(entry.identity)
-        const mounted = phase.phase === 'mounted' && phase.generation === entry.generation && mountedRecord?.generation === entry.generation
-        const holder = hostRowHoldingReservation(rows, entry.client?.serverName ?? entry.identity)
-        const state = holder ? 'conflict' : mounted ? 'mounted' : phase.phase === 'saved-degraded' ? 'degraded' : ['cleanup-failed', 'cleanup-unknown'].includes(phase.phase) ? phase.phase : 'registered'
-        const discovery = discoveryFor(entry.identity, entry.generation)
-        return {
-          identity: entry.identity,
-          label: entry.label,
-          serverName: entry.client?.serverName ?? entry.identity,
-          transport: entry.transport?.kind ?? entry.client?.transport ?? 'unknown',
-          incarnation: entry.incarnation ?? null,
-          generation: entry.generation,
-          defaultEnabled: defaults.has(entry.identity),
-          state,
-          statusSource: mounted ? 'registry-runtime-mount-readback' : holder ? 'serverName-reservation' : 'registry-runtime',
-          runtimePhase: phase.phase,
-          discovery: mounted ? discovery : { toolCount: null, toolNamesPreview: [], truncated: false },
-          lastMount: receipts.mount.get(entry.identity) ?? null,
-          lastTest: receipts.test.get(entry.identity) ?? null,
-          startErrors: startErrors.filter(error => error.identity === entry.identity).map(error => ({ reason: error.reason })),
-          liveReconnect: 'unknown',
-          processExit: 'unknown',
-          stderr: 'unknown',
-          readOnly: false,
-          config: redactMcpEntry(entry),
-          fingerprint: fingerprintMcpEntry(entry),
-        }
-      })
-      return { managed, unmanaged: partitioned.unmanaged, warnings: current.warnings, registryRevision: current.revision, capabilities: support() }
-    }
+    const inventory = createMcpInventoryProjection({
+      registry, runtime, mounted: mount.mounted, receipts, listRows, startErrors,
+      discoveryFor, support, isResidue: isMcpResidueId, groupPrefix: MCP_GROUP_PREFIX,
+      holdsReservation: hostRowHoldingReservation,
+      redactEntry: redactMcpEntry, fingerprintEntry: fingerprintMcpEntry,
+    })
+    const list = () => inventory.list()
 
     const gateFace = {
       admit: (agent, identity, generation) => gate.admit(agent, identity, generation),

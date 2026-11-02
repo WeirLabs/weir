@@ -37,6 +37,7 @@
     "src/capabilities/store/checked-contract.d.ts",
     "src/capabilities/lifecycle-feed.js",
     "src/capabilities/mcp-operation-coordinator.js",
+    "src/capabilities/mcp-inventory.js",
     "lib/client.file-lease-badge.js",
     "src/blackboard/kernel.js",
     "src/blackboard/storage.js",
