@@ -66,6 +66,8 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 5. 经自管存储在锁内 CAS 原子写入新 selection 与 receipt，**`store.commit` 同时返回它实际覆写的 payload（`committedOver`，在同一把 unit 锁内读到）**，净 delta 与关闸/排空集合都以该记录为权威（apply-basis-lock-hardening D2/D3；事务起始读只保留 fail-fast 校验与提前关闸的角色），随后在**同一个非异步段**（`publishAccepted`，apply-delta-durable-basis D4）内依次 对持久记录计算净 delta 并入队模型通知 → 切换内存快照 → 更新 lifecycle 快照 → 调用 provider `control.invalidate()` → 解除 fence——`invalidate()` 先于解除 fence、先于发送响应，客户端收到响应后的第一次重取绝不会命中旧缓存；写入明确失败则解除 fence 并恢复旧快照，写入结果不确定则维持阻断，按原 request ID 查询 receipt 结算（`published`／`not-committed`／`blocked`——不宣称取消成功、不伪造回滚；`published` 恢复运行**同一个** `publishAccepted` 发布段，通知恰好入队一次）；
 6. 发送响应：accepted revision、effective sets、unresolved warnings 与发送时刻的排空状态快照，**不等待**排空完成。
 
+**accepted re-enable 的 drain 恢复**：accepted removal 关闭的 `(session, server)` 闸在禁用期间保持关闭。之后若 Apply 重新接受该 server，引擎在 durable commit（或 receipt proof）之后、仍持有 Apply fence 时，按「accepted set − `committedOver` 基准」计算本次实际恢复的 servers，只重开当前 session 的这些闸，然后才发布 owning lifecycle 并同步 manager。失败或结果不确定的 Apply 不借此路径提前开门；reopen 自身失败只报告 `drain-reopen-degraded`，不把已落地提交伪装成拒绝或回滚，也不改动 sibling session 或 identity-wide runtime-operation 关闭。
+
 配套纪律与机制：
 
 - **审计**：`capability-apply` 类型注册于共享 [audit.js](<../../plugins/weir-harness/src/shared/audit.js>)（cordis emit + `.weir/audit.jsonl` 双写），发射失败 warn/swallow 且不改变 policy；生产引擎经 `engineFor()` 接入该冷安全通道与 logger 诊断 `trace`（apply-delta-durable-basis D5——此前审计只在测试中接线），`apply-wiring.test.js` 钉住提交 Apply 与 recovery-`published` 结算两处发射；`command/run`／`command/done`／审计日志都不是提交证据；新增代码静态保证不触碰 `session.append` 与自定义 session 事件（冷读红线）。
@@ -121,6 +123,8 @@ Skill 侧保持**官方形状**：`skills` 注册表留在宿主层，Weir 在�
 Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置的 server 由 Weir 在运行时逐个挂载（每个 server 一个隔离 `cordis:group`：代理 facade + stock `dsh-mcp-client`，经宿主支持的 loader API 创建/销毁，崩溃残留行启动时清理），会话选择决定每个 agent 能用哪些。
 
 **预设行 realm 布局**：manager 行经 reflect 发布 `weirMcpGate` / `weirMcpManager` 两个服务，而预设注册审计拒绝任何进入根 realm 的预设服务（`Preset services require isolate realms`），因此 `weir-mcp-manager`（提供者）与 `weir-skill-selection`（消费者，`/capabilities list` 读取 manager 列表）同置于预设的 `capabilities` cordis 组、由该组 isolate 这两个服务（S11 同 realm 纪律，`preset-realms` 单测对拍守卫）；facade 侧经模块级 realm bridge 取闸门面，不跨 realm 读服务。
+
+**MCP lifecycle 按 Mounted Preset Revision 归属**：每次 selection 挂载通过实际 `ctx.effect` 注册独立的 Lifecycle Feed token，token 持有该 revision 的 lifecycle 与惰性 manager accessor。manager 在每次 `snapshotFor` 裁决时都按自身可变 face 的引用身份寻找唯一 token；零个、多个、迟到或失败 accessor 均 fail closed，绝不回退到 `processFace`、挂载顺序、preset 名或唯一现存 feed。token 由该次 mount 幂等清理，乱序/重复销毁不影响 sibling 或 replacement。由此，memory-only revision 0（无需 Apply 或 durable 记录）、后续 Apply、继承/冷读与 retained old/new revisions 都读取各自 owning lifecycle；`skillSelectionFor` 仍仅供既有 delegate/intent-gate 消费者。该机制不新增 Cordis service、隔离组或生产 patch 行，也不改变 capability-remote 的冷读路由。
 
 **保证等级（如实措辞）：**
 
