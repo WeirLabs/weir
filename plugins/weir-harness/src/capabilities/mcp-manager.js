@@ -7,7 +7,7 @@ import { createMcpGate } from './mcp-gate.js'
 import { createMcpDrain } from './mcp-drain.js'
 import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree } from './mcp-mount.js'
 import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
-import { skillSelectionFor } from './skill-selection-plugin.js'
+import { lifecycleFeedRegistry } from './lifecycle-feed.js'
 import { createMcpRuntime, createMcpIdentityLock } from './mcp-runtime.js'
 import { materializeMcpClientConfig } from './mcp-credentials.js'
 import { hasMcpSecrets, redactMcpEntry, fingerprintMcpEntry } from './mcp-config.js'
@@ -42,8 +42,13 @@ export function createMcpManager(dependencies = {}) {
     const profileContext = ctx.get?.('profileContext')
     const store = dependencies.store ?? openCapabilityStore({ profileContext })
     const registry = dependencies.registry ?? createMcpRegistry({ store })
+    let defaultLifecycleActive = true
     const lifecycle = dependencies.lifecycle ?? {
-      snapshotFor: sessionId => skillSelectionFor(ctx)?.lifecycle?.snapshotFor(sessionId) ?? null,
+      snapshotFor(sessionId) {
+        if (!defaultLifecycleActive) return null
+        const owningLifecycle = lifecycleFeedRegistry.lifecycleFor(face)
+        return owningLifecycle?.snapshotFor?.(sessionId) ?? null
+      },
     }
     const runtime = dependencies.runtime ?? createMcpRuntime()
     // Every runtime.begin path runs inside this per-identity queue (design D6).
@@ -668,6 +673,7 @@ export function createMcpManager(dependencies = {}) {
       onError('mcp-manager-start-failed', cause)
     })
     return () => {
+      defaultLifecycleActive = false
       try { ctx.reflect?.provide?.('weirMcpGate', { admit: async () => false, permit: async () => null, assertPermit: () => false, enabledFor: () => false, drain }) } catch { /* best effort */ }
       // Child-group disposal normally unregisters tools first. If any public
       // fact remains, unregistration was not confirmed: KEEP its deny instead

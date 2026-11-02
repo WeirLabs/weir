@@ -38,6 +38,7 @@ EXPECTED_ORDER.push('capability-remote')
 // lands): the expected order follows the same flag, immediately after
 // capability-remote, so neither mode accepts the other's list.
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') EXPECTED_ORDER.push('capability-remote-dual-preset')
+if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') EXPECTED_ORDER.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
 EXPECTED_ORDER.push('continuable')
 EXPECTED_ORDER.push('zombie-lane')
 EXPECTED_ORDER.push('lane-resumable')
@@ -92,6 +93,10 @@ describe('scenario registry', () => {
     if (process.env.WEIR_IT_CAPABILITY_DUAL !== '1') {
       files.splice(files.indexOf('capability-remote-dual-preset'), 1)
     }
+    if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL !== '1') {
+      files.splice(files.indexOf('capability-lifecycle-revision-zero-weir-first'), 1)
+      files.splice(files.indexOf('capability-lifecycle-revision-zero-creative-first'), 1)
+    }
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
   })
 
@@ -143,6 +148,7 @@ describe('scenario registry', () => {
 RUN_OVERRIDE.push('filelease-turn-release', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection')
 RUN_OVERRIDE.push('filelease-lineage', 'filelease-wake', 'filelease-holder-death')
 RUN_OVERRIDE.push('filelease-release-watch', 'filelease-watch-reset')
+  RUN_OVERRIDE.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

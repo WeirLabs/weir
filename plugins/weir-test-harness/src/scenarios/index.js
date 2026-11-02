@@ -42,6 +42,8 @@ import capabilityPresetsSurface from './capability-presets-surface.js'
 import resumeIncarnation from './resume-incarnation.js'
 import capabilityRemote from './capability-remote.js'
 import capabilityRemoteDualPreset from './capability-remote-dual-preset.js'
+import capabilityLifecycleRevisionZeroWeirFirst from './capability-lifecycle-revision-zero-weir-first.js'
+import capabilityLifecycleRevisionZeroCreativeFirst from './capability-lifecycle-revision-zero-creative-first.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import worktreeAutoApprove from './worktree-auto-approve.js'
@@ -86,6 +88,8 @@ SCENARIOS.push(childPrompt)
 SCENARIOS.push(capabilityRemote)
 // Opt-in until the production routing fix lands: this fixture is intentionally RED.
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') SCENARIOS.push(capabilityRemoteDualPreset)
+// Opt-in red regression until the per-mount Lifecycle Feed lands (task 1.3).
+if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') SCENARIOS.push(capabilityLifecycleRevisionZeroWeirFirst, capabilityLifecycleRevisionZeroCreativeFirst)
 SCENARIOS.push(continuable)
 SCENARIOS.push(zombieLane)
 SCENARIOS.push(laneResumable)

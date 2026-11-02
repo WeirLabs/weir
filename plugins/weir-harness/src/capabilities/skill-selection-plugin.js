@@ -13,6 +13,7 @@ import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
 import { createPresetInvalidation, emitPresetSelected } from './preset-invalidation.js'
 import { createLifecycleSnapshots } from './lifecycle-snapshot.js'
 import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
+import { lifecycleFeedRegistry } from './lifecycle-feed.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
 import { partitionUnresolvedSkills } from './skill-applicability.js'
@@ -646,6 +647,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     }
     mounted.set(ctx, face)
     processFace = face
+    // Admission ownership is per mounted revision, not the process-local face.
+    // Resolve the manager lazily so either row may mount first; the effect owns
+    // exactly this token and its idempotent release cannot remove a replacement.
+    ctx.effect?.(() => lifecycleFeedRegistry.register({
+      lifecycle,
+      manager: () => ctx.get?.('weirMcpManager'),
+    }), 'weir-capability-lifecycle-feed')
     // The Host remote can see only this explicitly labeled preset's faces.
     // Its sessionQuery observation, not any creation-time cwd cache, owns routing.
     try {

@@ -35,6 +35,7 @@
     // a `/// <reference>` from a deleted edit-lock module, so the dependency is
     // listed here instead of staying accidental.
     "src/capabilities/store/checked-contract.d.ts",
+    "src/capabilities/lifecycle-feed.js",
     "lib/client.file-lease-badge.js",
     "src/blackboard/kernel.js",
     "src/blackboard/storage.js",
