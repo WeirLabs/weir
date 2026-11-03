@@ -28,6 +28,11 @@ test('group options isolate the three services and reference the stock client by
   expect(options.config[1].name).toBe('@deepseek-ai/dsh-mcp-client')
   expect(options.config[0].name).toBe('weir-harness/mcp-facade-plugin')
   expect(options.config[0].config).toEqual({ identity: 'docs', generation: 3, group: 'weir-mcp-docs' })
+  const scoped = mcpGroupOptions({ identity: 'docs', generation: 3, groupId: 'weir-mcp-docs~attempt-1', client: { command: 'mock' } })
+  expect(scoped.id).toBe('weir-mcp-docs~attempt-1')
+  expect(scoped.config.map(row => row.id)).toEqual(['weir-mcp-docs~attempt-1-facade', 'weir-mcp-docs~attempt-1-client'])
+  expect(scoped.config[0].config).toEqual({ identity: 'docs', generation: 3, group: 'weir-mcp-docs~attempt-1' })
+  assert.throws(() => mcpGroupOptions({ identity: 'docs', generation: 1, groupId: 'other', client: {} }), TypeError)
   assert.throws(() => mcpGroupOptions({ identity: '../x', generation: 1, client: {} }), TypeError)
 })
 

@@ -44,6 +44,23 @@ test('the entry exports the stable plugin name and the bridge registry', () => {
   assert.equal(mcpFacadeBridgeFor('g-1'), null)
 })
 
+test('stale or repeated bridge release cannot delete a later owner after confirmed group reuse', () => {
+  const stalePayload = makePayload({ identity: 'stale-owner' })
+  const currentPayload = makePayload({ identity: 'current-owner' })
+  const releaseStale = registerMcpFacadeBridge('g-reused', stalePayload)
+  releaseStale()
+  const releaseCurrent = registerMcpFacadeBridge('g-reused', currentPayload)
+  try {
+    releaseStale()
+    releaseStale()
+    assert.equal(mcpFacadeBridgeFor('g-reused'), currentPayload)
+  } finally {
+    releaseCurrent()
+    releaseCurrent()
+  }
+  assert.equal(mcpFacadeBridgeFor('g-reused'), null)
+})
+
 test('apply without a bridge fails closed and visible: warn, provide nothing', () => {
   const { ctx, calls } = makeCtx('g-absent')
   apply(ctx)
@@ -84,6 +101,15 @@ test('apply falls back to a config-carried payload and to config.group', () => {
   } finally {
     unregister()
   }
+})
+
+test('duplicate registration rejects instead of overwriting the current owner', () => {
+  const current = makePayload({ identity: 'current' })
+  const release = registerMcpFacadeBridge('g-duplicate', current, 'current-owner')
+  try {
+    assert.throws(() => registerMcpFacadeBridge('g-duplicate', makePayload({ identity: 'intruder' }), 'other-owner'), error => error.code === 'duplicate-mcp-facade-owner')
+    assert.equal(mcpFacadeBridgeFor('g-duplicate'), current)
+  } finally { release() }
 })
 
 test('removing the bridge closes the mount again', () => {

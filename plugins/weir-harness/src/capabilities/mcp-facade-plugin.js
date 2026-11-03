@@ -14,13 +14,23 @@ import { createMcpFacade } from './mcp-facade.js'
  */
 const bridge = new Map()
 
-export function registerMcpFacadeBridge(groupId, payload) {
-  bridge.set(groupId, payload)
-  return () => bridge.delete(groupId)
+export function registerMcpFacadeBridge(groupId, payload, owner = payload) {
+  if (bridge.has(groupId)) {
+    throw Object.assign(new Error(`MCP facade group ${groupId} already has an owner`), { code: 'duplicate-mcp-facade-owner' })
+  }
+  const record = { payload, owner }
+  bridge.set(groupId, record)
+  return () => {
+    // A stale/repeated disposer compares the exact registration and owner. It
+    // can never delete a later registration that reused the confirmed-free ID.
+    if (bridge.get(groupId) !== record || record.owner !== owner) return false
+    bridge.delete(groupId)
+    return true
+  }
 }
 
 export function mcpFacadeBridgeFor(groupId) {
-  return bridge.get(groupId) ?? null
+  return bridge.get(groupId)?.payload ?? null
 }
 
 export const name = 'weir-mcp-facade'

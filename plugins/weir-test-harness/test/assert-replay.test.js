@@ -33,7 +33,7 @@ function syntheticObs() {
 // The lifecycle revision-zero and retained-revision cases are also live-only:
 // their custom runs boot real preset revisions and their assertions consume real
 // RPC/server-process reports, which a frozen mock-LLM trace cannot establish.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection', 'filelease-lineage', 'filelease-wake', 'filelease-holder-death', 'filelease-release-watch', 'filelease-watch-reset', 'capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first', 'capability-lifecycle-retained-revision'].includes(scenario.id))
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection', 'filelease-lineage', 'filelease-wake', 'filelease-holder-death', 'filelease-release-watch', 'filelease-watch-reset', 'capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first', 'capability-lifecycle-retained-revision', 'scoped-preset-tree-canary'].includes(scenario.id))
 
 /** Load one scenario's recorded run as a makeRunView input. */
 function loadRun(scenarioId) {

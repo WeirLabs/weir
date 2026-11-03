@@ -5,8 +5,9 @@ import { openCapabilityStore } from './store/store.js'
 import { createMcpRegistry } from './mcp-registry.js'
 import { createMcpGate } from './mcp-gate.js'
 import { createMcpDrain } from './mcp-drain.js'
-import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree } from './mcp-mount.js'
+import { createMcpMount, mcpGroupOptions, isMcpResidueId, detectMcpNameAmbiguity, MCP_GROUP_PREFIX, resolveEphemeralMcpTree, resolveScopedMcpTree } from './mcp-mount.js'
 import { registerMcpFacadeBridge } from './mcp-facade-plugin.js'
+import { mcpMountOwnership } from './mcp-mount-ownership.js'
 import { lifecycleFeedRegistry } from './lifecycle-feed.js'
 import { createMcpRuntime } from './mcp-runtime.js'
 import { createMcpOperationCoordinator } from './mcp-operation-coordinator.js'
@@ -19,8 +20,8 @@ import { mcpDiagnostic, sanitizeMcpText } from './mcp-diagnostics.js'
 const message = error => (error instanceof Error ? error.message : String(error))
 const now = () => Date.now()
 
-export function partitionMcpRows(rows, mounted, registryServers) {
-  return partitionMcpInventory(rows, mounted, registryServers, { isResidue: isMcpResidueId, groupPrefix: MCP_GROUP_PREFIX })
+export function partitionMcpRows(rows, mounted, registryServers, ownership = mcpMountOwnership) {
+  return partitionMcpInventory(rows, mounted, registryServers, { isResidue: isMcpResidueId, groupPrefix: MCP_GROUP_PREFIX, ownership })
 }
 
 export function hostRowHoldingReservation(rows, serverName) {
@@ -47,19 +48,22 @@ export function createMcpManager(dependencies = {}) {
     const { serialize, beginOperation, finishOperation, abortOperation } = coordinator
     const gate = dependencies.gate ?? createMcpGate({ registry, lifecycle, runtime, registrationFor: runtime.registrationFor })
     const loader = dependencies.loader ?? ctx.get?.('loader')
-    const defaultListRows = () => [...(loader?.entries?.() ?? [])].map(entry => ({ id: entry?.options?.id ?? entry?.id ?? null, name: entry?.options?.name ?? null, config: entry?.options?.config ?? {} }))
-    const listEntryIds = dependencies.listEntryIds ?? (() => defaultListRows().map(row => row.id).filter(Boolean))
-    const listRows = dependencies.listRows ?? defaultListRows
+    const ownership = dependencies.ownership ?? mcpMountOwnership
+    const defaultHostRows = () => [...(loader?.entries?.() ?? [])].map(entry => ({ id: entry?.options?.id ?? entry?.id ?? null, name: entry?.options?.name ?? null, config: entry?.options?.config ?? {} }))
     const startErrors = []
     /** A strict mount of this identity supersedes its earlier start/mount failures. */
     const clearStartErrors = identity => {
       for (let index = startErrors.length - 1; index >= 0; index -= 1) if (startErrors[index].identity === identity) startErrors.splice(index, 1)
     }
     const onError = (reason, cause) => ctx.logger?.warn?.(sanitizeMcpText(`${reason}${cause ? `: ${message(cause)}` : ''}`))
-    const defaultFiberOf = async groupId => {
+    const owningTree = ctx.fiber?.entry?.parent?.tree ?? null
+    const scopedTree = owningTree ? resolveScopedMcpTree(owningTree) : undefined
+    const defaultFiberOf = async (groupId, context = {}) => {
+      const tree = context.tree ?? mount.treeForGroup?.(groupId)
+      const resolve = tree?.resolve ?? (id => loader?.resolve?.(id))
       for (const candidate of [`${groupId}:${groupId}-client`, `${groupId}-client`]) {
         let entry = null
-        try { entry = loader?.resolve?.(candidate) } catch { /* next shape */ }
+        try { entry = resolve?.(candidate) } catch { /* next shape */ }
         if (entry?.fiber) {
           await entry.fiber.await()
           return { state: 'running' }
@@ -67,15 +71,23 @@ export function createMcpManager(dependencies = {}) {
       }
       return null
     }
-    const mount = dependencies.mount ?? createMcpMount({ loader, onError, startupTimeoutMs: config.startupTimeoutMs ?? 15_000, cleanupTimeoutMs: config.cleanupTimeoutMs ?? 15_000 })
+    const mount = dependencies.mount ?? createMcpMount({
+      loader, onError, ownership,
+      startupTimeoutMs: config.startupTimeoutMs ?? 15_000,
+      cleanupTimeoutMs: config.cleanupTimeoutMs ?? 15_000,
+      ...(scopedTree !== undefined ? { ephemeralTree: scopedTree } : {}),
+    })
     const fiberOf = dependencies.fiberOf ?? defaultFiberOf
+    const listRows = dependencies.listRows ?? (() => [...defaultHostRows(), ...(mount.listRows?.() ?? [])])
+    const listEntryIds = dependencies.listEntryIds ?? (() => listRows().map(row => row.id).filter(Boolean))
     const processAdapter = dependencies.processAdapter ?? createMcpProcessAdapter({ subprocess: dependencies.subprocess ?? ctx.get?.('subprocess') })
     const credentialsFor = () => dependencies.credentials ?? ctx.get?.('credentials')
     const support = () => {
       const credentials = credentialsFor()
-      return { credentials: typeof credentials?.set === 'function' && typeof credentials?.resolve === 'function', ephemeral: resolveEphemeralMcpTree(loader).kind === 'ok' }
+      return { credentials: typeof credentials?.set === 'function' && typeof credentials?.resolve === 'function', ephemeral: scopedTree?.kind === 'ok' || resolveEphemeralMcpTree(loader).kind === 'ok' }
     }
     const publicNames = new Map() // publicName → { identity, generation }
+    const publicOwnerAttempts = new WeakMap() // plain public owner object → internal bridge attempt
     const bridges = new Map() // groupId → { identity, generation, release }
     const receipts = { mount: new Map(), test: new Map() }
     const host = {
@@ -88,9 +100,13 @@ export function createMcpManager(dependencies = {}) {
     const restrictions = new Map() // agent → Map(publicName → { owner, dispose })
 
     const identityOf = owner => typeof owner === 'string' ? owner : owner?.identity
-    const sameOwner = (owner, identity, generation) => typeof owner === 'string'
-      ? owner === identity // legacy test facts carried no generation
-      : owner?.identity === identity && owner?.generation === generation
+    const attemptOf = owner => owner && (typeof owner === 'object' || typeof owner === 'function') ? publicOwnerAttempts.get(owner) : null
+    const sameOwner = (owner, identity, generation, attempt = null) => {
+      const same = typeof owner === 'string'
+        ? owner === identity // legacy test facts carried no generation
+        : owner?.identity === identity && owner?.generation === generation
+      return same && (!attempt || attemptOf(owner) === attempt)
+    }
     const isAgent = agent => (typeof agent === 'object' && agent !== null) || typeof agent === 'function'
     function rememberAgent(agent) {
       if (!isAgent(agent)) return null
@@ -121,7 +137,12 @@ export function createMcpManager(dependencies = {}) {
           const present = publicNames.has(name)
           const owner = publicNames.get(name)
           const existing = held?.get(name)
-          const shouldDeny = present && !gate.enabledFor(agent, identityOf(owner))
+          const definition = attemptOf(owner)?.definitions?.get(name)
+          let foreignDefinition = false
+          if (owningTree && definition && (!existing || existing.owner !== owner) && typeof host.tools?.get === 'function') {
+            try { foreignDefinition = host.tools.get(name, agent) !== definition } catch { /* fail closed through the normal gate deny */ }
+          }
+          const shouldDeny = present && !foreignDefinition && !gate.enabledFor(agent, identityOf(owner))
           if (shouldDeny && !existing) {
             const restrict = agent?.ctx?.tools?.restrict
             if (typeof restrict !== 'function') throw new Error(`cannot restrict MCP tool "${name}" without agent tools`)
@@ -166,10 +187,14 @@ export function createMcpManager(dependencies = {}) {
       if (rememberAgent(agent)) reconcileAgent(agent)
     }
 
-    function registerPublicName(name, identity, generation, captureRollback) {
+    function registerPublicName(name, identity, generation, captureRollback, attempt = null, definition = null) {
       const hadPrevious = publicNames.has(name)
       const previous = publicNames.get(name)
       const attempted = { identity, generation }
+      // Preserve the public {identity,generation} shape while binding exact
+      // attempt identity for same-generation concurrent/stale cleanup.
+      if (attempt) publicOwnerAttempts.set(attempted, attempt)
+      if (attempt && definition) attempt.definitions.set(name, definition)
       const previousDenies = []
       for (const [agent, held] of restrictions) {
         const record = held.get(name)
@@ -224,8 +249,8 @@ export function createMcpManager(dependencies = {}) {
       syncName(name, added)
     }
 
-    function unregisterPublicName(name, identity, generation) {
-      if (!sameOwner(publicNames.get(name), identity, generation)) return false
+    function unregisterPublicName(name, identity, generation, attempt = null) {
+      if (!sameOwner(publicNames.get(name), identity, generation, attempt)) return false
       publicNames.delete(name)
       try { syncName(name) } catch (cause) { onError(`mcp-schema-cleanup-failed:${name}`, cause) }
       return true
@@ -247,37 +272,41 @@ export function createMcpManager(dependencies = {}) {
       if (held.size === 0) restrictions.delete(agent)
     }
 
-    // Agents that predate this manager are authoritative through the Host
-    // registry. No public names exist yet, so bootstrap only records identity.
-    if (typeof agentsService?.list === 'function') {
-      try { liveAgents() } catch (cause) { onError('mcp-agent-bootstrap-failed', cause) }
-    }
-
-    function releaseBridge(groupId, expected = null) {
+    function releaseBridge(groupId, expected) {
       const bridge = bridges.get(groupId)
-      if (!bridge) return
-      if (expected && (bridge.identity !== expected.identity || bridge.generation !== expected.generation)) return
+      if (!bridge || !expected || bridge !== expected) return false
       bridges.delete(groupId)
       for (const [name, owner] of [...publicNames]) {
-        if (sameOwner(owner, bridge.identity, bridge.generation)) unregisterPublicName(name, bridge.identity, bridge.generation)
+        if (sameOwner(owner, bridge.identity, bridge.generation, bridge)) unregisterPublicName(name, bridge.identity, bridge.generation, bridge)
       }
       bridge.release()
+      bridge.definitions.clear()
+      return true
     }
-    function registerBridge(groupId, identity, generation) {
+    function registerBridge(groupId, identity, generation, owner = null) {
+      if (bridges.has(groupId)) throw Object.assign(new Error(`MCP manager group ${groupId} already has a bridge`), { code: 'duplicate-mcp-facade-owner' })
+      const record = { groupId, identity, generation, owner, release: null, definitions: new Map() }
       const release = registerMcpFacadeBridge(groupId, {
         host, identity, generation,
         admit: agent => gate.permit(agent, identity, generation),
         assertPermit: gate.assertPermit,
         isEnabledFor: agent => gate.enabledFor(agent, identity),
         drain,
-        onRegister: (name, captureRollback) => registerPublicName(name, identity, generation, captureRollback),
-        onUnregister: name => unregisterPublicName(name, identity, generation),
+        onRegister: (name, captureRollback, definition) => registerPublicName(name, identity, generation, captureRollback, record, definition),
+        onUnregister: name => unregisterPublicName(name, identity, generation, record),
         onError,
-      })
-      bridges.set(groupId, { identity, generation, release })
+      }, owner ?? record)
+      record.release = release
+      bridges.set(groupId, record)
+      return record
     }
-    function discoveryFor(identity, generation) {
-      const names = [...publicNames.entries()].filter(([, owner]) => owner.identity === identity && owner.generation === generation).map(([name]) => name).sort()
+    function discoveryFor(identity, generation, attempt = null) {
+      const currentGroup = mount.mounted.get(identity)?.groupId ?? null
+      const names = [...publicNames.entries()].filter(([, owner]) => {
+        if (owner.identity !== identity || owner.generation !== generation) return false
+        if (attempt) return attemptOf(owner) === attempt
+        return !attemptOf(owner) || attemptOf(owner).groupId === currentGroup
+      }).map(([name]) => name).sort()
       return { toolCount: names.length, toolNamesPreview: names.slice(0, 20), truncated: names.length > 20 }
     }
 
@@ -342,15 +371,20 @@ export function createMcpManager(dependencies = {}) {
         }
         await waitForDrain(identity)
         if (mount.mounted.has(identity)) {
-          const removed = await mount.unmount(identity)
+          const previousMount = mount.mounted.get(identity)
+          const previousBridge = bridges.get(previousMount.groupId) ?? null
+          const afterCleanup = () => releaseBridge(previousMount.groupId, previousBridge)
+          const removed = await mount.unmount(identity, {}, { afterCleanup })
           if (removed.status !== 'cleaned') {
             finishOperation(token, removed.status, { generation: entry.generation, incarnation: entry.incarnation ?? null })
             return { status: removed.status, identity, cleanup: removed, saved: true }
           }
-          releaseBridge(`${MCP_GROUP_PREFIX}${identity}`)
+          // Legacy mount doubles do not consume context; exact compare-delete
+          // makes this compatibility fallback harmless for the real mount.
+          afterCleanup()
         }
         const prepared = await prepare(entry)
-        const groupId = `${MCP_GROUP_PREFIX}${identity}`
+        let attempt = null
         const result = await mount.mount({
           identity,
           generation: entry.generation,
@@ -359,9 +393,13 @@ export function createMcpManager(dependencies = {}) {
           secretBearing: prepared.secretBearing,
           execution: prepared.execution,
           fiberOf,
-          beforeCreate: () => registerBridge(groupId, identity, entry.generation),
-          afterCleanup: () => releaseBridge(groupId, { identity, generation: entry.generation }),
-          discovery: () => discoveryFor(identity, entry.generation),
+          beforeCreate: (context = {}) => {
+            attempt = registerBridge(context.groupId ?? `${MCP_GROUP_PREFIX}${identity}`, identity, entry.generation, context.owner ?? null)
+          },
+          afterCleanup: (context = {}) => {
+            if (attempt) releaseBridge(context.groupId ?? attempt.groupId, attempt)
+          },
+          discovery: () => discoveryFor(identity, entry.generation, attempt),
           readback: async () => {
             const readback = await registry.read()
             const actual = readback.kind === 'ok' ? readback.servers[identity] : null
@@ -400,12 +438,16 @@ export function createMcpManager(dependencies = {}) {
     async function removeRuntimeFenced(identity, token) {
       try {
         await waitForDrain(identity)
-        const cleanup = await mount.unmount(identity)
+        const mountedRecord = mount.mounted.get(identity) ?? null
+        const groupId = mountedRecord?.groupId ?? null
+        const bridge = groupId ? bridges.get(groupId) ?? null : null
+        const afterCleanup = () => { if (groupId) releaseBridge(groupId, bridge) }
+        const cleanup = await mount.unmount(identity, {}, { afterCleanup })
         if (cleanup.status !== 'cleaned') {
           finishOperation(token, cleanup.status)
           return { status: cleanup.status, identity, cleanup, error: cleanup.diagnostic, next: { action: 'recover-residue' } }
         }
-        releaseBridge(`${MCP_GROUP_PREFIX}${identity}`)
+        afterCleanup()
         finishOperation(token, 'unknown', { generation: null, incarnation: null })
         return { status: 'removed', identity, removed: true }
       } catch (cause) {
@@ -416,6 +458,7 @@ export function createMcpManager(dependencies = {}) {
     }
 
     async function probe(entry, { targetIdentity = entry.identity } = {}) {
+      let attempt = null
       try {
         const prepared = await prepare(entry)
         const result = await mount.probe({
@@ -425,9 +468,13 @@ export function createMcpManager(dependencies = {}) {
           secretBearing: prepared.secretBearing,
           secrets: prepared.secrets,
           fiberOf,
-          beforeCreate: ({ groupId, identity, generation }) => registerBridge(groupId, identity, generation),
-          afterCleanup: ({ groupId, identity, generation }) => releaseBridge(groupId, { identity, generation }),
-          discovery: ({ identity, generation }) => discoveryFor(identity, generation),
+          beforeCreate: (context = {}) => {
+            attempt = registerBridge(context.groupId ?? `${MCP_GROUP_PREFIX}probe`, context.identity ?? 'probe', context.generation ?? 0, context.owner ?? null)
+          },
+          afterCleanup: (context = {}) => {
+            if (attempt) releaseBridge(context.groupId ?? attempt.groupId, attempt)
+          },
+          discovery: context => discoveryFor(context?.identity ?? attempt?.identity ?? 'probe', context?.generation ?? 0, attempt),
         })
         const outcome = { status: result.status, identity: targetIdentity, discovery: result.discovery, cleanup: result.cleanup }
         // Receipts share one shape with lastMount: the row reads `diagnostic`.
@@ -468,7 +515,32 @@ export function createMcpManager(dependencies = {}) {
     const healthy = (identity, state = runtime.snapshot(identity)) => state?.phase === 'mounted' && mount.mounted.has(identity)
       && (mount.mounted.get(identity)?.state ?? 'mounted') === 'mounted'
 
-    /** Recover one identity inside its queue slot: sweep untracked residue, then strictly remount. */
+    async function sweepRecoveryGroups(groupIds) {
+      const expected = new Map(groupIds.map(groupId => [groupId, bridges.get(groupId) ?? null]))
+      const afterCleanup = ({ groupId }) => {
+        const bridge = expected.get(groupId)
+        if (bridge) releaseBridge(groupId, bridge)
+      }
+      if (typeof mount.sweepResidueDetailed === 'function') {
+        return mount.sweepResidueDetailed(groupIds, { afterCleanup })
+      }
+      const swept = await mount.sweepResidue(groupIds)
+      for (const groupId of swept) afterCleanup({ groupId })
+      return { swept, blocked: groupIds.filter(id => !swept.includes(id)), foreign: [], unresolved: [] }
+    }
+
+    function residueIdentity(groupId) {
+      if (typeof mount.identityForGroup === 'function') return mount.identityForGroup(groupId)?.identity ?? null
+      return isMcpResidueId(groupId) ? groupId.slice(MCP_GROUP_PREFIX.length) : null
+    }
+
+    function residueGroups(identity) {
+      const listed = listEntryIds().filter(isMcpResidueId).filter(groupId => residueIdentity(groupId) === identity)
+      for (const [groupId, bridge] of bridges) if (bridge.identity === identity) listed.push(groupId)
+      return [...new Set(listed)]
+    }
+
+    /** Recover one identity inside its queue slot using exact actual group IDs. */
     function recoverOne(identity, assertOwner) {
       return serialize(identity, async () => {
         // Ownership can still reject a queued no-op without touching admission.
@@ -477,8 +549,6 @@ export function createMcpManager(dependencies = {}) {
         const token = beginOperation(identity)
         let terminal = false
         try {
-          // Re-read inside the slot: an earlier queued operation may have
-          // remounted, edited or removed this identity meanwhile.
           const current = await registry.read()
           if (current.kind !== 'ok' && current.kind !== 'absent') {
             terminal = true
@@ -491,37 +561,33 @@ export function createMcpManager(dependencies = {}) {
             abortOperation(token)
             return { status: 'mounted', identity, generation: entry.generation, alreadyHealthy: true }
           }
-          const groupId = `${MCP_GROUP_PREFIX}${identity}`
-          const residuePresent = listEntryIds().includes(groupId)
+          const groups = residueGroups(identity)
           if (!entry) {
-            // Orphan residue of an identity that is no longer registered.
-            const swept = residuePresent ? await mount.sweepResidue([groupId]) : []
-            const cleaned = !residuePresent || swept.includes(groupId)
+            // Only own or synchronously claimed inactive residue is swept. A
+            // foreign active group is retained and never reported as removed.
+            const detail = groups.length > 0 ? await sweepRecoveryGroups(groups) : { swept: [], blocked: [], foreign: [], unresolved: [] }
+            const cleaned = detail.blocked.length === 0 && detail.unresolved.length === 0 && detail.foreign.length === 0
             terminal = true
             finishOperation(token, cleaned ? 'unknown' : 'cleanup-failed', { generation: null, incarnation: null })
-            if (cleaned) releaseBridge(groupId)
             return cleaned
-              ? { status: 'removed', identity, swept: residuePresent }
-              : { status: 'cleanup-failed', identity, error: mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' }), next: { action: 'recover-residue' } }
+              ? { status: 'removed', identity, swept: groups.length > 0 }
+              : { status: 'cleanup-failed', identity, error: mcpDiagnostic(new Error(`residue Loader group(s) for ${identity} could not be safely removed`), { code: 'cleanup-failed', action: 'recover-residue' }), next: { action: 'recover-residue' } }
           }
-          // A tracked failed mount record is retried by reconcileOne's unmount; a
-          // Loader row the mount map no longer tracks is swept first, or the
-          // same-name replacement could never be created.
-          if (!mount.mounted.has(identity) && residuePresent) {
-            const swept = await mount.sweepResidue([groupId])
-            if (!swept.includes(groupId)) {
+          // A tracked failed mount is unmounted by reconcileOne using its actual
+          // ID. Only untracked groups are residue candidates here; foreign active
+          // groups are skipped and do not become this manager's mount evidence.
+          if (!mount.mounted.has(identity) && groups.length > 0) {
+            const detail = await sweepRecoveryGroups(groups)
+            if (detail.blocked.length > 0 || detail.unresolved.length > 0) {
               terminal = true
               finishOperation(token, 'cleanup-failed', { generation: entry.generation, incarnation: entry.incarnation ?? null })
-              const diagnostic = mcpDiagnostic(new Error(`residue Loader row ${groupId} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
+              const diagnostic = mcpDiagnostic(new Error(`owned residue Loader group(s) for ${identity} could not be removed`), { code: 'cleanup-failed', action: 'recover-residue' })
               receipts.mount.set(identity, { time: now(), status: 'cleanup-failed', diagnostic })
               return { status: 'cleanup-failed', identity, generation: entry.generation, saved: true, error: diagnostic, next: { action: 'recover-residue' } }
             }
-            releaseBridge(groupId)
           }
           if (assertOwner) {
             try { await assertOwner('mount') } catch (cause) {
-              // Cleanup may already have removed the old mount. Keep admission
-              // closed without stranding the queue fence in `replacing`.
               terminal = true
               finishOperation(token, 'unknown', { generation: entry.generation, incarnation: entry.incarnation ?? null })
               throw cause
@@ -548,7 +614,7 @@ export function createMcpManager(dependencies = {}) {
       const current = await registry.read()
       if (current.kind !== 'ok' && current.kind !== 'absent') return { status: 'unavailable', skipped: current.kind, results: [] }
       const servers = current.kind === 'ok' ? current.servers : {}
-      const orphans = listEntryIds().filter(isMcpResidueId).map(id => id.slice(MCP_GROUP_PREFIX.length)).filter(id => !servers[id])
+      const orphans = listEntryIds().filter(isMcpResidueId).map(residueIdentity).filter(id => id && !servers[id])
       let candidates = [...new Set([...Object.keys(servers).filter(id => !healthy(id)), ...orphans])]
       if (identity !== null) candidates = candidates.filter(id => id === identity)
       const results = []
@@ -607,7 +673,7 @@ export function createMcpManager(dependencies = {}) {
 
     const inventory = createMcpInventoryProjection({
       registry, runtime, mounted: mount.mounted, receipts, listRows, startErrors,
-      discoveryFor, support, isResidue: isMcpResidueId, groupPrefix: MCP_GROUP_PREFIX,
+      discoveryFor, support, isResidue: isMcpResidueId, groupPrefix: MCP_GROUP_PREFIX, ownership,
       holdsReservation: hostRowHoldingReservation,
       redactEntry: redactMcpEntry, fingerprintEntry: fingerprintMcpEntry,
     })
@@ -640,6 +706,11 @@ export function createMcpManager(dependencies = {}) {
       mcpGroupOptions,
     }
     try { ctx.reflect?.provide?.('weirMcpManager', face) } catch { /* older row */ }
+    // Bootstrap only after face publication so revision-local agent ownership
+    // can resolve the exact manager rather than observing an empty service.
+    if (typeof agentsService?.list === 'function') {
+      try { liveAgents() } catch (cause) { onError('mcp-agent-bootstrap-failed', cause) }
+    }
     void Promise.resolve().then(() => face.start()).catch(cause => {
       startErrors.push({ identity: null, reason: `start-failed:${message(cause)}` })
       onError('mcp-manager-start-failed', cause)

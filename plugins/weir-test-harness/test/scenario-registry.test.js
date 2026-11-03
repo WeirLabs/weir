@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { SCENARIOS, byId } from '../src/scenarios/index.js'
 import dualPreset from '../src/scenarios/capability-remote-dual-preset.js'
 import retainedRevision from '../src/scenarios/capability-lifecycle-retained-revision.js'
+import scopedPresetTreeCanary from '../src/scenarios/scoped-preset-tree-canary.js'
 import { baseName } from '../src/scenarios/editlock-lsp-rename.js'
 import hashlineNegatives from '../src/scenarios/editlock-hashline-negatives.js'
 import lspRename from '../src/scenarios/editlock-lsp-rename.js'
@@ -41,6 +42,7 @@ EXPECTED_ORDER.push('capability-remote')
 if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') EXPECTED_ORDER.push('capability-remote-dual-preset')
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') EXPECTED_ORDER.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') EXPECTED_ORDER.push('capability-lifecycle-retained-revision')
+if (process.env.WEIR_IT_MCP_SCOPED_CANARY === '1') EXPECTED_ORDER.push('scoped-preset-tree-canary')
 EXPECTED_ORDER.push('continuable')
 EXPECTED_ORDER.push('zombie-lane')
 EXPECTED_ORDER.push('lane-resumable')
@@ -102,6 +104,9 @@ describe('scenario registry', () => {
     if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED !== '1') {
       files.splice(files.indexOf('capability-lifecycle-retained-revision'), 1)
     }
+    if (process.env.WEIR_IT_MCP_SCOPED_CANARY !== '1') {
+      files.splice(files.indexOf('scoped-preset-tree-canary'), 1)
+    }
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
   })
 
@@ -123,6 +128,17 @@ describe('scenario registry', () => {
     const member = byId('capability-lifecycle-retained-revision')
     if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') {
       assert.equal(member, retainedRevision)
+      const continuable = SCENARIOS.findIndex((s) => s.id === 'continuable')
+      assert.equal(SCENARIOS[continuable - 1], member)
+    } else {
+      assert.equal(member, undefined)
+    }
+  })
+
+  it('registers the opt-in scoped PresetTree canary only under its flag', () => {
+    const member = byId('scoped-preset-tree-canary')
+    if (process.env.WEIR_IT_MCP_SCOPED_CANARY === '1') {
+      assert.equal(member, scopedPresetTreeCanary)
       const continuable = SCENARIOS.findIndex((s) => s.id === 'continuable')
       assert.equal(SCENARIOS[continuable - 1], member)
     } else {
@@ -165,6 +181,7 @@ RUN_OVERRIDE.push('filelease-lineage', 'filelease-wake', 'filelease-holder-death
 RUN_OVERRIDE.push('filelease-release-watch', 'filelease-watch-reset')
   RUN_OVERRIDE.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
   RUN_OVERRIDE.push('capability-lifecycle-retained-revision')
+  RUN_OVERRIDE.push('scoped-preset-tree-canary')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

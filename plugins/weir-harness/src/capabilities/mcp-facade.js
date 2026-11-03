@@ -53,7 +53,7 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
       const disposeHost = typeof registration === 'function' ? registration : () => {}
       let rollbackRegistration = null
       try {
-        onRegister?.(name, rollback => { rollbackRegistration = rollback })
+        onRegister?.(name, rollback => { rollbackRegistration = rollback }, wrapped)
       } catch (cause) {
         // Host-first rollback is fail-closed: owner facts and partial denies
         // stay in place unless Host removal is confirmed.

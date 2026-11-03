@@ -8,6 +8,7 @@ import { createMcpInventoryProjection } from '../src/capabilities/mcp-inventory.
 import { createMcpManager, hostRowHoldingReservation, partitionMcpRows } from '../src/capabilities/mcp-manager.js'
 import { fingerprintMcpEntry, redactMcpEntry } from '../src/capabilities/mcp-config.js'
 import { isMcpResidueId, MCP_GROUP_PREFIX } from '../src/capabilities/mcp-mount.js'
+import { createMcpMountOwnership } from '../src/capabilities/mcp-mount-ownership.js'
 import { buildListPayload } from '../src/capabilities/read-payloads.js'
 import { loadClientChunk } from './helpers/load-client-chunk.js'
 
@@ -101,6 +102,44 @@ test('partitionMcpRows remains an exact compatibility adapter, including its man
     managed: [{ identity: 'legacy', groupId: 'weir-mcp-legacy', label: 'legacy', generation: null, state: 'registered' }],
     unmanaged: [],
   })
+})
+test('same-identity actual groups join independently without foreign mounted facts or owner leakage', async () => {
+  const ownership = createMcpMountOwnership()
+  const first = ownership.claim('docs', { holder: {} })
+  const second = ownership.claim('docs', { holder: {} })
+  const rows = [first.groupId, second.groupId, 'weir-mcp-unknown~suffix'].map(id => ({ id, name: 'cordis:group' }))
+  const mounted = new Map()
+  const registry = { docs: { ...serverEntry('docs'), generation: 1 } }
+  const compatible = partitionMcpRows(rows, mounted, registry, ownership)
+  expect(compatible).toEqual({
+    managed: [
+      { identity: 'docs', groupId: first.groupId, label: 'Documentation', generation: 1, state: 'registered' },
+      { identity: 'docs', groupId: second.groupId, label: 'Documentation', generation: 1, state: 'registered' },
+    ],
+    unmanaged: [],
+  })
+  const wire = JSON.stringify(compatible)
+  expect(wire.includes(first.owner) || wire.includes(second.owner)).toBe(false)
+
+  const projection = createMcpInventoryProjection(projectionDependencies({
+    ownership,
+    registry: { read: async () => ({ kind: 'ok', revision: 1, servers: registry, enabled: [], warnings: [] }) },
+    runtime: { snapshot: () => ({ phase: 'mounted', generation: 1 }) },
+    mounted,
+    receipts: { mount: new Map(), test: new Map() },
+    listRows: () => rows,
+    startErrors: [],
+    discoveryFor: () => ({ toolCount: 0, toolNamesPreview: [], truncated: false }),
+    support: () => ({ credentials: false, ephemeral: true }),
+  }))
+  // A foreign live allocation plus a mounted runtime phase is not this
+  // caller's mount record, so no mounted/discovery fact is fabricated.
+  expect((await projection.list()).managed[0].state).toBe('registered')
+  mounted.set('docs', { groupId: second.groupId, generation: 1, state: 'mounted' })
+  expect((await projection.list()).managed[0].state).toBe('mounted')
+  const exact = partitionMcpRows(rows, mounted, registry, ownership)
+  expect(exact.managed.map(row => row.state)).toEqual(['registered', 'mounted'])
+  expect(exact.managed.some(row => row.groupId.includes('unknown'))).toBe(false)
 })
 
 async function managerFixture({

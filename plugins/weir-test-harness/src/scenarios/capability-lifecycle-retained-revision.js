@@ -11,7 +11,6 @@ import { lastOfRole, textChunks, toolCallChunks } from '../mock-kit.js'
 const ID = 'capability-lifecycle-retained-revision'
 const PRESET = 'weir-it-lifecycle-retained-primary'
 const RUN_ID = 'capability-lifecycle-retained-primary'
-const FACADE_RUN_ID = 'capability-lifecycle-retained-facade-diagnostic'
 const IDENTITIES = { old: 'retained-old', new: 'retained-new' }
 const PNPM = process.env.WEIR_IT_PNPM ?? (process.platform === 'win32'
   ? join(homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
@@ -52,7 +51,7 @@ async function runCase(ctx) {
     ] },
   ], null, 2) + '\n')
   execFileSync(process.execPath, [PNPM, 'install', '--reporter', 'silent'], { cwd: profile, stdio: 'inherit' })
-  const prompt = 'Run the same-preset retained-revision lifecycle and separate facade diagnostic probe.'
+  const prompt = 'Run retained lifecycle and same-identity mount ownership regressions in both cleanup orders.'
   const trace = join(ctx.IT_ROOT, `trace-${ID}.jsonl`)
   const main = await ctx.spawnHeadless([profileName, prompt], ctx.scenarioEnv(ID, trace, { WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED: '1' }))
   writeFileSync(join(ctx.IT_ROOT, 'retained-headless-stderr.log'), main.stderr)
@@ -60,12 +59,81 @@ async function runCase(ctx) {
   return { scenario: ID, trace, code: main.code, stdout: main.stdout, stderr: main.stderr }
 }
 
-function checkCall(run, label, call, identity, tag) {
-  run.check(`${label} completes exactly one real RPC through the owning lifecycle`, call?.resultObserved === true
+function isRealCall(call, identity, tag) {
+  return call?.resultObserved === true
     && call.identity === identity
     && call.rpcDelta === 1
     && call.matchingRpc?.length === 1
-    && JSON.stringify(call.lifecycleTags) === JSON.stringify([tag]), detail(call))
+    && JSON.stringify(call.lifecycleTags) === JSON.stringify([tag])
+}
+
+function checkCall(run, label, call, identity, tag) {
+  run.check(`${label} completes exactly one real RPC through the owning lifecycle`, isRealCall(call, identity, tag), detail(call))
+}
+
+function assertFacadeOrder(run, facade) {
+  const order = facade?.order ?? 'missing-order'
+  const first = facade?.first
+  const survivor = facade?.survivor
+  const tag = slot => `${facade?.runId}:${slot}`
+  const publicName = 'mcp__retained-shared__echo'
+  const same = facade?.sameIdentity
+  run.check(`${order} same-identity fixture retains independent old/new owners with identical generation, incarnation and serverName`, facade?.fixtureBlocker == null
+    && facade.retained?.managersDistinct === true && facade.retained.lifecyclesDistinct === true
+    && facade.oldAdoption?.outcome?.status === 'mounted' && facade.newSameIdentityMount?.status === 'mounted'
+    && facade.oldApply?.outcome?.status === 'applied' && facade.newApply?.outcome?.status === 'applied'
+    && same?.serverName === 'retained-shared' && same.generation === same.oldGeneration && same.generation === same.newGeneration
+    && same.generation === same.oldMountGeneration && same.generation === same.newMountGeneration
+    && same.incarnation != null && same.incarnation === same.oldMountIncarnation && same.incarnation === same.newMountIncarnation
+    && facade.groupsAfterBoth?.count === 2
+    && facade.bridgesAfterBoth?.old?.present === true && facade.bridgesAfterBoth?.new?.present === true
+    && facade.bridgesAfterBoth.old.groupId !== facade.bridgesAfterBoth.new.groupId
+    && JSON.stringify(facade.bridgesAfterBoth.old.ownerLifecycleTags) === JSON.stringify([tag('old')])
+    && JSON.stringify(facade.bridgesAfterBoth.new.ownerLifecycleTags) === JSON.stringify([tag('new')]), detail({ blocker: facade?.fixtureBlocker, retained: facade?.retained, same, groups: facade?.groupsAfterBoth, bridges: facade?.bridgesAfterBoth }))
+  run.check(`${order} new same-identity mount has real nonzero discovery (regression: mounted with discovery=0)`, facade?.oldAdoption?.outcome?.discovery?.toolCount === 1
+    && JSON.stringify(facade.oldAdoption.outcome.discovery.toolNamesPreview) === JSON.stringify([publicName])
+    && facade.newSameIdentityMount?.discovery?.toolCount === 1
+    && JSON.stringify(facade.newSameIdentityMount.discovery.toolNamesPreview) === JSON.stringify([publicName]), detail({ old: facade?.oldAdoption?.outcome?.discovery, new: facade?.newSameIdentityMount?.discovery }))
+  run.check(`${order} old/new public tool names are identical and both direct gates use only their own lifecycle`, ['old', 'new'].every(slot => {
+    const visibility = facade?.visibilityAfterBoth?.[slot]
+    const gate = facade?.directGatesAfterBoth?.[slot]
+    return visibility?.visible === true && visibility.managedSchema?.name === publicName && visibility.managedSchema.parameters?.type === 'object'
+      && gate?.enabledFor === true && gate.admitted === true && gate.assertPermit === true
+      && JSON.stringify(gate.lifecycle?.enabledFor) === JSON.stringify([tag(slot)])
+      && JSON.stringify(gate.lifecycle?.permit) === JSON.stringify([tag(slot)])
+  }), detail({ visibility: facade?.visibilityAfterBoth, gates: facade?.directGatesAfterBoth }))
+  checkCall(run, `${order} old owner after concurrent same-identity mount`, facade?.oldAfterNewMount, 'retained-shared', tag('old'))
+  run.check(`${order} new owner completes exactly one real RPC through a distinct client and its own lifecycle`, isRealCall(facade?.newAfterNewMount, 'retained-shared', tag('new'))
+    && facade.realRpc?.distinctServerProcesses === true, detail({ call: facade?.newAfterNewMount, realRpc: facade?.realRpc }))
+  run.check(`${order} ${first} disposal closes only its own feed/gate and preserves survivor facts`, facade?.firstDisposal?.disposed === true
+    && facade.firstDisposal.unregistered === true && facade.firstDisposal.runtimeRemoval?.status === 'removed'
+    && facade.firstDisposal.gate?.enabledFor === false && facade.firstDisposal.gate.admitted === false
+    && JSON.stringify(facade.firstDisposal.gate.lifecycle?.permit) === JSON.stringify([])
+    && JSON.stringify(facade.beforeFirstCleanup) === JSON.stringify(facade.survivorAfterFirstCleanup?.facts), detail({ before: facade?.beforeFirstCleanup, disposal: facade?.firstDisposal, after: facade?.survivorAfterFirstCleanup?.facts }))
+  run.check(`${order} ${first} cleanup cannot delete the current ${survivor} bridge (explicit old-cleanup/new-bridge regression)`, facade?.bridgeAfterFirstCleanup?.present === true
+    && facade.bridgeAfterFirstCleanup.groupId === facade.bridgesAfterBoth?.[survivor]?.groupId
+    && facade.bridgeAfterFirstCleanup.enabledForObservedSession === true
+    && JSON.stringify(facade.bridgeAfterFirstCleanup.ownerLifecycleTags) === JSON.stringify([tag(survivor)]), detail({ before: facade?.bridgesAfterBoth?.[survivor], after: facade?.bridgeAfterFirstCleanup }))
+  run.check(`${order} survivor discovery and real RPC survive ${first} cleanup`, facade?.survivorAfterFirstCleanup?.visibility?.visible === true
+    && facade.survivorAfterFirstCleanup.visibility.managedSchema?.name === publicName
+    && isRealCall(facade.survivorAfterFirstCleanup.call, 'retained-shared', tag(survivor)), detail(facade?.survivorAfterFirstCleanup))
+  run.check(`${order} stale/repeated ${first} release cannot delete the current ${survivor} owner or disrupt RPC`, facade?.repeatedFirstRelease != null
+    && facade.bridgeAfterRepeatedRelease?.present === true
+    && facade.bridgeAfterRepeatedRelease.groupId === facade.bridgesAfterBoth?.[survivor]?.groupId
+    && JSON.stringify(facade.bridgeAfterRepeatedRelease.ownerLifecycleTags) === JSON.stringify([tag(survivor)])
+    && facade.survivorAfterRepeatedRelease?.visibility?.visible === true
+    && isRealCall(facade.survivorAfterRepeatedRelease.call, 'retained-shared', tag(survivor)), detail({ release: facade?.repeatedFirstRelease, bridge: facade?.bridgeAfterRepeatedRelease, survivor: facade?.survivorAfterRepeatedRelease }))
+  run.check(`${order} final groups, bridges, claims, registry, feeds, retained mounts and processes are fully cleaned`, facade?.survivorDisposal?.disposed === true
+    && facade.survivorDisposal.runtimeRemoval?.status === 'removed' && facade.survivorDisposal.registryRemoval?.status === 'committed'
+    && facade.final?.groups?.count === 0 && facade.cleanup?.finalGroups?.count === 0
+    && ['old', 'new'].every(slot => facade.final?.bridges?.[slot]?.present === false && facade.cleanup?.finalBridges?.[slot]?.present === false)
+    && facade.final?.claims?.claimCount === 0 && facade.cleanup?.finalClaims?.claimCount === 0
+    && Object.keys(facade.final?.registry?.servers ?? {}).length === 0
+    && Object.keys(facade.cleanup?.finalRegistry?.servers ?? {}).length === 0
+    && facade.cleanup?.errors?.length === 0 && facade.cleanup?.serverProcesses?.started?.length >= 2
+    && facade.cleanup.serverProcesses.allExited === true
+    && facade.cleanup.finalFeed?.old?.present === false && facade.cleanup.finalFeed?.new?.present === false
+    && facade.cleanup.finalRetainedCompositions?.length === 0, detail({ final: facade?.final, cleanup: facade?.cleanup }))
 }
 
 function checkInitial(run, label, measurement, slot) {
@@ -211,62 +279,15 @@ function assertRetained(run) {
     && primary.cleanup.serverProcesses.allExited === true, detail(primary?.cleanup))
 
   const facade = report?.facade
-  run.check('separate same-identity diagnostic establishes real retained managers and a working old RPC baseline', facade != null
-    && facade.fixtureBlocker == null
-    && facade.presetId === 'weir-it-lifecycle-facade-diagnostic'
-    && facade.groupId === 'weir-mcp-retained-shared'
-    && facade.retained?.managersDistinct === true
-    && facade.retained?.lifecyclesDistinct === true
-    && facade.oldAdoption?.outcome?.status === 'mounted'
-    && facade.oldApply?.outcome?.status === 'applied'
-    && facade.oldBeforeNewMount?.resultObserved === true
-    && facade.oldBeforeNewMount.rpcDelta === 1
-    && JSON.stringify(facade.oldBeforeNewMount.lifecycleTags) === JSON.stringify([`${FACADE_RUN_ID}:old`]), detail({ blocker: facade?.fixtureBlocker, retained: facade?.retained, adoption: facade?.oldAdoption, baseline: facade?.oldBeforeNewMount }))
-  run.check('facade diagnosis records second-mount, exact groupId bridge owner, old/new RPC and ordered-cleanup evidence', typeof facade?.newSameIdentityMount?.status === 'string'
-    && facade.bridgeBeforeNewMount?.groupId === facade.groupId
-    && facade.bridgeAfterNewMount?.groupId === facade.groupId
-    && facade.bridgeAfterNewApply?.observedThroughOld?.groupId === facade.groupId
-    && facade.bridgeAfterNewApply?.observedThroughNew?.groupId === facade.groupId
-    && facade.oldAfterNewMount != null
-    && facade.newAfterNewMount != null
-    && facade.newAfterOldCleanup != null
-    && facade.bridgeAfterOldCleanup?.groupId === facade.groupId
-    && facade.oldDisposal?.disposed === true
-    && facade.newDisposal?.disposed === true, detail({ mount: facade?.newSameIdentityMount, before: facade?.bridgeBeforeNewMount, after: facade?.bridgeAfterNewApply, calls: { old: facade?.oldAfterNewMount, new: facade?.newAfterNewMount, afterCleanup: facade?.newAfterOldCleanup } }))
-  run.check('facade diagnosis is evidence-classified without treating overwrite alone as a defect', ['confirmed', 'not-reproduced', 'blocked'].includes(facade?.classification)
-    && (facade.classification !== 'confirmed' || facade.collisionEvidence?.length > 0)
-    && (facade.classification !== 'not-reproduced' || (facade.newSameIdentityMount?.status === 'mounted'
-      && facade.oldAfterNewMount?.resultObserved === true && facade.newAfterNewMount?.resultObserved === true && facade.newAfterOldCleanup?.resultObserved === true))
-    && (facade.classification !== 'blocked' || typeof facade.blocker === 'string'), detail({ classification: facade?.classification, blocker: facade?.blocker, mechanism: facade?.mechanismFacts, evidence: facade?.collisionEvidence }))
-  run.check('confirmed facade collision proves new-owner RPC failure and old-owner bridge deletion, not old lifecycle misrouting', facade?.classification !== 'confirmed' || (
-    facade.newSameIdentityMount?.status === 'mounted'
-    && facade.newSameIdentityMount.discovery?.toolCount === 0
-    && JSON.stringify(facade.bridgeBeforeNewMount?.ownerLifecycleTags) === JSON.stringify([`${FACADE_RUN_ID}:old`])
-    && JSON.stringify(facade.bridgeAfterNewApply?.observedThroughOld?.ownerLifecycleTags) === JSON.stringify([`${FACADE_RUN_ID}:new`])
-    && facade.directGatesAfterBoth?.old?.admitted === true
-    && facade.directGatesAfterBoth?.new?.admitted === true
-    && JSON.stringify(facade.directGatesAfterBoth.old.lifecycle?.permit) === JSON.stringify([`${FACADE_RUN_ID}:old`])
-    && JSON.stringify(facade.directGatesAfterBoth.new.lifecycle?.permit) === JSON.stringify([`${FACADE_RUN_ID}:new`])
-    && facade.oldAfterNewMount?.resultObserved === true
-    && JSON.stringify(facade.oldAfterNewMount.lifecycleTags) === JSON.stringify([`${FACADE_RUN_ID}:old`])
-    && facade.newAfterNewMount?.outcome?.error?.info?.code === 'UNKNOWN_TOOL'
-    && facade.newAfterNewMount.rpcDelta === 0
-    && facade.bridgeAfterOldCleanup?.present === false
-    && facade.newAfterOldCleanup?.resultObserved === false
-    && facade.newAfterOldCleanup.rpcDelta === 0
-  ), detail({ mount: facade?.newSameIdentityMount, bridges: { before: facade?.bridgeBeforeNewMount, after: facade?.bridgeAfterNewApply, afterOldCleanup: facade?.bridgeAfterOldCleanup }, gates: facade?.directGatesAfterBoth, calls: { old: facade?.oldAfterNewMount, new: facade?.newAfterNewMount, afterOldCleanup: facade?.newAfterOldCleanup } }))
-  run.check('facade diagnostic cleanup removes every managed process and leaves no retained feed/mount', facade?.cleanup?.errors?.length === 0
-    && facade.cleanup?.serverProcesses?.started?.length >= 1
-    && facade.cleanup.serverProcesses.allExited === true
-    && facade.cleanup.finalFeed?.old?.present === false
-    && facade.cleanup.finalFeed?.new?.present === false
-    && facade.cleanup.finalRetainedCompositions?.length === 0, detail(facade?.cleanup))
+  run.check('same-identity correct-behavior regression runs every requested cleanup order', facade?.expectedOrders?.length >= 1
+    && facade.expectedOrders.every(order => facade.orders?.[order]?.order === order), detail({ expected: facade?.expectedOrders, actual: Object.keys(facade?.orders ?? {}) }))
+  for (const order of facade?.expectedOrders ?? []) assertFacadeOrder(run, facade.orders?.[order])
   run.check('headless installed CLI exits cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 
 export default {
   id: ID,
-  prompt: 'Run the same-preset retained-revision lifecycle and separate facade diagnostic probe.',
+  prompt: 'Run retained lifecycle and same-identity mount ownership regressions in both cleanup orders.',
   env: { WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED: '1' },
   decide,
   observe,

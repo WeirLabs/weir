@@ -2,6 +2,7 @@
 // These tests use the real manager/runtime/drain/operations and the unchanged
 // mutable manager face. Mount and registry controls only make overlap visible.
 import { test, expect } from './helpers.js'
+import { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -36,7 +37,7 @@ function mountDouble() {
   const gates = { mount: null, probe: null, unmount: null }
   return {
     mounted, events, gates,
-    async sweepResidue() { return [] },
+    async sweepResidue(ids) { return ids },
     async mount(options) {
       events.push(`mount-start:${options.identity}:${options.generation}`)
       if (gates.mount) await gates.mount.promise
@@ -62,7 +63,17 @@ function mountDouble() {
   }
 }
 
+const activeFixtures = new Set()
+async function cleanupFixtures() {
+  for (const fixture of [...activeFixtures]) {
+    for (const identity of [...fixture.face.mounted.keys()]) await fixture.face.removeRuntime(identity)
+    fixture.dispose()
+    activeFixtures.delete(fixture)
+  }
+}
+afterEach(cleanupFixtures)
 async function fixture() {
+  await cleanupFixtures()
   const root = mkdtempSync(join(tmpdir(), 'weir-mcp-coordinator-'))
   const registry = createMcpRegistry({ store: openCapabilityStore({ root, platform: 'darwin' }), newIncarnation: () => null })
   let revision = 0
@@ -71,11 +82,13 @@ async function fixture() {
   const services = new Map()
   const accepted = ['docs', 'web', 'adopted', 'fresh']
   const lifecycle = { snapshotFor: () => ({ state: 'ready', mcpServers: accepted, mcpIncarnations: Object.fromEntries(accepted.map(identity => [identity, null])) }) }
-  createMcpManager({ registry, mount, lifecycle, listRows: () => [], listEntryIds: () => [] })({
+  const dispose = createMcpManager({ registry, mount, lifecycle, listRows: () => [], listEntryIds: () => [] })({
     get: () => undefined, on() {}, reflect: { provide: (key, value) => services.set(key, value) }, logger: { warn() {} },
   }, {})
   const face = services.get('weirMcpManager')
   await face.start()
+  const fixture = { face, dispose }
+  activeFixtures.add(fixture)
   const operations = createMcpOperations({ registry, manager: face, credentials: undefined })
   const agent = { session: { id: 's1' } }
   const healthy = identity => {
