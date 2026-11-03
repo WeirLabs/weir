@@ -104,9 +104,19 @@ Add/Edit 可先保存再 mount，因此保存成功但 mount 失败返回 `saved
 
 `mounted` 仍要求 runtime phase、registry generation 与 mount generation 的严格匹配；registry 只有记录时不伪造 mounted discovery。`absent` 是健康空库存，损坏/不可读则保留显式 `unavailable`。managed/unmanaged 字段、redaction、fingerprint、bounded diagnostics、unmanaged `readOnly` 与未知 `liveReconnect`/`processExit`/`stderr` 全部保留。打开、刷新或重复读取清单不会 probe、挂载、唤醒/恢复 agent、写 registry/selection/credentials、写会话日志或触发隐藏收敛。
 
+### Mount Attempt Ownership 与 revision-scoped namespace
+
+每次 managed mount/probe 都有独立的 Mount Attempt Ownership。稳定 logical identity 用于注册、选择和准入；actual groupId 只用于 Loader/facade 对账。首次活跃挂载保留 legacy `weir-mcp-<identity>`，并发 attempt 使用不同的内部 actual groupId；identity、generation、incarnation、公开 `serverName`、模型可见工具名、manager face 与结果形状不变，内部 owner 不进入公开回执、库存、工具结果或持久化选择。
+
+分配在 `tree.create` 前的同一同步 JavaScript turn 内完成 check-and-claim。同组重复 bridge 注册会拒绝而不是覆盖；清理等待既有 Disposal Barrier，随后按捕获记录精确 compare-delete，stale/重复 release 为空操作。create、disposal 或 recovery 未结算时禁止复用 actual groupId；`cleanup-failed` 与 `cleanup-unknown` 保留 ownership，不能用超时本身推断已经消失。
+
+retained revision 的 client 挂到所属 revision 的 scoped、non-writing `PresetTree`，所以相同公开 `serverName` 与工具名可在 old/new scope 中独立存在，profile 配置保持不写入。bare composition 只保留此前支持的 secret-free fallback；显式 scoped tree 不可用或形状不满足时 fail closed，不回退共享 root。create/remove、entries/store、readiness、readback、fiber lookup、listing 与 disposal 全部使用同一个 scoped tree。
+
+库存与 residue 按 own exact mount → live allocation → facade child config → true legacy 的优先级解析 actual group。多个同 identity group 不再互相覆盖；foreign active mount 不会成为调用 revision 的 mounted 事实或被其 sweep，无法解析的后缀残留不会伪造 registry、discovery 或健康事实。独立 mount Disposal Barrier 不与 manager Operation Coordination 合并。
+
 ### 秘密 containment 与补偿
 
-- 只有运行时 canary 证明 `loader.root` 的动态 group/facade 可用、scope 不串 preset 且 profile cordis 零写入时，物化秘密才能进入 ephemeral Loader tree。其他结构返回 `unsupported`，绝不使用 write-through Include tree 兜底。
+- 只有运行时 canary 证明 `loader.root` 或所属 revision 的 scoped `PresetTree` 支持动态 group/facade、scope 隔离且 profile cordis 零写入时，物化秘密才能进入对应 non-writing tree。其他结构返回 `unsupported`，绝不使用 write-through Include tree 兜底。
 - Weir-owned ref 形如 `WEIR_MCP_<identityHash>_G<generation>_<attemptRandomHex>_<fieldHash>`，并发编辑不共享补偿目标。
 - 仅在 proven-uncommitted 且 registry reread 证明 ref 未使用时清理本 attempt refs。异常或丢失响应无法证明提交结果时返回 `indeterminate`、保留 refs，并按实际 registry 对账。
 - 不删除用户提供的 refs，不做旧 generation/orphan credential 自动 GC。本地 credentials 避免配置/transcript 泄露，但不是同 UID Agent 的隔离边界。
@@ -117,7 +127,7 @@ Managed mount 和 probe 都强制 strict。startup timeout、连接失败或 dis
 
 删除、重启、替换、probe 和 residue recovery 捕获 group/client/descendant 的实际 `fiber.dispose()` 结算；`loader.remove()` 返回本身不算 disposal barrier。延迟/拒绝/无法确认 transport close 分别产生 `cleanup-failed` 或 `cleanup-unknown`，并提供 residue recovery，而不是立即启动同名 replacement 或宣称 clean。
 
-每个 identity 都有同步 runtime phase 和 `{identity,generation,incarnation,operationId}` permit。操作在任何 await 前关闭新旧 generation 与 drain entry；准入在 registry read 后及 transport handoff 前再次复核。旧 transport 已接收的调用可按既有 running-operation 边界结束，替换完成前的新调用一律拒绝。启动全量 mount 与运行期 add/edit/restart/remove 共用 `reconcileOne`，不重挂 sibling；public tool facts 按 `{identity,generation}` 精确清理。
+每个 identity 都有同步 runtime phase 和 `{identity,generation,incarnation,operationId}` permit。操作在任何 await 前关闭新旧 generation 与 drain entry；准入在 registry read 后及 transport handoff 前再次复核。旧 transport 已接收的调用可按既有 running-operation 边界结束，替换完成前的新调用一律拒绝。启动全量 mount 与运行期 add/edit/restart/remove 共用 `reconcileOne`，不重挂 sibling；公开 owner 仍保持 `{identity,generation}` 形状，内部则按具体 mount attempt 精确清理 public tool facts 与限制。
 
 **mount 的 Disposal Barrier 保持独立。** manager 的 Operation Coordination 决定操作顺序，`createMcpMount` 内部的 per-identity FIFO 仍单独保证：同名 replacement 必须等旧挂载的异步 disposal 真正结束。两层职责不合并，避免 manager→mount 的非重入嵌套死锁，也不削弱直接调用 mount 模块时的清理保障。
 
@@ -171,15 +181,15 @@ GUI 启动环境 PATH 通过既有 `resolveExecutable`/`spawnArgv`/`childEnviron
 - Remove/re-add 创建新 incarnation，旧 accepted/inherited snapshot 必须重新 Apply；Edit/Restart 保留 incarnation，但 readiness 前仍拒绝新调用。
 - legacy literal env/header 可读但永不进入新响应；它们的 mount 也必须满足 ephemeral 要求。迁移不后台进行，用户重新录入才转换为 refs。
 - Unmanaged 只读；不实现 adoption、OAuth、legacy SSE、marketplace、远程目录、任意 tool trial、自动 orphan credential GC 或实时 reconnect/exit/stderr 承诺。
-- **已确认的 retained same-identity facade 碰撞（本变更不修复）**：当同一 preset 的 old/new retained revisions 挂载同一个 managed identity 时，二者使用同一个 `weir-mcp-<identity>` groupId。真实诊断证明新 mount 虽报告 mounted 且自身 lifecycle/gate 正确，discovery 却为空、新会话调用为 `UNKNOWN_TOOL`；旧 revision 的清理还会删除被新 revision 覆盖的 bridge。这是独立的 facade/group ownership 缺陷，不属于 Lifecycle Feed 修复；不同 identity 的 retained old/new Apply、RPC 与有序清理已通过。后续修复必须独立立项并处理 bridge 所有权。
+- **Mount Attempt Ownership 的边界**：same-identity retained old/new 已验证双方真实 RPC 与两种清理顺序，但该 ownership 是 module-realm-local，不是跨进程锁；无法证明归属的 active cross-module 行、未解析后缀残留以及永久未结算的 create/disposal 都保守保留。bare composition 仅获得既有受支持 fallback，不能据此宣称跨模块或未运行时的并发隔离保证。
 - 回滚不支持只恢复旧 bundle 而保留新格式记录。唯一支持的完整路径是先备份并在新版本删除 HTTP、secretRef 与 incarnation-bearing 记录，再恢复旧 bundle；旧 reader 的行为不由 schemaVersion 保证。
 
 ## 测试
 
-- 单元测试：`mcp-lifecycle`、`mcp-config`、`mcp-credentials`、`mcp-registry-incarnation`、`mcp-incarnation`、`mcp-runtime`、`mcp-manager-lifecycle`、`mcp-operations`、`mcp-process`、`capability-mutation-remote`、`capabilities-mcp-commands` 覆盖 Loader/disposal/strict/readback、秘密补偿、replacement permit、批量、remote ownership 与命令一致性；manager/facade/Apply wiring 另覆盖 live agent 差分限制、注册失败回滚、generation 精确清理、runtime readiness 与普通/恢复 Apply 的同步顺序。
+- 单元测试：`mcp-lifecycle`、`mcp-mount-ownership`、`mcp-config`、`mcp-credentials`、`mcp-registry-incarnation`、`mcp-incarnation`、`mcp-runtime`、`mcp-manager-lifecycle`、`mcp-operations`、`mcp-process`、`capability-mutation-remote`、`capabilities-mcp-commands` 覆盖 Loader/disposal/strict/readback、同步 ownership 分配、scoped mount、stale release、foreign/unresolved residue、秘密补偿、replacement permit、批量、remote ownership 与命令一致性；manager/facade/Apply wiring 另覆盖 live agent 差分限制、注册失败回滚、generation/attempt 精确清理、runtime readiness 与普通/恢复 Apply 的同步顺序。
 - AI/intent：`mcp-install-tool` 覆盖 preview、exact approval、stored-plan digest、取消/超时/liveness/plan/ownership/revision/namespace、probe/CAS/mount 与 delegated child；`intent-gate`/`intent-classifier`/`skills` 覆盖中英文命中、否定/讨论/已有 server、quoted/unclosed、显式资格与冷安全审计。
 - Client：`client-mcp-model`、`client-mcp-manager`、`client-capability-*`、`client.test` 覆盖库存/stale、Basic/Advanced、blank-keep/replace/remove、batch/retry、Select/default/Remove、focus、字典、错误边界、mutation wire 与 chunk digest。
 - 集成场景 `mcp-management` 使用真实 stdio 与 loopback Streamable HTTP fixtures，覆盖 mount/probe/disposal、零工具、401、bounded timeout、replacement fence、incarnation/re-Apply、AI preview/cancel/approve、remote ownership 和 add/edit/probe/restart/remove/crash recovery 的秘密 canary。
 - 回归场景 `mcp-gateway` 直接断言同一 live root 后续真实请求的 `toolNames`：late install 不向未选中会话注入工具，enable → disable → re-enable 精确增删 schema，并保留 admission、zero-RPC 与新 agent 检查；A/B 会话隔离由 manager 单元测试和下方 Desktop 验收覆盖，**不由 `mcp-gateway` 断言**。`lifecycle-inheritance`、`preset-defaults`、`capability-presets-surface` 继续验证继承与 portable preset 语义不扩大权限。
-- 深化回归新增 `capability-lifecycle-feed`、`mcp-operation-coordinator` 与 `mcp-inventory-projection` 单元/组合链路。真实 `capability-lifecycle-revision-zero-{weir-first,creative-first}` 在 `WEIR_IT_CAPABILITY_LIFECYCLE_DUAL=1` 下分别覆盖 revision-0 与 Apply enable/disable/re-enable，各 42/42；`WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED=1` 的 `capability-lifecycle-retained-revision` 覆盖 same-preset retained old/new、revision-local Apply/RPC、有序清理及独立 facade 诊断，37/37。运行时证据来自安装版 DSH 0.2.1-rc.3；不外推到未实跑的其他受支持版本。
+- 深化回归新增 `capability-lifecycle-feed`、`mcp-operation-coordinator`、`mcp-mount-ownership` 与 `mcp-inventory-projection` 单元/组合链路。真实 `capability-lifecycle-revision-zero-{weir-first,creative-first}` 在 `WEIR_IT_CAPABILITY_LIFECYCLE_DUAL=1` 下分别覆盖 revision-0 与 Apply enable/disable/re-enable，合计 84/84；`WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED=1` 的 `capability-lifecycle-retained-revision` 覆盖 same-preset retained old/new、revision-local Apply/RPC、same-identity 双方真实 RPC、old-first/new-first 清理与重复释放，完整双顺序为 53/53（每种单独顺序均为 43/43）；`WEIR_IT_MCP_SCOPED_CANARY=1` 的 scoped non-writing tree/相同公开命名空间验证为 9/9。运行时证据来自安装版 DSH 0.2.1-rc.3；不外推到未实跑的其他受支持版本。
 - Desktop 验收（`fix-mcp-live-tool-visibility`）：在真实 Weir 会话安装本地 stdio fixture，经 Host `Tool.listTools` 逐阶段确认未 Select/Apply 不注入、Apply 后出现、禁用后移除、再次启用恢复；实际 `echo` 调用成功，禁用后旧名称不再可调用。持续子会话在父会话启用前后保持相同 32 项工具目录，证明 A/B 隔离。最后取消选择并 Remove，preview 复核 `fingerprint:null / conflict:null`，无测试注册残留。Desktop 证据独立于此前的单元与 headless 结果。

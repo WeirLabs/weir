@@ -1,4 +1,5 @@
 import { test, expect } from './helpers.js'
+import { afterEach } from 'node:test'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,13 +20,23 @@ function mountFixture() {
     async mount(options) {
       calls.push(['mount', options.identity, options.generation])
       if (state.failMount) throw new Error('injected strict startup failure')
-      await options.beforeCreate?.({ groupId: options.groupId ?? `weir-mcp-${options.identity}`, identity: options.identity, generation: options.generation })
-      const bridge = mcpFacadeBridgeFor(`weir-mcp-${options.identity}`)
-      bridge?.onRegister?.(`mcp__${options.identity}__echo`)
-      await options.readback?.()
-      const generation = state.wrongGeneration ? options.generation + 1 : options.generation
-      mounted.set(options.identity, { groupId: `weir-mcp-${options.identity}`, generation, state: 'mounted' })
-      return { status: 'mounted', groupId: `weir-mcp-${options.identity}`, generation: options.generation, discovery: options.discovery ? await options.discovery() : { toolCount: 0, toolNamesPreview: [], truncated: false } }
+      const groupId = options.groupId ?? `weir-mcp-${options.identity}`
+      let bridgeReady = false
+      try {
+        await options.beforeCreate?.({ groupId, identity: options.identity, generation: options.generation })
+        bridgeReady = true
+        const bridge = mcpFacadeBridgeFor(groupId)
+        bridge?.onRegister?.(`mcp__${options.identity}__echo`)
+        await options.readback?.()
+        const generation = state.wrongGeneration ? options.generation + 1 : options.generation
+        mounted.set(options.identity, { groupId, generation, state: 'mounted' })
+        return { status: 'mounted', groupId, generation: options.generation, discovery: options.discovery ? await options.discovery() : { toolCount: 0, toolNamesPreview: [], truncated: false } }
+      } catch (cause) {
+        // This double has no Host registration left after its synchronous
+        // facade failure, so its bridge cleanup is confirmed.
+        if (bridgeReady) await options.afterCleanup?.({ groupId, identity: options.identity, generation: options.generation })
+        throw cause
+      }
     },
     async unmount(identity) {
       calls.push(['unmount', identity])
@@ -45,7 +56,18 @@ function mountFixture() {
   }
   return mount
 }
+const activeFixtures = new Set()
+async function cleanupFixtures() {
+  for (const fixture of [...activeFixtures]) {
+    for (const identity of [...fixture.face.mounted.keys()]) await fixture.face.removeRuntime(identity)
+    fixture.dispose()
+    activeFixtures.delete(fixture)
+  }
+}
+afterEach(cleanupFixtures)
+
 async function fixture({ entries = ['docs', 'web'], mount = mountFixture(), agents = null, selectionFor = null } = {}) {
+  await cleanupFixtures()
   const root = mkdtempSync(join(tmpdir(), 'weir-mcp-manager-life-'))
   const store = openCapabilityStore({ root, platform: 'darwin' })
   const registry = createMcpRegistry({ store, newIncarnation: () => null })
@@ -69,7 +91,9 @@ async function fixture({ entries = ['docs', 'web'], mount = mountFixture(), agen
   const dispose = manager(ctx, {})
   const face = services.get('weirMcpManager')
   await face.start()
-  return { root, store, registry, mount, listeners, services, face, lifecycle, dispose }
+  const fixture = { root, store, registry, mount, listeners, services, face, lifecycle, dispose }
+  activeFixtures.add(fixture)
+  return fixture
 }
 
 function visibilityAgent(sessionId) {
@@ -106,28 +130,37 @@ async function sameNameFailureFixture({ failHostRollback = false } = {}) {
   const mount = mountFixture()
   mount.mount = async options => {
     const groupId = `weir-mcp-${options.identity}`
-    await options.beforeCreate?.({ groupId, identity: options.identity, generation: options.generation })
-    const bridge = mcpFacadeBridgeFor(groupId)
-    const facade = createMcpFacade({
-      ...bridge,
-      host: { tools: { register(definition) {
-        const stack = hostOwners.get(name)
-        const record = { identity: options.identity, definition }
-        stack.push(record)
-        let active = true
-        return () => {
-          if (!active) return
-          if (options.identity === 'web' && failHostRollback) throw new Error('injected same-name Host rollback failure')
-          active = false
-          const index = stack.indexOf(record)
-          if (index >= 0) stack.splice(index, 1)
-        }
-      } } },
-    })
-    facade.tools.register({ name, execute: async () => {} })
-    await options.readback?.()
-    mount.mounted.set(options.identity, { groupId, generation: options.generation, state: 'mounted' })
-    return { status: 'mounted', groupId, generation: options.generation, discovery: await options.discovery() }
+    let bridgeReady = false
+    try {
+      await options.beforeCreate?.({ groupId, identity: options.identity, generation: options.generation })
+      bridgeReady = true
+      const bridge = mcpFacadeBridgeFor(groupId)
+      const facade = createMcpFacade({
+        ...bridge,
+        host: { tools: { register(definition) {
+          const stack = hostOwners.get(name)
+          const record = { identity: options.identity, definition }
+          stack.push(record)
+          let active = true
+          return () => {
+            if (!active) return
+            if (options.identity === 'web' && failHostRollback) throw new Error('injected same-name Host rollback failure')
+            active = false
+            const index = stack.indexOf(record)
+            if (index >= 0) stack.splice(index, 1)
+          }
+        } } },
+      })
+      facade.tools.register({ name, execute: async () => {} })
+      await options.readback?.()
+      mount.mounted.set(options.identity, { groupId, generation: options.generation, state: 'mounted' })
+      return { status: 'mounted', groupId, generation: options.generation, discovery: await options.discovery() }
+    } catch (cause) {
+      const retained = hostOwners.get(name)?.some(record => record.identity === options.identity)
+      if (retained) mount.mounted.set(options.identity, { groupId, generation: options.generation, state: 'cleanup-failed' })
+      else if (bridgeReady) await options.afterCleanup?.({ groupId, identity: options.identity, generation: options.generation })
+      throw cause
+    }
   }
   const f = await fixture({
     entries: ['docs'], mount, agents,
@@ -467,7 +500,16 @@ test('live visibility: compound registration and Host rollback failure retains o
         return hostDisposer
       } } },
     })
-    facade.tools.register({ name, execute: async () => {} })
+    try {
+      facade.tools.register({ name, execute: async () => {} })
+    } catch (cause) {
+      if (hostTools.has(name)) {
+        mount.mounted.set(options.identity, { groupId, generation: options.generation, state: 'cleanup-failed' })
+      } else {
+        await options.afterCleanup?.({ groupId, identity: options.identity, generation: options.generation })
+      }
+      throw cause
+    }
   }
   const f = await fixture({
     entries: [], mount, agents,

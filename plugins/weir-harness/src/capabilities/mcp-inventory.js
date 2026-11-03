@@ -2,28 +2,35 @@
 // Loader facts are joined here; probing, mutation, credential resolution, agent
 // visibility and every other operation remain with their existing owners.
 // Pure dependencies keep this module independently testable and typechecked.
+import { resolveMcpGroupIdentity } from './mcp-mount-ownership.js'
 
 /**
  * Classify Loader rows once and retain the facts needed by both public views.
- * The legacy partition is a view over this join, not another inventory join.
+ * Every actual group remains a separate fact; same-identity groups never
+ * overwrite each other in an identity-keyed Map.
  *
  * @param {any[]} rows
  * @param {Map<string, any>} mounted
  * @param {Record<string, any>} registryServers
- * @param {{ isResidue: (id: string) => boolean, groupPrefix: string }} options
+ * @param {{ isResidue: (id: string) => boolean, groupPrefix: string, ownership?: any }} options
  */
-function joinLoaderRows(rows, mounted, registryServers, { isResidue, groupPrefix }) {
+function joinLoaderRows(rows, mounted, registryServers, { isResidue, groupPrefix, ownership = null }) {
   const managed = []
   const unmanaged = []
   for (const row of rows) {
     if (typeof row?.id === 'string' && isResidue(row.id)) {
-      const identity = row.id.slice(groupPrefix.length)
+      const resolved = resolveMcpGroupIdentity({ groupId: row.id, mounted, ownership, row })
+      // Unresolved generated suffixes are conservative residue, not evidence
+      // from which a logical registry identity or mount health may be invented.
+      if (!resolved) continue
       managed.push({
-        identity,
+        identity: resolved.identity,
         groupId: row.id,
-        registry: registryServers[identity],
-        isMounted: mounted.has(identity),
-        mount: mounted.get(identity),
+        registry: registryServers[resolved.identity],
+        isMounted: resolved.mount != null,
+        mount: resolved.mount,
+        source: resolved.source,
+        allocation: resolved.allocation,
       })
     } else if (row?.name === '@deepseek-ai/dsh-mcp-client' && !(typeof row.id === 'string' && row.id.startsWith(groupPrefix))) {
       unmanaged.push({ serverName: row.config?.serverName ?? row.id ?? 'unknown', state: 'unmanaged', readOnly: true })
@@ -40,7 +47,7 @@ function joinLoaderRows(rows, mounted, registryServers, { isResidue, groupPrefix
  * @param {any[]} rows
  * @param {Map<string, any>} mounted
  * @param {Record<string, any>} registryServers
- * @param {{ isResidue: (id: string) => boolean, groupPrefix: string }} options
+ * @param {{ isResidue: (id: string) => boolean, groupPrefix: string, ownership?: any }} options
  */
 export function partitionMcpInventory(rows, mounted, registryServers, options) {
   const joined = joinLoaderRows(rows, mounted, registryServers, options)
@@ -68,6 +75,7 @@ export function partitionMcpInventory(rows, mounted, registryServers, options) {
  *   support: () => any,
  *   isResidue: (id: string) => boolean,
  *   groupPrefix: string,
+ *   ownership?: any,
  *   holdsReservation: (rows: any[], serverName: any) => any,
  *   redactEntry: (entry: any) => any,
  *   fingerprintEntry: (entry: any) => string,
@@ -76,7 +84,7 @@ export function partitionMcpInventory(rows, mounted, registryServers, options) {
 export function createMcpInventoryProjection(dependencies) {
   const {
     registry, runtime, mounted, receipts, listRows, startErrors,
-    discoveryFor, support, isResidue, groupPrefix, holdsReservation,
+    discoveryFor, support, isResidue, groupPrefix, ownership = null, holdsReservation,
     redactEntry, fingerprintEntry,
   } = dependencies
 
@@ -84,7 +92,7 @@ export function createMcpInventoryProjection(dependencies) {
     const current = await registry.read()
     const rows = listRows()
     const registryServers = current.kind === 'ok' ? current.servers : {}
-    const loader = joinLoaderRows(rows, mounted, registryServers, { isResidue, groupPrefix })
+    const loader = joinLoaderRows(rows, mounted, registryServers, { isResidue, groupPrefix, ownership })
     if (current.kind === 'absent') {
       return { managed: [], unmanaged: loader.unmanaged, warnings: [], registryRevision: 0, capabilities: support() }
     }
@@ -92,15 +100,24 @@ export function createMcpInventoryProjection(dependencies) {
       return { managed: [], unmanaged: loader.unmanaged, unavailable: { status: current.kind }, registryRevision: current.revision ?? 0, capabilities: support() }
     }
 
-    // The full view starts from registry authority, while consuming the same
-    // managed Loader join as the compatibility view. Registry-only entries stay
-    // visible and orphan Loader residue never becomes a fabricated registry row.
-    const loaderByIdentity = new Map(loader.managed.map(fact => [fact.identity, fact]))
+    // Registry authority starts the full view. Join every actual Loader group,
+    // then select only this manager's exact own mount as mounted evidence.
+    const loaderByIdentity = new Map()
+    for (const fact of loader.managed) {
+      const facts = loaderByIdentity.get(fact.identity) ?? []
+      facts.push(fact)
+      loaderByIdentity.set(fact.identity, facts)
+    }
     const defaults = new Set(current.enabled)
     const managed = Object.values(current.servers).map(entry => {
       const phase = runtime.snapshot(entry.identity)
-      const loaderFact = loaderByIdentity.get(entry.identity)
-      const mountedRecord = loaderFact ? loaderFact.mount : mounted.get(entry.identity)
+      const facts = loaderByIdentity.get(entry.identity) ?? []
+      const ownMount = mounted.get(entry.identity) ?? null
+      const ownLoaderFact = ownMount ? facts.find(fact => fact.groupId === ownMount.groupId) : null
+      // Some supported bare/test compositions expose no Loader listing. Keep
+      // their existing mount readback, but never let a different actual group
+      // satisfy this manager's strict mount evidence.
+      const mountedRecord = ownMount && (facts.length === 0 || ownLoaderFact) ? ownMount : null
       const isMounted = phase.phase === 'mounted' && phase.generation === entry.generation && mountedRecord?.generation === entry.generation
       const holder = holdsReservation(rows, entry.client?.serverName ?? entry.identity)
       const state = holder ? 'conflict' : isMounted ? 'mounted' : phase.phase === 'saved-degraded' ? 'degraded' : ['cleanup-failed', 'cleanup-unknown'].includes(phase.phase) ? phase.phase : 'registered'

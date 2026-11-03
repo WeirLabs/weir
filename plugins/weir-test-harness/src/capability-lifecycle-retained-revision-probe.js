@@ -1,7 +1,6 @@
 // Real-Host same-preset retained-revision proof for mcp-management-deepening 1.5.
-// The primary phase uses different managed identities. A separate diagnostic
-// phase mounts one identity from both retained managers and reports, rather than
-// repairs, any groupId-keyed facade collision.
+// The primary phase uses different managed identities. Separate real regressions
+// require same-identity old/new discovery, RPC and owner-safe cleanup in both orders.
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -10,6 +9,7 @@ import { createMcpRegistry } from '../../weir-harness/src/capabilities/mcp-regis
 import { openCapabilityStore } from '../../weir-harness/src/capabilities/store/store.js'
 import { lifecycleFeedRegistry } from '../../weir-harness/src/capabilities/lifecycle-feed.js'
 import { mcpFacadeBridgeFor } from '../../weir-harness/src/capabilities/mcp-facade-plugin.js'
+import { scopedPresetTreeCaptures } from './scoped-preset-tree-capture.js'
 import { beginOrder, setPhase, snapshotSummary } from './capability-lifecycle-dual-state.js'
 
 export const name = 'capability-lifecycle-retained-revision-probe'
@@ -111,6 +111,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
   const registry = createMcpRegistry({ store })
   const agents = new Map()
   const managers = new Map()
+  const trees = new Map()
   const handles = new Map()
   const unregister = new Map()
   const disposed = new Set()
@@ -120,6 +121,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
   const registryRemoved = new Set()
   const placeholders = new Map()
   const generations = new Map()
+  const groupIds = new Map()
   report.runId = runId
   report.presetId = presetId
   report.serverLog = serverLog
@@ -132,6 +134,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
   function definition(slot, root) {
     const selectionRow = fileURLToPath(new URL('./capability-lifecycle-selection-fixture.js', import.meta.url))
     const observerRow = fileURLToPath(new URL('./capability-lifecycle-manager-observer.js', import.meta.url))
+    const treeCaptureRow = fileURLToPath(new URL('./scoped-preset-tree-capture.js', import.meta.url))
     return {
       id: presetId,
       name: `Retained ${presetId} ${slot}`,
@@ -145,6 +148,10 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
           { id: `manager-${slot}`, name: 'weir-harness/mcp-manager', config: { startupTimeoutMs: 15000 } },
           { id: `observer-${slot}`, name: observerRow, config: { orderId: runId, presetId: slot } },
         ],
+      }, {
+        id: `tree-capture-${slot}`,
+        name: treeCaptureRow,
+        config: { key: `${runId}:${slot}` },
       }, {
         id: `skill-tool-${slot}`,
         name: '@deepseek-ai/dsh-tool-skill',
@@ -187,6 +194,9 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
     })
     if (resolved.broken) throw new Error(`preset ${presetId}/${slot} failed to mount: ${resolved.broken}`)
     if (!manager) throw new Error(`observer found no manager for ${runId}/${slot}`)
+    const tree = scopedPresetTreeCaptures.get(`${runId}:${slot}`)?.tree
+    if (!tree) throw new Error(`scoped PresetTree capture found no owning tree for ${runId}/${slot}`)
+    trees.set(slot, tree)
     const pending = state.managerStarts.get(slot) ?? manager.start()
     await pending
     await validateInitialEmptyRegistry(manager, registry, runId, slot)
@@ -326,6 +336,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
     setPhase(runId, `adopt:${slot}`)
     runtimeAttempted.add(slot)
     const outcome = await managers.get(slot).adopt(serverEntry(identity, serverLog))
+    groupIds.set(slot, managers.get(slot).mounted.get(identity)?.groupId ?? `weir-mcp-${identity}`)
     const current = await registry.read()
     const entry = current.kind === 'ok' ? current.servers?.[identity] : null
     generations.set(slot, entry?.generation ?? null)
@@ -336,6 +347,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
     setPhase(runId, `same-identity-reconcile:${slot}`)
     runtimeAttempted.add(slot)
     const outcome = await managers.get(slot).reconcileOne(identityFor(slot), entry)
+    groupIds.set(slot, managers.get(slot).mounted.get(identityFor(slot))?.groupId ?? `weir-mcp-${identityFor(slot)}`)
     generations.set(slot, entry.generation)
     return clone(outcome)
   }
@@ -380,7 +392,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
 
   function bridgeEvidence(slot, agentSlot = slot) {
     const identity = identityFor(slot)
-    const groupId = `weir-mcp-${identity}`
+    const groupId = groupIds.get(slot) ?? managers.get(slot)?.mounted.get(identity)?.groupId ?? `weir-mcp-${identity}`
     const payload = mcpFacadeBridgeFor(groupId)
     const agent = agents.get(agentSlot)
     if (!payload || !agent) return { groupId, present: Boolean(payload), identity: payload?.identity ?? null, generation: payload?.generation ?? null, ownerLifecycleTags: [] }
@@ -439,6 +451,42 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
     return clone(outcome)
   }
 
+  async function repeatRuntimeRelease(slot) {
+    if (!runtimeAttempted.has(slot) || !managers.has(slot)) return null
+    const outcome = await managers.get(slot).remove(identityFor(slot))
+    report.cleanup.repeatedRemovals ??= {}
+    report.cleanup.repeatedRemovals[slot] = clone(outcome)
+    return clone(outcome)
+  }
+
+  function groupFacts() {
+    const identity = identityFor('old')
+    const sources = [['host', ctx.get('loader')], ...SLOTS.map(slot => [slot, trees.get(slot)])]
+    const groups = []
+    for (const [scope, tree] of sources) {
+      if (typeof tree?.entries !== 'function') continue
+      for (const entry of tree.entries()) {
+        const options = entry?.options
+        if (options?.group !== true) continue
+        const facade = Array.isArray(options.config) ? options.config.find(row => row?.name === 'weir-harness/mcp-facade-plugin' && row.config?.identity === identity) : null
+        if (!facade && !(typeof options.id === 'string' && options.id.startsWith(`weir-mcp-${identity}`))) continue
+        groups.push({ scope, groupId: facade?.config?.group ?? options.id, entryId: entry.id, state: entry.fiber?.state ?? null })
+      }
+    }
+    return { count: groups.length, groups }
+  }
+
+  function claimFacts() {
+    const bySlot = Object.fromEntries(SLOTS.map(slot => {
+      const manager = managers.get(slot)
+      const identity = identityFor(slot)
+      const publicNames = [...(manager?.publicNames ?? [])].filter(([, owner]) => owner?.identity === identity).map(([name]) => name)
+      const mounted = manager?.mounted?.has(identity) === true
+      return [slot, { mounted, publicNames, claimCount: Number(mounted) + publicNames.length }]
+    }))
+    return { bySlot, claimCount: SLOTS.reduce((sum, slot) => sum + bySlot[slot].claimCount, 0) }
+  }
+
   async function removeRegistry(slot) {
     if (registryRemoved.has(slot)) return null
     registryRemoved.add(slot)
@@ -491,6 +539,10 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
     await waitForProcesses()
     report.cleanup.finalFeed = feedEvidence()
     report.cleanup.finalRetainedCompositions = presetRegistry.inspectCompositions().map(entry => entry.id)
+    report.cleanup.finalGroups = groupFacts()
+    report.cleanup.finalBridges = Object.fromEntries(SLOTS.map(slot => [slot, bridgeEvidence(slot)]))
+    report.cleanup.finalClaims = claimFacts()
+    report.cleanup.finalRegistry = clone(await registry.read())
   }
 
   function inspections() {
@@ -501,6 +553,7 @@ function createFixture(ctx, report, { runId, presetId, identityFor }) {
     prepareRoots, mountRevision, createAgent, resolveInitial, measure,
     gateEvidence, visibility, call, siblingFacts, adopt, reconcileSame, apply,
     bridgeEvidence, feedEvidence, releaseRegistration, disposeRevision, removeRuntime, removeRegistry,
+    repeatRuntimeRelease, groupFacts, claimFacts,
     waitForProcesses, finish, inspections,
   }
 }
@@ -587,65 +640,79 @@ function callOk(call, tag) {
     && JSON.stringify(call.lifecycleTags) === JSON.stringify([tag])
 }
 
-async function runFacadeDiagnostic(ctx) {
-  const runId = 'capability-lifecycle-retained-facade-diagnostic'
-  const presetId = 'weir-it-lifecycle-facade-diagnostic'
+async function runFacadeRegression(ctx, order) {
+  const runId = `capability-lifecycle-retained-facade-${order}`
+  const presetId = `weir-it-lifecycle-facade-${order}`
   const identity = 'retained-shared'
-  const report = { fixtureBlocker: null, classification: 'blocked', collisionEvidence: [], mechanismFacts: [] }
+  const first = order === 'old-first' ? 'old' : 'new'
+  const survivor = first === 'old' ? 'new' : 'old'
+  const report = { fixtureBlocker: null, order, first, survivor, identity }
   const fixture = createFixture(ctx, report, { runId, presetId, identityFor: () => identity })
   const oldTag = `${runId}:old`
   const newTag = `${runId}:new`
   try {
     await mountPair(fixture, report)
-    report.groupId = `weir-mcp-${identity}`
     report.oldAdoption = await fixture.adopt('old')
     report.oldApply = await fixture.apply('old')
-    report.oldBeforeNewMount = await fixture.call('old', 'FACADE_OLD_BEFORE_NEW', 'facade:before-new:old-rpc')
-    report.bridgeBeforeNewMount = fixture.bridgeEvidence('old', 'old')
     const current = await fixture.registry.read()
     const entry = current.kind === 'ok' ? current.servers?.[identity] : null
-    if (!entry) throw new Error('facade diagnostic lost its registered identity before replacement mount')
+    if (!entry) throw new Error('same-identity regression lost its registered identity before the new mount')
     report.newSameIdentityMount = await fixture.reconcileSame('new', entry)
-    report.bridgeAfterNewMount = fixture.bridgeEvidence('new', 'old')
-    report.oldAfterNewMount = await fixture.call('old', 'FACADE_OLD_AFTER_NEW', 'facade:after-new:old-rpc')
     report.newApply = await fixture.apply('new')
-    report.bridgeAfterNewApply = {
-      observedThroughOld: fixture.bridgeEvidence('new', 'old'),
-      observedThroughNew: fixture.bridgeEvidence('new', 'new'),
+    report.sameIdentity = {
+      generation: entry.generation,
+      incarnation: entry.incarnation ?? null,
+      serverName: entry.client?.serverName ?? null,
+      oldGeneration: fixture.generations.get('old'),
+      newGeneration: fixture.generations.get('new'),
+      oldMountGeneration: report.oldAdoption.outcome?.generation ?? null,
+      newMountGeneration: report.newSameIdentityMount?.generation ?? null,
+      oldMountIncarnation: report.oldAdoption.outcome?.incarnation ?? null,
+      newMountIncarnation: report.newSameIdentityMount?.incarnation ?? null,
     }
+    report.groupsAfterBoth = fixture.groupFacts()
+    report.bridgesAfterBoth = { old: fixture.bridgeEvidence('old', 'old'), new: fixture.bridgeEvidence('new', 'new') }
     report.directGatesAfterBoth = { old: await fixture.gateEvidence('old'), new: await fixture.gateEvidence('new') }
-    report.newAfterNewMount = await fixture.call('new', 'FACADE_NEW_AFTER_NEW', 'facade:after-new:new-rpc')
-    report.oldDisposal = await fixture.disposeRevision('old')
-    report.oldDisposal.runtimeRemoval = await fixture.removeRuntime('old')
-    report.bridgeAfterOldCleanup = fixture.bridgeEvidence('new', 'new')
-    report.newAfterOldCleanup = await fixture.call('new', 'FACADE_NEW_AFTER_OLD_CLEANUP', 'facade:after-old-cleanup:new-rpc')
-    report.newDisposal = await fixture.disposeRevision('new')
-    report.newDisposal.runtimeRemoval = await fixture.removeRuntime('new')
+    report.visibilityAfterBoth = { old: fixture.visibility('old'), new: fixture.visibility('new') }
+    report.oldAfterNewMount = await fixture.call('old', `FACADE_${order}_OLD_AFTER_NEW`, `facade:${order}:after-new:old-rpc`)
+    report.newAfterNewMount = await fixture.call('new', `FACADE_${order}_NEW_AFTER_NEW`, `facade:${order}:after-new:new-rpc`)
+    report.realRpc = {
+      old: callOk(report.oldAfterNewMount, oldTag),
+      new: callOk(report.newAfterNewMount, newTag),
+      distinctServerProcesses: report.oldAfterNewMount.matchingRpc?.[0]?.pid != null
+        && report.newAfterNewMount.matchingRpc?.[0]?.pid != null
+        && report.oldAfterNewMount.matchingRpc[0].pid !== report.newAfterNewMount.matchingRpc[0].pid,
+    }
 
-    const baseline = callOk(report.oldBeforeNewMount, oldTag)
-    const oldAfter = callOk(report.oldAfterNewMount, oldTag)
-    const newAfter = callOk(report.newAfterNewMount, newTag)
-    const newAfterOld = callOk(report.newAfterOldCleanup, newTag)
-    if (report.bridgeBeforeNewMount?.ownerLifecycleTags?.includes(oldTag) && report.bridgeAfterNewApply?.observedThroughOld?.ownerLifecycleTags?.includes(newTag)) {
-      report.mechanismFacts.push('same groupId bridge owner changed from old to new')
+    report.beforeFirstCleanup = await fixture.siblingFacts(survivor)
+    report.firstDisposal = await fixture.disposeRevision(first)
+    report.firstDisposal.gate = await fixture.gateEvidence(first)
+    report.firstDisposal.runtimeRemoval = await fixture.removeRuntime(first)
+    report.bridgeAfterFirstCleanup = fixture.bridgeEvidence(survivor, survivor)
+    report.survivorAfterFirstCleanup = {
+      facts: await fixture.siblingFacts(survivor),
+      visibility: fixture.visibility(survivor),
+      call: await fixture.call(survivor, `FACADE_${order}_SURVIVOR_AFTER_CLEANUP`, `facade:${order}:after-cleanup:${survivor}-rpc`),
     }
-    if (report.bridgeBeforeNewMount?.present && !report.oldDisposal?.runtimeRemoval) {
-      report.mechanismFacts.push('old runtime removal was not observable')
+    report.repeatedFirstRelease = await fixture.repeatRuntimeRelease(first)
+    report.bridgeAfterRepeatedRelease = fixture.bridgeEvidence(survivor, survivor)
+    report.survivorAfterRepeatedRelease = {
+      visibility: fixture.visibility(survivor),
+      call: await fixture.call(survivor, `FACADE_${order}_SURVIVOR_AFTER_REPEATED_RELEASE`, `facade:${order}:after-repeated-release:${survivor}-rpc`),
     }
-    if (baseline && !oldAfter) report.collisionEvidence.push('old real RPC stopped completing through its own lifecycle after the same-groupId new mount')
-    if (report.oldAfterNewMount?.lifecycleTags?.includes(newTag)) report.collisionEvidence.push('old-session tool execution resolved the new revision lifecycle')
-    if (newAfter && !newAfterOld) report.collisionEvidence.push('new real RPC stopped completing after old revision/runtime cleanup')
-    if (report.newSameIdentityMount?.status !== 'mounted' && baseline && !oldAfter) report.collisionEvidence.push('failed same-groupId replacement cleanup broke the previously working old RPC')
-    if (report.directGatesAfterBoth?.new?.admitted === true && !newAfter) report.collisionEvidence.push('new owning manager admitted its session, but the same-groupId mount exposed no usable new managed RPC')
-    if (report.bridgeAfterNewApply?.observedThroughNew?.present === true && report.bridgeAfterOldCleanup?.present === false) report.collisionEvidence.push('old cleanup deleted the same groupId bridge that had been overwritten by the new owner')
-    if (report.collisionEvidence.length > 0) report.classification = 'confirmed'
-    else if (report.newSameIdentityMount?.status === 'mounted' && baseline && oldAfter && newAfter && newAfterOld) report.classification = 'not-reproduced'
-    else report.classification = 'blocked'
-    if (report.classification === 'blocked') report.blocker = 'the real fixture did not establish a complete same-identity old/new RPC and ordered-cleanup matrix'
+
+    report.survivorDisposal = await fixture.disposeRevision(survivor)
+    report.survivorDisposal.gate = await fixture.gateEvidence(survivor)
+    report.survivorDisposal.runtimeRemoval = await fixture.removeRuntime(survivor)
+    report.survivorDisposal.registryRemoval = await fixture.removeRegistry(survivor)
+    report.final = {
+      groups: fixture.groupFacts(),
+      bridges: { old: fixture.bridgeEvidence('old'), new: fixture.bridgeEvidence('new') },
+      claims: fixture.claimFacts(),
+      registry: clone(await fixture.registry.read()),
+    }
   } catch (error) {
     report.fixtureBlocker = errorText(error)
-    report.classification = 'blocked'
-    report.blocker = errorText(error)
   } finally {
     await fixture.finish()
   }
@@ -655,7 +722,7 @@ async function runFacadeDiagnostic(ctx) {
 export function apply(ctx) {
   ctx.tools.register({
     name: 'capability_lifecycle_retained_revision_probe',
-    description: 'Prove same-preset retained old/new lifecycle ownership, Apply and cleanup, then diagnose the independent same-identity facade bridge.',
+    description: 'Prove retained lifecycle ownership and same-identity old/new discovery, RPC and cleanup in both orders.',
     parameters: { type: 'object', properties: {}, required: [] },
     output: {
       schema: { type: 'object' },
@@ -664,19 +731,23 @@ export function apply(ctx) {
     async execute() {
       const cwd = join(ROOT, 'ws')
       const reportPath = join(cwd, 'capability-lifecycle-retained-revision.json')
-      const report = { schemaVersion: 1, primary: null, facade: null }
+      const report = { schemaVersion: 2, primary: null, facade: null }
       await mkdir(cwd, { recursive: true })
       report.primary = await runPrimary(ctx)
       if (report.primary.fixtureBlocker) {
-        report.facade = { classification: 'blocked', blocker: 'primary retained lifecycle proof did not complete', collisionEvidence: [] }
+        report.facade = { expectedOrders: [], orders: {}, fixtureBlocker: 'primary retained lifecycle proof did not complete' }
       } else {
-        report.facade = await runFacadeDiagnostic(ctx)
+        const requested = process.env.WEIR_IT_MCP_FACADE_ORDER
+        const expectedOrders = requested ? [requested] : ['old-first', 'new-first']
+        if (expectedOrders.some(order => !['old-first', 'new-first'].includes(order))) throw new Error(`unknown facade cleanup order: ${requested}`)
+        report.facade = { expectedOrders, orders: {} }
+        for (const order of expectedOrders) report.facade.orders[order] = await runFacadeRegression(ctx, order)
       }
       await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n')
       return {
-        completed: !report.primary.fixtureBlocker && !report.facade.fixtureBlocker,
+        completed: !report.primary.fixtureBlocker && !report.facade.fixtureBlocker && report.facade.expectedOrders.every(order => !report.facade.orders[order]?.fixtureBlocker),
         primaryBlocker: report.primary.fixtureBlocker,
-        facadeClassification: report.facade.classification,
+        facadeOrders: report.facade.expectedOrders,
         report: reportPath,
       }
     },

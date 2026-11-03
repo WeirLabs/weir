@@ -45,6 +45,7 @@ import capabilityRemoteDualPreset from './capability-remote-dual-preset.js'
 import capabilityLifecycleRevisionZeroWeirFirst from './capability-lifecycle-revision-zero-weir-first.js'
 import capabilityLifecycleRevisionZeroCreativeFirst from './capability-lifecycle-revision-zero-creative-first.js'
 import capabilityLifecycleRetainedRevision from './capability-lifecycle-retained-revision.js'
+import scopedPresetTreeCanary from './scoped-preset-tree-canary.js'
 import worktreeWatch from './worktree-watch.js'
 import notifyWorktree from './notify-worktree.js'
 import worktreeAutoApprove from './worktree-auto-approve.js'
@@ -93,6 +94,8 @@ if (process.env.WEIR_IT_CAPABILITY_DUAL === '1') SCENARIOS.push(capabilityRemote
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_DUAL === '1') SCENARIOS.push(capabilityLifecycleRevisionZeroWeirFirst, capabilityLifecycleRevisionZeroCreativeFirst)
 // Opt-in same-preset retained-revision proof and separate facade diagnostic.
 if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') SCENARIOS.push(capabilityLifecycleRetainedRevision)
+// Opt-in real scoped, non-writing PresetTree / stock MCP namespace canary.
+if (process.env.WEIR_IT_MCP_SCOPED_CANARY === '1') SCENARIOS.push(scopedPresetTreeCanary)
 SCENARIOS.push(continuable)
 SCENARIOS.push(zombieLane)
 SCENARIOS.push(laneResumable)

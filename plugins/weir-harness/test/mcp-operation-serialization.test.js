@@ -2,6 +2,7 @@
 // server mounted but refusing calls. A real manager (runtime fence, drain,
 // gate) and real operations run against a controllable Loader mount double.
 import { test, expect } from './helpers.js'
+import { afterEach } from 'node:test'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -53,7 +54,17 @@ function mountDouble() {
   }
 }
 
+const activeFixtures = new Set()
+async function cleanupFixtures() {
+  for (const fixture of [...activeFixtures]) {
+    for (const identity of [...fixture.face.mounted.keys()]) await fixture.face.removeRuntime(identity)
+    fixture.dispose()
+    activeFixtures.delete(fixture)
+  }
+}
+afterEach(cleanupFixtures)
 async function fixture() {
+  await cleanupFixtures()
   const root = mkdtempSync(join(tmpdir(), 'weir-mcp-serial-'))
   const registry = createMcpRegistry({ store: openCapabilityStore({ root, platform: 'darwin' }), newIncarnation: () => null })
   await registry.register({
@@ -64,11 +75,12 @@ async function fixture() {
   const mount = mountDouble()
   const services = new Map()
   const lifecycle = { snapshotFor: () => ({ state: 'ready', mcpServers: ['docs'], mcpIncarnations: { docs: null } }) }
-  createMcpManager({ registry, mount, lifecycle, listRows: () => [], listEntryIds: () => [] })({
+  const dispose = createMcpManager({ registry, mount, lifecycle, listRows: () => [], listEntryIds: () => [] })({
     get: () => undefined, on() {}, reflect: { provide: (key, value) => services.set(key, value) }, logger: { warn() {} },
   }, {})
   const face = services.get('weirMcpManager')
   await face.start()
+  activeFixtures.add({ face, dispose })
   const operations = createMcpOperations({ registry, manager: face, credentials: undefined })
   const agent = { session: { id: 's1' } }
   const admits = () => {
