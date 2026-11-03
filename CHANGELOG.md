@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-03
+
 ### Changed
 
 - **MCP 操作协调与库存投影统一**：每个 manager 的同一 identity 操作现在共享一套 FIFO、准入 fence/token 与 drain 转换，启动、恢复、收养、编辑、重启和删除不再分别维护协调规则；独立 mount 清理屏障与现有管理面保持不变。MCP 清单改由同一只读投影生成，保留 managed/unmanaged 分类、字段、脱敏和诊断，不因打开或刷新清单触发连接探测或隐藏写入。详见 [MCP server 管理](docs/features/mcp-server-management.md)。
