@@ -128,8 +128,9 @@ describe('scenario registry', () => {
     const member = byId('capability-lifecycle-retained-revision')
     if (process.env.WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED === '1') {
       assert.equal(member, retainedRevision)
-      const continuable = SCENARIOS.findIndex((s) => s.id === 'continuable')
-      assert.equal(SCENARIOS[continuable - 1], member)
+      const retained = SCENARIOS.findIndex((s) => s.id === 'capability-lifecycle-retained-revision')
+      const successor = process.env.WEIR_IT_MCP_SCOPED_CANARY === '1' ? 'scoped-preset-tree-canary' : 'continuable'
+      assert.equal(SCENARIOS[retained + 1]?.id, successor)
     } else {
       assert.equal(member, undefined)
     }
