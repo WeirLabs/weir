@@ -58,6 +58,7 @@ import blackboardPromotion from './blackboard-promotion.js'
 import blackboardPersistence from './blackboard-persistence.js'
 import blackboardFork from './blackboard-fork.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
+import customSkillPaths from './custom-skill-paths.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
 import editlockLspUncertain from './editlock-lsp-uncertain.js'
@@ -125,6 +126,8 @@ SCENARIOS.push(fileleaseHolderDeath)
 // broker reset that ends a subscription without pretending it was a release.
 SCENARIOS.push(fileleaseReleaseWatch)
 SCENARIOS.push(fileleaseWatchReset)
+// Custom Skill scan paths: real gateway + selection/Apply + durable-log proof.
+SCENARIOS.push(customSkillPaths)
 
 /**
  * Find a scenario entry by id.

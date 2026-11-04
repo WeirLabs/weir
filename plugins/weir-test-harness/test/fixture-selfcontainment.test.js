@@ -85,7 +85,7 @@ function listFiles(dir) {
 // assert-replay.test.js for the reasoning shared by both lists.
 // Lifecycle revision-zero and retained-revision cases are live-only for the same
 // reason: their real RPC and process-cleanup reports are not replayable mock-LLM fixtures.
-const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection', 'filelease-lineage', 'filelease-wake', 'filelease-holder-death', 'filelease-release-watch', 'filelease-watch-reset', 'capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first', 'capability-lifecycle-retained-revision', 'scoped-preset-tree-canary'].includes(scenario.id))
+const REPLAY_SCENARIOS = SCENARIOS.filter(scenario => !['editlock', 'editlock-lsp-rename', 'editlock-lsp-uncertain', 'editlock-hashline-negatives', 'filelease-turn-release', 'filelease-hold', 'filelease-degrade', 'filelease-negotiation', 'filelease-fault-injection', 'filelease-lineage', 'filelease-wake', 'filelease-holder-death', 'filelease-release-watch', 'filelease-watch-reset', 'capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first', 'capability-lifecycle-retained-revision', 'scoped-preset-tree-canary', 'custom-skill-paths'].includes(scenario.id))
 
 describe('replay fixture self-containment', () => {
   it('the wildcard rules make exactly the enum kinds trackable under every fixture workspace', () => {
