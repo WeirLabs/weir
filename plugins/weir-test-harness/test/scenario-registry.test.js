@@ -67,6 +67,8 @@ EXPECTED_ORDER.push('filelease-lineage', 'filelease-wake', 'filelease-holder-dea
 // edit-lock-release-watch 3.1/3.2: the release subscription race and the broker
 // reset that ends a subscription.
 EXPECTED_ORDER.push('filelease-release-watch', 'filelease-watch-reset')
+// Live custom scan-path registry / selection / denied-load proof.
+EXPECTED_ORDER.push('custom-skill-paths')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -183,6 +185,7 @@ RUN_OVERRIDE.push('filelease-release-watch', 'filelease-watch-reset')
   RUN_OVERRIDE.push('capability-lifecycle-revision-zero-weir-first', 'capability-lifecycle-revision-zero-creative-first')
   RUN_OVERRIDE.push('capability-lifecycle-retained-revision')
   RUN_OVERRIDE.push('scoped-preset-tree-canary')
+  RUN_OVERRIDE.push('custom-skill-paths')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

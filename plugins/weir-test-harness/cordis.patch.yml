@@ -35,15 +35,15 @@
       name: 'weir-test-harness/mock-llm'
     - id: weir-skill-selection
       name: 'weir-test-harness/skill-selection'
-      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_APPLY_TX || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_LIFECYCLE || process.env.WEIR_IT_MCP || process.env.WEIR_IT_MCP_MANAGEMENT || process.env.WEIR_IT_PRESET || process.env.WEIR_IT_PRESET_SURFACE)"
+      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_APPLY_TX || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_LIFECYCLE || process.env.WEIR_IT_MCP || process.env.WEIR_IT_MCP_MANAGEMENT || process.env.WEIR_IT_PRESET || process.env.WEIR_IT_PRESET_SURFACE || process.env.WEIR_IT_CUSTOM_SKILL_PATHS)"
       config:
         readPresetId: weir
     - id: weir-it-tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
-      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION)"
+      disabled: !!js "Boolean(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_CUSTOM_SKILL_PATHS)"
     - id: weir-it-agent-presets
       name: '@deepseek-ai/dsh-agent-preset-registry'
-      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_MCP_MANAGEMENT)"
+      disabled: !!js "!(process.env.WEIR_IT_SKILL_COMPOSITION || process.env.WEIR_IT_COLD_SESSION || process.env.WEIR_IT_CAPABILITY_REMOTE || process.env.WEIR_IT_CAPABILITY_DUAL || process.env.WEIR_IT_MCP_MANAGEMENT || process.env.WEIR_IT_CUSTOM_SKILL_PATHS)"
       config:
         default: weir-it-selection
     - id: weir-it-skill-composition-probe
@@ -181,11 +181,15 @@
     # below mirrors the service for the capability-remote scenario only.
     - id: weir-it-capability-remote
       name: 'weir-harness/capability-remote'
-      disabled: !!js "!(process.env.WEIR_IT_CAPABILITY_REMOTE === '1' || process.env.WEIR_IT_CAPABILITY_DUAL === '1')"
+      disabled: !!js "!(process.env.WEIR_IT_CAPABILITY_REMOTE === '1' || process.env.WEIR_IT_CAPABILITY_DUAL === '1' || process.env.WEIR_IT_CUSTOM_SKILL_PATHS === '1')"
     - id: weir-it-capability-remote-probe
       name: 'weir-test-harness/capability-remote-probe'
       config:
         enabled: !!js process.env.WEIR_IT_CAPABILITY_REMOTE === '1'
+    - id: weir-it-custom-skill-paths-probe
+      name: './src/custom-skill-paths-probe.js'
+      config:
+        enabled: !!js process.env.WEIR_IT_CUSTOM_SKILL_PATHS === '1'
     # Mirror the product's host-layer blackboard remote (design D8). Headless
     # has no typert gateway, so the row proves the designed inert path; the
     # probe below drives the service directly for the blackboard scenario.

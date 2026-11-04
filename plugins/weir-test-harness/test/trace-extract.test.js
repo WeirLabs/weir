@@ -107,6 +107,7 @@ const PRE_MIGRATION_KEYS = [
   'jobsAwareChild',
   'settlementSeen',
   'compositionProbeServed',
+  'customSkillPathsServed',
   // cold-session scenario observation (task 5.5: convergence probe advertised)
   'coldProbeSeen',
   // notify-worktree scenario observation (merge result reached the parent)
