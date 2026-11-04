@@ -6,16 +6,29 @@
 
 本特性把 Weir 会话的 Skill 与 MCP 配置收敛为一份**显式的已选集合**：编辑先进入草稿，确认（Apply）后才生效并持久化；持久化由 Weir 自管的带锁侧文件承担，不依赖宿主 storage 的跨进程保证。Skill 侧保持官方形状（宿主注册表 + stock `tool-skill`），MCP 侧由 Weir 作为唯一挂载入口（managed/unmanaged 区分）。
 
-当前实施进度：**全部任务组已交付**。存储层、选择 provider、Apply 事务、生命周期、MCP 会话级关闭、预设库与工作区默认值、管理界面（右侧栏 Capabilities 面板 + Badge 入口）与打包导出/两阶段导入均已落地（最后两者经 OpenSpec 变更 `capability-manager-ux`）。
+当前实施进度：**全部任务组已交付**。存储层、选择 provider、Apply 事务、生命周期、MCP 会话级关闭、预设库与工作区默认值、管理界面（右侧栏 Capabilities 面板 + Badge 入口）与打包导出/两阶段导入均已落地（最后两者经 OpenSpec 变更 `capability-manager-ux`）；自定义 Skill 扫描路径（OpenSpec 变更 `add-custom-skill-scan-paths`）随后落地，Skill 发现根可由用户在 Skills 视图按 Profile 增删。
 
 ## 用户可见行为
 
 - **可见性变化（自选择 provider 落地起）**：Weir 会话只看到**已选** Skill；未选中的第三方 Skill 不再自动出现在模型目录、`skill` 加载与 slash 列表中。选择记录尚不存在的会话看到空目录与可见的状态提示（fail closed，绝不回退为全量发现）；工作区默认值、管理器界面与 Apply 流程交付后，选择集合由用户显式编辑产生。
 - **管理器入口与页签图标**：Capabilities 面板经右侧栏页签 `weir-capabilities` 打开（点击输入框 Badge 直达，或从向导页胶囊进入）；页签在向导胶囊与标签 chip 两层都显示专属滑块图标（16×16 stroke glyph，`currentColor`），chip 为「图标 + 标题」。
+- **自定义 Skill 扫描目录**：Skills 视图顶部可增删**本 Profile 共享**的扫描目录（绝对路径或 `~/…`）；新目录里的 Skill 只作为**未选中**候选进入列表，勾选并 Apply 之前模型与你都无法调用。列表只呈现注册表登记的路径——Weir 内置、Creative 的 cordis 开发技能、project/user 标准根与 host bundled 根不在其中，也不能从此界面移除。路径增删本身不产生 Apply 差异，也不改写选择草稿、已应用集合、工作区默认值与预设。
 
 ## 配置
 
-本特性尚无配置项（实施中的模块将以 volatile config 暴露，在线编辑、无需重挂载）。
+组合期配置在生产 patch 的 `weir-harness/skill-selection` 行；修改后须重应用 bundle，不提供在线编辑。
+
+| 键 | 作用 | 当前组合取值 |
+|---|---|---|
+| `readPresetId` | 该挂载归属的预设 id | `weir` / `weir-creative` |
+| `customSkillDirs` | 组合附带的 custom 扫描根（scope `custom`、rank 300） | 仅 `weir-creative`：`@deepseek-ai/dsh-agent-preset` 的 cordis 开发技能目录 |
+| `supplementalSkillDirs` | 只用于把 Apply 缺失名称分类为「已知但不适用于本预设」，不参与枚举 | 两预设行注入同一根 |
+| `baselineScopes` | 新根会话初始基线可纳入的 scope | `weir`：默认仅 `weir-builtin`；`weir-creative`：`weir-builtin` + `custom` |
+| `weirBuiltinDir` / `bundledSkillDir` | Weir 内置技能根 / 宿主 bundled 根 | bundle 自身 `skills/`；`DSH_BUNDLED_SKILL_DIR` |
+| `machineId` | identity 的安装级 opaque 命名空间 | 缺省由 `profileContext` 的 home + name 派生 |
+| `dshHome` / `agentsHome` | 标准 user 根的家目录 | `profileContext.home` / `DSH_AGENTS_HOME` |
+
+**Profile 级用户扫描路径注册表**：Skills 视图添加的目录写入 `join(profileContext.home, 'weir', 'profiles', <name>, 'capabilities', 'skills', 'scan-paths.json')`，payload 严格为 `{paths: string[]}`。它与选择记录是不同的存储单元，自带 revision 与 CAS（缺席读作 `{status:'ok', revision:0, paths:[]}`）；登记值是 realpath 之后的**规范化绝对路径**，输入可用 `~`／`~/…` 展开，且必须是存在、可读的绝对目录。语义、失败码与失效范围见下文「自定义 Skill 扫描路径」。
 
 ## 设计细节
 
@@ -27,12 +40,25 @@
 `profileContext` 不可得时所有存储单元标为 unsupported 并显式报错，**不回退**到 cwd 或用户工作区；
 正式与测试 profile 因此天然隔离（各自 DSH home 下各自 profile 名）。
 
-- **不依赖宿主 storage 的持久性保证，只依赖文件系统 rename／fsync 语义。** 每个存储单元（会话选择、content pins、工作区默认值、预设库、分发记录、MCP 注册表）是独立文件与独立 revision，互不覆盖；记录与锁都带 `schemaVersion`，未知版本 fail closed（拒绝读写、不迁移、不改写、不删除）。
+- **不依赖宿主 storage 的持久性保证，只依赖文件系统 rename／fsync 语义。** 每个存储单元（会话选择、content pins、工作区默认值、预设库、分发记录、MCP 注册表、Skill 扫描路径注册表 `skills/scan-paths.json`）是独立文件与独立 revision，互不覆盖；记录与锁都带 `schemaVersion`，未知版本 fail closed（拒绝读写、不迁移、不改写、不删除）。
 - **原子提交**：选择与其回执在**同一文件的同一次原子提交**中落盘——写临时文件、fsync、rename、目录 fsync；在持锁区间内做 expected-revision CAS。同 requestId 同 payload 重放返回原回执（duplicate），同 ID 异 payload 拒绝（request-conflict）。进程内 mutex 只作本进程串行化，不当跨进程保障。
 - **锁协议**：每单元一把独占锁（owner token、进程标识、启动标识、租约时间），获取走「写私有候选 `<file>.<token>.cand` → fsync → `link(cand, file)`（`EEXIST` 即竞争失败）→ 删候选」。刻意**不用**「`wx` 先建后写」：第一轮 G0 spike 实测该写法在崩溃点留下 0 字节锁文件，单元从此永久卡住——这是本设计绕开宿主方案、自管锁文件的直接动因（见证据目录 C-1.10）。`link` 遇 `ENOENT`（候选被持锁者的孤立清理删掉）视为本轮失败并重试。
 - **陈旧锁回收**：必须先同时满足「租约过期」且「owner 已不存活」（pid + 启动标识双重核对），不得仅凭超时抢占；过期租约 + 存活 owner 不回收。回收经 `<unit>.lock.recover`（同样以 `link` 发布）串行化，持有后重读锁文件、核对 owner token 仍等于所观察的已死 owner 才 rename，否则中止。持锁期间崩溃留下的本单元孤立 `.tmp`／`.cand` 在下一次持锁时清理；已死回收者遗留的 `.recover` 不自动清除，提供手动恢复入口（`inspect`/`clear`）。
 - **内容代次发布**：`distribution/<scope>/active.json` 指针在同一文件系统内以 rename 切换，指针 + provenance + 操作回执在同一次原子发布中提交；任何中断点之后读者只见完整旧代次或完整新代次。
 - **平台矩阵**：只在 rename/fsync/link 语义经实测的平台行启用写入（`darwin` 行：1.10 矩阵；`win32` 行：windows-platform-adaptation——NTFS 上硬链接 EEXIST、rename 原子替换、文件 fsync、`kill(pid,0)` 与 `powershell.exe` 启动时间探测经本机实测，跨进程 SIGKILL 竞赛套件全绿；目录 fsync 在 win32 不可用（EPERM），该行跳过目录 fsync）；其余平台写操作标为 unsupported 并显式报错，**绝不**「先删后拷」。
+
+### 自定义 Skill 扫描路径
+
+Skill 发现根 = 组合/标准根 + 用户注册表根。用户根来自 Profile 级注册表 `skills/scan-paths.json`，其读写由 [skill-scan-path-registry.js](<../../plugins/weir-harness/src/capabilities/skill-scan-path-registry.js>) 承担，根合并与去重由 [skill-inventory.js](<../../plugins/weir-harness/src/capabilities/skill-inventory.js>) 的 `resolveSkillRoots` 完成。
+
+- **规范化与校验**：添加前先 trim，`~`／`~/…` 展开为 home（home 不可得报 `home-unavailable`），展开后必须是绝对路径（`path-not-absolute`——相对路径、`~someone/…`、`$HOME/…` 都拒绝），`realpath` 必须成功（`path-missing`／`path-unreadable`／`path-canonicalization-failed`），必须 `stat` 为目录（`path-not-directory`），并且 `access(R_OK)` 可读（`path-unreadable`）。成功时**存储 realpath 后的规范化路径**，显示与读回都用它；去重与匹配另用平台折叠键（win32 折叠大小写与分隔符，不改写已存储的显示路径）。任何校验失败都是 `validation-failed` 加具体 code，**磁盘零写入**。
+- **重复与移除**：同一规范化键已登记时添加返回 `duplicate`（零写入，回带当前 `revision` 与 `paths`），因此 symlink、`./` 与 `~/` 拼写不会产生第二项；移除接受任何能规范化到同一键的拼写，目录已被删除时按最深存活祖先规范化，消失的根因此仍可移除；未登记路径返回 `not-found`。
+- **合并与去重**：注册表根在组合根与标准根之后追加为 scope `custom`、rank 300，既有根的 source/scope/rank 不变；最终根列表按规范化路径键去重，先出现者获胜（组合与标准根语义优先）。Creative 的 `customSkillDirs`、project/user 标准根、Weir 内置根与 host bundled 根不是注册表条目，不能从此界面移除；规范化键无法证明的根保持独立，落到发现层既有的部分失败路径。
+- **读失败即显式失败**：损坏、未知 schema、撕裂、非法 payload、平台不支持都读成 `{status:'unavailable', error:{code}}`（`corrupt`／`unknown-schema`／`torn`／`invalid-payload`／`read-failed` 等），绝不解释为空列表、绝不修复或删除记录；`requireSkillScanPaths` 让根解析抛出，于是清单读取显式失败，而不是假装库存完整。
+- **写失败与归属**：写路径与其它单元共用同一把锁与 CAS，`locked`／`unreadable`／`write-failed`／`unsupported`／`storage-failed` 都以 `saved:false` 返回，失败的写入不算发现范围变化（不失效、不刷新清单）。服务端在 authenticated session 上重新观察归属（preset／Profile／feed 相同）：CAS 前一次（失败即不落地）、提交后一次（已落地则保留 `saved:true` 与真实 `revision`/`paths`，状态 `owner-changed`）。
+- **失效范围限接受进程**：已落地的写入在成功响应之前，对**接受该请求的 Host 进程**内每个同 Profile 挂载逐个调用 `provider.sourceChanged()`——同一 Profile 的 `weir` 与 `weir-creative` 都失效，其他 Profile 不动。某个挂载失效失败或提交后归属检查失败都不撤销已落地的写入：状态降级为 `invalidation-failed`／`owner-changed` 并保留真实 `revision` 与 `paths`，绝不声称回滚。**不承诺 watcher**：其他 Host 进程按下一次 fresh 读收敛——每次枚举都会重读注册表文件，既有的 Apply `control.invalidate()` 与 `agent-preset/selected` 收敛帧也会强制重枚举；即时跨进程可见性不在承诺内。
+- **与选择、默认值、预设分离**：路径单元有自己的 revision，选择 CAS 仍只用 accepted 回执 revision；路径 revision 不参与 `draftAfterRefresh`、不进入 Apply 的 `expectedRevision`，因此路径操作本身**不产生 Apply 差异**（底栏 +n/−m 不变），新发现的 Skill 保持未选中，已应用记录、工作区默认值与预设都不被改写，dirty 草稿连同其身份条目原样保留。
+- **移除之后**：被移除根的候选不再出现在清单里；仍在已应用集合中的 identity 走既有缺失语义——`skill` 加载返回不可用、回执带 `selection-unavailable` 警告且 revision 不前进、以该 identity 提交 Apply 报 `selected-identity-missing`，已接受记录逐字保留。恢复方式与其它缺失项相同：重新登记目录后刷新，或显式改选。
 
 ### 库存、身份与选择 provider
 
@@ -146,6 +172,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 ### 管理界面与通知
 
 **会话 Badge 与 Capabilities 面板**（客户端 `lib/client.capability-*.js`，服务器 `/capabilities` 命令）：Badge 挂在 `conversation.input.right`（order 95，紧邻 LSP order 100），显示的已应用 Skills/MCP 计数一律以**服务端回执**为准（draft 绝不乐观显示），带内联图标与不可用警告点；空白会话凭明确 session ID 打开。**管理器落点是右侧栏 Capabilities 面板**（`sidebarRightTabs` tab `weir-capabilities` + `sidebar.right.pane.tab`，priority `extension`，与 Worktree 面板同模式）：点击 Badge 经 `sidebarRight.openTab` 打开对应会话的面板；shell 无右侧栏时 Badge 回退为输入框弹层——**面板与弹层共享同一视图组件树**（`shell` prop 只换外壳），降级路径零分叉。面板三个视图：Skills（按 scope 分组 Weir 内置/user/project/custom、真实复选框、名称+描述次行、冲突/缺失标记、搜索）、MCP（managed/unmanaged 分组、逐字段校验的添加表单）、**预设与默认值**（global/workspace 分节列表、保存草稿/已应用为预设、载入预设进草稿并报告 unresolved、重命名/替换/删除显式确认、导出 v2 包下载 `.json`、导入永远先 dry-run 出摘要（目标根/文件数/冲突列表）经显式确认与冲突决策后执行、工作区默认值保存/查看/清除）。底栏 Apply/Discard 带 dirty 净增减摘要（+n/−m），commit 相位语义不变。**Apply 不适用分区（preset-skill-applicability）**：草稿含当前库存无法解析的名称时，经 profile 补充目录（`supplementalSkillDirs`，两预设行同根注入）判定为「已知但当前预设不适用」的条目**跳过**（回执 `skipped:[{name,reason}]` 逐条列出，面板以警告 chip 呈现「已跳过 n 项」），可解析部分照常提交、记录不改写（预设往返无损）；真正未知名维持 `{status:'missing'}` 整批硬失败（草稿保留）。服务器面：读取三件套（receipt/list/conditions）走插件自有 typert remote `weirCapabilities`（宿主层行 `weir-capability-remote`，[capability-remote.js](<../../plugins/weir-harness/src/capabilities/capability-remote.js>)）——**读操作零会话日志写入**（宿主 `commands.execute` 无条件落 `command/run`/`command/done` 且硬编码 `source:{kind:'user'}`，Badge 每次挂载拉取曾在每次进会话时永久留对话卡片；S27 实证后迁出）；变更操作与预设/默认值写动词仍走 `/capabilities apply|mcp-add|preset-save|preset-load|preset-delete|preset-export|preset-import|default-save|default-clear` 命令（用户显式触发，留卡片是审计特性）；预设页签的两个自动读取（`presets`/`default-get`）随后亦迁入同一 remote（silent-preset-reads，方法 `presets`/`defaultGet`，域状态如 `no-workspace` 作为值返回）；命令与 remote 共享同一套载荷构造（[read-payloads.js](<../../plugins/weir-harness/src/capabilities/read-payloads.js>)，字节一致），UI 不直连 store；未满足的一致性条件显示显式 **unsupported** 而非隐藏控件，与 loading/unknown 区分；恢复失败显示原因。草稿交互（12.3）：行即复选框（键盘 Space/Enter 可操作），Apply 提交走 `/capabilities apply <json>`——identity 在服务器侧按**全量库存**精确匹配、旧名称条目按唯一 parsed 匹配映射为身份（不在有效选择里的候选同样可勾选），未知名显式报错；关闭 dirty draft 提供 discard/keep editing；提交中复用同一 request ID；失败保留草稿；revision conflict 显示当前状态让用户重选（不静默 rebase）；无 diff 但有缺失警告时提供 install/configure 而不虚构 Apply；结果待确认可查询。命令结果契约注意：`dsh-commands` 的 normalizeResult 只保留 `{kind, text, sourceEventSeq}`，结构化载荷一律以 JSON 文本传输。remote 通道契约：`weirCapabilities.receipt|list|conditions(sessionId)` 经 `ctx.typert.register()` 手写 contribution（src-json codec）注册，服务由预设层 skill-selection 经模块级 bridge 喂面、宿主层行 `ctx.root.reflect.provide` 发布（预设 realm 对网关不可见，S27）；失败为 typed error（`bridge-absent`/`unknown-session`/`payload-failed`），客户端映射为既有不可用态，**不回退命令通道**。
+**Skills 视图的自定义扫描路径管理**（[client.capability-manager.js](<../../plugins/weir-harness/lib/client.capability-manager.js>) 的 `SkillPathManager`）：面板与弹层共用同一子组件树，并复用面板既有的 `addBlock` 插入点（仅 Skills 页签渲染；右栏为滚动区首个子节点、弹层为根 `children[1]`），面板自身 hook 数与既有子节点位置不变。区块含标题 + 「刷新路径」、添加表单（标签「技能扫描目录」、占位 `~/skills 或 /absolute/path`、原生 form 提交，`Enter` 可用）、空态「尚未登记自定义扫描路径。」、读取失败 alert，以及每行等宽显示的完整规范化路径 + 「移除」。移除是两步确认：行内「移除」打开 `role="group"` 的确认面，标题「移除此技能扫描路径？」并原样显示该规范化路径，「移除路径」／「取消」都可聚焦（确认主按钮 `autoFocus`）；`Escape` 与「取消」都零写入并把焦点交回该行「移除」，确认面自身不响应 `Enter`/`Space`，确认按钮是原生 button，`Enter`/`Space` 即原生激活。忙碌（添加/移除在途）与读取期间区块 `aria-busy`、全部控件（输入、「添加路径」、「移除」、「刷新路径」与确认面两按钮）禁用，`role="status"`（`aria-live="polite"`）显示「正在添加…」／「正在移除…」／「正在加载扫描路径…」；确认面内的 `Escape` 在忙碌时被忽略。失败反馈保留输入并给添加框 `aria-invalid`：`validation-failed`／`duplicate`／`not-found`／`revision-conflict` 只重读注册表（不刷新清单与回执、不合并输入），`saved`／降级／结果不确定才重读注册表 + 清单 + 回执；注册表不可读时禁用全部写入并给出可操作 alert，绝不发投机请求。通道面：路径读取是同一 remote 的 `skillPaths(sessionId)` 方法（与 `receipt`/`list`/`conditions`/`presets`/`defaultGet` 同属六个读方法，零会话日志），写入走 `weirCapabilityMutations` 通道的 `skillPathAdd`／`skillPathRemove(sessionId, {path, expectedRevision})`；路径响应不含凭据，因此不经 `sanitizeMcpPayload`。自动测试覆盖双外壳与键盘路径；**真实 GUI 视觉验收仍待办**（合入并重应用 bundle 后刷新页面观察）。
 
 **双预设读取归属与降级（fix-capability-read-preset-routing）**：普通 Weir 与 Weir Creative 的选择提供者可以在同一 Host 同时挂载；Badge/管理器/预设页的静默读取不能借用「最后挂载」的提供者。Host 对每个目标会话按已提交的当前预设投影选确切提供者（即使创建 header 仍写旧预设、或会话是冷读）；缺失、重复或在读取途中切换的归属返回明确不可用，不重启 Agent、不写会话日志、不改持久选择。若已接受选择记录有内容而库存读取不完整或回执带警告，已应用有效数量显示「未知／暂不可核实」和恢复提示，**不**把 0 个候选误称已应用空集，也不清空用户草稿；首次打开时基线未知，不以虚假的空集计算 +n/−m，用户明确核对并单独确认覆盖风险后才能再次 Apply。异步旧回执不能在新回执后覆盖页面。只有完整且无警告的真实空集才显示 0；已应用来源的预设保存继续要求回执摘要与修订证明，降级时禁用。
 
@@ -184,10 +211,14 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 - 回收被中断（`.recover` 残留）：单元保持锁定并显示手动恢复入口，不自动清除他人残留。
 - 平台矩阵以外的平台（darwin/win32 之外）或 `profileContext` 缺失：所有单元 unsupported，零写入。
 - Apply 冲突与并发：同 expected revision 的并发 Apply 恰一胜，败者得到 `revision-conflict`、receipt 不被确认，旧 authority 与草稿保留。
+- 扫描路径注册表损坏／未知版本／撕裂／非法 payload／存储不支持：读为显式 `unavailable`（带 `error.code`），根解析与清单读取随之显式失败；零写入、零修复、零删除。
+- 扫描路径输入被拒（空、相对、`~user`、不存在、非目录、不可读）：返回 `validation-failed` 与具体 code，客户端保留原输入且磁盘零写入。
+- 扫描路径并发：同一 expected revision 的添加/移除恰一胜；败者得到 `revision-conflict` 并回带当前 `revision`/`paths`（当前状态不可读时为 `current-state-unavailable`），客户端只重读注册表、不合并输入。
+- 扫描路径写已落地但提交后检查失败：回执保留 `saved:true` 与真实 `revision`/`paths`，状态为 `invalidation-failed`／`owner-changed`，绝不声称回滚；未落地时不得据此声称已保存。
 
 ## 测试
 
-- 客户端回归：`client-capability-model.test.js` 覆盖同名草稿完整预检、字符串歧义/未知、精确替换与移除、身份/dirty/安全标签；`client-capability-manager.test.js` 覆盖双外壳、搜索隐藏、可访问告警、旧名称恢复按钮与 stale 回执；`client.test.js` 覆盖真实 Apply 命令包装的 `kind:'error'` JSON 解包与 chunk 内容绑定。自动测试不等于现有 desktop GUI 验收；须经合入、按用户允许重应用 bundle 后刷新页面观察。
+- 客户端回归：`client-capability-model.test.js` 覆盖同名草稿完整预检、字符串歧义/未知、精确替换与移除、身份/dirty/安全标签；`client-capability-manager.test.js` 覆盖双外壳、搜索隐藏、可访问告警、旧名称恢复按钮与 stale 回执，并把弹层 `children[1]` 的 `addBlock` 槽位钉在路径子组件上（含注入的刷新回调）；`client.test.js` 覆盖真实 Apply 命令包装的 `kind:'error'` JSON 解包与 chunk 内容绑定。自动测试不等于现有 desktop GUI 验收；须经合入、按用户允许重应用 bundle 后刷新页面观察。
 
 - 单元测试：`plugins/weir-harness/test/capability-store.test.js`（18 例：路径解析与隔离、单元布局、fail-closed 解码、CAS 与幂等回执、committed 结果形状含 `committedOver`（首写为 `undefined`、其后为被覆写 payload）、锁获取／回收／手动恢复、平台桩零写入、win32 行真实提交、代次指针原子切换）。
 - 单元测试（通知单元）：`plugins/weir-harness/test/notice-store.test.js`（3 例：`sessions/<id>/notice.json` 布局与 segment 纪律、与选择单元并存的独立文件／独立 revision／独立 CAS、损坏记录 fail closed 且不被重写）、`plugins/weir-harness/test/selection-notify-durable.test.js`（6 例：换一个模块实例仍见义务＝重启保证、跨重启的净合并、deliver-then-clear、丢 CAS 时只减已投递名字与二次冲突保留义务、锁忙/损坏/平台不支持的 fail-closed）。
@@ -201,3 +232,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 - 单元测试（Fork 继承，`fix-capability-fork-and-preset-workspaces` 组 1）：`lifecycle-snapshot.test.js`（源只有 inherited 快照／源已解析初始快照／连续 Fork 两次捕获与冷读／源真实缺席不写空 inherited／自身 Apply 逐字保留／损坏与未知 schema 不回落／inherited revision 不进回执）、`lifecycle-preload.test.js`（冷 preload 载入 inherited 集与谱系、accepted 优先、任一单元损坏即 BLOCKED、内存优先、unsupported 只报告）、`initial-selection.test.js`（revision-0 发布、默认值集合含 MCP、迟到发布不覆盖、库存不完整不发布、depth-0 fork 根初始化与子代理拒绝）、`mcp-gate.test.js`（冷 Fork 与连续 Fork 的准入集合与继承集合一致）、`capabilities-command.test.js`（冷 Fork 回执 `revision: 0`、首次 Apply 以 `expectedRevision: 0` 提交）。
 - 集成测试：`plugins/weir-test-harness` 的 `lifecycle-inheritance` 场景末段（真实 `agents.create` Fork 阶段）——depth-0 真实 Fork、Fork 的 Fork 与「只解析过初始集合」的源，在首个模型请求前 Skill 目录、内存与冷读 lifecycle 快照、生产 MCP 准入闸（含源未接受的受管 server 仍被拒）一致报出继承集合；报告落 `capability-fork-report.json`。不新增 scenario 注册项：测试装置的 scenario 注册表契约单测（`test/scenario-registry.test.js`）不在本车道写面内，改动注册表会使该契约红。
 - 集成测试：`plugins/weir-test-harness` 的 `skill-composition` 场景族（OFF／LEAK／HOST／office 四组合）：只有 OFF 形态下未选 Skill 不出现在模型目录、`skill` 加载、预设内消费者与 slash 列表；未选 office Skill 被同名遮蔽；预设不进入 `broken`。
+- 单元测试（自定义扫描路径注册表）：`plugins/weir-harness/test/skill-scan-path-registry.test.js`（8 例：独立 Profile 单元与缺席 revision 0、`~`/symlink/词法别名归一为同一项、非法/相对/缺失/非目录/不可读零写入、CAS 冲突与 `not-found`、目录消失后仍可按规范路径移除、损坏/未知/撕裂/非法 payload fail closed 且不改写、读写 I/O 失败为显式状态、win32 home 展开与大小写折叠不改写存储的显示路径）；`skill-inventory.test.js` 新增用例（组合根与注册表根合并后按规范键去重、注册表读失败显式失败根解析）。
+- 单元测试（路径 remote 通道）：`capability-skill-paths-remote.test.js`（5 例：精确归属 + CAS + 同 Profile 多 revision 全失效 + 零会话日志、损坏注册表读为值且写失败不回退、落地后失效失败保留 saved 事实并尝试每个同 Profile provider、CAS 前归属变化阻断写入且不失效、落地后归属变化保留真实 revision/paths）、`capability-remote.test.js` / `capability-remote-registration.test.js`（六个读 + 四个写端点、旧代次恢复为全部十个端点）。
+- 客户端回归（扫描路径）：`client-skill-paths.test.js`（10 例：双外壳添加的忙碌态、全量重读、脏身份草稿保留与新发现未选中；服务端拒绝保留输入；duplicate 与 revision conflict 各自只重读注册表；双外壳移除确认点名精确路径且 Cancel/Escape 零写入并回焦；落地降级保留 saved 事实；不可读注册表禁用写入；字典键 en/zh 覆盖）、`client-capability-model.test.js`（读写结果归一化、路径 revision 不进选择 CAS、路径刷新保留草稿 diff）、`client-channel-adapter.test.js`（`fetchSkillPaths`/`skillPathAdd`/`skillPathRemove` 走原始 RPC、无命令回退、组合根适配器绑定面板）。
+- 集成测试：`plugins/weir-test-harness` 的 `custom-skill-paths` 场景 39 项检查——真实临时 Skill 目录、真实 gateway 读写、真实 accepted 记录与 stock `skill` 加载、durable 会话日志：添加只登记规范路径且回执逐字不变、清单出现未选中 custom 候选、显式 Select/Apply 后才可加载、移除后清单消失且加载拒绝、回执只加 `selection-unavailable` 警告不前进 revision、缺失 identity 的 Apply 报 `selected-identity-missing`、会话日志与模型请求都不携带该路径，且路径操作不追加任何命令/自定义事件。

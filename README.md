@@ -75,7 +75,7 @@ flowchart LR
 | `work-with-pr` | PR 全流程：独立 worktree、证据化验证、可读的 PR 描述 |
 | `remove-deadcode` | 验证后原子提交式删除死代码 |
 
-Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；能力集合可存为预设、日后改名或重新保存，也可导入导出。→ [会话能力管理器](docs/features/session-capability-manager.md)
+Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；现成技能不够用时，可在 Skills 视图添加自己的技能扫描目录，新发现的技能仍需你勾选并应用后才会启用；能力集合可存为预设、日后改名或重新保存，也可导入导出。→ [会话能力管理器](docs/features/session-capability-manager.md)
 
 **MCP server 管理**：在 Capabilities 面板添加、编辑、测试、重启或删除 `stdio` / `streamable-http` server，支持粘贴 JSON、凭据引用、批量预览与真实错误诊断。安装、当前会话启用、新会话默认彼此独立；直接说「安装某个 MCP server」，主 Orchestrator 会生成计划并请你确认。→ [MCP server 管理](docs/features/mcp-server-management.md)
 
