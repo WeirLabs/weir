@@ -12,7 +12,15 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import zlib from 'node:zlib'
+import { CAPABILITY_ENDPOINTS } from '../../../weir-harness/src/capabilities/capability-remote.js'
 import { textChunks, toolCallChunks, transcript } from '../mock-kit.js'
+
+// Lifecycle masks come from the authoritative endpoint contract: the probe
+// renders one character per declared endpoint in contribution order (its
+// `endpointState` / `seenState`), so a hard-coded 7/10 literal rots silently the
+// moment a read or mutation endpoint is added.
+const ALL_LIVE = '1'.repeat(CAPABILITY_ENDPOINTS.length)
+const ALL_GONE = '0'.repeat(CAPABILITY_ENDPOINTS.length)
 
 const id = 'capability-remote'
 const prompt = 'capability-remote-probe'
@@ -148,11 +156,11 @@ function assert(run) {
   }
   if (registration !== null) {
     run.check('the shipped row fiber was found and its real gateway service is callable', registration?.rowFiber?.found === true && registration?.gateway?.dispatch === true, JSON.stringify({ rowFiber: registration?.rowFiber, gateway: registration?.gateway }).slice(0, 300))
-    run.check('all five read AND both mutation endpoints are registered before any remount', registration?.endpoints?.before === '1111111' && registration?.package?.before === true, JSON.stringify({ endpoints: registration?.endpoints, package: registration?.package }).slice(0, 300))
+    run.check(`all ${CAPABILITY_ENDPOINTS.length} declared read and mutation endpoints are registered before any remount`, registration?.endpoints?.before === ALL_LIVE && registration?.package?.before === true, JSON.stringify({ endpoints: registration?.endpoints, package: registration?.package }).slice(0, 300))
     run.check('a real gateway read and mutation reach the bridge spy faces', registration?.dispatch?.readBefore?.ok === true && registration?.dispatch?.mutationBefore?.ok === true && registration?.dispatch?.mutationBefore?.value?.status === 'preview' && registration?.spies?.before?.reads === 1 && registration?.spies?.before?.mutations === 1, JSON.stringify({ read: registration?.dispatch?.readBefore, mutation: registration?.dispatch?.mutationBefore, spies: registration?.spies?.before }).slice(0, 400))
-    run.check('a real Cordis fiber restart leaves every endpoint and the package face live', registration?.endpoints?.afterRestart === '1111111' && registration?.package?.afterRestart === true, JSON.stringify({ endpoints: registration?.endpoints, package: registration?.package, seen: registration?.hasSeen }).slice(0, 300))
+    run.check('a real Cordis fiber restart leaves every endpoint and the package face live', registration?.endpoints?.afterRestart === ALL_LIVE && registration?.package?.afterRestart === true, JSON.stringify({ endpoints: registration?.endpoints, package: registration?.package, seen: registration?.hasSeen }).slice(0, 300))
     run.check('dispatch still reaches the row after the restart instead of definition-unavailable', registration?.dispatch?.readAfterRestart?.ok === true && registration?.dispatch?.mutationAfterRestart?.ok === true && registration?.spies?.afterRestart?.reads === 2 && registration?.spies?.afterRestart?.mutations === 2, JSON.stringify({ read: registration?.dispatch?.readAfterRestart, mutation: registration?.dispatch?.mutationAfterRestart, spies: registration?.spies }).slice(0, 400))
-    run.check('a withdrawal with no survivor leaves no endpoint or package face behind', registration?.endpoints?.afterDisposal === '0000000' && registration?.package?.afterDisposal === false && registration?.hasSeen?.afterDisposal === '1111111', JSON.stringify({ endpoints: registration?.endpoints?.afterDisposal, package: registration?.package?.afterDisposal, seen: registration?.hasSeen?.afterDisposal }).slice(0, 300))
+    run.check('a withdrawal with no survivor leaves no endpoint or package face behind', registration?.endpoints?.afterDisposal === ALL_GONE && registration?.package?.afterDisposal === false && registration?.hasSeen?.afterDisposal === ALL_LIVE, JSON.stringify({ endpoints: registration?.endpoints?.afterDisposal, package: registration?.package?.afterDisposal, seen: registration?.hasSeen?.afterDisposal }).slice(0, 300))
     run.check('a withdrawn strict definition rejects with gateway/definition-unavailable before either spy', registration?.dispatch?.readAfterDisposal?.ok === false && registration?.dispatch?.readAfterDisposal?.code === 'gateway/definition-unavailable' && registration?.dispatch?.mutationAfterDisposal?.code === 'gateway/definition-unavailable' && JSON.stringify(registration?.spies?.afterDisposal) === JSON.stringify(registration?.spies?.afterRestart), JSON.stringify({ read: registration?.dispatch?.readAfterDisposal, mutation: registration?.dispatch?.mutationAfterDisposal, spies: registration?.spies }).slice(0, 400))
   }
 
