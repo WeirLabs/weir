@@ -376,11 +376,12 @@ export function createCapabilityMutationService(dependencies = {}) {
         }
       }
 
-      // A landed registry write has already changed the durable discovery scope.
-      // Invalidate every same-Profile mount before any success response, and keep
-      // the actual saved facts if either this step or the final owner check fails.
+      // A known or possibly landed registry write may already have changed the
+      // durable discovery scope. Invalidate every same-Profile mount before the
+      // response, without converting an ambiguous outcome into a definite one.
+      const indeterminate = result.status === 'indeterminate'
       let invalidationFailure = null
-      if (result.saved === true) {
+      if (result.saved === true || indeterminate) {
         const failures = invalidateSkillScanPathProviders(first.profile)
         if (failures.length > 0) invalidationFailure = failures.map(failure => pathDiagnostic(failure).message).join('; ')
       }
@@ -389,14 +390,14 @@ export function createCapabilityMutationService(dependencies = {}) {
       } catch (cause) {
         return {
           ...result,
-          status: 'owner-changed', ownerChanged: true, saved: result.saved === true,
+          status: indeterminate ? 'indeterminate' : 'owner-changed', ownerChanged: true, saved: result.saved === true,
           error: pathDiagnostic(cause, 'owner-changed'),
         }
       }
       if (invalidationFailure !== null) {
         return {
           ...result,
-          status: 'invalidation-failed',
+          status: indeterminate ? 'indeterminate' : 'invalidation-failed',
           error: { code: 'invalidation-failed', message: invalidationFailure },
         }
       }

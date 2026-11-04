@@ -10,6 +10,7 @@ import {
   feedCapabilityReadBridge,
 } from '../src/capabilities/capability-remote.js'
 import { createSkillScanPathRegistry } from '../src/capabilities/skill-scan-path-registry.js'
+import { createNodeFs, instrumentFs } from '../src/capabilities/store/fs-adapter.js'
 import { openCapabilityStore } from '../src/capabilities/store/store.js'
 import { createStubLiveness } from './helpers/stub-liveness.js'
 import { storePlatformSkip } from './helpers.js'
@@ -172,6 +173,71 @@ test('landed invalidation failure reports saved facts, attempts every same-Profi
   const foreignState = await createSkillScanPathRegistry({ store: f.openStore(f.profiles.two), platform }).read()
   assert.deepEqual(foreignState, { status: 'ok', revision: 0, paths: [] })
   assert.deepEqual(f.appends, [])
+})
+
+test('ambiguous post-rename add and remove invalidate their Profile and stay indeterminate after degraded checks', { skip: storePlatformSkip }, async t => {
+  const f = pathRemoteFixture(t)
+  let ownerInvalidations = 0
+  const owner = f.mount('owner', 'weir', f.profiles.one, () => {
+    ownerInvalidations += 1
+    if (ownerInvalidations === 1) throw new Error('invalidate broke')
+    f.presets.set('s', 'weir-creative')
+  })
+  f.mount('creative', 'weir-creative', f.profiles.one)
+  f.mount('foreign', 'weir', f.profiles.two)
+  f.bind('s', owner)
+  mkdirSync(join(f.root, 'library'))
+  const canonical = realpathSync(join(f.root, 'library'))
+  const target = join(f.root, 'weir', 'profiles', 'one', 'capabilities', 'skills', 'scan-paths.json')
+  let renames = 0
+  let failFsync = false
+  let failSettleRead = false
+  const fs = instrumentFs(createNodeFs(), (op, args, phase) => {
+    if (phase === 'after' && op === 'rename' && args[1] === target) {
+      renames += 1
+      failFsync = true
+      failSettleRead = true
+    }
+    if (phase === 'before' && op === 'fsyncDir' && failFsync && args[0] === dirname(target)) {
+      failFsync = false
+      throw Object.assign(new Error('directory sync failed'), { code: 'EIO' })
+    }
+    if (phase === 'before' && op === 'readText' && failSettleRead && args[0] === target) {
+      failSettleRead = false
+      throw Object.assign(new Error('settle read failed'), { code: 'EIO' })
+    }
+  })
+  const mutations = createCapabilityMutationService({
+    ...f.deps,
+    skillPathRegistry: profile => createSkillScanPathRegistry({
+      store: openCapabilityStore({ profileContext: profile, platform, fs, liveness: createStubLiveness() }),
+      platform,
+    }),
+  })
+  const freshRead = profile => createSkillScanPathRegistry({ store: f.openStore(profile), platform }).read()
+
+  const added = await mutations.skillPathAdd('s', { path: canonical, expectedRevision: 0 })
+  assert.equal(added.status, 'indeterminate')
+  assert.equal(added.saved, false)
+  assert.equal(added.revision, null)
+  assert.equal(added.paths, null)
+  assert.deepEqual(await freshRead(f.profiles.one), { status: 'ok', revision: 1, paths: [canonical] })
+  assert.deepEqual(f.invalidations, ['owner', 'creative'])
+  assert.equal(added.error.code, 'invalidation-failed')
+
+  const removed = await mutations.skillPathRemove('s', { path: canonical, expectedRevision: 1 })
+  assert.equal(removed.status, 'indeterminate')
+  assert.equal(removed.saved, false)
+  assert.equal(removed.revision, null)
+  assert.equal(removed.paths, null)
+  assert.equal(removed.ownerChanged, true)
+  assert.equal(removed.error.code, 'owner-changed')
+  assert.deepEqual(await freshRead(f.profiles.one), { status: 'ok', revision: 2, paths: [] })
+  assert.deepEqual(f.invalidations, ['owner', 'creative', 'owner', 'creative'])
+  assert.deepEqual(await freshRead(f.profiles.two), { status: 'ok', revision: 0, paths: [] })
+  assert.equal(renames, 2)
+  assert.deepEqual(f.appends, [])
+  assert.deepEqual(f.resumes, [])
 })
 
 test('an owner change before the CAS prevents the write and causes no invalidation', { skip: storePlatformSkip }, async t => {

@@ -214,7 +214,8 @@ export function createSkillScanPathRegistry(options) {
       }
     }
     return {
-      status: result.status, saved: false, revision: result.revision ?? null, paths: null,
+      status: result.status === 'write-failed' ? 'indeterminate' : result.status,
+      saved: false, revision: result.revision ?? null, paths: null,
       error: { code: result.kind ?? result.status, message: result.reason ?? message(result.error ?? `Skill scan path registry write failed: ${result.status}`) },
     }
   }
