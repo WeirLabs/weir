@@ -394,7 +394,8 @@ test('popover without prior draft still announces an incomplete applied receipt'
   const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
   render(); await new Promise(resolve => setTimeout(resolve, 0))
   const tree = render()
-  expect(tree.children[1]).toBeNull()
+  expect(tree.children[1].sessionId).toBe('s') // pinned popover addBlock slot now hosts the isolated path manager
+  expect(typeof tree.children[1].refreshCapabilities).toBe('function')
   expect(findAll(tree, node => node.role === 'status' && String(node.children).includes('cannot be verified'))).toHaveLength(1)
   expect(findAll(tree, node => node.children === '0 skills · 0 MCP')).toHaveLength(0)
   expect(findAll(tree, node => node.children === 'Apply')[0].disabled).toBe(true)

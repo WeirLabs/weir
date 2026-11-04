@@ -518,6 +518,240 @@ window.__ModuleLoader__.load({
 			}
 			return react_jsx_runtime.jsx(impl, { ...props });
 		}
+		/** Skills-only path management. All hooks live here so CapabilityManagerPanel
+		 * keeps its pinned 7/1 hook structure in both shells. */
+		function SkillPathManager(props) {
+			const model = props.model;
+			const t = props.t;
+			const [registry, setRegistry] = react.useState(null);
+			const [input, setInput] = react.useState("");
+			const [reading, setReading] = react.useState(false);
+			const [busy, setBusy] = react.useState(null);
+			const [feedback, setFeedback] = react.useState(null);
+			const [pendingRemove, setPendingRemove] = react.useState(null);
+			const [returnFocusTo, setReturnFocusTo] = react.useState(null);
+			const readRequest = react.useRef(0);
+			const operationRequest = react.useRef(0);
+			const operationRunning = react.useRef(false);
+			const alive = react.useRef(true);
+
+			const refreshPaths = async () => {
+				const request = ++readRequest.current;
+				setReading(true);
+				let response;
+				try {
+					response = typeof props.fetchSkillPaths === "function"
+						? await props.fetchSkillPaths(props.sessionId)
+						: { status: "unavailable", saved: false, error: { code: "unavailable", message: "Skill scan path reads are unavailable on this client." } };
+				} catch (error) {
+					response = { status: "call-threw", saved: false, error: { code: "call-threw", message: error instanceof Error ? error.message : String(error) } };
+				}
+				if (!alive.current || request !== readRequest.current) return null;
+				setRegistry(current => model.skillPathsAfterRead(current, response));
+				setReading(false);
+				return response;
+			};
+
+			react.useEffect(() => {
+				alive.current = true;
+				setRegistry(null);
+				setFeedback(null);
+				setPendingRemove(null);
+				setReturnFocusTo(null);
+				setBusy(null);
+				operationRunning.current = false;
+				void refreshPaths();
+				return () => {
+					alive.current = false;
+					++readRequest.current;
+					++operationRequest.current;
+					operationRunning.current = false;
+				};
+			}, [props.sessionId]);
+
+			const cancelRemove = (path) => {
+				if (busy !== null) return;
+				setPendingRemove(null);
+				setReturnFocusTo(path);
+				setFeedback(null);
+			};
+			const runMutation = async (kind, path) => {
+				if (operationRunning.current || busy !== null || reading || registry?.status !== "ok") return;
+				const verb = kind === "add" ? props.skillPathAdd : props.skillPathRemove;
+				if (typeof verb !== "function") {
+					setFeedback({ kind: "error", operation: kind, outcome: model.skillPathMutationOutcomeOf({ status: "unavailable", saved: false, error: { message: "Skill scan path mutations are unavailable on this client." } }) });
+					return;
+				}
+				const request = ++operationRequest.current;
+				operationRunning.current = true;
+				setBusy(kind);
+				setFeedback(null);
+				setReturnFocusTo(null);
+				let response;
+				try {
+					response = await verb(props.sessionId, { path, expectedRevision: registry.revision });
+				} catch (error) {
+					response = { status: "call-threw", saved: false, error: { code: "call-threw", message: error instanceof Error ? error.message : String(error) } };
+				}
+				if (!alive.current || request !== operationRequest.current) return;
+				const outcome = model.skillPathMutationOutcomeOf(response);
+				if (outcome.snapshot !== null) setRegistry(outcome.snapshot);
+				if (outcome.saved) {
+					if (kind === "add") setInput("");
+					else setPendingRemove(null);
+				}
+				setFeedback({ kind: outcome.saved ? (outcome.phase === "degraded" ? "warning" : "success") : "error", operation: kind, outcome });
+				try {
+					const refreshes = [];
+					if (outcome.refreshPaths) refreshes.push(refreshPaths());
+					if (outcome.refreshCapabilities && typeof props.refreshCapabilities === "function") refreshes.push(props.refreshCapabilities());
+					await Promise.all(refreshes);
+				} catch (error) {
+					if (alive.current && request === operationRequest.current) setFeedback(current => ({ ...current, refreshError: error instanceof Error ? error.message : String(error) }));
+				} finally {
+					if (alive.current && request === operationRequest.current) {
+						operationRunning.current = false;
+						setBusy(null);
+					}
+				}
+			};
+			const detail = (text) => {
+				const message = feedback?.outcome?.error?.message;
+				return typeof message === "string" && message !== "" && !text.includes(message) ? `${text} ${message}` : text;
+			};
+			let feedbackText = null;
+			if (feedback) {
+				const phase = feedback.outcome.phase;
+				if (phase === "saved") feedbackText = feedback.operation === "add"
+					? t("capability.skills.paths.added", "Directory added. Newly discovered Skills remain unselected until you select and Apply them.")
+					: t("capability.skills.paths.removed", "Directory removed. Selection drafts, applied capabilities, and defaults were not rewritten.");
+				else if (phase === "degraded") feedbackText = detail(t("capability.skills.paths.degraded", "The path change was saved, but the host reported a post-commit problem. Fresh registry, Skill listing, and receipt reads were requested; no rollback is claimed."));
+				else if (phase === "validation-failed") feedbackText = detail(t("capability.skills.paths.validation", "The server rejected this directory. Enter an existing readable absolute directory or ~/directory; your input was kept and nothing was saved."));
+				else if (phase === "duplicate") feedbackText = detail(t("capability.skills.paths.duplicate", "This canonical directory is already registered. Current paths were re-read; your input was kept and no duplicate was saved."));
+				else if (phase === "not-found") feedbackText = detail(t("capability.skills.paths.notFound", "That canonical directory is no longer registered. Current paths were re-read; nothing was removed."));
+				else if (phase === "revision-conflict") feedbackText = detail(t("capability.skills.paths.conflict", "The path registry changed elsewhere. Current paths were re-read; your input was kept and was not merged. Review the registry before retrying."));
+				else if (phase === "indeterminate") feedbackText = detail(t("capability.skills.paths.indeterminate", "The operation outcome could not be confirmed. Fresh registry, Skill listing, and receipt reads were requested; your input was kept and no rollback is claimed."));
+				else if (phase === "unavailable") feedbackText = detail(t("capability.skills.paths.unavailable", "The Skill scan path registry is unavailable. No path change was saved."));
+				else feedbackText = detail(t("capability.skills.paths.failed", "The path operation failed. No saved change is claimed; your input was kept."));
+				if (feedback.refreshError) feedbackText += ` ${t("capability.skills.paths.refreshFailed", "A follow-up refresh failed: {message}").replace("{message}", feedback.refreshError)}`;
+			}
+			const unavailable = registry?.status !== "ok";
+			const controlsDisabled = busy !== null || reading || unavailable;
+			const liveText = busy === "add" ? t("capability.skills.paths.adding", "Adding…")
+				: busy === "remove" ? t("capability.skills.paths.removing", "Removing…")
+					: reading && registry === null ? t("capability.skills.paths.loading", "Loading scan paths…") : null;
+			const pathRow = (path) => {
+				const confirming = pendingRemove === path;
+				return react_jsx_runtime.jsx("div", {
+					style: { ...S.list.card, margin: "4px 0", padding: "6px 8px" },
+					"data-weir-skill-path": path,
+					children: confirming ? react_jsx_runtime.jsxs("div", {
+						role: "group",
+						"aria-label": t("capability.skills.paths.confirmTitle", "Remove this Skill scan path?"),
+						onKeyDown: (event) => {
+							if (event.key === "Escape" && busy === null) {
+								event.preventDefault();
+								event.stopPropagation();
+								cancelRemove(path);
+							}
+						},
+						children: [
+							react_jsx_runtime.jsx("div", { style: S.form.title, children: t("capability.skills.paths.confirmTitle", "Remove this Skill scan path?") }),
+							react_jsx_runtime.jsxs("div", { style: { fontSize: "11px", lineHeight: "16px", color: LABEL2, overflowWrap: "anywhere" }, children: [
+								t("capability.skills.paths.confirmBody", "Remove this canonical directory from the Profile? Selection drafts, applied capabilities, and defaults are not rewritten: "),
+								react_jsx_runtime.jsx("code", { style: { color: LABEL1, fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" }, children: path })
+							] }),
+							react_jsx_runtime.jsxs("div", { style: { ...S.form.actions, marginTop: "6px" }, children: [
+								react_jsx_runtime.jsx("button", {
+									type: "button", autoFocus: true, disabled: busy !== null,
+									style: busy !== null ? { ...S.form.primary, ...S.footer.disabled } : S.form.primary,
+									...ring,
+									onClick: () => { void runMutation("remove", path); },
+									children: busy === "remove" ? t("capability.skills.paths.removing", "Removing…") : t("capability.skills.paths.confirmRemove", "Remove path")
+								}),
+								react_jsx_runtime.jsx("button", {
+									type: "button", disabled: busy !== null, style: S.form.ghost, ...ring,
+									onClick: () => cancelRemove(path),
+									children: t("capability.skills.paths.cancel", "Cancel")
+								})
+							] })
+						]
+					}) : react_jsx_runtime.jsxs("div", {
+						style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 },
+						children: [
+							react_jsx_runtime.jsx("code", {
+								title: path,
+								style: { flex: 1, minWidth: 0, color: LABEL1, fontSize: "11px", lineHeight: "16px", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)", overflowWrap: "anywhere" },
+								children: path
+							}),
+							react_jsx_runtime.jsx("button", {
+								type: "button", autoFocus: returnFocusTo === path, disabled: controlsDisabled,
+								style: controlsDisabled ? { ...S.form.ghost, ...S.footer.disabled } : S.form.ghost,
+								...ring,
+								"aria-label": t("capability.skills.paths.removeAria", "Remove scan path {path}").replace("{path}", path),
+								onClick: () => { setFeedback(null); setReturnFocusTo(null); setPendingRemove(path); },
+								children: t("capability.skills.paths.remove", "Remove")
+							})
+						]
+					})
+				}, path);
+			};
+			return react_jsx_runtime.jsxs("section", {
+				style: { ...S.list.card, margin: "0 0 8px", padding: "8px" },
+				"aria-label": t("capability.skills.paths.title", "Custom Skill scan paths"),
+				"aria-busy": busy !== null || reading,
+				"data-weir-skill-path-manager": "",
+				children: [
+					react_jsx_runtime.jsxs("div", { style: S.list.cardHead, children: [
+						react_jsx_runtime.jsx("span", { children: t("capability.skills.paths.title", "Custom Skill scan paths") }),
+						react_jsx_runtime.jsx("button", {
+							type: "button", onClick: () => { void refreshPaths(); }, disabled: busy !== null || reading,
+							style: busy !== null || reading ? { ...S.form.ghost, ...S.footer.disabled } : S.form.ghost,
+							...ring,
+							children: t("capability.skills.paths.refresh", "Refresh paths")
+						})
+					] }),
+					react_jsx_runtime.jsx("div", { style: { fontSize: "11px", lineHeight: "16px", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
+					react_jsx_runtime.jsxs("form", {
+						"aria-label": t("capability.skills.paths.addLabel", "Skill scan directory"),
+						onSubmit: (event) => { event.preventDefault(); void runMutation("add", input); },
+						children: [
+							react_jsx_runtime.jsx("label", {
+								style: { display: "flex", flexDirection: "column", gap: "3px", ...S.form.title },
+								children: [
+									t("capability.skills.paths.addLabel", "Skill scan directory"),
+									react_jsx_runtime.jsx("input", {
+										value: input, onChange: (event) => setInput(event.target.value), disabled: controlsDisabled,
+										placeholder: t("capability.skills.paths.placeholder", "~/skills or /absolute/path"),
+										style: S.form.input, ...ring,
+										"aria-invalid": feedback?.kind === "error" && feedback.operation === "add" ? true : undefined
+									})
+								]
+							}),
+							react_jsx_runtime.jsx("div", { style: { ...S.form.actions, marginTop: "6px" }, children: react_jsx_runtime.jsx("button", {
+								type: "submit", disabled: controlsDisabled,
+								style: controlsDisabled ? { ...S.form.primary, ...S.footer.disabled } : S.form.primary,
+								...ring,
+								children: busy === "add" ? t("capability.skills.paths.adding", "Adding…") : t("capability.skills.paths.add", "Add path")
+							}) })
+						]
+					}),
+					liveText ? react_jsx_runtime.jsx("div", { role: "status", "aria-live": "polite", style: { ...S.form.title, marginTop: "6px" }, children: liveText }) : null,
+					registry?.error ? react_jsx_runtime.jsx("div", { role: "alert", style: { ...S.form.error, marginTop: "6px" }, children: `${t("capability.skills.paths.readFailed", "The path registry could not be read. Existing rows, when present, are stale.")} ${registry.error.message}` }) : null,
+					feedbackText ? react_jsx_runtime.jsx("div", {
+						role: feedback.kind === "success" ? "status" : "alert",
+						"aria-live": feedback.kind === "success" ? "polite" : "assertive",
+						"data-weir-skill-path-feedback": feedback.kind,
+						style: { ...(feedback.kind === "success" ? S.form.title : S.form.error), marginTop: "6px", color: feedback.kind === "success" ? SUCCESS : feedback.kind === "warning" ? WARN_TEXT : DANGER },
+						children: feedbackText
+					}) : null,
+					registry?.status === "ok" && registry.paths.length === 0
+						? react_jsx_runtime.jsx("div", { style: { ...S.form.title, marginTop: "6px" }, children: t("capability.skills.paths.empty", "No custom scan paths are registered.") })
+						: null,
+					...(registry?.paths ?? []).map(pathRow)
+				]
+			});
+		}
 		function CapabilityManagerPanel(props) {
 			const model = props.model;
 			// Echo-guard like the Badge: an unregistered dictionary entry must
@@ -719,7 +953,11 @@ window.__ModuleLoader__.load({
 				...unknown.map(item => t("capability.unknownLegacyName", "{name}: no matching Skill in the current listing. Refresh the listing or remove this legacy name.").replace("{name}", item.name))
 			];
 			const selectionDisabled = draft === null || commit?.phase === "submitting";
-			const addBlock = null;
+			const addBlock = tab === "skills" ? react_jsx_runtime.jsx(SkillPathManager, {
+				sessionId: props.sessionId, model, t,
+				fetchSkillPaths: props.fetchSkillPaths, skillPathAdd: props.skillPathAdd, skillPathRemove: props.skillPathRemove,
+				refreshCapabilities: refreshAll
+			}) : null;
 			const skillRow = (skill, index) => {
 				const selected = skillKeys.has(model.skillEntryKeyOf(skill.identity ?? skill.name));
 				const selectedConflict = selectedKeys.has(model.skillEntryKeyOf(skill.identity));
@@ -884,6 +1122,71 @@ window.__ModuleLoader__.load({
 				] }) : null
 			] });
 		}
+		// View-owned locale data face. The entry merges this with the model's
+		// established capability dictionary when either shared shell arrives.
+		const dictionaries = {
+			en: {
+				"capability.skills.paths.title": "Custom Skill scan paths",
+				"capability.skills.paths.description": "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.",
+				"capability.skills.paths.addLabel": "Skill scan directory",
+				"capability.skills.paths.placeholder": "~/skills or /absolute/path",
+				"capability.skills.paths.add": "Add path",
+				"capability.skills.paths.adding": "Adding…",
+				"capability.skills.paths.removing": "Removing…",
+				"capability.skills.paths.loading": "Loading scan paths…",
+				"capability.skills.paths.refresh": "Refresh paths",
+				"capability.skills.paths.refreshFailed": "A follow-up refresh failed: {message}",
+				"capability.skills.paths.readFailed": "The path registry could not be read. Existing rows, when present, are stale.",
+				"capability.skills.paths.empty": "No custom scan paths are registered.",
+				"capability.skills.paths.added": "Directory added. Newly discovered Skills remain unselected until you select and Apply them.",
+				"capability.skills.paths.removed": "Directory removed. Selection drafts, applied capabilities, and defaults were not rewritten.",
+				"capability.skills.paths.degraded": "The path change was saved, but the host reported a post-commit problem. Fresh registry, Skill listing, and receipt reads were requested; no rollback is claimed.",
+				"capability.skills.paths.validation": "The server rejected this directory. Enter an existing readable absolute directory or ~/directory; your input was kept and nothing was saved.",
+				"capability.skills.paths.duplicate": "This canonical directory is already registered. Current paths were re-read; your input was kept and no duplicate was saved.",
+				"capability.skills.paths.notFound": "That canonical directory is no longer registered. Current paths were re-read; nothing was removed.",
+				"capability.skills.paths.conflict": "The path registry changed elsewhere. Current paths were re-read; your input was kept and was not merged. Review the registry before retrying.",
+				"capability.skills.paths.indeterminate": "The operation outcome could not be confirmed. Fresh registry, Skill listing, and receipt reads were requested; your input was kept and no rollback is claimed.",
+				"capability.skills.paths.unavailable": "The Skill scan path registry is unavailable. No path change was saved.",
+				"capability.skills.paths.failed": "The path operation failed. No saved change is claimed; your input was kept.",
+				"capability.skills.paths.remove": "Remove",
+				"capability.skills.paths.removeAria": "Remove scan path {path}",
+				"capability.skills.paths.confirmTitle": "Remove this Skill scan path?",
+				"capability.skills.paths.confirmBody": "Remove this canonical directory from the Profile? Selection drafts, applied capabilities, and defaults are not rewritten: ",
+				"capability.skills.paths.confirmRemove": "Remove path",
+				"capability.skills.paths.cancel": "Cancel"
+			},
+			zh: {
+				"capability.skills.paths.title": "自定义技能扫描路径",
+				"capability.skills.paths.description": "由 Weir 会话共享的 Profile 级目录。路径变更不会选择技能、应用草稿或改写默认值。",
+				"capability.skills.paths.addLabel": "技能扫描目录",
+				"capability.skills.paths.placeholder": "~/skills 或 /absolute/path",
+				"capability.skills.paths.add": "添加路径",
+				"capability.skills.paths.adding": "正在添加…",
+				"capability.skills.paths.removing": "正在移除…",
+				"capability.skills.paths.loading": "正在加载扫描路径…",
+				"capability.skills.paths.refresh": "刷新路径",
+				"capability.skills.paths.refreshFailed": "后续刷新失败：{message}",
+				"capability.skills.paths.readFailed": "无法读取路径注册表；如有既有行，现已过期。",
+				"capability.skills.paths.empty": "尚未登记自定义扫描路径。",
+				"capability.skills.paths.added": "目录已添加。新发现的技能保持未选状态，需手动选择并应用后才会启用。",
+				"capability.skills.paths.removed": "目录已移除。选择草稿、已应用能力和默认值均未被改写。",
+				"capability.skills.paths.degraded": "路径变更已保存，但宿主报告了提交后检查问题。已请求重新读取注册表、技能清单和回执；不声称已回滚。",
+				"capability.skills.paths.validation": "服务端拒绝了此目录。请输入存在且可读的绝对目录或 ~/directory；输入已保留，未保存任何变更。",
+				"capability.skills.paths.duplicate": "此规范化目录已登记。已重新读取当前路径；输入已保留，未保存重复项。",
+				"capability.skills.paths.notFound": "此规范化目录已不在注册表中。已重新读取当前路径；未移除任何项目。",
+				"capability.skills.paths.conflict": "路径注册表已在别处变更。已重新读取当前路径；输入已保留且未合并。重试前请核对注册表。",
+				"capability.skills.paths.indeterminate": "无法确认操作结果。已请求重新读取注册表、技能清单和回执；输入已保留，不声称已回滚。",
+				"capability.skills.paths.unavailable": "技能扫描路径注册表不可用。未保存路径变更。",
+				"capability.skills.paths.failed": "路径操作失败。不声称变更已保存；输入已保留。",
+				"capability.skills.paths.remove": "移除",
+				"capability.skills.paths.removeAria": "移除扫描路径 {path}",
+				"capability.skills.paths.confirmTitle": "移除此技能扫描路径？",
+				"capability.skills.paths.confirmBody": "从此 Profile 移除以下规范化目录？选择草稿、已应用能力和默认值均不会被改写：",
+				"capability.skills.paths.confirmRemove": "移除路径",
+				"capability.skills.paths.cancel": "取消"
+			}
+		};
+		exports.dictionaries = dictionaries;
 		exports.CapabilityManagerPanel = CapabilityManagerPanel;
 		return module.exports;
 	}
