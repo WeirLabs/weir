@@ -11,6 +11,10 @@
 
 - **Capabilities 自定义 Skill 扫描路径**：Skills 视图可添加、移除 Profile 级 Skill 扫描目录，支持 `~` 展开、可读目录校验与 canonical 去重，重启后仍保留。新发现的 Skill 仍需显式选择并 Apply；移除目录不会改写已选记录。路径变更在当前 Host 进程内即时刷新，其他进程在下次读取或既有失效事件时收敛。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 
+### Changed
+
+- **Capabilities 路径管理界面紧凑化**：Skills 列表顶部不再常驻扫描路径配置卡片，改为工具栏文件夹按钮与按需管理浮层；按钮仅在路径数量已知时显示计数，浮层保留添加、删除、刷新、错误反馈、键盘操作与焦点恢复。路径注册表、Skill 显式选择和 Apply 行为不变。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ## [2.1.2] - 2026-11-03
 
 ### Changed
