@@ -139,8 +139,17 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   expect(typeof header.children[1].onFocus).toBe('function')
   expect(typeof header.children[2].onFocus).toBe('function')
 
-  // The sidebar header carries the session's applied-counts summary chip.
-  expect(findAll(header, (node) => node.__type === 'span' && node.children === '1 skills · 1 MCP')).toHaveLength(1)
+  // The low-priority applied summary may shrink and ellipsize so the search
+  // and trailing Skill path trigger retain their places in the same flex row.
+  // This pins the style contract only; it does not simulate browser layout.
+  const appliedSummary = findAll(header, (node) => node.__type === 'span' && node.children === '1 skills · 1 MCP')[0]
+  expect(appliedSummary).toBeTruthy()
+  expect({
+    flex: appliedSummary.style.flex,
+    minWidth: appliedSummary.style.minWidth,
+    overflow: appliedSummary.style.overflow,
+    textOverflow: appliedSummary.style.textOverflow,
+  }).toEqual({ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' })
 
   // Search input sits in an icon wrapper with an inline SVG (no icon font).
   const searchWrap = findAll(header, (node) => node.style && node.style.position === 'relative')[0]

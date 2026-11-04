@@ -115,7 +115,7 @@ window.__ModuleLoader__.load({
 					borderBottom: "1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.10))",
 					flex: "none"
 				},
-				summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, whiteSpace: "nowrap", flex: "none", marginLeft: "2px" },
+				summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, whiteSpace: "nowrap", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", marginLeft: "2px" },
 				close: {
 					width: "22px",
 					height: "22px",
