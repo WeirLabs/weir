@@ -20,7 +20,7 @@ function makeReactStub() {
   let current = null
   let hookCursor = 0
   const bucket = (name) => {
-    if (!buckets.has(name)) buckets.set(name, { state: [], effectRan: false })
+    if (!buckets.has(name)) buckets.set(name, { state: [] })
     return buckets.get(name)
   }
   return {
@@ -31,15 +31,36 @@ function makeReactStub() {
       if (!(at in target.state)) target.state[at] = [initial, (next) => { target.state[at][0] = typeof next === 'function' ? next(target.state[at][0]) : next }]
       return target.state[at]
     },
-    useEffect(fn) {
+    useEffect(fn, deps) {
       const target = bucket(current)
-      if (!target.effectRan) { target.effectRan = true; fn() }
+      const at = hookCursor++
+      const previous = target.state[at]
+      const changed = !previous || !deps || !previous.deps || deps.length !== previous.deps.length || deps.some((value, index) => !Object.is(value, previous.deps[index]))
+      if (changed) {
+        if (previous?.cleanup) previous.cleanup()
+        const cleanup = fn()
+        target.state[at] = { deps, cleanup }
+      }
     },
     useRef(initial) {
       const target = bucket(current)
       const at = hookCursor++
       if (!(at in target.state)) target.state[at] = { current: initial }
       return target.state[at]
+    },
+  }
+}
+
+function makeEventTarget() {
+  const listeners = new Map()
+  return {
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, new Set())
+      listeners.get(type).add(listener)
+    },
+    removeEventListener(type, listener) { listeners.get(type)?.delete(listener) },
+    dispatch(type, event = {}) {
+      for (const listener of [...(listeners.get(type) ?? [])]) listener(event)
     },
   }
 }
@@ -63,7 +84,7 @@ function findAll(node, predicate, out = []) {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 const identity = (root, name) => ({ scope: 'custom', root, name, provenance: null, opaqueId: root, portable: false })
 
-async function createHarness(shell = 'popover') {
+async function createHarness(shell = 'popover', options = {}) {
   const react = makeReactStub()
   const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
   const model = loadModel()
@@ -79,6 +100,8 @@ async function createHarness(shell = 'popover') {
     discovered: false,
     add: null,
     remove: null,
+    read: options.read ?? null,
+    rect: { right: 760, bottom: 32 },
   }
   const calls = { pathReads: 0, listingReads: 0, receiptReads: 0, add: [], remove: [], apply: 0 }
   const props = {
@@ -90,7 +113,7 @@ async function createHarness(shell = 'popover') {
       return { skills: rows.map((entry) => ({ name: entry.name, description: '', scope: 'custom', status: 'parsed', identity: entry, selected: entry === applied })), mcpServers: [] }
     },
     fetchReceipt: async () => { calls.receiptReads += 1; return receipt },
-    fetchSkillPaths: async () => { calls.pathReads += 1; return behavior.pathSnapshot },
+    fetchSkillPaths: async () => { calls.pathReads += 1; return behavior.read ? behavior.read() : behavior.pathSnapshot },
     skillPathAdd: async (_sessionId, request) => {
       calls.add.push(request)
       if (behavior.add) return behavior.add(request)
@@ -105,33 +128,68 @@ async function createHarness(shell = 'popover') {
     },
     applySelection: async () => { calls.apply += 1; return { status: 'applied', revision: 8 } },
   }
+  const windowEvents = makeEventTarget()
+  const documentEvents = makeEventTarget()
+  Object.assign(globalThis.window, {
+    innerWidth: 800,
+    innerHeight: 600,
+    addEventListener: windowEvents.addEventListener,
+    removeEventListener: windowEvents.removeEventListener,
+    document: {
+      addEventListener: documentEvents.addEventListener,
+      removeEventListener: documentEvents.removeEventListener,
+    },
+  })
+  const focus = { trigger: 0, input: 0 }
+  const triggerDom = {
+    getBoundingClientRect: () => behavior.rect,
+    contains: (target) => target === triggerDom,
+    focus: () => { focus.trigger += 1 },
+  }
+  const overlayDom = { contains: (target) => target === overlayDom || target?.insideOverlay === true }
+  const inputDom = { focus: () => { focus.input += 1 } }
   let parentTree = null
   const renderParent = () => {
     react.begin('parent')
     parentTree = exports.CapabilityManagerPanel(props)
     return parentTree
   }
-  const pathElement = () => shell === 'sidebar' ? parentTree?.children[1]?.children[0] : parentTree?.children[1]
+  const pathElement = () => parentTree?.children[0]?.children[5] ?? null
   const renderPath = () => {
     const element = pathElement()
     if (!element) return null
     react.begin('path')
     return element.__type(element)
   }
+  const trigger = () => findAll(renderPath(), (node) => node['data-weir-skill-path-trigger'] !== undefined)[0]
+  const count = () => findAll(renderPath(), (node) => node['data-weir-skill-path-count'] !== undefined)[0]
+  const overlay = () => findAll(renderPath(), (node) => node['data-weir-skill-path-manager'] !== undefined)[0]
+  const input = () => findAll(renderPath(), (node) => node.__type === 'input' && node.placeholder === '~/skills or /absolute/path')[0]
+  const closeButton = () => findAll(renderPath(), (node) => node.__type === 'button' && node['aria-label'] === 'Close')[0]
+  const open = async () => {
+    trigger().onClick()
+    renderPath()
+    if (overlay()) overlay().ref.current = overlayDom
+    if (input()) input().ref.current = inputDom
+    await flush()
+    renderPath()
+  }
   renderParent()
   await flush()
   renderParent()
-  react.begin('path')
   renderPath()
   await flush()
   renderPath()
-  return {
-    behavior, calls, props, applied, staged, discovered,
-    renderParent, renderPath, pathElement,
-    input: () => findAll(renderPath(), (node) => node.__type === 'input' && node.placeholder === '~/skills or /absolute/path')[0],
+  trigger().ref.current = triggerDom
+  const harness = {
+    behavior, calls, props, applied, staged, discovered, focus, windowEvents, documentEvents,
+    renderParent, renderPath, pathElement, trigger, count, overlay, input, closeButton, open,
+    inventory: () => shell === 'sidebar' ? parentTree?.children[1] : { children: [parentTree?.children[1], parentTree?.children[2]] },
     form: () => findAll(renderPath(), (node) => node.__type === 'form')[0],
     feedback: () => findAll(renderPath(), (node) => node['data-weir-skill-path-feedback'])[0],
   }
+  if (options.open ?? true) await open()
+  return harness
 }
 
 function typePath(harness, value) {
@@ -142,6 +200,130 @@ function typePath(harness, value) {
 function submitPath(harness) {
   harness.form().onSubmit({ preventDefault() {} })
 }
+
+for (const shell of ['sidebar', 'popover']) {
+  test(`${shell}: default Skills inventory has no path card and the compact trigger opens with refresh and input focus`, async () => {
+    const harness = await createHarness(shell, { open: false })
+    const parent = harness.renderParent()
+    const inventory = harness.inventory()
+    expect(parent.children[0].children[1].children).toBe('MCP')
+    expect(harness.pathElement().sessionId).toBe('session-paths')
+    expect(shell === 'sidebar' ? inventory.children[0] : parent.children[1]).toBeNull()
+    expect(findAll(inventory, (node) => node.__type === 'form' || node['data-weir-skill-path'] || node['data-weir-skill-path-manager'] !== undefined)).toHaveLength(0)
+    expect(findAll(inventory, (node) => node.type === 'checkbox' && node['aria-label'] === 'applied — custom')).toHaveLength(1)
+    expect(harness.overlay()).toBeUndefined()
+    expect(harness.trigger()['aria-label']).toBe('Manage Skill scan paths')
+    expect(harness.trigger().title).toBe('Manage Skill scan paths')
+    expect(harness.trigger()['aria-haspopup']).toBe('dialog')
+    expect(harness.trigger()['aria-expanded']).toBe(false)
+    expect(findAll(harness.trigger(), (node) => node.name === 'folder')).toHaveLength(1)
+    expect(harness.count().children).toBe('1')
+    expect(harness.calls.pathReads).toBe(1)
+
+    await harness.open()
+    expect(harness.calls.pathReads).toBe(2)
+    expect(harness.focus.input).toBeGreaterThanOrEqual(1)
+    expect(harness.overlay().role).toBe('dialog')
+    expect(harness.overlay()['aria-modal']).toBe(false)
+    expect(harness.overlay().style.position).toBe('fixed')
+    expect(harness.overlay().style.left).toBe(400)
+    expect(harness.overlay().style.top).toBe(40)
+    expect(harness.overlay().style.width).toBe(360)
+    expect(harness.overlay().style.maxHeight).toBe(548)
+    expect(harness.overlay().style.overflowY).toBe('auto')
+    expect(harness.overlay().style.background).toContain('--dsw-alias-bg-overlay')
+    expect(harness.input().value).toBe('')
+  })
+
+  test(`${shell}: Close, outside pointer, and Escape write nothing, return focus, and retain unsubmitted input`, async () => {
+    const harness = await createHarness(shell)
+    typePath(harness, '~/draft')
+    harness.closeButton().onClick()
+    expect(harness.overlay()).toBeUndefined()
+    expect(harness.focus.trigger).toBe(1)
+
+    await harness.open()
+    expect(harness.input().value).toBe('~/draft')
+    harness.documentEvents.dispatch('pointerdown', { target: { insideOverlay: true } })
+    expect(harness.overlay()).toBeTruthy()
+    expect(harness.focus.trigger).toBe(1)
+    harness.documentEvents.dispatch('pointerdown', { target: { outside: true } })
+    expect(harness.overlay()).toBeUndefined()
+    expect(harness.focus.trigger).toBe(2)
+
+    await harness.open()
+    expect(harness.input().value).toBe('~/draft')
+    let prevented = 0
+    let stopped = 0
+    harness.overlay().onKeyDown({ key: 'Escape', preventDefault() { prevented += 1 }, stopPropagation() { stopped += 1 } })
+    expect(prevented).toBe(1)
+    expect(stopped).toBe(1)
+    expect(harness.overlay()).toBeUndefined()
+    expect(harness.focus.trigger).toBe(3)
+
+    await harness.open()
+    expect(harness.input().value).toBe('~/draft')
+    expect(harness.calls.pathReads).toBe(5)
+    expect(harness.calls.add).toEqual([])
+    expect(harness.calls.remove).toEqual([])
+    expect(harness.calls.apply).toBe(0)
+  })
+
+  test(`${shell}: narrow geometry is clamped and outer scroll or resize closes without writes`, async () => {
+    const harness = await createHarness(shell, { open: false })
+    globalThis.window.innerWidth = 320
+    globalThis.window.innerHeight = 240
+    harness.behavior.rect = { right: 300, bottom: 40 }
+    await harness.open()
+    expect(harness.overlay().style.position).toBe('fixed')
+    expect(harness.overlay().style.width).toBe(296)
+    expect(harness.overlay().style.left).toBe(12)
+    expect(harness.overlay().style.top).toBe(48)
+    expect(harness.overlay().style.maxHeight).toBe(180)
+    expect(harness.overlay().style.overflowY).toBe('auto')
+
+    harness.windowEvents.dispatch('scroll', { target: { insideOverlay: true } })
+    expect(harness.overlay()).toBeTruthy()
+    harness.windowEvents.dispatch('scroll', { target: { outside: true } })
+    expect(harness.overlay()).toBeUndefined()
+    expect(harness.focus.trigger).toBe(1)
+
+    await harness.open()
+    harness.windowEvents.dispatch('resize')
+    expect(harness.overlay()).toBeUndefined()
+    expect(harness.focus.trigger).toBe(2)
+    expect(harness.calls.add).toEqual([])
+    expect(harness.calls.remove).toEqual([])
+    expect(harness.calls.apply).toBe(0)
+  })
+}
+
+test('loading and unavailable registries never show a fake zero and the trigger still opens recovery', async () => {
+  let finishInitial
+  const harness = await createHarness('popover', {
+    open: false,
+    read: () => new Promise((resolve) => { finishInitial = resolve }),
+  })
+  expect(harness.count()).toBeUndefined()
+  expect(harness.trigger().disabled).toBeUndefined()
+  expect(harness.overlay()).toBeUndefined()
+
+  const unavailable = { status: 'unavailable', saved: false, revision: 0, paths: [], error: { message: 'registry unavailable' } }
+  harness.behavior.pathSnapshot = unavailable
+  harness.behavior.read = null
+  finishInitial(unavailable)
+  await flush()
+  harness.renderPath()
+  expect(harness.count()).toBeUndefined()
+  expect(harness.trigger().disabled).toBeUndefined()
+
+  await harness.open()
+  expect(harness.overlay()).toBeTruthy()
+  expect(harness.count()).toBeUndefined()
+  expect(findAll(harness.overlay(), (node) => node.role === 'alert' && String(node.children).includes('registry unavailable')).length).toBeGreaterThanOrEqual(1)
+  expect(harness.input().disabled).toBe(true)
+  expect(harness.calls.add).toEqual([])
+})
 
 for (const shell of ['sidebar', 'popover']) {
   test(`${shell}: add is busy, refreshes all reads, preserves the dirty identity draft, and leaves discoveries unselected`, async () => {
@@ -166,9 +348,18 @@ for (const shell of ['sidebar', 'popover']) {
     typePath(harness, '~/new')
     submitPath(harness)
     expect(calls.add).toEqual([{ path: '~/new', expectedRevision: 2 }])
-    expect(harness.renderPath()['aria-busy']).toBe(true)
+    expect(harness.overlay()['aria-busy']).toBe(true)
     expect(findAll(harness.renderPath(), (node) => node.children === 'Adding…').length).toBeGreaterThanOrEqual(1)
     expect(harness.input().disabled).toBe(true)
+    expect(harness.closeButton().disabled).toBe(true)
+    harness.closeButton().onClick()
+    harness.overlay().onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} })
+    harness.documentEvents.dispatch('pointerdown', { target: { outside: true } })
+    harness.windowEvents.dispatch('resize')
+    harness.windowEvents.dispatch('scroll', { target: { outside: true } })
+    expect(harness.overlay()).toBeTruthy()
+    expect(harness.focus.trigger).toBe(0)
+    expect(calls.add).toHaveLength(1)
 
     finishAdd()
     await flush()
@@ -179,7 +370,7 @@ for (const shell of ['sidebar', 'popover']) {
     expect(harness.feedback()['data-weir-skill-path-feedback']).toBe('success')
     expect(harness.feedback().children).toContain('Directory added')
     expect(findAll(pathTree, (node) => node['data-weir-skill-path'] === '/canonical/new')).toHaveLength(1)
-    expect(calls.pathReads).toBe(2)
+    expect(calls.pathReads).toBe(3)
     expect(calls.listingReads).toBe(2)
     expect(calls.receiptReads).toBe(2)
     expect(calls.apply).toBe(0)
@@ -193,8 +384,14 @@ for (const shell of ['sidebar', 'popover']) {
     expect(findAll(harness.renderParent(), (node) => node.children === '+1 skills')).toHaveLength(1)
     expect(findAll(harness.renderParent(), (node) => node.children === '+2 skills')).toHaveLength(0)
 
-    // The pinned addBlock insertion point is Skills-only in this same shell.
+    // The Skills-only header entry and its overlay disappear on other tabs.
     harness.renderParent().children[0].children[1].onClick()
+    harness.renderParent()
+    expect(harness.pathElement()).toBeNull()
+    harness.renderParent().children[0].children[0].onClick()
+    harness.renderParent()
+    expect(harness.pathElement()).toBeTruthy()
+    harness.renderParent().children[0].children[2].onClick()
     harness.renderParent()
     expect(harness.pathElement()).toBeNull()
   })
@@ -212,7 +409,16 @@ test('server validation keeps the exact rejected input and performs no success o
   expect(harness.feedback()['data-weir-skill-path-feedback']).toBe('error')
   expect(harness.feedback().children).toContain('relative paths are not allowed')
   expect(harness.feedback().children).toContain('nothing was saved')
-  expect(calls.pathReads).toBe(1)
+  expect(calls.pathReads).toBe(2)
+  expect(calls.listingReads).toBe(1)
+  expect(calls.receiptReads).toBe(1)
+  expect(calls.apply).toBe(0)
+  harness.closeButton().onClick()
+  await harness.open()
+  expect(harness.input().value).toBe('relative/path')
+  expect(harness.feedback()['data-weir-skill-path-feedback']).toBe('error')
+  expect(harness.feedback().children).toContain('relative paths are not allowed')
+  expect(calls.pathReads).toBe(3)
   expect(calls.listingReads).toBe(1)
   expect(calls.receiptReads).toBe(1)
   expect(calls.apply).toBe(0)
@@ -247,7 +453,7 @@ for (const fixture of [
     expect(harness.input().value).toBe(fixture.input)
     expect(harness.feedback()['data-weir-skill-path-feedback']).toBe('error')
     expect(harness.feedback().children).toContain(fixture.message)
-    expect(calls.pathReads).toBe(2)
+    expect(calls.pathReads).toBe(3)
     expect(calls.listingReads).toBe(1)
     expect(calls.receiptReads).toBe(1)
     expect(calls.apply).toBe(0)
@@ -279,27 +485,59 @@ test(`${shell}: remove confirmation names the exact canonical path; Cancel and E
   cancel.onClick()
   expect(harness.calls.remove).toEqual([])
   expect(remove().autoFocus).toBe(true)
+  // The overlay preserves the same Escape priority if focus leaves the group.
+  remove().onClick()
+  harness.renderPath()
+  harness.overlay().onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} })
+  expect(harness.overlay()).toBeTruthy()
+  expect(remove().autoFocus).toBe(true)
+  expect(harness.calls.remove).toEqual([])
 
   remove().onClick()
   tree = harness.renderPath()
   group = findAll(tree, (node) => node.role === 'group' && node['aria-label'] === 'Remove this Skill scan path?')[0]
   let prevented = 0
+  let stopped = 0
   group.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} })
   group.onKeyDown({ key: ' ', preventDefault() {}, stopPropagation() {} })
   expect(harness.calls.remove).toEqual([])
-  group.onKeyDown({ key: 'Escape', preventDefault() { prevented += 1 }, stopPropagation() {} })
+  group.onKeyDown({ key: 'Escape', preventDefault() { prevented += 1 }, stopPropagation() { stopped += 1 } })
   expect(prevented).toBe(1)
+  expect(stopped).toBe(1)
   expect(harness.calls.remove).toEqual([])
   expect(remove().autoFocus).toBe(true)
+  expect(harness.overlay()).toBeTruthy()
+  expect(harness.calls.remove).toEqual([])
+
+  // With the confirmation gone, a subsequent Escape closes only the overlay.
+  harness.overlay().onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} })
+  expect(harness.overlay()).toBeUndefined()
+  expect(harness.focus.trigger).toBe(1)
+  expect(harness.calls.remove).toEqual([])
+  await harness.open()
 
   // A fresh confirmation performs exactly one revision-checked removal.
   remove().onClick()
   tree = harness.renderPath()
+  let finishRemove
+  harness.behavior.remove = () => new Promise((resolve) => {
+    finishRemove = () => {
+      harness.behavior.pathSnapshot = { status: 'ok', revision: 3, paths: ['/canonical/a'], error: null }
+      resolve({ status: 'removed', saved: true, revision: 3, paths: ['/canonical/a'], error: null })
+    }
+  })
   findAll(tree, (node) => node.__type === 'button' && node.children === 'Remove path')[0].onClick()
+  expect(harness.closeButton().disabled).toBe(true)
+  harness.closeButton().onClick()
+  harness.overlay().onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} })
+  harness.documentEvents.dispatch('pointerdown', { target: { outside: true } })
+  expect(harness.overlay()).toBeTruthy()
+  expect(harness.focus.trigger).toBe(1)
+  finishRemove()
   await flush()
   await flush()
   expect(harness.calls.remove).toEqual([{ path: '/canonical/b', expectedRevision: 2 }])
-  expect(harness.calls.pathReads).toBe(3) // initial + manual refresh + post-remove
+  expect(harness.calls.pathReads).toBe(5) // initial + open + manual refresh + reopen + post-remove
   expect(harness.calls.listingReads).toBe(2)
   expect(harness.calls.receiptReads).toBe(2)
   expect(harness.feedback().children).toContain('Directory removed')
@@ -326,7 +564,7 @@ test('landed-but-degraded add keeps the saved fact, forces honest reads, and nev
   expect(harness.feedback().children).toContain('was saved')
   expect(harness.feedback().children).toContain('no rollback is claimed')
   expect(harness.feedback().children).toContain('provider invalidation failed')
-  expect(calls.pathReads).toBe(2)
+  expect(calls.pathReads).toBe(3)
   expect(calls.listingReads).toBe(2)
   expect(calls.receiptReads).toBe(2)
   expect(calls.apply).toBe(0)
@@ -341,6 +579,7 @@ test('unavailable registry is actionable and never enables a speculative mutatio
   await flush()
   expect(harness.input().disabled).toBe(true)
   expect(findAll(harness.renderPath(), (node) => node.role === 'alert' && String(node.children).includes('corrupt registry')).length).toBeGreaterThanOrEqual(1)
+  expect(harness.count()).toBeUndefined()
   submitPath(harness)
   expect(calls.add).toEqual([])
   behavior.pathSnapshot = { status: 'ok', revision: 0, paths: [], error: null }
@@ -348,6 +587,7 @@ test('unavailable registry is actionable and never enables a speculative mutatio
   await flush()
   expect(harness.input().disabled).toBe(false)
   expect(findAll(harness.renderPath(), (node) => node.children === 'No custom scan paths are registered.')).toHaveLength(1)
+  expect(harness.count().children).toBe('0')
 })
 
 test('path view dictionaries cover every used key with English and Chinese strings', async () => {
@@ -355,11 +595,12 @@ test('path view dictionaries cover every used key with English and Chinese strin
   const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
   const source = readFileSync(new URL('../lib/client.capability-manager.js', import.meta.url), 'utf8')
   const used = [...new Set([...source.matchAll(/t\("([^"]*capability\.skills\.paths\.[^"]+)"/g)].map((match) => match[1]))]
-  expect(used.length).toBe(28)
+  expect(used.length).toBe(29)
   expect(Object.keys(exports.dictionaries.en).sort()).toEqual(Object.keys(exports.dictionaries.zh).sort())
   for (const key of used) {
     expect(typeof exports.dictionaries.en[key], `en ${key}`).toBe('string')
     expect(typeof exports.dictionaries.zh[key], `zh ${key}`).toBe('string')
   }
   expect(exports.dictionaries.zh['capability.skills.paths.confirmTitle']).toContain('移除')
+  expect(exports.dictionaries.zh['capability.skills.paths.manage']).toContain('管理')
 })

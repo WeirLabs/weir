@@ -132,6 +132,54 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				}
 			},
+			path: {
+				trigger: {
+					minWidth: "22px",
+					height: "22px",
+					display: "inline-flex",
+					alignItems: "center",
+					justifyContent: "center",
+					gap: "3px",
+					flex: "none",
+					padding: "0 4px",
+					cursor: "pointer",
+					background: "none",
+					border: "none",
+					borderRadius: "var(--dsw-radius-sm, 6px)",
+					color: MUTED,
+					transition: TRANSITION
+				},
+				count: {
+					fontSize: "9px",
+					lineHeight: "12px",
+					fontWeight: 600,
+					color: LABEL2,
+					background: HOVER_BG,
+					borderRadius: "var(--dsw-radius-xl, 999px)",
+					padding: "0 4px",
+					minWidth: "12px",
+					textAlign: "center",
+					flex: "none"
+				},
+				overlay: (position) => ({
+					position: "fixed",
+					zIndex: 1000,
+					top: position.top,
+					left: position.left,
+					width: position.width,
+					maxHeight: position.maxHeight,
+					boxSizing: "border-box",
+					overflowY: "auto",
+					overflowX: "hidden",
+					background: "var(--dsw-alias-bg-overlay, #fff)",
+					border: `1px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-lg, 12px)",
+					boxShadow: "var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,.14))",
+					padding: "12px",
+					fontSize: "12px",
+					color: LABEL1
+				})
+			},
 			tabs: {
 				// Segmented control (host SegmentedControl recipe, containerless):
 				// inactive segments carry the track fill, the active segment is a
@@ -446,6 +494,10 @@ window.__ModuleLoader__.load({
 		// ---- 16x16 stroke icons (worktree-view style, stroke: currentColor) ----
 		const ICON_PATHS = {
 			search: [["circle", { cx: 7, cy: 7, r: 4.6 }], ["path", { d: "M10.6 10.6L14 14" }]],
+			folder: [
+				["path", { d: "M2.2 4.2c0-.6.4-1 1-1h3l1.5 1.8h5.1c.6 0 1 .4 1 1v5.8c0 .6-.4 1-1 1H3.2c-.6 0-1-.4-1-1V4.2z" }],
+				["path", { d: "M2.2 6h11.6" }]
+			],
 			x: [["path", { d: "M4 4l8 8M12 4l-8 8" }]],
 			warn: [
 				["path", { d: "M8 2.6l6 10.4H2l6-10.4z" }],
@@ -530,10 +582,15 @@ window.__ModuleLoader__.load({
 			const [feedback, setFeedback] = react.useState(null);
 			const [pendingRemove, setPendingRemove] = react.useState(null);
 			const [returnFocusTo, setReturnFocusTo] = react.useState(null);
+			const [open, setOpen] = react.useState(false);
+			const [position, setPosition] = react.useState({ top: 12, left: 12, width: 360, maxHeight: 420 });
 			const readRequest = react.useRef(0);
 			const operationRequest = react.useRef(0);
 			const operationRunning = react.useRef(false);
 			const alive = react.useRef(true);
+			const triggerRef = react.useRef(null);
+			const overlayRef = react.useRef(null);
+			const inputRef = react.useRef(null);
 
 			const refreshPaths = async () => {
 				const request = ++readRequest.current;
@@ -552,9 +609,28 @@ window.__ModuleLoader__.load({
 				return response;
 			};
 
+			const closeManager = () => {
+				if (busy !== null) return;
+				setOpen(false);
+				triggerRef.current?.focus();
+			};
+			const openManager = () => {
+				if (open) return;
+				const viewportWidth = window.innerWidth;
+				const viewportHeight = window.innerHeight;
+				const rect = triggerRef.current?.getBoundingClientRect();
+				const width = Math.max(0, Math.min(360, viewportWidth - 24));
+				const left = Math.max(12, Math.min((rect?.right ?? viewportWidth - 12) - width, viewportWidth - width - 12));
+				const top = Math.max(12, Math.min((rect?.bottom ?? 12) + 8, Math.max(12, viewportHeight - 12)));
+				setPosition({ top, left, width, maxHeight: Math.max(0, viewportHeight - top - 12) });
+				setOpen(true);
+				void refreshPaths();
+			};
+
 			react.useEffect(() => {
 				alive.current = true;
 				setRegistry(null);
+				setOpen(false);
 				setFeedback(null);
 				setPendingRemove(null);
 				setReturnFocusTo(null);
@@ -568,6 +644,32 @@ window.__ModuleLoader__.load({
 					operationRunning.current = false;
 				};
 			}, [props.sessionId]);
+
+			react.useEffect(() => {
+				if (!open) return undefined;
+				const document = window.document;
+				const onOutsidePointer = (event) => {
+					if (overlayRef.current?.contains(event.target) || triggerRef.current?.contains(event.target)) return;
+					closeManager();
+				};
+				const onViewportChange = () => { closeManager(); };
+				const onScroll = (event) => {
+					if (overlayRef.current?.contains(event.target)) return;
+					closeManager();
+				};
+				document.addEventListener("pointerdown", onOutsidePointer);
+				window.addEventListener("resize", onViewportChange);
+				window.addEventListener("scroll", onScroll, true);
+				return () => {
+					document.removeEventListener("pointerdown", onOutsidePointer);
+					window.removeEventListener("resize", onViewportChange);
+					window.removeEventListener("scroll", onScroll, true);
+				};
+			}, [open, busy]);
+
+			react.useEffect(() => {
+				if (open && busy === null && !reading && registry?.status === "ok") inputRef.current?.focus();
+			}, [open, busy, reading, registry?.status]);
 
 			const cancelRemove = (path) => {
 				if (busy !== null) return;
@@ -696,59 +798,106 @@ window.__ModuleLoader__.load({
 					})
 				}, path);
 			};
-			return react_jsx_runtime.jsxs("section", {
-				style: { ...S.list.card, margin: "0 0 8px", padding: "8px" },
-				"aria-label": t("capability.skills.paths.title", "Custom Skill scan paths"),
-				"aria-busy": busy !== null || reading,
-				"data-weir-skill-path-manager": "",
+			return react_jsx_runtime.jsxs(react_jsx_runtime.Fragment, {
 				children: [
-					react_jsx_runtime.jsxs("div", { style: S.list.cardHead, children: [
-						react_jsx_runtime.jsx("span", { children: t("capability.skills.paths.title", "Custom Skill scan paths") }),
-						react_jsx_runtime.jsx("button", {
-							type: "button", onClick: () => { void refreshPaths(); }, disabled: busy !== null || reading,
-							style: busy !== null || reading ? { ...S.form.ghost, ...S.footer.disabled } : S.form.ghost,
-							...ring,
-							children: t("capability.skills.paths.refresh", "Refresh paths")
-						})
-					] }),
-					react_jsx_runtime.jsx("div", { style: { fontSize: "11px", lineHeight: "16px", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
-					react_jsx_runtime.jsxs("form", {
-						"aria-label": t("capability.skills.paths.addLabel", "Skill scan directory"),
-						onSubmit: (event) => { event.preventDefault(); void runMutation("add", input); },
+					react_jsx_runtime.jsxs("button", {
+						type: "button",
+						ref: triggerRef,
+						style: S.path.trigger,
+						...ring,
+						...hover(HOVER_BG, "none"),
+						onClick: openManager,
+						"aria-label": t("capability.skills.paths.manage", "Manage Skill scan paths"),
+						title: t("capability.skills.paths.manage", "Manage Skill scan paths"),
+						"aria-haspopup": "dialog",
+						"aria-expanded": open,
+						"data-weir-skill-path-trigger": "",
 						children: [
-							react_jsx_runtime.jsx("label", {
-								style: { display: "flex", flexDirection: "column", gap: "3px", ...S.form.title },
-								children: [
-									t("capability.skills.paths.addLabel", "Skill scan directory"),
-									react_jsx_runtime.jsx("input", {
-										value: input, onChange: (event) => setInput(event.target.value), disabled: controlsDisabled,
-										placeholder: t("capability.skills.paths.placeholder", "~/skills or /absolute/path"),
-										style: S.form.input, ...ring,
-										"aria-invalid": feedback?.kind === "error" && feedback.operation === "add" ? true : undefined
-									})
-								]
-							}),
-							react_jsx_runtime.jsx("div", { style: { ...S.form.actions, marginTop: "6px" }, children: react_jsx_runtime.jsx("button", {
-								type: "submit", disabled: controlsDisabled,
-								style: controlsDisabled ? { ...S.form.primary, ...S.footer.disabled } : S.form.primary,
-								...ring,
-								children: busy === "add" ? t("capability.skills.paths.adding", "Adding…") : t("capability.skills.paths.add", "Add path")
-							}) })
+							react_jsx_runtime.jsx(Icon, { name: "folder", size: 13 }),
+							registry?.status === "ok" ? react_jsx_runtime.jsx("span", {
+								style: S.path.count,
+								"aria-hidden": "true",
+								"data-weir-skill-path-count": "",
+								children: String(registry.paths.length)
+							}) : null
 						]
 					}),
-					liveText ? react_jsx_runtime.jsx("div", { role: "status", "aria-live": "polite", style: { ...S.form.title, marginTop: "6px" }, children: liveText }) : null,
-					registry?.error ? react_jsx_runtime.jsx("div", { role: "alert", style: { ...S.form.error, marginTop: "6px" }, children: `${t("capability.skills.paths.readFailed", "The path registry could not be read. Existing rows, when present, are stale.")} ${registry.error.message}` }) : null,
-					feedbackText ? react_jsx_runtime.jsx("div", {
-						role: feedback.kind === "success" ? "status" : "alert",
-						"aria-live": feedback.kind === "success" ? "polite" : "assertive",
-						"data-weir-skill-path-feedback": feedback.kind,
-						style: { ...(feedback.kind === "success" ? S.form.title : S.form.error), marginTop: "6px", color: feedback.kind === "success" ? SUCCESS : feedback.kind === "warning" ? WARN_TEXT : DANGER },
-						children: feedbackText
-					}) : null,
-					registry?.status === "ok" && registry.paths.length === 0
-						? react_jsx_runtime.jsx("div", { style: { ...S.form.title, marginTop: "6px" }, children: t("capability.skills.paths.empty", "No custom scan paths are registered.") })
-						: null,
-					...(registry?.paths ?? []).map(pathRow)
+					open ? react_jsx_runtime.jsxs("section", {
+						ref: overlayRef,
+						role: "dialog",
+						"aria-modal": false,
+						style: S.path.overlay(position),
+						"aria-label": t("capability.skills.paths.title", "Custom Skill scan paths"),
+						"aria-busy": busy !== null || reading,
+						"data-weir-skill-path-manager": "",
+						onKeyDown: (event) => {
+							if (event.key !== "Escape" || busy !== null) return;
+							event.preventDefault();
+							event.stopPropagation();
+							if (pendingRemove !== null) cancelRemove(pendingRemove);
+							else closeManager();
+						},
+						children: [
+							react_jsx_runtime.jsxs("div", { style: S.list.cardHead, children: [
+								react_jsx_runtime.jsx("span", { children: t("capability.skills.paths.title", "Custom Skill scan paths") }),
+								react_jsx_runtime.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "4px" }, children: [
+									react_jsx_runtime.jsx("button", {
+										type: "button", onClick: () => { void refreshPaths(); }, disabled: busy !== null || reading,
+										style: busy !== null || reading ? { ...S.form.ghost, ...S.footer.disabled } : S.form.ghost,
+										...ring,
+										children: t("capability.skills.paths.refresh", "Refresh paths")
+									}),
+									react_jsx_runtime.jsx("button", {
+										type: "button", onClick: closeManager, disabled: busy !== null,
+										style: busy !== null ? { ...S.header.close, ...S.footer.disabled } : S.header.close,
+										...ring,
+										"aria-label": t("capability.close", "Close"),
+										title: t("capability.close", "Close"),
+										children: react_jsx_runtime.jsx(Icon, { name: "x", size: 12 })
+									})
+								] })
+							] }),
+							react_jsx_runtime.jsx("div", { style: { fontSize: "11px", lineHeight: "16px", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
+							react_jsx_runtime.jsxs("form", {
+								"aria-label": t("capability.skills.paths.addLabel", "Skill scan directory"),
+								onSubmit: (event) => { event.preventDefault(); void runMutation("add", input); },
+								children: [
+									react_jsx_runtime.jsx("label", {
+										style: { display: "flex", flexDirection: "column", gap: "3px", ...S.form.title },
+										children: [
+											t("capability.skills.paths.addLabel", "Skill scan directory"),
+											react_jsx_runtime.jsx("input", {
+												ref: inputRef,
+												value: input, onChange: (event) => setInput(event.target.value), disabled: controlsDisabled,
+												placeholder: t("capability.skills.paths.placeholder", "~/skills or /absolute/path"),
+												style: S.form.input, ...ring,
+												"aria-invalid": feedback?.kind === "error" && feedback.operation === "add" ? true : undefined
+											})
+										]
+									}),
+									react_jsx_runtime.jsx("div", { style: { ...S.form.actions, marginTop: "6px" }, children: react_jsx_runtime.jsx("button", {
+										type: "submit", disabled: controlsDisabled,
+										style: controlsDisabled ? { ...S.form.primary, ...S.footer.disabled } : S.form.primary,
+										...ring,
+										children: busy === "add" ? t("capability.skills.paths.adding", "Adding…") : t("capability.skills.paths.add", "Add path")
+									}) })
+								]
+							}),
+							liveText ? react_jsx_runtime.jsx("div", { role: "status", "aria-live": "polite", style: { ...S.form.title, marginTop: "6px" }, children: liveText }) : null,
+							registry?.error ? react_jsx_runtime.jsx("div", { role: "alert", style: { ...S.form.error, marginTop: "6px" }, children: `${t("capability.skills.paths.readFailed", "The path registry could not be read. Existing rows, when present, are stale.")} ${registry.error.message}` }) : null,
+							feedbackText ? react_jsx_runtime.jsx("div", {
+								role: feedback.kind === "success" ? "status" : "alert",
+								"aria-live": feedback.kind === "success" ? "polite" : "assertive",
+								"data-weir-skill-path-feedback": feedback.kind,
+								style: { ...(feedback.kind === "success" ? S.form.title : S.form.error), marginTop: "6px", color: feedback.kind === "success" ? SUCCESS : feedback.kind === "warning" ? WARN_TEXT : DANGER },
+								children: feedbackText
+							}) : null,
+							registry?.status === "ok" && registry.paths.length === 0
+								? react_jsx_runtime.jsx("div", { style: { ...S.form.title, marginTop: "6px" }, children: t("capability.skills.paths.empty", "No custom scan paths are registered.") })
+								: null,
+							...(registry?.paths ?? []).map(pathRow)
+						]
+					}) : null
 				]
 			});
 		}
@@ -953,7 +1102,8 @@ window.__ModuleLoader__.load({
 				...unknown.map(item => t("capability.unknownLegacyName", "{name}: no matching Skill in the current listing. Refresh the listing or remove this legacy name.").replace("{name}", item.name))
 			];
 			const selectionDisabled = draft === null || commit?.phase === "submitting";
-			const addBlock = tab === "skills" ? react_jsx_runtime.jsx(SkillPathManager, {
+			const addBlock = null;
+			const pathManager = tab === "skills" ? react_jsx_runtime.jsx(SkillPathManager, {
 				sessionId: props.sessionId, model, t,
 				fetchSkillPaths: props.fetchSkillPaths, skillPathAdd: props.skillPathAdd, skillPathRemove: props.skillPathRemove,
 				refreshCapabilities: refreshAll
@@ -1074,6 +1224,7 @@ window.__ModuleLoader__.load({
 							react_jsx_runtime.jsx("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: t("capability.search", "Search"), style: S.search.input, ...ring })
 						]
 					}),
+					pathManager,
 					typeof props.onClose === "function"
 						? react_jsx_runtime.jsx("button", {
 							type: "button",
@@ -1127,6 +1278,7 @@ window.__ModuleLoader__.load({
 		const dictionaries = {
 			en: {
 				"capability.skills.paths.title": "Custom Skill scan paths",
+				"capability.skills.paths.manage": "Manage Skill scan paths",
 				"capability.skills.paths.description": "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.",
 				"capability.skills.paths.addLabel": "Skill scan directory",
 				"capability.skills.paths.placeholder": "~/skills or /absolute/path",
@@ -1157,6 +1309,7 @@ window.__ModuleLoader__.load({
 			},
 			zh: {
 				"capability.skills.paths.title": "自定义技能扫描路径",
+				"capability.skills.paths.manage": "管理技能扫描路径",
 				"capability.skills.paths.description": "由 Weir 会话共享的 Profile 级目录。路径变更不会选择技能、应用草稿或改写默认值。",
 				"capability.skills.paths.addLabel": "技能扫描目录",
 				"capability.skills.paths.placeholder": "~/skills 或 /absolute/path",
