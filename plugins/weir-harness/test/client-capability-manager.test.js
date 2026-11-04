@@ -154,6 +154,10 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   const scroll = loaded.children[1]
   expect(scroll.style.overflowY).toBe('auto')
   expect(scroll.style.minHeight).toBe(0)
+  // The path manager lives in the header; the inventory's former addBlock is empty.
+  expect(header.children[5].__type.name).toBe('SkillPathManager')
+  expect(loaded.children[1].children[0]).toBeNull()
+  expect(findAll(loaded.children[1], (node) => node.__type === 'form' || node['data-weir-skill-path-manager'] !== undefined || node['data-weir-skill-path'])).toHaveLength(0)
 
   // Sticky group headers carry the scope label plus a count badge.
   const stickyHeaders = findAll(loaded, (node) => node.style && node.style.position === 'sticky' && node.style.top === 0)
@@ -394,8 +398,11 @@ test('popover without prior draft still announces an incomplete applied receipt'
   const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
   render(); await new Promise(resolve => setTimeout(resolve, 0))
   const tree = render()
-  expect(tree.children[1].sessionId).toBe('s') // pinned popover addBlock slot now hosts the isolated path manager
-  expect(typeof tree.children[1].refreshCapabilities).toBe('function')
+  expect(tree.children[1]).toBeNull() // pinned popover addBlock stays empty
+  expect(tree.children[0].children[1].children).toBe('MCP')
+  expect(tree.children[0].children[5].sessionId).toBe('s')
+  expect(tree.children[0].children[5].__type.name).toBe('SkillPathManager')
+  expect(typeof tree.children[0].children[5].refreshCapabilities).toBe('function')
   expect(findAll(tree, node => node.role === 'status' && String(node.children).includes('cannot be verified'))).toHaveLength(1)
   expect(findAll(tree, node => node.children === '0 skills · 0 MCP')).toHaveLength(0)
   expect(findAll(tree, node => node.children === 'Apply')[0].disabled).toBe(true)
