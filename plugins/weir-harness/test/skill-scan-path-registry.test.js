@@ -146,8 +146,11 @@ test('corrupt, unknown, torn and invalid payload records fail without silent rep
 })
 
 test('read and write I/O failures are explicit storage outcomes', async t => {
-  const { root } = await fixture(t)
+  const { root, registry: freshRegistry } = await fixture(t)
   await mkdir(join(root, 'library'))
+  await mkdir(join(root, 'other'))
+  const canonical = await realpath(join(root, 'library'))
+  assert.equal((await freshRegistry.add(canonical, 0)).status, 'saved')
   const readFailure = createSkillScanPathRegistry({
     store: { read: async () => { throw Object.assign(new Error('read denied'), { code: 'EACCES' }) } },
     home: root, platform,
@@ -159,10 +162,55 @@ test('read and write I/O failures are explicit storage outcomes', async t => {
   })
   const store = openCapabilityStore({ root, platform, fs, liveness: createStubLiveness() })
   const registry = createSkillScanPathRegistry({ store, home: root, platform })
-  const result = await registry.add(join(root, 'library'), 0)
-  assert.equal(result.status, 'write-failed')
+  const result = await registry.add(join(root, 'other'), 1)
+  assert.equal(result.status, 'indeterminate')
   assert.equal(result.saved, false)
-  assert.deepEqual(await registry.read(), { status: 'ok', revision: 0, paths: [] })
+  assert.equal(result.error.code, 'write-failed')
+  assert.deepEqual(await freshRegistry.read(), { status: 'ok', revision: 1, paths: [canonical] })
+})
+
+test('post-rename fsync and settle-read failures stay indeterminate for add and remove', async t => {
+  const { root, registry: freshRegistry } = await fixture(t)
+  await mkdir(join(root, 'library'))
+  const canonical = await realpath(join(root, 'library'))
+  const target = recordPath(root)
+  let renames = 0
+  let failFsync = false
+  let failSettleRead = false
+  const fs = instrumentFs(createNodeFs(), (op, args, phase) => {
+    if (phase === 'after' && op === 'rename' && args[1] === target) {
+      renames += 1
+      failFsync = true
+      failSettleRead = true
+    }
+    if (phase === 'before' && op === 'fsyncDir' && failFsync && args[0] === dirname(target)) {
+      failFsync = false
+      throw Object.assign(new Error('directory sync failed'), { code: 'EIO' })
+    }
+    if (phase === 'before' && op === 'readText' && failSettleRead && args[0] === target) {
+      failSettleRead = false
+      throw Object.assign(new Error('settle read failed'), { code: 'EIO' })
+    }
+  })
+  const store = openCapabilityStore({ root, platform, fs, liveness: createStubLiveness() })
+  const registry = createSkillScanPathRegistry({ store, home: root, platform })
+
+  const added = await registry.add(canonical, 0)
+  assert.equal(added.status, 'indeterminate')
+  assert.equal(added.saved, false)
+  assert.equal(added.revision, null)
+  assert.equal(added.paths, null)
+  assert.equal(added.error.code, 'write-failed')
+  assert.deepEqual(await freshRegistry.read(), { status: 'ok', revision: 1, paths: [canonical] })
+
+  const removed = await registry.remove(canonical, 1)
+  assert.equal(removed.status, 'indeterminate')
+  assert.equal(removed.saved, false)
+  assert.equal(removed.revision, null)
+  assert.equal(removed.paths, null)
+  assert.equal(removed.error.code, 'write-failed')
+  assert.deepEqual(await freshRegistry.read(), { status: 'ok', revision: 2, paths: [] })
+  assert.equal(renames, 2)
 })
 
 test('Windows home expansion and case/separator folding do not replace the stored display path', async t => {
