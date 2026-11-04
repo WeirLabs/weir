@@ -188,6 +188,11 @@
         enabled: !!js process.env.WEIR_IT_CAPABILITY_REMOTE === '1'
     - id: weir-it-custom-skill-paths-probe
       name: './src/custom-skill-paths-probe.js'
+      # Loader-level guard: the probe injects `agentPresets`, so a composition
+      # without that service leaves the row pending and every unrelated boot logs
+      # a warning. Mount it only for its own scenario; the config guard below is
+      # the probe's own seam and stays unchanged.
+      disabled: !!js process.env.WEIR_IT_CUSTOM_SKILL_PATHS !== '1'
       config:
         enabled: !!js process.env.WEIR_IT_CUSTOM_SKILL_PATHS === '1'
     # Mirror the product's host-layer blackboard remote (design D8). Headless
