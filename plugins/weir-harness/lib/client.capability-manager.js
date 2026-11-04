@@ -630,6 +630,7 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				alive.current = true;
 				setRegistry(null);
+				setInput("");
 				setOpen(false);
 				setFeedback(null);
 				setPendingRemove(null);

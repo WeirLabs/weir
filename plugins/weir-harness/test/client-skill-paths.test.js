@@ -235,7 +235,7 @@ for (const shell of ['sidebar', 'popover']) {
     expect(harness.input().value).toBe('')
   })
 
-  test(`${shell}: Close, outside pointer, and Escape write nothing, return focus, and retain unsubmitted input`, async () => {
+  test(`${shell}: Close, outside pointer, and Escape write nothing, return focus, retain input, and reset it on session change`, async () => {
     const harness = await createHarness(shell)
     typePath(harness, '~/draft')
     harness.closeButton().onClick()
@@ -267,6 +267,17 @@ for (const shell of ['sidebar', 'popover']) {
     expect(harness.calls.add).toEqual([])
     expect(harness.calls.remove).toEqual([])
     expect(harness.calls.apply).toBe(0)
+    harness.closeButton().onClick()
+    expect(harness.focus.trigger).toBe(4)
+    harness.props.sessionId = 'session-paths-next'
+    harness.renderParent()
+    harness.renderPath()
+    await flush()
+    harness.renderParent()
+    await harness.open()
+    expect(harness.pathElement().sessionId).toBe('session-paths-next')
+    expect(harness.input().value).toBe('')
+    expect(harness.calls.pathReads).toBe(7)
   })
 
   test(`${shell}: narrow geometry is clamped and outer scroll or resize closes without writes`, async () => {
