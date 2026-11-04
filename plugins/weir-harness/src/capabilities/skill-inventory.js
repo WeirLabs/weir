@@ -3,6 +3,8 @@ import { dirname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { createSkillIdentity } from './skill-identity.js'
 import { parseSkillText } from './frontmatter.js'
+import { canonicalPathKey } from './skill-applicability.js'
+import { requireSkillScanPaths } from './skill-scan-path-registry.js'
 
 export const SKILL_ROOT_RANKS = Object.freeze({ 'project-dsh': 100, 'project-agents': 200, custom: 300, 'user-dsh': 400, 'user-agents': 500, bundled: 600 })
 
@@ -19,7 +21,7 @@ export async function findProjectRoot(cwd, fs = nodeFs) {
 }
 
 /** Homes are supplied by the host adapter, not inferred from the process profile. */
-export async function resolveSkillRoots({ cwd, dshHome, agentsHome, customSkillDirs = [], bundledSkillDir, weirBuiltinDir, includeDefaultRoots = true }, fs = nodeFs) {
+export async function resolveSkillRoots({ cwd, dshHome, agentsHome, customSkillDirs = [], bundledSkillDir, weirBuiltinDir, includeDefaultRoots = true, skillScanPathRegistry }, fs = nodeFs) {
   const roots = []
   const add = (path, source, scope, extra = {}) => roots.push({ path: resolve(path), source, scope, rank: SKILL_ROOT_RANKS[source], ...extra })
   if (includeDefaultRoots && cwd !== undefined) {
@@ -37,7 +39,21 @@ export async function resolveSkillRoots({ cwd, dshHome, agentsHome, customSkillD
   }
   // Host bundles are not automatically Weir-owned or selected.
   if (bundledSkillDir !== undefined) add(bundledSkillDir, 'bundled', 'custom', { trustedHost: true })
-  return roots
+  // Existing composition/default roots keep their source, scope and rank. User
+  // registry roots append in registry order and never replace Creative's roots.
+  if (skillScanPathRegistry) {
+    for (const path of await requireSkillScanPaths(skillScanPathRegistry)) add(path, 'custom', 'custom')
+  }
+  // Canonical identity, not lexical spelling, controls enumeration. A root whose
+  // canonical key cannot be proven stays independent so discovery's established
+  // partial-failure path reports its real unreadable/missing outcome.
+  const seen = new Set()
+  return roots.filter((root, index) => {
+    const key = canonicalPathKey(root.path) ?? `unresolved:${index}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 const rootKey = root => JSON.stringify([resolve(root.path), root.source, root.scope, root.rank])

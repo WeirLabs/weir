@@ -22,13 +22,14 @@ import { buildReceiptPayload, buildListPayload, buildConditionsPayload, buildPre
 import { PRESET_SELECTED_EVENT } from './preset-invalidation.js'
 import { createAudit } from '../shared/audit.js'
 import { mcpDiagnostic, sanitizeMcpPayload } from './mcp-diagnostics.js'
+import { createSkillScanPathRegistry } from './skill-scan-path-registry.js'
 
 /** The host-root service key the typert gateway resolves (S27: ctx.get from the host root). */
 export const CAPABILITY_READ_SERVICE_KEY = 'weirCapabilityRead'
 /** The wire namespace: POST /api/weirCapabilities/<method>, client ctx.remote.weirCapabilities.*. */
 export const CAPABILITY_READ_NAMESPACE = 'weirCapabilities'
-/** The five read methods, each taking exactly one parameter. */
-export const CAPABILITY_READ_METHODS = ['receipt', 'list', 'conditions', 'presets', 'defaultGet']
+/** The six read methods, each taking exactly one parameter. */
+export const CAPABILITY_READ_METHODS = ['receipt', 'list', 'conditions', 'presets', 'defaultGet', 'skillPaths']
 
 /** Typed infrastructure/ownership failure, distinct from domain status values. */
 export class CapabilityReadError extends Error {
@@ -157,6 +158,7 @@ export function capabilityOwnership(observation, sessionId) {
 export function createCapabilityReadService(dependencies = {}) {
   const bridgeFor = feedResolver(dependencies)
   const storeFor = dependencies.store ?? (profileContext => openCapabilityStore({ profileContext }))
+  const skillPathRegistryFor = dependencies.skillPathRegistry ?? (profileContext => createSkillScanPathRegistry({ store: storeFor(profileContext) }))
   const ensure = dependencies.ensureRegistered ?? (() => true)
   const onDegraded = dependencies.onDegraded ?? (() => {})
   const observeSession = dependencies.observeSession ?? (sessionId => dependencies.sessionQuery?.()?.observeSession(sessionId))
@@ -242,12 +244,13 @@ export function createCapabilityReadService(dependencies = {}) {
     defaultGet: sessionId => read(sessionId, 'defaultGet', (faces, options) => buildDefaultGetPayload({
       store: storeFor(faces.profileContext?.()),
     }, options)),
+    skillPaths: sessionId => read(sessionId, 'skillPaths', faces => skillPathRegistryFor(faces.profileContext?.()).read()),
   }
 }
 
 export const CAPABILITY_MUTATION_SERVICE_KEY = 'weirCapabilityMutation'
 export const CAPABILITY_MUTATION_NAMESPACE = 'weirCapabilityMutations'
-export const CAPABILITY_MUTATION_METHODS = ['mutate', 'batch']
+export const CAPABILITY_MUTATION_METHODS = ['mutate', 'batch', 'skillPathAdd', 'skillPathRemove']
 
 export function sameMutationOwner(first, second) {
   const profile = value => value ? `${value.home ?? ''}\0${value.name ?? ''}` : ''
@@ -257,9 +260,38 @@ export function sameMutationOwner(first, second) {
     && profile(first.profile) === profile(second.profile)
 }
 
+/** Call every accepting-process provider for exactly one changed Profile. */
+export function invalidateSkillScanPathProviders(profile) {
+  const failures = []
+  if (typeof profile?.home !== 'string' || typeof profile?.name !== 'string') {
+    return [new Error('changed Profile identity is unavailable')]
+  }
+  for (const feeds of bridgeFeeds.values()) {
+    for (const token of feeds) {
+      const faces = token.faces ?? token
+      try {
+        const candidate = faces.profileContext?.()
+        if (candidate?.home !== profile.home || candidate?.name !== profile.name) continue
+        if (typeof faces.provider?.sourceChanged !== 'function') throw new Error('mounted Skill provider cannot invalidate')
+        faces.provider.sourceChanged()
+      } catch (cause) {
+        failures.push(cause)
+      }
+    }
+  }
+  return failures
+}
+
+const pathDiagnostic = (cause, code = cause?.code ?? 'validation-failed') => ({
+  code,
+  message: cause instanceof Error ? cause.message : String(cause),
+})
+
 /** Session-preset/profile/feed ownership for mutations; selectionSeq is not compared. */
 export function createCapabilityMutationService(dependencies = {}) {
   const bridgeFor = feedResolver(dependencies)
+  const storeFor = dependencies.store ?? (profileContext => openCapabilityStore({ profileContext }))
+  const skillPathRegistryFor = dependencies.skillPathRegistry ?? (profileContext => createSkillScanPathRegistry({ store: storeFor(profileContext) }))
   const ensure = dependencies.ensureRegistered ?? (() => true)
   const observeSession = dependencies.observeSession ?? (sessionId => dependencies.sessionQuery?.()?.observeSession(sessionId))
   const observe = async sessionId => {
@@ -278,16 +310,18 @@ export function createCapabilityMutationService(dependencies = {}) {
       throw new CapabilityReadError('unknown-session', `capability mutation: cannot observe session ${JSON.stringify(sessionId)}`, { cause })
     }
   }
+  // The same exact observation/feed/Profile recheck serves MCP and path writes.
+  const ownershipAssertion = (sessionId, first) => async () => {
+    const current = await observe(sessionId)
+    try {
+      if (!sameMutationOwner(first, current)) throw new CapabilityReadError('owner-changed', 'capability mutation: session preset/profile/feed owner changed')
+    } finally { current.lease[Symbol.dispose]() }
+  }
   async function mutate(sessionId, request, batch = false) {
     if (!ensure()) throw new CapabilityReadError('channel-unavailable', 'capability mutation channel is not registered')
     const first = await observe(sessionId)
     try {
-      const assertOwner = async () => {
-        const current = await observe(sessionId)
-        try {
-          if (!sameMutationOwner(first, current)) throw new CapabilityReadError('owner-changed', 'capability mutation: session preset/profile/feed owner changed')
-        } finally { current.lease[Symbol.dispose]() }
-      }
+      const assertOwner = ownershipAssertion(sessionId, first)
       if (typeof first.faces.mcpOperations !== 'function') throw new CapabilityReadError('bridge-absent', 'capability mutation: owning preset has no MCP operations')
       const operations = first.faces.mcpOperations({ id: sessionId, header: { cwd: first.owner.cwd } }, { assertOwner })
       let result
@@ -322,9 +356,61 @@ export function createCapabilityMutationService(dependencies = {}) {
       first.lease[Symbol.dispose]()
     }
   }
+
+  async function mutatePath(sessionId, request, kind) {
+    if (!ensure()) throw new CapabilityReadError('channel-unavailable', 'capability mutation channel is not registered')
+    const first = await observe(sessionId)
+    try {
+      const assertOwner = ownershipAssertion(sessionId, first)
+      let result
+      try {
+        const registry = skillPathRegistryFor(first.profile)
+        result = kind === 'add'
+          ? await registry.add(request?.path, request?.expectedRevision, { assertOwner })
+          : await registry.remove(request?.path, request?.expectedRevision, { assertOwner })
+      } catch (cause) {
+        result = {
+          status: cause?.code === 'owner-changed' ? 'owner-changed' : 'validation-failed',
+          saved: false, revision: null, paths: null,
+          error: pathDiagnostic(cause, cause?.code ?? 'validation-failed'),
+        }
+      }
+
+      // A landed registry write has already changed the durable discovery scope.
+      // Invalidate every same-Profile mount before any success response, and keep
+      // the actual saved facts if either this step or the final owner check fails.
+      let invalidationFailure = null
+      if (result.saved === true) {
+        const failures = invalidateSkillScanPathProviders(first.profile)
+        if (failures.length > 0) invalidationFailure = failures.map(failure => pathDiagnostic(failure).message).join('; ')
+      }
+      try {
+        await assertOwner()
+      } catch (cause) {
+        return {
+          ...result,
+          status: 'owner-changed', ownerChanged: true, saved: result.saved === true,
+          error: pathDiagnostic(cause, 'owner-changed'),
+        }
+      }
+      if (invalidationFailure !== null) {
+        return {
+          ...result,
+          status: 'invalidation-failed',
+          error: { code: 'invalidation-failed', message: invalidationFailure },
+        }
+      }
+      return result
+    } finally {
+      first.lease[Symbol.dispose]()
+    }
+  }
+
   return {
     mutate: (sessionId, request) => mutate(sessionId, request, false),
     batch: (sessionId, request) => mutate(sessionId, request, true),
+    skillPathAdd: (sessionId, request) => mutatePath(sessionId, request, 'add'),
+    skillPathRemove: (sessionId, request) => mutatePath(sessionId, request, 'remove'),
   }
 }
 
@@ -343,7 +429,7 @@ export const CAPABILITY_ENDPOINTS = [
  * codecs, no zod, no generated artifacts). Parameters and results are plain
  * JSON; the envelope validates the argument name only.
  *
- * ALL five read and two mutation invocations live in ONE contribution, because
+ * ALL six read and four mutation invocations live in ONE contribution, because
  * the registry keys exactly one record per package+face and rejects any second
  * registration while that record is live: two separate `weir-harness` host-face
  * contributions could never overlap generations, and the face the mutation half

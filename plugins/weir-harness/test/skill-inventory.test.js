@@ -127,3 +127,41 @@ test('trusted provenance is separate from metadata, and content revisions do not
   expect(first.digest).not.toBe(second.digest)
   expect(second.identity.portable).toBe(true)
 })
+
+test('managed and composition roots merge canonically while static custom and Creative roots keep their semantics', async t => {
+  const base = await sandbox(t)
+  const composition = join(base, 'composition')
+  const builtin = join(base, 'creative-builtin')
+  const managed = join(base, 'managed')
+  for (const path of [composition, builtin, managed]) await fs.mkdir(path, { recursive: true })
+  await fs.symlink(composition, join(base, 'composition-alias'))
+  const registry = { read: async () => ({ status: 'ok', revision: 4, paths: [join(base, 'composition-alias'), managed] }) }
+  const roots = await resolveSkillRoots({
+    includeDefaultRoots: false,
+    customSkillDirs: [composition],
+    weirBuiltinDir: builtin,
+    skillScanPathRegistry: registry,
+  })
+  expect(roots.map(root => root.path)).toEqual([composition, builtin, managed])
+  expect(roots.map(root => [root.source, root.scope, root.rank])).toEqual([
+    ['custom', 'custom', 300],
+    ['custom', 'weir-builtin', 300],
+    ['custom', 'custom', 300],
+  ])
+  await put(join(composition, 'shared/SKILL.md'), text('shared'))
+  await put(join(builtin, 'creative/SKILL.md'), text('creative'))
+  await put(join(managed, 'managed/SKILL.md'), text('managed'))
+  const snapshot = await discover(roots)
+  expect(snapshot.complete).toBe(true)
+  expect(snapshot.candidates.map(candidate => candidate.name)).toEqual(['shared', 'creative', 'managed'])
+  expect(snapshot.candidates.filter(candidate => candidate.name === 'shared')).toHaveLength(1)
+})
+
+test('a registry read failure explicitly fails root resolution instead of pretending the inventory is complete', async t => {
+  const base = await sandbox(t)
+  const registry = { read: async () => ({ status: 'unavailable', error: { code: 'corrupt', message: 'registry is corrupt' } }) }
+  const error = await resolveSkillRoots({ includeDefaultRoots: false, customSkillDirs: [base], skillScanPathRegistry: registry })
+    .then(() => null, cause => cause)
+  expect(error).toBeInstanceOf(Error)
+  expect(error.message).toContain('Skill scan path registry unavailable: registry is corrupt')
+})
