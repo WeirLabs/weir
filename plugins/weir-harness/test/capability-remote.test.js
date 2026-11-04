@@ -191,10 +191,13 @@ function twoPresetFixture() {
     ['weir', { scope: 'project', root: '/fixture/normal', name: 'normal-skill', provenance: { kind: 'fixture' } }],
     ['weir-creative', { scope: 'project', root: '/fixture/creative', name: 'creative-skill', provenance: { kind: 'fixture' } }],
   ])
-  const store = { read: async ({ sessionId }) => ({
-    kind: 'ok', revision: 10,
-    payload: { skills: [identities.get(owners.get(sessionId))], mcpServers: [] },
-  }) }
+  const store = { read: async unit => {
+    if (unit.kind === 'skill-scan-paths') return { kind: 'absent', revision: 0 }
+    return {
+      kind: 'ok', revision: 10,
+      payload: { skills: [identities.get(owners.get(unit.sessionId))], mcpServers: [] },
+    }
+  } }
   const faces = presetId => ({
     readPresetId: presetId,
     sessionCwd: () => ({ found: true, cwd }), // Old bridge wrongly accepts either same-cwd session.
@@ -361,7 +364,7 @@ test('disposing one preset feed leaves the sibling preset reading untouched', as
   }
 })
 
-test('all five reads observe the cold current owner and dispose both leases', async () => {
+test('all six reads observe the cold current owner and dispose both leases', async () => {
   const fixture = twoPresetFixture()
   const calls = []
   const creative = fixture.faces('weir-creative')
@@ -385,6 +388,7 @@ test('all five reads observe the cold current owner and dispose both leases', as
       conditions: () => buildConditionsPayload(),
       presets: () => buildPresetsPayload({ store: store('creative-context') }, options),
       defaultGet: () => buildDefaultGetPayload({ store: store('creative-context') }, options),
+      skillPaths: async () => ({ status: 'ok', revision: 0, paths: [] }),
     }
     for (const method of CAPABILITY_READ_METHODS) {
       const value = await service[method]('creative-session')
@@ -559,10 +563,13 @@ test('host apply publishes the frozen bindings and registers the one host-face c
   expect(typeof service.receipt).toBe('function')
   expect(typeof service.list).toBe('function')
   expect(typeof service.conditions).toBe('function')
+  expect(typeof service.skillPaths).toBe('function')
   expect(provided[1].key).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
   expect(Object.isFrozen(provided[1].service)).toBe(true)
   expect(typeof provided[1].service.mutate).toBe('function')
   expect(typeof provided[1].service.batch).toBe('function')
+  expect(typeof provided[1].service.skillPathAdd).toBe('function')
+  expect(typeof provided[1].service.skillPathRemove).toBe('function')
   expect(provided[1].service.typertRemote.serviceKey).toBe(CAPABILITY_MUTATION_SERVICE_KEY)
   expect(provided[1].service.typertRemote.namespace).toBe(CAPABILITY_MUTATION_NAMESPACE)
 
@@ -586,6 +593,8 @@ test('host apply publishes the frozen bindings and registers the one host-face c
   expect(contribution.invocations.slice(CAPABILITY_READ_METHODS.length).map(entry => [entry.service, entry.method, entry.parameters.map(parameter => parameter.name)])).toEqual([
     [CAPABILITY_MUTATION_SERVICE_KEY, 'mutate', ['sessionId', 'request']],
     [CAPABILITY_MUTATION_SERVICE_KEY, 'batch', ['sessionId', 'request']],
+    [CAPABILITY_MUTATION_SERVICE_KEY, 'skillPathAdd', ['sessionId', 'request']],
+    [CAPABILITY_MUTATION_SERVICE_KEY, 'skillPathRemove', ['sessionId', 'request']],
   ])
 })
 
@@ -635,8 +644,11 @@ test('the contribution factory is standalone-stable for the gateway claim check'
     'weirCapabilities/conditions',
     'weirCapabilities/presets',
     'weirCapabilities/defaultGet',
+    'weirCapabilities/skillPaths',
     'weirCapabilityMutations/mutate',
     'weirCapabilityMutations/batch',
+    'weirCapabilityMutations/skillPathAdd',
+    'weirCapabilityMutations/skillPathRemove',
   ])
   // The gateway claims an endpoint from get() OR hasSeen(): every endpoint this
   // package can ever withdraw must belong to the same committed batch.
@@ -658,8 +670,8 @@ test('the shipped contribution carries the package, face and both channels the r
 
   expect(contribution.invocations).toHaveLength(CAPABILITY_READ_METHODS.length + CAPABILITY_MUTATION_METHODS.length)
   expect(contribution.invocations.map(entry => `${entry.namespace}/${entry.method}`)).toEqual([
-    'weirCapabilities/receipt', 'weirCapabilities/list', 'weirCapabilities/conditions', 'weirCapabilities/presets', 'weirCapabilities/defaultGet',
-    'weirCapabilityMutations/mutate', 'weirCapabilityMutations/batch',
+    'weirCapabilities/receipt', 'weirCapabilities/list', 'weirCapabilities/conditions', 'weirCapabilities/presets', 'weirCapabilities/defaultGet', 'weirCapabilities/skillPaths',
+    'weirCapabilityMutations/mutate', 'weirCapabilityMutations/batch', 'weirCapabilityMutations/skillPathAdd', 'weirCapabilityMutations/skillPathRemove',
   ])
   for (const invocation of contribution.invocations) {
     expect(invocation.id.startsWith('weir-harness.')).toBe(true)
@@ -674,7 +686,9 @@ test('the shipped contribution carries the package, face and both channels the r
   expect(read.every(entry => entry.parameters.length === 1 && entry.parameters[0].name === 'sessionId')).toBe(true)
   const mutation = contribution.invocations.filter(entry => entry.namespace === 'weirCapabilityMutations')
   expect(mutation.every(entry => entry.service === 'weirCapabilityMutation')).toBe(true)
-  expect(mutation.map(entry => entry.parameters.map(parameter => parameter.name))).toEqual([['sessionId', 'request'], ['sessionId', 'request']])
+  expect(mutation.map(entry => entry.parameters.map(parameter => parameter.name))).toEqual([
+    ['sessionId', 'request'], ['sessionId', 'request'], ['sessionId', 'request'], ['sessionId', 'request'],
+  ])
 })
 
 test('the shipped contribution survives the registry validatePackage, so registration cannot die silently', () => {
@@ -786,7 +800,7 @@ test('the read channel self-heals a withdrawn typert registration', () => {
 
 test('a duplicate registration race with every endpoint live is success, never a warning', () => {
   // Reproduces the ordinary reload overlap at the apply seam: another
-  // incarnation already owns all seven endpoints, so the new generation must
+  // incarnation already owns all ten endpoints, so the new generation must
   // neither re-register nor warn — its own listener owns the later recovery.
   const endpoints = new Set(CAPABILITY_ENDPOINTS)
   const warnings = []

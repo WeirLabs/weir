@@ -116,6 +116,7 @@ test('a selected builtin skill is served with the pre-migration labels', async t
   createSkillSelectionPlugin({
     readSelection: async () => [identity],
     office: async () => ({ complete: true, candidates: [] }),
+    skillScanPathRegistry: { read: async () => ({ status: 'ok', revision: 0, paths: [] }) },
   })(ctx, { machineId: 'installation-a', dshHome: join(base, 'dsh'), agentsHome: join(base, 'agents') })
   const listed = await registered().list()
   expect(listed.complete).toBe(true)
@@ -142,6 +143,7 @@ test('a non-equivalent builtin discovery fails closed with a visible reason, and
   createSkillSelectionPlugin({
     readSelection: async () => [identity],
     office: async () => ({ complete: true, candidates: [] }),
+    skillScanPathRegistry: { read: async () => ({ status: 'ok', revision: 0, paths: [] }) },
   })(ctx, { machineId: 'installation-a', dshHome: join(base, 'dsh'), agentsHome: join(base, 'agents'), weirBuiltinDir: join(base, 'builtin') })
   const listed = await registered().list()
   expect(listed.complete).toBe(false)

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { createSkillIdentity, skillIdentityKey } from './skill-identity.js'
 import { openCapabilityStore } from './store/store.js'
 import { discoverSkillInventory, resolveSkillRoots } from './skill-inventory.js'
+import { createSkillScanPathRegistry } from './skill-scan-path-registry.js'
 import { createSkillSelectionProvider } from './skill-selection-provider.js'
 import { assertBuiltinSkillMigration } from './skill-builtin-migration.js'
 import { createOfficeAdapter, officeDenials } from './skill-office-adapter.js'
@@ -67,6 +68,9 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     /** Task 6.5 initialization reports per session (manager surface). */
     let initialReports = new Map()
     let lifecycle = null
+    const scanPathRegistry = dependencies.skillScanPathRegistry ?? createSkillScanPathRegistry({
+      store: openCapabilityStore({ profileContext: ctx.get?.('profileContext') }),
+    })
     try {
       ctx.skills.registerProvider(control => {
         const readSelection = dependencies.readSelection ?? (async options => {
@@ -134,6 +138,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             customSkillDirs: config.customSkillDirs ?? [],
             bundledSkillDir: config.bundledSkillDir ?? process.env.DSH_BUNDLED_SKILL_DIR,
             weirBuiltinDir: config.weirBuiltinDir ?? fileURLToPath(new URL('../../skills/', import.meta.url)),
+            skillScanPathRegistry: scanPathRegistry,
           })
           const snapshot = await discoverSkillInventory({ roots, machineId, previous })
           // First-run migration check (D-H 6): a non-equivalent builtin
@@ -323,6 +328,7 @@ export function createSkillSelectionPlugin(dependencies = {}) {
         customSkillDirs: config.customSkillDirs ?? [],
         bundledSkillDir: config.bundledSkillDir ?? process.env.DSH_BUNDLED_SKILL_DIR,
         weirBuiltinDir: config.weirBuiltinDir ?? fileURLToPath(new URL('../../skills/', import.meta.url)),
+        skillScanPathRegistry: scanPathRegistry,
       })
     }
     // The shared cold-safe audit channel (cordis emit + .weir/audit.jsonl

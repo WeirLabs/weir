@@ -243,7 +243,7 @@ function createFiber(registry, name) {
   return fiber
 }
 
-/** The legacy generation: services provided, only the five read endpoints registered. */
+/** The legacy generation: services provided, only the six read endpoints registered. */
 function mountLegacy(registry) {
   const fiber = createFiber(registry, 'legacy-generation')
   fiber.provideService(CAPABILITY_READ_SERVICE_KEY, Object.freeze({ legacy: true, typertRemote: Object.freeze({ service: null, serviceKey: CAPABILITY_READ_SERVICE_KEY, namespace: CAPABILITY_READ_NAMESPACE }) }))
@@ -253,7 +253,7 @@ function mountLegacy(registry) {
   return fiber
 }
 
-test('a legacy read-only registration is recovered as all seven endpoints after the old generation disposes', async () => {
+test('a legacy read-only registration is recovered as all ten endpoints after the old generation disposes', async () => {
   const registry = createRegistry()
   const legacy = mountLegacy(registry)
   expect(registry.live()).toEqual(READ_ENDPOINTS)
@@ -315,7 +315,7 @@ test('disposing the sole generation withdraws the package and every endpoint, an
 for (const listenerOutlivesWithdrawal of [true, false]) {
   test(`the survivor recovers whatever the listener order (${listenerOutlivesWithdrawal ? 'old listener outlives the withdrawal' : 'old listener removed first'})`, async () => {
     const registry = createRegistry()
-    // Previous incarnation: the same shipped apply, so it owns all seven
+    // Previous incarnation: the same shipped apply, so it owns all ten
     // endpoints AND its own listener — the old generation that must not consume
     // the survivor's retry.
     const previous = createFiber(registry, 'previous-incarnation')

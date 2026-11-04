@@ -565,3 +565,30 @@ test('pin: workspace-scoped preset verbs without a workspace return the shared n
   // Zero writes anywhere: every guard returned before touching the store.
   expect(existsSync(join(root, 'weir'))).toBe(false)
 })
+
+test('managed paths feed both inventory and package-import roots, and registry degradation stays visible', { skip: storePlatformSkip }, async () => {
+  const root = tmp()
+  mkdirSync(join(root, 'managed', 'external'), { recursive: true })
+  writeFileSync(join(root, 'managed', 'external', 'SKILL.md'), '---\nname: external\ndescription: managed fixture\n---\nEXTERNAL\n')
+  let reads = 0
+  const registry = { read: async () => { reads += 1; return { status: 'ok', revision: 2, paths: [join(root, 'managed')] } } }
+  const mounted = mountCapabilities(root, { customSkillDirs: [], dshHome: root }, undefined, { skillScanPathRegistry: registry })
+  const listed = await mounted.callJson('list')
+  expect(listed.kind).toBe('success')
+  const external = listed.payload.skills.find(skill => skill.name === 'external')
+  expect(external.scope).toBe('custom')
+  expect(external.selected).toBe(false)
+  const imported = await mounted.callJson('preset-import', { scope: 'global', document: v2Package(), dryRun: true })
+  expect(imported.kind).toBe('success')
+  expect(imported.payload.status).toBe('dry-run')
+  expect(reads >= 2).toBe(true)
+
+  const brokenRoot = tmp()
+  const broken = mountCapabilities(brokenRoot, { customSkillDirs: [], dshHome: brokenRoot }, undefined, {
+    inventory: async () => ({ candidates: [], roots: [], complete: true }),
+    skillScanPathRegistry: { read: async () => ({ status: 'unavailable', error: { code: 'corrupt', message: 'registry corrupt' } }) },
+  })
+  const degraded = await broken.callJson('preset-import', { scope: 'global', document: v2Package(), dryRun: true })
+  expect(degraded.kind).toBe('error')
+  expect(degraded.text).toContain('Skill scan path registry unavailable: registry corrupt')
+})

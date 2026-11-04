@@ -38,6 +38,7 @@ export function resolveStoreRoot(profileContext) {
  *   | { kind: 'preset', scope: 'global', presetId: string }
  *   | { kind: 'preset', scope: 'workspace', workspaceKey: string, presetId: string }
  *   | { kind: 'mcp-registry' }
+ *   | { kind: 'skill-scan-paths' }
  *   | { kind: 'distribution', scope: string }} Unit
  */
 
@@ -77,6 +78,8 @@ export function unitLayout(unit) {
       break
     case 'mcp-registry':
       return layout(['mcp'], 'registry')
+    case 'skill-scan-paths':
+      return layout(['skills'], 'scan-paths')
     case 'distribution':
       need(u.scope)
       return layout(['distribution', /** @type {string} */ (u.scope)], 'active')
