@@ -85,6 +85,13 @@ describe('client channel adapters (composition root)', () => {
     }
     const notifyWebStarts = []
     const chunkModules = {
+      './client.capability-badge.js': { CapabilityBadge: (props) => ({ __badge: props }) },
+      './client.capability-model.js': { dictionaries: { en: { 'capability.badge': 'badge' }, zh: { 'capability.badge': '徽标' } } },
+      './client.capability-manager.js': {
+        CapabilityManagerPanel: (props) => ({ __capabilityPanel: props }),
+        dictionaries: { en: { 'capability.skills.paths.title': 'Custom Skill scan paths' }, zh: { 'capability.skills.paths.title': '自定义技能扫描路径' } },
+      },
+      './client.mcp-manager.js': {},
       './client.settings-page.js': settingsPageChunk,
       './client.chain-editor.js': {},
       './client.robash-editor.js': {},
@@ -405,5 +412,49 @@ describe('client channel adapters (composition root)', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+  it('Skill path verbs use raw log-silent channels and reach the composer through a stable panel adapter', async () => {
+    const { surface, reactStub } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, connection, rpcCalls, localeRegistrations } = makeCtx()
+    const executed = []
+    ctx.remote.commands = { execute: async (...args) => { executed.push(args); return { ok: false, error: { code: 'unexpected', message: 'no command fallback' } } } }
+    connection.rpcBehavior = (_channel, endpoint) => {
+      if (endpoint.endsWith('/skillPaths')) return { ok: true, value: { status: 'ok', revision: 4, paths: ['/canonical/a'] } }
+      if (endpoint.endsWith('/skillPathAdd')) return { ok: true, value: { status: 'saved', saved: true, revision: 5, paths: ['/canonical/a', '/canonical/b'], error: null } }
+      if (endpoint.endsWith('/skillPathRemove')) return { ok: true, value: { status: 'removed', saved: true, revision: 6, paths: ['/canonical/a'], error: null } }
+      return { ok: false, error: { code: 'gateway/unknown', message: 'unknown endpoint' } }
+    }
+    surface.apply(ctx)
+    const badge = registrationById(slotInjects, slotRegistrations, 'weir-capability-badge')
+    const verbs = badge.definition.inject('s7')
+
+    expect(await verbs.fetchSkillPaths('s7')).toEqual({ status: 'ok', revision: 4, paths: ['/canonical/a'] })
+    expect(await verbs.skillPathAdd('s7', { path: '~/b', expectedRevision: 4 })).toEqual({ status: 'saved', saved: true, revision: 5, paths: ['/canonical/a', '/canonical/b'], error: null })
+    expect(await verbs.skillPathRemove('s7', { path: '/canonical/b', expectedRevision: 5 })).toEqual({ status: 'removed', saved: true, revision: 6, paths: ['/canonical/a'], error: null })
+    expect(rpcCalls).toEqual([
+      { channel: '/api', endpoint: 'weirCapabilities/skillPaths', payload: { args: { sessionId: 's7' } } },
+      { channel: '/api', endpoint: 'weirCapabilityMutations/skillPathAdd', payload: { args: { sessionId: 's7', request: { path: '~/b', expectedRevision: 4 } } } },
+      { channel: '/api', endpoint: 'weirCapabilityMutations/skillPathRemove', payload: { args: { sessionId: 's7', request: { path: '/canonical/b', expectedRevision: 5 } } } },
+    ])
+    expect(executed).toEqual([])
+
+    // The unchanged Badge chunk receives one stable ManagerPanel adapter. Its
+    // path props are bound here, and model+view dictionaries merge on arrival.
+    const componentProps = { ...verbs, t: (key) => key }
+    reactStub.begin()
+    expect(badge.component(componentProps)).toBe(null)
+    await flush()
+    reactStub.begin()
+    const wrapped = badge.component(componentProps)
+    const adapted = wrapped.ManagerPanel({ sessionId: 's7' })
+    expect(adapted.fetchSkillPaths).toBe(verbs.fetchSkillPaths)
+    expect(adapted.skillPathAdd).toBe(verbs.skillPathAdd)
+    expect(adapted.skillPathRemove).toBe(verbs.skillPathRemove)
+    reactStub.begin()
+    expect(badge.component(componentProps).ManagerPanel).toBe(wrapped.ManagerPanel)
+    const capabilityDictionary = localeRegistrations.find((row) => row.ns === 'settings.weir.capability')
+    expect(capabilityDictionary.dicts.en['capability.badge']).toBe('badge')
+    expect(capabilityDictionary.dicts.en['capability.skills.paths.title']).toBe('Custom Skill scan paths')
+    expect(capabilityDictionary.dicts.zh['capability.skills.paths.title']).toBe('自定义技能扫描路径')
   })
 })

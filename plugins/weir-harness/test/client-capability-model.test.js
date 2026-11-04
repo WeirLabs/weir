@@ -528,3 +528,99 @@ test('safe preset edits preserve exact conflict target, failure statuses and rej
   expect(model.loadablePresetOf({ status: 'ok', document: { selection: { skills: [], mcpServers: [], unresolvedRefs: [] } } })).toBe(true)
   expect(model.draftFromReceipt({ revision: 3, effective: { skills: [], mcpServers: [] } }).unresolvedRefs).toEqual([])
 })
+
+// ---- Custom Skill scan paths (OpenSpec 3.1) ----
+
+test('skill path reads normalize absent empty lists and explicit stale/unavailable states', () => {
+  expect(model.skillPathsAfterRead(null, { status: 'ok', revision: 0 })).toEqual({
+    status: 'ok', revision: 0, paths: [], error: null, stale: false,
+  })
+  expect(model.skillPathsAfterRead(null, { status: 'ok', revision: 2, paths: ['/a', '', 4, '/b'] })).toEqual({
+    status: 'ok', revision: 2, paths: ['/a', '/b'], error: null, stale: false,
+  })
+  const current = { status: 'ok', revision: 3, paths: ['/last-good'], error: null, stale: false }
+  expect(model.skillPathsAfterRead(current, { status: 'unreadable', error: { code: 'E_CORRUPT', message: 'corrupt registry' } })).toEqual({
+    status: 'unreadable', revision: 3, paths: ['/last-good'], error: { code: 'E_CORRUPT', message: 'corrupt registry' }, stale: true,
+  })
+  expect(model.skillPathsAfterRead(null, null)).toEqual({
+    status: 'unavailable', revision: 0, paths: [], error: { code: 'unavailable', message: 'The Skill scan path registry is unavailable.' }, stale: false,
+  })
+})
+
+test('skill path mutations distinguish rejection, conflict, unavailable and durable degraded outcomes', () => {
+  const saved = model.skillPathMutationOutcomeOf({ status: 'saved', saved: true, revision: 4, paths: ['/new'], error: null })
+  expect(saved.phase).toBe('saved')
+  expect(saved.saved).toBe(true)
+  expect(saved.snapshot).toEqual({ status: 'ok', revision: 4, paths: ['/new'], error: null, stale: false })
+  expect(saved.refreshPaths).toBe(true)
+  expect(saved.refreshCapabilities).toBe(true)
+  expect(model.skillPathMutationOutcomeOf({ status: 'removed', saved: true, revision: 5, paths: [] }).phase).toBe('saved')
+
+  for (const status of ['invalidation-failed', 'owner-changed']) {
+    const degraded = model.skillPathMutationOutcomeOf({ status, saved: true, revision: 6, paths: ['/landed'], error: { message: 'post-commit check failed' } })
+    expect(degraded.phase).toBe('degraded')
+    expect(degraded.saved).toBe(true)
+    expect(degraded.revision).toBe(6)
+    expect(degraded.refreshCapabilities).toBe(true)
+    expect(degraded.error.message).toBe('post-commit check failed')
+  }
+
+  const duplicate = model.skillPathMutationOutcomeOf({ status: 'duplicate', saved: true, revision: 6, paths: ['/existing'], error: { message: 'already registered' } })
+  expect(duplicate.saved).toBe(false) // contradictory payloads never become a success claim
+  expect(duplicate.phase).toBe('duplicate')
+  expect(duplicate.refreshPaths).toBe(true)
+  expect(duplicate.refreshCapabilities).toBe(false)
+  const conflict = model.skillPathMutationOutcomeOf({ status: 'revision-conflict', saved: false, current: { revision: 8, paths: ['/current'] } })
+  expect(conflict.phase).toBe('revision-conflict')
+  expect(conflict.snapshot.revision).toBe(8)
+  expect(conflict.snapshot.paths).toEqual(['/current'])
+  expect(conflict.refreshCapabilities).toBe(false)
+  expect(model.skillPathMutationOutcomeOf({ status: 'not-found', saved: false }).refreshPaths).toBe(true)
+  expect(model.skillPathMutationOutcomeOf({ status: 'validation-failed', saved: false }).refreshPaths).toBe(false)
+  for (const status of ['unavailable', 'unreadable', 'unsupported', 'locked', 'write-failed', 'storage-failed']) {
+    const outcome = model.skillPathMutationOutcomeOf({ status, saved: false })
+    expect(outcome.phase).toBe('unavailable')
+    expect(outcome.saved).toBe(false)
+    expect(outcome.refreshCapabilities).toBe(false)
+  }
+  expect(model.skillPathMutationOutcomeOf({ status: 'indeterminate', saved: false }).refreshCapabilities).toBe(true)
+  for (const status of ['call-threw', 'call-failed', 'gateway/internal']) {
+    const uncertain = model.skillPathMutationOutcomeOf({ status, saved: false, error: { message: 'reply lost' } })
+    expect(uncertain.phase).toBe('indeterminate')
+    expect(uncertain.saved).toBe(false)
+    expect(uncertain.refreshPaths).toBe(true)
+    expect(uncertain.refreshCapabilities).toBe(true)
+  }
+})
+
+test('path revisions never enter selection CAS and path-only refreshes preserve the exact identity draft diff', () => {
+  const a = identity('/applied'), b = identity('/staged'), discovered = identity('/new-candidate')
+  const receipt = {
+    status: 'applied', revision: 9, warnings: [],
+    effective: { skills: ['same'], skillIdentities: [a], mcpServers: [], digest: 'd'.repeat(64) },
+  }
+  const clean = model.draftFromReceipt(receipt)
+  const pathOutcome = model.skillPathMutationOutcomeOf({ status: 'saved', saved: true, revision: 40, paths: ['/new-candidate'] })
+  const cleanAfterPath = model.draftAfterRefresh(clean, receipt)
+  expect(pathOutcome.revision).toBe(40)
+  expect(cleanAfterPath.revision).toBe(9)
+  expect(cleanAfterPath.dirty).toBe(false)
+  expect(model.draftDiffOf(cleanAfterPath).any).toBe(false)
+
+  const dirty = model.draftToggle(clean, 'skills', b)
+  const beforeDiff = model.draftDiffOf(dirty)
+  const kept = model.draftAfterRefresh(dirty, receipt)
+  expect(kept.skills).toEqual([a, b])
+  expect(kept.applied.skills).toEqual([a])
+  expect(kept.revision).toBe(9)
+  expect(kept.dirty).toBe(true)
+  expect(model.draftDiffOf(kept)).toEqual(beforeDiff)
+
+  const rows = model.partitionManagerListing({ skills: [
+    { name: 'same', scope: 'custom', status: 'parsed', identity: a, selected: true },
+    { name: 'same', scope: 'custom', status: 'parsed', identity: discovered, selected: false },
+  ], mcpServers: [] }).skills
+  const selected = new Set(kept.skills.map(model.skillEntryKeyOf))
+  expect(selected.has(model.skillEntryKeyOf(discovered))).toBe(false)
+  expect(rows[1].selected).toBe(false)
+})

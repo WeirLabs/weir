@@ -83,6 +83,81 @@ window.__ModuleLoader__.load({
 			return "unsupported";
 		}
 
+		// ---- Profile-scoped Skill scan paths (add-custom-skill-scan-paths D5) ----
+		// This registry has its OWN revision/CAS. None of these helpers reads or
+		// writes the selection draft revision; receipt coordination remains solely
+		// draftAfterRefresh's job below.
+		const skillPathListOf = (value) => Array.isArray(value)
+			? value.filter(path => typeof path === "string" && path !== "")
+			: null;
+		const skillPathRevisionOf = (value, fallback = 0) => Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+		const skillPathErrorOf = (response, status) => {
+			const error = response?.error;
+			return {
+				code: typeof error?.code === "string" && error.code !== "" ? error.code : status,
+				message: typeof error?.message === "string" && error.message !== "" ? error.message : "The Skill scan path registry is unavailable."
+			};
+		};
+		/** Normalize a registry read. Absent successful lists mean an empty registry;
+		 * failed re-reads retain last-good paths only as explicitly stale rows. */
+		function skillPathsAfterRead(current, response) {
+			const currentPaths = skillPathListOf(current?.paths) ?? [];
+			const currentRevision = skillPathRevisionOf(current?.revision);
+			if (response?.status === "ok") {
+				return {
+					status: "ok",
+					revision: skillPathRevisionOf(response.revision, currentRevision),
+					paths: skillPathListOf(response.paths) ?? [],
+					error: null,
+					stale: false
+				};
+			}
+			const status = typeof response?.status === "string" && response.status !== "" ? response.status : "unavailable";
+			return {
+				status,
+				revision: skillPathRevisionOf(response?.revision, currentRevision),
+				paths: skillPathListOf(response?.paths) ?? currentPaths,
+				error: skillPathErrorOf(response, status),
+				stale: current !== null && current !== undefined
+			};
+		}
+		/** Normalize every path mutation without ever inferring a save from status
+		 * alone. Duplicate/not-found/conflict re-read only the registry; durable
+		 * (including landed-but-degraded) outcomes re-read registry + capabilities. */
+		function skillPathMutationOutcomeOf(response) {
+			const status = typeof response?.status === "string" && response.status !== "" ? response.status : "unavailable";
+			const saved = response?.saved === true && ["saved", "removed", "invalidation-failed", "owner-changed"].includes(status);
+			const degraded = saved && (status === "invalidation-failed" || status === "owner-changed");
+			const uncertain = status === "indeterminate" || status === "call-threw" || status === "call-failed" || status.startsWith("gateway/");
+			const phase = saved ? (degraded ? "degraded" : "saved")
+				: status === "revision-conflict" ? "revision-conflict"
+					: status === "validation-failed" ? "validation-failed"
+						: status === "duplicate" ? "duplicate"
+							: status === "not-found" ? "not-found"
+								: uncertain ? "indeterminate"
+									: ["unavailable", "unreadable", "unsupported", "locked", "write-failed", "storage-failed"].includes(status) ? "unavailable" : "failed";
+			const current = response?.current && typeof response.current === "object" && !Array.isArray(response.current) ? response.current : null;
+			const rawPaths = response?.paths === undefined ? current?.paths : response.paths;
+			const paths = skillPathListOf(rawPaths);
+			const rawRevision = response?.revision === undefined ? current?.revision : response.revision;
+			const hasRevision = Number.isSafeInteger(rawRevision) && rawRevision >= 0;
+			const snapshot = paths !== null && hasRevision
+				? { status: "ok", revision: rawRevision, paths, error: null, stale: false }
+				: null;
+			const refreshPaths = saved || phase === "revision-conflict" || phase === "duplicate" || phase === "not-found" || phase === "indeterminate";
+			return {
+				phase,
+				status,
+				saved,
+				revision: hasRevision ? rawRevision : null,
+				paths,
+				snapshot,
+				error: saved && !degraded ? null : skillPathErrorOf(response, status),
+				refreshPaths,
+				refreshCapabilities: saved || phase === "indeterminate"
+			};
+		}
+
 		/**
 		 * Second-window convergence (12.5): an agent-preset/selected frame
 		 * refreshes THIS session's Badge only when the frame names the same
@@ -1347,6 +1422,8 @@ window.__ModuleLoader__.load({
 		exports.skillRowOf = skillRowOf;
 		exports.partitionManagerListing = partitionManagerListing;
 		exports.managerConditionState = managerConditionState;
+		exports.skillPathsAfterRead = skillPathsAfterRead;
+		exports.skillPathMutationOutcomeOf = skillPathMutationOutcomeOf;
 		exports.frameRefreshesSession = frameRefreshesSession;
 		exports.draftFromReceipt = draftFromReceipt;
 		exports.draftAfterRefresh = draftAfterRefresh;
