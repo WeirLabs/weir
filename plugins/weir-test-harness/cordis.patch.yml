@@ -7,6 +7,14 @@
   disabled: true
 - id: tool-skill
   disabled: true
+# DSH 0.2.2 disables this by default; Weir's managed write requires it.
+- id: fs-observation-policy
+  disabled: false
+# Mirror Weir's pull-only compact notices and bounded wakeups.
+- id: tool-jobs
+  config:
+    maxConsecutiveWakes: 8
+    inlineOutputBytes: 0
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
   config:
