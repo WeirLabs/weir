@@ -196,20 +196,21 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   expect(typeof mcpView.refreshAll).toBe('function')
 })
 
-test('header controls paint focus only for keyboard-style focus and clear it for pointer input', async () => {
+test('header controls and Skill rows paint focus only for keyboard-style focus and clear it for pointer input', async () => {
   const react = makeReactStub({ useState: 0, useEffect: 0 })
   const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
   const model = loadModel()
   const props = {
     shell: 'sidebar', sessionId: 's', model,
-    fetchListing: async () => ({ skills: [], mcpServers: [] }),
+    fetchListing: async () => ({ skills: [{ name: 'a', description: '', scope: 'user', status: 'parsed', selected: false, conflict: false }], mcpServers: [] }),
     fetchConditions: async () => ({ conditions: [] }),
-    fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [] }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: ['a'], mcpServers: [] }, warnings: [] }),
   }
   const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
   render()
   await new Promise(resolve => setTimeout(resolve, 0))
-  const header = render().children[0]
+  const tree = render()
+  const header = tree.children[0]
   const tabs = header.children.slice(0, 3)
   expect(tabs.map(tab => tab.children)).toEqual(['Skills', 'MCP', 'Presets'])
 
@@ -238,6 +239,25 @@ test('header controls paint focus only for keyboard-style focus and clear it for
   expect(pointerAfterKeyboard.style.outline).toBe(focusRing)
   tabs[2].onPointerDown({ currentTarget: pointerAfterKeyboard })
   expect(pointerAfterKeyboard.style).toEqual({ outline: 'none', outlineOffset: '' })
+
+  // React focus bubbles from the real row checkbox to its non-focusable label.
+  const skillCheckbox = findAll(tree, node => node.__type === 'input' && node.type === 'checkbox' && node['aria-label'] === 'a — user')[0]
+  expect(skillCheckbox).toBeTruthy()
+  const skillRow = findAll(tree, node => node.__type === 'label' && findAll(node, child => child === skillCheckbox).length === 1)[0]
+  expect(skillRow).toBeTruthy()
+  skillCheckbox.matches = selector => {
+    expect(selector).toBe(':focus-visible')
+    return true
+  }
+  skillRow.matches = selector => {
+    expect(selector).toBe(':focus-visible')
+    return false
+  }
+  skillRow.style.outline = focusRing
+  skillRow.style.outlineOffset = '1px'
+  skillRow.onFocus({ target: skillCheckbox, currentTarget: skillRow })
+  expect(skillRow.style.outline).toBe(focusRing)
+  expect(skillRow.style.outlineOffset).toBe('1px')
 
   // Hosts or stubs without matches() keep the accessible legacy behavior.
   const fallback = { style: {} }
