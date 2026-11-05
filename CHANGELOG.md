@@ -15,6 +15,10 @@
 
 - **Capabilities 路径管理界面紧凑化**：Skills 列表顶部不再常驻扫描路径配置卡片，改为工具栏文件夹按钮与按需管理浮层；按钮仅在路径数量已知时显示计数，浮层保留添加、删除、刷新、错误反馈、键盘操作与焦点恢复。路径注册表、Skill 显式选择和 Apply 行为不变。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
 
+### Fixed
+
+- **Capabilities 鼠标点击不再残留焦点外框**：技能、MCP、预设与工具栏按钮在鼠标或触控点击后不再显示额外边缘高亮；先键盘聚焦再点击也会清除旧外框。键盘导航仍保留可见焦点，页签选中样式、路径管理与 Apply 行为不变。详见 [会话能力管理器](docs/features/session-capability-manager.md)。
+
 ## [2.1.2] - 2026-11-03
 
 ### Changed
