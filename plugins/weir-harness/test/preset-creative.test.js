@@ -47,11 +47,12 @@ describe('weir-creative preset declaration', () => {
   for (const [id, block] of [['weir', weir], ['weir-creative', creative]]) {
     it(`${id} has one task-spawn entry and preserves child controls`, () => {
       const ids = pluginRowIds(block)
-      for (const removed of ['tool-subagent', 'tool-subagent-fork', 'workflow-ptc', 'tool-workflow']) {
+      for (const removed of ['tool-subagent', 'tool-subagent-fork', 'tool-subagent-list-agents', 'workflow-ptc', 'tool-workflow']) {
         expect(ids, `${id} must not mount ${removed}`).not.toContain(removed)
       }
       expect(block).not.toContain('workflowEngine:')
-      for (const retained of ['delegate', 'tool-subagent-control', 'tool-subagent-list-agents']) {
+      expect(block).not.toContain('@deepseek-ai/dsh-tool-subagent-control/list-agents')
+      for (const retained of ['delegate', 'tool-subagent-control']) {
         expect(ids, `${id} must retain ${retained}`).toContain(retained)
       }
       expect(block).toMatch(/- id: tool-ralph\s+name: '@deepseek-ai\/dsh-tool-ralph'\s+disabled: true/)
