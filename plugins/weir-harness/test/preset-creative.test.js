@@ -57,6 +57,12 @@ describe('weir-creative preset declaration', () => {
       }
       expect(block).toMatch(/- id: tool-ralph\s+name: '@deepseek-ai\/dsh-tool-ralph'\s+disabled: true/)
     })
+
+    it(`${id} keeps the DSH 0.2.2 observation and pull-only policies explicit`, () => {
+      expect(pluginRowIds(block)).toContain('fs-observation-policy')
+      expect(block).toContain("name: '@deepseek-ai/dsh-fs-observation-policy'")
+      expect(block).toContain('inlineOutputBytes: 0')
+    })
   }
 
   it('creative delta 1: tool-cordis row is present', () => {

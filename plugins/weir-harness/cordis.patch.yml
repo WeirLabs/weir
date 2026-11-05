@@ -112,6 +112,10 @@
             disabled: !!js process.platform !== 'win32'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+          # Weir's managed writers require the stock observation/CAS guard even
+          # though DSH 0.2.2 leaves the profile-level policy disabled.
+          - id: fs-observation-policy
+            name: '@deepseek-ai/dsh-fs-observation-policy'
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
@@ -119,9 +123,11 @@
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
             config:
-              # F5 拉取式后台：结算通知已内建为紧凑 + 边界注入 + 拉取式读取；
-              # 这里仅限制连续唤醒次数，防止通知唤醒风暴。
+              # F5 拉取式后台：限制连续唤醒次数，并禁止 DSH 0.2.2 将
+              # 输出/报告全文内联进结算通知；全文仍由 job_output 拉取。
               maxConsecutiveWakes: 8
+              # Never inline output/results into completion notices (DSH 0.2.2).
+              inlineOutputBytes: 0
           # Weir capabilities: skill selection + managed MCP. The manager
           # publishes weirMcpGate / weirMcpManager via reflect; preset
           # services must sit in an isolate realm or the registry rejects the
@@ -300,6 +306,10 @@
             disabled: !!js process.platform !== 'win32'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+          # Weir's managed writers require the stock observation/CAS guard even
+          # though DSH 0.2.2 leaves the profile-level policy disabled.
+          - id: fs-observation-policy
+            name: '@deepseek-ai/dsh-fs-observation-policy'
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
@@ -308,6 +318,8 @@
             name: '@deepseek-ai/dsh-tool-jobs'
             config:
               maxConsecutiveWakes: 8
+              # Never inline output/results into completion notices (DSH 0.2.2).
+              inlineOutputBytes: 0
           # Same capabilities group as `weir` (S11 realm structure), with
           # the creative delta: customSkillDirs resolves the Cordis
           # development skills shipped inside @deepseek-ai/dsh-agent-preset,

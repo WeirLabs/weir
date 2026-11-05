@@ -109,11 +109,11 @@ function assert(run) {
 
   const step = name => report.steps?.[name]
   const value = name => step(name)?.value
-  // The Host prepends its standing agent-instructions message on every manual
-  // pre-step pass. Only that observed baseline is excluded; every other message
-  // is forbidden on path operations, and ALL messages are still scanned for the
-  // canonical path.
-  const nonHostBaseline = messages => (Array.isArray(messages) ? messages : []).filter(message => message?.source !== 'agent-instructions')
+  // The Host prepends standing agent instructions and maintains its own Skill
+  // catalog on manual pre-step passes. Those host-owned baselines are not path
+  // mutation notices; every other message is forbidden, and ALL messages are
+  // still scanned for the canonical path (including the excluded baselines).
+  const nonHostBaseline = messages => (Array.isArray(messages) ? messages : []).filter(message => !['agent-instructions', 'skill-catalog'].includes(message?.source))
   const pathFree = messages => Array.isArray(messages) && messages.every(message => !String(message?.text ?? '').includes(report.canonicalPath))
   run.check('flow completed without probe or cleanup errors', report.completed === true && report.error === undefined && report.cleanup?.errors?.length === 0, json({ error: report.error, cleanup: report.cleanup }))
   run.check('the real temporary Skill was removed by normal cleanup', report.cleanup?.agentDisposed === true && report.cleanup?.presetUnregistered === true && report.cleanup?.temporaryDirectoryExists === false, json(report.cleanup))
