@@ -65,7 +65,8 @@ window.__ModuleLoader__.load({
 		const ring = {
 			onFocus: (event) => {
 				const el = event?.currentTarget;
-				const visible = typeof el?.matches !== "function" || el.matches(":focus-visible");
+				const focused = event?.target ?? el;
+				const visible = typeof focused?.matches !== "function" || focused.matches(":focus-visible");
 				paint(event, visible
 					? { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }
 					: { outline: "none", outlineOffset: "" });
