@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+> **DSH 兼容性边界（破坏性适配）**：Weir **2.1.4** 起需要 DSH **0.2.2 线**（`>=0.2.2-rc.1 <0.3.0`，`engines.dsh` 与 `peerDependencies` 双声明）。仍在 DSH 0.2.1 线的用户请留在 Weir **2.1.3**——它是该线的最后支持版本。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
+
+### Fixed
+
+- **DSH 0.2.2 的 Weir 与 Weir 创造模式无法激活**：DSH 0.2.2 将 `list_agents` 合并进 `dsh-tool-subagent-control` 主入口并删除旧 `list-agents` 子路径；两个预设现已移除失效的独立挂载行，继续保留 `list_agents`、消息、打断与监督控制工具，一次性及 continuable 委派链路不变。
+- **后台任务报告恢复拉取式通知**：DSH 0.2.2 默认把较短输出与最终结果直接内联进完成通知；两个 Weir 预设现显式设置 `inlineOutputBytes: 0`，通知只保留标识、摘要与终态，完整报告仍由 `job_output` 按需读取。详见 [拉取式后台通知](docs/features/background-notification.md)。
+- **受管写入与黑板晋升恢复**：DSH 0.2.2 默认关闭 `fs-observation-policy`，使 Weir 的受管 `write` 无法取得观察/CAS 守卫；两个预设现显式挂载该策略，新建文件、已读更新、文件租约及黑板文档晋升恢复，同时保留未读覆盖与过期版本拒绝。详见 [锚点编辑](docs/features/hashline-edit.md)。
+
 ## [2.1.3] - 2026-11-05
 
 ### Added

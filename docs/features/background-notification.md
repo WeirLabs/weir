@@ -20,6 +20,7 @@
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | `maxConsecutiveWakes` | `8` | 预设对 tool-jobs 的配置：连续唤醒上限 |
+| `inlineOutputBytes` | `0` | DSH 0.2.2 起显式禁止完成通知内联输出或最终结果，保持 pull-only |
 
 其余行为由 DSH 内建 job 道提供。
 

@@ -39,6 +39,7 @@ volatile config，在线编辑即刻生效。
 
 - **文件租约接入（[file-lease](edit-lock.md)）**：`hash_edit` 与受管 `write` 在动字节前调用 `client.withLeases(owner, paths, scope, fn)` 取得本回合的路径声明（edit-lock-rebuild D11）。不再有 cordis 锁服务、`claim` 通道或「服务移除即拒绝」的回退：声明在进程内的租约 client 里，写前冲突（`held`）直接拒绝且零侧效，仲裁器不可达时降级放行并记一条审计（同进程限流）。锚点、版本护栏与沙箱策略完全不变。
 - **真实沙箱负例（集成证据 `editlock-hashline-negatives`）**：该场景的会话 cwd 是自己的 `narrow/` 子目录，`sandboxPolicy.resolve({ session })` 据此得到 `workspace-write` 可写根 `<ws>/editlock-hashline-negatives/narrow`。预置的 `<ws>/editlock-hashline-negatives/sandbox-target.txt` **在项目工作区里、在沙箱可写根外**：带合法锚点（且已取得租约）的 `hash_edit` 真正调用沙箱化 `ctx.fs.writeText`，返回 `[sandbox: file access denied under workspace-write mode]`。调用前后以 Base64 比较目标原始字节，完全一致。**租约只仲裁「谁可以写」，不授予文件系统权限；这次拒绝发生在派发之后，不得说成「发布前拒绝」，也不能用字节未变推断原子回滚。**另两类仍是发布前拒绝：①锚点失配 `>>> mismatch`，目标字节不变；②目录在 `stat` 阶段拒绝（`no regular file`）。版本 CAS 属另一项**已派发后的后端拒绝**，见下条。
+- **观察策略显式挂载（DSH 0.2.2）**：宿主默认关闭 `fs-observation-policy`，而受管 `write` 必须取得明确的 `createIfAbsent` / `replaceIfVersion` 守卫。两个 Weir 预设因此自行挂载该策略；测试装置同步启用。策略缺席时仍在租约与写入前 fail-closed，绝不退化为无条件覆盖。
 - **观察版本护栏与 hash_edit 的交互（CAS 拒绝）**：受管 `write` 的版本护栏取自宿主观察策略的读时版本（`fs/write-intent`），刻意不重新 stat；`hash_edit` 发布成功不发送 `fs/observed`，不刷新该观察。因此 `hash_edit` 成功之后的受管 `write` 携带过期版本，被后端 `replaceIfVersion` CAS 拒绝（`FS_STALE_VERSION`「file changed since it was read」），目标字节仍是 `hash_edit` 所写。不可归类为写前拒绝；重新读取后再写即可恢复。这是既有保守设计（fail-closed、不用新 stat 覆盖旧观察），不是缺陷。
 - 锚点过期/篡改/拼写错误 → 整体拒绝 + mismatch 报告，**保证**文件字节级不变（零写入）。
 - 多操作调用中仅一个锚点失效 → 同样整体拒绝（原子性）。

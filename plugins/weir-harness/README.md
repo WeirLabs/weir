@@ -21,7 +21,7 @@ Weir — 以 Orchestrator 为中心的 DSH agent 预设 bundle。声明预设 `w
 
 ## 安装
 
-要求 DeepSeek Harness 版本 `>=0.2.0-rc.2 <0.3.0`（不兼容的运行时会在安装前被明确拒绝）。
+要求 DeepSeek Harness 版本 `>=0.2.2-rc.1 <0.3.0`（不兼容的运行时会在安装前被明确拒绝）。仍在 DSH 0.2.1 线的用户请固定 `weir-harness@2.1.3`，它是该线的最后支持版本。
 
 CLI 一条命令：
 

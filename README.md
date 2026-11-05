@@ -1,7 +1,7 @@
 ![Weir — Orchestrator preset for DeepSeek Harness](docs/assets/readme-hero.svg)
 
 <p>
-  <img src="https://img.shields.io/badge/版本-2.1.3-0a0a0b?labelColor=1c1d20&color=ccff00" alt="版本">
+  <img src="https://img.shields.io/badge/版本-2.1.4-0a0a0b?labelColor=1c1d20&color=ccff00" alt="版本">
   <img src="https://img.shields.io/badge/许可-MIT-0a0a0b?labelColor=1c1d20&color=ccff00" alt="许可 MIT">
   <img src="https://img.shields.io/badge/宿主-DeepSeek%20Harness-0a0a0b?labelColor=1c1d20&color=ecece6" alt="宿主">
 </p>
@@ -81,14 +81,14 @@ Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabi
 
 ## 安装
 
-**前置要求**：DeepSeek Harness 桌面版 `>=0.2.1-rc.1 <0.3.0`（安装时自动校验，不匹配会被拒绝并提示）。仍在 DSH 0.2.0 线的用户请安装 **1.2.1**（该线的最后一个支持版本：`npm i weir-harness@1.2.1`）——逐版本支持范围见 [版本兼容性矩阵](docs/compatibility.md)。
+**前置要求**：DeepSeek Harness 桌面版 `>=0.2.2-rc.1 <0.3.0`（安装时自动校验，不匹配会被拒绝并提示）。仍在 DSH 0.2.1 线的用户请安装 **2.1.3**（该线的最后一个支持版本：`npm i weir-harness@2.1.3`）；DSH 0.2.0 线请安装 **1.2.1**。逐版本支持范围见 [版本兼容性矩阵](docs/compatibility.md)。
 
 打开 DeepSeek Harness 桌面应用，进入**插件管理面板**：
 
 1. 点击**添加插件**按钮；
-2. 输入包名 `weir-harness@2.1.3`，点击**安装**。
+2. 输入包名 `weir-harness@2.1.4`，点击**安装**。
 
-安装器会从 npm registry 拉取，无需克隆仓库。习惯终端的话也可以直接执行 `dsh plugin --profile <profile> add weir-harness@2.1.3`；开发者克隆本仓库后对 `plugins/weir-harness` 做 link 安装（随源码更新，改动经「禁用 → 启用」重应用）。
+安装器会从 npm registry 拉取，无需克隆仓库。习惯终端的话也可以直接执行 `dsh plugin --profile <profile> add weir-harness@2.1.4`；开发者克隆本仓库后对 `plugins/weir-harness` 做 link 安装（随源码更新，改动经「禁用 → 启用」重应用）。
 
 安装成功后：
 

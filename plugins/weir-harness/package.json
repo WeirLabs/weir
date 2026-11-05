@@ -29,10 +29,10 @@
     "icon.svg"
   ],
   "engines": {
-    "dsh": ">=0.2.1-rc.1 <0.3.0"
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.1-rc.1 <0.3.0"
+    "@deepseek-ai/dsh": ">=0.2.2-rc.1 <0.3.0"
   },
   "exports": {
     "./package.json": "./package.json",
