@@ -63,7 +63,14 @@ window.__ModuleLoader__.load({
 			if (el && el.style) Object.assign(el.style, styles);
 		};
 		const ring = {
-			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }),
+			onFocus: (event) => {
+				const el = event?.currentTarget;
+				const visible = typeof el?.matches !== "function" || el.matches(":focus-visible");
+				paint(event, visible
+					? { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }
+					: { outline: "none", outlineOffset: "" });
+			},
+			onPointerDown: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 		};
 		const hover = (over, out) => ({
