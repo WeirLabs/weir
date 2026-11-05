@@ -196,6 +196,55 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   expect(typeof mcpView.refreshAll).toBe('function')
 })
 
+test('header controls paint focus only for keyboard-style focus and clear it for pointer input', async () => {
+  const react = makeReactStub({ useState: 0, useEffect: 0 })
+  const { exports } = await loadClientChunk('lib/client.capability-manager.js', requireStubFor(react))
+  const model = loadModel()
+  const props = {
+    shell: 'sidebar', sessionId: 's', model,
+    fetchListing: async () => ({ skills: [], mcpServers: [] }),
+    fetchConditions: async () => ({ conditions: [] }),
+    fetchReceipt: async () => ({ status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [] }),
+  }
+  const render = () => { react.begin(); return exports.CapabilityManagerPanel(props) }
+  render()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const header = render().children[0]
+  const tabs = header.children.slice(0, 3)
+  expect(tabs.map(tab => tab.children)).toEqual(['Skills', 'MCP', 'Presets'])
+
+  const focusRing = '2px solid var(--dsw-alias-focus-ring, currentColor)'
+  const eventTarget = (focusVisible) => ({
+    style: {},
+    matches(selector) {
+      expect(selector).toBe(':focus-visible')
+      return focusVisible
+    },
+  })
+
+  const keyboard = eventTarget(true)
+  tabs[0].onFocus({ currentTarget: keyboard })
+  expect(keyboard.style).toEqual({ outline: focusRing, outlineOffset: '1px' })
+  tabs[0].onBlur({ currentTarget: keyboard })
+  expect(keyboard.style).toEqual({ outline: 'none', outlineOffset: '' })
+
+  const pointer = eventTarget(false)
+  pointer.style = { outline: '2px solid stale', outlineOffset: '4px' }
+  tabs[1].onFocus({ currentTarget: pointer })
+  expect(pointer.style).toEqual({ outline: 'none', outlineOffset: '' })
+
+  const pointerAfterKeyboard = eventTarget(true)
+  tabs[2].onFocus({ currentTarget: pointerAfterKeyboard })
+  expect(pointerAfterKeyboard.style.outline).toBe(focusRing)
+  tabs[2].onPointerDown({ currentTarget: pointerAfterKeyboard })
+  expect(pointerAfterKeyboard.style).toEqual({ outline: 'none', outlineOffset: '' })
+
+  // Hosts or stubs without matches() keep the accessible legacy behavior.
+  const fallback = { style: {} }
+  tabs[0].onFocus({ currentTarget: fallback })
+  expect(fallback.style).toEqual({ outline: focusRing, outlineOffset: '1px' })
+})
+
 
 test('same-named rows check independently and Apply carries the exact identity', async () => {
   const counts = { useState: 0, useEffect: 0 }
