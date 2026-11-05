@@ -6,13 +6,14 @@
 
 本特性把 Weir 会话的 Skill 与 MCP 配置收敛为一份**显式的已选集合**：编辑先进入草稿，确认（Apply）后才生效并持久化；持久化由 Weir 自管的带锁侧文件承担，不依赖宿主 storage 的跨进程保证。Skill 侧保持官方形状（宿主注册表 + stock `tool-skill`），MCP 侧由 Weir 作为唯一挂载入口（managed/unmanaged 区分）。
 
-当前实施进度：**全部任务组已交付**。存储层、选择 provider、Apply 事务、生命周期、MCP 会话级关闭、预设库与工作区默认值、管理界面（右侧栏 Capabilities 面板 + Badge 入口）与打包导出/两阶段导入均已落地（最后两者经 OpenSpec 变更 `capability-manager-ux`）；自定义 Skill 扫描路径（OpenSpec 变更 `add-custom-skill-scan-paths`）随后落地，Skill 发现根可由用户在 Skills 视图按 Profile 增删；该入口再经 OpenSpec 变更 `compact-skill-path-management` 从常驻卡片收敛为工具栏 folder 图标 + 按需浮层（纯客户端呈现变更，注册表、选择与 Apply 语义不变；该变更的真实 GUI 验收已完成，右侧栏面板与 composer 弹层两种外壳都经过实况验收，证据见下文「真实 GUI 证据」两条）。
+当前实施进度：**全部任务组已交付**。存储层、选择 provider、Apply 事务、生命周期、MCP 会话级关闭、预设库与工作区默认值、管理界面（右侧栏 Capabilities 面板 + Badge 入口）与打包导出/两阶段导入均已落地（最后两者经 OpenSpec 变更 `capability-manager-ux`）；自定义 Skill 扫描路径（OpenSpec 变更 `add-custom-skill-scan-paths`）随后落地，Skill 发现根可由用户在 Skills 视图按 Profile 增删；该入口再经 OpenSpec 变更 `compact-skill-path-management` 从常驻卡片收敛为工具栏 folder 图标 + 按需浮层（纯客户端呈现变更，注册表、选择与 Apply 语义不变；该变更的真实 GUI 验收已完成，右侧栏面板与 composer 弹层两种外壳都经过实况验收，证据见下文「真实 GUI 证据」两条）；焦点呈现再经 OpenSpec 变更 `capability-toolbar-click-focus` 改为按输入方式区分（鼠标/触控点击不留外框、键盘导航保留可见焦点，纯客户端呈现变更；该变更的真实 GUI 验收另行记录）。
 
 ## 用户可见行为
 
 - **可见性变化（自选择 provider 落地起）**：Weir 会话只看到**已选** Skill；未选中的第三方 Skill 不再自动出现在模型目录、`skill` 加载与 slash 列表中。选择记录尚不存在的会话看到空目录与可见的状态提示（fail closed，绝不回退为全量发现）；工作区默认值、管理器界面与 Apply 流程交付后，选择集合由用户显式编辑产生。
 - **管理器入口与页签图标**：Capabilities 面板经右侧栏页签 `weir-capabilities` 打开（点击输入框 Badge 直达，或从向导页胶囊进入）；页签在向导胶囊与标签 chip 两层都显示专属滑块图标（16×16 stroke glyph，`currentColor`），chip 为「图标 + 标题」。
 - **自定义 Skill 扫描目录**：Skills 视图工具栏的 folder 按钮按需打开路径管理浮层，在其中增删**本 Profile 共享**的扫描目录（绝对路径或 `~/…`）；Skill 列表本身不再被路径管理卡片占据。按钮上的小计数只在注册表读成功时显示已登记条数——读取中或不可读都不显示伪造的 0，且按钮仍可打开以呈现加载/错误状态并重试。新目录里的 Skill 只作为**未选中**候选进入列表，勾选并 Apply 之前模型与你都无法调用。浮层只呈现注册表登记的路径——Weir 内置、Creative 的 cordis 开发技能、project/user 标准根与 host bundled 根不在其中，也不能从此界面移除。路径增删本身不产生 Apply 差异，也不改写选择草稿、已应用集合、工作区默认值与预设。
+- **焦点呈现按输入方式区分**：用鼠标或触控点击 Skills／MCP／Presets 页签、folder 按钮以及面板内其它控件时，点击结束后不留下焦点外框，选中与 hover 样式照常；若该控件此前已显示键盘焦点外框，pointer-down 会先把它清除。键盘导航（Tab／Shift+Tab 到达、Space/Enter 激活）保留既有的可见焦点环，当前控件仍可辨认。该行为纯属呈现：页签切换、搜索、路径浮层、勾选、草稿状态、底栏 +n/−m 与 Apply 语义以及任何服务端行为都不变。
 
 ## 配置
 
@@ -188,7 +189,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 **并发读取与降级诊断（2026-10-12 实况修复）**：Badge 与面板会并发请求同一会话的回执；provider 的 `fresh()` 曾先作废 epoch 再重新枚举，并发调用互相触发 stale-epoch 守卫，双双得到无错误详情的 `complete:false`（Badge 永久「?」）。修复后并发 `fresh()` 共享在途枚举（在途枚举本就是最新答案），stale-epoch 守卫仍拦截真正的中途失效（`sourceChanged`/Apply 作废旧结果）。Host 读服务在回执带 warning 时写一条 `weir/capability-read` 审计（方法、观察到的预设归属与 header 对照、live/prepared 来源、feed 数量、provider 状态原因，**不含技能名**），镜像到 `<cwd>/.weir/audit.jsonl`，供「已接受但不可核实」的现场定位。
 
-**视觉语言**（2026-10-06 `capabilities-panel-visual-polish`，skip_specs 纯视觉）：面板与弹层共用一套按 frame/header/tabs/list/row/tag/footer/state 分区的样式表——分段控件标签栏、带图标搜索框（焦点环）、sticky 分组标题（含计数徽标）、按 scope 着色的来源标签（Weir 内置/user/project/custom 四个色系）、行项 hover/选中/键盘焦点三态、MCP 与预设的卡片分组、loading 骨架行、error/unsupported/degraded 完整空态（图标+标题+说明+动作）、底栏 diff 徽标与主按钮层级、破坏操作用警示条；全部 `--dsw-*` token + hex fallback，深浅主题安全，过渡仅 hover/选中 120-160ms，可交互元素统一 focus-visible 环。行为零变化：hook 数、钉死的子节点路径、动词契约、t() 单参 echo-guard 契约全部保持，单测只加不缩。
+**视觉语言**（2026-10-06 `capabilities-panel-visual-polish`，skip_specs 纯视觉）：面板与弹层共用一套按 frame/header/tabs/list/row/tag/footer/state 分区的样式表——分段控件标签栏、带图标搜索框（焦点环）、sticky 分组标题（含计数徽标）、按 scope 着色的来源标签（Weir 内置/user/project/custom 四个色系）、行项 hover/选中/键盘焦点三态、MCP 与预设的卡片分组、loading 骨架行、error/unsupported/degraded 完整空态（图标+标题+说明+动作）、底栏 diff 徽标与主按钮层级、破坏操作用警示条；全部 `--dsw-*` token + hex fallback，深浅主题安全，过渡仅 hover/选中 120-160ms，可交互元素统一 focus-visible 环（环只在键盘等需要可见焦点的输入方式下绘制，指针点击不留下外框，见上文「焦点呈现按输入方式区分」）。行为零变化：hook 数、钉死的子节点路径、动词契约、t() 单参 echo-guard 契约全部保持，单测只加不缩。
 
 **给模型的移除通知**（12.4，[selection-notify.js](<../../plugins/weir-harness/src/capabilities/selection-notify.js>)）：Apply 被接受后净增减跨多次应用合并，在**下一次安全请求**时以完整 UserMessage（共享 helper）随该请求注入——绝不自行触发回合、不在 `session/event` 内同步 followup；来源标记为 `weir-selection-notify`（非 `user`），intent gate 与 continuation/intent 分类器按构造排除（共享 `isGenuineUserMessage` 只认 `source.kind === 'user'`）；英文 advisory 模板明确「已 handed off 的调用仍可能完成、历史中任何回合或调用不被撤回或抹除」；注入失败只 audit/warn，绝不影响已接受的提交；待注入的义务本身是**持久记录**（见下段），注入失败不会删除它。
 
@@ -230,6 +231,7 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 ## 测试
 
 - 客户端回归：`client-capability-model.test.js` 覆盖同名草稿完整预检、字符串歧义/未知、精确替换与移除、身份/dirty/安全标签；`client-capability-manager.test.js` 覆盖双外壳、搜索隐藏、可访问告警、旧名称恢复按钮与 stale 回执，并钉住路径入口的结构位置：父组件 hooks 仍 `7/1`、header `children[1]` 仍是 MCP 页签、header `children[5]` 是 `SkillPathManager`（含注入的刷新回调）、弹层 `children[1]` 的旧 `addBlock` 槽位为 `null`、inventory 区域不含表单/路径行/浮层根；`client.test.js` 覆盖真实 Apply 命令包装的 `kind:'error'` JSON 解包与 chunk 内容绑定。完整客户端表面（`node --test plugins/weir-harness/test/client*.test.js`）合并后实测 368 例、43 个套件全绿，焦点路径用例 28/28；完整产品套件（`pnpm --filter weir-harness test`）3061 例、3060 通过、0 失败、1 例既有平台跳过；静态检查（`pnpm --filter weir-harness run check`）通过。紧凑呈现的真实 GUI 验收已完成（见上文「真实 GUI 证据」两条）；自动测试不构成持续的 GUI 回归保证，后续改动仍须重应用 bundle 后刷新页面观察。
+- 客户端回归（输入方式焦点）：`client-capability-manager.test.js` 从真实 header 控件取得共享焦点处理器，用事件桩钉住四条路径——键盘焦点绘制外框、指针焦点不绘制、先键盘聚焦后 pointer-down 清除既有外框、blur 仍清理；既有 hooks、DOM 索引、选中/hover 与布局断言保持不变。该组用例只是组件级证据：真实 GUI 中鼠标点击与 Tab 导航的实际观感不在本次记录内，后续验收另行补记。
 
 - 单元测试：`plugins/weir-harness/test/capability-store.test.js`（18 例：路径解析与隔离、单元布局、fail-closed 解码、CAS 与幂等回执、committed 结果形状含 `committedOver`（首写为 `undefined`、其后为被覆写 payload）、锁获取／回收／手动恢复、平台桩零写入、win32 行真实提交、代次指针原子切换）。
 - 单元测试（通知单元）：`plugins/weir-harness/test/notice-store.test.js`（3 例：`sessions/<id>/notice.json` 布局与 segment 纪律、与选择单元并存的独立文件／独立 revision／独立 CAS、损坏记录 fail closed 且不被重写）、`plugins/weir-harness/test/selection-notify-durable.test.js`（6 例：换一个模块实例仍见义务＝重启保证、跨重启的净合并、deliver-then-clear、丢 CAS 时只减已投递名字与二次冲突保留义务、锁忙/损坏/平台不支持的 fail-closed）。
