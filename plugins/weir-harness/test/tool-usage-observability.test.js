@@ -4,10 +4,11 @@ import { mountToolUsageObservability } from '../src/capabilities/tool-usage-obse
 import { AUDIT_TYPES, AUDIT_SUBTYPES } from '../src/shared/audit.js'
 import { createSkillSelectionPlugin } from '../src/capabilities/skill-selection-plugin.js'
 
-function fixture(audit) {
+function fixture(audit, root) {
   const listeners = new Map()
   const records = []
   const ctx = {
+    ...(root ? { root } : {}),
     on(name, listener) {
       const current = listeners.get(name) ?? []
       current.push(listener)
@@ -121,7 +122,58 @@ test('audit failures and disposal never alter tool outcomes or continue observat
   assert.doesNotThrow(() => emit('tools/result', exec, result))
 })
 
-test('the existing capability composition root mounts cold-safe request and result observers', () => {
+for (const order of [[0, 1], [1, 0]]) {
+  test(`dual-mounted observers emit one request and result fact per event through disposal order ${order.join('-')}`, () => {
+    const root = {}
+    const first = fixture(undefined, root)
+    const secondContext = { root, on: first.ctx.on }
+    const disposers = [
+      first.dispose,
+      mountToolUsageObservability({
+        ctx: secondContext,
+        audit: (session, type, data) => first.records.push({ session, type, data }),
+      }),
+    ]
+    const emitEvent = seq => {
+      const session = { id: `dual-${seq}`, header: {} }
+      first.emit('session/event', session, {
+        type: 'request/header', seq,
+        data: { header: { config: {}, tools: [] } },
+      })
+      first.emit('tools/result', {
+        name: 'echo', callId: `call-${seq}`, agent: { id: session.id, session },
+      }, { isError: false })
+    }
+    const counts = seq => ({
+      requests: first.records.filter(record => record.type === `${AUDIT_TYPES.toolUsage}/request` && record.data.seq === seq).length,
+      results: first.records.filter(record => record.type === `${AUDIT_TYPES.toolUsage}/result` && record.data.callId === `call-${seq}`).length,
+    })
+
+    emitEvent(1)
+    assert.equal(first.records.length, 2)
+    assert.deepEqual(counts(1), { requests: 1, results: 1 })
+    assert.equal(first.listeners.get('session/event').length, 1)
+    assert.equal(first.listeners.get('tools/result').length, 1)
+
+    disposers[order[0]]()
+    emitEvent(2)
+    assert.equal(first.records.length, 4)
+    assert.deepEqual(counts(2), { requests: 1, results: 1 })
+    assert.equal(first.listeners.get('session/event').length, 1)
+    assert.equal(first.listeners.get('tools/result').length, 1)
+
+    disposers[order[1]]()
+    disposers[order[1]]()
+    emitEvent(3)
+    assert.equal(first.records.length, 4)
+    assert.deepEqual(counts(3), { requests: 0, results: 0 })
+    assert.equal(first.listeners.get('session/event').length, 0)
+    assert.equal(first.listeners.get('tools/result').length, 0)
+    assert.deepEqual(first.records.map(record => record.data.seq ?? record.data.callId), [1, 'call-1', 2, 'call-2'])
+  })
+}
+
+test('the existing weir and weir-creative composition wiring shares cold-safe request and result observers', () => {
   const listeners = new Map()
   const emitted = []
   const effects = []
@@ -137,12 +189,14 @@ test('the existing capability composition root mounts cold-safe request and resu
     logger: { warn() {}, debug() {} },
   }
   try {
-    createSkillSelectionPlugin({
+    const dependencies = {
       readSelection: async () => [],
       inventory: async () => ({ complete: true, candidates: [] }),
       office: async () => ({ complete: true, candidates: [] }),
       lifecycle: { agentCreated() {}, snapshotFor() { return null } },
-    })(ctx, { readPresetId: 'weir' })
+    }
+    createSkillSelectionPlugin(dependencies)(ctx, { readPresetId: 'weir' })
+    createSkillSelectionPlugin(dependencies)(ctx, { readPresetId: 'weir-creative' })
     assert.equal(listeners.get('session/event')?.length, 1)
     assert.equal(listeners.get('tools/result')?.length, 1)
     const session = { id: 'root-mounted', header: {} }
@@ -156,6 +210,11 @@ test('the existing capability composition root mounts cold-safe request and resu
       seq: 33, provider: 'deepseek', model: 'deepseek-chat',
       schemaCount: 0, deferredCount: 0, schemaBytes: 0, deferredSchemaBytes: 0,
     })
+    assert.equal(emitted.filter(entry => entry.type === 'weir/tool-usage/request').length, 1)
+    for (const listener of listeners.get('tools/result')) listener({
+      name: 'echo', callId: 'root-call', agent: { id: session.id, session },
+    }, { isError: false })
+    assert.equal(emitted.filter(entry => entry.type === 'weir/tool-usage/result').length, 1)
   } finally {
     for (const dispose of effects.reverse()) if (typeof dispose === 'function') dispose()
   }
