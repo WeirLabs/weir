@@ -13,7 +13,7 @@ Weir 的 MCP 管理面以注册表为唯一配置权威，覆盖官方 `stdio` �
 ### 生命周期与真实库存
 
 - MCP 页签提供 Add、Edit、Test、Restart、Remove、Select for this session 和 Default on/off。Unmanaged server 只读展示；本轮不提供 adoption、禁用宿主条目或把 conflict 写成 managed 成功。
-- 每行展示 label、逻辑 identity、公开 `serverName`、transport、`incarnation`、`generation`、默认状态、严格 mount 状态、已知 discovery、最近一次 mount/test 结果和脱敏诊断。
+- 每行展示 label、逻辑 identity、公开 `serverName`、transport、`incarnation`、`generation`、默认状态、严格 mount 状态、已知 discovery、最近一次 mount/test 结果和脱敏诊断。仅当配置含 `deferLoading:true` 时额外显示 `deferred` 标签；该标签只回显配置，不表示模型已发现工具、路由已支持延迟加载或已节省 token。
 - 状态区分 `unknown`、`registered`、`mounted`、`degraded`、`cleanup-failed`、`cleanup-unknown` 与 `conflict`。`mounted` 只表示可核实的严格挂载/readback 结果，不是实时 reconnect 健康证明。
 - stock client 没有提供的 reconnect 相位、进程退出码和 stderr 一律显示 `unknown`，不从工具数量猜「当前在线」。打开或刷新清单只读取状态，不自动 probe、不唤醒 Agent、不写会话日志。
 - 清单读取失败时保留 last-good 非秘密内容并标为 stale；注册表不可读与健康的空清单不同。初始 `absent` 注册表是合法空库存。
@@ -21,6 +21,7 @@ Weir 的 MCP 管理面以注册表为唯一配置权威，覆盖官方 `stdio` �
 ### Add/Edit 与秘密字段
 
 - Basic/Advanced 表单按 transport 校验字段：`stdio` 的 command、args、env、cwd；HTTP 的 URL、headers；两者共用的 `serverName`、`toolCallTimeoutMs`、`maxInstructionBytes` 和 reconnect 设置。
+- Add/Edit 的 Advanced 提供可访问的 **Defer tool definitions** 复选框，新添加与 legacy 记录默认不勾选。辅助说明只承诺支持的模型会在需要时加载完整工具定义，权限与工具调用保持不变。草稿经 Preview 到 Confirm 始终在配置顶层携带布尔 `deferLoading`：启用项的无关编辑保持 `true`，显式取消勾选发送 `false` 以关闭；该配置编辑不自动 Select 或 Apply。
 - Host mutation 与 JSON 输入接受受管 server 顶层的布尔 `deferLoading`：缺省、legacy 缺失和 `false` 都不启用；仅显式 `true` 写入 registry metadata，关闭时删除字段。该扩展不进入 `entry.client` 或 stock `dsh-mcp-client` Loader config。
 - 秘密行支持 **blank-keep / replace / remove**。已有值只显示 configured 状态与 ref，不回显；blank 保持原 ref，replace 写入新值或新 ref，remove 仅删除该配置引用。秘密替换值只保存在组件内存，关闭或成功后清除；失败保留非秘密草稿，替换秘密被清除以便重新输入。
 - 新的 env/header/秘密 argv/敏感 URL 值通过 DSH credentials 保存。注册表只保留 `secretRefs`；legacy literal 记录仍可读，但新载荷不返回那些字面值。
@@ -199,7 +200,7 @@ GUI 启动环境 PATH 通过既有 `resolveExecutable`/`spawnArgv`/`childEnviron
 - 单元测试：`mcp-lifecycle`、`mcp-mount-ownership`、`mcp-config`、`mcp-credentials`、`mcp-registry-incarnation`、`mcp-incarnation`、`mcp-runtime`、`mcp-manager-lifecycle`、`mcp-operations`、`mcp-process`、`capability-mutation-remote`、`capabilities-mcp-commands` 覆盖 Loader/disposal/strict/readback、同步 ownership 分配、scoped mount、stale release、foreign/unresolved residue、秘密补偿、replacement permit、批量、remote ownership 与命令一致性；manager/facade/Apply wiring 另覆盖 live agent 差分限制、注册失败回滚、generation/attempt 精确清理、runtime readiness 与普通/恢复 Apply 的同步顺序。
 - `deferLoading` 的 Host 单元回归覆盖 flat/batch JSON、非法值零副作用、旧记录、显式开关与无关编辑、Restart、strict replacement、retained 同身份挂载、重连后再注册，以及 facade register/execute 的 admission/drain 不变量；stock client row 始终无该扩展。真实供应商的发现→加载→调用与不支持路由回退仍需独立运行时验收，不能由这些单元测试代替。
 - AI/intent：`mcp-install-tool` 覆盖 preview、exact approval、stored-plan digest、取消/超时/liveness/plan/ownership/revision/namespace、probe/CAS/mount 与 delegated child；`intent-gate`/`intent-classifier`/`skills` 覆盖中英文命中、否定/讨论/已有 server、quoted/unclosed、显式资格与冷安全审计。
-- Client：`client-mcp-model`、`client-mcp-manager`、`client-capability-*`、`client.test` 覆盖库存/stale、Basic/Advanced、blank-keep/replace/remove、batch/retry、Select/default/Remove、focus、字典、错误边界、mutation wire 与 chunk digest。
+- Client：`client-mcp-model`、`client-mcp-manager`、`client-capability-*`、`client.test` 覆盖库存/stale、Basic/Advanced、blank-keep/replace/remove、batch/retry、Select/default/Remove、focus、字典、错误边界、mutation wire 与 chunk digest；`deferLoading` 用例经 `mcpEditorFromServer`/`mcpConfigFromEditor` 与 `McpManagerView` 覆盖 add/legacy 默认关闭、启用编辑、显式关闭、无关编辑、Preview/Confirm 顶层布尔载荷、配置标签及不自动 Select/Apply。
 - 集成场景 `mcp-management` 使用真实 stdio 与 loopback Streamable HTTP fixtures，覆盖 mount/probe/disposal、零工具、401、bounded timeout、replacement fence、incarnation/re-Apply、AI preview/cancel/approve、remote ownership 和 add/edit/probe/restart/remove/crash recovery 的秘密 canary。
 - 回归场景 `mcp-gateway` 直接断言同一 live root 后续真实请求的 `toolNames`：late install 不向未选中会话注入工具，enable → disable → re-enable 精确增删 schema，并保留 admission、zero-RPC 与新 agent 检查；A/B 会话隔离由 manager 单元测试和下方 Desktop 验收覆盖，**不由 `mcp-gateway` 断言**。`lifecycle-inheritance`、`preset-defaults`、`capability-presets-surface` 继续验证继承与 portable preset 语义不扩大权限。
 - 深化回归新增 `capability-lifecycle-feed`、`mcp-operation-coordinator`、`mcp-mount-ownership` 与 `mcp-inventory-projection` 单元/组合链路。真实 `capability-lifecycle-revision-zero-{weir-first,creative-first}` 在 `WEIR_IT_CAPABILITY_LIFECYCLE_DUAL=1` 下分别覆盖 revision-0 与 Apply enable/disable/re-enable，合计 84/84；`WEIR_IT_CAPABILITY_LIFECYCLE_RETAINED=1` 的 `capability-lifecycle-retained-revision` 覆盖 same-preset retained old/new、revision-local Apply/RPC、same-identity 双方真实 RPC、old-first/new-first 清理与重复释放，完整双顺序为 53/53（每种单独顺序均为 43/43）；`WEIR_IT_MCP_SCOPED_CANARY=1` 的 scoped non-writing tree/相同公开命名空间验证为 9/9。运行时证据来自安装版 DSH 0.2.1-rc.3；不外推到未实跑的其他受支持版本。

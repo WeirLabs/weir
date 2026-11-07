@@ -335,6 +335,18 @@ test('REAL manager.list → payload → shipped client preserves mixed rows and 
   f.dispose()
 })
 
+test('real inventory carries deferLoading as configuration metadata without changing selection', async () => {
+  const docs = { ...serverEntry('docs'), deferLoading: true }
+  const f = await managerFixture({ entries: [docs], rows: [residueRow('docs')], failures: new Set() })
+  const { payload, partition } = await f.read()
+  const row = partition.mcpManaged[0]
+  expect(row.config.deferLoading).toBe(true)
+  expect(Object.hasOwn(row, 'deferLoading')).toBe(false)
+  expect(clientModel.mcpEditorFromServer(row, payload.mcpRegistryRevision).deferLoading).toBe(true)
+  expect(f.calls.selectionWrites).toBe(0)
+  f.dispose()
+})
+
 test('strict generation/runtime/mount evidence alone controls mounted and discovery', async () => {
   const f = await managerFixture({ entries: [serverEntry('docs')], rows: [residueRow('docs')], failures: new Set() })
   f.face.publicNames.set('mcp__docs__echo', { identity: 'docs', generation: 1 })
