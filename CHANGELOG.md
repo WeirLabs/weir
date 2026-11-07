@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-11-08
+
 ### Added
 
 - **受管 MCP 工具定义按需加载**：每台 server 可在 Capabilities 的 Add/Edit → Advanced 中显式开启 `Defer tool definitions`（默认关闭），支持的模型路由按需取得完整定义，不支持的路由保留完整 active-schema 回退；配置沿用严格替换与现有 Select/Apply、admission、drain 和继承权限，内置工具与 unmanaged server 不变。详见 [MCP server 管理](docs/features/mcp-server-management.md)。
