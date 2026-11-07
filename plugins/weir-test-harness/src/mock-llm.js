@@ -108,6 +108,17 @@ async function* streamScenario(options) {
   }
   const { out, record } = planRequest(options)
   trace(record)
+  if (scenario.id === 'decision-spike-cancel' && record.s6Fixture === 'hang') {
+    const events = process.env.WEIR_DECISION_SPIKE_EVENTS
+    if (events) appendFileSync(events, JSON.stringify({ time: Date.now(), spike: 'S6', listener: 'llm-hang' }) + '\n')
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    await new Promise((resolve) => {
+      if (options.signal?.aborted) return resolve()
+      options.signal?.addEventListener('abort', resolve, { once: true })
+    })
+    yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: 'mock stream aborted' } } }
+    return
+  }
   yield* out
 }
 

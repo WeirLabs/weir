@@ -61,6 +61,12 @@ import blackboardFork from './blackboard-fork.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
 import customSkillPaths from './custom-skill-paths.js'
 import delegateParallel from './delegate-parallel.js'
+import decisionSpikeOrder from './decision-spike-order.js'
+import decisionSpikeDelegated from './decision-spike-delegated.js'
+import decisionSpikeJson from './decision-spike-json.js'
+import decisionSpikeMultiMount from './decision-spike-multi-mount.js'
+import decisionSpikeCancel from './decision-spike-cancel.js'
+import decisionSpikeSlots from './decision-spike-slots.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
 import editlockLspUncertain from './editlock-lsp-uncertain.js'
@@ -133,6 +139,7 @@ SCENARIOS.push(fileleaseWatchReset)
 SCENARIOS.push(customSkillPaths)
 // Parallel foreground delegation: real two-child overlap by causal handshake.
 SCENARIOS.push(delegateParallel)
+if (process.env.WEIR_IT_DECISION_SPIKES === '1') SCENARIOS.push(decisionSpikeOrder, decisionSpikeDelegated, decisionSpikeJson, decisionSpikeMultiMount, decisionSpikeCancel, decisionSpikeSlots)
 
 /**
  * Find a scenario entry by id.

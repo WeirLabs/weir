@@ -243,13 +243,14 @@ async function runPresetDelegationSurface(scenario, preset) {
     { id: 'weir-it-mock-llm', name: 'weir-test-harness/mock-llm' },
     { id: 'weir-it-event-tap', name: 'weir-test-harness/event-tap' },
     { id: 'weir-it-preset-delegation-surface-probe', name: join(HERE, 'src/preset-delegation-surface-probe.js') },
+    ...(scenario.env?.WEIR_IT_DECISION_SPIKE ? [{ id: 'weir-it-decision-spike-probe', name: join(HERE, 'src/decision-spike-probe.js') }] : []),
   ] })
   // JSON is a YAML subset; production !!js expressions remain in the product
   // bundle and are interpreted by Loader, not copied or evaluated by this test.
   writeFileSync(join(profile, 'cordis.patch.yml'), JSON.stringify(patch, null, 2) + '\n')
   execFileSync(NODE, [PNPM, 'install', '--reporter', 'silent'], { cwd: profile, stdio: 'inherit' })
   const trace = join(RUN_ROOT, `trace-${scenario.id}-${preset}.jsonl`)
-  const outcome = await spawnHeadless([profileName, scenario.prompt], scenarioEnv(scenario.id, trace, { WEIR_IT_DELEGATION_PRESET: preset }))
+  const outcome = await spawnHeadless([profileName, scenario.prompt], scenarioEnv(scenario.id, trace, { ...scenario.env, WEIR_IT_DELEGATION_PRESET: preset }))
   return { scenario: scenario.id, trace, ...outcome }
 }
 

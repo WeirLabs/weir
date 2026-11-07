@@ -22,6 +22,7 @@
     "./capability-remote-probe": "./src/capability-remote-probe.js",
     "./worktree-approve-probe": "./src/worktree-approve-probe.js",
     "./user-questions-stub": "./src/user-questions-stub.js",
+    "./decision-spike-probe": "./src/decision-spike-probe.js",
     "./blackboard-remote-probe": "./src/blackboard-remote-probe.js",
     "./file-lease-turn-probe": "./src/file-lease-turn-probe.js"
   },

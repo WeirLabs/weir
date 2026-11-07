@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 // Scripted user-questions answerer for the `notify-worktree` integration
 // scenario. The headless composition mounts dsh-base's userQuestions service
 // but has no UI answerer, so its `user-questions/request` waterfall would
@@ -15,6 +17,14 @@ const ANSWERED = new Set(['merge', 'abandon', 'cleanup'])
 /** The blackboard promotion adjudication question id (the injected brief's ask, slice 3). */
 const PROMOTION_QUESTION_ID = 'blackboard-promotion'
 const MCP_INSTALL_QUESTION_ID = 'mcp-install-confirmation'
+const S1_ORDER_QUESTION_ID = 's1-order'
+
+function traceDecisionStub(request, answer) {
+  const file = process.env.WEIR_DECISION_SPIKE_EVENTS
+  if (!file) return
+  mkdirSync(dirname(file), { recursive: true })
+  appendFileSync(file, JSON.stringify({ time: Date.now(), spike: 'S1', listener: 'user-questions-stub', questionIds: request?.questions?.map(question => question.id) ?? [], answer }) + '\n')
+}
 
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
@@ -23,6 +33,12 @@ function apply(ctx, config = {}) {
     if (!Array.isArray(questions)) return next()
     const answers = []
     for (const question of questions) {
+      if (question?.id === S1_ORDER_QUESTION_ID) {
+        const label = question?.options?.[0]?.label
+        if (typeof label !== 'string') return next()
+        answers.push({ id: question.id, selected: [label] })
+        continue
+      }
       if (question?.id === MCP_INSTALL_QUESTION_ID) {
         const mode = process.env.WEIR_IT_MCP_AI_ANSWER ?? 'approve'
         if (mode === 'close') throw Object.assign(new Error('scripted confirmation close'), { code: 'ASK_CANCELLED' })
@@ -47,6 +63,7 @@ function apply(ctx, config = {}) {
       if (typeof label !== 'string') return next()
       answers.push({ id: question.id, selected: [label] })
     }
+    if (request?.questions?.some(question => question?.id === S1_ORDER_QUESTION_ID)) traceDecisionStub(request, { answers })
     return { answers }
   })
 }

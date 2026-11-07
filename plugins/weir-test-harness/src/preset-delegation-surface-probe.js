@@ -7,8 +7,11 @@ export const inject = ['agentPresets', 'tools']
 export function apply(ctx) {
   const preset = process.env.WEIR_IT_DELEGATION_PRESET
   if (!preset) return
+  let selectedRoot = false
   ctx.on('agent/created', async ({ agent }) => {
     if ((agent.session.header.delegationDepth ?? 0) > 0) return
+    if (selectedRoot) return
+    selectedRoot = true
     const hostTools = ctx.tools.schemas().map(tool => tool.name)
     await ctx.agentPresets.select(agent, preset)
     appendFileSync(process.env.WEIR_IT_TRACE, JSON.stringify({

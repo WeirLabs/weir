@@ -13,6 +13,11 @@ const SHELL = shellToolName()
 function userOptions(text, extra = {}) {
   return { messages: [{ role: 'user', content: [{ type: 'text', text }] }], tools: [], ...extra }
 }
+function toolOptions(userText, toolText) {
+  const options = userOptions(userText)
+  options.messages.push({ role: 'tool', content: [{ type: 'text', text: toolText }], source: { kind: 'tool', toolCallId: 'mock-call-1' } })
+  return options
+}
 
 /** Run a decide brain and return the materialized chunk list. */
 function run(id, options) {
@@ -401,5 +406,49 @@ describe('filelease lineage / wake / holder-death brains', () => {
     assert.equal(path.endsWith('lease-holder-death-boot.txt'), true)
     const afterWrite = blockEnds(run('filelease-holder-death', userOptions(`filelease-holder-death-probe\nCreated file: ${path}`)))[0]
     assert.equal(afterWrite.type, 'text')
+  })
+})
+
+describe('decision-agent P0 spike brains', { skip: process.env.WEIR_IT_DECISION_SPIKES !== '1' }, () => {
+  it('order drives the stock ask and finishes on the prepend answer', () => {
+    const first = blockEnds(run('decision-spike-order', userOptions('decision-spike-order-probe')))[0]
+    assert.equal(first.name, 'ask_user_question')
+    const after = blockEnds(run('decision-spike-order', toolOptions('decision-spike-order-probe', '{"answers":[{"id":"s1-order","selected":["Prepend"]}]}')))[0]
+    assert.equal(after.text, 'S1_ORDER_DONE')
+  })
+
+  it('delegated child asks first, then consults only after DELEGATED_CALLER', () => {
+    const first = blockEnds(run('decision-spike-delegated', userOptions('DECISION_SPIKE_CHILD')))[0]
+    assert.equal(first.name, 'ask_user_question')
+    const second = blockEnds(run('decision-spike-delegated', toolOptions('DECISION_SPIKE_CHILD', '{"error":{"code":"DELEGATED_CALLER"}}')))[0]
+    assert.equal(second.name, 'decision_consult')
+    const parent = blockEnds(run('decision-spike-delegated', userOptions('decision-spike-delegated-probe')))[0]
+    assert.equal(parent.name, 'delegate')
+  })
+
+  it('JSON mock brain emits all five fixture classes', () => {
+    for (const fixture of ['valid', 'fenced', 'truncated', 'non-json', 'unknown-evidence']) {
+      const chunks = run('decision-spike-json', userOptions(`FIXTURE:${fixture}`, { system: 'Decision evaluator contract v1' }))
+      if (fixture === 'truncated') assert.equal(chunks.at(-1).reason.kind, 'max-tokens')
+      else assert.equal(chunks.at(-1).reason.kind, 'stop')
+    }
+    const main = blockEnds(run('decision-spike-json', userOptions('decision-spike-json-probe')))[0]
+    assert.equal(main.name, 'decision_json_spike')
+  })
+
+  it('multi-mount drives the dual-preset host probe', () => {
+    const block = blockEnds(run('decision-spike-multi-mount', userOptions('decision-spike-multi-mount-probe')))[0]
+    assert.equal(block.name, 'decision_multi_mount_spike')
+  })
+
+  it('cancel drives the two-process probe and exposes the hang fixture', () => {
+    const main = blockEnds(run('decision-spike-cancel', userOptions('decision-spike-cancel-probe')))[0]
+    assert.equal(main.name, 'decision_cancel_spike')
+    const sidecar = blockEnds(run('decision-spike-cancel', userOptions('FIXTURE:hang', { system: 'Decision evaluator contract v1' })))[0]
+    assert.equal(sidecar.text, 'HANG')
+  })
+  it('slots brain selects before/after inspect phases', () => {
+    assert.equal(JSON.parse(blockEnds(run('decision-spike-slots', userOptions('decision-spike-slots-probe')))[0].arguments).phase, 'before')
+    assert.equal(JSON.parse(blockEnds(run('decision-spike-slots', userOptions('decision-spike-slots-probe-after')))[0].arguments).phase, 'after')
   })
 })
