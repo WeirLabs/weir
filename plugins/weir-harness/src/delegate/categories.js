@@ -19,7 +19,7 @@
 export const DEFAULT_CATEGORIES = {
   quick: {
     description: 'Trivial mechanical work: single-file changes, typo fixes, boilerplate, config/copy edits.',
-    guidance: 'Default for every splittable piece; fan out several quick children in one burst when scopes are disjoint.',
+    guidance: 'Use only after delegation is justified, for a bounded mechanical single-file task. Being splittable is not a reason to delegate or fan out.',
     reasoningEffort: 'low',
     chain: [],
     promptAppend: `<Category_Context name="quick">

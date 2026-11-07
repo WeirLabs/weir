@@ -860,6 +860,15 @@ describe('registry defaults', () => {
     expect(Object.keys(CURATED_AGENTS).sort()).toEqual(['advisor', 'finder', 'scholar'])
   })
 
+  it('quick guidance applies only after delegation is justified', () => {
+    const guidance = DEFAULT_CATEGORIES.quick.guidance
+    expect(guidance).toContain('Use only after delegation is justified')
+    expect(guidance).toContain('bounded mechanical single-file task')
+    expect(guidance).toContain('Being splittable is not a reason to delegate or fan out')
+    expect(guidance).not.toContain('Default for every splittable piece')
+    expect(guidance).not.toContain('fan out several quick children')
+  })
+
   it('curated agents are read-only', () => {
     for (const agent of Object.values(CURATED_AGENTS)) {
       expect(agent.tools).not.toContain('write')
