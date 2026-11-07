@@ -75,6 +75,32 @@ describe('weir-core', () => {
     }
   })
 
+  it('keeps coupled work in the main loop and gates delegation on concrete benefits', () => {
+    const required = [
+      'Start with DIRECT',
+      'tightly coupled work that shares judgment, data, or context',
+      'regardless of size or file count',
+      'genuinely independent parallel work with disposable context',
+      'fresh-context containment',
+      'tool/permission/instruction isolation',
+      'independent black-box verification',
+      'parallel execution is itself a concrete benefit',
+      'reading and verifying each prerequisite result',
+    ]
+    for (const phrase of required) {
+      expect(DOCTRINE, `doctrine must mention ${phrase}`).toContain(phrase)
+    }
+    expect(DOCTRINE).not.toContain('DIRECT: trivial, single-file, one-tool work')
+  })
+
+  it('treats disjoint scopes as a safety prerequisite rather than a delegation benefit', () => {
+    expect(DOCTRINE).toContain('disjoint write scopes are a safety prerequisite')
+    expect(DOCTRINE).toContain('never sufficient justification for delegation or FAN-OUT')
+    expect(DOCTRINE).toContain('no two children edit the same files')
+    expect(DOCTRINE).not.toContain('Delegation requires disjoint write scopes:')
+    expect(DOCTRINE).not.toContain('Default to fan-out whenever write scopes are disjoint.')
+  })
+
   it('doctrine carries no retired curated-agent name', () => {
     expect(DOCTRINE).not.toContain('explore')
     expect(DOCTRINE).not.toContain('librarian')

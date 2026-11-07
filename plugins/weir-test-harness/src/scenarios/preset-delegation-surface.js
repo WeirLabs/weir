@@ -21,10 +21,31 @@ function decide(options, obs) {
 }
 
 function observe(obs) {
+  const system = `${obs.system ?? ''}\n${obs.transcript ?? ''}`
+  const base = continuable.observe(obs)
+  // Keep the recorded trace schema stable: a parent probe only counts when the
+  // live prompt carries the current routing doctrine and concurrency discipline.
+  const contextGatedDoctrine = [
+    'Start with DIRECT',
+    'tightly coupled work that shares judgment, data, or context',
+    'genuinely independent parallel work with disposable context',
+    'fresh-context containment',
+    'tool/permission/instruction isolation',
+    'independent black-box verification',
+    'parallel execution is itself a concrete benefit',
+    'disjoint write scopes are a safety prerequisite',
+    'run items concurrently',
+    'ordered per-item outcomes',
+    'does not cancel siblings',
+  ].every(marker => system.includes(marker))
   return {
-    ...continuable.observe(obs),
+    ...base,
+    sawContinuableProbe: base.sawContinuableProbe && contextGatedDoctrine,
     oneShotResultSeen: obs.transcript.includes('continuable-probe') && obs.transcript.includes('SURFACE_ONESHOT_OK'),
-    retiredGuidance: /`(?:workflow|subagent|subagent_fork|list_subagent_models)`/.test(obs.system + obs.transcript),
+    retiredGuidance:
+      /`(?:workflow|subagent|subagent_fork|list_subagent_models)`/.test(system) ||
+      system.includes('Default to fan-out whenever write scopes are disjoint.') ||
+      system.includes('Default for every splittable piece'),
   }
 }
 
@@ -47,7 +68,7 @@ function assert(run) {
     for (const name of REQUIRED) run.check(`${preset}: exposes ${name}`, parents.length > 0 && parents.every(record => record.tools.includes(name)))
     for (const name of ['compact_context', 'stop_continuation']) run.check(`${preset}: coordinated realm exposes ${name}`, parents.length > 0 && parents.every(record => record.tools.includes(name)))
     for (const name of REMOVED) run.check(`${preset}: excludes ${name}`, parents.length > 0 && parents.every(record => !record.tools.includes(name)))
-    run.check(`${preset}: no retired tool guidance`, parents.length > 0 && parents.every(record => !record.retiredGuidance))
+    run.check(`${preset}: no retired tool or default-fanout guidance`, parents.length > 0 && parents.every(record => !record.retiredGuidance))
     run.check(`${preset}: one-shot delegate returned its child result`, parents.some(record => record.oneShotResultSeen))
     run.check(`${preset}: continuable delegate dispatched`, parents.some(record => record.emittedNames.includes('delegate')) && requests.some(record => record.childFirstTurnSeen))
     run.check(`${preset}: parent sent follow-up`, parents.some(record => record.emittedNames.includes('send_message')))

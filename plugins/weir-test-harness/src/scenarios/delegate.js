@@ -40,7 +40,12 @@ function observe(obs) {
     sawDelegateProbe: obs.transcript.includes('delegate-probe'),
     sawChildMarker: obs.transcript.includes('MARKER_CHILD_OK'),
     sawTargetsGuidance: system.includes(GUIDANCE_HEADING),
-    guidanceListsQuick: system.includes('- quick —'),
+    guidanceListsQuick:
+      system.includes('- quick —') &&
+      system.includes('Use only after delegation is justified, for a bounded mechanical single-file task.') &&
+      system.includes('Being splittable is not a reason to delegate or fan out.') &&
+      !system.includes('Default for every splittable piece') &&
+      !system.includes('fan out several quick children'),
   }
 }
 
@@ -53,7 +58,7 @@ function assert(run) {
   run.check('parent observed the child result', run.stdout.includes('parent observed child result'), run.stdout.slice(-400))
   const parent = requests.find((r) => r.emittedNames?.includes('delegate'))
   run.check('parent system prompt carries the delegation-target guidance', Boolean(parent?.sawTargetsGuidance))
-  run.check('guidance lists the quick category', Boolean(parent?.guidanceListsQuick))
+  run.check('quick guidance requires prior delegation justification and drops default fan-out', Boolean(parent?.guidanceListsQuick))
   run.check('headless run exited cleanly', run.code === 0 || run.code === null, `code=${run.code} stderr=${run.stderr.slice(-400)}`)
 }
 

@@ -10,9 +10,10 @@ import {
   renderDelegateTargetsSection,
 } from '../src/delegate/targets.js'
 import { DELEGATE_DESCRIPTION } from '../src/delegate/tool.js'
+import { DEFAULT_CATEGORIES } from '../src/delegate/categories.js'
 
 const CATEGORIES = {
-  quick: { description: 'Trivial mechanical work.', guidance: 'Default for every splittable piece.', chain: [] },
+  quick: { description: 'Trivial mechanical work.', guidance: 'Only after delegation is justified.', chain: [] },
   deep: { description: 'One goal, one deliverable.', guidance: 'The default deep lane.', chain: [] },
   visual: { description: 'Frontend and styling.', guidance: 'Browser-facing work routes here.', chain: [], disabled: true },
 }
@@ -70,7 +71,7 @@ describe('renderDelegateTargets', () => {
     expect(renderDelegateTargets({ categories: CATEGORIES, agents: AGENTS })).toBe(
       [
         'Categories:',
-        '- quick — Trivial mechanical work. Routing guidance: Default for every splittable piece.',
+        '- quick — Trivial mechanical work. Routing guidance: Only after delegation is justified.',
         '- deep — One goal, one deliverable. Routing guidance: The default deep lane.',
         '',
         'Curated agents:',
@@ -78,6 +79,14 @@ describe('renderDelegateTargets', () => {
         '- advisor — Architecture advice.',
       ].join('\n'),
     )
+  })
+
+  it('renders the context-gated quick guidance without default fan-out wording', () => {
+    const output = renderDelegateTargets({ categories: { quick: DEFAULT_CATEGORIES.quick }, agents: {} })
+    expect(output).toContain('Use only after delegation is justified, for a bounded mechanical single-file task.')
+    expect(output).toContain('Being splittable is not a reason to delegate or fan out.')
+    expect(output).not.toContain('Default for every splittable piece')
+    expect(output).not.toContain('fan out several quick children')
   })
 
   it('lists only enabled entries: a disabled category or agent never appears', () => {
