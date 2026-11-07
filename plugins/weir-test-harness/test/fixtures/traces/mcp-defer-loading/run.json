@@ -1,0 +1,8 @@
+{
+  "scenario": "mcp-defer-loading",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/.weir/it-root/home",
+  "code": 0,
+  "stdout": "[unsupported]\nmcp defer protocol unsupported complete\n\n[addition-only]\nmcp defer protocol addition-only complete\n\n[in-history]\nmcp defer protocol in-history complete\n",
+  "stderr": "[unsupported]\n\n[addition-only]\n\n[in-history]\n",
+  "sessionId": null
+}

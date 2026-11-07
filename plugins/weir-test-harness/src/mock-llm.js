@@ -15,6 +15,27 @@ const SCENARIO = process.env.WEIR_IT_SCENARIO ?? 'deepwork'
 const TRACE = process.env.WEIR_IT_TRACE ?? join(IT_ROOT, 'trace.jsonl')
 const WINDOW = Number(process.env.WEIR_IT_WINDOW ?? '128000')
 
+// Test-only provider capability switch. Unsupported remains the default; any
+// opted-in value outside DSH's closed union fails before the profile can run.
+function parseToolUpdate(value) {
+  if (value === undefined) return undefined
+  if (value === 'addition-only' || value === 'in-history') return value
+  throw new Error(`WEIR_IT_TOOL_UPDATE must be 'addition-only' or 'in-history' when set; received ${JSON.stringify(value)}`)
+}
+
+const TOOL_UPDATE = parseToolUpdate(process.env.WEIR_IT_TOOL_UPDATE)
+
+function modelInfo(provider, model, toolUpdate = TOOL_UPDATE) {
+  return {
+    provider,
+    id: model,
+    name: model,
+    inputModalities: ['text'],
+    context: { contextWindow: WINDOW },
+    ...(toolUpdate === undefined ? {} : { toolUpdate }),
+  }
+}
+
 // The env is the registry lookup key; an unknown id throws at plugin load
 // (loud failure) instead of answering an "unknown scenario" text that lets
 // the run pass silently (spec: 未知场景显式失败, design D1).
@@ -96,24 +117,12 @@ function apply(ctx) {
     providerRetryPolicy: () => undefined,
     imageRequestPricing: () => undefined,
     listModels: async (provider) => [{ provider, id: 'mock-1', name: 'Mock One', inputModalities: ['text'] }],
-    resolveModel: async (provider, model) => ({
-      provider,
-      id: model,
-      name: model,
-      inputModalities: ['text'],
-      context: { contextWindow: WINDOW },
-    }),
+    resolveModel: async (provider, model) => modelInfo(provider, model),
     prepareCall: async (provider, model) => ({
       config: { provider, model },
       retryPolicy: { mode: 'normal', maxRetries: 0, retryableCodes: [], initialDelayMs: 0, maxDelayMs: 0, jitterRatio: 0 },
       adapterDefaults: {},
-      model: {
-        provider,
-        id: model,
-        name: model,
-        inputModalities: ['text'],
-        context: { contextWindow: WINDOW },
-      },
+      model: modelInfo(provider, model),
       stream: (options) => streamScenario(options),
     }),
     stream: (options) => streamScenario(options),
@@ -121,4 +130,4 @@ function apply(ctx) {
   ctx.llm.registerAdapter(['mock'], adapter)
 }
 
-export { name, inject, apply, planRequest, buildTraceRecord, streamScenario }
+export { name, inject, apply, modelInfo, parseToolUpdate, planRequest, buildTraceRecord, streamScenario }
