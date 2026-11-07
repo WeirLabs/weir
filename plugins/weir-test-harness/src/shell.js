@@ -16,6 +16,8 @@
 const POSIX_BUILDERS = {
   'echo-only': ({ text }) => `echo ${text}`,
   'echo-and-wait': ({ text, seconds }) => `echo ${text} && sleep ${seconds}`,
+  'handshake-first': ({ path, text, seconds }) => `printf '%s\\n' ${text}_FIRST_READY > ${path}-first.ready && { i=0; while [ "$i" -lt ${seconds * 10} ]; do if [ -f ${path}-second.ready ]; then echo ${text}; exit 0; fi; sleep 0.1; i=$((i + 1)); done; echo ${text}_TIMEOUT; exit 1; }`,
+  'handshake-second': ({ path, text, seconds }) => `printf '%s\\n' ${text}_SECOND_READY > ${path}-second.ready && { i=0; while [ "$i" -lt ${seconds * 10} ]; do if [ -f ${path}-first.ready ]; then echo ${text}_SECOND; exit 0; fi; sleep 0.1; i=$((i + 1)); done; echo ${text}_SECOND_TIMEOUT; exit 1; }`,
   wait: ({ seconds }) => `sleep ${seconds}`,
   'stay-busy': ({ seconds }) => `sleep ${seconds}`,
   'remove-file': ({ path }) => `rm -rf ${path}`,
@@ -25,6 +27,8 @@ const POSIX_BUILDERS = {
 const WIN32_BUILDERS = {
   'echo-only': ({ text }) => `Write-Output "${text}"`,
   'echo-and-wait': ({ text, seconds }) => `Write-Output "${text}"; Start-Sleep -Seconds ${seconds}`,
+  'handshake-first': ({ path, text, seconds }) => `Set-Content -Path ${path}-first.ready -Value ${text}_FIRST_READY; $remaining = ${seconds * 10}; while ($remaining -gt 0) { if (Test-Path -Path ${path}-second.ready) { Write-Output "${text}"; exit 0 }; Start-Sleep -Milliseconds 100; $remaining-- }; Write-Output "${text}_TIMEOUT"; exit 1`,
+  'handshake-second': ({ path, text, seconds }) => `Set-Content -Path ${path}-second.ready -Value ${text}_SECOND_READY; $remaining = ${seconds * 10}; while ($remaining -gt 0) { if (Test-Path -Path ${path}-first.ready) { Write-Output "${text}_SECOND"; exit 0 }; Start-Sleep -Milliseconds 100; $remaining-- }; Write-Output "${text}_SECOND_TIMEOUT"; exit 1`,
   wait: ({ seconds }) => `Start-Sleep -Seconds ${seconds}`,
   'stay-busy': ({ seconds }) => `Start-Sleep -Seconds ${seconds}`,
   'remove-file': ({ path }) => `Remove-Item -Force -Recurse ${path}`,
@@ -47,6 +51,8 @@ const SAFE_TOKEN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/
 const ARG_VALIDATORS = {
   'echo-only': (args) => ({ text: requireSafeToken(args.text, 'text') }),
   'echo-and-wait': (args) => ({ text: requireSafeToken(args.text, 'text'), seconds: requireSeconds(args) }),
+  'handshake-first': (args) => ({ path: requireSafeToken(args.path, 'path'), text: requireSafeToken(args.text, 'text'), seconds: requireSeconds(args) }),
+  'handshake-second': (args) => ({ path: requireSafeToken(args.path, 'path'), text: requireSafeToken(args.text, 'text'), seconds: requireSeconds(args) }),
   wait: (args) => ({ seconds: requireSeconds(args) }),
   'stay-busy': (args) => ({ seconds: requireSeconds(args) }),
   'remove-file': (args) => ({ path: requireSafeToken(args.path, 'path') }),

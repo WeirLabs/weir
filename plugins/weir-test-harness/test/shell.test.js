@@ -24,6 +24,8 @@ describe('SHELL_OPERATIONS vocabulary', () => {
     assert.deepEqual([...SHELL_OPERATIONS].sort(), [
       'echo-and-wait',
       'echo-only',
+      'handshake-first',
+      'handshake-second',
       'remove-file',
       'stay-busy',
       'wait',
@@ -63,6 +65,20 @@ describe('shellCommand posix', () => {
     assert.equal(shellCommand('stay-busy', 'darwin', { seconds: 30 }), 'sleep 30')
   })
 
+  it('runs the first handshake leg until the peer marker arrives', () => {
+    assert.equal(
+      shellCommand('handshake-first', 'darwin', { path: 'delegate-parallel', text: 'PARALLEL_OVERLAP_OK', seconds: 2 }),
+      `printf '%s\\n' PARALLEL_OVERLAP_OK_FIRST_READY > delegate-parallel-first.ready && { i=0; while [ "$i" -lt 20 ]; do if [ -f delegate-parallel-second.ready ]; then echo PARALLEL_OVERLAP_OK; exit 0; fi; sleep 0.1; i=$((i + 1)); done; echo PARALLEL_OVERLAP_OK_TIMEOUT; exit 1; }`,
+    )
+  })
+
+  it('lets the second handshake leg publish first and wait for its peer', () => {
+    assert.equal(
+      shellCommand('handshake-second', 'darwin', { path: 'delegate-parallel', text: 'PARALLEL_OVERLAP_OK', seconds: 2 }),
+      `printf '%s\\n' PARALLEL_OVERLAP_OK_SECOND_READY > delegate-parallel-second.ready && { i=0; while [ "$i" -lt 20 ]; do if [ -f delegate-parallel-first.ready ]; then echo PARALLEL_OVERLAP_OK_SECOND; exit 0; fi; sleep 0.1; i=$((i + 1)); done; echo PARALLEL_OVERLAP_OK_SECOND_TIMEOUT; exit 1; }`,
+    )
+  })
+
   it('removes a file so the write denial is the observable outcome', () => {
     assert.equal(shellCommand('remove-file', 'darwin', { path: 'fixture.txt' }), 'rm -rf fixture.txt')
   })
@@ -86,6 +102,20 @@ describe('shellCommand win32', () => {
 
   it('stays busy long enough for an interrupt', () => {
     assert.equal(shellCommand('stay-busy', 'win32', { seconds: 30 }), 'Start-Sleep -Seconds 30')
+  })
+
+  it('runs the first handshake leg through pwsh until the peer marker arrives', () => {
+    assert.equal(
+      shellCommand('handshake-first', 'win32', { path: 'delegate-parallel', text: 'PARALLEL_OVERLAP_OK', seconds: 2 }),
+      `Set-Content -Path delegate-parallel-first.ready -Value PARALLEL_OVERLAP_OK_FIRST_READY; $remaining = 20; while ($remaining -gt 0) { if (Test-Path -Path delegate-parallel-second.ready) { Write-Output "PARALLEL_OVERLAP_OK"; exit 0 }; Start-Sleep -Milliseconds 100; $remaining-- }; Write-Output "PARALLEL_OVERLAP_OK_TIMEOUT"; exit 1`,
+    )
+  })
+
+  it('lets the second pwsh handshake leg publish first and wait for its peer', () => {
+    assert.equal(
+      shellCommand('handshake-second', 'win32', { path: 'delegate-parallel', text: 'PARALLEL_OVERLAP_OK', seconds: 2 }),
+      `Set-Content -Path delegate-parallel-second.ready -Value PARALLEL_OVERLAP_OK_SECOND_READY; $remaining = 20; while ($remaining -gt 0) { if (Test-Path -Path delegate-parallel-first.ready) { Write-Output "PARALLEL_OVERLAP_OK_SECOND"; exit 0 }; Start-Sleep -Milliseconds 100; $remaining-- }; Write-Output "PARALLEL_OVERLAP_OK_SECOND_TIMEOUT"; exit 1`,
+    )
   })
 
   it('removes a file through a cmdlet the deny list rejects', () => {

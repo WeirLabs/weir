@@ -1,0 +1,8 @@
+{
+  "scenario": "delegate-parallel",
+  "home": "/Users/young/Documents/Orrery/.weir/worktrees/parallel-foreground-delegation-271/.weir/it-root/home",
+  "code": 0,
+  "stdout": "parent observed ordered parallel handshake results\n",
+  "stderr": "",
+  "sessionId": null
+}

@@ -59,6 +59,7 @@ import blackboardPersistence from './blackboard-persistence.js'
 import blackboardFork from './blackboard-fork.js'
 import presetDelegationSurface from './preset-delegation-surface.js'
 import customSkillPaths from './custom-skill-paths.js'
+import delegateParallel from './delegate-parallel.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
 import editlockLspUncertain from './editlock-lsp-uncertain.js'
@@ -128,6 +129,8 @@ SCENARIOS.push(fileleaseReleaseWatch)
 SCENARIOS.push(fileleaseWatchReset)
 // Custom Skill scan paths: real gateway + selection/Apply + durable-log proof.
 SCENARIOS.push(customSkillPaths)
+// Parallel foreground delegation: real two-child overlap by causal handshake.
+SCENARIOS.push(delegateParallel)
 
 /**
  * Find a scenario entry by id.

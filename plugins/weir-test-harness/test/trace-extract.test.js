@@ -211,6 +211,14 @@ const PRE_MIGRATION_KEYS = [
   'sawChildTask',
   'sawChildDone',
   'noticeDelivered',
+  // delegate-parallel scenario observations (two real child sessions and their
+  // causal handshake, plus input-ordered reports in the parent context)
+  'parallelProbeSeen',
+  'parallelFirstChild',
+  'parallelSecondChild',
+  'parallelFirstHandshake',
+  'parallelSecondHandshake',
+  'parallelOrderedResults',
 ]
 
 // The one-shot child settlement scenario (and the edit-lock delegate scenarios
