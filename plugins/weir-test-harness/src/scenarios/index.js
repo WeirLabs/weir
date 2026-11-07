@@ -36,6 +36,7 @@ import coldSession from './cold-session.js'
 import lifecycleInheritance from './lifecycle-inheritance.js'
 import delegatePreflight from './delegate-preflight.js'
 import mcpGateway from './mcp-gateway.js'
+import mcpDeferLoading from './mcp-defer-loading.js'
 import mcpManagement from './mcp-management.js'
 import presetDefaults from './preset-defaults.js'
 import capabilityPresetsSurface from './capability-presets-surface.js'
@@ -81,6 +82,7 @@ SCENARIOS.push(coldSession)
 SCENARIOS.push(lifecycleInheritance)
 SCENARIOS.push(delegatePreflight)
 SCENARIOS.push(mcpGateway)
+SCENARIOS.push(mcpDeferLoading)
 SCENARIOS.push(mcpManagement)
 SCENARIOS.push(presetDefaults)
 SCENARIOS.push(capabilityPresetsSurface)

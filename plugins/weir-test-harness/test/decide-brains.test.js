@@ -217,6 +217,23 @@ describe('lsp brain', () => {
   })
 })
 
+describe('mcp-defer-loading brain', () => {
+  it('drives Apply, deferred RPC, ordinary RPC and the protocol report in order', () => {
+    const first = blockEnds(run('mcp-defer-loading', userOptions('mcp-defer-loading-probe')))[0]
+    assert.equal(first.name, 'mcp_probe')
+    assert.deepEqual(JSON.parse(first.arguments).mcpServers, ['deferred', 'plain'])
+    const afterApply = blockEnds(run('mcp-defer-loading', userOptions('mcp-defer-loading-probe\nMCP_PROBE done apply:unsupported')))[0]
+    assert.equal(afterApply.name, 'mcp__deferred__echo')
+    const afterDeferred = blockEnds(run('mcp-defer-loading', userOptions('mcp-defer-loading-probe\nMCP_PROBE done apply:unsupported\nRESULT server=deferred origin=managed-unsupported')))[0]
+    assert.equal(afterDeferred.name, 'mcp__plain__echo')
+    const afterPlain = blockEnds(run('mcp-defer-loading', userOptions('mcp-defer-loading-probe\nMCP_PROBE done apply:unsupported\nRESULT server=deferred origin=managed-unsupported\nRESULT server=plain origin=managed-unsupported')))[0]
+    assert.equal(afterPlain.name, 'mcp_probe')
+    assert.equal(JSON.parse(afterPlain.arguments).op, 'deferReport')
+    const final = blockEnds(run('mcp-defer-loading', userOptions('mcp-defer-loading-probe\nMCP_PROBE done apply:unsupported\nRESULT server=deferred origin=managed-unsupported\nRESULT server=plain origin=managed-unsupported\nMCP_PROBE done defer-report:unsupported')))[0]
+    assert.equal(final.text, 'mcp defer protocol unsupported complete')
+  })
+})
+
 describe('kit shellCall', () => {
   it('renders the platform command for a named operation', () => {
     const blocks = blockEnds([...shellCall('echo-only', { text: 'MARKER' }, 'desc')])

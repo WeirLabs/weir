@@ -16,6 +16,30 @@ const FIXTURES = ['fixture-a']
 
 const namesOf = skills => (Array.isArray(skills) ? skills : []).map(identity => identity?.name ?? null)
 
+const DEFER_TARGETS = new Set(['mcp__deferred__echo', 'mcp__plain__echo'])
+
+// Capture only structural protocol facts for the two fixture tools. Prompt text,
+// call arguments and tool results stay out of this report; the mock request trace
+// and real server log independently cover projection and RPC.
+function deferProtocolSnapshot(session) {
+  const events = session.snapshotEvents()
+  return {
+    requestHeaders: events.flatMap(event => {
+      if (event.type !== 'request/header') return []
+      const tools = (event.data?.header?.tools ?? []).filter(tool => DEFER_TARGETS.has(tool.name))
+      return tools.length > 0 ? [{ seq: event.seq, tools }] : []
+    }),
+    developerUpdates: events.flatMap(event => {
+      if (event.type !== 'developer/message') return []
+      const content = event.data?.message?.content ?? []
+      const additions = content.filter(block => block.type === 'tool-addition' && DEFER_TARGETS.has(block.toolName)).map(block => block.toolName)
+      const removals = content.filter(block => block.type === 'tool-removal' && DEFER_TARGETS.has(block.toolName)).map(block => block.toolName)
+      if (additions.length === 0 && removals.length === 0) return []
+      return [{ seq: event.seq, messageId: event.data.message.id, headerSeq: event.data.headerSeq ?? null, additions, removals }]
+    }),
+  }
+}
+
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
   selectionPlugin.apply(ctx, {
@@ -31,7 +55,7 @@ function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['apply', 'call', 'list', 'adopt', 'install', 'register', 'removeManaged', 'report'] },
+        op: { type: 'string', enum: ['apply', 'call', 'list', 'adopt', 'install', 'register', 'removeManaged', 'report', 'deferReport'] },
         skills: { type: 'array', items: { type: 'string' } },
         mcpServers: { type: 'array', items: { type: 'string' } },
         name: { type: 'string' },
@@ -184,6 +208,28 @@ function apply(ctx, config = {}) {
           if (!manager) throw new Error('weirMcpManager not mounted')
           report.remove = await manager.remove(args.identity)
           report.completed = true
+          return report
+        }
+        if (args.op === 'deferReport') {
+          if (!manager) throw new Error('weirMcpManager not mounted')
+          const registry = createMcpRegistry({ store })
+          const current = await registry.read()
+          report.mode = process.env.WEIR_IT_TOOL_UPDATE ?? 'unsupported'
+          report.protocol = deferProtocolSnapshot(exec.agent.session)
+          report.registry = Object.fromEntries(['deferred', 'plain'].map(identity => {
+            const entry = current.kind === 'ok' ? current.servers[identity] : null
+            return [identity, {
+              deferLoading: entry?.deferLoading === true,
+              hasDeferLoading: Object.hasOwn(entry ?? {}, 'deferLoading'),
+              clientHasDeferLoading: Object.hasOwn(entry?.client ?? {}, 'deferLoading'),
+            }]
+          }))
+          report.listing = await manager.list()
+          report.publicNames = [...manager.publicNames.entries()].filter(([name]) => DEFER_TARGETS.has(name))
+          report.startErrors = manager.startErrors ?? []
+          report.completed = true
+          mkdirSync(join(IT_ROOT, 'ws'), { recursive: true })
+          writeFileSync(join(IT_ROOT, 'ws', 'mcp-gateway-report.json'), JSON.stringify(report, null, 2) + '\n')
           return report
         }
         if (args.op === 'report') {

@@ -1,0 +1,713 @@
+{
+  "scenario": "mcp-defer-loading",
+  "modes": {
+    "unsupported": {
+      "completed": true,
+      "op": "deferReport",
+      "mode": "unsupported",
+      "protocol": {
+        "requestHeaders": [
+          {
+            "seq": 25,
+            "tools": [
+              {
+                "name": "mcp__deferred__echo",
+                "description": "echo from deferred (managed-unsupported)",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "deferLoading": true
+              },
+              {
+                "name": "mcp__plain__echo",
+                "description": "echo from plain (managed-unsupported)",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "developerUpdates": [
+          {
+            "seq": 26,
+            "messageId": "f57bb170-3684-4fcc-9cf4-0ebb01edca3c",
+            "headerSeq": 25,
+            "additions": [
+              "mcp__deferred__echo",
+              "mcp__plain__echo"
+            ],
+            "removals": []
+          }
+        ]
+      },
+      "registry": {
+        "deferred": {
+          "deferLoading": true,
+          "hasDeferLoading": true,
+          "clientHasDeferLoading": false
+        },
+        "plain": {
+          "deferLoading": false,
+          "hasDeferLoading": false,
+          "clientHasDeferLoading": false
+        }
+      },
+      "listing": {
+        "managed": [
+          {
+            "identity": "deferred",
+            "label": "IT deferred server",
+            "serverName": "deferred",
+            "transport": "stdio",
+            "incarnation": "e97004a1-f731-416d-91af-3141b5920fb2",
+            "generation": 1,
+            "defaultEnabled": false,
+            "state": "mounted",
+            "statusSource": "registry-runtime-mount-readback",
+            "runtimePhase": "mounted",
+            "discovery": {
+              "toolCount": 1,
+              "toolNamesPreview": [
+                "mcp__deferred__echo"
+              ],
+              "truncated": false
+            },
+            "lastMount": {
+              "time": 1794078628747,
+              "status": "mounted",
+              "generation": 1,
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__deferred__echo"
+                ],
+                "truncated": false
+              }
+            },
+            "lastTest": null,
+            "startErrors": [],
+            "liveReconnect": "unknown",
+            "processExit": "unknown",
+            "stderr": "unknown",
+            "readOnly": false,
+            "config": {
+              "identity": "deferred",
+              "label": "IT deferred server",
+              "owner": {
+                "kind": "workspace",
+                "key": "ws"
+              },
+              "generation": 1,
+              "configuredAt": 1794078627939,
+              "deferLoading": true,
+              "transport": {
+                "kind": "stdio",
+                "ref": "mock://deferred"
+              },
+              "client": {
+                "transport": "stdio",
+                "serverName": "deferred",
+                "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+                "args": [
+                  "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                  "deferred"
+                ],
+                "env": {
+                  "WEIR_IT_MCP_LOG": "[redacted]",
+                  "WEIR_IT_MCP_ORIGIN": "[redacted]"
+                },
+                "reconnect": {
+                  "enabled": true
+                }
+              },
+              "incarnation": "e97004a1-f731-416d-91af-3141b5920fb2"
+            },
+            "fingerprint": "c889bfb870bc85823f8371773da3cab2b0c624e9203d3a37da08cee412f65d5a"
+          },
+          {
+            "identity": "plain",
+            "label": "IT plain server",
+            "serverName": "plain",
+            "transport": "stdio",
+            "incarnation": "dffd09e0-f02e-4c0e-b17d-3f8952182304",
+            "generation": 1,
+            "defaultEnabled": false,
+            "state": "mounted",
+            "statusSource": "registry-runtime-mount-readback",
+            "runtimePhase": "mounted",
+            "discovery": {
+              "toolCount": 1,
+              "toolNamesPreview": [
+                "mcp__plain__echo"
+              ],
+              "truncated": false
+            },
+            "lastMount": {
+              "time": 1794078628822,
+              "status": "mounted",
+              "generation": 1,
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__plain__echo"
+                ],
+                "truncated": false
+              }
+            },
+            "lastTest": null,
+            "startErrors": [],
+            "liveReconnect": "unknown",
+            "processExit": "unknown",
+            "stderr": "unknown",
+            "readOnly": false,
+            "config": {
+              "identity": "plain",
+              "label": "IT plain server",
+              "owner": {
+                "kind": "workspace",
+                "key": "ws"
+              },
+              "generation": 1,
+              "configuredAt": 1794078627951,
+              "transport": {
+                "kind": "stdio",
+                "ref": "mock://plain"
+              },
+              "client": {
+                "transport": "stdio",
+                "serverName": "plain",
+                "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+                "args": [
+                  "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                  "plain"
+                ],
+                "env": {
+                  "WEIR_IT_MCP_LOG": "[redacted]",
+                  "WEIR_IT_MCP_ORIGIN": "[redacted]"
+                },
+                "reconnect": {
+                  "enabled": true
+                }
+              },
+              "incarnation": "dffd09e0-f02e-4c0e-b17d-3f8952182304"
+            },
+            "fingerprint": "b684c50431cd6c67199626afb3c41e655f6bf4de4045656dfbbb79c1af5a81e8"
+          }
+        ],
+        "unmanaged": [
+          {
+            "serverName": "gamma",
+            "state": "unmanaged",
+            "readOnly": true
+          }
+        ],
+        "warnings": [],
+        "registryRevision": 2,
+        "capabilities": {
+          "credentials": false,
+          "ephemeral": true
+        }
+      },
+      "publicNames": [
+        [
+          "mcp__deferred__echo",
+          {
+            "identity": "deferred",
+            "generation": 1
+          }
+        ],
+        [
+          "mcp__plain__echo",
+          {
+            "identity": "plain",
+            "generation": 1
+          }
+        ]
+      ],
+      "startErrors": []
+    },
+    "addition-only": {
+      "completed": true,
+      "op": "deferReport",
+      "mode": "addition-only",
+      "protocol": {
+        "requestHeaders": [
+          {
+            "seq": 26,
+            "tools": [
+              {
+                "name": "mcp__deferred__echo",
+                "description": "echo from deferred (managed-addition-only)",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "deferLoading": true
+              },
+              {
+                "name": "mcp__plain__echo",
+                "description": "echo from plain (managed-addition-only)",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "developerUpdates": [
+          {
+            "seq": 27,
+            "messageId": "63ea156a-d755-438f-9545-5d6595737ce4",
+            "headerSeq": 26,
+            "additions": [
+              "mcp__deferred__echo",
+              "mcp__plain__echo"
+            ],
+            "removals": []
+          }
+        ]
+      },
+      "registry": {
+        "deferred": {
+          "deferLoading": true,
+          "hasDeferLoading": true,
+          "clientHasDeferLoading": false
+        },
+        "plain": {
+          "deferLoading": false,
+          "hasDeferLoading": false,
+          "clientHasDeferLoading": false
+        }
+      },
+      "listing": {
+        "managed": [
+          {
+            "identity": "deferred",
+            "label": "IT deferred server",
+            "serverName": "deferred",
+            "transport": "stdio",
+            "incarnation": "3f0755e0-a40d-4ab0-91ac-ad21bbfd7565",
+            "generation": 1,
+            "defaultEnabled": false,
+            "state": "mounted",
+            "statusSource": "registry-runtime-mount-readback",
+            "runtimePhase": "mounted",
+            "discovery": {
+              "toolCount": 1,
+              "toolNamesPreview": [
+                "mcp__deferred__echo"
+              ],
+              "truncated": false
+            },
+            "lastMount": {
+              "time": 1794078629766,
+              "status": "mounted",
+              "generation": 1,
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__deferred__echo"
+                ],
+                "truncated": false
+              }
+            },
+            "lastTest": null,
+            "startErrors": [],
+            "liveReconnect": "unknown",
+            "processExit": "unknown",
+            "stderr": "unknown",
+            "readOnly": false,
+            "config": {
+              "identity": "deferred",
+              "label": "IT deferred server",
+              "owner": {
+                "kind": "workspace",
+                "key": "ws"
+              },
+              "generation": 1,
+              "configuredAt": 1794078629028,
+              "deferLoading": true,
+              "transport": {
+                "kind": "stdio",
+                "ref": "mock://deferred"
+              },
+              "client": {
+                "transport": "stdio",
+                "serverName": "deferred",
+                "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+                "args": [
+                  "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                  "deferred"
+                ],
+                "env": {
+                  "WEIR_IT_MCP_LOG": "[redacted]",
+                  "WEIR_IT_MCP_ORIGIN": "[redacted]"
+                },
+                "reconnect": {
+                  "enabled": true
+                }
+              },
+              "incarnation": "3f0755e0-a40d-4ab0-91ac-ad21bbfd7565"
+            },
+            "fingerprint": "0aa8eb80a3838d29a23e7081993af830d0a73da70e372de088a34fd8f64e02a2"
+          },
+          {
+            "identity": "plain",
+            "label": "IT plain server",
+            "serverName": "plain",
+            "transport": "stdio",
+            "incarnation": "90b63885-4565-45df-b4db-10853e8c0d3b",
+            "generation": 1,
+            "defaultEnabled": false,
+            "state": "mounted",
+            "statusSource": "registry-runtime-mount-readback",
+            "runtimePhase": "mounted",
+            "discovery": {
+              "toolCount": 1,
+              "toolNamesPreview": [
+                "mcp__plain__echo"
+              ],
+              "truncated": false
+            },
+            "lastMount": {
+              "time": 1794078629840,
+              "status": "mounted",
+              "generation": 1,
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__plain__echo"
+                ],
+                "truncated": false
+              }
+            },
+            "lastTest": null,
+            "startErrors": [],
+            "liveReconnect": "unknown",
+            "processExit": "unknown",
+            "stderr": "unknown",
+            "readOnly": false,
+            "config": {
+              "identity": "plain",
+              "label": "IT plain server",
+              "owner": {
+                "kind": "workspace",
+                "key": "ws"
+              },
+              "generation": 1,
+              "configuredAt": 1794078629039,
+              "transport": {
+                "kind": "stdio",
+                "ref": "mock://plain"
+              },
+              "client": {
+                "transport": "stdio",
+                "serverName": "plain",
+                "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+                "args": [
+                  "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                  "plain"
+                ],
+                "env": {
+                  "WEIR_IT_MCP_LOG": "[redacted]",
+                  "WEIR_IT_MCP_ORIGIN": "[redacted]"
+                },
+                "reconnect": {
+                  "enabled": true
+                }
+              },
+              "incarnation": "90b63885-4565-45df-b4db-10853e8c0d3b"
+            },
+            "fingerprint": "aa7a79146b66bd7e6c20f5822dd15b14ae89834da4b1db9e875120b3165f3f87"
+          }
+        ],
+        "unmanaged": [
+          {
+            "serverName": "gamma",
+            "state": "unmanaged",
+            "readOnly": true
+          }
+        ],
+        "warnings": [],
+        "registryRevision": 2,
+        "capabilities": {
+          "credentials": false,
+          "ephemeral": true
+        }
+      },
+      "publicNames": [
+        [
+          "mcp__deferred__echo",
+          {
+            "identity": "deferred",
+            "generation": 1
+          }
+        ],
+        [
+          "mcp__plain__echo",
+          {
+            "identity": "plain",
+            "generation": 1
+          }
+        ]
+      ],
+      "startErrors": []
+    },
+    "in-history": {
+      "completed": true,
+      "op": "deferReport",
+      "mode": "in-history",
+      "protocol": {
+        "requestHeaders": [
+          {
+            "seq": 25,
+            "tools": [
+              {
+                "name": "mcp__deferred__echo",
+                "description": "echo from deferred (managed-in-history)",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "deferLoading": true
+              },
+              {
+                "name": "mcp__plain__echo",
+                "description": "echo from plain (managed-in-history)",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "developerUpdates": [
+          {
+            "seq": 26,
+            "messageId": "622ef3ce-ae57-4a4f-bda7-a51f87e5df1a",
+            "headerSeq": 25,
+            "additions": [
+              "mcp__deferred__echo",
+              "mcp__plain__echo"
+            ],
+            "removals": []
+          }
+        ]
+      },
+      "registry": {
+        "deferred": {
+          "deferLoading": true,
+          "hasDeferLoading": true,
+          "clientHasDeferLoading": false
+        },
+        "plain": {
+          "deferLoading": false,
+          "hasDeferLoading": false,
+          "clientHasDeferLoading": false
+        }
+      },
+      "listing": {
+        "managed": [
+          {
+            "identity": "deferred",
+            "label": "IT deferred server",
+            "serverName": "deferred",
+            "transport": "stdio",
+            "incarnation": "a95bfc05-3cce-4d01-a3b9-90c69f9759e3",
+            "generation": 1,
+            "defaultEnabled": false,
+            "state": "mounted",
+            "statusSource": "registry-runtime-mount-readback",
+            "runtimePhase": "mounted",
+            "discovery": {
+              "toolCount": 1,
+              "toolNamesPreview": [
+                "mcp__deferred__echo"
+              ],
+              "truncated": false
+            },
+            "lastMount": {
+              "time": 1794078630771,
+              "status": "mounted",
+              "generation": 1,
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__deferred__echo"
+                ],
+                "truncated": false
+              }
+            },
+            "lastTest": null,
+            "startErrors": [],
+            "liveReconnect": "unknown",
+            "processExit": "unknown",
+            "stderr": "unknown",
+            "readOnly": false,
+            "config": {
+              "identity": "deferred",
+              "label": "IT deferred server",
+              "owner": {
+                "kind": "workspace",
+                "key": "ws"
+              },
+              "generation": 1,
+              "configuredAt": 1794078630035,
+              "deferLoading": true,
+              "transport": {
+                "kind": "stdio",
+                "ref": "mock://deferred"
+              },
+              "client": {
+                "transport": "stdio",
+                "serverName": "deferred",
+                "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+                "args": [
+                  "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                  "deferred"
+                ],
+                "env": {
+                  "WEIR_IT_MCP_LOG": "[redacted]",
+                  "WEIR_IT_MCP_ORIGIN": "[redacted]"
+                },
+                "reconnect": {
+                  "enabled": true
+                }
+              },
+              "incarnation": "a95bfc05-3cce-4d01-a3b9-90c69f9759e3"
+            },
+            "fingerprint": "9b10b2b90999456898445a2bd195eae33ede6fed2caeacf29c613410d04ec807"
+          },
+          {
+            "identity": "plain",
+            "label": "IT plain server",
+            "serverName": "plain",
+            "transport": "stdio",
+            "incarnation": "608fa927-e2de-4661-a3ff-d314894e83e2",
+            "generation": 1,
+            "defaultEnabled": false,
+            "state": "mounted",
+            "statusSource": "registry-runtime-mount-readback",
+            "runtimePhase": "mounted",
+            "discovery": {
+              "toolCount": 1,
+              "toolNamesPreview": [
+                "mcp__plain__echo"
+              ],
+              "truncated": false
+            },
+            "lastMount": {
+              "time": 1794078630853,
+              "status": "mounted",
+              "generation": 1,
+              "discovery": {
+                "toolCount": 1,
+                "toolNamesPreview": [
+                  "mcp__plain__echo"
+                ],
+                "truncated": false
+              }
+            },
+            "lastTest": null,
+            "startErrors": [],
+            "liveReconnect": "unknown",
+            "processExit": "unknown",
+            "stderr": "unknown",
+            "readOnly": false,
+            "config": {
+              "identity": "plain",
+              "label": "IT plain server",
+              "owner": {
+                "kind": "workspace",
+                "key": "ws"
+              },
+              "generation": 1,
+              "configuredAt": 1794078630046,
+              "transport": {
+                "kind": "stdio",
+                "ref": "mock://plain"
+              },
+              "client": {
+                "transport": "stdio",
+                "serverName": "plain",
+                "command": "/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node",
+                "args": [
+                  "/Users/young/Documents/Orrery/.weir/worktrees/deferred-mcp-runtime-qa-275/plugins/weir-test-harness/src/mock-mcp-server.mjs",
+                  "plain"
+                ],
+                "env": {
+                  "WEIR_IT_MCP_LOG": "[redacted]",
+                  "WEIR_IT_MCP_ORIGIN": "[redacted]"
+                },
+                "reconnect": {
+                  "enabled": true
+                }
+              },
+              "incarnation": "608fa927-e2de-4661-a3ff-d314894e83e2"
+            },
+            "fingerprint": "50d2b031109402610359331ea067e07e7eedc49d365ca0a14da563940ff7dc9c"
+          }
+        ],
+        "unmanaged": [
+          {
+            "serverName": "gamma",
+            "state": "unmanaged",
+            "readOnly": true
+          }
+        ],
+        "warnings": [],
+        "registryRevision": 2,
+        "capabilities": {
+          "credentials": false,
+          "ephemeral": true
+        }
+      },
+      "publicNames": [
+        [
+          "mcp__deferred__echo",
+          {
+            "identity": "deferred",
+            "generation": 1
+          }
+        ],
+        [
+          "mcp__plain__echo",
+          {
+            "identity": "plain",
+            "generation": 1
+          }
+        ]
+      ],
+      "startErrors": []
+    }
+  }
+}

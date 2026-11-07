@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { extract } from '../src/mock-kit.js'
-import { planRequest, streamScenario } from '../src/mock-llm.js'
+import { modelInfo, parseToolUpdate, planRequest, streamScenario } from '../src/mock-llm.js'
 import { SCENARIOS } from '../src/scenarios/index.js'
 
 // The pre-registry trace record carried these keys on every request (mock
@@ -219,6 +219,13 @@ const PRE_MIGRATION_KEYS = [
   'parallelFirstHandshake',
   'parallelSecondHandshake',
   'parallelOrderedResults',
+  // Deferred managed MCP provider projection and retained-history observations
+  'routeMode',
+  'deferredTool',
+  'plainTool',
+  'historyTools',
+  'historyAdditions',
+  'developerAdditions',
 ]
 
 // The one-shot child settlement scenario (and the edit-lock delegate scenarios
@@ -244,6 +251,7 @@ describe('extract', () => {
       system: 'the system prompt',
       sessionId: 'session-native-request',
       tools: [{ name: 'read', parameters: { type: 'object' } }, { name: 'bash' }],
+      toolHistory: { tools: [], updates: [{ messageId: 'update-1', additions: [] }] },
       messages: [
         { role: 'user', content: [{ type: 'text', text: 'hello' }] },
         { role: 'assistant', content: [{ type: 'text', text: 'working' }] },
@@ -256,6 +264,7 @@ describe('extract', () => {
     assert.deepEqual(obs.toolNames, ['read', 'bash'])
     assert.equal(obs.toolDefs, options.tools)
     assert.equal(obs.messages, options.messages)
+    assert.equal(obs.toolHistory, options.toolHistory)
     assert.ok(obs.transcript.includes('user:\nhello'))
     assert.ok(obs.transcript.includes('tool:\ntool output'))
     assert.equal(obs.lastUser, 'hello')
@@ -271,6 +280,7 @@ describe('extract', () => {
     assert.deepEqual(obs.toolNames, [])
     assert.deepEqual(obs.toolDefs, [])
     assert.deepEqual(obs.messages, [])
+    assert.equal(obs.toolHistory, null)
   })
 })
 
@@ -326,5 +336,22 @@ describe('schema gate', () => {
       },
       { message: `Invalid schema for function 'bad-tool': schema must be a JSON Schema of 'type: "object"'` },
     )
+  })
+})
+
+describe('toolUpdate capability opt-in', () => {
+  it('defaults to unsupported and accepts only the two exact DSH modes', () => {
+    assert.equal(parseToolUpdate(undefined), undefined)
+    for (const mode of ['addition-only', 'in-history']) assert.equal(parseToolUpdate(mode), mode)
+    for (const invalid of ['', 'unsupported', 'true', 'IN-HISTORY', ' addition-only', null, 1]) {
+      assert.throws(() => parseToolUpdate(invalid), /WEIR_IT_TOOL_UPDATE.*addition-only.*in-history/)
+    }
+  })
+
+  it('keeps the default model unsupported and projects an opted-in mode into resolved metadata', () => {
+    assert.equal(Object.hasOwn(modelInfo('mock', 'mock-1'), 'toolUpdate'), false)
+    for (const mode of ['addition-only', 'in-history']) {
+      assert.equal(modelInfo('mock', 'mock-1', mode).toolUpdate, mode)
+    }
   })
 })
