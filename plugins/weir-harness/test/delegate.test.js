@@ -223,6 +223,198 @@ describe('delegate tool', () => {
     }
   }
 
+  it('starts an ordinary foreground batch concurrently and renders results in input order', async () => {
+    const deps = fakeDeps()
+    const original = deps.subagents.startActivation
+    const pending = new Map()
+    const started = new Map()
+    for (const name of ['first', 'second', 'third']) {
+      let release
+      let announce
+      const result = new Promise((resolve) => { release = resolve })
+      started.set(name, new Promise((resolve) => { announce = resolve }))
+      pending.set(name, { release, announce, result })
+    }
+    deps.subagents.startActivation = async (spec) => {
+      const activation = await original(spec)
+      const gate = pending.get(spec.label)
+      gate.announce()
+      return { ...activation, result: gate.result }
+    }
+    const tool = createDelegateTool(deps)
+    const execution = tool.execute({
+      tasks: ['first', 'second', 'third'].map((name) => ({ category: 'quick', prompt: `TASK: ${name}`, name })),
+    }, fakeExec())
+    execution.catch(() => {})
+
+    await started.get('first')
+    await Promise.race([
+      Promise.all([...started.values()]),
+      new Promise((resolve) => setImmediate(resolve)),
+    ])
+    expect(deps.spawned.map((spec) => spec.label)).toEqual(['first', 'second', 'third'])
+
+    let settled = false
+    execution.then(() => { settled = true })
+    for (const [name, text] of [['third', 'third done'], ['second', 'second done']]) {
+      pending.get(name).release({ output: [{ type: 'text', text }], stopReason: 'completed' })
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+    pending.get('first').release({ output: [{ type: 'text', text: 'first done' }], stopReason: 'completed' })
+
+    const value = await execution
+    expect(value.results.map((result) => [result.label, result.text])).toEqual([
+      ['first', 'first done'],
+      ['second', 'second done'],
+      ['third', 'third done'],
+    ])
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered.indexOf('first done') < rendered.indexOf('second done')).toBe(true)
+    expect(rendered.indexOf('second done') < rendered.indexOf('third done')).toBe(true)
+  })
+
+  it('returns an item error for a failed batch spawn without losing sibling reports', async () => {
+    const deps = fakeDeps()
+    const original = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      if (spec.label === 'broken') throw new Error('spawn exploded')
+      return original(spec)
+    }
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      tasks: [
+        { category: 'quick', prompt: 'TASK: before', name: 'before' },
+        { category: 'quick', prompt: 'TASK: broken', name: 'broken' },
+        { category: 'quick', prompt: 'TASK: after', name: 'after' },
+      ],
+    }, fakeExec())
+
+    expect(value.background).toBe(false)
+    expect(value.results.map((result) => [result.label, result.status, result.text])).toEqual([
+      ['before', 'completed', 'done the thing'],
+      ['broken', 'error', 'spawn exploded'],
+      ['after', 'completed', 'done the thing'],
+    ])
+    expect('id' in value.results[1]).toBe(false)
+    expect('childId' in value.results[1]).toBe(false)
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered).toContain('## broken — error')
+    expect(rendered).toContain('spawn exploded')
+    expect(rendered.indexOf('## before')).toBeGreaterThanOrEqual(0)
+    expect(rendered.indexOf('## before') < rendered.indexOf('## broken')).toBe(true)
+    expect(rendered.indexOf('## broken') < rendered.indexOf('## after')).toBe(true)
+  })
+
+  it('uses a resolved target label for later failures and the request target when resolution itself fails', async () => {
+    const deps = fakeDeps({
+      resolveTarget: async (item) => {
+        if (item.category === 'missing') throw new Error('target unavailable')
+        return { persona: 'persona', label: `resolved-${item.category}` }
+      },
+    })
+    const original = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      if (spec.label === 'resolved-quick') throw new Error('post-resolution spawn failed')
+      return original(spec)
+    }
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      tasks: [
+        { category: 'quick', prompt: 'TASK: spawn failure' },
+        { category: 'missing', prompt: 'TASK: resolve failure' },
+        { category: 'deep', prompt: 'TASK: sibling' },
+      ],
+    }, fakeExec())
+
+    expect(value.results.map((result) => [result.label, result.status, result.text])).toEqual([
+      ['resolved-quick', 'error', 'post-resolution spawn failed'],
+      ['missing', 'error', 'target unavailable'],
+      ['resolved-deep', 'completed', 'done the thing'],
+    ])
+    expect(value.results.slice(0, 2).every((result) => !('id' in result) && !('childId' in result))).toBe(true)
+  })
+
+  it('shares caller cancellation across a batch and waits for every child to settle', async () => {
+    const controller = new AbortController()
+    const deps = fakeDeps()
+    const original = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      const activation = await original(spec)
+      return {
+        ...activation,
+        result: new Promise((resolve) => {
+          spec.signal.addEventListener('abort', () => resolve({
+            output: [{ type: 'text', text: `${spec.label} cancelled` }],
+            stopReason: 'aborted',
+          }), { once: true })
+        }),
+      }
+    }
+    const tool = createDelegateTool(deps)
+    const execution = tool.execute({
+      tasks: [
+        { category: 'quick', prompt: 'TASK: a', name: 'a' },
+        { category: 'quick', prompt: 'TASK: b', name: 'b' },
+      ],
+    }, { ...fakeExec(), signal: controller.signal })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(deps.spawned).toHaveLength(2)
+    expect(deps.spawned.every((spec) => spec.signal === controller.signal)).toBe(true)
+
+    controller.abort()
+    const value = await execution
+    expect(deps.children.map((child) => child.disposed)).toEqual([1, 1])
+    expect(value.results.map((result) => [result.label, result.status, result.text])).toEqual([
+      ['a', 'aborted', 'a cancelled'],
+      ['b', 'aborted', 'b cancelled'],
+    ])
+  })
+
+  it('keeps sibling reports when one batch child rejects during settlement', async () => {
+    const deps = fakeDeps()
+    const original = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      const activation = await original(spec)
+      if (spec.label === 'settle-fails') {
+        return { ...activation, result: Promise.reject(new Error('child execution failed')) }
+      }
+      return activation
+    }
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      tasks: [
+        { category: 'quick', prompt: 'TASK: before', name: 'before' },
+        { category: 'quick', prompt: 'TASK: settle', name: 'settle-fails' },
+        { category: 'quick', prompt: 'TASK: after', name: 'after' },
+      ],
+    }, fakeExec())
+
+    expect(value.results.map((result) => [result.label, result.status, result.text])).toEqual([
+      ['before', 'completed', 'done the thing'],
+      ['settle-fails', 'error', 'child execution failed'],
+      ['after', 'completed', 'done the thing'],
+    ])
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered).toContain('## settle-fails — error')
+    expect(rendered).toContain('child execution failed')
+    expect(rendered).toContain('## after — completed')
+  })
+
+  it('preserves whole-call errors for single-prompt start and settlement failures', async () => {
+    const startDeps = fakeDeps()
+    startDeps.subagents.startActivation = async () => { throw new Error('single start failed') }
+    await expect(async () => createDelegateTool(startDeps).execute({ category: 'quick', prompt: 'TASK: x' }, fakeExec())).rejects.toThrow(/single start failed/)
+
+    const settleDeps = fakeDeps()
+    const original = settleDeps.subagents.startActivation
+    settleDeps.subagents.startActivation = async (spec) => ({
+      ...await original(spec),
+      result: Promise.reject(new Error('single settlement failed')),
+    })
+    await expect(async () => createDelegateTool(settleDeps).execute({ category: 'quick', prompt: 'TASK: x' }, fakeExec())).rejects.toThrow(/single settlement failed/)
+  })
+
   it('spawns a foreground child and returns its text', async () => {
     const deps = fakeDeps()
     const tool = createDelegateTool(deps)
@@ -422,26 +614,165 @@ describe('delegate continuable mode', () => {
     expect(rendered).toContain('settlement notice')
   })
 
-  it('runs a mixed batch: one-shot items wait for results, continuable items return childIds', async () => {
+  it('starts mixed batches concurrently and orders both result projections by input', async () => {
     const deps = fakeDeps()
+    const original = deps.subagents.startActivation
+    const gates = new Map()
+    for (const name of ['one-a', 'cont-a', 'one-b', 'cont-b']) {
+      let release
+      let announce
+      const gate = new Promise((resolve) => { release = resolve })
+      const started = new Promise((resolve) => { announce = resolve })
+      gates.set(name, { release, announce, gate, started })
+    }
+    deps.subagents.startActivation = async (spec) => {
+      const activation = await original(spec)
+      const gate = gates.get(spec.label)
+      gate.announce()
+      if (spec.delivery === 'caller') return { ...activation, result: gate.gate }
+      await gate.gate
+      return activation
+    }
     const tool = createDelegateTool(deps)
-    const value = await tool.execute({
-      mode: 'one-shot',
+    const execution = tool.execute({
       tasks: [
-        { category: 'quick', prompt: 'TASK: a' },
-        { category: 'deep', prompt: 'TASK: b', mode: 'continuable', name: 'beta' },
+        { category: 'quick', prompt: 'TASK: one a', name: 'one-a' },
+        { category: 'deep', prompt: 'TASK: cont a', name: 'cont-a', mode: 'continuable' },
+        { category: 'quick', prompt: 'TASK: one b', name: 'one-b' },
+        { category: 'deep', prompt: 'TASK: cont b', name: 'cont-b', mode: 'continuable' },
       ],
     }, fakeExec())
-    expect(value.continuable).toBe(true)
-    // The one-shot item reserved child-c1, so the continuable item got child-c2.
-    expect(value.children).toEqual([{ childId: 'child-c2', label: 'beta', name: 'beta' }])
-    expect(value.results).toHaveLength(1)
-    expect(value.results[0].text).toBe('done the thing')
-    expect(deps.spawned).toHaveLength(1)
-    expect(deps.continued).toHaveLength(1)
+
+    await gates.get('one-a').started
+    await Promise.race([
+      Promise.all([...gates.values()].map((gate) => gate.started)),
+      new Promise((resolve) => setImmediate(resolve)),
+    ])
+    expect([...gates.keys()].filter((name) => deps.spawned.some((spec) => spec.label === name) || deps.continued.some((spec) => spec.label === name))).toEqual(['one-a', 'cont-a', 'one-b', 'cont-b'])
+
+    let settled = false
+    execution.then(() => { settled = true })
+    gates.get('cont-b').release()
+    gates.get('cont-a').release()
+    gates.get('one-b').release({ output: [{ type: 'text', text: 'one b done' }], stopReason: 'completed' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+    gates.get('one-a').release({ output: [{ type: 'text', text: 'one a done' }], stopReason: 'completed' })
+    const value = await execution
+
+    const contA = deps.continued.find((spec) => spec.label === 'cont-a').childId
+    const contB = deps.continued.find((spec) => spec.label === 'cont-b').childId
+    expect(value.children).toEqual([
+      { childId: contA, label: 'cont-a', name: 'cont-a' },
+      { childId: contB, label: 'cont-b', name: 'cont-b' },
+    ])
+    expect(value.results.map((result) => [result.label, result.text])).toEqual([
+      ['one-a', 'one a done'],
+      ['one-b', 'one b done'],
+    ])
     const rendered = tool.output.render({}, value)[0].text
-    expect(rendered).toContain('child-c2')
+    expect(rendered.indexOf(contA) < rendered.indexOf(contB)).toBe(true)
+    expect(rendered.indexOf('one a done') < rendered.indexOf('one b done')).toBe(true)
+  })
+
+  it('keeps genuine residual child ids but never invents one for failed mixed-batch starts', async () => {
+    const boom = new Error('guard exploded')
+    const deps = fakeDeps({
+      resolveTarget: async (item) => ({ persona: 'persona', label: item.name, readOnly: item.name === 'residual' }),
+      robash: () => ({ enabled: true, lists: { bash: { allow: ['ls'], gitAllow: [], deny: [] }, pwsh: { allow: [], gitAllow: [], deny: [] } } }),
+    })
+    const originalStart = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      if (spec.label === 'unpublished') throw new Error('spawn failed before publication')
+      return originalStart(spec)
+    }
+    const getAgent = deps.agents.get
+    deps.agents.get = (id) => {
+      const agent = getAgent(id)
+      if (deps.continued.some((spec) => spec.childId === id && spec.label === 'residual')) {
+        agent.ctx.tools.guard = () => { throw boom }
+      }
+      return agent
+    }
+    const interruptAttempts = []
+    deps.subagents.interrupt = (id) => {
+      interruptAttempts.push(id)
+      throw new Error('interrupt failed')
+    }
+
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      tasks: [
+        { category: 'quick', prompt: 'TASK: sibling', name: 'sibling' },
+        { category: 'quick', prompt: 'TASK: unpublished', name: 'unpublished', mode: 'continuable' },
+        { category: 'quick', prompt: 'TASK: residual', name: 'residual', mode: 'continuable' },
+        { category: 'quick', prompt: 'TASK: healthy', name: 'healthy', mode: 'continuable' },
+      ],
+    }, fakeExec())
+
+    expect(value.results.map((result) => [result.label, result.status])).toEqual([['sibling', 'completed']])
+    expect(value.children.map((child) => [child.label, child.status ?? 'started'])).toEqual([
+      ['unpublished', 'error'],
+      ['residual', 'error'],
+      ['healthy', 'started'],
+    ])
+    expect('childId' in value.children[0]).toBe(false)
+    const residualId = deps.continued.find((spec) => spec.label === 'residual').childId
+    const healthyId = deps.continued.find((spec) => spec.label === 'healthy').childId
+    expect(value.children[1].childId).toBe(residualId)
+    expect(value.children[2].childId).toBe(healthyId)
+    expect(interruptAttempts).toEqual([residualId])
+
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered).not.toContain('(undefined)')
+    expect(rendered).toContain('spawn failed before publication')
+    expect(rendered).toContain(residualId)
+    expect(rendered).toMatch(/possibly residual.*needs cleanup/)
+    expect(rendered).toContain(healthyId)
     expect(rendered).toContain('done the thing')
+  })
+
+  it('keeps resolve and capacity failures item-local without child ids or sibling cancellation', async () => {
+    const deps = fakeDeps({
+      resolveTarget: async (item) => {
+        if (item.name === 'resolve-cont') throw new Error('continuable target unavailable')
+        return { persona: 'persona', label: item.name }
+      },
+    })
+    const original = deps.subagents.startActivation
+    deps.subagents.startActivation = async (spec) => {
+      if (spec.label === 'capacity-cont') {
+        const error = new Error('subagent limit reached (active child limit: 8)')
+        error.code = 'ACTIVATION_LIMIT_REACHED'
+        throw error
+      }
+      return original(spec)
+    }
+    const tool = createDelegateTool(deps)
+    const value = await tool.execute({
+      tasks: [
+        { category: 'quick', prompt: 'TASK: resolve', name: 'resolve-cont', mode: 'continuable' },
+        { category: 'quick', prompt: 'TASK: sibling', name: 'one-shot-ok' },
+        { category: 'quick', prompt: 'TASK: capacity', name: 'capacity-cont', mode: 'continuable' },
+        { category: 'quick', prompt: 'TASK: healthy', name: 'healthy-cont', mode: 'continuable' },
+      ],
+    }, fakeExec())
+
+    expect(value.children.map((child) => [child.label, child.status ?? 'started'])).toEqual([
+      ['resolve-cont', 'error'],
+      ['capacity-cont', 'error'],
+      ['healthy-cont', 'started'],
+    ])
+    expect(value.children[0].text).toBe('continuable target unavailable')
+    expect(value.children[1].text).toContain('continuable capacity exhausted')
+    expect(value.children.slice(0, 2).every((child) => !('childId' in child))).toBe(true)
+    expect(value.children[2].childId).toBe(deps.continued[0].childId)
+    expect(value.results.map((result) => [result.label, result.status])).toEqual([['one-shot-ok', 'completed']])
+    expect(deps.interrupted).toHaveLength(0)
+    const rendered = tool.output.render({}, value)[0].text
+    expect(rendered).toContain('continuable target unavailable')
+    expect(rendered).toContain('continuable capacity exhausted')
+    expect(rendered).not.toContain('(undefined)')
   })
 
   it('lets an item-level mode override the call level in both directions (levels need not agree)', async () => {
@@ -511,6 +842,11 @@ describe('delegate continuable mode', () => {
     expect(DELEGATE_DESCRIPTION).toContain("'continuable'")
     expect(DELEGATE_DESCRIPTION).toContain('mode never combines with group')
     expect(DELEGATE_DESCRIPTION).toContain('send_message')
+    expect(DELEGATE_DESCRIPTION).toContain('start items concurrently')
+    expect(DELEGATE_DESCRIPTION).toContain("status: 'error'")
+    expect(DELEGATE_DESCRIPTION).toContain('Single-prompt failures still reject the whole call')
+    expect(DELEGATE_DESCRIPTION).toContain('Whole-batch preflight failures still spawn nothing')
+    expect(DELEGATE_DESCRIPTION).toContain('possibly residual and needs cleanup')
     // Lane-bound continuables run supervised (implicit group), never the old settle-once mutex.
     expect(DELEGATE_DESCRIPTION).toContain("implicit group 'lane:<laneId>'")
     expect(DELEGATE_DESCRIPTION).not.toContain('settles exactly once')

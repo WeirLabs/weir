@@ -62,6 +62,7 @@ describe('weir-core', () => {
       'one-shot',
       "mode: 'continuable'",
       'only possible with continuable children',
+      'run items concurrently', 'does not cancel siblings',
       'end the turn',
       'job_output',
       'Evidence closes work',

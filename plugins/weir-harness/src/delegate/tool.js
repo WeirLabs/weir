@@ -26,7 +26,7 @@ Mode: 'one-shot' (the default) waits for each child's result and returns it — 
 
 Supervised children report a binary terminal status (completed or blocked). A member's terminal report reaches you in its settlement notice; resume a blocked member with resume_agent (attach unblocking context) or terminate it with terminate_agent. Terminate a blocked child and delegate a fresh one when the task's direction changed substantially.
 
-Batch form: tasks (1-16 items) shares top-level options; an item-level run_in_background must agree with the top level, while an item-level mode overrides the top level and the two need not agree.
+Batch form: tasks (1-16 items) shares top-level options; an item-level run_in_background must agree with the top level, while an item-level mode overrides the top level and the two need not agree. Ordinary foreground batches (including mixed one-shot/continuable batches) start items concurrently. One-shot results and continuable children each retain input-relative order. Item resolution/start failures and one-shot settlement failures return status: 'error' entries without cancelling siblings; inspect every item. A child id appears only if a child was actually published; a failed continuable item with an id is possibly residual and needs cleanup. Single-prompt failures still reject the whole call. Whole-batch preflight failures still spawn nothing. Supervised groups, background jobs, and lane-bound implicit supervised groups keep their existing scheduling and settlement rules.
 
 Every child prompt MUST be self-contained and start with TASK: <imperative>, then name DELIVERABLE, SCOPE, VERIFY, and STOP WHEN. Prompts are executable assignments, not context handoffs: include only what the child needs.
 
@@ -159,12 +159,28 @@ export function createDelegateTool(deps) {
         }
         return { background: true, jobs: outcomes }
       }
-      const results = []
-      const children = []
-      for (const item of items) {
-        if (item.mode === 'continuable') children.push(await spawnContinuable(item, args, deps, exec))
-        else results.push(await spawnForeground(item, args, deps, exec))
+      // Single-prompt calls keep their whole-call exception contract. Batch
+      // items settle independently so one failure cannot erase sibling work.
+      if (args.tasks === undefined) {
+        const item = items[0]
+        if (item.mode === 'continuable') return { continuable: true, children: [await spawnContinuable(item, args, deps, exec)] }
+        return { background: false, results: [await spawnForeground(item, args, deps, exec)] }
       }
+      const foregroundOutcomes = await Promise.all(items.map(async (item) => {
+        const continuable = item.mode === 'continuable'
+        try {
+          return {
+            continuable,
+            value: continuable
+              ? await spawnContinuable(item, args, deps, exec)
+              : await spawnForeground(item, args, deps, exec),
+          }
+        } catch (error) {
+          return { continuable, value: itemError(item, error, continuable) }
+        }
+      }))
+      const results = foregroundOutcomes.filter((outcome) => !outcome.continuable).map((outcome) => outcome.value)
+      const children = foregroundOutcomes.filter((outcome) => outcome.continuable).map((outcome) => outcome.value)
       if (children.length > 0) {
         return { continuable: true, children, ...(results.length > 0 ? { background: false, results } : {}) }
       }
@@ -206,6 +222,29 @@ function stripUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined))
 }
 
+/** Convert one rejected batch item into its ordered, model-readable outcome. */
+function itemError(item, error, continuable) {
+  const childId = typeof error?.childId === 'string' ? error.childId : null
+  return {
+    label: error?.delegateLabel || item.name || item.task_summary || item.category || item.agent,
+    status: 'error',
+    text: String(error?.message ?? error),
+    ...(childId ? continuable ? { childId } : { id: childId } : {}),
+  }
+}
+
+/** Preserve the best resolved label without replacing the original error. */
+function withDelegateLabel(error, label) {
+  if (error && typeof error === 'object') {
+    try {
+      if (typeof error.delegateLabel !== 'string') error.delegateLabel = label
+    } catch {
+      // Frozen host errors still propagate; the scheduler falls back to the request.
+    }
+  }
+  return error
+}
+
 /** Build the child's prompt blocks: skills first, then the assignment. */
 async function buildPrompt(item, deps) {
   const blocks = []
@@ -219,6 +258,14 @@ async function buildPrompt(item, deps) {
 
 async function spawnForeground(item, args, deps, exec) {
   const target = await deps.resolveTarget(item, parentRouteOf(exec))
+  try {
+    return await spawnForegroundResolved(item, args, deps, exec, target)
+  } catch (error) {
+    throw withDelegateLabel(error, target.label)
+  }
+}
+
+async function spawnForegroundResolved(item, args, deps, exec, target) {
   const binding = await laneBindingFor(target, args, deps, exec)
   const prompt = withLaneContract(await buildPrompt(item, deps), binding)
   const started = await spawnBound(binding, () => spawnGuardedChild({ target, prompt, parent: exec.agent, signal: exec.signal, label: laneLabel(target.label, binding), laneGuard: laneGuardOf(binding, deps, exec) }, oneShotLane(), deps), (child) => child.id)
@@ -244,6 +291,14 @@ async function spawnForeground(item, args, deps, exec) {
  */
 async function spawnContinuable(item, args, deps, exec) {
   const target = await deps.resolveTarget(item, parentRouteOf(exec))
+  try {
+    return await spawnContinuableResolved(item, deps, exec, target)
+  } catch (error) {
+    throw withDelegateLabel(error, target.label)
+  }
+}
+
+async function spawnContinuableResolved(item, deps, exec, target) {
   const prompt = await buildPrompt(item, deps)
   try {
     const started = await spawnGuardedChild({ target, prompt, parent: exec.agent, signal: exec.signal }, continuableLane(), deps)
@@ -557,8 +612,20 @@ function renderDelegateResult(value) {
     return `Supervised group "${value.group}" started with ${value.members.length} member(s); they now run as supervised continuable children:\n${lines.join('\n')}\n\nEach member will report a terminal status (completed/blocked); each member's report reaches you in that member's settlement notice. A one-line group-settled signal arrives when every member settles.`
   }
   if (value.continuable) {
-    const lines = value.children.map((child) => `- ${child.name ? `${child.name} — ` : ''}${child.label} (${child.childId})`)
-    const text = `Started ${value.children.length} continuable child(ren); each result arrives in a built-in settlement notice (no jobs wrapper — the notice IS the report channel):\n${lines.join('\n')}\n\nFollow up any of them with send_message({ agent_id, message }) — mid-course correction or post-settlement questions; interrupt_agent interrupts the current turn without destroying the child.`
+    const lines = value.children.map((child) => {
+      const label = `${child.name ? `${child.name} — ` : ''}${child.label}`
+      if (child.status === 'error') {
+        const residual = typeof child.childId === 'string'
+          ? ` (childId: ${child.childId}; published child is possibly residual and needs cleanup)`
+          : ''
+        return `- ${label} — error${residual}: ${child.text}`
+      }
+      return `- ${label} (${child.childId})`
+    })
+    const failed = value.children.filter((child) => child.status === 'error').length
+    const text = failed > 0
+      ? `Continuable batch: ${value.children.length - failed} child(ren) started and ${failed} item(s) failed; each started child's result arrives in a built-in settlement notice (no jobs wrapper):\n${lines.join('\n')}\n\nInspect every item above. Follow up started children with send_message({ agent_id, message }); interrupt_agent interrupts the current turn without destroying the child.`
+      : `Started ${value.children.length} continuable child(ren); each result arrives in a built-in settlement notice (no jobs wrapper — the notice IS the report channel):\n${lines.join('\n')}\n\nFollow up any of them with send_message({ agent_id, message }) — mid-course correction or post-settlement questions; interrupt_agent interrupts the current turn without destroying the child.`
     // A mixed batch also has one-shot results, rendered after the childId list.
     if (!value.results) return text
     return `${text}\n\n---\n\n${renderForegroundResults(value.results)}`

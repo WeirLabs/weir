@@ -69,6 +69,8 @@ EXPECTED_ORDER.push('filelease-lineage', 'filelease-wake', 'filelease-holder-dea
 EXPECTED_ORDER.push('filelease-release-watch', 'filelease-watch-reset')
 // Live custom scan-path registry / selection / denied-load proof.
 EXPECTED_ORDER.push('custom-skill-paths')
+// Real two-child foreground overlap proven by a causal filesystem handshake.
+EXPECTED_ORDER.push('delegate-parallel')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {

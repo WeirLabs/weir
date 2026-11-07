@@ -62,6 +62,35 @@ describe('delegate brain', () => {
   })
 })
 
+describe('delegate-parallel brain', () => {
+  it('starts an ordinary two-item foreground batch', () => {
+    const [block] = blockEnds(run('delegate-parallel', userOptions('delegate-parallel-probe')))
+    assert.equal(block.name, 'delegate')
+    const args = JSON.parse(block.arguments)
+    assert.equal(args.tasks.length, 2)
+    assert.equal(args.group, undefined)
+    assert.equal(args.run_in_background, undefined)
+  })
+
+  it('makes both children publish then wait for their peer', () => {
+    const first = blockEnds(run('delegate-parallel', userOptions('PARALLEL_CHILD_A')))[0]
+    const second = blockEnds(run('delegate-parallel', userOptions('PARALLEL_CHILD_B')))[0]
+    assert.equal(first.name, SHELL)
+    assert.equal(second.name, SHELL)
+    assert.match(JSON.parse(first.arguments).command, /delegate-parallel-second\.ready/)
+    assert.match(JSON.parse(second.arguments).command, /delegate-parallel-first\.ready/)
+  })
+
+  it('does not mistake a bounded handshake timeout for successful overlap', () => {
+    const options = userOptions('PARALLEL_CHILD_A\nPARALLEL_OVERLAP_OK_TIMEOUT')
+    const [block] = blockEnds(run('delegate-parallel', options))
+    assert.equal(block.text, 'PARALLEL_FIRST_TIMEOUT')
+    const secondOptions = userOptions('PARALLEL_CHILD_B\nPARALLEL_OVERLAP_OK_SECOND_TIMEOUT')
+    const [second] = blockEnds(run('delegate-parallel', secondOptions))
+    assert.equal(second.text, 'PARALLEL_SECOND_TIMEOUT')
+  })
+})
+
 describe('robash brain', () => {
   it('child brain leads with the echo-and-wait shellCall', () => {
     const chunks = run('robash', userOptions('ROBASH_CHILD\nTASK: prove bash works'))
