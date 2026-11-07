@@ -29,6 +29,63 @@ function fixture(audit, root) {
   return { ctx, listeners, records, dispose, emit }
 }
 
+function automaticDisposalFixture() {
+  const listeners = new Map()
+  const records = []
+  const audit = (session, type, data) => records.push({ session, type, data })
+  const createContext = (root) => {
+    const owned = new Set()
+    const ctx = {
+      ...(root ? { root } : {}),
+      on(name, listener) {
+        listeners.set(name, [...(listeners.get(name) ?? []), listener])
+        let active = true
+        const off = () => {
+          if (!active) return
+          active = false
+          owned.delete(off)
+          listeners.set(name, (listeners.get(name) ?? []).filter(item => item !== listener))
+        }
+        owned.add(off)
+        return off
+      },
+    }
+    return {
+      ctx,
+      disposeListeners() {
+        for (const off of [...owned]) off()
+      },
+    }
+  }
+  const root = createContext()
+  const lease = scope => mountToolUsageObservability({ ctx: scope.ctx, audit })
+  const mount = scope => {
+    const disposeLease = lease(scope)
+    let active = true
+    return () => {
+      if (!active) return
+      active = false
+      scope.disposeListeners()
+      disposeLease()
+    }
+  }
+  const emitEvent = seq => {
+    const session = { id: `automatic-${seq}`, header: {} }
+    for (const listener of [...(listeners.get('session/event') ?? [])]) listener(session, {
+      type: 'request/header', seq,
+      data: { header: { config: {}, tools: [] } },
+    })
+    for (const listener of [...(listeners.get('tools/result') ?? [])]) listener({
+      name: 'echo', callId: `call-${seq}`, agent: { id: session.id, session },
+    }, { isError: false })
+  }
+  const counts = seq => ({
+    requests: records.filter(record => record.type === `${AUDIT_TYPES.toolUsage}/request` && record.data.seq === seq).length,
+    results: records.filter(record => record.type === `${AUDIT_TYPES.toolUsage}/result` && record.data.callId === `call-${seq}`).length,
+  })
+  return { records, listeners, root, createContext, lease, mount, emitEvent, counts }
+}
+
 test('request headers audit mixed tool counts and serialized UTF-8 bytes without schema content', () => {
   const { records, emit } = fixture()
   const immediateText = '{"name":"echo","description":"immediate-description-secret","parameters":{"type":"object"}}'
@@ -123,53 +180,73 @@ test('audit failures and disposal never alter tool outcomes or continue observat
 })
 
 for (const order of [[0, 1], [1, 0]]) {
-  test(`dual-mounted observers emit one request and result fact per event through disposal order ${order.join('-')}`, () => {
-    const root = {}
-    const first = fixture(undefined, root)
-    const secondContext = { root, on: first.ctx.on }
-    const disposers = [
-      first.dispose,
-      mountToolUsageObservability({
-        ctx: secondContext,
-        audit: (session, type, data) => first.records.push({ session, type, data }),
-      }),
-    ]
-    const emitEvent = seq => {
-      const session = { id: `dual-${seq}`, header: {} }
-      first.emit('session/event', session, {
-        type: 'request/header', seq,
-        data: { header: { config: {}, tools: [] } },
-      })
-      first.emit('tools/result', {
-        name: 'echo', callId: `call-${seq}`, agent: { id: session.id, session },
-      }, { isError: false })
-    }
-    const counts = seq => ({
-      requests: first.records.filter(record => record.type === `${AUDIT_TYPES.toolUsage}/request` && record.data.seq === seq).length,
-      results: first.records.filter(record => record.type === `${AUDIT_TYPES.toolUsage}/result` && record.data.callId === `call-${seq}`).length,
-    })
+  test(`automatic child-fiber disposal preserves the surviving lease through unmount order ${order.join('-')}`, () => {
+    const fixture = automaticDisposalFixture()
+    const scopes = [fixture.createContext(fixture.root.ctx), fixture.createContext(fixture.root.ctx)]
+    const unmounts = scopes.map(scope => fixture.mount(scope))
 
-    emitEvent(1)
-    assert.equal(first.records.length, 2)
-    assert.deepEqual(counts(1), { requests: 1, results: 1 })
-    assert.equal(first.listeners.get('session/event').length, 1)
-    assert.equal(first.listeners.get('tools/result').length, 1)
+    fixture.emitEvent(1)
+    assert.deepEqual(fixture.counts(1), { requests: 1, results: 1 })
+    assert.equal(fixture.listeners.get('session/event').length, 1)
+    assert.equal(fixture.listeners.get('tools/result').length, 1)
+
+    unmounts[order[0]]()
+    fixture.emitEvent(2)
+    assert.deepEqual(fixture.counts(2), { requests: 1, results: 1 })
+    assert.equal(fixture.records.length, 4)
+    assert.equal(fixture.listeners.get('session/event').length, 1)
+    assert.equal(fixture.listeners.get('tools/result').length, 1)
+
+    unmounts[order[1]]()
+    unmounts[order[1]]()
+    fixture.emitEvent(3)
+    assert.deepEqual(fixture.counts(3), { requests: 0, results: 0 })
+    assert.equal(fixture.records.length, 4)
+    assert.equal(fixture.listeners.get('session/event').length, 0)
+    assert.equal(fixture.listeners.get('tools/result').length, 0)
+
+    const remount = fixture.mount(fixture.createContext(fixture.root.ctx))
+    fixture.emitEvent(4)
+    assert.deepEqual(fixture.counts(4), { requests: 1, results: 1 })
+    assert.equal(fixture.records.length, 6)
+    remount()
+    remount()
+    fixture.emitEvent(5)
+    assert.deepEqual(fixture.counts(5), { requests: 0, results: 0 })
+    assert.equal(fixture.records.length, 6)
+    assert.equal(fixture.listeners.get('session/event').length, 0)
+    assert.equal(fixture.listeners.get('tools/result').length, 0)
+    assert.deepEqual(fixture.records.map(record => record.data.seq ?? record.data.callId), [1, 'call-1', 2, 'call-2', 4, 'call-4'])
+  })
+}
+
+for (const order of [[0, 1], [1, 0]]) {
+  test(`dual-mounted observers emit one request and result fact per event through disposal order ${order.join('-')}`, () => {
+    const fixture = automaticDisposalFixture()
+    const scopes = [fixture.createContext(fixture.root.ctx), fixture.createContext(fixture.root.ctx)]
+    const disposers = scopes.map(scope => fixture.lease(scope))
+
+    fixture.emitEvent(1)
+    assert.equal(fixture.records.length, 2)
+    assert.deepEqual(fixture.counts(1), { requests: 1, results: 1 })
+    assert.equal(fixture.listeners.get('session/event').length, 1)
+    assert.equal(fixture.listeners.get('tools/result').length, 1)
 
     disposers[order[0]]()
-    emitEvent(2)
-    assert.equal(first.records.length, 4)
-    assert.deepEqual(counts(2), { requests: 1, results: 1 })
-    assert.equal(first.listeners.get('session/event').length, 1)
-    assert.equal(first.listeners.get('tools/result').length, 1)
+    fixture.emitEvent(2)
+    assert.equal(fixture.records.length, 4)
+    assert.deepEqual(fixture.counts(2), { requests: 1, results: 1 })
+    assert.equal(fixture.listeners.get('session/event').length, 1)
+    assert.equal(fixture.listeners.get('tools/result').length, 1)
 
     disposers[order[1]]()
     disposers[order[1]]()
-    emitEvent(3)
-    assert.equal(first.records.length, 4)
-    assert.deepEqual(counts(3), { requests: 0, results: 0 })
-    assert.equal(first.listeners.get('session/event').length, 0)
-    assert.equal(first.listeners.get('tools/result').length, 0)
-    assert.deepEqual(first.records.map(record => record.data.seq ?? record.data.callId), [1, 'call-1', 2, 'call-2'])
+    fixture.emitEvent(3)
+    assert.equal(fixture.records.length, 4)
+    assert.deepEqual(fixture.counts(3), { requests: 0, results: 0 })
+    assert.equal(fixture.listeners.get('session/event').length, 0)
+    assert.equal(fixture.listeners.get('tools/result').length, 0)
+    assert.deepEqual(fixture.records.map(record => record.data.seq ?? record.data.callId), [1, 'call-1', 2, 'call-2'])
   })
 }
 

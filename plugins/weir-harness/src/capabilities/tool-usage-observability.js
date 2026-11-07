@@ -13,7 +13,7 @@ export function mountToolUsageObservability({ ctx, audit }) {
       if (!currentAudit) return
       try { currentAudit(session, `${AUDIT_TYPES.toolUsage}/${kind}`, data) } catch { /* audit never affects runtime behavior */ }
     }
-    const offRequest = ctx.on(COMMITTED_SESSION_EVENT, (session, event) => {
+    const offRequest = root.on(COMMITTED_SESSION_EVENT, (session, event) => {
       if (event?.type !== 'request/header') return
       try {
         const header = event.data?.header
@@ -43,7 +43,7 @@ export function mountToolUsageObservability({ ctx, audit }) {
         })
       } catch { /* malformed observations never affect the committed request */ }
     })
-    const offResult = ctx.on('tools/result', (exec, result) => {
+    const offResult = root.on('tools/result', (exec, result) => {
       if (typeof exec?.name !== 'string') return
       try {
         const agent = exec.agent
