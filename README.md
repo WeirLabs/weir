@@ -23,8 +23,8 @@
 ```mermaid
 flowchart LR
     U([你的需求]) --> O{{Orchestrator<br/>总指挥}}
-    O -->|简单任务| D[直接完成]
-    O -->|复杂任务| S[拆解并并行派发]
+    O -->|紧耦合、需要连续上下文| D[主循环直接完成]
+    O -->|独立且有并行/隔离收益| S[拆分并并行派发]
     S --> A1[快速问答]
     S --> A2[深度分析]
     S --> A3[架构咨询]
@@ -38,7 +38,8 @@ flowchart LR
 ## 亮点
 
 ### 指挥调度
-- **总指挥统筹**：简单的活直接干，复杂的活拆给子代理，能并行就并行，每个子任务都有交付标准和验收。
+- **总指挥统筹**：共享判断与上下文的紧耦合工作留在主循环；只有并行、上下文/权限隔离或独立验证有实际收益时才委派，每个子任务都有交付标准和验收。
+- **真正的批量并行**：独立子任务并发执行，结果仍按提交顺序逐项返回；单项失败不会抹掉其他任务的结果。→ [分类委派](docs/features/category-delegation.md)
 - **模型各司其职**：九种任务类别加三个只读研究代理，各自绑定模型链，「Weir 模型路由」设置页可视化配置、可单独停用。
 - **后台委派**：耗时任务后台运行，完成只推一条简短通知；支持任务分组、续聊式子任务，重启不丢。
 - **会话黑板**：子代理的发现写入共享黑板，同一会话重启或重装后仍保留，经你裁决后可晋升为跨会话文档。→ [会话黑板](docs/features/blackboard.md)
@@ -77,7 +78,7 @@ flowchart LR
 
 Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabilities 面板**统一管理；现成技能不够用时，可在 Skills 视图添加自己的技能扫描目录，新发现的技能仍需你勾选并应用后才会启用；能力集合可存为预设、日后改名或重新保存，也可导入导出。→ [会话能力管理器](docs/features/session-capability-manager.md)
 
-**MCP server 管理**：在 Capabilities 面板添加、编辑、测试、重启或删除 `stdio` / `streamable-http` server，支持粘贴 JSON、凭据引用、批量预览与真实错误诊断。安装、当前会话启用、新会话默认彼此独立；直接说「安装某个 MCP server」，主 Orchestrator 会生成计划并请你确认。→ [MCP server 管理](docs/features/mcp-server-management.md)
+**MCP server 管理**：在 Capabilities 面板添加、编辑、测试、重启或删除 `stdio` / `streamable-http` server，支持粘贴 JSON、凭据引用、批量预览与真实错误诊断。工具较多的受管 server 可在 Advanced 中显式开启 **Defer tool definitions**，让支持的模型按需加载完整定义；默认关闭，权限与调用约束不变。安装、当前会话启用、新会话默认彼此独立；直接说「安装某个 MCP server」，主 Orchestrator 会生成计划并请你确认。→ [MCP server 管理](docs/features/mcp-server-management.md)
 
 ## 安装
 
@@ -112,7 +113,7 @@ Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabi
 
 - **形态**：bundle 包 `plugins/weir-harness/`（发布到公共 npm registry，运行时零 npm 依赖），声明预设 `weir`。
 - **运行时**：DeepSeek Harness（Electron 宿主），插件仅通过 `ctx` 使用宿主服务，不静态引用宿主包。
-- **审计**：关键事件写入 `.weir/audit.jsonl`，不污染会话日志。
+- **审计**：关键事件以及脱敏的工具面计数/字节、调用结果写入本地 `.weir/audit.jsonl`，不污染会话日志，不上报外部遥测。→ [工具使用观测](docs/features/tool-usage-observability.md)
 - **测试**：单元测试（node:test）、静态检查（tsc checkJs）、基于 mock LLM 的集成测试（`plugins/weir-test-harness/`，仅限开发）。
 
 ```

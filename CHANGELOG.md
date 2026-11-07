@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **受管 MCP 工具定义按需加载**：每台 server 可在 Capabilities 的 Add/Edit → Advanced 中显式开启 `Defer tool definitions`（默认关闭），支持的模型路由按需取得完整定义，不支持的路由保留完整 active-schema 回退；配置沿用严格替换与现有 Select/Apply、admission、drain 和继承权限，内置工具与 unmanaged server 不变。详见 [MCP server 管理](docs/features/mcp-server-management.md)。
+- **本地工具使用观测**：请求工具数、deferred 数、序列化 UTF-8 字节及最终工具调用成败/稳定错误码写入冷读安全的本地审计；不记录 schema、参数、结果正文或秘密，不上报外部遥测，字节指标不代表精确 token 或实际节省。详见 [工具使用观测](docs/features/tool-usage-observability.md)。
+
+### Changed
+
+- **委派拓扑改为主循环优先**：共享判断、数据或上下文的紧耦合工作默认由主 Agent 直接执行；只有独立并行、新上下文容纳、工具/权限/指令隔离或独立黑盒验证具有实际收益时才委派。写面不相交仍只是并发安全前提，不再单独触发 fan-out；类别、模型路由、监督与续聊能力不变。详见 [Orchestrator 总指挥](docs/features/orchestrator-persona.md)。
+- **前台批量委派真正并行（批量行为变化）**：普通 one-shot 与混合批量项并发启动和执行，结果按输入顺序逐项返回；单项失败以 `status: 'error'` 保留在原位置，不再让整次调用丢失其他成功报告，也不会自动取消兄弟项。单 prompt 仍按整次错误抛出；后台 job、显式监督组和车道隐式监督组语义不变。详见 [分类委派](docs/features/category-delegation.md)。
+
 ## [2.1.4] - 2026-11-06
 
 > **DSH 兼容性边界（破坏性适配）**：Weir **2.1.4** 起需要 DSH **0.2.2 线**（`>=0.2.2-rc.1 <0.3.0`，`engines.dsh` 与 `peerDependencies` 双声明）。仍在 DSH 0.2.1 线的用户请留在 Weir **2.1.3**——它是该线的最后支持版本。逐版本支持范围见 [docs/compatibility.md](docs/compatibility.md)。
