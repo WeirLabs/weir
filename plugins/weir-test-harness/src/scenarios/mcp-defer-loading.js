@@ -185,11 +185,15 @@ function assert(run) {
 
     const sessionId = projected.sessionId
     const facts = audit.filter(entry => entry.session === sessionId && (entry.type === 'weir/tool-usage/request' || entry.type === 'weir/tool-usage/result'))
-    const requestFact = facts.find(entry => entry.type === 'weir/tool-usage/request' && entry.data?.seq === linkedHeader?.seq)
+    const requestFacts = facts.filter(entry => entry.type === 'weir/tool-usage/request' && entry.data?.seq === linkedHeader?.seq)
+    const requestFact = requestFacts[0]
+    run.check(`${mode}: local request audit has exactly one fact for the linked header`, requestFacts.length === 1, JSON.stringify(requestFacts))
     run.check(`${mode}: local request audit measures the linked header and one deferred schema`, requestFact?.data?.provider === 'mock' && requestFact.data.model === 'mock-1' && requestFact.data.schemaCount > 1 && requestFact.data.deferredCount === 1 && requestFact.data.schemaBytes > requestFact.data.deferredSchemaBytes && requestFact.data.deferredSchemaBytes > 0, JSON.stringify(requestFact))
     run.check(`${mode}: local request audit uses only its whitelisted count/byte fields`, requestFact && JSON.stringify(Object.keys(requestFact.data).sort()) === JSON.stringify(['seq', 'provider', 'model', 'schemaCount', 'deferredCount', 'schemaBytes', 'deferredSchemaBytes'].sort()), JSON.stringify(requestFact))
     for (const toolName of [DEFERRED, PLAIN]) {
-      const resultFact = facts.find(entry => entry.type === 'weir/tool-usage/result' && entry.data?.name === toolName)
+      const resultFacts = facts.filter(entry => entry.type === 'weir/tool-usage/result' && entry.data?.name === toolName)
+      const resultFact = resultFacts[0]
+      run.check(`${mode}: ${toolName} has exactly one local result audit`, resultFacts.length === 1, JSON.stringify(resultFacts))
       run.check(`${mode}: ${toolName} has a successful correlated local result audit`, resultFact?.data?.isError === false && typeof resultFact.data.callId === 'string' && resultFact.data.callId.length > 0 && JSON.stringify(Object.keys(resultFact.data).sort()) === JSON.stringify(['name', 'isError', 'callId'].sort()), JSON.stringify(resultFact))
     }
     const wire = JSON.stringify(facts)

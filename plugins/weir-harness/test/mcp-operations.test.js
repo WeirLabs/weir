@@ -534,3 +534,87 @@ test('invalid deferLoading values have no operation, credential, registry or sel
   expect((await f.registry.read()).kind).toBe('absent')
   expect(await f.store.read({ kind: 'selection', sessionId: 's1' })).toEqual(before)
 })
+
+for (const kind of ['edit', 'live-target test']) {
+  test(`${kind} rejects invalid deferLoading before fencing a delayed live operation`, async () => {
+    let delayed = false
+    let ownerCalls = 0
+    let registryReads = 0
+    let releaseOwner
+    let releaseRegistry
+    const ownerGate = new Promise(resolve => { releaseOwner = resolve })
+    const registryGate = new Promise(resolve => { releaseRegistry = resolve })
+    const f = fixture({ assertOwner: async phase => {
+      if (delayed && phase === 'preflight') {
+        ownerCalls += 1
+        await ownerGate
+      }
+    } })
+    await f.store.commit({ kind: 'selection', sessionId: 's1' }, 0, () => ({ skills: [], mcpServers: ['docs', 'other'], origin: 'apply' }))
+    const added = await f.operations.add({ identity: 'docs', config: config('docs', { deferLoading: true }) })
+    expect(added.status, JSON.stringify(added)).toBe('mounted')
+    const beforeRegistry = await f.registry.read()
+    const beforeSelection = await f.store.read({ kind: 'selection', sessionId: 's1' })
+    const beforeRuntime = f.runtime.snapshot('docs')
+    f.calls.begin = 0
+    f.calls.probe = 0
+    f.calls.mount = 0
+    f.calls.remove = 0
+    f.sets.length = 0
+    f.unsets.length = 0
+
+    const read = f.registry.read
+    f.registry.read = async (...args) => {
+      if (delayed) {
+        registryReads += 1
+        await registryGate
+      }
+      return read(...args)
+    }
+    const request = {
+      identity: 'docs',
+      expectedRevision: beforeRegistry.revision,
+      config: { deferLoading: 'true' },
+    }
+    delayed = true
+    const operation = kind === 'edit'
+      ? f.operations.edit(request)
+      : f.operations.test({ ...request, mode: 'edit' })
+    const turn = () => new Promise(resolve => setImmediate(resolve))
+    const observeAdmission = label => {
+      const token = f.drain.enter('s1', 'docs', label)
+      if (token !== null) f.drain.exit('s1', 'docs', token)
+      return {
+        begin: f.calls.begin,
+        ownerCalls,
+        registryReads,
+        drainClosed: f.drain.isClosed('s1', 'docs'),
+        admitted: token !== null,
+      }
+    }
+
+    await turn()
+    const duringOwner = observeAdmission('during-owner')
+    releaseOwner()
+    await turn()
+    const duringRegistry = observeAdmission('during-registry')
+    releaseRegistry()
+    const result = await operation
+    delayed = false
+
+    expect(result.status, JSON.stringify(result)).toBe('validation-failed')
+    expect(result.error.code).toBe('invalid-config')
+    expect(result.error.message).toBe('deferLoading: must be boolean')
+    expect(duringOwner).toEqual({ begin: 0, ownerCalls: 0, registryReads: 0, drainClosed: false, admitted: true })
+    expect(duringRegistry).toEqual({ begin: 0, ownerCalls: 0, registryReads: 0, drainClosed: false, admitted: true })
+    expect(f.calls).toEqual({ probe: 0, mount: 0, remove: 0, begin: 0 })
+    expect(f.sets).toEqual([])
+    expect(f.unsets).toEqual([])
+    expect(await f.registry.read()).toEqual(beforeRegistry)
+    expect(await f.store.read({ kind: 'selection', sessionId: 's1' })).toEqual(beforeSelection)
+    expect(f.runtime.snapshot('docs')).toEqual(beforeRuntime)
+    const subsequent = f.drain.enter('s1', 'docs', 'after-validation')
+    expect(subsequent).not.toBeNull()
+    f.drain.exit('s1', 'docs', subsequent)
+  })
+}

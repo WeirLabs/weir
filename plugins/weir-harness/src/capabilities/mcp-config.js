@@ -32,6 +32,9 @@ export class McpConfigError extends TypeError {
   }
 }
 const fail = (field, message) => { throw new McpConfigError(field, message) }
+export function validateMcpDeferLoading(raw) {
+  if (raw?.deferLoading !== undefined && typeof raw.deferLoading !== 'boolean') fail('deferLoading', 'must be boolean')
+}
 const known = (value, allowed, path) => {
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(`${path}.${key}`, 'unknown field')
 }
@@ -143,7 +146,7 @@ export function normalizeMcpServer(raw, options = {}) {
   const kind = normalizeTransport(raw, clientInput)
   const allowed = new Set(kind === 'stdio' ? ['command', 'args', 'env', 'cwd', 'secretArgs'] : ['url', 'headers'])
   known(clientInput, new Set([...COMMON, ...allowed, 'identity', 'label', 'owner', 'incarnation', 'generation', 'configuredAt', 'client', 'secretRefs', 'secretValues', ...(raw.client ? [] : ['deferLoading'])]), 'client')
-  if (raw.deferLoading !== undefined && typeof raw.deferLoading !== 'boolean') fail('deferLoading', 'must be boolean')
+  validateMcpDeferLoading(raw)
   const identity = options.identity ?? raw.identity
   if (!isSegment(identity)) fail('identity', 'must be a stable identity segment')
   const label = raw.label ?? identity
