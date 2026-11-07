@@ -32,6 +32,8 @@ jq -c 'select(.session == "<session-id>" and .data.callId == "<call-id>")' .weir
 
 共享 [audit.js](<../../plugins/weir-harness/src/shared/audit.js>) 的 `AUDIT_TYPES.toolUsage` 与 `AUDIT_SUBTYPES.toolUsage` 统一登记 `request`/`result`。[tool-usage-observability.js](<../../plugins/weir-harness/src/capabilities/tool-usage-observability.js>) 只构造下列白名单字段；共享记录外层另有 `time`、`session` 与 `type`。
 
+多个组合根挂载按 `ctx.root ?? ctx` 共享同一对事件监听器，同时各自保留独立 audit lease。监听器注册在共同 root context，而非首个 child fiber，避免首个 child 卸载时 Cordis 自动回收仍被其他 lease 使用的订阅；最后一个 lease 释放时显式移除这对 root-owned 监听器，之后可重新挂载。
+
 ### `tool-usage/request`
 
 | 字段 | 含义 |
@@ -65,5 +67,5 @@ jq -c 'select(.session == "<session-id>" and .data.callId == "<call-id>")' .weir
 
 ## 测试
 
-- `tool-usage-observability.test.js` 覆盖混合/空/缺省工具请求、UTF-8 字节、provider/model 与事件序号、success/error/code/callId、秘密和载荷排除、审计失败隔离、disposer，以及既有组合根的实际挂载。
+- `tool-usage-observability.test.js` 覆盖混合/空/缺省工具请求、UTF-8 字节、provider/model 与事件序号、success/error/code/callId、秘密和载荷排除、审计失败隔离、disposer，以及既有组合根的实际挂载。生命周期回归分别覆盖显式释放与 child fiber 自动注销的两种卸载顺序：任一单次卸载后每个事件仍恰好一条事实，最终幂等卸载后无事实、无监听器泄漏，重新挂载恢复正常。
 - `audit.test.js` 继续覆盖 Cordis emit + JSONL 双写、无 cwd 行为和 emit/file 故障不抛出。
