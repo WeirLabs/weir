@@ -283,11 +283,12 @@ export function createMcpManager(dependencies = {}) {
       bridge.definitions.clear()
       return true
     }
-    function registerBridge(groupId, identity, generation, owner = null) {
+    function registerBridge(groupId, identity, generation, owner = null, deferLoading = false) {
       if (bridges.has(groupId)) throw Object.assign(new Error(`MCP manager group ${groupId} already has a bridge`), { code: 'duplicate-mcp-facade-owner' })
       const record = { groupId, identity, generation, owner, release: null, definitions: new Map() }
       const release = registerMcpFacadeBridge(groupId, {
         host, identity, generation,
+        ...(deferLoading === true ? { deferLoading: true } : {}),
         admit: agent => gate.permit(agent, identity, generation),
         assertPermit: gate.assertPermit,
         isEnabledFor: agent => gate.enabledFor(agent, identity),
@@ -388,13 +389,14 @@ export function createMcpManager(dependencies = {}) {
         const result = await mount.mount({
           identity,
           generation: entry.generation,
+          deferLoading: entry.deferLoading === true,
           client: prepared.client,
           secrets: prepared.secrets,
           secretBearing: prepared.secretBearing,
           execution: prepared.execution,
           fiberOf,
           beforeCreate: (context = {}) => {
-            attempt = registerBridge(context.groupId ?? `${MCP_GROUP_PREFIX}${identity}`, identity, entry.generation, context.owner ?? null)
+            attempt = registerBridge(context.groupId ?? `${MCP_GROUP_PREFIX}${identity}`, identity, entry.generation, context.owner ?? null, entry.deferLoading === true)
           },
           afterCleanup: (context = {}) => {
             if (attempt) releaseBridge(context.groupId ?? attempt.groupId, attempt)
@@ -464,12 +466,13 @@ export function createMcpManager(dependencies = {}) {
         const result = await mount.probe({
           identity: undefined,
           generation: 0,
+          deferLoading: entry.deferLoading === true,
           client: prepared.client,
           secretBearing: prepared.secretBearing,
           secrets: prepared.secrets,
           fiberOf,
           beforeCreate: (context = {}) => {
-            attempt = registerBridge(context.groupId ?? `${MCP_GROUP_PREFIX}probe`, context.identity ?? 'probe', context.generation ?? 0, context.owner ?? null)
+            attempt = registerBridge(context.groupId ?? `${MCP_GROUP_PREFIX}probe`, context.identity ?? 'probe', context.generation ?? 0, context.owner ?? null, entry.deferLoading === true)
           },
           afterCleanup: (context = {}) => {
             if (attempt) releaseBridge(context.groupId ?? attempt.groupId, attempt)

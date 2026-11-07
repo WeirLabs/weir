@@ -261,3 +261,30 @@ test('residue sweep derives identity and clears stale mounted facts even when Lo
   await mount.sweepResidue(['weir-mcp-docs'])
   expect(mount.mounted.has('docs')).toBe(false)
 })
+
+test('strict mount forwards deferLoading to the facade row only', async () => {
+  const fixture = loaderFixture()
+  const mount = createMcpMount({ loader: fixture.loader })
+  await mount.mount(mountedInput(fixture, { deferLoading: true }))
+  const [group] = fixture.created
+  expect(group.config[0].config.deferLoading).toBe(true)
+  expect(Object.hasOwn(group.config[1].config, 'deferLoading')).toBe(false)
+  expect(group.config[1].config.failOnStartupError).toBe(true)
+  await mount.unmount('docs')
+  await mount.mount(mountedInput(fixture, { generation: 2, deferLoading: false }))
+  const replacement = fixture.created[1]
+  expect(Object.hasOwn(replacement.config[0].config, 'deferLoading')).toBe(false)
+  expect(Object.hasOwn(replacement.config[1].config, 'deferLoading')).toBe(false)
+})
+
+test('retained same-identity mounts keep independent deferLoading facts', async () => {
+  const fixture = loaderFixture()
+  const mount = createMcpMount({ loader: fixture.loader })
+  const oldRevision = await mount.mount(mountedInput(fixture, { deferLoading: true }))
+  const newRevision = await mount.mount(mountedInput(fixture, { generation: 2, deferLoading: false }))
+  expect(newRevision.groupId).not.toBe(oldRevision.groupId)
+  const groups = new Map(fixture.created.map(group => [group.id, group]))
+  expect(groups.get(oldRevision.groupId).config[0].config.deferLoading).toBe(true)
+  expect(Object.hasOwn(groups.get(newRevision.groupId).config[0].config, 'deferLoading')).toBe(false)
+  for (const group of groups.values()) expect(Object.hasOwn(group.config[1].config, 'deferLoading')).toBe(false)
+})

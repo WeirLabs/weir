@@ -33,6 +33,7 @@ function editSource(existing, raw) {
   source.identity = existing.identity
   source.label ??= existing.label
   source.serverName ??= existing.client?.serverName
+  if (source.deferLoading === undefined && existing.deferLoading === true) source.deferLoading = true
   if (existing.transport?.kind === 'stdio' || existing.client?.transport === 'stdio') {
     source.command ??= existing.client?.command
     // Omitted args keep the stored argv; supplied args resolve projection

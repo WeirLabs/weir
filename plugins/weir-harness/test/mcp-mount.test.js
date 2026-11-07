@@ -36,6 +36,20 @@ test('group options isolate the three services and reference the stock client by
   assert.throws(() => mcpGroupOptions({ identity: '../x', generation: 1, client: {} }), TypeError)
 })
 
+test('deferLoading is emitted only in facade config, never the stock client row', () => {
+  const client = { command: 'mock' }
+  const enabled = mcpGroupOptions({ identity: 'docs', generation: 3, client, deferLoading: true })
+  expect(enabled.config[0].config).toEqual({ identity: 'docs', generation: 3, group: 'weir-mcp-docs', deferLoading: true })
+  expect(enabled.config[1].config).toBe(client)
+  expect(Object.hasOwn(enabled.config[1].config, 'deferLoading')).toBe(false)
+
+  for (const deferLoading of [undefined, false]) {
+    const options = mcpGroupOptions({ identity: 'docs', generation: 3, client, deferLoading })
+    expect(Object.hasOwn(options.config[0].config, 'deferLoading')).toBe(false)
+    expect(Object.hasOwn(options.config[1].config, 'deferLoading')).toBe(false)
+  }
+})
+
 function loaderFixture() {
   const created = []
   const removed = []

@@ -101,3 +101,36 @@ test('redaction projection keeps plain argv exact and redacts only secret-indexe
   // Known secret values are still removed from structured fields.
   expect(redactMcpEntry({ ...entry, label: `label ${secret}` }, [secret]).label).toBe('label [redacted]')
 })
+
+test('deferLoading is opt-in boolean registry metadata, never stock client config', () => {
+  const legacy = normalizeMcpServer({ identity: 'docs', command: 'node' }).entry
+  const disabled = normalizeMcpServer({ identity: 'docs', command: 'node', deferLoading: false }).entry
+  const enabled = normalizeMcpServer({ identity: 'docs', command: 'node', deferLoading: true }).entry
+  expect(Object.hasOwn(legacy, 'deferLoading')).toBe(false)
+  expect(Object.hasOwn(disabled, 'deferLoading')).toBe(false)
+  expect(enabled.deferLoading).toBe(true)
+  expect(enabled.client.deferLoading).toBeUndefined()
+  expect(fingerprintMcpEntry(enabled)).not.toBe(fingerprintMcpEntry(legacy))
+
+  const parsed = parseMcpDocument({ identity: 'docs', command: 'node', deferLoading: true })
+  expect(parsed.plan[0].entry.deferLoading).toBe(true)
+  expect(parsed.plan[0].entry.client.deferLoading).toBeUndefined()
+  expect(parsed.entries[0].entry.deferLoading).toBe(true)
+  const batch = parseMcpDocument({ mcpServers: {
+    docs: { command: 'node', deferLoading: true },
+    legacy: { command: 'node' },
+  } })
+  expect(batch.plan.map(item => item.entry.deferLoading)).toEqual([true, undefined])
+  expect(batch.plan.every(item => !Object.hasOwn(item.entry.client, 'deferLoading'))).toBe(true)
+
+  for (const deferLoading of ['true', 1, 0, null, {}, []]) {
+    assert.throws(
+      () => normalizeMcpServer({ identity: 'docs', command: 'node', deferLoading }),
+      error => error?.code === 'invalid-config' && error?.field === 'deferLoading',
+    )
+  }
+  assert.throws(() => normalizeMcpServer({
+    identity: 'docs',
+    client: { transport: 'stdio', serverName: 'docs', command: 'node', deferLoading: true },
+  }), /client\.deferLoading: unknown field/)
+})

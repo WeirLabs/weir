@@ -13,9 +13,10 @@ const entry = (identity, incarnation = null) => ({ identity, label: identity, ow
 function mountFixture() {
   const mounted = new Map()
   const calls = []
+  const facadeFacts = []
   const state = { failMount: false, wrongGeneration: false, delay: null }
   const mount = {
-    mounted, calls, state,
+    mounted, calls, state, facadeFacts,
     async sweepResidue() { return [] },
     async mount(options) {
       calls.push(['mount', options.identity, options.generation])
@@ -26,6 +27,7 @@ function mountFixture() {
         await options.beforeCreate?.({ groupId, identity: options.identity, generation: options.generation })
         bridgeReady = true
         const bridge = mcpFacadeBridgeFor(groupId)
+        facadeFacts.push({ phase: 'mount', groupId, generation: options.generation, deferLoading: bridge?.deferLoading === true, mountDeferLoading: options.deferLoading === true, stockHasDeferLoading: Object.hasOwn(options.client, 'deferLoading') })
         bridge?.onRegister?.(`mcp__${options.identity}__echo`)
         await options.readback?.()
         const generation = state.wrongGeneration ? options.generation + 1 : options.generation
@@ -655,4 +657,47 @@ test('live visibility: selected mount stays denied while degraded, recovers on m
   expect(f.face.abortOperation(currentOwner)).toBe(true)
   expect(f.face.gate.enabledFor(a.agent, 'docs')).toBe(false)
   expect(a.state.disposals).toHaveLength(3)
+})
+
+test('registry deferLoading reaches only the facade through edit, restart and strict readiness', async () => {
+  const f = await fixture({ entries: ['docs'] })
+  expect(f.mount.facadeFacts).toEqual([{
+    phase: 'mount', groupId: 'weir-mcp-docs', generation: 1,
+    deferLoading: false, mountDeferLoading: false, stockHasDeferLoading: false,
+  }])
+  const agent = { session: { id: 's1' } }
+  const incarnation = (await f.registry.read()).servers.docs.incarnation ?? null
+
+  let current = await f.registry.read()
+  await f.registry.register({ ...current.servers.docs, deferLoading: true }, current.revision)
+  current = await f.registry.read()
+  const enabledToken = f.face.beginOperation('docs')
+  expect(f.face.gate.enabledFor(agent, 'docs')).toBe(false)
+  const enabled = await f.face.reconcileOne('docs', current.servers.docs, enabledToken)
+  expect(enabled.status).toBe('mounted')
+  expect(f.face.gate.enabledFor(agent, 'docs')).toBe(true)
+  expect(f.mount.facadeFacts.at(-1)).toEqual({
+    phase: 'mount', groupId: 'weir-mcp-docs', generation: 2,
+    deferLoading: true, mountDeferLoading: true, stockHasDeferLoading: false,
+  })
+
+  await f.registry.register(current.servers.docs, current.revision)
+  current = await f.registry.read()
+  const restarted = await f.face.reconcileOne('docs', current.servers.docs)
+  expect(restarted.status).toBe('mounted')
+  expect(f.mount.facadeFacts.at(-1).deferLoading).toBe(true)
+  expect(f.mount.facadeFacts.at(-1).generation).toBe(3)
+
+  const { deferLoading: _removed, ...disabledEntry } = current.servers.docs
+  await f.registry.register(disabledEntry, current.revision)
+  current = await f.registry.read()
+  const disabled = await f.face.reconcileOne('docs', current.servers.docs)
+  expect(disabled.status).toBe('mounted')
+  expect(f.mount.facadeFacts.at(-1)).toEqual({
+    phase: 'mount', groupId: 'weir-mcp-docs', generation: 4,
+    deferLoading: false, mountDeferLoading: false, stockHasDeferLoading: false,
+  })
+  expect(current.servers.docs.incarnation ?? null).toBe(incarnation)
+  expect(f.face.gate.enabledFor(agent, 'docs')).toBe(true)
+  expect(f.mount.facadeFacts.every(fact => fact.stockHasDeferLoading === false)).toBe(true)
 })

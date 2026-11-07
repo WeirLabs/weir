@@ -26,14 +26,14 @@ const message = error => (error instanceof Error ? error.message : String(error)
 
 /**
  * @param {{ host: { tools?: unknown, systemPrompt?: unknown, mcpResources?: unknown },
- *   identity: string, generation: number,
+ *   identity: string, generation: number, deferLoading?: boolean,
  *   admit: (agent: unknown) => Promise<boolean>,
  *   isEnabledFor: (agent: unknown) => boolean,
  *   drain?: { enter(agentId: string, server: string, label?: string): number|null, exit(agentId: string, server: string, token: number|null): void },
- *   onRegister?: (name: string, captureRollback: (rollback: () => void) => void) => void, onUnregister?: (name: string) => void,
+ *   onRegister?: (name: string, captureRollback: (rollback: () => void) => void, definition: unknown) => void, onUnregister?: (name: string) => void,
  *   onError?: (reason: string, cause?: unknown) => void }} config
  */
-export function createMcpFacade({ host, identity, generation, admit, isEnabledFor, drain, onRegister, onUnregister, onError = () => {}, assertPermit }) {
+export function createMcpFacade({ host, identity, generation, deferLoading = false, admit, isEnabledFor, drain, onRegister, onUnregister, onError = () => {}, assertPermit }) {
   const wrapper = createMcpToolWrapper({ identity, generation, admit, drain, assertPermit })
 
   const unknown = (service, method) => {
@@ -47,13 +47,16 @@ export function createMcpFacade({ host, identity, generation, admit, isEnabledFo
       // Host registration happens first, then the generation-owned fact and
       // every live agent converge in this same synchronous segment.
       const wrapped = wrapper.wrap(definition)
-      const registration = /** @type {{ register(d: unknown): unknown }} */ (host.tools).register(wrapped)
-      if (typeof wrapped?.name !== 'string') return registration
-      const name = wrapped.name
+      const presented = deferLoading === true && wrapped && typeof wrapped === 'object'
+        ? { ...wrapped, deferLoading: true }
+        : wrapped
+      const registration = /** @type {{ register(d: unknown): unknown }} */ (host.tools).register(presented)
+      if (typeof presented?.name !== 'string') return registration
+      const name = presented.name
       const disposeHost = typeof registration === 'function' ? registration : () => {}
       let rollbackRegistration = null
       try {
-        onRegister?.(name, rollback => { rollbackRegistration = rollback }, wrapped)
+        onRegister?.(name, rollback => { rollbackRegistration = rollback }, presented)
       } catch (cause) {
         // Host-first rollback is fail-closed: owner facts and partial denies
         // stay in place unless Host removal is confirmed.
