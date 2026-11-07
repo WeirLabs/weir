@@ -37,7 +37,7 @@ export function detectMcpNameAmbiguity(entries) {
   return conflicts.length === 0 ? { kind: 'ok' } : { kind: 'conflict', conflicts }
 }
 
-export function mcpGroupOptions({ identity, generation, client, groupId = null }) {
+export function mcpGroupOptions({ identity, generation, client, groupId = null, deferLoading = false }) {
   if (!isSegment(identity)) throw new TypeError(`invalid MCP server identity: ${JSON.stringify(identity)}`)
   const group = groupId ?? `${MCP_GROUP_PREFIX}${identity}`
   if (!isMcpResidueId(group)) throw new TypeError(`invalid actual MCP groupId: ${JSON.stringify(group)}`)
@@ -47,7 +47,7 @@ export function mcpGroupOptions({ identity, generation, client, groupId = null }
     group: true,
     isolate: { tools: true, systemPrompt: true, mcpResources: true },
     config: [
-      { id: `${group}-facade`, name: 'weir-harness/mcp-facade-plugin', config: { identity, generation, group } },
+      { id: `${group}-facade`, name: 'weir-harness/mcp-facade-plugin', config: { identity, generation, group, ...(deferLoading === true ? { deferLoading: true } : {}) } },
       { id: `${group}-client`, name: '@deepseek-ai/dsh-mcp-client', config: client },
     ],
   }
@@ -400,7 +400,7 @@ export function createMcpMount({
           return true
         },
       })
-      options = mcpGroupOptions({ identity, generation, groupId: record.groupId, client: strictMcpClientConfig(input.client, { probe }) })
+      options = mcpGroupOptions({ identity, generation, groupId: record.groupId, client: strictMcpClientConfig(input.client, { probe }), deferLoading: input.deferLoading === true })
       const attempt = () => ({ groupId: options.id, identity, generation, probe, ephemeral: tree.ephemeral === true, owner: record.owner })
       if (typeof input.beforeCreate === 'function') await input.beforeCreate(attempt())
       bridgeReady = true

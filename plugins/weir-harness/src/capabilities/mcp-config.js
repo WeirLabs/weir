@@ -18,7 +18,7 @@ export const MCP_LIMITS = Object.freeze({
 const SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/
 const CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/
 const COMMON = new Set(['transport', 'type', 'serverName', 'toolCallTimeoutMs', 'maxInstructionBytes', 'reconnect', 'failOnStartupError'])
-const ROOT = new Set(['identity', 'label', 'owner', 'incarnation', 'generation', 'configuredAt', 'client', 'transport', 'secretRefs', 'secretValues', ...COMMON, 'command', 'args', 'env', 'cwd', 'url', 'headers', 'secretArgs'])
+const ROOT = new Set(['identity', 'label', 'owner', 'incarnation', 'generation', 'configuredAt', 'client', 'transport', 'secretRefs', 'secretValues', 'deferLoading', ...COMMON, 'command', 'args', 'env', 'cwd', 'url', 'headers', 'secretArgs'])
 const RECONNECT = new Set(['enabled', 'initialDelayMs', 'maxDelayMs', 'maxAttempts'])
 const clone = value => value == null ? value : structuredClone(value)
 const object = value => value && typeof value === 'object' && !Array.isArray(value)
@@ -142,7 +142,8 @@ export function normalizeMcpServer(raw, options = {}) {
   if (!object(clientInput)) fail('client', 'must be an object')
   const kind = normalizeTransport(raw, clientInput)
   const allowed = new Set(kind === 'stdio' ? ['command', 'args', 'env', 'cwd', 'secretArgs'] : ['url', 'headers'])
-  known(clientInput, new Set([...COMMON, ...allowed, 'identity', 'label', 'owner', 'incarnation', 'generation', 'configuredAt', 'client', 'secretRefs', 'secretValues']), 'client')
+  known(clientInput, new Set([...COMMON, ...allowed, 'identity', 'label', 'owner', 'incarnation', 'generation', 'configuredAt', 'client', 'secretRefs', 'secretValues', ...(raw.client ? [] : ['deferLoading'])]), 'client')
+  if (raw.deferLoading !== undefined && typeof raw.deferLoading !== 'boolean') fail('deferLoading', 'must be boolean')
   const identity = options.identity ?? raw.identity
   if (!isSegment(identity)) fail('identity', 'must be a stable identity segment')
   const label = raw.label ?? identity
@@ -230,6 +231,7 @@ export function normalizeMcpServer(raw, options = {}) {
     ...(raw.incarnation !== undefined ? { incarnation: raw.incarnation } : {}),
     generation: raw.generation ?? 0,
     configuredAt: raw.configuredAt ?? 0,
+    ...(raw.deferLoading === true ? { deferLoading: true } : {}),
     transport: { kind, ref: kind === 'stdio' ? `cmd:${client.command}` : client.url ? `http:${client.url}` : 'http:credential-ref' },
     client: { ...client, ...(kind === 'stdio' ? { env: legacy.env } : { headers: legacy.headers }) },
     secretRefs,

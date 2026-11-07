@@ -33,6 +33,7 @@ import { feedCapabilityReadBridge, capabilityReadFeed, capabilityOwnership, crea
 import { createMcpInstallTool } from './mcp-install-tool.js'
 import { parseFrontmatter } from './frontmatter.js'
 import { createAudit } from '../shared/audit.js'
+import { mountToolUsageObservability } from './tool-usage-observability.js'
 
 const mounted = new WeakMap()
 /**
@@ -292,6 +293,13 @@ export function createSkillSelectionPlugin(dependencies = {}) {
     // is created before the notifier so its outcomes reach the cold-safe
     // `weir/capability-notice` event (D7) — created once, shared with the hooks.
     const audit = createAudit(ctx)
+    try {
+      const mount = () => mountToolUsageObservability({ ctx, audit })
+      if (typeof ctx.effect === 'function') ctx.effect(mount, 'weir-tool-usage-observability')
+      else mount()
+    } catch {
+      ctx.logger?.warn?.('tool usage observability registration failed')
+    }
     let sharedStore = null
     const storeFor = () => {
       if (!sharedStore) sharedStore = openCapabilityStore({ profileContext: ctx.get?.('profileContext') })

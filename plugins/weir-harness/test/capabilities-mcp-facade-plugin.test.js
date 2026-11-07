@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createMcpFacade } from '../src/capabilities/mcp-facade.js'
 
 // Entry-contract pin (change test-surface-pinning, tasks 5.1/5.2): the
 // package export subpath ./mcp-facade-plugin is intended public surface
@@ -119,4 +120,57 @@ test('removing the bridge closes the mount again', () => {
   apply(ctx)
   assert.equal(calls.provide.length, 0)
   assert.equal(calls.warn.length, 1)
+})
+
+test('facade adds deferLoading after admission wrapping without changing register or execute semantics', async () => {
+  const registered = []
+  const callbacks = []
+  const order = []
+  let admitted = true
+  let rpcs = 0
+  const facade = createMcpFacade({
+    host: { tools: { register(definition) {
+      registered.push(definition)
+      return () => callbacks.push(['host-unregister', definition.name])
+    } } },
+    identity: 'docs', generation: 7, deferLoading: true,
+    admit: async () => { order.push('admit'); return admitted },
+    isEnabledFor: () => true,
+    drain: {
+      enter() { order.push('enter'); return 11 },
+      exit(_agentId, _identity, token) { order.push(`exit:${token}`) },
+    },
+    onRegister: (name, _captureRollback, definition) => callbacks.push(['register', name, definition]),
+    onUnregister: name => callbacks.push(['unregister', name]),
+  })
+  const source = {
+    name: 'mcp__docs__echo', description: 'Echo', parameters: { type: 'object', properties: {} },
+    async execute() { order.push('rpc'); rpcs += 1; return 'ok' },
+  }
+  const unregister = facade.tools.register(source)
+  const definition = registered[0]
+  assert.equal(definition.deferLoading, true)
+  assert.notEqual(definition.execute, source.execute)
+  assert.equal(callbacks[0][2], definition)
+  assert.equal(await definition.execute({}, { agent: { id: 's1' } }), 'ok')
+  assert.deepEqual(order, ['admit', 'enter', 'rpc', 'exit:11'])
+
+  admitted = false
+  await assert.rejects(definition.execute({}, { agent: { id: 's1' } }), error => error?.code === 'mcp-admission-refused')
+  assert.equal(rpcs, 1)
+  unregister()
+  assert.deepEqual(callbacks.slice(-2), [['host-unregister', source.name], ['unregister', source.name]])
+
+  facade.tools.register({ ...source, name: 'mcp__docs__after_reconnect' })
+  assert.equal(registered[1].deferLoading, true)
+  for (const deferLoading of [undefined, false]) {
+    let unmarked
+    const plain = createMcpFacade({
+      host: { tools: { register(value) { unmarked = value; return () => {} } } },
+      identity: 'docs', generation: 7, deferLoading,
+      admit: async () => true, isEnabledFor: () => true,
+    })
+    plain.tools.register(source)
+    assert.equal(Object.hasOwn(unmarked, 'deferLoading'), false)
+  }
 })

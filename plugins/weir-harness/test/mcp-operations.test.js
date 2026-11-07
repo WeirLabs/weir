@@ -481,3 +481,56 @@ test('an unchanged stdio edit round-trips plain args byte-identical and keeps se
   expect(refused.status).toBe('validation-failed')
   expect((await f.registry.read()).servers.docs.client.args).toEqual(['--port=8080', 'FOO=bar', ''])
 })
+
+test('deferLoading edits persist only true, preserve identity and selection, and survive restart', async () => {
+  const f = fixture()
+  await f.store.commit({ kind: 'selection', sessionId: 's1' }, 0, () => ({ skills: [], mcpServers: ['docs'], origin: 'apply' }))
+  const added = await f.operations.add({ identity: 'docs', config: config('docs', { deferLoading: true }) })
+  expect(added.status, JSON.stringify(added)).toBe('mounted')
+  let current = await f.registry.read()
+  const incarnation = current.servers.docs.incarnation
+  expect(current.servers.docs.deferLoading).toBe(true)
+  expect(current.servers.docs.client.deferLoading).toBeUndefined()
+
+  const unrelated = await f.operations.edit({ identity: 'docs', expectedRevision: current.revision, config: { label: 'Still deferred' } })
+  expect(unrelated.status, JSON.stringify(unrelated)).toBe('mounted')
+  current = await f.registry.read()
+  expect(current.servers.docs.deferLoading).toBe(true)
+  expect(current.servers.docs.incarnation).toBe(incarnation)
+
+  const disabled = await f.operations.edit({ identity: 'docs', expectedRevision: current.revision, config: { deferLoading: false } })
+  expect(disabled.status, JSON.stringify(disabled)).toBe('mounted')
+  current = await f.registry.read()
+  expect(Object.hasOwn(current.servers.docs, 'deferLoading')).toBe(false)
+  expect(current.servers.docs.incarnation).toBe(incarnation)
+  const restartedDisabled = await f.operations.restart({ identity: 'docs', expectedRevision: current.revision })
+  expect(restartedDisabled.status).toBe('mounted')
+  current = await f.registry.read()
+  expect(Object.hasOwn(current.servers.docs, 'deferLoading')).toBe(false)
+
+  const enabled = await f.operations.edit({ identity: 'docs', expectedRevision: current.revision, config: { deferLoading: true } })
+  expect(enabled.status, JSON.stringify(enabled)).toBe('mounted')
+  current = await f.registry.read()
+  expect(current.servers.docs.deferLoading).toBe(true)
+  const restartedEnabled = await f.operations.restart({ identity: 'docs', expectedRevision: current.revision })
+  expect(restartedEnabled.status).toBe('mounted')
+  current = await f.registry.read()
+  expect(current.servers.docs.deferLoading).toBe(true)
+  expect(current.servers.docs.incarnation).toBe(incarnation)
+  expect((await f.store.read({ kind: 'selection', sessionId: 's1' })).payload.mcpServers).toEqual(['docs'])
+})
+
+test('invalid deferLoading values have no operation, credential, registry or selection effects', async () => {
+  const f = fixture()
+  await f.store.commit({ kind: 'selection', sessionId: 's1' }, 0, () => ({ skills: [], mcpServers: ['other'], origin: 'apply' }))
+  const before = await f.store.read({ kind: 'selection', sessionId: 's1' })
+  await assert.rejects(
+    f.operations.add({ identity: 'docs', config: config('docs', { deferLoading: 'true' }) }),
+    error => error?.code === 'invalid-config' && error?.field === 'deferLoading',
+  )
+  expect(f.calls).toEqual({ probe: 0, mount: 0, remove: 0, begin: 0 })
+  expect(f.sets).toEqual([])
+  expect(f.unsets).toEqual([])
+  expect((await f.registry.read()).kind).toBe('absent')
+  expect(await f.store.read({ kind: 'selection', sessionId: 's1' })).toEqual(before)
+})
