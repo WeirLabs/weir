@@ -56,6 +56,7 @@ export const AUDIT_TYPES = Object.freeze({
   // the per-process rate limit (one record per window); the emit site adds no
   // throttle of its own and a failed emit never blocks a write.
   fileLease: 'file-lease',
+  toolUsage: 'tool-usage',
 })
 /**
  * Known dynamic sub-event kinds: `<type>/<kind>` events emitted beside a base
@@ -73,6 +74,7 @@ export const AUDIT_SUBTYPES = Object.freeze({
   // Child-composition spawn facts: one record per spawn, replayed on cold
   // resume from this same channel (audit only — never a session log).
   delegate: Object.freeze(['spawn']),
+  toolUsage: Object.freeze(['request', 'result']),
 })
 
 /**
