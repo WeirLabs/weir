@@ -1,7 +1,7 @@
 // Shared Host MCP operations. UI mutations, user commands and AI installation
 // converge here: normalized preview → ownership/support checks → staged refs →
 // optional probe → current-read fingerprint/CAS → strict targeted mount/readback.
-import { parseMcpDocument, normalizeMcpServer, fingerprintMcpEntry, hasMcpSecrets, assertMcpPlanSize, resolveMcpEditArgs } from './mcp-config.js'
+import { parseMcpDocument, normalizeMcpServer, fingerprintMcpEntry, hasMcpSecrets, assertMcpPlanSize, resolveMcpEditArgs, validateMcpDeferLoading } from './mcp-config.js'
 import { stageMcpCredentials, compensateMcpCredentialAttempt } from './mcp-credentials.js'
 import { mcpDiagnostic, sanitizeMcpPayload } from './mcp-diagnostics.js'
 import { mcpIdentityLockFor } from './mcp-runtime.js'
@@ -303,6 +303,9 @@ export function createMcpOperations({ registry, manager, credentials, audit, ass
     if (!['add', 'edit', 'test', 'installFromAgent'].includes(action)) return finalize(action ?? 'unknown', failure('validation-failed', 'unknown-operation', new Error(`unsupported MCP operation ${action}`)), request.identity)
     const surface = request.surface ?? (request.refsOnly || action === 'installFromAgent' ? 'refs' : 'ui')
     if (action === 'edit' || (action === 'test' && request.mode === 'edit')) {
+      try { validateMcpDeferLoading(request.config ?? request.document ?? {}) } catch (cause) {
+        return finalize(action, failure('validation-failed', cause?.code ?? 'invalid-config', cause, { next: { action: 'retry' } }), request.identity)
+      }
       return mutateOne(action, request, unresolved(), {
         targetFingerprint: request.targetFingerprint,
         liveTarget: true,
