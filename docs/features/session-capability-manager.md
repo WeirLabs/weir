@@ -168,6 +168,8 @@ Weir 是自身所管理 MCP server 的唯一挂载入口：用户经 Weir 配置
 
 **完整管理面（mcp-server-management）**：MCP 页签现支持两种官方 transport 的添加、编辑、测试、重启、删除、Basic/Advanced 与 JSON 批量预览；严格 mount 结果、真实 generation/incarnation、默认与 Select/Apply 分离。独立 `weirCapabilityMutations/mutate|batch` 通道承载秘密配置，避免进入 session command 记录；`/capabilities mcp-add` 仅保留 legacy 兼容并警告 literal secret 命令历史。完整契约见 [MCP server 管理](mcp-server-management.md)。
 
+**MCP 延迟工具定义配置**：Add/Edit 的 Advanced 提供 **Defer tool definitions** 复选框，新添加与 legacy server 默认关闭；说明文本明确支持的模型会在需要时加载完整定义，权限与调用不变。表单草稿、Preview 与 Confirm 使用顶层布尔 `deferLoading`，启用项的无关编辑保留设置，取消勾选显式发送 `false`。managed 库存行的 `deferred` 标签只表示该配置已开启，不声称 token 节省、模型发现或实时路由支持；添加与编辑仍不自动 Select/Apply，会话授权流程不变。
+
 **纳入 Weir 管理（adopt）**：现有宿主配置不被自动接管；用户确认后才在注册表创建 identity——宿主原条目仍持有先到先得 `serverName` 保留时显示为**冲突**（提示用户自行停用宿主条目，之后由 managed client 接管），绝不显示为成功。便携式 MCP ref 只指向 Weir 管理的逻辑 binding。
 
 ### 管理界面与通知

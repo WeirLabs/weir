@@ -77,13 +77,14 @@ function fixture(options = {}) {
     mcpCapabilities: { credentials: true, ephemeral: true },
     ...(options.listing ?? {}),
   }
-  const calls = { preview: [], mutate: [], batch: [], toggle: [], refresh: 0 }
+  const calls = { preview: [], mutate: [], batch: [], toggle: [], apply: [], refresh: 0 }
   const props = {
     sessionId: 's1', model, t, listing,
     managed: options.empty ? [] : [currentServer], unmanaged: [{ serverName: 'host-gamma', state: 'unmanaged', readOnly: true }],
     draft: { mcpServers: options.empty ? [] : ['docs'] },
     selectionDisabled: false,
     toggle: (...args) => { calls.toggle.push(args) },
+    applySelection: (...args) => { calls.apply.push(args) },
     refreshAll: async () => { calls.refresh += 1; return { listing } },
     mcpPreview: async (_sid, request) => {
       calls.preview.push(request)
@@ -122,6 +123,20 @@ test('inventory exposes real lifecycle facts without probing or unmanaged action
   expect(findAll(tree, node => node.children === 'unmanaged')).toHaveLength(1)
 })
 
+test('inventory shows deferred only for servers whose configuration enables it', async () => {
+  const deferred = server()
+  deferred.config.deferLoading = true
+  const enabled = await fixture({ server: deferred }).init()
+  const tree = enabled.render()
+  expect(findAll(tree, node => node.children === 'deferred')).toHaveLength(1)
+  expect(enabled.calls.toggle).toEqual([])
+  expect(enabled.calls.apply).toEqual([])
+  expect(enabled.calls.mutate).toEqual([])
+
+  const legacy = await fixture().init()
+  expect(findAll(legacy.render(), node => node.children === 'deferred')).toHaveLength(0)
+})
+
 test('Add Basic/Advanced uses inert preview then exact mutation, with pending disabled and no automatic Select/Apply', async () => {
   let resolvePreview
   const f = await fixture({ empty: true, preview: request => new Promise(resolve => {
@@ -129,6 +144,7 @@ test('Add Basic/Advanced uses inert preview then exact mutation, with pending di
   }) }).init()
   click(f.render(), '+ Add managed MCP server')
   let tree = f.render()
+  expect(input(tree, 'Defer tool definitions')).toBeUndefined()
   setInput(input(tree, 'identity (e.g. my-docs)'), 'docs')
   tree = f.render()
   setInput(input(tree, 'label (display name, optional)'), 'Docs')
@@ -137,6 +153,16 @@ test('Add Basic/Advanced uses inert preview then exact mutation, with pending di
   tree = f.render()
   click(tree, 'Advanced')
   tree = f.render()
+  const defer = input(tree, 'Defer tool definitions')
+  expect(defer).toBeTruthy()
+  expect(defer.type).toBe('checkbox')
+  expect(defer.checked).toBe(false)
+  expect(defer['aria-describedby']).toBe('weir-mcp-defer-loading-help')
+  expect(findAll(tree, node => node.id === 'weir-mcp-defer-loading-help'
+    && node.children === 'Supported models load full tool definitions when needed. Permissions and tool invocation stay unchanged.')).toHaveLength(1)
+  defer.onChange({ target: { checked: true } })
+  tree = f.render()
+  expect(input(tree, 'Defer tool definitions').checked).toBe(true)
   click(tree, '+ Add secret/reference')
   tree = f.render()
   setInput(input(tree, 'secret key'), 'TOKEN')
@@ -150,6 +176,8 @@ test('Add Basic/Advanced uses inert preview then exact mutation, with pending di
   resolvePreview()
   await flush()
   tree = f.render()
+  expect(f.calls.preview[0].config.deferLoading).toBe(true)
+  expect(f.calls.preview[0].config.client).toBeUndefined()
   expect(JSON.parse(JSON.stringify(f.calls.preview[0].config.secretValues.env.TOKEN))).toEqual({ action: 'replace', value: 'client-canary' })
   expect(JSON.stringify(f.calls.preview[0])).not.toContain('status": "mounted"')
   expect(f.calls.mutate).toEqual([])
@@ -158,10 +186,40 @@ test('Add Basic/Advanced uses inert preview then exact mutation, with pending di
   expect(f.calls.mutate).toHaveLength(1)
   expect(f.calls.mutate[0].expectedRevision).toBe(5)
   expect(f.calls.mutate[0].targetFingerprint).toBeNull()
+  expect(f.calls.mutate[0].config.deferLoading).toBe(true)
+  expect(f.calls.mutate[0].config.client).toBeUndefined()
   expect(f.calls.mutate[0].config.secretValues.env.TOKEN.value).toBe('client-canary')
   expect(f.calls.toggle).toEqual([])
+  expect(f.calls.apply).toEqual([])
   expect(f.calls.refresh).toBeGreaterThan(0)
   expect(buttons(f.render(), '+ Add managed MCP server')[0].disabled).toBe(false)
+})
+
+test('Edit Advanced preserves enabled deferLoading on unrelated edits and sends explicit false when disabled', async () => {
+  for (const disable of [false, true]) {
+    const enabled = server()
+    enabled.config.deferLoading = true
+    const f = await fixture({ server: enabled }).init()
+    click(f.render(), 'Edit')
+    click(f.render(), 'Advanced')
+    let tree = f.render()
+    const defer = input(tree, 'Defer tool definitions')
+    expect(defer.checked).toBe(true)
+    if (disable) defer.onChange({ target: { checked: false } })
+    else setInput(input(tree, 'label (display name, optional)'), 'Only label changed')
+    tree = f.render()
+    expect(input(tree, 'Defer tool definitions').checked).toBe(!disable)
+    click(tree, 'Preview')
+    await flush()
+    expect(f.calls.preview[0].config.deferLoading).toBe(!disable)
+    expect(f.calls.preview[0].config.client).toBeUndefined()
+    click(f.render(), 'Confirm')
+    await flush()
+    expect(f.calls.mutate[0].config.deferLoading).toBe(!disable)
+    expect(f.calls.mutate[0].config.client).toBeUndefined()
+    expect(f.calls.toggle).toEqual([])
+    expect(f.calls.apply).toEqual([])
+  }
 })
 
 test('failed edit preserves non-secret draft, clears replacement secrets, and offers re-preview', async () => {

@@ -683,6 +683,7 @@ window.__ModuleLoader__.load({
 				identity: server?.identity ?? "", label: server?.label ?? "", serverName: client.serverName ?? server?.serverName ?? server?.identity ?? "",
 				originalServerName: client.serverName ?? server?.serverName ?? server?.identity ?? "",
 				transport,
+				deferLoading: config.deferLoading === true,
 				command: client.command ?? "", argsText: JSON.stringify(mcpPublicArgsOf(config)), originalArgsText: server ? JSON.stringify(mcpPublicArgsOf(config)) : null, cwd: client.cwd ?? "",
 				url: legacySensitiveUrl ? "" : client.url ?? "", urlRef: secretUrl?.ref ?? "", urlPrefix: secretUrl?.prefix ?? "",
 				urlMode: secretUrl ? "ref" : legacySensitiveUrl ? "legacy" : "literal", urlAction: server ? "keep" : "replace",
@@ -735,6 +736,7 @@ window.__ModuleLoader__.load({
 			const config = {
 				identity, label: String(editor.label ?? "").trim() || identity,
 				transport: editor.transport,
+				deferLoading: editor.deferLoading === true,
 				serverName: String(editor.serverName ?? "").trim() || identity,
 			};
 			for (const key of ["toolCallTimeoutMs", "maxInstructionBytes"]) {

@@ -166,3 +166,26 @@ test('an unchanged edit omits args so the Host keeps the stored argv; a changed 
   const added = model.mcpConfigFromEditor({ ...model.mcpEditorFromServer(null, 0), identity: 'x', command: 'node', argsText: '["a"]' })
   expect(added.args).toEqual(['a'])
 })
+
+test('deferLoading stays a top-level boolean through add, enabled edit, disable and unrelated edits', () => {
+  const addedEditor = model.mcpEditorFromServer(null, 0)
+  expect(addedEditor.deferLoading).toBe(false)
+  const added = model.mcpConfigFromEditor({ ...addedEditor, identity: 'docs', serverName: 'docs', command: 'node' })
+  expect(added.deferLoading).toBe(false)
+  expect(added.client).toBeUndefined()
+
+  const legacyEditor = model.mcpEditorFromServer(managedServer(), 1)
+  expect(legacyEditor.deferLoading).toBe(false)
+
+  const enabledServer = managedServer()
+  enabledServer.config.deferLoading = true
+  const enabledEditor = model.mcpEditorFromServer(enabledServer, 2)
+  expect(enabledEditor.deferLoading).toBe(true)
+  const unrelated = model.mcpConfigFromEditor({ ...enabledEditor, label: 'Renamed' })
+  expect(unrelated.deferLoading).toBe(true)
+  expect(unrelated.client).toBeUndefined()
+
+  const disabled = model.mcpConfigFromEditor({ ...enabledEditor, deferLoading: false })
+  expect(disabled.deferLoading).toBe(false)
+  expect(disabled.client).toBeUndefined()
+})

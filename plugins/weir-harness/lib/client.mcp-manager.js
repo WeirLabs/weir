@@ -407,6 +407,13 @@ window.__ModuleLoader__.load({
 							] }),
 					] }),
 					editor.advanced ? react_jsx_runtime.jsxs("div", { style: S.field, children: [
+						react_jsx_runtime.jsxs("div", { style: S.field, children: [
+							react_jsx_runtime.jsxs("label", { style: S.row, children: [
+								react_jsx_runtime.jsx("input", { type: "checkbox", checked: draft.deferLoading, disabled: editor.busy, "aria-label": t("capability.mcp.deferLoading", "Defer tool definitions"), "aria-describedby": "weir-mcp-defer-loading-help", onChange: event => updateDraft("deferLoading", event.target.checked) }),
+								react_jsx_runtime.jsx("span", { style: S.meta, children: t("capability.mcp.deferLoading", "Defer tool definitions") }),
+							] }),
+							react_jsx_runtime.jsx("span", { id: "weir-mcp-defer-loading-help", style: S.meta, children: t("capability.mcp.deferLoadingHelp", "Supported models load full tool definitions when needed. Permissions and tool invocation stay unchanged.") }),
+						]}),
 						field("toolCallTimeoutMs", t("capability.mcp.timeout", "per-call timeout (ms)"), { type: "number" }),
 						field("maxInstructionBytes", t("capability.mcp.instructionLimit", "instruction limit (bytes)"), { type: "number" }),
 						draft.transport === "stdio" ? secretRows("envRows", t("capability.mcp.env", "environment secrets / references")) : secretRows("headerRows", t("capability.mcp.headers", "HTTP header secrets / references")),
@@ -484,6 +491,7 @@ window.__ModuleLoader__.load({
 						react_jsx_runtime.jsx("strong", { style: S.name, children: server.label ?? identity }),
 						tag(state, state === "mounted" ? SUCCESS : state === "degraded" || state === "conflict" ? DANGER : undefined),
 						server.defaultEnabled ? tag(t("capability.mcp.default", "default")) : null,
+						server.config?.deferLoading === true ? tag(t("capability.mcp.deferred", "deferred")) : null,
 						selected ? tag(t("capability.mcp.selected", "selected")) : null,
 					] }),
 					react_jsx_runtime.jsx("span", { style: S.meta, children: `${identity} · ${server.serverName ?? identity} · ${server.transport ?? "unknown"}` }),
