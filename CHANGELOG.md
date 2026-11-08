@@ -13,6 +13,7 @@
 - **决策卡与左侧栏管理页**：显示结论理由、证据出处、记录版本、暂定建议和逐题结论；提供 Agent 档案、六维过滤的只读决策记录、持久待办收件箱与指标。赞、踩、撤销、评论、纠正、裁决、改派、取消和重试均写入本地权威历史，并支持重启后恢复。
 - **九项 Decision Agent 设置**：总开关、Attempt 超时/次数/并发、上下文与输出预算、Agent 模型链、保留天数和私有存储目录。`generatedDescription` 在 P1 恒空只读。
 - **Decision Agent P2 受限检索与中性记忆**：每次 Attempt 独立按 Agent、workspace、scope 和当前资格检索；未评分的已答历史可作为 L3 非权威上下文，但不能充当证据或权限。L2 保持空适配器，无 Snapshot/语义整合/自动画像学习。新增 L3 优先预算裁剪、实际来源与省略清单、上下文指纹，以及记录详情中的只读 Context Pack。
+- **Decision Agent P3 手动语义整合与 Snapshot 生命周期**：用户可在 Agent 档案中手动冻结同命名空间记录并启动 Learning Run，审阅严格的候选操作、原则 diff、来源和结构重放，再显式发布、拒绝或回滚。已发布 Snapshot 以非权威 L2 进入后续 Attempt，全部来源仍须展开为合格 L5，不能独立回答或授权。新增 L3→L2→L5 裁剪、实际 pins/manifest/hash、六个授权 RPC、跨根 Case/correction 只读来源审阅及当前版本长历史可回滚；复用 SQLite schema v1，无自动整合/发布、自动画像学习、Auto、跨工作区共享或导出。
 
 ### Fixed
 
