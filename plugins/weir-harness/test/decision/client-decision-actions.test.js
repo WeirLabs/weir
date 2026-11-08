@@ -34,7 +34,7 @@ test('action errors are explicit non-blocking banners and surfaces use accessibl
     assert.equal(source.includes('commands.execute'), false, file);
     assert.equal(/#[\da-f]{3,8}\b/i.test(source), false, file);
     assert.equal(source.includes('aria-label'), true, file);
-    assert.equal(source.includes('type: "button"') || file === 'client.decision-selector.js', true, file);
+    assert.equal(source.includes('type: "button"') || source.includes('ui.Button') || file === 'client.decision-selector.js', true, file);
     assert.equal(/setInterval|setTimeout/.test(source), false, file);
   }
 })

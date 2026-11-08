@@ -3,124 +3,633 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { loadClientChunk } from '../helpers/load-client-chunk.js'
 
-async function setup() {
-  const model = (await loadClientChunk('lib/client.decision-model.js')).exports;
-  const actions = (await loadClientChunk('lib/client.decision-actions.js')).exports;
-  const state = [];
-  let cursor = 0;
+function makeReact() {
+  const hooks = []
+  let cursor = 0
   const react = {
     useState(initial) {
-      const index = cursor++;
-      if (!state[index]) state[index] = [initial, null];
-      const set = value => { state[index][0] = typeof value === 'function' ? value(state[index][0]) : value; };
-      state[index][1] = set;
-      return [state[index][0], set];
+      const index = cursor++
+      if (!hooks[index]) hooks[index] = { value: initial }
+      const set = value => { hooks[index].value = typeof value === 'function' ? value(hooks[index].value) : value }
+      return [hooks[index].value, set]
     },
-    useEffect: fn => { fn(); },
-  };
-  const card = (await loadClientChunk('lib/client.decision-card.js', name => name === 'react' ? react : { jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }) })).exports;
-  const render = props => { cursor = 0; return card.DecisionCard(props); };
-  return { model, actions, render };
+    useRef(initial) {
+      const index = cursor++
+      if (!hooks[index]) hooks[index] = { current: initial }
+      return hooks[index]
+    },
+    useEffect(fn, dependencies) {
+      const index = cursor++
+      const previous = hooks[index]
+      const changed = !previous || !dependencies || !previous.dependencies
+        || dependencies.length !== previous.dependencies.length
+        || dependencies.some((value, dependency) => !Object.is(value, previous.dependencies[dependency]))
+      const hook = previous ?? {}
+      hook.dependencies = dependencies ? [...dependencies] : undefined
+      hooks[index] = hook
+      if (changed) {
+        hook.cleanup?.()
+        hook.cleanup = fn()
+      }
+    },
+    useId() {
+      const index = cursor++
+      if (!hooks[index]) hooks[index] = { id: `id-${index}` }
+      return hooks[index].id
+    },
+  }
+  return { react, begin: () => { cursor = 0 } }
 }
 
 function findAll(node, predicate, found = []) {
-  if (!node || typeof node !== 'object') return found;
-  if (predicate(node)) found.push(node);
+  if (!node || typeof node !== 'object') return found
+  if (predicate(node)) found.push(node)
   for (const value of Object.values(node)) {
-    if (Array.isArray(value)) for (const item of value) findAll(item, predicate, found);
-    else if (value && typeof value === 'object') findAll(value, predicate, found);
+    if (Array.isArray(value)) for (const item of value) findAll(item, predicate, found)
+    else if (value && typeof value === 'object') findAll(value, predicate, found)
   }
-  return found;
+  return found
 }
 
-const detail = {
-  case: { caseId: 'dc', agentId: 'a', state: 'closed', closing: 'answered', revision: 2, feedbackState: 'none', request: { questions: [] }, scope: { workspaces: ['/repo'] }, decision: { answers: [{ id: 'q', selected: ['A'] }] } },
-  attempts: [{ attemptId: 'da', claims: [{ text: 'Use concise wording', evidenceIds: ['ev'] }], evidence: [{ evidenceId: 'ev', source: 'user_decision', locator: { kind: 'case', caseId: 'source' } }] }], feedback: [], routeDecisions: [],
-};
+function textContent(node) {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textContent).filter(Boolean).join(' ')
+  if (!node || typeof node !== 'object') return ''
+  return textContent(node.children)
+}
 
-test('production registers both toolview keys independently at priority -10', async () => {
-  const production = readFileSync(new URL('../../lib/client.js', import.meta.url), 'utf8');
-  assert.match(production, /for \(const toolName of \["ask_user_question", "decision_consult"\]\)/);
-  assert.match(production, /key: toolName, priority: -10/);
-  assert.match(production, /ui-weir-settings: \$\{toolName\} decision card/);
-  const source = readFileSync(new URL('../../lib/client.decision-card.js', import.meta.url), 'utf8');
-  assert.equal(source.includes('session.append') || source.includes('commands.execute'), false);
-})
+const agents = [
+  { agentId: 'a', name: 'Tone', state: 'enabled' },
+  { agentId: 'b', name: 'Second assistant', state: 'enabled' },
+]
 
-test('missing Case returns null and leaves native UI untouched', async () => {
-  const f = await setup();
-  const props = {
-    sessionId: 'root', callId: 'call', toolName: 'ask_user_question', questions: [], connection: {},
-    decisionRpc: async () => null, createDecisionActions: f.actions.createDecisionActions,
-    cardView: f.model.cardView, t: key => key,
-  };
-  const first = f.render(props);
-  assert.equal(first, null);
-  await Promise.resolve(); await Promise.resolve();
-  assert.equal(f.render(props), null);
-})
+const answeredDetail = {
+  case: {
+    caseId: 'dc-current', agentId: 'a', state: 'closed', closing: 'answered', revision: 7, feedbackState: 'none',
+    request: { questions: [{ id: 'q-title', question: 'Which title should we use?', options: [{ label: 'Concise title' }, { label: 'Long title' }] }] },
+    scope: { workspaces: ['/repo'], paths: ['docs'] },
+    decision: { attemptId: 'da-new', answers: [{ id: 'q-title', selected: ['Concise title'] }], hint: 'Use concise wording' },
+  },
+  attempts: [
+    { attemptId: 'da-old', attemptNo: 1, outcome: 'return', reasonCode: 'MISSING_CONTEXT', claims: [{ text: 'Old rationale' }], evidence: [{ evidenceId: 'ev-old', excerpt: 'old evidence' }] },
+    { attemptId: 'da-new', attemptNo: 2, outcome: 'answer', claims: [{ text: 'Use concise wording', evidenceIds: ['ev-new'] }], evidence: [{ evidenceId: 'ev-new', source: 'user_decision', excerpt: 'current evidence', locator: { kind: 'case', caseId: 'source' } }] },
+  ],
+  feedback: [], routeDecisions: [],
+}
 
-test('Case card shows evidence/version, rereads record on expand and exposes action failures', async () => {
-  const f = await setup();
-  const calls = [];
-  let failFeedback = false;
-  const decisionRpc = async (_connection, method, request) => {
-    calls.push([method, request]);
-    if (method === 'feedback' && failFeedback) throw new Error('write rejected');
-    if (method === 'caseForCall' || method === 'record') return detail;
-    if (method === 'overview') return { agents: [{ agentId: 'a', name: 'Tone', state: 'enabled' }] };
-    return null;
-  };
+async function setup() {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const actions = (await loadClientChunk('lib/client.decision-actions.js')).exports
+  const runtime = makeReact()
+  const jsx = (type, props) => ({ ...props, __type: type, type: props?.type ?? type })
+  const card = (await loadClientChunk('lib/client.decision-card.js', name => name === 'react' ? runtime.react : { jsx, jsxs: jsx })).exports
+  const ui = Object.fromEntries(['DecisionStyles', 'DecisionIcon', 'Button', 'Badge', 'Field', 'LoadingState', 'EmptyState', 'ErrorState', 'Disclosure', 'ConfirmDialog', 'DecisionAnswers'].map(name => [name, `ui.${name}`]))
+  const render = props => { runtime.begin(); return card.DecisionCard(props) }
+  return { model, actions, render, ui }
+}
+
+async function mount(detail = answeredDetail, options = {}) {
+  const f = await setup()
+  const calls = []
+  let current = detail
+  const decisionRpc = options.decisionRpc ?? (async (_connection, method, request) => {
+    calls.push([method, request])
+    if (method === 'overview') return { agents }
+    if (method === 'caseForCall' || method === 'caseForToolCall' || method === 'record') return current
+    return null
+  })
   const props = {
     sessionId: 'root', callId: 'call', toolName: 'ask_user_question', questions: [], connection: {},
     decisionRpc, createDecisionActions: f.actions.createDecisionActions,
-    cardView: f.model.cardView, t: key => key,
-  };
-  f.render(props);
-  for (let index = 0; index < 6; index++) await Promise.resolve();
-  const rendered = f.render(props);
-  assert.equal(rendered['data-weir-decision-card'], 'dc');
-  assert.equal(JSON.stringify(rendered).includes('Use concise wording'), true)
-  const disclosure = findAll(rendered, node => node.type === 'details')[0];
-  disclosure.onToggle();
-  await Promise.resolve();
-  assert.equal(calls.some(call => call[0] === 'record' && call[1].caseId === 'dc'), true);
-  const down = findAll(rendered, node => node.type === 'button' && node['aria-label'] === 'decisionDown')[0];
-  failFeedback = true;
-  await down.onClick();
-  const failed = f.render(props);
-  assert.equal(findAll(failed, node => node.role === 'alert').some(node => String(node.children).includes('write rejected')), true);
-})
-test('escalation card renders tentative suggestions and per-question conclusions read-only', async () => {
-  const f = await setup()
-  const waiting = {
-    ...detail,
-    case: {
-      ...detail.case,
-      state: 'awaiting_user', closing: undefined, decision: null,
-      escalation: {
-        suggestion: [{ id: 'q', selected: ['Use Short'] }],
-        perQuestion: [{ id: 'q2', outcome: 'return', detail: 'MISSING_CONTEXT' }],
-      },
-    },
-  }
-  const props = {
-    sessionId: 'root', callId: 'call', toolName: 'ask_user_question', questions: [], connection: {},
-    decisionRpc: async (_connection, method) => method === 'overview' ? { agents: [] } : waiting,
-    createDecisionActions: f.actions.createDecisionActions, cardView: f.model.cardView, t: key => key,
+    cardView: f.model.cardView, decisionModel: f.model, ui: f.ui, t: key => key,
+    ...options.props,
   }
   f.render(props)
-  for (let index = 0; index < 6; index++) await Promise.resolve()
-  const rendered = f.render(props)
-  const text = JSON.stringify(rendered)
-  assert.equal(text.includes('decisionSuggestions'), true)
-  assert.equal(text.includes('decisionPerQuestion'), true)
-  assert.equal(text.includes('Use Short'), true)
-  assert.equal(text.includes('MISSING_CONTEXT'), true)
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  return {
+    ...f, props, calls,
+    render: () => f.render(props),
+    setDetail: value => { current = value },
+  }
+}
+
+test('production registers both toolview keys independently at priority -10 without bypass channels', async () => {
+  const production = readFileSync(new URL('../../lib/client.js', import.meta.url), 'utf8')
+  assert.match(production, /for \(const toolName of \["ask_user_question", "decision_consult"\]\)/)
+  assert.match(production, /key: toolName, priority: -10/)
+  assert.match(production, /ui-weir-settings: \$\{toolName\} decision card/)
+  const source = readFileSync(new URL('../../lib/client.decision-card.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('session.append') || source.includes('commands.execute'), false)
+  assert.equal(source.includes('querySelector') || source.includes('document.body'), false)
+})
+
+test('missing Case returns null and leaves native UI untouched', async () => {
+  const mounted = await mount(null)
+  assert.equal(mounted.render(), null)
+})
+
+test('answered card presents real questions and answers with one primary action and lazy diagnostics', async () => {
+  const mounted = await mount()
+  const tree = mounted.render()
+  const text = textContent(tree)
+  assert.equal(tree['data-decision-variant'], 'answered')
+  assert.match(text, /Tone/)
+  assert.match(text, /Which title should we use\?/)
+  assert.match(text, /Concise title/)
+  assert.match(text, /Use concise wording/)
+  assert.equal(text.includes('dc-current') || text.includes('da-new') || text.includes('decisionRevision'), false)
+  const primary = findAll(tree, node => node.__type === mounted.ui.Button && node.variant === 'primary')
+  assert.equal(primary.length, 1)
+  const disclosures = findAll(tree, node => node.__type === mounted.ui.Disclosure)
+  assert.ok(disclosures.some(node => node.label === 'decisionEvidence'))
+  const advanced = disclosures.find(node => node.label === 'decisionAdvancedDiagnostics')
+  assert.ok(advanced)
+  assert.equal(typeof advanced.children, 'function')
+  assert.match(textContent(advanced.children()), /dc-current/)
+})
+
+test('card status variants retain localized state and a single primary action', async () => {
+  const variants = [
+    [{ state: 'closed', closing: 'answered' }, 'answered', 'decisionStatusAnswered'],
+    [{ state: 'awaiting_user', closing: undefined, awaitingReason: 'authority', decision: null }, 'pending', 'decisionStatusAwaitingUser'],
+    [{ state: 'closed', closing: 'returned', decision: null }, 'needs_more', 'decisionStatusReturned'],
+    [{ state: 'awaiting_user', closing: undefined, awaitingReason: 'exhausted', decision: null }, 'failed', 'decisionStatusFailed'],
+    [{ state: 'closed', closing: 'cancelled', decision: null }, 'cancelled', 'decisionStatusCancelled'],
+  ]
+  for (const [patch, variant, statusKey] of variants) {
+    const detail = { ...answeredDetail, case: { ...answeredDetail.case, ...patch } }
+    const mounted = await mount(detail)
+    const tree = mounted.render()
+    assert.equal(tree['data-decision-variant'], variant)
+    assert.ok(findAll(tree, node => node.__type === mounted.ui.Badge).some(node => node.children === statusKey))
+    assert.equal(findAll(tree, node => node.__type === mounted.ui.Button && node.variant === 'primary').length, 1)
+  }
+})
+
+const waitingDetail = {
+  ...answeredDetail,
+  case: {
+    ...answeredDetail.case,
+    state: 'awaiting_user', closing: undefined, awaitingReason: 'authority', decision: null,
+    escalation: {
+      missing: ['A new title judgment is required'],
+      suggestion: [{ id: 'q-title', selected: ['Use Short'] }],
+      perQuestion: [{ id: 'q-title', outcome: 'return', detail: 'MISSING_CONTEXT' }],
+    },
+  },
+}
+
+test('Hook pending card defers to the native question and never duplicates its answer form', async () => {
+  const mounted = await mount(waitingDetail, { props: { toolName: 'ask_user_question' } })
+  const tree = mounted.render()
+  const text = textContent(tree)
+  assert.match(text, /decisionNativeAnswerHint/)
+  assert.match(text, /A new title judgment is required/)
+  assert.match(text, /Use Short/)
+  assert.match(text, /decisionSuggestionNotSubmitted/)
+  assert.match(text, /decisionReasonMissingContext/)
+  assert.equal(text.includes('MISSING_CONTEXT'), false)
+  assert.equal(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers).length, 0)
+  assert.equal(findAll(tree, node => node.__type === 'input' || node.__type === 'textarea' || node.__type === 'select').length, 0)
+})
+
+test('explicit consult card reuses DecisionAnswers and writes back with an authoritative reread', async () => {
+  let current = { ...waitingDetail, case: { ...waitingDetail.case, caseId: 'dc-consult' } }
+  const calls = []
+  const mounted = await mount(current, {
+    props: { toolName: 'decision_consult' },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall' || method === 'record') return current
+      if (method === 'decide') {
+        current = { ...current, case: { ...current.case, state: 'closed', closing: 'escalated', decision: { attemptId: 'da-new', answers: request.answers } } }
+        return current.case
+      }
+      return null
+    },
+  })
+  let tree = mounted.render()
+  const form = findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0]
+  assert.ok(form)
+  assert.deepEqual(form.questions, current.case.request.questions)
+  assert.deepEqual(form.suggestions, current.case.escalation.suggestion)
+  assert.deepEqual(form.answers, {})
+  const openRecord = findAll(tree, node => node.__type === mounted.ui.Button && node.children === 'decisionHistory')[0]
+  assert.equal(openRecord.variant, 'secondary')
+  const batch = [{ id: 'q-title', selected: ['User choice'] }]
+  await form.onSubmit(batch)
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  tree = mounted.render()
+  assert.deepEqual(calls.filter(call => call[0] === 'decide'), [['decide', { sessionId: 'root', caseId: 'dc-consult', answers: batch }]])
+  assert.ok(calls.some(call => call[0] === 'record' && call[1].caseId === 'dc-consult'))
+  assert.equal(calls.filter(call => call[0] === 'caseForToolCall').length, 1)
+  assert.equal(tree['data-decision-variant'], 'answered')
+  assert.match(textContent(tree), /User choice/)
+})
+
+test('evidence rereads once on open and earlier evaluations keep their own evidence grouped', async () => {
+  const mounted = await mount()
+  let tree = mounted.render()
+  let evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(mounted.calls.filter(call => call[0] === 'record').length, 0)
+  assert.equal(evidence.onToggle, undefined)
+  await evidence.onOpen()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  tree = mounted.render()
+  evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(mounted.calls.filter(call => call[0] === 'record').length, 1)
+  const currentText = textContent(evidence.children())
+  assert.match(currentText, /current evidence/)
+  assert.equal(currentText.includes('old evidence'), false)
+  await evidence.onOpen()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.equal(mounted.calls.filter(call => call[0] === 'record').length, 1)
+
+  const history = findAll(mounted.render(), node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvaluationHistory')[0]
+  assert.ok(history)
+  const historyText = textContent(history.children())
+  assert.match(historyText, /Old rationale/)
+  assert.match(historyText, /old evidence/)
+  assert.match(historyText, /decisionReasonMissingContext/)
+  assert.equal(historyText.includes('current evidence') || historyText.includes('da-old') || historyText.includes('MISSING_CONTEXT'), false)
+})
+
+test('stale, conflicting, and missing evidence remain visible in ordinary language', async () => {
+  const stale = {
+    ...answeredDetail,
+    case: answeredDetail.case,
+    attempts: [answeredDetail.attempts[0], { ...answeredDetail.attempts[1], reasonCode: 'STALE_EVIDENCE', evidence: [{ evidenceId: 'ev-new', status: 'superseded' }] }],
+  }
+  const staleMount = await mount(stale)
+  const staleTree = staleMount.render()
+  assert.match(textContent(staleTree), /decisionReasonStaleEvidence/)
+  const staleEvidence = findAll(staleTree, node => node.__type === staleMount.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.match(textContent(staleEvidence.children()), /decisionEvidenceSuperseded/)
+  assert.match(textContent(staleEvidence.children()), /decisionEvidenceUnavailable/)
+
+  const conflict = { ...answeredDetail, case: { ...answeredDetail.case, decision: { ...answeredDetail.case.decision, code: 'CONFLICTING_EVIDENCE' } } }
+  const conflictMount = await mount(conflict)
+  assert.match(textContent(conflictMount.render()), /decisionReasonConflictingEvidence/)
+
+  const missing = { ...answeredDetail, attempts: [answeredDetail.attempts[0], { ...answeredDetail.attempts[1], evidence: [] }] }
+  const missingMount = await mount(missing)
+  const missingEvidence = findAll(missingMount.render(), node => node.__type === missingMount.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.match(textContent(missingEvidence.children()), /decisionNoEvidence/)
+})
+
+test('feedback actions follow rating state and dispute stays a single reason-free RPC', async () => {
+  const expected = { none: ['rating_up', 'rating_down'], validated: ['undo_rating_up'], disputed: ['undo_rating_down'], unknown: [] }
+  for (const [feedbackState, verbs] of Object.entries(expected)) {
+    const detail = { ...answeredDetail, case: { ...answeredDetail.case, feedbackState } }
+    const mounted = await mount(detail)
+    let tree = mounted.render()
+    const controls = findAll(tree, node => node.__type === mounted.ui.Button && node['data-feedback'])
+    assert.deepEqual(controls.map(node => node['data-feedback']), verbs)
+    if (feedbackState === 'none') {
+      assert.equal(controls.some(node => String(node['data-feedback']).startsWith('undo_')), false)
+      assert.match(textContent(tree), /decisionConfirmConsequence/)
+      assert.match(textContent(tree), /decisionDisputeConsequence/)
+      const down = controls.find(node => node['data-feedback'] === 'rating_down')
+      await down.onClick()
+      for (let index = 0; index < 8; index++) await Promise.resolve()
+      assert.deepEqual(mounted.calls.filter(call => call[0] === 'feedback'), [['feedback', { sessionId: 'root', caseId: 'dc-current', verb: 'rating_down' }]])
+      tree = mounted.render()
+    }
+    if (feedbackState === 'validated') assert.match(textContent(tree), /decisionFeedbackValidated/)
+    if (feedbackState === 'disputed') assert.match(textContent(tree), /decisionFeedbackDisputed/)
+  }
+})
+
+test('note and correction entries keep separate content, previews, and exact RPC arguments', async () => {
+  const mounted = await mount()
+  let tree = mounted.render()
+  findAll(tree, node => node.__type === mounted.ui.Button && node['data-action'] === 'open-comment')[0].onClick()
+  tree = mounted.render()
+  let note = findAll(tree, node => node.__type === 'textarea' && node['data-draft'] === 'comment')[0]
+  assert.equal(findAll(tree, node => node.__type === mounted.ui.Field && node.label === 'decisionComment')[0].hint, 'decisionNoteNoEffect')
+  note.onChange({ target: { value: 'A note for later' } })
+
+  tree = mounted.render()
+  findAll(tree, node => node.__type === mounted.ui.Button && node['data-action'] === 'open-correction')[0].onClick()
+  tree = mounted.render()
+  const correction = findAll(tree, node => node.__type === 'textarea' && node['data-draft'] === 'correction')[0]
+  assert.notEqual(correction.value, 'A note for later')
+  correction.onChange({ target: { value: 'Use the longer title' } })
+  tree = mounted.render()
+  const preview = textContent(tree)
+  assert.match(preview, /decisionCorrectionScope/)
+  assert.match(preview, /\/repo/)
+  assert.match(preview, /docs/)
+  assert.match(preview, /decisionCorrectionTarget/)
+  assert.match(preview, /Which title should we use\?/)
+  assert.match(preview, /decisionCorrectionFutureOnly/)
+  await findAll(tree, node => node.__type === mounted.ui.Button && node['data-action'] === 'correction')[0].onClick()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.deepEqual(mounted.calls.filter(call => call[0] === 'correction'), [['correction', {
+    sessionId: 'root', caseId: 'dc-current', direction: 'Use the longer title',
+    scope: answeredDetail.case.scope, supersedes: ['dc-current'],
+  }]])
+
+  tree = mounted.render()
+  findAll(tree, node => node.__type === mounted.ui.Button && node['data-action'] === 'open-comment')[0].onClick()
+  tree = mounted.render()
+  note = findAll(tree, node => node.__type === 'textarea' && node['data-draft'] === 'comment')[0]
+  assert.equal(note.value, 'A note for later')
+  await findAll(tree, node => node.__type === mounted.ui.Button && node['data-action'] === 'comment')[0].onClick()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.deepEqual(mounted.calls.filter(call => call[0] === 'feedback'), [['feedback', {
+    sessionId: 'root', caseId: 'dc-current', verb: 'comment', payload: { text: 'A note for later' },
+  }]])
+})
+
+function action(tree, ui, name) {
+  return findAll(tree, node => node.__type === ui.Button && node['data-action'] === name)[0]
+}
+
+function draftInput(tree, field) {
+  return findAll(tree, node => (node.__type === 'textarea' || node.__type === 'select') && node['data-draft'] === field)[0]
+}
+
+function recovery(tree, ui) {
+  return findAll(tree, node => node.__type === ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+}
+
+async function flushCard() {
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+}
+
+test('answers, comment, correction, and reassign drafts stay isolated by session and Case', async () => {
+  const makeWaiting = caseId => ({ ...waitingDetail, case: { ...waitingDetail.case, caseId } })
+  const byCall = { 'call-a': makeWaiting('dc-a'), 'call-b': makeWaiting('dc-b') }
+  const byCase = Object.fromEntries(Object.values(byCall).map(value => [value.case.caseId, value]))
+  const mounted = await mount(byCall['call-a'], {
+    props: { toolName: 'decision_consult', callId: 'call-a' },
+    decisionRpc: async (_connection, method, request) => {
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall') return byCall[request.toolCallId]
+      if (method === 'record') return byCase[request.caseId]
+      return null
+    },
+  })
+  const answersA = { 'q-title': { selected: ['Answer A'] } }
+  let tree = mounted.render()
+  findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].onChange(answersA)
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  draftInput(tree, 'comment').onChange({ target: { value: 'Comment A' } })
+  tree = mounted.render()
+  action(tree, mounted.ui, 'open-correction').onClick()
+  tree = mounted.render()
+  draftInput(tree, 'correction').onChange({ target: { value: 'Correction A' } })
+  tree = mounted.render()
+  let target = findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0]
+  target.onChange({ target: { value: 'b' } })
+
+  mounted.props.callId = 'call-b'
+  mounted.render()
+  await flushCard()
+  tree = mounted.render()
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, {})
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'comment').value, '')
+  draftInput(tree, 'comment').onChange({ target: { value: 'Comment B' } })
+  tree = mounted.render()
+  assert.equal(findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].value, '')
+
+  mounted.props.callId = 'call-a'
+  mounted.render()
+  await flushCard()
+  tree = mounted.render()
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answersA)
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'comment').value, 'Comment A')
+  tree = mounted.render()
+  action(tree, mounted.ui, 'open-correction').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'correction').value, 'Correction A')
+  assert.equal(findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].value, 'b')
+
+  mounted.props.sessionId = 'other'
+  mounted.render()
+  await flushCard()
+  tree = mounted.render()
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, {})
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'comment').value, '')
+  assert.equal(findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].value, '')
+})
+
+test('write and reread failures retain drafts; success clears only the relevant draft', async () => {
+  let current = { ...waitingDetail, case: { ...waitingDetail.case, caseId: 'dc-safe' } }
+  const failures = new Set(['decide', 'comment', 'correction', 'reassign'])
+  let failRecord = false
+  const mounted = await mount(current, {
+    props: { toolName: 'decision_consult' },
+    decisionRpc: async (_connection, method, request) => {
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall') return current
+      if (method === 'record') {
+        if (failRecord) throw Object.assign(new Error('raw reread socket details'), { code: 'NETWORK' })
+        return current
+      }
+      if (method === 'decide' && failures.has('decide')) throw Object.assign(new Error('raw revision details'), { code: 'REVISION_CONFLICT' })
+      if (method === 'feedback' && request.verb === 'comment' && failures.has('comment')) throw new Error('raw comment details')
+      if (method === 'correction' && failures.has('correction')) throw new Error('raw correction details')
+      if (method === 'reassign' && failures.has('reassign')) throw new Error('raw reassign details')
+      return null
+    },
+  })
+  const answers = { 'q-title': { selected: ['Draft answer'] } }
+  const batch = [{ id: 'q-title', selected: ['Draft answer'] }]
+  let tree = mounted.render()
+  findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].onChange(answers)
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  draftInput(tree, 'comment').onChange({ target: { value: 'Keep this note' } })
+  tree = mounted.render()
+  action(tree, mounted.ui, 'open-correction').onClick()
+  tree = mounted.render()
+  draftInput(tree, 'correction').onChange({ target: { value: 'Keep this correction' } })
+  tree = mounted.render()
+  findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].onChange({ target: { value: 'b' } })
+
+  tree = mounted.render()
+  await findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].onSubmit(batch)
+  await flushCard()
+  tree = mounted.render()
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answers)
+  assert.match(textContent(tree), /decisionErrorConflict/)
+  assert.equal(textContent(tree).includes('raw revision details'), false)
+  const advanced = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.match(textContent(advanced.children()), /REVISION_CONFLICT/)
+  assert.match(textContent(advanced.children()), /raw revision details/)
+
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  await action(tree, mounted.ui, 'comment').onClick()
+  await flushCard()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'comment').value, 'Keep this note')
+  assert.equal(textContent(tree).includes('raw comment details'), false)
+
+  action(tree, mounted.ui, 'open-correction').onClick()
+  tree = mounted.render()
+  await action(tree, mounted.ui, 'correction').onClick()
+  await flushCard()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'correction').value, 'Keep this correction')
+
+  let recoveryTree = recovery(tree, mounted.ui).children()
+  await findAll(recoveryTree, node => node.__type === mounted.ui.Button && node['data-action'] === 'reassign')[0].onClick()
+  await flushCard()
+  tree = mounted.render()
+  assert.equal(findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].value, 'b')
+
+  failures.delete('comment')
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  await action(tree, mounted.ui, 'comment').onClick()
+  await flushCard()
+  tree = mounted.render()
+  action(tree, mounted.ui, 'open-comment').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'comment').value, '')
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answers)
+  action(tree, mounted.ui, 'open-correction').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'correction').value, 'Keep this correction')
+  assert.equal(findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].value, 'b')
+
+  failures.delete('correction')
+  await action(tree, mounted.ui, 'correction').onClick()
+  await flushCard()
+  tree = mounted.render()
+  action(tree, mounted.ui, 'open-correction').onClick()
+  tree = mounted.render()
+  assert.equal(draftInput(tree, 'correction').value, '')
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answers)
+
+  failures.delete('reassign')
+  await findAll(recovery(tree, mounted.ui).children(), node => node.__type === mounted.ui.Button && node['data-action'] === 'reassign')[0].onClick()
+  await flushCard()
+  tree = mounted.render()
+  assert.equal(findAll(recovery(tree, mounted.ui).children(), node => node.__type === 'select')[0].value, '')
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answers)
+
+  failures.delete('decide')
+  failRecord = true
+  await findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].onSubmit(batch)
+  await flushCard()
+  tree = mounted.render()
+  assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answers)
+  assert.equal(textContent(tree).includes('raw reread socket details'), false)
+})
+
+test('unified pending guard suppresses duplicate and competing writes', async () => {
+  let current = waitingDetail
+  let release
+  const calls = []
+  const mounted = await mount(current, {
+    props: { toolName: 'decision_consult' },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall' || method === 'record') return current
+      if (method === 'decide') return new Promise(resolve => {
+        release = () => {
+          current = { ...current, case: { ...current.case, state: 'closed', closing: 'escalated', decision: { attemptId: 'da-new', answers: request.answers } } }
+          resolve(current.case)
+        }
+      })
+      return null
+    },
+  })
+  const tree = mounted.render()
+  const form = findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0]
+  const batch = [{ id: 'q-title', selected: ['One answer'] }]
+  const first = form.onSubmit(batch)
+  const second = form.onSubmit(batch)
+  const pendingTree = mounted.render()
+  assert.equal(calls.filter(call => call[0] === 'decide').length, 1)
+  const rating = findAll(pendingTree, node => node.__type === mounted.ui.Button && node['data-feedback'] === 'rating_up')[0]
+  assert.equal(rating.disabled, true)
+  await rating.onClick()
+  await action(pendingTree, mounted.ui, 'open-comment').onClick()
+  assert.equal(calls.filter(call => call[0] === 'feedback').length, 0)
+  assert.equal(findAll(mounted.render(), node => node.__type === mounted.ui.ConfirmDialog).length, 0)
+  release()
+  await Promise.all([first, second])
+  await flushCard()
+  assert.equal(calls.filter(call => call[0] === 'decide').length, 1)
+})
+
+test('cancel requires confirmation and terminal records expose no revival controls', async () => {
+  let current = waitingDetail
+  const calls = []
+  const mounted = await mount(current, {
+    props: { toolName: 'decision_consult' },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall' || method === 'record') return current
+      if (method === 'cancel') {
+        current = { ...current, case: { ...current.case, state: 'closed', closing: 'cancelled', decision: null } }
+        return current.case
+      }
+      return null
+    },
+  })
+  let tree = mounted.render()
+  let cancel = findAll(recovery(tree, mounted.ui).children(), node => node.__type === mounted.ui.Button && node['data-action'] === 'cancel')[0]
+  cancel.onClick()
+  tree = mounted.render()
+  assert.equal(calls.filter(call => call[0] === 'cancel').length, 0)
+  let dialog = findAll(tree, node => node.__type === mounted.ui.ConfirmDialog)[0]
+  assert.ok(dialog)
+  assert.equal(dialog.body, 'decisionCancelConfirmation')
+  dialog.onCancel()
+  assert.equal(calls.filter(call => call[0] === 'cancel').length, 0)
+  tree = mounted.render()
+  cancel = findAll(recovery(tree, mounted.ui).children(), node => node.__type === mounted.ui.Button && node['data-action'] === 'cancel')[0]
+  cancel.onClick()
+  tree = mounted.render()
+  dialog = findAll(tree, node => node.__type === mounted.ui.ConfirmDialog)[0]
+  await dialog.onConfirm()
+  await flushCard()
+  assert.deepEqual(calls.filter(call => call[0] === 'cancel'), [['cancel', { sessionId: 'root', caseId: 'dc-current' }]])
+  tree = mounted.render()
+  assert.equal(tree['data-decision-variant'], 'cancelled')
+  assert.equal(recovery(tree, mounted.ui), undefined)
+  assert.equal(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers).length, 0)
+  assert.equal(action(tree, mounted.ui, 'retry'), undefined)
 })
 
 test('native pending interaction refreshes an early tool-call card without polling', async () => {
-  const source = readFileSync(new URL('../../lib/client.decision-card.js', import.meta.url), 'utf8');
-  assert.equal(source.includes('props.useSessionStatus?.('), true);
-  assert.equal(source.includes('props.refreshKey, pendingInteraction]'), true);
+  let pendingInteraction
+  let current = null
+  const calls = []
+  const mounted = await mount(null, {
+    props: { useSessionStatus: () => pendingInteraction },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForCall') return current
+      return null
+    },
+  })
+  assert.equal(mounted.render(), null)
+  current = waitingDetail
+  pendingInteraction = { kind: 'question', callId: 'call' }
+  mounted.render()
+  await flushCard()
+  assert.equal(mounted.render()['data-decision-variant'], 'pending')
+  assert.equal(calls.filter(call => call[0] === 'caseForCall').length, 2)
+  const source = readFileSync(new URL('../../lib/client.decision-card.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('props.useSessionStatus?.('), true)
+  assert.equal(source.includes('props.refreshKey, pendingInteraction]'), true)
+  assert.equal(/setInterval|setTimeout/.test(source), false)
 })

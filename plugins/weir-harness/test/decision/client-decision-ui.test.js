@@ -69,6 +69,7 @@ test('shared atoms use theme tokens, explicit action hierarchy, and readable sta
   assert.match(styles.children, /:focus-visible/)
   assert.match(styles.children, /@media \(max-width: 600px\)/)
   assert.match(styles.children, /--dsw-alias-bg-overlay/)
+  assert.match(styles.children, /\.weir-da-conversation-card \{ position: relative; \}/)
   const source = readFileSync(new URL('../../lib/client.decision-ui.js', import.meta.url), 'utf8')
   assert.equal(/#[\da-f]{3,8}\b/i.test(source), false)
   assert.equal(source.includes('document.body'), false)
