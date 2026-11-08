@@ -57,6 +57,10 @@ function decideDecision(options, obs) {
   return textChunks(JSON.stringify({ outcome: 'escalate', missing: [`No scripted evidence-backed outcome for ${questionId ?? 'unknown question'}`] }))
 }
 
+function decideConsolidation() {
+  return textChunks(JSON.stringify({ operations: [] }))
+}
+
 function observe(obs) {
   return observeDecision(obs)
 }
@@ -105,6 +109,6 @@ function assert(run) {
 }
 
 export default {
-  id, prompt, decide, decideDecision, observe, assert,
+  id, prompt, decide, decideDecision, decideConsolidation, observe, assert,
   env: { WEIR_IT_DECISION: '1', WEIR_IT_DECISION_EVENTS: EVENTS },
 }

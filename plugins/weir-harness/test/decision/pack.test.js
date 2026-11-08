@@ -37,7 +37,8 @@ test('pins, profile/correction ordering and contextPackHash are deterministic', 
   assert.equal(value.outcome, 'ready')
   assert.deepEqual(value.pins, {
     agentProfileRevision: 7, userDescriptionRevision: 3, generatedDescriptionRevision: 0,
-    memorySnapshotId: null, promptVersion: 'evaluator-contract/2', evaluatorVersion: 'sidecar/1',
+    memorySnapshotId: null, memorySnapshotRevision: null, memorySnapshotHash: null,
+    promptVersion: 'evaluator-contract/3', evaluatorVersion: 'sidecar/1',
     modelRoute: { kind: 'inherited' }, budgetTokens: 24000,
   })
   assert.deepEqual(value.packManifest.evidenceIds, ['ev_correction', 'ev_profile', 'ev_user'])
@@ -105,7 +106,10 @@ test('optional memory is safely projected and default input remains the P1 empty
   assert.equal(legacy.layers.L3, '')
   assert.equal(legacy.contextPackHash, explicitEmpty.contextPackHash)
   assert.deepEqual(legacy.packManifest.memory, {
-    L2: { schemaVersion: 1, status: 'empty', snapshotId: null },
+    L2: {
+      schemaVersion: 1, status: 'empty', snapshotId: null, snapshotRevision: null, snapshotHash: null,
+      principleIds: [], items: [], exclusions: [],
+    },
     L3: { schemaVersion: 1, sourceCaseIds: [] },
   })
 

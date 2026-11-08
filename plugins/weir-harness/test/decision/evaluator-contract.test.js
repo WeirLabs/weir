@@ -4,7 +4,7 @@ import { EVALUATOR_CONTRACT, evaluatorVersion, promptVersion, renderEvaluatorCon
 import { EVALUATOR_VERSION, PROMPT_VERSION, RETURN_CODES } from '../../src/decision/contracts.js'
 
 test('L0 contract has a stable English version marker and exact return-code semantics', () => {
-  assert.equal(EVALUATOR_CONTRACT.split('\n')[0], 'Decision evaluator contract v2')
+  assert.equal(EVALUATOR_CONTRACT.split('\n')[0], 'Decision evaluator contract v3')
   assert.equal(renderEvaluatorContract(), EVALUATOR_CONTRACT)
   assert.equal(/[\u3400-\u9fff]/.test(EVALUATOR_CONTRACT), false)
   for (const code of RETURN_CODES) assert.ok(EVALUATOR_CONTRACT.includes(`- ${code}:`))
@@ -27,5 +27,5 @@ test('L0 contract bans confidence, authority and unknown evidence; versions feed
   assert.equal(promptVersion, PROMPT_VERSION)
   assert.equal(evaluatorVersion, EVALUATOR_VERSION)
   const pins = { promptVersion, evaluatorVersion }
-  assert.deepEqual(pins, { promptVersion: 'evaluator-contract/2', evaluatorVersion: 'sidecar/1' })
+  assert.deepEqual(pins, { promptVersion: 'evaluator-contract/3', evaluatorVersion: 'sidecar/1' })
 })

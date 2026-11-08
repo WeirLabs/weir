@@ -13,7 +13,11 @@ import { DecisionContextRetriever } from './retrieval/retriever.js'
 import { canonicalJson, DecisionContractError, parseAnswerBatch } from './contracts.js'
 import { buildContextPack } from './evaluator/pack.js'
 import { runDecisionAttempt } from './evaluator/attempt-pipeline.js'
-import { resolveDecisionModelRoute } from './evaluator/sidecar.js'
+import { resolveDecisionModelRoute, streamDecision } from './evaluator/sidecar.js'
+import {
+  applyConsolidationOperations, buildConsolidationPack, parseConsolidationCandidate, replayOperations,
+} from './learning/consolidator.js'
+import { DecisionLearning } from './store/learning.js'
 import { decisionOrigin, excludedRequest, sessionModelRoute } from './route.js'
 import { userTextMessage } from '../shared/user-message.js'
 
@@ -32,6 +36,9 @@ export class DecisionBroker {
     this.activeEvaluations = 0
     this.attemptControllers = new Map()
     this.evaluationJobs = new Set()
+    this.learningControllers = new Map()
+    this.learningJobs = new Set()
+    this.learningJobKeys = new Map()
   }
 
   /** @returns {{available:boolean,enabled:boolean,reason?:string}} */
@@ -62,7 +69,8 @@ export class DecisionBroker {
 
   async flush() {
     for (const controller of this.attemptControllers.values()) controller.abort(new Error('Decision Broker flushed'))
-    await Promise.allSettled([...this.evaluationJobs])
+    for (const controller of this.learningControllers.values()) controller.abort(new Error('Decision Broker flushed'))
+    await Promise.allSettled([...this.evaluationJobs, ...this.learningJobs])
     this.store?.close()
     this.store = undefined
     this.cases = undefined
@@ -72,6 +80,7 @@ export class DecisionBroker {
     this.feedbackStore = undefined
     this.query = undefined
     this.retriever = undefined
+    this.learning = undefined
     this.started = false
   }
 
@@ -97,8 +106,11 @@ export class DecisionBroker {
     this.feedbackStore = new DecisionFeedback(store, { now: this.now, audit: this.audit })
     this.query = new DecisionQuery(store, { now: this.now })
     this.retriever = new DecisionContextRetriever(store, this.evidence)
+    this.learning = new DecisionLearning(store, { now: this.now, evidence: this.evidence })
     const recovered = await this.attempts.recoverInterrupted()
     this.audit('recover', recovered)
+    const recoveredLearning = await this.learning.recoverInterrupted()
+    this.audit('recover', recoveredLearning)
     const retentionDays = this.config().decisionAgentRetentionDays ?? 0
     await this.query.sweep(retentionDays)
   }
@@ -464,6 +476,11 @@ export class DecisionBroker {
     throw new DecisionContractError(code, detail ?? caseId ?? agentId ?? rootSessionId)
   }
 
+  rejectLearningBoundary(kind, { learningRunId, snapshotId, agentId, rootSessionId, code = 'OUT_OF_SCOPE' }) {
+    this.audit(kind, { learningRunId, snapshotId, agentId, rootSessionId, action: 'boundary-reject', code })
+    throw new DecisionContractError(code, snapshotId ?? learningRunId ?? agentId ?? rootSessionId)
+  }
+
   async mutate(input) {
     const current = this.cases.getCase(input.caseId)
     if ((input.sessionId !== undefined || input.workspaceKey !== undefined) && (input.sessionId !== current.rootSessionId || input.workspaceKey !== current.workspaceKey)) {
@@ -581,7 +598,23 @@ export class DecisionBroker {
     const context = await this.sessionContext(input.sessionId)
     const profile = this.profiles.getProfile(input.agentId)
     if (profile.workspaceKey !== context.workspaceKey) this.rejectBoundary({ agentId: input.agentId, rootSessionId: context.rootSessionId })
-    return { ...profile, descriptionHistory: this.profiles.descriptionHistory(profile.agentId) }
+    const currentSnapshot = this.learning.currentSnapshot(profile.agentId, context.workspaceKey)
+    const snapshotHistory = this.learning.listSnapshots(profile.agentId).slice(0, 20)
+    if (currentSnapshot && !snapshotHistory.some(snapshot => snapshot.snapshotId === currentSnapshot.snapshotId)) snapshotHistory.push(currentSnapshot)
+    return {
+      ...profile,
+      descriptionHistory: this.profiles.descriptionHistory(profile.agentId),
+      currentSnapshotId: currentSnapshot?.snapshotId ?? null,
+      learningRuns: this.learning.listRuns(profile.agentId).slice(0, 20).map(run => ({
+        learningRunId: run.learningRunId, outcome: run.outcome, revision: run.revision,
+        createdAt: run.createdAt, updatedAt: run.updatedAt,
+      })),
+      snapshots: snapshotHistory.map(snapshot => ({
+        snapshotId: snapshot.snapshotId, version: snapshot.version, parentSnapshotId: snapshot.parentSnapshotId,
+        state: snapshot.state, learningRunId: snapshot.learningRunId, revision: snapshot.revision,
+        contentHash: snapshot.contentHash, createdAt: snapshot.createdAt, updatedAt: snapshot.updatedAt,
+      })),
+    }
   }
 
   async caseForCall(input) {
@@ -598,6 +631,178 @@ export class DecisionBroker {
     const context = await this.sessionContext(input.sessionId)
     const row = this.store.db.prepare("SELECT case_id FROM cases WHERE root_session_id=? AND entry='consult' AND json_extract(request_json,'$.toolCallId')=? ORDER BY created_at DESC,case_id DESC LIMIT 1").get(context.rootSessionId, input.toolCallId)
     return row ? this.query.record({ caseId: row.case_id, sessionId: context.rootSessionId }) : null
+  }
+
+  async learningStart(input) {
+    await this.ensureStore()
+    if (typeof input.requestId !== 'string' || !input.requestId || input.requestId.length > 200) {
+      throw new DecisionContractError('INVALID_REQUEST_ID', 'requestId is required')
+    }
+    const context = await this.sessionContext(input.sessionId)
+    const profile = this.profiles.getProfile(input.agentId)
+    const workspaceMismatch = profile.workspaceKey !== context.workspaceKey
+      || (input.workspaceKey !== undefined && input.workspaceKey !== context.workspaceKey)
+    if (profile.state !== 'enabled' || workspaceMismatch) {
+      this.rejectLearningBoundary('learning-run', {
+        agentId: input.agentId, rootSessionId: context.rootSessionId,
+        code: workspaceMismatch ? 'OUT_OF_SCOPE' : 'AGENT_UNAVAILABLE',
+      })
+    }
+    const jobKey = `${profile.agentId}\0${input.requestId}`
+    const existing = this.learningJobKeys.get(jobKey)
+    if (existing) return existing
+    const job = this.executeLearningStart({ input, context, profile })
+    this.learningJobKeys.set(jobKey, job)
+    this.learningJobs.add(job)
+    const cleanup = () => {
+      this.learningJobKeys.delete(jobKey)
+      this.learningJobs.delete(job)
+    }
+    job.then(cleanup, cleanup)
+    return job
+  }
+
+  async executeLearningStart({ input, context, profile }) {
+    let modelRoute
+    try {
+      const agent = await this.rootAgent(context.rootSessionId)
+      const configuredChains = this.config().decisionAgentChains
+      modelRoute = await resolveDecisionModelRoute({
+        llm: this.ctx.llm, chain: configuredChains?.[profile.agentId] ?? profile.modelRoute.chain,
+        sessionRoute: sessionModelRoute(agent),
+      })
+    } catch {
+      modelRoute = { kind: 'unavailable', reason: 'route_resolution_failed' }
+    }
+    const started = await this.learning.beginRun({
+      agentId: profile.agentId, workspaceKey: context.workspaceKey, requestId: input.requestId,
+      agentProfileRevision: profile.revision, startedAt: this.now(), modelRoute,
+    })
+    if (!started.created) return started.run
+    const run = started.run
+    this.audit('learning-run', { learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId, action: 'start', outcome: 'running' })
+    const controller = new AbortController()
+    this.learningControllers.set(run.learningRunId, controller)
+    try {
+      const streamed = await streamDecision({
+        llm: this.ctx.llm, route: modelRoute, pack: buildConsolidationPack(started.projection),
+        maxOutputTokens: this.config().decisionAgentLearningMaxOutputTokens ?? 4000,
+        timeoutMs: this.config().decisionAgentLearningTimeoutMs ?? 60000,
+        signal: controller.signal,
+      })
+      if (controller.signal.aborted) return this.finishFailedLearning(run, 'INTERRUPTED', context.rootSessionId)
+      if (streamed.finishReason !== 'stop') {
+        const detail = ({
+          timeout: 'MODEL_TIMEOUT', route_unavailable: 'ROUTE_UNAVAILABLE', aborted: 'INTERRUPTED',
+          'max-tokens': 'CANDIDATE_TOO_LARGE',
+        })[streamed.finishReason] ?? 'MODEL_ERROR'
+        return this.finishFailedLearning(run, detail, context.rootSessionId)
+      }
+      let operations
+      try {
+        operations = parseConsolidationCandidate(streamed.text, started.authority.parentPrinciples)
+      } catch (error) {
+        return this.finishFailedLearning(run, typeof error?.code === 'string' ? error.code : 'INVALID_CANDIDATE', context.rootSessionId)
+      }
+      const replay = replayOperations(started.authority.parentPrinciples, operations, started.authority)
+      if (!replay.passed) return this.finishFailedLearning(run, replay, context.rootSessionId)
+      const principles = applyConsolidationOperations(started.authority.parentPrinciples, operations, started.authority)
+      try {
+        const committed = await this.learning.commitCandidate({
+          learningRunId: run.learningRunId, expectedRevision: run.revision, operations, replay, principles,
+        })
+        this.audit('learning-run', {
+          learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId, outcome: 'candidate',
+          revision: committed.run.revision, operationCount: operations.length,
+        })
+        this.audit('snapshot', {
+          snapshotId: committed.snapshot.snapshotId, learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId,
+          state: 'draft', version: committed.snapshot.version, revision: committed.snapshot.revision,
+          contentHash: committed.snapshot.contentHash,
+        })
+        return committed.run
+      } catch (error) {
+        if (error?.code === 'STALE_LEARNING_RUN') return this.learning.getRunById(run.learningRunId)
+        throw error
+      }
+    } catch (error) {
+      return this.finishFailedLearning(run, typeof error?.code === 'string' ? error.code : 'CONSOLIDATION_ERROR', context.rootSessionId)
+    } finally {
+      this.learningControllers.delete(run.learningRunId)
+    }
+  }
+
+  async finishFailedLearning(run, failure, rootSessionId) {
+    const failed = await this.learning.failRun(run.learningRunId, failure, run.revision)
+    this.audit('learning-run', {
+      learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId, outcome: failed.outcome,
+      revision: failed.revision, code: failed.replay?.detail,
+    })
+    return failed
+  }
+
+  async snapshotPublish(input) { return this.snapshotAction('publish', input) }
+  async snapshotReject(input) { return this.snapshotAction('reject', input) }
+  async snapshotRollback(input) { return this.snapshotAction('rollback', input) }
+
+  async snapshotAction(action, input) {
+    const context = await this.sessionContext(input.sessionId)
+    const snapshot = await this.memorySnapshot(input)
+    const result = await this.learning[action](snapshot.snapshotId, input.expectedRevision)
+    if (result.error) {
+      this.audit('learning-run', {
+        learningRunId: result.run.learningRunId, agentId: result.run.agentId, rootSessionId: context.rootSessionId,
+        outcome: result.run.outcome, revision: result.run.revision, code: result.error,
+      })
+      this.audit('snapshot', { snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId, action, state: snapshot.state, code: result.error })
+      throw new DecisionContractError(result.error, snapshot.snapshotId)
+    }
+    this.audit('learning-run', {
+      learningRunId: result.run.learningRunId, agentId: result.run.agentId, rootSessionId: context.rootSessionId,
+      outcome: result.run.outcome, revision: result.run.revision,
+    })
+    this.audit('snapshot', {
+      snapshotId: result.snapshot.snapshotId, learningRunId: result.run.learningRunId, agentId: result.run.agentId, rootSessionId: context.rootSessionId,
+      action, state: result.snapshot.state, version: result.snapshot.version,
+      revision: result.snapshot.revision, contentHash: result.snapshot.contentHash,
+    })
+    return result.snapshot
+  }
+
+  async learningRun(input) {
+    await this.ensureStore()
+    const context = await this.sessionContext(input.sessionId)
+    const run = this.learning.getRunById(input.learningRunId)
+    const profile = this.profiles.getProfile(run.agentId)
+    if (profile.workspaceKey !== context.workspaceKey || (input.agentId && input.agentId !== run.agentId)) {
+      this.rejectLearningBoundary('learning-run', { learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId })
+    }
+    return {
+      ...run,
+      sourceRecords: this.learning.sourceRecords({
+        agentId: run.agentId, workspaceKey: context.workspaceKey,
+        sourceIds: run.operations.flatMap(operation => operation.sources ?? []), revisions: run.inputFrozen.revisions,
+      }),
+    }
+  }
+
+  async memorySnapshot(input) {
+    await this.ensureStore()
+    const context = await this.sessionContext(input.sessionId)
+    const snapshot = this.learning.getSnapshotById(input.snapshotId)
+    const profile = this.profiles.getProfile(snapshot.agentId)
+    if (profile.workspaceKey !== context.workspaceKey || (input.agentId && input.agentId !== snapshot.agentId)) {
+      this.rejectLearningBoundary('snapshot', { snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId })
+    }
+    const run = this.learning.getRunById(snapshot.learningRunId)
+    const revisions = run.agentId === snapshot.agentId && run.inputFrozen.workspaceKey === context.workspaceKey ? run.inputFrozen.revisions : {}
+    return {
+      ...snapshot,
+      sourceRecords: this.learning.sourceRecords({
+        agentId: snapshot.agentId, workspaceKey: context.workspaceKey,
+        sourceIds: snapshot.principles.flatMap(principle => principle.sources), revisions,
+      }),
+    }
   }
 
   async records(input) {

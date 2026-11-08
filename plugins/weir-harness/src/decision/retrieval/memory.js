@@ -2,18 +2,58 @@
 import { DecisionContractError, parseAnswerItem } from '../contracts.js'
 import { caseOf } from '../store/cases.js'
 import { scopeCovers } from '../store/evidence.js'
+import { DecisionLearning } from '../store/learning.js'
 
 export const L2_MEMORY_VERSION = 1
 export const L3_MEMORY_VERSION = 1
 const L3_EXCERPT_LIMIT = 600
 
-/**
- * P2 deliberately has no semantic-memory reader. Arguments are accepted for a
- * stable adapter shape, but no store object is inspected and no Snapshot or
- * Learning Run table can be read or written through this path.
- */
-export function readL2Memory() {
-  return deepFreeze({ schemaVersion: L2_MEMORY_VERSION, status: 'empty', snapshotId: null, items: [] })
+/** Read only the current published Snapshot and expand every principle source into full eligible L5. */
+export function readL2Memory(store, input, L5 = []) {
+  const snapshot = new DecisionLearning(store).currentSnapshot(input.agentId, input.workspaceKey)
+  if (!snapshot) return deepFreeze({
+    schemaVersion: L2_MEMORY_VERSION, status: 'empty', snapshotId: null,
+    snapshotRevision: null, snapshotHash: null, items: [], exclusions: [],
+  })
+  const items = []
+  const exclusions = []
+  for (const principle of snapshot.principles) {
+    if (principle.state !== 'active') {
+      exclusions.push({ principleId: principle.principleId, reason: 'NOT_ACTIVE' })
+      continue
+    }
+    if (!scopeCovers(principle.scope, input.scope, input.workspaceKey)) {
+      exclusions.push({ principleId: principle.principleId, reason: 'OUT_OF_SCOPE' })
+      continue
+    }
+    const evidenceIds = []
+    for (const source of principle.sources) {
+      const ref = L5.find(evidence => evidence.agentId === input.agentId && evidence.status === 'active'
+        && scopeCovers(evidence.scope, input.scope, input.workspaceKey) && (
+        (['user_decision', 'agent_record'].includes(evidence.source) && evidence.locator?.kind === 'case' && evidence.locator.caseId === source)
+        || (evidence.source === 'user_correction' && evidence.locator?.kind === 'feedback' && evidence.locator.feedbackId === source)
+      ))
+      if (!ref) {
+        evidenceIds.length = 0
+        break
+      }
+      if (!evidenceIds.includes(ref.evidenceId)) evidenceIds.push(ref.evidenceId)
+    }
+    if (principle.sources.length === 0 || evidenceIds.length !== new Set(principle.sources).size) {
+      exclusions.push({ principleId: principle.principleId, reason: 'SOURCE_UNAVAILABLE' })
+      continue
+    }
+    items.push({
+      schemaVersion: L2_MEMORY_VERSION, kind: 'reviewed_principle',
+      principleId: principle.principleId, text: principle.text, scope: principle.scope,
+      sources: [...principle.sources], evidenceIds,
+    })
+  }
+  return deepFreeze({
+    schemaVersion: L2_MEMORY_VERSION, status: items.length ? 'populated' : 'empty',
+    snapshotId: snapshot.snapshotId, snapshotRevision: snapshot.revision, snapshotHash: snapshot.contentHash,
+    items, exclusions,
+  })
 }
 
 /**

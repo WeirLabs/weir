@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DecisionBroker } from '../../src/decision/broker.js'
 import { createDecisionRemoteService } from '../../src/decision/remote.js'
+import { seedUserDecision, snapshotForRun } from './p3-fixtures.js'
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'weir-decision-boundaries-'))
@@ -89,4 +90,40 @@ test('remote profile state changes cannot cross workspace boundaries', async t =
   assert.equal(read.ok, false)
   assert.equal(read.error.code, 'OUT_OF_SCOPE')
   assert.ok(f.audits.filter(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.agentId === f.foreign.agentId).length >= 2)
+})
+
+test('learning reads and lifecycle writes reject foreign workspaces and Agent spoofing with metadata audit', async t => {
+  const f = await fixture(t)
+  const fixtureView = { broker: f.broker, workspace: f.workspace, profile: f.a }
+  const source = await seedUserDecision(fixtureView, 'remote-learning-source')
+  f.broker.ctx.llm.stream = () => (async function * () {
+    yield { type: 'text-delta', text: JSON.stringify({ operations: [{
+      op: 'add', text: 'Prefer A', scope: { workspaces: [f.workspace] }, sources: [source.caseId],
+    }] }) }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })()
+  const run = await f.broker.learningStart({ sessionId: 'root', agentId: f.a.agentId, requestId: 'remote-authorization' })
+  const snapshotId = snapshotForRun(fixtureView, run.learningRunId).snapshot_id
+  const snapshot = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })
+
+  for (const [method, idKey, id] of [['learningRun', 'learningRunId', run.learningRunId], ['memorySnapshot', 'snapshotId', snapshotId]]) {
+    const foreign = await f.remote[method]({ sessionId: 'other', [idKey]: id })
+    assert.equal(foreign.ok, false, method)
+    assert.equal(foreign.error.code, 'OUT_OF_SCOPE', method)
+    const spoofed = await f.remote[method]({ sessionId: 'root', agentId: f.b.agentId, [idKey]: id })
+    assert.equal(spoofed.ok, false, `${method} Agent spoof`)
+    assert.equal(spoofed.error.code, 'OUT_OF_SCOPE')
+  }
+  for (const method of ['snapshotPublish', 'snapshotReject', 'snapshotRollback']) {
+    const result = await f.remote[method]({ sessionId: 'other', snapshotId, expectedRevision: snapshot.revision })
+    assert.equal(result.ok, false, method)
+    assert.equal(result.error.code, 'OUT_OF_SCOPE', method)
+  }
+  const foreignStart = await f.remote.learningStart({ sessionId: 'root', agentId: f.foreign.agentId, requestId: 'foreign-start' })
+  assert.equal(foreignStart.ok, false)
+  assert.equal(foreignStart.error.code, 'OUT_OF_SCOPE')
+  assert.equal((await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })).state, 'draft')
+  assert.ok(f.audits.some(event => event.kind === 'learning-run' && event.value.action === 'boundary-reject'))
+  assert.ok(f.audits.some(event => event.kind === 'snapshot' && event.value.action === 'boundary-reject'))
+  assert.equal(JSON.stringify(f.audits).includes('Prefer A'), false)
 })

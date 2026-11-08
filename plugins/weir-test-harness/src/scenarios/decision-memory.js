@@ -431,7 +431,7 @@ function assert(run) {
       && memoryIds(sourceWire?.decisionMemoryPack).length === 0
       && l3Wires.length === 3 && l3Wires.every(request => memoryIds(request.decisionMemoryPack).includes(source?.case_id)
         && !request.decisionMemoryPack.L5.some(ref => ref.locator?.caseId === source?.case_id)
-        && request.decisionMemorySystem.includes('Decision evaluator contract v2'))
+        && request.decisionMemorySystem.includes('Decision evaluator contract v3'))
       && l3Attempts.length === 3 && l3Attempts.every(attempt => attempt.outcome === 'failed'
         && attempt.error?.kind === 'invalid_output' && attempt.error?.detail === 'UNKNOWN_EVIDENCE: claims may cite only evidenceIds in this pack')
       && l3Only?.closing === 'escalated' && l3Only.decision?.kind === 'user_decision',

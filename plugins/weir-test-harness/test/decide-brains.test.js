@@ -510,6 +510,35 @@ describe('decision evaluator v2 mock dispatch', () => {
   })
 })
 
+describe('decision evaluator v3 and consolidation v1 mock dispatch', () => {
+  it('uses exact first-line contracts and keeps the two strict JSON brains separate', async () => {
+    const previous = process.env.WEIR_IT_SCENARIO
+    process.env.WEIR_IT_SCENARIO = 'decision-hook'
+    try {
+      const { planRequest } = await import('../src/mock-llm.js')
+      const evaluatorOptions = userOptions(JSON.stringify({
+        L2: [{ principleId: 'pr_reviewed', evidenceIds: ['ev_v3'] }],
+        L4: { request: { questions: [{ id: 'decision-hook-answer', options: [{ label: 'Native fallback' }, { label: 'Concise' }] }] } },
+        L5: [{ evidenceId: 'ev_v3', source: 'user_profile' }],
+      }), { system: 'Decision evaluator contract v3\nL2 is reviewed and non-authoritative.' })
+      const evaluated = JSON.parse(blockEnds(planRequest(evaluatorOptions).out)[0].text)
+      assert.equal(evaluated.outcome, 'answer')
+      assert.deepEqual(evaluated.claims[0].evidenceIds, ['ev_v3'])
+      assert.equal(byId('decision-hook').observe(extract(evaluatorOptions)).decisionEvaluator, true)
+
+      const consolidationOptions = userOptions(JSON.stringify({ cases: [], feedback: [], parentSnapshot: null }), {
+        system: 'Decision consolidation contract v1\nProduce only one JSON object.',
+      })
+      const consolidated = JSON.parse(blockEnds(planRequest(consolidationOptions).out)[0].text)
+      assert.deepEqual(consolidated, { operations: [] })
+      assert.equal(byId('decision-hook').observe(extract(consolidationOptions)).decisionEvaluator, false)
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_SCENARIO
+      else process.env.WEIR_IT_SCENARIO = previous
+    }
+  })
+})
+
 describe('decision-memory P2 brain', () => {
   it('registers the real scoped-memory acceptance scenario', () => {
     assert.equal(byId('decision-memory')?.id, 'decision-memory')
@@ -538,6 +567,45 @@ describe('decision-memory P2 brain', () => {
     assert.equal(value.outcome, 'answer')
     assert.deepEqual(value.claims[0].evidenceIds, ['ev_decision'])
     assert.deepEqual(value.answers, [{ id: 'decision-memory-l5-after', selected: ['User resolves L3 only'] }])
+  })
+})
+
+describe('decision-learning P3 brain', () => {
+  it('registers the real manual-learning acceptance scenario and seeds through the existing probe', () => {
+    assert.equal(byId('decision-learning')?.id, 'decision-learning')
+    const first = blockEnds(run('decision-learning', userOptions('decision-learning-probe')))[0]
+    assert.equal(first.name, 'decision_integration_probe')
+    assert.equal(JSON.parse(first.arguments).op, 'learning-seed')
+  })
+
+  it('uses authoritative frozen Case ids for a strict add candidate', () => {
+    const previous = process.env.WEIR_IT_DECISION_PHASE
+    process.env.WEIR_IT_DECISION_PHASE = 'main-v1'
+    try {
+      const scenario = byId('decision-learning')
+      const projection = { schemaVersion: 1, agentId: 'ag_a', workspaceKey: '/repo', cases: [{ caseId: 'dc_a', revision: 3, scope: { workspaces: ['/repo'] } }], feedback: [], parentSnapshot: null }
+      const options = userOptions(JSON.stringify(projection), { system: 'Decision consolidation contract v1' })
+      const value = JSON.parse(blockEnds([...scenario.decideConsolidation(options, extract(options))])[0].text)
+      assert.equal(value.operations[0].op, 'add')
+      assert.deepEqual(value.operations[0].sources, ['dc_a'])
+      assert.deepEqual(value.operations[0].scope, { workspaces: ['/repo'] })
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_DECISION_PHASE
+      else process.env.WEIR_IT_DECISION_PHASE = previous
+    }
+  })
+
+  it('answers from mapped L5 but deliberately tries an L2-only citation for the real parser rejection', () => {
+    const scenario = byId('decision-learning')
+    const makeOptions = id => userOptions(JSON.stringify({
+      L2: [{ principleId: 'pr_actual', evidenceIds: ['ev_actual'] }],
+      L4: { request: { questions: [{ id, options: [{ label: 'Learned answer' }] }] } },
+      L5: [{ evidenceId: 'ev_actual', source: 'user_decision', locator: { caseId: 'dc_actual' } }],
+    }), { system: 'Decision evaluator contract v3' })
+    const answer = JSON.parse(blockEnds([...scenario.decideDecision(makeOptions('decision-learning-after-v1'), extract(makeOptions('decision-learning-after-v1')))])[0].text)
+    assert.deepEqual(answer.claims[0].evidenceIds, ['ev_actual'])
+    const malicious = JSON.parse(blockEnds([...scenario.decideDecision(makeOptions('decision-learning-only-l2'), extract(makeOptions('decision-learning-only-l2')))])[0].text)
+    assert.deepEqual(malicious.claims[0].evidenceIds, ['pr_actual'])
   })
 })
 
@@ -702,5 +770,44 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(reuse.name, 'ask_user_question')
     assert.equal(JSON.parse(source.arguments).questions[0].id, 'gui-memory-source')
     assert.equal(JSON.parse(reuse.arguments).questions[0].id, 'gui-memory-reuse')
+  })
+  it('scripts authoritative v1, successor, and rejected GUI learning candidates', () => {
+    const scenario = byId('decision-gui')
+    const source = { caseId: 'dc_gui_source', excerpt: 'Answer gui-learning-source: User backed GUI answer\nQuestion gui-learning-source: Choose', scope: { workspaces: ['/gui'] } }
+    const consolidate = projection => {
+      const options = userOptions(JSON.stringify({ workspaceKey: '/gui', cases: [source], parentSnapshot: null, ...projection }), { system: 'Decision consolidation contract v1' })
+      return JSON.parse(blockEnds([...scenario.decideConsolidation(options, extract(options))])[0].text).operations[0]
+    }
+    const v1 = consolidate({})
+    assert.deepEqual(v1.sources, ['dc_gui_source'])
+    assert.ok(!v1.text.includes('successor'))
+    assert.ok(consolidate({ parentSnapshot: { snapshotId: 'ms_v1' } }).text.includes('successor'))
+    const corrected = consolidate({ parentSnapshot: { snapshotId: 'ms_v1' }, feedback: [{ feedbackId: 'fb_gui_correction', kind: 'correction', direction: 'Use corrected GUI direction' }] })
+    assert.deepEqual(corrected.sources, ['fb_gui_correction'])
+    assert.ok(corrected.text.includes('correction'))
+    const rejected = consolidate({ cases: [source, { caseId: 'dc_empty', excerpt: 'Question gui-learning-after-empty: Answer' }] })
+    assert.ok(rejected.text.startsWith('Rejected GUI candidate'))
+    const question = blockEnds(run('decision-gui', userOptions('GUI_LEARNING_SOURCE')))[0]
+    assert.equal(JSON.parse(question.arguments).questions[0].id, 'gui-learning-source')
+  })
+  it('uses reviewed L2 only through real L5 mappings and retains an empty rollback fallback', () => {
+    const scenario = byId('decision-gui')
+    const evaluate = (id, L2) => {
+      const options = userOptions(JSON.stringify({
+        L2,
+        L4: { request: { questions: [{ id, options: [{ label: 'Learned GUI answer' }] }] } },
+        L5: [{ evidenceId: 'ev_gui_1', source: 'user_decision' }, { evidenceId: 'ev_gui_2', source: 'user_decision' }],
+      }), { system: 'Decision evaluator contract v3' })
+      return JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    }
+    const successor = evaluate('gui-learning-after-v2', [
+      { principleId: 'pr_v1', evidenceIds: ['ev_gui_1'] },
+      { principleId: 'pr_v2', text: 'Reviewed GUI successor principle', evidenceIds: ['ev_gui_2'] },
+    ])
+    assert.deepEqual(successor.claims[0].evidenceIds, ['ev_gui_2'])
+    const empty = evaluate('gui-learning-after-empty', '')
+    assert.deepEqual(empty.claims[0].evidenceIds, ['ev_gui_1'])
+    const missing = evaluate('gui-learning-after-v1', [{ principleId: 'pr_v1', evidenceIds: ['pr_not_evidence'] }])
+    assert.equal(missing.outcome, 'return')
   })
 })

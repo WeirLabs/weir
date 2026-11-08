@@ -1,5 +1,5 @@
 // Live Decision Agent integration fixtures. Dev-only; never mount in a real profile.
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const name = 'weir-it-decision-integration-probe'
@@ -10,6 +10,88 @@ function render(args, value) {
   return [{ type: 'text', text: `DECISION_TEST ${status}:${JSON.stringify(value)}` }]
 }
 
+async function seedLearningDecision(broker, agent, input) {
+  const opened = await broker.cases.createCase({
+    workspaceKey: input.workspaceKey, rootSessionId: agent.id, entry: 'hook', agentId: input.agentId,
+    request: { entry: 'hook', questions: [{ id: `decision-learning-${input.key}`, question: `LEARNING_FIXTURE ${input.key}`, options: [{ label: input.selected }] }] },
+    scope: { workspaces: [input.workspaceKey], authorizationClasses: ['A', 'B', 'C'] },
+    idempotencyKey: `decision-learning:${input.key}`,
+  })
+  let current = await broker.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user' })
+  current = await broker.cases.transition({
+    caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision,
+    state: 'closed', closing: 'escalated',
+    decision: { kind: 'user_decision', answers: [{ id: `decision-learning-${input.key}`, selected: [input.selected] }] },
+  })
+  return current
+}
+
+async function seedLearningAnswer(broker, agent, input) {
+  const questionId = `decision-learning-${input.key}`
+  const opened = await broker.cases.createCase({
+    workspaceKey: input.workspaceKey, rootSessionId: agent.id, entry: 'hook', agentId: input.agentId,
+    request: { entry: 'hook', questions: [{ id: questionId, question: `LEARNING_ANSWER ${input.key}`, options: [{ label: 'Neutral answer' }] }] },
+    scope: { workspaces: [input.workspaceKey], authorizationClasses: ['A', 'B', 'C'] },
+    idempotencyKey: `decision-learning:${input.key}`,
+  })
+  let current = await broker.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
+  const attempt = await broker.attempts.start({
+    caseId: current.caseId, agentId: input.agentId, pins: input.pins,
+    contextPackHash: `decision-learning-${input.key}-hash`, packManifest: input.manifest,
+  })
+  await broker.attempts.finish(attempt.attemptId, { outcome: 'answer', claims: [], citedEvidenceIds: [] })
+  current = broker.cases.getCase(current.caseId)
+  current = await broker.cases.transition({
+    caseId: current.caseId, expectedState: 'evaluating', expectedRevision: current.revision,
+    state: 'closed', closing: 'answered',
+    decision: { kind: 'answer', attemptId: attempt.attemptId, answers: [{ id: questionId, selected: ['Neutral answer'] }], decidedAt: broker.now() },
+  })
+  return { current, attempt }
+}
+
+async function learningSeed(broker, agent) {
+  const workspaceKey = realpathSync(agent.session.header.cwd)
+  const otherWorkspace = join(workspaceKey, 'decision-learning-other')
+  mkdirSync(otherWorkspace, { recursive: true })
+  const otherWorkspaceKey = realpathSync(otherWorkspace)
+  const scope = { workspaces: [workspaceKey], authorizationClasses: ['A', 'B', 'C'] }
+  const agentA = await broker.profileUpsert({ workspaceKey, name: 'Decision Learning A', scope, userDescription: 'Use the reviewed principle only with its evidence.', modelRoute: { chain: [] } })
+  const agentB = await broker.profileUpsert({ workspaceKey, name: 'Decision Learning B', scope, userDescription: 'Independent Agent namespace.', modelRoute: { chain: [] } })
+  const agentC = await broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'Decision Learning W2', scope: { workspaces: [otherWorkspaceKey], authorizationClasses: ['A', 'B', 'C'] }, userDescription: 'Foreign workspace namespace.', modelRoute: { chain: [] } })
+  await broker.setSelector(agent.id, 'agent', agentA.agentId)
+  const sourceA = await seedLearningDecision(broker, agent, { key: 'source-a', selected: 'Source A', agentId: agentA.agentId, workspaceKey })
+  const sourceB = await seedLearningDecision(broker, agent, { key: 'source-b', selected: 'Source B', agentId: agentA.agentId, workspaceKey })
+  const sourceC = await seedLearningDecision(broker, agent, { key: 'source-c', selected: 'Source C', agentId: agentA.agentId, workspaceKey })
+  const foreign = await seedLearningDecision(broker, agent, { key: 'foreign', selected: 'FOREIGN_WORKSPACE_SECRET', agentId: agentC.agentId, workspaceKey: otherWorkspaceKey })
+  const emptyManifest = { layerSizes: { L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 }, evidenceIds: [], correctionIds: [], omissions: [] }
+  const neutral = await seedLearningAnswer(broker, agent, {
+    key: 'neutral', agentId: agentA.agentId, workspaceKey,
+    pins: { promptVersion: 'evaluator-contract/2', evaluatorVersion: 'sidecar/1', memorySnapshotId: null },
+    manifest: { ...emptyManifest, memory: { L2: { schemaVersion: 1, status: 'empty', snapshotId: null }, L3: { schemaVersion: 1, sourceCaseIds: [] } } },
+  })
+  const p1 = await seedLearningAnswer(broker, agent, {
+    key: 'p1-fixture', agentId: agentA.agentId, workspaceKey,
+    pins: { promptVersion: 'evaluator-contract/1', evaluatorVersion: 'sidecar/1', memorySnapshotId: null }, manifest: emptyManifest,
+  })
+  const p2 = await seedLearningAnswer(broker, agent, {
+    key: 'p2-fixture', agentId: agentA.agentId, workspaceKey,
+    pins: { promptVersion: 'evaluator-contract/2', evaluatorVersion: 'sidecar/1', memorySnapshotId: null },
+    manifest: { ...emptyManifest, memory: { L2: { schemaVersion: 1, status: 'empty', snapshotId: null }, L3: { schemaVersion: 1, sourceCaseIds: [] } } },
+  })
+  const fixture = {
+    completed: true, op: 'learning-seed', workspaceKey, otherWorkspace: otherWorkspaceKey,
+    agentA: agentA.agentId, agentB: agentB.agentId, agentC: agentC.agentId,
+    sourceA: sourceA.caseId, sourceB: sourceB.caseId, sourceC: sourceC.caseId, foreign: foreign.caseId,
+    neutral: neutral.current.caseId,
+    compatibility: {
+      p1: { caseId: p1.current.caseId, attemptId: p1.attempt.attemptId },
+      p2: { caseId: p2.current.caseId, attemptId: p2.attempt.attemptId },
+    },
+  }
+  writeFileSync(join(process.env.WEIR_IT_ROOT, 'ws', 'decision-learning-fixtures.json'), JSON.stringify(fixture, null, 2) + '\n')
+  return fixture
+}
+
 export function apply(ctx, config = {}) {
   if (config.enabled !== true) return
   ctx.tools.register({
@@ -18,7 +100,7 @@ export function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['setup', 'record', 'route-setup', 'disable-a', 'case-for-call', 'feedback', 'correction', 'isolation-setup', 'select', 'cross-consult'] },
+        op: { type: 'string', enum: ['setup', 'record', 'route-setup', 'disable-a', 'case-for-call', 'feedback', 'correction', 'isolation-setup', 'select', 'cross-consult', 'learning-seed', 'delete-source'] },
         caseId: { type: 'string' }, agentId: { type: 'string' }, verb: { type: 'string' }, text: { type: 'string' },
         direction: { type: 'string' }, scope: { type: 'object' }, supersedes: { type: 'array', items: { type: 'string' } },
         questions: { type: 'array', items: { type: 'object' } },
@@ -32,6 +114,17 @@ export function apply(ctx, config = {}) {
         const broker = ctx.get('weirDecisionBroker')
         const agent = exec.agent
         if (!broker || !agent?.id) throw new Error('Decision Broker and execution Agent are required')
+        if (args.op === 'learning-seed') return await learningSeed(broker, agent)
+        if (args.op === 'delete-source') {
+          const deleted = await broker.store.write(db => {
+            const source = db.prepare('SELECT * FROM cases WHERE case_id=?').get(args.caseId)
+            if (!source) throw new Error(`Missing deletion fixture ${args.caseId}`)
+            const evidence = db.prepare("DELETE FROM evidence WHERE json_extract(locator_json,'$.caseId')=?").run(args.caseId)
+            const cases = db.prepare('DELETE FROM cases WHERE case_id=?').run(args.caseId)
+            return { caseId: args.caseId, evidence: evidence.changes, cases: cases.changes }
+          })
+          return { completed: true, op: args.op, deleted }
+        }
         if (args.op === 'record') {
           const record = await broker.record({ sessionId: agent.id, caseId: args.caseId })
           const inbox = await broker.inbox({ sessionId: agent.id })

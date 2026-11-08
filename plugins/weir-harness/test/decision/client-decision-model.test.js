@@ -55,7 +55,17 @@ test('RPC uses /api weirDecision namespace and exposes readable failures', async
 
 test('Context Pack dictionaries are localized and mark L3 as non-authoritative', async () => {
   const model = await load()
-  const keys = ['decisionContextPack', 'decisionL2Memory', 'decisionMemoryEmpty', 'decisionNeutralEpisodes', 'decisionNoMemory', 'decisionLayerSizes', 'decisionOmissions']
+  const keys = [
+    'decisionContextPack', 'decisionL2Memory', 'decisionMemoryEmpty', 'decisionNeutralEpisodes', 'decisionNoMemory', 'decisionLayerSizes', 'decisionOmissions',
+    'decisionLearningGovernance', 'decisionConsolidate', 'decisionPublish', 'decisionReject', 'decisionRollback', 'decisionCurrentSnapshot', 'decisionNoCurrentSnapshot',
+    'decisionLearningRuns', 'decisionNoLearningRuns', 'decisionSnapshots', 'decisionNoSnapshots', 'decisionLearningDetail', 'decisionNoLearningDetail',
+    'decisionFrozenInput', 'decisionStructuralReplay', 'decisionStructuralReplayHint', 'decisionReplayPassed', 'decisionReplayFailed', 'decisionReplayPending',
+    'decisionOperations', 'decisionNoOperations', 'decisionPrincipleDiff', 'decisionDiffAdded', 'decisionDiffChanged', 'decisionDiffRemoved', 'decisionBefore', 'decisionAfter',
+    'decisionNoPrincipleChanges', 'decisionNoSnapshotForRun', 'decisionSnapshotPin', 'decisionNoSnapshotPin', 'decisionReviewedPrinciples', 'decisionL5Mappings',
+    'decisionExclusions', 'decisionNoExclusions', 'decisionLearningOutcome_running', 'decisionLearningOutcome_candidate', 'decisionLearningOutcome_published',
+    'decisionLearningOutcome_rejected', 'decisionLearningOutcome_rolled_back', 'decisionLearningOutcome_failed', 'decisionSnapshotState_draft',
+    'decisionSnapshotState_published', 'decisionSnapshotState_rolled_back',
+  ]
   assert.deepEqual(Object.keys(model.dictionaries.en).sort(), Object.keys(model.dictionaries.zh).sort())
   for (const key of keys) {
     assert.equal(typeof model.dictionaries.en[key], 'string', `en ${key}`)
@@ -67,4 +77,8 @@ test('Context Pack dictionaries are localized and mark L3 as non-authoritative',
   assert.match(model.dictionaries.zh.decisionNeutralEpisodes, /非权威/)
   assert.match(model.dictionaries.en.decisionL2Memory, /L2/)
   assert.match(model.dictionaries.zh.decisionL2Memory, /L2/)
+  assert.match(model.dictionaries.en.decisionReviewedPrinciples, /non-authoritative/)
+  assert.match(model.dictionaries.zh.decisionReviewedPrinciples, /非权威/)
+  assert.match(model.dictionaries.en.decisionStructuralReplayHint, /manual/)
+  assert.match(model.dictionaries.zh.decisionStructuralReplayHint, /手动/)
 })
