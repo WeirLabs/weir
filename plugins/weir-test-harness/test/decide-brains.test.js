@@ -570,6 +570,45 @@ describe('decision-memory P2 brain', () => {
   })
 })
 
+describe('decision-learning P3 brain', () => {
+  it('registers the real manual-learning acceptance scenario and seeds through the existing probe', () => {
+    assert.equal(byId('decision-learning')?.id, 'decision-learning')
+    const first = blockEnds(run('decision-learning', userOptions('decision-learning-probe')))[0]
+    assert.equal(first.name, 'decision_integration_probe')
+    assert.equal(JSON.parse(first.arguments).op, 'learning-seed')
+  })
+
+  it('uses authoritative frozen Case ids for a strict add candidate', () => {
+    const previous = process.env.WEIR_IT_DECISION_PHASE
+    process.env.WEIR_IT_DECISION_PHASE = 'main-v1'
+    try {
+      const scenario = byId('decision-learning')
+      const projection = { schemaVersion: 1, agentId: 'ag_a', workspaceKey: '/repo', cases: [{ caseId: 'dc_a', revision: 3, scope: { workspaces: ['/repo'] } }], feedback: [], parentSnapshot: null }
+      const options = userOptions(JSON.stringify(projection), { system: 'Decision consolidation contract v1' })
+      const value = JSON.parse(blockEnds([...scenario.decideConsolidation(options, extract(options))])[0].text)
+      assert.equal(value.operations[0].op, 'add')
+      assert.deepEqual(value.operations[0].sources, ['dc_a'])
+      assert.deepEqual(value.operations[0].scope, { workspaces: ['/repo'] })
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_DECISION_PHASE
+      else process.env.WEIR_IT_DECISION_PHASE = previous
+    }
+  })
+
+  it('answers from mapped L5 but deliberately tries an L2-only citation for the real parser rejection', () => {
+    const scenario = byId('decision-learning')
+    const makeOptions = id => userOptions(JSON.stringify({
+      L2: [{ principleId: 'pr_actual', evidenceIds: ['ev_actual'] }],
+      L4: { request: { questions: [{ id, options: [{ label: 'Learned answer' }] }] } },
+      L5: [{ evidenceId: 'ev_actual', source: 'user_decision', locator: { caseId: 'dc_actual' } }],
+    }), { system: 'Decision evaluator contract v3' })
+    const answer = JSON.parse(blockEnds([...scenario.decideDecision(makeOptions('decision-learning-after-v1'), extract(makeOptions('decision-learning-after-v1')))])[0].text)
+    assert.deepEqual(answer.claims[0].evidenceIds, ['ev_actual'])
+    const malicious = JSON.parse(blockEnds([...scenario.decideDecision(makeOptions('decision-learning-only-l2'), extract(makeOptions('decision-learning-only-l2')))])[0].text)
+    assert.deepEqual(malicious.claims[0].evidenceIds, ['pr_actual'])
+  })
+})
+
 describe('decision-consult P1 brain', () => {
   it('sets up the selected Agent before the answered consultation', () => {
     const first = blockEnds(run('decision-consult', userOptions('decision-consult-probe')))[0]

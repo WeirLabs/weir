@@ -82,6 +82,7 @@ EXPECTED_ORDER.push('decision-feedback')
 EXPECTED_ORDER.push('decision-isolation')
 EXPECTED_ORDER.push('decision-ui-remote')
 EXPECTED_ORDER.push('decision-memory')
+EXPECTED_ORDER.push('decision-learning')
 if (process.env.WEIR_IT_DECISION_GUI === '1') EXPECTED_ORDER.push('decision-gui')
 
 describe('scenario registry', () => {
@@ -208,6 +209,7 @@ RUN_OVERRIDE.push('filelease-release-watch', 'filelease-watch-reset')
   RUN_OVERRIDE.push('decision-spike-cancel')
   RUN_OVERRIDE.push('decision-recovery')
   RUN_OVERRIDE.push('decision-memory')
+RUN_OVERRIDE.push('decision-learning')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

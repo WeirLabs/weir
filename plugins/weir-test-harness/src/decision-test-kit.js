@@ -1,8 +1,10 @@
 // Shared live-only Decision scenario observers and authoritative-store readers.
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IT_ROOT } from './mock-kit.js'
+import { canonicalJson } from '../../weir-harness/src/decision/contracts.js'
 
 export const DECISION_CONTRACTS = Object.freeze(['Decision evaluator contract v1', 'Decision evaluator contract v2', 'Decision evaluator contract v3'])
 export const DECISION_EVENTS = join(IT_ROOT, 'decision-integration-events.jsonl')
@@ -45,7 +47,7 @@ function parse(value) {
 
 export function readDecisionStore(ws, storeDirectory = process.env.WEIR_IT_DECISION_STORE_PATH) {
   const path = storeDirectory ? join(storeDirectory, 'decision.db') : join(ws, '..', 'home', 'weir', 'profiles', 'weir-it', 'decisions', 'decision.db')
-  if (!existsSync(path)) return { path, profiles: [], selectors: [], cases: [], attempts: [], evidence: [], feedback: [], corrections: [], routes: [] }
+  if (!existsSync(path)) return { path, profiles: [], selectors: [], cases: [], attempts: [], evidence: [], feedback: [], corrections: [], routes: [], learning_runs: [], memory_snapshots: [] }
   const db = new DatabaseSync(path, { readOnly: true })
   try {
     return {
@@ -65,6 +67,17 @@ export function readDecisionStore(ws, storeDirectory = process.env.WEIR_IT_DECIS
         .map(row => ({ ...row, scope: parse(row.scope_json), supersedes: parse(row.supersedes_json) })),
       routes: db.prepare('SELECT * FROM route_decisions ORDER BY created_at,route_decision_id').all()
         .map(row => ({ ...row, candidates: parse(row.candidates_json), ambiguity: parse(row.ambiguity_json) })),
+      learning_runs: db.prepare('SELECT * FROM learning_runs ORDER BY created_at,learning_run_id').all()
+        .map(row => ({ ...row, inputFrozen: parse(row.input_frozen_json), operations: parse(row.operations_json), replay: parse(row.replay_json) })),
+      memory_snapshots: db.prepare('SELECT * FROM memory_snapshots ORDER BY version,snapshot_id').all()
+        .map(row => {
+          const principles = parse(row.principles_json)
+          const generatedDescription = parse(row.generated_description_json)
+          const contentHash = createHash('sha256').update(canonicalJson({
+            version: row.version, parentSnapshotId: row.parent_snapshot_id, principles, generatedDescription, learningRunId: row.learning_run_id,
+          })).digest('hex')
+          return { ...row, principles, generatedDescription, contentHash }
+        }),
     }
   } finally {
     db.close()

@@ -63,7 +63,7 @@ function lastToolName(options) {
  * definitions for observations that inspect schemas (hashline's escalation
  * enum).
  * @param {object} options - the LLM request options
- * @returns {{sessionId: string | undefined, transcript: string, lastUser: string, lastTool: string, system: string, toolNames: string[], toolDefs: any[], toolHistory: any | null, messages: any[]}}
+ * @returns {{sessionId: string | undefined, transcript: string, lastUser: string, lastTool: string, system: string, toolNames: string[], toolDefs: any[], toolHistory: any | null, messages: any[], provider: string | undefined, model: string | undefined, maxTokens: number | undefined, hasTemperature: boolean}}
  */
 function extract(options) {
   return {
@@ -76,6 +76,10 @@ function extract(options) {
     toolDefs: options.tools ?? [],
     toolHistory: options.toolHistory ?? null,
     messages: options.messages ?? [],
+    provider: options.provider,
+    model: options.model,
+    maxTokens: options.maxTokens,
+    hasTemperature: Object.hasOwn(options, 'temperature'),
   }
 }
 

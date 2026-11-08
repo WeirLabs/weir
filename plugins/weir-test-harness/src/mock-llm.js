@@ -3,7 +3,7 @@
 // scenario registry (env WEIR_IT_SCENARIO selects the entry), tracing each
 // call as one JSON line to WEIR_IT_TRACE for the driver to assert on.
 // Dev-only: never install into a real profile.
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { IT_ROOT, extract, textChunks } from './mock-kit.js'
 import { SCENARIOS, byId } from './scenarios/index.js'
@@ -118,6 +118,20 @@ async function* streamScenario(options) {
   }
   const { out, record } = planRequest(options)
   trace(record)
+  if (scenario.id === 'decision-learning' && record.decisionLearning?.kind === 'consolidation' && process.env.WEIR_IT_LEARNING_HOLD === '1') {
+    const ready = process.env.WEIR_IT_LEARNING_READY
+    const release = process.env.WEIR_IT_LEARNING_RELEASE
+    if (ready) writeFileSync(ready, JSON.stringify({ pid: process.pid, at: Date.now() }) + '\n')
+    const deadline = Date.now() + 60_000
+    while (!options.signal?.aborted && (!release || !existsSync(release))) {
+      if (Date.now() >= deadline) throw new Error('decision-learning consolidation hold timed out')
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    if (options.signal?.aborted) {
+      yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: 'learning stream aborted' } } }
+      return
+    }
+  }
   if (scenario.id === 'decision-spike-cancel' && record.s6Fixture === 'hang') {
     const events = process.env.WEIR_DECISION_SPIKE_EVENTS
     if (events) appendFileSync(events, JSON.stringify({ time: Date.now(), spike: 'S6', listener: 'llm-hang' }) + '\n')

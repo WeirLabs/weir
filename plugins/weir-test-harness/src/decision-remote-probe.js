@@ -1,7 +1,8 @@
 // Direct live-service mirror of the Decision typert remote (headless has no gateway). Dev-only.
-import { realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createDecisionRemoteService, decisionRemoteContribution } from '../../weir-harness/src/decision/remote.js'
+import { DecisionBroker } from '../../weir-harness/src/decision/broker.js'
 
 export const name = 'weir-it-decision-remote-probe'
 export const inject = ['tools']
@@ -63,12 +64,104 @@ async function childFlow(remote, agent, caseId) {
   return { calls, childSessionId: agent.id, caseId }
 }
 
+function learningReport(label, value) {
+  const name = 'decision-learning-rpc.json'
+  const path = join(process.env.WEIR_IT_ROOT, 'ws', name)
+  const report = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
+  report[label] = value
+  writeReport(name, report)
+  return path
+}
+
+async function waitForLearningRun(broker, agentId, requestId) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const run = broker.learning?.listRuns(agentId).find(item => item.inputFrozen.requestId === requestId)
+    if (run?.outcome === 'running') return run
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error(`Learning Run ${requestId} did not persist running before the model gate`)
+}
+
+async function learningFlow(remote, broker, agent, args) {
+  const sessionId = agent.id
+  let result
+  if (args.action === 'crossAgent') {
+    result = {
+      run: await remote.learningRun({ sessionId, agentId: args.agentId, learningRunId: args.learningRunId }),
+      snapshot: await remote.memorySnapshot({ sessionId, agentId: args.agentId, snapshotId: args.snapshotId }),
+      publish: await remote.snapshotPublish({ sessionId, agentId: args.agentId, snapshotId: args.snapshotId, expectedRevision: args.expectedRevision }),
+    }
+  } else if (args.action === 'crossWorkspace') {
+    const crossAgent = {
+      id: agent.id,
+      session: {
+        header: { ...agent.session.header, cwd: args.otherWorkspace },
+        requestContext: () => agent.session.requestContext(),
+      },
+    }
+    const crossBroker = new DecisionBroker({
+      profileContext: broker.profileContext, config: broker.config, now: broker.now, audit: broker.audit,
+      ctx: { agents: { get: id => id === agent.id ? crossAgent : undefined } },
+    })
+    await crossBroker.start()
+    const crossRemote = createDecisionRemoteService({ broker: () => crossBroker })
+    try {
+      result = {
+        start: await crossRemote.learningStart({ sessionId, agentId: args.agentId, requestId: `${args.label}-foreign-workspace` }),
+        run: await crossRemote.learningRun({ sessionId, learningRunId: args.learningRunId }),
+        snapshot: await crossRemote.memorySnapshot({ sessionId, snapshotId: args.snapshotId }),
+        rollback: await crossRemote.snapshotRollback({ sessionId, snapshotId: args.snapshotId, expectedRevision: args.expectedRevision }),
+      }
+    } finally {
+      await crossBroker.flush()
+    }
+  } else if (args.action === 'learningStart') {
+    const input = { sessionId, agentId: args.agentId, requestId: args.requestId }
+    if (args.concurrent) {
+      const first = remote.learningStart(input)
+      await waitForLearningRun(broker, args.agentId, args.requestId)
+      const duplicate = remote.learningStart(input)
+      let competing
+      try {
+        competing = await remote.learningStart({ ...input, requestId: `${args.requestId}-competing` })
+      } finally {
+        if (process.env.WEIR_IT_LEARNING_RELEASE) writeFileSync(process.env.WEIR_IT_LEARNING_RELEASE, 'release\n')
+      }
+      result = { first: await first, duplicate: await duplicate, competing }
+    } else result = await remote.learningStart(input)
+  } else {
+    const input = { sessionId, agentId: args.agentId, learningRunId: args.learningRunId, snapshotId: args.snapshotId, expectedRevision: args.expectedRevision }
+    if (args.action === 'learningRun' && !input.learningRunId && args.requestId) {
+      const row = broker.store.db.prepare("SELECT learning_run_id FROM learning_runs WHERE agent_id=? AND json_extract(input_frozen_json,'$.requestId')=?").get(args.agentId, args.requestId)
+      input.learningRunId = row?.learning_run_id
+    }
+    result = await remote[args.action](input)
+  }
+  const run = result?.value?.learningRunId ? result.value : result?.first?.value
+  const snapshotId = args.snapshotId ?? (run?.learningRunId
+    ? broker.store.db.prepare('SELECT snapshot_id FROM memory_snapshots WHERE learning_run_id=?').get(run.learningRunId)?.snapshot_id
+    : undefined)
+  const value = { completed: true, op: args.op, label: args.label, action: args.action, result, snapshotId }
+  const path = learningReport(args.label, value)
+  return { ...value, path }
+}
+
 export function apply(ctx, config = {}) {
   if (config.enabled !== true) return
   ctx.tools.register({
     name: 'decision_remote_probe',
     description: 'Drive the real Decision remote service with bare root/child session ids. Dev-only.',
-    parameters: { type: 'object', properties: { op: { type: 'string', enum: ['root', 'child-read'] }, caseId: { type: 'string' } }, required: ['op'] },
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['root', 'child-read', 'learning'] }, caseId: { type: 'string' },
+        action: { type: 'string' }, label: { type: 'string' }, agentId: { type: 'string' }, requestId: { type: 'string' },
+        learningRunId: { type: 'string' }, snapshotId: { type: 'string' }, expectedRevision: { type: 'integer' },
+        otherWorkspace: { type: 'string' }, concurrent: { type: 'boolean' },
+      },
+      required: ['op'],
+    },
     output: {
       schema: { type: 'object' },
       render: (args, value) => [{ type: 'text', text: `DECISION_REMOTE ${value?.completed ? `done ${args?.op}` : 'error'}:${JSON.stringify(value)}` }],
@@ -79,6 +172,7 @@ export function apply(ctx, config = {}) {
         const agent = exec.agent
         if (!broker || !agent?.id) throw new Error('Decision Broker and execution Agent are required')
         const remote = createDecisionRemoteService({ broker: () => broker })
+        if (args.op === 'learning') return await learningFlow(remote, broker, agent, args)
         const report = args.op === 'root' ? await rootFlow(remote, broker, agent) : await childFlow(remote, agent, args.caseId)
         const contribution = decisionRemoteContribution()
         const noAgentLookup = contribution.invocations.every(invocation => !JSON.stringify(invocation).includes('lookup'))

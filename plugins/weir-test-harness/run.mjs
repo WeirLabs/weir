@@ -162,25 +162,26 @@ function setup() {
 
 // ---------- spawn skeleton ----------
 
-/** Boot one headless run of the CLI; resolves with { code, stdout, stderr }. */
+/** Boot one headless CLI process; an optional observer receives its exact ChildProcess. */
 // Resolved once, in main(), by src/launcher.js — before any scenario starts, so
 // a missing CLI is one actionable error instead of a MODULE_NOT_FOUND per run.
 // `kind: 'exec'` spawns the launcher itself (self-contained, no node prefix);
 // `kind: 'node'` boots NODE on the CLI entry (the WEIR_IT_DSH semantics).
 let launcher = null
 
-function spawnHeadless(args, env) {
+function spawnHeadless(args, env, onChild) {
   if (launcher === null) throw new Error('spawnHeadless: the dsh launcher has not been resolved yet')
   const [command, argv] = launcher.kind === 'exec' ? [launcher.path, args] : [NODE, [launcher.path, ...args]]
   return new Promise((resolvePromise) => {
-    execFile(
+    const child = execFile(
       command,
       argv,
       { cwd: env.WEIR_IT_LSP_RENAME === '1' ? join(WS, 'editlock-lsp-rename') : (env.WEIR_IT_LSP_UNCERTAIN === '1' ? join(WS, 'editlock-lsp-uncertain') : (env.WEIR_IT_SANDBOX_NARROW === '1' ? join(WS, 'editlock-hashline-negatives', 'narrow') : WS)), env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
-        resolvePromise({ code: error?.code ?? 0, stdout, stderr })
+        resolvePromise({ code: error?.code ?? 0, stdout, stderr, ...(onChild ? { pid: child.pid, signal: error?.signal ?? null } : {}) })
       },
     )
+    onChild?.(child)
   })
 }
 
