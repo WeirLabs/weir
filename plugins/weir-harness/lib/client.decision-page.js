@@ -7,9 +7,6 @@ window.__ModuleLoader__.load({
     const react = require("react");
     const jsx = require("react/jsx-runtime");
     const PAGE_ID = "weir-decisions";
-    const cardStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", padding: "12px" };
-    const inputStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "5px 7px" };
-    const buttonStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "4px 8px", cursor: "pointer" };
     const contextPackStyle = { background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "6px 8px" };
     const contextPackBodyStyle = { display: "grid", gap: "8px", paddingTop: "8px", fontSize: "12px", lineHeight: "16px" };
     const contextPackLabelStyle = { color: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
@@ -282,24 +279,20 @@ window.__ModuleLoader__.load({
 
     function AgentDetail(props) {
       const { agent, ui, t } = props;
-      const current = learningRows(agent.snapshots).find(snapshot => snapshot.snapshotId === agent.currentSnapshotId);
-      const pendingReview = learningRows(agent.learningRuns).some(run => run.outcome === "candidate");
       return jsx.jsxs("article", { className: "weir-da-card weir-da-agent-detail", "data-agent-detail": agent.agentId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [jsx.jsx("h2", { children: agent.name }, "name"), jsx.jsx("p", { children: agent.userDescription?.text || t("decisionNoPreference") }, "preference")] }, "copy"),
           jsx.jsx(ui.Badge, { variant: agent.state === "enabled" ? "success" : agent.state === "disabled" ? "warn" : "idle", children: t(agentStateKey(agent.state)) }, "state"),
         ] }, "header"),
-        jsx.jsx("p", { children: `${t("decisionCurrentSnapshot")}: ${current ? `v${current.version ?? "—"}` : t("decisionNoCurrentSnapshot")}` }, "current"),
-        pendingReview ? jsx.jsx(ui.Badge, { variant: "warn", children: t("decisionPendingReview") }, "pending") : null,
         jsx.jsxs("div", { className: "weir-da-actions", children: [
           jsx.jsx(ui.Button, { variant: "primary", "data-action": "edit-agent", onClick: props.onEdit, children: t("decisionEditAgent") }, "edit"),
           jsx.jsx(ui.Button, { "data-agent-state": agent.state === "enabled" ? "disabled" : "enabled", disabled: agent.state === "archived", onClick: () => props.requestState(agent.state === "enabled" ? "disabled" : "enabled"), children: t(agent.state === "enabled" ? "decisionDisableAgent" : "decisionEnableAgent") }, "toggle"),
           jsx.jsx(ui.Button, { variant: "danger", "data-agent-state": "archived", disabled: agent.state === "archived", onClick: () => props.requestState("archived"), children: t("decisionArchiveAgent") }, "archive"),
         ] }, "actions"),
+        jsx.jsx(props.learningProps.learning.AgentLearning, { ...props.learningProps, agent, ui }, "learning"),
         jsx.jsx(ui.Disclosure, { id: `weir-da-agent-advanced-${agent.agentId}`, label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsxs("div", { className: "weir-da-agent-diagnostics", children: [
           jsx.jsx("h3", { children: t("decisionProfileHistory") }, "history-title"),
           jsx.jsx("ul", { children: (agent.descriptionHistory ?? []).map(item => jsx.jsx("li", { children: `v${item.revision}: ${item.text}` }, item.revision)) }, "history"),
-          jsx.jsx(AgentLearning, { ...props.learningProps, agent }, "learning"),
           jsx.jsx("pre", { children: JSON.stringify(agent, null, 2) }, "raw"),
         ] }) }, "advanced"),
       ] });
@@ -417,142 +410,6 @@ window.__ModuleLoader__.load({
 
     const learningRows = value => Array.isArray(value) ? value.filter(item => item && typeof item === "object") : [];
 
-    function principleDiff(parentSnapshot, snapshot) {
-      const before = new Map(learningRows(parentSnapshot?.principles).map(item => [item.principleId, item]));
-      const after = new Map(learningRows(snapshot?.principles).map(item => [item.principleId, item]));
-      const rows = [];
-      for (const principleId of new Set([...before.keys(), ...after.keys()])) {
-        const previous = before.get(principleId) ?? null;
-        const next = after.get(principleId) ?? null;
-        if (previous && next && JSON.stringify({ text: previous.text, scope: previous.scope, sources: previous.sources, state: previous.state }) === JSON.stringify({ text: next.text, scope: next.scope, sources: next.sources, state: next.state })) continue;
-        rows.push({ principleId, change: previous ? next ? "changed" : "removed" : "added", before: previous, after: next });
-      }
-      return rows;
-    }
-
-    function learningSource(sourceId, index, props) {
-      if (typeof sourceId !== "string") return null;
-      return sourceId.startsWith("dc_")
-        ? jsx.jsx("button", { type: "button", style: buttonStyle, onClick: () => props.openRecord(sourceId), "aria-label": `${props.t("decisionHistory")}: ${sourceId}`, children: sourceId }, `${sourceId}:${index}`)
-        : jsx.jsx("code", { children: sourceId }, `${sourceId}:${index}`);
-    }
-
-    function learningSourceList(sourceIds, props) {
-      const sources = Array.isArray(sourceIds) ? sourceIds.filter(sourceId => typeof sourceId === "string") : [];
-      return sources.length ? jsx.jsx("ul", { style: contextPackListStyle, children: sources.map((sourceId, index) => jsx.jsx("li", { children: learningSource(sourceId, index, props) }, `${sourceId}:${index}`)) }) : jsx.jsx("span", { children: "—" });
-    }
-
-    function AgentLearning(props) {
-      const t = props.t;
-      const learningRevision = props.learning.revision;
-      const learningStatus = props.learning.status;
-      const agent = props.agent ?? {};
-      const runs = learningRows(agent.learningRuns);
-      const snapshots = learningRows(agent.snapshots);
-      const current = snapshots.find(snapshot => snapshot.snapshotId === agent.currentSnapshotId) ?? (typeof agent.currentSnapshotId === "string" ? { snapshotId: agent.currentSnapshotId, state: "published" } : null);
-      const candidateRun = runs.find(run => run.outcome === "candidate") ?? null;
-      const candidate = candidateRun ? snapshots.find(snapshot => snapshot.state === "draft" && snapshot.learningRunId === candidateRun.learningRunId) ?? null : null;
-      const detail = props.detail?.agentId === agent.agentId ? props.detail : null;
-      const candidateRevision = learningRevision(candidate, detail?.snapshot);
-      const currentRevision = learningRevision(current, detail?.snapshot);
-      const busy = typeof props.pending === "string";
-      const canConsolidate = agent.state === "enabled" && !busy && !runs.some(run => run.outcome === "running" || run.outcome === "candidate");
-      const canReview = !busy && candidateRun && candidate && Number.isInteger(candidateRevision);
-      const canRollback = !busy && current?.state === "published" && Number.isInteger(currentRevision);
-      const run = detail?.run ?? null;
-      const snapshot = detail?.snapshot ?? null;
-      const sourceRecords = learningRows(snapshot?.sourceRecords ?? run?.sourceRecords);
-      const diff = snapshot ? principleDiff(detail?.parentSnapshot, snapshot) : [];
-      const operations = Array.isArray(run?.operations) ? run.operations.filter(operation => operation && typeof operation === "object") : [];
-      const frozen = run?.inputFrozen ? {
-        caseCount: Array.isArray(run.inputFrozen.caseIds) ? run.inputFrozen.caseIds.length : 0,
-        feedbackCount: Array.isArray(run.inputFrozen.feedbackIds) ? run.inputFrozen.feedbackIds.length : 0,
-        parentSnapshotId: run.inputFrozen.parentSnapshotId ?? null,
-        parentSnapshotRevision: run.inputFrozen.parentSnapshotRevision ?? null,
-        promptVersion: run.inputFrozen.promptVersion ?? null,
-        inputHash: run.inputFrozen.inputHash ?? null,
-        feedbackDigest: run.inputFrozen.feedbackDigest ?? null,
-      } : null;
-      return jsx.jsxs("section", { "aria-label": t("decisionLearningGovernance"), style: { display: "grid", gap: "10px", borderTop: "1px solid var(--dsw-alias-border-l2)", paddingTop: "10px" }, children: [
-        jsx.jsxs("div", { style: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }, children: [
-          jsx.jsx("strong", { children: t("decisionLearningGovernance") }, "title"),
-          jsx.jsx("button", { type: "button", disabled: !canConsolidate, "aria-busy": props.pending === "learningStart", style: buttonStyle, onClick: () => { if (canConsolidate) return props.run("learningStart", agent.agentId, window.crypto.randomUUID()); }, children: t("decisionConsolidate") }, "consolidate"),
-          jsx.jsx("button", { type: "button", disabled: !canReview, style: buttonStyle, onClick: () => { if (canReview) return props.run("snapshotPublish", candidate.snapshotId, candidateRevision); }, children: t("decisionPublish") }, "publish"),
-          jsx.jsx("button", { type: "button", disabled: !canReview, style: buttonStyle, onClick: () => { if (canReview) return props.run("snapshotReject", candidate.snapshotId, candidateRevision); }, children: t("decisionReject") }, "reject"),
-          jsx.jsx("button", { type: "button", disabled: !canRollback, style: buttonStyle, onClick: () => { if (canRollback) return props.run("snapshotRollback", current.snapshotId, currentRevision); }, children: t("decisionRollback") }, "rollback"),
-        ] }, "actions"),
-        jsx.jsxs("div", { children: [
-          jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionCurrentSnapshot") }, "label"),
-          current
-            ? jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => props.selectSnapshot(current.snapshotId), children: `${current.snapshotId} · v${current.version ?? "—"} · ${learningStatus(t, "decisionSnapshotState", current.state)} · r${currentRevision ?? "—"}` }, "current")
-            : jsx.jsx("div", { children: t("decisionNoCurrentSnapshot") }, "empty"),
-        ] }, "current"),
-        jsx.jsxs("div", { children: [
-          jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionLearningRuns") }, "label"),
-          runs.length
-            ? jsx.jsx("ul", { style: contextPackListStyle, children: runs.map(item => jsx.jsx("li", { children: jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => props.selectRun(item.learningRunId), "data-learning-run-id": item.learningRunId, children: `${item.learningRunId} · ${learningStatus(t, "decisionLearningOutcome", item.outcome)} · r${item.revision ?? "—"}` }) }, item.learningRunId)) }, "runs")
-            : jsx.jsx("div", { children: t("decisionNoLearningRuns") }, "empty"),
-        ] }, "runs"),
-        jsx.jsxs("div", { children: [
-          jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionSnapshots") }, "label"),
-          snapshots.length
-            ? jsx.jsx("ul", { style: contextPackListStyle, children: snapshots.map(item => jsx.jsx("li", { children: jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => props.selectSnapshot(item.snapshotId), "data-snapshot-id": item.snapshotId, children: `${item.snapshotId} · v${item.version ?? "—"} · ${learningStatus(t, "decisionSnapshotState", item.state)} · r${item.revision ?? "—"}` }) }, item.snapshotId)) }, "snapshots")
-            : jsx.jsx("div", { children: t("decisionNoSnapshots") }, "empty"),
-        ] }, "snapshots"),
-        run ? jsx.jsxs("div", { "data-learning-run-detail": run.learningRunId, style: { display: "grid", gap: "8px", overflowWrap: "anywhere" }, children: [
-          jsx.jsx("strong", { children: t("decisionLearningDetail") }, "title"),
-          jsx.jsxs("div", { children: [jsx.jsx("code", { children: run.learningRunId }, "id"), ` · ${learningStatus(t, "decisionLearningOutcome", run.outcome)} · `, jsx.jsx("code", { children: run.outcome }, "outcome"), ` · r${run.revision ?? "—"}`] }, "status"),
-          frozen ? jsx.jsxs("div", { children: [jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionFrozenInput") }, "label"), jsx.jsx("pre", { children: JSON.stringify(frozen, null, 2) }, "frozen")] }, "frozen") : null,
-          jsx.jsxs("div", { children: [
-            jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionStructuralReplay") }, "label"),
-            jsx.jsx("div", { children: t("decisionStructuralReplayHint") }, "hint"),
-            run.replay
-              ? jsx.jsxs("div", { children: [jsx.jsx("div", { children: run.replay.passed === true ? t("decisionReplayPassed") : t("decisionReplayFailed") }, "result"), jsx.jsx("pre", { children: JSON.stringify({ detail: run.replay.detail ?? null, metrics: run.replay.metrics ?? {}, finalHash: run.replay.finalHash ?? null }, null, 2) }, "replay")] }, "result")
-              : jsx.jsx("div", { children: t("decisionReplayPending") }, "pending"),
-          ] }, "replay"),
-          sourceRecords.length ? jsx.jsxs("div", { children: [
-            jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionSourceRecords") }, "label"),
-            jsx.jsx("ul", { style: { listStyle: "none", margin: "4px 0 0", padding: 0, display: "grid", gap: "6px" }, children: sourceRecords.map((record, index) => jsx.jsxs("li", {
-              "data-learning-source-record": record.sourceId,
-              style: contextPackStyle,
-              children: [
-                jsx.jsx("code", { children: `${record.kind ?? "source"} · ${record.sourceId} · r${record.revision ?? "—"}` }, "id"),
-                record.kind === "case" ? jsx.jsx("pre", { style: { whiteSpace: "pre-wrap", margin: "6px 0 0" }, children: record.excerpt ?? "—" }, "excerpt") : null,
-                record.kind === "correction" ? jsx.jsxs("div", { children: [
-                  jsx.jsx("div", { style: { marginTop: "6px" }, children: `${t("decisionCorrectionDirection")}: ${record.direction ?? "—"}` }, "direction"),
-                  jsx.jsx("pre", { style: { whiteSpace: "pre-wrap", margin: "6px 0 0" }, children: JSON.stringify({ scope: record.scope ?? null, supersedes: record.supersedes ?? [] }, null, 2) }, "scope"),
-                ] }, "correction") : null,
-              ],
-            }, `${record.sourceId}:${index}`)) }, "sources"),
-          ] }, "source-records") : null,
-          jsx.jsxs("div", { children: [
-            jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionOperations") }, "label"),
-            operations.length
-              ? jsx.jsx("ol", { style: contextPackListStyle, children: operations.map((operation, index) => jsx.jsxs("li", { children: [
-                jsx.jsx("div", { children: jsx.jsx("strong", { children: operation.op ?? "—" }) }, "op"),
-                jsx.jsx("code", { children: operation.principleId ?? (Array.isArray(operation.targetPrincipleIds) ? operation.targetPrincipleIds.join(", ") : "—") }, "target"),
-                typeof operation.text === "string" ? jsx.jsx("div", { children: operation.text }, "text") : null,
-                operation.scope === undefined ? null : jsx.jsx("pre", { children: JSON.stringify(operation.scope, null, 2) }, "scope"),
-                learningSourceList(operation.sources, { ...props, t }),
-              ] }, `${operation.op ?? "operation"}:${index}`)) }, "operations")
-              : jsx.jsx("div", { children: t("decisionNoOperations") }, "empty"),
-          ] }, "operations"),
-          snapshot ? jsx.jsxs("div", { children: [
-            jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionPrincipleDiff") }, "label"),
-            jsx.jsx("div", { children: `${snapshot.snapshotId} · v${snapshot.version ?? "—"} · ${learningStatus(t, "decisionSnapshotState", snapshot.state)}` }, "snapshot"),
-            diff.length
-              ? jsx.jsx("ul", { style: contextPackListStyle, children: diff.map(item => jsx.jsxs("li", { children: [
-                jsx.jsx("strong", { children: `${item.principleId} · ${t(`decisionDiff${item.change[0].toUpperCase()}${item.change.slice(1)}`)}` }, "change"),
-                jsx.jsx("div", { children: `${t("decisionBefore")}: ${item.before?.text ?? "—"}` }, "before"),
-                jsx.jsx("div", { children: `${t("decisionAfter")}: ${item.after?.text ?? "—"}` }, "after"),
-                jsx.jsx("pre", { children: JSON.stringify({ before: item.before ? { scope: item.before.scope, state: item.before.state, sources: item.before.sources ?? [] } : null, after: item.after ? { scope: item.after.scope, state: item.after.state, sources: item.after.sources ?? [] } : null }, null, 2) }, "states"),
-                item.after ? learningSourceList(item.after.sources, { ...props, t }) : null,
-              ] }, item.principleId)) }, "diff")
-              : jsx.jsx("div", { children: t("decisionNoPrincipleChanges") }, "empty"),
-          ] }, "diff") : jsx.jsx("div", { children: t("decisionNoSnapshotForRun") }, "no-snapshot"),
-        ] }, "detail") : jsx.jsx("div", { children: t("decisionNoLearningDetail") }, "detail-empty"),
-      ] });
-    }
 
     function DecisionPage(props) {
       const t = props.t ?? (key => key);
@@ -568,11 +425,14 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = react.useState(null);
       const [actionError, setActionError] = react.useState(null);
       const [learningDetail, setLearningDetail] = react.useState(null);
+      const [learningError, setLearningError] = react.useState(null);
+      const [learningLoading, setLearningLoading] = react.useState(false);
       const [drafts, setDrafts] = react.useState({});
       const [confirm, setConfirm] = react.useState(null);
       const [editor, setEditor] = react.useState(null);
       const [selectedAgentId, setSelectedAgentId] = react.useState(null);
       const pendingRef = react.useRef(false);
+      const learningIntentRef = react.useRef(null);
       const epochRef = react.useRef(0);
       const requestsRef = react.useRef({ agents: 0, inbox: 0, records: 0, metrics: 0, agent: 0, learning: 0, details: {} });
       const tabRef = react.useRef(tab);
@@ -666,27 +526,74 @@ window.__ModuleLoader__.load({
           return null;
         }
       };
+      const openLearningRecord = async caseId => {
+        const requestSession = sessionId;
+        const epoch = epochRef.current;
+        const value = await readRecord(caseId, { force: true, sessionId: requestSession, epoch });
+        if (!value || value.case?.caseId !== caseId || epochRef.current !== epoch || sessionId !== requestSession) return null;
+        setTab("records"); setSelectedCaseId(caseId); setDrillIn(true);
+        if (resources.records.status === "idle" || resources.records.status === "error") loadRecords(filter, requestSession, epoch);
+        return value;
+      };
       const readLearning = async (agentValue, learningRunId) => {
         const requestSession = sessionId;
         const epoch = epochRef.current;
         const token = ++requestsRef.current.learning;
-        const selectedRunId = learningRunId ?? learningRows(agentValue?.learningRuns).find(run => run.outcome === "candidate")?.learningRunId ?? learningRows(agentValue?.learningRuns)[0]?.learningRunId;
-        if (!selectedRunId) { if (valid("learning", token, epoch, requestSession)) setLearningDetail(null); return; }
-        const selectedRun = await actions.learningRun(selectedRunId);
-        const snapshotSummary = learningRows(agentValue?.snapshots).find(snapshot => snapshot.learningRunId === selectedRunId);
-        const parentSnapshotId = snapshotSummary?.parentSnapshotId ?? selectedRun?.inputFrozen?.parentSnapshotId ?? null;
-        const [selectedSnapshot, parentSnapshot] = await Promise.all([
-          snapshotSummary ? actions.memorySnapshot(snapshotSummary.snapshotId) : Promise.resolve(null),
-          parentSnapshotId ? actions.memorySnapshot(parentSnapshotId) : Promise.resolve(null),
-        ]);
-        if (valid("learning", token, epoch, requestSession)) setLearningDetail({ agentId: agentValue.agentId, run: selectedRun, snapshot: selectedSnapshot, parentSnapshot });
+        const runs = learningRows(agentValue?.learningRuns);
+        const snapshots = learningRows(agentValue?.snapshots);
+        const candidateRun = runs.find(run => run.outcome === "candidate") ?? null;
+        const currentSummary = snapshots.find(snapshot => snapshot.snapshotId === agentValue?.currentSnapshotId) ?? null;
+        const selectedRunId = learningRunId ?? candidateRun?.learningRunId ?? currentSummary?.learningRunId ?? runs[0]?.learningRunId ?? null;
+        if (valid("learning", token, epoch, requestSession)) setLearningError(null);
+        if (!selectedRunId && !currentSummary) { if (valid("learning", token, epoch, requestSession)) setLearningDetail(null); return; }
+        if (valid("learning", token, epoch, requestSession)) setLearningLoading(true);
+        const runReads = new Map();
+        const snapshotReads = new Map();
+        const readRun = id => {
+          if (!runReads.has(id)) runReads.set(id, Promise.resolve().then(() => actions.learningRun(id)));
+          return runReads.get(id);
+        };
+        const readSnapshot = id => {
+          if (!snapshotReads.has(id)) snapshotReads.set(id, Promise.resolve().then(() => actions.memorySnapshot(id)));
+          return snapshotReads.get(id);
+        };
+        const readReview = async runId => {
+          const run = await readRun(runId);
+          const snapshotSummary = snapshots.find(snapshot => snapshot.learningRunId === runId);
+          const parentSnapshotId = snapshotSummary?.parentSnapshotId ?? run?.inputFrozen?.parentSnapshotId ?? null;
+          const [snapshot, parentSnapshot] = await Promise.all([
+            snapshotSummary ? readSnapshot(snapshotSummary.snapshotId) : Promise.resolve(null),
+            parentSnapshotId ? readSnapshot(parentSnapshotId) : Promise.resolve(null),
+          ]);
+          return { agentId: agentValue.agentId, run, snapshot, parentSnapshot };
+        };
+        try {
+          const candidatePromise = candidateRun ? readReview(candidateRun.learningRunId) : Promise.resolve(null);
+          const inspectionPromise = selectedRunId ? readReview(selectedRunId) : Promise.resolve(null);
+          const currentPromise = currentSummary ? Promise.all([
+            readSnapshot(currentSummary.snapshotId),
+            currentSummary.learningRunId ? readRun(currentSummary.learningRunId) : Promise.resolve(null),
+          ]).then(([snapshot, run]) => ({ agentId: agentValue.agentId, snapshot, run })) : Promise.resolve(null);
+          const [candidate, inspection, current] = await Promise.all([candidatePromise, inspectionPromise, currentPromise]);
+          const sourceRecords = learningRows(candidate?.snapshot?.sourceRecords ?? candidate?.run?.sourceRecords);
+          const caseIds = [...new Set(sourceRecords.map(record => record.kind === "case" ? record.caseId ?? record.sourceId : record.caseId).filter(value => typeof value === "string"))];
+          const recordAccess = Object.fromEntries(await Promise.all(caseIds.map(async caseId => {
+            try {
+              const value = await actions.record(caseId);
+              return [caseId, value?.case?.caseId === caseId];
+            } catch { return [caseId, false]; }
+          })));
+          if (valid("learning", token, epoch, requestSession)) setLearningDetail({ agentId: agentValue.agentId, candidate, inspection, current, recordAccess });
+        } catch (reason) {
+          if (valid("learning", token, epoch, requestSession)) setLearningError(asError(reason));
+        } finally { if (valid("learning", token, epoch, requestSession)) setLearningLoading(false); }
       };
       const selectAgent = async agentId => {
         const requestSession = sessionId;
         const epoch = epochRef.current;
         const token = ++requestsRef.current.agent;
         requestsRef.current.learning += 1;
-        setSelectedAgentId(agentId); patchResource("agent", { status: "loading", value: null, error: null }); setLearningDetail(null);
+        setSelectedAgentId(agentId); patchResource("agent", { status: "loading", value: null, error: null }); setLearningDetail(null); setLearningError(null); setLearningLoading(false);
         try {
           const value = await actions.agent(agentId);
           if (!valid("agent", token, epoch, requestSession)) return;
@@ -736,6 +643,20 @@ window.__ModuleLoader__.load({
           return undefined;
         } finally { if (epochRef.current === epoch && sessionId === requestSession) { pendingRef.current = false; setPending(null); } }
       };
+      const startLearning = async agentId => {
+        const selected = resources.agent.value;
+        const runs = learningRows(selected?.learningRuns);
+        if (pendingRef.current || selected?.agentId !== agentId || selected.state !== "enabled"
+          || runs.some(item => item.outcome === "running" || item.outcome === "candidate")) return;
+        let intent = learningIntentRef.current;
+        if (!intent || intent.sessionId !== sessionId || intent.agentId !== agentId) {
+          intent = { sessionId, agentId, requestId: window.crypto.randomUUID() };
+          learningIntentRef.current = intent;
+        }
+        const result = await run("learningStart", agentId, intent.requestId);
+        if (result !== undefined && learningIntentRef.current === intent) learningIntentRef.current = null;
+        return result;
+      };
       const editorDirty = () => editor && ["name", "preference", "scopeText", "routeText"].some(field => editor[field] !== editor.baseline[field]);
       const closeEditor = after => {
         if (editorDirty()) { setConfirm({ kind: "discard-editor", after }); return; }
@@ -773,8 +694,9 @@ window.__ModuleLoader__.load({
         const epoch = ++epochRef.current;
         requestsRef.current = { agents: 0, inbox: 0, records: 0, metrics: 0, agent: 0, learning: 0, details: {} };
         pendingRef.current = false;
+        learningIntentRef.current = null;
         setPending(null); setActionError(null); setResources(emptyResources());
-        setSelectedCaseId(null); setDrillIn(false); setFilter({}); setLearningDetail(null); setConfirm(null); setSelectedAgentId(null);
+        setSelectedCaseId(null); setDrillIn(false); setFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
         if (sessionId) {
@@ -859,13 +781,16 @@ window.__ModuleLoader__.load({
             agent: selectedAgent, ui, t, onEdit: () => setEditor(newAgentEditor(selectedAgent)),
             requestState: state => setConfirm({ kind: "agent-state", agentId: selectedAgent.agentId, state }),
             learningProps: {
-              detail: learningDetail, run, pending, t, learning: props.learning,
+              detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
+              loading: learningLoading,
+              onStart: () => startLearning(selectedAgent.agentId),
+              confirmAction: action => setConfirm(action), error: learningError, onRetry: () => readLearning(selectedAgent),
               selectRun: learningRunId => readLearning(selectedAgent, learningRunId),
               selectSnapshot: snapshotId => {
                 const snapshot = learningRows(selectedAgent.snapshots).find(item => item.snapshotId === snapshotId);
                 return snapshot?.learningRunId ? readLearning(selectedAgent, snapshot.learningRunId) : Promise.resolve();
               },
-              openRecord: caseId => readRecord(caseId, { select: true, force: true }),
+              openRecord: openLearningRecord,
             },
           }) : null,
         ] }, "content"),
@@ -884,6 +809,19 @@ window.__ModuleLoader__.load({
         confirmLabel: t(confirm.state === "archived" ? "decisionArchiveAgent" : confirm.state === "disabled" ? "decisionDisableAgent" : "decisionEnableAgent"),
         cancelLabel: t("decisionCancel"), danger: confirm.state === "archived", pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const { agentId, state } = confirm; setConfirm(null); return run("profileSetState", agentId, state); },
+      }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, {
+        id: `weir-da-learning-${confirm.kind === "snapshotPublish" ? "publish" : confirm.kind === "snapshotReject" ? "reject" : "rollback"}`,
+        title: t(confirm.kind === "snapshotPublish" ? "decisionApplyTitle" : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateTitle" : "decisionRollbackTitle"),
+        body: jsx.jsxs("div", { children: [
+          jsx.jsx("p", { children: t(confirm.kind === "snapshotPublish" ? "decisionApplyConfirmation" : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateConfirmation" : "decisionRollbackConfirmation") }, "consequence"),
+          confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t("decisionApplyChangeCount")}: ${confirm.changeCount}` }, "count") : null,
+          confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t("decisionApplyReplaceCurrent")}: ${confirm.currentVersion === null ? t("decisionNoCurrentSnapshot") : `${t("decisionPrincipleVersion")} ${confirm.currentVersion}`}` }, "current") : null,
+          confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: t("decisionApplyFutureOnly") }, "future") : null,
+        ] }),
+        confirmLabel: t(confirm.kind === "snapshotPublish" ? "decisionPublish" : confirm.kind === "snapshotReject" ? "decisionReject" : "decisionRollback"),
+        cancelLabel: t("decisionCancel"), danger: confirm.kind !== "snapshotPublish", pending: pending !== null,
+        onCancel: () => setConfirm(null),
+        onConfirm: () => { const { kind, snapshotId, expectedRevision } = confirm; setConfirm(null); return run(kind, snapshotId, expectedRevision); },
       }) : null;
       const metricsContent = !sessionId ? noSession : resources.metrics.status === "error" ? retryState(resources.metrics, () => loadMetrics())
         : resources.metrics.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
@@ -913,8 +851,6 @@ window.__ModuleLoader__.load({
     exports.DecisionPage = DecisionPage;
     exports.InboxItem = InboxItem;
     exports.AttemptContextPack = AttemptContextPack;
-    exports.AgentLearning = AgentLearning;
-    exports.principleDiff = principleDiff;
     return module.exports;
   },
 });

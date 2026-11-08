@@ -577,7 +577,7 @@ test('assistant edit keeps simple fields primary and preserves exact advanced sc
   harness.unmount()
 })
 
-test('assistant state and archive require confirmation, retain history copy, and keep existing learning in advanced detail', async () => {
+test('assistant state and archive require confirmation, retain history copy, and keep learning in the task detail', async () => {
   const calls = []
   const harness = await createPageHarness({ actions: {
     agents: async () => [assistantDetail], inbox: async () => [], agent: async () => assistantDetail, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
@@ -592,14 +592,16 @@ test('assistant state and archive require confirmation, retain history copy, and
   tree = harness.render()
   const detail = findAll(tree, node => node['data-agent-detail'] === 'ag_a')[0]
   assert.ok(detail)
-  assert.equal(textOf(detail).includes('decisionCurrentSnapshot'), true)
-  assert.equal(textOf(detail).includes('decisionPendingReview'), true)
-  assert.equal(textOf(detail).includes('ms-current'), false)
+  const learningElement = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
+  const learningText = textOf(harness.learning.AgentLearning(learningElement))
+  assert.equal(learningText.includes('decisionCurrentSnapshot'), true)
+  assert.equal(learningText.includes('decisionPendingReview'), false)
+  assert.equal(learningText.includes('ms-current'), false)
   assert.equal(findAll(detail, node => node.type === 'pre').length, 0)
   const advanced = findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
   assert.ok(advanced)
   const diagnostics = advanced.children()
-  assert.equal(findAll(diagnostics, node => node.type === harness.page.AgentLearning).length, 1)
+  assert.equal(findAll(diagnostics, node => node.type === harness.learning.AgentLearning).length, 0)
   assert.equal(findAll(diagnostics, node => node.type === 'pre').length > 0, true)
   findAll(detail, node => node.type === harness.ui.Button && node['data-agent-state'] === 'disabled')[0].onClick()
   assert.equal(calls.length, 0)
