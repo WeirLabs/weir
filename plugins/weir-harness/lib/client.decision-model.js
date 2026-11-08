@@ -153,13 +153,14 @@ window.__ModuleLoader__.load({
         : phase !== "loading" && selector?.mode === "off" ? "off" : null;
       const selectedAgent = selected && selected !== "off" ? agents.find(agent => agent?.agentId === selected) ?? null : null;
       const unavailable = selected !== null && selected !== "off" && selectedAgent?.state !== "enabled";
-      const options = phase === "loading" ? [] : selectorOptions({ agents });
+      const options = phase === "loading" || (phase === "error" && !selector) ? [] : selectorOptions({ agents });
       const triggerKey = phase === "loading" ? "decisionLoadingShort"
         : phase === "saving" ? "decisionSaving"
         : selected === "off" ? "decisionOff"
         : selected === null ? "decisionSelector" : null;
       return {
         phase,
+        globalOff: value.status?.enabled === false,
         selected,
         selectedName: text(selectedAgent?.name) || null,
         unavailable,
@@ -292,6 +293,8 @@ window.__ModuleLoader__.load({
         decisionNoPermission: "You do not have permission to read these decision records.", decisionRecordsCleaned: "Decision records were cleaned up.", decisionNoFilteredRecords: "No decision records match these filters.", decisionNoAgents: "No assistants yet. Create an assistant to get started.",
         decisionUp: "Confirm", decisionDown: "Dispute", decisionUndo: "Undo rating", decisionUndoUp: "Undo confirmation", decisionUndoDown: "Undo dispute", decisionComment: "Note", decisionCorrect: "Correction",
         decisionDecide: "Submit decision", decisionReassign: "Reassign", decisionCancel: "Cancel", decisionRetry: "Retry", decisionSave: "Save", decisionUseSuggestions: "Use suggestions", decisionAnswersIncomplete: "Answer every question before submitting.",
+        decisionSelectTitle: "Choose a decision assistant", decisionSelectorSafety: "Only this session; approvals and high-risk actions still ask you.", decisionManageAgents: "Manage assistants", decisionCreateAgent: "New assistant",
+        decisionGlobalOff: "Decision assistants are off globally.", decisionGlobalOffHint: "No automatic decisions are made. Enable them in Settings → Weir → Decision assistants.",
         decisionAdvancedDiagnostics: "Advanced diagnostics", decisionStructuralQualityWarning: "Structural validation does not guarantee content quality.", decisionRateNotQuality: "Automatic answer rate is not a quality metric.", decisionHistoricalNotEvidence: "Historical context is not evidence for a decision.",
         decisionSelectionUnavailable: "The current selection is unavailable.", decisionErrorConflict: "The record changed. Reload the latest version before retrying.", decisionErrorUnavailable: "The selected assistant is unavailable. Choose another assistant or Off.",
         decisionStatusAnswered: "Answered", decisionStatusAwaitingUser: "Needs your decision", decisionStatusAwaitingRevision: "Needs revised input", decisionStatusEvaluating: "Evaluating", decisionStatusReceived: "Received",
@@ -328,6 +331,8 @@ window.__ModuleLoader__.load({
         decisionNoPermission: "你没有读取这些判断记录的权限。", decisionRecordsCleaned: "判断记录已清理。", decisionNoFilteredRecords: "没有符合筛选条件的判断记录。", decisionNoAgents: "暂无助手，请先新建助手。",
         decisionUp: "认可", decisionDown: "不认可", decisionUndo: "撤销评分", decisionUndoUp: "撤销认可", decisionUndoDown: "撤销不认可", decisionComment: "备注", decisionCorrect: "纠正",
         decisionDecide: "提交决定", decisionReassign: "改派", decisionCancel: "取消", decisionRetry: "重试", decisionSave: "保存", decisionUseSuggestions: "使用建议", decisionAnswersIncomplete: "请回答全部问题后再提交。",
+        decisionSelectTitle: "选择决策助手", decisionSelectorSafety: "仅当前会话；审批和高风险操作仍会询问你。", decisionManageAgents: "管理助手", decisionCreateAgent: "新建助手",
+        decisionGlobalOff: "决策助手已在全局关闭。", decisionGlobalOffHint: "当前不会自动决策。可在“设置 → Weir → 决策助手”中开启。",
         decisionAdvancedDiagnostics: "高级诊断", decisionStructuralQualityWarning: "结构校验通过不代表内容质量。", decisionRateNotQuality: "自动回答率不是质量指标。", decisionHistoricalNotEvidence: "历史参考不是判断依据。",
         decisionSelectionUnavailable: "当前选择的助手不可用。", decisionErrorConflict: "记录已变化，请先读取最新版本再重试。", decisionErrorUnavailable: "当前助手不可用，请选择其他助手或关闭。",
         decisionStatusAnswered: "已回答", decisionStatusAwaitingUser: "待你决定", decisionStatusAwaitingRevision: "等待补充", decisionStatusEvaluating: "正在判断", decisionStatusReceived: "已收到",

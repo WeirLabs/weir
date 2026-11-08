@@ -2256,6 +2256,7 @@ describe('weir settings client half', () => {
     'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
     'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord',
     'decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect', 'decisionDecide', 'decisionUseSuggestions', 'decisionAnswersIncomplete',
+    'decisionSelectTitle', 'decisionSelectorSafety', 'decisionManageAgents', 'decisionCreateAgent', 'decisionGlobalOff', 'decisionGlobalOffHint',
     'decisionReassign', 'decisionCancel', 'decisionRetry', 'decisionSave',
     'decisionLoadingShort', 'decisionSaving', 'decisionRecord', 'decisionNoSession', 'decisionReadFailed', 'decisionNoPermission',
     'decisionRecordsCleaned', 'decisionNoFilteredRecords', 'decisionNoAgents', 'decisionUndoUp', 'decisionUndoDown',
