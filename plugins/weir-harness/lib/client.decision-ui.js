@@ -190,6 +190,8 @@ window.__ModuleLoader__.load({
 
     function DecisionAnswers(props) {
       const t = props.t ?? (key => key);
+      const instanceId = react.useId();
+      const incompleteId = `weir-da-answers-${instanceId}-incomplete`;
       const questions = Array.isArray(props.questions) ? props.questions : [];
       const [localAnswers, setLocalAnswers] = react.useState({});
       const [submitting, setSubmitting] = react.useState(false);
@@ -234,9 +236,9 @@ window.__ModuleLoader__.load({
           ...questions.map(question => {
             const answer = answers[question.id] ?? {};
             if (!Array.isArray(question.options)) return jsx.jsx(Field, {
-              id: `weir-da-answer-${question.id}`, label: question.question,
+              id: `weir-da-answer-${instanceId}-${question.id}`, label: question.question,
               children: jsx.jsx("textarea", {
-                id: `weir-da-answer-${question.id}`, className: "weir-da-answer-textarea", rows: 3,
+                id: `weir-da-answer-${instanceId}-${question.id}`, className: "weir-da-answer-textarea", rows: 3,
                 value: answer.custom ?? "", disabled: pending, "aria-label": question.question,
                 onChange: event => update({ ...answers, [question.id]: { selected: [], custom: event.target.value } }),
               }),
@@ -268,9 +270,9 @@ window.__ModuleLoader__.load({
           }),
           jsx.jsxs("div", { className: "weir-da-actions", children: [
             Array.isArray(props.suggestions) && props.suggestions.length > 0 ? jsx.jsx(Button, { variant: "secondary", disabled: pending, onClick: fillSuggestions, children: t("decisionUseSuggestions") }, "suggestions") : null,
-            jsx.jsx(Button, { type: "submit", variant: "primary", disabled: !complete || pending, "aria-describedby": !complete ? "weir-da-answers-incomplete" : undefined, children: pending ? t("decisionSaving") : t("decisionDecide") }, "submit"),
+            jsx.jsx(Button, { type: "submit", variant: "primary", disabled: !complete || pending, "aria-describedby": !complete ? incompleteId : undefined, children: pending ? t("decisionSaving") : t("decisionDecide") }, "submit"),
           ] }, "actions"),
-          !complete ? jsx.jsx("div", { id: "weir-da-answers-incomplete", role: "alert", className: "weir-da-caption", children: t("decisionAnswersIncomplete") }, "incomplete") : null,
+          !complete ? jsx.jsx("div", { id: incompleteId, role: "alert", className: "weir-da-caption", children: t("decisionAnswersIncomplete") }, "incomplete") : null,
         ],
       });
     }

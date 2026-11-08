@@ -192,3 +192,18 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   tree = render()
   assert.equal(tree['aria-busy'], false)
 })
+
+test('DecisionAnswers scopes accessible ids per form instance', async () => {
+  const runtime = makeReact()
+  const ui = await load(runtime.react)
+  const props = { questions: [{ id: 'shared', question: 'Same question' }], t: key => key }
+  runtime.begin()
+  const first = ui.DecisionAnswers(props)
+  const second = ui.DecisionAnswers(props)
+  const firstInput = findAll(first, node => node.type === 'textarea')[0]
+  const secondInput = findAll(second, node => node.type === 'textarea')[0]
+  assert.notEqual(firstInput.id, secondInput.id)
+  const firstError = findAll(first, node => node.id?.endsWith('-incomplete'))[0]
+  const secondError = findAll(second, node => node.id?.endsWith('-incomplete'))[0]
+  assert.notEqual(firstError.id, secondError.id)
+})
