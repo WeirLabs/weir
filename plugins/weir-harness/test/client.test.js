@@ -2180,6 +2180,14 @@ describe('weir settings client half', () => {
     'decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect', 'decisionDecide',
     'decisionReassign', 'decisionCancel', 'decisionRetry', 'decisionSave',
     'decisionContextPack', 'decisionL2Memory', 'decisionMemoryEmpty', 'decisionNeutralEpisodes', 'decisionNoMemory', 'decisionLayerSizes', 'decisionOmissions',
+    'decisionLearningGovernance', 'decisionConsolidate', 'decisionPublish', 'decisionReject', 'decisionRollback',
+    'decisionCurrentSnapshot', 'decisionNoCurrentSnapshot', 'decisionLearningRuns', 'decisionNoLearningRuns', 'decisionSnapshots', 'decisionNoSnapshots',
+    'decisionLearningDetail', 'decisionNoLearningDetail', 'decisionFrozenInput', 'decisionStructuralReplay', 'decisionStructuralReplayHint',
+    'decisionReplayPassed', 'decisionReplayFailed', 'decisionReplayPending', 'decisionOperations', 'decisionNoOperations', 'decisionPrincipleDiff',
+    'decisionDiffAdded', 'decisionDiffChanged', 'decisionDiffRemoved', 'decisionBefore', 'decisionAfter', 'decisionNoPrincipleChanges', 'decisionNoSnapshotForRun',
+    'decisionSnapshotPin', 'decisionNoSnapshotPin', 'decisionReviewedPrinciples', 'decisionL5Mappings', 'decisionExclusions', 'decisionNoExclusions',
+    'decisionLearningOutcome_running', 'decisionLearningOutcome_candidate', 'decisionLearningOutcome_published', 'decisionLearningOutcome_rejected',
+    'decisionLearningOutcome_rolled_back', 'decisionLearningOutcome_failed', 'decisionSnapshotState_draft', 'decisionSnapshotState_published', 'decisionSnapshotState_rolled_back',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

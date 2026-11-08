@@ -109,3 +109,117 @@ test('Attempt Context Pack shows actual L2 pins, principles, L5 sources, and exc
   assert.equal(pinnedEmpty.includes('decisionMemoryEmpty'), true)
   assert.equal(pinnedEmpty.includes('pr_actual'), false)
 })
+
+test('manual governance uses fresh browser UUIDs and latest Snapshot revisions for real actions', async () => {
+  const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({
+    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
+  }))
+  const calls = []
+  const opened = []
+  const run = async (...args) => { calls.push(args) }
+  const base = { run, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async id => { opened.push(id) }, t: key => key }
+  let uuid = 0
+  window.crypto = { randomUUID: () => `browser-uuid-${++uuid}` }
+  const empty = exports.AgentLearning({ ...base, agent: { agentId: 'a', state: 'enabled', currentSnapshotId: null, learningRuns: [], snapshots: [] } })
+  const emptyText = JSON.stringify(empty)
+  for (const key of ['decisionNoCurrentSnapshot', 'decisionNoLearningRuns', 'decisionNoSnapshots', 'decisionNoLearningDetail']) assert.ok(emptyText.includes(key), key)
+  const consolidate = findAll(empty, node => node.type === 'button' && node.children === 'decisionConsolidate')[0]
+  assert.equal(consolidate.disabled, false)
+  await consolidate.onClick()
+  await consolidate.onClick()
+  assert.deepEqual(calls, [
+    ['learningStart', 'a', 'browser-uuid-1'],
+    ['learningStart', 'a', 'browser-uuid-2'],
+  ])
+
+  const agent = {
+    agentId: 'a', state: 'enabled', currentSnapshotId: 'ms_current',
+    learningRuns: [
+      { learningRunId: 'lr_candidate', outcome: 'candidate', revision: 3 },
+      { learningRunId: 'lr_current', outcome: 'published', revision: 4 },
+    ],
+    snapshots: [
+      { snapshotId: 'ms_candidate', state: 'draft', version: 2, revision: 4, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' },
+      { snapshotId: 'ms_current', state: 'published', version: 1, revision: 8, learningRunId: 'lr_current', parentSnapshotId: null },
+    ],
+  }
+  const detail = {
+    agentId: 'a',
+    run: {
+      learningRunId: 'lr_candidate', agentId: 'a', outcome: 'candidate', revision: 3,
+      inputFrozen: { caseIds: ['dc_source'], feedbackIds: ['df_correction'], parentSnapshotId: 'ms_current', parentSnapshotRevision: 8, promptVersion: 'consolidation-contract/1', inputHash: 'a'.repeat(64), feedbackDigest: 'b'.repeat(64) },
+      operations: [{ op: 'refine', principleId: 'pr_one', text: 'Use B', scope: { paths: ['src'] }, sources: ['dc_source', 'df_correction'] }],
+      replay: { passed: true, metrics: { operationCount: 1, sourceCount: 2, activePrincipleCount: 1, retiredPrincipleCount: 0 }, finalHash: 'c'.repeat(64) },
+    },
+    snapshot: { snapshotId: 'ms_candidate', state: 'draft', version: 2, revision: 5, principles: [{ principleId: 'pr_one', text: 'Use B', scope: { paths: ['src'] }, sources: ['dc_source'], state: 'active' }] },
+    parentSnapshot: { snapshotId: 'ms_current', state: 'published', version: 1, revision: 8, principles: [{ principleId: 'pr_one', text: 'Use A', scope: {}, sources: ['dc_old'], state: 'active' }] },
+  }
+  const rendered = exports.AgentLearning({ ...base, agent, detail })
+  const text = JSON.stringify(rendered)
+  for (const value of ['refine', 'Use A', 'Use B', 'dc_old', 'df_correction', 'decisionStructuralReplay', 'decisionReplayPassed', 'decisionFrozenInput', 'decisionOperations', 'decisionPrincipleDiff', 'decisionDiffChanged']) assert.ok(text.includes(value), value)
+  for (const [label, expected] of [
+    ['decisionPublish', ['snapshotPublish', 'ms_candidate', 5]],
+    ['decisionReject', ['snapshotReject', 'ms_candidate', 5]],
+    ['decisionRollback', ['snapshotRollback', 'ms_current', 8]],
+  ]) {
+    const button = findAll(rendered, node => node.type === 'button' && node.children === label)[0]
+    assert.equal(button.disabled, false, label)
+    await button.onClick()
+    assert.deepEqual(calls.at(-1), expected)
+  }
+  const source = findAll(rendered, node => node.type === 'button' && node.children === 'dc_source')[0]
+  await source.onClick()
+  assert.deepEqual(opened, ['dc_source'])
+  assert.equal(findAll(rendered, node => node.type === 'button' && node.children === 'decisionConsolidate')[0].disabled, true)
+})
+
+test('Agent selection loads actual run, Snapshot, and parent details without polling', async () => {
+  const calls = []
+  const agent = {
+    agentId: 'a', name: 'A', state: 'enabled', currentSnapshotId: 'ms_current', learningRuns: [{ learningRunId: 'lr_candidate', outcome: 'candidate', revision: 2 }],
+    snapshots: [{ snapshotId: 'ms_candidate', state: 'draft', version: 2, revision: 1, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' }],
+  }
+  const actions = {
+    agent: async id => { calls.push(['agent', id]); return agent },
+    learningRun: async id => { calls.push(['learningRun', id]); return { learningRunId: id, agentId: 'a', outcome: 'candidate', inputFrozen: { parentSnapshotId: 'ms_current' }, operations: [] } },
+    memorySnapshot: async id => { calls.push(['memorySnapshot', id]); return { snapshotId: id, agentId: 'a', learningRunId: id === 'ms_candidate' ? 'lr_candidate' : 'lr_current', principles: [] } },
+  }
+  const states = ['agents', [agent], [], [], null, null, null, null, {}, null, '', '', '']
+  let cursor = 0
+  const react = { useState: initial => [cursor < states.length ? states[cursor++] : initial, () => {}], useEffect: () => {} }
+  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : {
+    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
+  })
+  const rendered = exports.DecisionPage({
+    connection: {}, decisionRpc: async () => {}, createDecisionActions: () => actions,
+    getSessionId: () => 'root', t: key => key,
+  })
+  const select = findAll(rendered, node => node.type === 'button' && node.children === 'A · enabled · v0')[0]
+  await select.onClick()
+  assert.deepEqual(calls, [
+    ['agent', 'a'], ['learningRun', 'lr_candidate'], ['memorySnapshot', 'ms_candidate'], ['memorySnapshot', 'ms_current'],
+  ])
+})
+
+test('Agent governance exposes every real lifecycle state and blocks conflicting starts', async () => {
+  const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({
+    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
+  }))
+  const outcomes = ['running', 'candidate', 'published', 'rejected', 'rolled_back', 'failed']
+  const agent = {
+    agentId: 'a', state: 'enabled', currentSnapshotId: 'ms_published',
+    learningRuns: outcomes.map(outcome => ({ learningRunId: `lr_${outcome}`, outcome, revision: 1 })),
+    snapshots: [
+      { snapshotId: 'ms_candidate', state: 'draft', version: 3, revision: 1, learningRunId: 'lr_candidate' },
+      { snapshotId: 'ms_published', state: 'published', version: 2, revision: 2, learningRunId: 'lr_published' },
+      { snapshotId: 'ms_rolled_back', state: 'rolled_back', version: 1, revision: 2, learningRunId: 'lr_rolled_back' },
+    ],
+  }
+  const rendered = exports.AgentLearning({ agent, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
+  const text = JSON.stringify(rendered)
+  for (const outcome of outcomes) assert.ok(text.includes(`decisionLearningOutcome_${outcome}`), outcome)
+  for (const state of ['draft', 'published', 'rolled_back']) assert.ok(text.includes(`decisionSnapshotState_${state}`), state)
+  assert.equal(findAll(rendered, node => node.type === 'button' && node.children === 'decisionConsolidate')[0].disabled, true)
+  const disabled = exports.AgentLearning({ agent: { ...agent, state: 'disabled', learningRuns: [], snapshots: [], currentSnapshotId: null }, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
+  assert.equal(findAll(disabled, node => node.type === 'button' && node.children === 'decisionConsolidate')[0].disabled, true)
+})

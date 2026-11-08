@@ -16,6 +16,12 @@ window.__ModuleLoader__.load({
         feedback: (caseId, verb, text) => call("feedback", { caseId, verb, ...(text === undefined ? {} : { payload: { text } }) }),
         correction: (caseId, direction, scope, supersedes) => call("correction", { caseId, direction, scope, supersedes }),
         profileUpsert: value => call("profileUpsert", value), profileSetState: (agentId, state) => call("profileSetState", { agentId, state }),
+        learningStart: (agentId, requestId) => call("learningStart", { agentId, requestId }),
+        learningRun: learningRunId => call("learningRun", { learningRunId }),
+        snapshotPublish: (snapshotId, expectedRevision) => call("snapshotPublish", { snapshotId, expectedRevision }),
+        snapshotReject: (snapshotId, expectedRevision) => call("snapshotReject", { snapshotId, expectedRevision }),
+        snapshotRollback: (snapshotId, expectedRevision) => call("snapshotRollback", { snapshotId, expectedRevision }),
+        memorySnapshot: snapshotId => call("memorySnapshot", { snapshotId }),
       };
     }
     function errorBanner(reason, fallback = "Decision action failed; retry is available.") {
