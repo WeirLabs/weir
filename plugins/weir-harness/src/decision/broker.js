@@ -9,6 +9,7 @@ import { DecisionAttempts } from './store/attempts.js'
 import { DecisionEvidence } from './store/evidence.js'
 import { DecisionFeedback } from './store/feedback.js'
 import { DecisionQuery } from './store/query.js'
+import { DecisionContextRetriever } from './retrieval/retriever.js'
 import { canonicalJson, DecisionContractError, parseAnswerBatch } from './contracts.js'
 import { buildContextPack } from './evaluator/pack.js'
 import { runDecisionAttempt } from './evaluator/attempt-pipeline.js'
@@ -27,6 +28,7 @@ export class DecisionBroker {
     this.started = false
     this.unavailableReason = undefined
     this.store = undefined
+    this.retriever = undefined
     this.activeEvaluations = 0
     this.attemptControllers = new Map()
     this.evaluationJobs = new Set()
@@ -69,6 +71,7 @@ export class DecisionBroker {
     this.evidence = undefined
     this.feedbackStore = undefined
     this.query = undefined
+    this.retriever = undefined
     this.started = false
   }
 
@@ -93,6 +96,7 @@ export class DecisionBroker {
     this.evidence = new DecisionEvidence(store, { now: this.now })
     this.feedbackStore = new DecisionFeedback(store, { now: this.now, audit: this.audit })
     this.query = new DecisionQuery(store, { now: this.now })
+    this.retriever = new DecisionContextRetriever(store, this.evidence)
     const recovered = await this.attempts.recoverInterrupted()
     this.audit('recover', recovered)
     const retentionDays = this.config().decisionAgentRetentionDays ?? 0
@@ -350,8 +354,9 @@ export class DecisionBroker {
       await this.ensureProfileEvidence(profile)
       const attemptStartedAt = this.now()
       await this.refreshEvidenceHints(current, signal)
-      const candidates = this.evidence.candidates({ agentId: profile.agentId, workspaceKey: current.workspaceKey, scope: current.scope, attemptStartedAt })
-      const packed = buildContextPack({ profile, request: current.request, evidence: candidates, modelRoute, budgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000 })
+      const retrieval = this.retriever.retrieve({ agentId: profile.agentId, workspaceKey: current.workspaceKey, scope: current.scope, attemptStartedAt, excludeCaseId: current.caseId })
+      const candidates = retrieval.L5
+      const packed = buildContextPack({ profile, request: current.request, evidence: candidates, memory: { L2: retrieval.L2, L3: retrieval.L3 }, modelRoute, budgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000 })
       const attempt = await this.attempts.start({ caseId: current.caseId, agentId: profile.agentId, pins: packed.pins, contextPackHash: packed.contextPackHash, packManifest: packed.packManifest })
       current = this.cases.getCase(current.caseId)
       const controller = new AbortController()
@@ -368,8 +373,8 @@ export class DecisionBroker {
         timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000, signal: controller.signal,
         workspaceKey: current.workspaceKey, scope: current.scope,
         questions: current.request.questions, attemptStartedAt,
-        conflictPairs: this.evidence.conflictPairs(candidates),
-        currentObservationHashes: Object.fromEntries(candidates.filter(ref => ref.source === 'current_observation').map(ref => [ref.evidenceId, ref.hash])),
+        conflictPairs: retrieval.conflictPairs,
+        currentObservationHashes: retrieval.currentObservationHashes,
         recheckEvidence: evidenceId => {
           try {
             const ref = this.evidence.get(evidenceId)
