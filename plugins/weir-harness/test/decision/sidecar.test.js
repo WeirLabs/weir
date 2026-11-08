@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveDecisionModelRoute, streamDecision } from '../../src/decision/evaluator/sidecar.js'
 
-const pack = { system: 'Decision evaluator contract v1', messages: [{ role: 'user', content: '{"L4":{}}' }] }
+const pack = { system: 'Decision evaluator contract v2', messages: [{ role: 'user', content: '{"L4":{}}' }] }
 
 function fakeLlm(chunks) {
   const calls = []

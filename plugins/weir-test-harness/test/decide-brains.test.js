@@ -484,6 +484,28 @@ describe('decision-hook P1 brain', () => {
   })
 })
 
+describe('decision evaluator v2 mock dispatch', () => {
+  it('routes contract v2 through the scenario Decision brain', async () => {
+    const previous = process.env.WEIR_IT_SCENARIO
+    process.env.WEIR_IT_SCENARIO = 'decision-hook'
+    try {
+      const { planRequest } = await import('../src/mock-llm.js')
+      const options = userOptions(JSON.stringify({
+        L4: { request: { questions: [{ id: 'decision-hook-answer', options: [{ label: 'Native fallback' }, { label: 'Concise' }] }] } },
+        L5: [{ evidenceId: 'ev_v2', source: 'user_profile' }],
+      }), { system: 'Decision evaluator contract v2\nL3 is neutral and non-authoritative.' })
+      const { out } = planRequest(options)
+      const answer = JSON.parse(blockEnds(out)[0].text)
+      assert.equal(answer.outcome, 'answer')
+      assert.equal(answer.claims[0].evidenceIds[0], 'ev_v2')
+      assert.deepEqual(answer.answers, [{ id: 'decision-hook-answer', selected: ['Concise'] }])
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_SCENARIO
+      else process.env.WEIR_IT_SCENARIO = previous
+    }
+  })
+})
+
 describe('decision-consult P1 brain', () => {
   it('sets up the selected Agent before the answered consultation', () => {
     const first = blockEnds(run('decision-consult', userOptions('decision-consult-probe')))[0]

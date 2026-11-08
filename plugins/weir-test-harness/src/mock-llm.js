@@ -61,7 +61,7 @@ function decide(options, obs) {
   if (options.purpose === 'session-title') return textChunks('Integration Test Session')
   if (options.purpose === 'compaction') return textChunks('SUMMARY: the probe task was in progress with no errors.')
   // Decision evaluator sidecar: scenario-specific strict JSON, never a tool loop.
-  if (obs.system.includes('Decision evaluator contract v1')) {
+  if (obs.system.includes('Decision evaluator contract v1') || obs.system.includes('Decision evaluator contract v2')) {
     return (scenario.decideDecision ?? scenario.decide)(options, obs)
   }
   // Intent-gate semantic-classifier sidecar: scripted answer per scenario.

@@ -1,7 +1,7 @@
 // Shared, versioned Decision Agent contracts. Pure JS: no runtime dependencies.
 
 export const DECISION_SCHEMA_VERSION = 1
-export const PROMPT_VERSION = 'evaluator-contract/1'
+export const PROMPT_VERSION = 'evaluator-contract/2'
 export const EVALUATOR_VERSION = 'sidecar/1'
 
 export const RETURN_CODES = Object.freeze([

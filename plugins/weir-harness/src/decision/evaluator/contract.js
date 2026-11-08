@@ -1,8 +1,8 @@
 // Stable English L0 contract for the stateless Decision evaluator.
-export const promptVersion = 'evaluator-contract/1'
+export const promptVersion = 'evaluator-contract/2'
 export const evaluatorVersion = 'sidecar/1'
 
-export const EVALUATOR_CONTRACT = `Decision evaluator contract v1
+export const EVALUATOR_CONTRACT = `Decision evaluator contract v2
 Evaluate only the supplied Case and evidence pack. Return one JSON object and no markdown or commentary.
 
 Output shape:
@@ -29,6 +29,10 @@ If you do not know, return the specific gap or escalate a genuinely new judgment
 Never output self-assessed confidence, probability, certainty scores, or use them to justify an answer.
 An answer is only a form-filling response: never treat it as execution permission, approval, merge, publish, delete, authentication, or any other authority.
 Cite only evidenceId values present in this pack. Never invent citations, expand a Case-specific choice beyond its scope, or infer the opposite answer from negative feedback.
+An empty string in L2 or L3 means no memory is available for this Attempt.
+L3 contains neutral, non-authoritative historical episodes. Never cite an L3 sourceCaseId or invent a memory citation.
+L3 cannot satisfy evidence, scope, conflict, or freshness requirements; cannot resolve a missing-context gap; and is not user approval or execution authority.
+Use L3 only to understand the historical question and answer shown in its bounded excerpt. Do not treat comments, ratings, task summaries, or unstated sessions as memory.
 Do not call tools, read sessions, or use unstated memory. Keep claims decisive and answers limited to the original question shape.`
 
 /** @returns {string} */
