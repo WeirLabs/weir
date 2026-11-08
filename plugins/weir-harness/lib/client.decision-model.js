@@ -143,6 +143,57 @@ window.__ModuleLoader__.load({
       };
     }
 
+    function memoryView(attempt) {
+      const memory = object(attempt?.packManifest)?.memory;
+      const l2 = object(memory?.L2);
+      const l3 = object(memory?.L3);
+      const items = array(l2?.items).filter(item => typeof item?.principleId === "string");
+      const principleIds = array(l2?.principleIds).filter(value => typeof value === "string");
+      const l2Count = new Set([...principleIds, ...items.map(item => item.principleId)]).size;
+      const pins = object(attempt?.pins);
+      const pinned = Boolean(l2?.snapshotId ?? l2?.snapshotRevision ?? l2?.snapshotHash ?? pins?.memorySnapshotId ?? pins?.memorySnapshotRevision ?? pins?.memorySnapshotHash);
+      const sourceCaseIds = array(l3?.sourceCaseIds).filter(value => typeof value === "string");
+      return {
+        l2: !l2 ? "legacy" : l2Count ? "used" : pinned ? "pinned-empty" : "empty", l2Count,
+        l3: !l3 ? "legacy" : sourceCaseIds.length ? "used" : "empty", l3Count: sourceCaseIds.length,
+      };
+    }
+
+    const METRIC_LABELS = {
+      casesOpened: "decisionMetricCasesOpened", attemptsTotal: "decisionMetricAttemptsTotal", autoAnswered: "decisionMetricAutoAnswered",
+      autoAnswerRate: "decisionMetricAutoAnswerRate", escalated: "decisionMetricEscalated", exhausted: "decisionMetricExhausted",
+      cancelled: "decisionMetricCancelled", interrupted: "decisionMetricInterrupted", corrections: "decisionMetricCorrections",
+      reassignments: "decisionMetricReassignments", feedbackParticipation: "decisionMetricFeedbackParticipation",
+      selectorOffBypasses: "decisionMetricSelectorOffBypasses", meanAttemptLatencyMs: "decisionMetricMeanLatency",
+    };
+    function metricDisplay(key, value) {
+      if (key === "autoAnswerRate" && Number.isFinite(value)) return `${Math.round(value * 1000) / 10}%`;
+      if (key === "meanAttemptLatencyMs" && Number.isFinite(value)) return value < 1000 ? `${Math.round(value)} ms` : `${Math.round(value / 100) / 10} s`;
+      return value === null || value === undefined ? "—" : String(value);
+    }
+    function metricRow(key, value, labelKey = METRIC_LABELS[key] ?? null) {
+      return { key, labelKey, ...(labelKey ? {} : { label: key }), value, display: metricDisplay(key, value) };
+    }
+    function metricsView(metrics) {
+      const value = object(metrics);
+      if (!value) return { window: null, since: null, sections: [], raw: null };
+      const activity = Object.keys(METRIC_LABELS).filter(key => value[key] !== undefined).map(key => metricRow(key, value[key]));
+      const returned = Object.entries(object(value.returnedByCode) ?? {}).map(([code, count]) => metricRow(`returnedByCode.${code}`, count, reasonKey(code)));
+      const evidenceLabels = { stale: "decisionMetricEvidenceStale", conflicting: "decisionMetricEvidenceConflicting", deleted: "decisionMetricEvidenceDeleted" };
+      const evidence = Object.entries(object(value.evidenceFailures) ?? {}).map(([key, count]) => metricRow(`evidenceFailures.${key}`, count, evidenceLabels[key] ?? null));
+      const ratingLabels = { up: "decisionMetricRatingsUp", down: "decisionMetricRatingsDown", undone: "decisionMetricRatingsUndone" };
+      const ratings = Object.entries(object(value.ratings) ?? {}).map(([key, count]) => metricRow(`ratings.${key}`, count, ratingLabels[key] ?? null));
+      return {
+        window: text(value.window) || null, since: value.since ?? null,
+        sections: [
+          { key: "activity", labelKey: "decisionMetricActivity", rows: activity },
+          { key: "returns", labelKey: "decisionMetricReturns", rows: returned },
+          { key: "evidence", labelKey: "decisionMetricEvidenceFailures", rows: evidence },
+          { key: "feedback", labelKey: "decisionMetricFeedback", rows: ratings },
+        ].filter(section => section.rows.length), raw: metrics,
+      };
+    }
+
     function selectorView(input = {}) {
       const value = object(input) ?? {};
       const phase = ["loading", "saving", "error", "ready"].includes(value.phase) ? value.phase : "loading";
@@ -286,6 +337,12 @@ window.__ModuleLoader__.load({
 
     const dictionaries = {
       en: {
+        decisionPageDescription: "Let assistants handle repeatable decisions with evidence; important authority remains with you.", decisionPrimaryNavigation: "Decision assistant tasks", decisionInboxEmpty: "Nothing needs your decision right now.", decisionSelectRecord: "Choose a decision record to read its details.", decisionNoAnswer: "No answer is recorded.", decisionReasonSummary: "Why this decision was made", decisionCurrentEvidence: "Evidence for the current evaluation", decisionNoEvidence: "No verifiable evidence is attached to the current evaluation.", decisionEvidenceUnavailable: "The evidence exists, but no readable excerpt is available.", decisionEvidenceDeleted: "This supporting material was deleted.", decisionEvidenceSuperseded: "This supporting material has been superseded.", decisionRecoveryActions: "Recovery actions", decisionChooseAssistant: "Choose an assistant", decisionViewAssistant: "View assistant",
+        decisionSuggestionNotSubmitted: "Not submitted", decisionCancelTitle: "Cancel this decision?", decisionCancelConfirmation: "The pending request will be cancelled. Its read-only history remains available.", decisionKeepEditing: "Keep editing",
+        decisionRecordFilters: "Record filters", decisionFilterAgent: "Assistant", decisionFilterState: "Status", decisionFilterOutcome: "Evaluation result", decisionFilterReason: "Return reason", decisionFilterScope: "Scope contains", decisionFilterFeedback: "Feedback", decisionAllAssistants: "All assistants", decisionAllStates: "All statuses", decisionAllOutcomes: "All results", decisionAllReasons: "All reasons", decisionAllFeedback: "All feedback", decisionMoreFilters: "More filters", decisionApplyFilters: "Apply filters", decisionLoadMore: "Load more", decisionBackToRecords: "Back to decision records", decisionStatusClosed: "Closed", decisionOutcomeAnswer: "Answered by the assistant", decisionOutcomeReturn: "Returned for more input", decisionOutcomeEscalate: "Escalated to you", decisionOutcomeFailed: "Evaluation failed", decisionFeedbackNone: "No rating", decisionFeedbackValidated: "Confirmed", decisionFeedbackDisputed: "Disputed",
+        decisionReviewedPrinciplesUsed: "Reviewed principles were available as non-authoritative guidance", decisionPinnedEmpty: "A principle version was pinned, but no reviewed principles were loaded.", decisionNoReviewedPrinciples: "No reviewed principles were used.", decisionHistoricalContextUsed: "Historical references were included", decisionNoHistoricalContext: "No historical references were used.", decisionLegacyMemory: "No reviewed-principle or historical-reference use was recorded for this evaluation.", decisionEvaluationNumber: "Evaluation", decisionEvaluationHistory: "Evaluation history", decisionNoEarlierEvaluations: "No earlier evaluations.", decisionFeedbackHistory: "Feedback history", decisionNoFeedback: "No feedback has been recorded.", decisionNoteNoEffect: "A note is retained with this record and does not change future decisions.", decisionAddNote: "Add note", decisionCorrectionScope: "Applies to", decisionCorrectionTarget: "Supersedes the answer to", decisionCorrectionFutureOnly: "Only future decisions are affected; the original answer remains unchanged.", decisionSubmitCorrection: "Submit correction", decisionCurrentScope: "The current record scope", decisionAuthorizationClasses: "Authorization classes",
+        decisionAgentStateEnabled: "Enabled", decisionAgentStateDisabled: "Disabled", decisionAgentStateArchived: "Archived", decisionNoPreference: "No decision preference recorded.", decisionVersionUnavailable: "Version unavailable in the summary", decisionPrincipleDetailsOnOpen: "Open the assistant to review principle versions.", decisionPendingReview: "Changes await review", decisionEditAgent: "Edit assistant", decisionAgentName: "Name", decisionAgentPreference: "Decision preference (optional)", decisionAgentPreferenceHint: "Plain-language guidance for this assistant.", decisionAdvancedSettings: "Advanced settings", decisionAdvancedSettingsHint: "Scope and model routing use the existing authoritative profile format.", decisionAgentScopeJson: "Full scope (JSON)", decisionAgentModelRouteJson: "Model route (JSON)", decisionModelInheritanceHint: "A new assistant inherits the session route when no route is supplied.", decisionDisableAgent: "Disable assistant", decisionEnableAgent: "Enable assistant", decisionArchiveAgent: "Archive assistant", decisionProfileHistory: "Preference version history", decisionDiscardTitle: "Discard unsaved changes?", decisionDiscardConfirmation: "Your unsaved assistant edits will be lost.", decisionDiscard: "Discard changes", decisionArchiveTitle: "Archive this assistant?", decisionArchiveConfirmation: "The assistant can no longer receive new decisions. Existing records and history are retained.", decisionDisableTitle: "Disable this assistant?", decisionDisableConfirmation: "New decisions will not be routed to this assistant until it is enabled again.", decisionEnableTitle: "Enable this assistant?", decisionEnableConfirmation: "This assistant can receive new decisions again.",
+        decisionMetricActivity: "Activity", decisionMetricReturns: "Returns by reason", decisionMetricEvidenceFailures: "Evidence issues", decisionMetricFeedback: "Feedback", decisionMetricCasesOpened: "Decisions opened", decisionMetricAttemptsTotal: "Evaluations", decisionMetricAutoAnswered: "Automatically answered", decisionMetricAutoAnswerRate: "Automatic answer rate", decisionMetricEscalated: "Decided by you", decisionMetricExhausted: "Needs attention", decisionMetricCancelled: "Cancelled", decisionMetricInterrupted: "Interrupted evaluations", decisionMetricCorrections: "Corrections", decisionMetricReassignments: "Reassignments", decisionMetricFeedbackParticipation: "Records with feedback", decisionMetricSelectorOffBypasses: "Off bypasses (not sampled)", decisionMetricMeanLatency: "Mean evaluation latency", decisionMetricEvidenceStale: "Stale evidence", decisionMetricEvidenceConflicting: "Conflicting evidence", decisionMetricEvidenceDeleted: "Deleted evidence", decisionMetricRatingsUp: "Confirmations", decisionMetricRatingsDown: "Disputes", decisionMetricRatingsUndone: "Undone ratings", decisionMetricWindow: "Window", decisionMetricWindowAll: "All time", decisionMetricWindow24h: "Last 24 hours", decisionMetricWindow7d: "Last 7 days", decisionMetricWindow30d: "Last 30 days", decisionRawMetrics: "Raw metric values",
         decisionSelector: "Decision assistant", decisionOff: "Off", decisionAgents: "Assistants", decisionRecords: "Decision records",
         decisionInbox: "Needs your decision", decisionMetrics: "Metrics", decisionLoading: "Loading decisions…", decisionLoadingShort: "Loading…", decisionSaving: "Saving…", decisionFailed: "Decision action failed; retry is available.",
         decisionEvidence: "Rationale", decisionSuggestions: "Suggestions", decisionPerQuestion: "Per-question conclusions", decisionRevision: "Revision", decisionHistory: "Open record", decisionNoRecord: "No decision records.",
@@ -324,6 +381,12 @@ window.__ModuleLoader__.load({
         decisionSnapshotState_draft: "Draft", decisionSnapshotState_published: "Published", decisionSnapshotState_rolled_back: "Rolled back",
       },
       zh: {
+        decisionPageDescription: "让助手依据证据处理重复判断；重要权限仍由你决定。", decisionPrimaryNavigation: "决策助手任务", decisionInboxEmpty: "当前没有待你决定的事项。", decisionSelectRecord: "选择一条判断记录以查看详情。", decisionNoAnswer: "暂无记录的答案。", decisionReasonSummary: "判断理由", decisionCurrentEvidence: "本次处理的判断依据", decisionNoEvidence: "本次处理没有关联的可核验依据。", decisionEvidenceUnavailable: "依据存在，但没有可阅读的摘录。", decisionEvidenceDeleted: "该支持材料已删除。", decisionEvidenceSuperseded: "该支持材料已被取代。", decisionRecoveryActions: "恢复操作", decisionChooseAssistant: "选择助手", decisionViewAssistant: "查看助手",
+        decisionSuggestionNotSubmitted: "尚未提交", decisionCancelTitle: "取消这次判断？", decisionCancelConfirmation: "待处理请求将被取消，只读历史仍会保留。", decisionKeepEditing: "继续编辑",
+        decisionRecordFilters: "记录筛选", decisionFilterAgent: "助手", decisionFilterState: "状态", decisionFilterOutcome: "处理结果", decisionFilterReason: "返回原因", decisionFilterScope: "适用范围包含", decisionFilterFeedback: "反馈", decisionAllAssistants: "全部助手", decisionAllStates: "全部状态", decisionAllOutcomes: "全部结果", decisionAllReasons: "全部原因", decisionAllFeedback: "全部反馈", decisionMoreFilters: "更多筛选", decisionApplyFilters: "应用筛选", decisionLoadMore: "加载更多", decisionBackToRecords: "返回判断记录", decisionStatusClosed: "已结束", decisionOutcomeAnswer: "助手已回答", decisionOutcomeReturn: "返回等待补充", decisionOutcomeEscalate: "交由你决定", decisionOutcomeFailed: "处理失败", decisionFeedbackNone: "未评分", decisionFeedbackValidated: "已认可", decisionFeedbackDisputed: "已不认可",
+        decisionReviewedPrinciplesUsed: "本次处理使用了经审阅原则作为非权威指导", decisionPinnedEmpty: "本次处理固定了原则版本，但没有装入经审阅原则。", decisionNoReviewedPrinciples: "本次处理未使用经审阅原则。", decisionHistoricalContextUsed: "本次处理包含历史参考", decisionNoHistoricalContext: "本次处理未使用历史参考。", decisionLegacyMemory: "本次处理没有记录经审阅原则或历史参考的使用情况。", decisionEvaluationNumber: "处理", decisionEvaluationHistory: "处理历史", decisionNoEarlierEvaluations: "没有更早的处理记录。", decisionFeedbackHistory: "反馈历史", decisionNoFeedback: "暂无反馈记录。", decisionNoteNoEffect: "备注会保留在此记录中，不影响之后的判断。", decisionAddNote: "添加备注", decisionCorrectionScope: "适用于", decisionCorrectionTarget: "取代以下问题的答案", decisionCorrectionFutureOnly: "只影响之后的判断，原回答保留不变。", decisionSubmitCorrection: "提交纠正", decisionCurrentScope: "当前记录的适用范围", decisionAuthorizationClasses: "授权类",
+        decisionAgentStateEnabled: "已启用", decisionAgentStateDisabled: "已停用", decisionAgentStateArchived: "已归档", decisionNoPreference: "暂无判断偏好。", decisionVersionUnavailable: "摘要中没有版本信息", decisionPrincipleDetailsOnOpen: "打开助手以查看原则版本。", decisionPendingReview: "有待审变化", decisionEditAgent: "编辑助手", decisionAgentName: "名称", decisionAgentPreference: "判断偏好（可选）", decisionAgentPreferenceHint: "用普通语言描述此助手的判断偏好。", decisionAdvancedSettings: "高级设置", decisionAdvancedSettingsHint: "适用范围和模型路由沿用既有权威档案格式。", decisionAgentScopeJson: "完整适用范围（JSON）", decisionAgentModelRouteJson: "模型路由（JSON）", decisionModelInheritanceHint: "新助手未提供路由时继承会话模型。", decisionDisableAgent: "停用助手", decisionEnableAgent: "启用助手", decisionArchiveAgent: "归档助手", decisionProfileHistory: "判断偏好版本历史", decisionDiscardTitle: "放弃未保存的修改？", decisionDiscardConfirmation: "未保存的助手修改将丢失。", decisionDiscard: "放弃修改", decisionArchiveTitle: "归档此助手？", decisionArchiveConfirmation: "助手将不再接收新判断，既有记录和历史会保留。", decisionDisableTitle: "停用此助手？", decisionDisableConfirmation: "重新启用前，新判断不会路由到此助手。", decisionEnableTitle: "启用此助手？", decisionEnableConfirmation: "此助手可再次接收新判断。",
+        decisionMetricActivity: "活动", decisionMetricReturns: "按原因返回", decisionMetricEvidenceFailures: "依据问题", decisionMetricFeedback: "反馈", decisionMetricCasesOpened: "已开启判断", decisionMetricAttemptsTotal: "处理次数", decisionMetricAutoAnswered: "自动回答", decisionMetricAutoAnswerRate: "自动回答率", decisionMetricEscalated: "由你决定", decisionMetricExhausted: "需要处理", decisionMetricCancelled: "已取消", decisionMetricInterrupted: "中断的处理", decisionMetricCorrections: "纠正", decisionMetricReassignments: "改派", decisionMetricFeedbackParticipation: "有反馈的记录", decisionMetricSelectorOffBypasses: "关闭旁路（不采样）", decisionMetricMeanLatency: "平均处理耗时", decisionMetricEvidenceStale: "依据过期", decisionMetricEvidenceConflicting: "依据冲突", decisionMetricEvidenceDeleted: "依据已删除", decisionMetricRatingsUp: "认可", decisionMetricRatingsDown: "不认可", decisionMetricRatingsUndone: "撤销评分", decisionMetricWindow: "时间范围", decisionMetricWindowAll: "全部时间", decisionMetricWindow24h: "最近 24 小时", decisionMetricWindow7d: "最近 7 天", decisionMetricWindow30d: "最近 30 天", decisionRawMetrics: "原始指标值",
         decisionSelector: "决策助手", decisionOff: "关闭", decisionAgents: "助手管理", decisionRecords: "判断记录",
         decisionInbox: "待你决定", decisionMetrics: "指标", decisionLoading: "正在加载判断记录…", decisionLoadingShort: "读取中…", decisionSaving: "保存中…", decisionFailed: "决策操作失败，可重试。",
         decisionEvidence: "判断依据", decisionSuggestions: "暂定建议", decisionPerQuestion: "逐题结论", decisionRevision: "记录版本", decisionHistory: "打开记录", decisionNoRecord: "暂无判断记录。",
@@ -366,9 +429,13 @@ window.__ModuleLoader__.load({
     exports.dictionaries = dictionaries;
     exports.narrowRecords = narrowRecords;
     exports.narrowInbox = narrowInbox;
+    exports.reasonKey = reasonKey;
+    exports.errorKey = errorKey;
     exports.selectorOptions = selectorOptions;
     exports.selectorView = selectorView;
     exports.cardView = cardView;
+    exports.memoryView = memoryView;
+    exports.metricsView = metricsView;
     exports.recordSummary = recordSummary;
     exports.appendRecordPage = appendRecordPage;
     exports.recordEmptyState = recordEmptyState;

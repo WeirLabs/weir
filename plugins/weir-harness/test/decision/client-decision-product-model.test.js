@@ -185,3 +185,44 @@ test('candidate readiness requires matching loaded detail and accepts a first ca
   assert.equal(model.candidateReadiness(withParent).reason, 'parent')
   assert.equal(model.candidateReadiness({ ...withParent, detail: { ...withParent.detail, parentSnapshot: { snapshotId: 'ms-parent', state: 'published', revision: 8, principles: [] } } }).ready, true)
 })
+
+test('memory summaries distinguish used, empty, pinned-empty, and legacy attempts without inventing hits', async () => {
+  const model = await load()
+  assert.deepEqual(model.memoryView({
+    packManifest: { memory: {
+      L2: { status: 'populated', principleIds: ['pr-one'], items: [{ principleId: 'pr-one' }] },
+      L3: { sourceCaseIds: ['dc-one', 'dc-two'] },
+    } },
+  }), { l2: 'used', l2Count: 1, l3: 'used', l3Count: 2 })
+  assert.deepEqual(model.memoryView({
+    pins: { memorySnapshotId: 'ms-pinned' },
+    packManifest: { memory: { L2: { status: 'empty', principleIds: [], items: [] }, L3: { sourceCaseIds: [] } } },
+  }), { l2: 'pinned-empty', l2Count: 0, l3: 'empty', l3Count: 0 })
+  assert.deepEqual(model.memoryView({ packManifest: { layerSizes: { L2: 0, L3: 0 } } }), { l2: 'legacy', l2Count: 0, l3: 'legacy', l3Count: 0 })
+  assert.deepEqual(model.memoryView({}), { l2: 'legacy', l2Count: 0, l3: 'legacy', l3Count: 0 })
+})
+
+test('metrics projection preserves raw values while formatting counts, rates, durations, and diagnostic groups', async () => {
+  const model = await load()
+  const raw = {
+    window: 'all', since: null, casesOpened: 12, attemptsTotal: 20, autoAnswered: 3, autoAnswerRate: 0.25,
+    returnedByCode: { STALE_EVIDENCE: 2 }, escalated: 4, exhausted: 1, cancelled: 2, interrupted: 1,
+    evidenceFailures: { stale: 2, conflicting: 1, deleted: 0 }, ratings: { up: 5, down: 1, undone: 1 },
+    corrections: 2, reassignments: 3, feedbackParticipation: 6, selectorOffBypasses: 0, meanAttemptLatencyMs: 1500,
+  }
+  const view = model.metricsView(raw)
+  assert.equal(view.raw, raw)
+  assert.equal(view.window, 'all')
+  const rows = view.sections.flatMap(section => section.rows)
+  const row = key => rows.find(item => item.key === key)
+  assert.equal(row('casesOpened').display, '12')
+  assert.equal(row('autoAnswerRate').display, '25%')
+  assert.equal(row('autoAnswerRate').value, 0.25)
+  assert.equal(row('meanAttemptLatencyMs').display, '1.5 s')
+  assert.equal(row('returnedByCode.STALE_EVIDENCE').labelKey, 'decisionReasonStaleEvidence')
+  assert.equal(row('returnedByCode.STALE_EVIDENCE').display, '2')
+  assert.equal(row('evidenceFailures.conflicting').display, '1')
+  assert.equal(row('ratings.undone').display, '1')
+  assert.equal('qualityScore' in view, false)
+  assert.deepEqual(model.metricsView(null), { window: null, since: null, sections: [], raw: null })
+})

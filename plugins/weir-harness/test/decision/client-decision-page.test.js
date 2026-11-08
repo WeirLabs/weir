@@ -2,18 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { loadClientChunk } from '../helpers/load-client-chunk.js'
+import { createPageHarness, deferred, findAll, textOf } from './page-test-helpers.js'
 
-function findAll(node, predicate, found = []) {
-  if (!node || typeof node !== 'object') return found;
-  if (predicate(node)) found.push(node);
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value)) for (const item of value) findAll(item, predicate, found);
-    else if (value && typeof value === 'object') findAll(value, predicate, found);
-  }
-  return found;
-}
-
-test('management page registers left-panel and keyed main with exactly four real views', async () => {
+test('management page registers the existing left-panel and keyed main without polling', async () => {
   const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({}));
   assert.equal(exports.PAGE_ID, 'weir-decisions');
   const production = readFileSync(new URL('../../lib/client.js', import.meta.url), 'utf8');
@@ -21,7 +12,8 @@ test('management page registers left-panel and keyed main with exactly four real
   assert.match(production, /name: "main", key: "weir-decisions", children: \{ "weir-decisions.tab": \{ kind: "list", scope: "root" \} \}/);
   const source = readFileSync(new URL('../../lib/client.decision-page.js', import.meta.url), 'utf8');
   assert.equal(/setInterval|setTimeout/.test(source), false);
-  assert.equal(/consolidation|memory snapshot|auto routing/i.test(source), false);
+  assert.equal(source.includes('document.body'), false);
+  assert.equal(source.includes('@deepseek-ai/'), false);
 })
 
 test('page model exposes three primary views and advanced metrics without editing or consolidation entry points', async () => {
@@ -37,21 +29,367 @@ test('page model exposes three primary views and advanced metrics without editin
   assert.equal('editCase' in view, false);
   assert.equal('consolidate' in view, false);
 })
-test('inbox shows tentative suggestions and per-question conclusions', async () => {
-  const react = { useState: initial => [initial, () => {}] }
-  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : { jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }) })
-  const rendered = exports.InboxItem({
-    item: {
-      caseId: 'dc-waiting', awaitingReason: 'partial_batch', request: { questions: [] },
-      escalation: { suggestion: [{ id: 'q', selected: ['Use Short'] }], perQuestion: [{ id: 'q2', outcome: 'return', detail: 'MISSING_CONTEXT' }] },
+test('page defaults to inbox with a real count, three primary destinations, and separate advanced metrics', async () => {
+  const inbox = [
+    { caseId: 'dc-one', agentId: 'a', state: 'awaiting_user', request: { questions: [{ id: 'q1', question: 'Choose a title' }] } },
+    { caseId: 'dc-two', agentId: 'a', state: 'awaiting_user', request: { questions: [{ id: 'q2', question: 'Choose a scope' }] } },
+  ]
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => inbox,
+    records: async () => ({ records: [], nextCursor: null }),
+    metrics: async () => ({ casesOpened: 0 }),
+  } })
+  const { tree } = await harness.settle()
+  const nav = findAll(tree, node => node.type === 'nav' && node['data-decision-primary-nav'] === true)[0]
+  assert.ok(nav, 'primary navigation exists')
+  const destinations = findAll(nav, node => node.type === harness.ui.Button)
+  assert.deepEqual(destinations.map(node => node['data-view']), ['inbox', 'records', 'agents'])
+  assert.equal(findAll(tree, node => node['data-inbox-count'] === 2).length, 1)
+  assert.equal(findAll(tree, node => node.type === 'section' && node['data-view'] === 'inbox').length, 1)
+  assert.equal(findAll(tree, node => node.type === harness.ui.Button && node['data-view'] === 'metrics').length, 1)
+  assert.equal(findAll(nav, node => node['data-view'] === 'metrics').length, 0)
+  assert.equal(textOf(tree).includes('dc-one'), false)
+  harness.unmount()
+})
+
+test('directed openCase takes precedence over defaults and loads only that raw record detail', async () => {
+  const calls = []
+  let openCase = 'dc-directed'
+  let destination = 'create'
+  const detail = {
+    case: { caseId: 'dc-directed', agentId: 'a', state: 'closed', closing: 'answered', feedbackState: 'none', request: { questions: [{ id: 'q', question: 'Directed question' }] }, decision: { answers: [{ id: 'q', selected: ['Directed answer'] }] } },
+    attempts: [], feedback: [], routeDecisions: [],
+  }
+  const harness = await createPageHarness({
+    consumeOpenCase: () => { const value = openCase; openCase = null; return value },
+    consumeAgentDestination: () => { const value = destination; destination = null; return value },
+    actions: {
+      agents: async () => { calls.push('agents'); return [{ agentId: 'a', name: 'Tone', state: 'enabled' }] },
+      inbox: async () => { calls.push('inbox'); return [] },
+      records: async () => { calls.push('records'); return { records: [], nextCursor: null } },
+      record: async id => { calls.push(`record:${id}`); return detail },
+      metrics: async () => { calls.push('metrics'); return {} },
     },
-    agents: [], run: () => {}, t: key => key,
   })
-  const text = JSON.stringify(rendered)
-  assert.equal(text.includes('decisionSuggestions'), true)
-  assert.equal(text.includes('decisionPerQuestion'), true)
+  const { tree } = await harness.settle()
+  assert.equal(findAll(tree, node => node.type === 'section' && node['data-view'] === 'records').length, 1)
+  assert.equal(findAll(tree, node => node['data-record-detail'] === 'dc-directed').length, 1)
+  assert.equal(textOf(tree).includes('Directed question'), true)
+  assert.equal(findAll(tree, node => node['data-agent-editor'] === 'create').length, 0)
+  assert.equal(calls.includes('metrics'), false)
+  assert.deepEqual(calls.filter(call => call.startsWith('record:')), ['record:dc-directed'])
+  harness.unmount()
+})
+
+test('initial inbox never prefetches records, raw detail, or metrics and each destination loads on demand', async () => {
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => { calls.push('agents'); return [] },
+    inbox: async () => { calls.push('inbox'); return [] },
+    records: async () => { calls.push('records'); return { records: [], nextCursor: null } },
+    record: async id => { calls.push(`record:${id}`); return null },
+    metrics: async () => { calls.push('metrics'); return { casesOpened: 0 } },
+  } })
+  await harness.settle()
+  assert.deepEqual(calls.sort(), ['agents', 'inbox'])
+  let tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node['data-view'] === 'records')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(calls.filter(call => call === 'records').length, 1)
+  assert.equal(calls.some(call => call.startsWith('record:')), false)
+  findAll(tree, node => node.type === harness.ui.Button && node['data-view'] === 'metrics')[0].onClick()
+  await harness.flush()
+  assert.equal(calls.filter(call => call === 'metrics').length, 1)
+  harness.unmount()
+})
+
+test('a late response from an old session cannot overwrite the new session inbox', async () => {
+  const oldInbox = deferred()
+  const newInbox = deferred()
+  const harness = await createPageHarness({ sessionId: 'old', actionsForSession: sessionId => ({
+    agents: async () => [],
+    inbox: () => sessionId === 'old' ? oldInbox.promise : newInbox.promise,
+    records: async () => ({ records: [], nextCursor: null }),
+    metrics: async () => ({}),
+  }) })
+  harness.render()
+  harness.update({ sessionId: 'new' })
+  harness.render()
+  newInbox.resolve([{ caseId: 'dc-new', state: 'awaiting_user', request: { questions: [{ question: 'New session question' }] } }])
+  await harness.flush()
+  oldInbox.resolve([{ caseId: 'dc-old', state: 'awaiting_user', request: { questions: [{ question: 'Old session question' }] } }])
+  await harness.flush()
+  const items = findAll(harness.render(), node => node.type === harness.page.InboxItem)
+  assert.deepEqual(items.map(node => node.item.caseId), ['dc-new'])
+  assert.equal(items.some(node => textOf(node).includes('dc-new')), false)
+  harness.unmount()
+})
+function waitingFixture() {
+  return {
+    caseId: 'dc-waiting', agentId: 'a', state: 'awaiting_user', awaitingReason: 'partial_batch', feedbackState: 'none',
+    request: { questions: [
+      { id: 'q1', question: 'Choose a title', options: [{ label: 'Short' }, { label: 'Long' }] },
+      { id: 'q2', question: 'Explain the choice' },
+    ] },
+    escalation: {
+      suggestion: [{ id: 'q1', selected: ['Short'] }, { id: 'q2', custom: 'Use Short' }],
+      perQuestion: [{ id: 'q2', outcome: 'return', detail: 'MISSING_CONTEXT' }],
+      missing: ['One question needs your decision'],
+    },
+  }
+}
+
+function renderedInboxCard(harness, tree = harness.render(), caseId = 'dc-waiting') {
+  const element = findAll(tree, node => node.type === harness.page.InboxItem && node.item.caseId === caseId)[0]
+  assert.ok(element, `inbox card ${caseId}`)
+  return harness.page.InboxItem(element)
+}
+
+test('inbox uses shared answers, readable tentative guidance, on-demand current evidence, and secondary recovery', async () => {
+  const item = waitingFixture()
+  const detail = {
+    case: item,
+    attempts: [
+      { attemptId: 'da-old', evidence: [{ evidenceId: 'ev-old', excerpt: 'Old evidence' }] },
+      { attemptId: 'da-current', claims: [{ text: 'Current rationale' }], evidence: [{ evidenceId: 'ev-current', excerpt: 'Current evidence' }] },
+    ],
+    feedback: [], routeDecisions: [],
+  }
+  let reads = 0
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [item],
+    record: async () => { reads += 1; return detail }, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  const { tree } = await harness.settle()
+  const card = renderedInboxCard(harness, tree)
+  const answers = findAll(card, node => node.type === harness.ui.DecisionAnswers)[0]
+  assert.ok(answers)
+  assert.deepEqual(answers.questions, item.request.questions)
+  assert.deepEqual(answers.suggestions, item.escalation.suggestion)
+  const text = textOf(card)
   assert.equal(text.includes('Use Short'), true)
-  assert.equal(text.includes('MISSING_CONTEXT'), true)
+  assert.equal(text.includes('MISSING_CONTEXT'), false)
+  assert.equal(text.includes('dc-waiting'), false)
+  const disclosures = findAll(card, node => node.type === harness.ui.Disclosure)
+  assert.ok(disclosures.some(node => node.label === 'decisionRecoveryActions'))
+  const evidence = disclosures.find(node => node.label === 'decisionEvidence')
+  assert.ok(evidence)
+  evidence.onOpen()
+  await harness.flush()
+  assert.equal(reads, 1)
+  let reopened = findAll(renderedInboxCard(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(textOf(reopened.children()).includes('Current evidence'), true)
+  assert.equal(textOf(reopened.children()).includes('Old evidence'), false)
+  reopened.onOpen()
+  await harness.flush()
+  reopened = findAll(renderedInboxCard(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  reopened.onOpen()
+  await harness.flush()
+  assert.equal(reads, 1, 'cached evidence is not reread on close/reopen')
+  harness.unmount()
+})
+
+test('inbox decision submit is guarded and converges through authoritative record and inbox rereads', async () => {
+  const item = waitingFixture()
+  const gate = deferred()
+  let waiting = [item]
+  const calls = []
+  const authoritative = { case: { ...item, state: 'closed', closing: 'escalated', decision: { kind: 'user_decision', answers: [{ id: 'q1', selected: ['Short'] }, { id: 'q2', custom: 'Because' }] } }, attempts: [], feedback: [], routeDecisions: [] }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => { calls.push('inbox'); return waiting },
+    decide: async (caseId, batch) => { calls.push(['decide', caseId, batch]); return gate.promise },
+    record: async caseId => { calls.push(['record', caseId]); return authoritative },
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await harness.settle()
+  calls.length = 0
+  const answers = findAll(renderedInboxCard(harness), node => node.type === harness.ui.DecisionAnswers)[0]
+  const batch = [{ id: 'q1', selected: ['Short'] }, { id: 'q2', selected: [], custom: 'Because' }]
+  const first = answers.onSubmit(batch)
+  const second = answers.onSubmit(batch)
+  assert.equal(calls.filter(call => Array.isArray(call) && call[0] === 'decide').length, 1)
+  waiting = []
+  gate.resolve({ accepted: true })
+  await Promise.all([first, second])
+  await harness.flush()
+  assert.deepEqual(calls.map(call => Array.isArray(call) ? call[0] : call), ['decide', 'record', 'inbox'])
+  assert.deepEqual(calls[0][2], batch)
+  assert.equal(findAll(harness.render(), node => node.type === harness.page.InboxItem).length, 0)
+  assert.equal(textOf(harness.render()).includes('decisionInboxEmpty'), true)
+  harness.unmount()
+})
+
+test('failed decision writes and failed authoritative rereads preserve the same Case draft', async () => {
+  for (const failureAt of ['mutation', 'reread']) {
+    const item = waitingFixture()
+    let recordReads = 0
+    const harness = await createPageHarness({ actions: {
+      agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [item],
+      decide: async () => { if (failureAt === 'mutation') throw Object.assign(new Error('offline'), { code: 'NETWORK' }); return { accepted: true } },
+      record: async () => { recordReads += 1; throw new Error('reread offline') },
+      records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    } })
+    await harness.settle()
+    let answers = findAll(renderedInboxCard(harness), node => node.type === harness.ui.DecisionAnswers)[0]
+    const draft = { q1: { selected: ['Short'] }, q2: { selected: [], custom: 'Keep this draft' } }
+    answers.onChange(draft)
+    answers = findAll(renderedInboxCard(harness), node => node.type === harness.ui.DecisionAnswers)[0]
+    assert.deepEqual(answers.answers, draft)
+    await answers.onSubmit([{ id: 'q1', selected: ['Short'] }, { id: 'q2', selected: [], custom: 'Keep this draft' }])
+    await harness.flush()
+    answers = findAll(renderedInboxCard(harness), node => node.type === harness.ui.DecisionAnswers)[0]
+    assert.deepEqual(answers.answers, draft, failureAt)
+    assert.equal(textOf(harness.render()).includes('decisionFailed'), true)
+    assert.equal(recordReads, failureAt === 'reread' ? 1 : 0)
+    harness.unmount()
+  }
+})
+
+test('reassign and retry stay secondary while cancel requires explicit confirmation', async () => {
+  const item = waitingFixture()
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }, { agentId: 'b', name: 'Second', state: 'enabled' }], inbox: async () => [item],
+    reassign: async (...args) => { calls.push(['reassign', ...args]); return {} }, retry: async (...args) => { calls.push(['retry', ...args]); return {} }, cancel: async (...args) => { calls.push(['cancel', ...args]); return {} },
+    record: async () => ({ case: item, attempts: [], feedback: [], routeDecisions: [] }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let card = renderedInboxCard(harness)
+  let recovery = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+  const target = findAll(recovery, node => node.type === 'select')[0]
+  target.onChange({ target: { value: 'b' } })
+  card = renderedInboxCard(harness)
+  recovery = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+  await findAll(recovery, node => node.type === harness.ui.Button && node.children === 'decisionReassign')[0].onClick()
+  await harness.flush()
+  assert.deepEqual(calls[0], ['reassign', 'dc-waiting', 'b'])
+  card = renderedInboxCard(harness)
+  recovery = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+  await findAll(recovery, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  assert.deepEqual(calls[1], ['retry', 'dc-waiting'])
+  card = renderedInboxCard(harness)
+  recovery = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+  findAll(recovery, node => node.type === harness.ui.Button && node.children === 'decisionCancel')[0].onClick()
+  assert.equal(calls.some(call => call[0] === 'cancel'), false)
+  const dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  assert.ok(dialog)
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.deepEqual(calls[2], ['cancel', 'dc-waiting'])
+  harness.unmount()
+})
+function openRecords(harness) {
+  const button = findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'records')[0]
+  assert.ok(button)
+  button.onClick()
+  return harness.flush().then(() => harness.render())
+}
+
+function recordFilter(harness, tree, key) {
+  const advanced = findAll(tree, node => node.type === harness.ui.Disclosure && node.label === 'decisionMoreFilters')[0]
+  const root = ['outcome', 'reasonCode', 'scope', 'feedbackState'].includes(key) ? advanced?.children() : tree
+  return findAll(root, node => node['data-filter'] === key)[0]
+}
+
+test('record filters expose common controls and advanced choices while preserving all six exact RPC parameters', async () => {
+  const calls = []
+  const record = { caseId: 'dc-filtered', agentId: 'a', state: 'awaiting_user', request: { questions: [{ id: 'q', question: 'Filtered question' }] } }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    records: async (filter, cursor) => { calls.push({ filter, cursor }); return { records: [record], nextCursor: null } }, metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let tree = await openRecords(harness)
+  assert.ok(recordFilter(harness, tree, 'agentId'))
+  assert.ok(recordFilter(harness, tree, 'state'))
+  assert.equal(textOf(tree).includes('dc-filtered'), false)
+  const values = { agentId: 'a', state: 'awaiting_user', outcome: 'return', reasonCode: 'STALE_EVIDENCE', scope: 'src', feedbackState: 'disputed' }
+  for (const [key, value] of Object.entries(values)) {
+    tree = harness.render()
+    const control = recordFilter(harness, tree, key)
+    assert.ok(control, key)
+    control.onChange({ target: { value } })
+  }
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node.children === 'decisionApplyFilters')[0].onClick()
+  await harness.flush()
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[0], { filter: {}, cursor: undefined })
+  assert.deepEqual(calls[1], { filter: values, cursor: undefined })
+  harness.unmount()
+})
+
+test('record pagination appends and dedupes without replacing the selected detail, with narrow drill-in back navigation', async () => {
+  const first = { caseId: 'dc-a', agentId: 'a', state: 'closed', closing: 'answered', createdAt: '2026-01-02T03:04:05.000Z', request: { questions: [{ id: 'q', question: 'Original A' }] } }
+  const second = { caseId: 'dc-b', agentId: 'a', state: 'awaiting_user', createdAt: '2026-01-03T03:04:05.000Z', request: { questions: [{ id: 'q', question: 'Record B' }] } }
+  const detail = { case: { ...first, decision: { answers: [{ id: 'q', selected: ['Answer A'] }] } }, attempts: [], feedback: [], routeDecisions: [] }
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    records: async (filter, cursor) => {
+      calls.push({ filter, cursor })
+      return cursor ? { records: [{ ...first, request: { questions: [{ id: 'q', question: 'Updated duplicate A' }] } }, second], nextCursor: null } : { records: [first], nextCursor: 'cursor-1' }
+    },
+    record: async () => detail, metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let tree = await openRecords(harness)
+  let rows = findAll(tree, node => node.type === harness.ui.Button && node['data-case-id'])
+  assert.equal(rows.length, 1)
+  assert.equal(textOf(rows[0]).includes('Original A'), true)
+  assert.equal(textOf(rows[0]).includes('Tone'), true)
+  assert.equal(textOf(rows[0]).includes('2026'), true)
+  await rows[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node['data-record-detail'] === 'dc-a').length, 1)
+  assert.equal(findAll(tree, node => node.className === 'weir-da-records-layout')[0]['data-drill-in'], true)
+  const more = findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true)[0]
+  assert.ok(more)
+  await more.onClick()
+  await harness.flush()
+  tree = harness.render()
+  rows = findAll(tree, node => node.type === harness.ui.Button && node['data-case-id'])
+  assert.deepEqual(rows.map(row => row['data-case-id']), ['dc-a', 'dc-b'])
+  assert.equal(textOf(rows[0]).includes('Original A'), true)
+  assert.equal(textOf(rows[0]).includes('Updated duplicate A'), false)
+  assert.equal(findAll(tree, node => node['data-record-detail'] === 'dc-a').length, 1)
+  assert.deepEqual(calls[1], { filter: {}, cursor: { after: 'cursor-1' } })
+  assert.equal(findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true).length, 0)
+  const back = findAll(tree, node => node.type === harness.ui.Button && node.className === 'weir-da-record-back')[0]
+  assert.ok(back)
+  back.onClick()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node.className === 'weir-da-records-layout')[0]['data-drill-in'], false)
+  assert.equal(findAll(tree, node => node['data-record-detail'] === 'dc-a').length, 1)
+  harness.unmount()
+})
+
+test('a late response for old record filters cannot replace the new filter result', async () => {
+  const oldPage = deferred()
+  const newPage = deferred()
+  let reads = 0
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    records: async () => { reads += 1; return reads === 1 ? oldPage.promise : newPage.promise }, metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let tree = await openRecords(harness)
+  recordFilter(harness, tree, 'state').onChange({ target: { value: 'closed' } })
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node.children === 'decisionApplyFilters')[0].onClick()
+  await Promise.resolve()
+  newPage.resolve({ records: [{ caseId: 'dc-new-filter', state: 'closed', request: { questions: [{ question: 'New filter result' }] } }], nextCursor: null })
+  await harness.flush()
+  oldPage.resolve({ records: [{ caseId: 'dc-old-filter', state: 'awaiting_user', request: { questions: [{ question: 'Old filter result' }] } }], nextCursor: null })
+  await harness.flush()
+  const rows = findAll(harness.render(), node => node.type === harness.ui.Button && node['data-case-id'])
+  assert.deepEqual(rows.map(row => row['data-case-id']), ['dc-new-filter'])
+  harness.unmount()
 })
 test('Attempt Context Pack details show actual neutral sources and truthful legacy empty states', async () => {
   const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({ jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }) }));
@@ -133,30 +471,347 @@ test('Context Pack renders truthful no-L3, P1 legacy, and missing-manifest empty
   assert.deepEqual(findAll(missing, node => node.type === 'dt' || node.type === 'dd'), []);
 });
 
-test('record detail adds one Context Pack per Attempt without replacing raw detail or record actions', async () => {
-  const detail = {
-    case: { caseId: 'dc-record', agentId: 'a', state: 'closed', closing: 'answered', feedbackState: 'none', scope: {} },
-    attempts: [
-      { attemptId: 'da-one', packManifest: { layerSizes: { L2: 0, L3: 12 }, memory: { L2: { status: 'empty' }, L3: { sourceCaseIds: ['dc-source'] } }, omissions: [] } },
-      { attemptId: 'da-two', packManifest: { layerSizes: { L2: 0, L3: 0 }, omissions: [] } },
-    ],
-  };
-  const states = ['records', [], [], [], null, null, detail, null, {}, null, '', '', ''];
-  let cursor = 0;
-  const react = { useState: initial => [cursor < states.length ? states[cursor++] : initial, () => {}], useEffect: () => {} };
-  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : { jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }) });
-  const rendered = exports.DecisionPage({
-    connection: {}, decisionRpc: async () => {}, createDecisionActions: () => ({}),
-    getSessionId: () => 'session', t: key => key,
-  });
-  const packs = findAll(rendered, node => node.type === exports.AttemptContextPack);
-  assert.deepEqual(packs.map(pack => pack.attempt.attemptId), ['da-one', 'da-two']);
-  assert.equal(findAll(rendered, node => node.type === 'pre' && node.children === JSON.stringify(detail, null, 2)).length, 1);
-  const buttons = findAll(rendered, node => node.type === 'button').map(node => node.children);
-  for (const action of ['decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect']) assert.equal(buttons.includes(action), true);
-  assert.equal(buttons.some(label => /consolidat|publish|rollback|learn|auto|export|edit memory|memory edit/i.test(String(label))), false);
-});
+function openAgents(harness) {
+  const button = findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'agents')[0]
+  assert.ok(button)
+  button.onClick()
+  return harness.flush().then(() => harness.render())
+}
 
+function currentAgentEditor(harness) {
+  return findAll(harness.render(), node => node.type === 'form' && node['data-agent-editor'])[0]
+}
+
+function agentField(harness, name) {
+  return findAll(harness.render(), node => node['data-agent-field'] === name)[0]
+}
+
+const assistantDetail = {
+  agentId: 'ag_a', name: 'Tone', state: 'enabled', workspaceKey: '/repo',
+  userDescription: { revision: 2, text: 'Prefer concise copy' }, generatedDescription: { revision: 0, text: '' },
+  scope: { workspaces: ['/repo'], paths: ['src'], authorizationClasses: ['A', 'B'] },
+  modelRoute: { chain: [{ provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'low' }] },
+  descriptionHistory: [{ revision: 1, text: 'Old preference' }, { revision: 2, text: 'Prefer concise copy' }],
+  currentSnapshotId: 'ms-current', learningRuns: [{ learningRunId: 'lr-candidate', outcome: 'candidate', revision: 1 }],
+  snapshots: [{ snapshotId: 'ms-current', version: 3, state: 'published', revision: 4, learningRunId: 'lr-current' }],
+}
+
+test('assistant summaries are read-only and simple create preserves defaults, dirty drafts, and cancel confirmation', async () => {
+  const calls = []
+  let failSave = true
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    agent: async id => id === 'ag_new' ? { ...assistantDetail, agentId: id, name: 'New assistant', learningRuns: [], snapshots: [], currentSnapshotId: null } : assistantDetail,
+    profileUpsert: async payload => { calls.push(payload); if (failSave) throw new Error('save offline'); return { ...assistantDetail, agentId: 'ag_new', name: payload.name } },
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  const summary = findAll(tree, node => node['data-agent-summary'] === 'ag_a')[0]
+  assert.ok(summary)
+  assert.equal(textOf(summary).includes('Tone'), true)
+  assert.equal(textOf(summary).includes('Prefer concise copy'), true)
+  assert.equal(textOf(summary).includes('ag_a'), false)
+  assert.equal(findAll(summary, node => node.type === 'pre').length, 0)
+  findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'create-agent')[0].onClick()
+  assert.equal(currentAgentEditor(harness)['data-agent-editor'], 'create')
+  agentField(harness, 'name').onChange({ target: { value: 'Discard me' } })
+  findAll(currentAgentEditor(harness), node => node.type === harness.ui.Button && node.children === 'decisionCancel')[0].onClick()
+  let dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  assert.ok(dialog)
+  assert.equal(calls.length, 0)
+  dialog.onConfirm()
+  assert.equal(currentAgentEditor(harness), undefined)
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'create-agent')[0].onClick()
+  agentField(harness, 'name').onChange({ target: { value: 'New assistant' } })
+  agentField(harness, 'preference').onChange({ target: { value: 'Prefer short answers' } })
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.equal(calls.length, 1)
+  assert.equal(agentField(harness, 'name').value, 'New assistant')
+  assert.equal(textOf(harness.render()).includes('decisionFailed'), true)
+  failSave = false
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.deepEqual(calls[1], { name: 'New assistant', userDescription: 'Prefer short answers' })
+  assert.equal('scope' in calls[1], false)
+  assert.equal('modelRoute' in calls[1], false)
+  assert.equal(currentAgentEditor(harness), undefined)
+  harness.unmount()
+})
+
+test('assistant edit keeps simple fields primary and preserves exact advanced scope and model route payload', async () => {
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileUpsert: async payload => { calls.push(payload); return { ...assistantDetail, ...payload } },
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'edit-agent')[0].onClick()
+  let editor = currentAgentEditor(harness)
+  assert.equal(editor['data-agent-editor'], 'edit')
+  assert.equal(agentField(harness, 'name').value, 'Tone')
+  assert.equal(agentField(harness, 'preference').value, 'Prefer concise copy')
+  agentField(harness, 'name').onChange({ target: { value: 'Tone editor' } })
+  const advanced = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0]
+  assert.ok(advanced)
+  const advancedTree = advanced.children()
+  const scope = findAll(advancedTree, node => node['data-agent-field'] === 'scope')[0]
+  const route = findAll(advancedTree, node => node['data-agent-field'] === 'modelRoute')[0]
+  assert.deepEqual(JSON.parse(scope.value), assistantDetail.scope)
+  assert.deepEqual(JSON.parse(route.value), assistantDetail.modelRoute)
+  scope.onChange({ target: { value: JSON.stringify({ workspaces: ['/repo'], paths: ['src/decision'], authorizationClasses: ['A'] }) } })
+  editor = currentAgentEditor(harness)
+  const updatedAdvanced = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  findAll(updatedAdvanced, node => node['data-agent-field'] === 'modelRoute')[0].onChange({ target: { value: JSON.stringify({ chain: [{ provider: 'other', model: 'model-b' }] }) } })
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.deepEqual(calls, [{
+    agentId: 'ag_a', name: 'Tone editor', userDescription: 'Prefer concise copy',
+    scope: { workspaces: ['/repo'], paths: ['src/decision'], authorizationClasses: ['A'] },
+    modelRoute: { chain: [{ provider: 'other', model: 'model-b' }] },
+  }])
+  harness.unmount()
+})
+
+test('assistant state and archive require confirmation, retain history copy, and keep existing learning in advanced detail', async () => {
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], agent: async () => assistantDetail, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileSetState: async (...args) => { calls.push(args); return { ...assistantDetail, state: args[1] } },
+    learningRun: async id => ({ learningRunId: id, agentId: 'ag_a', outcome: 'candidate', inputFrozen: { parentSnapshotId: 'ms-current' }, operations: [] }),
+    memorySnapshot: async id => ({ snapshotId: id, agentId: 'ag_a', learningRunId: 'lr-current', state: 'published', revision: 4, principles: [] }),
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  const detail = findAll(tree, node => node['data-agent-detail'] === 'ag_a')[0]
+  assert.ok(detail)
+  assert.equal(textOf(detail).includes('decisionCurrentSnapshot'), true)
+  assert.equal(textOf(detail).includes('decisionPendingReview'), true)
+  assert.equal(textOf(detail).includes('ms-current'), false)
+  assert.equal(findAll(detail, node => node.type === 'pre').length, 0)
+  const advanced = findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.ok(advanced)
+  const diagnostics = advanced.children()
+  assert.equal(findAll(diagnostics, node => node.type === harness.page.AgentLearning).length, 1)
+  assert.equal(findAll(diagnostics, node => node.type === 'pre').length > 0, true)
+  findAll(detail, node => node.type === harness.ui.Button && node['data-agent-state'] === 'disabled')[0].onClick()
+  assert.equal(calls.length, 0)
+  let dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.deepEqual(calls[0], ['ag_a', 'disabled'])
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node['data-agent-state'] === 'archived')[0].onClick()
+  dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  assert.equal(dialog.body, 'decisionArchiveConfirmation')
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.deepEqual(calls[1], ['ag_a', 'archived'])
+  harness.unmount()
+})
+test('advanced metrics load lazily, retry failures, and show readable values with raw values separately disclosed', async () => {
+  const raw = {
+    window: 'all', since: null, casesOpened: 12, attemptsTotal: 20, autoAnswered: 3, autoAnswerRate: 0.25,
+    returnedByCode: { STALE_EVIDENCE: 2 }, escalated: 4, exhausted: 1, cancelled: 2, interrupted: 1,
+    evidenceFailures: { stale: 2, conflicting: 1, deleted: 0 }, ratings: { up: 5, down: 1, undone: 1 },
+    corrections: 2, reassignments: 3, feedbackParticipation: 6, selectorOffBypasses: 0, meanAttemptLatencyMs: 1500,
+  }
+  let reads = 0
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], records: async () => ({ records: [], nextCursor: null }),
+    metrics: async window => { reads += 1; if (reads === 1) throw new Error('metrics offline'); assert.equal(window, 'all'); return raw },
+  } })
+  await harness.settle()
+  assert.equal(reads, 0)
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'metrics')[0].onClick()
+  await harness.flush()
+  let tree = harness.render()
+  let section = findAll(tree, node => node.type === 'section' && node['data-view'] === 'metrics')[0]
+  assert.equal(reads, 1)
+  assert.equal(findAll(section, node => node.type === harness.ui.ErrorState).length, 1)
+  findAll(section, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  section = findAll(tree, node => node.type === 'section' && node['data-view'] === 'metrics')[0]
+  assert.equal(reads, 2)
+  const readable = findAll(section, node => node['data-metrics-view'] === true)[0]
+  assert.ok(readable)
+  const text = textOf(readable)
+  for (const value of ['decisionMetricCasesOpened', 'decisionMetricAutoAnswerRate', '25%', '1.5 s', 'decisionRateNotQuality']) assert.equal(text.includes(value), true, value)
+  assert.equal(findAll(readable, node => node.type === 'pre' || node.type === 'canvas').length, 0)
+  const rawDisclosure = findAll(readable, node => node.type === harness.ui.Disclosure && node.label === 'decisionRawMetrics')[0]
+  assert.ok(rawDisclosure)
+  assert.equal(findAll(rawDisclosure.children(), node => node.type === 'pre' && node.children === JSON.stringify(raw, null, 2)).length, 1)
+  harness.unmount()
+})
+test('record detail groups prior evaluations, shows truthful memory limits, and hides raw diagnostics until requested', async () => {
+  const detail = {
+    case: {
+      caseId: 'dc-detail', agentId: 'a', state: 'closed', closing: 'answered', feedbackState: 'validated', scope: { workspaces: ['/repo'] },
+      request: { questions: [{ id: 'q', question: 'Detailed question' }] }, decision: { attemptId: 'da-new', answers: [{ id: 'q', selected: ['Detailed answer'] }] },
+    },
+    attempts: [
+      { attemptId: 'da-old', attemptNo: 1, outcome: 'return', claims: [{ text: 'Old rationale' }], evidence: [{ evidenceId: 'ev-old', excerpt: 'Old evidence' }] },
+      {
+        attemptId: 'da-new', attemptNo: 2, outcome: 'answer', claims: [{ text: 'Current rationale' }], evidence: [{ evidenceId: 'ev-new', excerpt: 'Current evidence' }],
+        pins: { memorySnapshotId: 'ms-pinned' },
+        packManifest: { layerSizes: { L2: 0, L3: 20, L5: 40 }, memory: { L2: { status: 'empty', principleIds: [], items: [] }, L3: { sourceCaseIds: ['dc-history'] } }, omissions: [] },
+      },
+    ],
+    feedback: [
+      { kind: 'comment', payload: { text: 'Readable note' } },
+      { kind: 'correction', payload: { direction: 'Readable correction' } },
+    ],
+    routeDecisions: [],
+  }
+  let openCase = 'dc-detail'
+  const harness = await createPageHarness({
+    consumeOpenCase: () => { const value = openCase; openCase = null; return value },
+    actions: { agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [], record: async () => detail, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}) },
+  })
+  const { tree } = await harness.settle()
+  const record = findAll(tree, node => node['data-record-detail'] === 'dc-detail')[0]
+  const current = findAll(record, node => node['data-current-evidence'] === true)[0]
+  assert.ok(current)
+  assert.equal(textOf(current).includes('Current evidence'), true)
+  assert.equal(textOf(current).includes('Old evidence'), false)
+  const history = findAll(record, node => node['data-evaluation-history'] === true)[0]
+  assert.ok(history)
+  assert.equal(textOf(history).includes('Old rationale'), true)
+  assert.equal(textOf(history).includes('Old evidence'), true)
+  assert.equal(findAll(history, node => node['data-evaluation-group'] === true).length, 1)
+  const defaultText = textOf(record)
+  assert.equal(defaultText.includes('decisionPinnedEmpty'), true)
+  assert.equal(defaultText.includes('decisionHistoricalNotEvidence'), true)
+  assert.equal(defaultText.includes('Readable note'), true)
+  assert.equal(defaultText.includes('Readable correction'), true)
+  for (const technical of ['da-old', 'da-new', 'ev-old', 'ev-new', 'dc-history', 'ms-pinned']) assert.equal(defaultText.includes(technical), false, technical)
+  assert.equal(findAll(record, node => node.type === 'pre').length, 0)
+  const advanced = findAll(record, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.ok(advanced)
+  const diagnostics = advanced.children()
+  assert.equal(findAll(diagnostics, node => node.type === 'pre' && node.children === JSON.stringify(detail, null, 2)).length, 1)
+  assert.deepEqual(findAll(diagnostics, node => node['data-attempt-context-pack']).map(node => node['data-attempt-context-pack']), ['da-old', 'da-new'])
+  assert.equal(textOf(diagnostics).includes('dc-history'), true)
+  harness.unmount()
+})
+
+test('record feedback is state-aware and note and correction drafts submit independently with exact RPC arguments', async () => {
+  const scope = { workspaces: ['/repo'], paths: ['src'] }
+  const detail = {
+    case: { caseId: 'dc-feedback', agentId: 'a', state: 'closed', closing: 'answered', feedbackState: 'none', scope, request: { questions: [{ id: 'q', question: 'Feedback question' }] }, decision: { answers: [{ id: 'q', selected: ['A'] }] } },
+    attempts: [], feedback: [], routeDecisions: [],
+  }
+  const calls = []
+  let openCase = 'dc-feedback'
+  const harness = await createPageHarness({
+    consumeOpenCase: () => { const value = openCase; openCase = null; return value },
+    actions: {
+      agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [], record: async () => detail, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+      feedback: async (...args) => { calls.push(['feedback', ...args]); return {} }, correction: async (...args) => { calls.push(['correction', ...args]); return {} },
+    },
+  })
+  await harness.settle()
+  let record = findAll(harness.render(), node => node['data-record-detail'] === 'dc-feedback')[0]
+  assert.equal(findAll(record, node => node['data-feedback'] === 'rating_up').length, 1)
+  assert.equal(findAll(record, node => node['data-feedback'] === 'rating_down').length, 1)
+  assert.equal(findAll(record, node => String(node['data-feedback'] ?? '').startsWith('undo_')).length, 0)
+  findAll(record, node => node['data-draft'] === 'comment')[0].onChange({ target: { value: 'A note' } })
+  record = findAll(harness.render(), node => node['data-record-detail'] === 'dc-feedback')[0]
+  findAll(record, node => node['data-draft'] === 'correction')[0].onChange({ target: { value: 'Use B' } })
+  record = findAll(harness.render(), node => node['data-record-detail'] === 'dc-feedback')[0]
+  assert.equal(findAll(record, node => node['data-draft'] === 'comment')[0].value, 'A note')
+  assert.equal(findAll(record, node => node['data-draft'] === 'correction')[0].value, 'Use B')
+  assert.equal(textOf(record).includes('decisionCorrectionFutureOnly'), true)
+  await findAll(record, node => node['data-action'] === 'comment')[0].onClick()
+  await harness.flush()
+  assert.deepEqual(calls[0], ['feedback', 'dc-feedback', 'comment', 'A note'])
+  record = findAll(harness.render(), node => node['data-record-detail'] === 'dc-feedback')[0]
+  assert.equal(findAll(record, node => node['data-draft'] === 'comment')[0].value, '')
+  assert.equal(findAll(record, node => node['data-draft'] === 'correction')[0].value, 'Use B')
+  await findAll(record, node => node['data-action'] === 'correction')[0].onClick()
+  await harness.flush()
+  assert.deepEqual(calls[1], ['correction', 'dc-feedback', 'Use B', scope, ['dc-feedback']])
+  harness.unmount()
+})
+test('record detail is a readable projection without default raw JSON or internal identifiers', async () => {
+  const detail = {
+    case: {
+      caseId: 'dc-record', agentId: 'a', state: 'closed', closing: 'answered', feedbackState: 'none', scope: {},
+      request: { questions: [{ id: 'q', question: 'Which title is clearest?' }] },
+      decision: { answers: [{ id: 'q', selected: ['A clear title'] }], hint: 'It names the outcome' },
+    },
+    attempts: [
+      { attemptId: 'da-one', claims: [{ text: 'Old rationale' }], evidence: [{ evidenceId: 'ev-old', excerpt: 'Old evidence' }] },
+      { attemptId: 'da-two', claims: [{ text: 'Current rationale' }], evidence: [{ evidenceId: 'ev-new', excerpt: 'Current evidence' }] },
+    ],
+    feedback: [], routeDecisions: [],
+  }
+  let openCase = 'dc-record'
+  const harness = await createPageHarness({
+    consumeOpenCase: () => { const value = openCase; openCase = null; return value },
+    actions: {
+      agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+      record: async () => detail, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    },
+  })
+  const { tree } = await harness.settle()
+  const record = findAll(tree, node => node['data-record-detail'] === 'dc-record')[0]
+  assert.ok(record)
+  const text = textOf(record)
+  for (const value of ['Which title is clearest?', 'A clear title', 'It names the outcome', 'Current evidence']) assert.equal(text.includes(value), true, value)
+  for (const value of ['dc-record', 'da-one', 'da-two', 'ev-old', 'ev-new']) assert.equal(text.includes(value), false, value)
+  assert.equal(findAll(record, node => node.type === 'pre').length, 0)
+  harness.unmount()
+})
+test('inbox loading, failure, retry, and empty states are local to the inbox view', async () => {
+  let reads = 0
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Available assistant', state: 'enabled' }],
+    inbox: async () => { reads += 1; if (reads === 1) throw Object.assign(new Error('offline'), { code: 'NETWORK' }); return [] },
+    records: async () => ({ records: [], nextCursor: null }),
+    metrics: async () => ({}),
+  } })
+  const { first } = await harness.settle()
+  assert.equal(findAll(first, node => node.type === harness.ui.LoadingState).length > 0, true)
+  let tree = harness.render()
+  const inbox = findAll(tree, node => node.type === 'section' && node['data-view'] === 'inbox')[0]
+  assert.equal(findAll(inbox, node => node.type === harness.ui.ErrorState).length, 1)
+  assert.equal(textOf(inbox).includes('decisionReadFailed'), true)
+  findAll(inbox, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  const retried = findAll(tree, node => node.type === 'section' && node['data-view'] === 'inbox')[0]
+  assert.equal(findAll(retried, node => node.type === harness.ui.EmptyState).length, 1)
+  assert.equal(textOf(retried).includes('decisionInboxEmpty'), true)
+  assert.equal(reads, 2)
+  harness.unmount()
+})
+
+test('records and advanced metrics use the no-session empty state without issuing reads', async () => {
+  const calls = []
+  const harness = await createPageHarness({ sessionId: null, actions: {
+    agents: async () => { calls.push('agents'); return [] }, inbox: async () => { calls.push('inbox'); return [] },
+    records: async () => { calls.push('records'); return { records: [], nextCursor: null } }, metrics: async () => { calls.push('metrics'); return {} },
+  } })
+  await harness.settle()
+  for (const view of ['records', 'metrics']) {
+    findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === view)[0].onClick()
+    await harness.flush()
+    const section = findAll(harness.render(), node => node.type === 'section' && node['data-view'] === view)[0]
+    assert.equal(textOf(section).includes('decisionNoSession'), true, view)
+    assert.equal(findAll(section, node => node.type === harness.ui.LoadingState).length, 0, view)
+  }
+  assert.deepEqual(calls, [])
+  harness.unmount()
+})
 test('client manifest injects layout for render-time panel access', () => {
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))

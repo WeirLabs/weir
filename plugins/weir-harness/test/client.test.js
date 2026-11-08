@@ -1341,6 +1341,7 @@ describe('weir settings client half', () => {
     expect(page.ui).toBeTruthy()
     expect(page.learning).toBeTruthy()
     expect(page.pageView).toBe('page-view')
+    expect(page.decisionModel.decisionRpc).toBe('decision-rpc')
     expect(asyncCalls.filter(spec => spec === './client.decision-model.js')).toHaveLength(1)
     arrived.onCreate()
     expect(page.consumeAgentDestination()).toBe('create')
@@ -2278,6 +2279,34 @@ describe('weir settings client half', () => {
     'decisionSnapshotPin', 'decisionNoSnapshotPin', 'decisionReviewedPrinciples', 'decisionL5Mappings', 'decisionExclusions', 'decisionNoExclusions',
     'decisionLearningOutcome_running', 'decisionLearningOutcome_candidate', 'decisionLearningOutcome_published', 'decisionLearningOutcome_rejected',
     'decisionLearningOutcome_rolled_back', 'decisionLearningOutcome_failed', 'decisionSnapshotState_draft', 'decisionSnapshotState_published', 'decisionSnapshotState_rolled_back',
+    'decisionAddNote', 'decisionAdvancedSettings', 'decisionAdvancedSettingsHint', 'decisionAgentModelRouteJson',
+    'decisionAgentName', 'decisionAgentPreference', 'decisionAgentPreferenceHint', 'decisionAgentScopeJson',
+    'decisionAgentStateArchived', 'decisionAgentStateDisabled', 'decisionAgentStateEnabled',
+    'decisionAllAssistants', 'decisionAllFeedback', 'decisionAllOutcomes', 'decisionAllReasons', 'decisionAllStates',
+    'decisionApplyFilters', 'decisionArchiveAgent', 'decisionArchiveConfirmation', 'decisionArchiveTitle',
+    'decisionAuthorizationClasses', 'decisionBackToRecords', 'decisionCancelConfirmation', 'decisionCancelTitle',
+    'decisionChooseAssistant', 'decisionCorrectionFutureOnly', 'decisionCorrectionScope', 'decisionCorrectionTarget',
+    'decisionCurrentEvidence', 'decisionCurrentScope', 'decisionDisableAgent', 'decisionDisableConfirmation', 'decisionDisableTitle',
+    'decisionDiscard', 'decisionDiscardConfirmation', 'decisionDiscardTitle', 'decisionEditAgent',
+    'decisionEnableAgent', 'decisionEnableConfirmation', 'decisionEnableTitle',
+    'decisionEvaluationHistory', 'decisionEvaluationNumber', 'decisionEvidenceDeleted', 'decisionEvidenceSuperseded', 'decisionEvidenceUnavailable',
+    'decisionFeedbackDisputed', 'decisionFeedbackHistory', 'decisionFeedbackNone', 'decisionFeedbackValidated',
+    'decisionFilterAgent', 'decisionFilterFeedback', 'decisionFilterOutcome', 'decisionFilterReason', 'decisionFilterScope', 'decisionFilterState',
+    'decisionHistoricalContextUsed', 'decisionInboxEmpty', 'decisionKeepEditing', 'decisionLegacyMemory', 'decisionLoadMore',
+    'decisionMetricActivity', 'decisionMetricAttemptsTotal', 'decisionMetricAutoAnswerRate', 'decisionMetricAutoAnswered',
+    'decisionMetricCancelled', 'decisionMetricCasesOpened', 'decisionMetricCorrections', 'decisionMetricEscalated',
+    'decisionMetricEvidenceConflicting', 'decisionMetricEvidenceDeleted', 'decisionMetricEvidenceFailures', 'decisionMetricEvidenceStale',
+    'decisionMetricExhausted', 'decisionMetricFeedback', 'decisionMetricFeedbackParticipation', 'decisionMetricInterrupted',
+    'decisionMetricMeanLatency', 'decisionMetricRatingsDown', 'decisionMetricRatingsUndone', 'decisionMetricRatingsUp',
+    'decisionMetricReassignments', 'decisionMetricReturns', 'decisionMetricSelectorOffBypasses', 'decisionMetricWindow',
+    'decisionMetricWindow24h', 'decisionMetricWindow30d', 'decisionMetricWindow7d', 'decisionMetricWindowAll',
+    'decisionModelInheritanceHint', 'decisionMoreFilters', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
+    'decisionNoEvidence', 'decisionNoFeedback', 'decisionNoHistoricalContext', 'decisionNoPreference', 'decisionNoReviewedPrinciples',
+    'decisionNoteNoEffect', 'decisionOutcomeAnswer', 'decisionOutcomeEscalate', 'decisionOutcomeFailed', 'decisionOutcomeReturn',
+    'decisionPageDescription', 'decisionPendingReview', 'decisionPinnedEmpty', 'decisionPrimaryNavigation',
+    'decisionPrincipleDetailsOnOpen', 'decisionProfileHistory', 'decisionRawMetrics', 'decisionReasonSummary',
+    'decisionRecordFilters', 'decisionRecoveryActions', 'decisionReviewedPrinciplesUsed', 'decisionSelectRecord',
+    'decisionStatusClosed', 'decisionSubmitCorrection', 'decisionSuggestionNotSubmitted', 'decisionVersionUnavailable', 'decisionViewAssistant',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

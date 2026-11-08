@@ -207,3 +207,24 @@ test('DecisionAnswers scopes accessible ids per form instance', async () => {
   const secondError = findAll(second, node => node.id?.endsWith('-incomplete'))[0]
   assert.notEqual(firstError.id, secondError.id)
 })
+
+test('Disclosure opens lazily and notifies the owner without rendering hidden diagnostic content', async () => {
+  const runtime = makeReact()
+  const ui = await load(runtime.react)
+  let openings = 0
+  let builds = 0
+  const props = { id: 'diagnostic', label: 'Advanced', onOpen: () => { openings += 1 }, children: () => { builds += 1; return { type: 'pre', children: '{"raw":true}' } } }
+  runtime.begin()
+  let tree = ui.Disclosure(props)
+  assert.equal(builds, 0)
+  findAll(tree, node => node.type === 'button')[0].onClick()
+  runtime.begin()
+  tree = ui.Disclosure(props)
+  assert.equal(openings, 1)
+  assert.equal(builds, 1)
+  assert.equal(findAll(tree, node => node.type === 'pre').length, 1)
+  findAll(tree, node => node.type === 'button')[0].onClick()
+  runtime.begin()
+  tree = ui.Disclosure(props)
+  assert.equal(builds, 1)
+})

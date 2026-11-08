@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadClientChunk } from '../helpers/load-client-chunk.js'
+import { createPageHarness } from './page-test-helpers.js'
 
 const learning = (await loadClientChunk('lib/client.decision-learning.js')).exports
 
@@ -12,6 +13,23 @@ function findAll(node, predicate, found = []) {
     else if (value && typeof value === 'object') findAll(value, predicate, found)
   }
   return found
+}
+
+async function openAgentDetail(harness) {
+  let tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node['data-view'] === 'agents')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  return harness.render()
+}
+
+function renderedLearning(harness, tree = harness.render()) {
+  const detail = findAll(tree, node => node['data-agent-detail'])[0]
+  const advanced = findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  const element = findAll(advanced.children(), node => node.type === harness.page.AgentLearning)[0]
+  return harness.page.AgentLearning(element)
 }
 
 test('Client actions expose six P3 methods with sessionId, requestId, and expectedRevision intact', async () => {
@@ -42,27 +60,21 @@ test('existing Agent detail exposes manual governance and candidate state withou
     learningRuns: [{ learningRunId: 'lr_candidate', outcome: 'candidate', revision: 2 }],
     snapshots: [{ snapshotId: 'ms_candidate', state: 'draft', version: 2 }],
   }
-  const states = [
-    'agents', [agent], [], [], null, null, null, agentDetail, {}, null, '', '', '',
-  ]
-  let cursor = 0
-  const react = { useState: initial => [cursor < states.length ? states[cursor++] : initial, () => {}], useEffect: () => {} }
-  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : {
-    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
-  })
-  const rendered = exports.DecisionPage({
-    connection: {}, decisionRpc: async () => {}, createDecisionActions: () => ({}),
-    getSessionId: () => 'root', t: key => key, learning,
-  })
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [agent], inbox: async () => [], agent: async () => agentDetail,
+    learningRun: async id => ({ learningRunId: id, agentId: 'a', outcome: 'candidate', inputFrozen: { parentSnapshotId: 'ms_current' }, operations: [] }),
+    memorySnapshot: async id => ({ snapshotId: id, agentId: 'a', state: 'published', principles: [] }),
+  } })
+  const tree = await openAgentDetail(harness)
+  const rendered = renderedLearning(harness, tree)
   const text = JSON.stringify(rendered)
   for (const value of ['ms_current', 'lr_candidate', 'ms_candidate', 'candidate', 'draft']) assert.equal(text.includes(value), true, value)
-  const buttons = findAll(rendered, node => node.type === 'button')
-  const labels = buttons.map(button => button.children)
+  const labels = findAll(rendered, node => node.type === 'button').map(button => button.children)
   for (const label of ['decisionConsolidate', 'decisionPublish', 'decisionReject', 'decisionRollback']) assert.ok(labels.includes(label), label)
-  const nav = findAll(rendered, node => node.type === 'nav')
-  assert.equal(nav.length, 1)
-  assert.deepEqual(nav[0].children.map(button => button.key), ['agents', 'records', 'inbox', 'metrics'])
+  const nav = findAll(tree, node => node.type === 'nav' && node['data-decision-primary-nav'] === true)[0]
+  assert.deepEqual(findAll(nav, node => node.type === harness.ui.Button).map(button => button['data-view']), ['inbox', 'records', 'agents'])
   assert.equal(labels.some(label => /auto|export|generatedDescription|import/i.test(String(label))), false)
+  harness.unmount()
 })
 
 test('Attempt Context Pack shows actual L2 pins, principles, L5 sources, and exclusions while preserving pinned-empty truth', async () => {
@@ -183,25 +195,17 @@ test('Agent selection loads actual run, Snapshot, and parent details without pol
     snapshots: [{ snapshotId: 'ms_candidate', state: 'draft', version: 2, revision: 1, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' }],
   }
   const actions = {
+    agents: async () => [agent], inbox: async () => [],
     agent: async id => { calls.push(['agent', id]); return agent },
     learningRun: async id => { calls.push(['learningRun', id]); return { learningRunId: id, agentId: 'a', outcome: 'candidate', inputFrozen: { parentSnapshotId: 'ms_current' }, operations: [] } },
     memorySnapshot: async id => { calls.push(['memorySnapshot', id]); return { snapshotId: id, agentId: 'a', learningRunId: id === 'ms_candidate' ? 'lr_candidate' : 'lr_current', principles: [] } },
   }
-  const states = ['agents', [agent], [], [], null, null, null, null, {}, null, '', '', '']
-  let cursor = 0
-  const react = { useState: initial => [cursor < states.length ? states[cursor++] : initial, () => {}], useEffect: () => {} }
-  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : {
-    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
-  })
-  const rendered = exports.DecisionPage({
-    connection: {}, decisionRpc: async () => {}, createDecisionActions: () => actions,
-    getSessionId: () => 'root', t: key => key, learning,
-  })
-  const select = findAll(rendered, node => node.type === 'button' && node.children === 'A · enabled · v0')[0]
-  await select.onClick()
+  const harness = await createPageHarness({ actions })
+  await openAgentDetail(harness)
   assert.deepEqual(calls, [
     ['agent', 'a'], ['learningRun', 'lr_candidate'], ['memorySnapshot', 'ms_candidate'], ['memorySnapshot', 'ms_current'],
   ])
+  harness.unmount()
 })
 
 test('Agent governance exposes every real lifecycle state and blocks conflicting starts', async () => {
@@ -268,22 +272,18 @@ test('current Snapshot detail resolves even when its run is outside the recent-r
     snapshots: [...newer, { snapshotId: 'ms_current', state: 'published', version: 1, revision: 7, learningRunId: 'lr_current', parentSnapshotId: null }],
   }
   const actions = {
+    agents: async () => [agent], inbox: async () => [], agent: async () => agent,
     learningRun: async id => { calls.push(['learningRun', id]); return { learningRunId: id, agentId: 'a', outcome: 'published', inputFrozen: { parentSnapshotId: null }, operations: [] } },
     memorySnapshot: async id => { calls.push(['memorySnapshot', id]); return { snapshotId: id, agentId: 'a', learningRunId: 'lr_current', principles: [] } },
   }
-  const states = ['agents', [agent], [], [], null, null, null, agent, {}, null, '', '', '', null, null]
-  let cursor = 0
-  const react = { useState: initial => [cursor < states.length ? states[cursor++] : initial, () => {}], useEffect: () => {} }
-  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : {
-    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
-  })
-  const rendered = exports.DecisionPage({
-    connection: {}, decisionRpc: async () => {}, createDecisionActions: () => actions,
-    getSessionId: () => 'root', t: key => key, learning,
-  })
+  const harness = await createPageHarness({ actions })
+  const tree = await openAgentDetail(harness)
+  calls.length = 0
+  const rendered = renderedLearning(harness, tree)
   const current = findAll(rendered, node => node.type === 'button' && node.children === 'ms_current · v1 · decisionSnapshotState_published · r7')[0]
   await current.onClick()
   assert.deepEqual(calls, [['learningRun', 'lr_current'], ['memorySnapshot', 'ms_current']])
+  harness.unmount()
 })
 
 test('learning detail renders bounded Case and correction source disclosures read-only', async () => {
