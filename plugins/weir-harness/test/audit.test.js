@@ -94,4 +94,34 @@ describe('Decision audit privacy projection', () => {
       rmSync(cwd, { recursive: true, force: true })
     }
   })
+  it('allows only learning and Snapshot metadata, counts, and SHA-256 digests', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'weir-decision-learning-audit-'))
+    try {
+      const audit = createDecisionAudit({ emit: () => {} }, { root: cwd })
+      audit('learning-run', {
+        learningRunId: 'lr_1', agentId: 'ag_1', outcome: 'candidate', revision: 2,
+        operationCount: 2, sourceCount: 1, inputHash: 'a'.repeat(64),
+        operations: [{ text: 'PRIVATE-PRINCIPLE' }], inputFrozen: { comment: 'PRIVATE-COMMENT' },
+      })
+      audit('snapshot', {
+        snapshotId: 'ms_1', learningRunId: 'lr_1', state: 'draft', version: 3,
+        activePrincipleCount: 1, retiredPrincipleCount: 0, contentHash: 'b'.repeat(64),
+        principles: [{ text: 'PRIVATE-PRINCIPLE' }], comment: 'PRIVATE-COMMENT', finalHash: 'not-a-digest',
+      })
+      const raw = readFileSync(join(cwd, '.weir', 'audit.jsonl'), 'utf8')
+      for (const secret of ['PRIVATE-PRINCIPLE', 'PRIVATE-COMMENT', 'not-a-digest']) expect(raw.includes(secret)).toBe(false)
+      const records = raw.trim().split('\n').map(line => JSON.parse(line))
+      expect(records.map(record => record.type)).toEqual(['weir/decision/learning-run', 'weir/decision/snapshot'])
+      expect(records[0].data).toEqual({
+        learningRunId: 'lr_1', agentId: 'ag_1', outcome: 'candidate', revision: 2,
+        operationCount: 2, sourceCount: 1, inputHash: 'a'.repeat(64),
+      })
+      expect(records[1].data).toEqual({
+        snapshotId: 'ms_1', learningRunId: 'lr_1', state: 'draft', version: 3,
+        activePrincipleCount: 1, retiredPrincipleCount: 0, contentHash: 'b'.repeat(64),
+      })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
 })

@@ -77,7 +77,7 @@ export const AUDIT_SUBTYPES = Object.freeze({
   // resume from this same channel (audit only — never a session log).
   delegate: Object.freeze(['spawn']),
   toolUsage: Object.freeze(['request', 'result']),
-  decision: Object.freeze(['case-open', 'attempt', 'outcome', 'bypass', 'feedback', 'selector', 'agent-profile', 'cancel', 'recover', 'deliver', 'illegal-transition']),
+  decision: Object.freeze(['case-open', 'attempt', 'outcome', 'bypass', 'feedback', 'selector', 'agent-profile', 'cancel', 'recover', 'deliver', 'illegal-transition', 'learning-run', 'snapshot']),
 })
 
 /**
