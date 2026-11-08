@@ -95,20 +95,24 @@ function assertDeepFrozen(value) {
   for (const nested of Object.values(value)) assertDeepFrozen(nested)
 }
 
-test('L2 is a versioned empty read-only adapter and never touches Snapshot or Learning Run', async t => {
+test('P3 with no current Snapshot returns a versioned empty L2 without reading Learning Runs or mutating history', async t => {
   const f = fixture(t)
   const profile = await f.profiles.createProfile({ workspaceKey: '/repo', name: 'A', userDescription: 'User owned' })
   f.store.db.prepare(`INSERT INTO learning_runs(learning_run_id,agent_id,trigger,input_frozen_json,operations_json,outcome,created_at,updated_at)
     VALUES('lr_external','agent-a','external','{}','[]','done',1,1)`).run()
   f.store.db.prepare(`INSERT INTO memory_snapshots(snapshot_id,agent_id,version,state,principles_json,generated_description_json,learning_run_id,created_at,updated_at)
-    VALUES('ms_external','agent-a',1,'published','[]','{"text":"EXTERNAL"}','lr_external',1,1)`).run()
+    VALUES('ms_external','agent-a',1,'draft','[]','{"revision":0,"text":""}','lr_external',1,1)`).run()
   const before = f.profiles.getProfile(profile.agentId)
   const queries = []
   const prepare = f.store.db.prepare.bind(f.store.db)
   f.store.db.prepare = sql => { queries.push(sql); return prepare(sql) }
   const result = readL2Memory(f.store, f.query())
-  assert.deepEqual(result, { schemaVersion: L2_MEMORY_VERSION, status: 'empty', snapshotId: null, items: [] })
-  assert.deepEqual(queries, [])
+  assert.deepEqual(result, {
+    schemaVersion: L2_MEMORY_VERSION, status: 'empty', snapshotId: null,
+    snapshotRevision: null, snapshotHash: null, items: [], exclusions: [],
+  })
+  assert.ok(queries.some(sql => sql.includes('memory_snapshots')))
+  assert.equal(queries.some(sql => sql.includes('learning_runs')), false)
   assertDeepFrozen(result)
   assert.deepEqual(f.profiles.getProfile(profile.agentId).generatedDescription, before.generatedDescription)
   assert.equal(f.store.db.prepare('SELECT COUNT(*) AS n FROM memory_snapshots').get().n, 1)
@@ -235,7 +239,10 @@ test('retrieval is deeply frozen and reproducible with full L5 conflicts, fresh 
   const second = f.retriever.retrieve(f.query())
   assert.deepEqual(first, second)
   assert.equal(first.schemaVersion, 1)
-  assert.deepEqual(first.L2, { schemaVersion: 1, status: 'empty', snapshotId: null, items: [] })
+  assert.deepEqual(first.L2, {
+    schemaVersion: 1, status: 'empty', snapshotId: null, snapshotRevision: null,
+    snapshotHash: null, items: [], exclusions: [],
+  })
   assert.deepEqual(first.L3.map(item => item.sourceCaseId), [episode.current.caseId])
   assert.deepEqual(first.L5.filter(ref => ref.source === 'user_decision').map(ref => ref.evidenceId), [leftRef.evidenceId, rightRef.evidenceId].sort())
   assert.deepEqual(first.conflictPairs, [[leftRef.evidenceId, rightRef.evidenceId].sort()])

@@ -15,13 +15,13 @@ export class DecisionContextRetriever {
    * @param {{agentId:string,workspaceKey:string,scope:object,attemptStartedAt:number,excludeCaseId?:string}} input
    */
   retrieve(input) {
-    const L2 = readL2Memory(this.store, input)
-    const L3 = readL3Memory(this.store, input)
     const L5 = this.evidence.candidates(input)
     const conflictPairs = this.evidence.conflictPairs(L5)
     const currentObservationHashes = Object.fromEntries(
       L5.filter(ref => ref.source === 'current_observation').map(ref => [ref.evidenceId, ref.hash]),
     )
+    const L2 = readL2Memory(this.store, input, L5)
+    const L3 = readL3Memory(this.store, input)
     return deepFreeze({ schemaVersion: 1, L2, L3, L5, conflictPairs, currentObservationHashes })
   }
 }
