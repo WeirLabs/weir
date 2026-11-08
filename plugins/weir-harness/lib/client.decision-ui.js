@@ -64,6 +64,7 @@ window.__ModuleLoader__.load({
 .weir-da-count { display: inline-flex; min-width: 20px; min-height: 20px; align-items: center; justify-content: center; margin-inline-start: 6px; padding: 0 5px; border-radius: 10px; background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
 .weir-da-view, .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
 .weir-da-card { box-sizing: border-box; min-width: 0; padding: 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
+.weir-da-conversation-card { position: relative; }
 .weir-da-card-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .weir-da-card-header h2 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
 .weir-da-card-header p, .weir-da-card p { margin: 4px 0 0; line-height: 20px; }

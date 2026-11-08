@@ -6,88 +6,252 @@ window.__ModuleLoader__.load({
     const exports = module.exports;
     const react = require("react");
     const jsx = require("react/jsx-runtime");
-    const buttonStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "3px 8px", cursor: "pointer" };
-    const inputStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "6px", padding: "4px 6px" };
+
+    function answerText(answer) {
+      if (!answer) return "";
+      return [...(Array.isArray(answer.selected) ? answer.selected : []), ...(typeof answer.custom === "string" && answer.custom ? [answer.custom] : [])].join(", ");
+    }
+
+    function readableScope(scope, t) {
+      if (!scope || typeof scope !== "object") return t("decisionCurrentScope");
+      const parts = [...(Array.isArray(scope.workspaces) ? scope.workspaces : []), ...(Array.isArray(scope.paths) ? scope.paths : []), ...(Array.isArray(scope.tags) ? scope.tags : [])];
+      if (Array.isArray(scope.authorizationClasses)) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
+      return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
+    }
+
+    function EvidenceList(props) {
+      const evidence = Array.isArray(props.evidence) ? props.evidence : [];
+      if (!evidence.length) return jsx.jsx(props.ui.EmptyState, { children: props.t("decisionNoEvidence") });
+      return jsx.jsx("ul", { className: "weir-da-evidence-list", children: evidence.map((item, index) => jsx.jsxs("li", { children: [
+        jsx.jsx("div", { children: item?.excerpt || props.t("decisionEvidenceUnavailable") }, "excerpt"),
+        item?.status && item.status !== "active" ? jsx.jsx("div", { className: "weir-da-caption", children: props.t(item.status === "deleted" ? "decisionEvidenceDeleted" : "decisionEvidenceSuperseded") }, "status") : null,
+      ] }, item?.evidenceId ?? index)) });
+    }
+
+    function EvaluationGroup(props) {
+      const attempt = props.group?.attempt ?? {};
+      const outcomeKeys = { answer: "decisionOutcomeAnswer", return: "decisionOutcomeReturn", escalate: "decisionOutcomeEscalate", failed: "decisionOutcomeFailed" };
+      const claims = Array.isArray(attempt.claims) ? attempt.claims : [];
+      return jsx.jsxs("article", { className: "weir-da-evaluation", "data-evaluation-group": true, children: [
+        jsx.jsx("strong", { children: `${props.t("decisionEvaluationNumber")} ${attempt.attemptNo ?? props.index + 1} · ${props.t(outcomeKeys[attempt.outcome] ?? "decisionStatusUnknown")}` }, "title"),
+        attempt.hint || attempt.reasonCode ? jsx.jsx("p", { children: attempt.hint ?? props.t(props.model.reasonKey(attempt.reasonCode) ?? "decisionReasonUnknown") }, "reason") : null,
+        claims.length ? jsx.jsx("ul", { children: claims.map((claim, index) => jsx.jsx("li", { children: claim?.text ?? "" }, index)) }, "claims") : null,
+        EvidenceList({ evidence: props.group?.evidence, ui: props.ui, t: props.t }),
+      ] });
+    }
 
     function DecisionCard(props) {
       const t = props.t ?? (key => key);
+      const ui = props.ui;
+      const model = props.decisionModel;
       const [detail, setDetail] = react.useState(null);
       const [agents, setAgents] = react.useState([]);
       const [error, setError] = react.useState(null);
-      const [busy, setBusy] = react.useState(false);
-      const [draft, setDraft] = react.useState("");
-      const [answers, setAnswers] = react.useState({});
-      const [target, setTarget] = react.useState("");
+      const [drafts, setDrafts] = react.useState({});
+      const [editor, setEditor] = react.useState(null);
+      const [confirm, setConfirm] = react.useState(null);
+      const [pending, setPending] = react.useState(null);
+      const pendingRef = react.useRef(false);
+      const evidenceReadRef = react.useRef(null);
+      const generationRef = react.useRef(0);
       const caseId = detail?.case?.caseId;
       // A native pending question appears only after Broker persisted its waiting Case.
       // Refresh on that existing projection boundary instead of racing Case creation or polling.
       const pendingInteraction = props.useSessionStatus?.(snapshot => props.sessionId ? snapshot.get(props.sessionId)?.pendingInteraction : undefined);
       const actions = props.createDecisionActions(props.connection, props.sessionId, props.decisionRpc);
-      const banner = props.errorBanner ?? (reason => ({ message: reason instanceof Error ? reason.message : String(reason) }));
       const view = props.cardView(detail, agents);
 
-      const load = async authoritative => {
-        if (!props.sessionId) { setDetail(null); return; }
+      const load = async (authoritative, targetCaseId = caseId, rethrow = false) => {
+        const generation = generationRef.current;
+        const current = () => generation === generationRef.current;
+        if (!props.sessionId) { if (current()) setDetail(null); return null; }
         try {
           const isConsult = props.toolName === "decision_consult";
-          const value = authoritative && caseId ? await actions.record(caseId) : await props.decisionRpc(props.connection, isConsult ? "caseForToolCall" : "caseForCall", isConsult ? { sessionId: props.sessionId, toolCallId: props.callId } : { sessionId: props.sessionId, questions: props.questions ?? props.block?.args?.questions ?? props.block?.input?.questions ?? [] });
+          const value = authoritative && targetCaseId ? await actions.record(targetCaseId) : await props.decisionRpc(props.connection, isConsult ? "caseForToolCall" : "caseForCall", isConsult ? { sessionId: props.sessionId, toolCallId: props.callId } : { sessionId: props.sessionId, questions: props.questions ?? props.block?.args?.questions ?? props.block?.input?.questions ?? [] });
+          if (!current()) return null;
           setDetail(value);
           if (value?.case) setError(null);
           const overview = await actions.overview();
+          if (!current()) return null;
           setAgents(Array.isArray(overview?.agents) ? overview.agents : []);
-        } catch (reason) { setError(banner(reason).message); }
+          return value;
+        } catch (reason) {
+          if (current()) setError({ reason, kind: "read" });
+          if (rethrow) throw reason;
+          return null;
+        }
       };
-      react.useEffect(() => { setDetail(null); setError(null); load(false); }, [props.sessionId, props.callId, props.refreshKey, pendingInteraction]);
+      const clearDraft = (sessionId, targetCaseId, fields) => setDrafts(current => model.draftsReducer(current, { type: "clear", sessionId, caseId: targetCaseId, fields }));
       const run = async (method, ...args) => {
-        setBusy(true); setError(null);
-        try { await actions[method](...args); await load(true); }
-        catch (reason) { setError(banner(reason).message); }
-        finally { setBusy(false); }
+        if (pendingRef.current) return;
+        const generation = generationRef.current;
+        const requestSession = props.sessionId;
+        const targetCaseId = args[0];
+        pendingRef.current = true; setPending(method); setError(null);
+        try {
+          await actions[method](...args);
+          if (generation !== generationRef.current) return;
+          const authoritative = await load(true, targetCaseId, true);
+          if (!authoritative?.case || authoritative.case.caseId !== targetCaseId) throw Object.assign(new Error("Decision record reread returned no matching record"), { code: "DECISION_REREAD_FAILED" });
+          if (method === "decide") clearDraft(requestSession, targetCaseId, ["answers"]);
+          if (method === "reassign") clearDraft(requestSession, targetCaseId, ["reassignTarget"]);
+          if (method === "feedback" && args[1] === "comment") { clearDraft(requestSession, targetCaseId, ["comment"]); setEditor(null); }
+          if (method === "correction") { clearDraft(requestSession, targetCaseId, ["correction"]); setEditor(null); }
+        } catch (reason) {
+          if (generation === generationRef.current) setError({ reason, kind: "action" });
+        } finally { pendingRef.current = false; setPending(null); }
       };
-      if (!view) return error && props.sessionId ? jsx.jsx("div", { role: "alert", children: error }) : null;
+      const openEvidence = async () => {
+        if (!caseId || !props.sessionId) return;
+        const key = `${props.sessionId}:${caseId}`;
+        if (evidenceReadRef.current === key) return;
+        evidenceReadRef.current = key;
+        const value = await load(true, caseId);
+        if (!value?.case && evidenceReadRef.current === key) evidenceReadRef.current = null;
+      };
+      react.useEffect(() => {
+        const generation = ++generationRef.current;
+        evidenceReadRef.current = null; setDetail(null); setError(null); setEditor(null); setConfirm(null);
+        load(false);
+        return () => { if (generationRef.current === generation) generationRef.current += 1; };
+      }, [props.sessionId, props.callId, props.refreshKey, pendingInteraction]);
+
+      const errorMessage = error ? t(error.kind === "read" ? "decisionReadFailed" : model?.errorKey?.(error.reason) ?? "decisionFailed") : null;
+      if (!view) return error && props.sessionId ? jsx.jsxs(ui.ErrorState, { children: [
+        jsx.jsx("span", { children: errorMessage }, "message"),
+        jsx.jsx(ui.Button, { onClick: () => load(false), children: t("decisionRetry") }, "retry"),
+      ] }) : null;
       const questions = Array.isArray(detail.case.request?.questions) ? detail.case.request.questions : [];
-      const complete = questions.length > 0 && questions.every(question => {
-        const answer = answers[question.id];
-        return question.options ? answer?.selected?.length > 0 : typeof answer?.custom === "string" && answer.custom.length > 0;
-      });
+      const answers = Array.isArray(view.answers) ? view.answers : [];
+      const badgeVariant = view.variant === "answered" ? "success" : view.variant === "failed" ? "error" : view.variant === "cancelled" ? "idle" : "warn";
+      const summary = view.summary;
+      const reason = view.reasonKey ? t(view.reasonKey) : null;
+      const waiting = view.state === "awaiting_user";
+      const nativeAnswer = waiting && props.toolName === "ask_user_question";
+      const suggestions = Array.isArray(view.escalation?.suggestion) ? view.escalation.suggestion : [];
+      const perQuestion = Array.isArray(view.escalation?.perQuestion) ? view.escalation.perQuestion : [];
+      const previous = view.history.filter(group => group.attempt?.attemptId !== view.currentAttempt?.attemptId);
+      const isPending = pending !== null;
+      const ratings = model.feedbackActions(view.feedbackState);
+      const draft = model.readDraft(drafts, props.sessionId, view.caseId);
+      const updateDraft = (field, value) => setDrafts(current => model.draftsReducer(current, { type: "update", sessionId: props.sessionId, caseId: view.caseId, field, value }));
+      const toggleEditor = name => {
+        if (pendingRef.current) return;
+        setEditor(editor === name ? null : name);
+      };
+      const requestCancel = () => {
+        if (!waiting || pendingRef.current) return;
+        setConfirm({ caseId: view.caseId });
+      };
+      const rawError = error ? { code: error.reason?.code, message: error.reason instanceof Error ? error.reason.message : String(error.reason) } : null;
       return jsx.jsxs("section", {
+        className: "weir-da-card weir-da-conversation-card",
         "data-weir-decision-card": view.caseId,
-        style: { display: "grid", gap: "8px", padding: "10px", color: "var(--dsw-alias-label-primary)", background: "color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, transparent)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "10px" },
+        "data-decision-variant": view.variant,
+        "aria-busy": isPending,
         children: [
-          jsx.jsxs("div", { children: [jsx.jsx("strong", { children: view.agentName }), ` · ${view.outcome} · ${t("decisionRevision")} ${view.revision}`] }, "title"),
-          jsx.jsx("div", { children: view.summary }, "summary"),
-          view.escalation?.suggestion?.length ? jsx.jsxs("details", { children: [jsx.jsx("summary", { children: t("decisionSuggestions") }), jsx.jsx("pre", { children: JSON.stringify(view.escalation.suggestion, null, 2) })] }, "suggestion") : null,
-          view.escalation?.perQuestion?.length ? jsx.jsxs("details", { children: [jsx.jsx("summary", { children: t("decisionPerQuestion") }), jsx.jsx("pre", { children: JSON.stringify(view.escalation.perQuestion, null, 2) })] }, "per-question") : null,
-          error ? jsx.jsx("div", { role: "alert", style: { color: "var(--dsw-alias-state-error-primary)" }, children: error }, "error") : null,
-          jsx.jsxs("details", { onToggle: () => load(true), children: [
-            jsx.jsx("summary", { children: `${t("decisionEvidence")} (${view.evidence.length})` }),
-            jsx.jsx("ul", { children: view.evidence.map(ref => jsx.jsx("li", { children: `${ref.evidenceId} · ${ref.source} · ${JSON.stringify(ref.locator)}${ref.excerpt ? ` · ${ref.excerpt}` : ""}` }, ref.evidenceId)) }),
-          ] }, "evidence"),
-          jsx.jsx("button", { type: "button", style: buttonStyle, onClick: () => props.openRecord?.(view.caseId), "aria-label": t("decisionHistory"), children: t("decisionHistory") }, "history"),
-          jsx.jsxs("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" }, children: [
-            jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => run("feedback", view.caseId, "rating_up"), "aria-label": t("decisionUp"), children: t("decisionUp") }, "up"),
-            jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => run("feedback", view.caseId, "rating_down"), "aria-label": t("decisionDown"), children: t("decisionDown") }, "down"),
-            jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => run("feedback", view.caseId, view.feedbackState === "validated" ? "undo_rating_up" : "undo_rating_down"), children: t("decisionUndo") }, "undo"),
-          ] }, "ratings"),
-          jsx.jsxs("div", { style: { display: "flex", gap: "6px" }, children: [
-            jsx.jsx("input", { value: draft, onChange: event => setDraft(event.target.value), style: inputStyle, "aria-label": t("decisionComment") }, "draft"),
-            jsx.jsx("button", { type: "button", disabled: busy || !draft, style: buttonStyle, onClick: () => run("feedback", view.caseId, "comment", draft), children: t("decisionComment") }, "comment"),
-            jsx.jsx("button", { type: "button", disabled: busy || !draft, style: buttonStyle, onClick: () => run("correction", view.caseId, draft, detail.case.scope, [view.caseId]), children: t("decisionCorrect") }, "correct"),
+          jsx.jsx(ui.DecisionStyles, {}, "styles"),
+          jsx.jsxs("header", { className: "weir-da-card-header", children: [
+            jsx.jsxs("div", { children: [
+              jsx.jsx("h2", { children: view.questionSummary || t("decisionRecord") }, "title"),
+              jsx.jsx("p", { className: "weir-da-caption", children: view.agentName }, "agent"),
+            ] }, "copy"),
+            jsx.jsx(ui.Badge, { variant: badgeVariant, children: t(view.statusKey) }, "status"),
+          ] }, "header"),
+          jsx.jsx("section", { className: "weir-da-record-answers", "aria-label": t("decisionRecord"), children: questions.map((question, index) => {
+            const answer = answers.find(item => item?.id === question.id);
+            return jsx.jsxs("div", { className: "weir-da-answer-summary", children: [
+              jsx.jsx("strong", { children: question.question }, "question"),
+              jsx.jsx("div", { children: answerText(answer) || t("decisionNoAnswer") }, "answer"),
+            ] }, question.id ?? index);
+          }) }, "answers"),
+          summary || reason ? jsx.jsxs("section", { children: [
+            jsx.jsx("h3", { children: t("decisionReasonSummary") }, "title"),
+            summary ? jsx.jsx("p", { children: summary }, "summary") : null,
+            reason && reason !== summary ? jsx.jsx("p", { className: "weir-da-caption", children: reason }, "recorded-reason") : null,
+          ] }, "reason") : null,
+          nativeAnswer ? jsx.jsx("p", { className: "weir-da-state", "data-native-answer": true, children: t("decisionNativeAnswerHint") }, "native-answer") : null,
+          waiting && (suggestions.length || perQuestion.length) ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [
+            jsx.jsx("strong", { children: [t("decisionSuggestions"), " · ", t("decisionSuggestionNotSubmitted")] }, "title"),
+            suggestions.length ? jsx.jsx("ul", { children: suggestions.map((answer, index) => {
+              const question = questions.find(item => item.id === answer?.id);
+              return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${answerText(answer)}` }, answer?.id ?? index);
+            }) }, "suggestions") : null,
+            perQuestion.length ? jsx.jsx("ul", { children: perQuestion.map((entry, index) => {
+              const question = questions.find(item => item.id === entry?.id);
+              return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown")}` }, entry?.id ?? index);
+            }) }, "per-question") : null,
+          ] }, "guidance") : null,
+          waiting && props.toolName === "decision_consult" ? jsx.jsx(ui.DecisionAnswers, {
+            questions, answers: draft.answers, suggestions, pending: isPending,
+            onChange: value => updateDraft("answers", value), onSubmit: value => run("decide", view.caseId, value), t,
+          }, "answer-form") : null,
+          error ? jsx.jsx(ui.ErrorState, { children: errorMessage }, "error") : null,
+          jsx.jsx(ui.Disclosure, {
+            id: `weir-da-card-evidence-${view.caseId}`, label: t("decisionEvidence"), onOpen: openEvidence,
+            children: () => EvidenceList({ evidence: view.evidence, ui, t }),
+          }, "evidence"),
+          jsx.jsx(ui.Disclosure, {
+            id: `weir-da-card-history-${view.caseId}`, label: t("decisionEvaluationHistory"),
+            children: () => previous.length ? previous.map((group, index) => EvaluationGroup({ group, index, model, ui, t })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEarlierEvaluations") }),
+          }, "evaluation-history"),
+          jsx.jsx(ui.Button, { variant: waiting && props.toolName === "decision_consult" ? "secondary" : "primary", onClick: () => props.openRecord?.(view.caseId), children: t("decisionHistory") }, "history"),
+          waiting ? jsx.jsx(ui.Disclosure, {
+            id: `weir-da-card-recovery-${view.caseId}`, label: t("decisionRecoveryActions"),
+            children: () => jsx.jsxs("div", { className: "weir-da-actions", children: [
+              jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => updateDraft("reassignTarget", event.target.value), "data-draft": "reassignTarget", "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: isPending, children: [
+                jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
+                ...agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId)),
+              ] }, "target"),
+              jsx.jsx(ui.Button, { "data-action": "reassign", disabled: !draft.reassignTarget || isPending, onClick: () => run("reassign", view.caseId, draft.reassignTarget), children: t("decisionReassign") }, "reassign"),
+              jsx.jsx(ui.Button, { "data-action": "retry", disabled: isPending, onClick: () => run("retry", view.caseId), children: t("decisionRetry") }, "retry"),
+              jsx.jsx(ui.Button, { variant: "danger", "data-action": "cancel", disabled: isPending, onClick: requestCancel, children: t("decisionCancel") }, "cancel"),
+            ] }),
+          }, "recovery") : null,
+          jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
+            view.feedbackState === "validated" || view.feedbackState === "disputed" ? jsx.jsx(ui.Badge, { variant: "idle", children: t(view.feedbackState === "validated" ? "decisionFeedbackValidated" : "decisionFeedbackDisputed") }, "feedback-state") : null,
+            jsx.jsx("div", { className: "weir-da-actions", children: ratings.map(action => jsx.jsx(ui.Button, {
+              variant: "ghost", "data-feedback": action.verb, disabled: isPending,
+              onClick: () => run("feedback", view.caseId, action.verb), children: t(action.labelKey),
+            }, action.verb)) }, "ratings"),
+            view.feedbackState === "none" ? jsx.jsxs("div", { className: "weir-da-caption", children: [
+              jsx.jsx("div", { children: t("decisionConfirmConsequence") }, "confirm-consequence"),
+              jsx.jsx("div", { children: t("decisionDisputeConsequence") }, "dispute-consequence"),
+            ] }, "rating-consequences") : null,
+            jsx.jsxs("div", { className: "weir-da-actions", children: [
+              jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-comment", disabled: isPending, onClick: () => toggleEditor("comment"), children: t("decisionComment") }, "open-comment"),
+              jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-correction", disabled: isPending, onClick: () => toggleEditor("correction"), children: t("decisionCorrect") }, "open-correction"),
+            ] }, "editor-entries"),
+            editor === "comment" ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+              jsx.jsx(ui.Field, { id: `weir-da-card-note-${view.caseId}`, label: t("decisionComment"), hint: t("decisionNoteNoEffect"), children: jsx.jsx("textarea", {
+                id: `weir-da-card-note-${view.caseId}`, "data-draft": "comment", "aria-label": t("decisionComment"), value: draft.comment, disabled: isPending,
+                onChange: event => updateDraft("comment", event.target.value),
+              }) }, "note-field"),
+              jsx.jsx(ui.Button, { "data-action": "comment", disabled: isPending || !draft.comment, onClick: () => run("feedback", view.caseId, "comment", draft.comment), children: t("decisionAddNote") }, "note-action"),
+            ] }, "note-editor") : null,
+            editor === "correction" ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+              jsx.jsx(ui.Field, { id: `weir-da-card-correction-${view.caseId}`, label: t("decisionCorrect"), children: jsx.jsx("textarea", {
+                id: `weir-da-card-correction-${view.caseId}`, "data-draft": "correction", "aria-label": t("decisionCorrect"), value: draft.correction, disabled: isPending,
+                onChange: event => updateDraft("correction", event.target.value),
+              }) }, "correction-field"),
+              draft.correction ? jsx.jsxs("div", { className: "weir-da-correction-preview", children: [
+                jsx.jsx("div", { children: `${t("decisionCorrectionScope")}: ${readableScope(detail.case.scope, t)}` }, "scope"),
+                jsx.jsx("div", { children: `${t("decisionCorrectionTarget")}: ${view.questionSummary || t("decisionRecord")}` }, "target"),
+                jsx.jsx("div", { children: t("decisionCorrectionFutureOnly") }, "future"),
+              ] }, "preview") : null,
+              jsx.jsx(ui.Button, { "data-action": "correction", disabled: isPending || !draft.correction, onClick: () => run("correction", view.caseId, draft.correction, detail.case.scope, [view.caseId]), children: t("decisionSubmitCorrection") }, "correction-action"),
+            ] }, "correction-editor") : null,
           ] }, "feedback"),
-          view.state === "awaiting_user" ? jsx.jsxs("div", { style: { display: "grid", gap: "6px" }, children: [
-            ...questions.map(question => jsx.jsxs("label", { children: [question.question, question.options ? jsx.jsxs("select", {
-              value: question.multiSelect ? (answers[question.id]?.selected ?? []) : (answers[question.id]?.selected?.[0] ?? ""), style: inputStyle,
-              multiple: question.multiSelect === true,
-              "aria-label": `${t("decisionDecide")}: ${question.id}`,
-              onChange: event => setAnswers({ ...answers, [question.id]: { selected: question.multiSelect ? Array.from(event.target.selectedOptions ?? []).map(option => option.value) : event.target.value ? [event.target.value] : [] } }),
-              children: [jsx.jsx("option", { value: "", children: "—" }, "empty"), ...question.options.map(option => jsx.jsx("option", { value: option.label, children: option.label }, option.label))],
-            }) : jsx.jsx("input", { style: inputStyle, "aria-label": `${t("decisionDecide")}: ${question.id}`, onChange: event => setAnswers({ ...answers, [question.id]: { custom: event.target.value } }) })] }, question.id)),
-            jsx.jsx("button", { type: "button", disabled: busy || !complete, style: buttonStyle, onClick: () => run("decide", view.caseId, questions.map(question => ({ id: question.id, selected: answers[question.id]?.selected ?? [], ...(answers[question.id]?.custom === undefined ? {} : { custom: answers[question.id].custom }) }))), children: t("decisionDecide") }, "decide"),
-            jsx.jsxs("select", { value: target, onChange: event => setTarget(event.target.value), style: inputStyle, "aria-label": t("decisionReassign"), children: [jsx.jsx("option", { value: "", children: "—" }, "empty"), ...agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId))] }, "target"),
-            jsx.jsx("button", { type: "button", disabled: busy || !target, style: buttonStyle, onClick: () => run("reassign", view.caseId, target), children: t("decisionReassign") }, "reassign"),
-            jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => run("retry", view.caseId), children: t("decisionRetry") }, "retry"),
-            jsx.jsx("button", { type: "button", disabled: busy, style: buttonStyle, onClick: () => run("cancel", view.caseId), children: t("decisionCancel") }, "cancel"),
-          ] }, "awaiting") : null,
+          jsx.jsx(ui.Disclosure, {
+            id: `weir-da-card-advanced-${view.caseId}`, label: t("decisionAdvancedDiagnostics"),
+            children: () => jsx.jsx("div", { className: "weir-da-advanced-record", children: jsx.jsx("pre", { children: JSON.stringify({ detail, error: rawError }, null, 2) }) }),
+          }, "advanced"),
+          confirm ? jsx.jsx(ui.ConfirmDialog, {
+            id: `weir-da-card-cancel-${view.caseId}`, title: t("decisionCancelTitle"), body: t("decisionCancelConfirmation"),
+            confirmLabel: t("decisionCancel"), cancelLabel: t("decisionKeepEditing"), danger: true, pending: isPending,
+            onCancel: () => setConfirm(null),
+            onConfirm: () => { const targetCaseId = confirm.caseId; setConfirm(null); return run("cancel", targetCaseId); },
+          }, "confirm-cancel") : null,
         ],
       });
     }

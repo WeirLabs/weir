@@ -1343,6 +1343,17 @@ describe('weir settings client half', () => {
     expect(page.pageView).toBe('page-view')
     expect(page.decisionModel.decisionRpc).toBe('decision-rpc')
     expect(asyncCalls.filter(spec => spec === './client.decision-model.js')).toHaveLength(1)
+    const cardRegistration = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
+    const cardShell = cardRegistration.component({ sessionId: 'root', callId: 'call-consult' })
+    reactStub.reset()
+    reactStub.begin()
+    const cardProps = { sessionId: 'root', callId: 'call-consult', toolName: 'decision_consult' }
+    cardShell.__type(cardProps)
+    await flush()
+    reactStub.begin()
+    const card = cardShell.__type(cardProps)
+    expect(card.decisionModel.decisionRpc).toBe('decision-rpc')
+    expect(card.cardView).toBe('card-view')
     arrived.onCreate()
     expect(page.consumeAgentDestination()).toBe('create')
     expect(page.consumeAgentDestination()).toBe(null)
@@ -1470,7 +1481,7 @@ describe('weir settings client half', () => {
   })
 
   it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
-    // The frozen key set (633 keys): any key dropped in a future edit
+    // The frozen key set (636 keys): any key dropped in a future edit
     // of the data faces or the entry dictionary reddens here (the design's
     // 键集并集 pin), and any cross-slice duplicate inside the page merge would
     // silently shadow — pinned too.
@@ -2285,9 +2296,9 @@ describe('weir settings client half', () => {
     'decisionAllAssistants', 'decisionAllFeedback', 'decisionAllOutcomes', 'decisionAllReasons', 'decisionAllStates',
     'decisionApplyFilters', 'decisionArchiveAgent', 'decisionArchiveConfirmation', 'decisionArchiveTitle',
     'decisionAuthorizationClasses', 'decisionBackToRecords', 'decisionCancelConfirmation', 'decisionCancelTitle',
-    'decisionChooseAssistant', 'decisionCorrectionFutureOnly', 'decisionCorrectionScope', 'decisionCorrectionTarget',
+    'decisionChooseAssistant', 'decisionConfirmConsequence', 'decisionCorrectionFutureOnly', 'decisionCorrectionScope', 'decisionCorrectionTarget',
     'decisionCurrentEvidence', 'decisionCurrentScope', 'decisionDisableAgent', 'decisionDisableConfirmation', 'decisionDisableTitle',
-    'decisionDiscard', 'decisionDiscardConfirmation', 'decisionDiscardTitle', 'decisionEditAgent',
+    'decisionDiscard', 'decisionDiscardConfirmation', 'decisionDiscardTitle', 'decisionDisputeConsequence', 'decisionEditAgent',
     'decisionEnableAgent', 'decisionEnableConfirmation', 'decisionEnableTitle',
     'decisionEvaluationHistory', 'decisionEvaluationNumber', 'decisionEvidenceDeleted', 'decisionEvidenceSuperseded', 'decisionEvidenceUnavailable',
     'decisionFeedbackDisputed', 'decisionFeedbackHistory', 'decisionFeedbackNone', 'decisionFeedbackValidated',
@@ -2300,7 +2311,7 @@ describe('weir settings client half', () => {
     'decisionMetricMeanLatency', 'decisionMetricRatingsDown', 'decisionMetricRatingsUndone', 'decisionMetricRatingsUp',
     'decisionMetricReassignments', 'decisionMetricReturns', 'decisionMetricSelectorOffBypasses', 'decisionMetricWindow',
     'decisionMetricWindow24h', 'decisionMetricWindow30d', 'decisionMetricWindow7d', 'decisionMetricWindowAll',
-    'decisionModelInheritanceHint', 'decisionMoreFilters', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
+    'decisionModelInheritanceHint', 'decisionMoreFilters', 'decisionNativeAnswerHint', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
     'decisionNoEvidence', 'decisionNoFeedback', 'decisionNoHistoricalContext', 'decisionNoPreference', 'decisionNoReviewedPrinciples',
     'decisionNoteNoEffect', 'decisionOutcomeAnswer', 'decisionOutcomeEscalate', 'decisionOutcomeFailed', 'decisionOutcomeReturn',
     'decisionPageDescription', 'decisionPendingReview', 'decisionPinnedEmpty', 'decisionPrimaryNavigation',
