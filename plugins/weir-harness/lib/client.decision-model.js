@@ -83,6 +83,9 @@ window.__ModuleLoader__.load({
         decisionEvidence: "Evidence", decisionSuggestions: "Suggestions", decisionPerQuestion: "Per-question conclusions", decisionRevision: "Revision", decisionHistory: "Open record", decisionNoRecord: "No decision records.",
         decisionUp: "Upvote", decisionDown: "Downvote", decisionUndo: "Undo rating", decisionComment: "Comment", decisionCorrect: "Correct",
         decisionDecide: "Decide", decisionReassign: "Reassign", decisionCancel: "Cancel", decisionRetry: "Retry", decisionSave: "Save",
+        decisionContextPack: "Context Pack", decisionL2Memory: "L2 semantic memory", decisionMemoryEmpty: "empty",
+        decisionNeutralEpisodes: "L3 neutral episodes (non-authoritative context, not evidence)", decisionNoMemory: "No L2/L3 memory use is recorded for this Attempt.",
+        decisionLayerSizes: "Layer sizes", decisionOmissions: "Omissions",
       },
       zh: {
         decisionSelector: "决策 Agent", decisionOff: "关闭", decisionAgents: "Agent 档案", decisionRecords: "决策记录",
@@ -90,6 +93,9 @@ window.__ModuleLoader__.load({
         decisionEvidence: "证据", decisionSuggestions: "暂定建议", decisionPerQuestion: "逐题结论", decisionRevision: "记录版本", decisionHistory: "打开记录", decisionNoRecord: "暂无决策记录。",
         decisionUp: "赞", decisionDown: "踩", decisionUndo: "撤销评分", decisionComment: "评论", decisionCorrect: "纠正",
         decisionDecide: "裁决", decisionReassign: "改派", decisionCancel: "取消", decisionRetry: "重试", decisionSave: "保存",
+        decisionContextPack: "上下文包", decisionL2Memory: "L2 语义记忆", decisionMemoryEmpty: "空",
+        decisionNeutralEpisodes: "L3 中性情节（非权威上下文，不是证据）", decisionNoMemory: "此 Attempt 未记录 L2/L3 记忆使用。",
+        decisionLayerSizes: "层大小", decisionOmissions: "省略项",
       },
     };
 
