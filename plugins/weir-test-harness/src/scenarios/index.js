@@ -76,6 +76,7 @@ import decisionRecovery from './decision-recovery.js'
 import decisionFeedback from './decision-feedback.js'
 import decisionIsolation from './decision-isolation.js'
 import decisionUiRemote from './decision-ui-remote.js'
+import decisionMemory from './decision-memory.js'
 import decisionGui from './decision-gui.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
@@ -158,6 +159,7 @@ SCENARIOS.push(decisionRecovery)
 SCENARIOS.push(decisionFeedback)
 SCENARIOS.push(decisionIsolation)
 SCENARIOS.push(decisionUiRemote)
+SCENARIOS.push(decisionMemory)
 if (process.env.WEIR_IT_DECISION_GUI === '1') SCENARIOS.push(decisionGui)
 
 /**

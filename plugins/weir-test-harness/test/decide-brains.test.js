@@ -510,6 +510,37 @@ describe('decision evaluator v2 mock dispatch', () => {
   })
 })
 
+describe('decision-memory P2 brain', () => {
+  it('registers the real scoped-memory acceptance scenario', () => {
+    assert.equal(byId('decision-memory')?.id, 'decision-memory')
+  })
+
+  it('deliberately attempts an L3-only citation so the real evidence-id parser must reject it', () => {
+    const scenario = byId('decision-memory')
+    const options = userOptions(JSON.stringify({
+      L3: [{ sourceCaseId: 'dc_neutral' }],
+      L4: { request: { questions: [{ id: 'decision-memory-l3-only', question: 'Reuse neutral memory without a decisive L5', options: [{ label: 'User resolves L3 only' }, { label: 'Neutral answer' }] }] } },
+      L5: [{ evidenceId: 'ev_profile', source: 'user_profile' }],
+    }), { system: 'Decision evaluator contract v2' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(value.outcome, 'answer')
+    assert.deepEqual(value.claims[0].evidenceIds, ['dc_neutral'])
+  })
+
+  it('uses only the genuine user-decision L5 after the L3-only Case is resolved', () => {
+    const scenario = byId('decision-memory')
+    const options = userOptions(JSON.stringify({
+      L3: [{ sourceCaseId: 'dc_neutral' }],
+      L4: { request: { questions: [{ id: 'decision-memory-l5-after', question: 'Reuse the genuine user decision', options: [{ label: 'User resolves L3 only' }, { label: 'Neutral answer' }] }] } },
+      L5: [{ evidenceId: 'ev_profile', source: 'user_profile' }, { evidenceId: 'ev_decision', source: 'user_decision', excerpt: 'User decision question: User resolves L3 only' }],
+    }), { system: 'Decision evaluator contract v2' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(value.outcome, 'answer')
+    assert.deepEqual(value.claims[0].evidenceIds, ['ev_decision'])
+    assert.deepEqual(value.answers, [{ id: 'decision-memory-l5-after', selected: ['User resolves L3 only'] }])
+  })
+})
+
 describe('decision-consult P1 brain', () => {
   it('sets up the selected Agent before the answered consultation', () => {
     const first = blockEnds(run('decision-consult', userOptions('decision-consult-probe')))[0]
