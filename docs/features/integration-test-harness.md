@@ -21,9 +21,9 @@
 
 对贡献者（非终端用户）可见的行为：
 
-- `pnpm --filter weir-test-harness run test:integration` 跑全部 12 个场景，逐条打印 `PASS`/`FAIL`，末尾给出通过计数；有失败则退出码非 0。
+- `pnpm --filter weir-test-harness run test:integration` 跑 `src/scenarios/index.js` 登记的全部场景，逐条打印 `PASS`/`FAIL`，末尾给出通过计数；有失败则退出码非 0。
 - 也可以只跑指定场景：`node run.mjs lsp robash`。
-- 场景清单的权威来源是 `src/scenarios/index.js` 的有序 `SCENARIOS`：`deepwork`、`delegate`、`hashline`、`pressure`、`robash`、`semantic`、`grouped`、`escalate`、`background`、`terminate`、`rehydrate`、`lsp`。新增场景 = 新增一个场景模块并在索引登记一处（registry conformance 测试钉住齐备性）；**未知场景 id 是响亮失败**：`node run.mjs no-such-scenario` 在 setup 前退出码 1 并点名该 id。
+- 场景清单的权威来源是 `src/scenarios/index.js` 的有序 `SCENARIOS`，不在文档复制会过时的固定数量或名单。新增场景 = 新增一个场景模块并在索引登记一处（registry conformance 测试钉住齐备性）；**未知场景 id 是响亮失败**：`node run.mjs no-such-scenario` 在 setup 前退出码 1 并点名该 id。
 - `pnpm --filter weir-test-harness test` 跑装置自身的单元测试（shell 契约 / registry / brains / replay / audit-types / trace-extract / jsonl / message-text / launcher 发现各套件）。
 - `pnpm --filter weir-test-harness run record` 重录断言回放夹具（一次绿跑后把 `trace-<scenario>.jsonl` 拷入 `test/fixtures/traces/`，入库）。
 - 每次运行会把测试根目录整体删除重建（持有咨询锁时锁文件本身除外，见「并发运行隔离」）；默认产物位于当前仓库或 lane 的 `.weir/it-root/`（已忽略、不入库）。lane 清理时该 scratch 随 `.weir/` 归档到主仓库的 `.weir/lanes/<lane-id>/`。
@@ -170,4 +170,4 @@ patch 层把 compaction 子组嵌入 editing 组，在外层统一 isolate `comp
 `fixture-selfcontainment.test.js` —— 回放夹具自包含 conformance（契约见「边界与失败语义」）：通配忽略规则对每个已注册场景的夹具 ws 恰好放行枚举内状态文件种类、夹具消费文件全部受 git 跟踪、`ws/.weir/` 下无枚举外未忽略文件。
 `wait-primitive.test.js` —— 交错容忍等待原语直测：标记出现即 advance、未现即 wait（盖递增 `WEIR_WAIT_<n>` 标记）、预算耗尽才 exhausted、重试计数从历史重建、尾随快照不错位。`run-lock.test.js` —— 咨询锁行为：占用分流（含响亮提示行）、残锁/垃圾锁静默接管、退出只删自己的锁、显式 `WEIR_IT_ROOT` 绕过（源码钉住 run.mjs 接线）。`launcher.test.js` —— dsh launcher 发现契约：`WEIR_IT_DSH_EXEC` > `WEIR_IT_DSH` > 候选的优先级、显式覆盖不检查存在性、POSIX/win32 候选顺序与 `source` 命中标签、全部落空时错误消息包含两条变量与每个真实尝试路径；全部用例注入 `env`/`platform`/`exists`/`home`，不 spawn 任何进程。
 - 默认根契约：`it-root.test.js` 断言根为包目录上两级下的 `.weir/it-root`，三处消费者引用同一 helper、默认值一致且显式覆盖不变。产品 capability-store 的单进程测试注入可编程 liveness 替身；独立 process 套件先探测 Node/ps 派生能力，不可用时逐用例显式 skip（附原因），可用时执行真实跨进程竞争、SIGKILL 恢复和 ps 探测。
-- 集成测试：`pnpm --filter weir-test-harness run test:integration` —— 装置自身就是那一层；12 个场景即验收门。
+- 集成测试：`pnpm --filter weir-test-harness run test:integration` —— 装置自身就是那一层；实际场景集合与顺序以 `src/scenarios/index.js` 为准。

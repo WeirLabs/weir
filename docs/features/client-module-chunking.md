@@ -1,12 +1,12 @@
 # 客户端 chunk 化（client-module-chunking）
 
-> 浏览器半区按特性拆成 12 个手写 chunk：入口只留组合根，各特性按需异步到达。
+> 浏览器半区按特性拆成 31 个手写 chunk：入口只留组合根，各特性按需异步到达。
 
 ## 概述
 
 `lib/client.js` 曾是 bundle 最大文件（1538 行），把六个不相干职责（设置页、模型链编辑器、robash 列表编辑器、LSP 面板、composer LSP 开关、hash_edit diff 视图）装进一个工厂闭包，区域之间没有内部 interface，任何纯 helper 的测试都要重复一份约 60 行的 loader 脚手架（四份）。
 
-本特性把浏览器半区拆成**单一同步入口 + 12 个异步 chunk**：宿主 ModuleLoader 不支持同包文件的同步相对 require（S18 每包唯一 `./client` 出口），唯一受支持的包内拆分是 `require.async("./client.<name>.js")` chunk 协议——宿主按精确 URL 直接读包内文件，**无需构建步骤**，与 lib/ 的零构建纪律相容。
+本特性把浏览器半区拆成**单一同步入口 + 31 个异步 chunk**：宿主 ModuleLoader 不支持同包文件的同步相对 require（S18 每包唯一 `./client` 出口），唯一受支持的包内拆分是 `require.async("./client.<name>.js")` chunk 协议——宿主按精确 URL 直接读包内文件，**无需生成模块内容的构建步骤**；`scripts/build-client.js` 只校验产物并写回 sha256 清单。
 
 模型选择器（`client.model-picker.js`）自 1.1.2 起也在其中：它原是第二个包（`weir-model-picker`），但 bundle 的 patch 只能挂载消费方 profile 解析得到的说明符，而那个包 `private: true` 且从未发布——分发必坏的形状，把设置页一起拖下水（1.1.0/1.1.1 事故，见 [npm-distribution.md](npm-distribution.md)）。
 
@@ -23,7 +23,7 @@
 ## 设计细节
 
 - **入口即组合根**（`lib/client.js`；拆分后曾约 670 行，后随特性累积，变更 client-deepening 字典搬出后约 1,382 行）：同步渲染字典、`settingsBus`（两个消费者分居不同 chunk，提升为入口并经 props 注入）、三个 slot 包装组件。**字典拆分（变更 client-deepening）**：入口只保留同步渲染所需字符串（标签页标题/guide、胶囊/徽章标签、加载态）；各特性字典随 chunk 到达时由入口经 `ctx.effect` 注册（每特性独立 namespace `settings.weir.<feature>`，同一 (namespace, locale) 对绝不重复注册——运行时对重复对同步 throw；disposer 归入口 effect 持有，HMR 安全）。运行时实测支持迟到注册（合并即 bump revision，已挂载 slot 无重挂载重渲染），「字典必须留入口」的时效性前提已证伪；真正的约束是重复对与 disposer 所有权（契约见 `dsh-client-locale-register-semantics` 黑板条目）。chunk 体只导出纯 `{en,zh}` 数据面，绝不自行 register（chunk 无 ctx 且工厂会重执行）。到达前窗口由各表面 echo-guard 兜底（`t(key)` 原样返回 key 时回落代码内字符串，注册后同实例渲染真值）。每个表面对所含 chunk 做**一次 `Promise.all` 并行 fan-out**，不做 chunk 间嵌套 `require.async` 的瀑布。**唯一的例外是模型 picker chunk**：设置卡用自己的一次 `useChunkArrival` 独立驱动它，而不是并进设置那一组 `Promise.all`——picker 加载失败必须只降级用到它的行，永远不能连带清空整张卡（它当初独立成包就是为了这个隔离，现在由独立到达态承担）。
-- **12 个 chunk**（命名匹配宿主 `CLIENT_CHUNK` 正则）：4 个零依赖 model chunk（`client.chain-model.js` / `client.robash-model.js` / `client.lsp-model.js` / `client.hash-edit-model.js`，factory 内零 `require` 调用，纯 view-model 可被 node:test 直接 import）+ 8 个 UI chunk（settings-page / chain-editor / **model-picker** / robash-editor / **disabled-categories-editor** / lsp-panel / lsp-toggle / hash-edit-view）。
+- **31 个 chunk**（命名匹配宿主 `CLIENT_CHUNK` 正则）：Decision Agent 新增 5 个——零依赖 `client.decision-model.js`（纯读模型/RPC）与 `client.decision-actions.js`（动作映射），以及 `client.decision-selector.js`、`client.decision-card.js`、`client.decision-page.js`。它们在入口中共享一次 Promise.all，但只有对应槽位首次渲染才发起；选择器首帧是 Off 骨架，卡片未到达时不改变原生 UI。其余既有 model/UI chunk 清单与职责不变。
 - **同步 require 面不扩大**：全 lib/ 的同步 require 说明符只有 `react`、`react/jsx-runtime`、`@deepseek-ai/dsh-client-ui-primitives` 三个（S14）——`weir-model-picker` 曾凭组合图跨模块同步到达（S18 先例），并入本包后改为独立到达态按 props 下发，同步面反而收窄一格。
 - **宿主缓存约束**：宿主按入口缓存 slot `inject()` face，因此设置卡片 face 自带一个稳定的 deferred snapshot store；controller 在 chunk 到达时于入口侧构造（生命周期绑定 serve 代次），不建在 react 树内。
 - **样式常量按 chunk 复制**：同包同步 require 不可能，故各 UI chunk 逐字携带自用的样式常量与 `WEIR_NS` / `LSP_PROJECTION_KEY`（入口为自己的闭包保留副本）——这是该宿主约束下的显式取舍，不是疏漏。
