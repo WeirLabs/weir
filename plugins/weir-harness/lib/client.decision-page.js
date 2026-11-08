@@ -106,7 +106,7 @@ window.__ModuleLoader__.load({
               jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionNeutralEpisodes") }, "label"),
               sourceCaseIds.length
                 ? jsx.jsx("ol", { style: contextPackListStyle, children: sourceCaseIds.map((caseId, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: caseId }) }, `${caseId}:${index}`)) }, "sources")
-                : jsx.jsx("div", { children: t("decisionNoMemory") }, "empty")
+                : jsx.jsx("div", { children: principleIds.length ? t("decisionMemoryEmpty") : t("decisionNoMemory") }, "empty")
             ] }, "l3"),
             jsx.jsxs("div", { children: [
               jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionLayerSizes") }, "label"),

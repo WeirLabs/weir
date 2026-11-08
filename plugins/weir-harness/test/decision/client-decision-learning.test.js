@@ -92,6 +92,7 @@ test('Attempt Context Pack shows actual L2 pins, principles, L5 sources, and exc
     assert.equal(text.includes(value), true, value)
   }
   assert.equal(text.includes('decisionReviewedPrinciples'), true)
+  assert.equal(text.includes('decisionNoMemory'), false, 'actual L2 use must not claim no L2/L3 memory')
   assert.deepEqual(findAll(populated, node => ['button', 'input', 'select', 'textarea'].includes(node.type)), [])
 
   const pinnedEmpty = JSON.stringify(exports.AttemptContextPack({
