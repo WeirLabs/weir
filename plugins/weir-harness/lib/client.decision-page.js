@@ -10,6 +10,10 @@ window.__ModuleLoader__.load({
     const cardStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", padding: "12px" };
     const inputStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "5px 7px" };
     const buttonStyle = { color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "4px 8px", cursor: "pointer" };
+    const contextPackStyle = { background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "6px 8px" };
+    const contextPackBodyStyle = { display: "grid", gap: "8px", paddingTop: "8px", fontSize: "12px", lineHeight: "16px" };
+    const contextPackLabelStyle = { color: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
+    const contextPackListStyle = { margin: "4px 0 0", paddingLeft: "22px", overflowWrap: "anywhere" };
 
     function InboxItem(props) {
       const current = props.item;
@@ -37,6 +41,49 @@ window.__ModuleLoader__.load({
           jsx.jsx("button", { type: "button", style: buttonStyle, onClick: () => props.run("cancel", current.caseId), children: t("decisionCancel") }, "cancel"),
         ] }, "actions"),
       ] });
+    }
+
+    function AttemptContextPack(props) {
+      const t = props.t ?? (key => key);
+      const attempt = props.attempt && typeof props.attempt === "object" ? props.attempt : {};
+      const manifest = attempt.packManifest;
+      const memory = manifest?.memory;
+      const attemptId = typeof attempt.attemptId === "string" ? attempt.attemptId : "—";
+      const sourceCaseIds = Array.isArray(memory?.L3?.sourceCaseIds) ? memory.L3.sourceCaseIds.filter(caseId => typeof caseId === "string") : [];
+      const omissions = Array.isArray(manifest?.omissions) ? manifest.omissions.filter(code => typeof code === "string") : [];
+      const layerSizes = manifest?.layerSizes && typeof manifest.layerSizes === "object" && !Array.isArray(manifest.layerSizes) ? Object.entries(manifest.layerSizes) : [];
+      const l2Status = memory?.L2 === undefined
+        ? t("decisionMemoryEmpty")
+        : memory.L2?.status === "empty" ? t("decisionMemoryEmpty") : typeof memory.L2?.status === "string" ? memory.L2.status : "—";
+      return jsx.jsxs("details", {
+        "data-attempt-context-pack": attemptId,
+        "aria-label": `${t("decisionContextPack")}: ${attemptId}`,
+        style: contextPackStyle,
+        children: [
+          jsx.jsx("summary", { style: { cursor: "pointer" }, children: `${t("decisionContextPack")} · ${attemptId}` }, "summary"),
+          jsx.jsxs("div", { style: contextPackBodyStyle, children: [
+            jsx.jsx("div", { children: `${t("decisionL2Memory")}: ${l2Status}` }, "l2"),
+            jsx.jsxs("div", { children: [
+              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionNeutralEpisodes") }, "label"),
+              sourceCaseIds.length
+                ? jsx.jsx("ol", { style: contextPackListStyle, children: sourceCaseIds.map((caseId, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: caseId }) }, `${caseId}:${index}`)) }, "sources")
+                : jsx.jsx("div", { children: t("decisionNoMemory") }, "empty")
+            ] }, "l3"),
+            jsx.jsxs("div", { children: [
+              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionLayerSizes") }, "label"),
+              layerSizes.length
+                ? jsx.jsx("dl", { style: contextPackListStyle, children: layerSizes.map(([layer, size]) => jsx.jsxs("div", { children: [jsx.jsx("dt", { children: layer }, "layer"), jsx.jsx("dd", { style: { margin: 0 }, children: String(size) }, "size")] }, layer)) }, "sizes")
+                : jsx.jsx("div", { children: "—" }, "empty")
+            ] }, "sizes"),
+            jsx.jsxs("div", { children: [
+              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionOmissions") }, "label"),
+              omissions.length
+                ? jsx.jsx("ul", { style: contextPackListStyle, children: omissions.map((code, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: code }) }, `${code}:${index}`)) }, "codes")
+                : jsx.jsx("div", { children: Array.isArray(manifest?.omissions) ? "[]" : "—" }, "empty")
+            ] }, "omissions")
+          ] }, "body")
+        ]
+      });
     }
 
     function DecisionPage(props) {
@@ -111,6 +158,7 @@ window.__ModuleLoader__.load({
           jsx.jsx("div", { children: view.records.map(record => jsx.jsx("button", { type: "button", onClick: () => selectRecord(record.caseId), style: buttonStyle, children: `${record.caseId} · ${record.state}${record.closing ? `/${record.closing}` : ""}` }, record.caseId)) }, "records"),
           nextCursor ? jsx.jsx("button", { type: "button", onClick: async () => { const page = await actions.records(filter, { after: nextCursor }); setRecords(page.records); setNextCursor(page.nextCursor); }, style: buttonStyle, children: "Next" }, "next") : null,
           detail ? jsx.jsxs("article", { style: cardStyle, "data-readonly-record": detail.case.caseId, children: [
+            ...(Array.isArray(detail.attempts) ? detail.attempts : []).map((attempt, index) => jsx.jsx(AttemptContextPack, { attempt, t }, attempt?.attemptId ?? index)),
             jsx.jsx("pre", { children: JSON.stringify(detail, null, 2) }, "detail"),
             jsx.jsx("input", { value: comment, onChange: event => setComment(event.target.value), "aria-label": t("decisionComment"), style: inputStyle }, "comment-input"),
             jsx.jsx("button", { type: "button", onClick: () => run("feedback", detail.case.caseId, "rating_up"), children: t("decisionUp") }, "up"),
@@ -128,6 +176,7 @@ window.__ModuleLoader__.load({
     exports.PAGE_ID = PAGE_ID;
     exports.DecisionPage = DecisionPage;
     exports.InboxItem = InboxItem;
+    exports.AttemptContextPack = AttemptContextPack;
     return module.exports;
   },
 });

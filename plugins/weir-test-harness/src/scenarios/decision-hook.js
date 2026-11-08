@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IT_ROOT, textChunks, toolCallChunks } from '../mock-kit.js'
+import { observeDecision } from '../decision-test-kit.js'
 
 const id = 'decision-hook'
 const prompt = 'decision-hook-probe'
-const CONTRACT = 'Decision evaluator contract v1'
 const EVENTS = join(IT_ROOT, 'decision-integration-events.jsonl')
 
 const QUESTIONS = {
@@ -58,12 +58,7 @@ function decideDecision(options, obs) {
 }
 
 function observe(obs) {
-  const pack = obs.system.includes(CONTRACT) ? packOf(obs) : undefined
-  return {
-    decisionEvaluator: obs.system.includes(CONTRACT),
-    decisionQuestionIds: pack?.L4?.request?.questions?.map(question => question.id) ?? [],
-    decisionEvidenceIds: pack?.L5?.map(evidence => evidence.evidenceId) ?? [],
-  }
+  return observeDecision(obs)
 }
 
 function readEvents() {

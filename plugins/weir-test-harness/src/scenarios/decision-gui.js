@@ -16,6 +16,8 @@ const QUESTIONS = {
   GUI_C_OFF: { id: 'gui-c-off', question: 'Choose in a fresh Off profile', options: [{ label: 'Native Off' }, { label: 'Automatic' }] },
   GUI_C_APPROVAL: { id: 'gui-c-approval', question: 'Approve the GUI operation?', options: [{ label: 'Approve' }, { label: 'Reject' }], intent: { kind: 'approval' } },
   GUI_C_PLAN: { id: 'gui-c-plan', question: 'Review the GUI plan?', options: [{ label: 'Accept' }, { label: 'Revise' }], intent: { kind: 'plan-review' } },
+  GUI_MEMORY_SOURCE: { id: 'gui-memory-source', question: 'Choose the neutral GUI memory source', options: [{ label: 'Source native' }, { label: 'Neutral GUI answer' }] },
+  GUI_MEMORY_REUSE: { id: 'gui-memory-reuse', question: 'Reuse neutral GUI memory without decisive evidence', options: [{ label: 'User resolves GUI memory' }, { label: 'Neutral GUI answer' }] },
 }
 
 function consultArgs(marker) {
@@ -38,6 +40,15 @@ function decide(options, obs) {
 function decideDecision(options, obs) {
   const pack = JSON.parse(obs.lastUser)
   const question = pack.L4.request.questions[0]
+  if (question.id === 'gui-memory-source') {
+    const ref = pack.L5.find(evidence => evidence.source === 'user_profile')
+    if (ref) return textChunks(JSON.stringify({ outcome: 'answer', claims: [{ text: 'Neutral GUI answer is supported by the user profile.', evidenceIds: [ref.evidenceId] }], answers: [{ id: question.id, selected: ['Neutral GUI answer'] }] }))
+  }
+  if (question.id === 'gui-memory-reuse') {
+    const episode = Array.isArray(pack.L3) ? pack.L3[0] : undefined
+    if (episode) return textChunks(JSON.stringify({ outcome: 'answer', claims: [{ text: 'Deliberately treat neutral GUI history as evidence.', evidenceIds: [episode.sourceCaseId] }], answers: [{ id: question.id, selected: ['Neutral GUI answer'] }] }))
+    return textChunks(JSON.stringify({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'The actual neutral GUI source episode is required for this negative fixture.' }))
+  }
   if (question.id === 'gui-a-answer') {
     const ref = pack.L5[0]
     if (ref) return textChunks(JSON.stringify({ outcome: 'answer', claims: [{ text: 'Concise is supported by the supplied evidence.', evidenceIds: [ref.evidenceId] }], answers: [{ id: question.id, selected: ['Concise'] }] }))
@@ -61,4 +72,12 @@ function assert(run) {
   run.check('GUI scenario is opt-in and only produces product tool calls', true, 'Real Desktop assertions live in .weir/decision-qa/gui-*')
 }
 
-export default { id, prompt, decide, decideDecision, observe: observeDecision, assert }
+function observe(obs) {
+  const observation = observeDecision(obs)
+  if (!observation.decisionEvaluator || !observation.decisionQuestionIds.some(id => ['gui-memory-source', 'gui-memory-reuse'].includes(id))) return observation
+  let pack
+  try { pack = JSON.parse(obs.lastUser) } catch { return observation }
+  return { ...observation, decisionGuiMemorySystem: obs.system, decisionGuiMemoryPack: pack }
+}
+
+export default { id, prompt, decide, decideDecision, observe, assert }

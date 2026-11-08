@@ -11,6 +11,7 @@ export async function runDecisionAttempt(input) {
     profile: input.profile,
     request: input.request,
     evidence: input.evidence,
+    memory: input.memory,
     modelRoute: input.modelRoute,
     budgetTokens: input.budgetTokens,
     criticalEvidenceIds: input.criticalEvidenceIds,

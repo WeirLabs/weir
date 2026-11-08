@@ -60,7 +60,7 @@ export class DecisionEvidence {
       const issue = this.eligibilityIssue(evidence, input)
       if (!issue) eligible.push(expandEvidence(this.store, evidence))
     }
-    return eligible.sort((left, right) => rank(left.source) - rank(right.source) || right.createdAt - left.createdAt)
+    return eligible.sort((left, right) => rank(left.source) - rank(right.source) || right.createdAt - left.createdAt || left.evidenceId.localeCompare(right.evidenceId))
   }
 
   conflictPairs(refs) {

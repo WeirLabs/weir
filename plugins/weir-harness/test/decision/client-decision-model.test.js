@@ -52,3 +52,19 @@ test('RPC uses /api weirDecision namespace and exposes readable failures', async
   const serviceFailed = { rpc: { call: async () => ({ ok: true, value: { ok: false, error: { code: 'OFF', message: 'Decision Off' } } }) } }
   await assert.rejects(model.decisionRpc(serviceFailed, 'overview'), error => error.code === 'OFF' && error.message === 'Decision Off')
 })
+
+test('Context Pack dictionaries are localized and mark L3 as non-authoritative', async () => {
+  const model = await load()
+  const keys = ['decisionContextPack', 'decisionL2Memory', 'decisionMemoryEmpty', 'decisionNeutralEpisodes', 'decisionNoMemory', 'decisionLayerSizes', 'decisionOmissions']
+  assert.deepEqual(Object.keys(model.dictionaries.en).sort(), Object.keys(model.dictionaries.zh).sort())
+  for (const key of keys) {
+    assert.equal(typeof model.dictionaries.en[key], 'string', `en ${key}`)
+    assert.equal(typeof model.dictionaries.zh[key], 'string', `zh ${key}`)
+    assert.ok(model.dictionaries.en[key].length > 0, `en ${key}`)
+    assert.ok(model.dictionaries.zh[key].length > 0, `zh ${key}`)
+  }
+  assert.match(model.dictionaries.en.decisionNeutralEpisodes, /non-authoritative/)
+  assert.match(model.dictionaries.zh.decisionNeutralEpisodes, /非权威/)
+  assert.match(model.dictionaries.en.decisionL2Memory, /L2/)
+  assert.match(model.dictionaries.zh.decisionL2Memory, /L2/)
+})

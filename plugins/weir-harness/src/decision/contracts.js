@@ -1,7 +1,7 @@
 // Shared, versioned Decision Agent contracts. Pure JS: no runtime dependencies.
 
 export const DECISION_SCHEMA_VERSION = 1
-export const PROMPT_VERSION = 'evaluator-contract/1'
+export const PROMPT_VERSION = 'evaluator-contract/2'
 export const EVALUATOR_VERSION = 'sidecar/1'
 
 export const RETURN_CODES = Object.freeze([
@@ -25,6 +25,7 @@ export const EVIDENCE_STATUSES = Object.freeze(['active', 'superseded', 'deleted
 export const ROUTE_MODES = Object.freeze(['pinned', 'explicit', 'manual_reassign', 'none'])
 export const OMISSION_CODES = Object.freeze([
   'L5_EVIDENCE_TRUNCATED', 'L5_EVIDENCE_OMITTED', 'L5_EXCERPT_OMITTED', 'L4_TRUNCATED',
+  'L3_EPISODE_OMITTED', 'L3_EPISODE_TRUNCATED',
 ])
 export const ATTEMPT_FAILURES = Object.freeze([
   'timeout', 'model_error', 'invalid_output', 'truncated', 'aborted', 'interrupted', 'route_unavailable',

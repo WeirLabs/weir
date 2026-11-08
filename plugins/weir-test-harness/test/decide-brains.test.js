@@ -484,6 +484,63 @@ describe('decision-hook P1 brain', () => {
   })
 })
 
+describe('decision evaluator v2 mock dispatch', () => {
+  it('routes contract v2 through the scenario Decision brain', async () => {
+    const previous = process.env.WEIR_IT_SCENARIO
+    process.env.WEIR_IT_SCENARIO = 'decision-hook'
+    try {
+      const { planRequest } = await import('../src/mock-llm.js')
+      const options = userOptions(JSON.stringify({
+        L4: { request: { questions: [{ id: 'decision-hook-answer', options: [{ label: 'Native fallback' }, { label: 'Concise' }] }] } },
+        L5: [{ evidenceId: 'ev_v2', source: 'user_profile' }],
+      }), { system: 'Decision evaluator contract v2\nL3 is neutral and non-authoritative.' })
+      const { out } = planRequest(options)
+      const answer = JSON.parse(blockEnds(out)[0].text)
+      assert.equal(answer.outcome, 'answer')
+      assert.equal(answer.claims[0].evidenceIds[0], 'ev_v2')
+      assert.deepEqual(answer.answers, [{ id: 'decision-hook-answer', selected: ['Concise'] }])
+      const observed = byId('decision-hook').observe(extract(options))
+      assert.equal(observed.decisionEvaluator, true)
+      assert.deepEqual(observed.decisionQuestionIds, ['decision-hook-answer'])
+      assert.deepEqual(observed.decisionEvidenceIds, ['ev_v2'])
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_SCENARIO
+      else process.env.WEIR_IT_SCENARIO = previous
+    }
+  })
+})
+
+describe('decision-memory P2 brain', () => {
+  it('registers the real scoped-memory acceptance scenario', () => {
+    assert.equal(byId('decision-memory')?.id, 'decision-memory')
+  })
+
+  it('deliberately attempts an L3-only citation so the real evidence-id parser must reject it', () => {
+    const scenario = byId('decision-memory')
+    const options = userOptions(JSON.stringify({
+      L3: [{ sourceCaseId: 'dc_neutral' }],
+      L4: { request: { questions: [{ id: 'decision-memory-l3-only', question: 'Reuse neutral memory without a decisive L5', options: [{ label: 'User resolves L3 only' }, { label: 'Neutral answer' }] }] } },
+      L5: [{ evidenceId: 'ev_profile', source: 'user_profile' }],
+    }), { system: 'Decision evaluator contract v2' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(value.outcome, 'answer')
+    assert.deepEqual(value.claims[0].evidenceIds, ['dc_neutral'])
+  })
+
+  it('uses only the genuine user-decision L5 after the L3-only Case is resolved', () => {
+    const scenario = byId('decision-memory')
+    const options = userOptions(JSON.stringify({
+      L3: [{ sourceCaseId: 'dc_neutral' }],
+      L4: { request: { questions: [{ id: 'decision-memory-l5-after', question: 'Reuse the genuine user decision', options: [{ label: 'User resolves L3 only' }, { label: 'Neutral answer' }] }] } },
+      L5: [{ evidenceId: 'ev_profile', source: 'user_profile' }, { evidenceId: 'ev_decision', source: 'user_decision', excerpt: 'User decision question: User resolves L3 only' }],
+    }), { system: 'Decision evaluator contract v2' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(value.outcome, 'answer')
+    assert.deepEqual(value.claims[0].evidenceIds, ['ev_decision'])
+    assert.deepEqual(value.answers, [{ id: 'decision-memory-l5-after', selected: ['User resolves L3 only'] }])
+  })
+})
+
 describe('decision-consult P1 brain', () => {
   it('sets up the selected Agent before the answered consultation', () => {
     const first = blockEnds(run('decision-consult', userOptions('decision-consult-probe')))[0]
@@ -637,5 +694,13 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(value.outcome, 'return')
     assert.equal(value.reasonCode, 'MISSING_CONTEXT')
     assert.ok(value.hint.includes('scope'))
+  })
+  it('scripts isolated neutral-memory source and reuse questions', () => {
+    const source = blockEnds(run('decision-gui', userOptions('GUI_MEMORY_SOURCE')))[0]
+    const reuse = blockEnds(run('decision-gui', userOptions('GUI_MEMORY_REUSE')))[0]
+    assert.equal(source.name, 'ask_user_question')
+    assert.equal(reuse.name, 'ask_user_question')
+    assert.equal(JSON.parse(source.arguments).questions[0].id, 'gui-memory-source')
+    assert.equal(JSON.parse(reuse.arguments).questions[0].id, 'gui-memory-reuse')
   })
 })

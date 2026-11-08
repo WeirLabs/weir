@@ -1,12 +1,13 @@
-// Bounded, deterministic L0/L1/L4/L5 context assembly for one Attempt.
+// Bounded, deterministic L0/L1/L2/L3/L4/L5 context assembly for one Attempt.
 import { createHash } from 'node:crypto'
 import { canonicalJson, DecisionContractError } from '../contracts.js'
 import { evaluatorVersion, promptVersion, renderEvaluatorContract } from './contract.js'
 
 const L4_CONTEXT_LIMIT = 2048
+const L3_EXCERPT_LIMIT = 600
 
 /**
- * @param {{profile:any,request:any,evidence?:any[],modelRoute?:object,budgetTokens:number,criticalEvidenceIds?:string[]}} input
+ * @param {{profile:any,request:any,evidence?:any[],memory?:{L2?:any,L3?:any[]},modelRoute?:object,budgetTokens:number,criticalEvidenceIds?:string[]}} input
  */
 export function buildContextPack(input) {
   if (!input.profile || !input.request) throw new DecisionContractError('INVALID_PACK_INPUT', 'profile and request are required')
@@ -33,27 +34,36 @@ export function buildContextPack(input) {
     modelRoute: input.modelRoute ?? { kind: 'inherited' },
     budgetTokens: input.budgetTokens,
   }
+  const L2 = normalizeL2(input.memory?.L2)
+  let L3 = normalizeL3(input.memory?.L3)
   const ordered = orderEvidence(input.evidence ?? [])
   let L5 = ordered.map(evidence => sanitizeEvidence(evidence, false))
   const critical = new Set(input.criticalEvidenceIds ?? ordered
     .filter(evidence => evidence.source === 'user_correction' || evidence.source === 'user_profile')
     .map(evidence => evidence.evidenceId))
 
-  const fixedLength = packLength({ L0, L1, L2: '', L3: '', L4, L5: [] })
+  const fixedLength = packLength({ L0, L1, L2, L3: '', L4, L5: [] })
   if (fixedLength > budgetCharacters) {
     return earlyResult('escalate', {
       hint: 'Reduce the fixed profile or Case context before retrying.',
       missing: ['The fixed L0/L1/L4 layers exceed the pinned context budget.'],
-    }, { L0, L1, L2: '', L3: '', L4, L5: [] }, pins, omissions)
+    }, { L0, L1, L2, L3: '', L4, L5: [] }, pins, omissions)
   }
 
-  if (packLength({ L0, L1, L2: '', L3: '', L4, L5 }) > budgetCharacters) {
+  // Neutral memory has the lowest retention priority: remove whole episodes in
+  // reverse retrieval order, never leave a source locator without its content.
+  while (L3.length && packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
+    L3.pop()
+    if (!omissions.includes('L3_EPISODE_OMITTED')) omissions.push('L3_EPISODE_OMITTED', 'L3_EPISODE_TRUNCATED')
+  }
+
+  if (packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
     const hadExcerpts = L5.some(evidence => typeof evidence.excerpt === 'string')
     L5 = L5.map(evidence => sanitizeEvidence(evidence, true))
     if (hadExcerpts) omissions.push('L5_EXCERPT_OMITTED')
   }
 
-  while (L5.length && packLength({ L0, L1, L2: '', L3: '', L4, L5 }) > budgetCharacters) {
+  while (L5.length && packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
     const oldest = oldestIndex(L5)
     const [dropped] = L5.splice(oldest, 1)
     if (!omissions.includes('L5_EVIDENCE_OMITTED')) omissions.push('L5_EVIDENCE_OMITTED', 'L5_EVIDENCE_TRUNCATED')
@@ -62,11 +72,11 @@ export function buildContextPack(input) {
         reasonCode: 'MISSING_CONTEXT',
         hint: `Increase the context budget or reduce evidence so critical evidence ${dropped.evidenceId} fits.`,
         missing: [`Critical evidence ${dropped.evidenceId} did not fit the pinned context budget.`],
-      }, { L0, L1, L2: '', L3: '', L4, L5 }, pins, omissions)
+      }, { L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }, pins, omissions)
     }
   }
 
-  const layers = { L0, L1, L2: '', L3: '', L4, L5 }
+  const layers = { L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }
   if (packLength(layers) > budgetCharacters) {
     return earlyResult('escalate', {
       hint: 'Reduce the fixed profile or Case context before retrying.',
@@ -74,6 +84,63 @@ export function buildContextPack(input) {
     }, layers, pins, omissions)
   }
   return result('ready', layers, pins, omissions)
+}
+
+/** @param {any} value */
+function normalizeL2(value) {
+  if (value === undefined) return ''
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 1 || value.status !== 'empty' || value.snapshotId !== null
+    || !Array.isArray(value.items) || value.items.length !== 0) {
+    throw new DecisionContractError('INVALID_MEMORY_INPUT', 'P2 L2 memory must be the versioned empty adapter result')
+  }
+  return ''
+}
+
+/** @param {any} value */
+function normalizeL3(value) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new DecisionContractError('INVALID_MEMORY_INPUT', 'L3 memory must be an Episode array')
+  return value.map(sanitizeEpisode)
+}
+
+/** @param {any} episode */
+function sanitizeEpisode(episode) {
+  if (!episode || typeof episode !== 'object' || Array.isArray(episode)
+    || episode.schemaVersion !== 1 || episode.kind !== 'neutral_agent_answer'
+    || typeof episode.sourceCaseId !== 'string' || !episode.sourceCaseId
+    || !Number.isInteger(episode.sourceRevision) || episode.sourceRevision < 1
+    || typeof episode.excerpt !== 'string' || !episode.excerpt || episode.excerpt.length > L3_EXCERPT_LIMIT
+    || !Number.isFinite(episode.createdAt) || !Number.isFinite(episode.closedAt)) {
+    throw new DecisionContractError('INVALID_MEMORY_INPUT', 'L3 Episodes must be complete, bounded neutral_agent_answer projections')
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'neutral_agent_answer',
+    sourceCaseId: episode.sourceCaseId,
+    sourceRevision: episode.sourceRevision,
+    scope: sanitizeScope(episode.scope),
+    excerpt: episode.excerpt,
+    createdAt: episode.createdAt,
+    closedAt: episode.closedAt,
+  }
+}
+
+/** @param {any} value */
+function sanitizeScope(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.workspaces)
+    || value.workspaces.length === 0 || value.workspaces.some(item => typeof item !== 'string' || !item)) {
+    throw new DecisionContractError('INVALID_MEMORY_INPUT', 'L3 Episode scope must contain workspace strings')
+  }
+  const result = { workspaces: [...value.workspaces] }
+  for (const key of ['paths', 'tags', 'authorizationClasses']) {
+    if (value[key] === undefined) continue
+    if (!Array.isArray(value[key]) || value[key].some(item => typeof item !== 'string' || !item)) {
+      throw new DecisionContractError('INVALID_MEMORY_INPUT', `L3 Episode scope.${key} must be a string array`)
+    }
+    result[key] = [...value[key]]
+  }
+  return result
 }
 
 /** @param {any} request @param {string[]} omissions */
@@ -139,16 +206,21 @@ function result(outcome, layers, pins, omissions, extra = {}) {
     layerSizes: Object.fromEntries(Object.entries(layers).map(([key, value]) => [key, typeof value === 'string' ? value.length : JSON.stringify(value).length])),
     evidenceIds,
     correctionIds,
+    memory: {
+      L2: { schemaVersion: 1, status: 'empty', snapshotId: null },
+      L3: { schemaVersion: 1, sourceCaseIds: typeof layers.L3 === 'string' ? [] : layers.L3.map(episode => episode.sourceCaseId) },
+    },
     omissions: [...omissions],
   }
   const contextPackHash = createHash('sha256').update(canonicalJson({
-    pins, request: layers.L4.request, evidenceIds, correctionIds, omissions,
+    pins, request: layers.L4.request, evidenceIds, correctionIds,
+    L2: layers.L2, L3: layers.L3, omissions,
   })).digest('hex')
   return {
     outcome,
     ...extra,
     system: layers.L0,
-    messages: outcome === 'ready' ? [{ role: 'user', content: JSON.stringify({ L1: layers.L1, L2: '', L3: '', L4: layers.L4, L5: layers.L5 }) }] : [],
+    messages: outcome === 'ready' ? [{ role: 'user', content: JSON.stringify({ L1: layers.L1, L2: layers.L2, L3: layers.L3, L4: layers.L4, L5: layers.L5 }) }] : [],
     layers,
     pins,
     packManifest,
