@@ -12,6 +12,7 @@
 - **本地多 Decision Agent（P0 契约 + P1 核心）**：可创建、编辑、停用和归档独立 Agent，在会话中选择 `Off` 或指定 Agent；有证据且 scope 匹配时按原选项回答，不完整问题带原因码退回，真正的新判断进入原生用户升级。新增 `decision_consult`、持久 Case/Attempt/Evidence 历史、原生用户裁决复用、重启恢复和真实修订/重试。默认关闭，无 Auto、语义整合、自动画像学习、跨工作区共享或导出。详见 [Decision Agent](docs/features/decision-agent.md)。
 - **决策卡与左侧栏管理页**：显示结论理由、证据出处、记录版本、暂定建议和逐题结论；提供 Agent 档案、六维过滤的只读决策记录、持久待办收件箱与指标。赞、踩、撤销、评论、纠正、裁决、改派、取消和重试均写入本地权威历史，并支持重启后恢复。
 - **九项 Decision Agent 设置**：总开关、Attempt 超时/次数/并发、上下文与输出预算、Agent 模型链、保留天数和私有存储目录。`generatedDescription` 在 P1 恒空只读。
+- **Decision Agent P2 受限检索与中性记忆**：每次 Attempt 独立按 Agent、workspace、scope 和当前资格检索；未评分的已答历史可作为 L3 非权威上下文，但不能充当证据或权限。L2 保持空适配器，无 Snapshot/语义整合/自动画像学习。新增 L3 优先预算裁剪、实际来源与省略清单、上下文指纹，以及记录详情中的只读 Context Pack。
 
 ### Fixed
 
