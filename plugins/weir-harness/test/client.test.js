@@ -132,6 +132,13 @@ describe('weir settings client half', () => {
     const mcpManagerChunk = { McpManagerView: () => null, McpManagerBoundary: () => null }
     const blackboardModelChunk = { marker: 'blackboard-model', dictionaries: { en: { 'blackboard.sentinel': 'board en' }, zh: { 'blackboard.sentinel': 'board zh' } } }
     const blackboardPanelChunk = { BlackboardPanel: (props) => ({ __blackboardPanel: props }) }
+    const decisionModelChunk = { decisionRpc: 'decision-rpc', selectorOptions: 'selector-options', selectorView: 'selector-view', cardView: 'card-view', pageView: 'page-view', narrowRecords: 'narrow-records', narrowInbox: 'narrow-inbox', dictionaries: markerDict('decision') }
+    const decisionActionsChunk = { createDecisionActions: 'create-actions', errorBanner: 'error-banner' }
+    const decisionUiChunk = { DecisionStyles: () => null }
+    const decisionSelectorChunk = { DecisionSelector: (props) => ({ __decisionSelector: props }) }
+    const decisionCardChunk = { DecisionCard: (props) => ({ __decisionCard: props }) }
+    const decisionPageChunk = { DecisionPage: (props) => ({ __decisionPage: props }) }
+    const decisionLearningChunk = { revision: () => 1, status: () => 'status' }
     const chunkModules = {
       './client.capability-presets.js': presetChunk,
       './client.capability-badge.js': capabilityBadgeChunk,
@@ -159,6 +166,13 @@ describe('weir settings client half', () => {
       './client.worktree-model.js': worktreeModelChunk,
       './client.file-lease-tool-view.js': fileLeaseToolViewChunk,
       './client.file-lease-tool-model.js': fileLeaseToolModelChunk,
+      './client.decision-model.js': decisionModelChunk,
+      './client.decision-actions.js': decisionActionsChunk,
+      './client.decision-ui.js': decisionUiChunk,
+      './client.decision-selector.js': decisionSelectorChunk,
+      './client.decision-card.js': decisionCardChunk,
+      './client.decision-page.js': decisionPageChunk,
+      './client.decision-learning.js': decisionLearningChunk,
     }
     let asyncFailure = null
     // Per-spec failures: the picker chunk must be failable on its own, without
@@ -275,6 +289,7 @@ describe('weir settings client half', () => {
       },
       get: (name) => (name === 'connection' ? connection : undefined),
       remote,
+      layout: { selectPanel: () => {}, panelInfo: { subscribe: () => () => {} } },
       uiConversation: { events: { register: definition => { conversationDefinitions.push(definition); return () => {} } } },
       slots: {
         inject: (name, fn) => {
@@ -1272,6 +1287,69 @@ describe('weir settings client half', () => {
     expect(capabilityModel.dictionaries.en['capability.serverSameName']).toContain('{names}')
     expect(capabilityModel.dictionaries.zh['capability.serverMissing']).toContain('{names}')
   })
+  it('loads Decision UI, selector, cards, page, and learning helpers in one parallel batch with themed slot shells', async () => {
+    const { surface, reactStub, asyncCalls } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, localeRegistrations } = makeCtx()
+    const selectedPanels = []
+    ctx.layout.selectPanel = id => { selectedPanels.push(id) }
+    surface.apply(ctx)
+    for (const inject of slotInjects) inject.fn()
+    const selector = slotRegistrations.find(item => item.definition.id === 'weir-decision-selector')
+    const panel = slotRegistrations.find(item => item.definition.id === 'weir-decisions')
+    const main = slotRegistrations.find(item => item.definition.name === 'main' && item.definition.key === 'weir-decisions')
+    expect(selector.definition.name).toBe('conversation.input.right')
+    expect(selector.definition.order).toBe(90)
+    expect(panel.definition.name).toBe('sidebar.panellist')
+    expect(main.definition.children).toEqual({ 'weir-decisions.tab': { kind: 'list', scope: 'root' } })
+
+    const icon = panel.component({ size: 20, active: true })
+    expect(icon.__type).toBe('svg')
+    expect(icon.width).toBe(20)
+    expect(icon['data-active']).toBe(true)
+    expect(icon['data-decision-icon']).toBe('branch-check')
+    expect(icon.children).not.toBe('DA')
+
+    reactStub.reset()
+    reactStub.begin()
+    const loading = selector.component({ sessionId: 'root', t: key => key })
+    expect(loading.__type).toBe('button')
+    expect(loading.disabled).toBe(true)
+    expect(loading.children).toBe('decisionLoadingShort')
+    expect(loading.role).toBe('status')
+    expect(asyncCalls.filter(spec => spec.startsWith('./client.decision-'))).toEqual([
+      './client.decision-model.js', './client.decision-actions.js', './client.decision-selector.js',
+      './client.decision-card.js', './client.decision-page.js', './client.decision-ui.js', './client.decision-learning.js',
+    ])
+    await flush()
+    reactStub.begin()
+    const arrived = selector.component({ sessionId: 'root', t: key => key })
+    expect(typeof arrived.__type).toBe('function')
+    expect(arrived.selectorOptions).toBe('selector-options')
+    expect(arrived.selectorView).toBe('selector-view')
+    expect(arrived.ui).toBeTruthy()
+    expect(typeof arrived.onManage).toBe('function')
+    expect(typeof arrived.onCreate).toBe('function')
+    expect(localeRegistrations.filter(item => item.ns === 'settings.weir.decision')).toHaveLength(1)
+
+    reactStub.reset()
+    reactStub.begin()
+    const pageLoading = main.component({})
+    expect(pageLoading.children).toBe('decisionLoading')
+    await flush()
+    reactStub.begin()
+    const page = main.component({})
+    expect(page.ui).toBeTruthy()
+    expect(page.learning).toBeTruthy()
+    expect(page.pageView).toBe('page-view')
+    expect(asyncCalls.filter(spec => spec === './client.decision-model.js')).toHaveLength(1)
+    arrived.onCreate()
+    expect(page.consumeAgentDestination()).toBe('create')
+    expect(page.consumeAgentDestination()).toBe(null)
+    arrived.onManage()
+    expect(page.consumeAgentDestination()).toBe('manage')
+    expect(selectedPanels).toEqual(['weir-decisions', 'weir-decisions'])
+  })
+
   it('build binds the entry to every chunk digest', () => {
     // Content binding is the red line: the entry header pins each chunk's
     // sha256, so a chunk edit without `pnpm build` fails here

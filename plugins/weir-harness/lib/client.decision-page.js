@@ -126,11 +126,6 @@ window.__ModuleLoader__.load({
     }
 
     const learningRows = value => Array.isArray(value) ? value.filter(item => item && typeof item === "object") : [];
-    const learningRevision = (summary, detail) => {
-      const revisions = [summary?.revision, ...(summary && detail?.snapshotId === summary.snapshotId ? [detail.revision] : [])].filter(Number.isInteger);
-      return revisions.length ? Math.max(...revisions) : undefined;
-    };
-    const learningStatus = (t, prefix, value) => typeof value === "string" ? t(`${prefix}_${value}`) : "—";
 
     function principleDiff(parentSnapshot, snapshot) {
       const before = new Map(learningRows(parentSnapshot?.principles).map(item => [item.principleId, item]));
@@ -159,6 +154,8 @@ window.__ModuleLoader__.load({
 
     function AgentLearning(props) {
       const t = props.t;
+      const learningRevision = props.learning.revision;
+      const learningStatus = props.learning.status;
       const agent = props.agent ?? {};
       const runs = learningRows(agent.learningRuns);
       const snapshots = learningRows(agent.snapshots);
@@ -318,6 +315,11 @@ window.__ModuleLoader__.load({
           if (detail?.case?.caseId) setDetail(await actions.record(detail.case.caseId));
           const openCaseId = props.consumeOpenCase?.();
           if (openCaseId) { setTab("records"); setDetail(await actions.record(openCaseId)); }
+          const agentDestination = props.consumeAgentDestination?.();
+          if (agentDestination) {
+            setTab("agents");
+            if (agentDestination === "create") { setAgentDetail(null); setName(""); setDescription(""); }
+          }
           if (!preserveError) setError(null);
         } catch (reason) { setError(banner(reason).message); }
       };
@@ -362,7 +364,7 @@ window.__ModuleLoader__.load({
             jsx.jsx("div", { children: `generatedDescription: ${JSON.stringify(agentDetail.generatedDescription ?? { revision: 0, text: "" })}` }, "generated-description"),
             jsx.jsx("ul", { children: (agentDetail.descriptionHistory ?? []).map(item => jsx.jsx("li", { children: `v${item.revision}: ${item.text}` }, item.revision)) }, "description-history"),
             AgentLearning({
-              agent: agentDetail, detail: learningDetail, run, pending, t,
+              agent: agentDetail, detail: learningDetail, run, pending, t, learning: props.learning,
               selectRun: learningRunId => readLearning(agentDetail, learningRunId),
               selectSnapshot: snapshotId => {
                 const snapshot = learningRows(agentDetail.snapshots).find(item => item.snapshotId === snapshotId);

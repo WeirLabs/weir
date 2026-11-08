@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadClientChunk } from '../helpers/load-client-chunk.js'
 
+const learning = (await loadClientChunk('lib/client.decision-learning.js')).exports
+
 function findAll(node, predicate, found = []) {
   if (!node || typeof node !== 'object') return found
   if (predicate(node)) found.push(node)
@@ -50,7 +52,7 @@ test('existing Agent detail exposes manual governance and candidate state withou
   })
   const rendered = exports.DecisionPage({
     connection: {}, decisionRpc: async () => {}, createDecisionActions: () => ({}),
-    getSessionId: () => 'root', t: key => key,
+    getSessionId: () => 'root', t: key => key, learning,
   })
   const text = JSON.stringify(rendered)
   for (const value of ['ms_current', 'lr_candidate', 'ms_candidate', 'candidate', 'draft']) assert.equal(text.includes(value), true, value)
@@ -118,7 +120,7 @@ test('manual governance uses fresh browser UUIDs and latest Snapshot revisions f
   const calls = []
   const opened = []
   const run = async (...args) => { calls.push(args) }
-  const base = { run, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async id => { opened.push(id) }, t: key => key }
+  const base = { run, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async id => { opened.push(id) }, t: key => key, learning }
   let uuid = 0
   window.crypto = { randomUUID: () => `browser-uuid-${++uuid}` }
   const empty = exports.AgentLearning({ ...base, agent: { agentId: 'a', state: 'enabled', currentSnapshotId: null, learningRuns: [], snapshots: [] } })
@@ -193,7 +195,7 @@ test('Agent selection loads actual run, Snapshot, and parent details without pol
   })
   const rendered = exports.DecisionPage({
     connection: {}, decisionRpc: async () => {}, createDecisionActions: () => actions,
-    getSessionId: () => 'root', t: key => key,
+    getSessionId: () => 'root', t: key => key, learning,
   })
   const select = findAll(rendered, node => node.type === 'button' && node.children === 'A · enabled · v0')[0]
   await select.onClick()
@@ -216,12 +218,12 @@ test('Agent governance exposes every real lifecycle state and blocks conflicting
       { snapshotId: 'ms_rolled_back', state: 'rolled_back', version: 1, revision: 2, learningRunId: 'lr_rolled_back' },
     ],
   }
-  const rendered = exports.AgentLearning({ agent, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
+  const rendered = exports.AgentLearning({ agent, learning, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
   const text = JSON.stringify(rendered)
   for (const outcome of outcomes) assert.ok(text.includes(`decisionLearningOutcome_${outcome}`), outcome)
   for (const state of ['draft', 'published', 'rolled_back']) assert.ok(text.includes(`decisionSnapshotState_${state}`), state)
   assert.equal(findAll(rendered, node => node.type === 'button' && node.children === 'decisionConsolidate')[0].disabled, true)
-  const disabled = exports.AgentLearning({ agent: { ...agent, state: 'disabled', learningRuns: [], snapshots: [], currentSnapshotId: null }, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
+  const disabled = exports.AgentLearning({ agent: { ...agent, state: 'disabled', learningRuns: [], snapshots: [], currentSnapshotId: null }, learning, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
   assert.equal(findAll(disabled, node => node.type === 'button' && node.children === 'decisionConsolidate')[0].disabled, true)
 })
 
@@ -242,7 +244,7 @@ test('current Snapshot beyond twenty newer drafts keeps authoritative rollback a
   const calls = []
   const selected = []
   const rendered = exports.AgentLearning({
-    agent, detail: null, pending: null, run: async (...args) => { calls.push(args) },
+    agent, learning, detail: null, pending: null, run: async (...args) => { calls.push(args) },
     selectRun: async () => {}, selectSnapshot: async id => { selected.push(id) }, openRecord: async () => {}, t: key => key,
   })
   const rollback = findAll(rendered, node => node.type === 'button' && node.children === 'decisionRollback')[0]
@@ -277,7 +279,7 @@ test('current Snapshot detail resolves even when its run is outside the recent-r
   })
   const rendered = exports.DecisionPage({
     connection: {}, decisionRpc: async () => {}, createDecisionActions: () => actions,
-    getSessionId: () => 'root', t: key => key,
+    getSessionId: () => 'root', t: key => key, learning,
   })
   const current = findAll(rendered, node => node.type === 'button' && node.children === 'ms_current · v1 · decisionSnapshotState_published · r7')[0]
   await current.onClick()
@@ -303,7 +305,7 @@ test('learning detail renders bounded Case and correction source disclosures rea
     snapshot: { snapshotId: 'ms_review', agentId: 'a', state: 'draft', version: 1, revision: 1, principles: [], sourceRecords },
   }
   const rendered = exports.AgentLearning({
-    agent, detail, pending: null, run: async () => {}, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key,
+    agent, learning, detail, pending: null, run: async () => {}, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key,
   })
   const disclosures = findAll(rendered, node => typeof node['data-learning-source-record'] === 'string')
   assert.deepEqual(disclosures.map(node => node['data-learning-source-record']), ['dc_cross_root', 'fb_correction'])
