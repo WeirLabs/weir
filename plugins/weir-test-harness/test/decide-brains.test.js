@@ -451,4 +451,191 @@ describe('decision-agent P0 spike brains', { skip: process.env.WEIR_IT_DECISION_
     assert.equal(JSON.parse(blockEnds(run('decision-spike-slots', userOptions('decision-spike-slots-probe')))[0].arguments).phase, 'before')
     assert.equal(JSON.parse(blockEnds(run('decision-spike-slots', userOptions('decision-spike-slots-probe-after')))[0].arguments).phase, 'after')
   })
+  it('current-profile brain covers native, batch, and subagent flows', () => {
+    assert.equal(blockEnds(run('decision-spike-current', userOptions('P0_ANSWERED')))[0].name, 'ask_user_question')
+    assert.equal(JSON.parse(blockEnds(run('decision-spike-current', userOptions('P0_BATCH_ALL')))[0].arguments).questions.length, 3)
+    assert.equal(blockEnds(run('decision-spike-current', userOptions('P0_SUBAGENT')))[0].name, 'decision_consult')
+  })
+})
+
+describe('decision-hook P1 brain', () => {
+  it('starts in Off, then creates the live Broker fixture', () => {
+    const first = blockEnds(run('decision-hook', userOptions('decision-hook-probe')))[0]
+    assert.equal(first.name, 'ask_user_question')
+    assert.equal(JSON.parse(first.arguments).questions[0].id, 'decision-hook-off')
+    const afterOff = blockEnds(run('decision-hook', toolOptions('decision-hook-probe', '{"answers":[{"id":"decision-hook-off","selected":["Native Off"]}]}')))[0]
+    assert.equal(afterOff.name, 'decision_integration_probe')
+    assert.equal(JSON.parse(afterOff.arguments).op, 'setup')
+  })
+
+  it('scripts an evidence-citing answer and malformed output for the evaluator dispatch', () => {
+    const scenario = byId('decision-hook')
+    assert.equal(typeof scenario.decideDecision, 'function')
+    const options = userOptions(JSON.stringify({
+      L4: { request: { questions: [{ id: 'decision-hook-answer', options: [{ label: 'Native fallback' }, { label: 'Concise' }] }] } },
+      L5: [{ evidenceId: 'ev_test', source: 'user_profile' }],
+    }), { system: 'Decision evaluator contract v1' })
+    const answer = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(answer.outcome, 'answer')
+    assert.equal(answer.claims[0].evidenceIds[0], 'ev_test')
+    assert.deepEqual(answer.answers, [{ id: 'decision-hook-answer', selected: ['Concise'] }])
+    const invalidOptions = userOptions(JSON.stringify({ L4: { request: { questions: [{ id: 'decision-hook-invalid' }] } }, L5: [] }), { system: 'Decision evaluator contract v1' })
+    assert.equal(blockEnds([...scenario.decideDecision(invalidOptions, extract(invalidOptions))])[0].text, 'this is not JSON')
+  })
+})
+
+describe('decision-consult P1 brain', () => {
+  it('sets up the selected Agent before the answered consultation', () => {
+    const first = blockEnds(run('decision-consult', userOptions('decision-consult-probe')))[0]
+    assert.equal(first.name, 'decision_integration_probe')
+    const afterSetup = blockEnds(run('decision-consult', toolOptions('decision-consult-probe', 'DECISION_TEST done setup:{"completed":true}')))[0]
+    assert.equal(afterSetup.name, 'decision_consult')
+    assert.equal(JSON.parse(afterSetup.arguments).request_id, 'consult-answered')
+  })
+
+  it('delegated child escalates without asking, then reads the Case once', () => {
+    const first = blockEnds(run('decision-consult', userOptions('DECISION_CONSULT_CHILD_TASK')))[0]
+    assert.equal(first.name, 'decision_consult')
+    const result = '{"outcome":"awaiting_user","caseId":"dc_child","state":"awaiting_user"}\nDecision dc_child is awaiting user judgment.'
+    const second = blockEnds(run('decision-consult', toolOptions('DECISION_CONSULT_CHILD_TASK', result)))[0]
+    assert.equal(second.name, 'decision_integration_probe')
+    assert.deepEqual(JSON.parse(second.arguments), { op: 'record', caseId: 'dc_child' })
+  })
+})
+
+describe('decision-batch P1 brain', () => {
+  it('drives a three-question batch before partial and approval controls', () => {
+    const setup = blockEnds(run('decision-batch', userOptions('decision-batch-probe')))[0]
+    assert.equal(setup.name, 'decision_integration_probe')
+    const all = blockEnds(run('decision-batch', toolOptions('decision-batch-probe', 'DECISION_TEST done setup:{"completed":true}')))[0]
+    assert.equal(all.name, 'ask_user_question')
+    const args = JSON.parse(all.arguments)
+    assert.equal(args.questions.length, 3)
+    assert.equal(args.questions[1].multi_select, true)
+  })
+
+  it('partial evaluator output omits the unresolved middle answer', () => {
+    const scenario = byId('decision-batch')
+    const options = userOptions(JSON.stringify({
+      L4: { request: { questions: [
+        { id: 'decision-batch-partial-1' }, { id: 'decision-batch-partial-2' }, { id: 'decision-batch-partial-3' },
+      ] } },
+      L5: [{ evidenceId: 'ev_batch', source: 'user_profile' }],
+    }), { system: 'Decision evaluator contract v1' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.deepEqual(value.answers.map(answer => answer.id), ['decision-batch-partial-1', 'decision-batch-partial-3'])
+  })
+})
+
+describe('decision-route P1 brain', () => {
+  it('pins A before disabling it, then consults explicit B without changing the selector', () => {
+    const setup = blockEnds(run('decision-route', userOptions('decision-route-probe')))[0]
+    assert.equal(JSON.parse(setup.arguments).op, 'route-setup')
+    const pinned = blockEnds(run('decision-route', toolOptions('decision-route-probe', 'DECISION_TEST done route-setup:{"agentA":"ag_a","agentB":"ag_b"}')))[0]
+    assert.equal(JSON.parse(pinned.arguments).questions[0].id, 'decision-route-pinned')
+    const history = 'decision-route-probe\nDECISION_TEST done route-setup:{"agentA":"ag_a","agentB":"ag_b"}\n{"answers":[{"id":"decision-route-pinned","selected":["Pinned A"]}]}'
+    const disable = blockEnds(run('decision-route', userOptions(history)))[0]
+    assert.deepEqual(JSON.parse(disable.arguments), { op: 'disable-a', agentId: 'ag_a' })
+  })
+})
+
+describe('decision-recovery P1 brain', () => {
+  it('replays the persisted consult after restart, then verifies recovery', () => {
+    const previous = process.env.WEIR_IT_DECISION_PHASE
+    process.env.WEIR_IT_DECISION_PHASE = 'after'
+    try {
+      const replay = blockEnds(run('decision-recovery', userOptions('decision-recovery-probe')))[0]
+      assert.equal(replay.name, 'decision_consult')
+      assert.equal(JSON.parse(replay.arguments).request_id, 'recovery-replay')
+      const verify = blockEnds(run('decision-recovery', toolOptions('decision-recovery-probe\n{"outcome":"answered","caseId":"dc_replay"}', '{"outcome":"answered","caseId":"dc_replay"}')))[0]
+      assert.equal(verify.name, 'decision_recovery_probe')
+      assert.equal(JSON.parse(verify.arguments).op, 'verify')
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_DECISION_PHASE
+      else process.env.WEIR_IT_DECISION_PHASE = previous
+    }
+  })
+})
+
+describe('decision-feedback P1 brain', () => {
+  it('escalates a new judgment and prefers an active Correction over old decisions', () => {
+    const first = blockEnds(run('decision-feedback', userOptions('decision-feedback-probe')))[0]
+    assert.equal(first.name, 'decision_integration_probe')
+    const source = blockEnds(run('decision-feedback', toolOptions('decision-feedback-probe', 'DECISION_TEST done setup:{"completed":true}')))[0]
+    assert.equal(source.name, 'ask_user_question')
+    const scenario = byId('decision-feedback')
+    const options = userOptions(JSON.stringify({
+      L4: { request: { questions: [{ id: 'decision-feedback-corrected' }] } },
+      L5: [{ evidenceId: 'ev_decision', source: 'user_decision', excerpt: 'User decision q: Use Short' }, { evidenceId: 'ev_correction', source: 'user_correction', excerpt: 'Use Long' }],
+    }), { system: 'Decision evaluator contract v1' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(value.answers[0].selected[0], 'Use Long')
+    assert.equal(value.claims[0].evidenceIds[0], 'ev_correction')
+  })
+})
+
+describe('decision-isolation P1 brain', () => {
+  it('fails closed for B without evidence and W2 without W1 records', () => {
+    const scenario = byId('decision-isolation')
+    const bOptions = userOptions(JSON.stringify({ L4: { request: { questions: [{ id: 'decision-isolation-b' }] } }, L5: [] }), { system: 'Decision evaluator contract v1' })
+    const b = JSON.parse(blockEnds([...scenario.decideDecision(bOptions, extract(bOptions))])[0].text)
+    assert.equal(b.reasonCode, 'MISSING_CONTEXT')
+    const crossOptions = userOptions(JSON.stringify({ L4: { request: { questions: [{ id: 'question', question: 'ISOLATION_CROSS: use W2 only' }] } }, L5: [] }), { system: 'Decision evaluator contract v1' })
+    const cross = JSON.parse(blockEnds([...scenario.decideDecision(crossOptions, extract(crossOptions))])[0].text)
+    assert.equal(cross.reasonCode, 'OUT_OF_SCOPE')
+  })
+})
+
+describe('decision-ui-remote P1 brain', () => {
+  it('runs the root remote matrix before the delegated bare-session reads', () => {
+    const root = blockEnds(run('decision-ui-remote', userOptions('decision-ui-remote-probe')))[0]
+    assert.equal(root.name, 'decision_remote_probe')
+    assert.equal(JSON.parse(root.arguments).op, 'root')
+    const after = blockEnds(run('decision-ui-remote', toolOptions('decision-ui-remote-probe', 'DECISION_REMOTE done root:{"completed":true}')))[0]
+    assert.equal(after.name, 'delegate')
+    const child = blockEnds(run('decision-ui-remote', userOptions('DECISION_REMOTE_CHILD_TASK')))[0]
+    assert.equal(child.name, 'decision_consult')
+  })
+})
+
+describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !== '1' }, () => {
+  it('emits the native structured question for GUI_A_ANSWER', () => {
+    const first = blockEnds(run('decision-gui', userOptions('GUI_A_ANSWER')))[0]
+    assert.equal(first.name, 'ask_user_question')
+    assert.equal(JSON.parse(first.arguments).questions[0].id, 'gui-a-answer')
+  })
+  it('makes after-down and later turns evidence-driven instead of id-driven', () => {
+    const scenario = byId('decision-gui')
+    const evaluate = evidence => {
+      const options = userOptions(JSON.stringify({
+        L4: { request: { questions: [{ id: 'gui-b-after-down', question: 'Reuse the disputed GUI direction', options: [{ label: 'Use Short' }, { label: 'Use Long' }] }] } },
+        L5: evidence,
+      }), { system: 'Decision evaluator contract v1' })
+      return JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    }
+    assert.equal(evaluate([]).outcome, 'escalate')
+    assert.equal(evaluate([{ evidenceId: 'ev_empty', source: 'user_decision' }]).outcome, 'escalate')
+    const restored = evaluate([{ evidenceId: 'ev_decision', source: 'user_decision', excerpt: 'User decision q: Use Short' }])
+    assert.equal(restored.outcome, 'answer')
+    assert.deepEqual(restored.answers, [{ id: 'gui-b-after-down', selected: ['Use Short'] }])
+    const corrected = evaluate([{ evidenceId: 'ev_correction', source: 'user_correction', excerpt: 'Use Long' }, { evidenceId: 'ev_decision', source: 'user_decision', excerpt: 'User decision q: Use Short' }])
+    assert.deepEqual(corrected.answers, [{ id: 'gui-b-after-down', selected: ['Use Long'] }])
+    assert.equal(corrected.claims[0].evidenceIds[0], 'ev_correction')
+
+    const later = userOptions('GUI_A_ANSWER')
+    later.messages.push({ role: 'tool', content: [{ type: 'text', text: '{"answers":[]}' }] })
+    later.messages.push({ role: 'user', content: [{ type: 'text', text: 'GUI_B_NEW' }] })
+    later.messages.push({ role: 'user', content: [{ type: 'text', text: '<system-reminder>Current runtime context.</system-reminder>' }] })
+    const next = blockEnds([...scenario.decide(later, extract(later))])[0]
+    assert.equal(next.name, 'ask_user_question')
+    assert.equal(JSON.parse(next.arguments).questions[0].id, 'gui-b-new')
+  })
+  it('provides a real returned case for the six-dimension GUI filter matrix', () => {
+    const scenario = byId('decision-gui')
+    const options = userOptions(JSON.stringify({ L4: { request: { questions: [{ id: 'question', question: 'GUI_C_RETURN: needs scoped context' }] } }, L5: [] }), { system: 'Decision evaluator contract v1' })
+    const value = JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    assert.equal(value.outcome, 'return')
+    assert.equal(value.reasonCode, 'MISSING_CONTEXT')
+    assert.ok(value.hint.includes('scope'))
+  })
 })

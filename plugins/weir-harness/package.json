@@ -52,6 +52,9 @@
     "./capability-remote": "./src/capabilities/capability-remote.js",
     "./lsp": "./src/lsp/index.js",
     "./notify": "./src/notify/index.js",
+    "./decision": "./src/decision/index.js",
+    "./decision-broker": "./src/decision/broker-plugin.js",
+    "./decision-remote": "./src/decision/remote-plugin.js",
     "./client": "./lib/client.js",
     "./index.js": "./lib/index.js",
     ".": "./lib/index.js",
@@ -67,6 +70,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-plugin-manager"
       ]
     }

@@ -130,6 +130,26 @@
       config:
         intentGateProvider: mock
         intentGateModel: mock-1
+        decisionAgentsEnabled: true
+        decisionAgentStorePath: !!js process.env.WEIR_IT_DECISION_STORE_PATH || ''
+    # Decision Agents: profile Broker + inert/self-healing Host remote.
+    - id: weir-it-decision-broker
+      name: 'weir-harness/decision-broker'
+    - id: weir-it-decision-remote
+      name: 'weir-harness/decision-remote'
+      inject: [typert]
+    - id: weir-it-decision-integration-probe
+      name: 'weir-test-harness/decision-integration-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_DECISION === '1'
+    - id: weir-it-decision-recovery-probe
+      name: 'weir-test-harness/decision-recovery-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_DECISION_RECOVERY === '1'
+    - id: weir-it-decision-remote-probe
+      name: 'weir-test-harness/decision-remote-probe'
+      config:
+        enabled: !!js process.env.WEIR_IT_DECISION_REMOTE === '1'
     - id: weir-it-event-tap
       name: 'weir-test-harness/event-tap'
     # Capability-store probe, host level: the baseline the isolated row below
@@ -147,6 +167,13 @@
         # Exercise the semantic classifier headlessly; the sidecar route comes
         # from the settings row above (weirSettings overlay proof).
         classifier: 'llm'
+    # Mirror the preset decision row's delegation-group position. It provides no service.
+    - id: delegation
+      name: cordis:group
+      group: true
+      config:
+        - id: decision
+          name: 'weir-harness/decision'
     # Worktree lanes: host state machine + lane tools + /worktree command.
     # Provider (worktree) and consumer (delegate) sit at the same host level
     # here, mirroring the preset where both share the delegation group.
@@ -182,7 +209,7 @@
     - id: weir-it-user-questions-stub
       name: 'weir-test-harness/user-questions-stub'
       config:
-        enabled: !!js (process.env.WEIR_IT_NOTIFY_WORKTREE === '1' || process.env.WEIR_IT_ZOMBIE_LANE === '1' || process.env.WEIR_IT_WORKTREE_AUTO_APPROVE === '1' || process.env.WEIR_IT_BLACKBOARD_PROMOTION === '1' || process.env.WEIR_IT_MCP_MANAGEMENT === '1' || process.env.WEIR_IT_DECISION_SPIKE === 'order')
+        enabled: !!js (process.env.WEIR_IT_NOTIFY_WORKTREE === '1' || process.env.WEIR_IT_ZOMBIE_LANE === '1' || process.env.WEIR_IT_WORKTREE_AUTO_APPROVE === '1' || process.env.WEIR_IT_BLACKBOARD_PROMOTION === '1' || process.env.WEIR_IT_MCP_MANAGEMENT === '1' || process.env.WEIR_IT_DECISION_SPIKE === 'order' || process.env.WEIR_IT_DECISION === '1')
     - id: weir-it-decision-spike-probe
       name: 'weir-test-harness/decision-spike-probe'
       disabled: !!js "!process.env.WEIR_IT_DECISION_SPIKE"
@@ -214,7 +241,7 @@
     # answered headlessly by the stub above (the user is scripted).
     - id: weir-it-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
-      disabled: !!js (process.env.WEIR_IT_BLACKBOARD_PROMOTION !== '1' && process.env.WEIR_IT_DECISION_SPIKE !== 'order' && process.env.WEIR_IT_DECISION_SPIKE !== 'delegated')
+      disabled: !!js (process.env.WEIR_IT_BLACKBOARD_PROMOTION !== '1' && process.env.WEIR_IT_DECISION_SPIKE !== 'order' && process.env.WEIR_IT_DECISION_SPIKE !== 'delegated' && process.env.WEIR_IT_DECISION !== '1')
     - id: weir-it-blackboard-remote
       name: 'weir-harness/blackboard-remote'
       disabled: !!js process.env.WEIR_IT_BLACKBOARD !== '1'

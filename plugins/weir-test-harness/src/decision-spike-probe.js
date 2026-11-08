@@ -220,43 +220,58 @@ function registerMultiMountProbe(ctx) {
 }
 
 function registerCancelProbe(ctx) {
+  const storePath = join(ROOT, 'ws', 'decision-spike-cancel-store.json')
+  const readStore = () => JSON.parse(readFileSync(storePath, 'utf8'))
+  const writeStore = store => {
+    const temp = `${storePath}.tmp`
+    writeFileSync(temp, JSON.stringify(store, null, 2) + '\n')
+    renameSync(temp, storePath)
+  }
   let askController = null
   ctx.on('user-questions/request', (request, next) => {
     if (request?.questions?.[0]?.id !== 's6-abort') return next()
     appendEvent({ spike: 'S6', listener: 'abort-request' })
     askController?.abort()
-    return next()
+    // Corrected D9: persist FIRST, then throw a fresh non-UserQuestionError so
+    // the real userQuestions.ask aborted-signal branch can produce ASK_ABORTED.
+    const store = readStore()
+    const target = store.cases.find(item => item.caseId === 'dc_s6_hook')
+    const attempt = store.attempts.find(item => item.caseId === 'dc_s6_hook')
+    target.state = 'closed(cancelled)'
+    target.answer = null
+    attempt.outcome = 'failed'
+    attempt.failure = 'aborted'
+    attempt.endedAt = Date.now()
+    writeStore(store)
+    throw new Error('Decision Hook aborted', { cause: request.signal?.reason })
   }, { prepend: true })
+  const replay = store => {
+    const existing = store.cases.find(item => item.idempotencyKey === 's6-idempotency')
+    if (existing) return { case: existing, created: false, attemptCount: store.attempts.length }
+    const created = { caseId: 'dc_s6_ui', idempotencyKey: 's6-idempotency', state: 'evaluating', answer: null }
+    store.cases.push(created)
+    store.attempts.push({ attemptId: 'da_s6_ui', caseId: created.caseId, outcome: null, failure: null, endedAt: null })
+    writeStore(store)
+    return { case: created, created: true, attemptCount: store.attempts.length }
+  }
   ctx.tools.register({
     name: 'decision_cancel_spike',
     description: 'Disposable two-process abort, cancellation, persistence and idempotency probe.',
     parameters: { type: 'object', properties: {}, required: [] },
     output: { schema: { type: 'object' }, render },
     async execute(args, exec) {
-      const storePath = join(ROOT, 'ws', 'decision-spike-cancel-store.json')
-      const readStore = () => JSON.parse(readFileSync(storePath, 'utf8'))
-      const writeStore = store => {
-        const temp = `${storePath}.tmp`
-        writeFileSync(temp, JSON.stringify(store, null, 2) + '\n')
-        renameSync(temp, storePath)
-      }
-      const replay = store => {
-        const existing = store.cases.find(item => item.idempotencyKey === 's6-idempotency')
-        if (existing) return { case: existing, created: false, attemptCount: store.attempts.length }
-        const created = { caseId: 'dc_s6', idempotencyKey: 's6-idempotency', state: 'evaluating', answer: null }
-        store.cases.push(created)
-        store.attempts.push({ attemptId: 'da_s6', caseId: created.caseId, outcome: null, failure: null, endedAt: null })
-        writeStore(store)
-        return { case: created, created: true, attemptCount: store.attempts.length }
-      }
       if (process.env.WEIR_IT_DECISION_PHASE === 'after') {
         const store = readStore()
         const beforeAttempts = store.attempts.length
         const replayed = replay(store)
+        const hook = store.cases.find(item => item.caseId === 'dc_s6_hook')
+        const ui = store.cases.find(item => item.caseId === 'dc_s6_ui')
+        const hookAttempt = store.attempts.find(item => item.caseId === 'dc_s6_hook')
+        const uiAttempt = store.attempts.find(item => item.caseId === 'dc_s6_ui')
         const report = {
           completed: true, phase: 'after', store,
           replay: { created: replayed.created, beforeAttempts, afterAttempts: store.attempts.length, terminal: replayed.case.state },
-          pass: store.askAbort?.code === 'ASK_ABORTED' && store.cases[0]?.state === 'closed(cancelled)' && store.cases[0]?.answer === null && store.attempts[0]?.failure === 'interrupted' && !replayed.created && store.attempts.length === beforeAttempts,
+          pass: store.askAbort?.code === 'ASK_ABORTED' && hook?.state === 'closed(cancelled)' && hookAttempt?.failure === 'aborted' && ui?.state === 'closed(cancelled)' && uiAttempt?.failure === 'interrupted' && hook?.answer === null && ui?.answer === null && !replayed.created && store.attempts.length === beforeAttempts,
         }
         writeReport('decision-spike-cancel-after.json', report)
         return report
@@ -264,6 +279,11 @@ function registerCancelProbe(ctx) {
       const questions = ctx.get('userQuestions')
       const llm = ctx.get('llm')
       if (!questions || !llm) throw new Error('userQuestions and llm required')
+      writeStore({
+        askAbort: null,
+        cases: [{ caseId: 'dc_s6_hook', idempotencyKey: 's6-hook', state: 'evaluating', answer: null }],
+        attempts: [{ attemptId: 'da_s6_hook', caseId: 'dc_s6_hook', outcome: null, failure: null, endedAt: null }],
+      })
       askController = new AbortController()
       let askAbort = null
       try {
@@ -273,8 +293,10 @@ function registerCancelProbe(ctx) {
       } finally {
         askController = null
       }
-      writeStore({ askAbort, cases: [], attempts: [] })
-      const initial = replay(readStore())
+      const abortedStore = readStore()
+      abortedStore.askAbort = askAbort
+      writeStore(abortedStore)
+      const initial = replay(abortedStore)
       const attemptController = new AbortController()
       const stream = (async () => {
         let finish = null
@@ -306,15 +328,18 @@ function registerCancelProbe(ctx) {
         writeStore(store)
         return target
       }
-      const cancelled = cancel({ caseId: 'dc_s6' })
+      const cancelled = cancel({ caseId: 'dc_s6_ui' })
       const finish = await stream
       const beforeAttempts = store.attempts.length
       const replayed = replay(store)
+      const hook = store.cases.find(item => item.caseId === 'dc_s6_hook')
+      const hookAttempt = store.attempts.find(item => item.caseId === 'dc_s6_hook')
+      const uiAttempt = store.attempts.find(item => item.caseId === 'dc_s6_ui')
       const before = {
         completed: true, phase: 'before', askAbort, initialAttemptCount: initial.attemptCount,
         cancel: { caseId: cancelled.caseId, state: cancelled.state }, llmFinish: finish,
         replay: { created: replayed.created, beforeAttempts, afterAttempts: store.attempts.length }, store,
-        pass: askAbort?.code === 'ASK_ABORTED' && cancelled.state === 'closed(cancelled)' && finish?.kind === 'aborted' && store.attempts[0]?.failure === 'interrupted' && !replayed.created && store.attempts.length === 1,
+        pass: askAbort?.code === 'ASK_ABORTED' && hook?.state === 'closed(cancelled)' && hookAttempt?.failure === 'aborted' && cancelled.state === 'closed(cancelled)' && finish?.kind === 'aborted' && uiAttempt?.failure === 'interrupted' && !replayed.created && store.attempts.length === 2,
       }
       writeReport('decision-spike-cancel-before.json', before)
       return before

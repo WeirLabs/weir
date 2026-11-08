@@ -153,9 +153,9 @@ describe('client.settings-page chunk', () => {
     return dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentChains','decisionAgentRetentionDays','decisionAgentStorePath','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
-  const MAIN_GROUPS = ['intent', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify']
+  const MAIN_GROUPS = ['intent', 'todo', 'guard', 'decision', 'editing', 'worktree', 'robash', 'lsp', 'notify']
   const ROUTING_GROUPS = ['routingCategories', 'routingAgents', 'routingSupervision']
   const ROUTING_FIELD_NAMES = ['delegateCategoryChains', 'delegateDisabledCategories', 'delegateAgentChains', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs']
 
@@ -902,10 +902,11 @@ describe('client.settings-page chunk', () => {
     expect(Object.keys(FIELD_DEFAULTS).sort()).toEqual(Object.keys(SERVER_FIELD_DEFAULTS).sort())
     expect(FIELD_DEFAULTS).toEqual(SERVER_FIELD_DEFAULTS)
     // BOOLEAN_DEFAULTS is the derived boolean subset — exactly the previous
-    // hand-maintained literal (11 entries), never a second literal
+    // hand-maintained literal plus the Decision master switch (12 entries).
     expect(BOOLEAN_DEFAULTS).toEqual({
       todoEnabled: true,
       guardEnabled: true,
+      decisionAgentsEnabled: false,
       hashlineHideStockEdit: true,
       worktreeEnabled: true,
       worktreeAutoSetup: true,
@@ -1570,7 +1571,7 @@ describe('client.settings-page chunk', () => {
       // every group on both pages has its translated card title, and no
       // departed group (delegate, blackboard) leaves an orphan label behind
       const groupLabelKeys = exports.GROUPS.map((group) => `group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`)
-      expect(groupLabelKeys).toHaveLength(11)
+      expect(groupLabelKeys).toHaveLength(12)
       for (const key of groupLabelKeys) expectResolved(dict, key)
       expect(Object.keys(dict).filter((key) => key.startsWith('group')).sort()).toEqual([...groupLabelKeys].sort())
       // no orphans: the config-face-only keys (server-declared page:false)

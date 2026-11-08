@@ -380,6 +380,8 @@ async function main() {
   console.log(`[setup] profile at ${PROFILE}`)
   setup()
   for (const scenario of selected) {
+    // Decision stub observations are per scenario even though the profile persists.
+    if (scenario.id.startsWith('decision-')) rmSync(join(RUN_ROOT, 'decision-integration-events.jsonl'), { force: true })
     console.log(`[run] ${scenario.id}`)
     const run = await (scenario.run?.(driverCtx) ?? runScenario(scenario))
     if (run.stderr.trim().length > 0) {

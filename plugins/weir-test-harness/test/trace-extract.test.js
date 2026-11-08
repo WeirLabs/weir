@@ -226,6 +226,15 @@ const PRE_MIGRATION_KEYS = [
   'historyTools',
   'historyAdditions',
   'developerAdditions',
+  // Decision evaluator sidecar observations (P1 live integration scenarios).
+  'decisionEvaluator',
+  'decisionQuestionIds',
+  'decisionEvidenceIds',
+  'decisionConsultResult',
+  'decisionProbeRecord',
+  'decisionRecoveryReplay',
+  'decisionFeedbackAction',
+  'decisionIsolationLeak',
 ]
 
 // The one-shot child settlement scenario (and the edit-lock delegate scenarios

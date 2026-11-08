@@ -30,6 +30,15 @@
         guardEnabled: true
         guardSoftThreshold: 0.72
         guardHardThreshold: 0.88
+        decisionAgentsEnabled: false
+        decisionAgentAnswerTimeoutMs: 60000
+        decisionAgentMaxAttemptsPerCase: 3
+        decisionAgentContextBudgetTokens: 24000
+        decisionAgentMaxOutputTokens: 1600
+        decisionAgentMaxConcurrentAttempts: 4
+        decisionAgentChains: ''
+        decisionAgentRetentionDays: 0
+        decisionAgentStorePath: ''
         hashlineHideStockEdit: true
         # Worktree lanes (git-worktree-lanes): capability switch, lane root,
         # active-lane cap, automatic dependency setup, lane-watch timeout, and
@@ -58,6 +67,12 @@
         # Session blackboard: write-token TTL (minutes); expiry releases the
         # key and notifies its subscribers. Volatile — edits apply live.
         blackboardWriteTokenTtlMinutes: 60
+    # Decision Agents: one profile-scoped authoritative Broker and its JSON-only UI remote.
+    - id: weir-decision-broker
+      name: 'weir-harness/decision-broker'
+    - id: weir-decision-remote
+      name: 'weir-harness/decision-remote'
+      inject: [typert]
     # System notifications (profile level, so every session is covered, not only
     # Weir-preset ones): approval / question / plan-review / failure / long-turn
     # completion. Pure observer of session events; settings overlay is read live.
@@ -222,6 +237,9 @@
               # F1 意图门：关键词意图 → 上下文注入 / 推理提档
               - id: intent-gate
                 name: 'weir-harness/intent-gate'
+              # Decision Agent Hook + consult tool; no preset service is provided.
+              - id: decision
+                name: 'weir-harness/decision'
               # Worktree 车道：宿主状态机 + 车道工具 + /worktree 命令 + 面板端点；
               # 提供 weirWorktreeLanes 服务（delegate 消费：绑定、车道守卫、结算）
               - id: worktree
@@ -407,6 +425,9 @@
                   maxRounds: 64
               - id: intent-gate
                 name: 'weir-harness/intent-gate'
+              # Decision Agent Hook + consult tool; no preset service is provided.
+              - id: decision
+                name: 'weir-harness/decision'
               - id: worktree
                 name: 'weir-harness/worktree'
               - id: delegate

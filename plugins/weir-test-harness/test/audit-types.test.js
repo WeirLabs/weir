@@ -20,7 +20,7 @@ const PRODUCT_SRC = join(HERE, '..', '..', 'weir-harness', 'src')
 // Emit-site files: every product module that calls audit(...) with a type
 // argument. After the delegate split the supervision emits live in
 // supervision-mount.js — keep this list aligned with a grep for "audit(".
-const EMIT_FILES = ['intent-gate/index.js', 'todo-driver/index.js', 'delegate/supervision-mount.js', 'delegate/child-composition.js']
+const EMIT_FILES = ['intent-gate/index.js', 'todo-driver/index.js', 'delegate/supervision-mount.js', 'delegate/child-composition.js', 'decision/audit.js']
 
 /** The subscription set the tap is expected to register on the cordis bus. */
 function expectedAuditEvents() {

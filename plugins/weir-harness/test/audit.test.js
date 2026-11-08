@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from './helpers.js'
 import { createAudit } from '../src/shared/audit.js'
+import { createDecisionAudit } from '../src/decision/audit.js'
 
 describe('shared audit channel', () => {
   it('emits a cordis event and mirrors a JSONL line to .weir/audit.jsonl', () => {
@@ -71,5 +72,26 @@ describe('shared audit channel', () => {
     circular.self = circular
     audit({ id: 's4', header: {} }, 'circular', circular)
     expect(emitted[0].record.data).toBeNull()
+  })
+})
+
+describe('Decision audit privacy projection', () => {
+  it('never mirrors question, evidence, answer, or profile bodies', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'weir-decision-audit-'))
+    try {
+      const audit = createDecisionAudit({ emit: () => {} }, { root: cwd })
+      audit('case-open', {
+        caseId: 'dc_1', rootSessionId: 'root', outcome: 'answered', answerCount: 1,
+        question: 'PRIVATE-QUESTION', evidence: 'PRIVATE-EVIDENCE',
+        userDescription: 'PRIVATE-PROFILE', answers: [{ custom: 'PRIVATE-ANSWER' }],
+      })
+      const raw = readFileSync(join(cwd, '.weir', 'audit.jsonl'), 'utf8')
+      for (const secret of ['PRIVATE-QUESTION', 'PRIVATE-EVIDENCE', 'PRIVATE-PROFILE', 'PRIVATE-ANSWER']) expect(raw.includes(secret)).toBe(false)
+      const record = JSON.parse(raw.trim())
+      expect(record.type).toBe('weir/decision/case-open')
+      expect(record.data).toEqual({ caseId: 'dc_1', rootSessionId: 'root', outcome: 'answered', answerCount: 1 })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })

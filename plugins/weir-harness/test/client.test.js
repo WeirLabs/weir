@@ -234,6 +234,7 @@ describe('weir settings client half', () => {
       },
     }
     const eventSubscriptions = []
+    const conversationDefinitions = []
     const remote = {
       $on: (event, listener) => {
         const subscription = { event, listener }
@@ -274,6 +275,7 @@ describe('weir settings client half', () => {
       },
       get: (name) => (name === 'connection' ? connection : undefined),
       remote,
+      uiConversation: { events: { register: definition => { conversationDefinitions.push(definition); return () => {} } } },
       slots: {
         inject: (name, fn) => {
           slotInjects.push({ name, fn })
@@ -285,7 +287,7 @@ describe('weir settings client half', () => {
         },
       },
     }
-    return { ctx, effects, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, scope, executed, rpcCalls, connection, eventSubscriptions, sessionAccesses: () => sessionAccesses }
+    return { ctx, effects, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, scope, executed, rpcCalls, connection, eventSubscriptions, conversationDefinitions, sessionAccesses: () => sessionAccesses }
   }
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -307,7 +309,7 @@ describe('weir settings client half', () => {
   it('loads, exposes the plugin surface, and registers the page chain', async () => {
     const { surface, reactStub } = await loadEntry()
 
-    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote', 'remote.session', 'remote.commands', 'connection'])
+    expect(surface.inject).toEqual(['slots', 'locale', 'configForms', 'remote', 'remote.session', 'remote.commands', 'connection', 'layout', 'uiConversation'])
     expect(surface.NS).toBe('settings.weir')
     // the test-only export grab-bag is gone — only the host contract remains
     expect(surface.chainEditor).toBeUndefined()
@@ -318,7 +320,7 @@ describe('weir settings client half', () => {
 
     // apply: the synchronously rendered dictionaries register first, then the
     // slot registration chain — no chunk request needed for apply itself (S18)
-    const { ctx, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, sessionAccesses } = makeCtx()
+    const { ctx, localeRegistrations, whileServedCalls, slotInjects, slotRegistrations, conversationDefinitions, sessionAccesses } = makeCtx()
     surface.apply(ctx)
 
     // Exactly one apply-time registration: NS carries only the strings that
@@ -383,10 +385,27 @@ describe('weir settings client half', () => {
       'conversation.session.header.utilities',
       // the seven read-only edit-lock conversation cards (edit-lock-tool-cards D2)
       'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview',
+      'conversation.input.right', 'tool.call.toolview', 'tool.call.toolview', 'conversation.chat.node', 'sidebar.panellist', 'main',
       'settings.section', 'settings.weir.item',
       // the model-routing page: its own section + item slot registrations
       'settings.section', 'settings.weir-routing.item',
     ])
+    expect(conversationDefinitions).toHaveLength(1)
+    const decisionDefinition = conversationDefinitions[0]
+    const decisionCall = { type: 'tool/call', seq: 42, data: { name: 'ask_user_question', callId: 'call-a', arguments: JSON.stringify({ questions: [{ id: 'q', question: 'Choose' }] }) } }
+    const match = decisionDefinition.match(decisionCall)
+    expect(match).toEqual({ id: 'call-a', role: 'start' })
+    const state = decisionDefinition.start(null, { event: decisionCall })
+    const node = decisionDefinition.buildViewNode({ key: 'decision-node', id: match.id, state, start: { location: { kind: 'unresolved' } } })
+    expect(node.kind).toBe('weir-decision')
+    expect(node.data).toEqual({ callId: 'call-a', toolName: 'ask_user_question', questions: [{ id: 'q', question: 'Choose' }] })
+    const decisionResult = { type: 'tool/result', seq: 43, data: { message: { source: { callId: 'call-a' } } } }
+    expect(decisionDefinition.match(decisionResult)).toEqual({ id: 'call-a', role: 'update' })
+    const settledState = decisionDefinition.update({ state }, { event: decisionResult })
+    const settledNode = decisionDefinition.buildViewNode({ key: 'decision-node', id: match.id, state: settledState, start: { location: { kind: 'unresolved' } } })
+    expect(settledNode.data.settledSeq).toBe(43)
+    expect(settledNode.anchorSeq).toBe(43)
+    expect(decisionDefinition.match({ ...decisionCall, data: { ...decisionCall.data, name: 'bash' } })).toBe(null)
 
     // the per-session LSP toggle in the conversation composer bar slot
     slotInjects[0].fn()
@@ -443,8 +462,8 @@ describe('weir settings client half', () => {
 
     // the top-level settings section registrations: the main page (order 40)
     // and the model-routing page (order 41)
-    slotInjects[20].fn()
-    slotInjects[22].fn()
+    slotInjects[26].fn()
+    slotInjects[28].fn()
     const sectionEntries = slotRegistrations.filter((registration) => registration.definition.name === 'settings.section')
     expect(sectionEntries).toHaveLength(2)
     const { definition: sectionDef, component: sectionComponent } = sectionEntries.find((registration) => registration.definition.id === 'weir-settings')
@@ -465,8 +484,8 @@ describe('weir settings client half', () => {
 
     // the item slot registrations hosting the form cards (the single entry
     // per page: no plugins.item registration anymore)
-    slotInjects[21].fn()
-    slotInjects[23].fn()
+    slotInjects[27].fn()
+    slotInjects[29].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const routingItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
     expect(routingItemEntry).toBeTruthy()
@@ -509,7 +528,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[21].fn()
+    slotInjects[27].fn()
     const { definition, component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const injected = definition.inject()
 
@@ -565,7 +584,7 @@ describe('weir settings client half', () => {
 
     // the routing item renders the same WeirCard on the routing page against
     // the second controller's store
-    slotInjects[23].fn()
+    slotInjects[29].fn()
     const routingItem = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
     expect(routingItem.definition.inject().hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
     reactStub.reset()
@@ -602,7 +621,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[21].fn()
+    slotInjects[27].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
 
     const settle = async (props) => {
@@ -633,7 +652,7 @@ describe('weir settings client half', () => {
     const { ctx, whileServedCalls, slotInjects, slotRegistrations } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
-    slotInjects[21].fn()
+    slotInjects[27].fn()
     const { component } = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
 
     const settle = async (props) => {
@@ -664,7 +683,7 @@ describe('weir settings client half', () => {
     expect(surface.inject).toContain('remote.commands')
     const { ctx, slotInjects, slotRegistrations, executed } = makeCtx()
     surface.apply(ctx)
-    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview'])
+    expect(slotInjects.map((inject) => inject.name)).toEqual(['conversation.input.right', 'tool.call.toolview', 'conversation.input.right', 'sidebar.session.row.leading', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right', 'conversation.session.header.utilities', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview', 'conversation.input.right', 'tool.call.toolview', 'tool.call.toolview', 'conversation.chat.node', 'sidebar.panellist', 'main'])
     slotInjects[0].fn()
     const { definition } = slotRegistrations[0]
     expect(definition.id).toBe('weir-lsp-toggle')
@@ -2151,6 +2170,15 @@ describe('weir settings client half', () => {
     'leaseToolWatchSelf',
     'leaseToolWatchUnsupported',
     'leaseToolWatchWaiting',
+    'decisionAgentAnswerTimeoutMs', 'decisionAgentAnswerTimeoutMsHint', 'decisionAgentChains', 'decisionAgentChainsHint',
+    'decisionAgentContextBudgetTokens', 'decisionAgentContextBudgetTokensHint', 'decisionAgentMaxAttemptsPerCase', 'decisionAgentMaxAttemptsPerCaseHint',
+    'decisionAgentMaxConcurrentAttempts', 'decisionAgentMaxConcurrentAttemptsHint', 'decisionAgentMaxOutputTokens', 'decisionAgentMaxOutputTokensHint',
+    'decisionAgentRetentionDays', 'decisionAgentRetentionDaysHint', 'decisionAgentStorePath', 'decisionAgentStorePathHint',
+    'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecision',
+    'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
+    'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord',
+    'decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect', 'decisionDecide',
+    'decisionReassign', 'decisionCancel', 'decisionRetry', 'decisionSave',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }
@@ -2167,6 +2195,7 @@ describe('weir settings client half', () => {
       slots: { inject: () => () => {} },
       configForms: { whileServed: () => () => {} },
       remote: {},
+      uiConversation: { events: { register: () => () => {} } },
     })
     expect(registrations).toHaveLength(1)
     expect(registrations[0].ns).toBe('settings.weir')
@@ -2178,6 +2207,7 @@ describe('weir settings client half', () => {
       ['lib/client.robash-model.js', undefined],
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
+      ['lib/client.decision-model.js', undefined],
       ['lib/client.notify-permissions.js', chunkRequire],
       ['lib/client.file-lease-badge.js', chunkRequire],
       ['lib/client.capability-model.js', undefined],

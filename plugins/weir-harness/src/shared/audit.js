@@ -56,6 +56,8 @@ export const AUDIT_TYPES = Object.freeze({
   // the per-process rate limit (one record per window); the emit site adds no
   // throttle of its own and a failed emit never blocks a write.
   fileLease: 'file-lease',
+  // Decision Broker observations: only ids, enums, counts and durations.
+  decision: 'decision',
   toolUsage: 'tool-usage',
 })
 /**
@@ -75,6 +77,7 @@ export const AUDIT_SUBTYPES = Object.freeze({
   // resume from this same channel (audit only — never a session log).
   delegate: Object.freeze(['spawn']),
   toolUsage: Object.freeze(['request', 'result']),
+  decision: Object.freeze(['case-open', 'attempt', 'outcome', 'bypass', 'feedback', 'selector', 'agent-profile', 'cancel', 'recover', 'deliver', 'illegal-transition']),
 })
 
 /**

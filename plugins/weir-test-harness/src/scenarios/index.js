@@ -67,6 +67,16 @@ import decisionSpikeJson from './decision-spike-json.js'
 import decisionSpikeMultiMount from './decision-spike-multi-mount.js'
 import decisionSpikeCancel from './decision-spike-cancel.js'
 import decisionSpikeSlots from './decision-spike-slots.js'
+import decisionSpikeCurrent from './decision-spike-current.js'
+import decisionHook from './decision-hook.js'
+import decisionConsult from './decision-consult.js'
+import decisionBatch from './decision-batch.js'
+import decisionRoute from './decision-route.js'
+import decisionRecovery from './decision-recovery.js'
+import decisionFeedback from './decision-feedback.js'
+import decisionIsolation from './decision-isolation.js'
+import decisionUiRemote from './decision-ui-remote.js'
+import decisionGui from './decision-gui.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
 import editlockLspUncertain from './editlock-lsp-uncertain.js'
@@ -139,7 +149,16 @@ SCENARIOS.push(fileleaseWatchReset)
 SCENARIOS.push(customSkillPaths)
 // Parallel foreground delegation: real two-child overlap by causal handshake.
 SCENARIOS.push(delegateParallel)
-if (process.env.WEIR_IT_DECISION_SPIKES === '1') SCENARIOS.push(decisionSpikeOrder, decisionSpikeDelegated, decisionSpikeJson, decisionSpikeMultiMount, decisionSpikeCancel, decisionSpikeSlots)
+if (process.env.WEIR_IT_DECISION_SPIKES === '1') SCENARIOS.push(decisionSpikeOrder, decisionSpikeDelegated, decisionSpikeJson, decisionSpikeMultiMount, decisionSpikeCancel, decisionSpikeSlots, decisionSpikeCurrent)
+SCENARIOS.push(decisionHook)
+SCENARIOS.push(decisionConsult)
+SCENARIOS.push(decisionBatch)
+SCENARIOS.push(decisionRoute)
+SCENARIOS.push(decisionRecovery)
+SCENARIOS.push(decisionFeedback)
+SCENARIOS.push(decisionIsolation)
+SCENARIOS.push(decisionUiRemote)
+if (process.env.WEIR_IT_DECISION_GUI === '1') SCENARIOS.push(decisionGui)
 
 /**
  * Find a scenario entry by id.

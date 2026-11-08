@@ -1,0 +1,54 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { loadClientChunk } from '../helpers/load-client-chunk.js'
+
+async function load() {
+  const { definition, exports } = await loadClientChunk('lib/client.decision-model.js')
+  assert.equal(definition.id, 'weir-harness')
+  return exports
+}
+
+test('selector offers only Off and enabled Agents, never Auto', async () => {
+  const model = await load()
+  const options = model.selectorOptions({ ok: true, value: { agents: [
+    { agentId: 'a', name: 'A', state: 'enabled' },
+    { agentId: 'b', name: 'B', state: 'disabled' },
+    { agentId: 'c', name: 'C', state: 'archived' },
+  ] } })
+  assert.deepEqual(options.map(option => option.value), ['off', 'a'])
+  assert.equal(JSON.stringify(options).includes('Auto'), false)
+  assert.deepEqual(model.selectorOptions({ ok: false, error: { message: 'off' } }).map(option => option.value), ['off'])
+})
+
+test('card and page projections are complete and malformed payloads stay neutral', async () => {
+  const model = await load()
+  const detail = {
+    case: { caseId: 'dc', agentId: 'a', state: 'closed', closing: 'answered', revision: 4, feedbackState: 'none', decision: { answers: [{ id: 'q', selected: ['A'] }] } },
+    attempts: [{ attemptId: 'da', claims: [{ text: 'Use a concise title', evidenceIds: ['ev'] }], evidence: [{ evidenceId: 'ev', locator: { kind: 'case', caseId: 'source' } }] }],
+  }
+  const card = model.cardView(detail, [{ agentId: 'a', name: 'Tone' }])
+  assert.equal(card.agentName, 'Tone')
+  assert.equal(card.outcome, 'answered')
+  assert.equal(card.summary, 'Use a concise title')
+  assert.equal(card.evidence[0].evidenceId, 'ev')
+  assert.equal(card.recordLink, 'weir-decisions:dc')
+  assert.equal(model.cardView(null), null)
+  assert.deepEqual(model.pageView({ tab: 'invalid' }).tabs, ['agents', 'records', 'inbox', 'metrics'])
+  assert.deepEqual(model.narrowRecords({ ok: false }), { records: [], nextCursor: null })
+  assert.deepEqual(model.narrowInbox({ ok: false }), [])
+  assert.deepEqual(model.narrowRecords({ records: [{ caseId: 'dc-plain' }], nextCursor: 'next' }), { records: [{ caseId: 'dc-plain' }], nextCursor: 'next' })
+  assert.deepEqual(model.narrowInbox([{ caseId: 'dc-plain' }]), [{ caseId: 'dc-plain' }])
+})
+
+
+test('RPC uses /api weirDecision namespace and exposes readable failures', async () => {
+  const model = await load()
+  const calls = []
+  const connection = { rpc: { call: async (...args) => { calls.push(args); return { ok: true, value: { ok: true, value: { ok: true } } } } } }
+  assert.deepEqual(await model.decisionRpc(connection, 'inbox', { sessionId: 'child' }), { ok: true })
+  assert.deepEqual(calls, [['/api', 'weirDecision/inbox', { args: { args: { sessionId: 'child' } } }]])
+  const failed = { rpc: { call: async () => ({ ok: false, error: { code: 'OFF', message: 'Decision Off' } }) } }
+  await assert.rejects(model.decisionRpc(failed, 'overview'), error => error.code === 'OFF' && error.message === 'Decision Off')
+  const serviceFailed = { rpc: { call: async () => ({ ok: true, value: { ok: false, error: { code: 'OFF', message: 'Decision Off' } } }) } }
+  await assert.rejects(model.decisionRpc(serviceFailed, 'overview'), error => error.code === 'OFF' && error.message === 'Decision Off')
+})

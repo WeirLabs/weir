@@ -145,6 +145,7 @@ describe('client channel adapters (composition root)', () => {
       },
       get: (name) => (name === 'connection' ? connection : undefined),
       remote: {},
+      uiConversation: { events: { register: () => () => {} } },
       slots: {
         inject: (name, fn) => {
           slotInjects.push({ name, fn })

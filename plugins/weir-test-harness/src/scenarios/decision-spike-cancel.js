@@ -24,10 +24,11 @@ function observe(obs) {
 }
 
 async function run(driver) {
+  const events = join(driver.IT_ROOT, 'decision-spike-events.jsonl')
   const trace = join(driver.IT_ROOT, `trace-${id}-before.jsonl`)
-  const before = await driver.spawnHeadless(['weir-it', prompt], driver.scenarioEnv(id, trace, { WEIR_IT_DECISION_SPIKE: 'cancel', WEIR_IT_DECISION_PHASE: 'before' }))
+  const before = await driver.spawnHeadless(['weir-it', prompt], driver.scenarioEnv(id, trace, { WEIR_IT_DECISION_SPIKE: 'cancel', WEIR_IT_DECISION_PHASE: 'before', WEIR_DECISION_SPIKE_EVENTS: events }))
   const trace2 = join(driver.IT_ROOT, `trace-${id}-after.jsonl`)
-  const after = await driver.spawnHeadless(['weir-it', prompt], driver.scenarioEnv(id, trace2, { WEIR_IT_DECISION_SPIKE: 'cancel', WEIR_IT_DECISION_PHASE: 'after' }))
+  const after = await driver.spawnHeadless(['weir-it', prompt], driver.scenarioEnv(id, trace2, { WEIR_IT_DECISION_SPIKE: 'cancel', WEIR_IT_DECISION_PHASE: 'after', WEIR_DECISION_SPIKE_EVENTS: events }))
   return {
     scenario: id, trace, trace2,
     code: before.code === 0 && after.code === 0 ? 0 : 1,
@@ -43,21 +44,26 @@ function assert(run) {
   }
   const before = read('before')
   const after = read('after')
+  const uiBefore = before?.store?.attempts?.find(attempt => attempt.caseId === 'dc_s6_ui')
+  const uiAfter = after?.store?.attempts?.find(attempt => attempt.caseId === 'dc_s6_ui')
+  const hookBefore = before?.store?.attempts?.find(attempt => attempt.caseId === 'dc_s6_hook')
+  const hookAfter = after?.store?.attempts?.find(attempt => attempt.caseId === 'dc_s6_hook')
+  const noAnswers = report => report?.store?.cases?.every(item => item.answer === null) === true
   const pass = before?.pass === true && after?.pass === true && run.code === 0 && run.stdout.includes('S6_BEFORE_DONE') && run.stdout.includes('S6_AFTER_DONE')
   writeDecisionEvidence(run, 'S6', 'cancel-idempotency.json', {
     processRuns: run.processRuns,
     beforeRestart: before, afterRestart: after,
     assertions: {
-      requestSignalAbort: before?.askAbort?.code === 'ASK_ABORTED' && after?.store?.askAbort?.code === 'ASK_ABORTED',
-      uiCancelInterruptedAttempt: before?.store?.attempts?.[0]?.failure === 'interrupted' && before?.llmFinish?.kind === 'aborted' && after?.store?.attempts?.[0]?.failure === 'interrupted',
-      idempotentReplayNoNewAttempt: before?.replay?.created === false && before?.replay?.afterAttempts === 1 && after?.replay?.created === false && after?.replay?.afterAttempts === 1,
-      noAnswerAfterCancel: before?.store?.cases?.[0]?.answer === null && after?.store?.cases?.[0]?.answer === null,
+      requestSignalAbort: before?.askAbort?.code === 'ASK_ABORTED' && after?.store?.askAbort?.code === 'ASK_ABORTED' && hookBefore?.failure === 'aborted' && hookAfter?.failure === 'aborted',
+      uiCancelInterruptedAttempt: uiBefore?.failure === 'interrupted' && before?.llmFinish?.kind === 'aborted' && uiAfter?.failure === 'interrupted',
+      idempotentReplayNoNewAttempt: before?.replay?.created === false && before?.replay?.afterAttempts === 2 && after?.replay?.created === false && after?.replay?.afterAttempts === 2,
+      noAnswerAfterCancel: noAnswers(before) && noAnswers(after),
     },
     pass,
   })
-  run.check('request.signal abort yields ASK_ABORTED and survives restart', before?.askAbort?.code === 'ASK_ABORTED' && after?.store?.askAbort?.code === 'ASK_ABORTED', JSON.stringify({ before: before?.askAbort, after: after?.store?.askAbort }))
-  run.check('UI cancel interrupts the in-flight Attempt without an answer', before?.store?.attempts?.[0]?.failure === 'interrupted' && before?.llmFinish?.kind === 'aborted' && after?.store?.cases?.[0]?.answer === null, JSON.stringify({ before, after }))
-  run.check('same idempotency key adds no Attempt before or after restart', before?.replay?.created === false && before?.replay?.afterAttempts === 1 && after?.replay?.created === false && after?.replay?.afterAttempts === 1, JSON.stringify({ before: before?.replay, after: after?.replay }))
+  run.check('request.signal abort persists cancellation and yields ASK_ABORTED across restart', before?.askAbort?.code === 'ASK_ABORTED' && after?.store?.askAbort?.code === 'ASK_ABORTED' && hookBefore?.failure === 'aborted' && hookAfter?.failure === 'aborted', JSON.stringify({ before: before?.askAbort, after: after?.store?.askAbort, hookBefore, hookAfter }))
+  run.check('UI cancel interrupts the in-flight Attempt without an answer', uiBefore?.failure === 'interrupted' && before?.llmFinish?.kind === 'aborted' && noAnswers(before) && noAnswers(after), JSON.stringify({ uiBefore, uiAfter, before: before?.llmFinish }))
+  run.check('same idempotency key adds no Attempt before or after restart', before?.replay?.created === false && before?.replay?.afterAttempts === 2 && after?.replay?.created === false && after?.replay?.afterAttempts === 2, JSON.stringify({ before: before?.replay, after: after?.replay }))
   run.check('both real headless processes exited cleanly', run.code === 0, `processes=${JSON.stringify(run.processRuns)} stderr=${run.stderr.slice(-500)}`)
 }
 

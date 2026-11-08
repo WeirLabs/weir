@@ -10,7 +10,7 @@ import { dirname } from 'node:path'
 // Anything it does not recognise falls through (next()), preserving the stock
 // NO_PROVIDER behavior. Dev-only; never install into a real profile.
 const name = 'weir-it-user-questions-stub'
-const inject = []
+const inject = ['weirDecisionBroker']
 
 /** The lane service's decision-card ids (src/worktree/lanes.js). */
 const ANSWERED = new Set(['merge', 'abandon', 'cleanup'])
@@ -19,16 +19,16 @@ const PROMOTION_QUESTION_ID = 'blackboard-promotion'
 const MCP_INSTALL_QUESTION_ID = 'mcp-install-confirmation'
 const S1_ORDER_QUESTION_ID = 's1-order'
 
-function traceDecisionStub(request, answer) {
-  const file = process.env.WEIR_DECISION_SPIKE_EVENTS
+function traceDecisionStub(request, answer, caseSnapshot) {
+  const file = process.env.WEIR_IT_DECISION_EVENTS ?? process.env.WEIR_DECISION_SPIKE_EVENTS
   if (!file) return
   mkdirSync(dirname(file), { recursive: true })
-  appendFileSync(file, JSON.stringify({ time: Date.now(), spike: 'S1', listener: 'user-questions-stub', questionIds: request?.questions?.map(question => question.id) ?? [], answer }) + '\n')
+  appendFileSync(file, JSON.stringify({ time: Date.now(), listener: 'user-questions-stub', questionIds: request?.questions?.map(question => question.id) ?? [], answer, caseSnapshot }) + '\n')
 }
 
 function apply(ctx, config = {}) {
   if (config.enabled !== true) return
-  ctx.on('user-questions/request', (request, next) => {
+  ctx.on('user-questions/request', async (request, next) => {
     const questions = request?.questions
     if (!Array.isArray(questions)) return next()
     const answers = []
@@ -58,12 +58,25 @@ function apply(ctx, config = {}) {
         if (typeof label === 'string') answers.push({ id: question.id, selected: [label] })
         continue
       }
+      if (typeof question?.id === 'string' && question.id.startsWith('decision-')) {
+        const label = question?.options?.[0]?.label
+        if (typeof label !== 'string') return next()
+        answers.push({ id: question.id, selected: [label] })
+        continue
+      }
       if (!ANSWERED.has(question?.id)) return next()
       const label = question?.options?.[0]?.label
       if (typeof label !== 'string') return next()
       answers.push({ id: question.id, selected: [label] })
     }
-    if (request?.questions?.some(question => question?.id === S1_ORDER_QUESTION_ID)) traceDecisionStub(request, { answers })
+    if (request?.questions?.some(question => question?.id === S1_ORDER_QUESTION_ID || question?.id?.startsWith('decision-'))) {
+      let caseSnapshot = null
+      if (process.env.WEIR_IT_DECISION === '1') {
+        const broker = ctx.get('weirDecisionBroker')
+        caseSnapshot = await broker.caseForCall({ sessionId: request.agent.id, questions: request.questions })
+      }
+      traceDecisionStub(request, { answers }, caseSnapshot)
+    }
     return { answers }
   })
 }
