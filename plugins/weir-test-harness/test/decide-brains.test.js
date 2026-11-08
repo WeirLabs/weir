@@ -695,4 +695,12 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(value.reasonCode, 'MISSING_CONTEXT')
     assert.ok(value.hint.includes('scope'))
   })
+  it('scripts isolated neutral-memory source and reuse questions', () => {
+    const source = blockEnds(run('decision-gui', userOptions('GUI_MEMORY_SOURCE')))[0]
+    const reuse = blockEnds(run('decision-gui', userOptions('GUI_MEMORY_REUSE')))[0]
+    assert.equal(source.name, 'ask_user_question')
+    assert.equal(reuse.name, 'ask_user_question')
+    assert.equal(JSON.parse(source.arguments).questions[0].id, 'gui-memory-source')
+    assert.equal(JSON.parse(reuse.arguments).questions[0].id, 'gui-memory-reuse')
+  })
 })
