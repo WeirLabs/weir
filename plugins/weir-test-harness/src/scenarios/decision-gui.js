@@ -47,15 +47,18 @@ function decideConsolidation(options, obs) {
   const projection = JSON.parse(obs.lastUser)
   const source = projection.cases.find(item => item.excerpt?.includes('Question gui-learning-source:'))?.caseId
   const rejecting = projection.cases.some(item => item.excerpt?.includes('Question gui-learning-after-empty:'))
+  const correction = (projection.feedback ?? []).find(item => item.kind === 'correction')
   const successor = Boolean(projection.parentSnapshot)
   const text = rejecting
     ? 'Rejected GUI candidate: this principle must never become current.'
-    : successor
-      ? 'Reviewed GUI successor principle: prefer the second source-backed answer.'
-      : 'Reviewed GUI principle: prefer the source-backed answer.'
+    : correction
+      ? 'Reviewed GUI correction principle: prefer the corrected cross-root answer.'
+      : successor
+        ? 'Reviewed GUI successor principle: prefer the second source-backed answer.'
+        : 'Reviewed GUI principle: prefer the source-backed answer.'
   return textChunks(JSON.stringify({ operations: [{
     op: 'add', principleId: 'temporary-gui-learning', text,
-    scope: { workspaces: [projection.workspaceKey] }, sources: source ? [source] : [],
+    scope: { workspaces: [projection.workspaceKey] }, sources: correction ? [correction.feedbackId] : source ? [source] : [],
   }] }))
 }
 function decideDecision(options, obs) {

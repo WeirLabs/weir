@@ -782,6 +782,9 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.deepEqual(v1.sources, ['dc_gui_source'])
     assert.ok(!v1.text.includes('successor'))
     assert.ok(consolidate({ parentSnapshot: { snapshotId: 'ms_v1' } }).text.includes('successor'))
+    const corrected = consolidate({ parentSnapshot: { snapshotId: 'ms_v1' }, feedback: [{ feedbackId: 'fb_gui_correction', kind: 'correction', direction: 'Use corrected GUI direction' }] })
+    assert.deepEqual(corrected.sources, ['fb_gui_correction'])
+    assert.ok(corrected.text.includes('correction'))
     const rejected = consolidate({ cases: [source, { caseId: 'dc_empty', excerpt: 'Question gui-learning-after-empty: Answer' }] })
     assert.ok(rejected.text.startsWith('Rejected GUI candidate'))
     const question = blockEnds(run('decision-gui', userOptions('GUI_LEARNING_SOURCE')))[0]
