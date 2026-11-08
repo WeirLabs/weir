@@ -45,8 +45,9 @@ function decideDecision(options, obs) {
 }
 
 function observe(obs) {
-  const body = obs.system.includes('Decision evaluator contract v1') ? obs.lastUser : ''
-  return { ...observeDecision(obs), decisionIsolationLeak: body.includes('A private profile marker') || body.includes('A private feedback marker') }
+  const observation = observeDecision(obs)
+  const body = observation.decisionEvaluator ? obs.lastUser : ''
+  return { ...observation, decisionIsolationLeak: body.includes('A private profile marker') || body.includes('A private feedback marker') }
 }
 
 function assert(run) {

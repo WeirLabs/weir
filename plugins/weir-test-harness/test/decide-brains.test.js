@@ -499,6 +499,10 @@ describe('decision evaluator v2 mock dispatch', () => {
       assert.equal(answer.outcome, 'answer')
       assert.equal(answer.claims[0].evidenceIds[0], 'ev_v2')
       assert.deepEqual(answer.answers, [{ id: 'decision-hook-answer', selected: ['Concise'] }])
+      const observed = byId('decision-hook').observe(extract(options))
+      assert.equal(observed.decisionEvaluator, true)
+      assert.deepEqual(observed.decisionQuestionIds, ['decision-hook-answer'])
+      assert.deepEqual(observed.decisionEvidenceIds, ['ev_v2'])
     } finally {
       if (previous === undefined) delete process.env.WEIR_IT_SCENARIO
       else process.env.WEIR_IT_SCENARIO = previous

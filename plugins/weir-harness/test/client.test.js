@@ -2179,6 +2179,7 @@ describe('weir settings client half', () => {
     'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord',
     'decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect', 'decisionDecide',
     'decisionReassign', 'decisionCancel', 'decisionRetry', 'decisionSave',
+    'decisionContextPack', 'decisionL2Memory', 'decisionMemoryEmpty', 'decisionNeutralEpisodes', 'decisionNoMemory', 'decisionLayerSizes', 'decisionOmissions',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }
