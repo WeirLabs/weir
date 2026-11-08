@@ -32,10 +32,43 @@ test('sidecar accumulates text and usage with only existing GenerateOptions fiel
   assert.equal(result.inputTokens, 120)
   assert.equal(result.outputTokens, 9)
   const options = llm.calls[0]
-  assert.equal(options.temperature, 0)
   assert.equal(options.maxTokens, 1600)
   assert.deepEqual(options.messages[0].content, [{ type: 'text', text: '{"L4":{}}' }])
   for (const key of ['tools', 'purpose', 'sessionId']) assert.equal(key in options, false)
+})
+
+const kimiK3Route = { kind: 'resolved', provider: 'kimi-coding', model: 'k3.1-pro' }
+const inheritedDeepSeekRoute = { kind: 'inherited', provider: 'deepseek-official', model: 'deepseek-chat' }
+
+function assertNoExplicitSamplingOptions(options, route) {
+  assert.equal('temperature' in options, false, 'Decision requests must omit temperature and defer to the provider default')
+  assert.equal(options.provider, route.provider)
+  assert.equal(options.model, route.model)
+  assert.equal(options.maxTokens, 1600)
+  assert.deepEqual(options.messages[0].content, [{ type: 'text', text: '{"L4":{}}' }])
+  for (const key of ['tools', 'purpose', 'sessionId']) assert.equal(key in options, false)
+}
+
+test('Kimi K3 fixed-temperature route sends no explicit temperature', async () => {
+  const llm = fakeLlm([
+    { type: 'text-delta', text: '{"outcome":"answer"}' },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ])
+  const result = await streamDecision(input(llm, { route: kimiK3Route }))
+  assert.equal(result.finishReason, 'stop')
+  assert.equal(result.text, '{"outcome":"answer"}')
+  assertNoExplicitSamplingOptions(llm.calls[0], kimiK3Route)
+})
+
+test('ordinary inherited DeepSeek route sends no explicit temperature either', async () => {
+  const llm = fakeLlm([
+    { type: 'text-delta', text: '{"outcome":"return"}' },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ])
+  const result = await streamDecision(input(llm, { route: inheritedDeepSeekRoute }))
+  assert.equal(result.finishReason, 'stop')
+  assert.equal(result.text, '{"outcome":"return"}')
+  assertNoExplicitSamplingOptions(llm.calls[0], inheritedDeepSeekRoute)
 })
 
 for (const [kind, failureCode] of [['error', 'UPSTREAM_429'], ['aborted', undefined], ['max-tokens', undefined]]) {

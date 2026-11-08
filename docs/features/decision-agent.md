@@ -64,7 +64,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 - 权威存储使用 `node:sqlite`、WAL、`BEGIN IMMEDIATE`、串行写与迁移备份。默认路径为 `<profileContext.home>/weir/profiles/<profileContext.name>/decisions/decision.db`；更高数据库或记录 schema 版本明确拒绝且不改写。
 - 用户裁决与 `user_decision` Evidence Ref 同事务写入；点赞与 `agent_record` 同反馈事务写入。并发首次送达在事务内重读幂等键，返回已提交 Case。
-- 评估器直接调用 `ctx.llm.stream`，使用严格文本 JSON、有限上下文包和 G1–G7；不使用工具、会话历史或自评置信度。意外异常持久化为通用失败 Attempt，不泄漏异常正文。
+- 评估器直接调用 `ctx.llm.stream`，使用严格文本 JSON、有限上下文包和 G1–G7；不使用工具、会话历史或自评置信度。所有路由都省略显式 `temperature`，沿用 DSH 与供应商的兼容默认值，避免固定采样参数模型被拒绝。意外异常持久化为通用失败 Attempt，不泄漏异常正文。
 - 浏览器只通过 `/api` 的 `weirDecision/<method>` 读写。所有 Case/Profile 动作都解析调用方根会话/workspace 并检查目标归属；越界拒绝写审计。
 - 决策卡是权威记录的只读投影，不写自定义 Session 事件、不使用 `session.append` 或 `commands.execute`，不靠定时轮询刷新。审计镜像尽力而为，不含题面、证据正文或用户画像正文。
 
@@ -78,6 +78,6 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ## 测试
 
-- 单元与契约测试：`plugins/weir-harness/test/decision/`，覆盖状态机、迁移、并发幂等、记录版本、证据展开与隔离、G1–G7、咨询修订/重读、耗尽恢复、异常恢复、反馈、远端授权、Client 表面。当前完整 Decision 套件 171/171。
+- 单元与契约测试：`plugins/weir-harness/test/decision/`，覆盖状态机、迁移、并发幂等、记录版本、证据展开与隔离、G1–G7、咨询修订/重读、耗尽恢复、异常恢复、反馈、远端授权、Client 表面，以及 Kimi/DeepSeek 路由均不发送显式 `temperature` 的回归。当前完整 Decision 套件 173/173。
 - headless 集成：`decision-hook`、`decision-consult`、`decision-batch`、`decision-route`、`decision-recovery`、`decision-feedback`、`decision-isolation`、`decision-ui-remote`，合计 40/40。
 - 真实隔离 Desktop GUI：A 16/16（选择器、证据卡、重启与新增子路径导出激活）、B 28/28（升级复用、反馈、纠正、收件箱动作）、C 28/28（管理/设置、原生权限、fresh-Off）。测试只启动独立临时 profile/进程，不操作用户当前 App 或其存储。

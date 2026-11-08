@@ -39,7 +39,6 @@ export async function streamDecision(input) {
       content: typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content,
     })),
     maxTokens: input.maxOutputTokens,
-    temperature: 0,
     signal: controller.signal,
   }
 
