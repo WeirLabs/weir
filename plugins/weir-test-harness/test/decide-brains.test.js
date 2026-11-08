@@ -771,4 +771,40 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(JSON.parse(source.arguments).questions[0].id, 'gui-memory-source')
     assert.equal(JSON.parse(reuse.arguments).questions[0].id, 'gui-memory-reuse')
   })
+  it('scripts authoritative v1, successor, and rejected GUI learning candidates', () => {
+    const scenario = byId('decision-gui')
+    const source = { caseId: 'dc_gui_source', excerpt: 'Answer gui-learning-source: User backed GUI answer\nQuestion gui-learning-source: Choose', scope: { workspaces: ['/gui'] } }
+    const consolidate = projection => {
+      const options = userOptions(JSON.stringify({ workspaceKey: '/gui', cases: [source], parentSnapshot: null, ...projection }), { system: 'Decision consolidation contract v1' })
+      return JSON.parse(blockEnds([...scenario.decideConsolidation(options, extract(options))])[0].text).operations[0]
+    }
+    const v1 = consolidate({})
+    assert.deepEqual(v1.sources, ['dc_gui_source'])
+    assert.ok(!v1.text.includes('successor'))
+    assert.ok(consolidate({ parentSnapshot: { snapshotId: 'ms_v1' } }).text.includes('successor'))
+    const rejected = consolidate({ cases: [source, { caseId: 'dc_empty', excerpt: 'Question gui-learning-after-empty: Answer' }] })
+    assert.ok(rejected.text.startsWith('Rejected GUI candidate'))
+    const question = blockEnds(run('decision-gui', userOptions('GUI_LEARNING_SOURCE')))[0]
+    assert.equal(JSON.parse(question.arguments).questions[0].id, 'gui-learning-source')
+  })
+  it('uses reviewed L2 only through real L5 mappings and retains an empty rollback fallback', () => {
+    const scenario = byId('decision-gui')
+    const evaluate = (id, L2) => {
+      const options = userOptions(JSON.stringify({
+        L2,
+        L4: { request: { questions: [{ id, options: [{ label: 'Learned GUI answer' }] }] } },
+        L5: [{ evidenceId: 'ev_gui_1', source: 'user_decision' }, { evidenceId: 'ev_gui_2', source: 'user_decision' }],
+      }), { system: 'Decision evaluator contract v3' })
+      return JSON.parse(blockEnds([...scenario.decideDecision(options, extract(options))])[0].text)
+    }
+    const successor = evaluate('gui-learning-after-v2', [
+      { principleId: 'pr_v1', evidenceIds: ['ev_gui_1'] },
+      { principleId: 'pr_v2', text: 'Reviewed GUI successor principle', evidenceIds: ['ev_gui_2'] },
+    ])
+    assert.deepEqual(successor.claims[0].evidenceIds, ['ev_gui_2'])
+    const empty = evaluate('gui-learning-after-empty', '')
+    assert.deepEqual(empty.claims[0].evidenceIds, ['ev_gui_1'])
+    const missing = evaluate('gui-learning-after-v1', [{ principleId: 'pr_v1', evidenceIds: ['pr_not_evidence'] }])
+    assert.equal(missing.outcome, 'return')
+  })
 })
