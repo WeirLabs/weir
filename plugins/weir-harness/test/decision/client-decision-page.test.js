@@ -24,9 +24,10 @@ test('management page registers left-panel and keyed main with exactly four real
   assert.equal(/consolidation|memory snapshot|auto routing/i.test(source), false);
 })
 
-test('page model exposes four views without editing or consolidation entry points', async () => {
+test('page model exposes three primary views and advanced metrics without editing or consolidation entry points', async () => {
   const model = (await loadClientChunk('lib/client.decision-model.js')).exports;
-  assert.deepEqual(model.pageView({}).tabs, ['agents', 'records', 'inbox', 'metrics']);
+  assert.deepEqual(model.pageView({}).tabs, ['inbox', 'records', 'agents']);
+  assert.deepEqual(model.pageView({}).advancedViews, ['metrics']);
   const record = {
     case: { caseId: 'dc', agentId: 'a', state: 'awaiting_user', feedbackState: 'disputed', scope: { paths: ['src'] }, decision: { code: 'STALE_EVIDENCE' } },
     attempts: [{ outcome: 'escalate' }],

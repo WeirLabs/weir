@@ -33,7 +33,7 @@ test('card and page projections are complete and malformed payloads stay neutral
   assert.equal(card.evidence[0].evidenceId, 'ev')
   assert.equal(card.recordLink, 'weir-decisions:dc')
   assert.equal(model.cardView(null), null)
-  assert.deepEqual(model.pageView({ tab: 'invalid' }).tabs, ['agents', 'records', 'inbox', 'metrics'])
+  assert.deepEqual(model.pageView({ tab: 'invalid' }).tabs, ['inbox', 'records', 'agents'])
   assert.deepEqual(model.narrowRecords({ ok: false }), { records: [], nextCursor: null })
   assert.deepEqual(model.narrowInbox({ ok: false }), [])
   assert.deepEqual(model.narrowRecords({ records: [{ caseId: 'dc-plain' }], nextCursor: 'next' }), { records: [{ caseId: 'dc-plain' }], nextCursor: 'next' })
